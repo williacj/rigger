@@ -122,13 +122,22 @@ async function checkEnding(t, tmp, runName, output, { processes = processesIn, e
 }
 
 // Start time and command are the host's identity, not just a PID copied from a file.
-function readinessProcess(pid, within = 10_000, run = spawnSync) {
+function readinessProcess(pid, within = 10_000, run = spawnSync, cwdBudget) {
   if (!(within > 0) || !Number.isFinite(within)) return { live: false };
   const result = run('/bin/ps', ['-ww', '-p', String(pid), '-o', 'stat=', '-o', 'lstart=', '-o', 'pgid=', '-o', 'command='], { env: { ...process.env, LC_ALL: 'C', TZ: 'UTC0' }, encoding: 'utf8', timeout: Math.ceil(within), killSignal: 'SIGKILL' });
   if (result.error || result.status !== 0) return { live: false };
   const row = /^\s*(\S+)\s+(.{24})\s+(\d+)\s+(.*)$/.exec(result.stdout.trimEnd());
   if (!row) return { live: false };
-  return { live: !row[1].startsWith('Z'), signature: row.slice(2).join(' '), group: Number(row[3]), command: row[4] };
+  const observed = { live: !row[1].startsWith('Z'), signature: row.slice(2).join(' '), group: Number(row[3]), command: row[4] };
+  if (cwdBudget) {
+    const remaining = cwdBudget.deadline - cwdBudget.now();
+    if (!(remaining > 0)) return observed;
+    const cwd = run(LSOF, ['-w', '-n', '-P', '-a', '-p', String(pid), '-d', 'cwd', '-F', 'pn'], {
+      env: process.env, encoding: 'utf8', timeout: Math.ceil(remaining), killSignal: 'SIGKILL',
+    });
+    if (!cwd.error && cwd.status === 0) observed.cwd = cwd.stdout.split('\n').find((line) => line.startsWith('n'))?.slice(1);
+  }
+  return observed;
 }
 
 async function waitForReadiness(t, {
@@ -153,12 +162,15 @@ async function waitForReadiness(t, {
       if (pids.every((pid) => Number.isSafeInteger(pid) && pid > 0) && Array.isArray(record.processes)
           && pids.every((pid) => record.processes.some((entry) => entry.pid === pid && typeof entry.signature === 'string'))) {
         for (const pid of pids) {
-          const actual = observe(pid, deadline - now());
+          const actual = observe(pid, deadline - now(), undefined, kind === 'F5' ? { deadline, now } : undefined);
           if (now() >= deadline) throw new Error('setup never became ready by 10000ms: process observation exceeded deadline');
           if (t.signal.aborted) throw new Error('setup cancelled before readiness', { cause: t.signal.reason });
           const recorded = record.processes.find((entry) => entry.pid === pid);
           if (!actual.live) throw new Error(`setup recorded pid ${pid} is not live`);
           if (actual.signature !== recorded.signature || !actual.command?.includes(directory)) throw new Error(`setup rejected reused or foreign pid ${pid}`);
+          if ((kind === 'F3' || kind === 'F5') && actual.group !== record.pid) throw new Error('setup tail does not lead its own group');
+          if (kind === 'F5' && actual.cwd === undefined) throw new Error('setup could not observe tail working directory');
+          if (kind === 'F5' && actual.cwd !== record.working) throw new Error('setup tail is outside its intended working directory');
           if (kind === 'F7' && (record.group !== record.pid || actual.group !== record.group)) throw new Error('setup rejected group identity');
         }
         return record;
@@ -184,7 +196,7 @@ async function runEnding(t, ending, kind, { holdPidPublication = false, gateSetu
     "import { join } from 'node:path';",
     `import { scratch, fixture, leave, leaveWorking, read, startGroup, tailIn, TAIL } from ${JSON.stringify(fixtureModule)};`,
     kind === 'F6' ? `import { installStandInAgent } from ${JSON.stringify(agentModule)};` : '',
-    kind === 'F7' ? `import { runCommand } from ${JSON.stringify(processModule)};` : '',
+    `import { LSOF${kind === 'F7' ? ', runCommand' : ''} } from ${JSON.stringify(processModule)};`,
     readinessProcess.toString(),
     `test('holds a ${kind} fixture', { timeout: 600_000 }, async (t) => {`,
     '  const setupDeadline = performance.now() + 10_000;',
@@ -234,7 +246,7 @@ async function runEnding(t, ending, kind, { holdPidPublication = false, gateSetu
       "  const fixturePid = Number(read(directory, 'group.pid'));",
       "  process.kill(fixturePid, 0);",
     ]),
-    `  const ready = { invocation: ${JSON.stringify(invocation)}, kind: ${JSON.stringify(kind)}, pid: fixturePid, ${kind === 'F4' ? 'leader: started.leader,' : ''} ${kind === 'F7' ? 'group: fixturePid,' : ''} processes: ${kind === 'F4' ? '[started.leader, fixturePid]' : '[fixturePid]'}.map((pid) => ({ pid, ...readinessProcess(pid, setupDeadline - performance.now()) })) };`,
+    `  const ready = { invocation: ${JSON.stringify(invocation)}, kind: ${JSON.stringify(kind)}, pid: fixturePid, ${kind === 'F4' ? 'leader: started.leader,' : ''} ${kind === 'F7' ? 'group: fixturePid,' : ''} ${kind === 'F5' ? "working: join(directory, 'working')," : ''} processes: ${kind === 'F4' ? '[started.leader, fixturePid]' : '[fixturePid]'}.map((pid) => ({ pid, ...readinessProcess(pid, setupDeadline - performance.now()) })) };`,
     `  writeFileSync(${JSON.stringify(join(directory, 'started'))}, JSON.stringify(ready));`,
     `  while (!existsSync(${JSON.stringify(join(directory, 'ready-accepted'))})) { t.signal.throwIfAborted(); await new Promise((resolve) => setImmediate(resolve)); }`,
 
@@ -673,4 +685,55 @@ test('the host readiness read bounds its ps invocation by the remaining budget',
   });
   assert.equal(timeout, 17);
   assert.deepEqual(result, { live: false });
+});
+
+for (const kind of ['F3', 'F5']) {
+  test(`readiness rejects an ${kind} tail that does not lead its own group`, async (t) => {
+    const record = { invocation: 'one', kind, pid: 123, working: '/fixture/working',
+      processes: [{ pid: 123, signature: 'known-tail /fixture/tail' }] };
+    await assert.rejects(waitForReadiness(t, {
+      invocation: 'one', kind, directory: '/fixture', read: () => JSON.stringify(record),
+      observe: () => ({ live: true, signature: 'known-tail /fixture/tail', command: '/fixture/tail', group: 456, cwd: '/fixture/working' }),
+    }), /tail does not lead its own group/);
+  });
+}
+
+test('readiness rejects an F5 tail outside its intended working directory', async (t) => {
+  const record = { invocation: 'one', kind: 'F5', pid: 123, working: '/fixture/working',
+    processes: [{ pid: 123, signature: 'known-tail /fixture/tail' }] };
+  await assert.rejects(waitForReadiness(t, {
+    invocation: 'one', kind: 'F5', directory: '/fixture', read: () => JSON.stringify(record),
+    observe: () => ({ live: true, signature: 'known-tail /fixture/tail', command: '/fixture/tail', group: 123, cwd: '/fixture/elsewhere' }),
+  }), /tail is outside its intended working directory/);
+});
+
+test('the F5 cwd read consumes only the remaining shared observation budget', () => {
+  let clock = 0;
+  const timeouts = [];
+  const observed = readinessProcess(123, 10_000, (command, _args, options) => {
+    timeouts.push(options.timeout);
+    assert.equal(options.killSignal, 'SIGKILL');
+    if (command === '/bin/ps') {
+      clock = 2_500;
+      return { status: 0, stdout: 'S Thu Oct 22 10:00:00 2026 123 /fixture/tail\n' };
+    }
+    assert.equal(command, LSOF);
+    return { status: 0, stdout: 'p123\nfcwd\nn/fixture/working\n' };
+  }, { deadline: 10_000, now: () => clock });
+  assert.equal(observed.cwd, '/fixture/working');
+  assert.deepEqual(timeouts, [10_000, 7_500]);
+});
+
+test('readiness rejects an F5 cwd observation completed past the setup deadline', async (t) => {
+  let clock = 0;
+  const record = { invocation: 'one', kind: 'F5', pid: 123, working: '/fixture/working',
+    processes: [{ pid: 123, signature: 'Thu Oct 22 10:00:00 2026 123 /fixture/tail' }] };
+  await assert.rejects(waitForReadiness(t, {
+    invocation: 'one', kind: 'F5', directory: '/fixture', read: () => JSON.stringify(record), now: () => clock,
+    observe: (pid, remaining, _run, budget) => readinessProcess(pid, remaining, (command) => {
+      if (command === '/bin/ps') return { status: 0, stdout: 'S Thu Oct 22 10:00:00 2026 123 /fixture/tail\n' };
+      clock = 10_001;
+      return { status: 0, stdout: 'p123\nfcwd\nn/fixture/working\n' };
+    }, budget),
+  }), /setup never became ready by 10000ms/);
 });
