@@ -194,6 +194,7 @@ says how one merges. The paths:
 - The CLI entry point: `src/cli/rigger.mjs`, which the package manifest declares as its bin.
 - The gate's code: `src/workflow/gate.mjs`, `src/workflow/marker.mjs`, `scripts/gate-check.mjs`,
   and `src/substrate/forge/read.mjs`, through which the gate script reads every fact it rules on.
+- The coordinator's tooling, which launches its Codex makers and judges: `tools/coordinator/`.
 
 The gate's code is listed because it runs live (`D25` rule 6; `ARCHITECTURE.md`, "The gate").
 
