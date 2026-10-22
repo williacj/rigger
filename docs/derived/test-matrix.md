@@ -70,7 +70,7 @@ reports no gap of its own; the register carries the reason.
 | R-SCHED-18 | **gap** |
 | R-SCHED-19 | **gap** |
 | R-SCHED-20 | **gap** |
-| R-SCHED-21 | **gap** |
+| R-SCHED-27 | **gap** |
 | R-SCHED-22 | **gap** |
 | R-SCHED-23 | **gap** |
 | R-SCHED-24 | **gap** |
