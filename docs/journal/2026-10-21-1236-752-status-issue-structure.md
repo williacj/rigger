@@ -32,3 +32,10 @@ requirement instead: an issue whose label `resume` removed is no longer the stat
 way, the next step is a question for the owner, not another marker. Round 2 also found two holds
 each opening a notice. One engine per repository (`D11`) let L3 run notice calls one at a time,
 and no lock was needed.
+
+Round 3 found a close and a reopen between two triggers, which a read of the issue's state alone
+cannot see. A state read samples the issue, and the requirement is about an event, so the answer
+has to come from the event's record. The timeline already in L2's read gave it, anchored at the
+point where the hold's own notice reached the issue. That anchor also keeps an older close from
+applying to a newer hold, and it showed that a crash before the attach left a closer whose notice
+nobody could find. So a closer naming no issue now looks for an issue naming its id first.

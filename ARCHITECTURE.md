@@ -614,15 +614,22 @@ A hold's closer also carries, once L3 attaches it, the number of the status issu
 A hold runs in this order:
 
 1. L3 links the hold's closer, because closing is the safe direction.
-2. L3 calls L2's notice function, handing it the issue numbers the other hold closers name.
+2. L3 calls L2's notice function, handing it the hold's id and the issue numbers the other hold
+   closers name.
 3. L2 reads each issue those numbers name, by its number, and reuses the first that is open and
    carries the status label. Otherwise it asks L0's read side for the repository's open issues
    carrying the status label, by label and not through the search index, and reuses one it finds.
    Otherwise it opens one.
-4. L2 comments on a reused issue as `R-SCHED-25` requires. It places the issue on the board in Owner
-   where the board does not hold it there.
+4. L2 comments on a reused issue as `R-SCHED-25` requires. That comment, like an opened issue's body,
+   names the hold's id. L2 places the issue on the board in Owner where the board does not hold it
+   there.
 5. L3 has `admission.mjs` attach the issue's number by renaming the hold's own closer,
    `hold-<id>.json`, to `hold-<id>-issue-<n>.json`.
+
+Step 5 follows only an open or a comment the forge accepted, whether or not the placing was. One
+module under `src/workflow/` composes that comment and that body, and parses the hold's id back from
+them, as `escalation.mjs` does for notes. L2 reads only those written by an account with write
+access to the repository.
 
 L3 makes its calls to L2's notice function one at a time, as its repo lane makes merges. One call's
 steps 2 to 5 finish before the next call's step 2 starts, so a later hold is handed the number an
@@ -664,28 +671,41 @@ and never per claim. It reads through L0's read side, which gains an issue's sta
 a label. A read that fails or times out counts as unreadable: admission stays closed, and the next
 trigger reads again. At each trigger, after it lists the directory, L3 acts on each hold's closer:
 
-- For a hold's closer that names no issue, L3 calls L2's notice function for it. L2 finds or opens
-  the issue and places it as above, and L3 then has `admission.mjs` rename that closer to name it.
-- For a hold's closer naming an issue whose state L3 read, L3 hands L2's notice function that
-  number. L2 answers whether the issue is still that hold's notice.
-- Where it is not, L2 finds or opens another, and L3 has `admission.mjs` rename the closer to name it.
-- Where it is, and L3 read it as open, L2 places it on the board in Owner where the board does not
-  hold it there.
-- Where it is, and L3 read it as closed, L3 removes that hold's closer.
+- For a hold's closer that names no issue, L3 calls L2's notice function for it, handing it the
+  hold's id. L2 first asks L0's read side for the issues carrying the status label, open or closed,
+  by label. Where the opening or a comment of one names the hold's id, as after a crash before step
+  5, L3 renames the closer to name that issue, and the next bullet applies to it. Otherwise L2 finds
+  or opens the issue and places it as above, and L3 then has `admission.mjs` rename that closer to
+  name it.
+- For a hold's closer naming an issue whose state L3 read, L3 hands L2's notice function the hold's
+  id and that number. L2 answers one of three things:
+  - the notice closed for that hold, and L3 removes that hold's closer;
+  - the issue is still that hold's notice, and open, and L2 places it on the board in Owner where
+    the board does not hold it there;
+  - the issue is no longer that hold's notice, and L2 finds or opens another, and L3 has
+    `admission.mjs` rename the closer to name it.
 
-L2 answers from the issue's labels and its timeline of label changes, closes and reopens, which L0's
-read side also gains. Where L2 cannot read them, the issue counts as unreadable, as above. An issue is no longer a hold's notice in any of these cases:
+L2 answers from the issue's labels and its timeline of comments, label changes, closes and reopens,
+which L0's read side also gains. Where L2 cannot read them, the issue counts as unreadable, as above.
+A hold's notice reached the issue at the issue's opening or L2's comment, whichever first names the
+hold's id. The notice closed for that hold where the timeline shows a close after that point, made
+while the issue carried the status label. That holds whatever state L3 read, so a close and a
+reopen between two triggers still count. Otherwise the issue is no longer that hold's notice in any
+of these cases:
 
 - it is deleted, or transferred;
-- it is open and carries no status label;
-- it is closed, and carried no status label when it last closed, as after `resume`'s two writes.
+- it carries no status label, as after a person's removal or `resume`'s two writes;
+- it is closed, by a close before the hold's notice reached it or without the status label.
 
-Any other close of the issue reopens an admission the hold alone closed, whoever closed it. The
-closers and the issue can disagree:
+A close of the status issue after a hold's notice reached it therefore reopens an admission that
+hold alone closed, whoever closed it. A close older than the hold's notice applies only to the holds
+whose notices it followed. The closers and the issue can disagree:
 
 | Closers | Issue | Admission | What happens |
 |---|---|---|---|
 | a hold's closer naming the issue | open | closed | — |
+| a hold's closer naming the issue | closed by anyone, then reopened before the next trigger | opens | L2 finds the close in the issue's timeline, after the hold's notice, and L3 removes that hold's closer; admission opens where no other closer remains |
+| a hold's closer naming the issue, which an earlier close preceded | the earlier close came before the hold's notice reached the issue | closed | that close is not the hold's; where the issue is open and labelled it stays the notice, and where it is closed L2's notice finds or opens another |
 | a hold's closer naming the issue | closed, by anyone | opens | L3 removes that hold's closer, and admission opens where no other closer remains; the event names the issue's close as what reopened it |
 | a hold's closer naming the issue | deleted, or transferred | closed | L2's notice finds or opens another, and L3 has `admission.mjs` rename the closer to name it; deleting the issue never clears a hold |
 | a hold's closer naming the issue | unreadable, or its read timed out | closed | L3 claims nothing, names the issue, and reads again at the next trigger |
