@@ -163,8 +163,12 @@ const expectedLists = {
   converting: originalConverting,
 };
 expectedLists.host.push('test/process-table.test.mjs');
+expectedLists.host.push('test/claude-folder-live.test.mjs');
 expectedLists.host.sort();
+expectedLists.awaiting.push('test/claude-folder-live.test.mjs');
+expectedLists.awaiting.sort();
 expectedLists.converting.push(
+  'test/claude-sweep-home.test.mjs',
   'test/verdict-forge.test.mjs',
   'test/verdict-input.test.mjs',
   'test/verdict-surface.test.mjs',

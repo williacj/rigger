@@ -1,7 +1,7 @@
-// ABOUTME: L1 makes card workspaces, judge and scratch directories under their replace rules,
-// reads the line tip a maker leaves, and removes a merged card's directories before Done.
+// ABOUTME: L1 makes and removes card directories, reads a maker's line tip, and lists and sweeps
+// the provider's session folder after a dispatch settles.
 
-import { chmodSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync, rmdirSync, unlinkSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync, rmdirSync, statSync, unlinkSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 import { within as underOrAt } from './run.mjs';
@@ -328,6 +328,91 @@ function lstatOrAbsent(path) {
   } catch (error) {
     if (error.code === 'ENOENT') return undefined;
     throw new Error(`${path} cannot be read: ${error.message}`, { cause: error });
+  }
+}
+
+/** The directory identity used to refuse a sweep if its path now names another directory. */
+function folderIdentity(path) {
+  const real = realpathSync.native(path);
+  const held = statSync(real, { bigint: true });
+  if (!held.isDirectory()) throw new Error(`${path} is not a directory`);
+  return { real, device: String(held.dev), inode: String(held.ino) };
+}
+
+/** Paths already under a folder, read without following any link. */
+function pathsInFolder(path, found = new Set(), prefix = '') {
+  for (const name of readdirSync(path).sort()) {
+    const relativePath = prefix === '' ? name : join(prefix, name);
+    const at = join(path, name);
+    const held = lstatOrAbsent(at);
+    if (held === undefined) throw new Error(`${at} disappeared while its folder was listed`);
+    found.add(relativePath);
+    if (held.isDirectory()) pathsInFolder(at, found, relativePath);
+  }
+  return found;
+}
+
+/** Lists a CLI folder before its command starts, or names why no later removal is safe. */
+export function listCliFolder({ home, name }) {
+  if (typeof home !== 'string' || !isAbsolute(home)) return { reason: 'the session has no absolute configuration home' };
+  if (typeof name !== 'string' || name === '' || name === '.' || name === '..' || name.includes(sep)) {
+    return { reason: `the adapter named no single folder segment: ${JSON.stringify(name)}` };
+  }
+  const path = join(home, 'projects', name);
+  try {
+    const held = lstatOrAbsent(path);
+    if (held !== undefined) {
+      if (!held.isDirectory()) return { path, reason: 'the folder is not a directory, so no listing followed it' };
+      const root = folderIdentity(path);
+      return { path, root, before: pathsInFolder(path) };
+    }
+    return { path, parent: folderIdentity(dirname(path)), before: new Set() };
+  } catch (error) {
+    return { path, reason: `the folder or its parent could not be read before the session: ${error.message}` };
+  }
+}
+
+/** Removes entries absent from the listing, children first, without following any link. */
+function removeAdded(path, relativePath, before, removeRoot, left) {
+  let held;
+  try {
+    held = lstatOrAbsent(path);
+    if (held === undefined) return;
+    if (held.isDirectory()) {
+      for (const name of readdirSync(path).sort()) {
+        removeAdded(join(path, name), relativePath === '' ? name : join(relativePath, name), before, removeRoot, left);
+      }
+    }
+    if (relativePath === '' ? removeRoot : !before.has(relativePath)) {
+      if (held.isDirectory()) rmdirSync(path);
+      else unlinkSync(path);
+    }
+  } catch (error) {
+    left.push({ path, reason: `the added path could not be removed: ${error.message}` });
+  }
+}
+
+/** Removes only new entries while the listed directory identity still holds. */
+export function sweepCliFolder(listing) {
+  if (listing.reason !== undefined) return [{ path: listing.path, reason: listing.reason }];
+  const { path, parent, root, before } = listing;
+  try {
+    if (root !== undefined && lstatOrAbsent(path) === undefined) return [];
+    const anchor = root === undefined ? dirname(path) : path;
+    if (root === undefined && lstatOrAbsent(anchor) === undefined) return [];
+    const expected = root ?? parent;
+    const now = folderIdentity(anchor);
+    if (now.real !== expected.real || now.device !== expected.device || now.inode !== expected.inode) {
+      return [{ path, reason: 'the folder anchor is no longer the directory listed before the session' }];
+    }
+    const held = lstatOrAbsent(path);
+    if (held === undefined) return [];
+    if (!held.isDirectory()) return [{ path, reason: 'the new folder is not a directory, so no removal followed it' }];
+    const left = [];
+    removeAdded(path, '', before, root === undefined, left);
+    return left;
+  } catch (error) {
+    return [{ path, reason: `the folder could not be removed: ${error.message}` }];
   }
 }
 

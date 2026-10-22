@@ -12,6 +12,7 @@ import { invocation } from '../src/substrate/providers/claude.mjs';
 import { runCommand } from '../src/substrate/process.mjs';
 import { detachedWorktreeAt, gitIn, repositoryAt } from './git-repository.mjs';
 import { SESSION, callsOf, eventsOf, pastRefusing, put, scratch, skip, transcriptsOf } from './claude-live.mjs';
+import { ownerClaudeEnvironment } from './claude-live.mjs';
 import { onPath } from './on-path.mjs';
 
 /** The repository's own Claude settings and command gate, committed into the fixture. */
@@ -103,6 +104,7 @@ test('a live Claude judge uses L2 instructions to diff the pull request, test in
     emitter: { emit() {} },
   });
   const env = { ...process.env, PATH: `${dirs.bin}:${pastRefusing()}`, RIGGER_HEAD_MARKER: dirs.marker, RIGGER_GH_CALLS: dirs.calls };
+  ownerClaudeEnvironment(env);
   for (const variable of unset) delete env[variable];
   Object.assign(env, set);
   const home = join(homedir(), '.claude');

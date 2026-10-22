@@ -156,6 +156,17 @@ test('roleDispatch reads the adapter map L0 holds where its caller gives none, s
   assert.equal(handed.command, 'claude');
 });
 
+// proves R-WORK-31
+test('roleDispatch hands L1 the Claude folder for its working directory under the session configuration home', async (t) => {
+  const { root, directory, cwd, sink } = layout(t);
+  const home = join(root, 'claude-home');
+  mkdirSync(home);
+  const handed = await roleDispatch({ answer: answerOf({ provider: 'claude' }), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach: [], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, id: 'd-role', card: 1412 });
+
+  assert.deepEqual(handed.folder, { home, name: realpathSync.native(cwd).replace(/[^A-Za-z0-9]/g, '-') });
+  assert.equal(handed.env.CLAUDE_CONFIG_DIR, home);
+});
+
 test('given a role answer naming a provider the adapter map does not hold, roleDispatch throws an error naming the provider, and no process starts', SETTLES_WITHIN, async (t) => {
   const { root, directory, cwd, state, sink } = layout(t);
   const { command, args } = agentIn(root);
@@ -1228,4 +1239,378 @@ test('given a worktree root that is a symbolic link to a directory nested inside
   await assertAncestorRefused(placed, base, join(foreign, '.git'), foreign);
 
   assert.deepEqual(readdirSync(join(foreign, 'nested')), [], 'L1 made something inside the unrelated checkout');
+});
+
+/** A stand-in invocation carrying its CLI's folder answer. */
+function namingFolder(adapter, folder) {
+  return { ...adapter, invocation: async (request) => ({ ...await adapter.invocation(request), folder }) };
+}
+
+/** A stand-in Claude home and its folder for this role's working directory. */
+function cliFolderWorld(t) {
+  const placed = layout(t);
+  const home = join(placed.root, 'claude-home');
+  mkdirSync(join(home, 'projects'), { recursive: true });
+  const name = realpathSync.native(placed.cwd).replace(/[^A-Za-z0-9]/g, '-');
+  return { ...placed, home, name, folder: join(home, 'projects', name) };
+}
+
+// proves R-WORK-31
+test('a role refused before listing its CLI folder names why no sweep ran', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, state, sink, home, name, folder } = cliFolderWorld(t);
+  mkdirSync(folder);
+  writeFileSync(join(folder, 'kept.txt'), 'kept\n');
+  const { adapter } = standIn('/usr/bin/true');
+  const handed = await roleDispatch({ answer: answerOf(), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach: [], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': namingFolder(adapter, { home, name }) } });
+  rmSync(handed.scratch, { recursive: true });
+
+  await assert.rejects(
+    dispatch({ id: 'd-role', card: 1412, directory: state, sink, ...handed }),
+    (error) => error.code === NOT_STARTED && /scratch directory/.test(error.message),
+  );
+
+  const end = eventsIn(state).find((event) => event.event === 'dispatch.end');
+  assert.ok(end.folderLeft.some(({ path, reason }) => path === folder && /scratch directory/.test(reason)));
+  assert.equal(readFileSync(join(folder, 'kept.txt'), 'utf8'), 'kept\n');
+});
+
+// proves R-WORK-31
+test('a role dispatch removes the saved result and its new Claude folder before recording its end', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, state, sink, home, name, folder } = cliFolderWorld(t);
+  const body = "const fs=require('node:fs');const path=require('node:path');fs.mkdirSync(path.join(process.argv[1],'session','tool-results'),{recursive:true});fs.writeFileSync(path.join(process.argv[1],'session','tool-results','result.txt'),'HERON-saved-629');console.log('HERON-output-629');";
+  const { adapter } = standIn(process.execPath, { args: ['-e', body, folder] });
+
+  const result = await throughL1({ answer: answerOf(), cwd, directory, reach: [], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, state, adapters: { 'stand-in': namingFolder(adapter, { home, name }) } });
+
+  assert.equal(result.exit, 0);
+  assert.match(result.stdout.toString('utf8'), /HERON-output-629/);
+  assert.equal(existsSync(folder), false, 'the saved result or its new folder remains');
+  const end = eventsIn(state).find((event) => event.event === 'dispatch.end');
+  assert.ok(end, 'the dispatch has no end event');
+  assert.equal(Object.hasOwn(end, 'folderLeft'), false, 'a successful sweep named a path left behind');
+});
+
+// proves R-WORK-31
+test('a role dispatch removes only new entries from a folder that held a colliding session', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, state, sink, home, name, folder } = cliFolderWorld(t);
+  mkdirSync(join(folder, 'old-session'), { recursive: true });
+  writeFileSync(join(folder, 'old-session', 'kept.txt'), 'the earlier session\n');
+  const backup = join(home, 'backups', '.claude.json.backup.1792445531427');
+  mkdirSync(join(home, 'backups'));
+  writeFileSync(backup, 'the earlier backup\n');
+  const body = "const fs=require('node:fs');const path=require('node:path');fs.mkdirSync(path.join(process.argv[1],'new-session','tool-results'),{recursive:true});fs.writeFileSync(path.join(process.argv[1],'new-session','tool-results','result.txt'),'new');fs.writeFileSync(path.join(process.argv[1],'old-session','added.txt'),'new');";
+  const { adapter } = standIn(process.execPath, { args: ['-e', body, folder] });
+
+  const result = await throughL1({ answer: answerOf(), cwd, directory, reach: [], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, state, adapters: { 'stand-in': namingFolder(adapter, { home, name }) } });
+
+  assert.equal(result.exit, 0);
+  assert.deepEqual(readdirSync(folder), ['old-session']);
+  assert.deepEqual(readdirSync(join(folder, 'old-session')), ['kept.txt']);
+  assert.equal(readFileSync(join(folder, 'old-session', 'kept.txt'), 'utf8'), 'the earlier session\n');
+  assert.equal(readFileSync(backup, 'utf8'), 'the earlier backup\n');
+  assert.equal(Object.hasOwn(eventsIn(state).find((event) => event.event === 'dispatch.end'), 'folderLeft'), false);
+});
+
+// proves R-WORK-31
+test('a role dispatch records no folder left when the listed folder is missing after the session', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, state, sink, home, name, folder } = cliFolderWorld(t);
+  mkdirSync(folder);
+  const { adapter } = standIn(process.execPath, { args: ['-e', "require('node:fs').rmdirSync(process.argv[1]);", folder] });
+
+  const result = await throughL1({ answer: answerOf(), cwd, directory, reach: [], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, state, adapters: { 'stand-in': namingFolder(adapter, { home, name }) } });
+
+  assert.equal(result.exit, 0);
+  assert.equal(existsSync(folder), false);
+  assert.equal(Object.hasOwn(eventsIn(state).find((event) => event.event === 'dispatch.end'), 'folderLeft'), false);
+});
+
+// proves R-WORK-31
+test('L0 refusing an illegible working directory leaves every configuration home entry alone', SETTLES_WITHIN, async (t) => {
+  const { root, directory, state, sink, home } = cliFolderWorld(t);
+  const illegible = `${directory}-é`;
+  renameSync(directory, illegible);
+  const cwd = join(illegible, 'main');
+  const name = realpathSync.native(cwd).replace(/[^A-Za-z0-9]/g, '-');
+  const folder = join(home, 'projects', name);
+  mkdirSync(join(folder, 'session'), { recursive: true });
+  writeFileSync(join(folder, 'session', 'kept.txt'), 'kept\n');
+  const beside = join(home, 'outside.txt');
+  writeFileSync(beside, 'outside\n');
+  const fallback = join(root, '.claude');
+  mkdirSync(fallback);
+  writeFileSync(join(fallback, 'kept.txt'), 'fallback\n');
+  const { adapter } = standIn('/usr/bin/true');
+
+  await assert.rejects(
+    throughL1({ answer: answerOf(), cwd, directory: illegible, reach: [], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, state, adapters: { 'stand-in': namingFolder(adapter, { home, name }) } }),
+    (error) => error.code === NOT_STARTED && /printable ASCII/.test(error.message),
+  );
+
+  assert.equal(readFileSync(join(folder, 'session', 'kept.txt'), 'utf8'), 'kept\n');
+  assert.equal(readFileSync(beside, 'utf8'), 'outside\n');
+  assert.equal(readFileSync(join(fallback, 'kept.txt'), 'utf8'), 'fallback\n');
+  const end = eventsIn(state).find((event) => event.event === 'dispatch.end');
+  assert.match(end.reason, /printable ASCII/);
+  assert.ok(end.folderLeft.some(({ path }) => path === folder));
+  assert.match(end.folderLeft[0].reason, /printable ASCII/);
+});
+
+// proves R-WORK-31
+test('a role sweep removes a new link under F without following its target outside F', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, state, sink, home, name, folder } = cliFolderWorld(t);
+  const target = join(root, 'target');
+  mkdirSync(target);
+  writeFileSync(join(target, 'kept.txt'), 'kept\n');
+  const body = "const fs=require('node:fs');const path=require('node:path');fs.mkdirSync(process.argv[1]);fs.symlinkSync(process.argv[2],path.join(process.argv[1],'link'));fs.writeFileSync(path.join(process.argv[1],'result.txt'),'saved');";
+  const { adapter } = standIn(process.execPath, { args: ['-e', body, folder, target] });
+
+  const result = await throughL1({ answer: answerOf(), cwd, directory, reach: [], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, state, adapters: { 'stand-in': namingFolder(adapter, { home, name }) } });
+
+  assert.equal(result.exit, 0);
+  assert.equal(existsSync(folder), false);
+  assert.deepEqual(readdirSync(target), ['kept.txt']);
+  assert.equal(readFileSync(join(target, 'kept.txt'), 'utf8'), 'kept\n');
+});
+
+// proves R-WORK-31
+test('a role sweep does not follow F when F itself is a symbolic link', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, state, sink, home, name, folder } = cliFolderWorld(t);
+  const target = join(root, 'target');
+  mkdirSync(target);
+  writeFileSync(join(target, 'kept.txt'), 'kept\n');
+  symlinkSync(target, folder);
+  const { adapter } = standIn('/usr/bin/true');
+
+  const result = await throughL1({ answer: answerOf(), cwd, directory, reach: [], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, state, adapters: { 'stand-in': namingFolder(adapter, { home, name }) } });
+
+  assert.equal(result.exit, 0);
+  assert.equal(lstatSync(folder).isSymbolicLink(), true);
+  assert.deepEqual(readdirSync(target), ['kept.txt']);
+  assert.ok(eventsIn(state).find((event) => event.event === 'dispatch.end').folderLeft.some(({ path }) => path === folder));
+});
+
+// proves R-WORK-31
+test('a role sweep does not follow an F link made after its absent listing', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, state, sink, home, name, folder } = cliFolderWorld(t);
+  const target = join(root, 'target');
+  mkdirSync(target);
+  writeFileSync(join(target, 'kept.txt'), 'kept\n');
+  const body = "require('node:fs').symlinkSync(process.argv[2],process.argv[1]);";
+  const { adapter } = standIn(process.execPath, { args: ['-e', body, folder, target] });
+
+  const result = await throughL1({ answer: answerOf(), cwd, directory, reach: [], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, state, adapters: { 'stand-in': namingFolder(adapter, { home, name }) } });
+
+  assert.equal(result.exit, 0);
+  assert.equal(lstatSync(folder).isSymbolicLink(), true);
+  assert.equal(readFileSync(join(target, 'kept.txt'), 'utf8'), 'kept\n');
+  assert.ok(eventsIn(state).find((event) => event.event === 'dispatch.end').folderLeft.some(({ path }) => path === folder));
+});
+
+// proves R-WORK-31
+test('a role sweep reaches F through a linked projects directory by its real identity', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, state, sink, home, name, folder } = cliFolderWorld(t);
+  const projects = join(home, 'projects');
+  const actual = join(root, 'actual-projects');
+  renameSync(projects, actual);
+  symlinkSync(actual, projects);
+  const body = "const fs=require('node:fs');const path=require('node:path');fs.mkdirSync(process.argv[1]);fs.writeFileSync(path.join(process.argv[1],'result.txt'),'saved');";
+  const { adapter } = standIn(process.execPath, { args: ['-e', body, folder] });
+
+  const result = await throughL1({ answer: answerOf(), cwd, directory, reach: [], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, state, adapters: { 'stand-in': namingFolder(adapter, { home, name }) } });
+
+  assert.equal(result.exit, 0);
+  assert.equal(existsSync(folder), false);
+  assert.equal(lstatSync(projects).isSymbolicLink(), true);
+  assert.deepEqual(readdirSync(actual), []);
+});
+
+// proves R-WORK-31
+test('a role sweep reaches F through a linked configuration home by its real identity', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, state, sink, home, name, folder } = cliFolderWorld(t);
+  const actual = join(root, 'actual-home');
+  renameSync(home, actual);
+  symlinkSync(actual, home);
+  const body = "const fs=require('node:fs');const path=require('node:path');fs.mkdirSync(process.argv[1]);fs.writeFileSync(path.join(process.argv[1],'result.txt'),'saved');";
+  const { adapter } = standIn(process.execPath, { args: ['-e', body, folder] });
+
+  const result = await throughL1({ answer: answerOf(), cwd, directory, reach: [], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, state, adapters: { 'stand-in': namingFolder(adapter, { home, name }) } });
+
+  assert.equal(result.exit, 0);
+  assert.equal(existsSync(folder), false);
+  assert.equal(lstatSync(home).isSymbolicLink(), true);
+  assert.deepEqual(readdirSync(join(actual, 'projects')), []);
+});
+
+// proves R-WORK-31
+test('a role sweep keeps a sibling F prefix and the judge head folder', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, state, sink, home, name, folder, head } = cliFolderWorld(t);
+  const siblings = [`${name}-longer`, name.slice(0, -1), realpathSync.native(head).replace(/[^A-Za-z0-9]/g, '-')];
+  for (const sibling of siblings) {
+    mkdirSync(join(home, 'projects', sibling));
+    writeFileSync(join(home, 'projects', sibling, 'kept.txt'), 'kept\n');
+  }
+  const body = "const fs=require('node:fs');const path=require('node:path');fs.mkdirSync(process.argv[1]);fs.writeFileSync(path.join(process.argv[1],'result.txt'),'saved');";
+  const { adapter } = standIn(process.execPath, { args: ['-e', body, folder] });
+
+  const result = await throughL1({ answer: answerOf(), cwd, directory, reach: [head], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, state, adapters: { 'stand-in': namingFolder(adapter, { home, name }) } });
+
+  assert.equal(result.exit, 0);
+  assert.equal(existsSync(folder), false);
+  for (const sibling of siblings) assert.equal(readFileSync(join(home, 'projects', sibling, 'kept.txt'), 'utf8'), 'kept\n');
+});
+
+// proves R-WORK-31
+test('a role sweep refuses a changed folder identity and leaves both folder trees intact', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, state, sink, home, name, folder } = cliFolderWorld(t);
+  mkdirSync(folder);
+  writeFileSync(join(folder, 'kept.txt'), 'before\n');
+  const moved = `${folder}-moved`;
+  const body = "const fs=require('node:fs');const path=require('node:path');fs.renameSync(process.argv[1],process.argv[2]);fs.mkdirSync(process.argv[1]);fs.writeFileSync(path.join(process.argv[1],'new.txt'),'after');";
+  const { adapter } = standIn(process.execPath, { args: ['-e', body, folder, moved] });
+
+  const result = await throughL1({ answer: answerOf(), cwd, directory, reach: [], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, state, adapters: { 'stand-in': namingFolder(adapter, { home, name }) } });
+
+  assert.equal(result.exit, 0);
+  assert.equal(readFileSync(join(moved, 'kept.txt'), 'utf8'), 'before\n');
+  assert.equal(readFileSync(join(folder, 'new.txt'), 'utf8'), 'after');
+  assert.match(eventsIn(state).find((event) => event.event === 'dispatch.end').folderLeft[0].reason, /no longer the directory listed/);
+});
+
+// proves R-WORK-31
+test('a role sweep refuses a changed projects identity where F was absent at the listing', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, state, sink, home, name, folder } = cliFolderWorld(t);
+  const projects = join(home, 'projects');
+  const moved = `${projects}-moved`;
+  const body = "const fs=require('node:fs');const path=require('node:path');fs.renameSync(process.argv[2],process.argv[3]);fs.mkdirSync(process.argv[2]);fs.mkdirSync(process.argv[1]);fs.writeFileSync(path.join(process.argv[1],'new.txt'),'after');";
+  const { adapter } = standIn(process.execPath, { args: ['-e', body, folder, projects, moved] });
+
+  const result = await throughL1({ answer: answerOf(), cwd, directory, reach: [], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, state, adapters: { 'stand-in': namingFolder(adapter, { home, name }) } });
+
+  assert.equal(result.exit, 0);
+  assert.equal(readFileSync(join(folder, 'new.txt'), 'utf8'), 'after');
+  assert.deepEqual(readdirSync(moved), []);
+  assert.match(eventsIn(state).find((event) => event.event === 'dispatch.end').folderLeft[0].reason, /no longer the directory listed/);
+});
+
+// proves R-WORK-31
+test('a role sweep refuses an unreadable F listing and leaves its earlier entry intact', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, state, sink, home, name, folder } = cliFolderWorld(t);
+  mkdirSync(folder);
+  writeFileSync(join(folder, 'kept.txt'), 'kept\n');
+  chmodSync(folder, 0);
+  t.after(() => chmodSync(folder, 0o700));
+  const { adapter } = standIn('/usr/bin/true');
+
+  const result = await throughL1({ answer: answerOf(), cwd, directory, reach: [], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, state, adapters: { 'stand-in': namingFolder(adapter, { home, name }) } });
+
+  assert.equal(result.exit, 0);
+  assert.ok(eventsIn(state).find((event) => event.event === 'dispatch.end').folderLeft.some(({ path }) => path === folder));
+  chmodSync(folder, 0o700);
+  assert.equal(readFileSync(join(folder, 'kept.txt'), 'utf8'), 'kept\n');
+});
+
+// proves R-WORK-31
+test('a role sweep refuses unreadable projects when F was absent at the listing', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, state, sink, home, name, folder } = cliFolderWorld(t);
+  const projects = join(home, 'projects');
+  chmodSync(projects, 0);
+  t.after(() => chmodSync(projects, 0o700));
+  const { adapter } = standIn('/usr/bin/true');
+
+  const result = await throughL1({ answer: answerOf(), cwd, directory, reach: [], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, state, adapters: { 'stand-in': namingFolder(adapter, { home, name }) } });
+
+  assert.equal(result.exit, 0);
+  assert.ok(eventsIn(state).find((event) => event.event === 'dispatch.end').folderLeft.some(({ path }) => path === folder));
+  chmodSync(projects, 0o700);
+  assert.equal(existsSync(folder), false);
+});
+
+// proves R-WORK-31
+test('a role sweep names why an adapter gave an unsafe folder segment or no absolute home', SETTLES_WITHIN, async (t) => {
+  for (const answer of [{ home: 'relative', name: 'safe' }, { home: '', name: 'safe' }, { home: '/tmp', name: '' }, { home: '/tmp', name: '.' }, { home: '/tmp', name: '..' }, { home: '/tmp', name: 'a/b' }]) {
+    const { root, directory, cwd, state, sink, home, folder } = cliFolderWorld(t);
+    const body = "const fs=require('node:fs');const path=require('node:path');fs.mkdirSync(process.argv[1]);fs.writeFileSync(path.join(process.argv[1],'saved.txt'),'saved');";
+    const { adapter } = standIn(process.execPath, { args: ['-e', body, folder] });
+    const result = await throughL1({ answer: answerOf(), cwd, directory, reach: [], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, state, adapters: { 'stand-in': namingFolder(adapter, answer) } });
+    assert.equal(result.exit, 0);
+    assert.equal(readFileSync(join(folder, 'saved.txt'), 'utf8'), 'saved');
+    assert.match(eventsIn(state).find((event) => event.event === 'dispatch.end').folderLeft[0].reason, /home|segment/);
+  }
+});
+
+// proves R-WORK-31
+test('a role sweep succeeds without a folder left when projects disappeared after the listing', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, state, sink, home, name, folder } = cliFolderWorld(t);
+  const projects = join(home, 'projects');
+  const body = "require('node:fs').rmSync(process.argv[1],{recursive:true});";
+  const { adapter } = standIn(process.execPath, { args: ['-e', body, projects] });
+
+  const result = await throughL1({ answer: answerOf(), cwd, directory, reach: [], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, state, adapters: { 'stand-in': namingFolder(adapter, { home, name }) } });
+
+  assert.equal(result.exit, 0);
+  assert.equal(existsSync(projects), false);
+  assert.equal(existsSync(folder), false);
+  assert.equal(Object.hasOwn(eventsIn(state).find((event) => event.event === 'dispatch.end'), 'folderLeft'), false);
+});
+
+// proves R-WORK-31
+test('a role sweep names each new path it cannot remove without changing the command outcome', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, state, sink, home, name, folder } = cliFolderWorld(t);
+  const blocked = join(folder, 'blocked');
+  t.after(() => { if (existsSync(blocked)) chmodSync(blocked, 0o700); });
+  const body = "const fs=require('node:fs');const path=require('node:path');fs.mkdirSync(path.join(process.argv[1],'blocked'),{recursive:true});fs.writeFileSync(path.join(process.argv[1],'blocked','saved.txt'),'saved');fs.chmodSync(path.join(process.argv[1],'blocked'),0);console.log('HERON-outcome-629');";
+  const { adapter } = standIn(process.execPath, { args: ['-e', body, folder] });
+
+  const result = await throughL1({ answer: answerOf(), cwd, directory, reach: [], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, state, adapters: { 'stand-in': namingFolder(adapter, { home, name }) } });
+
+  assert.equal(result.exit, 0);
+  assert.match(result.stdout.toString('utf8'), /HERON-outcome-629/);
+  const end = eventsIn(state).find((event) => event.event === 'dispatch.end');
+  assert.equal(end.exit, 0);
+  assert.ok(end.folderLeft.some(({ path }) => path === blocked));
+});
+
+test('a timed-out role dispatch still sweeps the CLI folder after L0 settles', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, state, sink, home, name, folder } = cliFolderWorld(t);
+  const body = "const fs=require('node:fs');const path=require('node:path');const child=require('node:child_process');fs.mkdirSync(process.argv[1]);const file=path.join(process.argv[1],'saved.txt');fs.writeFileSync(file,'saved');child.spawnSync('/usr/bin/tail',['-f',file]);";
+  const { adapter } = standIn(process.execPath, { args: ['-e', body, folder] });
+
+  const result = await throughL1({ answer: answerOf({ timeout: 2_000 }), cwd, directory, reach: [], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, state, adapters: { 'stand-in': namingFolder(adapter, { home, name }) } });
+
+  assert.equal(result.timedOut, true);
+  assert.equal(existsSync(folder), false);
+  assert.equal(Object.hasOwn(eventsIn(state).find((event) => event.event === 'dispatch.end'), 'folderLeft'), false);
+});
+
+// proves R-WORK-31
+test('a role sweep runs after L0 records an unreadable process table', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, state, sink, home, name, folder } = cliFolderWorld(t);
+  const body = "const fs=require('node:fs');const path=require('node:path');fs.mkdirSync(process.argv[1]);fs.writeFileSync(path.join(process.argv[1],'saved.txt'),'saved');console.log('HERON-unread-629');";
+  const { adapter } = standIn(process.execPath, { args: ['-e', body, folder] });
+  const lsof = fixture(root, 'lsof-refuses', 'echo "unread on purpose" >&2\nexit 2');
+  const handed = await roleDispatch({ answer: answerOf(), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach: [], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': namingFolder(adapter, { home, name }) } });
+
+  const result = await dispatch({ id: 'd-role', card: 1412, directory: state, sink, ...handed, lsof });
+
+  assert.equal(result.exit, 0);
+  assert.match(result.stdout.toString('utf8'), /HERON-unread-629/);
+  assert.equal(existsSync(folder), false);
+  assert.ok(eventsIn(state).some((event) => event.event === 'directory.unread'));
+});
+
+// proves R-WORK-31
+test('a Codex role and a provisioning step leave the configuration home alone', SETTLES_WITHIN, async (t) => {
+  const { root, directory, cwd, state, sink, home } = cliFolderWorld(t);
+  const kept = join(home, 'kept.txt');
+  writeFileSync(kept, 'kept\n');
+  const { adapter } = standIn('/usr/bin/true');
+
+  const role = await throughL1({ answer: answerOf({ provider: 'codex' }), cwd, directory, reach: [], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, state, adapters: { codex: adapter } });
+  const step = await dispatch({ id: 'd-step', card: 1412, directory: state, sink, ...stepDispatch({ run: '/usr/bin/true' }, directory, { HOME: root, CLAUDE_CONFIG_DIR: home }) });
+
+  assert.equal(role.exit, 0);
+  assert.equal(step.exit, 0);
+  assert.deepEqual(readdirSync(home), ['kept.txt', 'projects']);
+  assert.equal(readFileSync(kept, 'utf8'), 'kept\n');
+  assert.deepEqual(readdirSync(join(home, 'projects')), []);
 });

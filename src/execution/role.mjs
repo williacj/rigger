@@ -1,5 +1,5 @@
-// ABOUTME: L1's role runner: what L1's dispatching function is handed to run one role's agent CLI,
-// asked of the provider adapter L2's role answer names.
+// ABOUTME: L1 asks a role's provider adapter for its CLI invocation and session folder, then
+// hands the command and folder to L1's dispatching function.
 
 import { lstatSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
@@ -30,6 +30,8 @@ import { ADAPTERS } from '../substrate/providers/adapters.mjs';
  * The environment is built in four steps (ruling 9): `env`, as L3 hands it; less every variable
  * that redirects git (`gitEnvironment`); less the variables the adapter's `unset` names; and then
  * the adapter's `env`, set over what is left. The evidence itself reaches no event.
+ * The adapter also answers `folder`, or none, from the role's working directory and this
+ * environment. L1 hands it to `dispatch` beside the role's scratch directory.
  *
  * `scratch` is the card's scratch base, and `repository` the repository L1 made from, each of which
  * L3 hands unread from L1's make (the architect's rulings 19 and 21 on #467). Once the provider is
@@ -57,6 +59,7 @@ export async function roleDispatch({ answer, cwd, directory, scratch, repository
     if (cause.code === EVENT_REFUSED) throw cause;
     throw unstarted(cause.message, cause);
   }
+  const environment = gitEnvironment(env);
   let invoked;
   try {
     invoked = await adapters[provider].invocation({
@@ -66,20 +69,20 @@ export async function roleDispatch({ answer, cwd, directory, scratch, repository
       directory: cwd,
       scratch: made,
       reach,
+      environment,
       emitter: sink.emitter({ layer: 'L0', card, dispatch: id }),
     });
   } catch (cause) {
     throw unstarted(`the ${provider} adapter answered no invocation for role ${answer.role}: ${cause.message}`, cause);
   }
-  const { command, args, input, unset, env: set } = invoked;
+  const { command, args, input, unset, env: set, folder } = invoked;
   for (const [key, value] of Object.entries(set)) {
     const why = unsettable(key, value, unset, [directory, made]);
     if (why !== undefined) throw unstarted(`the ${provider} adapter sets ${key}, which ${why}`);
   }
-  const environment = gitEnvironment(env);
   for (const name of unset) delete environment[name];
   Object.assign(environment, set);
-  return { command, args, input, cwd, workspace: directory, scratch: made, env: environment, timeout: answer.timeout, facts: answer.facts, digest: answer.digest };
+  return { command, args, input, cwd, workspace: directory, scratch: made, env: environment, folder, timeout: answer.timeout, facts: answer.facts, digest: answer.digest };
 }
 
 /**

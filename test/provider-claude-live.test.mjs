@@ -88,6 +88,7 @@ function filesUnder(directory) {
   return readdirSync(directory, { recursive: true }).map((name) => join(directory, name)).filter((path) => statSync(path).isFile());
 }
 
+// proves R-WORK-31
 test('a live claude session started from the invocation writes a background task\'s output under the directory\'s own temporary directory, and none under /tmp', { skip, timeout: 2 * SESSION }, async (t) => {
   // Item 14 on #480, after ruling 9 on #467: `CLAUDE_CODE_TMPDIR` in the invocation's `env`. #473's
   // c33 found the output under `/tmp/claude-<uid>/<encoded working directory>/` without it. The

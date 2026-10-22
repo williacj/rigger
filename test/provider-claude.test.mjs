@@ -473,6 +473,31 @@ test('the invocation sets CLAUDE_CODE_TMPDIR to one fixed, dot-named directory u
   assert.equal((await invoked(other)).env.CLAUDE_CODE_TMPDIR.slice(other.directory.length), value.slice(repo.directory.length), 'the name is not fixed');
 });
 
+// proves R-WORK-31
+test('the Claude Code adapter names the measured projects folder for the over-limit Bash maker directory', () => {
+  const directory = '/Users/cjwilliams/GitHub/rigger-worktrees/codex-629-tmp/rigger-suite.dnA4OR/rigger-claude-live-hpSqZ5/repo';
+  assert.deepEqual(claude.cliFolder(directory, { HOME: '/Users/cjwilliams' }), {
+    home: '/Users/cjwilliams/.claude',
+    name: '-Users-cjwilliams-GitHub-rigger-worktrees-codex-629-tmp-rigger-suite-dnA4OR-rigger-claude-live-hpSqZ5-repo',
+  });
+});
+
+// proves R-WORK-31
+test('the Claude Code adapter names the measured shortened folder for a long linked maker path', () => {
+  const directory = `/Users/cjwilliams/GitHub/rigger-worktrees/codex-629-tmp/rigger-suite.9pXnFc/rigger-claude-live-Wgv5Gn/worktree_root _ space ${'x'.repeat(85)}/deep/rigger-629`;
+  const folder = claude.cliFolder(directory, { HOME: '/Users/cjwilliams' });
+  assert.equal(folder.name, `-Users-cjwilliams-GitHub-rigger-worktrees-codex-629-tmp-rigger-suite-9pXnFc-rigger-claude-live-Wgv5Gn-worktree-root---space-${'x'.repeat(76)}-mij62n`);
+});
+
+// proves R-WORK-31
+test('the Claude Code folder uses CLAUDE_CONFIG_DIR when set and HOME only when it is absent', () => {
+  const directory = '/tmp/a';
+  assert.equal(claude.cliFolder(directory, { HOME: '/home/owner', CLAUDE_CONFIG_DIR: '/other/config' }).home, '/other/config');
+  assert.equal(claude.cliFolder(directory, { HOME: '/home/owner', CLAUDE_CONFIG_DIR: '' }).home, '');
+  assert.equal(claude.cliFolder(directory, { HOME: '/home/owner' }).home, '/home/owner/.claude');
+  assert.equal(claude.cliFolder(directory, { HOME: 'relative' }).home, 'relative/.claude');
+});
+
 test('the agent file the invocation hands the CLI is the one given, under the directory, and is not read', async (t) => {
   // The adapter does not check that the file exists: the CLI reports a missing one.
   const repo = consumer(t);

@@ -20,6 +20,7 @@ unset NODE_TEST_CONTEXT
 # These three lists implement the file placements in #816, Part 2. The last two shrink as
 # their cards convert and split tests. An entry must name the file that still exists.
 host_tests='
+test/claude-folder-live.test.mjs
 test/codex-judge-shell.test.mjs
 test/command-gate-hook.test.mjs
 test/demo.test.mjs
@@ -60,6 +61,7 @@ test/workflow-files.test.mjs
 test/worktrees.test.mjs
 '
 awaiting_tests='
+test/claude-folder-live.test.mjs
 test/codex-judge-shell.test.mjs
 test/command-gate-hook.test.mjs
 test/demo.test.mjs
@@ -102,6 +104,7 @@ test/absorption-check.test.mjs
 test/attempt.test.mjs
 test/budget-checks.test.mjs
 test/build-test-matrix.test.mjs
+test/claude-sweep-home.test.mjs
 test/cli.test.mjs
 test/command-gate.test.mjs
 test/doctor.test.mjs
@@ -228,6 +231,13 @@ ln -s /usr/bin/git "$allowed/git" || exit 1
 ln -s /usr/bin/tar "$allowed/tar" || exit 1
 RIGGER_SUITE_ALLOWED_PATH=$allowed
 export RIGGER_SUITE_ALLOWED_PATH
+if [ "${CLAUDE_CONFIG_DIR+x}" = x ]; then
+  printf '%s' "$CLAUDE_CONFIG_DIR" > "$run/owner-claude-config-dir" || exit 1
+fi
+CLAUDE_CONFIG_DIR="$run/claude-home"
+mkdir "$CLAUDE_CONFIG_DIR" || exit 1
+: > "$run/unsafe-claude-homes"
+export CLAUDE_CONFIG_DIR
 dir="$run/rigger-refusing-gh"
 mkdir "$dir" || exit 1
 trap 'rm -rf "$run"' EXIT
@@ -286,9 +296,39 @@ export RIGGER_REFUSING_AGENT_DIR
 PATH="$agents:$PATH"
 
 mkfifo "$run/ended" || exit 1
-cat > "$run/runner.cjs" <<'RUNNER'
+: > "$run/runner.cjs"
+# A test-side observation of every real L1 listing. The runner path fixes its own record path,
+# so a child that rebuilds its environment cannot redirect the record away from this suite.
+cat >> "$run/runner.cjs" <<'AUDIT'
+// ABOUTME: Records a CLI-folder listing outside the suite's disposable home.
+const fs = require('node:fs');
+const path = require('node:path');
+const { syncBuiltinESMExports } = require('node:module');
+const lstat = fs.lstatSync;
+const root = __dirname;
+const gated = process.env.RIGGER_LIVE_CLAUDE === '1'
+  && process.argv.some((arg) => /(?:^|\/)test\/[^/]+-live\.test\.mjs$/.test(arg));
+fs.lstatSync = function auditedLstat(at, ...options) {
+  if (!gated && typeof at === 'string' && at.includes(`${path.sep}projects${path.sep}`)
+      && new Error().stack.includes('listCliFolder')) {
+    const home = at.slice(0, at.lastIndexOf(`${path.sep}projects${path.sep}`));
+    let real;
+    try { real = fs.realpathSync.native(home); } catch { real = path.resolve(home); }
+    const relative = path.relative(root, real);
+    if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+      fs.appendFileSync(path.join(root, 'unsafe-claude-homes'), `${real}\n`);
+      const refusal = new Error(`test suite refused the CLI home ${real} outside its temporary directory`);
+      refusal.code = 'EACCES';
+      throw refusal;
+    }
+  }
+  return lstat.call(this, at, ...options);
+};
+syncBuiltinESMExports();
+AUDIT
+cat >> "$run/runner.cjs" <<'GUARD'
 require(require('node:path').resolve('test/suite-guard.cjs')).registerHostHooks(require('node:test'));
-RUNNER
+GUARD
 /usr/bin/perl -e 'setpgrp(0, 0); die "reaper group: $!" if getpgrp != $$; exec @ARGV or die "reaper exec: $!"' node test/suite-reaper "$run" "$run/ended" 3>&- &
 reaper=$!
 exec 3> "$run/ended"
@@ -313,6 +353,12 @@ if [ -s "$agents/calls" ]; then
   while IFS= read -r call; do
     printf '  %s\n' "$call" >&2
   done < "$agents/calls"
+  status=1
+fi
+
+if [ -s "$run/unsafe-claude-homes" ]; then
+  printf '%s\n' 'npm test: these dispatches named a Claude home outside the suite temporary directory:' >&2
+  cat "$run/unsafe-claude-homes" >&2
   status=1
 fi
 
