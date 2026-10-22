@@ -257,3 +257,18 @@ test('L2\'s facts call answers a Review card\'s one open pull request as its num
     comments: { status: 'fulfilled', value: [{ ...comments[0], id: 'IC_221_1', author: 'rigger-fake', permission: 'write', edited: false }] },
   });
 });
+
+// proves R-ESCALATE-11
+test('a fresh facts call after the owner removes the escalation label restores the ordinary answer', async () => {
+  const { reads, made } = readsOver();
+  const labelled = { ...cardIn(181, columns.ready), labels: ['type:change', 'RIGGER:ESCALATED', 'area:other'] };
+  assert.deepEqual(await decided([labelled], reads), [{ action: 'ignore', escalated: true }]);
+
+  const answered = { ...labelled, labels: ['type:change', 'area:other'] };
+
+  assert.deepEqual(await decided([answered], reads), [{ action: 'dispatch', kind: 'change' }]);
+  assert.deepEqual(made.filter(([operation]) => operation === 'readPullRequests'), [
+    ['readPullRequests', 'rigger-181'], ['readPullRequests', 'rigger-181'],
+  ]);
+  assert.deepEqual(answered.labels, ['type:change', 'area:other']);
+});
