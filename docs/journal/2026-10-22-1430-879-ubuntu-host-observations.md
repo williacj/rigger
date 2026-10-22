@@ -58,3 +58,38 @@ execution. This protected suite-runner change requires the owner's marker before
 The first ordinary-suite attempt found the new dynamic version-tool call lacked an explicitly
 named environment. The existing git-environment audit rejected that call. It now supplies
 process.env explicitly; the failed original remains in 879-npm-test.log without green credit.
+
+## Prospective census proof
+
+Independent review at 55df9e6fae91b5a026a8ab89c6f56b6a99682a3e ran the two named
+directory tests with node --test --test-reporter=tap and the name pattern
+'symbolic link, a process working under|directory itself, it is not alive'.
+The guarded driver disabled the dispatch directory census by replacing its uniquely matched
+directory argument. Both tests then failed their surviving-process assertions, with zero
+cancellations. Separate stopped, unknown-state and failed/empty process-table controls each
+produced the same two assertion failures. The stopped control positively checked a T-prefixed
+state before returning it. No failed observation established termination.
+
+A controlled Zsl answer passed both predicates; this is observation-branch proof, not a claim
+that those controlled processes were actual zombies. The earlier unmodified observer supplies
+the actual Linux zombie observation. A separate condition wait positively established actual
+absence before the unchanged assertions, and both passed. Restoring the original source passed
+both tests again.
+
+The driver required one source anchor, read back each replacement, retained the complete diff
+and test output, and checked byte-exact restoration and clean git status after every control.
+The complete retained controls live in the owner's rigger-test-logs/879-review evidence directory:
+controls.py, controls-run.log, and the census-disabled-live, census-disabled-stopped,
+census-disabled-unknown, census-disabled-empty, zombie-prefixed-observation,
+positive-absence and restored .diff/.log pairs. Aggregate output is not a cross-stream causal
+trace. Earlier control originals disappeared from temporary storage; their reruns above provide
+the retained proof. An earlier empty-state control changed readiness and an affected-file run
+overlapped its restoration; neither attempt earns assertion or complete-file proof.
+
+Independent review also ran npm test (2,614 passed, zero failed/cancelled, nine skipped),
+the affected complete host files (139 passed, zero failed/cancelled/skipped), and npm run
+test:host (1,684 passed, zero failed/cancelled, 50 skipped; 717,931.623048 ms) at that source
+head on the same Ubuntu/Node environment. The complete fullhost.log has SHA-256
+8da659334188f9d87bf5cba1695c872ecce2e2c461640fe67210b329883becdd, measured with sha256sum.
+These are current correctness checks and finite discrimination controls; they establish no
+historical Test quality cause. The subsequent journal correction changes no executable file.
