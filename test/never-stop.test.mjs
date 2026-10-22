@@ -3505,7 +3505,10 @@ test('after an answered directory kill wait, a cut state read at its deadline ke
   const ps = fixture(directory, 'ps', [
     ("[ -f \"$here/outside-killed\" ] || exec " + shellQuote(PS) + " \"$@\""),
     `case "$*" in "-p ${outside} -o pid=,stat=")`,
-    ("  if /bin/mkdir \"$here/answered\" 2>/dev/null; then exec " + shellQuote(PS) + " \"$@\"; fi"),
+    '  if /bin/mkdir "$here/answered" 2>/dev/null; then',
+    ("    " + shellQuote(PS) + " \"$@\" > \"$here/post-kill-answer\"; status=$?"),
+    '    /bin/cat "$here/post-kill-answer"; exit "$status"',
+    '  fi',
     cut.body,
     '  ;;',
     ("  *) exec " + shellQuote(PS) + " \"$@\" ;;"),
@@ -3522,6 +3525,8 @@ test('after an answered directory kill wait, a cut state read at its deadline ke
   const { events } = await settled;
 
   assert.ok(existsSync(join(directory, 'answered')), 'no earlier read showed the process alive');
+  const answer = readFileSync(join(directory, 'post-kill-answer'), 'utf8');
+  assert.match(answer, new RegExp(`^\\s*${outside} T\\S* *\\n$`), 'the completed post-kill state answer did not independently identify a live target');
   assertUnended(directory, events, 'survivor.unended', 'still alive when L0\'s read bound ran out after its kill');
 });
 
@@ -3552,14 +3557,62 @@ test('without an answered directory kill wait, a timed-out state read records th
 });
 
 // proves R-STATE-19
+test('without a live post-kill answer, an async state read cut before start records the unread reason', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const work = await workedIn(t, directory);
+  const outside = pidIn(directory, 'outside');
+  const signals = standIn(directory, { unkept: 'outside' });
+  const kill = (target, name) => {
+    if (target === outside && name === 'SIGKILL') writeFileSync(join(directory, 'outside-killed'), '');
+    return signals.kill(target, name);
+  };
+  const ps = fixture(directory, 'ps', [
+    ("[ -f \"$here/outside-killed\" ] || exec " + shellQuote(PS) + " \"$@\""),
+    `case "$*" in "-p ${outside} -o pid=,stat=")`,
+    '  if /bin/mkdir "$here/first-failed" 2>/dev/null; then',
+    '    : > "$here/clock-cut"; echo "ps: optional state unavailable" >&2; exit 2',
+    '  fi',
+    '  : > "$here/unexpected-read"; exit 2 ;;',
+    'esac',
+    ("exec " + shellQuote(PS) + " \"$@\""),
+  ].join('\n'));
+  const lsof = fixture(directory, 'lsof', listingOf('outside', realpathSync.native(join(work, 'sub'))));
+
+  const { result: { events }, jumps } = await cutAsyncReading(directory, () => called(directory, { command: '/usr/bin/true', directory: work, ps, lsof, kill, readTimeout: 300 }));
+
+  assert.ok(signals.killedAt(outside) !== undefined, 'no kill was sent to the target');
+  assert.equal(existsSync(join(directory, 'first-failed')), true, 'the first post-kill read did not return its plain error');
+  assert.ok(jumps > 0, 'the next read did not encounter the cut deadline');
+  assert.equal(existsSync(join(directory, 'unexpected-read')), false, 'a state read started after LATE');
+  assertUnended(directory, events, 'survivor.unended', 'not shown to have ended: the process table could not be read');
+});
+
+// proves R-STATE-19
 test('given a dispatch\'s directory holding a process the kill does not end, the call\'s census settles once KILL_BOUND has passed since its kill, records it as a process it could not end, alive at the bound, and leaves it running', OUTLASTS_KILL_BOUND, async (t) => {
   const directory = holding(t);
   const work = await workedIn(t, directory);
   const signals = standIn(directory, { unkept: 'outside' });
   const outside = pidIn(directory, 'outside');
 
-  const { events, settled } = await called(directory, { command: '/usr/bin/true', directory: work, kill: signals.kill });
+  const kill = (target, name) => {
+    if (target === outside && name === 'SIGKILL') writeFileSync(join(directory, 'outside-killed'), '');
+    return signals.kill(target, name);
+  };
+  const ps = fixture(directory, 'ps', [
+    `if [ -f "$here/outside-killed" ] && [ "$*" = "-p ${outside} -o pid=,stat=" ]; then`,
+    ("  " + shellQuote(PS) + " \"$@\" > \"$here/terminal-state-answer\"; status=$?"),
+    '  printf "%s\n" "$status" > "$here/terminal-state-status"',
+    '  /bin/cat "$here/terminal-state-answer"; exit "$status"',
+    'fi',
+    ("exec " + shellQuote(PS) + " \"$@\""),
+  ].join('\n'));
 
+  const { events, settled } = await called(directory, { command: '/usr/bin/true', directory: work, ps, kill });
+
+  assert.equal(existsSync(join(directory, 'terminal-state-answer')), true, 'no returned post-kill state was retained at the kill bound');
+  assert.equal(read(directory, 'terminal-state-status'), '0', 'the terminal post-kill state read did not exit successfully');
+  const terminal = readFileSync(join(directory, 'terminal-state-answer'), 'utf8');
+  assert.match(terminal, new RegExp(`^\\s*${outside} T\\S* *\\n$`), 'the terminal post-kill state did not independently identify the live target');
   assertUnended(directory, events, 'survivor.unended', `still alive ${KILL_BOUND} ms after L0's kill`);
   const killed = signals.killedAt(outside);
   assert.ok(killed !== undefined, 'the census never sent the outside process its kill, so the test proves nothing');
@@ -3962,6 +4015,47 @@ async function assertLeaderNotKilled(t, { table = hanging, options = {}, reason,
 test('given a leader L0 may not signal, and a process table that stops answering once the exit cleanup has sent its first kill of the group, the cleanup records the leader as a process it could not end because of EPERM, not as killed, and hands its step no exit code', SETTLES_WITHIN, async (t) => {
   const { group } = await assertLeaderNotKilled(t, { options: { refused: 'group' }, reason: /^EPERM$/, why: /could not end the command: EPERM/ });
   assert.equal(alive(group), true, 'the kill ended the leader, so the test proves nothing');
+});
+
+// proves R-STATE-19, R-STATE-9
+test('an exit cleanup that reads its actual leader as a zombie records no leader unended event', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  holdingTwo(directory);
+
+  const { status, stderr, events } = await cleanedUpBy(TRACED_CALLER, directory, {});
+  const group = pidIn(directory, 'group');
+  const trace = linesOf(directory, 'control.trace.jsonl');
+  const ended = trace.filter(({ kind, tool, args, status, error }) => kind === 'read-end' && tool === PS && args.join(' ') === `-g ${group} -o pid=,stat=,xstat=` && status === 0 && !error);
+
+  assert.equal(status, 0, stderr);
+  assert.ok(Number.isSafeInteger(group) && group > 0, 'the real caller did not record its leader identity');
+  assert.ok(ended.some(({ stdout }) => stdout.split('\n').some((row) => new RegExp(`^\\s*${group} Z\\S*\\s`).test(row))), 'no successful real process-table answer identified the leader as a zombie');
+  assert.deepEqual(events.filter(({ event, pid }) => event === 'survivor.unended' && pid === group), []);
+  for (const name of ['one', 'two']) {
+    const pid = pidIn(directory, name);
+    assert.ok(Number.isSafeInteger(pid) && pid > 1, `the real caller did not record its ${name} child identity`);
+    const state = processState(pid);
+    assert.ok(state.startsWith('Z') || !alive(pid), `the cleanup left its ${name} child alive: pid=${pid}, state=${JSON.stringify(state)}`);
+  }
+  assert.equal(alive(group), false, 'the reaped caller still has a live leader');
+});
+
+// proves R-STATE-19
+test('a call whose actual leader has been reaped records no leader unended event', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const trace = [];
+  let leader;
+  let birth;
+
+  const { events } = await called(directory, { command: leavingTwo(directory), onGroup: (pid, started) => { leader = pid; birth = started; }, trace: (entry) => trace.push(entry) });
+  const states = trace.filter(({ phase, args }) => phase === 'read.answer' && args.join(' ') === `-ww -g ${leader} -o pid=,stat=`);
+
+  assert.ok(Number.isSafeInteger(leader) && leader > 0 && Number.isSafeInteger(birth), 'the real child had no PID-bound birth identity');
+  assert.ok(states.length > 0, 'the real group table never answered');
+  assert.ok(states.every(({ prefix, length }) => prefix.length === length && !prefix.split('\n').some((row) => new RegExp(`^\\s*${leader} `).test(row))), 'an answered real state table still listed the leader, or the observation was truncated');
+  assert.equal(alive(leader), false, 'signal 0 still reaches the leader');
+  assert.equal(processState(leader), '', 'the process table still holds the leader');
+  assert.deepEqual(events.filter(({ event, pid }) => event === 'survivor.unended' && pid === leader), []);
 });
 
 // proves R-STATE-19, R-STATE-9
