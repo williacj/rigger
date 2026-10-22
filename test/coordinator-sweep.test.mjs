@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { TOOLS, answer, assertToolingClean, forge, ghCalls, run, tree, world } from './coordinator-fixtures.mjs';
@@ -409,6 +409,64 @@ test('a root named through a symbolic link is swept as its real path', (t) => {
   assertToolingClean();
 });
 
+test('a maker\'s clone holding an untracked file is kept though its git config hides untracked files from status', () => {
+  const s = setup('sweep-untracked-hidden-');
+  const work = maker(s, 7);
+  gitIn(work, 'config', 'status.showUntrackedFiles', 'no');
+  writeFileSync(join(work, 'local-only'), 'only here\n');
+  assert.equal(gitIn(work, 'status', '--porcelain'), '', 'the clone\'s own status hides the file');
+  pull(s, 20, 'MERGED', 'rigger-7');
+  const r = sweep(s);
+
+  assert.equal(r.status, 1, r.stderr);
+  assert.deepEqual(r.out, []);
+  assert.match(named(r, work), /kept.*uncommitted/);
+  assertToolingClean();
+});
+
+test('a maker\'s entry whose pull request list fills the read\'s limit is kept, since an open one may lie past it', () => {
+  const s = setup('sweep-list-limit-');
+  const tmp = join(s.root, 'codex-7-tmp');
+  mkdirSync(tmp);
+  // The open pull request is the oldest, so gh, which lists newest first, cuts it at the limit.
+  s.prs[1] = { state: 'OPEN', branch: 'rigger-7', head: '0'.repeat(40) };
+  for (let n = 2; n <= 1001; n += 1) s.prs[n] = { state: 'CLOSED', branch: 'rigger-7', head: '0'.repeat(40) };
+  answer(s.w, { prs: s.prs });
+  const r = sweep(s);
+
+  assert.equal(r.status, 1, r.stderr);
+  assert.deepEqual(r.out, []);
+  assert.match(named(r, tmp), /kept.*1000 or more pull requests/);
+  assertToolingClean();
+});
+
+/** A stub `rm` that records, before it removes anything, whether the sweep's standard output already names its operand. */
+function watchedRemoval(s) {
+  const dir = join(s.w.base, 'rm-stub');
+  mkdirSync(dir);
+  const printed = join(s.w.base, 'printed-first');
+  writeFileSync(join(dir, 'rm'), `#!/bin/sh\nfor a do last=$a; done\nif grep -qxF -- "$last" "$SWEEP_STDOUT"; then echo "yes $last"; else echo "no $last"; fi >> "${printed}"\nexec /bin/rm "$@"\n`, { mode: 0o755 });
+  return { env: { PATH: `${dir}:${s.w.env.PATH}` }, printed };
+}
+
+test('the sweep prints each path on standard output before its removal starts', () => {
+  const s = setup('sweep-print-first-');
+  const first = judge(s, 'judge-12-codex-r1');
+  const second = judge(s, 'judge-13-codex-r1');
+  pull(s, 12, 'MERGED');
+  pull(s, 13, 'MERGED');
+  const { env, printed } = watchedRemoval(s);
+  const stdout = join(s.w.base, 'stdout');
+  const out = openSync(stdout, 'w');
+  const result = spawnSync(process.execPath, [SWEEP], { env: { ...s.w.env, ...env, RIGGER_WORKTREE_ROOT: s.root, RIGGER_CONFIG: s.config, SWEEP_STDOUT: stdout }, stdio: ['ignore', out, 'pipe'], encoding: 'utf8' });
+  closeSync(out);
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(readFileSync(printed, 'utf8'), `yes ${first}\nyes ${second}\n`);
+  assert.equal(existsSync(first) || existsSync(second), false);
+  assertToolingClean();
+});
+
 test('a removal that fails partway is named with the reason after its path is printed, the sweep goes on, and the run exits with its own status', (t) => {
   const s = setup('sweep-remove-fails-');
   const stuck = judge(s, 'judge-12-codex-r1');
@@ -427,7 +485,7 @@ test('a removal that fails partway is named with the reason after its path is pr
 
   assert.equal(r.status, 3, r.stderr);
   assert.deepEqual(r.out, [stuck, next, open], 'each path is printed, the failed one before its removal began');
-  assert.match(named(r, stuck), new RegExp(`could not remove ${stuck}: E[A-Z]+`));
+  assert.match(named(r, stuck), new RegExp(`could not remove ${stuck}: rm: .*Permission denied`));
   assert.ok(existsSync(join(locked, 'file')), 'the removal failed partway');
   assert.equal(existsSync(next), false, 'the sweep went on to the next entry');
   assertToolingClean();

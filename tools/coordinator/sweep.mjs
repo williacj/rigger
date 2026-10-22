@@ -20,14 +20,14 @@
 //
 // Standard output carries each path it removes, printed before the removal starts. Standard error
 // names each entry it keeps, leaves or fails to remove, with the reason. It finds `gh`, `git` and
-// `lsof` on PATH, and ends no process but a read of the forge it started that did not answer.
+// `lsof` and `rm` on PATH, and ends no process but a read of the forge it started that did not answer.
 //
 // Exit status: 0 when nothing failed and every entry kept was kept only for an open pull request;
 // 1 when an entry was kept or left for any other reason; 3 when a removal failed; 2 when it could
 // not run at all.
 
 import { spawnSync } from 'node:child_process';
-import { lstatSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -39,6 +39,9 @@ const PATTERNS = [
   { kind: 'maker', match: /^codex-([0-9]+)$/ },
   { kind: 'tmp', match: /^codex-([0-9]+)-tmp$/ },
 ];
+
+/** The most pull requests one read lists; a list this long may have left an open one out. */
+const LIMIT = 1000;
 
 const KEPT_OPEN = 'open';
 const KEPT = 'kept';
@@ -95,14 +98,16 @@ class Sweep {
   readPulls(kind, number) {
     const args = kind === 'judge'
       ? ['pr', 'view', number, '-R', this.repo, '--json', 'state', '--jq', '.state']
-      : ['pr', 'list', '-R', this.repo, '--head', this.topic.replaceAll('{number}', number), '--state', 'all', '--json', 'number,state', '--limit', '1000'];
+      : ['pr', 'list', '-R', this.repo, '--head', this.topic.replaceAll('{number}', number), '--state', 'all', '--json', 'number,state', '--limit', String(LIMIT)];
     const r = call('gh', args, { timeout: this.timeout });
     if (r.silent) return { reason: `the read of its pull requests did not answer within ${this.timeout / 1000} s` };
     if (r.error) return { reason: `cannot read its pull requests: ${r.error}` };
     if (r.status !== 0) return { reason: `cannot read its pull requests: ${r.stderr || `gh exited ${r.status}`}` };
     if (kind === 'judge') return { states: [r.stdout.trim()] };
     try {
-      return { states: JSON.parse(r.stdout).map((pr) => pr.state) };
+      const states = JSON.parse(r.stdout).map((pr) => pr.state);
+      if (states.length >= LIMIT) return { reason: `it has ${LIMIT} or more pull requests, and one read lists no more than ${LIMIT}, so an open one may lie past them` };
+      return { states };
     } catch {
       return { reason: `cannot read its pull requests: gh printed no list` };
     }
@@ -142,7 +147,7 @@ class Sweep {
   /** Why the maker's clone at `dir` holds local-only work, or null. */
   localWork(dir) {
     const git = (...args) => call('git', ['-C', dir, ...args]);
-    const status = git('status', '--porcelain');
+    const status = git('status', '--porcelain', '--untracked-files=all');
     if (status.status !== 0) return `cannot read its clone: ${status.stderr || status.error}`;
     if (status.stdout.trim()) return 'its clone holds uncommitted work';
     const stash = git('stash', 'list');
@@ -191,14 +196,11 @@ class Sweep {
     }
     process.stdout.write(`${path}\n`);
     if (this.list) return 'removed';
-    try {
-      rmSync(path, { recursive: true });
-      return 'removed';
-    } catch (error) {
-      process.stderr.write(`sweep: could not remove ${path}: ${error.message}\n`);
-      this.worst = 3;
-      return FAILED;
-    }
+    const removal = call('rm', ['-rf', '--', path]);
+    if (removal.status === 0) return 'removed';
+    process.stderr.write(`sweep: could not remove ${path}: ${removal.stderr?.split('\n')[0] || removal.error || `rm exited ${removal.status}`}\n`);
+    this.worst = 3;
+    return FAILED;
   }
 
   run() {

@@ -44,7 +44,7 @@ printf '%s\\n' "$*" >> "$CODEX_STUB_DIR/sleeps"
  * for these calls: `pr view <n> --json headRefOid -q .headRefOid` prints the sha, `pr view <n>
  * --json state --jq .state` prints OPEN, MERGED or CLOSED, `issue view <n> --json body -q .body`
  * prints the body, and `pr list --head <branch> --state all --json number,state` prints a JSON
- * array. A repository other than the fixture's, or a pull request it does not hold, fails as `gh`
+ * array, newest first and no longer than `--limit` (30 where it is not given), as `gh` cuts it. A repository other than the fixture's, or a pull request it does not hold, fails as `gh`
  * fails. Every call is appended to `$GH_FIXTURE.calls`. A number in `hang` never answers.
  */
 const GH = (node) => `#!${node}
@@ -68,7 +68,8 @@ else if (noun === 'pr' && verb === 'view') {
 } else if (noun === 'pr' && verb === 'list') {
   if ((world.failList || []).includes(flag('--head'))) fail('HTTP 502: Bad Gateway');
   const list = Object.entries(world.prs || {}).filter(([, pr]) => pr.branch === flag('--head'))
-    .map(([number, pr]) => ({ number: Number(number), state: pr.state }));
+    .map(([number, pr]) => ({ number: Number(number), state: pr.state }))
+    .sort((a, b) => b.number - a.number).slice(0, Number(flag('--limit') ?? 30));
   process.stdout.write(JSON.stringify(list) + '\\n');
 } else fail('unknown command ' + args.join(' '));
 `;
