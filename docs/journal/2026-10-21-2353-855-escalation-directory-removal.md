@@ -81,3 +81,52 @@ affected real-git retry tests then passed: four tests, zero failures or cancella
 1390.008057 ms. Their PID, exit and output records are `.tmp/855-unlock-route-red.*` and
 `.tmp/855-unlock-route-green.*`. No existing helper, scanner, assertion, deadline or production
 behavior changed for this correction. The ordinary full-suite hook must still pass before commit.
+
+## Independent review's empty symlink target
+
+The corrected ordinary commit hook passed at `fb0180e7913d0963665dab71f9b0523044fe81fc`:
+4,180 tests, 4,121 passed, zero failures or cancellations, 59 skipped, 579363.046683 ms.
+The [configured reviewer's delivered finding](https://github.com/williacj/rigger/pull/865#issuecomment-6334958125)
+then demonstrated that item 2's no-follow condition was not proved for escalations. The old
+link targets were nonempty, so a link-following fault could leave them intact accidentally.
+The production guard was correct; all 14 other acceptance items were met.
+
+One additive regression now places an empty topic behind each live escalation root/topic
+symlink. It checks that the outside topic and link survive, Done remains reachable, no removal
+event is recorded and the refusal reason identifies that particular path as a symbolic link.
+An ancestor's generic nonempty reason cannot satisfy this assertion. The old tests, assertions,
+deadlines and proof declarations remain unchanged. The 15-item acceptance and five-file scope
+are unchanged; no production edit was needed.
+
+Measured with Node 26.12.0 on Ubuntu WSL 2 on 2026-10-22 UTC, a separate worktree at `fb0180e`
+plus the final regression bytes ran the following one-test controls. Each fault changes one
+checked source anchor and exempts only escalations at the named hierarchy level. Applied
+diff/readback, syntax checks, actual filesystem effects and exact source restoration were
+verified; the author production file was never mutated.
+
+| Candidate / single fault | Pass | Fail | Cancelled | Duration (ms) |
+|---|---:|---:|---:|---:|
+| Original guard | 1 | 0 | 0 | 410.959265 |
+| Follow the root link | 0 | 1 | 0 | 262.073616 |
+| Restore root guard exactly | 1 | 0 | 0 | 421.12812 |
+| Follow the topic link | 0 | 1 | 0 | 413.092555 |
+| Restore topic guard exactly | 1 | 0 | 0 | 404.190673 |
+
+Following the root link actually removed the empty outside topic. Following the topic link
+reached `rmdir` and recorded `ENOTDIR`, turning the required nonblocking refusal into a failed
+removal. Both failures were the named regression's intended assertions, not fixture errors.
+The final raw evidence is under `.tmp/empty-symlink-proof-final/` in the author worktree.
+
+The first proof attempt retained in `.tmp/empty-symlink-proof/` stopped nonzero because its
+effect guard expected the nested `ENOTDIR` in Node's outer AggregateError display. Exact
+production bytes were restored. The regression now emits the existing L1 refusal diagnostics
+only on rejection, exposing the actual filesystem reason without changing its assertions.
+
+All thirteen escalation controls then passed in the author worktree: 13 passed, zero failed,
+cancelled or skipped, 10093.757348 ms (`.tmp/855-link-focused.log`, explicit exit zero).
+Fresh configured delivered reviews remain required at the final repair head.
+
+The earlier parent-before-child change is shared by judges, escalations and scratch: a known
+regular-file parent is now an answered refusal for each, instead of a failed child read. This
+is the shared rule's behavior, not an escalation-only implementation. Existing class guards
+and tests remain, and this card's added behavior proofs claim its escalation cells only.

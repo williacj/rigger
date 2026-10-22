@@ -2574,3 +2574,36 @@ test('refused escalation removal or left events retain the actual state and unre
     assert.equal(existsSync(made.path), cell === 'left-role');
   }
 });
+// proves R-WORK-33
+test('escalation removal preserves an empty target behind either hierarchy symlink and names that link refusal', async (t) => {
+  for (const level of ['root', 'topic']) {
+    const here = world(t);
+    const parent = join(here.root, 'escalations');
+    const base = join(parent, 'rigger-42');
+    const link = level === 'root' ? parent : base;
+    const outside = join(here.directory, 'outside-escalations');
+    const targetTopic = level === 'root' ? join(outside, 'rigger-42') : outside;
+    mkdirSync(targetTopic, { recursive: true });
+    mkdirSync(dirname(link), { recursive: true });
+    symlinkSync(outside, link);
+    const before = held(outside);
+    const built = mergedRemoval(here);
+
+    await assert.doesNotReject(built.loop.pull().catch((failure) => {
+      t.diagnostic(JSON.stringify(here.events().filter(({ layer, event }) => layer === 'L1' && event === 'workspace.left')));
+      throw failure;
+    }), `${level}: a link refusal must not fail removal`);
+
+    assert.equal(existsSync(targetTopic), true, `${level}: the empty target topic outside the root was removed through the link`);
+    assert.equal(lstatSync(targetTopic).isDirectory(), true);
+    assert.deepEqual(held(outside), before, `${level}: the outside target changed`);
+    assert.equal(lstatSync(link).isSymbolicLink(), true);
+    assert.equal(readlinkSync(link), outside);
+    assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
+    const left = here.events().filter(({ layer, event }) => layer === 'L1' && event === 'workspace.left');
+    assert.equal(left.length, 1, `${level}: exactly the link refusal is recorded`);
+    assert.equal(left[0].path, base);
+    assert.ok(left[0].reason.startsWith(`${link} is a symbolic link`), `${level}: the reason must identify the refused link, not a nonempty ancestor`);
+    assert.deepEqual(here.events().filter(({ layer, event }) => layer === 'L1' && event === 'workspace.removed'), []);
+  }
+});
