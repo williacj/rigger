@@ -39,3 +39,10 @@ has to come from the event's record. The timeline already in L2's read gave it, 
 point where the hold's own notice reached the issue. That anchor also keeps an older close from
 applying to a newer hold, and it showed that a crash before the attach left a closer whose notice
 nobody could find. So a closer naming no issue now looks for an issue naming its id first.
+
+Round 4 found that round 3's recovery searched by the label, which is the very fact a person can
+change. The fix makes the closer's own name record where its notice can be, before each forge write
+that could strand one. A reuse attaches the number before it comments. An open first records the
+newest number it saw, so the notice lies above it. Recovery then reads by number and by the hold's
+id alone, and the one timeline rule judges what it finds. A recovery path that filters on mutable
+state is a second rule in disguise, and it drifts from the first.
