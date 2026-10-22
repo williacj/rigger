@@ -68,7 +68,7 @@ reports no gap of its own; the register carries the reason.
 | R-SCHED-16 | **gap** |
 | R-SCHED-17 | **gap** |
 | R-SCHED-18 | **gap** |
-| R-SCHED-19 | **gap** |
+| R-SCHED-19 | `test/config.test.mjs` the escalation label is reserved in kind and epic selectors in every letter case |
 | R-SCHED-20 | **gap** |
 | R-SCHED-21 | **gap** |
 | R-SCHED-22 | **gap** |
@@ -159,8 +159,8 @@ reports no gap of its own; the register carries the reason.
 | R-ESCALATE-7 | **gap** |
 | R-ESCALATE-8 | **gap** |
 | R-ESCALATE-9 | **gap** |
-| R-ESCALATE-10 | **gap** |
-| R-ESCALATE-11 | **gap** |
+| R-ESCALATE-10 | `test/next-action.test.mjs` an escalation label leaves every unmerged active-stage card waiting before selection and form refusals<br>`test/next-action.test.mjs` a labelled merged card keeps its ordinary stage answer and an escalation diagnostic<br>`test/once.test.mjs` once dispatches and writes nothing for labelled unmerged cards across active stages and selection conflicts<br>`test/once.test.mjs` once cleans a labelled merged Review or Owner card before moving it to Done<br>`test/once.test.mjs` once preserves a labelled merged Ready or Coding card workspace under its existing forge refusal<br>`test/once.test.mjs` once leaves merged labelled epics and unselected cards unpulled in every active stage<br>`test/plan.test.mjs` plan names labelled active-stage cards as escalated and counts only ordinary refusals<br>`test/plan.test.mjs` plan reports escalated items outside active columns without reading their workflow facts<br>`test/plan.test.mjs` plan keeps merged escalation actions and names forge refusals without counting them as refused |
+| R-ESCALATE-11 | `test/forge-facts.test.mjs` a fresh facts call after the owner removes the escalation label restores the ordinary answer<br>`test/loop.test.mjs` the same loop pulls an escalated card after a fresh board read shows the owner removed its label<br>`test/once.test.mjs` once reads the owner removing an escalation label before its next invocation and resumes ordinary work |
 | R-ESCALATE-12 | **gap** |
 | R-ESCALATE-13 | `test/config.test.mjs` an escalation category Rigger does not offer is refused, and the refusal names it |
 | R-ESCALATE-14 | **gap** |

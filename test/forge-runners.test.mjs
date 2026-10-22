@@ -11,6 +11,7 @@ import { closeSync, mkdirSync, openSync, readSync, symlinkSync } from 'node:fs';
 import { realpathSync, unlinkSync } from 'node:fs';
 
 import { itemWriteRunner, readRunner, schemaWriteRunner } from '../src/substrate/forge/runners.mjs';
+import { repositoryWriteRunner } from '../src/substrate/forge/runners.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 
@@ -27,6 +28,59 @@ function recording(answer = () => ({ status: 0, stdout: '{}', stderr: '' })) {
   send.sent = sent;
   return send;
 }
+
+test('the repository-write runner appends an issue comment without requiring a pull-request read', async () => {
+  const args = ['api', 'repos/williacj/rigger/issues/12/comments', '-X', 'POST', '-f', 'body=Card needs an owner decision'];
+  const send = recording((command, request) => request[3] === 'GET'
+    ? { status: 1, stdout: '', stderr: 'gh: Not Found (HTTP 404)' }
+    : { status: 0, stdout: '{"id":1,"body":"Card needs an owner decision"}', stderr: '' });
+
+  const said = await repositoryWriteRunner(args, { send });
+
+  assert.equal(said.status, 0);
+  assert.deepEqual(send.sent, [['gh', ...args]]);
+});
+
+test('the repository-write runner admits exactly one issue-label addition by shape, not workflow meaning', async () => {
+  for (const label of ['needs-owner', 'customer:publish']) {
+    const args = ['api', 'repos/williacj/rigger/issues/214/labels', '-X', 'POST', '-f', `labels[]=${label}`];
+    const send = recording();
+
+    assert.equal((await repositoryWriteRunner(args, { send })).status, 0);
+    assert.deepEqual(send.sent, [['gh', ...args]]);
+  }
+});
+
+test('issue comment and label request-shape refusals send no request', async () => {
+  for (const endpoint of ['comments', 'labels']) {
+    const path = `repos/williacj/rigger/issues/214/${endpoint}`;
+    const payload = endpoint === 'comments' ? 'body=Review' : 'labels[]=customer:publish';
+    const refused = [
+      ...['GET', 'PUT', 'PATCH', 'DELETE'].map((verb) => ['api', path, '-X', verb, '-f', payload]),
+      ['api', path, '--method', 'POST', '-f', payload],
+      ['api', path, '-X', 'POST', '-F', payload],
+      ['api', path, '-X', 'POST', '-f', payload, '-f', 'extra=value'],
+      ['api', path, '-X', 'POST', '-f', payload, '-f', payload],
+      ['api', `${path}/1`, '-X', 'POST', '-f', payload],
+      ['api', `${path}\n`, '-X', 'POST', '-f', payload],
+      ['api', path, '-X', 'POST'],
+      ...['', '0', '-1', 'text', '1.5', '214/extra'].map((target) =>
+        ['api', `repos/williacj/rigger/issues/${target}/${endpoint}`, '-X', 'POST', '-f', payload]),
+      ['api', `repos//rigger/issues/214/${endpoint}`, '-X', 'POST', '-f', payload],
+      ['api', `repos/williacj//issues/214/${endpoint}`, '-X', 'POST', '-f', payload],
+    ];
+    if (endpoint === 'labels') refused.push(
+      ['api', path, '-X', 'POST', '-f', 'labels[]'],
+      ['api', path, '-X', 'POST', '-f', 'labels=customer:publish'],
+      ['api', path, '-X', 'POST', '-f', 'labels[]=one', '-f', 'labels[]=two'],
+    );
+    for (const args of refused) {
+      const send = recording();
+      await assert.rejects(repositoryWriteRunner(args, { send }), /repository-write/, JSON.stringify(args));
+      assert.deepEqual(send.sent, [], JSON.stringify(args));
+    }
+  }
+});
 
 test('the read runner sends `gh auth status`, which its read allowlist names', async () => {
   const send = recording(() => ({ status: 0, stdout: 'Logged in', stderr: '' }));
@@ -285,6 +339,31 @@ test('the read runner admits a `gh api <path>` form only where gh itself sends i
 });
 
 const LIVE_GH_PROBE = 'the read runner admits a `gh api <path>` form only where gh itself sends it as a GET with no body';
+
+test('repository-write comment and one-label forms match installed gh JSON, and an empty label array is refused', async (t) => {
+  const gh = installedGh();
+  if (!gh) return t.skip('no real gh on PATH; repository-write method/body probe not run');
+  const body = 'Owner input\n$(printf remains-data); "quoted"';
+  const label = 'customer:publish';
+  const forms = [
+    { args: ['api', 'repos/williacj/rigger/issues/214/comments', '-X', 'POST', '-f', `body=${body}`], payload: { body } },
+    { args: ['api', 'repos/williacj/rigger/issues/214/labels', '-X', 'POST', '-f', `labels[]=${label}`], payload: { labels: [label] } },
+  ];
+  for (const { args, payload } of forms) {
+    const sent = await methodGhSends(gh, args);
+    assert.equal(sent.method, 'POST');
+    assert.deepEqual(JSON.parse(sent.body), payload);
+    const send = recording();
+    await repositoryWriteRunner(args, { send });
+    assert.deepEqual(send.sent, [['gh', ...args]]);
+  }
+  const empty = ['api', 'repos/williacj/rigger/issues/214/labels', '-X', 'POST', '-f', 'labels[]'];
+  const sent = await methodGhSends(gh, empty);
+  assert.deepEqual(JSON.parse(sent.body), { labels: [] }, 'gh changed its empty-array spelling; revisit the runner boundary');
+  const send = recording();
+  await assert.rejects(repositoryWriteRunner(empty, { send }), /repository-write runner refuses/);
+  assert.deepEqual(send.sent, []);
+});
 
 function executableOnPath(name, path = process.env.PATH, accept = () => true) {
   for (const entry of path.split(delimiter)) {

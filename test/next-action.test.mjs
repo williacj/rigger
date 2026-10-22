@@ -345,3 +345,62 @@ test('a maker:codex change card requires claude of its reviewer and of its archi
   assert.deepEqual(providerOf(given, 'engineer', config.roles.engineer), { provider: 'codex' });
   assert.deepEqual(panelOf(given, kind, config.roles), [{ role: 'reviewer', provider: 'claude' }, { role: 'architect', provider: 'claude' }]);
 });
+
+// proves R-ESCALATE-10
+test('an escalation label leaves every unmerged active-stage card waiting before selection and form refusals', () => {
+  const roles = {
+    ...config.roles,
+    engineer: {
+      ...config.roles.engineer,
+      labels: { 'tier:standard': 'standard', 'tier:high': 'high' },
+      providerLabels: { 'provider:claude': 'claude', 'provider:codex': 'codex' },
+    },
+  };
+  const cases = [
+    { name: 'valid', labels: ['type:change'], body: PASSING },
+    { name: 'missing acceptance', labels: ['type:change'], body: '' },
+    { name: 'restated title', labels: ['type:change'], body: '## Acceptance\n\n- Add a verb.\n' },
+    { name: 'unselected', labels: ['area:other'], body: PASSING },
+    { name: 'several kinds', labels: ['type:change', 'type:spec'], body: PASSING },
+    { name: 'epic', labels: ['type:change', 'type:epic'], body: PASSING },
+    { name: 'tier conflict', labels: ['type:change', 'tier:standard', 'tier:high'], body: PASSING },
+    { name: 'provider conflict', labels: ['type:change', 'provider:claude', 'provider:codex'], body: PASSING },
+  ];
+  for (const stage of ['ready', 'coding', 'review', 'owner']) {
+    for (const label of ['rigger:escalated', 'RIGGER:ESCALATED']) {
+      for (const branch of [false, true]) {
+        for (const each of cases) {
+          const given = {
+            ...card(7, [...each.labels, label], each.body),
+            forge: { stage, line: 'rigger-7', branch, open: [], merged: [] },
+          };
+          assert.deepEqual(nextAction(given, KINDS, 'type:epic', { roles }),
+            { action: 'ignore', escalated: true }, `${stage}/${label}/${branch}/${each.name}`);
+        }
+      }
+    }
+  }
+});
+
+// proves R-ESCALATE-10
+test('a labelled merged card keeps its ordinary stage answer and an escalation diagnostic', () => {
+  for (const stage of ['ready', 'coding', 'review', 'owner']) {
+    for (const label of ['rigger:escalated', 'Rigger:Escalated']) {
+      for (const branch of [false, true]) {
+        for (const labels of [['type:change'], ['area:other'], ['type:change', 'type:epic']]) {
+          const forge = { stage, line: 'rigger-7', branch, open: [], merged: [{ number: 71 }] };
+          const given = { ...card(7, labels), forge };
+          const answer = nextAction({ ...given, labels: [...labels, label] }, KINDS, 'type:epic');
+          assert.equal(answer.escalated, true, `${stage}/${label}/${branch}/${labels}`);
+          if (!labels.includes('type:change') || labels.includes('type:epic')) assert.deepEqual(answer, { action: 'ignore', escalated: true });
+          else if (['review', 'owner'].includes(stage)) assert.deepEqual(answer, { action: 'move', to: 'done', escalated: true });
+          else {
+            assert.equal(answer.action, 'refuse');
+            assert.equal(answer.card, 7);
+            assert.match(answer.reason, /#71, merged/);
+          }
+        }
+      }
+    }
+  }
+});

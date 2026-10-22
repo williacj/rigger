@@ -37,6 +37,59 @@ const mergeSent = (fake) => fake.sent().filter((args) => args[1]?.endsWith('/mer
 const commentSent = (fake) => fake.sent().filter((args) => args[1]?.endsWith('/comments'));
 const expectedMerge = ['api', 'repos/williacj/rigger/pulls/12/merge', '-X', 'PUT', '-f', `sha=${SHA}`, '-f', 'merge_method=merge'];
 const expectedComment = (body) => ['api', 'repos/williacj/rigger/issues/12/comments', '-X', 'POST', '-f', `body=${body}`];
+const expectedLabel = (label) => ['api', 'repos/williacj/rigger/issues/12/labels', '-X', 'POST', '-f', `labels[]=${label}`];
+
+for (const kind of ['issue', 'pull request']) {
+  test(`the explicit issue-comment operation appends the supplied bytes to a ${kind}`, async () => {
+    const prior = { body: 'Earlier comment' };
+    const fake = fakeWith(kind === 'issue' ? { issues: [{ number: 12, comments: [prior] }] } : { pullRequests: [pull({ comments: [prior] })] });
+    const body = 'Owner input\n$(printf remains-data); "quoted"';
+
+    assert.deepEqual(await onFake(fake, () => writes().postIssueComment(12, body)), { id: 2, body });
+    const target = kind === 'issue' ? held(fake).issues[0] : held(fake).pullRequests[0];
+    assert.deepEqual(target.comments.map((comment) => comment.body), [prior.body, body]);
+    assert.deepEqual(fake.sent(), [expectedComment(body)]);
+  });
+}
+
+test('an empty issue-comment body is sent as data and its server refusal names the issue and reason', async () => {
+  const fake = fakeWith({ issues: [{ number: 12 }], commentReplies: { 12: { status: '422', message: 'Body cannot be blank' } } });
+  await assert.rejects(onFake(fake, () => writes().postIssueComment(12, '')), /postIssueComment on issue #12.*Body cannot be blank.*HTTP 422/);
+  assert.deepEqual(fake.sent(), [expectedComment('')]);
+  assert.deepEqual(held(fake).issues[0].comments ?? [], []);
+});
+
+for (const [operation, replies, expected] of [
+  ['postIssueComment', 'commentReplies', expectedComment('payload')],
+  ['addIssueLabel', 'labelReplies', expectedLabel('payload')],
+]) {
+  test(`${operation} preserves existing issue state on a scripted HTTP refusal`, async () => {
+    const issue = { number: 12, labels: ['existing'], comments: [{ body: 'Earlier comment' }] };
+    const fake = fakeWith({ issues: [issue], [replies]: { 12: { status: '403', message: 'Resource not accessible by integration' } } });
+    await assert.rejects(onFake(fake, () => writes()[operation](12, 'payload')), (error) =>
+      error.message.includes(`${operation} on issue #12`) && /Resource not accessible.*HTTP 403/.test(error.message));
+    assert.deepEqual(fake.sent(), [expected]);
+    assert.deepEqual(held(fake).issues[0], issue);
+  });
+}
+
+test('the one-label operation also adds to the issue behind a pull request', async () => {
+  const fake = fakeWith({ pullRequests: [pull({ labels: ['existing'] })] });
+  assert.deepEqual(await onFake(fake, () => writes().addIssueLabel(12, 'customer:publish')), [{ name: 'existing' }, { name: 'customer:publish' }]);
+  assert.deepEqual(held(fake).pullRequests[0].labels, ['existing', 'customer:publish']);
+  assert.deepEqual(fake.sent(), [expectedLabel('customer:publish')]);
+});
+
+for (const labels of [[], ['existing'], ['existing', 'customer:publish']]) {
+  test(`one-label addition preserves the issue's existing labels ${JSON.stringify(labels)}`, async () => {
+    const fake = fakeWith({ issues: [{ number: 12, labels }] });
+    const expected = labels.includes('customer:publish') ? labels : [...labels, 'customer:publish'];
+
+    assert.deepEqual(await onFake(fake, () => writes().addIssueLabel(12, 'customer:publish')), expected.map((name) => ({ name })));
+    assert.deepEqual(held(fake).issues[0].labels, expected);
+    assert.deepEqual(fake.sent(), [expectedLabel('customer:publish')]);
+  });
+}
 
 for (const [status, conclusion, expected] of [
   ['completed', 'success', 'passed'], ['completed', 'neutral', 'passed'], ['completed', 'skipped', 'passed'],
@@ -375,12 +428,15 @@ test('repository-write refuses a comment target that is not a pull request', asy
   assert.deepEqual(commentSent(fake), []);
 });
 
-test('repository-write runner directly refuses an issue comment without sending a write', async () => {
-  const fake = fakeWith();
+test('repository-write runner directly appends an issue comment without a PR preflight', async () => {
+  const fake = fakeWith({ issues: [{ number: 12, body: 'Card twelve' }] });
   const args = expectedComment('Review complete');
-  await assert.rejects(onFake(fake, () => repositoryWriteRunner(args, { emitter: UNKILLED })), /repository-write runner refuses.*pull request #12/);
-  assert.deepEqual(commentSent(fake), []);
-  assert.deepEqual(fake.sent(), [['api', 'repos/williacj/rigger/pulls/12', '-X', 'GET']]);
+  const said = await onFake(fake, () => repositoryWriteRunner(args, { emitter: UNKILLED }));
+  assert.equal(said.status, 0, said.stderr);
+  assert.deepEqual(JSON.parse(said.stdout), { id: 1, body: 'Review complete' });
+  assert.equal(held(fake).issues[0].comments[0].body, 'Review complete');
+  assert.deepEqual(commentSent(fake), [args]);
+  assert.deepEqual(fake.sent(), [args]);
 });
 
 for (const sha of ['', 'main', 'HEAD']) {

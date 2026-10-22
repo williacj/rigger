@@ -51,8 +51,8 @@ const CONFIG = {
 /** The labels CONFIG's kinds and steps select, written out by hand from it. */
 const SELECTED = ['type:change', 'type:spec', 'area:demo'];
 
-/** The labels CONFIG declares: those its kinds and steps select, and its epic label. */
-const DECLARED_LABELS = [...SELECTED, 'type:epic'];
+/** The labels CONFIG declares, followed by Rigger's fixed escalation label. */
+const DECLARED_LABELS = [...SELECTED, 'type:epic', 'rigger:escalated'];
 
 /** CONFIG with no `epicLabel` key at all. */
 const { epicLabel: _epic, ...NO_EPIC } = CONFIG;
@@ -115,6 +115,7 @@ test('against a board missing every declared column, every label and the priorit
     { operation: 'createLabel', args: ['type:spec'] },
     { operation: 'createLabel', args: ['area:demo'] },
     { operation: 'createLabel', args: ['type:epic'] },
+    { operation: 'createLabel', args: ['rigger:escalated'] },
   ]);
 });
 
@@ -144,7 +145,7 @@ const labelsSent = (sent) => sent
   .filter(Boolean)
   .map((name) => JSON.parse(name));
 
-test('against a board whose repository holds no label, the labels setup-board creates are those the kinds and steps select, and the epic label', async () => {
+test('against a repository holding no label, setup-board creates the consumer labels and fixed escalation label', async () => {
   const { ran, writes } = await setUp({ ...COMPLETE, labels: [] });
 
   assert.equal(ran.status, 0, ran.stderr);
@@ -152,7 +153,7 @@ test('against a board whose repository holds no label, the labels setup-board cr
 });
 
 test('given a config declaring an epic label the repository lacks, setup-board sends a createLabel of exactly that name', async () => {
-  const { ran, sent } = await setUp({ ...COMPLETE, labels: [...SELECTED] });
+  const { ran, sent } = await setUp({ ...COMPLETE, labels: [...SELECTED, 'rigger:escalated'] });
 
   assert.equal(ran.status, 0, ran.stderr);
   assert.deepEqual(labelsSent(sent), ['type:epic']);
@@ -160,18 +161,18 @@ test('given a config declaring an epic label the repository lacks, setup-board s
 
 test('given a config declaring an epic label the repository already holds, setup-board sends no write to that label', async () => {
   // The repository lacks a selected label, so the run does write, and only the epic label is held.
-  const { ran, sent } = await setUp({ ...COMPLETE, labels: ['type:change', 'type:spec', 'type:epic'] });
+  const { ran, sent } = await setUp({ ...COMPLETE, labels: ['type:change', 'type:spec', 'type:epic', 'rigger:escalated'] });
 
   assert.equal(ran.status, 0, ran.stderr);
   assert.deepEqual(labelsSent(sent), ['area:demo']);
 });
 
-test('given a config with no epicLabel key, against a repository holding no label, the labels setup-board creates are exactly those the kinds and steps select', async () => {
+test('given a config with no epicLabel key, setup-board creates selected labels and the fixed escalation label', async () => {
   assert.ok(!Object.hasOwn(NO_EPIC, 'epicLabel'));
   const { ran, writes } = await setUp({ ...COMPLETE, labels: [] }, NO_EPIC);
 
   assert.equal(ran.status, 0, ran.stderr);
-  assert.deepEqual([...labelsCreated(writes)].sort(), [...SELECTED].sort());
+  assert.deepEqual([...labelsCreated(writes)].sort(), [...SELECTED, 'rigger:escalated'].sort());
 });
 
 test("given a config whose role's labels names tier:high, against a repository lacking it, setup-board creates the label tier:high and makes no other write", async () => {
@@ -220,14 +221,14 @@ test('given kinds selecting both bug and Bug and a repository holding neither, s
 });
 
 test('given the epic label Type:Epic and a repository holding no label differing from it only in letter case, setup-board creates Type:Epic as spelled', async () => {
-  const { ran, writes } = await setUp({ ...COMPLETE, labels: [...SELECTED] }, { ...CONFIG, epicLabel: 'Type:Epic' });
+  const { ran, writes } = await setUp({ ...COMPLETE, labels: [...SELECTED, 'rigger:escalated'] }, { ...CONFIG, epicLabel: 'Type:Epic' });
 
   assert.equal(ran.status, 0, ran.stderr);
   assert.deepEqual(labelsCreated(writes), ['Type:Epic']);
 });
 
 test('against a repository holding every declared label under another letter case, setup-board prints no line saying it created a label', async () => {
-  const labels = ['TYPE:CHANGE', 'Type:Spec', 'AREA:demo', 'type:EPIC'];
+  const labels = ['TYPE:CHANGE', 'Type:Spec', 'AREA:demo', 'type:EPIC', 'RIGGER:ESCALATED'];
   assert.ok(labels.every((name, i) => name !== DECLARED_LABELS[i] && caseOnly(name, DECLARED_LABELS[i])));
   const { ran } = await setUp({ ...COMPLETE, labels });
 
@@ -301,15 +302,16 @@ test('setup-board prints one line for each write it made, naming what it wrote',
 
   assert.equal(ran.status, 0, ran.stderr);
   const [heading, ...lines] = ran.stdout.trimEnd().split('\n');
-  assert.match(heading, /5 writes/);
+  assert.match(heading, /6 writes/);
   assert.deepEqual(lines.map((line) => line.trim()), [
     'added the column Owner',
     'created the field Priority with the options High, Normal, Low',
     'created the label type:spec',
     'created the label area:demo',
     'created the label type:epic',
+    'created the label rigger:escalated',
   ]);
-  assert.equal(writes.length, 5);
+  assert.equal(writes.length, 6);
 });
 
 test('a write of a name holding a line break or other control character still prints as one line, and the name written is the name declared', async () => {
@@ -317,14 +319,14 @@ test('a write of a name holding a line break or other control character still pr
   // name a consumer can declare. Every way a terminal can be made to start a line is split on.
   const names = ['area:\ndemo', 'area:\rcli', 'area:\u2028docs', 'area:\u0085ops', 'area:\u001b[2Kbell'];
   const config = { ...CONFIG, provisioning: { ...CONFIG.provisioning, vhs: { run: 'brew install vhs', select: { labels: names } } } };
-  const { ran, model, writes } = await setUp({ ...COMPLETE, labels: ['type:change', 'type:spec', 'type:epic'] }, config);
+  const { ran, model, writes } = await setUp({ ...COMPLETE, labels: ['type:change', 'type:spec', 'type:epic', 'rigger:escalated'] }, config);
 
   assert.equal(ran.status, 0, ran.stderr);
   assert.equal(writes.length, names.length);
   const lines = ran.stdout.replace(/\n$/, '').split(/\r\n|[\n\r\u000b\u000c\u0085\u2028\u2029]/);
   assert.equal(lines.length, 1 + names.length, JSON.stringify(ran.stdout));
   assert.ok(!/\u001b/.test(ran.stdout), 'an escape sequence reached the terminal');
-  assert.deepEqual((await model.operations.readLabels()).slice(3), names);
+  assert.deepEqual((await model.operations.readLabels()).slice(4), names);
 });
 
 test('against a board already holding everything, setup-board prints no line for a write', async () => {
@@ -426,4 +428,30 @@ test('setup-board run against the source tree it is running from exits non-zero,
   assert.match(ran.stderr, /R-SAFE-5/);
   assert.deepEqual(writes, []);
   assert.deepEqual(sent, []);
+});
+
+test('setup-board provisions the escalation label once and preserves an already-held spelling', async () => {
+  for (const existing of [[], ['rigger:escalated'], ['RIGGER:ESCALATED']]) {
+    const labels = [...SELECTED, 'type:epic', ...existing];
+    const { ran, writes, model } = await setUp({ ...COMPLETE, labels });
+    assert.equal(ran.status, 0, ran.stderr);
+    assert.deepEqual(writes, existing.length === 0 ? [{ operation: 'createLabel', args: ['rigger:escalated'] }] : []);
+    const after = await model.operations.readLabels();
+    assert.equal(after.filter((name) => name.toLowerCase() === 'rigger:escalated').length, 1, JSON.stringify(after));
+    for (const label of labels) assert.ok(after.includes(label), `${label} was lost`);
+    const repeated = await setUp({ ...COMPLETE, labels: after });
+    assert.equal(repeated.ran.status, 0, repeated.ran.stderr);
+    assert.deepEqual(repeated.writes, []);
+  }
+});
+
+test('setup-board provisions one escalation label when allowed role and step maps declare case variants', async () => {
+  const config = {
+    ...CONFIG,
+    roles: { ...CONFIG.roles, engineer: { ...CONFIG.roles.engineer, labels: { 'RIGGER:ESCALATED': 'high' }, providerLabels: { 'Rigger:Escalated': 'codex' } } },
+    provisioning: { ...CONFIG.provisioning, extra: { run: 'true', select: { labels: ['rigger:escalated'] } } },
+  };
+  const { ran, writes } = await setUp({ ...COMPLETE, labels: [...SELECTED, 'type:epic'] }, config);
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.deepEqual(writes, [{ operation: 'createLabel', args: ['rigger:escalated'] }]);
 });
