@@ -109,12 +109,15 @@ test('a stand-in planned to exec a command under every card replaces itself with
  * nothing, as a macOS watch reports nothing of a file written before its FSEvents stream started
  * (#622), so no test here can pass on a watch.
  */
-function stopping(target, gate, at) {
+function stopping(target, gate, at, errorMap) {
   const source = `
     import fs from 'node:fs';
     import { syncBuiltinESMExports } from 'node:module';
-    const [target, gate, at] = ${JSON.stringify([target, gate, at])};
-    const { existsSync, watch, writeFileSync } = fs;
+    const [target, gate, at, errorMap] = ${JSON.stringify([target, gate, at, errorMap])};
+    const { existsSync, watch, writeFileSync, openSync, writeSync, lstatSync } = fs;
+    let announcement;
+    let originalWriteFailure;
+    let absenceProbes = 0;
     let stopped = false;
     const traced = (event, said) => globalThis[Symbol.for(${JSON.stringify(TRACE.description)})]?.(event, { gate, said });
     const stop = (said) => { stopped = true; fs.writeSync(1, said + '\\n'); traced('gate read starting', said); fs.readFileSync(gate); fs.writeSync(1, 'gate returned\\n'); traced('gate read returned', said); };
@@ -130,6 +133,39 @@ function stopping(target, gate, at) {
       const mine = at === 'wrote' && ours(path);
       writeFileSync(path, ...rest);
       if (mine) stop('wrote');
+    };
+    if (errorMap !== null) process.on('uncaughtExceptionMonitor', (failure) => {
+      writeSync(1, 'original write error retained ' + (failure === originalWriteFailure) + '\\n');
+      writeSync(1, 'absence probes ' + absenceProbes + '\\n');
+    });
+    fs.lstatSync = (path, ...rest) => {
+      if (errorMap !== null && announcement !== undefined && String(path).endsWith('/' + target)) {
+        absenceProbes += 1;
+        if (errorMap === 'probe-error') throw Object.assign(new Error('controlled absence observation failure'), { code: 'EACCES' });
+      }
+      return lstatSync(path, ...rest);
+    };
+    fs.openSync = (path, flags, ...rest) => {
+      const fd = openSync(path, flags, ...rest);
+      if (at === 'announce' && String(path).endsWith('/' + target) && flags === (fs.constants.O_WRONLY | fs.constants.O_NONBLOCK)) {
+        announcement = fd;
+        stop('announce opened');
+        setImmediate(() => writeSync(1, 'announce turn returned\\n'));
+      }
+      return fd;
+    };
+    fs.writeSync = (fd, ...rest) => {
+      if (fd !== announcement) return writeSync(fd, ...rest);
+      try {
+        if (errorMap === 'write-error') throw Object.assign(new Error('controlled announcement write failure'), { code: 'EIO' });
+        const written = writeSync(fd, ...rest);
+        writeSync(1, 'announce write returned ' + written + '\\n');
+        return written;
+      } catch (failure) {
+        originalWriteFailure = failure;
+        writeSync(1, 'announce write threw ' + failure.code + '\\n');
+        throw failure;
+      }
     };
     fs.watch = (path) => watch(path, () => {});
     syncBuiltinESMExports();
@@ -375,8 +411,8 @@ test('a run awaiting a file written after its first read found it missing, with 
 
   const ended = await traced(t, 'the waiter\'s exit', () => waiter.exited);
   assert.equal(ended.code, 5, ended.err());
-  assert.equal(writer.child.exitCode, null);
-  assert.equal(writer.child.signalCode, null);
+  assert.equal(writer.child.exitCode, null, writer.err());
+  assert.equal(writer.child.signalCode, null, writer.err());
   assert.match(processState(writer.child.pid), /^(?![ZX])\S/, 'the writer is a live process when the waiter settles');
   assert.ok(agent.wrote(CARD, 'reviewer'));
 });
@@ -411,12 +447,80 @@ for (const alive of [false, true]) {
     const ended = await waiter.exited;
     assert.equal(ended.code, 5, ended.err());
     if (alive) {
-      assert.equal(writer.child.exitCode, null);
-      assert.equal(writer.child.signalCode, null);
+      assert.equal(writer.child.exitCode, null, writer.err());
+      assert.equal(writer.child.signalCode, null, writer.err());
       assert.match(processState(writer.child.pid), /^(?![ZX])\S/, 'the writer is a live process when the waiter settles');
     }
   });
 }
+
+// The waiter may find the file after announcement opens its FIFO but before the actual write.
+for (const errorMap of [undefined, 'probe-error', 'write-error']) {
+  test(errorMap === undefined
+    ? 'a writer stays alive when its waiter settles between notification open and write'
+    : errorMap === 'probe-error'
+      ? 'a writer preserves its original notification error when the absence observation fails'
+      : 'a writer preserves a non-pipe notification error without probing FIFO absence', SETTLES_WITHIN, async (t) => {
+    const agent = awaiting(true);
+    const waiterGate = gateIn();
+    const writerGate = gateIn();
+    tracing(t, agent, waiterGate.gate);
+    const waiter = started(t, agent, 'architect', stopping('wrote-' + CARD + '-reviewer', waiterGate.gate, 'before'));
+    await waiter.said('stopped before');
+    const writer = started(t, agent, 'reviewer', stopping(FIFO, writerGate.gate, 'announce', errorMap));
+    await writer.said('announce opened');
+    assert.ok(agent.wrote(CARD, 'reviewer'));
+    await waiterGate.open();
+    const ended = await waiter.exited;
+    assert.equal(ended.code, 5, ended.err());
+    assert.equal(existsSync(join(agent.dir, FIFO)), false, 'the settled waiter removed its owned FIFO');
+    await writerGate.open();
+    const expectedError = errorMap === 'write-error' ? 'EIO' : 'EPIPE';
+    await writer.said('announce write threw ' + expectedError);
+    const outcome = await Promise.race([
+      writer.exited,
+      writer.said('announce turn returned').then(() => undefined),
+    ]);
+    if (errorMap !== undefined) {
+      assert.notEqual(outcome, undefined, 'an unknown FIFO state must not suppress the notification failure');
+      assert.equal(outcome.code, 1, outcome.err());
+      await writer.said('original write error retained true');
+      await writer.said('absence probes ' + (errorMap === 'write-error' ? 0 : 1));
+      assert.match(outcome.err(), errorMap === 'write-error' ? /code: 'EIO'/ : /code: 'EPIPE'/);
+      assert.doesNotMatch(outcome.err(), /code: 'EACCES'/);
+      return;
+    }
+    if (outcome !== undefined) assert.equal(outcome.code, null, outcome.err());
+    assert.equal(writer.child.exitCode, null, writer.err());
+    assert.equal(writer.child.signalCode, null, writer.err());
+    assert.match(processState(writer.child.pid), /^(?![ZX])\S/, 'the writer remains live after its waiter closed the FIFO');
+  });
+}
+
+test('a writer rejects a broken notification pipe whose FIFO is still present', SETTLES_WITHIN, async (t) => {
+  const agent = awaiting(true);
+  const fifo = join(agent.dir, FIFO);
+  execFileSync('/usr/bin/mkfifo', [fifo]);
+  let reader = openSync(fifo, constants.O_RDONLY | constants.O_NONBLOCK);
+  t.after(() => { if (reader !== undefined) closeSync(reader); });
+  const writerGate = gateIn();
+  tracing(t, agent, writerGate.gate);
+  const writer = started(t, agent, 'reviewer', stopping(FIFO, writerGate.gate, 'announce'));
+  await writer.said('announce opened');
+  closeSync(reader);
+  reader = undefined;
+  assert.ok(existsSync(fifo), 'closing the reader leaves the owned FIFO name present');
+  await writerGate.open();
+  await writer.said('announce write threw EPIPE');
+  const ended = await Promise.race([
+    writer.exited,
+    writer.said('announce turn returned').then(() => undefined),
+  ]);
+  assert.notEqual(ended, undefined, 'a present FIFO must not suppress the notification failure');
+  assert.equal(ended.code, 1, ended.err());
+  assert.match(ended.err(), /code: 'EPIPE'/);
+  assert.ok(existsSync(fifo), 'a failed announcement does not remove the FIFO');
+});
 
 // Control for a write that fails: nothing is announced, the wait stays open, and a SIGTERM ends it
 // with its FIFO gone from the directory, which is still there.
