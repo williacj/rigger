@@ -13,7 +13,7 @@ import { openSink, readEvents } from '../src/observation/sink.mjs';
 import { readGroups, writeGroups } from '../src/execution/groups.mjs';
 import { dispatch, killRecordedGroups } from '../src/execution/run.mjs';
 import { EVENT_REFUSED, LSOF, NOT_STARTED, runCommand } from '../src/substrate/process.mjs';
-import { TAIL, alive, assertUntouched, fixture, gone, holding, leave, leaveWorking, read, tailIn, until } from './process-fixtures.mjs';
+import { TAIL, alive, assertUntouched, fixture, gone, holding, leave, leaveWorking, processState, read, tailIn, until } from './process-fixtures.mjs';
 import { heldOutput } from './process-fixtures.mjs';
 import { shellQuote } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
@@ -128,7 +128,7 @@ test('given a dispatch\'s directory named through a symbolic link, a process wor
   const result = await dispatchIn(join(directory, 'link'), { id: 'd-census', card: 1412, command: '/usr/bin/true' });
 
   assert.equal(result.exit, 0);
-  assert.equal(alive(under), false, 'the process working under the directory the link resolves to is alive');
+  assert.ok(processState(under).startsWith('Z') || !alive(under), 'the process working under the directory the link resolves to is alive');
 });
 
 // proves R-STATE-17
@@ -462,7 +462,7 @@ test('given a process outside every group Rigger created whose working directory
 
   await dispatchIn(directory, { id: 'd-census', card: 1412, command: '/usr/bin/true' });
 
-  assert.equal(alive(at), false, 'the process working in the dispatch\'s directory itself is alive');
+  assert.ok(processState(at).startsWith('Z') || !alive(at), 'the process working in the dispatch\'s directory itself is alive');
 });
 
 // proves R-STATE-17
