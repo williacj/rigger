@@ -35,7 +35,7 @@ const { 60_000: SETTLES_WITHIN } = BOUNDS;
  */
 const RUNS = 40;
 
-test('run observations publish a record only after its terminating newline arrives', () => {
+test('run observations publish a record only after its terminating newline arrives', SETTLES_WITHIN, () => {
   const agent = standInAgent();
   const log = join(agent.dir, 'runs.jsonl');
   writeFileSync(log, '{"card":1}\n{"card":');
@@ -398,14 +398,16 @@ for (const alive of [false, true]) {
   test(`a run awaiting a file written after it began and before its first read, by a writer ${alive ? 'still alive' : 'that has exited'}, settles`, SETTLES_WITHIN, async (t) => {
     const agent = awaiting(alive);
     const { gate, open } = gateIn();
+    tracing(t, agent, gate);
+    assert.ok(traces.has(t), 'the run records its trace');
     const waiter = started(t, agent, 'architect', stopping(`wrote-${CARD}-reviewer`, gate, 'before'));
-    await waiter.said('stopped before');
+    await traced(t, 'the waiter says stopped before', () => waiter.said('stopped before'));
     const writer = started(t, agent, 'reviewer');
-    if (alive) await until(() => agent.wrote(CARD, 'reviewer'), t);
-    else assert.equal((await writer.exited).code, 0, writer.err());
-    await open();
+    if (alive) await traced(t, 'the writer writes', () => until(() => agent.wrote(CARD, 'reviewer'), t));
+    else assert.equal((await traced(t, 'the writer\'s exit', () => writer.exited)).code, 0, writer.err());
+    await traced(t, 'the gate\'s open', () => open());
 
-    const ended = await waiter.exited;
+    const ended = await traced(t, 'the waiter\'s exit', () => waiter.exited);
     assert.equal(ended.code, 5, ended.err());
   });
 }
@@ -458,16 +460,18 @@ test('a run awaiting a file that is already there, whose FIFO cannot be made, fa
 test('a run whose writer fails to announce a file after the wait\'s first read has settled on it exits as settled, and the writer fails saying why', SETTLES_WITHIN, async (t) => {
   const agent = awaiting();
   const { gate, open } = gateIn();
+  tracing(t, agent, gate);
+  assert.ok(traces.has(t), 'the run records its trace');
   const writer = started(t, agent, 'reviewer', stopping(`wrote-${CARD}-reviewer`, gate, 'wrote'));
-  await writer.said('wrote');
+  await traced(t, 'the writer says wrote', () => writer.said('wrote'));
   const waiter = started(t, agent, 'architect');
-  const ended = await waiter.exited;
+  const ended = await traced(t, 'the waiter\'s exit', () => waiter.exited);
   assert.equal(ended.code, 5, ended.err());
   assert.deepEqual(readdirSync(agent.dir).filter((name) => name.endsWith('.awaited')), []);
   mkdirSync(join(agent.dir, FIFO));
-  await open();
+  await traced(t, 'the gate\'s open', () => open());
 
-  const failed = await writer.exited;
+  const failed = await traced(t, 'the writer\'s exit', () => writer.exited);
   assert.notEqual(failed.code, 0);
   assert.match(failed.err(), /EISDIR/);
 });
