@@ -1972,3 +1972,28 @@ test('given a loop handle whose injected kill rejects, a pull reads nothing, rec
   assert.equal(counted.reads, 0);
   assert.deepEqual(built.l3Events(), []);
 });
+
+// proves R-ESCALATE-11
+test('the same loop pulls an escalated card after a fresh board read shows the owner removed its label', SETTLES_WITHIN, async () => {
+  const fake = boardOf([{ ...cardIn(201, COLUMNS.ready), labels: ['type:change', 'RIGGER:ESCALATED'] }]);
+  let answered = false;
+  const board = handleOn(fake, { onRead: (items) => {
+    if (answered) items[0].labels = ['type:change'];
+  } });
+  const built = world({ fake, board });
+  assert.deepEqual(await built.loop.pull(), []);
+  assert.deepEqual(built.dispatches.started, []);
+  assert.deepEqual(fake.writes(), []);
+
+  answered = true;
+  const running = built.loop.pull(1);
+  const finished = settledOf(running);
+  try {
+    await positive(() => finished() || built.dispatches.holding().includes(201));
+    assert.deepEqual(built.dispatches.started, [201]);
+    assert.deepEqual(await columnsOf(fake), { 201: COLUMNS.coding });
+  } finally {
+    built.dispatches.releaseAll();
+    await running;
+  }
+});

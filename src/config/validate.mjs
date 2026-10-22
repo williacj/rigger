@@ -148,6 +148,9 @@ export const judgeRole = (entry) => (typeof entry === 'string' ? entry : entry?.
  */
 export const CATEGORIES = ['recorded-decision', 'critical', 'ambiguous'];
 
+/** Labels Rigger fixes, shared by provisioning, selector validation and L2 (`D27`). */
+export const FIXED_LABELS = { escalated: 'rigger:escalated' };
+
 /**
  * The tiers a role may run at, which are Rigger's and not the consumer's (`O4` on #467): each
  * provider adapter maps every one of them to a model of its own, so a config naming another names
@@ -184,6 +187,13 @@ const folded = (name) => name.replace(/[A-Z]/g, (letter) => letter.toLowerCase()
  * no string is one label with nothing.
  */
 export const sameLabel = (one, other) => typeof one === 'string' && typeof other === 'string' && folded(one) === folded(other);
+
+/** A fixed label cannot select a kind of work or mark a card as an epic (`R-SCHED-19`). */
+function readSelectorLabel(label, where, refusals) {
+  if (Object.values(FIXED_LABELS).some((fixed) => sameLabel(label, fixed))) {
+    refusals.push(`\`${where}\` names \`${label}\`, a label Rigger fixes and reserves from kind and epic selectors`);
+  }
+}
 
 /**
  * Whether a list holds anything that is no name. Read through `Array.from`, which visits every
@@ -294,6 +304,9 @@ function readKinds(config, refusals) {
       refusals.push(`\`${where}.maker\` names \`${kind.maker}\`, which is no role the config declares`);
     }
     readLabels(kind?.select, `${where}.select.labels`, refusals);
+    if (Array.isArray(kind?.select?.labels)) {
+      for (const label of kind.select.labels) readSelectorLabel(label, `${where}.select.labels`, refusals);
+    }
     if (kind?.judges === undefined) continue;
     if (!Array.isArray(kind.judges) || kind.judges.length === 0) {
       // One maker and at least one judge, in the order they judge in (`README.md`, "The
@@ -503,6 +516,7 @@ function readEpicLabel(config, refusals) {
     refusals.push('`epicLabel` must be one label name');
     return;
   }
+  readSelectorLabel(epicLabel, 'epicLabel', refusals);
   // Kinds that are no set of declarations, and labels that are no list, earned their refusal
   // where they were read.
   if (!declares(config.kinds)) return;
@@ -729,7 +743,8 @@ export function selectedLabels(config) {
 /**
  * Every label an accepted config declares, each once: those its kinds and steps select, then its
  * epic label where it declares one, then those its roles' `labels` map to a tier, then those
- * its roles' `providerLabels` map to a provider, roles in the order declared. These are the labels `setup-board` gives the repository. Two names GitHub holds
+ * its roles' `providerLabels` map to a provider, roles in the order declared, then Rigger's fixed
+ * labels. These are the labels `setup-board` gives the repository. Two names GitHub holds
  * as one label are one label here, spelled as the first of them declared.
  */
 export function declaredLabels(config) {
@@ -738,6 +753,7 @@ export function declaredLabels(config) {
     ...(Object.hasOwn(config, 'epicLabel') ? [config.epicLabel] : []),
     ...Object.values(config.roles).flatMap((role) => Object.keys(role.labels ?? {})),
     ...Object.values(config.roles).flatMap((role) => Object.keys(role.providerLabels ?? {})),
+    ...Object.values(FIXED_LABELS),
   ];
   return declared.filter((name, at) => !declared.slice(0, at).some((earlier) => sameLabel(earlier, name)));
 }

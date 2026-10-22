@@ -4,7 +4,7 @@
 // read it. Within an attempt at it: the next provisioning step it selected, the maker as a role,
 // the card attempted again, held, or stopped.
 
-import { OWNER, judgeRole, roleTimeout, sameLabel, stepTimeout, workRequires, worktreeTopic } from '../config/validate.mjs';
+import { FIXED_LABELS, OWNER, judgeRole, roleTimeout, sameLabel, stepTimeout, workRequires, worktreeTopic } from '../config/validate.mjs';
 import { WORKSPACE_NOT_MADE, topicFor } from '../execution/workspace.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
 import { acceptanceItems, checkAcceptanceForm } from './form-check.mjs';
@@ -13,6 +13,9 @@ import { evidenceDigest } from './marker.mjs';
 
 /** Whether a card carries `label`, reading label names as GitHub does, whatever their letter case. */
 const carries = (card, label) => card.labels.some((held) => sameLabel(held, label));
+
+/** The escalation status of an already-read board item, without reading its workflow facts. */
+export const escalationStatus = (card) => carries(card, FIXED_LABELS.escalated) ? { escalated: true } : undefined;
 
 /**
  * The names of the kinds that select a card, in the config's order: each kind any one of whose
@@ -74,14 +77,16 @@ const selecting = (card, kinds) =>
 export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTopic(), provisioning, outcomes = [], sink, attempt = 1, firstFailure, workspace, maker, forge, judged, directories, continuing } = {}) {
   // The facts L2's settle answered are of a card it moved to review.
   const card = forge === undefined ? given : { ...given, forge: { stage: 'review', ...forge } };
+  const escalation = escalationStatus(card);
+  if (escalation !== undefined && !(card.forge?.merged?.length > 0)) return { action: 'ignore', ...escalation };
   const { kind, answer } = kindOf(card, kinds, epicLabel);
-  if (answer !== undefined) return answer;
+  if (answer !== undefined) return escalation === undefined ? answer : { ...answer, ...escalation };
   if (continuing !== undefined) {
     const tier = roles === undefined ? undefined : tierOf(card, kinds[kind].maker, roles[kinds[kind].maker]);
     return within(card, kind, kinds[kind], { roles, tier: tier?.tier, topic, provisioning: provisioning ?? {}, outcomes, sink, attempt, firstFailure, workspace, maker, continuing });
   }
   const held = card.forge === undefined ? undefined : fromTheForge(card);
-  if (held?.action === 'ignore' || held?.action === 'move') return held;
+  if (held?.action === 'ignore' || held?.action === 'move') return escalation === undefined ? held : { ...held, ...escalation };
   if (held?.action === 'judge') return reviewAnswer(card, kinds, epicLabel, { roles, provisioning, sink, outcomes: judged, directories });
   const form = checkAcceptanceForm(card);
   const makerRole = kinds[kind].maker;
@@ -95,7 +100,7 @@ export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTop
     ? [held?.reason ?? (form.admitted ? undefined : form.reason)]
     : [...conflicts, held?.reason, form.admitted ? undefined : form.reason];
   const named = reasons.filter((reason) => reason !== undefined);
-  if (named.length > 0) return { action: 'refuse', card: card.number, reason: named.join('; and ') };
+  if (named.length > 0) return { action: 'refuse', card: card.number, reason: named.join('; and '), ...escalation };
   if (provisioning === undefined && maker === undefined) return { action: 'dispatch', kind };
   return within(card, kind, kinds[kind], { roles, tier: tier?.tier, topic, provisioning: provisioning ?? {}, outcomes, sink, attempt, firstFailure, workspace, maker });
 }

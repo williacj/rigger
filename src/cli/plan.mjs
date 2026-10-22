@@ -5,7 +5,7 @@ import { validate } from '../config/validate.mjs';
 import { pullOrder } from '../scheduling/pull-order.mjs';
 import { readSide, repositoryReads } from '../substrate/forge/read.mjs';
 import { factsCall } from '../workflow/facts.mjs';
-import { nextAction } from '../workflow/next-action.mjs';
+import { escalationStatus, nextAction } from '../workflow/next-action.mjs';
 import { CONFIG } from './init.mjs';
 import { PACKAGE, consumerConfig, settled } from './doctor.mjs';
 import { recording } from './recording.mjs';
@@ -62,7 +62,12 @@ async function planning(opened, { target = process.cwd(), packageRoot = PACKAGE,
   // The same facts call and next action the claiming verbs hand L3, so `plan` refuses each card
   // they would: for what the forge holds of its line of work, and for its maker's or a judge's
   // tier; and names the judges they would dispatch for a Review card.
-  const decide = (card) => nextAction(card, config.kinds, config.epicLabel, { roles: config.roles, provisioning: config.provisioning ?? {}, sink: UNRECORDED });
+  const answers = new Map();
+  const decide = (card) => {
+    const answer = nextAction(card, config.kinds, config.epicLabel, { roles: config.roles, provisioning: config.provisioning ?? {}, sink: UNRECORDED });
+    answers.set(card.number, answer);
+    return answer;
+  };
   let decided;
   try {
     decided = await factsCall({ config, reads: repositoryReads(forge, { send, emitter: sink.emitter({ layer: 'L0' }) }), decide })(read.items);
@@ -70,14 +75,19 @@ async function planning(opened, { target = process.cwd(), packageRoot = PACKAGE,
     return { text: `rigger plan: ${threw.message}`, code: 1 };
   }
   const order = pullOrder(read, decided);
+  const escalated = read.items.map((card) => [card.number,
+    answers.has(card.number) ? answers.get(card.number) : escalationStatus(card)])
+    .filter(([, answer]) => answer?.escalated);
+  const namedRefusals = order.refusals.filter(({ card }) => !answers.get(card)?.escalated);
 
   const counted = (n, what) => `${n} ${what}${n === 1 ? '' : 's'}`;
   const heading = order.pulls.length === 0
     ? `rigger plan: from board ${project}, nothing would be pulled`
     : `rigger plan: from board ${project}, the next run would pull ${counted(order.pulls.length, 'card')}, first pulled first`;
-  const refused = order.refusals.length === 0 ? '' : `, and refuses ${counted(order.refusals.length, 'card')}`;
+  const refused = namedRefusals.length === 0 ? '' : `, and refuses ${counted(namedRefusals.length, 'card')}`;
   return {
-    text: [`${heading}${refused}`, ...order.pulls.map(pullLine), ...order.refusals.map(refusalLine)].join('\n'),
+    text: [`${heading}${refused}`, ...order.pulls.map(pullLine), ...namedRefusals.map(refusalLine),
+      ...escalated.map(([card, answer]) => `  escalated #${card}${answer.reason ? `  ${answer.reason}` : ''}`)].join('\n'),
     code: 0,
   };
 }
