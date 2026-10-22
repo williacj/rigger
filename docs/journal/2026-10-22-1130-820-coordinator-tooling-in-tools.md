@@ -33,6 +33,12 @@ match the manifest's sha256.
   `--untracked-files=all`, because a clone's own config can hide untracked files. It keeps an
   entry whose pull request list fills the read's limit of 1000, because an open one may lie past
   it. It removes through `rm` on `PATH`, so a test can see each path printed before removal starts.
+- **What round 2 on #888 changed in the sweep.** A clone marking any tracked file
+  assume-unchanged or skip-worktree is kept, because `git status` trusts both bits and an edit
+  under either is invisible to it. Where the clone's commits are not reached by a forge tip it
+  holds, the sweep fetches the tips it lacks into a bare repository under its own temporary
+  directory. That repository borrows the clone's objects through an alternate, so nothing is
+  written into the clone or the root. A failed fetch keeps the clone, naming why.
 - **`suite-slot.test.sh`** differs from the source only where it names the default slot
   directory. The check of `RIGGER_WORKTREE_ROOT` lives in `test/coordinator-suite-slot.test.mjs`.
 - **The sweep's read timeout.** `SWEEP_READ_TIMEOUT`, default 60 seconds, bounds each read of the
