@@ -1,5 +1,5 @@
-// ABOUTME: The forge adapter's repository-write side: head-guarded merges and comments on pull
-// requests, sent through its own runner. Only L2 reaches it.
+// ABOUTME: The forge adapter's repository-write side: head-guarded merges, issue and PR comments,
+// and single issue-label additions, sent through its own runner. Only L2 reaches it.
 
 import { firstLine, readRunner, repositoryWriteRunner } from './runners.mjs';
 
@@ -37,8 +37,28 @@ async function pullOf(board, number, via) {
   return JSON.parse(said.stdout);
 }
 
+/** Name an issue write's target and reason, keeping transport and event-refusal codes. */
+async function issueWrite(operation, kind, number, write) {
+  const named = `${operation} on ${kind} #${number} failed: `;
+  try {
+    return await write();
+  } catch (error) {
+    if (error.message.startsWith(named)) throw error;
+    const failure = new Error(`${named}${error.message}`, { cause: error });
+    if (error.code !== undefined) failure.code = error.code;
+    throw failure;
+  }
+}
+
 export function repositoryWriteSide(board, { send, emitter, timeout } = {}) {
   const via = { send, emitter, timeout };
+  const postIssue = (number, endpoint, value, operation, kind = 'issue') => issueWrite(operation, kind, number, async () => {
+    if (!Number.isSafeInteger(number) || number < 1) throw new Error(`${operation} on ${kind} #${number} failed: not an ${kind} number`);
+    const args = ['api', `repos/${board.repo}/issues/${number}/${endpoint}`, '-X', 'POST', '-f', value];
+    const said = await repositoryWriteRunner(args, via);
+    if (said.status !== 0 || said.timedOut) throw new Error(`${operation} on ${kind} #${number} failed: ${firstLine(said)}`);
+    return JSON.parse(said.stdout);
+  });
   return {
     /** Merge by merge commit only at `expectedHead`, or answer why the forge refused it. */
     mergePullRequest: async (number, expectedHead) => {
@@ -61,11 +81,21 @@ export function repositoryWriteSide(board, { send, emitter, timeout } = {}) {
       throw new Error(`mergePullRequest #${number} failed: ${Number.isFinite(status) ? `HTTP ${status} ` : ''}${message}`);
     },
     /** Post `body` on a pull request, refusing an issue number that is not a pull request. */
-    postComment: async (number, body) => {
-      const args = ['api', `repos/${board.repo}/issues/${number}/comments`, '-X', 'POST', '-f', `body=${body}`];
-      const said = await repositoryWriteRunner(args, via);
-      if (said.status !== 0 || said.timedOut) throw new Error(`postComment on pull request #${number} failed: ${firstLine(said)}`);
-      return JSON.parse(said.stdout);
+    postComment: (number, body) => issueWrite('postComment', 'pull request', number, async () => {
+      if (!Number.isSafeInteger(number) || number < 1) throw new Error(`postComment on pull request #${number} failed: not a pull request number`);
+      const confirmed = await readRunner(['api', `repos/${board.repo}/pulls/${number}`, '-X', 'GET'], via);
+      if (confirmed.status !== 0 || confirmed.timedOut) throw new Error(`postComment on pull request #${number} failed: the forge did not confirm a pull request: ${firstLine(confirmed)}`);
+      let pull;
+      try { pull = JSON.parse(confirmed.stdout); } catch { /* An unreadable response cannot confirm a PR. */ }
+      if (typeof pull?.head?.sha !== 'string' || !/^[0-9a-f]{40}$/.test(pull.head.sha)) throw new Error(`postComment on pull request #${number} failed: the forge did not confirm a pull request`);
+      return postIssue(number, 'comments', `body=${body}`, 'postComment', 'pull request');
+    }),
+    /** Append `body` to an issue, including the issue behind a pull request. */
+    postIssueComment: (number, body) => postIssue(number, 'comments', `body=${body}`, 'postIssueComment'),
+    /** Add one label without replacing the issue's existing labels. */
+    addIssueLabel: async (number, label) => {
+      if (typeof label !== 'string' || label.length === 0) throw new Error(`addIssueLabel on issue #${number} failed: requires one label name`);
+      return postIssue(number, 'labels', `labels[]=${label}`, 'addIssueLabel');
     },
   };
 }

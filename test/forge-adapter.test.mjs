@@ -67,6 +67,109 @@ test('repository-write posts a comment only on a pull request', async () => {
   assert.deepEqual(sent[1], ['gh', 'api', 'repos/williacj/rigger/issues/12/comments', '-X', 'POST', '-f', 'body=review']);
 });
 
+test('repository-write exposes a card-issue comment operation with one exact write and no PR preflight', async () => {
+  const body = 'Owner input\n$(printf remains-data); "quoted"';
+  const sent = [];
+  const send = (command, args) => {
+    sent.push([command, ...args]);
+    return { status: 0, stdout: JSON.stringify({ id: 7, body }), stderr: '' };
+  };
+
+  assert.deepEqual(await repositoryWriteSide(BOARD, { send }).postIssueComment(214, body), { id: 7, body });
+  assert.deepEqual(sent, [['gh', 'api', 'repos/williacj/rigger/issues/214/comments', '-X', 'POST', '-f', `body=${body}`]]);
+});
+
+test('repository-write adds one issue label with one exact POST', async () => {
+  const sent = [];
+  const send = (command, args) => {
+    sent.push([command, ...args]);
+    return { status: 0, stdout: '[{"name":"existing"},{"name":"customer:publish"}]', stderr: '' };
+  };
+
+  assert.deepEqual(await repositoryWriteSide(BOARD, { send }).addIssueLabel(214, 'customer:publish'), [{ name: 'existing' }, { name: 'customer:publish' }]);
+  assert.deepEqual(sent, [['gh', 'api', 'repos/williacj/rigger/issues/214/labels', '-X', 'POST', '-f', 'labels[]=customer:publish']]);
+});
+
+test('the PR-only comment operation writes nothing for failed, timed-out, unreadable or unconfirmed PR preflights', async () => {
+  const cases = [
+    { name: 'ordinary issue', said: { status: 1, stdout: '', stderr: 'gh: Not Found (HTTP 404)' }, reason: /Not Found/ },
+    { name: 'transport failure', said: { status: 1, stdout: '', stderr: 'network unavailable' }, reason: /network unavailable/ },
+    { name: 'timeout', said: { status: 0, timedOut: true, timeout: 42, stdout: '', stderr: '' }, reason: /timeout of 42 ms/ },
+    { name: 'unreadable response', said: { status: 0, stdout: 'not JSON', stderr: '' }, reason: /did not confirm/ },
+    { name: 'unconfirmed response', said: { status: 0, stdout: '{}', stderr: '' }, reason: /did not confirm/ },
+    { name: 'malformed PR head', said: { status: 0, stdout: '{"head":{"sha":"not-a-head-sha"}}', stderr: '' }, reason: /did not confirm/ },
+  ];
+  for (const { name, said, reason } of cases) {
+    const sent = [];
+    const send = (command, args) => { sent.push([command, ...args]); return said; };
+
+    await assert.rejects(repositoryWriteSide(BOARD, { send }).postComment(12, 'Review'), (error) => /postComment on pull request #12 failed/.test(error.message) && reason.test(error.message), name);
+    assert.deepEqual(sent, [['gh', 'api', 'repos/williacj/rigger/pulls/12', '-X', 'GET']], name);
+  }
+});
+
+test('a failed PR preflight retains the did-not-confirm diagnosis and the underlying read reason', async () => {
+  const sent = [];
+  const send = (command, args) => {
+    sent.push([command, ...args]);
+    return { status: 1, stdout: '', stderr: 'gh: the read failed' };
+  };
+  await assert.rejects(repositoryWriteSide(BOARD, { send }).postComment(12, 'Review'), /postComment on pull request #12.*did not confirm.*the read failed/);
+  assert.deepEqual(sent, [['gh', 'api', 'repos/williacj/rigger/pulls/12', '-X', 'GET']]);
+});
+
+test('issue writes name their operation, issue and reason for HTTP refusals, transport failures and timeouts', async () => {
+  const failures = [
+    { status: 1, stdout: '{"message":"Validation Failed","status":422}', stderr: 'gh: Validation Failed (HTTP 422)' },
+    { status: 1, stdout: '', stderr: 'network unavailable' },
+    { status: 0, timedOut: true, timeout: 42, stdout: '', stderr: '' },
+  ];
+  for (const operation of ['postIssueComment', 'addIssueLabel']) {
+    for (const [index, said] of failures.entries()) {
+      const sent = [];
+      const send = (command, args) => { sent.push([command, ...args]); return said; };
+      await assert.rejects(repositoryWriteSide(BOARD, { send })[operation](214, 'payload'), (error) =>
+        error.message.includes(`${operation} on issue #214 failed:`)
+        && [/Validation Failed/, /network unavailable/, /timeout of 42 ms/][index].test(error.message));
+      assert.equal(sent.length, 1);
+    }
+  }
+});
+
+test('comment and label operations contextualize thrown transport errors without losing their code or cause', async () => {
+  for (const operation of ['postIssueComment', 'addIssueLabel', 'postComment']) {
+    const original = Object.assign(new Error('spawn unavailable'), { code: 'EVENT_REFUSED' });
+    const sent = [];
+    const send = (command, args) => { sent.push([command, ...args]); throw original; };
+    await assert.rejects(repositoryWriteSide(BOARD, { send })[operation](214, 'payload'), (error) =>
+      error.message.includes(`${operation} on ${operation === 'postComment' ? 'pull request' : 'issue'} #214 failed: spawn unavailable`)
+      && error.code === original.code && error.cause === original, operation);
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0][4], operation === 'postComment' ? 'GET' : 'POST');
+  }
+});
+
+test('issue writes and PR comments refuse invalid target numbers before sending', async () => {
+  for (const operation of ['postIssueComment', 'addIssueLabel', 'postComment']) {
+    for (const target of [undefined, 0, -1, '214', '214/extra', 1.5, NaN, Number.MAX_SAFE_INTEGER + 1]) {
+      const sent = [];
+      const send = (command, args) => { sent.push([command, ...args]); return { status: 0, stdout: '{}', stderr: '' }; };
+      await assert.rejects(repositoryWriteSide(BOARD, { send })[operation](target, 'payload'), (error) =>
+        error.message.includes(operation) && error.message.includes(`#${target}`));
+      assert.deepEqual(sent, [], `${operation} target ${target}`);
+    }
+  }
+});
+
+test('the label adapter refuses absent or multiple label names before sending', async () => {
+  for (const label of [undefined, '', [], ['one', 'two']]) {
+    const sent = [];
+    const send = (command, args) => { sent.push([command, ...args]); return { status: 0, stdout: '[]', stderr: '' }; };
+    await assert.rejects(repositoryWriteSide(BOARD, { send }).addIssueLabel(214, label), /addIssueLabel on issue #214.*one label name/);
+    assert.deepEqual(sent, []);
+  }
+});
+
 /** The document a `gh api graphql -f query=` request carries, or null for any other request. */
 const documentOf = (sent) => (sent[3]?.startsWith('query=') ? sent[3].slice('query='.length) : null);
 
