@@ -32,6 +32,8 @@ import { lockWorktreeAt } from './git-repository.mjs';
 import { world as schedulingWorld, COLUMNS, cardIn, columnsOf } from './loop-world.mjs';
 import { renameSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { detachedWorktreeAt } from './git-repository.mjs';
+import { unlockWorktreeAt } from './git-repository.mjs';
 
 /**
  * A repository whose `origin` is a local bare repository, a root for workspaces and a sink, in a
@@ -2185,4 +2187,423 @@ test('an unreadable worktree administrative directory keeps Review until a later
   assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
   assert.equal(existsSync(made.path), false);
   assert.equal(worktreeList(here.repository).includes(made.path), false);
+});
+
+/** A role directory containing the named real detached worktrees of this fixture repository. */
+function escalationRole(here, role, names, number = 42) {
+  const path = join(here.root, 'escalations', `rigger-${number}`, role);
+  mkdirSync(path, { recursive: true });
+  const trees = names.map((name) => detachedWorktreeAt(here.repository, join(path, name), headOf(here.repository)));
+  return { path, trees, role };
+}
+
+// proves R-WORK-33
+test('merged-card removal clears every eligible escalation role layout and retains other cards and the local branch', async (t) => {
+  const here = world(t);
+  await here.make(42);
+  const branch = branchAt(here.repository, 'rigger-42');
+  const roles = [
+    escalationRole(here, 'empty', []),
+    escalationRole(here, 'single', ['main']),
+    escalationRole(here, 'pair', ['main', 'head']),
+    escalationRole(here, 'several', ['alpha', 'beta', 'gamma', 'delta']),
+  ];
+  for (const { trees } of roles) for (const tree of trees) writeFileSync(join(tree, 'uncommitted'), 'an earlier role attempt\n');
+  const other = escalationRole(here, 'other', ['main'], 43);
+  const otherBefore = held(other.path);
+  const unrelated = join(here.root, 'unrelated');
+  writeFileSync(unrelated, 'retain this existing root entry\n');
+  const built = mergedRemoval(here);
+
+  await built.loop.pull();
+
+  assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
+  for (const { path, trees, role: expectedRole } of roles) {
+    assert.equal(existsSync(path), false, path);
+    for (const tree of trees) assert.equal(worktreeList(here.repository).includes(tree), false, tree);
+    assert.ok(here.events().some(({ event, path: removed, role }) => event === 'workspace.removed' && removed === path && role === expectedRole));
+  }
+  const base = join(here.root, 'escalations', 'rigger-42');
+  assert.equal(existsSync(base), false);
+  assert.equal(lstatSync(dirname(base)).isDirectory(), true);
+  assert.ok(here.events().some(({ event, path }) => event === 'workspace.removed' && path === base));
+  assert.deepEqual(held(other.path), otherBefore);
+  assert.equal(readFileSync(unrelated, 'utf8'), 'retain this existing root entry\n');
+  assert.equal(branchAt(here.repository, 'rigger-42'), branch);
+  const beforeRepeat = here.events().filter(({ layer }) => layer === 'L1');
+  await workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: here.sink });
+  assert.deepEqual(here.events().filter(({ layer }) => layer === 'L1'), beforeRepeat);
+  assert.deepEqual(held(other.path), otherBefore);
+});
+
+// proves R-WORK-33
+test('a gone person-locked escalation registration blocks Done while other eligible roles are removed', async (t) => {
+  for (const role of ['a-person', 'z-person']) {
+    const here = world(t);
+    const kept = escalationRole(here, role, ['main']);
+    const eligible = escalationRole(here, 'middle', ['main']);
+    lockWorktreeAt(here.repository, kept.trees[0], 'kept by a person');
+    rmSync(kept.path, { recursive: true });
+    const built = mergedRemoval(here);
+
+    await assert.rejects(built.loop.pull());
+
+    assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.review });
+    assert.equal(existsSync(eligible.path), false);
+    assert.equal(existsSync(kept.path), false);
+    assert.ok(worktreeList(here.repository).includes(kept.trees[0]));
+    assert.match(worktreeList(here.repository), /locked kept by a person/);
+    assert.ok(here.events().some(({ event, path, role: named, reason }) => event === 'workspace.left' && path === kept.trees[0] && named === role && reason.includes('kept by a person')));
+    unlockWorktreeAt(here.repository, kept.trees[0]);
+    await built.loop.pull();
+    assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
+    assert.equal(worktreeList(here.repository).includes(kept.trees[0]), false);
+  }
+});
+
+// proves R-WORK-33
+test('escalation removal leaves files and symbolic links at each hierarchy level without withholding Done', async (t) => {
+  for (const level of ['root', 'topic', 'role']) for (const shape of ['file', 'link', 'dangling-link']) {
+    const here = world(t);
+    const before = join(here.root, 'judges', 'rigger-42', 'before');
+    const after = join(here.root, 'scratch', 'rigger-42', 'after');
+    mkdirSync(before, { recursive: true });
+    mkdirSync(after, { recursive: true });
+    writeFileSync(join(after, 'output'), 'eligible scratch output\n');
+    const parent = join(here.root, 'escalations');
+    const base = join(parent, 'rigger-42');
+    const path = level === 'root' ? parent : level === 'topic' ? base : join(base, 'reviewer');
+    mkdirSync(dirname(path), { recursive: true });
+    const outside = join(here.directory, 'outside');
+    mkdirSync(join(outside, 'rigger-42', 'reviewer'), { recursive: true });
+    writeFileSync(join(outside, 'rigger-42', 'reviewer', 'kept'), 'retain the link target\n');
+    const target = shape === 'dangling-link' ? join(outside, 'absent') : outside;
+    if (shape === 'file') writeFileSync(path, 'retain this file\n', { mode: 0o444 });
+    else symlinkSync(target, path);
+    const mode = lstatSync(path).mode;
+    const outsideBefore = held(outside);
+    const built = mergedRemoval(here);
+
+    await assert.doesNotReject(built.loop.pull().catch((failure) => {
+      t.diagnostic(JSON.stringify(here.events().filter(({ layer, event }) => layer === 'L1' && event === 'workspace.left')));
+      throw failure;
+    }), `${level} ${shape}`);
+
+    assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
+    assert.equal(lstatSync(path).mode, mode);
+    if (shape === 'file') assert.equal(readFileSync(path, 'utf8'), 'retain this file\n');
+    else assert.equal(readlinkSync(path), target);
+    assert.deepEqual(held(outside), outsideBefore);
+    assert.equal(existsSync(before), false, `${level} ${shape}: earlier eligible role`);
+    assert.equal(existsSync(after), false, `${level} ${shape}: later eligible role`);
+    const named = level === 'role' ? path : base;
+    assert.ok(here.events().some(({ event, path: left, reason }) => event === 'workspace.left' && left === named && reason.includes(path)), `${level} ${shape}: refused path was not named`);
+    assert.equal(here.events().some(({ event, path: removed }) => event === 'workspace.removed' && removed === path), false);
+  }
+});
+
+// proves R-WORK-33
+test('escalation replacement refusals preserve each guarded role before or after an eligible role', async (t) => {
+  for (const cell of ['main-checkout', 'other-repository', 'attached', 'extra-content', 'nested-worktree']) for (const role of ['a-refused', 'z-refused']) {
+    const here = world(t);
+    const path = join(here.root, 'escalations', 'rigger-42', role);
+    mkdirSync(path, { recursive: true });
+    if (cell === 'main-checkout') {
+      const moved = join(path, 'main');
+      renameSync(here.repository, moved);
+      here.repository = moved;
+    } else if (cell === 'other-repository') {
+      repositoryAt(join(path, 'main'), { kept: 'another repository\n' });
+    } else if (cell === 'attached') {
+      worktreeAt(here.repository, join(path, 'main'), 'held');
+    } else if (cell === 'extra-content') {
+      writeFileSync(join(path, 'kept'), 'plain content is not a worktree\n');
+    } else {
+      const tree = detachedWorktreeAt(here.repository, join(path, 'main'), headOf(here.repository));
+      detachedWorktreeAt(here.repository, join(tree, 'nested'), headOf(here.repository));
+    }
+    const eligible = escalationRole(here, 'middle', ['main']);
+    const leaving = cell === 'main-checkout' ? ['main/.git/worktrees'] : [];
+    const before = contents(path, leaving);
+    const mode = lstatSync(path).mode;
+    const branch = branchAt(here.repository, 'held');
+    const built = mergedRemoval(here);
+
+    await assert.doesNotReject(built.loop.pull(), `${cell} ${role}`);
+
+    assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
+    assert.deepEqual(contents(path, leaving), before, `${cell} ${role}`);
+    assert.equal(lstatSync(path).mode, mode);
+    assert.equal(branchAt(here.repository, 'held'), branch);
+    assert.equal(existsSync(eligible.path), false, `${cell} ${role}: eligible role was not tried`);
+    assert.ok(here.events().some(({ event, path: left, role: named, reason }) => event === 'workspace.left' && left === path && named === role && reason.includes(path)), `${cell} ${role}: no named refusal`);
+    assert.equal(here.events().some(({ event, path: removed }) => event === 'workspace.removed' && removed === path), false);
+  }
+});
+
+// proves R-WORK-33
+test('a present person-locked escalation role keeps every tree and its lock while other roles finish', async (t) => {
+  for (const role of ['a-person', 'z-person']) {
+    const here = world(t);
+    const kept = escalationRole(here, role, ['main', 'head']);
+    lockWorktreeAt(here.repository, kept.trees[0], 'kept by a person');
+    const eligible = escalationRole(here, 'middle', ['main']);
+    const before = held(kept.path);
+    const built = mergedRemoval(here);
+
+    await assert.rejects(built.loop.pull());
+
+    assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.review });
+    assert.deepEqual(held(kept.path), before);
+    assert.match(worktreeList(here.repository), /locked kept by a person/);
+    for (const tree of kept.trees) assert.ok(worktreeList(here.repository).includes(tree));
+    assert.equal(existsSync(eligible.path), false);
+    assert.ok(here.events().some(({ event, path, role: named, reason }) => event === 'workspace.left' && path === kept.path && named === role && reason.includes('kept by a person')));
+    unlockWorktreeAt(here.repository, kept.trees[0]);
+    await built.loop.pull();
+    assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
+    assert.equal(existsSync(kept.path), false);
+  }
+});
+
+// proves R-WORK-33
+test('escalation removal prunes stale registrations and unlocks only initializing locks across absent parents', async (t) => {
+  for (const state of ['present', 'role-gone', 'topic-gone', 'parent-gone']) for (const locked of [false, true]) {
+    const here = world(t);
+    const made = escalationRole(here, 'reviewer', ['main', 'head']);
+    if (locked) lockWorktreeAt(here.repository, made.trees[0], ADDING);
+    if (state !== 'present') rmSync(state === 'role-gone' ? made.path : state === 'topic-gone' ? dirname(made.path) : dirname(dirname(made.path)), { recursive: true });
+    for (const tree of made.trees) assert.ok(worktreeList(here.repository).includes(tree));
+    const built = mergedRemoval(here);
+
+    await assert.doesNotReject(built.loop.pull(), `${state} initializing=${locked}`);
+
+    assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
+    assert.equal(existsSync(made.path), false);
+    for (const tree of made.trees) assert.equal(worktreeList(here.repository).includes(tree), false, tree);
+    if (state !== 'present') assert.equal(here.events().some(({ event, path }) => event === 'workspace.removed' && path === made.path), false);
+    const beforeRepeat = here.events().filter(({ layer }) => layer === 'L1');
+    await workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: here.sink });
+    assert.deepEqual(here.events().filter(({ layer }) => layer === 'L1'), beforeRepeat);
+  }
+});
+
+// proves R-WORK-33
+test('an escalation role containing initializing and person locks preserves both until the person unlocks', async (t) => {
+  for (const role of ['a-person', 'z-person']) {
+    const here = world(t);
+    const kept = escalationRole(here, role, ['a-own', 'z-person']);
+    lockWorktreeAt(here.repository, kept.trees[0], ADDING);
+    lockWorktreeAt(here.repository, kept.trees[1], 'kept by a person');
+    const eligible = escalationRole(here, 'middle', ['main']);
+    const before = held(kept.path);
+    const built = mergedRemoval(here);
+
+    await assert.rejects(built.loop.pull());
+
+    assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.review });
+    assert.deepEqual(held(kept.path), before);
+    assert.match(worktreeList(here.repository), /locked initializing/);
+    assert.match(worktreeList(here.repository), /locked kept by a person/);
+    assert.equal(existsSync(eligible.path), false);
+    unlockWorktreeAt(here.repository, kept.trees[1]);
+    await built.loop.pull();
+    assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
+    for (const tree of kept.trees) assert.equal(worktreeList(here.repository).includes(tree), false);
+  }
+});
+
+// proves R-WORK-33
+test('an absent escalation hierarchy causes no removal event or failure and keeps unrelated root content', async (t) => {
+  const here = world(t);
+  mkdirSync(here.root);
+  writeFileSync(join(here.root, 'kept'), 'unrelated existing content\n');
+  const before = held(here.root);
+  const built = mergedRemoval(here);
+
+  await built.loop.pull();
+
+  assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
+  assert.deepEqual(held(here.root), before);
+  assert.deepEqual(here.events().filter(({ layer }) => layer === 'L1'), []);
+});
+
+// proves R-WORK-33
+test('failed or timed-out escalation worktree checks keep Review and a later pull retries them', async (t) => {
+  for (const cell of ['failed', 'timed-out']) {
+    const here = world(t);
+    const kept = escalationRole(here, 'a-failed', ['main']);
+    const eligible = escalationRole(here, 'z-later', ['main']);
+    const before = held(kept.path);
+    const options = cell === 'timed-out' ? { timeout: OUTLIVED } : {};
+    const built = mergedRemoval(here, options);
+    const stand = cell === 'timed-out' ? holding(t) : scratch(t);
+    fixture(stand, 'git', [
+      `if [ "$1" = -C ] && [ "$2" = '${kept.trees[0]}' ] && [ ! -e "$here/failed" ]; then`,
+      '  : > "$here/failed"',
+      ...(cell === 'timed-out' ? ['  exec /usr/bin/tail -f "$here/hold"'] : ['  echo "escalation recognition read failed" >&2', '  exit 1']),
+      'fi',
+      `exec '${GIT}' "$@"`,
+    ].join('\n'));
+
+    await assert.rejects(withFirstOnPath(stand, () => built.loop.pull()));
+
+    assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.review });
+    assert.deepEqual(held(kept.path), before);
+    assert.equal(existsSync(eligible.path), false);
+    assert.ok(here.events().some(({ event, path, reason }) => event === 'workspace.left' && path === kept.path && (cell === 'failed' ? reason.includes('escalation recognition read failed') : reason.includes('past its timeout'))));
+    options.timeout = undefined;
+    await built.loop.pull();
+    assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
+    assert.equal(existsSync(kept.path), false);
+  }
+});
+
+// proves R-WORK-33
+test('unreadable escalation topic or worktree administration withholds Done and retries the remaining guards', async (t) => {
+  for (const cell of ['topic', 'administration']) {
+    const here = world(t);
+    const kept = escalationRole(here, 'reviewer', ['main']);
+    const path = cell === 'topic' ? dirname(kept.path) : gitIn(kept.trees[0], 'rev-parse', '--absolute-git-dir').trim();
+    const mode = lstatSync(path).mode & 0o777;
+    const before = held(kept.path);
+    const built = mergedRemoval(here);
+    chmodSync(path, 0o000);
+    try {
+      await assert.rejects(built.loop.pull());
+      assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.review });
+      assert.equal(lstatSync(path).mode & 0o777, 0);
+      const named = cell === 'topic' ? dirname(kept.path) : kept.path;
+      assert.ok(here.events().some(({ event, path: left, reason }) => event === 'workspace.left' && left === named && /permission denied|exited 128/i.test(reason)));
+    } finally {
+      chmodSync(path, mode);
+    }
+    assert.deepEqual(held(kept.path), before);
+    // Git's global prune can forget an unlocked tree it cannot reach. The retry uses the
+    // registration Git still holds, rather than assuming the first check preserved it.
+    const registered = worktreeList(here.repository).includes(kept.trees[0]);
+    const answer = spawnSync(GIT, ['-C', kept.trees[0], 'rev-parse', '--git-common-dir'], { encoding: 'utf8', env: gitEnvironment() });
+    assert.equal(answer.status === 0, registered, answer.stderr);
+    const beforeRetry = here.events().length;
+    await built.loop.pull();
+    assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
+    assert.equal(existsSync(kept.path), !registered);
+    if (!registered) {
+      assert.deepEqual(held(kept.path), before);
+      assert.ok(here.events().slice(beforeRetry).some(({ event, path, reason }) => event === 'workspace.left' && path === kept.path && reason.includes('not a worktree of the repository')));
+    }
+  }
+});
+
+// proves R-WORK-33
+test('whole and partial escalation removals name what remains and retry after later roles finish', async (t) => {
+  for (const cell of ['whole', 'partial']) {
+    const here = world(t);
+    const kept = escalationRole(here, 'a-failed', ['main', 'head']);
+    writeFileSync(join(kept.trees[0], 'uncommitted'), 'part of an earlier role attempt\n');
+    const before = held(kept.path);
+    const eligible = escalationRole(here, 'z-later', ['main']);
+    const stopped = cell === 'whole' ? kept.trees[1] : kept.trees[0];
+    const built = mergedRemoval(here);
+    const stand = scratch(t);
+    fixture(stand, 'git', [
+      'if [ "$1" = worktree ] && [ "$2" = remove ]; then',
+      '  for last do :; done',
+      `  if [ "$last" = '${stopped}' ]; then`,
+      ...(cell === 'partial' ? ['    /bin/rm -f "$last/uncommitted"'] : []),
+      '    echo "escalation removal stopped" >&2',
+      '    exit 1',
+      '  fi',
+      'fi',
+      `exec '${GIT}' "$@"`,
+    ].join('\n'));
+
+    await assert.rejects(withFirstOnPath(stand, () => built.loop.pull()));
+
+    assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.review });
+    assert.equal(existsSync(eligible.path), false);
+    assert.equal(existsSync(stopped), true);
+    if (cell === 'whole') assert.deepEqual(held(kept.path), before);
+    else {
+      assert.equal(existsSync(kept.trees[1]), false);
+      assert.equal(worktreeList(here.repository).includes(kept.trees[1]), false);
+      assert.equal(existsSync(join(kept.trees[0], 'uncommitted')), false);
+    }
+    for (const path of [kept.path, dirname(kept.path)]) assert.ok(here.events().some(({ event, path: left, reason }) => event === 'workspace.left' && left === path && reason.length > 0));
+    assert.ok(here.events().some(({ event, path, reason }) => event === 'workspace.left' && path === kept.path && reason.includes('escalation removal stopped')));
+    await built.loop.pull();
+    assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
+    assert.equal(existsSync(kept.path), false);
+    for (const tree of kept.trees) assert.equal(worktreeList(here.repository).includes(tree), false);
+  }
+});
+
+// proves R-WORK-33
+test('refused escalation removal or left events retain the actual state and unrecorded event until retry', async (t) => {
+  for (const cell of ['removed-role', 'removed-topic', 'left-role']) {
+    const here = world(t);
+    const made = escalationRole(here, 'reviewer', cell === 'left-role' ? [] : ['main']);
+    if (cell === 'left-role') writeFileSync(join(made.path, 'kept'), 'a completed guard refusal\n');
+    const path = cell === 'removed-topic' ? dirname(made.path) : made.path;
+    const event = cell === 'left-role' ? 'workspace.left' : 'workspace.removed';
+    let refuse = true;
+    const sink = { emitter: (context) => {
+      const emitter = here.sink.emitter(context);
+      return { emit: (name, fields) => {
+        if (refuse && context.layer === 'L1' && name === event && fields.path === path) throw new Error('escalation record full');
+        emitter.emit(name, fields);
+      } };
+    } };
+    const built = mergedRemoval(here, { sink });
+
+    await assert.rejects(built.loop.pull(), (failure) => {
+      const refusal = failure.errors[0];
+      assert.equal(refusal.code, EVENT_REFUSED);
+      assert.match(refusal.message, /unrecorded.*escalation record full/);
+      assert.deepEqual(refusal.unrecorded.map(({ event, path }) => ({ event, path })), [{ event, path }]);
+      return true;
+    });
+
+    assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.review });
+    assert.equal(existsSync(path), cell === 'left-role');
+    if (cell === 'left-role') assert.equal(readFileSync(join(made.path, 'kept'), 'utf8'), 'a completed guard refusal\n');
+    else assert.equal(here.events().some(({ event, path: left }) => event === 'workspace.left' && left === path), false);
+    refuse = false;
+    await built.loop.pull();
+    assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
+    assert.equal(existsSync(made.path), cell === 'left-role');
+  }
+});
+// proves R-WORK-33
+test('escalation removal preserves an empty target behind either hierarchy symlink and names that link refusal', async (t) => {
+  for (const level of ['root', 'topic']) {
+    const here = world(t);
+    const parent = join(here.root, 'escalations');
+    const base = join(parent, 'rigger-42');
+    const link = level === 'root' ? parent : base;
+    const outside = join(here.directory, 'outside-escalations');
+    const targetTopic = level === 'root' ? join(outside, 'rigger-42') : outside;
+    mkdirSync(targetTopic, { recursive: true });
+    mkdirSync(dirname(link), { recursive: true });
+    symlinkSync(outside, link);
+    const before = held(outside);
+    const built = mergedRemoval(here);
+
+    await assert.doesNotReject(built.loop.pull().catch((failure) => {
+      t.diagnostic(JSON.stringify(here.events().filter(({ layer, event }) => layer === 'L1' && event === 'workspace.left')));
+      throw failure;
+    }), `${level}: a link refusal must not fail removal`);
+
+    assert.equal(existsSync(targetTopic), true, `${level}: the empty target topic outside the root was removed through the link`);
+    assert.equal(lstatSync(targetTopic).isDirectory(), true);
+    assert.deepEqual(held(outside), before, `${level}: the outside target changed`);
+    assert.equal(lstatSync(link).isSymbolicLink(), true);
+    assert.equal(readlinkSync(link), outside);
+    assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
+    const left = here.events().filter(({ layer, event }) => layer === 'L1' && event === 'workspace.left');
+    assert.equal(left.length, 1, `${level}: exactly the link refusal is recorded`);
+    assert.equal(left[0].path, base);
+    assert.ok(left[0].reason.startsWith(`${link} is a symbolic link`), `${level}: the reason must identify the refused link, not a nonempty ancestor`);
+    assert.deepEqual(here.events().filter(({ layer, event }) => layer === 'L1' && event === 'workspace.removed'), []);
+  }
 });
