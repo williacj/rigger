@@ -93,7 +93,7 @@ export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTop
         || !['review', 'owner'].includes(facts?.stage) || facts.closed.length === 0
         || facts.open.length > 0 || facts.merged.length > 0) return ordinary;
     const following = forgeRefusal
-      ? { action: 'escalate', category: 'ambiguous', reason: ordinary.reason, line: facts.line }
+      ? { action: 'escalate', category: 'ambiguous', raiser: 'loop', reason: ordinary.reason, line: facts.line }
       : ordinary;
     return { action: 'remove', following };
   };

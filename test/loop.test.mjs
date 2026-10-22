@@ -2517,6 +2517,7 @@ test('a closed cleanup rechecks claim availability after an independently delaye
     removeDirectories: async () => { removals += 1; await removalWait; }, state: built.directory, environment: {},
   });
   const first = handle.pull(1);
+  const firstEnded = settledOf(first);
   first.catch(() => {});
   let second;
   t.after(async () => { releaseFacts(); releaseRemoval(); await Promise.allSettled([first, second].filter(Boolean)); });
@@ -2528,6 +2529,8 @@ test('a closed cleanup rechecks claim availability after an independently delaye
   await waitFor(() => ended() || removals > 0);
   assert.equal(removals, 1);
   releaseFacts();
+  await waitFor(() => firstEnded() || removals > 1);
+  assert.equal(removals, 1, 'stale facts must not enter a second removal');
   assert.deepEqual(await first, [], 'the stale facts caller takes no second same-card claim');
   assert.equal(removals, 1);
   assert.deepEqual(cardsOf(built, 'slot.release'), []);
@@ -2555,16 +2558,24 @@ test('one closed claim spans delayed removal and every following owner write wit
     const held = wait();
     target[operation] = async (...args) => { entered.push(operation); await held; return original(...args); };
   }
+  const overlaps = [];
   const running = built.loop.run();
   const ended = settledOf(running);
   running.catch(() => {});
-  t.after(async () => { for (const release of releases) release(); await running.catch(() => {}); });
+  t.after(async () => { for (const release of releases) release(); await Promise.allSettled([running, ...overlaps]); });
   const order = ['remove', 'postIssueComment', 'moveItem', 'addIssueLabel'];
   for (const [at, operation] of order.entries()) {
     await waitFor(() => ended() || entered.includes(operation));
     assert.deepEqual(entered, order.slice(0, at + 1));
     assert.deepEqual(cardsOf(built, 'slot.release'), []);
-    assert.deepEqual(await built.loop.pull(1), [], `${operation} still owns the only same-card claim`);
+    const beforeOverlap = entered.length;
+    const overlap = built.loop.pull(1);
+    overlaps.push(overlap);
+    const overlapEnded = settledOf(overlap);
+    overlap.catch(() => {});
+    await waitFor(() => overlapEnded() || entered.length > beforeOverlap);
+    assert.deepEqual(entered, order.slice(0, at + 1), 'an overlapping pull must not enter another operation');
+    assert.deepEqual(await overlap, [], `${operation} still owns the only same-card claim`);
     assert.deepEqual(cardsOf(built, 'pull'), [number]);
     assert.deepEqual(cardsOf(built, 'slot.release'), []);
     if (operation === 'remove') assert.equal((await columnsOf(built.fake))[number], COLUMNS.review);

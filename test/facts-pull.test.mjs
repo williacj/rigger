@@ -361,7 +361,7 @@ test('run records one L2 escalation and settles without pulling that Review card
     forge: { pullRequests: [{ ...pullFrom(number, pull), mergeable: 'mergeable', comments: [marker] }] },
   });
 
-  assert.deepEqual(await built.loop.run(), [{ card: number, action: 'escalate', category: 'critical', reason: 'reviewer (critical): Keep the user files.', pull, head: pullFrom(number, pull).sha }]);
+  assert.deepEqual(await built.loop.run(), [{ card: number, action: 'escalate', category: 'critical', raiser: 'loop', reason: 'reviewer (critical): Keep the user files.', pull, head: pullFrom(number, pull).sha }]);
   assert.deepEqual(pulledIn(built), [number]);
   assert.deepEqual(built.events().filter(({ event }) => event === 'review.escalate').map(({ layer, card, category }) => ({ layer, card, category })), [
     { layer: 'L2', card: number, category: 'critical' },

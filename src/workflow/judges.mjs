@@ -238,7 +238,7 @@ function judgeOf(role, declared, tier, provider, pull, evidence, facts, items) {
  *
  * Each answer is one of `{ action: 'judge', kind, judges }`, `{ action: 'refuse', card, reason }`,
  * `{ action: 'move', to }`, `{ action: 'continue', pull, head, markers }`, `{ action: 'return',
- * pull, comment }`, `{ action: 'escalate', category, reason, pull, head }`, `{ action: 'merge', pull, head }` and
+ * pull, comment }`, `{ action: 'escalate', category, raiser, reason, pull, head }`, `{ action: 'merge', pull, head }` and
  * `{ action: 'ignore', reason }`, which L3 carries out.
  */
 export function reviewAnswer(card, kinds, epicLabel, options = {}) {
@@ -265,7 +265,7 @@ export function reviewAnswer(card, kinds, epicLabel, options = {}) {
   const states = agents.map((role) => stateOf(governing.get(role), required.get(role)));
   if (card.forge.stage === 'coding') return codingAnswer(card, pull, states, agents.map((role) => governing.get(role)), items);
   if (states.includes('critical')) return {
-    action: 'escalate', category: 'critical', pull: pull.number, head: pull.head,
+    action: 'escalate', category: 'critical', raiser: 'loop', pull: pull.number, head: pull.head,
     reason: agents.filter((role, at) => states[at] === 'critical')
       .map((role) => markerReason(governing.get(role).marker, items)).join('\n'),
   };
@@ -280,7 +280,7 @@ export function reviewAnswer(card, kinds, epicLabel, options = {}) {
   const spent = revising.length > 0 ? roundsOf(comments, round, required) : 0;
   const bound = declared.rounds ?? ROUNDS;
   if (revising.length > 0 && spent >= bound) return {
-    action: 'escalate', category: 'ambiguous', pull: pull.number, head: pull.head,
+    action: 'escalate', category: 'ambiguous', raiser: 'loop', pull: pull.number, head: pull.head,
     reason: [`${spent} of ${bound} rounds spent.`, ...revising.map((role) => markerReason(governing.get(role).marker, items))].join('\n'),
   };
   if (revising.length > 0) return continued(pull, revising.map((role) => governing.get(role).marker), items);
@@ -342,7 +342,7 @@ function ownerAnswer(card, panel, pull, comments, round, owner, items) {
     return { action: 'ignore', reason: `the owner's marker ${at} is ${why}` };
   }
   if (state === 'critical') return {
-    action: 'escalate', category: 'critical', pull: pull.number, head: pull.head,
+    action: 'escalate', category: 'critical', raiser: 'loop', pull: pull.number, head: pull.head,
     reason: markerReason(owner.marker, items),
   };
   if (state === 'insufficient') return returned(card, pull, comments, owner.marker);
