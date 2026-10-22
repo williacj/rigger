@@ -4031,6 +4031,12 @@ test('an exit cleanup that reads its actual leader as a zombie records no leader
   assert.ok(Number.isSafeInteger(group) && group > 0, 'the real caller did not record its leader identity');
   assert.ok(ended.some(({ stdout }) => stdout.split('\n').some((row) => new RegExp(`^\\s*${group} Z\\S*\\s`).test(row))), 'no successful real process-table answer identified the leader as a zombie');
   assert.deepEqual(events.filter(({ event, pid }) => event === 'survivor.unended' && pid === group), []);
+  for (const name of ['one', 'two']) {
+    const pid = pidIn(directory, name);
+    assert.ok(Number.isSafeInteger(pid) && pid > 1, `the real caller did not record its ${name} child identity`);
+    const state = processState(pid);
+    assert.ok(state.startsWith('Z') || !alive(pid), `the cleanup left its ${name} child alive: pid=${pid}, state=${JSON.stringify(state)}`);
+  }
   assert.equal(alive(group), false, 'the reaped caller still has a live leader');
 });
 
