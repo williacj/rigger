@@ -79,11 +79,11 @@ or /mnt/c installation supplying Node or npm.
 
 ## Clone and run
 
-While #832 is unmerged, check out its experimental branch explicitly:
+Check out `main`, which includes the experimental Linux test compatibility work:
 
 ```bash
 mkdir -p "$HOME/src"
-git -c core.autocrlf=false clone --branch rigger-832 https://github.com/williacj/rigger.git "$HOME/src/rigger"
+git -c core.autocrlf=false clone --branch main https://github.com/williacj/rigger.git "$HOME/src/rigger"
 cd "$HOME/src/rigger"
 git config core.autocrlf false
 npm ci
@@ -102,7 +102,7 @@ summary. A skip count alone does not establish success.
 | Node reports win32, or a command resolves under /mnt/c | Put the Linux Node bin first on PATH, reopen Ubuntu, and repeat the tool checks. |
 | Shell reports `sh\r`, `bash\r` or bad interpreter | Clone in Linux with the command above. Keep Linux files as LF and install dependencies there. |
 | Missing cc, lsof, pgrep or flock | Repeat the Linux tools installation and check command resolution. |
-| Missing lockf on Ubuntu | Confirm the branch is rigger-832. Its Linux fixtures use flock; do not alias lockf. |
+| Missing lockf on Ubuntu | Use the current main checkout above. Its Linux fixtures use flock; do not alias lockf. |
 | A test fails or is cancelled | Keep the full output and record `git rev-parse HEAD`, `node --version`, `uname -a` and `cat /etc/os-release`. Rerun the named test using `npm test -- test/name.test.mjs`. |
 
 The [verification journal](journal/2026-10-20-1646-832-linux-tests.md) records the measured WSL run.

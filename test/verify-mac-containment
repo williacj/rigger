@@ -52,7 +52,7 @@ for (const cell of cases) {
     const controls = join(evidence, 'controls');
     mkdirSync(tmp, { recursive: true, mode: 0o700 });
     mkdirSync(controls, { mode: 0o700 });
-    const args = ['test', '--', '--test-reporter=tap', `--test-name-pattern=^${cell.title}$`, 'test/never-stop.test.mjs'];
+    const args = ['run', 'test:host', '--', '--test-reporter=tap', `--test-name-pattern=^${cell.title}$`, 'test/never-stop.test.mjs'];
     const env = { ...process.env, TMPDIR: tmp, C615_EVIDENCE_ROOT: controls };
     // A focused invocation owns its admission contract; an outer runner's contract must not leak in.
     for (const name of ['NODE_TEST_CONTEXT', 'C615_WORK_DEADLINE_NS', 'C615_STOP_MARKER', 'C615_SIGHTING_EVIDENCE_ROOT']) delete env[name];

@@ -186,7 +186,9 @@ says how one merges. The paths:
 - The live gate: `.github/workflows/rigger-gate.yml` and
   `templates/github/workflows/rigger-gate.yml`; `.github/workflows/self-hosting.yml` and
   `.github/scripts/self-hosting-check.mjs`; `.github/workflows/ci.yml`.
-- The git hooks: `.githooks/`, and `templates/githooks/` with it.
+- The git hooks: `.githooks/`, and `templates/githooks/` with it, and what decides what they run:
+  `test/suite.sh` and `package.json`, with any file the suite loads to place a test in a tier
+  (`test/suite-guard.cjs` and `test/suite-path.cjs`).
 - The live config: `rigger.config.mjs`.
 - The live Codex configuration: `.codex/config.toml`, and the directory `templates/codex/` with it.
 - The CLI entry point: `src/cli/rigger.mjs`, which the package manifest declares as its bin.
@@ -204,3 +206,9 @@ through the gate, the forge's required checks, "rigger/gate" and "self-hosting" 
 rule in `rigger.config.mjs`. Commit atomically and often, with messages that say why.
 `git status` before `git add -A`. Commit a journal entry with the work that produced it, as its
 own file in `docs/journal/` named `<date>-<time>-<card>-<slug>.md`.
+
+Remove what you make by hand. Once a pull request merges or closes, remove each worktree and
+scratch clone you made for its work. Where you will hand off or end before then, remove each one
+whose work the forge already holds as you finish. Never remove one you did not make, or one a
+process other than your own command is using. Where one holds uncommitted changes or commits the
+forge does not hold, ask the owner before removing it.
