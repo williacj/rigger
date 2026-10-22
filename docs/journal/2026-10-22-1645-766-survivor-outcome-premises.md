@@ -74,3 +74,38 @@ the three new requirement claims. The ordinary suite is run by the normal commit
 hook after this source is frozen. Its separate output is part of the handoff.
 macOS execution remains an explicit CI boundary; these Linux measurements do not
 establish macOS runtime behavior.
+
+## Child-ending proof after independent review
+
+The independent architect found that the new actual-zombie leader witness at
+head `851c9506ecc4ab5cc18e5a599f40ae97ae5381f1` also claimed
+`R-STATE-9` while never asserting that its two real children ended. A temporary
+leader-only kill still produced the real zombie leader observation and passed
+the test, with both actual children left live. That was a gap in this new proof;
+the earlier mutation that failed before establishing its zombie premise earned
+no group-ending outcome credit.
+
+The same test now checks each recorded child's identity and independently reads
+its process state after cleanup. A positively observed zombie or signal-0
+`ESRCH` establishes that the child ended. A live or stopped state, or an empty
+state answer while signal 0 still reaches that PID, fails. No product behavior
+or protected pre-existing test body changed.
+
+A guarded temporary mutation again sends the positive leader PID its SIGKILL
+instead of signaling the group. The existing successful real-Z premise and
+no-leader-unended assertion both pass before the new child-ending assertion
+fails. Its preceding observation identifies actual child one, PID 572, in
+`Sl` state with signal 0 succeeding. The named test reports one failure with
+zero cancellations and zero skips. Restoring the production source byte-for-byte
+makes that same test pass. The retained receipt names the counted anchor,
+original/mutant/restored hashes, exact diff, complete outputs and observed
+effect. This repairs the current test's discrimination and assigns no new cause
+to a historical incident.
+
+After this six-line assertion repair, the same twelve affected host controls
+measure twelve passes, zero failures, zero cancellations and zero skips in
+35000.369142 ms on Ubuntu WSL2 with Node 26.12.0. The exact argv selection is
+retained with the complete output. The repaired source passes matrix, package
+budget, header and diff checks. The final staged tree receives the ordinary
+suite through the normal commit hook; its complete result is retained separately
+for the fresh independent panels.
