@@ -204,3 +204,9 @@ through the gate, the forge's required checks, "rigger/gate" and "self-hosting" 
 rule in `rigger.config.mjs`. Commit atomically and often, with messages that say why.
 `git status` before `git add -A`. Commit a journal entry with the work that produced it, as its
 own file in `docs/journal/` named `<date>-<time>-<card>-<slug>.md`.
+
+Remove what you make by hand. Once a pull request merges or closes, remove each worktree and
+scratch clone you made for its work. Where you will hand off or end before then, remove each one
+whose work the forge already holds as you finish. Never remove one you did not make, or one a
+process other than your own command is using. Where one holds uncommitted changes or commits the
+forge does not hold, ask the owner before removing it.
