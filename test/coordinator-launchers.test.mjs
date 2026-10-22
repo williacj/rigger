@@ -13,7 +13,7 @@ import { join } from 'node:path';
 
 import { TOOLS, answer, assertToolingClean, codexCalls, forge, run, world } from './coordinator-fixtures.mjs';
 import { cloneInto, gitIn } from './git-repository.mjs';
-import { SOURCE } from './coordinator-source.mjs';
+import { SOURCE, sourceText } from './coordinator-source.mjs';
 
 const LAUNCHERS = process.env.CODEX_TOOLS_DIR || TOOLS;
 const launcher = (name) => join(LAUNCHERS, name);
@@ -251,18 +251,17 @@ function movedCopy(dir) {
 }
 
 /**
- * The rebuilt source copy, each launcher checked against the manifest's sha256 first. The source
- * prompts name a path in the coordinator's home, so the moved prompts stand beside them; the
- * comparison sets aside the two lines in which the prompts differ, the header and the slot line.
+ * The rebuilt source copy, launchers and prompts, each checked against the manifest's sha256 first.
+ * The comparison below sets aside the two lines in which the prompts may differ, the header and
+ * the slot line.
  */
 function sourceCopy(dir) {
   mkdirSync(dir);
-  for (const name of NAMES) {
-    const { text, sha256 } = SOURCE[name];
-    assert.equal(createHash('sha256').update(text).digest('hex'), sha256, `${name} is the manifest's`);
-    writeFileSync(join(dir, name), text, { mode: 0o755 });
+  for (const name of [...NAMES, ...PROMPTS]) {
+    const text = sourceText(name);
+    assert.equal(createHash('sha256').update(text).digest('hex'), SOURCE[name].sha256, `${name} is the manifest's`);
+    writeFileSync(join(dir, name), text, { mode: NAMES.includes(name) ? 0o755 : 0o644 });
   }
-  for (const name of PROMPTS) copyFileSync(join(LAUNCHERS, name), join(dir, name));
 }
 
 /** What one copy of a launcher handed the stub codex, with that run's own paths named generically. */

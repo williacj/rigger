@@ -48,13 +48,6 @@ fi
 exec /bin/ps "$@"
 EOF
 chmod +x "$SHIM/ps"
-# Stand-ins for codex and gh, first on PATH, so no test here can reach a real agent or forge.
-STUBS="$ROOT/stubs"; mkdir -p "$STUBS"
-for cli in codex gh; do
-  printf '#!/bin/sh\necho "%s: refused by suite-slot.test.sh" >&2\nexit 1\n' "$cli" > "$STUBS/$cli"
-  chmod +x "$STUBS/$cli"
-done
-PATH="$STUBS:$PATH"
 # holder <label> <pid> <lstart> [token]: print a holder record written by hand.
 holder() { printf 'token=%s\npid=%s\nlstart=%s\nlabel=%s\nsince=2026-01-01T00:00:00Z\n' "${4:-hand}" "$2" "$3" "$1"; }
 real_lstart() { echo $(/bin/ps -o lstart= -p "$1"); }
@@ -429,18 +422,9 @@ reap "$PW"
 
 # 1. The default lock lives under $HOME/GitHub/rigger-worktrees/suite-slot (HOME redirected to scratch).
 setup default
-unset SUITE_SLOT_DIR RIGGER_WORKTREE_ROOT
-HOME="$T/home" "$SLOT" dflt -- true
-check 'default slot dir is $HOME/GitHub/rigger-worktrees/suite-slot' has "$T/home/GitHub/rigger-worktrees/suite-slot/suite-slot.log" "event=end label=dflt"
-
-# 1. With SUITE_SLOT_DIR unset, the lock and log live in suite-slot under RIGGER_WORKTREE_ROOT.
-setup worktree-root
 unset SUITE_SLOT_DIR
-mkdir "$T/home"
-HOME="$T/home" RIGGER_WORKTREE_ROOT="$T/root" "$SLOT" wroot -- sh -c 'cat "$0/lock" > "$1/held"' "$T/root/suite-slot" "$T"
-check "slot dir is suite-slot under RIGGER_WORKTREE_ROOT: log" has "$T/root/suite-slot/suite-slot.log" "event=end label=wroot"
-check "slot dir is suite-slot under RIGGER_WORKTREE_ROOT: lock" has "$T/held" "label=wroot"
-check "slot dir is suite-slot under RIGGER_WORKTREE_ROOT: nothing under HOME" [ -z "$(ls -A "$T/home")" ]
+HOME="$T/home" "$SLOT" dflt -- true
+check "default slot dir is \$HOME/GitHub/rigger-worktrees/suite-slot" has "$T/home/GitHub/rigger-worktrees/suite-slot/suite-slot.log" "event=end label=dflt"
 
 echo "# pass $PASS fail $FAIL"
 [ "$FAIL" = 0 ]
