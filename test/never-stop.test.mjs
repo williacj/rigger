@@ -556,8 +556,8 @@ function assertExitTargetsEnded(pids, {
       assert.fail(detail + '; signal zero still reaches it after the empty read');
     }
     // Exactly one integer PID and one nonempty stat field; no extra rows or columns qualify.
-    const row = /^\s*(\d+)\s+(\S+)\s*$/.exec(answer.stdout);
-    assert.ok(answer.status === 0 && row && Number(row[1]) === pid, detail);
+    const row = /^[ \t]*(\d+)[ \t]+(\S+)[ \t]*\n?$/.exec(answer.stdout);
+    assert.ok(answer.status === 0 && row && row[0] === answer.stdout && Number(row[1]) === pid, detail);
     assert.ok(row[2].startsWith('Z'), `PID ${pid} is still running or stopped: ${JSON.stringify(row[2])}`);
   }
 }
@@ -673,6 +673,7 @@ test('exit cleanup ended oracle rejects unconfirmed state reads', () => {
     ['wrong PID', { ...valid, stdout: '402 Z\n' }],
     ['multiple PID rows', { ...valid, stdout: '401 Z\n402 Z\n' }],
     ['malformed row', { ...valid, stdout: 'not a process row\n' }],
+    ['split row fields', { ...valid, stdout: '401\nZ\n' }],
     ['extra column', { ...valid, stdout: '401 Z extra\n' }],
     ['missing output', { ...valid, stdout: null }],
     ['nonempty absence answer', { ...valid, status: 1 }],

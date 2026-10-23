@@ -28,7 +28,7 @@ The original source SHA-256 is
 2ea06b9b3881b2d41e7ee88ded3c6981fe4dd9116cad82571c38b61f1e829a10.
 The old-oracle controlled-red source SHA-256 is
 8a44b97544bd9491e635957094c42b017c7a7028eb691e829c4ee5d6d91ad2d9.
-The fixed test source SHA-256 is
+The initial P fixed test source SHA-256 is
 ae1230c1e5836b9dabd44036f3f320b2c9652004a7ca683576155409e7f7ddaf.
 These identify precommit observations independently of the later journal commit.
 
@@ -91,9 +91,33 @@ states that gap. The failed consumed-value syntax preparation is preserved as
 a complete version before its explicitly authorized correction and single run.
 No reconstructed evidence is presented as an original.
 
-The final code and this journal will receive the normal ordinary-suite hook.
-After that unchanged final head is recorded, the coordinator schedules actual
-full-host verification and independent panels with persistent originals.
-Final-head results may be recorded on the card without another journal commit.
-No unrun full-host or macOS result is claimed here; Linux and supported macOS
-boundary evidence remain distinct.
+The initial P head ed35cfb4cb2a5079bda1b7de62f6e59bb4b11312 received a
+green normal ordinary-suite hook. The coordinator retains its completed green
+Linux full-host proof at that exact P; it is prior-head evidence, not proof of
+the parser repair below. Supported macOS boundary evidence remains distinct.
+
+## Single-row parser repair after independent review
+
+Independent review found that the initial parser's whitespace separator also
+accepted a PID and state on separate physical rows. The permanent malformed
+regression uses literal stdout `401\nZ\n`. At unchanged P, a new ordinary
+baseline passes 2645 tests with zero failures/cancellations and nine skips.
+Adding only that case produces the intended named read-control failure:
+Missing expected exception: split row fields, one failure with zero
+cancellations/skips. Its test-source SHA-256 is
+a19dcc4d9ab0ad2b8bbc3d9571a545245c73d75b2b777719967bfe5ca8283fbe.
+
+Only then does the parser require horizontal field spacing, at most one final
+LF, and a match consuming every stdout byte. The same malformed control passes.
+All nine real/controlled oracle tests pass again; each of the existing three
+Z/live/error faults still fails its intended assertion, followed by a
+byte-exact restoration and passing target. The repaired test-source SHA-256 is
+38aedbdfd3360059456f0e0b5ae404483512bc8376ee3b78847efff22e4e1edb. Complete separate
+outputs, actual PIDs, source versions and fault/restoration receipts are retained
+under rigger-test-logs/907/parser-repair. No product/shared fixture or other
+decision-table behavior changes, and no historical cause is inferred.
+
+The repaired code and this journal receive a new normal ordinary-suite hook.
+The coordinator schedules new exact-head full-host verification and independent
+panels after that commit. Results may be recorded on the card without another
+journal commit; no unrun new-head full-host or macOS result is claimed here.
