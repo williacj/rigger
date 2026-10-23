@@ -49,8 +49,18 @@ const causeOf = (error) => error.code ?? error.message;
  *
  * `read` is synchronous, so that `take` can list inside its synchronous claim.
  */
-export function admission({ directory, run, now, ids = randomId, fs = nodeFs }) {
+export function admission({ directory, run, now, sink, ids = randomId, fs = nodeFs }) {
   const dir = admissionPath(directory);
+  const emitter = sink.emitter({ layer: 'L3' });
+
+  /** Records `event` after its write, a refusal failing the call and naming the event. */
+  function record(event, fields) {
+    try {
+      emitter.emit(event, fields);
+    } catch (cause) {
+      throw new Error(`admission changed at ${fields.name}, and the sink refused its ${event} event: ${cause.message}`, { cause });
+    }
+  }
 
   /** The admission directory's entries, or why it cannot be listed as a directory. */
   function list() {
@@ -125,7 +135,9 @@ export function admission({ directory, run, now, ids = randomId, fs = nodeFs }) 
 
   /**
    * Closes admission as `kind` for `reason`: writes a temporary file of its own, links its closer
-   * to it, and removes the temporary file, so the closer is then the file's only name.
+   * to it, and removes the temporary file, so the closer is then the file's only name. It records
+   * one `admission.close` event. A temporary file it cannot remove after the link is named in the
+   * answer and the event, and the close still stands.
    */
   async function close({ kind, reason }) {
     if (!KINDS.includes(kind)) throw new Error(`admission closes only as owner or hold, not as ${JSON.stringify(kind)}`);
@@ -159,9 +171,39 @@ export function admission({ directory, run, now, ids = randomId, fs = nodeFs }) 
     } catch (error) {
       throw discard(path, error);
     }
-    fs.unlinkSync(temporary);
-    return { name, path, kind, id, ...content };
+    let leftover;
+    try {
+      fs.unlinkSync(temporary);
+    } catch {
+      leftover = temporary;
+    }
+    record('admission.close', { kind, id, name, reason, ...(leftover && { leftover }) });
+    return { name, path, kind, id, ...content, ...(leftover && { leftover }) };
   }
 
-  return { read, close };
+  /** Removes `name` from the directory: true where it removed it, false where it was already gone. */
+  function remove(name) {
+    try {
+      fs.unlinkSync(join(dir, name));
+      return true;
+    } catch (error) {
+      if (error.code === 'ENOENT') return false;
+      throw error;
+    }
+  }
+
+  /**
+   * Opens admission by one hold closer's name: removes exactly that closer and records one
+   * `admission.open` event. A name that is no hold closer's is refused, so no opening lifts the
+   * owner's `pause`. A closer already gone answers so, and records nothing, since nothing changed.
+   */
+  async function open(name) {
+    const named = parseName(name);
+    if (named?.kind !== 'hold') throw new Error(`admission opens only by a hold closer's name, not ${JSON.stringify(name)}`);
+    if (!remove(name)) return { name, ...named, alreadyGone: true };
+    record('admission.open', { kind: named.kind, id: named.id, name, by: 'opening' });
+    return { name, ...named, alreadyGone: false };
+  }
+
+  return { read, close, open };
 }

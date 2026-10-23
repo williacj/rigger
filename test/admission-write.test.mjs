@@ -242,6 +242,21 @@ test('a close whose link fails rejects naming the closer\'s path and cause, addi
   assert.deepEqual(events, []);
 });
 
+test('a close whose temporary file cannot be removed after its link resolves, its closer reading as closed', async () => {
+  const state = stateOf();
+  const temporary = join(admissionOf(state), '.tmp-1ef7');
+  // Injected at the module's removal of its own temporary file, after the link.
+  const fs = fsWith({ unlinkSync: (path) => { if (path === temporary) throw failure('EBUSY', 'unlink'); return fsWith({}).unlinkSync(path); } });
+  const { events, ...admissions } = moduleOver(state, { fs, ids: idsFrom('1ef7') });
+  const made = await admissions.close({ kind: 'owner', reason: 'pause' });
+  assert.equal(made.name, 'owner-1ef7.json');
+  assert.deepEqual(namesIn(state), ['.tmp-1ef7', 'owner-1ef7.json']);
+  assert.equal(admissions.read().state, 'closed');
+  assert.equal(made.leftover, temporary);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].leftover, temporary);
+});
+
 test('a close handed the id of a temporary file a dead write left rejects naming EEXIST, never opening the leftover or adding a closer', async () => {
   const state = stateOf();
   seed(state, '.tmp-dead1', 'half a closer');
@@ -254,6 +269,54 @@ test('a close handed the id of a temporary file a dead write left rejects naming
   assert.deepEqual(picture(admissionOf(state)), before);
   assert.deepEqual(read, []);
   assert.deepEqual(events, []);
+});
+
+test('an opening by a hold closer\'s name removes exactly that closer, leaving every other file unchanged', async () => {
+  for (const name of ['hold-b1.json', 'hold-b1-after-8.json', 'hold-b1-issue-12.json']) {
+    const state = stateOf();
+    seed(state, name);
+    seed(state, 'hold-b2-issue-13.json');
+    seed(state, 'owner-a1.json');
+    seed(state, '.tmp-99', 'left');
+    const before = picture(admissionOf(state));
+    const answer = await moduleOver(state).open(name);
+    assert.equal(answer.alreadyGone, false);
+    delete before[name];
+    assert.deepEqual(picture(admissionOf(state)), before, name);
+  }
+});
+
+test('an opening whose hold closer is already gone resolves, answers so, and adds no event to the sink', async () => {
+  const state = stateOf();
+  seed(state, 'owner-a1.json');
+  const before = picture(admissionOf(state));
+  const { events, ...admissions } = moduleOver(state);
+  const answer = await admissions.open('hold-b1-issue-4.json');
+  assert.equal(answer.alreadyGone, true);
+  assert.deepEqual(events, []);
+  assert.deepEqual(picture(admissionOf(state)), before);
+});
+
+test('an opening by a name that is not a hold closer\'s rejects naming it and removes nothing', async () => {
+  for (const name of ['owner-a1.json', 'paused.json', 'hold-.json', '.tmp-a1', '../owner-a1.json']) {
+    const state = stateOf();
+    seed(state, 'owner-a1.json');
+    seed(state, 'paused.json');
+    seed(state, '.tmp-a1', 'left');
+    const before = picture(admissionOf(state));
+    const { events, ...admissions } = moduleOver(state);
+    await assert.rejects(admissions.open(name), (error) => error.message.includes(JSON.stringify(name)));
+    assert.deepEqual(picture(admissionOf(state)), before, name);
+    assert.deepEqual(events, []);
+  }
+});
+
+test('an opening by an owner closer\'s name rejects naming it and leaves that closer byte-for-byte in place', async () => {
+  const state = stateOf();
+  seed(state, 'owner-a1.json', closerText({ reason: 'the owner\'s own pause' }));
+  const before = readFileSync(join(admissionOf(state), 'owner-a1.json'));
+  await assert.rejects(moduleOver(state).open('owner-a1.json'), /owner-a1\.json/);
+  assert.deepEqual(readFileSync(join(admissionOf(state), 'owner-a1.json')), before);
 });
 
 test('a close handed an id outside the Terms\' id form rejects naming it and writes nothing', async () => {
