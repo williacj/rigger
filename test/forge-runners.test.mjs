@@ -405,7 +405,7 @@ async function runGhCell(t, entries, realGh, failure = null, allTests = false) {
   const root = temporaryDirectory('rigger-gh-cell-', { context: t });
   const tools = join(root, 'tools');
   mkdirSync(tools);
-  for (const name of ['node', 'sh', 'git', 'mktemp', 'mkdir', 'chmod', 'rm', 'mkfifo', 'cat', 'ln', 'rmdir', 'uname', ...(process.platform === 'darwin' ? ['sw_vers'] : [])]) {
+  for (const name of ['node', 'sh', 'git', 'mktemp', 'mkdir', 'chmod', 'rm', 'mkfifo', 'cat', 'ln', 'rmdir', ...(process.platform === 'darwin' ? ['sw_vers'] : []), 'uname']) {
     const executable = name === 'node' ? process.execPath : executableOnPath(name);
     assert.ok(executable, `${name} is needed by npm test`);
     symlinkSync(executable, join(tools, name));
