@@ -241,6 +241,21 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
   }
 
   /**
+   * The names now carrying the ids of `closers`, which a `resume` that failed partway left: a hold
+   * renamed since its listing is named as it now is. Where the directory cannot be listed, the
+   * names as listed.
+   */
+  function leftOf(closers) {
+    const listing = list();
+    if (listing.failed) return closers.map(({ name }) => name);
+    const ids = new Set(closers.map(({ kind, id }) => `${kind}-${id}`));
+    return listing.entries.map((entry) => entry.name).filter((name) => {
+      const named = parseName(name);
+      return named && ids.has(`${named.kind}-${named.id}`);
+    });
+  }
+
+  /**
    * `resume`'s removal: where every closer reads, removes each closer it read, a hold's under
    * whatever name its id then carries, and records one `admission.open` event raised by `resume`
    * for each name it unlinked, so two names carrying one hold's id are two events. A closer already
@@ -270,8 +285,7 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
         removeCloser(closer, names);
       } catch (cause) {
         recordEach(names);
-        const left = closers.slice(index).map(({ name }) => name).join(', ');
-        throw new Error(`resume left ${left}: ${cause.message}`, { cause });
+        throw new Error(`resume left ${leftOf(closers.slice(index)).join(', ')}: ${cause.message}`, { cause });
       }
       recordEach(names);
       if (names.length > 0 || unlinked.has(closer.name)) removed.push(closer);

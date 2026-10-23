@@ -262,11 +262,22 @@ test('a close handed the id of a temporary file a dead write left rejects naming
   seed(state, '.tmp-dead1', 'half a closer');
   seed(state, 'owner-a1.json');
   const before = picture(admissionOf(state));
+  const leftover = join(admissionOf(state), '.tmp-dead1');
+  const opened = [];
   const read = [];
-  const fs = fsWith(watching('readFileSync', read));
+  // Every open of the leftover that succeeds, in any mode, and every read of a path or descriptor.
+  const fs = fsWith({
+    ...watching('readFileSync', read),
+    openSync: (path, ...rest) => {
+      const fd = fsWith({}).openSync(path, ...rest);
+      if (path === leftover) opened.push(rest[0] ?? 'r');
+      return fd;
+    },
+  });
   const { events, ...admissions } = moduleOver(state, { fs, ids: idsFrom('dead1') });
   await assert.rejects(admissions.close({ kind: 'hold', reason: 'x' }), (error) => error.message.includes('EEXIST'));
   assert.deepEqual(picture(admissionOf(state)), before);
+  assert.deepEqual(opened, []);
   assert.deepEqual(read, []);
   assert.deepEqual(events, []);
 });
@@ -413,6 +424,31 @@ test('a resume removal that fails partway rejects naming the closer left, which 
   assert.deepEqual(moduleOver(state).read(), { state: 'open' });
 });
 
+test('a resume removal whose renamed hold then fails to unlink names the closer left under its new name, and a second removes it', async () => {
+  const state = stateOf();
+  seed(state, 'hold-a1.json');
+  const listed = join(admissionOf(state), 'hold-a1.json');
+  const renamed = join(admissionOf(state), 'hold-a1-issue-3.json');
+  let moved = false;
+  let failed = false;
+  // Injected at the module's removals: L3's rename lands just before resume unlinks the listed
+  // name, and the unlink of the renamed closer then fails, which no real directory does on demand.
+  const fs = fsWith({
+    unlinkSync: (path) => {
+      if (path === listed && !moved) { moved = true; renameSync(listed, renamed); }
+      if (path === renamed && !failed) { failed = true; throw failure('EIO', 'unlink'); }
+      return fsWith({}).unlinkSync(path);
+    },
+  });
+  await assert.rejects(moduleOver(state, { fs }).resume(), (error) => error.message.includes('hold-a1-issue-3.json') && !error.message.includes('left hold-a1.json'));
+  assert.equal(moved && failed, true);
+  const left = moduleOver(state).read();
+  assert.equal(left.state, 'closed');
+  assert.deepEqual(left.closers.map(({ name }) => name), ['hold-a1-issue-3.json']);
+  await moduleOver(state).resume();
+  assert.deepEqual(moduleOver(state).read(), { state: 'open' });
+});
+
 test('an opening by an owner closer\'s name rejects naming it and leaves that closer byte-for-byte in place', async () => {
   const state = stateOf();
   seed(state, 'owner-a1.json', closerText({ reason: 'the owner\'s own pause' }));
@@ -501,7 +537,7 @@ test('a close that would write an unreadable closer, with no reason, no finite t
 });
 
 test('a close handed an id a present closer already carries, under any name form, rejects naming both, draws no other id and adds no closer', async () => {
-  for (const existing of ['owner-a1.json', 'hold-a1-issue-3.json']) {
+  for (const existing of ['owner-a1.json', 'hold-a1.json', 'hold-a1-after-3.json', 'hold-a1-issue-3.json']) {
     const state = stateOf();
     seed(state, existing);
     const before = picture(admissionOf(state));
