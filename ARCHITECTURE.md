@@ -761,9 +761,10 @@ what was missing.
 
 L2 classifies a failure as the work's, or in one of three classes that are not the work's:
 
-- **`environment`:** the five failures listed below, and a judge L2 withholds because its
-  directory was not made or a required step in its `head` failed. `R-FAIL-6`'s table classes that
-  judge out, so this class is not exactly that table's host rows.
+- **`environment`:** the five failures listed below, which take in every row `R-FAIL-6`'s table
+  classes host. It also takes in a judge L2 withholds because its directory was not made or a
+  required step in its `head` failed. `R-FAIL-6`'s table classes that judge out, so this class is
+  not exactly that table's host rows.
 - **`card-local`:** a failure `R-FAIL-6`'s table classes card-local. L2 escalates the card, as set
   out below.
 - **`out`:** exactly three causes, each a row `R-FAIL-6`'s table classes out. They are the line of
@@ -860,10 +861,12 @@ L3 hands L2 each outcome unread, and L2 answers the next action. A provisioning 
 dispatch, so L1 records its group as it records any dispatch's. L2 classifies five failures as
 the environment's:
 
-- a workspace L1 could not make, because git or the file system gave no answer, or none in time;
+- a workspace L1 could not make, because git or the file system gave no answer, or none in time,
+  or a continuing workspace whose fetch failed or timed out (`R-WORK-25`);
 - a required step that never started;
-- a required step that failed;
-- a maker whose dispatch never started;
+- a required step that exited non-zero or ran past its time;
+- a maker whose dispatch never started, whether its scratch directory was made or was not made
+  because the file system gave no answer, or none in time;
 - a dispatch of the role an escalation goes to that never started.
 
 A directory L1 refused under `R-WORK-13`, `R-WORK-20`, `R-WORK-26` or `R-WORK-32`, and a
