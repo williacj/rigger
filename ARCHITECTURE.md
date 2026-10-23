@@ -445,8 +445,8 @@ ruleset is (`D23`):
   `can_admins_bypass: false`;
 - the variable `GATE_APP_ID` and the secret `GATE_APP_PRIVATE_KEY`, both in that environment;
 - the required contexts: `rigger/gate` and, in this repository, `self-hosting`, each pinned to
-  the App's id; and, in this repository, `check (20)` and `check (24)`, each pinned to GitHub
-  Actions' integration, 15368.
+  the App's id; and, in this repository, `check (26)`, pinned to GitHub Actions' integration,
+  15368.
 
 Of the gate's forge-side pieces, `init` forks only the workflow.
 
