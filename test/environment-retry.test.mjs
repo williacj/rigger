@@ -12,6 +12,7 @@ import { NOT_STARTED } from '../src/substrate/process.mjs';
 import { WORKSPACE_NOT_MADE, workspaceHandle } from '../src/execution/workspace.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { cardIn, judgeWorld, pullFor, recorded } from './judge-world.mjs';
+import { markerComment } from './fake-repository.mjs';
 import { clonedFromOrigin } from './git-repository.mjs';
 import { COLUMNS, KINDS, columnsOf, makingWorkspaces, readyCard, waitFor } from './loop-world.mjs';
 import { scratch } from './process-fixtures.mjs';
@@ -60,12 +61,13 @@ test('L3 hands a maker outcome to L2 after settle without reading its contents',
 });
 
 // proves R-FAIL-2
-test('L2 retries a maker dispatch that never started and stops it after the second environment failure', () => {
+test('L2 retries a maker dispatch that never started and holds it after the second environment failure', () => {
   const directory = temporaryDirectory('rigger-environment-retry-');
   const sink = openSink({ directory, run: 'r-environment-retry', now: Date.now });
   const maker = { status: 'rejected', reason: Object.assign(new Error('the maker could not start'), { code: NOT_STARTED }) };
+  const firstFailure = { class: 'environment', maker: 'engineer', status: 'rejected', code: NOT_STARTED, reason: 'the maker could not start' };
   const answer = (attempt) => nextAction(readyCard(7), KINDS, undefined, {
-    columns: COLUMNS, roles: config.roles, provisioning: {}, sink, maker, attempt,
+    columns: COLUMNS, roles: config.roles, provisioning: {}, sink, maker, attempt, firstFailure,
   });
 
   assert.deepEqual(answer(1), {
@@ -73,14 +75,14 @@ test('L2 retries a maker dispatch that never started and stops it after the seco
     failure: { class: 'environment', maker: 'engineer', status: 'rejected', code: NOT_STARTED, reason: 'the maker could not start' },
   });
   assert.deepEqual(answer(2), {
-    action: 'stop', card: 7,
+    action: 'hold', card: 7, firstFailure,
     failure: { class: 'environment', maker: 'engineer', status: 'rejected', code: NOT_STARTED, reason: 'the maker could not start' },
   });
   assert.deepEqual(readEvents(directory).filter(({ layer }) => layer === 'L2').map(({ event, attempt, decision, class: classed, maker: role }) => ({ event, attempt, decision, class: classed, maker: role })), [
     { event: 'attempt.failed', attempt: 1, decision: undefined, class: 'environment', maker: 'engineer' },
     { event: 'attempt.decided', attempt: 1, decision: 'again', class: undefined, maker: undefined },
     { event: 'attempt.failed', attempt: 2, decision: undefined, class: 'environment', maker: 'engineer' },
-    { event: 'attempt.decided', attempt: 2, decision: 'stop', class: undefined, maker: undefined },
+    { event: 'attempt.decided', attempt: 2, decision: 'hold', class: undefined, maker: undefined },
   ]);
 });
 
@@ -92,10 +94,11 @@ test('a fresh verdict does not hide a maker that never started or its second att
   const maker = { status: 'rejected', reason: Object.assign(new Error('the maker could not start'), { code: NOT_STARTED }) };
   const answer = (attempt) => nextAction(card, KINDS, undefined, {
     columns: COLUMNS, fresh: () => true, roles: config.roles, provisioning: {}, sink, maker, attempt,
+    firstFailure: { class: 'environment', maker: 'engineer', status: 'rejected', code: NOT_STARTED, reason: 'the maker could not start' },
   });
 
   assert.equal(answer(1).action, 'again');
-  assert.equal(answer(2).action, 'stop');
+  assert.equal(answer(2).action, 'hold');
 });
 
 /** The individual failures inside L3's pull and run failures, retaining each card's stop. */
@@ -174,6 +177,138 @@ function stopOf(failure, card) {
   return stop;
 }
 
+// proves R-FAIL-6
+test('L3 hands L2 the first workspace failure beside the second attempt', SETTLES_WITHIN, async () => {
+  const built = failingWorld('workspace', { other: false });
+  let first;
+  let handed;
+  const decide = (card, outcomes, options) => {
+    if (options?.attempt === 2 && options.workspace !== undefined) handed = options.firstFailure;
+    const answer = built.handed.decide(card, outcomes, options);
+    if (answer.action === 'again') first = answer.failure;
+    return answer;
+  };
+
+  await assert.rejects(loop({ ...built.handed, decide }).pull(1));
+
+  assert.deepEqual(handed, first);
+  assert.equal(handed.workspace, first.workspace);
+});
+
+// proves R-FAIL-6
+test('L3 hands L2 the first workspace failure beside the second attempt of a run', SETTLES_WITHIN, async () => {
+  const built = failingWorld('workspace', { other: false });
+  let first;
+  let handed;
+  const decide = (card, outcomes, options) => {
+    if (options?.attempt === 2 && options.workspace !== undefined) handed = options.firstFailure;
+    const answer = built.handed.decide(card, outcomes, options);
+    if (answer.action === 'again') first = answer.failure;
+    return answer;
+  };
+
+  await assert.rejects(loop({ ...built.handed, decide }).run());
+
+  assert.deepEqual(handed, first);
+});
+
+// proves R-FAIL-6
+test('a continuing attempt whose workspace fetch fails twice answers hold at L1s current report', SETTLES_WITHIN, async () => {
+  const card = cardIn(1, COLUMNS.review);
+  const pull = pullFor(1);
+  const fetched = [];
+  const path = join(temporaryDirectory('rigger-fetch-retry-'), 'rigger-1');
+  const marker = markerComment({ card: 1, pull: pull.number, head: pull.sha, body: card.body, role: 'reviewer', verdict: 'needs revision', items: ['unmet'], toSound: 'Fix the help line.' });
+  const built = judgeWorld({
+    cards: [card],
+    forge: { pullRequests: [{ ...pull, comments: [marker] }] },
+    kinds: { change: { ...KINDS.change, judges: ['reviewer'] } },
+    workspace: async (number, head) => {
+      fetched.push([number, head]);
+      throw Object.assign(new Error('fetch failed before it answered'), { code: WORKSPACE_NOT_MADE, path });
+    },
+  });
+
+  const failure = await built.loop.pull(1).then(() => assert.fail('the continuing pull fulfilled'), (thrown) => thrown);
+
+  assert.equal(built.decisions[0].answer.action, 'continue');
+  assert.equal(stopOf(failure, 1).decision, 'hold');
+  assert.deepEqual(fetched, [[1, pull.sha], [1, pull.sha]]);
+  assert.deepEqual(recorded(built, 'L2', 'attempt.decided').map(({ decision }) => decision), ['again', 'hold']);
+  assert.deepEqual(recorded(built, 'L3', 'dispatch', (each) => each.role === 'engineer'), []);
+});
+
+// proves R-FAIL-6
+test('two once invocations over the same board and state count the held card afresh', SETTLES_WITHIN, async () => {
+  const built = failingWorld('workspace', { other: false });
+  const first = await built.loop.pull(1).then(() => assert.fail('the first pull fulfilled'), (failure) => failure);
+  const second = await built.loop.pull(1).then(() => assert.fail('the second pull fulfilled'), (failure) => failure);
+
+  assert.equal(stopOf(first, 1).decision, 'hold');
+  assert.equal(stopOf(second, 1).decision, 'hold');
+  assert.deepEqual(recorded(built, 'L2', 'attempt.decided').map(({ attempt, decision }) => [attempt, decision]), [[1, 'again'], [2, 'hold'], [1, 'again'], [2, 'hold']]);
+});
+
+// proves R-FAIL-6
+test('a held Ready card stays in Coding with only its claim move', SETTLES_WITHIN, async () => {
+  const built = failingWorld('workspace', { other: false });
+  await assert.rejects(built.loop.pull(1));
+
+  assert.deepEqual(built.fake.writes().filter(({ operation }) => operation === 'moveItem').map(({ args: [, column] }) => column), [COLUMNS.coding]);
+  assert.deepEqual(await columnsOf(built.fake), { 1: COLUMNS.coding });
+});
+
+// proves R-FAIL-4
+test('a held card records no escalation and writes no comment on its issue', SETTLES_WITHIN, async () => {
+  const path = join(temporaryDirectory('rigger-hold-issue-'), 'rigger-1');
+  const built = judgeWorld({
+    cards: [cardIn(1, COLUMNS.ready)], forge: { issues: [{ number: 1, comments: [] }] },
+    workspace: async () => { throw Object.assign(new Error('git gave no answer'), { code: WORKSPACE_NOT_MADE, path }); },
+  });
+  await assert.rejects(built.loop.pull(1));
+
+  assert.deepEqual(recorded(built, 'L2', 'review.escalate'), []);
+  assert.deepEqual(built.repository.held().issues[0].comments, []);
+});
+
+// proves R-FAIL-6
+test('a held card writes nothing under admission state', SETTLES_WITHIN, async () => {
+  const built = failingWorld('workspace', { other: false });
+  await assert.rejects(built.loop.pull(1));
+  assert.equal(existsSync(join(built.directory, 'admission')), false);
+});
+
+// proves R-FAIL-6
+test('two cards that each fail once in the same host way each get another attempt and neither is held', SETTLES_WITHIN, async () => {
+  const root = temporaryDirectory('rigger-two-retries-');
+  const making = makingWorkspaces(root);
+  const attempts = new Map();
+  const workspace = async (number) => {
+    const count = (attempts.get(number) ?? 0) + 1;
+    attempts.set(number, count);
+    if (count === 1) throw Object.assign(new Error('git gave no answer'), { code: WORKSPACE_NOT_MADE, path: join(root, `rigger-${number}`) });
+    return making(number);
+  };
+  const kinds = { change: { ...KINDS.change, judges: ['owner'] } };
+  const built = judgeWorld({ cards: [cardIn(1, COLUMNS.ready), cardIn(2, COLUMNS.ready)], kinds, concurrency: 2, workspace });
+
+  const reached = await built.loop.pull(2);
+
+  assert.deepEqual(reached.map(({ card }) => card).sort(), [1, 2]);
+  assert.deepEqual([...attempts], [[1, 2], [2, 2]]);
+  assert.deepEqual(recorded(built, 'L2', 'attempt.decided').map(({ card, attempt, decision }) => [card, attempt, decision]).sort(), [[1, 1, 'again'], [2, 1, 'again']]);
+  assert.equal(built.decisions.some(({ answer }) => answer.action === 'hold'), false);
+});
+
+// proves R-FAIL-6
+test('a card still holds for two matching host failures beside a card whose maker succeeds', SETTLES_WITHIN, async () => {
+  const { built, failure } = await runFailure('workspace');
+
+  assert.equal(stopOf(failure, 1).decision, 'hold');
+  assert.ok(built.repository.pull(1002), 'card 2 opened its pull request after a successful maker');
+  assert.deepEqual(recorded(built, 'L2', 'attempt.decided', (each) => each.card === 1).map(({ decision }) => decision), ['again', 'hold']);
+});
+
 test('a maker that never starts is tried twice in a fresh workspace, and its pull reports both failures only in the stop', SETTLES_WITHIN, async () => {
   const built = failingWorld('maker', { other: false });
 
@@ -220,7 +355,7 @@ test('a maker command that never starts records two L1 ends and a clean second w
 });
 
 for (const kind of ['maker', 'workspace', 'step-not-started', 'step-exit']) {
-  test(`run stops a ${kind} failure after two attempts while another maker frees a slot`, SETTLES_WITHIN, async () => {
+  test(`run holds a ${kind} failure after two attempts while another maker frees a slot`, SETTLES_WITHIN, async () => {
     const { built, failure } = await runFailure(kind);
     const stop = stopOf(failure, 1);
 
@@ -234,7 +369,7 @@ for (const kind of ['maker', 'workspace', 'step-not-started', 'step-exit']) {
 }
 
 for (const kind of ['maker', 'workspace']) {
-  test(`a later invocation pulls a card stopped for ${kind} again`, SETTLES_WITHIN, async () => {
+  test(`a later invocation pulls a card held for ${kind} again`, SETTLES_WITHIN, async () => {
     const { built, failure } = await runFailure(kind);
     stopOf(failure, 1);
 

@@ -543,6 +543,26 @@ const prepareContinuation = ({ ruling = 'reviewer', owner = false, conflicting =
   return oldHead;
 };
 
+// proves R-FAIL-6
+test('once names a continuing fetch hold with both failures in order', SETTLES_WITHIN, async (t) => {
+  const agent = standInAgent();
+  const git = spawnSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+  assert.match(git, /^\//);
+  const fixture = join(agent.dir, 'git');
+  writeFileSync(fixture, `#!/bin/sh\nif [ "$1" = fetch ]; then echo 'fetch refused by fixture' >&2; exit 128; fi\nexec '${git}' "$@"\n`);
+  chmodSync(fixture, 0o755);
+  const { ran } = onceWithAgent(t, agent, { items: [card(10, 'Review')] }, { prepare: prepareContinuation() });
+
+  const { code, err } = await ran;
+
+  assert.notEqual(code, 0, err);
+  assert.match(err, /rigger once: card #10 was held after 2 attempts/);
+  const failures = err.split('\n').filter((line) => /^attempt [12]: /.test(line));
+  assert.equal(failures.length, 2, err);
+  assert.ok(failures.every((line) => /fetch refused by fixture/.test(line)), err);
+  assert.deepEqual(agent.runs(), []);
+});
+
 for (const { column, ruling, owner, conflicting } of [
   { column: 'Review', ruling: 'reviewer' },
   { column: 'Owner', ruling: 'owner', owner: true },
@@ -623,6 +643,7 @@ test('given once where the maker does not start, once exits non-zero, and prints
   const lines = err.split('\n').filter((line) => /#10\b/.test(line));
   assert.equal(lines.length, 1, err);
   assert.match(lines[0], /^rigger once: claimed #10 from board 3; its maker did not start: .*settings\.json is no JSON/);
+  assert.match(lines[0], /card was held after 2 attempts/);
   assert.deepEqual(agent.runs(), []);
   const attempts = err.split('\n').filter((line) => /^attempt [12]: /.test(line));
   assert.deepEqual(attempts.map((line) => /^attempt (\d+): /.exec(line)?.[1]), ['1', '2']);
