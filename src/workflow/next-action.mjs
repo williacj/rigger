@@ -200,7 +200,7 @@ export function stepAnswer(name, provisioning) {
 /** How many times L2 has a card attempted before it stops it: the first attempt and one more (`R-FAIL-2`). */
 const ATTEMPTS = 2;
 
-/** Whether two failures L1 reported as environment failures are the same R-FAIL-5 host way. */
+/** Whether two failures L1 reported as environment failures are the same R-FAIL-6 host way. */
 function sameWay(first, second) {
   if (first?.class !== 'environment' || second.class !== 'environment') return false;
   if (first.workspace !== undefined || second.workspace !== undefined) return first.workspace !== undefined && second.workspace !== undefined;
@@ -215,7 +215,7 @@ function sameWay(first, second) {
  * says, once it has recorded the failure and its decision through `sink`. Every such failure is
  * the environment's (`ARCHITECTURE.md`, "Failure model"). An attempt before the last is followed
  * by `{ action: 'again', card, attempt, failure }`, naming the attempt to make next. The last is
- * `{ action: 'hold', card, firstFailure, failure }` when both failures are the same R-FAIL-5 host
+ * `{ action: 'hold', card, firstFailure, failure }` when both failures are the same R-FAIL-6 host
  * way; otherwise it is `{ action: 'stop', card, failure }`.
  *
  * L2 records an `attempt.failed` event under the card, naming the attempt, what failed and why,
