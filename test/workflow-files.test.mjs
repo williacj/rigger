@@ -23,9 +23,9 @@ const LIVE = join(ROOT, '.github', 'workflows', 'rigger-gate.yml');
 const TEMPLATE = join(ROOT, 'templates', 'github', 'workflows', 'rigger-gate.yml');
 const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 
-test('CI check and demo run on the self-hosted Mac with Node 26', () => {
+test('CI check and demo run on the GitHub-hosted Mac with Node 26', () => {
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
-  for (const name of ['check', 'demo']) assert.deepEqual(ci.jobs[name]['runs-on'], ['self-hosted', 'macOS', 'ARM64'], name);
+  for (const name of ['check', 'demo']) assert.equal(ci.jobs[name]['runs-on'], 'macos-latest', name);
   assert.deepEqual(ci.jobs.check.strategy.matrix.node, ['26']);
   const setup = ci.jobs.demo.steps.find((step) => step.uses === 'actions/setup-node@v5');
   assert.ok(setup, 'demo has no setup-node step');
