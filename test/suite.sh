@@ -192,7 +192,7 @@ if [ "${1-}" = --host ]; then
 fi
 if [ "$suite_mode" = host ]; then
   major=$(node -p 'process.versions.node.split(".")[0]') || exit 1
-  if [ "${GITHUB_ACTIONS-}" = true ]; then
+  if [ "${GITHUB_ACTIONS-}" = true ] && [ -n "${ImageOS-}" ] && [ -n "${ImageVersion-}" ]; then
     RIGGER_SUITE_HOST_KEY="${ImageOS}-${ImageVersion}-${RUNNER_ARCH}-node$major"
   else
     # Local keys describe the metadata returned by this host's tools.

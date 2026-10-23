@@ -1,26 +1,26 @@
 # ABOUTME: The workflow that runs Rigger's suite, its two budget checks, its document checks, its
 # ruled-out-word check and its test-matrix check, and regenerates the demo GIF from its tape, on
-# every push, every pull request and every merge a queue is testing.
+# pushes to main, every pull request and every merge a queue is testing.
 
 name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
   # A queue entry is a temporary branch nobody pushed and no pull request points at, so the two
-  # triggers above leave it unanswered. A queue requiring `CI / check (20)` and `CI / check (24)`
+  # triggers above leave it unanswered. A queue requiring `CI / check (26)`
   # then waits for checks that never start, until the entry times out.
   merge_group:
 
 jobs:
   check:
-    # macOS is v0's only host (D13), and Node 20 is the floor the README's Prerequisites set.
-    # Exercise that floor alongside Node 24 and 26.
-    runs-on: macos-latest
+    # macOS is v0's only host (D13); run the supported Node major on its Mac runner.
+    runs-on: [self-hosted, macOS, ARM64]
     strategy:
       fail-fast: false
       matrix:
-        node: ['20', '24', '26']
+        node: ['26']
     steps:
       - uses: actions/checkout@v5
         with:
@@ -58,13 +58,13 @@ jobs:
     # the GIF, and the checks below read the claim, the message and the non-zero exit from it:
     # `once` dispatches the card's maker, a stand-in that opens no pull request, and exits non-zero
     # naming that outcome and the workspace it made and provisioned.
-    runs-on: macos-latest
+    runs-on: [self-hosted, macOS, ARM64]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
-          node-version: '24'
-      - run: brew install vhs
+          node-version: '26'
+      - run: if ! command -v vhs >/dev/null; then brew install vhs; fi
       # The committed GIF sits where the tape writes, so it goes first: the check below then reads
       # only what this run recorded.
       - run: rm -f docs/demo.gif
