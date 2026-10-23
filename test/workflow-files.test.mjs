@@ -23,6 +23,15 @@ const LIVE = join(ROOT, '.github', 'workflows', 'rigger-gate.yml');
 const TEMPLATE = join(ROOT, 'templates', 'github', 'workflows', 'rigger-gate.yml');
 const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 
+test('CI check and demo run on the GitHub-hosted Mac with Node 26', () => {
+  const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
+  for (const name of ['check', 'demo']) assert.equal(ci.jobs[name]['runs-on'], 'macos-latest', name);
+  assert.deepEqual(ci.jobs.check.strategy.matrix.node, ['26']);
+  const setup = ci.jobs.demo.steps.find((step) => step.uses === 'actions/setup-node@v5');
+  assert.ok(setup, 'demo has no setup-node step');
+  assert.equal(setup.with['node-version'], '26');
+});
+
 /**
  * The YAML a workflow file in this repository is written in, parsed: block mappings and block
  * sequences by indentation, plain, single- and double-quoted scalars, flow sequences of scalars,
@@ -248,7 +257,10 @@ test('every job in the workflow runs on ubuntu-latest', () => {
 test('the workflow names one Node major, one engines admits, and before the script runs a step prints node --version and fails the run, naming both, where the runner\'s is below it', () => {
   const major = template.env.NODE_MAJOR;
   assert.match(major, /^\d+$/);
-  assert.ok(Number(major) >= Number(manifest.engines.node.match(/^>=\s*(\d+)/)[1]), `${major} is below engines ${manifest.engines.node}`);
+  const pinned = spawnSync('git', ['show', `${live.env.RIGGER_COMMIT}:package.json`], { cwd: ROOT, encoding: 'utf8', env: gitEnvironment() });
+  assert.equal(pinned.status, 0, pinned.stderr);
+  const pinnedManifest = JSON.parse(pinned.stdout);
+  assert.ok(Number(major) >= Number(pinnedManifest.engines.node.match(/^>=\s*(\d+)/)[1]), `${major} is below engines ${pinnedManifest.engines.node}`);
   for (const job of jobsOf(template)) {
     const names = job.steps.map((step) => step.name);
     const checked = names.indexOf('Check the Node version');

@@ -174,3 +174,11 @@ restores the entire original feature test file byte for byte. The same named
 case then passed one test, zero failures or cancellations, in 352.063371 ms.
 All existing pull, event, Owner move, issue comment and label assertions remain.
 The following normal hook must still pass; the failed first log is retained.
+
+## Current-main integration on October 23
+
+This normal merge retains feature head `9277ae8e2103a1fab47301952b4a80d5268d3bf4` and the acceptance author's actual feature-free comparison `76b8fba539d22599de6f07d8a80d6cff8f481c56`. That comparison retains main `a23d98df17d19546e657c639ffb159b57c59cd1d` and historical N, with source identical to that main. Its initial ordinary baseline measured 2718 tests, 2709 passes, zero failures or cancellations and nine skips in 137367.030434 ms; its normal composition hook measured the same counts in 136506.555404 ms. Those actual prerequisite measurements do not claim feature verification.
+
+The author published the finite integration note and independent admission before this merge. All 20 acceptance items and dimensions remain unchanged. Only the generated matrix conflicted, and the owning generator resolved it. Current-main source, test and binding-document changes are inherited; no new feature behavior or existing assertion or deadline edit is authored here. The original feature journal bytes are retained above.
+
+The Oct22 independent verdicts, owner marker and cancelled CI outcomes bind the earlier head only. The integrated tree must pass its own normal hook and current static checks, fresh configured independent judgments, current CI and any required new owner marker. The actual normal-hook log and explicit completion status are retained under `.tmp/oct23-integration.log` and `.tmp/oct23-integration.exit` in the integration worktree. A pending hook is not passing evidence.

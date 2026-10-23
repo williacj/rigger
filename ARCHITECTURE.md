@@ -33,7 +33,7 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
 |---|---|---|---|---|---|
 | **L0 Substrate** | How to talk to one external system: the forge (board, issues, PRs, CI through `gh`), git, the OS process model, each agent CLI. Retries, timeouts, containment mechanics, and which of its own git operations on one repository run one at a time. | Anything about cards or work. L0 does not know what a card is. | Call latency and failure, process spawn and exit, survivors killed by name and command line | Engineer cards, within the L0 budget | `src/substrate/` |
 | **L1 Execution** | How to run one dispatch in one workspace: isolation, lifetime, result as exit code plus captured output. Making the workspace an attempt at a card runs in. | Whether to run it, or what the result means | Dispatch start, end, duration, exit, timeout, and the workspace each runs in. A workspace made or removed. | Engineer cards, within the L1 budget | `src/execution/` |
-| **L2 Workflow** | The next action for a card from its stage and observable facts, including which kind selects a ready card and the provider each role's dispatch runs on, and whether its acceptance passes the form check. Every change to a card's column; the review loop; the gate rule, and whether a card's pull request merges; escalation routing; whether a failure is the work's or the environment's. Which provisioning steps a card runs, whether a step's failure stops its attempt, and whether a failed attempt is tried again. | Which card is next; what good means | Card transitions with cause, verdicts, loop rounds, escalations by category, provisioning failures and attempts, by class | Spec rows, ratified by the owner | `src/workflow/` |
+| **L2 Workflow** | The next action for a card from its stage and observable facts, including which kind selects a ready card and the provider each role's dispatch runs on, and whether its acceptance passes the form check. Every change to a card's column; the review loop; the gate rule, and whether a card's pull request merges; escalation routing; whether a failure is the work's, or the environment's, card-local or `out`. Which provisioning steps a card runs, whether a step's failure stops its attempt, and whether a failed attempt is tried again. | Which card is next; what good means | Card transitions with cause, verdicts, loop rounds, escalations by category, provisioning failures and attempts, by class | Spec rows, ratified by the owner | `src/workflow/` |
 | **L3 Scheduling** | Pull order by priority; concurrency; claims taken synchronously before any await; the repo lane, which runs the merges L2 decides one at a time. Admission, which is whether any card may be pulled; the hold that closes admission; the three trigger kinds. The halt on starts while the sink refuses an event, which is not the admission hold. When Rigger reads the forge again for a write it has not yet shown, and when it stops. | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput, admission holds and their reason | Spec rows and config | `src/scheduling/` |
 | **L4 Quality** | What the work is and what good means: kinds of work, their maker and judge sets, and the providers those run on, roles, review procedure, provisioning steps, recorded decisions, which improvement roles run and which signals count | How Rigger runs, beyond the engine settings the extension points name | Nothing. L2 records what a role produced: findings by code and judge, rounds per kind of work, rework, tier corrections, later defect escape | The owner, in the consumer's repository | The consumer's repository; Rigger ships templates under `templates/` |
 | **L5 Observation** | How every layer's events are recorded and which signals derive from them | Anything that acts on them. L5 records and derives, never decides | The report | Engineer cards | `src/observation/` |
@@ -445,8 +445,8 @@ ruleset is (`D23`):
   `can_admins_bypass: false`;
 - the variable `GATE_APP_ID` and the secret `GATE_APP_PRIVATE_KEY`, both in that environment;
 - the required contexts: `rigger/gate` and, in this repository, `self-hosting`, each pinned to
-  the App's id; and, in this repository, `check (20)` and `check (24)`, each pinned to GitHub
-  Actions' integration, 15368.
+  the App's id; and, in this repository, `check (26)`, pinned to GitHub Actions' integration,
+  15368.
 
 Of the gate's forge-side pieces, `init` forks only the workflow.
 
@@ -595,10 +595,13 @@ work. Rigger writes no other state. Recovery machinery
 enters L1 only after a recorded production incident in which redo was demonstrably insufficient.
 
 Admission lives in the directory `.rigger/admission/`, which holds one file per closer. Admission is
-open where no closer file exists, and that is its only open state. Every file in it but a temporary
-file is a closer. A temporary file is named `.tmp-<id>`, and no reader reads it. A closer file names
-the reason, the time and the run id, and no closer file's content changes after it appears. A closer
-whose name or content does not parse is unreadable. L3's `src/scheduling/admission.mjs` is the one
+open where no closer exists, and that is its only open state. An entry in it whose name starts
+with `.`, whatever its type, is not a closer, and no reader opens it. That covers each temporary
+file, named `.tmp-<id>`, and a file such as `.DS_Store` that the operating system or a person's
+tools leave there. Every other entry in it is a closer. A closer file names the reason, the time and
+the run id, and no closer file's content changes after it appears. A closer whose name or content
+does not parse is unreadable. An entry of no closer form whose name does not start with `.` is
+therefore an unreadable closer. L3's `src/scheduling/admission.mjs` is the one
 module that reads, closes and opens it, and `pause` and `resume` are the CLI's thin callers of that
 module.
 
@@ -757,10 +760,31 @@ integer exit code, and so has a command L0 ended at its timeout, whatever it the
 captured output is everything that reached the command's standard output and standard error until L0
 stopped reading them. L0 stops once they close after it has killed what was left of the group. A
 command that never started has no result: L1 reports to its caller that it did not start, naming
-what was missing. L2 classifies a failure as the work's or as its environment's. An environment
+what was missing.
+
+L2 classifies a failure as the work's, or in one of three classes that are not the work's:
+
+- **`environment`:** the five failures listed below, which take in every row `R-FAIL-6`'s table
+  classes host. It also takes in a judge L2 withholds because its directory was not made or a
+  required step in its `head` failed. `R-FAIL-6`'s table classes that judge out, so this class is
+  not exactly that table's host rows.
+- **`card-local`:** a failure `R-FAIL-6`'s table classes card-local. L2 escalates the card, as set
+  out below.
+- **`out`:** exactly three causes, each a row `R-FAIL-6`'s table classes out. They are the line of
+  work moved or deleted since L2 read it, a derived branch name git refuses, and a worktree root
+  that is not an absolute path.
+
+L2 answers `stop` for a failure of class `out`, and never `again` or `hold`. L3 attempts the card no
+more under that claim, and admission stays open.
+
+L2's class `out` is not the whole of `R-FAIL-6`'s out class. Every other row that table classes out
+keeps the outcome the table states. An optional step that failed or never started lets the work
+proceed (`R-PROV-2`). A maker that ran its first command and then failed stays the work's failure.
+
+An environment
 failure retries the card once, except a role's dispatch that never started, which L3 retries
 alone as set out below. Where the second attempt fails the same way as the first, as
-`R-FAIL-5`'s table counts it, L2 answers `hold` in place of `stop`, and L3 closes admission. L3
+`R-FAIL-6`'s table counts it, L2 answers `hold` in place of `stop`, and L3 closes admission. L3
 hands L2 the first attempt's failure unread, as it hands the attempt number, so the count needs no
 memory and is never persisted.
 
@@ -771,7 +795,8 @@ pulls for these reasons, and no others:
 | Case | Why |
 |---|---|
 | stopped after two attempts that failed in different ways | no hold fires, and without the memory the next pull attempts the card again at once |
-| judges L2 withheld for an environment failure | the memory is how L3 meets the row of `R-FAIL-5`'s table for a judge's directory not made |
+| stopped at one attempt for a derived branch name git refuses, or for a worktree root that is not an absolute path | no hold fires, and without the memory the next pull attempts the card again at once, which `R-FAIL-6` rules out |
+| judges L2 withheld for an environment failure | the memory is how L3 meets the row of `R-FAIL-6`'s table for a judge's directory not made |
 | a move, return or escalation whose write the forge refused | it bounds retries of a refused write, since a released claim fires the next trigger (C22) |
 | a merge, whatever it answered | a merge the lane refused, because the head moved, checks were pending or mergeability was unknown, would be pulled again at once and poll the forge |
 | a continuing attempt that did not settle | L2 moved nothing, so the next pull would read the same head and markers, answer `continue` again, and dispatch the maker again at once |
@@ -782,9 +807,11 @@ a file-system error leaves a hold unsaved.
 
 A card stopped after two attempts that failed the same way needs no memory, because the hold closes
 admission. An escalated card needs none either, because L2 answers no action for a card carrying the
-escalation label. A card sent to a role needs no case of its own. Each outcome of the role's
-dispatch either escalates the card, or leaves it for the next pull to answer, and a refused
-routing comment is the case of a refused escalation write.
+escalation label. A card stopped because its line of work moved or was deleted since L2 read it
+needs no memory either, because `R-FAIL-6` has the next pull read the forge again. A card sent to
+a role needs no case of its own. Each outcome of the role's dispatch either escalates the card, or
+leaves it for the next pull to answer, and a refused routing comment is the case of a refused
+escalation write.
 
 An attempt at a card runs in this order, under the card's one claim and slot:
 
@@ -837,16 +864,20 @@ L3 hands L2 each outcome unread, and L2 answers the next action. A provisioning 
 dispatch, so L1 records its group as it records any dispatch's. L2 classifies five failures as
 the environment's:
 
-- a workspace L1 could not make;
+- a workspace L1 could not make, because git or the file system gave no answer, or none in time,
+  or a continuing workspace whose fetch failed or timed out (`R-WORK-25`);
 - a required step that never started;
-- a required step that failed;
-- a maker whose dispatch never started;
+- a required step that exited non-zero or ran past its time;
+- a maker whose dispatch never started, whether its scratch directory was made or was not made
+  because the file system gave no answer, or none in time;
 - a dispatch of the role an escalation goes to that never started.
 
 A directory L1 refused under `R-WORK-13`, `R-WORK-20`, `R-WORK-26` or `R-WORK-32`, and a
-continuing workspace `R-WORK-25` refuses for a failure `R-FAIL-5`'s table classes card-local, is
+continuing workspace `R-WORK-25` refuses for a failure `R-FAIL-6`'s table classes card-local, is
 never one of them. L1 reports it as a refusal, and L2 escalates the card, never answering `again`
 or `hold`.
+A workspace L1 could not make for a derived branch name git refuses, or for a worktree root that is
+not an absolute path, is never one of them either: L2 classes it `out`.
 L2 escalates a role's escalation directory refused under `R-WORK-32` with raiser `loop`, as
 `ambiguous`, so `R-ESCALATE-15` sends it to the owner. That refusal is never retried: the fifth
 failure's one retry, set out next, covers only a dispatch that never started.

@@ -321,10 +321,10 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * scratch, repository }`, the card's scratch base and repository beside it as L1 answered them,
    * or, where L1 could not make it, L2's answer for that attempt, handed the failure unread.
    */
-  const made = async (card, number, continuing) => {
+  const made = async (card, number, continuing, firstFailure) => {
     const [outcome] = await Promise.allSettled([new Promise((resolve) => resolve(workspace(card.number, continuing?.head)))]);
     if (outcome.status === 'fulfilled') return { path: outcome.value.path, branch: outcome.value.branch, scratch: outcome.value.scratch, repository: outcome.value.repository };
-    return { answer: decide(card, [], { attempt: number, workspace: outcome, continuing }) };
+    return { answer: decide(card, [], { attempt: number, firstFailure, workspace: outcome, continuing }) };
   };
 
   /**
@@ -338,7 +338,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * workspace tip through L1. L3 hands L2 each maker outcome unread, with that tip where read.
    * A stale forge head has L3 pause and ask L2 to settle again under the same claim and slot.
    * Where the settle succeeded, L3 hands its facts to `decide` with the attempt number. L3 follows
-   * L2's `again` or `stop` answer; a retry makes a fresh workspace. Otherwise the attempt
+   * L2's `again`, `hold` or `stop` answer; a retry makes a fresh workspace. Otherwise the attempt
    * answers the card, its
    * workspace, the maker's `outcome` and L2's `settled`, each as `Promise.allSettled` records it.
    * Where the settle
@@ -349,31 +349,31 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * attempt rejects with that failure. Where a judge failed to hand back, the maker's result is
    * handed to `kept` again with every judge L2 named beside it as `judges`, as `judges` hands them
    * to its `keep`. An answer naming the
-   * next attempt has L3 make it; one naming the card stopped fails, naming the card and each
+   * next attempt has L3 make it; one holding or stopping the card fails, naming the card and each
    * attempt's failure, in order, both in the message and as fields `card` and `attemptFailures`.
-   * A stopped card is absent from `reached`. Any other answer stops the attempts, naming the card
+   * A held or stopped card is absent from `reached`. Any other answer stops the attempts, naming the card
    * and what L2 answered. `remember` marks a card whose judges L2 withheld for this run.
    */
   const attempt = async (card, next, kept, remember) => {
     const continuing = next.action === 'continue' ? next : undefined;
-    const askAttempt = (outcomes, options) => decide(card, outcomes, { ...options, continuing });
     const failures = [];
-    /** Follows L2's retry or stop answer, retaining each failure for the final report. */
+    const askAttempt = (outcomes, options) => decide(card, outcomes, { ...options, firstFailure: failures[0], continuing });
+    /** Follows L2's retry, hold or stop answer, retaining each failure for the final report. */
     const advance = (answer, number) => {
       if (answer.action === 'again' && answer.attempt === number + 1) {
         failures.push(answer.failure);
         return true;
       }
-      if (answer.action === 'stop') {
+      if (answer.action === 'stop' || answer.action === 'hold') {
         const attemptFailures = [...failures, answer.failure];
         const each = attemptFailures.map((failure, at) => `attempt ${at + 1}: ${JSON.stringify(failure)}`);
-        throw Object.assign(new Error(`card #${card.number} was stopped after ${each.length} attempts, each failing before the maker:\n${each.join('\n')}`), { card: card.number, attemptFailures });
+        throw Object.assign(new Error(`card #${card.number} was ${answer.action === 'hold' ? 'held' : 'stopped'} after ${each.length} attempts, each failing before the maker:\n${each.join('\n')}`), { card: card.number, attemptFailures, ...(answer.action === 'hold' ? { decision: 'hold' } : {}) });
       }
       return false;
     };
     let answer = next;
     for (let number = 1; ; number += 1) {
-      const { path, branch, scratch, repository, answer: unmade } = await made(card, number, continuing);
+      const { path, branch, scratch, repository, answer: unmade } = await made(card, number, continuing, failures[0]);
       if (unmade !== undefined) {
         answer = unmade;
       } else {

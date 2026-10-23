@@ -88,12 +88,19 @@ cd "$HOME/src/rigger"
 git config core.autocrlf false
 npm ci
 npm test
+npm run test:host
 ```
 
-Use a fresh Linux clone, with its own node_modules. The ordinary suite refuses calls to a real
-forge or agent; running it requires no agent session or forge login. Explicitly gated live tests
-can report skips with reasons. Success means exit status 0, fail 0 and cancelled 0 in the final
-summary. A skip count alone does not establish success.
+Use a fresh Linux clone, with its own node_modules.
+
+Use `npm test` for the ordinary deterministic tier. Run both commands above for the complete
+check. The [host tier](../test/suite.sh) exercises real local processes and tools.
+
+The runner refuses real forge and agent calls; neither command requires an agent session or
+forge login. Explicitly gated live tests can report skips with reasons.
+
+Complete-check success requires both commands to exit 0, each with fail 0 and cancelled 0 in
+its final summary. A skip count alone does not establish success.
 
 ## Troubleshooting
 
@@ -103,7 +110,8 @@ summary. A skip count alone does not establish success.
 | Shell reports `sh\r`, `bash\r` or bad interpreter | Clone in Linux with the command above. Keep Linux files as LF and install dependencies there. |
 | Missing cc, lsof, pgrep or flock | Repeat the Linux tools installation and check command resolution. |
 | Missing lockf on Ubuntu | Use the current main checkout above. Its Linux fixtures use flock; do not alias lockf. |
-| A test fails or is cancelled | Keep the full output and record `git rev-parse HEAD`, `node --version`, `uname -a` and `cat /etc/os-release`. Rerun the named test using `npm test -- test/name.test.mjs`. |
+| A test fails or is cancelled | Keep the full output and record `git rev-parse HEAD`, `node --version`, `uname -a` and `cat /etc/os-release`. For a deterministic file, use `npm test -- test/name.test.mjs`; for a host-listed file, use `npm run test:host -- test/name.test.mjs`. Replace the illustrative path with the failing file. |
+| File refused for being in the wrong test tier | Follow the runner's diagnostic; list current host files with `sh test/suite.sh --list host`. |
 
 The [verification journal](journal/2026-10-20-1646-832-linux-tests.md) records the measured WSL run.
 

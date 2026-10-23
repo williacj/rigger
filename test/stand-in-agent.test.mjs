@@ -79,8 +79,8 @@ test('every run of the stand-in that holds is woken by a release sent in the tur
 });
 
 /**
- * `NODE_OPTIONS` that remove `process.execve` before any module runs, as Node 20, the floor the
- * README sets, lacks it: Node added it in 23.11.0 and 22.15.0.
+ * `NODE_OPTIONS` that remove `process.execve` before any module runs, as older Node versions
+ * lack it: Node added it in 23.11.0 and 22.15.0.
  */
 const WITHOUT_EXECVE = '--import=data:text/javascript,delete%20process.execve';
 
