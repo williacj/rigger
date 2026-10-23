@@ -43,6 +43,38 @@ test('each opening that removes a hold closer records exactly one L3 admission.o
   assert.deepEqual(events, [{ layer: 'L3', event: 'admission.open', kind: 'hold', id: 'b1', name: 'hold-b1-issue-4.json', by: 'opening' }]);
 });
 
+test('a resume removal records one L3 admission.open event for each closer it removes, naming its kind and id and that resume raised it', async () => {
+  const state = stateOf();
+  seed(state, 'owner-a1.json');
+  seed(state, 'hold-b1-after-2.json');
+  const { events, ...admissions } = moduleOver(state);
+  await admissions.resume();
+  assert.deepEqual(events.sort((a, b) => a.id.localeCompare(b.id)), [
+    { layer: 'L3', event: 'admission.open', kind: 'owner', id: 'a1', name: 'owner-a1.json', by: 'resume' },
+    { layer: 'L3', event: 'admission.open', kind: 'hold', id: 'b1', name: 'hold-b1-after-2.json', by: 'resume' },
+  ]);
+});
+
+test('each event is recorded after its write: the sink finds a close\'s closer linked, and an opening\'s or resume\'s gone', async () => {
+  const state = stateOf();
+  const seen = [];
+  const { sink } = recordingSink((event, fields) => {
+    seen.push({ event, by: fields.by, present: existsSync(join(admissionOf(state), fields.name)), names: readdirSync(admissionOf(state)) });
+  });
+  const admissions = moduleOver(state, { sink });
+  const made = await admissions.close({ kind: 'hold', reason: 'r' });
+  await admissions.open(made.name);
+  await admissions.close({ kind: 'owner', reason: 'r' });
+  await admissions.resume();
+  assert.deepEqual(seen.map(({ event, by, present }) => [event, by, present]), [
+    ['admission.close', undefined, true],
+    ['admission.open', 'opening', false],
+    ['admission.close', undefined, true],
+    ['admission.open', 'resume', false],
+  ]);
+  assert.equal(seen[0].names.some((name) => name.startsWith('.tmp-')), false);
+});
+
 test('a close whose event the sink refuses rejects naming the refused event, and the closer it linked still exists', async () => {
   const state = stateOf();
   const { sink } = refusingSink();
@@ -50,4 +82,16 @@ test('a close whose event the sink refuses rejects naming the refused event, and
   await assert.rejects(admissions.close({ kind: 'owner', reason: 'r' }), (error) => error.message.includes('admission.close') && error.message.includes('owner-beef.json'));
   assert.deepEqual(namesIn(state), ['owner-beef.json']);
   assert.equal(moduleOver(state).read().state, 'closed');
+});
+
+test('an opening or a resume removal whose event the sink refuses rejects naming the refused event, and each closer it removed is still gone', async () => {
+  const opened = stateOf();
+  seed(opened, 'hold-b1.json');
+  await assert.rejects(moduleOver(opened, { sink: refusingSink().sink }).open('hold-b1.json'), (error) => error.message.includes('admission.open') && error.message.includes('hold-b1.json'));
+  assert.deepEqual(namesIn(opened), []);
+
+  const resumed = stateOf();
+  seed(resumed, 'owner-a1.json');
+  await assert.rejects(moduleOver(resumed, { sink: refusingSink().sink }).resume(), (error) => error.message.includes('admission.open') && error.message.includes('owner-a1.json'));
+  assert.deepEqual(namesIn(resumed), []);
 });

@@ -205,5 +205,54 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
     return { name, ...named, alreadyGone: false };
   }
 
-  return { read, close, open };
+  /** The names in the directory now carrying hold id `id`. */
+  function holdNames(id) {
+    const listing = list();
+    if (listing.failed) throw new Error(`admission cannot list ${dir}: ${listing.failed}`);
+    return listing.entries.map((entry) => entry.name).filter((name) => {
+      const named = parseName(name);
+      return named?.kind === 'hold' && named.id === id;
+    });
+  }
+
+  /** Removes `closer`, a hold's under whatever name its id now carries: true where this call removed it. */
+  function removeCloser(closer) {
+    let removed = remove(closer.name);
+    if (closer.kind !== 'hold') return removed;
+    for (let names = holdNames(closer.id); names.length > 0; names = holdNames(closer.id)) {
+      for (const name of names) removed = remove(name) || removed;
+    }
+    return removed;
+  }
+
+  /**
+   * `resume`'s removal: where every closer reads, removes each closer it read, a hold's under
+   * whatever name its id then carries, and records one `admission.open` event raised by `resume`
+   * for each it removed. A closer already gone counts as removed, with no event. Where any closer
+   * is unreadable, it removes nothing and names each.
+   */
+  async function resume() {
+    const answer = read();
+    if (answer.state === 'unreadable') {
+      throw new Error(`admission cannot be read, so resume removes nothing: ${answer.unreadable.map(({ path, cause }) => `${path} (${cause})`).join(', ')}`);
+    }
+    const closers = answer.closers ?? [];
+    const removed = [];
+    const gone = [];
+    for (const [index, closer] of closers.entries()) {
+      let did;
+      try {
+        did = removeCloser(closer);
+      } catch (cause) {
+        const left = closers.slice(index).map(({ name }) => name).join(', ');
+        throw new Error(`resume left ${left}: ${cause.message}`, { cause });
+      }
+      if (!did) { gone.push(closer); continue; }
+      removed.push(closer);
+      record('admission.open', { kind: closer.kind, id: closer.id, name: closer.name, by: 'resume' });
+    }
+    return { removed, gone };
+  }
+
+  return { read, close, open, resume };
 }

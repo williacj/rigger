@@ -311,12 +311,177 @@ test('an opening by a name that is not a hold closer\'s rejects naming it and re
   }
 });
 
+test('a resume removal over closers that all read removes every closer it listed', async () => {
+  const state = stateOf();
+  for (const name of ['owner-a1.json', 'owner-a2.json', 'hold-b1.json', 'hold-b2-after-5.json', 'hold-b3-issue-6.json']) seed(state, name);
+  seed(state, '.DS_Store', 'finder');
+  const answer = await moduleOver(state).resume();
+  assert.equal(answer.removed.length, 5);
+  assert.deepEqual(namesIn(state), ['.DS_Store']);
+});
+
+test('a resume removal where any closer is unreadable removes nothing, naming each unreadable closer', async () => {
+  const state = stateOf();
+  seed(state, 'owner-a1.json');
+  seed(state, 'hold-b1.json', '{ torn');
+  seed(state, 'stray.json');
+  const before = picture(admissionOf(state));
+  const { events, ...admissions } = moduleOver(state);
+  await assert.rejects(admissions.resume(), (error) => error.message.includes(join(admissionOf(state), 'hold-b1.json'))
+    && error.message.includes(join(admissionOf(state), 'stray.json')));
+  assert.deepEqual(picture(admissionOf(state)), before);
+  assert.deepEqual(events, []);
+});
+
+test('a resume removal leaves a closer linked after its listing', async () => {
+  const state = stateOf();
+  seed(state, 'owner-a1.json');
+  let linkedLate = false;
+  // Injected at the module's first removal: a pause links its closer after resume listed.
+  const fs = fsWith({
+    unlinkSync: (path) => {
+      if (!linkedLate) { linkedLate = true; seed(state, 'owner-late.json'); }
+      return fsWith({}).unlinkSync(path);
+    },
+  });
+  const answer = await moduleOver(state, { fs }).resume();
+  assert.deepEqual(answer.removed.map(({ name }) => name), ['owner-a1.json']);
+  assert.deepEqual(namesIn(state), ['owner-late.json']);
+});
+
+test('a resume removal removes a hold closer renamed before its removal under whatever name its id then carries', async () => {
+  for (const [listed, renamed] of [
+    ['hold-e5.json', 'hold-e5-after-3.json'],
+    ['hold-e5-after-3.json', 'hold-e5-issue-4.json'],
+    ['hold-e5-issue-4.json', 'hold-e5-issue-9.json'],
+  ]) {
+    const state = stateOf();
+    seed(state, listed);
+    seed(state, 'hold-f6.json');
+    const at = join(admissionOf(state), listed);
+    let moved = false;
+    // Injected at the module's removal of the listed name: L3's rename lands just before it.
+    const fs = fsWith({
+      unlinkSync: (path) => {
+        if (path === at && !moved) { moved = true; renameSync(at, join(admissionOf(state), renamed)); }
+        return fsWith({}).unlinkSync(path);
+      },
+    });
+    const { events, ...admissions } = moduleOver(state, { fs });
+    const answer = await admissions.resume();
+    assert.equal(moved, true);
+    assert.deepEqual(namesIn(state), [], listed);
+    assert.deepEqual(answer.removed.map(({ name }) => name).sort(), ['hold-f6.json', listed].sort());
+    assert.deepEqual(events.map(({ id }) => id).sort(), ['e5', 'f6']);
+  }
+});
+
+test('a resume removal counts a closer already gone at its removal as removed, with no failure and no event for it', async () => {
+  const state = stateOf();
+  seed(state, 'owner-a1.json');
+  seed(state, 'hold-b1-issue-2.json');
+  const at = join(admissionOf(state), 'hold-b1-issue-2.json');
+  let removedFirst = false;
+  // Injected at the module's removal: an issue-close opening removed the closer first.
+  const fs = fsWith({
+    unlinkSync: (path) => {
+      if (path === at && !removedFirst) { removedFirst = true; rmSync(at); }
+      return fsWith({}).unlinkSync(path);
+    },
+  });
+  const { events, ...admissions } = moduleOver(state, { fs });
+  const answer = await admissions.resume();
+  assert.equal(removedFirst, true);
+  assert.deepEqual(answer.gone.map(({ name }) => name), ['hold-b1-issue-2.json']);
+  assert.deepEqual(answer.removed.map(({ name }) => name), ['owner-a1.json']);
+  assert.deepEqual(events.map(({ name }) => name), ['owner-a1.json']);
+  assert.deepEqual(namesIn(state), []);
+});
+
+test('a resume removal that fails partway rejects naming the closer left, which still reads closed, and a second removes it', async () => {
+  const state = stateOf();
+  seed(state, 'owner-a1.json');
+  seed(state, 'owner-a2.json');
+  const failing = join(admissionOf(state), 'owner-a2.json');
+  // Injected at the module's removal of the second closer, which no real directory refuses on demand.
+  const fs = fsWith({ unlinkSync: (path) => { if (path === failing) throw failure('EIO', 'unlink'); return fsWith({}).unlinkSync(path); } });
+  await assert.rejects(moduleOver(state, { fs }).resume(), (error) => error.message.includes('owner-a2.json') && error.message.includes('EIO'));
+  const left = moduleOver(state).read();
+  assert.equal(left.state, 'closed');
+  assert.deepEqual(left.closers.map(({ name }) => name), ['owner-a2.json']);
+  await moduleOver(state).resume();
+  assert.deepEqual(moduleOver(state).read(), { state: 'open' });
+});
+
 test('an opening by an owner closer\'s name rejects naming it and leaves that closer byte-for-byte in place', async () => {
   const state = stateOf();
   seed(state, 'owner-a1.json', closerText({ reason: 'the owner\'s own pause' }));
   const before = readFileSync(join(admissionOf(state), 'owner-a1.json'));
   await assert.rejects(moduleOver(state).open('owner-a1.json'), /owner-a1\.json/);
   assert.deepEqual(readFileSync(join(admissionOf(state), 'owner-a1.json')), before);
+});
+
+test('no closer\'s content changes after it first appears, across every write the module makes', async () => {
+  const state = stateOf();
+  const seen = {};
+  const changed = [];
+  /**
+   * Closer `name`'s bytes now, compared with its bytes when first seen, or recorded as first seen.
+   * A change is kept rather than thrown, so a step that swallows its own failure cannot hide it.
+   */
+  const compare = (name, bytes, step) => {
+    if (name.startsWith('.')) return;
+    if (!(name in seen)) seen[name] = bytes;
+    else if (bytes !== seen[name]) changed.push(`${name} changed at ${step}`);
+  };
+  /** Every closer now present, compared with its bytes when first seen, and no change seen so far. */
+  const check = (step) => {
+    for (const [name, bytes] of Object.entries(picture(admissionOf(state)))) compare(name, bytes, step);
+    assert.deepEqual(changed, []);
+  };
+  let step = 'start';
+  /**
+   * `fs` with the module's links and removals observed: a closer's bytes are taken as it is linked
+   * and again just before any removal, so a rewrite is caught even where the same call removes the
+   * closer it rewrote and no picture taken after the call could still see it.
+   */
+  const observed = (fs = fsWith({})) => ({
+    ...fs,
+    linkSync: (from, to) => {
+      const result = fs.linkSync(from, to);
+      compare(basename(to), readFileSync(to).toString('hex'), `${step}, at its link`);
+      return result;
+    },
+    unlinkSync: (path) => {
+      if (existsSync(path) && lstatSync(path).isFile()) compare(basename(path), readFileSync(path).toString('hex'), `${step}, before its removal`);
+      return fs.unlinkSync(path);
+    },
+  });
+  const over = (options = {}) => moduleOver(state, { ...options, fs: observed(options.fs) });
+  const admissions = over();
+  const steps = [
+    ['owner close', () => admissions.close({ kind: 'owner', reason: 'one' })],
+    ['hold close', () => admissions.close({ kind: 'hold', reason: 'two' })],
+    ['second owner close', () => admissions.close({ kind: 'owner', reason: 'three' })],
+    ['close of another kind', () => admissions.close({ kind: 'ci', reason: 'x' }).catch(() => {})],
+    ['close beside a leftover', () => over({ ids: idsFrom('dead2') }).close({ kind: 'hold', reason: 'x' }).catch(() => {})],
+    ['close whose link fails', () => over({ fs: fsWith({ linkSync: () => { throw failure('EIO', 'link'); } }) }).close({ kind: 'hold', reason: 'x' }).catch(() => {})],
+    ['close leaving its temporary file', () => over({ fs: fsWith({ unlinkSync: () => { throw failure('EBUSY', 'unlink'); } }) }).close({ kind: 'hold', reason: 'leftover' })],
+    ['opening of a hold', () => admissions.open(namesIn(state).find((name) => name.startsWith('hold-')))],
+    ['opening already gone', () => admissions.open('hold-zz.json')],
+    ['opening of an owner', () => admissions.open(namesIn(state).find((name) => name.startsWith('owner-'))).catch(() => {})],
+    ['resume failing partway', () => over({ fs: fsWith({ unlinkSync: (path) => { if (path.endsWith('.json') && path.includes('hold-')) throw failure('EIO', 'unlink'); return fsWith({}).unlinkSync(path); } }) }).resume().catch(() => {})],
+    ['resume', () => admissions.resume()],
+  ];
+  seed(state, '.tmp-dead2', 'left');
+  check(step);
+  for (const [name, write] of steps) {
+    step = name;
+    await write();
+    check(step);
+  }
+  assert.deepEqual(namesIn(state).filter((name) => !name.startsWith('.')), []);
+  assert.ok(Object.keys(seen).length >= 4);
 });
 
 test('a close handed an id outside the Terms\' id form rejects naming it and writes nothing', async () => {
