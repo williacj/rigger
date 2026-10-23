@@ -2,7 +2,7 @@
 // it, refuse it with a reason, dispatch it under the one kind that selects it, or answer it from
 // its pull request's markers, from what the forge holds of its line of work where L2's facts call
 // read it. Within an attempt at it: the next provisioning step it selected, the maker as a role,
-// the card attempted again, or the card stopped.
+// the card attempted again, held, or stopped.
 
 import { FIXED_LABELS, OWNER, judgeRole, roleTimeout, sameLabel, stepTimeout, workRequires, worktreeTopic } from '../config/validate.mjs';
 import { WORKSPACE_NOT_MADE, topicFor } from '../execution/workspace.mjs';
@@ -71,7 +71,7 @@ const selecting = (card, kinds) =>
  * which L3 hands L2 with each outcome, so L2 keeps no count of its own (the architect's ruling 1,
  * A1). `workspace` is the outcome of L1's making the attempt's workspace, where L1 could not make it.
  * `maker` is L1's maker outcome, handed unread by L3 after L2's settle. Where its dispatch never
- * started, L2 records an environment attempt failure and answers another attempt or stop. For
+ * started, L2 records an environment attempt failure and answers another attempt, hold or stop. For
  * any other outcome, L2 answers `settled`, ending the attempt as L2's column changes settled it.
  * Without `provisioning`, a maker outcome or `continuing`, L2 answers as above, whatever `outcomes`,
  * `sink`, `attempt` and `workspace` are (the architect's ruling 6, Q-D, on #423). A maker outcome
@@ -79,7 +79,7 @@ const selecting = (card, kinds) =>
  * `makerAnswer` composes from `roles`, under `topic`, the rule naming the card's line of work, the
  * default rule where none is given.
  */
-export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTopic(), provisioning, outcomes = [], sink, attempt = 1, workspace, maker, forge, judged, directories, continuing } = {}) {
+export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTopic(), provisioning, outcomes = [], sink, attempt = 1, firstFailure, workspace, maker, forge, judged, directories, continuing } = {}) {
   // The facts L2's settle answered are of a card it moved to review.
   const card = forge === undefined ? given : { ...given, forge: { stage: 'review', ...forge } };
   const escalation = escalationStatus(card);
@@ -101,7 +101,7 @@ export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTop
   if (answer !== undefined) return removing(escalation === undefined ? answer : { ...answer, ...escalation });
   if (continuing !== undefined) {
     const tier = roles === undefined ? undefined : tierOf(card, kinds[kind].maker, roles[kinds[kind].maker]);
-    return within(card, kind, kinds[kind], { roles, tier: tier?.tier, topic, provisioning: provisioning ?? {}, outcomes, sink, attempt, workspace, maker, continuing });
+    return within(card, kind, kinds[kind], { roles, tier: tier?.tier, topic, provisioning: provisioning ?? {}, outcomes, sink, attempt, firstFailure, workspace, maker, continuing });
   }
   const held = card.forge === undefined ? undefined : fromTheForge(card);
   if (held?.action === 'ignore' || held?.action === 'move') return escalation === undefined ? held : { ...held, ...escalation };
@@ -120,7 +120,7 @@ export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTop
   const named = reasons.filter((reason) => reason !== undefined);
   if (named.length > 0) return removing({ action: 'refuse', card: card.number, reason: named.join('; and '), ...escalation }, conflicts.length === 0 && held?.action === 'refuse');
   if (provisioning === undefined && maker === undefined) return removing({ action: 'dispatch', kind });
-  return removing(within(card, kind, kinds[kind], { roles, tier: tier?.tier, topic, provisioning: provisioning ?? {}, outcomes, sink, attempt, workspace, maker }));
+  return removing(within(card, kind, kinds[kind], { roles, tier: tier?.tier, topic, provisioning: provisioning ?? {}, outcomes, sink, attempt, firstFailure, workspace, maker }));
 }
 
 /**
@@ -172,19 +172,19 @@ function fromTheForge(card) {
  * outcomes of the attempt's steps so far, in order: `{ step }`, the next step it selected, with
  * its name and what L1 runs; `{ maker }`, the kind's maker as a role answer, running at `tier`,
  * once every selected step has an outcome and no required one failed; or, for a required step that failed, or a `workspace` L1
- * could not make, or a maker outcome rejected with `NOT_STARTED`, the card attempted again or
- * stopped, as `failedAttempt` says. Any other maker outcome is answered `settled` to end the attempt.
+ * could not make, or a maker outcome rejected with `NOT_STARTED`, the card attempted again, held
+ * or stopped, as `failedAttempt` says. Any other maker outcome is answered `settled` to end the attempt.
  *
  * An optional step's failure is recorded through `sink` as an L2 `step.failed` event under the card,
  * and the attempt goes on (`R-PROV-2`). L3 asks again after each outcome, so only the newest
  * outcome's failure is recorded, and each is recorded once. A sink that refuses it has L2 answer
  * no action, naming the card, the step and the refusal.
  */
-function within(card, kind, declared, { roles, tier, topic, provisioning, outcomes, sink, attempt, workspace, maker, continuing }) {
-  if (workspace !== undefined) return failedAttempt(card, attempt, unmade(workspace, card), sink);
+function within(card, kind, declared, { roles, tier, topic, provisioning, outcomes, sink, attempt, firstFailure, workspace, maker, continuing }) {
+  if (workspace !== undefined) return failedAttempt(card, attempt, firstFailure, unmade(workspace, card), sink);
   if (maker !== undefined) {
     if (maker?.status === 'rejected' && maker.reason?.code === NOT_STARTED) {
-      return failedAttempt(card, attempt, { maker: declared.maker, status: maker.status, code: NOT_STARTED, reason: maker.reason.message }, sink);
+      return failedAttempt(card, attempt, firstFailure, { maker: declared.maker, status: maker.status, code: NOT_STARTED, reason: maker.reason.message }, sink);
     }
     return { action: 'settled' };
   }
@@ -196,7 +196,7 @@ function within(card, kind, declared, { roles, tier, topic, provisioning, outcom
     const name = steps[at];
     const failure = failed(outcome, provisioning[name], card, name);
     if (failure === undefined) continue;
-    if (workRequires(provisioning[name])) return failedAttempt(card, attempt, { step: name, ...failure }, sink);
+    if (workRequires(provisioning[name])) return failedAttempt(card, attempt, firstFailure, { step: name, ...failure }, sink);
     if (at === outcomes.length - 1) {
       try {
         sink.emitter({ layer: 'L2', card: card.number }).emit('step.failed', { step: name, ...failure, optional: true });
@@ -218,29 +218,43 @@ export function stepAnswer(name, provisioning) {
 /** How many times L2 has a card attempted before it stops it: the first attempt and one more (`R-FAIL-2`). */
 const ATTEMPTS = 2;
 
+/** Whether two failures L1 reported as environment failures are the same R-FAIL-6 host way. */
+function sameWay(first, second) {
+  if (first?.class !== 'environment' || second.class !== 'environment') return false;
+  if (first.workspace !== undefined || second.workspace !== undefined) return first.workspace !== undefined && second.workspace !== undefined;
+  if (first.maker !== undefined || second.maker !== undefined) return first.maker !== undefined && second.maker !== undefined;
+  if (first.step === undefined || second.step === undefined || first.step !== second.step) return false;
+  const neverStarted = (failure) => failure.reason !== undefined;
+  return neverStarted(first) === neverStarted(second);
+}
+
 /**
  * What L2 answers for `card`'s attempt numbered `attempt`, which failed before its maker ran as `what`
  * says, once it has recorded the failure and its decision through `sink`. Every such failure is
  * the environment's (`ARCHITECTURE.md`, "Failure model"). An attempt before the last is followed
- * by `{ action: 'again', card, attempt, failure }`, naming the attempt to make next; the last is
- * `{ action: 'stop', card, failure }` (the owner's O4 and O5 on #423).
+ * by `{ action: 'again', card, attempt, failure }`, naming the attempt to make next. The last is
+ * `{ action: 'hold', card, firstFailure, failure }` when both failures are the same R-FAIL-6 host
+ * way; otherwise it is `{ action: 'stop', card, failure }`.
  *
  * L2 records an `attempt.failed` event under the card, naming the attempt, what failed and why,
  * and the failure's class, then an `attempt.decided` event naming the attempt and whether the card
- * is attempted `again` or `stop`ped. A sink that refuses either has L2 answer no action, naming the
+ * is attempted `again`, held or stopped. A sink that refuses either has L2 answer no action, naming the
  * card, the attempt and the refusal: the refusal is the halt, and spends no attempt.
  */
-function failedAttempt(card, attempt, what, sink) {
+function failedAttempt(card, attempt, firstFailure, what, sink) {
   const failure = { class: 'environment', ...what };
   const again = attempt < ATTEMPTS;
+  if (!again && firstFailure === undefined) throw new Error(`card #${card.number}'s second attempt failed without its first attempt's failure, so L2 answers no action`);
+  const hold = !again && sameWay(firstFailure, failure);
   const events = sink.emitter({ layer: 'L2', card: card.number });
   try {
     events.emit('attempt.failed', { attempt, ...failure });
-    events.emit('attempt.decided', { attempt, decision: again ? 'again' : 'stop' });
+    events.emit('attempt.decided', { attempt, decision: again ? 'again' : hold ? 'hold' : 'stop', ...(hold ? { failures: [firstFailure, failure] } : {}) });
   } catch (refusal) {
     throw new Error(`card #${card.number}'s attempt ${attempt} failed, and the event sink refused to record it, so L2 answers no action: ${refusal.message}`, { cause: refusal });
   }
-  return again ? { action: 'again', card: card.number, attempt: attempt + 1, failure } : { action: 'stop', card: card.number, failure };
+  return again ? { action: 'again', card: card.number, attempt: attempt + 1, failure }
+    : hold ? { action: 'hold', card: card.number, firstFailure, failure } : { action: 'stop', card: card.number, failure };
 }
 
 /**

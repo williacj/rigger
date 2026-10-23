@@ -781,6 +781,28 @@ test('host runner prints the CI image key first when GITHUB_ACTIONS is true', (t
   assert.equal(result.stdout.split('\n')[0], 'macos-probe-42-ARM64-node' + process.versions.node.split('.')[0]);
 });
 
+for (const [name, imageOS, imageVersion] of [
+  ['both image variables absent', undefined, undefined],
+  ['ImageOS set and ImageVersion absent', 'macos-probe', undefined],
+  ['ImageOS absent and ImageVersion set', undefined, '42'],
+  ['ImageOS empty and ImageVersion set', '', '42'],
+  ['ImageOS set and ImageVersion empty', 'macos-probe', ''],
+]) {
+  test(`host runner uses the local key in CI with ${name}`, (t) => {
+    const checks = [['ImageOS', imageOS], ['ImageVersion', imageVersion]].map(([variable, value]) =>
+      value === undefined
+        ? `assert.equal(Object.hasOwn(process.env, '${variable}'), false);`
+        : `assert.equal(process.env.${variable}, ${JSON.stringify(value)});`).join(' ');
+    const source = `import assert from 'node:assert/strict';\nimport { spawnSync } from 'node:child_process';\ntest('starts git', () => { ${checks} spawnSync('git', ['--version']); });`;
+    const env = { ImageOS: imageOS, ImageVersion: imageVersion };
+    const { result: local } = hostProbe(t, source, { env: { ...env, GITHUB_ACTIONS: '' } });
+    assert.equal(local.status, 0, local.stdout + local.stderr);
+    const { result: ci } = hostProbe(t, source, { env: { ...env, GITHUB_ACTIONS: 'true' } });
+    assert.equal(ci.status, 0, ci.stdout + ci.stderr);
+    assert.equal(ci.stdout.split('\n')[0], local.stdout.split('\n')[0]);
+  });
+}
+
 test('host tests receive both refusing CLI directories on PATH', (t) => {
   const source = "import assert from 'node:assert/strict';\nimport { existsSync } from 'node:fs';\nimport { join } from 'node:path';\nimport { spawnSync } from 'node:child_process';\ntest('sees refusing directories', () => { assert.ok(existsSync(join(process.env.RIGGER_REFUSING_GH_DIR, 'gh'))); assert.ok(existsSync(join(process.env.RIGGER_REFUSING_AGENT_DIR, 'claude'))); assert.ok(existsSync(join(process.env.RIGGER_REFUSING_AGENT_DIR, 'codex'))); assert.ok(process.env.PATH.split(':').includes(process.env.RIGGER_REFUSING_GH_DIR)); assert.ok(process.env.PATH.split(':').includes(process.env.RIGGER_REFUSING_AGENT_DIR)); spawnSync('git', ['--version']); });";
   const { result } = hostProbe(t, source);
