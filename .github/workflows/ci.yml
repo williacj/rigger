@@ -16,7 +16,7 @@ on:
 jobs:
   check:
     # macOS is v0's only host (D13); run the supported Node major on its Mac runner.
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: macos-latest
     strategy:
       fail-fast: false
       matrix:
@@ -58,7 +58,7 @@ jobs:
     # the GIF, and the checks below read the claim, the message and the non-zero exit from it:
     # `once` dispatches the card's maker, a stand-in that opens no pull request, and exits non-zero
     # naming that outcome and the workspace it made and provisioned.
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5

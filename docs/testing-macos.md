@@ -92,9 +92,10 @@ The experiment's PR records historical macOS CI results for that PR's head. To v
 checkout you are testing, inspect CI results for its exact commit; a result from a different
 commit does not verify it.
 
-## Self-hosted CI runner
+## GitHub-hosted CI
 
-The repository's CI jobs select a runner carrying the `self-hosted`, `macOS` and `ARM64` labels.
-Keep Homebrew and `vhs`, `ttyd` and `ffmpeg` available on its `PATH` for the `demo` job. The
-`check (26)` job runs the test tiers and budget and document checks. Both jobs need network access
-so `actions/setup-node` can fetch Node 26 into the runner's tool cache.
+The [CI workflow](../.github/workflows/ci.yml) selects GitHub-hosted `macos-latest`
+runners for `check` and `demo`. The `check (26)` job runs the test tiers and budget
+and document checks. The demo job installs `vhs` with Homebrew when needed; its
+recording uses `vhs`, `ttyd` and `ffmpeg` on the job's `PATH`. These jobs do not
+require the owner's personal Mac to be online or configured as a runner.

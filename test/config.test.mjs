@@ -18,12 +18,12 @@ import { panelOf } from '../src/workflow/next-action.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-test('this repository config assigns opposite-provider agent judges for all five kinds and no codex role', () => {
+test('this repository config assigns Codex change judges and opposite-provider judges for other kinds, with no codex role', () => {
   const opposite = (role) => ({ role, provider: { claude: 'codex', codex: 'claude' } });
   assert.deepEqual(rigger.roles.engineer.providerLabels, { 'maker:codex': 'codex' });
   assert.equal(Object.hasOwn(rigger.roles, 'codex'), false);
   assert.deepEqual(Object.fromEntries(Object.entries(rigger.kinds).map(([name, kind]) => [name, kind.judges])), {
-    change: [opposite('reviewer'), opposite('architect')],
+    change: [{ role: 'reviewer', provider: { claude: 'codex', codex: 'codex' } }, { role: 'architect', provider: { claude: 'codex', codex: 'codex' } }],
     spec: [opposite('reviewer'), opposite('engineer'), opposite('architect'), 'owner'],
     structure: [opposite('reviewer'), 'owner'],
     intake: [opposite('reviewer'), 'owner'],
@@ -50,8 +50,8 @@ test('a change card without maker:codex requires codex of its reviewer and of it
   assert.deepEqual(livePanel('change'), [{ role: 'reviewer', provider: 'codex' }, { role: 'architect', provider: 'codex' }]);
 });
 
-test('a change card with maker:codex requires claude of its reviewer and of its architect', () => {
-  assert.deepEqual(livePanel('change', ['maker:codex']), [{ role: 'reviewer', provider: 'claude' }, { role: 'architect', provider: 'claude' }]);
+test('a change card with maker:codex requires codex of its reviewer and of its architect', () => {
+  assert.deepEqual(livePanel('change', ['maker:codex']), [{ role: 'reviewer', provider: 'codex' }, { role: 'architect', provider: 'codex' }]);
 });
 
 test('a spec card with maker:codex requires claude of its reviewer, its engineer and its architect, then the owner', () => {
