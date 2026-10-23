@@ -255,13 +255,54 @@ async function runEnding(t, ending, kind, { holdPidPublication = false, gateSetu
       `  while (!existsSync(${JSON.stringify(join(directory, 'publish-pid'))})) await new Promise((resolve) => setImmediate(resolve));`,
     ] : []),
     `  writeFileSync(${JSON.stringify(join(directory, 'file-pid'))}, String(process.pid));`,
-    ending === 'E1' ? `  while (!existsSync(${JSON.stringify(join(directory, 'go'))})) await new Promise((resolve) => setImmediate(resolve));\n  ${kind === 'F6' ? 'agent.release(1);' : "writeFileSync(directory + '/release', '');"}\n  ${kind === 'F7' ? 'await dispatch;' : ''}` : ending === 'E2' ? `  await t.test('holds a ready fixture', { timeout: 1_000 }, async () => { writeFileSync(${JSON.stringify(join(directory, 'holding-entered'))}, ''); await new Promise(() => {}); });` : '  await new Promise(() => {});',
+    ending === 'E1' ? `  while (!existsSync(${JSON.stringify(join(directory, 'go'))})) await new Promise((resolve) => setImmediate(resolve));\n  ${kind === 'F6' ? 'agent.release(1);' : "writeFileSync(directory + '/release', '');"}\n  ${kind === 'F7' ? 'await dispatch;' : ''}` : ending === 'E2' ? `  const holdDeadline = performance.now() + 1_000;
+  await t.test('holds a ready fixture', { timeout: 1_000 }, async (hold) => {
+    // The deadline begins before t.test; every fixture observation shares its remaining window.
+    const now = performance.now.bind(performance);
+    const observeBy = holdDeadline;
+    const alive = setInterval(() => { throw new Error('E2 ownership lease callback fired'); }, 2 ** 30);
+    const release = () => {
+      clearInterval(alive);
+      hold.signal.removeEventListener('abort', release);
+      t.signal.removeEventListener('abort', release);
+    };
+    try {
+      hold.signal.addEventListener('abort', release, { once: true });
+      t.signal.addEventListener('abort', release, { once: true });
+      hold.signal.throwIfAborted();
+      t.signal.throwIfAborted();
+      const pids = ${kind === 'F4' ? '[ready.leader, ready.pid]' : '[ready.pid]'};
+      for (const pid of pids) {
+        hold.signal.throwIfAborted();
+        const remaining = observeBy - now();
+        if (!(remaining > 0)) throw new Error('E2 fixture observation exhausted its shared hold budget');
+        if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error('E2 fixture has no positive process identity');
+        const recorded = ready.processes.find((entry) => entry.pid === pid);
+        if (!recorded || typeof recorded.signature !== 'string' || !Number.isSafeInteger(recorded.group) || recorded.group <= 0) throw new Error('E2 fixture has incomplete recorded identity');
+        const actual = readinessProcess(pid, remaining, undefined, ${kind === 'F5' ? '{ deadline: observeBy, now }' : 'undefined'});
+        hold.signal.throwIfAborted();
+        t.signal.throwIfAborted();
+        if (now() >= observeBy) throw new Error('E2 fixture observation crossed its shared hold deadline');
+        if (!actual.live || actual.signature !== recorded.signature || actual.group !== recorded.group || !actual.command?.includes(directory)) throw new Error('E2 fixture process identity changed before hold');
+        ${kind === 'F3' || kind === 'F5' ? "if (actual.group !== ready.pid) throw new Error('E2 fixture tail does not lead its own group');" : ''}
+        ${kind === 'F5' ? "if (actual.cwd === undefined || actual.cwd !== ready.working) throw new Error('E2 fixture tail working directory changed before hold');" : ''}
+        ${kind === 'F7' ? "if (ready.group !== ready.pid || actual.group !== ready.group) throw new Error('E2 fixture group identity changed before hold');" : ''}
+      }
+      hold.signal.throwIfAborted();
+      t.signal.throwIfAborted();
+      if (now() >= observeBy) throw new Error('E2 fixture hold entry exceeded its observation deadline');
+      writeFileSync(${JSON.stringify(join(directory, 'holding-entered'))}, '');
+      await new Promise(() => {});
+    } finally {
+      release();
+    }
+  });` : '  await new Promise(() => {});',
     '});',
   ].join('\n'));
   const output = join(directory, 'suite-output');
   const fd = openSync(output, 'w');
   const { NODE_TEST_CONTEXT, ...env } = process.env;
-  const child = spawn('/bin/sh', [suite, '--host', file], { cwd: resolve('.'), env: { ...env, TMPDIR: tmp }, detached: true, stdio: ['ignore', fd, fd] });
+  const child = spawn('/bin/sh', [suite, '--host', ...(ending === 'E2' ? ['--test-reporter=tap'] : []), file], { cwd: resolve('.'), env: { ...env, TMPDIR: tmp }, detached: true, stdio: ['ignore', fd, fd] });
   closeSync(fd);
   const setupDeadline = performance.now() + 10_000;
   let spawnError;
@@ -341,6 +382,13 @@ async function runEnding(t, ending, kind, { holdPidPublication = false, gateSetu
       const report = readFileSync(output, 'utf8');
       assert.match(report, /holds a ready fixture/);
       assert.match(report, /test timed out after 1000ms/);
+      assert.doesNotMatch(report, /event loop has already resolved|started no process|hookFailed/);
+      const types = [...report.matchAll(/^\s*failureType: ['"]([^'"]+)['"]/gm)].map((match) => match[1]);
+      const errors = [...report.matchAll(/^\s*error: ['"]([^'"]+)['"]\s*$/gm)].map((match) => match[1]);
+      assert.match(report, /^TAP version 13$/m);
+      assert.deepEqual(types, ['testTimeoutFailure', 'subtestsFailed'], report);
+      assert.deepEqual(errors, ['test timed out after 1000ms', '1 subtest failed'], report);
+      assert.equal([...report.matchAll(/^\s*not ok /gm)].length, 2, report);
     }
   } catch (error) {
     try { await teardown(); } catch (cleanup) { throw new AggregateError([error, cleanup], `${phase} failed and teardown failed`); }
