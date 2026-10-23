@@ -538,6 +538,30 @@ test('on a start\'s kill of a recorded group, a member the census named, and one
   assert.deepEqual([started.leader, started.member].map(alive), [false, false]);
 });
 
+/** Requires positive absence or one successful exact-PID zombie state; unknown reads reject. */
+function assertExitTargetsEnded(pids, {
+  signal = (pid) => process.kill(pid, 0),
+  states = (pid) => spawnSync(PS, ['-p', String(pid), '-o', 'pid=,stat='], { encoding: 'utf8', env: process.env }),
+} = {}) {
+  for (const pid of pids) {
+    try { signal(pid); }
+    catch (error) { if (error.code === 'ESRCH') continue; throw error; }
+    const answer = states(pid);
+    const detail = `PID ${pid} has an unconfirmed state read: ${JSON.stringify({ status: answer?.status, signal: answer?.signal, error: answer?.error?.code ?? answer?.error?.message, stdout: answer?.stdout, stderr: answer?.stderr })}`;
+    assert.ok(answer && !answer.error && answer.signal === null
+      && typeof answer.stdout === 'string' && answer.stderr === '', detail);
+    if (answer.status === 1 && answer.stdout === '') {
+      try { signal(pid); }
+      catch (error) { if (error.code === 'ESRCH') continue; throw error; }
+      assert.fail(detail + '; signal zero still reaches it after the empty read');
+    }
+    // Exactly one integer PID and one nonempty stat field; no extra rows or columns qualify.
+    const row = /^\s*(\d+)\s+(\S+)\s*$/.exec(answer.stdout);
+    assert.ok(answer.status === 0 && row && Number(row[1]) === pid, detail);
+    assert.ok(row[2].startsWith('Z'), `PID ${pid} is still running or stopped: ${JSON.stringify(row[2])}`);
+  }
+}
+
 // proves R-STATE-12, R-STATE-9
 test('on the exit cleanup, a survivor the census named, and one only the read just before the kill found, are each recorded by name and command line', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
@@ -550,8 +574,124 @@ test('on the exit cleanup, a survivor the census named, and one only the read ju
   const pids = ['one', 'two'].map((name) => pidIn(directory, name));
   assert.deepEqual(byPid(events.filter(({ pid }) => pids.includes(pid))), byPid(pids.map((pid) => ({ event: 'survivor.killed', pid, ...tailOf(directory) }))));
   assert.deepEqual(events.filter(({ event }) => event === 'group.killed'), []);
-  assert.deepEqual(pids.map(alive), [false, false]);
+  assertExitTargetsEnded(pids);
 });
+
+test('exit cleanup ended oracle accepts an actual held zombie', SETTLES_WITHIN, async (t) => {
+  exitAnswerRequired.add(t);
+  const { directory, events, two, trace } = await censusExit(t, 'B', 'zombie');
+  assertSighting(trace, two, 'B');
+  const observed = spawnSync(PS, ['-p', String(two), '-o', 'pid=,stat='], { encoding: 'utf8', env: process.env });
+  assert.equal(observed.status, 0, observed.stderr);
+  assert.equal(observed.error, undefined);
+  assert.equal(observed.signal, null);
+  assert.equal(observed.stderr, '');
+  assert.match(observed.stdout, new RegExp(`^\\s*${two}\\s+Z\\S*\\s*$`), 'the held member is not independently shown as the actual zombie');
+  assert.equal(alive(two), true, 'signal zero no longer reaches the held zombie');
+  assert.deepEqual(recordOf(events, two).map(({ event, name, cmd }) => ({ event, name, cmd })), [{ event: 'survivor.killed', ...tailOf(directory) }]);
+  t.diagnostic(JSON.stringify({ heldZombie: two, birthSeconds: startOf(two), observed }));
+  assertExitTargetsEnded([pidIn(directory, 'one'), two]);
+});
+
+test('exit cleanup ended oracle rejects an actual running tail', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const pid = await tailIn(t, directory, join(directory, 'running'));
+  const birth = startOf(pid);
+  const observed = spawnSync(PS, ['-p', String(pid), '-o', 'pid=,stat=,comm='], { encoding: 'utf8', env: process.env });
+  assert.equal(observed.status, 0, observed.stderr);
+  assert.equal(observed.error, undefined);
+  assert.equal(observed.signal, null);
+  assert.equal(observed.stderr, '');
+  assert.match(observed.stdout, new RegExp(`^\\s*${pid}\\s+(?![ZT])\\S+\\s+.*tail\\s*$`));
+  t.diagnostic(JSON.stringify({ running: pid, birthSeconds: birth, observed }));
+  assert.throws(() => assertExitTargetsEnded([pid]), new RegExp(`PID ${pid} is still running or stopped`));
+});
+
+test('exit cleanup ended oracle rejects an actual stopped tail', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  let pid;
+  t.after(() => {
+    if (pid === undefined) return;
+    try { process.kill(pid, 'SIGCONT'); }
+    catch (error) { if (error.code !== 'ESRCH') throw error; }
+  });
+  pid = await tailIn(t, directory, join(directory, 'stopped'));
+  const birth = startOf(pid);
+  process.kill(pid, 'SIGSTOP');
+  await until(() => processState(pid).startsWith('T'), t);
+  const observed = spawnSync(PS, ['-p', String(pid), '-o', 'pid=,stat=,comm='], { encoding: 'utf8', env: process.env });
+  assert.equal(observed.status, 0, observed.stderr);
+  assert.equal(observed.error, undefined);
+  assert.equal(observed.signal, null);
+  assert.equal(observed.stderr, '');
+  assert.match(observed.stdout, new RegExp(`^\\s*${pid}\\s+T\\S*\\s+.*tail\\s*$`));
+  t.diagnostic(JSON.stringify({ stopped: pid, birthSeconds: birth, observed }));
+  assert.throws(() => assertExitTargetsEnded([pid]), new RegExp(`PID ${pid} is still running or stopped`));
+});
+
+test('exit cleanup ended oracle accepts an actual reaped owned child without a state read', SETTLES_WITHIN, async (t) => {
+  const child = spawn('/usr/bin/true', [], { env: process.env, stdio: 'ignore' });
+  const pid = child.pid;
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
+  assert.ok(Number.isSafeInteger(pid) && pid > 1);
+  const [code, signal] = await once(child, 'close');
+  assert.equal(code, 0);
+  assert.equal(signal, null);
+  assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+  t.diagnostic(JSON.stringify({ reapedOwnedChild: pid, code, signal }));
+  assertExitTargetsEnded([pid], { states: () => assert.fail('a positively absent child needs no state read') });
+});
+
+test('exit cleanup ended oracle requires later ESRCH after a clean empty state answer', () => {
+  const order = [];
+  assertExitTargetsEnded([401], {
+    signal: () => { order.push('signal'); if (order.length === 3) throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' }); },
+    states: () => { order.push('read'); return { status: 1, signal: null, stdout: '', stderr: '' }; },
+  });
+  assert.deepEqual(order, ['signal', 'read', 'signal']);
+});
+
+test('exit cleanup ended oracle rejects a clean empty read while signal zero still reaches the PID', () => {
+  const order = [];
+  assert.throws(() => assertExitTargetsEnded([401], {
+    signal: () => { order.push('signal'); },
+    states: () => { order.push('read'); return { status: 1, signal: null, stdout: '', stderr: '' }; },
+  }), /PID 401.*unconfirmed.*signal zero still reaches/);
+  assert.deepEqual(order, ['signal', 'read', 'signal']);
+});
+
+test('exit cleanup ended oracle rejects unconfirmed state reads', () => {
+  // Literals vary the raw spawnSync result contract observed in the real PS controls above.
+  const valid = { status: 0, signal: null, stdout: '401 Z\n', stderr: '' };
+  const cases = [
+    ['error despite a valid zombie row', { ...valid, error: Object.assign(new Error('read failed'), { code: 'EIO' }) }],
+    ['timeout', { status: null, signal: 'SIGTERM', stdout: '', stderr: '', error: Object.assign(new Error('read timed out'), { code: 'ETIMEDOUT' }) }],
+    ['signalled', { ...valid, signal: 'SIGTERM' }],
+    ['failed status', { ...valid, status: 2 }],
+    ['diagnostic standard error', { ...valid, stderr: 'ps: diagnostic\n' }],
+    ['empty successful read', { ...valid, stdout: '' }],
+    ['wrong PID', { ...valid, stdout: '402 Z\n' }],
+    ['multiple PID rows', { ...valid, stdout: '401 Z\n402 Z\n' }],
+    ['malformed row', { ...valid, stdout: 'not a process row\n' }],
+    ['extra column', { ...valid, stdout: '401 Z extra\n' }],
+    ['missing output', { ...valid, stdout: null }],
+    ['nonempty absence answer', { ...valid, status: 1 }],
+    ['missing result', null],
+  ];
+  for (const [name, answer] of cases) {
+    assert.throws(() => assertExitTargetsEnded([401], { signal: () => {}, states: () => answer }), /PID 401.*unconfirmed/, name);
+  }
+});
+
+test('exit cleanup ended oracle preserves non-ESRCH signal errors without reading states', () => {
+  const refused = Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
+  assert.throws(() => assertExitTargetsEnded([401], {
+    signal: () => { throw refused; },
+    states: () => assert.fail('a refused signal must not be called absence'),
+  }), (error) => error === refused);
+});
+
+
 
 /**
  * A `ps` stand-in that cuts the process `$here/two.pid` names out of every read until `$here/hang`
