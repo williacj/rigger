@@ -1,9 +1,9 @@
-<!-- ABOUTME: Sets up macOS development tools and runs the repository's ordinary test suite. -->
+<!-- ABOUTME: Sets up macOS development and CI tools and runs the repository's test tiers. -->
 
 # Run the tests on macOS
 
 The [README prerequisites](../README.md#prerequisites) own the Node floor and host promise.
-This procedure covers the ordinary test suite. Engine and agent installation is separate work
+This procedure covers repository development and both test tiers. Engine and agent installation is separate work
 in [#822](https://github.com/williacj/rigger/issues/822). For the Windows experiment, see
 [testing with WSL](testing-windows.md).
 
@@ -64,11 +64,17 @@ git clone --branch main https://github.com/williacj/rigger.git "$HOME/src/rigger
 cd "$HOME/src/rigger"
 npm ci
 npm test
+npm run test:host
 ```
 
-Success means exit status 0, fail 0 and cancelled 0 in the final summary. The ordinary suite
-refuses real forge and agent calls. No agent session or forge login is needed for that run;
-explicitly gated live tests can report skips with reasons.
+Use `npm test` for the ordinary deterministic tier. Run both commands above for the complete
+check. The [host tier](../test/suite.sh) exercises real local processes and tools.
+
+The runner refuses real forge and agent calls; neither command requires an agent session or
+forge login. Explicitly gated live tests can report skips with reasons.
+
+Complete-check success requires both commands to exit 0, each with fail 0 and cancelled 0 in
+its final summary. A skip count alone does not establish success.
 
 ## Troubleshooting
 
@@ -77,10 +83,18 @@ explicitly gated live tests can report skips with reasons.
 | Missing compiler or invalid developer directory | Complete the Command Line Tools installation and repeat `xcode-select -p` and `cc --version`. |
 | Wrong Node version or platform | Check `command -v node npm`, reopen Terminal after installation, and select the intended Node version. |
 | Missing gh | Install GitHub CLI and verify `gh --version` in the same Terminal. |
-| A test fails or is cancelled | Save the output and record `git rev-parse HEAD`, `node --version` and `sw_vers`. Rerun the named file with `npm test -- test/name.test.mjs`. |
+| A test fails or is cancelled | Save the output and record `git rev-parse HEAD`, `node --version` and `sw_vers`. For a deterministic file, use `npm test -- test/name.test.mjs`; for a host-listed file, use `npm run test:host -- test/name.test.mjs`. Replace the illustrative path with the failing file. |
+| File refused for being in the wrong test tier | Follow the runner's diagnostic; list current host files with `sh test/suite.sh --list host`. |
 
 The setup installers above have not been executed on a Mac during this Windows-hosted work.
 The [verification journal](journal/2026-10-20-1646-832-linux-tests.md) records the local setup limits.
 The experiment's PR records historical macOS CI results for that PR's head. To verify the
 checkout you are testing, inspect CI results for its exact commit; a result from a different
 commit does not verify it.
+
+## Self-hosted CI runner
+
+The repository's CI jobs select a runner carrying the `self-hosted`, `macOS` and `ARM64` labels.
+Keep Homebrew and `vhs`, `ttyd` and `ffmpeg` available on its `PATH` for the `demo` job. The
+`check (26)` job runs the test tiers and budget and document checks. Both jobs need network access
+so `actions/setup-node` can fetch Node 26 into the runner's tool cache.

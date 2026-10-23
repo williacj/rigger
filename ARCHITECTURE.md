@@ -445,8 +445,8 @@ ruleset is (`D23`):
   `can_admins_bypass: false`;
 - the variable `GATE_APP_ID` and the secret `GATE_APP_PRIVATE_KEY`, both in that environment;
 - the required contexts: `rigger/gate` and, in this repository, `self-hosting`, each pinned to
-  the App's id; and, in this repository, `check (20)` and `check (24)`, each pinned to GitHub
-  Actions' integration, 15368.
+  the App's id; and, in this repository, `check (26)`, pinned to GitHub Actions' integration,
+  15368.
 
 Of the gate's forge-side pieces, `init` forks only the workflow.
 
@@ -595,10 +595,13 @@ work. Rigger writes no other state. Recovery machinery
 enters L1 only after a recorded production incident in which redo was demonstrably insufficient.
 
 Admission lives in the directory `.rigger/admission/`, which holds one file per closer. Admission is
-open where no closer file exists, and that is its only open state. Every file in it but a temporary
-file is a closer. A temporary file is named `.tmp-<id>`, and no reader reads it. A closer file names
-the reason, the time and the run id, and no closer file's content changes after it appears. A closer
-whose name or content does not parse is unreadable. L3's `src/scheduling/admission.mjs` is the one
+open where no closer exists, and that is its only open state. An entry in it whose name starts
+with `.`, whatever its type, is not a closer, and no reader opens it. That covers each temporary
+file, named `.tmp-<id>`, and a file such as `.DS_Store` that the operating system or a person's
+tools leave there. Every other entry in it is a closer. A closer file names the reason, the time and
+the run id, and no closer file's content changes after it appears. A closer whose name or content
+does not parse is unreadable. An entry of no closer form whose name does not start with `.` is
+therefore an unreadable closer. L3's `src/scheduling/admission.mjs` is the one
 module that reads, closes and opens it, and `pause` and `resume` are the CLI's thin callers of that
 module.
 

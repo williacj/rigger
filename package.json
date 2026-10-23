@@ -22,7 +22,7 @@
     "rigger": "src/cli/rigger.mjs"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=26"
   },
   "scripts": {
     "test": "sh test/suite.sh",
