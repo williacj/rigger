@@ -73,8 +73,8 @@ test('admission reads one owner closer as closed, naming its kind, id, reason, t
 test('admission reads a hold closer under each of its three names, naming its kind, id and number', () => {
   for (const [name, named] of [
     ['hold-b2.json', {}],
-    ['hold-b2-after-41.json', { after: 41 }],
-    ['hold-b2-issue-907.json', { issue: 907 }],
+    ['hold-b2-after-41.json', { after: '41' }],
+    ['hold-b2-issue-907.json', { issue: '907' }],
   ]) {
     const state = stateOf();
     seed(state, name, closerText({ reason: 'two environment failures' }));
@@ -85,6 +85,20 @@ test('admission reads a hold closer under each of its three names, naming its ki
         reason: 'two environment failures', time: TIME, run: RUN,
       }],
     }, name);
+  }
+});
+
+test('admission reads a hold closer\'s number exactly, however many digits it has', () => {
+  for (const [name, form, written] of [
+    ['hold-a-issue-9007199254740993.json', 'issue', '9007199254740993'],
+    ['hold-b2-after-123456789012345678901234567890.json', 'after', '123456789012345678901234567890'],
+  ]) {
+    const state = stateOf();
+    seed(state, name);
+    const answer = moduleOver(state).read();
+    assert.equal(answer.state, 'closed', name);
+    assert.equal(typeof answer.closers[0][form], 'string', name);
+    assert.equal(answer.closers[0][form], written, name);
   }
 });
 
