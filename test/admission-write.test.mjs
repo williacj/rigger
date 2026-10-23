@@ -499,3 +499,18 @@ test('a close that would write an unreadable closer, with no reason, no finite t
     assert.equal(existsSync(state), false, JSON.stringify({ ...options, reason }));
   }
 });
+
+test('a close handed an id a present closer already carries, under any name form, rejects naming both, draws no other id and adds no closer', async () => {
+  for (const existing of ['owner-a1.json', 'hold-a1-issue-3.json']) {
+    const state = stateOf();
+    seed(state, existing);
+    const before = picture(admissionOf(state));
+    let asked = 0;
+    const ids = () => { asked += 1; return asked === 1 ? 'a1' : 'b2'; };
+    const { events, ...admissions } = moduleOver(state, { ids });
+    await assert.rejects(admissions.close({ kind: 'hold', reason: 'x' }), (error) => error.message.includes('a1') && error.message.includes(existing), existing);
+    assert.equal(asked, 1, existing);
+    assert.deepEqual(picture(admissionOf(state)), before, existing);
+    assert.deepEqual(events, []);
+  }
+});

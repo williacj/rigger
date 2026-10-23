@@ -134,10 +134,21 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
   }
 
   /**
+   * The name of a closer present that carries `id`, under any name form, or undefined. Only the
+   * closers present can be checked; a removed closer's id rests on the id source (K39 D4).
+   */
+  function carrying(id) {
+    const listing = list();
+    if (listing.failed) throw new Error(`admission cannot list ${dir}: ${listing.failed}`);
+    return listing.entries.map((entry) => entry.name).find((name) => parseName(name)?.id === id);
+  }
+
+  /**
    * Closes admission as `kind` for `reason`: writes a temporary file of its own, links its closer
    * to it, and removes the temporary file, so the closer is then the file's only name. It records
    * one `admission.close` event. A temporary file it cannot remove after the link is named in the
-   * answer and the event, and the close still stands.
+   * answer and the event, and the close still stands. An id a present closer already carries is
+   * refused, and no other id is drawn.
    */
   async function close({ kind, reason }) {
     if (!KINDS.includes(kind)) throw new Error(`admission closes only as owner or hold, not as ${JSON.stringify(kind)}`);
@@ -146,6 +157,8 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
     const id = ids();
     if (typeof id !== 'string' || !ID.test(id)) throw new Error(`admission was handed the id ${JSON.stringify(id)}, which is not a run of 0-9 and a-z`);
     directoryToWrite();
+    const carrier = carrying(id);
+    if (carrier) throw new Error(`admission was handed the id ${id}, which the closer ${join(dir, carrier)} already carries`);
     const name = `${kind}-${id}.json`;
     const path = join(dir, name);
     const temporary = join(dir, `.tmp-${id}`);
@@ -215,21 +228,24 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
     });
   }
 
-  /** Removes `closer`, a hold's under whatever name its id now carries: true where this call removed it. */
-  function removeCloser(closer) {
-    let removed = remove(closer.name);
-    if (closer.kind !== 'hold') return removed;
+  /**
+   * Removes `closer`, a hold's under whatever name its id now carries, adding to `removed` each name
+   * this call unlinked, so that a failure partway still leaves every removal it made named.
+   */
+  function removeCloser(closer, removed) {
+    if (remove(closer.name)) removed.push(closer.name);
+    if (closer.kind !== 'hold') return;
     for (let names = holdNames(closer.id); names.length > 0; names = holdNames(closer.id)) {
-      for (const name of names) removed = remove(name) || removed;
+      for (const name of names) if (remove(name)) removed.push(name);
     }
-    return removed;
   }
 
   /**
    * `resume`'s removal: where every closer reads, removes each closer it read, a hold's under
    * whatever name its id then carries, and records one `admission.open` event raised by `resume`
-   * for each it removed. A closer already gone counts as removed, with no event. Where any closer
-   * is unreadable, it removes nothing and names each.
+   * for each name it unlinked, so two names carrying one hold's id are two events. A closer already
+   * gone counts as removed, with no event. Where any closer is unreadable, it removes nothing and
+   * names each.
    */
   async function resume() {
     const answer = read();
@@ -237,19 +253,29 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
       throw new Error(`admission cannot be read, so resume removes nothing: ${answer.unreadable.map(({ path, cause }) => `${path} (${cause})`).join(', ')}`);
     }
     const closers = answer.closers ?? [];
+    const unlinked = new Set();
     const removed = [];
     const gone = [];
+    /** One event for each name in `names`, the kind and id its name carries, after its unlink. */
+    const recordEach = (names) => {
+      for (const name of names) {
+        unlinked.add(name);
+        const { kind, id } = parseName(name);
+        record('admission.open', { kind, id, name, by: 'resume' });
+      }
+    };
     for (const [index, closer] of closers.entries()) {
-      let did;
+      const names = [];
       try {
-        did = removeCloser(closer);
+        removeCloser(closer, names);
       } catch (cause) {
+        recordEach(names);
         const left = closers.slice(index).map(({ name }) => name).join(', ');
         throw new Error(`resume left ${left}: ${cause.message}`, { cause });
       }
-      if (!did) { gone.push(closer); continue; }
-      removed.push(closer);
-      record('admission.open', { kind: closer.kind, id: closer.id, name: closer.name, by: 'resume' });
+      recordEach(names);
+      if (names.length > 0 || unlinked.has(closer.name)) removed.push(closer);
+      else gone.push(closer);
     }
     return { removed, gone };
   }

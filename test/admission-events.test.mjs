@@ -55,6 +55,17 @@ test('a resume removal records one L3 admission.open event for each closer it re
   ]);
 });
 
+test('a resume removal records one event for each closer name it removes, where two hold names carry one id', async () => {
+  const state = stateOf();
+  seed(state, 'hold-a1.json');
+  seed(state, 'hold-a1-issue-3.json');
+  const { events, ...admissions } = moduleOver(state);
+  await admissions.resume();
+  assert.deepEqual(namesIn(state), []);
+  assert.deepEqual(events.map(({ name }) => name).sort(), ['hold-a1-issue-3.json', 'hold-a1.json']);
+  assert.deepEqual(events.map(({ kind, id, by }) => [kind, id, by]), [['hold', 'a1', 'resume'], ['hold', 'a1', 'resume']]);
+});
+
 test('each event is recorded after its write: the sink finds a close\'s closer linked, and an opening\'s or resume\'s gone', async () => {
   const state = stateOf();
   const seen = [];
