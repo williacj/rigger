@@ -2,7 +2,14 @@
 // module that reads it, closes it, opens it and removes its closers on `resume`, recording each change.
 
 import * as nodeFs from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
+
+/** The kinds of closer, each by the word its file's name starts with. */
+const KINDS = ['owner', 'hold'];
+
+/** An id: a non-empty run of `0`-`9` and `a`-`z`, holding no `-` and no `.`. */
+const ID = /^[0-9a-z]+$/;
 
 /** A closer's name, by its kind; a hold's may carry the number after `after-` or `issue-`. */
 const OWNER = /^owner-([0-9a-z]+)\.json$/;
@@ -10,6 +17,9 @@ const HOLD = /^hold-([0-9a-z]+)(?:-(after|issue)-([1-9][0-9]*))?\.json$/;
 
 /** The admission directory inside state directory `directory`. */
 export const admissionPath = (directory) => join(directory, 'admission');
+
+/** A fresh id, random enough that no other closer or temporary file has had it. */
+const randomId = () => randomBytes(16).toString('hex');
 
 /**
  * What a closer's name says of it, or undefined where the name is of no closer form. A hold's
@@ -39,7 +49,7 @@ const causeOf = (error) => error.code ?? error.message;
  *
  * `read` is synchronous, so that `take` can list inside its synchronous claim.
  */
-export function admission({ directory, fs = nodeFs }) {
+export function admission({ directory, run, now, ids = randomId, fs = nodeFs }) {
   const dir = admissionPath(directory);
 
   /** The admission directory's entries, or why it cannot be listed as a directory. */
@@ -103,5 +113,55 @@ export function admission({ directory, fs = nodeFs }) {
     }
   }
 
-  return { read };
+  /** The admission directory, made where it is absent, refused where it is not one. */
+  function directoryToWrite() {
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+      if (!fs.lstatSync(dir).isDirectory()) throw Object.assign(new Error('not a directory'), { code: 'ENOTDIR' });
+    } catch (error) {
+      throw new Error(`admission cannot close through ${dir}: ${causeOf(error)}`, { cause: error });
+    }
+  }
+
+  /**
+   * Closes admission as `kind` for `reason`: writes a temporary file of its own, links its closer
+   * to it, and removes the temporary file, so the closer is then the file's only name.
+   */
+  async function close({ kind, reason }) {
+    if (!KINDS.includes(kind)) throw new Error(`admission closes only as owner or hold, not as ${JSON.stringify(kind)}`);
+    const content = { reason, time: now(), run };
+    if (!isContent(content)) throw new Error(`admission cannot record the closer ${JSON.stringify(content)}: it needs a reason, a time and a run`);
+    const id = ids();
+    if (typeof id !== 'string' || !ID.test(id)) throw new Error(`admission was handed the id ${JSON.stringify(id)}, which is not a run of 0-9 and a-z`);
+    directoryToWrite();
+    const name = `${kind}-${id}.json`;
+    const path = join(dir, name);
+    const temporary = join(dir, `.tmp-${id}`);
+    let fd;
+    try {
+      fd = fs.openSync(temporary, 'wx');
+    } catch (error) {
+      throw new Error(`admission cannot write ${temporary}: ${causeOf(error)}`, { cause: error });
+    }
+    const discard = (at, error) => {
+      try { fs.unlinkSync(temporary); } catch { /* a temporary file left is never read */ }
+      return new Error(`admission cannot close at ${at}: ${causeOf(error)}`, { cause: error });
+    };
+    try {
+      fs.writeFileSync(fd, JSON.stringify(content));
+    } catch (error) {
+      fs.closeSync(fd);
+      throw discard(temporary, error);
+    }
+    fs.closeSync(fd);
+    try {
+      fs.linkSync(temporary, path);
+    } catch (error) {
+      throw discard(path, error);
+    }
+    fs.unlinkSync(temporary);
+    return { name, path, kind, id, ...content };
+  }
+
+  return { read, close };
 }
