@@ -169,15 +169,35 @@ function branchAt(repository, branch) {
   return printed === '' ? undefined : printed;
 }
 
+// proves R-FAIL-6, R-WORK-13, R-WORK-14
+test('an answered workspace replace-rule refusal has its own code and names the condition', async (t) => {
+  const here = world(t);
+  const path = join(here.root, 'rigger-42');
+  mkdirSync(path, { recursive: true });
+  writeFileSync(join(path, 'kept'), 'unchanged\n');
+  const before = contents(path);
+  const branch = branchAt(here.repository, 'rigger-42');
+
+  await assert.rejects(here.make(42), (error) => error.code === 'WORKSPACE_REFUSED'
+    && error.message.includes(path) && error.message.includes('R-WORK-13')
+    && error.message.includes('R-WORK-14'));
+  assert.deepEqual(contents(path), before);
+  assert.equal(branchAt(here.repository, 'rigger-42'), branch);
+});
+
 /**
  * Asserts that `attempt` rejects as a workspace that could not be made, naming `path`, and hands
  * back its failure.
  */
-async function refusedNaming(attempt, path) {
+async function refusedNaming(attempt, path, code = WORKSPACE_NOT_MADE) {
   let failure;
   await attempt.then(() => assert.fail('the attempt made a workspace'), (thrown) => { failure = thrown; });
-  assert.equal(failure.code, WORKSPACE_NOT_MADE, failure.stack);
+  assert.equal(failure.code, code, failure.stack);
   assert.ok(failure.message.includes(path), `the failure does not name ${path}: ${failure.message}`);
+  if (code === 'WORKSPACE_REFUSED') {
+    assert.match(failure.message, /R-WORK-13/);
+    assert.match(failure.message, /R-WORK-1[4-7]/);
+  }
   return failure;
 }
 
@@ -187,7 +207,7 @@ test('given a plain directory holding a file at card 42\'s workspace path, under
   const path = join(here.root, 'rigger-42');
   mkdirSync(path, { recursive: true });
   writeFileSync(join(path, 'kept'), 'not Rigger\'s\n');
-  await refusedNaming(here.make(42), path);
+  await refusedNaming(here.make(42), path, 'WORKSPACE_REFUSED');
 });
 
 // proves R-WORK-13, R-WORK-14
@@ -209,7 +229,7 @@ test('given a plain directory holding a file at card 42\'s workspace path, under
   const path = join(root, 'rigger-42');
   mkdirSync(path, { recursive: true });
   writeFileSync(join(path, 'kept'), 'not Rigger\'s\n');
-  await refusedNaming(here.make(42, { root }), path);
+  await refusedNaming(here.make(42, { root }), path, 'WORKSPACE_REFUSED');
   assert.equal(readFileSync(join(path, 'kept'), 'utf8'), 'not Rigger\'s\n');
 });
 
@@ -224,7 +244,7 @@ test('given a directory that is not a workspace of the repository at card 42\'s 
     const path = join(here.root, 'rigger-42');
     mkdirSync(path, { recursive: true });
     writeFileSync(join(path, 'kept'), 'not Rigger\'s\n');
-    await refusedNaming(here.make(42), path);
+    await refusedNaming(here.make(42), path, 'WORKSPACE_REFUSED');
     assert.equal(branchAt(here.repository, 'rigger-42'), before, existing ? 'the branch moved' : 'a branch was made');
   }
 });
@@ -237,7 +257,7 @@ test('given a worktree of a different repository at card 42\'s workspace path, t
   mkdirSync(here.root, { recursive: true });
   worktreeAt(other, path, 'rigger-42');
   const before = worktreeList(other);
-  await refusedNaming(here.make(42), path);
+  await refusedNaming(here.make(42), path, 'WORKSPACE_REFUSED');
   assert.equal(worktreeList(other), before);
   assert.equal(existsSync(join(path, 'README')), true);
 });
@@ -283,7 +303,7 @@ function mainTreeWorld(t) {
 // proves R-WORK-13, R-WORK-14, R-WORK-16
 test('given a repository whose main working tree is W/app-7, with root W and topic app-{number}, an attempt at card 7 fails naming that path', async (t) => {
   const here = mainTreeWorld(t);
-  await refusedNaming(here.make(), join(here.w, 'app-7'));
+  await refusedNaming(here.make(), join(here.w, 'app-7'), 'WORKSPACE_REFUSED');
 });
 
 // proves R-WORK-13, R-WORK-14, R-WORK-16
@@ -300,7 +320,7 @@ test('given a root named through a symbolic link, so that the path derived for c
   const link = join(here.within, 'link');
   symlinkSync(here.w, link);
   const before = here.state();
-  await refusedNaming(here.make(link), join(link, 'app-7'));
+  await refusedNaming(here.make(link), join(link, 'app-7'), 'WORKSPACE_REFUSED');
   assert.deepEqual(here.state(), before);
 });
 
@@ -350,7 +370,7 @@ function gitRefuses(name) {
 test('given a topic that git refuses as a branch name, the attempt fails naming the card and the topic, and no directory is made at the derived path', async (t) => {
   const here = world(t);
   const topic = 'rigger-{number}.lock';
-  const failure = await refusedNaming(here.make(42, { topic }), join(here.root, 'rigger-42.lock'));
+  const failure = await refusedNaming(here.make(42, { topic }), join(here.root, 'rigger-42.lock'), 'BRANCH_REFUSED');
   assert.ok(failure.message.includes('#42'), failure.message);
   assert.ok(failure.message.includes(`\`${topic}\``), failure.message);
   assert.equal(existsSync(join(here.root, 'rigger-42.lock')), false);
@@ -385,6 +405,36 @@ function publishCard(here, content = 'the maker\'s work\n', force = false) {
   gitIn(here.source, 'push', '-q', ...(force ? ['--force'] : []), here.origin, 'HEAD:refs/heads/rigger-42');
   return headOf(here.source);
 }
+
+// proves R-FAIL-6, R-WORK-13, R-WORK-14, R-WORK-15, R-WORK-16, R-WORK-17
+test('each workspace replace-rule condition refuses from the beginning and while continuing without changing the path or branches', async (t) => {
+  for (const condition of ['R-WORK-14', 'R-WORK-15', 'R-WORK-16', 'R-WORK-17']) {
+    for (const continuing of [false, true]) {
+      await t.test(`${condition} ${continuing ? 'continuing' : 'beginning'}`, async (caseTest) => {
+        const here = world(caseTest);
+        const head = continuing ? publishCard(here) : undefined;
+        const path = join(here.root, 'rigger-42');
+        let repository = here.repository;
+        if (condition === 'R-WORK-14') {
+          mkdirSync(path, { recursive: true });
+          writeFileSync(join(path, 'kept'), 'plain directory\n');
+        } else if (condition === 'R-WORK-15') {
+          worktreeAt(here.repository, path, 'owner-42');
+        } else {
+          worktreeAt(here.repository, path, 'rigger-42');
+          if (condition === 'R-WORK-16') repository = path;
+          else worktreeAt(here.repository, join(path, 'nested'), 'nested-42');
+        }
+        const before = { contents: contents(path), branches: gitIn(here.repository, 'for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads'), worktrees: worktreeList(here.repository) };
+
+        const failure = await refusedNaming(here.make(42, { repository, ...(head === undefined ? {} : { head }) }), path, 'WORKSPACE_REFUSED');
+
+        assert.ok(failure.message.includes(condition), failure.message);
+        assert.deepEqual({ contents: contents(path), branches: gitIn(here.repository, 'for-each-ref', '--format=%(refname) %(objectname)', 'refs/heads'), worktrees: worktreeList(here.repository) }, before);
+      });
+    }
+  }
+});
 
 // proves R-WORK-25
 test('L1\'s workspace handle makes a continuing attempt at the card line of work head it is handed', async (t) => {
@@ -512,7 +562,7 @@ test('a continuing attempt refuses a forge line moved since L2 read it, naming b
   const before = contents(first.path);
   const movedHead = publishCard(here, 'later work\n');
 
-  const failure = await refusedNaming(here.make(42, { head: readHead }), first.path);
+  const failure = await refusedNaming(here.make(42, { head: readHead }), first.path, 'LINE_MOVED');
 
   assert.ok(failure.message.includes(readHead) && failure.message.includes(movedHead), failure.message);
   assert.deepEqual(contents(first.path), before);
@@ -536,7 +586,7 @@ test('a continuing attempt refuses when the forge moves during its fetch', async
     `exec '${GIT}' "$@"`,
   ].join('\n'));
 
-  const failure = await withFirstOnPath(stand, () => refusedNaming(here.make(42, { head: readHead }), first.path));
+  const failure = await withFirstOnPath(stand, () => refusedNaming(here.make(42, { head: readHead }), first.path, 'LINE_MOVED'));
 
   assert.ok(failure.message.includes(readHead) && failure.message.includes(movedHead), failure.message);
   assert.equal(branchAt(here.origin, 'rigger-42'), movedHead);
@@ -556,7 +606,7 @@ test('a continuing attempt refuses a different branch or detached HEAD at its pa
     writeFileSync(join(path, 'kept'), `${kind}\n`);
     const before = contents(path);
 
-    const failure = await refusedNaming(here.make(42, { head }), path);
+    const failure = await refusedNaming(here.make(42, { head }), path, 'WORKSPACE_REFUSED');
 
     assert.ok(failure.message.includes(kind === 'other branch' ? 'owner-work' : 'detached HEAD'), failure.message);
     assert.deepEqual(contents(path), before);
@@ -572,7 +622,7 @@ test('a continuing attempt refuses a plain directory at its path and preserves i
   writeFileSync(join(path, 'kept'), 'not a worktree\n');
   const before = contents(path);
 
-  await refusedNaming(here.make(42, { head }), path);
+  await refusedNaming(here.make(42, { head }), path, 'WORKSPACE_REFUSED');
 
   assert.deepEqual(contents(path), before);
 });
@@ -586,7 +636,7 @@ test('a continuing attempt refuses when the card branch is checked out in a work
   const before = contents(elsewhere);
   const path = join(here.root, 'rigger-42');
 
-  const failure = await refusedNaming(here.make(42, { head }), path);
+  const failure = await refusedNaming(here.make(42, { head }), path, 'BRANCH_ELSEWHERE');
 
   assert.ok(failure.message.includes(elsewhere), failure.message);
   assert.deepEqual(contents(elsewhere), before);
@@ -602,7 +652,7 @@ test('a continuing attempt refuses a line deleted after L2 read it and preserves
   const before = contents(first.path);
   gitIn(here.source, 'push', '-q', here.origin, ':refs/heads/rigger-42');
 
-  const failure = await refusedNaming(here.make(42, { head }), first.path);
+  const failure = await refusedNaming(here.make(42, { head }), first.path, 'LINE_DELETED');
 
   assert.ok(failure.message.includes('rigger-42') && failure.message.includes('deleted'), failure.message);
   assert.deepEqual(contents(first.path), before);
@@ -622,11 +672,27 @@ test('a continuing attempt refuses a failed fetch naming its path and preserving
     `exec '${GIT}' "$@"`,
   ].join('\n'));
 
-  const failure = await withFirstOnPath(stand, () => refusedNaming(here.make(42, { head }), first.path));
+  const failure = await withFirstOnPath(stand, () => refusedNaming(here.make(42, { head }), first.path, 'FETCH_FAILED'));
 
   assert.ok(failure.message.includes('fetch refused by fixture'), failure.message);
   assert.deepEqual(contents(first.path), before);
   assert.equal(headOf(first.path), head);
+});
+
+// proves R-FAIL-6
+test('L1 maps the forge failure code even when git prints words resembling a moved line', async (t) => {
+  const here = world(t);
+  const head = publishCard(here);
+  const first = await here.make(42, { head });
+  const stand = fixture(scratch(t), 'git', [
+    'if [ "$1" = ls-remote ]; then echo "origin moved from old to new" >&2; exit 128; fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+
+  const failure = await withFirstOnPath(dirname(stand), () => refusedNaming(here.make(42, { head }), first.path, 'FETCH_FAILED'));
+
+  assert.match(failure.message, /origin moved from old to new/);
+  assert.equal(branchOf(first.path), 'rigger-42');
 });
 
 // proves R-WORK-25
@@ -642,7 +708,7 @@ test('a continuing attempt refuses a timed-out fetch naming its path and preserv
     `exec '${GIT}' "$@"`,
   ].join('\n'));
 
-  const failure = await withFirstOnPath(stand, () => refusedNaming(here.make(42, { head, timeout: OUTLIVED }), first.path));
+  const failure = await withFirstOnPath(stand, () => refusedNaming(here.make(42, { head, timeout: OUTLIVED }), first.path, 'FETCH_FAILED'));
 
   assert.ok(failure.message.includes('fetch') && failure.message.includes(`${OUTLIVED} ms`), failure.message);
   assert.deepEqual(contents(first.path), before);
@@ -655,7 +721,7 @@ test('L1\'s workspace function, handed a root that is not absolute, makes no wor
   const handed = (root) => Object.defineProperty({ root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: here.sink }, 'repo', {
     get() { throw new Error('L1 read repo'); },
   });
-  const failure = await refusedNaming(makeWorkspace(handed('worktrees')), 'worktrees');
+  const failure = await refusedNaming(makeWorkspace(handed('worktrees')), 'worktrees', 'ROOT_NOT_ABSOLUTE');
   assert.ok(failure.message.includes('not an absolute path'), failure.message);
   assert.equal(existsSync(join('worktrees', 'rigger-42')), false);
   const made = await makeWorkspace(handed(here.root));
@@ -666,7 +732,7 @@ test('a workspace that could not be made is reported with a code telling it from
   const here = world(t);
   const path = join(here.root, 'rigger-42');
   mkdirSync(path, { recursive: true });
-  const failure = await refusedNaming(here.make(42), path);
+  const failure = await refusedNaming(here.make(42), path, 'WORKSPACE_REFUSED');
   assert.notEqual(failure.code, NOT_STARTED);
   assert.notEqual(failure.code, EVENT_REFUSED);
   assert.equal(failure.path, path);
@@ -697,7 +763,7 @@ test('given a workspace that could not be made, the event stream holds an L1 eve
   const here = world(t);
   const path = join(here.root, 'rigger-42');
   mkdirSync(path, { recursive: true });
-  const failure = await refusedNaming(here.make(42), path);
+  const failure = await refusedNaming(here.make(42), path, 'WORKSPACE_REFUSED');
   const recorded = l1(here.events(), 42, 'workspace.failed');
   assert.equal(recorded.length, 1);
   assert.equal(recorded[0].path, path);
@@ -731,9 +797,9 @@ test('given a plain directory, a worktree of another repository, or the main wor
   const stand = scratch(t);
   gitRecording(stand);
   await withFirstOnPath(stand, async () => {
-    await refusedNaming(here.make(42), plain);
-    await refusedNaming(here.make(43), join(here.root, 'rigger-43'));
-    await refusedNaming(main.make(), join(main.w, 'app-7'));
+    await refusedNaming(here.make(42), plain, 'WORKSPACE_REFUSED');
+    await refusedNaming(here.make(43), join(here.root, 'rigger-43'), 'WORKSPACE_REFUSED');
+    await refusedNaming(main.make(), join(main.w, 'app-7'), 'WORKSPACE_REFUSED');
   });
   const calls = gitCalls(stand);
   assert.ok(calls.length > 0, 'the stand-in recorded no call');
@@ -782,7 +848,7 @@ test('given a git stand-in that accepts card 1\'s derived name and refuses card 
   const stand = gitRefusingCard3(t);
   await withFirstOnPath(stand, async () => {
     const handle = await workspaceHandle({ root: here.root, topic: 'rigger-{number}', repository: here.repository, sink: here.sink });
-    const failure = await refusedNaming(handle(3), join(here.root, 'rigger-3'));
+    const failure = await refusedNaming(handle(3), join(here.root, 'rigger-3'), 'BRANCH_REFUSED');
     assert.ok(failure.message.includes('rigger-3'), failure.message);
   });
 });
@@ -834,7 +900,7 @@ function handedWorld(t, branch, below) {
 // proves R-WORK-13, R-WORK-15, R-WORK-16
 test('given L1 handed as the repository a linked worktree at root/rigger-42 on branch owner-work, holding an uncommitted file, an attempt at card 42 fails naming the path', async (t) => {
   const here = handedWorld(t, 'owner-work');
-  await refusedNaming(here.attempt(), here.path);
+  await refusedNaming(here.attempt(), here.path, 'WORKSPACE_REFUSED');
 });
 
 // proves R-WORK-13, R-WORK-15, R-WORK-16
@@ -850,14 +916,14 @@ test('given L1 handed as the repository a linked worktree at root/rigger-42 on b
 test('given L1 handed as the repository a linked worktree at root/rigger-42 that is on branch rigger-42, an attempt at card 42 fails naming the path, and the worktree\'s files are byte-identical afterwards', async (t) => {
   const here = handedWorld(t, 'rigger-42');
   const before = here.state();
-  await refusedNaming(here.attempt(), here.path);
+  await refusedNaming(here.attempt(), here.path, 'WORKSPACE_REFUSED');
   assert.deepEqual(here.state(), before);
 });
 
 // proves R-WORK-13, R-WORK-16
 test('given L1 handed as the repository a subdirectory of a linked worktree at root/rigger-42 on branch rigger-42, holding an uncommitted file, an attempt at card 42 fails naming the path', async (t) => {
   const here = handedWorld(t, 'rigger-42', 'below');
-  await refusedNaming(here.attempt(), here.path);
+  await refusedNaming(here.attempt(), here.path, 'WORKSPACE_REFUSED');
 });
 
 // proves R-WORK-13, R-WORK-16
@@ -889,7 +955,7 @@ function ownerWorld(t) {
 // proves R-WORK-13, R-WORK-15
 test('given the main working tree as the repository, and an owner\'s linked worktree on branch owner-7 at root/rigger-7 holding an uncommitted file, an attempt at card 7 fails naming the path', async (t) => {
   const here = ownerWorld(t);
-  await refusedNaming(here.make(7), here.path);
+  await refusedNaming(here.make(7), here.path, 'WORKSPACE_REFUSED');
 });
 
 // proves R-WORK-13, R-WORK-15
@@ -923,7 +989,7 @@ function detachedWorld(t) {
 // proves R-WORK-13, R-WORK-15
 test('given a linked worktree of the repository with a detached HEAD at card 42\'s workspace path, an attempt at card 42 fails naming the path', async (t) => {
   const here = detachedWorld(t);
-  await refusedNaming(here.make(42), here.path);
+  await refusedNaming(here.make(42), here.path, 'WORKSPACE_REFUSED');
 });
 
 // proves R-WORK-13, R-WORK-15
@@ -947,7 +1013,7 @@ async function linkedToCard43(t) {
 // proves R-WORK-13, R-WORK-15
 test('given a symbolic link at card 42\'s workspace path pointing at card 43\'s workspace on rigger-43, which holds an uncommitted file, an attempt at card 42 fails naming the path', async (t) => {
   const here = await linkedToCard43(t);
-  await refusedNaming(here.make(42), here.path);
+  await refusedNaming(here.make(42), here.path, 'WORKSPACE_REFUSED');
 });
 
 // proves R-WORK-13, R-WORK-15
@@ -981,7 +1047,7 @@ function mainNotHandedWorld(t) {
 // proves R-WORK-13, R-WORK-14
 test('given L1 handed as the repository a linked worktree elsewhere, and the repository\'s main worktree at W/app-7 on branch app-7, with root W and topic app-{number}, an attempt at card 7 fails naming the path', async (t) => {
   const here = mainNotHandedWorld(t);
-  await refusedNaming(here.attempt(), here.main);
+  await refusedNaming(here.attempt(), here.main, 'WORKSPACE_REFUSED');
 });
 
 // proves R-WORK-13, R-WORK-14
@@ -1007,7 +1073,7 @@ function cloneWorld(t) {
 // proves R-WORK-13, R-WORK-14
 test('given a separate clone of the repository at card 7\'s workspace path, on branch rigger-7, an attempt at card 7 fails naming the path', async (t) => {
   const here = cloneWorld(t);
-  await refusedNaming(here.make(7), here.path);
+  await refusedNaming(here.make(7), here.path, 'WORKSPACE_REFUSED');
 });
 
 // proves R-WORK-13, R-WORK-14
@@ -1213,7 +1279,7 @@ test('given card 42\'s own linked worktree on rigger-42 at its workspace path, w
   assert.notEqual(revParsed(here.handed, '--show-toplevel'), realpathSync(here.path));
   // R-WORK-17 fails: another worktree of the repository, the handed one, lies inside it.
   assert.ok(worktreeList(here.repository).includes(`worktree ${realpathSync(here.handed)}\n`), worktreeList(here.repository));
-  await refusedNaming(here.attempt(), here.path);
+  await refusedNaming(here.attempt(), here.path, 'WORKSPACE_REFUSED');
   // The failure is L1's refusal, not what is left once the engine went with the card's directory.
   assert.equal(existsSync(join(here.handed, 'uncommitted')), true);
 });
@@ -1261,7 +1327,7 @@ function nestedOwnerWorld(t, at = 'owner') {
 // proves R-WORK-13, R-WORK-17
 test('given the main worktree as the repository, and an owner\'s linked worktree registered at rigger-42/owner inside card 42\'s own workspace on rigger-42, holding an uncommitted file, an attempt at card 42 fails naming the path', async (t) => {
   const here = nestedOwnerWorld(t);
-  await refusedNaming(here.make(42), here.path);
+  await refusedNaming(here.make(42), here.path, 'WORKSPACE_REFUSED');
 });
 
 // proves R-WORK-13, R-WORK-17
@@ -1286,7 +1352,7 @@ test('given an owner\'s linked worktree registered at rigger-42/owner inside car
 // proves R-WORK-13, R-WORK-17
 test('given a worktree of the repository registered two directories deep inside card 42\'s own workspace, at rigger-42/a/b, an attempt at card 42 fails naming the path', async (t) => {
   const here = nestedOwnerWorld(t, join('a', 'b'));
-  await refusedNaming(here.make(42), here.path);
+  await refusedNaming(here.make(42), here.path, 'WORKSPACE_REFUSED');
   assert.equal(existsSync(join(here.owner, 'uncommitted')), true);
 });
 
@@ -1412,7 +1478,7 @@ test('given an owner\'s worktree registered inside card 42\'s own workspace thro
   // Git lists the worktree under the spelling it was added through, not the card's.
   assert.ok(worktreeList(here.repository).includes(`worktree ${join(realpathSync(here.directory), 'Worktrees', 'rigger-42', 'owner')}\n`), worktreeList(here.repository));
   const before = { files: contents(owner), worktrees: worktreeList(here.repository) };
-  await refusedNaming(here.make(42), first.path);
+  await refusedNaming(here.make(42), first.path, 'WORKSPACE_REFUSED');
   assert.deepEqual({ files: contents(owner), worktrees: worktreeList(here.repository) }, before);
   assert.equal(readFileSync(join(owner, 'uncommitted'), 'utf8'), 'the owner\'s work\n');
 });
@@ -1505,7 +1571,7 @@ test('given a root spelled in another case than its directory on disk, on a volu
   writeFileSync(join(disk, 'rigger-42', 'kept'), 'not Rigger\'s\n');
   here.push('the main line moves on');
   const before = untouched(here, disk);
-  await refusedNaming(here.make(42), join(here.root, 'rigger-42'));
+  await refusedNaming(here.make(42), join(here.root, 'rigger-42'), 'WORKSPACE_REFUSED');
   assert.deepEqual(untouched(here, disk), before);
   assert.equal(readFileSync(join(disk, 'rigger-42', 'kept'), 'utf8'), 'not Rigger\'s\n');
 });
@@ -1519,7 +1585,7 @@ test('given a root spelled in another case than its directory on disk, on a volu
   writeFileSync(join(owner, 'uncommitted'), 'the owner\'s work\n');
   here.push('the main line moves on');
   const before = untouched(here, disk);
-  const failure = await refusedNaming(here.make(42), join(here.root, 'rigger-42'));
+  const failure = await refusedNaming(here.make(42), join(here.root, 'rigger-42'), 'WORKSPACE_REFUSED');
   assert.match(failure.message, /holding the branch owner-42/);
   assert.deepEqual(untouched(here, disk), before);
   assert.equal(readFileSync(join(owner, 'uncommitted'), 'utf8'), 'the owner\'s work\n');
@@ -1534,7 +1600,7 @@ test('given a root spelled in another case than its directory on disk, on a volu
   writeFileSync(join(handed, 'uncommitted'), 'the engine\'s own work\n');
   here.push('the main line moves on');
   const before = untouched(here, disk);
-  const failure = await refusedNaming(here.make(42, { repository: handed }), join(here.root, 'rigger-42'));
+  const failure = await refusedNaming(here.make(42, { repository: handed }), join(here.root, 'rigger-42'), 'WORKSPACE_REFUSED');
   assert.match(failure.message, /is the worktree L1 was handed/);
   assert.deepEqual(untouched(here, disk), before);
   assert.equal(readFileSync(join(handed, 'uncommitted'), 'utf8'), 'the engine\'s own work\n');

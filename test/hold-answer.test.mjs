@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { WORKSPACE_NOT_MADE } from '../src/execution/workspace.mjs';
+import { FETCH_FAILED } from '../src/execution/workspace.mjs';
 import { NOT_STARTED } from '../src/substrate/process.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { KINDS, readyCard } from './loop-world.mjs';
@@ -25,7 +26,7 @@ test('L2 holds a card whose two workspaces cannot be made', () => {
 
 const FIRST = {
   W: { class: 'environment', workspace: '/work/rigger-7', reason: 'git gave no answer' },
-  F: { class: 'environment', workspace: '/work/rigger-7', reason: 'fetch timed out' },
+  F: { class: 'environment', workspace: '/work/rigger-7', code: FETCH_FAILED, reason: 'fetch timed out' },
   'N(s)': { class: 'environment', step: 's', reason: 'command never started' },
   'X(s)': { class: 'environment', step: 's', exit: 3 },
   M: { class: 'environment', maker: 'engineer', status: 'rejected', code: NOT_STARTED, reason: 'dispatch never started' },
@@ -34,7 +35,8 @@ const FIRST = {
 function second(kind) {
   if (kind === 'W' || kind === 'F') {
     const message = kind === 'F' ? 'fetch timed out' : 'git gave no answer';
-    return { options: { workspace: { status: 'rejected', reason: Object.assign(new Error(message), { code: WORKSPACE_NOT_MADE, path: '/work/rigger-7' }) } }, failure: { class: 'environment', workspace: '/work/rigger-7', reason: message } };
+    const code = kind === 'F' ? FETCH_FAILED : WORKSPACE_NOT_MADE;
+    return { options: { workspace: { status: 'rejected', reason: Object.assign(new Error(message), { code, path: '/work/rigger-7' }) } }, failure: { class: 'environment', workspace: '/work/rigger-7', ...(kind === 'F' ? { code } : {}), reason: message } };
   }
   if (kind === 'M') return { options: { maker: { status: 'rejected', reason: Object.assign(new Error('dispatch never started'), { code: NOT_STARTED }) } }, failure: FIRST.M };
   const step = kind.endsWith('(t)') ? 't' : 's';
@@ -54,7 +56,6 @@ test('L2 answers each in-scope Table A pair by host kind and step', async (t) =>
   const rows = ['W', 'F', 'N(s)', 'X(s)', 'M'];
   const columns = ['W', 'F', 'N(s)', 'N(t)', 'X(s)', 'X(t)', 'M'];
   for (const first of rows) for (const last of columns) {
-    if ((first === 'W' && last === 'F') || (first === 'F' && last === 'W')) continue;
     await t.test(`${first} then ${last}`, () => {
       events.length = 0;
       const { kinds = KINDS, options, failure } = second(last);
@@ -125,4 +126,62 @@ test('L2 answers no action with the card and attempt when the sink refuses the h
 test('L2 does not hold a card whose maker starts on the second attempt', () => {
   const answer = nextAction(readyCard(7), KINDS, undefined, { provisioning: {}, sink, attempt: 2, firstFailure: FIRST.W, maker: { status: 'fulfilled', value: { exit: 0 } } });
   assert.deepEqual(answer, { action: 'settled' });
+});
+
+// proves R-FAIL-6
+test('each card-local and out report stops immediately with its own attempt.failed class', async (t) => {
+  for (const [code, expected] of [
+    ['WORKSPACE_REFUSED', 'card-local'], ['BRANCH_ELSEWHERE', 'card-local'],
+    ['SCRATCH_REFUSED', 'card-local'], ['LINE_MOVED', 'out'],
+    ['LINE_DELETED', 'out'], ['BRANCH_REFUSED', 'out'], ['ROOT_NOT_ABSOLUTE', 'out'],
+  ]) {
+    await t.test(code, () => {
+      events.length = 0;
+      const reason = Object.assign(new Error(`${code} refused`), { code, path: '/work/rigger-7' });
+      const outcome = { status: 'rejected', reason };
+      const given = code === 'SCRATCH_REFUSED' ? { maker: outcome } : { workspace: outcome };
+      const answer = nextAction(readyCard(7), KINDS, undefined, { provisioning: {}, sink, attempt: 1, ...given });
+      assert.equal(answer.action, 'stop');
+      assert.equal(answer.failure.class, expected);
+      assert.equal(answer.failure.code, code);
+      assert.deepEqual(events.map(({ event, attempt, class: named, decision }) => [event, attempt, named, decision]), [
+        ['attempt.failed', 1, expected, undefined], ['attempt.decided', 1, undefined, 'stop'],
+      ]);
+    });
+  }
+});
+
+// proves R-FAIL-6
+test('a card-local refusal or moved line stops on attempt two after itself or a host failure', async (t) => {
+  for (const code of ['WORKSPACE_REFUSED', 'SCRATCH_REFUSED', 'LINE_MOVED']) {
+    for (const first of [code, 'host']) {
+      await t.test(`${first} then ${code}`, () => {
+        events.length = 0;
+        const reason = Object.assign(new Error(`${code} refused`), { code, path: '/work/rigger-7' });
+        const given = code === 'SCRATCH_REFUSED' ? { maker: { status: 'rejected', reason } } : { workspace: { status: 'rejected', reason } };
+        const firstFailure = first === 'host' ? FIRST.W : {
+          class: code === 'LINE_MOVED' ? 'out' : 'card-local',
+          ...(code === 'SCRATCH_REFUSED' ? { maker: 'engineer', status: 'rejected' } : { workspace: '/work/rigger-7' }),
+          code, reason: reason.message,
+        };
+        const answer = nextAction(readyCard(7), KINDS, undefined, { provisioning: {}, sink, attempt: 2, firstFailure, ...given });
+        assert.equal(answer.action, 'stop');
+        assert.equal(events.at(-1).decision, 'stop');
+      });
+    }
+  }
+});
+
+// proves R-FAIL-6
+test('an unanswered maker scratch check and a maker dispatch that never started hold as one host way in either order', () => {
+  const scratch = { class: 'environment', maker: 'engineer', status: 'rejected', code: NOT_STARTED, reason: 'scratch check gave no answer' };
+  const dispatch = FIRST.M;
+  for (const [firstFailure, last] of [[scratch, dispatch], [dispatch, scratch]]) {
+    events.length = 0;
+    const maker = { status: 'rejected', reason: Object.assign(new Error(last.reason), { code: NOT_STARTED }) };
+    const answer = nextAction(readyCard(7), KINDS, undefined, { provisioning: {}, sink, attempt: 2, firstFailure, maker });
+    assert.equal(answer.action, 'hold');
+    assert.equal(answer.failure.class, 'environment');
+    assert.equal(events.at(-1).decision, 'hold');
+  }
 });

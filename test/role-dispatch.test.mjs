@@ -687,19 +687,38 @@ test('L1 records under the card the scratch directory it made, and the one it re
  * rejects with NOT_STARTED naming `path`, that the adapter was asked for no invocation, that the
  * stand-in agent never ran, and that L1 recorded no dispatch.start. Hands back the failure.
  */
-async function assertScratchRefused({ root, directory, cwd, state, sink }, base, path) {
+async function assertScratchRefused({ root, directory, cwd, state, sink }, base, path, code = NOT_STARTED) {
   const { command, args } = agentIn(root);
   const { adapter, asked } = scratchReading(command, { args });
   let failure;
   await throughL1({ answer: answerOf(), cwd, directory, scratch: base, reach: [], env: {}, sink, state, adapters: { 'stand-in': adapter } })
     .then(() => assert.fail('L1 settled'), (thrown) => { failure = thrown; });
-  assert.equal(failure.code, NOT_STARTED, failure.stack);
+  assert.equal(failure.code, code, failure.stack);
   assert.ok(failure.message.includes(path), `the failure does not name ${path}: ${failure.message}`);
+  if (code === 'SCRATCH_REFUSED') {
+    assert.match(failure.message, /R-WORK-26/);
+    assert.match(failure.message, /R-WORK-2[7-9]/);
+  }
   assert.deepEqual(asked, [], 'the adapter was asked for an invocation');
   assert.equal(seenIn(root), undefined, 'the stand-in agent ran');
   assert.deepEqual(eventsIn(state).filter((event) => event.event === 'dispatch.start'), []);
   return failure;
 }
+
+// proves R-FAIL-6, R-WORK-26, R-WORK-27
+test('the maker scratch refusal is reported apart from a dispatch that never started', async (t) => {
+  const placed = layout(t);
+  const path = join(placed.scratch, 'engineer');
+  writeFileSync(path, 'kept\n');
+  const { adapter } = scratchReading('/usr/bin/true');
+
+  await assert.rejects(roleDispatch({ answer: answerOf(), cwd: placed.cwd, directory: placed.directory,
+    scratch: placed.scratch, repository: placed.repository, reach: [], env: {}, sink: placed.sink,
+    id: 'maker', card: 1412, adapters: { 'stand-in': adapter } }), (error) =>
+    error.code === 'SCRATCH_REFUSED' && error.message.includes(path)
+    && error.message.includes('R-WORK-26') && error.message.includes('R-WORK-27'));
+  assert.equal(readFileSync(path, 'utf8'), 'kept\n');
+});
 
 /** Every entry under `path`, not following links, with each file's bytes and each link's target. */
 function contents(path) {
@@ -723,7 +742,7 @@ test('given a symbolic link at <root>/scratch or at <root>/scratch/<topic>, role
     if (linked.length === 1) mkdirSync(join(elsewhere, 'rigger-1412', 'engineer'), { recursive: true });
     const before = [contents(top), contents(elsewhere)];
 
-    await assertScratchRefused(placed, join(top, 'scratch', 'rigger-1412'), link);
+    await assertScratchRefused(placed, join(top, 'scratch', 'rigger-1412'), link, 'SCRATCH_REFUSED');
 
     assert.deepEqual([contents(top), contents(elsewhere)], before, `${link}: something changed`);
   }
@@ -739,7 +758,7 @@ test('given a worktree of the repository registered at <scratch>/<role> or insid
     const branch = gitIn(repository, 'rev-parse', 'refs/heads/held');
     const before = { files: contents(tree), list: worktreeList(repository) };
 
-    await assertScratchRefused(placed, placed.scratch, path);
+    await assertScratchRefused(placed, placed.scratch, path, 'SCRATCH_REFUSED');
 
     assert.deepEqual({ files: contents(tree), list: worktreeList(repository) }, before, `${tree}: something changed`);
     assert.equal(gitIn(repository, 'rev-parse', 'refs/heads/held'), branch);
@@ -758,7 +777,7 @@ test('given a file, a symbolic link to a directory, or a symbolic link to nothin
     put(path, placed.root);
     const before = [contents(placed.scratch), contents(placed.directory)];
 
-    await assertScratchRefused(placed, placed.scratch, path);
+    await assertScratchRefused(placed, placed.scratch, path, 'SCRATCH_REFUSED');
 
     assert.deepEqual([contents(placed.scratch), contents(placed.directory)], before);
   }
@@ -823,7 +842,7 @@ test('L1 records under the card a scratch directory it could not make, carrying 
   const path = join(placed.scratch, 'engineer');
   writeFileSync(path, 'not a directory\n');
 
-  const failure = await assertScratchRefused(placed, placed.scratch, path);
+  const failure = await assertScratchRefused(placed, placed.scratch, path, 'SCRATCH_REFUSED');
 
   const failed = eventsIn(placed.state).filter((event) => event.event === 'workspace.failed');
   assert.deepEqual(failed.map(({ layer, card, role, path: at }) => ({ layer, card, role, path: at })), [{ layer: 'L1', card: 1412, role: 'engineer', path }]);
@@ -998,7 +1017,7 @@ test('given a worktree of the repository whose .git entry has been moved out of 
     const branch = gitIn(placed.repository, 'rev-parse', 'refs/heads/held');
     const before = { files: contents(tree), list: worktreeList(placed.repository) };
 
-    const failure = await assertScratchRefused(placed, placed.scratch, path);
+    const failure = await assertScratchRefused(placed, placed.scratch, path, 'SCRATCH_REFUSED');
 
     assert.ok(failure.message.includes(tree), `the failure does not name the worktree ${tree}: ${failure.message}`);
     assert.deepEqual({ files: contents(tree), list: worktreeList(placed.repository) }, before, `${tree}: something changed`);
@@ -1050,7 +1069,7 @@ test('given a worktree of another repository, which the repository\'s git does n
   const before = { files: contents(tree), list: worktreeList(another) };
   assert.equal(worktreeList(placed.repository).includes(tree), false, 'the repository\'s git lists the worktree, so the test proves nothing');
 
-  await assertScratchRefused(placed, placed.scratch, path);
+  await assertScratchRefused(placed, placed.scratch, path, 'SCRATCH_REFUSED');
 
   assert.deepEqual({ files: contents(tree), list: worktreeList(another) }, before);
   assert.equal(gitIn(another, 'rev-parse', 'refs/heads/held'), branch);
@@ -1063,7 +1082,7 @@ test('given a worktree of another repository, which the repository\'s git does n
  */
 async function assertInsideRefused(placed, base, tree) {
   const before = contents(tree);
-  const failure = await assertScratchRefused(placed, base, join(base, 'engineer'));
+  const failure = await assertScratchRefused(placed, base, join(base, 'engineer'), 'SCRATCH_REFUSED');
   assert.ok(failure.message.includes(tree), `the failure does not name the worktree ${tree}: ${failure.message}`);
   assert.deepEqual(contents(tree), before, `${tree}: something changed`);
   assert.equal(existsSync(join(base, 'engineer')), false, 'L1 made the scratch directory inside the worktree');
@@ -1077,7 +1096,7 @@ test('given a scratch base that is a registered worktree of the repository, hold
   writeFileSync(join(tree, 'engineer', 'staged.txt'), 'staged\n');
   gitIn(tree, 'add', 'engineer/staged.txt');
 
-  await assertScratchRefused(placed, tree, join(tree, 'engineer')).then((failure) => assert.ok(failure.message.includes(tree), failure.message));
+  await assertScratchRefused(placed, tree, join(tree, 'engineer'), 'SCRATCH_REFUSED').then((failure) => assert.ok(failure.message.includes(tree), failure.message));
 
   assert.equal(readFileSync(join(tree, 'engineer', 'staged.txt'), 'utf8'), 'staged\n');
   assert.match(gitIn(tree, 'status', '--porcelain'), /^A {2}engineer\/staged\.txt$/m);
@@ -1117,7 +1136,7 @@ test('given a scratch base spelled through a symbolic link into a registered wor
  */
 async function assertAncestorRefused(placed, base, named, kept) {
   const before = modes(kept);
-  const failure = await assertScratchRefused(placed, base, join(base, 'engineer'));
+  const failure = await assertScratchRefused(placed, base, join(base, 'engineer'), 'SCRATCH_REFUSED');
   assert.ok(failure.message.includes(named), `the failure does not name ${named}: ${failure.message}`);
   assert.deepEqual(modes(kept), before, `${kept}: something changed`);
   return failure;
@@ -1197,7 +1216,7 @@ test('given a scratch base deeper inside the repository\'s main working tree tha
   const base = join(placed.repository, 'x', 'y', 'scratch', 'rigger-1412');
   const before = modes(placed.repository);
 
-  const failure = await assertScratchRefused(placed, base, join(base, 'engineer'));
+  const failure = await assertScratchRefused(placed, base, join(base, 'engineer'), 'SCRATCH_REFUSED');
 
   assert.ok(failure.message.includes(placed.repository), `the failure does not name the main working tree: ${failure.message}`);
   assert.deepEqual(modes(placed.repository), before, 'something changed in the main working tree');
