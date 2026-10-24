@@ -318,7 +318,7 @@ async function environmentRead(operation, board, via, path, addressed) {
   return JSON.parse(said.stdout);
 }
 
-/** The environment's settings and every custom deployment policy, without forge vocabulary above L0. */
+/** An environment's bypass setting, branch-policy facts and custom policies, or null if absent. An unreadable policy list is null. */
 async function environment(board, via, name, addressed) {
   const path = `environments/${encodeURIComponent(name)}`;
   const held = await environmentRead('readEnvironment', board, via, path, addressed);
@@ -334,7 +334,15 @@ async function environment(board, via, name, addressed) {
       if (listed.branch_policies.length < PAGE) break;
     }
   }
-  return { canAdminsBypass: held.can_admins_bypass, deploymentBranchPolicy: held.deployment_branch_policy, policies };
+  const branchPolicy = held.deployment_branch_policy;
+  return {
+    canAdminsBypass: held.can_admins_bypass,
+    deploymentBranchPolicy: branchPolicy === null ? null : {
+      protectedBranches: branchPolicy.protected_branches,
+      customBranchPolicies: branchPolicy.custom_branch_policies,
+    },
+    policies,
+  };
 }
 
 /** Every REST page of a commit's checks or statuses. */
