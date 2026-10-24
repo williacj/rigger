@@ -1114,15 +1114,40 @@ test('a disagreeing census round leaves time for an agreeing round as long as th
   assert.deepEqual(look.value.members, [{ pid: 42, name: 'tail', cmd: 'new' }]);
 });
 
-/** Supplies two census rounds from a controlled process table and clock. */
-function controlledCensus(t, size, { firstStep = 1, secondStep = 1, deadline = 3 * (size + 4) + 20 } = {}) {
+test('an agreeing completed census returns exact members and sightings', (t) => {
+  controlledCensus(t, 1, { finish: 'first-agreement' });
+});
+
+test('a deadline before the next census read retains the completed sightings without an answer', (t) => {
+  controlledCensus(t, 1, { finish: 'deadline' });
+});
+
+test('a started census read timeout retains the completed sightings without an answered round', (t) => {
+  controlledCensus(t, 1, { finish: 'timeout' });
+});
+
+test('a first census read timeout throws without inventing a completed answer', () => {
+  const looks = processAdapter.census(42, () => {}, 20, () => 0);
+  assert.deepEqual(looks.next().value, ['-ww', '-g', '42', '-o', 'pid=,stat=']);
+  const error = Object.assign(new Error('first read timed out'), { code: 'ETIMEDOUT' });
+  assert.throws(() => looks.throw(error), (thrown) => thrown === error);
+});
+
+test('the answered census member assertion rejects a scripted invented name', (t) => {
+  assert.throws(() => controlledCensus(t, 1, { returnedName: 'invented' }), {
+    name: 'AssertionError', message: /the answered census returned the wrong members/,
+  });
+});
+
+/** Drives the finite census outcomes from a controlled process table and clock. */
+function controlledCensus(t, size, { firstStep = 1, secondStep = 1, deadline = 3 * (size + 4) + 20, finish = 'agree', returnedName = 'tail' } = {}) {
   const group = 42;
   const pids = Array.from({ length: size }, (_, index) => group + index);
   const states = (leader) => pids.map((pid) => `${pid} ${pid === group ? leader : 'S'}\n`).join('');
   const commands = (value) => pids.map((pid) => `${pid} ${value}\n`).join('');
   const groupRead = (column, answer) => ({ args: ['-ww', '-g', String(group), '-o', `pid=,${column}=`], answer });
-  const names = pids.map((pid) => ({ args: ['-p', String(pid), '-o', 'ucomm='], answer: 'tail\n' }));
-  const first = [groupRead('stat', states('?')), groupRead('command', commands('old')), ...names, groupRead('command', commands('new')), groupRead('stat', states('S'))];
+  const names = pids.map((pid) => ({ args: ['-p', String(pid), '-o', 'ucomm='], answer: `${returnedName}\n` }));
+  const first = [groupRead('stat', states(finish === 'first-agreement' ? 'S' : '?')), groupRead('command', commands(finish === 'first-agreement' ? 'new' : 'old')), ...names, groupRead('command', commands('new')), groupRead('stat', states('S'))];
   const second = [groupRead('stat', states('S')), groupRead('command', commands('new')), ...names, groupRead('command', commands('new')), groupRead('stat', states('S'))];
   const trace = [];
   t.after(() => t.diagnostic(JSON.stringify({ phase: 'trace.complete', size, firstStep, secondStep, deadline, trace })));
@@ -1130,7 +1155,7 @@ function controlledCensus(t, size, { firstStep = 1, secondStep = 1, deadline = 3
   const looks = processAdapter.census(group, () => {}, deadline, () => now, (entry) => trace.push(entry));
   let look = looks.next();
   let call = 0;
-  for (const [round, answers] of [first, second].entries()) {
+  for (const [round, answers] of (finish === 'first-agreement' ? [first] : [first, second]).entries()) {
     for (const { args, answer } of answers) {
       while (!look.done && typeof look.value === 'number') {
         const requested = look.value;
@@ -1146,10 +1171,32 @@ function controlledCensus(t, size, { firstStep = 1, secondStep = 1, deadline = 3
       now += round === 0 ? firstStep : secondStep;
       look = looks.next(answer);
     }
+    if (round === 0 && ['deadline', 'timeout'].includes(finish)) {
+      assert.equal(typeof look.value, 'number', 'the disagreement did not leave a pause before the next read');
+      if (finish === 'timeout') {
+        now += look.value;
+        look = looks.next();
+        assert.deepEqual(look.value, first[0].args, 'the started read was not the next round state read');
+        now = deadline;
+        look = looks.throw(Object.assign(new Error('scripted read timed out'), { code: 'ETIMEDOUT' }));
+      } else {
+        now = deadline;
+        look = looks.next();
+      }
+      assert.equal(look.done, true, 'the cutoff fabricated another read');
+      assert.deepEqual(look.value.members, [{ pid: 42, name: 'tail', cmd: 'new' }], 'the cutoff changed the completed members');
+      assert.deepEqual([...look.value.sightings], [[42, { pid: 42, name: 'tail', cmd: 'new' }]], 'the cutoff changed completed sightings');
+      assert.deepEqual(trace.filter(({ phase }) => phase === 'round.decision').map(({ agreed }) => agreed), [false]);
+      assert.equal(trace.filter(({ phase }) => phase === 'round.start').length, finish === 'timeout' ? 2 : 1);
+      assert.equal(trace.filter(({ phase }) => phase === 'round.failure').length, finish === 'timeout' ? 1 : 0);
+      assert.equal(trace.filter(({ phase }) => phase === 'census.deadline').length, finish === 'deadline' ? 1 : 0);
+      return { trace, calls: call, firstCalls: first.length };
+    }
   }
   assert.equal(look.done, true, 'the second round did not agree');
-  assert.deepEqual(look.value.members, pids.map((pid) => ({ pid, name: 'tail', cmd: 'new' })));
-  assert.deepEqual(trace.filter(({ phase }) => phase === 'round.decision').map(({ agreed }) => agreed), [false, true]);
+  assert.deepEqual(look.value.members, pids.map((pid) => ({ pid, name: 'tail', cmd: 'new' })), 'the answered census returned the wrong members');
+  assert.deepEqual([...look.value.sightings], pids.map((pid) => [pid, { pid, name: 'tail', cmd: 'new' }]), 'the answered census returned the wrong sightings');
+  assert.deepEqual(trace.filter(({ phase }) => phase === 'round.decision').map(({ agreed }) => agreed), finish === 'first-agreement' ? [true] : [false, true]);
   return { trace, calls: call, firstCalls: first.length };
 }
 
