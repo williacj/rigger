@@ -225,6 +225,9 @@ npx @williacj/rigger verdict <pr> <verdict>  # post your verdict on a pull reque
 Elsewhere in this document the commands are written in short form; `rigger <verb>` means
 `npx @williacj/rigger <verb>`.
 
+How to operate Rigger is in the [guide](docs/guide.md), and where to look each fact up is in the
+[reference](docs/reference.md).
+
 Unattended runs on macOS use launchd, whose assets are part of the substrate Rigger ships.
 
 ## Configuration
