@@ -10,6 +10,7 @@ import { inspect } from 'node:util';
 import { parse } from 'acorn';
 
 import { CATEGORIES, SHAPES, declaredLabels, selectedLabels, validate, workRequires } from '../src/config/validate.mjs';
+import { FIXED_LABELS } from '../src/config/validate.mjs';
 import rigger from '../rigger.config.mjs';
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
 import { roleTimeout } from '../src/config/validate.mjs';
@@ -745,11 +746,11 @@ test('the labels a config selects are every label its kinds and provisioning ste
 });
 
 test('the labels a config declares include its consumer labels and Rigger\'s fixed labels, each once', () => {
-  // Consumer labels are written out by hand from this config, followed by the fixed escalation label.
-  assert.deepEqual(declaredLabels(rigger), ['type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'type:epic', 'maker:codex', 'rigger:escalated']);
+  // Consumer labels are written out by hand from this config, followed by Rigger's two fixed labels.
+  assert.deepEqual(declaredLabels(rigger), ['type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'type:epic', 'maker:codex', 'rigger:escalated', 'rigger:status']);
   const { epicLabel, ...unmarked } = rigger;
   assert.deepEqual(validate(unmarked), []);
-  assert.deepEqual(declaredLabels(unmarked), ['type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'maker:codex', 'rigger:escalated']);
+  assert.deepEqual(declaredLabels(unmarked), ['type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'maker:codex', 'rigger:escalated', 'rigger:status']);
 });
 
 test('a config with no provisioning selects the labels its kinds select', () => {
@@ -1078,7 +1079,7 @@ test("the labels a config declares include every label a role's labels names, ea
   };
   assert.deepEqual(validate(config), []);
   assert.deepEqual(declaredLabels(config), [
-    'type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'type:epic', 'tier:high', 'tier:standard', 'maker:codex', 'rigger:escalated',
+    'type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'type:epic', 'tier:high', 'tier:standard', 'maker:codex', 'rigger:escalated', 'rigger:status',
   ]);
 });
 
@@ -1271,7 +1272,7 @@ test('the labels a config declares include each role\'s providerLabels keys, eac
   const config = { ...rigger, roles: { ...rigger.roles, engineer: { ...rigger.roles.engineer, providerLabels: { 'maker:codex': other, 'tier:high': other } }, reviewer: { ...rigger.roles.reviewer, labels: { 'tier:high': 'high' } } } };
   assert.deepEqual(validate(config), []);
   assert.deepEqual(declaredLabels(config), [
-    'type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'type:epic', 'tier:high', 'maker:codex', 'rigger:escalated',
+    'type:change', 'type:spec', 'type:structure', 'type:intake', 'type:spike', 'area:demo', 'type:epic', 'tier:high', 'maker:codex', 'rigger:escalated', 'rigger:status',
   ]);
 });
 
@@ -1310,8 +1311,48 @@ test('the escalation label is reserved in kind and epic selectors in every lette
   }
 });
 
+// proves R-SCHED-19
+test('the status label is reserved in kind and epic selectors in every letter case', () => {
+  for (const label of ['rigger:status', 'RIGGER:STATUS', 'Rigger:Status']) {
+    const kind = { ...rigger.kinds.change, select: { labels: [label] } };
+    const selected = refusedUnchanged({ ...rigger, kinds: { ...rigger.kinds, change: kind } });
+    assert.ok(selected.includes('kinds.change.select.labels') && selected.includes(label), selected);
+    const epic = refusedUnchanged({ ...rigger, epicLabel: label });
+    assert.ok(epic.includes('epicLabel') && epic.includes(label), epic);
+  }
+});
+
+// proves R-SCHED-19
+test('Rigger fixes exactly the escalation and status labels', () => {
+  assert.deepEqual(FIXED_LABELS, { escalated: 'rigger:escalated', status: 'rigger:status' });
+});
+
+// proves R-SCHED-19
+test('role tier and provider labels and step labels may name the status label', () => {
+  for (const label of ['rigger:status', 'RIGGER:STATUS', 'Rigger:Status']) {
+    const config = {
+      ...rigger,
+      roles: { ...rigger.roles, engineer: { ...rigger.roles.engineer, labels: { [label]: 'high' }, providerLabels: { [label]: 'codex' } } },
+      provisioning: { ...rigger.provisioning, status: { run: 'true', select: { labels: [label] } } },
+    };
+    assert.deepEqual(validate(config), [], label);
+  }
+});
+
+// proves R-SCHED-19
+test('declared labels include a consumer status label case variant once', () => {
+  const config = {
+    ...rigger,
+    roles: { ...rigger.roles, engineer: { ...rigger.roles.engineer, labels: { 'RIGGER:STATUS': 'high' } } },
+    provisioning: { ...rigger.provisioning, status: { run: 'true', select: { labels: ['Rigger:Status'] } } },
+  };
+  assert.deepEqual(validate(config), []);
+  const declared = declaredLabels(config);
+  assert.deepEqual(declared.filter((name) => name.toLowerCase() === 'rigger:status'), ['Rigger:Status']);
+});
+
 test('declared labels include escalation once while role and step maps may name its case variants', () => {
-  assert.equal(declaredLabels(rigger).at(-1), 'rigger:escalated');
+  assert.equal(declaredLabels(rigger).at(-2), 'rigger:escalated');
   assert.equal(selectedLabels(rigger).includes('rigger:escalated'), false);
   for (const label of ['rigger:escalated', 'RIGGER:ESCALATED', 'Rigger:Escalated']) {
     const config = {

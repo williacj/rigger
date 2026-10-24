@@ -149,7 +149,7 @@ export const judgeRole = (entry) => (typeof entry === 'string' ? entry : entry?.
 export const CATEGORIES = ['recorded-decision', 'critical', 'ambiguous'];
 
 /** Labels Rigger fixes, shared by provisioning, selector validation and L2 (`D27`). */
-export const FIXED_LABELS = { escalated: 'rigger:escalated' };
+export const FIXED_LABELS = { escalated: 'rigger:escalated', status: 'rigger:status' };
 
 /**
  * The tiers a role may run at, which are Rigger's and not the consumer's (`O4` on #467): each
