@@ -168,6 +168,34 @@ test('inline CI policy keeps smoke and protected-main regression distinct and ha
   assert.equal(ciPolicy('policy', { ...main, event: 'pull_request_target' }).mode, 'INVALID');
 });
 
+test('inline CI policy requires demo for unknown full-batch impact while retaining exact known exemptions', () => {
+  for (const [paths, expectedDemo] of [
+    [['unclassified-tool.py'], true],
+    [['docs/journal/a.md'], false],
+    [['test/package-budget.test.mjs'], false],
+    [['docs/journal/a.md', 'unclassified-tool.py'], true],
+    [['test/package-budget.test.mjs', 'unclassified-tool.py'], true],
+    [['docs/journal/a.md', 'test/package-budget.test.mjs'], true],
+    [['src/workflow/action.mjs'], true],
+  ]) for (const status of ['A', 'M']) {
+    const facts = ciFacts();
+    Object.assign(facts, { action: 'labeled', sender: 'williacj', label: 'ci:full' });
+    facts.live.labels = ['ci:full'];
+    facts.changes = paths.map((path) => ({ path, status, oldMode: status === 'A' ? '000000' : '100644', newMode: '100644' }));
+    assert.deepEqual(ciPolicy('policy', facts), { mode: 'BROAD_EXECUTED', demoNeeded: expectedDemo, sourceValid: true }, status + ':' + paths.join(','));
+    const proof = ciProof('BROAD_EXECUTED');
+    proof.demoNeeded = expectedDemo;
+    proof.results.full_ordinary = proof.results.full_host = 'success';
+    proof.results.demo = expectedDemo ? 'success' : 'skipped';
+    assert.equal(ciPolicy('guard', facts, proof), true, 'required demo result:' + paths.join(','));
+    if (expectedDemo) for (const result of ['failure', 'cancelled', 'skipped', '', undefined]) {
+      const rejected = structuredClone(proof);
+      rejected.results.demo = result;
+      assert.equal(ciPolicy('guard', facts, rejected), false, 'missing demo credit:' + paths.join(',') + ':' + result);
+    }
+  }
+});
+
 function ciProof(mode = 'FAST_ELIGIBLE') {
   return {
     mode, demoNeeded: false, sourceValid: true,

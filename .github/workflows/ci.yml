@@ -60,12 +60,16 @@ env:
       if (pr.state !== 'open' || ['head', 'base', 'baseRef', 'state', 'draft'].some((key) => pr[key] !== live[key]) || f.checkout.parents.length !== 2 || f.checkout.parents[0] !== pr.base || f.checkout.parents[1] !== pr.head) return invalid;
       if (!f.changes.every((row) => row && typeof row.path === 'string' && row.path.length > 0 && !row.path.includes(String.fromCharCode(0)) && /^[AMDRT]$/.test(row.status) && /^(000000|100644|100755|120000|160000)$/.test(row.oldMode) && /^(000000|100644|100755|120000|160000)$/.test(row.newMode))) return invalid;
       const ownerRequest = f.owner === 'williacj' && f.sender === f.owner && f.action === 'labeled' && live.labels.includes(f.label);
-      const relevantDemo = f.changes.some((row) => /^(docs\/demo\.|test\/demo|src\/(cli|workflow|scheduling|execution)\/|templates\/|package[^/]*\.json$|\.github\/workflows\/ci\.yml$)/.test(row.path));
-      if (pr.baseRef === 'main' && !pr.draft && ownerRequest && f.label === 'ci:full') return { mode: 'BROAD_EXECUTED', demoNeeded: relevantDemo, sourceValid: true };
       const journalOnly = f.changes.length > 0 && f.changes.every((row) =>
         /^docs\/journal\/[A-Za-z0-9][A-Za-z0-9._-]*\.md$/.test(row.path) &&
         ((row.status === 'A' && row.oldMode === '000000' && row.newMode === '100644') ||
          (row.status === 'M' && row.oldMode === '100644' && row.newMode === '100644')));
+      const irrelevantDemo = journalOnly || (f.changes.length > 0 && f.changes.every((row) =>
+        row.path === 'test/package-budget.test.mjs' &&
+        ((row.status === 'A' && row.oldMode === '000000' && row.newMode === '100644') ||
+         (row.status === 'M' && row.oldMode === '100644' && row.newMode === '100644'))));
+      if (pr.baseRef === 'main' && !pr.draft && ownerRequest && f.label === 'ci:full') return { mode: 'BROAD_EXECUTED', demoNeeded: !irrelevantDemo, sourceValid: true };
+
       return { mode: pr.baseRef !== 'main' || journalOnly ? 'FAST_ELIGIBLE' : 'BROAD_DEFERRED', demoNeeded: ownerRequest && f.label === 'ci:demo', sourceValid: true };
     }
     export async function requestJson(path, { send = fetch, token = process.env.GH_TOKEN, base = process.env.GITHUB_API_URL ?? 'https://api.github.com' } = {}) {
