@@ -865,6 +865,9 @@ export const AGENT_ANSWERED = Object.keys(AGENT_COMMANDS);
 async function boardOf(state) {
   const board = createFakeBoard(state.model);
   for (const { operation, args } of state.writes) await board.operations[operation](...args);
+  for (const issue of state.repository?.issues ?? []) {
+    if (issue.labels !== undefined) board.setIssueLabels(issue.repository ?? state.repo, issue.number, issue.labels);
+  }
   return board;
 }
 
@@ -969,8 +972,10 @@ export function installFakeGh(dir, { repo, owner, project, board = {}, origin })
  */
 export function seedRepository(fake, seed) {
   const statePath = join(dirname(fake.gh), 'board.json');
+  const state = JSON.parse(readFileSync(statePath, 'utf8'));
+  seed = { issues: createFakeBoard(state.model).issues(), ...seed };
   createFakeRepository(seed);
-  writeFileSync(statePath, JSON.stringify({ ...JSON.parse(readFileSync(statePath, 'utf8')), repository: seed }));
+  writeFileSync(statePath, JSON.stringify({ ...state, repository: seed }));
 }
 
 /** The mutation the item-write side sends for a column move (`src/substrate/forge/item-write.mjs`). */

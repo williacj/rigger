@@ -55,6 +55,40 @@ const COLUMNS = { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Ow
 /** The board the real adapter is pointed at, named as a config names it. */
 const BOARD = { ...WHERE, columns: COLUMNS };
 
+test('a successful issue label is visible on fresh board reads only for the same repository and issue', async () => {
+  const fake = installed({ columns: Object.values(COLUMNS), items: [
+    { type: 'issue', repository: 'WilliaCJ/RIGGER', number: 214, labels: ['keep'], column: 'Review' },
+    { type: 'issue', repository: 'someone/elsewhere', number: 214, labels: ['foreign'], column: 'Review' },
+    { type: 'issue', repository: WHERE.repo, number: 215, labels: ['unrelated'], column: 'Review' },
+  ] });
+  seedRepository(fake, { issues: [{ number: 214, labels: ['keep'] }, { number: 215, labels: ['unrelated'] }], pullRequests: [{ number: 301, head: 'rigger-214', sha: 'a'.repeat(40), comments: [{ body: 'PR comments remain separate.' }] }] });
+  await onPath(fake, () => repositoryWriteSide(BOARD, { emitter: UNKILLED }).addIssueLabel(214, 'rigger:escalated'));
+  const model = await fake.model();
+  assert.deepEqual((await model.operations.readItems()).map(({ repository, number, labels }) => ({ repository, number, labels })), [
+    { repository: 'WilliaCJ/RIGGER', number: 214, labels: ['keep', 'rigger:escalated'] },
+    { repository: 'someone/elsewhere', number: 214, labels: ['foreign'] },
+    { repository: WHERE.repo, number: 215, labels: ['unrelated'] },
+  ]);
+  await onPath(fake, async () => {
+    assert.deepEqual((await readSide(BOARD, { emitter: UNKILLED }).readItems()).map(({ number, labels }) => ({ number, labels })), [
+      { number: 214, labels: ['keep', 'rigger:escalated'] }, { number: 215, labels: ['unrelated'] },
+    ]);
+  });
+  assert.deepEqual(forgeHeld(fake).repository.pullRequests[0].comments, [{ body: 'PR comments remain separate.' }]);
+  assert.equal(Object.hasOwn(model.operations, 'setIssueLabels'), false);
+  assert.equal(Object.hasOwn(model.operations, 'issues'), false);
+});
+
+test('fake gh repository setup shares existing board issues unless the seed explicitly omits them', async () => {
+  const board = { columns: ['Review'], items: [{ type: 'issue', repository: WHERE.repo, number: 214, title: 'Held card', body: 'Existing body.', labels: ['keep'], column: 'Review' }] };
+  const fake = installed(board);
+  seedRepository(fake, { pullRequests: [{ number: 301, head: 'rigger-214', sha: 'a'.repeat(40) }] });
+  assert.deepEqual(await onPath(fake, () => reads().readIssue(214)), { number: 214, title: 'Held card', body: 'Existing body.', labels: ['keep'] });
+  const absent = installed(board);
+  seedRepository(absent, { issues: [] });
+  assert.equal(await onPath(absent, () => reads().readIssue(214)), null, 'explicit absence stays a negative fixture');
+});
+
 test('the real adapter reads cards, columns, fields and labels through the fake gh', async () => {
   const fake = installed({
     columns: ['Backlog', 'Ready', 'Coding', 'Review', 'Owner', 'Done'],
