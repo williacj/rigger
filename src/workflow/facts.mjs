@@ -39,14 +39,14 @@ async function reviewed(pull, reads) {
 }
 
 /**
- * What the forge holds of card `number`'s line of work `line`, as `{ line, open, merged }`, the
+ * What the forge holds of card `number`'s line of work `line`, as `{ line, open, merged, closed }`, the
  * pull requests from it read once through `reads.readPullRequests`, the forge adapter's read
  * side's, and, where exactly one is open and `review` holds, what `reviewed` reads of it beside
  * them. A read of the pull requests that fails rejects naming the card and the read.
  */
 export async function pullRequestsFrom(number, line, reads, review = true) {
-  const { open, merged } = await forCards([number], () => reads.readPullRequests(line));
-  return { line, open, merged, ...(review && open.length === 1 ? await reviewed(open[0], reads) : {}) };
+  const { open, merged, closed } = await forCards([number], () => reads.readPullRequests(line));
+  return { line, open, merged, closed, ...(review && open.length === 1 ? await reviewed(open[0], reads) : {}) };
 }
 
 /**
@@ -56,14 +56,14 @@ export async function pullRequestsFrom(number, line, reads, review = true) {
  *
  * Handed the cards L3 read, it reads, for each card in the `ready`, `coding`, `review` or `owner` column,
  * what the forge holds of its line of work, the branch the topic rule names: whether the branch is
- * there, read once for every such card, and the open and merged pull requests from it, read for
+ * there, read once for every such card, and the open, merged and closed pull requests from it, read for
  * each card in turn (the architect's ruling 2, P1, on #467). For a card in the `coding`, `review`
  * or `owner` column holding exactly one open pull request from it, it also reads what `reviewed`
  * reads of that pull request, the facts L2's review loop reads. A read of the branches or the pull requests that
  * fails rejects naming each card it was reading for and the read, and answers no facts at all.
  *
  * It answers the `decide` L3 calls at the pull, synchronously: `decide` handed each card read with
- * its facts as `forge`, `{ stage, line, branch, open, merged }` with `reviewed`'s beside them where
+ * its facts as `forge`, `{ stage, line, branch, open, merged, closed }` with `reviewed`'s beside them where
  * they were read, `stage` naming the column's key, and any other card as it was. L3 reads nothing of this answer but calls it (the architect's
  * ruling 1, Q4, and ruling 2, P2).
  */
