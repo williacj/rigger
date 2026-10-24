@@ -84,6 +84,7 @@ test('the opening runner refuses missing, empty, multiple or foreign fields with
     fields.slice(0, 4),
     ['-f', 'title=', ...fields.slice(2)],
     [...fields.slice(0, 2), '-f', 'body=', ...fields.slice(4)],
+    [...fields.slice(0, 4), '-f', 'labels[]='],
     [...fields, '-f', 'labels[]=second'],
     [...fields, '-f', 'milestone=1'],
   ];
@@ -128,6 +129,7 @@ test('a refused board add names the issue and leaves the opened issue intact', a
   await assert.rejects(itemWriteSide(BOARD, { send }).addIssue(opened), /addIssue.*issue #214.*403/);
   assert.equal(sent.filter((request) => request[2] === 'graphql' && request.at(-1).startsWith('query=mutation')).length, 1);
   assert.equal(sent.filter((request) => request.includes('DELETE')).length, 0);
+  assert.deepEqual(sent.filter((request) => request[2]?.startsWith('repos/williacj/rigger/issues') && request[4] !== 'GET'), [sent[0]]);
 });
 
 test('the close and remove runners refuse other state, other fields, whole-set deletion and extra segments', async () => {

@@ -12,5 +12,8 @@ The repository-write runner admits the three REST request forms by shape. The it
 admits the GraphQL add only with one project ID and one content ID. The installed-`gh` proxy tests
 check the methods, fields and encoded label path seen by the forge boundary.
 
+The refusal checks include an empty opening label with no send. A refused board add leaves the
+opening POST as the only repository issue write, so it cannot close or otherwise change the issue.
+
 This card claims none of `R-SCHED-20` through `R-SCHED-27`. Later workflow cards choose the notice,
 drive these writes and prove the scheduling requirements.
