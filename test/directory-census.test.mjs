@@ -6,14 +6,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, mkdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { openSink, readEvents } from '../src/observation/sink.mjs';
 import { readGroups, writeGroups } from '../src/execution/groups.mjs';
 import { dispatch, killRecordedGroups } from '../src/execution/run.mjs';
 import { EVENT_REFUSED, LSOF, NOT_STARTED, runCommand } from '../src/substrate/process.mjs';
-import { TAIL, alive, assertUntouched, fixture, gone, holding, leave, leaveWorking, read, tailIn, until } from './process-fixtures.mjs';
+import { TAIL, alive, assertUntouched, fixture, gone, holding, leave, leaveWorking, processState, read, tailIn, until } from './process-fixtures.mjs';
 import { heldOutput } from './process-fixtures.mjs';
 import { shellQuote } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
@@ -128,7 +128,7 @@ test('given a dispatch\'s directory named through a symbolic link, a process wor
   const result = await dispatchIn(join(directory, 'link'), { id: 'd-census', card: 1412, command: '/usr/bin/true' });
 
   assert.equal(result.exit, 0);
-  assert.equal(alive(under), false, 'the process working under the directory the link resolves to is alive');
+  assert.ok(processState(under).startsWith('Z') || !alive(under), 'the process working under the directory the link resolves to is alive');
 });
 
 // proves R-STATE-17
@@ -462,7 +462,7 @@ test('given a process outside every group Rigger created whose working directory
 
   await dispatchIn(directory, { id: 'd-census', card: 1412, command: '/usr/bin/true' });
 
-  assert.equal(alive(at), false, 'the process working in the dispatch\'s directory itself is alive');
+  assert.ok(processState(at).startsWith('Z') || !alive(at), 'the process working in the dispatch\'s directory itself is alive');
 });
 
 // proves R-STATE-17
@@ -502,7 +502,14 @@ test('given a dispatch whose command removes its own directory and makes it agai
   const directory = holding(t);
   const workspace = join(directory, 'work');
   mkdirSync(workspace);
-  const before = statSync(workspace, { bigint: true }).ino;
+  let original;
+  const closeOriginal = () => {
+    if (original !== undefined) { closeSync(original); original = undefined; }
+  };
+  original = openSync(workspace, 'r');
+  t.after(closeOriginal);
+  const originalIdentity = fstatSync(original, { bigint: true });
+  const before = originalIdentity.ino;
   const command = fixture(directory, 'command', ['cd /', '/bin/rm -rf "$here/work"', '/bin/mkdir "$here/work"', leaveWorking('work', 'left'), 'exit 0'].join('\n'));
   const state = stateOf(directory);
   const sink = openSink({ directory: state, run: 'r-test', now: () => 0 });
@@ -510,6 +517,14 @@ test('given a dispatch whose command removes its own directory and makes it agai
   const result = await dispatch({ id: 'd-census', card: 1412, directory: state, sink, command, args: [], cwd: workspace, workspace, env: {}, timeout: UNREACHED });
 
   assert.equal(result.exit, 0);
+  let heldIdentity;
+  assert.doesNotThrow(() => { heldIdentity = fstatSync(original, { bigint: true }); },
+    'the original directory descriptor was not retained across replacement');
+  assert.deepEqual([heldIdentity.dev, heldIdentity.ino], [originalIdentity.dev, originalIdentity.ino],
+    'the retained descriptor no longer names the original directory');
+  const replacementIdentity = statSync(workspace, { bigint: true });
+  assert.notDeepEqual([replacementIdentity.dev, replacementIdentity.ino], [originalIdentity.dev, originalIdentity.ino],
+    'the replacement did not have a distinct directory identity');
   assert.notEqual(statSync(workspace, { bigint: true }).ino, before, 'the command did not make its directory again, so the test proves nothing');
   assert.equal(alive(Number(read(directory, 'left.pid'))), false, 'the process working in the directory made again is alive');
 });
@@ -552,8 +567,23 @@ test('given a recorded dispatch whose scratch directory is still the one recorde
 test('given a recorded dispatch whose scratch directory was replaced at its path, a later start sweeps nothing there, leaves a process working there alive, and records the directory skipped and why', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   const { state, role } = recordedWithScratch(directory);
+  let original;
+  const closeOriginal = () => {
+    if (original !== undefined) { closeSync(original); original = undefined; }
+  };
+  original = openSync(role, 'r');
+  t.after(closeOriginal);
+  const originalIdentity = fstatSync(original, { bigint: true });
   rmSync(role, { recursive: true });
   mkdirSync(role);
+  let heldIdentity;
+  assert.doesNotThrow(() => { heldIdentity = fstatSync(original, { bigint: true }); },
+    'the original directory descriptor was not retained across replacement');
+  assert.deepEqual([heldIdentity.dev, heldIdentity.ino], [originalIdentity.dev, originalIdentity.ino],
+    'the retained descriptor no longer names the original directory');
+  const replacementIdentity = statSync(role, { bigint: true });
+  assert.notDeepEqual([replacementIdentity.dev, replacementIdentity.ino], [originalIdentity.dev, originalIdentity.ino],
+    'the replacement did not have a distinct directory identity');
   const left = await tailIn(t, directory, join(role, 'sub'));
   const sink = openSink({ directory: state, run: 'r-test', now: () => 0 });
 

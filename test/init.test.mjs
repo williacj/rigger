@@ -1354,7 +1354,7 @@ test('given the origin stand-in loses its tail after readiness, its shell still 
 });
 
 /** A test-only origin read with a controlled timer and process-table pause. */
-async function cellOrigin(t, cell) {
+async function cellOrigin(t, cell, { exitBeforeKill } = {}) {
   const [ending, childKind, readiness] = cell.split('-');
   const directory = holding(t);
   gitHanging(directory);
@@ -1378,7 +1378,10 @@ async function cellOrigin(t, cell) {
     D4: TAIL,
     F: TAIL,
   }[childKind];
-  let body = original.replace(TAIL, command);
+  // Copied own-exit fixtures need a known empty origin answer, not tail's file headers.
+  const originCommand = exitBeforeKill !== undefined ? command + ' > /dev/null' : command;
+  let body = original.replace(TAIL, originCommand);
+  if (exitBeforeKill !== undefined) body = body.replace('read answer < "$here/git-hold"', 'exit ' + exitBeforeKill);
   if (readyGate) body = body.replace(': > "$here/ready"', 'read gate < "$here/ready-gate"\n: > "$here/ready"');
   if (shellGate) body = body.replace(': > "$here/ready"', ': > "$here/ready"\nread gate < "$here/shell-gate"');
   body = childKind === 'D4'
@@ -1410,6 +1413,8 @@ async function cellOrigin(t, cell) {
   const timer = { callback: undefined, deadline: undefined, cancelled: false, fired: false };
   let timerHandle;
   let originPid;
+  let observedExit;
+  let exitBeforeContainment;
   globalThis.setTimeout = (callback, delay, ...args) => {
     if (delay !== timeout || timer.deadline !== undefined) return schedule(callback, delay, ...args);
     timer.deadline = Date.now() + delay;
@@ -1437,12 +1442,14 @@ async function cellOrigin(t, cell) {
   };
   ChildProcess.prototype.emit = function (event, ...args) {
     if (event === 'spawn' && this.spawnfile === 'git' && originPid === undefined) originPid = this.pid;
+    if (event === 'exit' && this.pid === originPid) observedExit = { code: args[0], signal: args[1] };
     if ((event === 'spawn' || event === 'exit') && this.pid === originPid) note('shell.' + event, { pid: this.pid, args });
     return emit.call(this, event, ...args);
   };
   const status = async (commandName, args, options) => {
     if (ps === undefined) return asked(commandName, args, options);
     const result = await runCommand({ command: commandName, args, cwd: process.cwd(), env: gitEnvironment(), timeout: options.timeout, emitter: options.emitter, ps });
+    if (exitBeforeKill !== undefined) note('origin.raw', { exit: result.exit, timedOut: result.timedOut, stdoutBase64: result.stdout.toString('base64'), stderrBase64: result.stderr.toString('base64') });
     return { status: result.exit, timedOut: result.timedOut, stdout: result.stdout.toString('utf8'), stderr: result.stderr.toString('utf8') };
   };
   const originAsk = async (commandName, args, options) => {
@@ -1468,6 +1475,11 @@ async function cellOrigin(t, cell) {
       note('shell.wait', { started: statSync(join(directory, 'wait-start')).birthtimeMs, childStatus: read(directory, 'child-status'), ended: statSync(join(directory, 'wait-status')).birthtimeMs, waitStatus: read(directory, 'wait-status') });
     }
     if (readiness === 'R0b' && (ending === 'C4' || ((ending === 'C2' || ending === 'C6') && original.includes('git-hold')))) timer.callback();
+    if (exitBeforeKill !== undefined) await until(() => observedExit !== undefined, t);
+    if (ending === 'C3') {
+      exitBeforeContainment = observedExit;
+      note('containment.release', { observedExit });
+    }
     if (psGate) writeFileSync(psGate, 'x');
     const result = await answer;
     if (childKind === 'D4') note('shell.wait', { started: existsSync(join(directory, 'wait-start')) ? statSync(join(directory, 'wait-start')).birthtimeMs : 'unknown', ended: 'unobserved before group SIGKILL' });
@@ -1494,10 +1506,53 @@ async function cellOrigin(t, cell) {
     assert.match(ran.text, /the remote it named ends in no owner and name/, ran.text);
     return;
   }
+  if (exitBeforeKill !== undefined) {
+    assert.deepEqual(observedExit, { code: exitBeforeKill, signal: null }, 'the controlled origin did not exit independently');
+    const raw = timeline.find(({ event }) => event === 'origin.raw');
+    assert.ok(raw, 'the copied origin did not retain its separate raw byte streams');
+    assert.equal(raw.stdoutBase64, '', 'the controlled empty origin stdout was not retained exactly');
+    assert.equal(raw.exit, exitBeforeKill, 'the raw result lost the independently observed exit code');
+  }
+  if (ending === 'C3' && exitBeforeContainment?.signal === null) {
+    assert.deepEqual(observedExit, exitBeforeContainment, 'the independently observed exit changed after containment');
+    assert.equal(timer.fired, true, 'the independent exit did not follow timer expiry');
+    const expiry = timeline.findIndex(({ event }) => event === 'timer.callback');
+    const exited = timeline.findIndex(({ event }) => event === 'shell.exit');
+    const released = timeline.findIndex(({ event }) => event === 'containment.release');
+    assert.ok(expiry >= 0 && exited > expiry && released > exited, 'the independently observed exit did not precede containment release after timer expiry');
+    assert.ok(Number.isInteger(observedExit.code), 'the direct child supplied no exit code');
+    const answer = timeline.find(({ event }) => event === 'origin.result');
+    assert.equal(answer.status, observedExit.code);
+    assert.equal(answer.timedOut, false);
+    if (observedExit.code === 0) {
+      assert.doesNotMatch(ran.text, /timeout of \d+ ms ended/);
+      if (exitBeforeKill !== undefined) assert.match(ran.text, /the remote it named ends in no owner and name/, ran.text);
+    } else {
+      assert.match(ran.text, /remote get-url origin/, ran.text);
+      assert.match(ran.text, new RegExp('exited ' + observedExit.code + ':'), ran.text);
+    }
+    assert.equal(existsSync(join(target, CONFIG)), true, 'the independent origin produced no config');
+    if (observedExit.code !== 0 || exitBeforeKill !== undefined) {
+      assert.ok(readFileSync(join(target, CONFIG), 'utf8').includes(PLACEHOLDER.repo), 'the unusable independent origin did not leave the placeholder');
+    }
+    const group = Number(read(directory, 'git.pid'));
+    assert.equal(alive(-group), false, 'the independently exited origin left a process in its group');
+    const state = join(target, STATE);
+    const events = existsSync(join(state, 'events.jsonl')) ? readEvents(state) : [];
+    assert.deepEqual(events.filter((event) => event.layer === 'L0' && event.pid === group), []);
+    assert.deepEqual(events.filter((event) => event.layer === 'L0' && event.pid === leftChild(directory)), []);
+    assert.deepEqual(events, [], 'an independent exit with no survivors recorded unexpected events');
+    return;
+  }
   assert.match(ran.text, new RegExp(`timeout of ${timeout} ms ended \`git `), ran.text);
   const group = Number(read(directory, 'git.pid'));
   assert.equal(alive(-group), false, `a process of group ${group} is alive`);
   assert.deepEqual(killsOf(target, group), ['timeout.killed']);
+  if (ending === 'C3') {
+    assert.equal(timer.fired, true);
+    assert.equal(observedExit.signal, 'SIGKILL');
+    assert.equal(timeline.find(({ event }) => event === 'origin.result').timedOut, true);
+  }
   if (childKind === 'D4') assert.deepEqual(killsOf(target, leftChild(directory)), ['timeout.killed']);
 }
 
@@ -1505,9 +1560,17 @@ for (const ending of ['C1', 'C2', 'C3', 'C4', 'C6', 'C7']) {
   for (const child of ending === 'C1' ? ['D4'] : ending === 'C6' ? ['F'] : ending === 'C7' ? ['D2'] : ['D0', 'D1', 'D2', 'D3']) {
     for (const readiness of ending === 'C2' ? ['R0a', 'R0b'] : ending === 'C7' ? ['R0a'] : ['R0a', 'R0b', 'R1']) {
       const cell = `${ending}-${child}-${readiness}`;
-      const result = ending === 'C7' ? 'reports its exited status' : ending === 'C6' ? 'reports its observed ending' : 'still reports the timeout';
+      const result = ending === 'C7' ? 'reports its exited status' : ending === 'C6' || ending === 'C3' ? 'reports its observed ending' : 'still reports the timeout';
       test(`the ${cell} origin shell ${result}`, async (t) => cellOrigin(t, cell));
     }
+  }
+}
+
+for (const child of ['D0', 'D1', 'D2', 'D3']) {
+  for (const code of [0, 3]) {
+    test('the copied C3-' + child + '-R1 origin reports independent exit ' + code + ' after timer expiry', async (t) => {
+      await cellOrigin(t, 'C3-' + child + '-R1', { exitBeforeKill: code });
+    });
   }
 }
 
