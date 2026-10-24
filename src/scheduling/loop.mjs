@@ -12,6 +12,7 @@ import { dispatch as dispatchOnL1 } from '../execution/run.mjs';
 import { stepDispatch } from '../execution/step.mjs';
 import { EVENT_REFUSED, whenElapsed } from '../substrate/process.mjs';
 import { dispatched } from '../workflow/marker.mjs';
+import { admission } from './admission.mjs';
 import { lane } from './lane.mjs';
 import { pullOrder } from './pull-order.mjs';
 
@@ -28,7 +29,7 @@ const DEFAULT_CONCURRENCY = 3;
  * nothing to stop it recording and reading over what the dead engine left (`ARCHITECTURE.md`,
  * "Failure model").
  */
-function claiming({ config, board, facts, l2, sink, kill }) {
+function claiming({ config, board, facts, l2, sink, kill, readAdmission }) {
   if (typeof kill !== 'function') throw new Error(`L3 was handed no kill of recorded process groups, so it cannot start: kill is ${typeof kill}`);
   if (typeof facts !== 'function') throw new Error(`L3 was handed no facts call of L2's, so it cannot ask L2 about a card before claiming it: the facts call is ${typeof facts}`);
   const concurrency = config.concurrency ?? DEFAULT_CONCURRENCY;
@@ -70,7 +71,9 @@ function claiming({ config, board, facts, l2, sink, kill }) {
      * ruling 3), and a limit given counts it like any other claim. L3
      * reads nothing of that answer but calls it (the architect's ruling 2, P2, on #467). Every
      * claim is taken in the same synchronous step as the pull order it follows, so no other trigger
-     * can claim a card between the two. Answers `claims`, each with its pull, its card, L2's answer
+     * can claim a card between the two. Admission is read after L2 answers and before a claim is
+     * taken. A closed admission answers its closers with no claims; an unreadable one rejects,
+     * naming each path and cause. Otherwise answers `claims`, each with its pull, its card, L2's answer
      * for it, the `decide` the facts call answered, as `queueDepth` the pullable cards it left
      * unclaimed as it took this one, whatever L2 answered them, and as `inFlight` the slots held, and
      * `failures`, holding the trigger
@@ -104,6 +107,11 @@ function claiming({ config, board, facts, l2, sink, kill }) {
         answers.set(card.number, next);
         return next;
       });
+      const admissionState = readAdmission();
+      if (admissionState.state === 'unreadable') {
+        throw new Error(`admission cannot be read, so this pull claims nothing: ${admissionState.unreadable.map(({ path, cause }) => `${path} (${cause})`).join(', ')}`);
+      }
+      if (admissionState.state === 'closed') return { claims: [], failures, admission: admissionState };
       const taken = [];
       for (const pull of pulls) {
         if (limit !== undefined && taken.length >= limit) break;
@@ -251,7 +259,8 @@ function released(release, claim, failure) {
  * judges L2 withheld, leaving them out of its later pulls; a later invocation starts empty.
  */
 export function loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, removeDirectories, state, environment, ps, readTimeout, clock }) {
-  const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, facts, l2, sink, kill });
+  let admissionRecord;
+  const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, facts, l2, sink, kill, readAdmission: () => admissionRecord.read() });
   const { merge } = lane({ board, facts, l2, record, refused, removeDirectories, clock });
   const now = clock?.now ?? Date.now;
   const pause = clock?.pause ?? ((delay) => new Promise((resolve) => { whenElapsed(delay, resolve, { hold: true }); }));
@@ -260,6 +269,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
   if (typeof removeDirectories !== 'function') throw new Error(`L3 was handed no removeDirectories handle of L1's, so it cannot remove a merged card's directories: removeDirectories is ${typeof removeDirectories}`);
   if (typeof state !== 'string' || state === '') throw new Error(`L3 was handed no state directory for L1's record of process groups, so it cannot dispatch: the state directory is ${JSON.stringify(state)}`);
   if (environment === null || typeof environment !== 'object') throw new Error(`L3 was handed no environment for the dispatches it makes, so it cannot dispatch: the environment is ${environment === null ? 'null' : typeof environment}`);
+  admissionRecord = admission({ directory: state, sink });
 
   /**
    * Whether the drain trigger has fired in this idle period. Drain fires once per idle period, by
@@ -608,7 +618,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * - a card pulled for its merge: `{ card, action: 'merge', pull, head, merge }`, as the lane
    *   answers it, `merge` being what its `merge.end` named.
    *
-   * A card that failed before its maker ran answers nothing. A read that fails
+   * A closed admission answers `{ admission, reached: [] }`, with the closers `take` read. A card
+   * that failed before its maker ran answers nothing. A read that fails
    * rejects with the read's own error, and no card is claimed. A card whose work fails, and a trigger event the
    * sink refused, are reported in one AggregateError naming how many failed, each failure
    * unchanged in its `errors`, and carrying as `reached` what every card answered, as the pull
@@ -622,7 +633,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * as `released` says.
    */
   const trigger = async (freed = () => {}, limit = undefined, excluded) => {
-    const { claims: claimed, failures } = await take(limit, excluded);
+    const { claims: claimed, failures, admission: closed } = await take(limit, excluded);
     if (claimed.length > 0) idle = false;
     if (claims.size === 0 && !idle) {
       idle = true;
@@ -639,7 +650,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     if (failures.length > 0) {
       throw Object.assign(new AggregateError(failures, `${failures.length} failures across the ${claimed.length} cards this pull claimed`), { reached });
     }
-    return reached;
+    return closed === undefined ? reached : { admission: closed, reached };
   };
 
   return {
@@ -676,7 +687,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       const reached = [];
       const excluded = new Set();
       const fire = () => trigger(fire, undefined, excluded).then((each) => {
-        reached.push(...each);
+        reached.push(...(Array.isArray(each) ? each : each.reached));
       }, (failure) => {
         failures.push(failure);
       });
