@@ -90,8 +90,9 @@ epic ([`R-SCHED-11`](spec/requirements.md)), and refuses one that two kinds sele
 2. Run [`rigger once`](../README.md#install-and-usage) or
    [`rigger run`](../README.md#install-and-usage).
 3. Read the outcome in three places:
-   - **the board**, for the column each card is in, as [How the loop works](#how-the-loop-works)
-     follows it;
+   - **the board**, for the column each card is in now, since the board holds every card's
+     workflow state ([`R-STATE-1`](spec/requirements.md)), as
+     [How the loop works](#how-the-loop-works) follows it;
    - **the card's pull request**, for the work and each judge's marker on it, as [`ARCHITECTURE.md`,
      "Markers"](../ARCHITECTURE.md#markers) defines one;
    - **[`rigger report`](../README.md#install-and-usage)**, for the signals across cards.
@@ -113,17 +114,20 @@ categories and destinations](reference.md#escalation-categories-and-destinations
 are defined, and where each one goes is still a placeholder there. When a card's rounds run out, the
 loop escalates it in the category [`R-LOOP-9`](spec/requirements.md) names.
 
-A card carrying the escalation label, which [`ARCHITECTURE.md`,
-"Escalation"](../ARCHITECTURE.md#escalation) names, waits: Rigger dispatches nothing for it, in any
-column, and escalates it no further, whoever added the label
-([`R-ESCALATE-10`](spec/requirements.md)). A labelled card whose pull request the forge holds as
-merged is the exception, which [`R-WORK-33`](spec/requirements.md) answers
-([`R-ESCALATE-10`](spec/requirements.md)).
+To answer the escalations waiting on you:
 
-You answer an escalation by removing the label [`ARCHITECTURE.md`,
-"Escalation"](../ARCHITECTURE.md#escalation) names ([`R-ESCALATE-11`](spec/requirements.md);
-[`D27`](spec/decisions.md)). Rigger reads the escalation as answered once that label is gone, and
-never removes it itself ([`R-ESCALATE-11`](spec/requirements.md)).
+1. Find them on the board: each card carrying the escalation label, which [`ARCHITECTURE.md`,
+   "Escalation"](../ARCHITECTURE.md#escalation) names, waits, and Rigger dispatches nothing for it,
+   in any column, and escalates it no further, whoever added the label
+   ([`R-ESCALATE-10`](spec/requirements.md)).
+2. Make the decision the card asks of you, then remove the label [`ARCHITECTURE.md`,
+   "Escalation"](../ARCHITECTURE.md#escalation) names from the card; Rigger reads the escalation as
+   answered once that label is gone, and never removes it itself
+   ([`R-ESCALATE-11`](spec/requirements.md); [`D27`](spec/decisions.md)).
+
+A card carrying the label [`ARCHITECTURE.md`, "Escalation"](../ARCHITECTURE.md#escalation) names,
+whose pull request the forge holds as merged, is the exception, which
+[`R-WORK-33`](spec/requirements.md) answers ([`R-ESCALATE-10`](spec/requirements.md)).
 
 > **Placeholder.** The owner operation: how an escalation reaches you, with its comment on the
 > card's issue, the move to the owner's column and the label. Written by M6-D2, from M6-04 and
@@ -173,5 +177,9 @@ A card that seems stuck usually has one of these causes:
   "Escalation"](../ARCHITECTURE.md#escalation) names. It waits for you, as [Answering
   escalations](#answering-escalations) says ([`R-ESCALATE-10`](spec/requirements.md)).
 
-Which column a card is in, and which labels it carries, are in the reference's [board columns and
-labels](reference.md#board-columns-and-labels).
+A card's current column and labels are on the board, which holds every card's workflow state
+([`R-STATE-1`](spec/requirements.md)); what each column and label is declared as is in the "Engine
+settings" and "Kinds of work" rows of [`ARCHITECTURE.md`, "Extension
+points"](../ARCHITECTURE.md#extension-points) and in [`ARCHITECTURE.md`,
+"Escalation"](../ARCHITECTURE.md#escalation), which the reference's [board columns and
+labels](reference.md#board-columns-and-labels) links.

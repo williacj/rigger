@@ -47,12 +47,10 @@ is the guide's [answering escalations](guide.md#answering-escalations).
 
 ## The marker vocabulary
 
-Two places in `ARCHITECTURE.md` own this vocabulary, and this page retypes neither:
-
-- **Markers.** [`ARCHITECTURE.md`, "The gate"](../ARCHITECTURE.md#the-gate), under
-  ["Markers"](../ARCHITECTURE.md#markers).
-- **Verdicts.** The "Verdict vocabulary" row of [`ARCHITECTURE.md`, "Extension
-  points"](../ARCHITECTURE.md#extension-points).
+Markers are owned by [`ARCHITECTURE.md`, "The gate"](../ARCHITECTURE.md#the-gate), under
+["Markers"](../ARCHITECTURE.md#markers), and verdicts by the "Verdict vocabulary" row of
+[`ARCHITECTURE.md`, "Extension points"](../ARCHITECTURE.md#extension-points); this page retypes
+neither.
 
 Where markers sit in the loop is the guide's [how the loop works](guide.md#how-the-loop-works).
 
