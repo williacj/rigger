@@ -3,7 +3,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { dirname } from 'node:path';
 
 import config from '../rigger.config.mjs';
 import { openSink, readEvents } from '../src/observation/sink.mjs';
@@ -83,6 +85,24 @@ test('L2 retries a maker dispatch that never started and holds it after the seco
     { event: 'attempt.decided', attempt: 1, decision: 'again', class: undefined, maker: undefined },
     { event: 'attempt.failed', attempt: 2, decision: undefined, class: 'environment', maker: 'engineer' },
     { event: 'attempt.decided', attempt: 2, decision: 'hold', class: undefined, maker: undefined },
+  ]);
+});
+
+// proves R-FAIL-6
+test('L2 stops a card-local refusal on its first attempt and records its class', () => {
+  const directory = temporaryDirectory('rigger-card-local-');
+  const sink = openSink({ directory, run: 'r-card-local', now: Date.now });
+  const path = join(directory, 'rigger-7');
+  const workspace = { status: 'rejected', reason: Object.assign(new Error('R-WORK-13 R-WORK-14 refused the path'), { code: 'WORKSPACE_REFUSED', path }) };
+
+  const answer = nextAction(readyCard(7), KINDS, undefined, {
+    columns: COLUMNS, roles: config.roles, provisioning: {}, sink, workspace, attempt: 1,
+  });
+
+  assert.equal(answer.action, 'stop');
+  assert.deepEqual(answer.failure, { class: 'card-local', workspace: path, code: 'WORKSPACE_REFUSED', reason: workspace.reason.message });
+  assert.deepEqual(readEvents(directory).filter(({ layer }) => layer === 'L2').map(({ event, class: failureClass, decision }) => [event, failureClass, decision]), [
+    ['attempt.failed', 'card-local', undefined], ['attempt.decided', undefined, 'stop'],
   ]);
 });
 
@@ -236,6 +256,71 @@ test('a continuing attempt whose workspace fetch fails twice answers hold at L1s
   assert.deepEqual(fetched, [[1, pull.sha], [1, pull.sha]]);
   assert.deepEqual(recorded(built, 'L2', 'attempt.decided').map(({ decision }) => decision), ['again', 'hold']);
   assert.deepEqual(recorded(built, 'L3', 'dispatch', (each) => each.role === 'engineer'), []);
+});
+
+// proves R-FAIL-6
+test('run does not pull again a card stopped for each card-local refusal or an out branch or root', SETTLES_WITHIN, async (t) => {
+  for (const code of ['WORKSPACE_REFUSED', 'BRANCH_ELSEWHERE', 'SCRATCH_REFUSED', 'BRANCH_REFUSED', 'ROOT_NOT_ABSOLUTE']) {
+    await t.test(code, async () => {
+      const built = failingWorld('workspace', { other: false });
+      const making = makingWorkspaces(temporaryDirectory('rigger-stopped-run-'));
+      const path = join(temporaryDirectory('rigger-stopped-path-'), 'rigger-1');
+      const workspace = async (number) => {
+        if (code === 'SCRATCH_REFUSED') {
+          const made = await making(number);
+          mkdirSync(made.scratch, { recursive: true });
+          writeFileSync(join(made.scratch, 'engineer'), 'kept\n');
+          return made;
+        }
+        throw Object.assign(new Error(`${code} at ${path}`), { code, path });
+      };
+
+      const failure = await loop({ ...built.handed, workspace }).run().then(() => assert.fail('run succeeded'), (thrown) => thrown);
+
+      const stopped = stopOf(failure, 1);
+      assert.equal(stopped.attemptFailures.length, 1);
+      assert.equal(stopped.attemptFailures[0].code, code);
+      assert.deepEqual(recorded(built, 'L2', 'attempt.decided').map(({ decision }) => decision), ['stop']);
+      assert.deepEqual(recorded(built, 'L2', 'attempt.failed').map(({ class: named }) => named), [code === 'BRANCH_REFUSED' || code === 'ROOT_NOT_ABSOLUTE' ? 'out' : 'card-local']);
+    });
+  }
+});
+
+// proves R-FAIL-6
+test('run stops one card-local refusal while another card is held for two workspace host failures', SETTLES_WITHIN, async () => {
+  const built = failingWorld('workspace');
+  const path = join(temporaryDirectory('rigger-card-local-beside-host-'), 'rigger-1');
+  const workspace = async (number) => {
+    if (number === 1) throw Object.assign(new Error('R-WORK-13 refused'), { code: 'WORKSPACE_REFUSED', path });
+    throw Object.assign(new Error('the host disk gave no answer'), { code: WORKSPACE_NOT_MADE, path: join(dirname(path), 'rigger-2') });
+  };
+
+  const failure = await loop({ ...built.handed, workspace }).run().then(() => assert.fail('run succeeded'), (thrown) => thrown);
+
+  assert.equal(stopOf(failure, 1).attemptFailures.length, 1);
+  assert.equal(stopOf(failure, 2).decision, 'hold');
+  assert.deepEqual(recorded(built, 'L2', 'attempt.decided', (each) => each.card === 1).map(({ decision }) => decision), ['stop']);
+  assert.deepEqual(recorded(built, 'L2', 'attempt.decided', (each) => each.card === 2).map(({ decision }) => decision), ['again', 'hold']);
+});
+
+// proves R-FAIL-6
+test('a judge scratch refusal remains NOT_STARTED and causes no card stop', SETTLES_WITHIN, async () => {
+  let built;
+  const judgeDirectory = async (card, role, head) => {
+    const made = await built.handed.judgeDirectory(card, role, head);
+    mkdirSync(made.scratch, { recursive: true });
+    writeFileSync(join(made.scratch, role), 'kept\n');
+    return made;
+  };
+  built = judgeWorld({ cards: [cardIn(7, COLUMNS.review)], forge: { pullRequests: [pullFor(7)] },
+    kinds: { change: { ...KINDS.change, judges: ['reviewer'] } } });
+  const engine = loop({ ...built.handed, judgeDirectory });
+
+  const [reached] = await engine.pull(1);
+
+  assert.equal(reached.judges[0].outcome.reason.code, NOT_STARTED);
+  assert.equal(recorded(built, 'L2', 'attempt.decided', (each) => each.card === 7).length, 0);
+  assert.equal(readFileSync(join(built.scratch, 'workspaces', 'scratch', 'rigger-7', 'reviewer'), 'utf8'), 'kept\n');
 });
 
 // proves R-FAIL-6

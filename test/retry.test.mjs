@@ -20,7 +20,7 @@ import { COLUMNS, KINDS, columnsOf, handleOn, readyCard } from './loop-world.mjs
 import { factsOverNothing, oneOpenFromEveryLine } from './loop-world.mjs';
 import { scratch } from './process-fixtures.mjs';
 import { worktreeAt } from './git-repository.mjs';
-import { gitLeavingChild, gitRacing, withFirstOnPath } from './process-fixtures.mjs';
+import { gitLeavingChild, gitRacing, gitUnansweredAdd, withFirstOnPath } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { makerRuns } from './loop-world.mjs';
 import { standInAgent } from './stub-claude.mjs';
@@ -172,18 +172,17 @@ test('given a required step that writes a file into the workspace and then exits
 
 // proves R-FAIL-1
 test('given a workspace that cannot be made on the first attempt and can on the second, the card\'s steps run once, in the second attempt\'s workspace, at the same derived path', SETTLES_WITHIN, async (t) => {
-  let path;
   const built = await retryWorld(t, {
     steps: ['a'],
     provisioning: { a: step('true') },
     maker: { exit: 0 },
-    // A directory that is not a workspace of the repository stands where the first attempt's
-    // workspace goes, so L1 refuses to replace it; it is gone before the second attempt.
-    before: (call) => (call === 1 ? mkdirSync(path, { recursive: true }) : rmSync(path, { recursive: true })),
   });
-  ({ path } = built);
+  const { path } = built;
+  const stand = join(built.directory, 'unanswered-git');
+  mkdirSync(stand);
+  gitUnansweredAdd(stand, 'rigger-1', 1);
 
-  await built.loop.pull();
+  await withFirstOnPath(stand, () => built.loop.pull());
 
   const events = built.events();
   assert.deepEqual(built.made, [1, 1]);
@@ -284,14 +283,13 @@ test('given a required step its timeout ends on both attempts, the maker stand-i
   assert.deepEqual(built.made, [1, 1]);
 });
 
-/** A world whose card's workspace can be made on neither attempt: a directory that is no workspace stands at its path. */
+/** A world whose card's workspace cannot be made because git gives no worktree-add answer twice. */
 async function neverMade(t) {
-  let path;
-  const built = await retryWorld(t, {
-    steps: ['a'], provisioning: { a: step('true') }, maker: { exit: 0 }, before: () => mkdirSync(path, { recursive: true }),
-  });
-  ({ path } = built);
-  const failure = await built.loop.pull().then(() => assert.fail('the pull settled'), (thrown) => thrown);
+  const built = await retryWorld(t, { steps: ['a'], provisioning: { a: step('true') }, maker: { exit: 0 } });
+  const stand = join(built.directory, 'unanswered-git');
+  mkdirSync(stand);
+  gitUnansweredAdd(stand, 'rigger-1', 2);
+  const failure = await withFirstOnPath(stand, () => built.loop.pull().then(() => assert.fail('the pull settled'), (thrown) => thrown));
   return { ...built, failure };
 }
 
@@ -376,13 +374,13 @@ test('given a card whose kind selects two steps, with the maker stand-in first o
 
 // proves R-FAIL-1
 test('the event stream holds an L2 event per failed attempt under the card, naming its attempt number, what failed, the workspace or a step, why, and that its class is the environment\'s', SETTLES_WITHIN, async (t) => {
-  let path;
-  const built = await retryWorld(t, {
-    steps: ['a'], provisioning: { a: step('exit 3') }, maker: { exit: 0 }, before: (call) => (call === 1 ? mkdirSync(path, { recursive: true }) : rmSync(path, { recursive: true })),
-  });
-  ({ path } = built);
+  const built = await retryWorld(t, { steps: ['a'], provisioning: { a: step('exit 3') }, maker: { exit: 0 } });
+  const { path } = built;
+  const stand = join(built.directory, 'unanswered-git');
+  mkdirSync(stand);
+  gitUnansweredAdd(stand, 'rigger-1', 1);
 
-  await assert.rejects(built.loop.pull());
+  await assert.rejects(withFirstOnPath(stand, () => built.loop.pull()));
 
   const failed = named(built.events(), 'L2', 'attempt.failed');
   assert.deepEqual(failed.map(({ card, attempt, workspace, step: name, exit }) => ({ card, attempt, workspace, step: name, exit })), [

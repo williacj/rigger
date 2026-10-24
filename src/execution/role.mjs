@@ -5,7 +5,7 @@ import { lstatSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 
 import { within } from './run.mjs';
-import { makeScratch } from './workspace.mjs';
+import { SCRATCH_REFUSED, makeScratch } from './workspace.mjs';
 import { gitEnvironment } from '../substrate/git-environment.mjs';
 import { EVENT_REFUSED, NOT_STARTED } from '../substrate/process.mjs';
 import { ADAPTERS } from '../substrate/providers/adapters.mjs';
@@ -57,6 +57,7 @@ export async function roleDispatch({ answer, cwd, directory, scratch, repository
     made = await makeScratch({ base: scratch, role: answer.role, card, repository, sink });
   } catch (cause) {
     if (cause.code === EVENT_REFUSED) throw cause;
+    if (cause.code === SCRATCH_REFUSED && !Object.hasOwn(answer, 'facts')) throw cause;
     throw unstarted(cause.message, cause);
   }
   const environment = gitEnvironment(env);
