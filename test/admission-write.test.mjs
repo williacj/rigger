@@ -297,6 +297,29 @@ test('an opening by a hold closer\'s name removes exactly that closer, leaving e
   }
 });
 
+test('an opening by a hold closer\'s name whose entry is an unreadable closer rejects naming it, removes nothing and records no event', async () => {
+  const unreadables = [
+    ['an empty directory', (path) => mkdirSync(path)],
+    ['a directory holding a file', (path) => { mkdirSync(path); writeFileSync(join(path, 'inside'), 'kept'); }],
+    ['a symbolic link to a readable closer\'s file', (path, state) => { writeFileSync(join(state, 'outside.json'), closerText()); symlinkSync(join(state, 'outside.json'), path); }],
+    ['a symbolic link to nothing', (path) => symlinkSync(join(path, '..', 'nowhere.json'), path)],
+    ['a file whose content does not parse', (path) => writeFileSync(path, '{ torn')],
+  ];
+  for (const [what, make] of unreadables) {
+    const state = stateOf();
+    seed(state, 'owner-b2.json');
+    const path = join(admissionOf(state), 'hold-a1.json');
+    make(path, state);
+    const before = picture(admissionOf(state));
+    const inside = what === 'a directory holding a file' ? picture(path) : undefined;
+    const { events, ...admissions } = moduleOver(state);
+    await assert.rejects(admissions.open('hold-a1.json'), (error) => error.message.includes(path), what);
+    assert.deepEqual(picture(admissionOf(state)), before, what);
+    if (inside) assert.deepEqual(picture(path), inside, what);
+    assert.deepEqual(events, [], what);
+  }
+});
+
 test('an opening whose hold closer is already gone resolves, answers so, and adds no event to the sink', async () => {
   const state = stateOf();
   seed(state, 'owner-a1.json');
