@@ -90,9 +90,9 @@ epic ([`R-SCHED-11`](spec/requirements.md)), and refuses one that two kinds sele
 2. Run [`rigger once`](../README.md#install-and-usage) or
    [`rigger run`](../README.md#install-and-usage).
 3. Read the outcome in three places:
-   - **the board**, for the column each card is in now, since the board holds every card's
-     workflow state ([`R-STATE-1`](spec/requirements.md)), as
-     [How the loop works](#how-the-loop-works) follows it;
+   - **the board**, for the column each card is in now, since the board holds every card's workflow
+     state ([`R-STATE-1`](spec/requirements.md)), as [How the loop works](#how-the-loop-works)
+     follows it;
    - **the card's pull request**, for the work and each judge's marker on it, as [`ARCHITECTURE.md`,
      "Markers"](../ARCHITECTURE.md#markers) defines one;
    - **[`rigger report`](../README.md#install-and-usage)**, for the signals across cards.
@@ -116,10 +116,11 @@ loop escalates it in the category [`R-LOOP-9`](spec/requirements.md) names.
 
 To answer the escalations waiting on you:
 
-1. Find them on the board: each card carrying the escalation label, which [`ARCHITECTURE.md`,
-   "Escalation"](../ARCHITECTURE.md#escalation) names, waits, and Rigger dispatches nothing for it,
-   in any column, and escalates it no further, whoever added the label
-   ([`R-ESCALATE-10`](spec/requirements.md)).
+1. Find them on the board, and read each escalated card's current column and labels there, since the
+   board holds every card's workflow state ([`R-STATE-1`](spec/requirements.md)). Each card carrying
+   the escalation label, which [`ARCHITECTURE.md`, "Escalation"](../ARCHITECTURE.md#escalation)
+   names, waits, and Rigger dispatches nothing for it, in any column, and escalates it no further,
+   whoever added the label ([`R-ESCALATE-10`](spec/requirements.md)).
 2. Make the decision the card asks of you, then remove the label [`ARCHITECTURE.md`,
    "Escalation"](../ARCHITECTURE.md#escalation) names from the card; Rigger reads the escalation as
    answered once that label is gone, and never removes it itself
@@ -130,8 +131,7 @@ whose pull request the forge holds as merged, is the exception, which
 [`R-WORK-33`](spec/requirements.md) answers ([`R-ESCALATE-10`](spec/requirements.md)).
 
 > **Placeholder.** The owner operation: how an escalation reaches you, with its comment on the
-> card's issue, the move to the owner's column and the label. Written by M6-D2, from M6-04 and
-> M6-05.
+> card's issue and the label. Written by M6-D2, from M6-04 and M6-05.
 
 ## Running unattended
 
