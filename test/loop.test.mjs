@@ -2242,9 +2242,12 @@ test('a closer linked while the facts call is pending stops the pull in its sync
     judgeDirectory: async () => {}, removeDirectories: async () => {}, state: directory, environment: {},
   });
   const pulled = gated.pull();
+  const done = settledOf(pulled);
   await positive(() => entered);
   seed(directory, 'owner-a1.json');
   release();
+  await positive(() => done() || built.l3Events().some(({ event }) => event === 'pull'));
+  assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull'), []);
   const answer = await pulled;
 
   assert.equal(answer.admission.state, 'closed');
@@ -2259,7 +2262,10 @@ test('a closer linked after a run claims a card lets it finish and stops its fre
   const running = built.loop.run();
   await positive(() => built.dispatches.heldNow(81) && built.dispatches.heldNow(82));
   seed(built.directory, 'owner-a1.json');
+  const done = settledOf(running);
   built.dispatches.releaseAll();
+  await positive(() => done() || built.dispatches.heldNow(83));
+  if (built.dispatches.heldNow(83)) built.dispatches.release(83);
   const reached = await running;
 
   assert.deepEqual(reached.map(({ card }) => card).sort(), [81, 82]);
@@ -2277,7 +2283,10 @@ test('resume removes the closer through admission and the next pull claims as wh
   assert.equal(stopped.admission.state, 'closed');
   await moduleOver(directory).resume();
   const next = built.loop.pull();
+  const done = settledOf(next);
   try {
+    await positive(() => done() || built.dispatches.heldNow(83));
+    assert.deepEqual(built.dispatches.started, [83]);
     await positive(() => built.dispatches.heldNow(83));
     assert.deepEqual(built.dispatches.started, [83]);
     assert.deepEqual(await columnsOf(built.fake), { 83: COLUMNS.coding });
