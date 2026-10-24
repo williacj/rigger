@@ -18,7 +18,7 @@ const ITEM_FACTS = ['type', 'repository', 'number', 'title', 'body', 'labels', '
  * with `refuseMoves` refuses every move it is asked for, as a board whose writes fail would.
  *
  * Its `operations` are what the forge adapter offers, and nothing else is: `writes()`,
- * `requests()` and `holdNextRead()` are the test's controls, not the board's.
+ * `requests()`, `holdNextRead()`, `issues()` and `setIssueLabels()` are test controls, not operations.
  */
 export function createFakeBoard({ columns = [], fields = [], items = [], labels = [], refuseMoves = false } = {}) {
   for (const item of items) {
@@ -115,6 +115,13 @@ export function createFakeBoard({ columns = [], fields = [], items = [], labels 
     writes: () => structuredClone(writes),
     /** Every request the board has received, as `{ operation, args }`, refused ones included. */
     requests: () => structuredClone(requests),
+    /** The issue facts already present on this board, for its shared fake repository. */
+    issues: () => structuredClone(board.items.filter(({ type }) => type === 'issue').map((item) =>
+      Object.fromEntries(['repository', 'number', 'title', 'body', 'labels'].filter((key) => item[key] !== undefined).map((key) => [key, item[key]])))),
+    /** Updates only the board view of this repository issue's labels, not its write operations. */
+    setIssueLabels: (repo, number, labels) => {
+      for (const item of board.items.filter((item) => item.type === 'issue' && item.number === number && item.repository.toLowerCase() === repo.toLowerCase())) item.labels = structuredClone(labels);
+    },
     /** Holds the next read unanswered, and returns the function that releases it. */
     holdNextRead: () => {
       let release;
