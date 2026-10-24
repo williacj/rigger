@@ -306,7 +306,50 @@ Rigger is not running fires once on the next start if its window was missed; tha
 is per trigger in config.
 
 Keeping the Rigger process alive across reboots is the OS scheduler's job. The launchd assets that
-do it are L0. A Windows equivalent arrives with native Windows, which is not in v0.
+do it are L0. A Windows equivalent arrives with native Windows, which is not in v0. On macOS the
+asset is one per-user LaunchAgent template under `templates/launchd/`, and `D28` records why. Spike
+#744's report measured launchd on the owner's host, and each cell named below is one of its cells:
+- **What `init` does.** `init` neither forks the template into the consumer's repository nor loads
+  it. A plist carries host paths, and loading a job changes the host, which is the owner's act.
+  `init` forks only the directories under `templates/` that have an asset destination.
+- **How `run` is supervised.** `StartInterval` re-launches the unchanged `rigger run`, and
+  `RunAtLoad` is true. launchd never starts the job while a run is in progress, and starts it again
+  one interval after it exits, with no firing queued (Q-a3). Without `RunAtLoad`, the first start
+  waits one interval (Q-a1, Q-a2).
+- **When it starts.** A LaunchAgent starts after the owner logs in, never before it (Q-l). Across
+  a reboot, the job therefore starts at the owner's next login, not at boot (U1 Q5 on #740).
+- **The job's process groups.** launchd never signals a process in a group of its own, at a
+  `bootout` or at the job's exit (Q-d4). Only Rigger's own exit cleanup therefore ends a dispatch's
+  group. Where launchd cuts that cleanup short, the next start meets the groups it left, and ends
+  them under `R-STATE-10`. launchd sends `SIGTERM`, not `SIGKILL`, to the rest of the job's own
+  group, at its kill and at its normal exit. A member that ignores `SIGTERM` survives (Q-d3).
+- **`ExitTimeOut`.** The template sets it explicitly, and never leaves it at launchd's default,
+  which is 5 s on the owner's host (Q-d2). One dispatch's cleanup, with one read that never
+  answers, took about 5.5 s as a test's measured duration (Q-e2).
+- **The bound.** A function in `src/config/` computes the least `ExitTimeOut` the job needs, and
+  the CLI only calls it. It multiplies `concurrency` by the largest agent-judge panel a kind names,
+  never fewer than one, and that by the per-dispatch cleanup figure. That figure is `KILL_BOUND`
+  plus `READ_TIMEOUT`, which L0's process adapter exports and the function imports. The bound is a
+  judgment on Q-e's premises: `concurrency` counts cards, a panel's judges run at once, and Rigger
+  cleans up dispatches one after another, each within that figure. At this repository's config the
+  report recommends 150 s (Q-e, a judgment).
+- **What L0 answers, and what `doctor` compares.** `doctor` reads a loaded job through a new L0
+  module, `src/substrate/launchd.mjs`, which spawns only through the process adapter. It answers
+  only the loaded job's fields, because L0 knows neither `concurrency` nor a kind. `doctor`
+  compares the loaded job's exit timeout, as L0 answers it, against the bound. The template is
+  static, so it holds an `ExitTimeOut` the owner sets at installation to at least the bound.
+- **`doctor`'s check.** Where a job under the documented label is loaded, `doctor` checks that its
+  program's real path is an installed package outside the target (`R-SAFE-5`). Where none is
+  loaded, the check prints no line, as S7 in the architect's review r1 on #740 places it.
+- **The environment.** launchd's default environment finds none of `gh`, `claude` or `codex` by
+  name, and `codex` fails by absolute path without `node` on `PATH` (Q-f1). The template therefore
+  sets `PATH` to reach `node`, `gh`, `claude` and `codex`, and each then ran signed in (Q-f2 to
+  Q-i2). The template names no host directory, because each host installs them where it does.
+- **Logs.** The job's standard output and standard error go under `~/Library/Logs/rigger/`,
+  outside `.rigger/` and outside every checkout.
+- **The Self-hosting list.** Neither the template nor the live plist in `~/Library/LaunchAgents`
+  is a Self-hosting path. The live plist is a host file, not a repository path, and the template is
+  not what the engine runs under.
 
 ## The gate
 
