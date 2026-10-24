@@ -27,8 +27,8 @@ export function markerComment({ card, pull, head, body, role = 'reviewer', provi
  * its head, by context, a required context it does not name being `absent`. `closed` is whether it
  * was closed without a merge, and `headRepositoryDeleted` whether the repository its head is in was
  * deleted, which GitHub answers as a head repository of null
- * (https://docs.github.com/en/graphql/reference/objects#pullrequest). The read of a branch's pull
- * requests leaves out both, as it leaves them out on GitHub.
+ * (https://docs.github.com/en/graphql/reference/objects#pullrequest). The line-of-work read
+ * includes closed pulls and excludes a deleted head repository.
  */
 const PULL_FACTS = ['number', 'head', 'sha', 'base', 'merged', 'diff', 'declined', 'mergeBase', 'comments', 'from', 'title', 'body', 'mergeable', 'checks', 'closed', 'headRepositoryDeleted', 'labels'];
 
@@ -123,8 +123,9 @@ export function createFakeRepository({ branches = [], pullRequests = [], issues 
     readEnvironmentVariable: async (name, variable) => environments[name]?.variables?.[variable] ?? null,
     readEnvironmentSecret: async (name, secret) => environments[name]?.secrets?.includes(secret) ?? false,
     readPullRequests: async (branch) => {
-      const from = held.pullRequests.filter((candidate) => candidate.head === branch && candidate.from === null && pullStateOf(candidate) !== 'CLOSED' && !candidate.headRepositoryDeleted);
-      return { open: from.filter((candidate) => !candidate.merged).map(asAnswered), merged: from.filter((candidate) => candidate.merged).map(asAnswered) };
+      const from = held.pullRequests.filter((candidate) => candidate.head === branch && candidate.from === null && !candidate.headRepositoryDeleted);
+      const inState = (state) => from.filter((candidate) => pullStateOf(candidate) === state).map(asAnswered);
+      return { open: inState('OPEN'), merged: inState('MERGED'), closed: inState('CLOSED') };
     },
     readBranches: async (names) => Object.fromEntries(names.map((name) => [name, held.branches.includes(name)])),
     readDiff: async (number) => {

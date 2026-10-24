@@ -34,6 +34,7 @@ Ids allocated here still count as allocated. The duplicate-id check reads both f
 | R-WORK-1 | A card's work happens in a workspace nothing else is using. No two dispatches share one, whether they are working one card or two. | | 2026-09-29 | R-WORK-12 |
 | R-WORK-11 | Rigger never removes or changes a directory at a card's workspace path unless that directory is a workspace of the repository Rigger works. Finding one that is not, it fails the attempt and names the path. | | 2026-09-30 | R-WORK-13, R-WORK-14, R-WORK-15, R-WORK-16 |
 | R-WORK-30 | Before Rigger moves a card to Done for its merged pull request, whoever merged it, Rigger removes the card's directories. They are its workspace and each directory under `judges/<topic>` and `scratch/<topic>` for the card's topic, whichever role it is named for. Rigger removes each only where `R-WORK-13`, `R-WORK-20` or `R-WORK-26` lets Rigger replace it, and otherwise names the path and leaves it. Rigger moves the card to Done only once no removal failed, and a path left under those rows is no failure. Where a removal failed, the card stays where it is, and Rigger names each path that remains. The states it covers are in `### R-WORK-30 — When a merged card's directories are removed`. | | 2026-10-17 | R-WORK-33 |
+| R-WORK-33 | Before Rigger moves a card to Done for its merged pull request, whoever merged it, Rigger removes the card's directories. They are its workspace and each directory under `judges/<topic>`, `escalations/<topic>` and `scratch/<topic>` for the card's topic, whichever role it is named for. Rigger removes each only where `R-WORK-13`, `R-WORK-20`, `R-WORK-26` or `R-WORK-32` lets Rigger replace it, and otherwise names the path and leaves it. Rigger moves the card to Done only once no removal failed, and a path left under those rows is no failure. Where a removal failed, the card stays where it is, and Rigger names each path that remains. The states it covers are in `### R-WORK-33 — When a merged card's directories are removed`. |  | 2026-10-22 | R-WORK-35 |
 | R-ESCALATE-1 | Every escalation to the owner is one of the configured categories. A card escalated to the owner proceeds no further until the owner answers it. | D3 | 2026-10-17 | R-ESCALATE-20 |
 | R-ESCALATE-2 | The set of categories is Rigger's. A consumer chooses which of them are the owner's to decide, and adds none. All are the owner's unless the consumer says otherwise. | D3 | 2026-10-17 | R-ESCALATE-13 |
 | R-ESCALATE-3 | The set holds exactly three: a change to a recorded decision, a fault that must not merge — the same fault a verdict names — and an ambiguity no role could resolve. | D3 | 2026-10-17 | R-ESCALATE-19 |
@@ -73,6 +74,39 @@ Ids allocated here still count as allocated. The duplicate-id check reads both f
 | a workspace path named through a symbolic link to the card's worktree, or anything else `R-WORK-13` refuses | in: as `R-WORK-13` answers it: the worktree and the link removed, or the path left and named |
 | a symbolic link at a judge's or a scratch directory's path, or anything else `R-WORK-20` or `R-WORK-26` refuses | in: left and named |
 | `judges/<topic>` and `scratch/<topic>`, once empty | in: removed where each is a directory and not a symbolic link, and so is `judges` or `scratch` above it; otherwise left and named |
+| the card's local branch | out: kept |
+| output an agent CLI other than Claude Code writes outside the scratch base | out: until that adapter's spike measures it. Claude Code's lies under the dispatch's directory |
+
+### R-WORK-33 — When a merged card's directories are removed
+
+| Situation | Scope |
+|---|---|
+| a merge the engine's lane makes, answered merged or already merged | in: removed before the Done move |
+| a merge the engine's lane makes, answered refused or not merged | in: nothing removed; removed once a later pull reads the pull request as merged |
+| a merge the engine's lane makes that fails | in: nothing removed; removed once a later pull reads the pull request as merged |
+| Rigger cannot record the end of a merge the engine's lane makes | in: nothing removed; removed once a later pull reads the merge |
+| merged by a person while the engine runs, or while it is stopped | in: removed at the next pull that reads the merge |
+| the engine killed between the merge and the removal | in: the card stays where it is; removed at a later pull that reads the merge |
+| a removal failing after another of the card's directories was removed | in: the card stays where it is; each remaining path named; a later pull removes them |
+| a removal failing partway through one directory | in: the card stays where it is; the path named; a later pull removes it where its row still lets Rigger replace it, and otherwise leaves and names it |
+| a check `R-WORK-13`, `R-WORK-20`, `R-WORK-26` or `R-WORK-32` asks for that Rigger cannot make, because git or the file system gives no answer to it, or does not answer in time | in: a failed removal, not a refusal: the path left and named; the card stays where it is; a later pull removes again |
+| a check `R-WORK-13`, `R-WORK-20`, `R-WORK-26` or `R-WORK-32` asks for that git or the file system answers, finding that the condition does not hold | in: a refusal: the path left and named; it does not hold back the Done move |
+| a workspace directory whose `.git` entry is still there after git dropped its registration, as a removal failing partway leaves it | in: a refusal under `R-WORK-13`: the path left and named; it does not hold back the Done move |
+| Rigger cannot record an event of the removal | in: the card stays where it is; Rigger says what went unrecorded; a later pull removes again |
+| a second removal pass over a card already removed | in: nothing changes, and nothing fails |
+| none of the card's directories exists | in: nothing changes, and nothing fails |
+| a directory of the card already gone, with or without its registration | in: nothing fails; git then lists no registration of the card's whose directory is gone, unless a person locked it |
+| a worktree of the card's that a person locked | in: left as it is, its lock kept, and named; the card stays where it is until the lock is lifted |
+| a person moved the card to Done before Rigger read the merge | out: Rigger reads no Done card, and its directories stay |
+| a Ready or Coding card whose pull request is merged | out: Rigger refuses it under `R-WORK-19`, and its directories stay |
+| a pull request closed without merging | in: nothing removed |
+| a dispatch of the card by a judge, or by a role an escalation goes to, still running when its pull request merges | in: removed at the first pull that reads the merge once no dispatch of the card runs |
+| a process Rigger did not start working in a directory | out: removal proceeds, as it does when Rigger replaces the directory |
+| a process Rigger started and could not end, working in a directory | out: removal proceeds, as for a process Rigger did not start |
+| a workspace with uncommitted changes or commits not on the forge | in: removed, as `R-WORK-13` replaces it |
+| a workspace path named through a symbolic link to the card's worktree, or anything else `R-WORK-13` refuses | in: as `R-WORK-13` answers it: the worktree and the link removed, or the path left and named |
+| a symbolic link at the path of a judge's directory, of a scratch directory, or of the directory of a role an escalation goes to, or anything else `R-WORK-20`, `R-WORK-26` or `R-WORK-32` refuses | in: left and named |
+| `judges/<topic>`, `escalations/<topic>` and `scratch/<topic>`, once empty | in: removed where each is a directory and not a symbolic link, and so is `judges`, `escalations` or `scratch` above it; otherwise left and named |
 | the card's local branch | out: kept |
 | output an agent CLI other than Claude Code writes outside the scratch base | out: until that adapter's spike measures it. Claude Code's lies under the dispatch's directory |
 
