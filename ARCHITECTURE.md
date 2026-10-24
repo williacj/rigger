@@ -512,7 +512,7 @@ checks which label, and L2 alone chooses it, an opened issue's title and body, a
 closes. L2 answers no action, in every column, for an item carrying any of Rigger's fixed labels,
 before it asks which kind selects it. The status label is the second. The one exception is the
 escalation label's, and it never reaches an item carrying the status label, whatever other label it
-carries: L2 answers a card whose pull request the forge holds as merged as `R-WORK-33` and its table
+carries: L2 answers a card whose pull request the forge holds as merged as `R-WORK-35` and its table
 require. No code of Rigger's removes the label:
 the owner answers an escalation by removing it.
 
@@ -577,8 +577,9 @@ kill left unrecorded stops what made the call: a start at L3, as a refused start
 verb, which exits non-zero naming it.
 
 L3 then reads the board, and L2 computes each card's next action from its stage and observable
-facts. Those facts are the card's column, its pull request, that request's head SHA, the head SHA
-and acceptance digest each marker names, and the last transition the board shows. They also include
+facts. Those facts are the card's column, its line of work's open, merged and closed pull requests, and
+each open request's head SHA. They include the head SHA and acceptance digest each marker names,
+and the last transition the board shows. They also include
 the escalation label the card carries, the escalation notes on its issue, and L2's routing comment
 where it sent the card to a role. L2 derives them on every read, so no card state is kept. The one
 exception is L3's memory of the cards it does not pull again in one invocation, set out below,
@@ -800,6 +801,7 @@ pulls for these reasons, and no others:
 | a move, return or escalation whose write the forge refused | it bounds retries of a refused write, since a released claim fires the next trigger (C22) |
 | a merge, whatever it answered | a merge the lane refused, because the head moved, checks were pending or mergeability was unknown, would be pulled again at once and poll the forge |
 | a continuing attempt that did not settle | L2 moved nothing, so the next pull would read the same head and markers, answer `continue` again, and dispatch the maker again at once |
+| a closed-card removal followed by a refusal | the refusal leaves the removal conditions unchanged, so the next pull would remove the same directories again at once |
 
 Where a hold's closer could not be saved, L3 pulls no card for the rest of the invocation, and
 claims it already holds finish. The command exits non-zero, naming the failure. Without a lock, only
@@ -854,11 +856,26 @@ While L2 reads a continuing attempt's pull request at a head other than the tip 
 read it again under the same claim and slot, until the bound `R-WORK-34` sets has passed. Every wait for the forge to show a write runs this way:
 L3 owns the pause, the clock and the bound, and L2 owns what each read shows.
 
+L1's directory-removal operation lives in `src/execution/workspace.mjs`. L2 selects it, and L3 invokes it under the card's claim. It serves both `R-WORK-35` and `R-WORK-36`.
+
 Once L2 reads a card's pull request as merged, whoever merged it, L3 has L1 remove the card's
 directories: its workspace, and each of its roles' judge, escalation and scratch directories
-(`R-WORK-33`). L2 moves the card to Done once no removal failed. A directory the replace rule
+(`R-WORK-35`). L2 moves the card to Done once no removal failed. A directory the replace rule
 refuses is left and named, and does not hold the move back. Where a removal failed, the card stays
 where it is, and the next pull that reads it removes again.
+
+For a card satisfying `R-WORK-36` to `R-WORK-40`, L2 answers removal carrying the action it would otherwise answer. L2 chooses that following action before L3 acts. Its qualifying forge-refusal escalation carries `raiser: 'loop'`. L3 treats removal as pullable work and follows this order:
+
+1. L3 claims the card and records the claim's start without moving the card to Coding.
+2. L3 invokes L1's removal and retains its remaining paths, failures and unrecorded events for its caller.
+3. L3 performs L2's following action under the same claim, even where the removal failed or its event could not be recorded.
+4. L3 releases the claim once the following action ends, and reports the retained removal failures with that action's outcome.
+
+A following attempt moves the card to Coding only after removal, through L2's existing claim operation. Its own start and event boundaries still apply. A sink that continues refusing records therefore prevents the following action's unrecordable start; the removal failure alone does not.
+
+L2 preserves an ordinary refusal's reason and precedence. It converts only the qualifying forge refusal into an ambiguous escalation; it does not convert a form, tier or provider refusal. L3 applies the following action's existing retry exclusions as well as the removal row above.
+
+L3 rechecks claim availability after asynchronous reads and holds one claim through removal and the following action. The decision uses the facts L2 read. Reopening after that read follows `R-WORK-36`'s table; L3 creates no restoration or persisted cleanup state.
 
 L3 hands L2 each outcome unread, and L2 answers the next action. A provisioning step is a
 dispatch, so L1 records its group as it records any dispatch's. L2 classifies five failures as
