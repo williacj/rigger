@@ -304,6 +304,7 @@ test('an opening by a hold closer\'s name whose entry is an unreadable closer re
     ['a symbolic link to a readable closer\'s file', (path, state) => { writeFileSync(join(state, 'outside.json'), closerText()); symlinkSync(join(state, 'outside.json'), path); }],
     ['a symbolic link to nothing', (path) => symlinkSync(join(path, '..', 'nowhere.json'), path)],
     ['a file whose content does not parse', (path) => writeFileSync(path, '{ torn')],
+    ['a file whose JSON parses but whose reason is a number', (path) => writeFileSync(path, JSON.stringify({ reason: 1, time: 1_760_000_000_123, run: 'r-1' }))],
   ];
   for (const [what, make] of unreadables) {
     const state = stateOf();
