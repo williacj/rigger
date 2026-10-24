@@ -554,7 +554,8 @@ Each failure is one of three classes:
 | a derived branch name git refuses | out | — | out: the card stops at the attempt that meets it, with no second attempt, and admission stays open |
 | a worktree root that is not an absolute path | out | — | out: the card stops at the attempt that meets it, with no second attempt, and admission stays open |
 | an optional step that failed or never started | out | — | out: `R-PROV-2` |
-| a judge's directory not made, a required step in a judge's `head` that failed or never started, or a judge's scratch directory not made because the file system gave no answer, or none in time | out | — | out: no second attempt is made in that invocation, and the next invocation tries again |
+| a judge's directory not made, or a required step in a judge's `head` that failed or never started | out | — | out: no second attempt is made in that invocation, and the next invocation tries again |
+| a judge's scratch directory not made because the file system gave no answer, or none in time | out | — | out: no second attempt is made in that invocation, and the next invocation tries again |
 | a maker that ran its first command and then failed | out | — | out: the work's failure, not the environment's |
 | two cards each failing once | out | — | out: counted per card |
 | a card refused for its acceptance's form (`R-CARD-7`, `R-CARD-8`) | out | — | out: it stays a refusal `rigger plan` reports |
