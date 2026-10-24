@@ -238,9 +238,11 @@ It names the provisioning steps, each with the card labels that select it and wh
 requires it. And for each kind of work it names one maker role, the judges that review it, and how
 many review rounds that kind gets before a standing disagreement escalates — three by default. A
 code change might have one judge. A requirements proposal might have three, with you last. Which
-outcomes are yours to decide is also configuration. You choose from a fixed set of categories and
-add none to it. The default is all three: a change to a recorded decision, a critical finding, and
-an ambiguity no role could resolve. Scheduled work is declared the same way: a clock trigger
+outcomes are yours to decide is also configuration. The categories are a fixed set of three, and
+you add none to it: a change to a recorded decision, a critical finding, and an ambiguity no role
+could resolve. For each category you name a destination, you or one of your roles, and a category
+you give none goes to you. A critical finding and a change to a recorded decision go only to you,
+and only an ambiguity a maker raises goes to a role. Scheduled work is declared the same way: a clock trigger
 creates a card on your board, and that card goes through the loop like any other.
 [`ARCHITECTURE.md`](ARCHITECTURE.md) lists every extension point; there are no others.
 
