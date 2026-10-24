@@ -504,13 +504,16 @@ A refused write therefore never leaves the label on without its comment. A later
 escalates the card again, and the comment may repeat. L2 posts the comment on the issue, never on
 the pull request, so one place holds every escalation, a maker's and a refusal's included.
 
-The escalation label is `rigger:escalated`, one of Rigger's fixed labels. `src/config/` names them
+The escalation label is `rigger:escalated`, one of Rigger's two fixed labels. `src/config/` names them
 beside the escalation categories, so the validator, `setup-board` and L2 read one list. The
 repository-write side's runner admits a label write, and an issue's opening or closing, by its
 shape alone: one label added to or removed from one issue, or one issue opened or closed. It never
 checks which label, and L2 alone chooses it, an opened issue's title and body, and which issue it comments on or
-closes. L2 answers no action, in every column, for an item carrying any of Rigger's fixed labels,
-before it asks which kind selects it. The status label is the second. The one exception is the
+closes. L2 opens the status issue in one request carrying its title, body and the status label; no write
+adds that label to an issue afterwards, and the repository-write side rejects an opening whose forge
+answer lacks it. L2 answers no action, in every column, for an item carrying any of Rigger's fixed labels,
+before it asks which kind selects it. The status label, `rigger:status`, is the second, and
+Rigger fixes no other label. The one exception is the
 escalation label's, and it never reaches an item carrying the status label, whatever other label it
 carries: L2 answers a card whose pull request the forge holds as merged as `R-WORK-33` and its table
 require. No code of Rigger's removes the label:
