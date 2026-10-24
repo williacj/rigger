@@ -453,7 +453,7 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | R-ESCALATE-9 | Rigger posts each escalation to the owner as a comment on the card's issue, carrying what `R-ESCALATE-7` lists, and never leaves the escalation label on a card without that comment. A retried escalation may post the comment again, each copy naming the same category and reason. Its edges are in `### R-ESCALATE-9 — An escalation partly written`. | the engine | the test suite | D3 |
 | R-ESCALATE-10 | Rigger dispatches nothing for a card carrying the escalation label, in any column, and escalates it no further, whoever added the label. A card whose pull request the forge holds as merged is the exception, which `R-WORK-33` answers. `rigger plan` names a labelled card as escalated, never as refused. | the engine | the test suite | D3 |
 | R-ESCALATE-11 | Rigger reads an escalation as answered once the escalation label is gone from the card, and never removes that label itself. | the engine | the test suite | D3 |
-| R-ESCALATE-12 | Rigger escalates a card to the owner as ambiguous, naming the refusal, where it refuses the card for what its workspace, a judge's directory, a scratch directory or the forge's hold on its line of work shows. It escalates at the attempt or pull where the refusal happens, with no second attempt. The refusals are the card-local rows of `### R-FAIL-6 — Environment failures and the hold`. | the engine | the test suite | D3 |
+| R-ESCALATE-12 | Rigger escalates a card to the owner as ambiguous, naming the refusal, where it refuses the card for what its workspace, a judge's directory, a scratch directory or the forge's hold on its line of work shows. It escalates at the attempt or pull where the refusal happens, with no second attempt. The refusals are the card-local rows of `### R-FAIL-7 — Environment failures and the hold`. | the engine | the test suite | D3 |
 | R-ESCALATE-13 | The set of categories is Rigger's, and a consumer adds none. A consumer may name each category's destination, the owner or one of its roles. Its bound is in `### R-ESCALATE-13 — Escalation destinations`. | the engine | the config validator, for the destinations it refuses | D3, D26 |
 | R-ESCALATE-14 | Rigger refuses a configuration naming a role as the destination of a recorded-decision change or of critical, and the refusal names the category. | the config validator | the test suite | D14, D26 |
 | R-ESCALATE-15 | Only an ambiguous escalation a maker raises goes to a role, where its category's destination is a role. Rigger sends every escalation the loop raises to the owner, whatever its configured destination. | the engine | the test suite | D26 |
@@ -524,9 +524,9 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | R-FAIL-1 | Work that failed before the maker ran its first command is tried again rather than judged. Nothing about the work has been shown. | the engine | the event record, by whether a maker emitted anything | D12 |
 | R-FAIL-2 | An infrastructure failure dispatches no maker, and the card is tried once more. | the engine | the event record, by attempts against starts | D12 |
 | R-FAIL-4 | An infrastructure failure never escalates to the owner as a fault in the work. | the engine | the event record, by the category on each escalation | D3, D12 |
-| R-FAIL-6 | Rigger closes admission, and records why, when a card's second attempt fails in its environment the same way its first did. The ways are in `### R-FAIL-6 — Environment failures and the hold`. | the engine | the event record, by failures counted against the hold | D12 |
+| R-FAIL-7 | Rigger closes admission, and records why, when a card's second attempt fails in its environment the same way its first did. The ways are in `### R-FAIL-7 — Environment failures and the hold`. | the engine | the event record, by failures counted against the hold | D12 |
 
-### R-FAIL-6 — Environment failures and the hold
+### R-FAIL-7 — Environment failures and the hold
 
 Each failure is one of three classes:
 
@@ -555,6 +555,7 @@ Each failure is one of three classes:
 | a worktree root that is not an absolute path | out | — | out: the card stops at the attempt that meets it, with no second attempt, and admission stays open |
 | an optional step that failed or never started | out | — | out: `R-PROV-2` |
 | a judge's directory not made, or a required step in a judge's `head` that failed or never started | out | — | out: no second attempt is made in that invocation, and the next invocation tries again |
+| a judge's scratch directory not made because the file system gave no answer, or none in time | out | — | out: no second attempt is made in that invocation, and the next invocation tries again |
 | a maker that ran its first command and then failed | out | — | out: the work's failure, not the environment's |
 | two cards each failing once | out | — | out: counted per card |
 | a card refused for its acceptance's form (`R-CARD-7`, `R-CARD-8`) | out | — | out: it stays a refusal `rigger plan` reports |

@@ -574,7 +574,7 @@ const prepareContinuation = ({ ruling = 'reviewer', owner = false, conflicting =
   return oldHead;
 };
 
-// proves R-FAIL-6
+// proves R-FAIL-7
 test('once names a continuing fetch hold with both failures in order', SETTLES_WITHIN, async (t) => {
   const agent = standInAgent();
   const git = spawnSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();

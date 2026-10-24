@@ -177,7 +177,7 @@ function stopOf(failure, card) {
   return stop;
 }
 
-// proves R-FAIL-6
+// proves R-FAIL-7
 test('L3 hands L2 the first workspace failure beside the second attempt', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace', { other: false });
   let first;
@@ -195,7 +195,7 @@ test('L3 hands L2 the first workspace failure beside the second attempt', SETTLE
   assert.equal(handed.workspace, first.workspace);
 });
 
-// proves R-FAIL-6
+// proves R-FAIL-7
 test('L3 hands L2 the first workspace failure beside the second attempt of a run', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace', { other: false });
   let first;
@@ -212,7 +212,7 @@ test('L3 hands L2 the first workspace failure beside the second attempt of a run
   assert.deepEqual(handed, first);
 });
 
-// proves R-FAIL-6
+// proves R-FAIL-7
 test('a continuing attempt whose workspace fetch fails twice answers hold at L1s current report', SETTLES_WITHIN, async () => {
   const card = cardIn(1, COLUMNS.review);
   const pull = pullFor(1);
@@ -238,7 +238,7 @@ test('a continuing attempt whose workspace fetch fails twice answers hold at L1s
   assert.deepEqual(recorded(built, 'L3', 'dispatch', (each) => each.role === 'engineer'), []);
 });
 
-// proves R-FAIL-6
+// proves R-FAIL-7
 test('two once invocations over the same board and state count the held card afresh', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace', { other: false });
   const first = await built.loop.pull(1).then(() => assert.fail('the first pull fulfilled'), (failure) => failure);
@@ -249,7 +249,7 @@ test('two once invocations over the same board and state count the held card afr
   assert.deepEqual(recorded(built, 'L2', 'attempt.decided').map(({ attempt, decision }) => [attempt, decision]), [[1, 'again'], [2, 'hold'], [1, 'again'], [2, 'hold']]);
 });
 
-// proves R-FAIL-6
+// proves R-FAIL-7
 test('a held Ready card stays in Coding with only its claim move', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace', { other: false });
   await assert.rejects(built.loop.pull(1));
@@ -271,14 +271,14 @@ test('a held card records no escalation and writes no comment on its issue', SET
   assert.deepEqual(built.repository.held().issues[0].comments, []);
 });
 
-// proves R-FAIL-6
+// proves R-FAIL-7
 test('a held card writes nothing under admission state', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace', { other: false });
   await assert.rejects(built.loop.pull(1));
   assert.equal(existsSync(join(built.directory, 'admission')), false);
 });
 
-// proves R-FAIL-6
+// proves R-FAIL-7
 test('two cards that each fail once in the same host way each get another attempt and neither is held', SETTLES_WITHIN, async () => {
   const root = temporaryDirectory('rigger-two-retries-');
   const making = makingWorkspaces(root);
@@ -300,7 +300,7 @@ test('two cards that each fail once in the same host way each get another attemp
   assert.equal(built.decisions.some(({ answer }) => answer.action === 'hold'), false);
 });
 
-// proves R-FAIL-6
+// proves R-FAIL-7
 test('a card still holds for two matching host failures beside a card whose maker succeeds', SETTLES_WITHIN, async () => {
   const { built, failure } = await runFailure('workspace');
 
