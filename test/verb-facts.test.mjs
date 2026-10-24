@@ -128,3 +128,30 @@ test('given a second card whose labels select two tiers for its maker role and w
   assert.equal(refusalOf(planned.text, 60), refusalOf(claimed.text, 60), 'plan and once refuse the card in the same words');
   assert.deepEqual(movesIn(claimed.model), []);
 });
+
+
+import { run } from '../src/cli/run.mjs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+
+// proves R-WORK-36
+test('run cleans eligible closed history then reports the unchanged form refusal once and exits zero', async () => {
+  const directory = temporaryDirectory('rigger-run-closed-refusal-');
+  const settings = config();
+  settings.worktrees = { ...settings.worktrees, root: directory };
+  const scratch = join(directory, 'scratch', 'rigger-99', 'reviewer');
+  const result = await ran(async (options) => {
+    writeFileSync(join(options.target, 'rigger.config.mjs'), `export default ${JSON.stringify(settings)};\n`);
+    mkdirSync(scratch, { recursive: true });
+    writeFileSync(join(scratch, 'cleanup-witness.txt'), 'closed card scratch');
+    assert.equal(existsSync(scratch), true, 'actual scratch exists before run');
+    return run(options);
+  }, [card(99, 'Review', { body: 'No acceptance.' })], {
+    pullRequests: [{ number: 1099, head: 'rigger-99', sha: 'a'.repeat(40), closed: true }],
+  });
+  assert.equal(existsSync(scratch), false, 'closed cleanup removes actual scratch before reporting the run refusal');
+  assert.equal(result.code, 0, result.text);
+  assert.match(result.text, /rigger run: card #99 refused: .*missing acceptance/);
+  assert.equal(result.text.split('\n').filter((line) => line.includes('card #99 refused:')).length, 1);
+  assert.doesNotMatch(result.text, /undefined/);
+  assert.deepEqual(result.model.writes(), []);
+});

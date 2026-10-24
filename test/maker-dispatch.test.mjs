@@ -111,7 +111,7 @@ function makerWorld({
     await new Promise((resolve) => { setImmediate(resolve); });
     const number = cardOf(branch);
     const open = agent.act(number, 'engineer')?.pr && ran(number) ? [{ number: 500 + number, head: String(number).padStart(40, 'a'), base: 'main' }] : [];
-    return { open, merged: [] };
+    return { open, merged: [], closed: [] };
   };
   const l2 = columnChanges({ config: settings, sink, items: fake.operations, reads: readsServing(pullRequests) });
   const kinds = { change: { ...KINDS.change, provisioning: steps } };

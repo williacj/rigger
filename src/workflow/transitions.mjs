@@ -232,7 +232,7 @@ export function columnChanges({
      * `pullRequestsFrom` reads them. For a continuing attempt, a head other than `expectedHead`
      * answers `waiting` until L3's last read, when L2 withholds review and names both heads.
      * With exactly one open at the expected head, the card moves to review (`R-WORK-18`),
-     * and L2 answers the facts it read, `{ line, open, merged }` with those beside them, to its
+     * and L2 answers the facts it read, `{ line, open, merged, closed }` with those beside them, to its
      * caller, which hands them back unread to L2's next action (the architect's ruling 3, AQ4). With
      * none open, or more than one, the card stays in coding, and L2 records why and
      * tells its caller the card and why, as `withheld` says. A read that fails leaves it in coding too, and its
