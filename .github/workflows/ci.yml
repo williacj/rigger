@@ -1,48 +1,212 @@
-# ABOUTME: The workflow that runs Rigger's suite, its two budget checks, its document checks, its
-# ruled-out-word check and its test-matrix check, and regenerates the demo GIF from its tape, on
-# pushes to main, every pull request and every merge a queue is testing.
-
+# ABOUTME: Runs portable feedback, explicitly requested hosted candidate proof and protected-main regression.
 name: CI
 
 on:
   push:
     branches: [main]
   pull_request:
-  # A queue entry is a temporary branch nobody pushed and no pull request points at, so the two
-  # triggers above leave it unanswered. A queue requiring `CI / check (26)`
-  # then waits for checks that never start, until the entry times out.
+    types: [opened, synchronize, reopened, edited, ready_for_review, labeled, unlabeled]
   merge_group:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  CI_POLICY: |
+    import { appendFileSync, readFileSync } from 'node:fs';
+    import { execFileSync } from 'node:child_process';
+    const sha = (value) => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value);
+    export function parseRaw(bytes) {
+      const raw = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+      if (raw === '') return [];
+      const parts = raw.split('\0');
+      if (parts.pop() !== '' || parts.length % 2 !== 0) throw new Error('incomplete raw Git diff');
+      const changes = [];
+      for (let index = 0; index < parts.length; index += 2) {
+        const header = /^:(\d{6}) (\d{6}) ([a-f0-9]{7,40}) ([a-f0-9]{7,40}) ([AMDT])$/.exec(parts[index]);
+        if (!header || parts[index + 1] === '') throw new Error('malformed raw Git diff');
+        changes.push({ oldMode: header[1], newMode: header[2], status: header[5], path: parts[index + 1] });
+      }
+      return changes;
+    }
+    export function policy(f) {
+      const invalid = { mode: 'INVALID', demoNeeded: false, sourceValid: false };
+      if (f?.rawBase64 !== undefined) {
+        try {
+          const bytes = Buffer.from(f.rawBase64, 'base64');
+          if (bytes.toString('base64') !== f.rawBase64) return invalid;
+          f = { ...f, changes: parseRaw(bytes) };
+        } catch { return invalid; }
+      }
+      if (!f || f.owner !== 'williacj' || f.complete !== true || !f.checkout || !sha(f.eventSha) || f.checkout.sha !== f.eventSha || !sha(f.checkout.tree) || !Array.isArray(f.checkout.parents) || !f.checkout.parents.every(sha) || !Array.isArray(f.changes)) return invalid;
+      if (['push', 'schedule', 'workflow_dispatch', 'merge_group'].includes(f.event)) {
+        if (!f.main || f.main.defaultBranch !== 'main' || !sha(f.main.head)) return invalid;
+        if (f.event === 'merge_group') {
+          if (!f.group || f.group.head !== f.checkout.sha || f.group.base !== f.main.head || f.group.baseRef !== 'refs/heads/main' || f.group.baseAncestor !== true) return invalid;
+          return { mode: 'BROAD_EXECUTED', demoNeeded: true, sourceValid: true };
+        }
+        if (f.ref !== 'refs/heads/main' || f.main.head !== f.checkout.sha || (f.inputs && Object.keys(f.inputs).length > 0)) return invalid;
+        if (f.event === 'push' && f.after !== f.checkout.sha) return invalid;
+        return { mode: f.event === 'push' ? 'MAIN_SMOKE' : 'MAIN_FULL', demoNeeded: f.event !== 'push', sourceValid: true };
+      }
+      if (f.event !== 'pull_request' || !f.pr || !f.live) return invalid;
+      const { pr, live } = f;
+      if (!['opened', 'synchronize', 'reopened', 'edited', 'ready_for_review', 'labeled', 'unlabeled'].includes(f.action) || typeof f.sender !== 'string' || !f.sender) return invalid;
+      if (!Number.isSafeInteger(pr.number) || pr.number <= 0 || f.ref !== 'refs/pull/' + pr.number + '/merge' || !sha(pr.head) || !sha(pr.base) || !['open', 'closed'].includes(pr.state) || typeof pr.draft !== 'boolean' || typeof pr.baseRef !== 'string' || !pr.baseRef || !Array.isArray(live.labels) || !live.labels.every((name) => typeof name === 'string')) return invalid;
+      if (pr.state !== 'open' || ['head', 'base', 'baseRef', 'state', 'draft'].some((key) => pr[key] !== live[key]) || f.checkout.parents.length !== 2 || f.checkout.parents[0] !== pr.base || f.checkout.parents[1] !== pr.head) return invalid;
+      if (!f.changes.every((row) => row && typeof row.path === 'string' && row.path.length > 0 && !row.path.includes(String.fromCharCode(0)) && /^[AMDRT]$/.test(row.status) && /^(000000|100644|100755|120000|160000)$/.test(row.oldMode) && /^(000000|100644|100755|120000|160000)$/.test(row.newMode))) return invalid;
+      const ownerRequest = f.owner === 'williacj' && f.sender === f.owner && f.action === 'labeled' && live.labels.includes(f.label);
+      const relevantDemo = f.changes.some((row) => /^(docs\/demo\.|test\/demo|src\/(cli|workflow|scheduling|execution)\/|templates\/|package[^/]*\.json$|\.github\/workflows\/ci\.yml$)/.test(row.path));
+      if (pr.baseRef === 'main' && !pr.draft && ownerRequest && f.label === 'ci:full') return { mode: 'BROAD_EXECUTED', demoNeeded: relevantDemo, sourceValid: true };
+      const journalOnly = f.changes.length > 0 && f.changes.every((row) =>
+        /^docs\/journal\/[A-Za-z0-9][A-Za-z0-9._-]*\.md$/.test(row.path) &&
+        ((row.status === 'A' && row.oldMode === '000000' && row.newMode === '100644') ||
+         (row.status === 'M' && row.oldMode === '100644' && row.newMode === '100644')));
+      return { mode: pr.baseRef !== 'main' || journalOnly ? 'FAST_ELIGIBLE' : 'BROAD_DEFERRED', demoNeeded: ownerRequest && f.label === 'ci:demo', sourceValid: true };
+    }
+    export async function requestJson(path, { send = fetch, token = process.env.GH_TOKEN, base = process.env.GITHUB_API_URL ?? 'https://api.github.com' } = {}) {
+      const url = new URL(path, base);
+      if (url.origin !== new URL(base).origin || !token) throw new Error('API scope unavailable');
+      const response = await send(url.href, { method: 'GET', headers: { authorization: 'Bearer ' + token, accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(30_000) });
+      if (!response.ok || /rel="next"/.test(response.headers.get('link') ?? '')) throw new Error('API status or pagination is incomplete');
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      const length = response.headers.get('content-length');
+      const encoding = response.headers.get('content-encoding');
+      if (bytes.length > 2 * 1024 * 1024 || (length !== null && (!encoding || encoding === 'identity') && Number(length) !== bytes.length)) throw new Error('API body is incomplete');
+      return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+    }
+    export async function collect(options = {}) {
+      try {
+        const event = options.event ?? JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+        const context = options.context ?? { eventName: process.env.GITHUB_EVENT_NAME, ref: process.env.GITHUB_REF, sha: process.env.GITHUB_SHA, repository: process.env.GITHUB_REPOSITORY, owner: process.env.GITHUB_REPOSITORY_OWNER };
+        const run = options.run ?? ((args) => execFileSync('git', args, { timeout: 30_000, maxBuffer: 8 * 1024 * 1024 }));
+        const request = options.request ?? requestJson;
+        const text = (args) => new TextDecoder('utf-8', { fatal: true }).decode(run(args)).trim();
+        if (context.owner !== 'williacj' || context.repository !== 'williacj/rigger' || event.repository?.full_name !== context.repository) throw new Error('repository scope mismatch');
+        const repository = await request('/repos/' + context.repository);
+        if (repository.full_name !== context.repository || repository.owner?.login !== context.owner || repository.default_branch !== 'main') throw new Error('current repository scope mismatch');
+        const checkout = { sha: text(['rev-parse', 'HEAD']), tree: text(['rev-parse', 'HEAD^{tree}']), parents: text(['show', '-s', '--format=%P', 'HEAD']).split(/\s+/).filter(Boolean) };
+        if (checkout.sha !== context.sha) throw new Error('checkout source mismatch');
+        const facts = { event: context.eventName, action: event.action, ref: context.ref, eventSha: context.sha, owner: context.owner, sender: event.sender?.login, label: event.label?.name, checkout, complete: false };
+        if (['push', 'schedule', 'workflow_dispatch', 'merge_group'].includes(context.eventName)) {
+          const current = await request('/repos/' + context.repository + '/git/ref/heads/main');
+          facts.main = { head: current.object?.sha, defaultBranch: repository.default_branch };
+          facts.inputs = event.inputs;
+          facts.after = event.after;
+          facts.changes = [];
+          if (context.eventName === 'merge_group') {
+            const group = event.merge_group;
+            if (!group || !sha(group.base_sha) || !sha(group.head_sha)) throw new Error('merge-group source unavailable');
+            run(['merge-base', '--is-ancestor', group.base_sha, checkout.sha]);
+            facts.group = { head: group.head_sha, base: group.base_sha, baseRef: group.base_ref, baseAncestor: true };
+            facts.changes = parseRaw(run(['diff', '--raw', '-z', '--no-renames', group.base_sha, checkout.sha]));
+          } else if (context.eventName === 'push') {
+            if (!sha(event.before)) throw new Error('push base unavailable');
+            facts.changes = parseRaw(run(['diff', '--raw', '-z', '--no-renames', event.before, checkout.sha]));
+          }
+          facts.complete = true;
+          return facts;
+        }
+        if (context.eventName !== 'pull_request' || !Number.isSafeInteger(event.number) || event.number <= 0) throw new Error('candidate PR facts unavailable');
+        const current = await request('/repos/' + context.repository + '/pulls/' + event.number);
+        const pr = event.pull_request;
+        if (!pr || current.number !== event.number) throw new Error('incomplete current PR facts');
+        const labels = await request('/repos/' + context.repository + '/issues/' + event.number + '/labels?per_page=100');
+        if (!Array.isArray(labels) || !labels.every((label) => typeof label?.name === 'string')) throw new Error('incomplete current labels');
+        const branch = await request('/repos/' + context.repository + '/git/ref/heads/' + current.base.ref.split('/').map(encodeURIComponent).join('/'));
+        if (branch.object?.sha !== current.base.sha) throw new Error('current base changed');
+        facts.pr = { number: event.number, head: pr.head.sha, base: pr.base.sha, baseRef: pr.base.ref, state: pr.state, draft: pr.draft };
+        facts.live = { head: current.head.sha, base: branch.object.sha, baseRef: current.base.ref, state: current.state, draft: current.draft, labels: labels.map((label) => label.name) };
+        facts.changes = parseRaw(run(['diff', '--raw', '-z', '--no-renames', facts.pr.base, checkout.sha]));
+        facts.complete = true;
+        return facts;
+      } catch (error) { return { complete: false, reason: String(error.message) }; }
+    }
+    export function source(f) {
+      return { event: f.event, ref: f.ref, sha: f.checkout.sha, tree: f.checkout.tree, parents: f.checkout.parents, head: f.pr?.head ?? f.group?.head ?? f.checkout.sha, base: f.pr?.base ?? f.group?.base ?? f.checkout.sha, baseRef: f.pr?.baseRef ?? f.group?.baseRef ?? 'main' };
+    }
+    export function guard(f, proof) {
+      const fresh = policy(f);
+      if (!fresh.sourceValid || proof.sourceValid !== true || proof.mode !== fresh.mode || proof.demoNeeded !== fresh.demoNeeded || JSON.stringify(proof.source) !== JSON.stringify(source(f))) return false;
+      const results = proof.results ?? {};
+      if (results.plan !== 'success' || results.fast !== 'success') return false;
+      if (!['FAST_ELIGIBLE', 'MAIN_SMOKE', 'BROAD_EXECUTED'].includes(fresh.mode)) return false;
+      const required = fresh.mode === 'BROAD_EXECUTED' ? 'success' : 'skipped';
+      return results.full_ordinary === required && results.full_host === required && results.demo === (fresh.demoNeeded ? 'success' : 'skipped');
+    }
+    export function runPolicy({ action, facts, proof = {}, worker } = {}) {
+      const fresh = policy(facts);
+      if (action === 'plan') return { ok: true, output: { mode: fresh.mode, demoNeeded: fresh.demoNeeded, sha: fresh.sourceValid ? facts.checkout.sha : '', tree: fresh.sourceValid ? facts.checkout.tree : '', snapshot: fresh.sourceValid ? JSON.stringify(source(facts)) : '' } };
+      const verified = fresh.sourceValid && proof.sourceValid === true && proof.mode === fresh.mode && JSON.stringify(proof.source) === JSON.stringify(source(facts));
+      if (action === 'worker') {
+        const allowed = worker === 'fast' ? fresh.mode !== 'MAIN_FULL' && fresh.mode !== 'INVALID'
+          : worker === 'full_ordinary' || worker === 'full_host' ? fresh.mode === 'BROAD_EXECUTED'
+          : worker === 'demo' ? fresh.demoNeeded
+          : worker === 'nightly' ? fresh.mode === 'MAIN_FULL' && ['schedule', 'workflow_dispatch'].includes(facts.event) && facts.ref === 'refs/heads/main'
+          : false;
+        return { ok: Boolean(verified && allowed && process.versions.node.split('.')[0] === '26'), source: fresh.sourceValid ? source(facts) : undefined, reason: 'worker source/mode verification failed' };
+      }
+      if (action === 'aggregate') return { ok: verified && guard(facts, proof), reason: fresh.mode === 'BROAD_DEFERRED' ? 'missing-current-batch-proof: explicitly request full proof for the current head and base' : 'current source or required tier result did not verify' };
+      return { ok: false, reason: 'unknown policy action' };
+    }
+    if (process.env.CI_POLICY_ACTION) {
+      const facts = await collect();
+      let expected;
+      try { expected = JSON.parse(process.env.CI_EXPECTED_SOURCE ?? 'null'); } catch { expected = null; }
+      let results = {};
+      try { results = Object.fromEntries(Object.entries(JSON.parse(process.env.CI_RESULTS ?? '{}')).map(([name, job]) => [name, job.result])); } catch { results = {}; }
+      const result = runPolicy({ action: process.env.CI_POLICY_ACTION, facts, worker: process.env.CI_WORKER, proof: { mode: process.env.CI_EXPECTED_MODE, demoNeeded: process.env.CI_EXPECTED_DEMO === 'true' ? true : process.env.CI_EXPECTED_DEMO === 'false' ? false : undefined, sourceValid: expected !== null, source: expected, results } });
+      console.log(JSON.stringify({ job: process.env.GITHUB_JOB, mode: policy(facts).mode, source: result.source, node: process.version, platform: process.platform, runner: process.env.RUNNER_NAME, runnerOS: process.env.RUNNER_OS, runnerArch: process.env.RUNNER_ARCH }));
+      if (result.output) for (const [key, value] of Object.entries(result.output)) appendFileSync(process.env.GITHUB_OUTPUT, key + '=' + String(value) + '\n');
+      if (!result.ok) throw new Error(result.reason);
+    }
 
 jobs:
-  check:
-    # macOS is v0's only host (D13); run the supported Node major on its Mac runner.
-    runs-on: macos-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node: ['26']
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.policy.outputs.mode }}
+      demoNeeded: ${{ steps.policy.outputs.demoNeeded }}
+      sha: ${{ steps.policy.outputs.sha }}
+      tree: ${{ steps.policy.outputs.tree }}
+      snapshot: ${{ steps.policy.outputs.snapshot }}
     steps:
       - uses: actions/checkout@v5
         with:
-          # The suite reads a document at a git ref: absorption-check compares the invariants
-          # 755c809 dissolved against the register they became, and only history holds them.
-          # checkout defaults to a depth of 1, where that ref is unreachable and the test reds.
           fetch-depth: 0
       - uses: actions/setup-node@v5
         with:
-          node-version: ${{ matrix.node }}
+          node-version: '26'
+      - run: node --input-type=module -e "$CI_POLICY"
+        id: policy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_POLICY_ACTION: plan
+  fast:
+    needs: [plan]
+    if: ${{ needs.plan.result == 'success' && needs.plan.outputs.mode != 'MAIN_FULL' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.plan.outputs.sha }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '26'
+      - run: node --input-type=module -e "$CI_POLICY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_POLICY_ACTION: worker
+          CI_EXPECTED_SOURCE: ${{ needs.plan.outputs.snapshot }}
+          CI_EXPECTED_MODE: ${{ needs.plan.outputs.mode }}
+          CI_WORKER: ${{ github.job }}
       - run: npm ci
       - run: npm test
-      - run: npm run test:host
-      - name: Verify Mac containment proof claims
-        run: node test/verify-mac-containment "$RUNNER_TEMP/containment-proof-${{ matrix.node }}"
-      - name: Keep Mac containment proof evidence
-        if: always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: containment-proof-${{ matrix.node }}
-          path: ${{ runner.temp }}/containment-proof-${{ matrix.node }}
-          if-no-files-found: ignore
       - run: npm run budget:package
       - run: npm run budget:instructions
       - run: npm run lint:spec-style
@@ -52,18 +216,100 @@ jobs:
       - run: npm run check:words
       - run: npm run check:headers
       - run: npm run matrix:check
-  demo:
-    # Regenerates the demo GIF from docs/demo.tape, which records the installed rigger claiming a
-    # card in a world test/demo-world.sh builds. The tape leaves its final screen as text beside
-    # the GIF, and the checks below read the claim, the message and the non-zero exit from it:
-    # `once` dispatches the card's maker, a stand-in that opens no pull request, and exits non-zero
-    # naming that outcome and the workspace it made and provisioned.
+  full_ordinary:
+    needs: [plan]
+    if: ${{ needs.plan.outputs.mode == 'BROAD_EXECUTED' }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.plan.outputs.sha }}
       - uses: actions/setup-node@v5
         with:
           node-version: '26'
+      - run: node --input-type=module -e "$CI_POLICY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_POLICY_ACTION: worker
+          CI_EXPECTED_SOURCE: ${{ needs.plan.outputs.snapshot }}
+          CI_EXPECTED_MODE: ${{ needs.plan.outputs.mode }}
+          CI_WORKER: ${{ github.job }}
+      - run: npm ci
+      - run: npm test
+  full_host:
+    needs: [plan]
+    if: ${{ needs.plan.outputs.mode == 'BROAD_EXECUTED' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.plan.outputs.sha }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '26'
+      - run: node --input-type=module -e "$CI_POLICY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_POLICY_ACTION: worker
+          CI_EXPECTED_SOURCE: ${{ needs.plan.outputs.snapshot }}
+          CI_EXPECTED_MODE: ${{ needs.plan.outputs.mode }}
+          CI_WORKER: ${{ github.job }}
+      - run: npm ci
+      - run: npm run test:host
+      - name: Verify Mac containment proof claims
+        run: node test/verify-mac-containment "$RUNNER_TEMP/containment-proof-26"
+      - name: Keep Mac containment proof evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: containment-proof-26
+          path: ${{ runner.temp }}/containment-proof-26
+          if-no-files-found: ignore
+  check:
+    needs: [plan, fast, full_ordinary, full_host, demo]
+    if: ${{ always() && !(needs.plan.result == 'success' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && needs.plan.outputs.mode == 'MAIN_FULL') }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['26']
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.plan.outputs.sha }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+      - run: node --input-type=module -e "$CI_POLICY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_POLICY_ACTION: aggregate
+          CI_EXPECTED_SOURCE: ${{ needs.plan.outputs.snapshot }}
+          CI_EXPECTED_MODE: ${{ needs.plan.outputs.mode }}
+          CI_EXPECTED_DEMO: ${{ needs.plan.outputs.demoNeeded }}
+          CI_RESULTS: ${{ toJSON(needs) }}
+  demo:
+    needs: [plan]
+    if: ${{ needs.plan.outputs.demoNeeded == 'true' }}
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ needs.plan.outputs.sha }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '26'
+      - run: node --input-type=module -e "$CI_POLICY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_POLICY_ACTION: worker
+          CI_EXPECTED_SOURCE: ${{ needs.plan.outputs.snapshot }}
+          CI_EXPECTED_MODE: ${{ needs.plan.outputs.mode }}
+          CI_WORKER: ${{ github.job }}
       - run: if ! command -v vhs >/dev/null; then brew install vhs; fi
       # The committed GIF sits where the tape writes, so it goes first: the check below then reads
       # only what this run recorded.
@@ -84,3 +330,43 @@ jobs:
           path: |
             docs/demo.gif
             docs/demo.txt
+  nightly:
+    needs: [plan]
+    if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && needs.plan.result == 'success' && needs.plan.outputs.mode == 'MAIN_FULL' }}
+    runs-on: [self-hosted, macOS, ARM64]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '26'
+      - run: node --input-type=module -e "$CI_POLICY"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_POLICY_ACTION: worker
+          CI_EXPECTED_SOURCE: ${{ needs.plan.outputs.snapshot }}
+          CI_EXPECTED_MODE: ${{ needs.plan.outputs.mode }}
+          CI_WORKER: ${{ github.job }}
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:host
+      - name: Verify Mac containment proof claims
+        run: node test/verify-mac-containment "$RUNNER_TEMP/containment-proof-26"
+      - name: Keep Mac containment proof evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: containment-proof-26
+          path: ${{ runner.temp }}/containment-proof-26
+          if-no-files-found: ignore
+      - run: npm run budget:package
+      - run: npm run budget:instructions
+      - run: npm run lint:spec-style
+      - run: npm run check:references
+      - run: npm run check:paths
+      - run: npm run check:ids
+      - run: npm run check:words
+      - run: npm run check:headers
+      - run: npm run matrix:check

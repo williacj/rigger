@@ -92,10 +92,36 @@ The experiment's PR records historical macOS CI results for that PR's head. To v
 checkout you are testing, inspect CI results for its exact commit; a result from a different
 commit does not verify it.
 
-## GitHub-hosted CI
+## Staged CI
 
-The [CI workflow](../.github/workflows/ci.yml) selects GitHub-hosted `macos-latest`
-runners for `check` and `demo`. The `check (26)` job runs the test tiers and budget
-and document checks. The demo job installs `vhs` with Homebrew when needed; its
-recording uses `vhs`, `ttyd` and `ffmpeg` on the job's `PATH`. These jobs do not
-require the owner's personal Mac to be online or configured as a runner.
+The [CI workflow](../.github/workflows/ci.yml) owns the job commands and event routing.
+PR updates get ordinary tests and static checks on GitHub-hosted Ubuntu. Main-targeting
+code PRs remain deferred at the required check until the repository owner explicitly
+adds `ci:full` to an open, non-draft PR. Readiness and an existing label do not request
+another full run. After updating the head or base, remove and re-add the label only
+when the coherent batch is ready and hosted capacity is available.
+
+A full candidate run executes ordinary and host tiers concurrently on separate
+GitHub-hosted Macs at the same recorded source. Non-main constituent PRs and eligible
+direct regular journal additions/edits can receive fast feedback without that full
+run; this does not waive their cards' evidence obligations before indirect merge.
+Main pushes run portable smoke rather than repeating the full Mac proof.
+
+Demo recording runs for relevant full batches, an explicit owner `ci:demo` PR label
+request, and protected-main regression. Its existing Homebrew/VHS setup and artifact
+checks remain. A requested demo cannot silently skip and still satisfy the aggregate.
+
+Daily 03:00 UTC and explicit workflow dispatch run full regression of current
+protected main on the existing personal Mac, with hosted demo recording. Dispatch
+has no custom ref inputs; a non-main dispatch is rejected. No candidate PR is
+intentionally routed to the personal runner. An offline personal runner leaves
+regression queued; there is no automatic fallback or cancellation.
+
+Candidate jobs use hosted machines and a minimal read token. Repository approval
+for external contributors remains the trust boundary: review workflow changes before
+approving fork runs. A PR can change workflow routing, so its conditions alone are
+not a security boundary protecting a persistent runner.
+
+Check the actual checkout SHA/tree, Node version, runner and selected required-check
+result in the run records. A synthetic PR checkout is not the literal PR head.
+Local controls and dispatch regression do not substitute for required candidate proof.
