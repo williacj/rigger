@@ -634,7 +634,7 @@ for (const { action, method, ruling, merged } of [
     assert.equal(writes, 1);
     assert.deepEqual(cardsOf(built, 'slot.release'), [card]);
     assert.equal(triggersOf(built).filter((trigger) => trigger === 'pull').length, 3);
-    assert.equal(built.events().filter(({ event }) => event === 'transition').length, action === 'move' ? 1 : 0);
+    assert.equal(built.events().filter(({ event }) => event === 'transition').length, action === 'move' || action === 'escalate' ? 1 : 0);
     if (action === 'return') assert.equal(built.repository.pull(pull).comments.length, 2);
     if (action === 'escalate') assert.equal(built.events().filter(({ event }) => event === 'review.escalate').length, 1);
   });
@@ -1996,4 +1996,104 @@ test('the same loop pulls an escalated card after a fresh board read shows the o
     built.dispatches.releaseAll();
     await running;
   }
+});
+
+test('the loop world shares issue facts and successful issue labels by repository and issue identity', async () => {
+  const fake = createFakeBoard({ columns: Object.values(COLUMNS), items: [
+    { ...cardIn(42, COLUMNS.review), labels: ['keep'] },
+    { ...cardIn(42, COLUMNS.review), repository: 'someone/elsewhere', labels: ['foreign'] },
+    { ...cardIn(43, COLUMNS.ready), labels: ['unrelated'] },
+  ] });
+  const built = world({ fake, cards: [] });
+  assert.deepEqual(await built.repository.operations.readIssue(42), { number: 42, title: 'Add a verb', body: PASSING, labels: ['keep'] });
+  const [card] = await fake.operations.readItems();
+  await built.l2.escalated(card, { action: 'escalate', category: 'ambiguous', reason: 'The owner must decide.' });
+  assert.deepEqual((await fake.operations.readItems()).map(({ repository, number, labels }) => ({ repository, number, labels })), [
+    { repository: config.repo, number: 42, labels: ['keep', 'rigger:escalated'] },
+    { repository: 'someone/elsewhere', number: 42, labels: ['foreign'] },
+    { repository: config.repo, number: 43, labels: ['unrelated'] },
+  ]);
+  assert.equal(Object.hasOwn(fake.operations, 'issues'), false);
+  assert.equal(Object.hasOwn(fake.operations, 'setIssueLabels'), false);
+  const absent = world({ cards: [cardIn(44, COLUMNS.review)], forge: { issues: [] } });
+  assert.equal(await absent.repository.operations.readIssue(44), null, 'an explicitly missing issue is not manufactured');
+});
+
+// proves R-ESCALATE-8, R-ESCALATE-9, R-ESCALATE-15
+test('one escalation claim spans every awaited owner write and a fresh labelled pull starts nothing', async (t) => {
+  const number = 96;
+  const pull = 961;
+  const head = '9'.repeat(40);
+  const unexpected = [];
+  const built = world({ cards: [cardIn(number, COLUMNS.owner)], concurrency: 1,
+    forge: { pullRequests: [{ number: pull, head: `rigger-${number}`, sha: head, comments: [markerComment({ card: number, pull, head, body: PASSING, role: 'owner', verdict: 'critical', toSound: 'Keep the user files.' })] }] },
+    workspace: async (...args) => { unexpected.push(['workspace', ...args]); throw new Error('an escalation creates no workspace'); },
+    judgeDirectory: async (...args) => { unexpected.push(['judgeDirectory', ...args]); throw new Error('an escalation creates no judge directory'); },
+    removeDirectories: async (...args) => { unexpected.push(['removeDirectories', ...args]); },
+  });
+  const entered = [];
+  const releases = [];
+  for (const [target, operation] of [[built.repository, 'postIssueComment'], [built.fake.operations, 'moveItem'], [built.repository, 'addIssueLabel']]) {
+    const original = target[operation];
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    releases.push(release);
+    target[operation] = async (...args) => { entered.push(operation); await held; return original(...args); };
+  }
+  let settled = false;
+  const running = built.loop.run().finally(() => { settled = true; });
+  t.after(async () => { for (const release of releases) release(); await running.catch(() => {}); });
+  for (const [at, operation] of ['postIssueComment', 'moveItem', 'addIssueLabel'].entries()) {
+    await waitFor(() => entered.includes(operation) || settled);
+    assert.equal(entered.at(-1), operation, `the operation reaches ${operation} before settling`);
+    assert.deepEqual(entered, ['postIssueComment', 'moveItem', 'addIssueLabel'].slice(0, at + 1));
+    assert.deepEqual(cardsOf(built, 'slot.release'), [], `${operation} still owns the claim`);
+    assert.deepEqual(await built.loop.pull(), [], `${operation}: overlapping trigger takes no second claim`);
+    assert.deepEqual(cardsOf(built, 'slot.release'), []);
+    releases[at]();
+  }
+  await running;
+  assert.deepEqual(await columnsOf(built.fake), { [number]: COLUMNS.owner }, 'the escalated card reaches its configured Owner column');
+  assert.deepEqual(cardsOf(built, 'slot.release'), [number]);
+  assert.equal(built.events().filter(({ event }) => event === 'review.escalate').length, 1);
+  assert.equal(built.events().filter(({ event }) => event === 'transition').length, 1);
+  assert.equal(built.events().find(({ event }) => event === 'transition').to, 'owner');
+  assert.equal(built.repository.held().issues[0].comments.length, 1);
+  assert.deepEqual((await built.fake.operations.readItems())[0].labels, ['type:change', 'rigger:escalated']);
+  assert.deepEqual(await built.loop.pull(), []);
+  assert.deepEqual(await built.loop.run(), []);
+  assert.equal(built.repository.held().issues[0].comments.length, 1, 'fresh reads do not post another escalation');
+  assert.deepEqual(entered, ['postIssueComment', 'moveItem', 'addIssueLabel']);
+  assert.deepEqual(built.dispatches.started, []);
+  assert.deepEqual(unexpected, []);
+});
+
+// proves R-RECORD-9, R-ESCALATE-9
+test('an owner escalation whose transition record is refused starts no later work while the sink remains unavailable', async (t) => {
+  const number = 98;
+  const pull = 981;
+  const head = '9'.repeat(40);
+  const fake = boardOf([cardIn(number, COLUMNS.owner), 99]);
+  let built;
+  const items = { ...fake.operations, moveItem: async (...args) => { await fake.operations.moveItem(...args); built.refuseAppends('owner transition recording unavailable'); } };
+  built = world({ fake, items, concurrency: 1,
+    forge: { pullRequests: [{ number: pull, head: `rigger-${number}`, sha: head, comments: [markerComment({ card: number, pull, head, body: PASSING, role: 'owner', verdict: 'critical', toSound: 'Keep the user files.' })] }] },
+  });
+  t.after(() => built.dispatches.releaseAll());
+  await assert.rejects(built.loop.pull(1), (failure) => {
+    assert.ok(leavesOf(failure).some(({ message }) => /card #98 moved from owner to owner.*refused to record it: owner transition recording unavailable/.test(message)), failure.message);
+    return true;
+  });
+  assert.equal(built.repository.held().issues.find(({ number }) => number === 98).comments.length, 1);
+  assert.deepEqual(built.repository.held().issues.find(({ number }) => number === 98).labels, ['type:change']);
+  assert.deepEqual(await columnsOf(fake), { 98: COLUMNS.owner, 99: COLUMNS.ready });
+  let settled = false;
+  const later = built.loop.pull().finally(() => { settled = true; });
+  later.catch(() => {});
+  await waitFor(() => settled || built.dispatches.held() > 0);
+  built.dispatches.releaseAll();
+  await assert.rejects(later, (failure) => leavesOf(failure).every(({ message }) => message.includes('owner transition recording unavailable')));
+  assert.deepEqual(built.dispatches.started, []);
+  assert.deepEqual(built.fake.writes(), [{ operation: 'moveItem', args: ['item-1', COLUMNS.owner] }]);
+  assert.equal(built.repository.held().issues.find(({ number }) => number === 98).comments.length, 1);
 });
