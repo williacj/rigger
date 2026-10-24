@@ -552,6 +552,17 @@ function escalating(escalate) {
   return escalate === undefined ? config : { ...config, escalate };
 }
 
+/**
+ * An `escalate` declaring one key, sent to the owner. Declared through `defineProperty` so that
+ * `__proto__` is an own key as every other name is, and with a destination that is valid, so the
+ * key alone is what the validator can refuse.
+ */
+function escalateTo(key, destination = 'owner') {
+  const escalate = {};
+  Object.defineProperty(escalate, key, { value: destination, enumerable: true, configurable: true, writable: true });
+  return escalate;
+}
+
 // proves R-ESCALATE-13
 test('a config sending each category to the owner is accepted, whether it names one category, all three or none', () => {
   assert.deepEqual(validate(escalating({})), [], 'an empty escalate');
@@ -570,7 +581,7 @@ test('a config declaring no escalate is accepted', () => {
 test('escalate as a list of categories, or as any other value that is not an object, is refused, and the refusal names the key', () => {
   for (const escalate of [THREE, ['critical'], [], null, undefined, 'owner', 'critical', 3]) {
     const config = { ...escalating(undefined), escalate };
-    const earned = refusal(config);
+    const earned = refusedUnchanged(config);
     assert.ok(earned.includes('`escalate`'), `escalate as ${inspect(escalate)} earned a refusal that does not name it: ${earned}`);
   }
 });
@@ -580,9 +591,9 @@ test('the keys escalate accepts are exactly the three categories, and any other 
   assert.deepEqual(unique(CATEGORIES), unique(THREE));
   for (const category of THREE) assert.deepEqual(validate(escalating({ [category]: 'owner' })), [], category);
   // A near miss of each category, a destination written where a category belongs, and every name
-  // an object inherits, declared as an own key so `__proto__` is probed as the others are.
+  // an object inherits. Each is sent to the owner, a destination every category accepts.
   for (const key of ['infrastructure', 'Critical', 'recorded_decision', 'ambiguity', 'owner', ...UNOFFERED]) {
-    const earned = refusal(declaring(escalating({}), ['escalate'], key));
+    const earned = refusedUnchanged(escalating(escalateTo(key)));
     assert.ok(earned.includes(`\`escalate.${key}\``), `\`escalate.${key}\` earned a refusal that does not name it: ${earned}`);
   }
 });
@@ -593,7 +604,7 @@ test('a category whose destination is not a string is refused, and the refusal n
     // A list holding a declared role's name is read as that name by `Object.hasOwn`, so it is the
     // probe that tells this refusal from the one for a role the config does not declare.
     for (const destination of [null, undefined, 3, true, ['owner'], ['engineer'], { role: 'pm' }]) {
-      const earned = refusal(escalating({ [category]: destination }));
+      const earned = refusedUnchanged(escalating({ [category]: destination }));
       assert.ok(earned.includes(`\`escalate.${category}\``), `${category} to ${inspect(destination)} earned a refusal that does not name it: ${earned}`);
     }
   }
@@ -605,7 +616,7 @@ test('a category sent to a role the config does not declare is refused, and the 
   // others are a declared role's name in another case, and names that are no role at all.
   for (const category of THREE) {
     for (const role of ['adjudicator', 'Engineer', 'OWNER', '', ' ']) {
-      const earned = refusal(escalating({ [category]: role }));
+      const earned = refusedUnchanged(escalating({ [category]: role }));
       assert.ok(earned.includes(`\`${role}\``), `${category} to ${inspect(role)} earned a refusal that does not name it: ${earned}`);
     }
   }
@@ -617,7 +628,7 @@ test('critical or a recorded-decision change sent to a declared role is refused,
   assert.ok(roles.length > 0, 'this config declares no role, so nothing was checked');
   for (const category of ['critical', 'recorded-decision']) {
     for (const role of roles) {
-      const earned = refusal(escalating({ [category]: role, ambiguous: 'owner' }));
+      const earned = refusedUnchanged(escalating({ [category]: role, ambiguous: 'owner' }));
       assert.ok(earned.includes(`\`escalate.${category}\``), `${category} to \`${role}\` earned a refusal that does not name it: ${earned}`);
     }
   }

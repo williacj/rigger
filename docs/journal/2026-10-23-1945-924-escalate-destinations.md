@@ -28,3 +28,9 @@ A list holding a declared role's name, `['engineer']`, is what tells the two ref
 because `Object.hasOwn` reads it as that name. Three rows could not go red before the code, since
 the validator at the base already met them: no `escalate`, and `escalate` as a list or as another
 value that is not an object. Guarded mutations show each test discriminates.
+
+Round 1's judges found the same masking in the exact-key test. Its unknown keys were declared
+through the suite's `declaring` helper, which gives every key the value `true`. So the
+non-string refusal answered for a validator that admitted any key, `Critical` included. Each
+probe key now goes to `'owner'`, which every category accepts, so only the key can be refused.
+Each refusal test now also asserts the validator left the config it refused unchanged.
