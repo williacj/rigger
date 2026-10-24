@@ -47,12 +47,12 @@ covers. How you answer one is the guide's [answering escalations](guide.md#answe
 
 ## The marker vocabulary
 
-A judge's verdict is a marker on the card's pull request.
+Two places in `ARCHITECTURE.md` own this vocabulary, and this page retypes neither:
 
-- **The verdicts.** The "Verdict vocabulary" row of
-  [`ARCHITECTURE.md`, "Extension points"](../ARCHITECTURE.md#extension-points) fixes them.
-- **What a marker holds, and how the gate reads it.**
-  [`ARCHITECTURE.md`, "The gate", "Markers"](../ARCHITECTURE.md#markers) gives each field.
+- **Markers.** [`ARCHITECTURE.md`, "The gate"](../ARCHITECTURE.md#the-gate), under
+  ["Markers"](../ARCHITECTURE.md#markers).
+- **Verdicts.** The "Verdict vocabulary" row of
+  [`ARCHITECTURE.md`, "Extension points"](../ARCHITECTURE.md#extension-points).
 
 Where markers sit in the loop is the guide's [how the loop works](guide.md#how-the-loop-works).
 
