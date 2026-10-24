@@ -1484,7 +1484,19 @@ test('the owner label control updates seeded issue facts by repository and issue
 
 // proves R-WORK-36
 test('once reports the ordinary refusal after closed cleanup exactly once with the existing refusal exit status', async () => {
-  const ran = once({ items: [card(91, 'Review', { body: 'No acceptance.' })] }, { seed: { pullRequests: [{ number: 1091, head: 'rigger-91', sha: 'a'.repeat(40), closed: true }] } });
+  const directory = temporaryDirectory('rigger-once-closed-refusal-');
+  const settings = config();
+  settings.worktrees = { ...settings.worktrees, root: directory };
+  const scratch = join(directory, 'scratch', 'rigger-91', 'reviewer');
+  const ran = once({ items: [card(91, 'Review', { body: 'No acceptance.' })] }, { settings,
+    seed: { pullRequests: [{ number: 1091, head: 'rigger-91', sha: 'a'.repeat(40), closed: true }] },
+    prepare: () => {
+      mkdirSync(scratch, { recursive: true });
+      writeFileSync(join(scratch, 'cleanup-witness.txt'), 'closed card scratch');
+      assert.equal(existsSync(scratch), true, 'actual scratch exists before once');
+    },
+  });
+  assert.equal(existsSync(scratch), false, 'closed cleanup removes actual scratch before the ordinary once refusal');
   assert.equal(ran.code, 0, ran.err);
   assert.match(ran.out, /rigger once: card #91 refused: missing acceptance/);
   assert.equal((ran.out.match(/missing acceptance/g) ?? []).length, 1, ran.out);
