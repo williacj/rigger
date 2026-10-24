@@ -76,6 +76,9 @@ function startSynchronousTrace() {
   };
 }
 
+// The mkdtemp check cites the trace's exact line, so imports for later tests sit below it.
+import { admissionOf, closerText, moduleOver, picture, seed, stateOf, TIME } from './admission-world.mjs';
+
 /** Keep the first and last observed call at each site and every call crossing the shared deadline. */
 function synchronousSummary(bodyStart, deadline, worlds = [], bodyEnd = Infinity) {
   const groups = new Map();
@@ -1316,6 +1319,50 @@ test('given no pullable card, `loop`\'s single pull claims nothing and answers a
   await release();
 });
 
+// proves R-SCHED-3, R-SCHED-16
+test('an owner closer in the state directory stops a Ready card before its claim', async () => {
+  const directory = stateOf();
+  seed(directory, 'owner-a1.json', closerText({ reason: 'owner paused claims' }));
+  const built = world({ cards: [7], directory });
+  const pulled = built.loop.pull();
+  const done = settledOf(pulled);
+  try {
+    await settling(built, done);
+    assert.deepEqual(built.dispatches.started, []);
+    assert.deepEqual(built.fake.writes(), []);
+    const answer = await pulled;
+    assert.deepEqual(answer.admission?.closers.map(({ kind, reason, time }) => ({ kind, reason, time })), [
+      { kind: 'owner', reason: 'owner paused claims', time: TIME },
+    ]);
+  } finally {
+    built.dispatches.releaseAll();
+    await pulled.catch(() => {});
+  }
+});
+
+// proves R-SCHED-3, R-SCHED-16
+test('an unreadable admission names every bad path and cause and claims no Ready card', async () => {
+  const directory = stateOf();
+  seed(directory, 'not-a-closer');
+  seed(directory, 'owner-b2.json', '{}');
+  const built = world({ cards: [7], directory });
+  const pulled = built.loop.pull();
+  const done = settledOf(pulled);
+  try {
+    await settling(built, done);
+    assert.deepEqual(built.dispatches.started, []);
+    assert.deepEqual(built.fake.writes(), []);
+    await assert.rejects(pulled, (failure) => {
+      assert.ok(failure.message.includes(`${admissionOf(directory)}/not-a-closer (no closer form)`), failure.message);
+      assert.ok(failure.message.includes(`${admissionOf(directory)}/owner-b2.json (no reason, time or run)`), failure.message);
+      return true;
+    });
+  } finally {
+    built.dispatches.releaseAll();
+    await pulled.catch(() => {});
+  }
+});
+
 test('a claim limit that is not a positive whole number is refused naming the claim limit, and nothing is claimed', async () => {
   for (const limit of [0, -1, 1.5, '1', Number.NaN, null]) {
     const built = world({ concurrency: 3 });
@@ -2096,4 +2143,146 @@ test('an owner escalation whose transition record is refused starts no later wor
   assert.deepEqual(built.dispatches.started, []);
   assert.deepEqual(built.fake.writes(), [{ operation: 'moveItem', args: ['item-1', COLUMNS.owner] }]);
   assert.equal(built.repository.held().issues.find(({ number }) => number === 98).comments.length, 1);
+});
+
+/** A real L2 answer at the pull, with the forge facts that make it. */
+function admissionAction(action) {
+  const number = { dispatch: 71, redo: 70, judge: 72, merge: 73, move: 74, return: 75, escalate: 76, continue: 77 }[action];
+  const head = 'a'.repeat(40);
+  const pull = number + 100;
+  if (action === 'dispatch') return { cards: [cardIn(number, COLUMNS.ready)] };
+  if (action === 'redo') return { cards: [cardIn(number, COLUMNS.coding)] };
+  if (action === 'continue') return {
+    cards: [cardIn(number, COLUMNS.review)],
+    kinds: { change: { ...KINDS.change, judges: ['reviewer'] } },
+    forge: { pullRequests: [{ number: pull, head: `rigger-${number}`, sha: head, mergeBase: 'c'.repeat(40), diff: 'diff --git a/help b/help\n', mergeable: 'mergeable', comments: [
+      markerComment({ card: number, pull, head, body: PASSING, role: 'reviewer', verdict: 'needs revision', items: ['unmet'], toSound: 'Fix the help line.' }),
+    ] }] },
+  };
+  const column = action === 'move' || action === 'judge' ? COLUMNS.review : COLUMNS.owner;
+  const comments = action === 'merge' ? [markerComment({ card: number, pull, head, body: PASSING, role: 'owner' })]
+    : action === 'return' ? [markerComment({ card: number, pull, head, body: PASSING, role: 'owner', coverage: 'insufficient', coverageReason: 'The card asks for two verbs.' })]
+      : action === 'escalate' ? [markerComment({ card: number, pull, head, body: PASSING, role: 'owner', verdict: 'critical', toSound: 'Keep the user files.' })] : [];
+  return {
+    cards: [cardIn(number, column)],
+    ...(action === 'judge' ? { kinds: { change: { ...KINDS.change, judges: ['reviewer'] } } } : {}),
+    forge: { pullRequests: [{ number: pull, head: `rigger-${number}`, sha: head, mergeBase: 'c'.repeat(40), diff: 'diff --git a/help b/help\n', mergeable: 'mergeable', merged: action === 'move', comments }] },
+  };
+}
+
+/** A blocked pull still asks real L2, and changes neither the board, forge nor admission. */
+async function blockedAdmission(action, name, content = closerText()) {
+  const directory = stateOf();
+  seed(directory, name, content);
+  const built = world({ ...admissionAction(action), directory });
+  const forgeBefore = structuredClone(built.repository.held());
+  const admissionBefore = picture(admissionOf(directory));
+  if (name === 'not-a-closer') {
+    await assert.rejects(built.loop.pull(), (failure) => {
+      assert.ok(failure.message.includes(`${admissionOf(directory)}/${name} (no closer form)`), failure.message);
+      return true;
+    });
+  } else {
+    const answer = await built.loop.pull();
+    assert.deepEqual(answer.reached, []);
+    assert.equal(answer.admission.state, 'closed');
+  }
+  assert.equal(built.decisions[0]?.action.action, action === 'redo' ? 'dispatch' : action, JSON.stringify(built.decisions));
+  assert.deepEqual(built.fake.writes(), []);
+  assert.deepEqual(built.repository.held(), forgeBefore);
+  assert.deepEqual(built.dispatches.started, []);
+  assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull'), []);
+  assert.equal(built.l3Events().filter(({ event, trigger }) => event === 'trigger' && trigger === 'drain').length, name === 'not-a-closer' ? 0 : 1);
+  assert.deepEqual(picture(admissionOf(directory)), admissionBefore);
+}
+
+// proves R-SCHED-3, R-SCHED-16
+test('an owner closer stops L2 maker dispatch from Ready and Coding', async () => {
+  for (const action of ['dispatch', 'redo']) await blockedAdmission(action, 'owner-a1.json');
+});
+
+// proves R-SCHED-3, R-SCHED-16
+test('an owner closer stops L2 judges alone in Review', async () => blockedAdmission('judge', 'owner-a1.json'));
+
+// proves R-SCHED-3, R-SCHED-16
+test('an owner closer stops L2 merge without taking a slot', async () => blockedAdmission('merge', 'owner-a1.json'));
+
+// proves R-SCHED-3, R-SCHED-16
+test('an owner closer stops L2 move, return and escalation writes', async () => {
+  for (const action of ['move', 'return', 'escalate']) await blockedAdmission(action, 'owner-a1.json');
+});
+
+// proves R-SCHED-3, R-SCHED-16
+test('an owner closer stops a returned card continuing its maker work', async () => blockedAdmission('continue', 'owner-a1.json'));
+
+// proves R-SCHED-3, R-SCHED-16
+test('a hold closer stops dispatch, judges, merge, move, return, escalation and continued work', async () => {
+  for (const action of ['dispatch', 'redo', 'judge', 'merge', 'move', 'return', 'escalate', 'continue']) await blockedAdmission(action, 'hold-b2.json');
+});
+
+// proves R-SCHED-3, R-SCHED-16
+test('unreadable admission stops dispatch, judges, merge, move, return, escalation and continued work', async () => {
+  for (const action of ['dispatch', 'redo', 'judge', 'merge', 'move', 'return', 'escalate', 'continue']) await blockedAdmission(action, 'not-a-closer');
+});
+
+// proves R-SCHED-3, R-SCHED-16
+test('a closer linked while the facts call is pending stops the pull in its synchronous claim step', async () => {
+  const directory = stateOf();
+  const fake = boardOf([readyCard(78)]);
+  const built = world({ fake, directory });
+  let entered = false;
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  const gated = loop({
+    config: { ...config, concurrency: 1 }, board: handleOn(fake),
+    facts: async () => { entered = true; await pending; return (card) => nextAction(card, KINDS); },
+    decide: (card) => nextAction(card, KINDS),
+    l2: built.l2, sink: built.sink, kill: async () => {},
+    workspace: async () => { throw new Error('a closed pull makes no workspace'); },
+    judgeDirectory: async () => {}, removeDirectories: async () => {}, state: directory, environment: {},
+  });
+  const pulled = gated.pull();
+  await positive(() => entered);
+  seed(directory, 'owner-a1.json');
+  release();
+  const answer = await pulled;
+
+  assert.equal(answer.admission.state, 'closed');
+  assert.deepEqual(answer.reached, []);
+  assert.deepEqual(fake.writes(), []);
+  assert.deepEqual(built.dispatches.started, []);
+});
+
+// proves R-SCHED-3, R-SCHED-16
+test('a closer linked after a run claims a card lets it finish and stops its freed-slot trigger', async () => {
+  const built = world({ cards: [81, 82, 83], concurrency: 2 });
+  const running = built.loop.run();
+  await positive(() => built.dispatches.heldNow(81) && built.dispatches.heldNow(82));
+  seed(built.directory, 'owner-a1.json');
+  built.dispatches.releaseAll();
+  const reached = await running;
+
+  assert.deepEqual(reached.map(({ card }) => card).sort(), [81, 82]);
+  assert.deepEqual(built.dispatches.started, [81, 82]);
+  assert.deepEqual(await columnsOf(built.fake), { 81: COLUMNS.review, 82: COLUMNS.review, 83: COLUMNS.ready });
+  assert.equal(built.l3Events().filter(({ event, trigger }) => event === 'trigger' && trigger === 'pull').length, 3);
+});
+
+// proves R-SCHED-3, R-SCHED-16
+test('resume removes the closer through admission and the next pull claims as when open', async () => {
+  const directory = stateOf();
+  seed(directory, 'owner-a1.json');
+  const built = world({ cards: [83], directory });
+  const stopped = await built.loop.pull();
+  assert.equal(stopped.admission.state, 'closed');
+  await moduleOver(directory).resume();
+  const next = built.loop.pull();
+  try {
+    await positive(() => built.dispatches.heldNow(83));
+    assert.deepEqual(built.dispatches.started, [83]);
+    assert.deepEqual(await columnsOf(built.fake), { 83: COLUMNS.coding });
+  } finally {
+    built.dispatches.releaseAll();
+    await next;
+  }
 });
