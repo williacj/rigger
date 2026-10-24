@@ -122,6 +122,7 @@ Rigger merges code without a person in the loop, so this section is explicit.
 - dispatches your agent CLI;
 - opens and comments on pull requests, and merges the ones that pass the gate;
 - files follow-up issues, comments on card issues, adds labels to card issues, and moves cards between columns;
+- opens the status issue with its label and puts it on the board, then removes that label and closes the issue;
 - pushes the event stream to a data ref in your repository, if you turn that on.
 
 **What Rigger never does:**
