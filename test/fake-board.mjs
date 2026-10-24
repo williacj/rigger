@@ -80,6 +80,12 @@ export function createFakeBoard({ columns = [], fields = [], items = [], labels 
         .map(({ repository }) => repository);
       return { repositories: [...new Set(others)], unreadable: board.items.filter(({ type }) => type === 'redacted').length };
     }),
+    addIssue: async (number, repository) => {
+      const id = `item-${board.items.length + 1}`;
+      board.items.push({ type: 'issue', repository, number, id });
+      record('addIssue', [number, repository]);
+      return id;
+    },
     moveItem: async (itemId, column) => {
       if (refuseMoves) throw new Error(`the fake board refuses every move, and refused ${itemId}'s to ${column}`);
       if (!board.columns.includes(column)) {

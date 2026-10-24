@@ -82,6 +82,27 @@ test('the real adapter reads cards, columns, fields and labels through the fake 
   });
 });
 
+test('the fake gh opens, adds, moves, unlabels and closes one status issue', async () => {
+  const fake = installed({ columns: ['Ready', 'Owner'] });
+  const result = await onPath(fake, async () => {
+    const repository = repositoryWriteSide(BOARD, { emitter: UNKILLED });
+    const items = itemWriteSide(BOARD, { emitter: UNKILLED });
+    const number = await repository.openIssue('Status', 'Host is down', 'rigger:status');
+    const id = await items.addIssue(number, UNKILLED);
+    await items.moveItem(id, 'Owner', UNKILLED);
+    const labels = await repository.removeIssueLabel(number, 'rigger:status');
+    const closed = await repository.closeIssue(number);
+    return { number, id, labels, closed };
+  });
+
+  assert.deepEqual(result, { number: 1, id: 'item-1', labels: [], closed: { number: 1, state: 'closed' } });
+  const board = await fake.model();
+  assert.deepEqual((await board.operations.readItems()).map(({ id, repository, number, column }) => ({ id, repository, number, column })), [
+    { id: 'item-1', repository: 'williacj/rigger', number: 1, column: 'Owner' },
+  ]);
+  assert.deepEqual(board.writes().map(({ operation }) => operation), ['addIssue', 'moveItem']);
+});
+
 test('the repository read answers a pull request mergeable state through the fake gh', async () => {
   const fake = installed();
   seedRepository(fake, { pullRequests: [{ number: 12, head: 'topic', sha: 'a'.repeat(40) }], mergeable: { 12: 'MERGEABLE' } });

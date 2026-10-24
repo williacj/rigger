@@ -372,8 +372,8 @@ export async function schemaWriteRunner(args, { send = throughL0, emitter, timeo
   return send(FORGE, args, { emitter, timeout });
 }
 
-/** The operations the item-write runner admits in M1: the field-value write that moves a card. */
-const ITEM_WRITES = new Set(['updateProjectV2ItemFieldValue']);
+/** The operations the item-write runner admits: a column move and an issue added to the board. */
+const ITEM_WRITES = new Set(['updateProjectV2ItemFieldValue', 'addProjectV2ItemById']);
 
 /** The field holding the columns, whose options are the column display names (`ARCHITECTURE.md`). */
 export const COLUMNS = 'Status';
@@ -406,6 +406,16 @@ function moveInput(field) {
   return { projectId: read.projectId.value, fieldId: read.fieldId.value };
 }
 
+/** One board and one issue content ID, both written as strings and with no other input. */
+function addInput(field) {
+  const [input, ...others] = field.arguments;
+  const fields = input?.name === 'input' && input.value.kind === 'object' && others.length === 0 ? input.value.fields : null;
+  const read = fieldsOf('item-write', field, fields ?? []);
+  if (!fields || Object.keys(read).length !== 2 || read.projectId?.kind !== 'string' || read.contentId?.kind !== 'string') {
+    refuse('item-write', `${field.name}, whose input is not a projectId and contentId alone`);
+  }
+}
+
 /**
  * Which field of `projectId` holds the columns, and what the field `fieldId` is called, read
  * through the read runner, sent as `via` says. A read that fails throws, naming what `gh` said, so
@@ -422,13 +432,16 @@ async function columnsField(projectId, fieldId, via) {
 }
 
 /**
- * Sends one write to a board item, and refuses any other request. In M1 that write is the column
- * move: a field-value write setting an option of the field holding the columns, which the runner
- * reads off the board rather than taking from whoever sent the request.
+ * Sends an issue addition or a column move, and refuses any other item write. For a column move,
+ * the runner reads which field holds the columns rather than taking the field from the caller.
  */
 export async function itemWriteRunner(args, { send = throughL0, emitter, timeout = FORGE_TIMEOUT } = {}) {
   const field = mutationOf('item-write', args);
   if (!ITEM_WRITES.has(field.name)) refuse('item-write', `${field.name}, which its allowlist does not hold`);
+  if (field.name === 'addProjectV2ItemById') {
+    addInput(field);
+    return send(FORGE, args, { emitter, timeout });
+  }
   const { projectId, fieldId } = moveInput(field);
   const columns = await columnsField(projectId, fieldId, { send, emitter, timeout });
   if (columns.id !== fieldId) {
@@ -437,7 +450,7 @@ export async function itemWriteRunner(args, { send = throughL0, emitter, timeout
   return send(FORGE, args, { emitter, timeout });
 }
 
-/** Sends only a head-guarded merge, an issue/PR comment, or one issue-label addition. */
+/** Sends only a head-guarded merge, a comment, a label addition or removal, or an issue opening or closing. */
 export async function repositoryWriteRunner(args, { send = throughL0, emitter, timeout = FORGE_TIMEOUT } = {}) {
   const [api, path, method, verb, field, value, option, mergeMethod, ...extra] = args;
   const merge = api === 'api' && /^repos\/[^/]+\/[^/]+\/pulls\/[1-9]\d*\/merge$/.test(path ?? '')
@@ -448,6 +461,14 @@ export async function repositoryWriteRunner(args, { send = throughL0, emitter, t
     && typeof value === 'string' && value.startsWith('body=');
   const label = post && /^repos\/[^/]+\/[^/]+\/issues\/[1-9]\d*\/labels$/.test(path ?? '')
     && typeof value === 'string' && value.startsWith('labels[]=');
-  if (!merge && !comment && !label) refuse('repository-write', spelled(args));
+  const open = api === 'api' && /^repos\/[^/]+\/[^/]+\/issues$/.test(path ?? '')
+    && method === '-X' && verb === 'POST' && field === '-f' && typeof value === 'string' && value.startsWith('title=') && value.length > 'title='.length
+    && option === '-f' && typeof mergeMethod === 'string' && mergeMethod.startsWith('body=') && mergeMethod.length > 'body='.length
+    && extra.length === 2 && extra[0] === '-f' && typeof extra[1] === 'string' && extra[1].startsWith('labels[]=') && extra[1].length > 'labels[]='.length;
+  const close = api === 'api' && /^repos\/[^/]+\/[^/]+\/issues\/[1-9]\d*$/.test(path ?? '')
+    && method === '-X' && verb === 'PATCH' && field === '-f' && value === 'state=closed' && args.length === 6;
+  const removeLabel = api === 'api' && /^repos\/[^/]+\/[^/]+\/issues\/[1-9]\d*\/labels\/[^/]+$/.test(path ?? '')
+    && method === '-X' && verb === 'DELETE' && args.length === 4;
+  if (!merge && !comment && !label && !open && !close && !removeLabel) refuse('repository-write', spelled(args));
   return send(FORGE, args, { emitter, timeout });
 }

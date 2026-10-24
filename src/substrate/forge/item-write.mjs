@@ -1,9 +1,9 @@
-// ABOUTME: The forge adapter's item-write side: the one write that changes a board item in M1,
-// the column move, sent through the item-write runner. Only L2 reaches it.
+// ABOUTME: The forge adapter's item-write side: adding an issue and moving an item on the board,
+// sent through the item-write runner. Only L2 reaches it.
 
 import { literal } from './graphql.mjs';
 import { answerOf, boardOf } from './read.mjs';
-import { COLUMNS, graphqlRequest, itemWriteRunner } from './runners.mjs';
+import { COLUMNS, firstLine, graphqlRequest, itemWriteRunner, readRunner } from './runners.mjs';
 
 /**
  * The item writes on `board`, which names its `repo`, its `project` number and, where the config
@@ -12,6 +12,26 @@ import { COLUMNS, graphqlRequest, itemWriteRunner } from './runners.mjs';
  */
 export function itemWriteSide(board, { send, timeout } = {}) {
   return {
+    /** Add one issue to the board by number, reading its node ID before the mutation. */
+    addIssue: async (number, emitter) => {
+      if (!Number.isSafeInteger(number) || number < 1) throw new Error(`addIssue on issue #${number} failed: not an issue number`);
+      const via = { send, emitter, timeout };
+      try {
+        const issue = await readRunner(['api', `repos/${board.repo}/issues/${number}`, '-X', 'GET'], via);
+        if (issue.status !== 0 || issue.timedOut) throw new Error(firstLine(issue));
+        const contentId = JSON.parse(issue.stdout).node_id;
+        if (typeof contentId !== 'string' || !contentId) throw new Error('the read answered no node id');
+        const { id } = await boardOf('addIssue', board, via);
+        const add = `mutation { addProjectV2ItemById(input: {projectId: ${literal(id)}, contentId: ${literal(contentId)}}) { item { id } } }`;
+        const said = await itemWriteRunner(graphqlRequest(add), via);
+        if (said.timedOut) throw new Error(firstLine(said));
+        return answerOf('addIssue', board, said).addProjectV2ItemById.item.id;
+      } catch (error) {
+        const failure = new Error(`addIssue on issue #${number} failed: ${error.message}`, { cause: error });
+        if (error.code !== undefined) failure.code = error.code;
+        throw failure;
+      }
+    },
     /**
      * Moves board item `itemId` to the column the board displays as `column`: one write, setting
      * that column's option of the field holding the columns.
