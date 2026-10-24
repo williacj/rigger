@@ -111,7 +111,7 @@ export function installStandInAgent(dir, plan = {}) {
   const entry = `process.env.RIGGER_FIXTURE_WARMING || import(${JSON.stringify(import.meta.url)}).then(({ standInMain }) => standInMain());\n`;
   writeFileSync(join(dir, 'claude'), `#!${process.execPath}\n${entry}`);
   // A plan to exec a command under every card installs a shell in its place, which `exec`s the
-  // command: Node 20, the floor the README sets, has no `process.execve` for the stand-in to call.
+  // command: the shell path works when a test removes `process.execve` from the stand-in.
   const exec = Object.values(plan['*'] ?? {}).find((act) => act.exec !== undefined)?.exec;
   if (exec !== undefined) writeFileSync(join(dir, 'claude'), `#!/bin/sh\n${EXIT_IF_WARMING}\nexec ${exec.map(quoted).join(' ')}\n`);
   chmodSync(join(dir, 'claude'), 0o755);

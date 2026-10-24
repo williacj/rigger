@@ -30,7 +30,7 @@ import { nextAction } from '../src/workflow/next-action.mjs';
 import { EVENT_REFUSED } from '../src/substrate/process.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
-import { stoppedCard } from './stop-failure.mjs';
+import { heldCard } from './stop-failure.mjs';
 import { markerComment } from './fake-repository.mjs';
 import { PASSING } from './loop-world.mjs';
 
@@ -157,7 +157,7 @@ test('given a board whose column read answers one turn later than the fake\'s, a
   const ran = async (later) => {
     const fake = boardOf([1, 2, 3, 4]);
     const built = world({ fake, board: later ? readingLater(fake) : handleOn(fake), concurrency: 2, answer });
-    await assert.rejects(drive(built), stoppedCard(2));
+    await assert.rejects(drive(built), heldCard(2));
     return { started: built.dispatches.started, writes: fake.writes() };
   };
 
@@ -223,14 +223,14 @@ for (const [how, failed] of Object.entries(FAILURES)) {
 
     assert.deepEqual(built.dispatches.holding(), [2], "card 1's slot is free, and card 2 holds it");
     built.dispatches.releaseAll();
-    if (how === 'throws') await assert.rejects(run, stoppedCard(1));
+    if (how === 'throws') await assert.rejects(run, heldCard(1));
     else await run;
   });
 
   test(`a card whose dispatch ${how} ends the run outside the review column`, async () => {
     const built = world({ cards: [1], concurrency: 1, answer: failed });
 
-    if (how === 'throws') await assert.rejects(drive(built), stoppedCard(1));
+    if (how === 'throws') await assert.rejects(drive(built), heldCard(1));
     else await drive(built);
 
     assert.deepEqual(built.dispatches.started, how === 'throws' ? [1, 1] : [1]);
@@ -280,7 +280,7 @@ test('the same run on a board whose five columns carry other display names, with
   const answer = (card) => (card.number === 2 ? new Error('the dispatch could not start') : { exit: 0, output: '' });
   const ran = async (columns) => {
     const built = world({ cards: [1, 2, { ...readyCard(3, columns), labels: [] }, 4], columns, concurrency: 2, answer });
-    await assert.rejects(drive(built), stoppedCard(2));
+    await assert.rejects(drive(built), heldCard(2));
     const keyOf = Object.fromEntries(Object.entries(columns).map(([key, name]) => [name, key]));
     const moves = built.fake.writes().map(({ operation, args: [id, column] }) => [operation, id, keyOf[column]]);
     return { started: built.dispatches.started, moves };
@@ -634,7 +634,7 @@ for (const { action, method, ruling, merged } of [
     assert.equal(writes, 1);
     assert.deepEqual(cardsOf(built, 'slot.release'), [card]);
     assert.equal(triggersOf(built).filter((trigger) => trigger === 'pull').length, 3);
-    assert.equal(built.events().filter(({ event }) => event === 'transition').length, action === 'move' ? 1 : 0);
+    assert.equal(built.events().filter(({ event }) => event === 'transition').length, action === 'move' || action === 'escalate' ? 1 : 0);
     if (action === 'return') assert.equal(built.repository.pull(pull).comments.length, 2);
     if (action === 'escalate') assert.equal(built.events().filter(({ event }) => event === 'review.escalate').length, 1);
   });
@@ -819,7 +819,7 @@ test('L3 hands L2 every dispatch outcome, one returned and one failed', async ()
   // Positive: until card 10 is held and card 11's outcome has reached L2, card 11's maker never starting.
   await positive(() => built.dispatches.holding().includes(10) && received.some(([number]) => number === 11));
   built.dispatches.releaseAll();
-  await assert.rejects(tick, stoppedCard(11));
+  await assert.rejects(tick, heldCard(11));
 
   assert.deepEqual(received.sort(), [[10, 'fulfilled'], [11, 'rejected'], [11, 'rejected']]);
 });
@@ -925,7 +925,7 @@ const cardsOf = (built, name) => built.l3Events().filter((event) => event.event 
 test('every slot release writes one event naming the card, whether its dispatch returned or threw', async () => {
   const built = world({ cards: [1, 2, 3], concurrency: 2, answer: (card) => (card.number === 2 ? new Error('the dispatch could not start') : { exit: 0, output: '' }) });
 
-  await assert.rejects(drive(built), stoppedCard(2));
+  await assert.rejects(drive(built), heldCard(2));
 
   assert.deepEqual([...cardsOf(built, 'slot.release')].sort(), [1, 1, 2, 3, 3]);
 });
@@ -1090,7 +1090,7 @@ test("each card's pull event is recorded before L2 asks the board to move that c
 test('every event L3 writes carries layer L3, and L1\'s and L0\'s events carry their own layer', async () => {
   const built = world({ cards: [1, 2, { ...readyCard(3), labels: [] }], concurrency: 1, answer: (card) => (card.number === 2 ? new Error('the dispatch could not start') : { exit: 0, output: '' }) });
 
-  await assert.rejects(drive(built), stoppedCard(2));
+  await assert.rejects(drive(built), heldCard(2));
 
   const events = built.events();
   const ofL3 = new Set(['run.start', 'trigger', 'pull', 'slot.release', 'dispatch']);
@@ -1996,4 +1996,104 @@ test('the same loop pulls an escalated card after a fresh board read shows the o
     built.dispatches.releaseAll();
     await running;
   }
+});
+
+test('the loop world shares issue facts and successful issue labels by repository and issue identity', async () => {
+  const fake = createFakeBoard({ columns: Object.values(COLUMNS), items: [
+    { ...cardIn(42, COLUMNS.review), labels: ['keep'] },
+    { ...cardIn(42, COLUMNS.review), repository: 'someone/elsewhere', labels: ['foreign'] },
+    { ...cardIn(43, COLUMNS.ready), labels: ['unrelated'] },
+  ] });
+  const built = world({ fake, cards: [] });
+  assert.deepEqual(await built.repository.operations.readIssue(42), { number: 42, title: 'Add a verb', body: PASSING, labels: ['keep'] });
+  const [card] = await fake.operations.readItems();
+  await built.l2.escalated(card, { action: 'escalate', category: 'ambiguous', reason: 'The owner must decide.' });
+  assert.deepEqual((await fake.operations.readItems()).map(({ repository, number, labels }) => ({ repository, number, labels })), [
+    { repository: config.repo, number: 42, labels: ['keep', 'rigger:escalated'] },
+    { repository: 'someone/elsewhere', number: 42, labels: ['foreign'] },
+    { repository: config.repo, number: 43, labels: ['unrelated'] },
+  ]);
+  assert.equal(Object.hasOwn(fake.operations, 'issues'), false);
+  assert.equal(Object.hasOwn(fake.operations, 'setIssueLabels'), false);
+  const absent = world({ cards: [cardIn(44, COLUMNS.review)], forge: { issues: [] } });
+  assert.equal(await absent.repository.operations.readIssue(44), null, 'an explicitly missing issue is not manufactured');
+});
+
+// proves R-ESCALATE-8, R-ESCALATE-9, R-ESCALATE-15
+test('one escalation claim spans every awaited owner write and a fresh labelled pull starts nothing', async (t) => {
+  const number = 96;
+  const pull = 961;
+  const head = '9'.repeat(40);
+  const unexpected = [];
+  const built = world({ cards: [cardIn(number, COLUMNS.owner)], concurrency: 1,
+    forge: { pullRequests: [{ number: pull, head: `rigger-${number}`, sha: head, comments: [markerComment({ card: number, pull, head, body: PASSING, role: 'owner', verdict: 'critical', toSound: 'Keep the user files.' })] }] },
+    workspace: async (...args) => { unexpected.push(['workspace', ...args]); throw new Error('an escalation creates no workspace'); },
+    judgeDirectory: async (...args) => { unexpected.push(['judgeDirectory', ...args]); throw new Error('an escalation creates no judge directory'); },
+    removeDirectories: async (...args) => { unexpected.push(['removeDirectories', ...args]); },
+  });
+  const entered = [];
+  const releases = [];
+  for (const [target, operation] of [[built.repository, 'postIssueComment'], [built.fake.operations, 'moveItem'], [built.repository, 'addIssueLabel']]) {
+    const original = target[operation];
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    releases.push(release);
+    target[operation] = async (...args) => { entered.push(operation); await held; return original(...args); };
+  }
+  let settled = false;
+  const running = built.loop.run().finally(() => { settled = true; });
+  t.after(async () => { for (const release of releases) release(); await running.catch(() => {}); });
+  for (const [at, operation] of ['postIssueComment', 'moveItem', 'addIssueLabel'].entries()) {
+    await waitFor(() => entered.includes(operation) || settled);
+    assert.equal(entered.at(-1), operation, `the operation reaches ${operation} before settling`);
+    assert.deepEqual(entered, ['postIssueComment', 'moveItem', 'addIssueLabel'].slice(0, at + 1));
+    assert.deepEqual(cardsOf(built, 'slot.release'), [], `${operation} still owns the claim`);
+    assert.deepEqual(await built.loop.pull(), [], `${operation}: overlapping trigger takes no second claim`);
+    assert.deepEqual(cardsOf(built, 'slot.release'), []);
+    releases[at]();
+  }
+  await running;
+  assert.deepEqual(await columnsOf(built.fake), { [number]: COLUMNS.owner }, 'the escalated card reaches its configured Owner column');
+  assert.deepEqual(cardsOf(built, 'slot.release'), [number]);
+  assert.equal(built.events().filter(({ event }) => event === 'review.escalate').length, 1);
+  assert.equal(built.events().filter(({ event }) => event === 'transition').length, 1);
+  assert.equal(built.events().find(({ event }) => event === 'transition').to, 'owner');
+  assert.equal(built.repository.held().issues[0].comments.length, 1);
+  assert.deepEqual((await built.fake.operations.readItems())[0].labels, ['type:change', 'rigger:escalated']);
+  assert.deepEqual(await built.loop.pull(), []);
+  assert.deepEqual(await built.loop.run(), []);
+  assert.equal(built.repository.held().issues[0].comments.length, 1, 'fresh reads do not post another escalation');
+  assert.deepEqual(entered, ['postIssueComment', 'moveItem', 'addIssueLabel']);
+  assert.deepEqual(built.dispatches.started, []);
+  assert.deepEqual(unexpected, []);
+});
+
+// proves R-RECORD-9, R-ESCALATE-9
+test('an owner escalation whose transition record is refused starts no later work while the sink remains unavailable', async (t) => {
+  const number = 98;
+  const pull = 981;
+  const head = '9'.repeat(40);
+  const fake = boardOf([cardIn(number, COLUMNS.owner), 99]);
+  let built;
+  const items = { ...fake.operations, moveItem: async (...args) => { await fake.operations.moveItem(...args); built.refuseAppends('owner transition recording unavailable'); } };
+  built = world({ fake, items, concurrency: 1,
+    forge: { pullRequests: [{ number: pull, head: `rigger-${number}`, sha: head, comments: [markerComment({ card: number, pull, head, body: PASSING, role: 'owner', verdict: 'critical', toSound: 'Keep the user files.' })] }] },
+  });
+  t.after(() => built.dispatches.releaseAll());
+  await assert.rejects(built.loop.pull(1), (failure) => {
+    assert.ok(leavesOf(failure).some(({ message }) => /card #98 moved from owner to owner.*refused to record it: owner transition recording unavailable/.test(message)), failure.message);
+    return true;
+  });
+  assert.equal(built.repository.held().issues.find(({ number }) => number === 98).comments.length, 1);
+  assert.deepEqual(built.repository.held().issues.find(({ number }) => number === 98).labels, ['type:change']);
+  assert.deepEqual(await columnsOf(fake), { 98: COLUMNS.owner, 99: COLUMNS.ready });
+  let settled = false;
+  const later = built.loop.pull().finally(() => { settled = true; });
+  later.catch(() => {});
+  await waitFor(() => settled || built.dispatches.held() > 0);
+  built.dispatches.releaseAll();
+  await assert.rejects(later, (failure) => leavesOf(failure).every(({ message }) => message.includes('owner transition recording unavailable')));
+  assert.deepEqual(built.dispatches.started, []);
+  assert.deepEqual(built.fake.writes(), [{ operation: 'moveItem', args: ['item-1', COLUMNS.owner] }]);
+  assert.equal(built.repository.held().issues.find(({ number }) => number === 98).comments.length, 1);
 });

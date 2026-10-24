@@ -204,10 +204,41 @@ test('after once claims a card from the ready column, the state directory\'s eve
   assert.ok(events.some((event) => event.layer === 'L2' && event.event === 'transition'), JSON.stringify(events));
 });
 
+// proves R-ESCALATE-7, R-ESCALATE-8, R-ESCALATE-9, R-ESCALATE-15
+test('once completes an owner escalation on its issue and a new invocation neither dispatches nor escalates it again', async () => {
+  const head = '6'.repeat(40);
+  const marker = markerComment({ card: 10, pull: 11, head, body: ADMITTED, verdict: 'critical', toSound: "Keep the user's files; $(literal) is data." });
+  let before;
+  const ran = once({ items: [card(10, 'Review')] }, {
+    seed: { pullRequests: [{ number: 11, head: 'rigger-10', sha: head, comments: [marker] }] },
+    prepare: ({ consumer }) => { before = worktreeList(consumer); },
+  });
+  assert.equal(ran.code, 0, ran.err);
+  assert.match(ran.out, /#10.*escalate.*critical/);
+  assert.deepEqual(await columnsOf(ran), { 10: 'Owner' });
+  const held = () => JSON.parse(readFileSync(join(dirname(ran.fake.gh), 'board.json'), 'utf8')).repository;
+  const issue = held().issues.find(({ number }) => number === 10);
+  assert.equal(issue.comments.length, 1);
+  assert.equal(issue.comments[0].body, "Rigger escalates card #10 to the owner (critical).\n\nreviewer (critical): Keep the user's files; $(literal) is data.\n\nPull request: #11\nHead: 6666666666666666666666666666666666666666\n");
+  assert.deepEqual(issue.labels, ['type:change', 'rigger:escalated']);
+  assert.deepEqual(held().pullRequests[0].comments, [marker]);
+  assert.deepEqual(eventsOf(ran).filter(({ event }) => event === 'transition').map(({ from, to, cause }) => ({ from, to, cause })), [{ from: 'review', to: 'owner', cause: 'escalated' }]);
+  const sent = ran.fake.sent().length;
+  const again = ran.rerun();
+  assert.equal(again.code, 0, again.err);
+  assert.match(again.out, /no card.*pullable/i);
+  assert.equal(held().issues.find(({ number }) => number === 10).comments.length, 1);
+  assert.equal(eventsOf(again).filter(({ event }) => event === 'review.escalate').length, 1);
+  assert.deepEqual(ran.fake.sent().slice(sent).filter((args) => args[3] === 'POST' || args[3]?.startsWith('query=mutation')), []);
+  assert.deepEqual(again.agentRuns(), []);
+  assert.deepEqual(worktreeList(ran.consumer), before);
+  assert.deepEqual(eventsOf(again).filter(({ layer }) => layer === 'L1'), []);
+});
+
 for (const { action, ruling, merged, expectedColumn, line } of [
   { action: 'move', merged: true, expectedColumn: 'Done', line: /#10.*move.*done/ },
   { action: 'return', ruling: { coverage: 'insufficient', coverageReason: 'The card asks for two verbs.' }, expectedColumn: 'Review', line: /#10.*return.*#11/ },
-  { action: 'escalate', ruling: { verdict: 'critical', toSound: 'Keep the user files.' }, expectedColumn: 'Review', line: /#10.*escalate.*critical/ },
+  { action: 'escalate', ruling: { verdict: 'critical', toSound: 'Keep the user files.' }, expectedColumn: 'Owner', line: /#10.*escalate.*critical/ },
 ]) {
   test(`once prints the ${action} it carried out for a Review card and exits zero`, async () => {
     const head = '6'.repeat(40);
@@ -543,6 +574,26 @@ const prepareContinuation = ({ ruling = 'reviewer', owner = false, conflicting =
   return oldHead;
 };
 
+// proves R-FAIL-6
+test('once names a continuing fetch hold with both failures in order', SETTLES_WITHIN, async (t) => {
+  const agent = standInAgent();
+  const git = spawnSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
+  assert.match(git, /^\//);
+  const fixture = join(agent.dir, 'git');
+  writeFileSync(fixture, `#!/bin/sh\nif [ "$1" = fetch ]; then echo 'fetch refused by fixture' >&2; exit 128; fi\nexec '${git}' "$@"\n`);
+  chmodSync(fixture, 0o755);
+  const { ran } = onceWithAgent(t, agent, { items: [card(10, 'Review')] }, { prepare: prepareContinuation() });
+
+  const { code, err } = await ran;
+
+  assert.notEqual(code, 0, err);
+  assert.match(err, /rigger once: card #10 was held after 2 attempts/);
+  const failures = err.split('\n').filter((line) => /^attempt [12]: /.test(line));
+  assert.equal(failures.length, 2, err);
+  assert.ok(failures.every((line) => /fetch refused by fixture/.test(line)), err);
+  assert.deepEqual(agent.runs(), []);
+});
+
 for (const { column, ruling, owner, conflicting } of [
   { column: 'Review', ruling: 'reviewer' },
   { column: 'Owner', ruling: 'owner', owner: true },
@@ -623,6 +674,7 @@ test('given once where the maker does not start, once exits non-zero, and prints
   const lines = err.split('\n').filter((line) => /#10\b/.test(line));
   assert.equal(lines.length, 1, err);
   assert.match(lines[0], /^rigger once: claimed #10 from board 3; its maker did not start: .*settings\.json is no JSON/);
+  assert.match(lines[0], /card was held after 2 attempts/);
   assert.deepEqual(agent.runs(), []);
   const attempts = err.split('\n').filter((line) => /^attempt [12]: /.test(line));
   assert.deepEqual(attempts.map((line) => /^attempt (\d+): /.exec(line)?.[1]), ['1', '2']);

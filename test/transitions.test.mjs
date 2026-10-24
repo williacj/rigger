@@ -354,6 +354,141 @@ async function boardWith(column) {
 /** L2's continuing-attempt answer on pull request #300 at a head. */
 const CONTINUE = { action: 'continue', pull: 300, head: '3'.repeat(40), markers: [] };
 
+/** The owner operation's real board/repository state, with one ordered trace across its writes. */
+async function escalationWorld({ columns = config.board.columns, source = 'review', sink: givenSink } = {}) {
+  const fake = createFakeBoard({ columns: Object.values(columns), items: [{ type: 'issue', repository: config.repo, number: 30, title: 'Card 30', column: columns[source] }] });
+  const repository = createFakeRepository({ issues: [{ number: 30, labels: ['keep'] }, { number: 31, labels: ['unrelated'] }], pullRequests: [{ number: 300, head: 'rigger-30', sha: '3'.repeat(40), comments: [{ body: 'Existing PR comment.' }] }] });
+  const directory = temporaryDirectory('rigger-owner-operation-');
+  const sink = givenSink ?? openSink({ directory, run: 'r-owner', now: () => 0 });
+  const trace = [];
+  const items = { ...fake.operations, moveItem: async (...args) => { trace.push(['moveItem', ...args.slice(0, 2)]); return fake.operations.moveItem(...args); } };
+  const repositoryWrites = Object.fromEntries(['postIssueComment', 'addIssueLabel', 'postComment'].map((operation) => [operation, async (...args) => { trace.push([operation, ...args]); return repository[operation](...args); }]));
+  const l2 = columnChanges({ config: { ...config, board: { ...config.board, columns } }, sink, items, repositoryWrites });
+  const [card] = await itemsOf(fake);
+  return { fake, repository, trace, l2, card, directory, events: () => existsSync(streamPath(directory)) ? readEvents(directory) : [] };
+}
+
+// proves R-ESCALATE-7, R-ESCALATE-8, R-ESCALATE-9, R-ESCALATE-15
+test('owner escalation preserves payload data and orders issue comment then actual Owner transition then fixed label', async () => {
+  const reason = "Keep the user's files.\n$(do-not-run); `literal` & > stay data.";
+  const work = [
+    { fields: { pull: 300, head: '3'.repeat(40) }, text: '\n\nPull request: #300\nHead: 3333333333333333333333333333333333333333' },
+    { fields: {}, text: '' },
+    { fields: { line: 'rigger-30' }, text: '\n\nLine of work: rigger-30' },
+  ];
+  for (const columns of [config.board.columns, { ...config.board.columns, ready: 'Queued', coding: 'Building', review: 'Judging', owner: 'Decision desk' }]) {
+    for (const source of ['ready', 'coding', 'review', 'owner']) {
+      for (const category of ['recorded-decision', 'critical', 'ambiguous']) {
+        for (const { fields, text } of work) {
+          const { fake, repository, trace, l2, card, events } = await escalationWorld({ columns, source });
+          const body = `Rigger escalates card #30 to the owner (${category}).\n\n${reason}${text}\n`;
+          await l2.escalated(card, { action: 'escalate', category, reason, ...fields });
+          assert.deepEqual(trace, [['postIssueComment', 30, body], ['moveItem', card.id, columns.owner], ['addIssueLabel', 30, 'rigger:escalated']]);
+          assert.equal((await itemsOf(fake))[0].column, columns.owner);
+          assert.deepEqual(repository.held().issues.map(({ number, labels, comments = [] }) => ({ number, labels, comments: comments.map(({ body }) => body) })), [
+            { number: 30, labels: ['keep', 'rigger:escalated'], comments: [body] },
+            { number: 31, labels: ['unrelated'], comments: [] },
+          ]);
+          assert.deepEqual(repository.pull(300).comments, [{ body: 'Existing PR comment.' }]);
+          const recorded = events();
+          assert.deepEqual(recorded.map(({ event }) => event), ['review.escalate', 'transition']);
+          const intent = recorded[0];
+          assert.deepEqual(Object.fromEntries(Object.entries(intent).filter(([key]) => !['ts', 'run', 'layer', 'card', 'dispatch', 'event'].includes(key))), { category, reason, ...fields });
+          assert.deepEqual(recorded[1], { ts: '1970-01-01T00:00:00.000Z', run: 'r-owner', layer: 'L2', card: 30, dispatch: null, event: 'transition', from: source, to: 'owner', cause: 'escalated' });
+          assert.deepEqual(repository.merges(), []);
+        }
+      }
+    }
+  }
+});
+
+// proves R-ESCALATE-8, R-ESCALATE-9
+test('owner escalation refusals retain each actual partial state and retries preserve the earlier comment', async () => {
+  for (const step of ['comment', 'move', 'label']) {
+    const { fake, repository, trace, l2, card, events } = await escalationWorld();
+    const target = step === 'move' ? fake.operations : repository;
+    const operation = { comment: 'postIssueComment', move: 'moveItem', label: 'addIssueLabel' }[step];
+    const original = target[operation];
+    target[operation] = async () => { throw new Error(`forge unavailable at ${step}`); };
+    const next = { action: 'escalate', category: 'ambiguous', reason: "Keep the user's first reason.\n$(literal) & second line.", line: 'rigger-30' };
+    const named = {
+      comment: /card #30.*issue comment.*forge unavailable at comment/,
+      move: /card #30.*move.*review.*owner.*Owner.*forge unavailable at move/,
+      label: /card #30.*label.*rigger:escalated.*forge unavailable at label/,
+    };
+    await assert.rejects(l2.escalated(card, next), named[step]);
+    const retained = repository.held().issues[0];
+    assert.equal(retained.comments?.length ?? 0, step === 'comment' ? 0 : 1, step);
+    assert.deepEqual(retained.labels, ['keep'], step);
+    assert.equal((await itemsOf(fake))[0].column, step === 'label' ? 'Owner' : 'Review', step);
+    assert.deepEqual(trace.map(([operation]) => operation), step === 'comment' ? ['postIssueComment'] : step === 'move' ? ['postIssueComment', 'moveItem'] : ['postIssueComment', 'moveItem', 'addIssueLabel'], step);
+    assert.equal(events().filter(({ event }) => event === 'transition').length, step === 'label' ? 1 : 0, step);
+    if (step === 'comment') continue;
+    target[operation] = original;
+    const [actual] = await itemsOf(fake);
+    await l2.escalated(actual, next);
+    const retried = repository.held().issues[0];
+    assert.equal(retried.comments.length, 2, `${step}: retry appends without erasing the first comment`);
+    assert.equal(retried.comments[0].body, retried.comments[1].body, `${step}: category and reason are unchanged`);
+    assert.match(retried.comments[0].body, /\(ambiguous\).*\n\nKeep the user's first reason\.\n\$\(literal\) & second line\./);
+    assert.deepEqual(retried.labels, ['keep', 'rigger:escalated']);
+    assert.equal((await itemsOf(fake))[0].column, 'Owner');
+    assert.equal(events().filter(({ event }) => event === 'transition').at(-1).from, step === 'label' ? 'owner' : 'review');
+    assert.deepEqual(repository.pull(300).comments, [{ body: 'Existing PR comment.' }]);
+  }
+});
+
+// proves R-RECORD-7
+test('default owner issue writes and item move bind every L0 request to the real run and card with no dispatch', async () => {
+  const directory = temporaryDirectory('rigger-owner-context-');
+  const sink = openSink({ directory, run: 'r-real-owner-action', now: () => 0 });
+  const sent = [];
+  const send = async (command, args, { emitter }) => {
+    assert.equal(command, 'gh');
+    sent.push(args);
+    emitter.emit('test.escalation.request', { request: args[1] });
+    let body;
+    if (args[1].endsWith('/comments')) body = { id: 'IC_owner', body: 'posted' };
+    else if (args[1].endsWith('/labels')) body = [{ name: 'rigger:escalated' }];
+    else {
+      assert.equal(args[1], 'graphql');
+      const document = args[3].slice('query='.length);
+      body = { data: document.includes('repositoryOwner')
+        ? { repositoryOwner: { projectV2: { id: 'PVT_kwHOBzomGc4Bkn7f', field: { id: 'PVTSSF_lAHOBzomGc4Bkn7fzhjX4Mc', options: [{ id: 'owner-option', name: 'Owner' }] } } } }
+        : document.startsWith('query') ? { project: { field: { id: 'PVTSSF_lAHOBzomGc4Bkn7fzhjX4Mc' } }, target: { name: 'Status' } } : {} };
+    }
+    return { status: 0, stdout: JSON.stringify(body), stderr: '' };
+  };
+  const l2 = columnChanges({ config, sink, send });
+  await l2.escalated({ number: 30, id: 'PVTI_lADOBzomGc4Bkn7fzgd', column: 'Review' }, { action: 'escalate', category: 'critical', reason: 'Keep the files.', pull: 300, head: '3'.repeat(40) });
+  assert.deepEqual(sent.filter((args) => args[1] !== 'graphql' || args[3].startsWith('query=mutation')).map((args) => args[1]), [`repos/${config.repo}/issues/30/comments`, 'graphql', `repos/${config.repo}/issues/30/labels`]);
+  assert.equal(sent.length, 5, 'the real adapters read the board and Status field before the mutation');
+  const requests = readEvents(directory).filter(({ event }) => event === 'test.escalation.request');
+  assert.equal(requests.length, 5);
+  for (const { layer, run, card, dispatch } of requests) assert.deepEqual({ layer, run, card, dispatch }, { layer: 'L0', run: 'r-real-owner-action', card: 30, dispatch: null });
+});
+
+// proves R-RECORD-9, R-ESCALATE-9
+test('a refused owner transition record names the actual move and retains its comment and move without a label', async () => {
+  const recorded = [];
+  let unavailable = false;
+  const sink = { emitter: (context) => ({ emit: (event, fields) => {
+    if (event === 'transition') unavailable = true;
+    if (unavailable) throw new Error('recording unavailable');
+    recorded.push({ ...context, event, ...fields });
+  } }) };
+  const { fake, repository, trace, l2, card } = await escalationWorld({ source: 'coding', sink });
+  const next = { action: 'escalate', category: 'recorded-decision', reason: 'The owner must decide.', line: 'rigger-30' };
+  await assert.rejects(l2.escalated(card, next), /card #30 moved from coding to owner, and the event sink refused to record it: recording unavailable/);
+  assert.deepEqual(trace.map(([operation]) => operation), ['postIssueComment', 'moveItem']);
+  assert.equal((await itemsOf(fake))[0].column, 'Owner');
+  assert.equal(repository.held().issues[0].comments.length, 1);
+  assert.deepEqual(repository.held().issues[0].labels, ['keep']);
+  assert.deepEqual(recorded, [{ layer: 'L2', card: 30, dispatch: null, event: 'review.escalate', category: 'recorded-decision', reason: 'The owner must decide.', line: 'rigger-30' }]);
+  await assert.rejects(l2.escalated((await itemsOf(fake))[0], next), /review.escalate could not be recorded: recording unavailable/);
+  assert.equal(trace.length, 2, 'while recording remains unavailable no retry starts another forge write');
+});
+
 test('L2 makes each review-loop move on the fake board: Review to Owner, Owner to Review, Review to Done and Owner to Done by its move answer, and Review to Coding and Owner to Coding by a continuing attempt\'s claim', async () => {
   const { columns } = config.board;
   const rows = [
@@ -410,16 +545,16 @@ test('L2 posts a return answer byte for byte on its pull request and leaves the 
 
 // proves R-ESCALATE-6
 test('L2 records review.escalate under its layer with the card and category', async () => {
-  const { fake, card } = await boardWith(config.board.columns.review);
-  const directory = temporaryDirectory('rigger-escalation-');
-  const l2 = columnChanges({ config, sink: openSink({ directory, run: 'r-test', now: () => 0 }), items: fake.operations });
+  const { fake, card, directory, l2, repository } = await escalationWorld();
 
-  l2.escalated(card, { action: 'escalate', category: 'critical' });
+  await l2.escalated(card, { action: 'escalate', category: 'critical', reason: 'Keep the user files.', pull: 300, head: '3'.repeat(40) });
 
   assert.deepEqual(readEvents(directory).filter((event) => event.event === 'review.escalate').map(({ layer, card: number, category }) => ({ layer, number, category })), [
     { layer: 'L2', number: 30, category: 'critical' },
   ]);
-  assert.deepEqual(fake.writes(), []);
+  assert.deepEqual(fake.writes(), [{ operation: 'moveItem', args: [card.id, config.board.columns.owner] }]);
+  assert.equal(repository.held().issues[0].comments.length, 1);
+  assert.deepEqual(repository.held().issues[0].labels, ['keep', 'rigger:escalated']);
 });
 
 test('a board refusal of a move answer names the card and both columns and records no transition', async () => {
@@ -456,11 +591,11 @@ test('a refused return comment names the card and pull request and moves nothing
 });
 
 test('a refused review.escalate event names the card and category and moves nothing', async () => {
-  const { fake, card } = await boardWith(config.board.columns.review);
   const sink = { emitter: () => ({ emit: () => { throw new Error('sink unavailable'); } }) };
-  const l2 = columnChanges({ config, sink, items: fake.operations });
+  const { fake, card, l2, trace } = await escalationWorld({ sink });
 
-  assert.throws(() => l2.escalated(card, { action: 'escalate', category: 'critical' }), /card #30's escalation in category critical was refused: sink unavailable/);
+  await assert.rejects(l2.escalated(card, { action: 'escalate', category: 'critical', reason: 'Keep the user files.' }), /card #30's escalation in category critical was refused: review.escalate could not be recorded: sink unavailable/);
 
   assert.deepEqual(fake.writes(), []);
+  assert.deepEqual(trace, []);
 });

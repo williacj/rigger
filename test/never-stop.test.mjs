@@ -519,7 +519,7 @@ test('on the call\'s containment, a survivor the census named, and one only the 
   const { events } = await called(directory, { command: leavingTwo(directory), ps: cuttingTwo(directory) });
 
   assert.deepEqual(byPid(events), byPid(['one', 'two'].map((name) => ({ event: 'survivor.killed', pid: pidIn(directory, name), ...tailOf(directory) }))));
-  assert.deepEqual(['one', 'two'].map((name) => alive(pidIn(directory, name))), [false, false]);
+  assertExitTargetsEnded(['one', 'two'].map((name) => pidIn(directory, name)));
 });
 
 // proves R-STATE-12, R-STATE-10
@@ -535,8 +535,32 @@ test('on a start\'s kill of a recorded group, a member the census named, and one
     { event: 'recorded.killed', pid: started.member },
   ]).map(({ event, pid }) => ({ event, pid, named: true })));
   assert.deepEqual(events.find(({ pid }) => pid === started.member).cmd, `/usr/bin/tail -f ${directory}/hold`);
-  assert.deepEqual([started.leader, started.member].map(alive), [false, false]);
+  assertExitTargetsEnded([started.leader, started.member]);
 });
+
+/** Requires positive absence or one successful exact-PID zombie state; unknown reads reject. */
+function assertExitTargetsEnded(pids, {
+  signal = (pid) => process.kill(pid, 0),
+  states = (pid) => spawnSync(PS, ['-p', String(pid), '-o', 'pid=,stat='], { encoding: 'utf8', env: process.env }),
+} = {}) {
+  for (const pid of pids) {
+    try { signal(pid); }
+    catch (error) { if (error.code === 'ESRCH') continue; throw error; }
+    const answer = states(pid);
+    const detail = `PID ${pid} has an unconfirmed state read: ${JSON.stringify({ status: answer?.status, signal: answer?.signal, error: answer?.error?.code ?? answer?.error?.message, stdout: answer?.stdout, stderr: answer?.stderr })}`;
+    assert.ok(answer && !answer.error && answer.signal === null
+      && typeof answer.stdout === 'string' && answer.stderr === '', detail);
+    if (answer.status === 1 && answer.stdout === '') {
+      try { signal(pid); }
+      catch (error) { if (error.code === 'ESRCH') continue; throw error; }
+      assert.fail(detail + '; signal zero still reaches it after the empty read');
+    }
+    // Exactly one integer PID and one nonempty stat field; no extra rows or columns qualify.
+    const row = /^[ \t]*(\d+)[ \t]+(\S+)[ \t]*\n?$/.exec(answer.stdout);
+    assert.ok(answer.status === 0 && row && row[0] === answer.stdout && Number(row[1]) === pid, detail);
+    assert.ok(row[2].startsWith('Z'), `PID ${pid} is still running or stopped: ${JSON.stringify(row[2])}`);
+  }
+}
 
 // proves R-STATE-12, R-STATE-9
 test('on the exit cleanup, a survivor the census named, and one only the read just before the kill found, are each recorded by name and command line', SETTLES_WITHIN, async (t) => {
@@ -550,8 +574,125 @@ test('on the exit cleanup, a survivor the census named, and one only the read ju
   const pids = ['one', 'two'].map((name) => pidIn(directory, name));
   assert.deepEqual(byPid(events.filter(({ pid }) => pids.includes(pid))), byPid(pids.map((pid) => ({ event: 'survivor.killed', pid, ...tailOf(directory) }))));
   assert.deepEqual(events.filter(({ event }) => event === 'group.killed'), []);
-  assert.deepEqual(pids.map(alive), [false, false]);
+  assertExitTargetsEnded(pids);
 });
+
+test('exit cleanup ended oracle accepts an actual held zombie', SETTLES_WITHIN, async (t) => {
+  exitAnswerRequired.add(t);
+  const { directory, events, two, trace } = await censusExit(t, 'B', 'zombie');
+  assertSighting(trace, two, 'B');
+  const observed = spawnSync(PS, ['-p', String(two), '-o', 'pid=,stat='], { encoding: 'utf8', env: process.env });
+  assert.equal(observed.status, 0, observed.stderr);
+  assert.equal(observed.error, undefined);
+  assert.equal(observed.signal, null);
+  assert.equal(observed.stderr, '');
+  assert.match(observed.stdout, new RegExp(`^\\s*${two}\\s+Z\\S*\\s*$`), 'the held member is not independently shown as the actual zombie');
+  assert.equal(alive(two), true, 'signal zero no longer reaches the held zombie');
+  assert.deepEqual(recordOf(events, two).map(({ event, name, cmd }) => ({ event, name, cmd })), [{ event: 'survivor.killed', ...tailOf(directory) }]);
+  t.diagnostic(JSON.stringify({ heldZombie: two, birthSeconds: startOf(two), observed }));
+  assertExitTargetsEnded([pidIn(directory, 'one'), two]);
+});
+
+test('exit cleanup ended oracle rejects an actual running tail', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const pid = await tailIn(t, directory, join(directory, 'running'));
+  const birth = startOf(pid);
+  const observed = spawnSync(PS, ['-p', String(pid), '-o', 'pid=,stat=,comm='], { encoding: 'utf8', env: process.env });
+  assert.equal(observed.status, 0, observed.stderr);
+  assert.equal(observed.error, undefined);
+  assert.equal(observed.signal, null);
+  assert.equal(observed.stderr, '');
+  assert.match(observed.stdout, new RegExp(`^\\s*${pid}\\s+(?![ZT])\\S+\\s+.*tail\\s*$`));
+  t.diagnostic(JSON.stringify({ running: pid, birthSeconds: birth, observed }));
+  assert.throws(() => assertExitTargetsEnded([pid]), new RegExp(`PID ${pid} is still running or stopped`));
+});
+
+test('exit cleanup ended oracle rejects an actual stopped tail', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  let pid;
+  t.after(() => {
+    if (pid === undefined) return;
+    try { process.kill(pid, 'SIGCONT'); }
+    catch (error) { if (error.code !== 'ESRCH') throw error; }
+  });
+  pid = await tailIn(t, directory, join(directory, 'stopped'));
+  const birth = startOf(pid);
+  process.kill(pid, 'SIGSTOP');
+  await until(() => processState(pid).startsWith('T'), t);
+  const observed = spawnSync(PS, ['-p', String(pid), '-o', 'pid=,stat=,comm='], { encoding: 'utf8', env: process.env });
+  assert.equal(observed.status, 0, observed.stderr);
+  assert.equal(observed.error, undefined);
+  assert.equal(observed.signal, null);
+  assert.equal(observed.stderr, '');
+  assert.match(observed.stdout, new RegExp(`^\\s*${pid}\\s+T\\S*\\s+.*tail\\s*$`));
+  t.diagnostic(JSON.stringify({ stopped: pid, birthSeconds: birth, observed }));
+  assert.throws(() => assertExitTargetsEnded([pid]), new RegExp(`PID ${pid} is still running or stopped`));
+});
+
+test('exit cleanup ended oracle accepts an actual reaped owned child without a state read', SETTLES_WITHIN, async (t) => {
+  const child = spawn('/usr/bin/true', [], { env: process.env, stdio: 'ignore' });
+  const pid = child.pid;
+  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
+  assert.ok(Number.isSafeInteger(pid) && pid > 1);
+  const [code, signal] = await once(child, 'close');
+  assert.equal(code, 0);
+  assert.equal(signal, null);
+  assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+  t.diagnostic(JSON.stringify({ reapedOwnedChild: pid, code, signal }));
+  assertExitTargetsEnded([pid], { states: () => assert.fail('a positively absent child needs no state read') });
+});
+
+test('exit cleanup ended oracle requires later ESRCH after a clean empty state answer', () => {
+  const order = [];
+  assertExitTargetsEnded([401], {
+    signal: () => { order.push('signal'); if (order.length === 3) throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' }); },
+    states: () => { order.push('read'); return { status: 1, signal: null, stdout: '', stderr: '' }; },
+  });
+  assert.deepEqual(order, ['signal', 'read', 'signal']);
+});
+
+test('exit cleanup ended oracle rejects a clean empty read while signal zero still reaches the PID', () => {
+  const order = [];
+  assert.throws(() => assertExitTargetsEnded([401], {
+    signal: () => { order.push('signal'); },
+    states: () => { order.push('read'); return { status: 1, signal: null, stdout: '', stderr: '' }; },
+  }), /PID 401.*unconfirmed.*signal zero still reaches/);
+  assert.deepEqual(order, ['signal', 'read', 'signal']);
+});
+
+test('exit cleanup ended oracle rejects unconfirmed state reads', () => {
+  // Literals vary the raw spawnSync result contract observed in the real PS controls above.
+  const valid = { status: 0, signal: null, stdout: '401 Z\n', stderr: '' };
+  const cases = [
+    ['error despite a valid zombie row', { ...valid, error: Object.assign(new Error('read failed'), { code: 'EIO' }) }],
+    ['timeout', { status: null, signal: 'SIGTERM', stdout: '', stderr: '', error: Object.assign(new Error('read timed out'), { code: 'ETIMEDOUT' }) }],
+    ['signalled', { ...valid, signal: 'SIGTERM' }],
+    ['failed status', { ...valid, status: 2 }],
+    ['diagnostic standard error', { ...valid, stderr: 'ps: diagnostic\n' }],
+    ['empty successful read', { ...valid, stdout: '' }],
+    ['wrong PID', { ...valid, stdout: '402 Z\n' }],
+    ['multiple PID rows', { ...valid, stdout: '401 Z\n402 Z\n' }],
+    ['malformed row', { ...valid, stdout: 'not a process row\n' }],
+    ['split row fields', { ...valid, stdout: '401\nZ\n' }],
+    ['extra column', { ...valid, stdout: '401 Z extra\n' }],
+    ['missing output', { ...valid, stdout: null }],
+    ['nonempty absence answer', { ...valid, status: 1 }],
+    ['missing result', null],
+  ];
+  for (const [name, answer] of cases) {
+    assert.throws(() => assertExitTargetsEnded([401], { signal: () => {}, states: () => answer }), /PID 401.*unconfirmed/, name);
+  }
+});
+
+test('exit cleanup ended oracle preserves non-ESRCH signal errors without reading states', () => {
+  const refused = Object.assign(new Error('kill EPERM'), { code: 'EPERM' });
+  assert.throws(() => assertExitTargetsEnded([401], {
+    signal: () => { throw refused; },
+    states: () => assert.fail('a refused signal must not be called absence'),
+  }), (error) => error === refused);
+});
+
+
 
 /**
  * A `ps` stand-in that cuts the process `$here/two.pid` names out of every read until `$here/hang`
@@ -3364,7 +3505,7 @@ test('on the call\'s containment, a member no read before the kill found, which 
   const [one, two] = ['one', 'two'].map((name) => pidIn(directory, name));
   assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })), [{ event: 'survivor.killed', pid: one }, { event: 'group.killed', pid: undefined }]);
   assert.match(events[1].census, /a read after the kill found/);
-  assert.deepEqual([one, two].map(alive), [false, false]);
+  assertExitTargetsEnded([one, two]);
 });
 
 // proves R-STATE-19, R-STATE-12
@@ -3425,7 +3566,7 @@ test('on a start\'s kill of a recorded group, a member no read before the kill f
 
   assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })), [{ event: 'recorded.killed', pid: started.leader }, { event: 'group.killed', pid: undefined }]);
   assert.match(events[1].census, /a read after the kill found/);
-  assert.deepEqual([started.leader, started.member].map(alive), [false, false]);
+  assertExitTargetsEnded([started.leader, started.member]);
 });
 
 // proves R-STATE-12, R-STATE-9
@@ -3440,12 +3581,7 @@ test('on the exit cleanup, a member no read before the kill found, which a read 
   assert.equal(status, 0);
   assert.deepEqual(events.filter(({ pid }) => pid === one || pid === two).map(({ event, pid }) => ({ event, pid })), [{ event: 'survivor.killed', pid: one }]);
   assert.deepEqual(events.filter(({ event }) => event === 'group.killed').length, 1);
-  if (process.platform === 'linux') {
-    // A killed orphan can remain a zombie until its adopting parent reaps it.
-    for (const pid of [one, two]) assert.match(processState(pid), /^(?:Z|$)/, `process ${pid} still runs after cleanup`);
-    await until(() => [one, two].every((pid) => !alive(pid)), t);
-  }
-  assert.deepEqual([one, two].map(alive), [false, false]);
+  assertExitTargetsEnded([one, two]);
 });
 
 // proves R-STATE-19, R-STATE-12
@@ -3500,7 +3636,7 @@ test('given a member L0 may not signal and another, the call ends the other, rec
   const { events, settled } = await called(directory, { command: leavingTwo(directory), kill: signals.kill });
 
   const [one, two] = ['one', 'two'].map((name) => pidIn(directory, name));
-  assert.equal(alive(two), false, 'the member L0 may signal is alive');
+  assertExitTargetsEnded([two]);
   assert.equal(alive(one), true, 'the member L0 may not signal was ended, so the test proves nothing');
   // `one` outlives the call and holds the command's output, so the call records that hold too.
   assert.deepEqual(events.filter(({ event }) => event === 'output.held').length, 1);
@@ -3520,7 +3656,7 @@ test('given a recorded group with a member L0 may not signal, a start ends the l
 
   const { events, settled } = await startKilled(started, { kill: signals.kill });
 
-  assert.equal(alive(started.leader), false, 'the leader is alive');
+  assertExitTargetsEnded([started.leader]);
   assert.equal(alive(started.member), true, 'the member L0 may not signal was ended, so the test proves nothing');
   assert.deepEqual(events.filter(({ pid }) => pid === started.member).map(({ event, name, cmd, reason }) => ({ event, name, cmd, reason })), [
     { event: 'recorded.unended', ...tailOf(directory), reason: 'EPERM' },
@@ -3537,7 +3673,7 @@ test('given a member L0 may not signal, the exit cleanup ends the others, record
 
   const [one, two] = ['one', 'two'].map((name) => pidIn(directory, name));
   assert.equal(status, 0);
-  assert.equal(alive(two), false, 'the member L0 may signal is alive');
+  assertExitTargetsEnded([two]);
   assert.equal(alive(one), true, 'the member L0 may not signal was ended, so the test proves nothing');
   assert.deepEqual(events.filter(({ pid }) => pid === one).map(({ event, name, cmd, reason }) => ({ event, name, cmd, reason })), [
     { event: 'survivor.unended', ...tailOf(directory), reason: 'EPERM' },
@@ -3554,7 +3690,7 @@ test('given a member the kill does not end, the call settles once KILL_BOUND has
 
   const [one, two] = ['one', 'two'].map((name) => pidIn(directory, name));
   assert.equal(alive(one), true, 'the member the kill does not end was ended, so the test proves nothing');
-  assert.equal(alive(two), false, 'the other member is alive');
+  assertExitTargetsEnded([two]);
   assert.deepEqual(events.filter(({ pid }) => pid === one).map(({ event, name, cmd, reason }) => ({ event, name, cmd, reason })), [
     { event: 'survivor.unended', ...tailOf(directory), reason: `still alive ${KILL_BOUND} ms after L0's first kill` },
   ]);
@@ -4207,7 +4343,7 @@ test('given a process table that stops answering once the exit cleanup has sent 
 
   assert.equal(status, 0);
   assert.ok(existsSync(join(directory, 'hang')), 'the cleanup never sent the group its kill, so the test proves nothing');
-  assert.deepEqual(['one', 'two'].map((name) => alive(pidIn(directory, name))), [false, false]);
+  assertExitTargetsEnded(['one', 'two'].map((name) => pidIn(directory, name)));
   // The cleanup's reads after that kill are given up at its own bound, read by read, so only the
   // time it takes to end the process lies past it.
   const first = killedIn(pairs, -pidIn(directory, 'group'));
@@ -4286,7 +4422,7 @@ test('an exit cleanup that reads its actual leader as a zombie records no leader
     const state = processState(pid);
     assert.ok(state.startsWith('Z') || !alive(pid), `the cleanup left its ${name} child alive: pid=${pid}, state=${JSON.stringify(state)}`);
   }
-  assert.equal(alive(group), false, 'the reaped caller still has a live leader');
+  assertExitTargetsEnded([group]);
 });
 
 // proves R-STATE-19
@@ -7020,7 +7156,7 @@ test('given a member that answers signal 0 with EPERM once, as it is being kille
 
   const [one, two] = ['one', 'two'].map((name) => pidIn(directory, name));
   assert.ok(signals.pairs.filter(([target, name]) => target === one && name === 0).length > 0, 'the call never asked signal 0 of the flickering member, so the test proves nothing');
-  assert.deepEqual([one, two].map(alive), [false, false]);
+  assertExitTargetsEnded([one, two]);
   assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })).sort((a, b) => a.pid - b.pid), [
     { event: 'survivor.killed', pid: one },
     { event: 'survivor.killed', pid: two },
@@ -7039,13 +7175,7 @@ test('given a command whose leader answers signal 0 with EPERM once, as the exit
   assert.ok(pairs.filter(([target, name]) => target === group && name === 0).length > 0, 'the cleanup never asked signal 0 of the leader, so the test proves nothing');
   assert.deepEqual(JSON.parse(read(directory, 'ending')), { exit: 128 + constants.signals.SIGKILL });
   assert.deepEqual(events.filter(({ event }) => event.endsWith('.unended')), []);
-  if (process.platform === 'linux') {
-    const children = ['one', 'two'].map((name) => pidIn(directory, name));
-    // Signal 0 still reaches an exited orphan until its adopting parent reaps it.
-    for (const pid of children) assert.match(processState(pid), /^(?:Z|$)/, `process ${pid} still runs after cleanup`);
-    await until(() => children.every((pid) => !alive(pid)), t);
-  }
-  assert.deepEqual(['one', 'two'].map((name) => alive(pidIn(directory, name))), [false, false]);
+  assertExitTargetsEnded(['one', 'two'].map((name) => pidIn(directory, name)));
 });
 
 /**
@@ -7146,7 +7276,7 @@ test('on a start\'s kill of a recorded group, a member no read before the kill l
   const two = pidIn(directory, 'two');
   assert.ok(processState(two).startsWith('Z'), `the joiner is not a zombie, so the test proves nothing: ${processState(two)}`);
   assertJoinerRecorded(events);
-  assert.deepEqual([started.leader, started.member].map(alive), [false, false]);
+  assertExitTargetsEnded([started.leader, started.member]);
 });
 
 // proves R-STATE-12, R-STATE-9
@@ -7277,7 +7407,7 @@ function assertUnendedUnread(events, { stuck, ended, unended, directory, reason 
   assert.match(events.find(({ pid }) => pid === stuck).reason, reason);
   assert.equal(events.filter(({ pid }) => pid === ended).length, 1, `the member the kill ended was not recorded once: ${JSON.stringify(events)}`);
   assert.equal(events.find(({ pid }) => pid === ended).event, unended.replace('.unended', '.killed'), `the member the kill ended was not recorded as killed: ${JSON.stringify(events)}`);
-  assert.equal(alive(ended), false, 'the member the kill ended is alive');
+  assertExitTargetsEnded([ended]);
 }
 
 // proves R-STATE-19, R-STATE-12

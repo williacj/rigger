@@ -55,6 +55,40 @@ const COLUMNS = { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Ow
 /** The board the real adapter is pointed at, named as a config names it. */
 const BOARD = { ...WHERE, columns: COLUMNS };
 
+test('a successful issue label is visible on fresh board reads only for the same repository and issue', async () => {
+  const fake = installed({ columns: Object.values(COLUMNS), items: [
+    { type: 'issue', repository: 'WilliaCJ/RIGGER', number: 214, labels: ['keep'], column: 'Review' },
+    { type: 'issue', repository: 'someone/elsewhere', number: 214, labels: ['foreign'], column: 'Review' },
+    { type: 'issue', repository: WHERE.repo, number: 215, labels: ['unrelated'], column: 'Review' },
+  ] });
+  seedRepository(fake, { issues: [{ number: 214, labels: ['keep'] }, { number: 215, labels: ['unrelated'] }], pullRequests: [{ number: 301, head: 'rigger-214', sha: 'a'.repeat(40), comments: [{ body: 'PR comments remain separate.' }] }] });
+  await onPath(fake, () => repositoryWriteSide(BOARD, { emitter: UNKILLED }).addIssueLabel(214, 'rigger:escalated'));
+  const model = await fake.model();
+  assert.deepEqual((await model.operations.readItems()).map(({ repository, number, labels }) => ({ repository, number, labels })), [
+    { repository: 'WilliaCJ/RIGGER', number: 214, labels: ['keep', 'rigger:escalated'] },
+    { repository: 'someone/elsewhere', number: 214, labels: ['foreign'] },
+    { repository: WHERE.repo, number: 215, labels: ['unrelated'] },
+  ]);
+  await onPath(fake, async () => {
+    assert.deepEqual((await readSide(BOARD, { emitter: UNKILLED }).readItems()).map(({ number, labels }) => ({ number, labels })), [
+      { number: 214, labels: ['keep', 'rigger:escalated'] }, { number: 215, labels: ['unrelated'] },
+    ]);
+  });
+  assert.deepEqual(forgeHeld(fake).repository.pullRequests[0].comments, [{ body: 'PR comments remain separate.' }]);
+  assert.equal(Object.hasOwn(model.operations, 'setIssueLabels'), false);
+  assert.equal(Object.hasOwn(model.operations, 'issues'), false);
+});
+
+test('fake gh repository setup shares existing board issues unless the seed explicitly omits them', async () => {
+  const board = { columns: ['Review'], items: [{ type: 'issue', repository: WHERE.repo, number: 214, title: 'Held card', body: 'Existing body.', labels: ['keep'], column: 'Review' }] };
+  const fake = installed(board);
+  seedRepository(fake, { pullRequests: [{ number: 301, head: 'rigger-214', sha: 'a'.repeat(40) }] });
+  assert.deepEqual(await onPath(fake, () => reads().readIssue(214)), { number: 214, title: 'Held card', body: 'Existing body.', labels: ['keep'] });
+  const absent = installed(board);
+  seedRepository(absent, { issues: [] });
+  assert.equal(await onPath(absent, () => reads().readIssue(214)), null, 'explicit absence stays a negative fixture');
+});
+
 test('the real adapter reads cards, columns, fields and labels through the fake gh', async () => {
   const fake = installed({
     columns: ['Backlog', 'Ready', 'Coding', 'Review', 'Owner', 'Done'],
@@ -333,17 +367,33 @@ const ADAPTER_TESTS = ['forge-read.test.mjs', 'forge-adapter.test.mjs', 'forge-r
  * The arguments of every `gh` request the forge adapter issues while `file` runs, recorded by
  * running it under `gh-recording.mjs`, which writes what it recorded to the path it is given.
  */
-function commandsIssuedBy(file) {
+function commandsIssuedBy(file, requested = false) {
+  // Only an explicit boolean selects a control; Array.flatMap supplies an index.
+  const selected = requested === true;
+  const target = 'P2-S control: real then fake gh runs the live method and body probe through real gh';
   const into = join(temporaryDirectory('rigger-gh-recording-'), 'requests.json');
   // Run as a test run of its own: a child inheriting `NODE_TEST_CONTEXT` reports to this run's
   // runner instead, in a form only that runner reads.
   const { NODE_TEST_CONTEXT, ...env } = gitEnvironment();
-  const run = spawnSync(process.execPath, ['--import', join(HERE, 'gh-recording.mjs'), '--test-reporter=tap', join(HERE, file), into], {
+  if (selected) env.C755_TRACE = '1';
+  const selection = selected ? ['--test-name-pattern=^' + target + '$'] : [];
+  const run = spawnSync(process.execPath, ['--import', join(HERE, 'gh-recording.mjs'), '--test-reporter=tap', ...selection, join(HERE, file), into], {
     encoding: 'utf8',
     env,
   });
   if (process.env.C755_TRACE && file === 'forge-runners.test.mjs') process.stderr.write(run.stdout + run.stderr);
   const passed = Number(/^# pass (\d+)$/m.exec(run.stdout)?.[1] ?? 0);
+  if (selected) {
+    const failed = Number(/^# fail (\d+)$/m.exec(run.stdout)?.[1] ?? 0);
+    const cells = run.stderr.split('\n')
+      .filter((line) => line.startsWith('C755_TRACE '))
+      .map((line) => JSON.parse(line.slice('C755_TRACE '.length)))
+      .filter(({ stage }) => stage === 'cell-start');
+    assert.equal(cells.length, 1, 'the recorder control must execute exactly one native cell');
+    assert.deepEqual(cells[0].entries, ['R', 'F'], 'the recorder selected a different native fixture');
+    assert.equal(passed + failed, 1, 'the recorder control must execute exactly one test body');
+    assert.match(run.stdout, new RegExp('^(?:not )?ok \\d+ - ' + target + '$', 'm'), 'the selected P2-S target did not execute without a skip');
+  }
   assert.ok(run.status === 0 && passed > 0, `${file} did not run and pass while it was recorded:\n${run.stdout}${run.stderr}`);
   return JSON.parse(readFileSync(into, 'utf8'));
 }
@@ -375,7 +425,7 @@ function hasInstalledGh() {
 
 test('E-C P2-A4m: the recorder sees the target-file failure caused by selected gh loss', (t) => {
   if (!hasInstalledGh()) return t.skip('no installed real gh available for the recorder control');
-  assert.throws(() => withTargetControl('missing', () => commandsIssuedBy('forge-runners.test.mjs')), (error) => {
+  assert.throws(() => withTargetControl('missing', () => commandsIssuedBy('forge-runners.test.mjs', true)), (error) => {
     assert.match(error.message, /forge-runners\.test\.mjs did not run and pass while it was recorded/);
     assert.match(error.message, /P2-S control/);
     assert.match(error.message, /ENOENT/);
@@ -385,12 +435,12 @@ test('E-C P2-A4m: the recorder sees the target-file failure caused by selected g
 
 test('E-C P2-A4r: the recorder keeps its target green after a resolver-only change', (t) => {
   if (!hasInstalledGh()) return t.skip('no installed real gh available for the recorder control');
-  withTargetControl('resolver', () => commandsIssuedBy('forge-runners.test.mjs'));
+  withTargetControl('resolver', () => commandsIssuedBy('forge-runners.test.mjs', true));
 });
 
 test('E-C P1/P2/P3-A1: the unforced recorder observes a passing target file', (t) => {
   if (!hasInstalledGh()) return t.skip('no installed real gh available for the recorder control');
-  commandsIssuedBy('forge-runners.test.mjs');
+  commandsIssuedBy('forge-runners.test.mjs', true);
 });
 
 test('the gh commands the fake gh answers are the ones the adapter issues across its own tests, compared both ways', () => {

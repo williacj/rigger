@@ -301,7 +301,7 @@ export function readingLater(fake) {
  * `{ card, action, pull }`, where `pull` counts the pull triggers fired so far.
  *
  * `repository` is the fake repository the forge holds beside the board, seeded with `forge`, and
- * by default it holds nothing for any card. L2's facts call, which L3 awaits before it claims, is
+ * by default its issues share the board's issue facts, with no branch or pull request. L2's facts call, which L3 awaits before it claims, is
  * the real one over its reads, and L2's column changes read its pull requests to settle a maker's
  * outcome. A card whose maker exited 0, or any maker's card where `fresh`, holds an open pull
  * request from its line of work from L1's `dispatch.end` for it on, as a maker that opened one
@@ -417,8 +417,16 @@ export function world({
       return sink.emitter(context);
     },
   };
-  const repository = createFakeRepository(forge);
-  const l2 = columnChanges({ config: settings, sink, items: moving, reads: repository.operations, repositoryWrites: { postComment: repository.postComment, mergePullRequest: repository.mergePullRequest } });
+  const repository = createFakeRepository({ repo: settings.repo, issues: fake.issues(), ...forge });
+  const l2 = columnChanges({ config: settings, sink, items: moving, reads: repository.operations, repositoryWrites: {
+    postComment: repository.postComment, mergePullRequest: repository.mergePullRequest,
+    postIssueComment: (...args) => repository.postIssueComment(...args),
+    addIssueLabel: async (number, label) => {
+      const labels = await repository.addIssueLabel(number, label);
+      fake.setIssueLabels(settings.repo, number, labels.map(({ name }) => name));
+      return labels;
+    },
+  } });
   if (process.env.RIGGER_596_PHASE_ACTIVE) {
     const settle = l2.settled.bind(l2);
     l2.settled = async (card, ...args) => {
