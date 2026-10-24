@@ -70,7 +70,7 @@ function freshFacts(number, stage) {
   return {
     stage, line: `rigger-${number}`, branch: true, open: [{ number: 10 * number, head, base: 'main' }], merged: [],
     pull: read({ number: 10 * number, base: 'c'.repeat(40), head }), diff: read(''), mergeable: read('unknown'), rules: read([]), checks: read({}),
-    comments: read([{ ...marker, id: 'IC_1', author: 'williacj', permission: 'write', edited: false }]),
+    comments: read([{ ...marker, id: 'IC_1', author: 'williacj', permission: 'write', edited: false }]), closed: [],
   };
 }
 
@@ -213,5 +213,19 @@ test('computing the pull order leaves the fake board\'s write record empty', asy
   const plan = await planOf(fake);
 
   assert.deepEqual(pulled(plan), [92, 90]);
+  assert.deepEqual(fake.writes(), []);
+});
+
+
+test('closed removal enters the existing redo priority order with its following dispatch escalation or refusal intact', async () => {
+  const fake = boardOf([item(2, COLUMNS.ready, 'High'), item(5, COLUMNS.review, 'Low', { body: 'No acceptance.' }), item(4, COLUMNS.owner, 'High'), item(3, COLUMNS.review, 'High')]);
+  const history = [{ number: 733, head: 'd6d079f3258e1b74aad7baf725895b8d74c5b315', base: 'main' }];
+  const forge = Object.fromEntries([[3, 'review'], [4, 'owner'], [5, 'review']].map(([number, stage]) => [number, { stage, line: `rigger-${number}`, branch: false, open: [], merged: [], closed: history }]));
+  const order = await planOf(fake, { forge });
+  assert.deepEqual(pulled(order), [3, 4, 5, 2]);
+  assert.deepEqual(order.pulls.map(({ redo }) => redo), [true, true, true, false]);
+  assert.deepEqual(order.pulls.slice(0, 3).map(({ action, following }) => [action, following.action]), [['remove', 'dispatch'], ['remove', 'escalate'], ['remove', 'refuse']]);
+  assert.equal(order.pulls[2].following.reason, 'missing acceptance');
+  assert.deepEqual(order.refusals, [], 'the following refusal belongs to the selected removal');
   assert.deepEqual(fake.writes(), []);
 });

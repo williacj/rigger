@@ -448,7 +448,7 @@ export function world({
   const openFrom = (number) => {
     const head = topicFor(worktreeTopic(settings), number);
     const { pullRequests } = repository.held();
-    if (pullRequests.some((pull) => pull.head === head && !pull.merged)) return;
+    if (pullRequests.some((pull) => pull.head === head && !pull.merged && !pull.closed)) return;
     repository.open({ number: 1000 + pullRequests.length, head, sha: String(number).padStart(40, '0') });
   };
   const dispatches = heldStandIns(agent, role, attempts);
@@ -620,7 +620,7 @@ const OPEN_HEAD = '0'.repeat(40);
  * A pull-request read, standing in for the read side's, that answers one open pull request, #1,
  * from every line of work it is asked about, from memory.
  */
-export const oneOpenFromEveryLine = async () => ({ open: [{ number: 1, head: OPEN_HEAD, base: 'main' }], merged: [] });
+export const oneOpenFromEveryLine = async () => ({ open: [{ number: 1, head: OPEN_HEAD, base: 'main' }], merged: [], closed: [] });
 
 /**
  * A workspace stand-in that makes the directory it answers, `rigger-<card>` under `under`, and
