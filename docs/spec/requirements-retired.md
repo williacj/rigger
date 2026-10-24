@@ -42,7 +42,7 @@ Ids allocated here still count as allocated. The duplicate-id check reads both f
 | R-STATE-20 | A process can join a process group Rigger created after Rigger's last read of that group before a kill, be ended by that kill, and be reaped before Rigger reads the group again. No read can show such a process, so Rigger records nothing for it, and `R-STATE-12`, `R-STATE-13` and `R-STATE-19` do not reach it. |  | 2026-10-04 | R-STATE-26 |
 | R-FAIL-3 | A second failure of the same kind, without a success between them, closes admission and records why. | D12 | 2026-10-17 | R-FAIL-5 |
 | R-FAIL-5 | Rigger closes admission, and records why, when a card's second attempt fails in its environment the same way its first did. The ways are in `### R-FAIL-5 — Environment failures and the hold`. | D12 | 2026-10-22 | R-FAIL-6 |
-| R-FAIL-6 | Rigger closes admission, and records why, when a card's second attempt fails in its environment the same way its first did. The ways are in `### R-FAIL-6 — Environment failures and the hold`. | D12 | 2026-10-23 | R-FAIL-7 |
+| R-FAIL-6 | Rigger closes admission, and records why, when a card's second attempt fails in its environment the same way its first did. The ways are in `### R-FAIL-6 — Environment failures and the hold`. | D12 | 2026-10-24 | R-FAIL-7 |
 
 ### R-WORK-30 — When a merged card's directories are removed
 
