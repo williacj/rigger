@@ -24,6 +24,8 @@ import { stubCodex } from './stub-claude.mjs';
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { readRunner } from '../src/substrate/forge/runners.mjs';
+import { repositoryReads } from '../src/substrate/forge/read.mjs';
+import { seedRepository } from './fake-gh.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -1389,6 +1391,74 @@ async function gateReport(state = {}, source = starter()) {
   assert.equal(lines.length, 1, ran.text);
   return { ran, line: lines[0], sent, callers };
 }
+
+test('gate line keeps its whole verdict for every deployment policy answer', async () => {
+  const pass = '  ok         gate check required: rigger/gate is required on main; environment gate, GATE_APP_ID and GATE_APP_PRIVATE_KEY pass';
+  const policyFault = "  failed     gate check required: environment gate's deployment-branch policy must admit only branch main";
+  const unreadable = "  failed     gate check required: environment gate's deployment-branch policy list is absent, or not readable with this token";
+  const missing = '  failed     gate check required: readEnvironment on board 12 failed: reading environment gate in acme/widgets, gh answered no deployment-branch policy';
+  const withoutPolicy = gateEnvironment();
+  delete withoutPolicy.deployment_branch_policy;
+  const cases = [
+    ['default branch', {}, pass],
+    ['null policy', { environment: { ...gateEnvironment(), deployment_branch_policy: null } }, policyFault],
+    ['protected branches', { environment: { ...gateEnvironment(), deployment_branch_policy: { protected_branches: true, custom_branch_policies: true } } }, policyFault],
+    ['no custom policies', { environment: { ...gateEnvironment(), deployment_branch_policy: { protected_branches: false, custom_branch_policies: false } } }, policyFault],
+    ['another branch', { environment: { ...gateEnvironment(), branch_policies: [{ name: 'other', type: 'branch' }] } }, policyFault],
+    ['tag', { environment: { ...gateEnvironment(), branch_policies: [{ name: 'main', type: 'tag' }] } }, policyFault],
+    ['two policies', { environment: { ...gateEnvironment(), branch_policies: [{ name: 'main', type: 'branch' }, { name: 'other', type: 'branch' }] } }, policyFault],
+    ['unreadable list', { failures: { 'environments/gate/deployment-branch-policies?per_page=100&page=1': 'gh: Not Found (HTTP 404)' } }, unreadable],
+    ['missing policy field', { environment: withoutPolicy }, missing],
+    ['missing protected flag', { environment: { ...gateEnvironment(), deployment_branch_policy: { custom_branch_policies: true } } }, policyFault],
+    ['non-boolean protected flag', { environment: { ...gateEnvironment(), deployment_branch_policy: { protected_branches: 'false', custom_branch_policies: true } } }, policyFault],
+    ['non-boolean custom flag', { environment: { ...gateEnvironment(), deployment_branch_policy: { protected_branches: false, custom_branch_policies: 'true' } } }, policyFault],
+  ];
+  for (const [title, state, expected] of cases) {
+    const { line } = await gateReport(state);
+    assert.equal(line, expected, title);
+  }
+});
+
+test('readEnvironment answers every deployment policy shape without forge field names', async () => {
+  const normal = { protected_branches: false, custom_branch_policies: true };
+  const cases = [
+    ['default branch', normal, [{ name: 'main', type: 'branch' }]],
+    ['no policy', null, []],
+    ['protected branches', { protected_branches: true, custom_branch_policies: true }, []],
+    ['no custom policies', { protected_branches: false, custom_branch_policies: false }, []],
+    ['another branch', normal, [{ name: 'other', type: 'branch' }]],
+    ['tag', normal, [{ name: 'main', type: 'tag' }]],
+    ['two policies', normal, [{ name: 'main', type: 'branch' }, { name: 'other', type: 'branch' }]],
+    ['unreadable list', normal, [], true],
+    ['missing protected flag', { custom_branch_policies: true }, []],
+    ['non-boolean protected flag', { protected_branches: 'false', custom_branch_policies: true }, []],
+    ['non-boolean custom flag', { protected_branches: false, custom_branch_policies: 'true' }, []],
+  ];
+  const noForgeKeys = (value) => {
+    if (value === null || typeof value !== 'object') return;
+    for (const [key, nested] of Object.entries(value)) {
+      assert.doesNotMatch(key, /_/, `forge field in readEnvironment answer: ${key}`);
+      noForgeKeys(nested);
+    }
+  };
+  for (const [title, policy, branch_policies, unreadable] of cases) {
+    const fake = installFakeGh(temporaryDirectory('rigger-environment-vocabulary-'), STARTER_BOARD);
+    seedRepository(fake, {
+      environments: { gate: { can_admins_bypass: false, deployment_branch_policy: policy, branch_policies } },
+      environmentFailures: unreadable ? { 'environments/gate/deployment-branch-policies?per_page=100&page=1': { message: 'Not Found', status: '404' } } : {},
+    });
+    const send = (command, args) => spawnSync(fake.gh, args, { encoding: 'utf8', env: gitEnvironment() });
+    const held = await repositoryReads(STARTER_BOARD, { send }).readEnvironment('gate');
+    assert.equal(held.canAdminsBypass, false, title);
+    assert.deepEqual(held.deploymentBranchPolicy, policy === null ? null : {
+      protectedBranches: policy.protected_branches,
+      customBranchPolicies: policy.custom_branch_policies,
+    }, title);
+    assert.deepEqual(held.policies, unreadable ? null : policy?.custom_branch_policies === true ? branch_policies : [], title);
+    noForgeKeys(held);
+    assert.deepEqual((await fake.model()).writes(), [], title);
+  }
+});
 
 test('gate line passes when an active ruleset pins its context to the gate App and the environment settings pass', async () => {
   const { ran, line } = await gateReport();

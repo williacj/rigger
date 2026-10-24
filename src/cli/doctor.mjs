@@ -616,7 +616,7 @@ export async function gateCheck({ target = process.cwd(), ask, emitter } = {}) {
     if (!appKnown && app !== undefined) faults.push(`${GATE_APP_ID} ${app === null ? 'is absent, or not readable with this token' : 'must hold decimal digits only'}`);
     const policy = environment?.deploymentBranchPolicy;
     if (environment?.policies === null) faults.push(`environment ${GATE_ENVIRONMENT}'s deployment-branch policy list is absent, or not readable with this token`);
-    else if (environment && branch && (policy?.protected_branches !== false || policy?.custom_branch_policies !== true || environment.policies?.length !== 1
+    else if (environment && branch && (policy?.protectedBranches !== false || policy?.customBranchPolicies !== true || environment.policies?.length !== 1
       || environment.policies[0].type !== 'branch' || environment.policies[0].name !== branch.name)) {
       faults.push(`environment ${GATE_ENVIRONMENT}'s deployment-branch policy must admit only branch ${branch.name}`);
     }
