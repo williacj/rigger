@@ -526,7 +526,7 @@ test('a kind naming one role as both its maker and a judge is refused, and the r
 
 // proves R-SCHED-10, R-ESCALATE-13
 test('an escalation category Rigger does not offer is refused, and the refusal names it', () => {
-  assert.match(refusal({ ...rigger, escalate: ['critical', 'infrastructure'] }), /infrastructure/);
+  assert.match(refusal({ ...rigger, escalate: { critical: 'owner', infrastructure: 'owner' } }), /infrastructure/);
 });
 
 test('a consumer choosing among the fixed categories is accepted, adding none of its own', async () => {
@@ -534,10 +534,103 @@ test('a consumer choosing among the fixed categories is accepted, adding none of
   // are unless the consumer says otherwise. The default the architecture publishes is therefore
   // the whole set, which is what the offered categories are checked against.
   const every = (await publishedShape()).escalate;
-  assert.deepEqual(unique(CATEGORIES), unique(every));
-  assert.deepEqual(validate({ ...rigger, escalate: [] }), []);
-  for (const category of every) assert.deepEqual(validate({ ...rigger, escalate: [category] }), []);
+  assert.deepEqual(unique(CATEGORIES), unique(Object.keys(every)));
+  assert.deepEqual(validate({ ...rigger, escalate: {} }), []);
+  for (const category of Object.keys(every)) assert.deepEqual(validate({ ...rigger, escalate: { [category]: every[category] } }), []);
   assert.deepEqual(validate({ ...rigger, escalate: every }), []);
+});
+
+/**
+ * The three categories, typed from `R-ESCALATE-19` rather than read from `CATEGORIES`, so a test
+ * built on them fails if the validator's set and the requirement's ever part.
+ */
+const THREE = ['recorded-decision', 'critical', 'ambiguous'];
+
+/** This repository's config declaring this `escalate`, or none where it is `undefined`. */
+function escalating(escalate) {
+  const { escalate: _, ...config } = rigger;
+  return escalate === undefined ? config : { ...config, escalate };
+}
+
+// proves R-ESCALATE-13
+test('a config sending each category to the owner is accepted, whether it names one category, all three or none', () => {
+  assert.deepEqual(validate(escalating({})), [], 'an empty escalate');
+  for (const category of THREE) assert.deepEqual(validate(escalating({ [category]: 'owner' })), [], category);
+  assert.deepEqual(validate(escalating({ critical: 'owner', ambiguous: 'owner' })), [], 'one category absent');
+  assert.deepEqual(validate(escalating(Object.fromEntries(THREE.map((category) => [category, 'owner'])))), [], 'all three');
+});
+
+// proves R-ESCALATE-13
+test('a config declaring no escalate is accepted', () => {
+  assert.equal(Object.hasOwn(escalating(undefined), 'escalate'), false);
+  assert.deepEqual(validate(escalating(undefined)), []);
+});
+
+// proves R-ESCALATE-13
+test('escalate as a list of categories, or as any other value that is not an object, is refused, and the refusal names the key', () => {
+  for (const escalate of [THREE, ['critical'], [], null, undefined, 'owner', 'critical', 3]) {
+    const config = { ...escalating(undefined), escalate };
+    const earned = refusal(config);
+    assert.ok(earned.includes('`escalate`'), `escalate as ${inspect(escalate)} earned a refusal that does not name it: ${earned}`);
+  }
+});
+
+// proves R-ESCALATE-13, R-ESCALATE-19
+test('the keys escalate accepts are exactly the three categories, and any other key is refused by name', () => {
+  assert.deepEqual(unique(CATEGORIES), unique(THREE));
+  for (const category of THREE) assert.deepEqual(validate(escalating({ [category]: 'owner' })), [], category);
+  // A near miss of each category, a destination written where a category belongs, and every name
+  // an object inherits, declared as an own key so `__proto__` is probed as the others are.
+  for (const key of ['infrastructure', 'Critical', 'recorded_decision', 'ambiguity', 'owner', ...UNOFFERED]) {
+    const earned = refusal(declaring(escalating({}), ['escalate'], key));
+    assert.ok(earned.includes(`\`escalate.${key}\``), `\`escalate.${key}\` earned a refusal that does not name it: ${earned}`);
+  }
+});
+
+// proves R-ESCALATE-13
+test('a category whose destination is not a string is refused, and the refusal names the category', () => {
+  for (const category of THREE) {
+    // A list holding a declared role's name is read as that name by `Object.hasOwn`, so it is the
+    // probe that tells this refusal from the one for a role the config does not declare.
+    for (const destination of [null, undefined, 3, true, ['owner'], ['engineer'], { role: 'pm' }]) {
+      const earned = refusal(escalating({ [category]: destination }));
+      assert.ok(earned.includes(`\`escalate.${category}\``), `${category} to ${inspect(destination)} earned a refusal that does not name it: ${earned}`);
+    }
+  }
+});
+
+// proves R-ESCALATE-13
+test('a category sent to a role the config does not declare is refused, and the refusal names the role', () => {
+  // `adjudicator` is the role `D18` defers, so this config is guaranteed not to declare it. The
+  // others are a declared role's name in another case, and names that are no role at all.
+  for (const category of THREE) {
+    for (const role of ['adjudicator', 'Engineer', 'OWNER', '', ' ']) {
+      const earned = refusal(escalating({ [category]: role }));
+      assert.ok(earned.includes(`\`${role}\``), `${category} to ${inspect(role)} earned a refusal that does not name it: ${earned}`);
+    }
+  }
+});
+
+// proves R-ESCALATE-13, R-ESCALATE-14
+test('critical or a recorded-decision change sent to a declared role is refused, and the refusal names the category', () => {
+  const roles = Object.keys(rigger.roles);
+  assert.ok(roles.length > 0, 'this config declares no role, so nothing was checked');
+  for (const category of ['critical', 'recorded-decision']) {
+    for (const role of roles) {
+      const earned = refusal(escalating({ [category]: role, ambiguous: 'owner' }));
+      assert.ok(earned.includes(`\`escalate.${category}\``), `${category} to \`${role}\` earned a refusal that does not name it: ${earned}`);
+    }
+  }
+});
+
+// proves R-ESCALATE-13
+test('ambiguous sent to a declared role is accepted, beside the other two sent to the owner', () => {
+  const roles = Object.keys(rigger.roles);
+  assert.ok(roles.length > 0, 'this config declares no role, so nothing was checked');
+  for (const role of roles) {
+    assert.deepEqual(validate(escalating({ ambiguous: role })), [], role);
+    assert.deepEqual(validate(escalating({ 'recorded-decision': 'owner', critical: 'owner', ambiguous: role })), [], role);
+  }
 });
 
 // proves R-PROV-1

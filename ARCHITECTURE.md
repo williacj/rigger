@@ -212,7 +212,7 @@ export default {
     // Only cards that touch the demo tape pay for this.
     'vhs':    { run: 'brew list vhs || brew install vhs', select: { labels: ['area:demo'] } },
   },
-  escalate: ['recorded-decision', 'critical', 'ambiguous'],
+  escalate: { 'recorded-decision': 'owner', critical: 'owner', ambiguous: 'owner' },
   // improvement and clock arrive with M9 and M7. A consumer that switches them
   // off still has a complete scenario.
   telemetry: { push: false },
