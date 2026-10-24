@@ -31,7 +31,9 @@
     "docs/spikes/what-leaves-the-process-group.md": "strict",
     "docs/spikes/how-a-judge-reaches-head.md": "strict",
     "docs/spikes/what-headless-sessions-load.md": "strict",
-    "docs/spikes/what-unattended-sessions-are-refused.md": "strict"
+    "docs/spikes/what-unattended-sessions-are-refused.md": "strict",
+    "docs/guide.md": "strict",
+    "docs/reference.md": "strict"
   },
   "exempt": {
     "paths": {}
