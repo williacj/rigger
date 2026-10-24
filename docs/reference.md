@@ -19,8 +19,8 @@ The verbs, in order, with what each does, are the list in [`README.md`](../READM
 
 Every key a consumer can set, and its shape, is declared in
 [`ARCHITECTURE.md`, "Extension points"](../ARCHITECTURE.md#extension-points): the table, and the
-paragraphs below it that give each key's form. `rigger init` writes the starter config. The order
-you set them in is the guide's [setup](guide.md#setup).
+paragraphs below it that give each key's form. The order you set them in is the guide's
+[setup](guide.md#setup).
 
 ## Board columns and labels
 
@@ -28,7 +28,7 @@ you set them in is the guide's [setup](guide.md#setup).
   [`ARCHITECTURE.md`, "Extension points"](../ARCHITECTURE.md#extension-points).
 - **Kind and epic labels.** The consumer declares them, in the form the "Kinds of work" row of
   [`ARCHITECTURE.md`, "Extension points"](../ARCHITECTURE.md#extension-points) gives.
-- **The escalation label.** It is one of Rigger's fixed labels, named in
+- **The escalation label.** It is named in
   [`ARCHITECTURE.md`, "Escalation"](../ARCHITECTURE.md#escalation), and `D27` in
   [`docs/spec/decisions.md`](spec/decisions.md) records why it exists and who removes it.
 
@@ -37,8 +37,8 @@ What a card's column or labels tell you when it seems stuck is the guide's
 
 ## Escalation categories and destinations
 
-The categories are fixed by Rigger. The "Escalation categories" row of
-[`ARCHITECTURE.md`, "Extension points"](../ARCHITECTURE.md#extension-points) names them, and
+The categories are fixed by Rigger, and a consumer adds none (`R-ESCALATE-13`). The
+"Escalation categories" row of [`ARCHITECTURE.md`, "Extension points"](../ARCHITECTURE.md#extension-points) names them, and
 `R-ESCALATE-19` in [`docs/spec/requirements.md`](spec/requirements.md) defines what each one
 covers. How you answer one is the guide's [answering escalations](guide.md#answering-escalations).
 

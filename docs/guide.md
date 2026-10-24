@@ -27,14 +27,14 @@ judge is the maker (`R-LOOP-3`). The agent judges rule without waiting for each 
 (`R-LOOP-7`), and each rules on every acceptance item (`R-LOOP-5`).
 
 A change to the work or to the acceptance sends every judge back, and spends one round
-(`R-LOOP-8`). The rounds are bounded (`R-LOOP-9`); what happens when they run out is in
-[Answering escalations](#answering-escalations).
+(`R-LOOP-8`). The rounds each kind of work gets are bounded (`R-LOOP-9`); what happens when they
+run out is in [Answering escalations](#answering-escalations).
 
 Work reaches the main line only through the gate (`R-GATE-1`). The gate admits it only when every
 configured judge has returned a sound verdict on the work being merged, against the card's current
 acceptance, and the consumer's own checks have passed (`R-GATE-4` to `R-GATE-8`). Where a kind of
-work names you as a judge, you judge last (`R-LOOP-11`), and you post your verdict with
-`rigger verdict`, which shows you the whole verdict and posts it only once you confirm it
+work names you as a judge, you judge last (`R-LOOP-11`). You post your verdict with
+`rigger verdict`, and it posts only once you confirm the whole verdict it shows you
 (`R-VERDICT-8`, `R-VERDICT-9`). What a verdict holds is in the reference's
 [marker vocabulary](reference.md#the-marker-vocabulary).
 
@@ -43,30 +43,33 @@ work names you as a judge, you judge last (`R-LOOP-11`), and you post your verdi
 1. Meet the [prerequisites](../README.md#prerequisites).
 2. Install Rigger apart from the repository it will work on, since Rigger never runs against the
    source tree it is running from (`R-SAFE-5`).
-3. Run `rigger init` in your repository. It writes a starter config and forks the role templates
-   into your repository, where Rigger reads them from at run time (`R-SAFE-6`).
+3. Run `rigger init` in your repository. The role prompts and skills you use then live in your
+   repository, and Rigger reads none of them from its own package at run time (`R-SAFE-6`).
 4. Edit the config. The keys and their shapes are in the reference's
    [config keys](reference.md#config-keys); Rigger refuses a configuration naming anything it does
    not offer, and says what it refused (`R-SCHED-10`).
-5. Run `rigger setup-board` to create the board's columns, fields and labels.
+5. Run `rigger setup-board`.
 6. Provision the forge settings the gate needs, as
    [What the owner provisions](../ARCHITECTURE.md#what-the-owner-provisions) lists them.
 7. Run `rigger doctor` until it passes.
 
-Each verb's line is in [`README.md`](../README.md#install-and-usage).
+What each of these verbs does is its line in [`README.md`](../README.md#install-and-usage).
 
 ## Daily operation
 
-You put cards in the ready column your config names, and set their priority. Rigger pulls ready cards in priority
-order (`R-SCHED-1`), and runs no more at once than the concurrency you set (`R-SCHED-2`). A kind
-of work selects a card by its labels (`R-SCHED-13`). Rigger never pulls a card no kind selects,
-nor an epic (`R-SCHED-11`), and refuses one that two kinds select (`R-SCHED-12`).
+You put cards in the ready column your config names, and set their priority. Rigger pulls ready
+cards in priority order (`R-SCHED-1`), and runs no more at once than the concurrency you set
+(`R-SCHED-2`). A kind of work selects a card by its labels (`R-SCHED-13`). Rigger never pulls a
+card no kind selects, nor an epic (`R-SCHED-11`), and refuses one that two kinds select
+(`R-SCHED-12`).
 
-- `rigger plan` shows what the next run would pull, and what it refuses and why.
-- `rigger once` claims one card and takes it through its maker and judges; `rigger run` does the
-  same until the slots are full.
-- `rigger report` derives the signals from the record.
-- `rigger verdict` posts your verdict, as [How the loop works](#how-the-loop-works) says.
+1. Run `rigger plan` before anything runs.
+2. Run `rigger once` or `rigger run`.
+3. Run `rigger report` afterwards.
+4. Post your verdict with `rigger verdict` where a card waits on you, as
+   [How the loop works](#how-the-loop-works) says.
+
+What each verb does is its line in [`README.md`](../README.md#install-and-usage), not this page.
 
 A maker that exits successfully without an open pull request leaves its card where it was, and
 Rigger names the card and why (`R-WORK-18`). The verbs, in the README's order, are in the
@@ -77,15 +80,20 @@ reference's [verbs](reference.md#verbs).
 
 ## Answering escalations
 
-An escalation is a decision only you can make, in one of the categories the reference's
+Every escalation is in one of the categories Rigger fixes, and a consumer adds none
+(`R-ESCALATE-13`). The reference's
 [escalation categories and destinations](reference.md#escalation-categories-and-destinations)
-lists. A card carrying the escalation label waits: Rigger dispatches nothing for it, in any
-column, and escalates it no further, whoever added the label (`R-ESCALATE-10`). `rigger plan`
-names such a card as escalated, never as refused (`R-ESCALATE-10`).
+says where they are defined, and where each one goes is still a placeholder there. When a card's
+rounds run out, the loop escalates it as ambiguous (`R-LOOP-9`).
 
-You answer an escalation by removing the label. Rigger reads the escalation as answered once the
-label is gone, and never removes the label itself (`R-ESCALATE-11`; `D27`). A labelled card
-whose pull request the forge holds as merged is the exception, which `R-WORK-33` answers.
+A card carrying the escalation label waits: Rigger dispatches nothing for it, in any column, and
+escalates it no further, whoever added the label (`R-ESCALATE-10`). `rigger plan` names such a
+card as escalated, never as refused (`R-ESCALATE-10`). A labelled card whose pull request the
+forge holds as merged is the exception, which `R-WORK-33` answers (`R-ESCALATE-10`).
+
+You answer an escalation by removing the label (`R-ESCALATE-11`; `D27`). Rigger reads the
+escalation as answered once the label is gone, and never removes the label itself
+(`R-ESCALATE-11`).
 
 > **Placeholder.** The owner operation: how an escalation reaches you, with its comment on the
 > card's issue, the move to the owner's column and the label. Written by M6-D2, from M6-04 and
@@ -93,17 +101,16 @@ whose pull request the forge holds as merged is the exception, which `R-WORK-33`
 
 ## Running unattended
 
-`rigger run` claims cards until the slots are full, then exits; the verbs are in the reference's
-[verbs](reference.md#verbs).
+What `rigger run` does on each invocation is its line in the reference's
+[verbs](reference.md#verbs), not this page.
 
 > **Placeholder.** Running under launchd, `pause` and `resume`, and the hold and its status issue,
 > with how to clear it. Written by M6-D2, from M6-12a, M6-12b, M6-09, M6-08b, M6-11a and M6-11c.
 
 ## Troubleshooting
 
-Start with `rigger doctor` and `rigger plan`: `doctor` checks the setup the README's
-[verb list](../README.md#install-and-usage) names, and `plan` shows what the next run would pull
-and what it refuses. A card that seems stuck usually has one of these causes:
+Start with `rigger doctor`, then `rigger plan`; what each checks or shows is its line in the
+README's [verb list](../README.md#install-and-usage). A card that seems stuck usually has one of these causes:
 
 - **No acceptance, or one restating the title.** Refused (`R-CARD-7`, `R-CARD-8`).
 - **No kind selects it, or it is an epic.** Left on the board and not reported as refused
