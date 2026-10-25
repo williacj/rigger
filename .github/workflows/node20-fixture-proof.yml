@@ -1,0 +1,115 @@
+# ABOUTME: Runs the original E2 Mac Node20 proof against an explicitly frozen aggregate source.
+name: Mac Node20 fixture proof
+on:
+  pull_request:
+    branches: [rigger-778]
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  fixtures:
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'rigger-911' && !github.event.pull_request.draft }}
+    runs-on: macos-latest
+    timeout-minutes: 30
+    env:
+      AGGREGATE_SHA: 55863255f8b8c989506001a5e1dd4cea88b006af
+      FIXTURE_SHA256: 1b424e999129e469721e1d554564d0a2133fd86cb299889d4b65ec61287f7565
+      PROOF_JOURNAL: docs/journal/2026-10-25-0028-911-mac20-proof.md
+      SOURCE_GUARD: |
+        import assert from 'node:assert/strict';
+        import { readFileSync } from 'node:fs';
+        import { createHash } from 'node:crypto';
+        import { execFileSync } from 'node:child_process';
+        const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+        const aggregate = process.env.AGGREGATE_SHA;
+        assert.match(aggregate, /^[a-f0-9]{40}$/);
+        assert.equal(process.env.GITHUB_REPOSITORY, 'williacj/rigger');
+        assert.equal(process.env.GITHUB_EVENT_NAME, 'pull_request');
+        const pr = event.pull_request;
+        assert.equal(pr.head.repo.full_name, 'williacj/rigger');
+        assert.equal(pr.head.ref, 'rigger-911');
+        assert.equal(pr.base.ref, 'rigger-778');
+        assert.equal(pr.base.sha, aggregate);
+        assert.match(pr.head.sha, /^[a-f0-9]{40}$/);
+        const git = (...args) => execFileSync('git', args, { encoding: 'utf8', timeout: 30000 });
+        assert.equal(git('rev-parse', 'HEAD').trim(), process.env.GITHUB_SHA);
+        assert.equal(git('status', '--porcelain', '--untracked-files=no').trim(), '', 'tracked checkout must stay clean');
+        assert.equal(git('show', '-s', '--format=%P', 'HEAD').trim(), aggregate + ' ' + pr.head.sha);
+        assert.equal(git('show', '-s', '--format=%P', pr.head.sha).trim(), aggregate);
+        assert.equal(git('rev-parse', 'HEAD^{tree}').trim(), git('rev-parse', pr.head.sha + '^{tree}').trim());
+        const changes = git('diff', '--raw', '--no-abbrev', '-z', '--no-renames', aggregate, 'HEAD').split('\0');
+        assert.match(process.env.PROOF_JOURNAL, /^docs\/journal\/[0-9-]+-911-mac20-proof\.md$/);
+        assert.equal(changes.length, 5);
+        for (const [offset, path] of [[0, '.github/workflows/node20-fixture-proof.yml'], [2, process.env.PROOF_JOURNAL]]) {
+          assert.match(changes[offset], /^:000000 100644 0{40} [a-f0-9]{40} A$/);
+          assert.equal(changes[offset + 1], path);
+        }
+        assert.equal(changes[4], '');
+        const fixture = createHash('sha256').update(readFileSync('test/suite-reaper.test.mjs')).digest('hex');
+        assert.equal(fixture, process.env.FIXTURE_SHA256);
+        const get = async (path) => {
+          const response = await fetch('https://api.github.com/repos/williacj/rigger' + path, {
+            headers: { authorization: 'Bearer ' + process.env.GH_TOKEN, accept: 'application/vnd.github+json' },
+            signal: AbortSignal.timeout(30000),
+          });
+          assert.equal(response.ok, true, 'live source read failed');
+          return response.json();
+        };
+        const live = await get('/pulls/' + event.number);
+        assert.equal(live.state, 'open');
+        assert.equal(live.draft, false);
+        assert.equal(live.head.sha, pr.head.sha);
+        assert.equal(live.base.sha, aggregate);
+        assert.equal(live.base.ref, 'rigger-778');
+        assert.equal((await get('/git/ref/heads/rigger-778')).object.sha, aggregate);
+        console.log(JSON.stringify({ aggregate, head: pr.head.sha, checkout: process.env.GITHUB_SHA,
+          tree: git('rev-parse', 'HEAD^{tree}').trim(), fixture, node: process.version,
+          platform: process.platform, architecture: process.arch, runner: process.env.RUNNER_NAME,
+          runnerOS: process.env.RUNNER_OS, runnerArch: process.env.RUNNER_ARCH }));
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '26'
+      - name: Verify frozen proof source
+        run: node --input-type=module -e "$SOURCE_GUARD"
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: npm ci
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '20.20.2'
+      - name: Validate the actual Mac Node20 fixtures
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          proof_dir="$RUNNER_TEMP/911-node20"
+          mkdir -m 700 "$proof_dir"
+          export C615_EVIDENCE_ROOT="$proof_dir/containment"
+          mkdir -m 700 "$C615_EVIDENCE_ROOT"
+          node -e "require('node:assert/strict').equal(process.version, 'v20.20.2'); require('node:assert/strict').equal(process.platform, 'darwin')"
+          node --input-type=module -e "$SOURCE_GUARD" > "$proof_dir/source-before.json"
+          npm --version > "$proof_dir/npm-version.txt"
+          npm run test:host -- test/suite-reaper.test.mjs > "$proof_dir/stdout.log" 2> "$proof_dir/stderr.log" &
+          suite_pid=$!
+          printf '%s\n' "$suite_pid" > "$proof_dir/suite-pid.txt"
+          suite_status=0
+          wait "$suite_pid" || suite_status=$?
+          printf '%s\n' "$suite_status" > "$proof_dir/exit-status.txt"
+          cat "$proof_dir/stdout.log"
+          cat "$proof_dir/stderr.log" >&2
+          if [ "$suite_status" -ne 0 ]; then exit "$suite_status"; fi
+          node --input-type=module -e "$SOURCE_GUARD" > "$proof_dir/source-after.json"
+      - name: Keep the actual Node20 proof originals
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fixture-proof-node20
+          path: ${{ runner.temp }}/911-node20
+          if-no-files-found: error
