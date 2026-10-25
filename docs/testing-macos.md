@@ -110,6 +110,9 @@ Main pushes run portable smoke rather than repeating the full Mac proof.
 Demo recording runs for relevant full batches, an explicit owner `ci:demo` PR label
 request, and protected-main regression. Its existing Homebrew/VHS setup and artifact
 checks remain. A requested demo cannot silently skip and still satisfy the aggregate.
+Only regular additions/edits confined to direct journal files or to
+`test/package-budget.test.mjs` are known recording exemptions; unknown and
+mixed impact requires the demo.
 
 Daily 03:00 UTC and explicit workflow dispatch run full regression of current
 protected main on the existing personal Mac, with hosted demo recording. Dispatch

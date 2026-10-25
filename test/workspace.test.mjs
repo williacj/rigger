@@ -1586,7 +1586,7 @@ test('L1\'s workspace make answers repository, the path of the repository it mad
   assert.equal(made.repository, here.repository);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('removing a merged card clears its workspace, judge and scratch directories while leaving another root entry', async (t) => {
   const here = world(t);
   const made = await here.make(42);
@@ -1615,7 +1615,7 @@ test('removing a merged card clears its workspace, judge and scratch directories
   ]);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a person-locked card worktree is left with its lock and blocks the Done move', async (t) => {
   const here = world(t);
   mkdirSync(here.root);
@@ -1629,7 +1629,7 @@ test('a person-locked card worktree is left with its lock and blocks the Done mo
   assert.deepEqual(here.events().filter(({ layer, event }) => layer === 'L1' && event === 'workspace.left').map(({ path: left, reason }) => ({ left, reason: reason.includes('kept by a person') })), [{ left: path, reason: true }]);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a card workspace already gone has its stale unlocked registration pruned', async (t) => {
   const here = world(t);
   const made = await here.make(42);
@@ -1642,7 +1642,7 @@ test('a card workspace already gone has its stale unlocked registration pruned',
   assert.deepEqual(here.events().filter(({ layer, event }) => layer === 'L1' && event === 'workspace.removed'), []);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a person-locked judge worktree is left with its lock and blocks the Done move', async (t) => {
   const here = world(t);
   const head = here.push('head for a judge');
@@ -1657,7 +1657,7 @@ test('a person-locked judge worktree is left with its lock and blocks the Done m
   assert.ok(here.events().some(({ layer, event, path, role }) => layer === 'L1' && event === 'workspace.left' && path === judge.path && role === 'reviewer'));
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a second removal pass changes nothing and records no removal event', async (t) => {
   const here = world(t);
   await here.make(42);
@@ -1670,7 +1670,7 @@ test('a second removal pass changes nothing and records no removal event', async
   assert.deepEqual({ entries: readdirSync(here.root), list: worktreeList(here.repository), events: here.events() }, afterFirst);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a card with no directories can be removed without an event or a failure', async (t) => {
   const here = world(t);
 
@@ -1680,7 +1680,7 @@ test('a card with no directories can be removed without an event or a failure', 
   assert.deepEqual(here.events(), []);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('replace-rule refusals leave workspace, judge and scratch paths named without failing removal', async (t) => {
   const here = world(t);
   const workspace = join(here.root, 'rigger-42');
@@ -1713,7 +1713,7 @@ test('replace-rule refusals leave workspace, judge and scratch paths named witho
   assert.equal(here.events().some(({ layer, event }) => layer === 'L1' && event === 'workspace.removed'), false);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('an unrecordable removal event rejects as EVENT_REFUSED and a later pass succeeds', async (t) => {
   const here = world(t);
   const made = await here.make(42);
@@ -1736,7 +1736,7 @@ test('an unrecordable removal event rejects as EVENT_REFUSED and a later pass su
   assert.equal(worktreeList(here.repository).includes(made.path), false);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a git removal that fails partway leaves the path named and a later pass removes it', async (t) => {
   const here = world(t);
   const made = await here.make(42);
@@ -1762,7 +1762,7 @@ test('a git removal that fails partway leaves the path named and a later pass re
   assert.equal(worktreeList(here.repository).includes(made.path), false);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a merged card workspace is removed with uncommitted files and local commits', async (t) => {
   const here = world(t);
   const made = await here.make(42);
@@ -1776,7 +1776,7 @@ test('a merged card workspace is removed with uncommitted files and local commit
   assert.equal(gitIn(here.repository, 'rev-parse', 'refs/heads/rigger-42').trim(), local);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a workspace path linked to its card worktree removes both the worktree and the link', async (t) => {
   const here = world(t);
   mkdirSync(here.root);
@@ -1792,7 +1792,7 @@ test('a workspace path linked to its card worktree removes both the worktree and
   assert.deepEqual(here.events().filter(({ layer, event }) => layer === 'L1' && event === 'workspace.removed').map(({ path: removed }) => removed), [tree]);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a gone card worktree with a person lock keeps its registration and blocks Done', async (t) => {
   const here = staleLockWorld(t, 'rigger-44', 'kept by a person');
   const before = worktreeList(here.repository);
@@ -1804,7 +1804,7 @@ test('a gone card worktree with a person lock keeps its registration and blocks 
   assert.ok(here.events().some(({ layer, event, path }) => layer === 'L1' && event === 'workspace.left' && path === here.path));
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('gone judge worktrees are pruned and their empty topic directory is removed', async (t) => {
   const here = world(t);
   const head = here.push('head for a judge');
@@ -1819,7 +1819,7 @@ test('gone judge worktrees are pruned and their empty topic directory is removed
   assert.equal(worktreeList(here.repository).includes(judge.head), false);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a gone judge worktree with a person lock stays registered and blocks Done', async (t) => {
   const here = world(t);
   const head = here.push('head for a judge');
@@ -1833,7 +1833,7 @@ test('a gone judge worktree with a person lock stays registered and blocks Done'
   assert.ok(here.events().some(({ layer, event, path, role }) => layer === 'L1' && event === 'workspace.left' && path === judge.main && role === 'reviewer'));
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a gone judge worktree locked by an interrupted add is unlocked and pruned', async (t) => {
   const here = world(t);
   const head = here.push('head for a judge');
@@ -1847,7 +1847,7 @@ test('a gone judge worktree locked by an interrupted add is unlocked and pruned'
   assert.equal(worktreeList(here.repository).includes(judge.head), false);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a topic directory or its parent reached through a symbolic link is left and named', async (t) => {
   const here = world(t);
   mkdirSync(here.root);
@@ -1868,7 +1868,7 @@ test('a topic directory or its parent reached through a symbolic link is left an
   ]);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a refused workspace.left record stops removal with the refused path unchanged', async (t) => {
   const here = world(t);
   const path = join(here.root, 'rigger-42');
@@ -1891,7 +1891,7 @@ test('a refused workspace.left record stops removal with the refused path unchan
   assert.equal(readFileSync(join(path, 'kept'), 'utf8'), 'keep\n');
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a failed git replace-rule check leaves the workspace named and Review until a later pull removes it', async (t) => {
   const here = world(t);
   const made = await here.make(42);
@@ -1917,7 +1917,7 @@ test('a failed git replace-rule check leaves the workspace named and Review unti
   assert.equal(existsSync(made.path), false);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a git replace-rule check that times out leaves Review and is retried by a later pull', async (t) => {
   const here = world(t);
   const made = await here.make(42);
@@ -1943,7 +1943,7 @@ test('a git replace-rule check that times out leaves Review and is retried by a 
   assert.equal(existsSync(made.path), false);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a filesystem replace-rule check that cannot read a topic leaves Review until a later pull retries', async (t) => {
   const here = world(t);
   const base = join(here.root, 'scratch', 'rigger-42');
@@ -1965,7 +1965,7 @@ test('a filesystem replace-rule check that cannot read a topic leaves Review unt
   assert.equal(existsSync(base), false);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a refused topic workspace.removed rejects as EVENT_REFUSED and records no false workspace.left', async (t) => {
   for (const kind of ['judges', 'scratch']) {
     const here = world(t);
@@ -1988,7 +1988,7 @@ test('a refused topic workspace.removed rejects as EVENT_REFUSED and records no 
   }
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a failed git worktree recognition check keeps the merged card in Review rather than treating it as refused', async (t) => {
   const here = world(t);
   const made = await here.make(42);
@@ -2023,7 +2023,7 @@ async function scratchLeft(here, path) {
   assert.equal(here.events().some(({ event, path: removed }) => event === 'workspace.removed' && removed === path), false);
 }
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('merged-card removal leaves a scratch directory in a checkout unchanged and names it', async (t) => {
   const here = world(t);
   const path = join(here.root, 'scratch', 'rigger-42', 'reviewer');
@@ -2034,7 +2034,7 @@ test('merged-card removal leaves a scratch directory in a checkout unchanged and
   assert.equal(readFileSync(join(here.root, '.git'), 'utf8'), 'checkout marker\n');
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('merged-card removal leaves a scratch directory holding another repository checkout unchanged and names it', async (t) => {
   const here = world(t);
   const path = join(here.root, 'scratch', 'rigger-42', 'reviewer');
@@ -2042,7 +2042,7 @@ test('merged-card removal leaves a scratch directory holding another repository 
   await scratchLeft(here, path);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('merged-card removal leaves scratch at, inside or holding a registered worktree with its git entry moved aside', async (t) => {
   for (const position of ['above', 'at', 'inside']) {
     const here = world(t);
@@ -2058,7 +2058,7 @@ test('merged-card removal leaves scratch at, inside or holding a registered work
   }
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('real merged-card removal tries later directories after one fails and names every path remaining', async (t) => {
   const here = world(t);
   const made = await here.make(42);
@@ -2099,7 +2099,7 @@ test('real merged-card removal tries later directories after one fails and names
   assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.done });
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a workspace whose git entry outlives its registration is left named and reaches Done on the first of two pulls', async (t) => {
   const here = world(t);
   const made = await here.make(42);
@@ -2137,7 +2137,7 @@ test('a workspace whose git entry outlives its registration is left named and re
   assert.match(events[0].reason, /not a workspace of the repository/);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a filesystem answer that a scratch path is not a directory leaves it unchanged and named without holding Done back', async (t) => {
   const here = world(t);
   const path = join(here.root, 'scratch', 'rigger-42', 'reviewer');
@@ -2159,7 +2159,7 @@ test('a filesystem answer that a scratch path is not a directory leaves it uncha
   assert.match(events[1].reason, /not empty/);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('an unreadable worktree administrative directory keeps Review until a later pull can remove it', async (t) => {
   const here = world(t);
   const made = await here.make(42);
@@ -2197,7 +2197,7 @@ function escalationRole(here, role, names, number = 42) {
   return { path, trees, role };
 }
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('merged-card removal clears every eligible escalation role layout and retains other cards and the local branch', async (t) => {
   const here = world(t);
   await here.make(42);
@@ -2236,7 +2236,7 @@ test('merged-card removal clears every eligible escalation role layout and retai
   assert.deepEqual(held(other.path), otherBefore);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a gone person-locked escalation registration blocks Done while other eligible roles are removed', async (t) => {
   for (const role of ['a-person', 'z-person']) {
     const here = world(t);
@@ -2261,7 +2261,7 @@ test('a gone person-locked escalation registration blocks Done while other eligi
   }
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('escalation removal leaves files and symbolic links at each hierarchy level without withholding Done', async (t) => {
   for (const level of ['root', 'topic', 'role']) for (const shape of ['file', 'link', 'dangling-link']) {
     const here = world(t);
@@ -2302,7 +2302,7 @@ test('escalation removal leaves files and symbolic links at each hierarchy level
   }
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('escalation replacement refusals preserve each guarded role before or after an eligible role', async (t) => {
   for (const cell of ['main-checkout', 'other-repository', 'attached', 'extra-content', 'nested-worktree']) for (const role of ['a-refused', 'z-refused']) {
     const here = world(t);
@@ -2341,7 +2341,7 @@ test('escalation replacement refusals preserve each guarded role before or after
   }
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a present person-locked escalation role keeps every tree and its lock while other roles finish', async (t) => {
   for (const role of ['a-person', 'z-person']) {
     const here = world(t);
@@ -2366,7 +2366,7 @@ test('a present person-locked escalation role keeps every tree and its lock whil
   }
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('escalation removal prunes stale registrations and unlocks only initializing locks across absent parents', async (t) => {
   for (const state of ['present', 'role-gone', 'topic-gone', 'parent-gone']) for (const locked of [false, true]) {
     const here = world(t);
@@ -2388,7 +2388,7 @@ test('escalation removal prunes stale registrations and unlocks only initializin
   }
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('an escalation role containing initializing and person locks preserves both until the person unlocks', async (t) => {
   for (const role of ['a-person', 'z-person']) {
     const here = world(t);
@@ -2413,7 +2413,7 @@ test('an escalation role containing initializing and person locks preserves both
   }
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('an absent escalation hierarchy causes no removal event or failure and keeps unrelated root content', async (t) => {
   const here = world(t);
   mkdirSync(here.root);
@@ -2428,7 +2428,7 @@ test('an absent escalation hierarchy causes no removal event or failure and keep
   assert.deepEqual(here.events().filter(({ layer }) => layer === 'L1'), []);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('failed or timed-out escalation worktree checks keep Review and a later pull retries them', async (t) => {
   for (const cell of ['failed', 'timed-out']) {
     const here = world(t);
@@ -2459,7 +2459,7 @@ test('failed or timed-out escalation worktree checks keep Review and a later pul
   }
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('unreadable escalation topic or worktree administration withholds Done and retries the remaining guards', async (t) => {
   for (const cell of ['topic', 'administration']) {
     const here = world(t);
@@ -2495,7 +2495,7 @@ test('unreadable escalation topic or worktree administration withholds Done and 
   }
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('whole and partial escalation removals name what remains and retry after later roles finish', async (t) => {
   for (const cell of ['whole', 'partial']) {
     const here = world(t);
@@ -2538,7 +2538,7 @@ test('whole and partial escalation removals name what remains and retry after la
   }
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('refused escalation removal or left events retain the actual state and unrecorded event until retry', async (t) => {
   for (const cell of ['removed-role', 'removed-topic', 'left-role']) {
     const here = world(t);
@@ -2574,7 +2574,7 @@ test('refused escalation removal or left events retain the actual state and unre
     assert.equal(existsSync(made.path), cell === 'left-role');
   }
 });
-// proves R-WORK-33
+// proves R-WORK-35
 test('escalation removal preserves an empty target behind either hierarchy symlink and names that link refusal', async (t) => {
   for (const level of ['root', 'topic']) {
     const here = world(t);
@@ -2606,4 +2606,92 @@ test('escalation removal preserves an empty target behind either hierarchy symli
     assert.ok(left[0].reason.startsWith(`${link} is a symbolic link`), `${level}: the reason must identify the refused link, not a nonempty ancestor`);
     assert.deepEqual(here.events().filter(({ layer, event }) => layer === 'L1' && event === 'workspace.removed'), []);
   }
+});
+
+
+/** The existing shared-removal fixture, with its actual forge history closed and its card in Owner. */
+async function closedRemoval(here, options = {}) {
+  const built = mergedRemoval(here, options);
+  built.repository.update(421, { merged: false, closed: true });
+  await built.fake.operations.moveItem('item-1', COLUMNS.owner);
+  return built;
+}
+
+// proves R-WORK-36
+test('closed cleanup reaches shared real Git removal for every directory class before the ordinary owner action and keeps branches and unrelated trees', async (t) => {
+  const here = world(t);
+  const made = await here.make(42);
+  const branch = branchAt(here.repository, 'rigger-42');
+  const head = here.push('head for the closed card judge');
+  const judge = await workspaceRemoval.makeJudgeDirectory({ root: here.root, topic: 'rigger-{number}', card: 42, role: 'reviewer', head, repository: here.repository, sink: here.sink });
+  const scratch = await workspaceRemoval.makeScratch({ base: made.scratch, role: 'reviewer', card: 42, repository: here.repository, sink: here.sink });
+  writeFileSync(join(scratch, 'content'), 'closed scratch content');
+  const escalation = escalationRole(here, 'architect', ['main', 'head']);
+  const other = escalationRole(here, 'reviewer', ['main'], 43);
+  const otherBefore = held(other.path);
+  const unrelated = join(here.root, 'unrelated');
+  writeFileSync(unrelated, 'unrelated existing content');
+  const paths = [made.path, judge.path, escalation.path, scratch];
+  const topics = ['judges', 'escalations', 'scratch'].map((kind) => join(here.root, kind, 'rigger-42'));
+  const built = await closedRemoval(here);
+  const comment = built.repository.postIssueComment;
+  let ordinary = 0;
+  built.repository.postIssueComment = async (...args) => {
+    ordinary += 1;
+    for (const path of [...paths, ...topics]) assert.equal(existsSync(path), false, `${path} remained until the ordinary action`);
+    return comment(...args);
+  };
+  const before = here.events().length;
+  const reached = await built.loop.pull(1);
+  assert.equal(ordinary, 1);
+  assert.equal(reached[0].action, 'escalate');
+  assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.owner });
+  for (const path of [...paths, ...topics]) assert.equal(existsSync(path), false, path);
+  for (const tree of [made.path, judge.main, judge.head, ...escalation.trees]) assert.equal(worktreeList(here.repository).includes(tree), false, tree);
+  assert.equal(branchAt(here.repository, 'rigger-42'), branch);
+  assert.equal(readFileSync(unrelated, 'utf8'), 'unrelated existing content');
+  assert.deepEqual(held(other.path), otherBefore);
+  const removed = here.events().slice(before).filter(({ layer, event }) => layer === 'L1' && event === 'workspace.removed').map(({ path }) => path);
+  for (const path of paths) assert.ok(removed.includes(path), `${path} had no actual removal record`);
+  const repeated = await closedRemoval(here);
+  const events = here.events().length;
+  assert.equal((await repeated.loop.pull(1))[0].action, 'escalate');
+  assert.deepEqual(here.events().slice(events).filter(({ layer }) => layer === 'L1'), [], 'a repeated eligible cleanup of absent directories neither fails nor records a removal');
+  assert.equal(branchAt(here.repository, 'rigger-42'), branch);
+  assert.deepEqual(held(other.path), otherBefore);
+  assert.equal(readFileSync(unrelated, 'utf8'), 'unrelated existing content');
+});
+
+
+// proves R-WORK-36
+test('actual closed cleanup retains and names every person-locked path while removing eligible siblings and still escalating the card', async (t) => {
+  const here = world(t);
+  const made = await here.make(42);
+  lockWorktreeAt(here.repository, made.path, 'workspace kept by a person');
+  const kept = escalationRole(here, 'a-kept', ['main']);
+  lockWorktreeAt(here.repository, kept.trees[0], 'escalation kept by a person');
+  const eligible = escalationRole(here, 'z-eligible', ['main', 'head']);
+  const scratch = await workspaceRemoval.makeScratch({ base: made.scratch, role: 'reviewer', card: 42, repository: here.repository, sink: here.sink });
+  writeFileSync(join(scratch, 'content'), 'eligible sibling content');
+  const before = { workspace: held(made.path), escalation: held(kept.path), branch: branchAt(here.repository, 'rigger-42') };
+  const built = await closedRemoval(here);
+  await assert.rejects(built.loop.pull(1), (failure) => {
+    assert.ok(failure.errors[0] instanceof AggregateError);
+    for (const path of [made.path, kept.path]) assert.ok(failure.errors[0].errors.some(({ message }) => message.includes(path)), `${path} was lost from the actual failure`);
+    assert.equal(failure.reached[0].action, 'escalate');
+    return true;
+  });
+  assert.deepEqual({ workspace: held(made.path), escalation: held(kept.path), branch: branchAt(here.repository, 'rigger-42') }, before);
+  assert.match(worktreeList(here.repository), /locked workspace kept by a person/);
+  assert.match(worktreeList(here.repository), /locked escalation kept by a person/);
+  assert.equal(existsSync(eligible.path), false);
+  assert.equal(existsSync(scratch), false);
+  assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.owner });
+  assert.equal(built.repository.held().issues[0].comments.length, 1);
+  assert.deepEqual((await built.fake.operations.readItems())[0].labels, ['type:change', 'rigger:escalated']);
+  const left = here.events().filter(({ event }) => event === 'workspace.left');
+  for (const path of [made.path, kept.path]) assert.ok(left.some(({ path: named }) => named === path));
+  const events = here.events().length;
+  assert.deepEqual(await built.loop.pull(1), []);
+  assert.deepEqual(here.events().slice(events), [], 'the failed cleanup is not repeated while labelled');
 });

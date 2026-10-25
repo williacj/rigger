@@ -612,7 +612,7 @@ export async function workspaceHandle({ root, topic, repository, sink }) {
  */
 export const judgeDirectoryHandle = ({ root, topic, repository, sink }) => (card, role, head) => makeJudgeDirectory({ root, topic, card, role, head, repository, sink });
 
-/** Removes the directories of a merged card that their replace rules admit, before its Done move. */
+/** Removes a card's directories under their replace rules. */
 export async function removeCardDirectories({ root, topic, card, repository, sink, timeout }) {
   if (!isAbsolute(root)) throw new Error(`the root ${root} is not an absolute path`);
   const name = topicFor(topic, card);

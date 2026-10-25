@@ -73,6 +73,6 @@ export default {
     // work requires it, so the work does not (`R-PROV-1`).
     vhs: { run: 'brew list vhs || brew install vhs', select: { labels: ['area:demo'] } },
   },
-  escalate: ['recorded-decision', 'critical', 'ambiguous'],
+  escalate: { 'recorded-decision': 'owner', critical: 'owner', ambiguous: 'owner' },
   telemetry: { push: false },
 };

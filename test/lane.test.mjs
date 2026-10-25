@@ -375,7 +375,7 @@ test('a merge claim records its pull after the claim and before merge.start, hol
   assert.deepEqual(reached.map(({ card, action }) => ({ card, action })), [{ card: 83, action: 'merge' }]);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a lane merge records removal after merge.end and before the transition to Done', async () => {
   let built;
   built = merging([83], { removeDirectories: async (card) => {
@@ -392,7 +392,7 @@ test('a lane merge records removal after merge.end and before the transition to 
   assert.ok(end >= 0 && end < removal && removal < done, JSON.stringify(events));
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('an already-merged answer removes directories before Done without another merge call', async () => {
   const removed = [];
   const built = merging([84], { removeDirectories: async (card) => { removed.push(card); } });
@@ -408,7 +408,7 @@ test('an already-merged answer removes directories before Done without another m
   assert.equal(built.repository.merges().length, 1);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a refused lane merge leaves directories until a later pull reads the merge', async () => {
   const removed = [];
   const built = merging([85], { removeDirectories: async (card) => { removed.push(card); } });
@@ -423,7 +423,7 @@ test('a refused lane merge leaves directories until a later pull reads the merge
   assert.deepEqual(await columnsOf(built.fake), { 85: COLUMNS.done });
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a failed lane merge removes nothing until a later pull reads it as merged', async () => {
   const removed = [];
   const built = merging([86], { removeDirectories: async (card) => { removed.push(card); } });
@@ -438,7 +438,7 @@ test('a failed lane merge removes nothing until a later pull reads it as merged'
   assert.deepEqual(await columnsOf(built.fake), { 86: COLUMNS.done });
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('an unrecorded merge end removes nothing until a later pull reads the merge', async () => {
   const removed = [];
   const built = merging([87], { removeDirectories: async (card) => { removed.push(card); } });
@@ -455,7 +455,7 @@ test('an unrecorded merge end removes nothing until a later pull reads the merge
   assert.deepEqual(await columnsOf(built.fake), { 87: COLUMNS.done });
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a removal failure after one directory was removed leaves Review until a later pull removes the rest', async () => {
   let built;
   let calls = 0;
@@ -477,7 +477,7 @@ test('a removal failure after one directory was removed leaves Review until a la
   assert.ok(events.findIndex(({ event, path }) => event === 'workspace.removed' && path === '/remaining') < done);
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a later pull removes directories after the first run ended between merge and removal', async () => {
   let calls = 0;
   const built = merging([89], { removeDirectories: async () => {
@@ -493,7 +493,7 @@ test('a later pull removes directories after the first run ended between merge a
   assert.deepEqual(await columnsOf(built.fake), { 89: COLUMNS.done });
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a lane merge not made after its card cannot be reread removes nothing until a later pull reads a merge', async () => {
   const fake = boardOf([cardIn(90, COLUMNS.review)]);
   const board = { ...handleOn(fake), readItems: async () => [] };

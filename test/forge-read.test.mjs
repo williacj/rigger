@@ -837,14 +837,14 @@ test('given a branch, the repository read answers the open pull request from it 
 
   const read = await repositoryReads(BOARD, { send }).readPullRequests('rigger-214');
 
-  assert.deepEqual(read, { open: [{ number: 12, head: 'c'.repeat(40), base: 'main' }], merged: [] });
-  assert.match(documentOf(send.sent[0].slice(1)), /pullRequests\(headRefName: "rigger-214", states: \[OPEN, MERGED\], first: 100\)/);
+  assert.deepEqual(read, { open: [{ number: 12, head: 'c'.repeat(40), base: 'main' }], merged: [], closed: [] });
+  assert.match(documentOf(send.sent[0].slice(1)), /pullRequests\(headRefName: "rigger-214", states: \[OPEN, MERGED, CLOSED\], first: 100\)/);
 });
 
 test('given a branch with no open pull request, the repository read answers none', async () => {
   const send = repositoryForge({ 'pull requests': pulls() });
 
-  assert.deepEqual(await repositoryReads(BOARD, { send }).readPullRequests('rigger-214'), { open: [], merged: [] });
+  assert.deepEqual(await repositoryReads(BOARD, { send }).readPullRequests('rigger-214'), { open: [], merged: [], closed: [] });
 });
 
 test('given a branch with two open pull requests, the repository read answers both', async () => {
@@ -879,7 +879,7 @@ test("the repository read answers the pull requests gh answered for this reposit
 
   const read = await repositoryReads(BOARD, { send }).readPullRequests('m4/477-structure-deltas');
 
-  assert.deepEqual(read, { open: [], merged: [{ number: 503, head: '2241b82e646247db82dae465dd0d2fbcb7e098e0', base: 'main' }] });
+  assert.deepEqual(read, { open: [], merged: [{ number: 503, head: '2241b82e646247db82dae465dd0d2fbcb7e098e0', base: 'main' }], closed: [] });
 });
 
 test('given a branch name, the repository read answers whether the forge holds that branch', async () => {
@@ -1698,4 +1698,98 @@ test('the environment reads cross the real fake gh executable and leave its writ
   assert.equal(await reads.readEnvironmentSecret('release/gate', 'APP/KEY'), true);
   assert.deepEqual((await fake.model()).writes(), []);
   assert.equal(fake.sent().length, 4);
+});
+
+
+test('the line read retains closed pull facts across first middle and last mixed pages and excludes other repositories', async () => {
+  // gh api graphql on 2026-10-22 returned this closed PR733 head/base from tq/667-reaper-poll.
+  const closed = { number: 733, head: 'd6d079f3258e1b74aad7baf725895b8d74c5b315', base: 'main' };
+  const send = repositoryForge({ 'pull requests': { paged: {
+    null: pullPage([pullNode({ ...closed, state: 'CLOSED' }), pullNode({ number: 734 })], 'middle'),
+    middle: pullPage([
+      pullNode({ number: 735, state: 'CLOSED', head: 'e'.repeat(40), base: 'release', from: 'WILLIACJ/RIGGER' }),
+      pullNode({ number: 736, state: 'CLOSED', from: 'someone/rigger' }),
+      pullNode({ number: 737, state: 'CLOSED', from: null }),
+    ], 'last'),
+    last: pullPage([pullNode({ number: 738, state: 'MERGED' }), pullNode({ number: 739, state: 'CLOSED', head: 'f'.repeat(40), base: 'stable' })]),
+  } } });
+
+  const read = await repositoryReads(BOARD, { send }).readPullRequests('tq/667-reaper-poll');
+
+  assert.deepEqual(read, {
+    open: [{ number: 734, head: String(734).padStart(40, 'a'), base: 'main' }],
+    merged: [{ number: 738, head: String(738).padStart(40, 'a'), base: 'main' }],
+    closed: [closed, { number: 735, head: 'e'.repeat(40), base: 'release' }, { number: 739, head: 'f'.repeat(40), base: 'stable' }],
+  });
+  assert.equal(send.sent.length, 3);
+  for (const sent of send.sent) assert.match(documentOf(sent.slice(1)), /states: \[OPEN, MERGED, CLOSED\]/);
+});
+
+
+import { factsCall } from '../src/workflow/facts.mjs';
+import { nextAction } from '../src/workflow/next-action.mjs';
+import { createFakeRepository } from './fake-repository.mjs';
+
+// proves R-WORK-36, R-WORK-37
+test('the actual board reader carries a captured CLOSED issue and an open issue through identical Review and Owner cleanup eligibility', async () => {
+  // gh2.99.0 captured board6 at 2026-09-25T13:35Z. GitHub issue/events reads on 2026-10-22
+  // show issue214 closed at05:25:20Z (event05:25:21Z), with no reopen; issue271 was created
+  // at13:23:37Z and first closed at15:12:29Z. The capture therefore contains both states.
+  const captured = JSON.parse(readFileSync(join(FIXTURES, 'board-6-items-2026-09-25.json'), 'utf8')).data.repositoryOwner.projectV2.items.nodes;
+  const examples = captured.filter((node) => [214, 271].includes(node.content?.number));
+  assert.deepEqual(examples.map(({ id }) => id), ['PVTI_lAHOBzomGc4BfS2xzg8rn1M', 'PVTI_lAHOBzomGc4BfS2xzg8wtWU']);
+  for (const [stage, column] of [['review', COLUMNS.review], ['owner', COLUMNS.owner]]) {
+    const nodes = structuredClone(examples);
+    for (const node of nodes) {
+      const status = node.fieldValues.nodes.filter((field) => field.field?.name === 'Status');
+      assert.equal(status.length, 1);
+      status[0].name = column;
+    }
+    const send = forge({ pages: { null: itemPage(nodes) } });
+    const { items } = await readSide(BOARD, { send }).readPriority();
+    assert.deepEqual(items.map(({ number, column }) => [number, column]), [[214, column], [271, column]]);
+    for (const [at, item] of items.entries()) {
+      assert.equal(item.body, examples[at].content.body, 'the captured content stays unchanged');
+      assert.equal(item.title, examples[at].content.title);
+      assert.deepEqual(item.labels, examples[at].content.labels.nodes.map(({ name }) => name));
+    }
+    const repository = createFakeRepository({ branches: ['rigger-214', 'rigger-271'], pullRequests: [
+      { number: 730, head: 'rigger-214', sha: 'a'.repeat(40), closed: true },
+      { number: 731, head: 'rigger-271', sha: 'b'.repeat(40), closed: true },
+    ] });
+    const settings = { ...rigger, board: { ...rigger.board, columns: COLUMNS } };
+    const decide = await factsCall({ config: settings, reads: repository.operations, decide: (card) => nextAction(card, settings.kinds, settings.epicLabel, { roles: settings.roles }) })(items);
+    for (const item of items) {
+      const next = decide(item);
+      assert.equal(next.action, 'remove', `${stage}/${item.number}: ${JSON.stringify(next)}`);
+      assert.equal(next.following.action, 'escalate');
+      assert.equal(next.following.category, 'ambiguous');
+      assert.equal(next.following.line, `rigger-${item.number}`);
+    }
+    assert.equal(send.sent.length, 1, 'no unqueried issue-state field or extra read is manufactured');
+  }
+});
+
+
+// proves R-WORK-36
+test('a later closed-result page failure or timeout cannot become partial cleanup facts', async () => {
+  for (const position of ['null', 'middle', 'last']) for (const timeout of [false, true]) {
+    const pages = {
+      null: pullPage([pullNode({ number: 1901, state: 'CLOSED' })], 'middle'),
+      middle: pullPage([pullNode({ number: 1902, state: 'CLOSED' })], 'last'),
+      last: pullPage([pullNode({ number: 1903, state: 'CLOSED' })]),
+    };
+    pages[position] = { ...failed(timeout ? 'gh: request timed out' : 'gh: HTTP 502'), ...(timeout ? { timedOut: true } : {}) };
+    const send = repositoryForge({ branches: branchPage([]), 'pull requests': { paged: pages } });
+    let decisions = 0;
+    const atPull = factsCall({ config: rigger, reads: repositoryReads(BOARD, { send }), decide: () => { decisions += 1; return { action: 'remove' }; } });
+    await assert.rejects(atPull([{ number: 190, column: COLUMNS.owner }]), (error) => {
+      assert.match(error.message, /card #190/);
+      assert.match(error.message, /readPullRequests/);
+      assert.match(error.message, timeout ? /ran past its timeout/ : /502/);
+      return true;
+    });
+    assert.equal(decisions, 0);
+    assert.equal(send.sent.length, 2 + ['null', 'middle', 'last'].indexOf(position), 'branch read followed by exactly the prefix through the failed page');
+  }
 });

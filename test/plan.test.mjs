@@ -337,3 +337,36 @@ test('plan names a labelled card when its workflow facts cannot be read', async 
   assert.equal(observed.filter((args) => args[1] === 'graphql' && args[3].includes('pullRequests(')).length, 1);
   assert.deepEqual((await fake.model()).writes(), []);
 });
+
+
+import { mkdirSync, readdirSync } from 'node:fs';
+
+// proves R-WORK-36
+test('plan describes closed removal followed by redo escalation or refusal and changes neither directories nor forge facts', async () => {
+  const directory = temporaryDirectory('rigger-plan-closed-directories-');
+  const settings = { ...template, repo: REPO, board: { ...template.board, project: PROJECT }, worktrees: { ...template.worktrees, root: directory } };
+  const consumer = repositoryIn('rigger-plan-closed-consumer-', { 'rigger.config.mjs': `export default ${JSON.stringify(settings)};\n` });
+  const items = [card(91, 'Review'), card(92, 'Owner'), card(93, 'Review', { body: 'No acceptance.' }), card(94, 'Owner', { labels: ['type:change', 'rigger:escalated'] })];
+  for (const item of items) {
+    mkdirSync(join(directory, `rigger-${item.number}`));
+    writeFileSync(join(directory, `rigger-${item.number}`, 'kept'), `keep ${item.number}`);
+  }
+  const fake = installFakeGh(temporaryDirectory('rigger-plan-closed-gh-'), { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, items } });
+  seedRepository(fake, { pullRequests: items.map(({ number }) => ({ number: 1000 + number, head: `rigger-${number}`, sha: String(number).padStart(40, 'a'), closed: true })) });
+  const held = () => { const { sent, ...facts } = JSON.parse(readFileSync(join(dirname(fake.gh), 'board.json'), 'utf8')); return facts; };
+  const before = held();
+  const files = readdirSync(directory);
+  const ran = spawnSync(process.execPath, [bin, 'plan'], { cwd: consumer, encoding: 'utf8', env: { ...gitEnvironment(), PATH: `${dirname(fake.gh)}${delimiter}${process.env.PATH}` } });
+  assert.equal(ran.error, undefined);
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.deepEqual(pulled(ran.stdout), [91, 92, 93]);
+  assert.match(pullLines(ran.stdout)[0], /remove directories, then change.*\(redo\)/);
+  assert.match(pullLines(ran.stdout)[1], /remove directories, then escalate ambiguous.*\(redo\)/);
+  assert.match(pullLines(ran.stdout)[2], /remove directories, then refuse: missing acceptance.*\(redo\)/);
+  assert.match(ran.stdout, /escalated #94/);
+  assert.doesNotMatch(ran.stdout, /undefined/);
+  assert.deepEqual(held(), before, 'all issue, pull and board facts remain unchanged');
+  assert.deepEqual((await fake.model()).writes(), []);
+  assert.deepEqual(readdirSync(directory), files);
+  for (const item of items) assert.equal(readFileSync(join(directory, `rigger-${item.number}`, 'kept'), 'utf8'), `keep ${item.number}`);
+});
