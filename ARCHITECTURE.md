@@ -634,8 +634,12 @@ closer with an id `resume` did not read survives, and counts as coming after the
 that read. A `pause` whose link comes after that read finds the card already running, and claims
 already held finish (`R-SCHED-3`). `plan` and `doctor` read the directory through the module before
 they print. No reader counts an unreadable closer as open: L3 claims nothing and names it, as a
-start does for an unreadable record of process groups. `pause` adds its closer beside an unreadable
-closer and replaces nothing.
+start does for an unreadable record of process groups. A closed admission is no failure of the
+pull. `take` claims nothing and answers the closers it read, and `once` and `run` say whether each
+closer is the owner's or a hold's, name its reason and time, and exit 0. An unreadable admission is
+a failure of the pull. `take` claims nothing and rejects, naming each unreadable path and its cause,
+and the verb exits non-zero naming them. `pause` adds its closer beside an unreadable closer and
+replaces nothing.
 
 L3's own event family records each change of admission. `pause` and `resume` append those events to
 the same stream from their own process, beside a running engine's.
