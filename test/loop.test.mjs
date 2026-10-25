@@ -2197,6 +2197,36 @@ async function blockedAdmission(action, name, content = closerText()) {
 }
 
 // proves R-SCHED-3, R-SCHED-16
+test('a blocked take attempts no admission write, even one removed before it returns', async () => {
+  const directory = stateOf();
+  seed(directory, 'owner-a1.json');
+  const built = world({ ...admissionAction('dispatch'), directory });
+  const admissionDirectory = admissionOf(directory);
+  const writes = [];
+  const originals = new Map();
+  for (const name of ['writeFileSync', 'appendFileSync', 'mkdirSync', 'renameSync', 'unlinkSync', 'rmSync']) {
+    const original = fs[name];
+    originals.set(name, original);
+    fs[name] = (...args) => {
+      const paths = name === 'renameSync' ? args.slice(0, 2) : args.slice(0, 1);
+      if (paths.some((path) => String(path) === admissionDirectory || String(path).startsWith(`${admissionDirectory}/`))) {
+        writes.push({ operation: name, paths: paths.map(String) });
+      }
+      return original(...args);
+    };
+  }
+  syncBuiltinESMExports();
+  try {
+    const answer = await built.loop.pull();
+    assert.equal(answer.admission.state, 'closed');
+    assert.deepEqual(writes, [], 'take attempted an admission write');
+  } finally {
+    for (const [name, original] of originals) fs[name] = original;
+    syncBuiltinESMExports();
+  }
+});
+
+// proves R-SCHED-3, R-SCHED-16
 test('an owner closer stops L2 maker dispatch from Ready and Coding', async () => {
   for (const action of ['dispatch', 'redo']) await blockedAdmission(action, 'owner-a1.json');
 });
