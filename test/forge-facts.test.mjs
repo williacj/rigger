@@ -272,3 +272,20 @@ test('a fresh facts call after the owner removes the escalation label restores t
   ]);
   assert.deepEqual(answered.labels, ['type:change', 'area:other']);
 });
+
+
+test('the workflow facts boundary carries whole closed identities for Review and Owner cards without reviewing a closed pull', async () => {
+  const cards = [cardIn(83, columns.review), cardIn(84, columns.owner)];
+  const closed = [{ number: 733, head: 'd6d079f3258e1b74aad7baf725895b8d74c5b315', base: 'main' }, { number: 734, head: 'e'.repeat(40), base: 'release' }];
+  const made = [];
+  const reads = {
+    readBranches: async (lines) => { made.push(['branches', lines]); return { 'rigger-83': true, 'rigger-84': false }; },
+    readPullRequests: async (line) => { made.push(['pulls', line]); return { open: [], merged: [], closed }; },
+  };
+  const decide = await factsCall({ config, reads, decide: (card) => card.forge })(cards);
+  assert.deepEqual(cards.map((card) => decide(card)), [
+    { stage: 'review', line: 'rigger-83', branch: true, open: [], merged: [], closed },
+    { stage: 'owner', line: 'rigger-84', branch: false, open: [], merged: [], closed },
+  ]);
+  assert.deepEqual(made, [['branches', ['rigger-83', 'rigger-84']], ['pulls', 'rigger-83'], ['pulls', 'rigger-84']]);
+});

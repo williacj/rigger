@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -16,7 +16,7 @@ import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { runCommand } from '../src/substrate/process.mjs';
 import { agentAuth, configValidity, doctor, ghAuth, nodeVersion, report, sameTree } from '../src/cli/doctor.mjs';
 import { installFakeGh } from './fake-gh.mjs';
-import { cloneInto, repositoryIn } from './git-repository.mjs';
+import { cloneInto, gitIn, repositoryIn } from './git-repository.mjs';
 import { stubGh } from './stub-gh.mjs';
 import { UNKILLED } from './process-fixtures.mjs';
 import { stubClaude } from './stub-claude.mjs';
@@ -704,14 +704,56 @@ test('the whole report is lines, and carries no stack trace', async () => {
  * `origin` is then set to the URL this checkout's own `origin` names, because a clone made from a
  * path has a filesystem path as its remote and `repoSlug` reads `owner/name` out of that remote:
  * a local path is no such thing, and the config `init` writes would name a repository nobody has.
+ * Tracked candidate changes are applied through Git so the clone matches the doctor being tested.
  */
-function freshClone() {
-  const into = cloneInto(root, join(temporaryDirectory('rigger-clone-'), 'rigger'));
-  const published = spawnSync('git', ['-C', root, 'remote', 'get-url', 'origin'], { encoding: 'utf8', env: gitEnvironment() });
+function freshClone(from = root) {
+  const into = cloneInto(from, join(temporaryDirectory('rigger-clone-'), 'rigger'));
+  const patch = spawnSync('git', ['-C', from, 'diff', '--binary', '--no-color', '--no-ext-diff', '--no-textconv', 'HEAD', '--'], { env: gitEnvironment() });
+  assert.ifError(patch.error);
+  assert.equal(patch.signal, null, 'reading the tracked candidate patch was interrupted');
+  assert.equal(patch.status, 0, patch.stderr.toString());
+  if (patch.stdout.length > 0) {
+    const applied = spawnSync('git', ['-C', into, 'apply', '--binary'], { input: patch.stdout, env: gitEnvironment() });
+    assert.ifError(applied.error);
+    assert.equal(applied.signal, null, 'applying the tracked candidate patch was interrupted');
+    assert.equal(applied.status, 0, applied.stderr.toString());
+  }
+  const published = spawnSync('git', ['-C', from, 'remote', 'get-url', 'origin'], { encoding: 'utf8', env: gitEnvironment() });
   assert.equal(published.status, 0, 'this checkout has no `origin`, so the clone has no name to take');
   assert.equal(spawnSync('git', ['-C', into, 'remote', 'set-url', 'origin', published.stdout.trim()], { env: gitEnvironment() }).status, 0);
   return into;
 }
+
+test('the real doctor clone carries tracked candidate changes without changing its source repository', () => {
+  const source = repositoryIn('rigger-doctor-candidate-');
+  writeFileSync(join(source, 'candidate.txt'), 'committed value\n');
+  gitIn(source, 'add', 'candidate.txt');
+  gitIn(source, 'commit', '-qm', 'committed fixture');
+  const published = 'https://github.com/williacj/rigger.git';
+  gitIn(source, 'remote', 'add', 'origin', published);
+  writeFileSync(join(source, 'added.txt'), 'staged addition\n');
+  gitIn(source, 'add', 'added.txt');
+  writeFileSync(join(source, 'candidate.txt'), 'tracked candidate value\n');
+  const snapshot = () => ({
+    head: gitIn(source, 'rev-parse', 'HEAD'),
+    index: gitIn(source, 'write-tree'),
+    staged: gitIn(source, 'diff', '--cached', '--binary', '--no-ext-diff', '--no-textconv'),
+    working: gitIn(source, 'diff', '--binary', '--no-ext-diff', '--no-textconv'),
+    status: gitIn(source, 'status', '--porcelain=v1'),
+  });
+  const before = snapshot();
+
+  const clone = freshClone(source);
+
+  assert.equal(readFileSync(join(clone, 'candidate.txt'), 'utf8'), 'tracked candidate value\n');
+  assert.equal(readFileSync(join(clone, 'added.txt'), 'utf8'), 'staged addition\n');
+  assert.equal(gitIn(clone, 'remote', 'get-url', 'origin').trim(), published);
+  assert.equal(realpathSync(gitIn(clone, 'rev-parse', '--show-toplevel').trim()), realpathSync(clone));
+  assert.notEqual(clone, source);
+  assert.deepEqual(snapshot(), before);
+  assert.equal(readFileSync(join(source, 'candidate.txt'), 'utf8'), 'tracked candidate value\n');
+  assert.equal(readFileSync(join(source, 'added.txt'), 'utf8'), 'staged addition\n');
+});
 
 test('doctor passes on a fresh clone of this repository after init', async () => {
   // The card's fourth item, and M0's own exit condition: `rigger doctor` runs against this

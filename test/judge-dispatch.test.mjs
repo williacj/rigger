@@ -398,7 +398,7 @@ test('given N of 1, two pullable cards and loop().run(), card B is not claimed u
   assert.ok(claimB > Math.max(...ends), JSON.stringify(events));
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a judge still running when its pull request merges is removed only after the judge ends', SETTLES_WITHIN, async () => {
   const removed = [];
   const built = judgeWorld({ cards: [cardIn(7, COLUMNS.review)], forge: { pullRequests: [pullFor(7)] }, removeDirectories: async (card) => { removed.push(card); } });
