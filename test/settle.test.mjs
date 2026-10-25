@@ -173,7 +173,7 @@ test('L2\'s settle makes one read of the forge for that card and answers the fac
   const facts = await w.l2.settled(w.card, exited(0));
 
   assert.deepEqual(w.reads, ['rigger-12']);
-  assert.deepEqual(facts, { line: 'rigger-12', open: [{ number: 120, head: pullFrom(12, 120).sha, base: 'main' }], merged: [], ...UNREAD });
+  assert.deepEqual(facts, { line: 'rigger-12', open: [{ number: 120, head: pullFrom(12, 120).sha, base: 'main' }], merged: [], ...UNREAD, closed: [] });
 });
 
 // proves R-WORK-18
@@ -289,6 +289,6 @@ test('L2\'s settle reads, in its one read for the card it settles, its one open 
     comments: { status: 'fulfilled', value: [{ ...comments[0], id: 'IC_130_1', author: 'rigger-fake', permission: 'write', edited: false }] },
     mergeable: { status: 'fulfilled', value: 'unknown' },
     rules: { status: 'fulfilled', value: [] },
-    checks: { status: 'fulfilled', value: {} },
+    checks: { status: 'fulfilled', value: {} }, closed: [],
   });
 });

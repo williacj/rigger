@@ -31,8 +31,8 @@ export default {
       select: { labels: ['type:change'] },
       maker: 'engineer',
       judges: [
-        { role: 'reviewer', provider: { claude: 'codex', codex: 'claude' } },
-        { role: 'architect', provider: { claude: 'codex', codex: 'claude' } },
+        { role: 'reviewer', provider: { claude: 'codex', codex: 'codex' } },
+        { role: 'architect', provider: { claude: 'codex', codex: 'codex' } },
       ],
       provisioning: ['npm-ci', 'vhs'],
     },

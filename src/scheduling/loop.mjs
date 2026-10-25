@@ -211,7 +211,7 @@ function released(release, claim, failure) {
  * maker exits 0. `clock` supplies the time and pause for a repeated forge read.
  * `judgeDirectory(card, role, head)` is L1's make of a judge's directory, injected, as
  * `judged` says (the architect's ruling 4's addendum on #467). `removeDirectories(card)` is L1's
- * merged-card removal, injected. `state` is the state directory L1 records each dispatch's process
+ * shared guarded directory removal, injected. `state` is the state directory L1 records each dispatch's process
  * group in, which L3 hands L1's `dispatch` unread (ruling 10).
  * `kill()` is L1's kill of recorded process groups, injected, and the first call on the handle
  * awaits it before L3 records or reads anything, as `claiming` says. A handle is refused when it
@@ -522,11 +522,15 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * was claimed, and whether or not its release event was refused. L2's report of a refused
    * transition event passes through unchanged as the work's failure where it comes from the claim;
    * from the maker's settle it comes back in the card's `settled`, as `attempt` says. `excluded`
-   * receives a stopped card or a card whose judges L2 withheld before `freed` fires another
-   * trigger, and lives for this run alone.
+   * receives a stopped card, a card whose judges L2 withheld, or a removal's following refusal
+   * or ignore before `freed` fires another trigger, and lives for this run alone.
+   * A removal keeps this claim through guarded cleanup and its following ordinary action.
+   * Cleanup failure is retained beside that action's failure and never replaces the action;
+   * a following Coding move is attempted only after cleanup.
    */
   const work = async (claim, freed, excluded) => {
-    const { card, next, decide: atPull } = claim;
+    const { card, decide: atPull } = claim;
+    let next = claim.next;
     /** Keeps a card whose judges L2 withheld out of later pulls in this run. */
     const remember = (answer) => {
       if (answer.withheld?.length > 0) excluded?.add(card.number);
@@ -535,10 +539,24 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     // Whether the start was made: for a redo as for a Ready card, only once `start` returns.
     let claimed = false;
     let failure = null;
+    let removalFailure = null;
     let reached;
     try {
       await start(claim);
       claimed = true;
+      if (next.action === 'remove') {
+        try {
+          await removeDirectories(card.number);
+        } catch (failure) {
+          removalFailure = failure;
+        }
+        next = next.following;
+        if (['dispatch', 'judge', 'continue'].includes(next.action)) {
+          claimed = false;
+          await l2.claimed(card, next);
+          claimed = true;
+        }
+      }
       const kept = (made) => { reached = made; };
       if (next.action === 'move') {
         if (next.to === 'done') await removeDirectories(card.number);
@@ -551,6 +569,9 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         await l2.escalated(card, next);
         excluded?.add(card.number);
         reached = { card: card.number, ...next };
+      } else if (['refuse', 'ignore'].includes(next.action)) {
+        excluded?.add(card.number);
+        reached = { card: card.number, ...next };
       } else {
         reached = next.action === 'judge'
           ? { card: card.number, judges: await judges(card, next, (options) => remember(atPull(card, [], options)), (ended) => kept({ card: card.number, judges: ended })) }
@@ -560,6 +581,9 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       failure = thrown;
       if (['move', 'return', 'escalate'].includes(next.action)) excluded?.add(card.number);
       if (thrown.card === card.number && Array.isArray(thrown.attemptFailures)) excluded?.add(card.number);
+    }
+    if (removalFailure !== null) {
+      failure = failure === null ? removalFailure : new AggregateError([removalFailure, failure], `card #${card.number}'s directory removal and following action failed`);
     }
     if (next.action === 'continue' && !(reached?.settled?.status === 'fulfilled' && reached.settled.value !== undefined)) {
       excluded?.add(card.number);

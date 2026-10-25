@@ -204,10 +204,41 @@ test('after once claims a card from the ready column, the state directory\'s eve
   assert.ok(events.some((event) => event.layer === 'L2' && event.event === 'transition'), JSON.stringify(events));
 });
 
+// proves R-ESCALATE-7, R-ESCALATE-8, R-ESCALATE-9, R-ESCALATE-15
+test('once completes an owner escalation on its issue and a new invocation neither dispatches nor escalates it again', async () => {
+  const head = '6'.repeat(40);
+  const marker = markerComment({ card: 10, pull: 11, head, body: ADMITTED, verdict: 'critical', toSound: "Keep the user's files; $(literal) is data." });
+  let before;
+  const ran = once({ items: [card(10, 'Review')] }, {
+    seed: { pullRequests: [{ number: 11, head: 'rigger-10', sha: head, comments: [marker] }] },
+    prepare: ({ consumer }) => { before = worktreeList(consumer); },
+  });
+  assert.equal(ran.code, 0, ran.err);
+  assert.match(ran.out, /#10.*escalate.*critical/);
+  assert.deepEqual(await columnsOf(ran), { 10: 'Owner' });
+  const held = () => JSON.parse(readFileSync(join(dirname(ran.fake.gh), 'board.json'), 'utf8')).repository;
+  const issue = held().issues.find(({ number }) => number === 10);
+  assert.equal(issue.comments.length, 1);
+  assert.equal(issue.comments[0].body, "Rigger escalates card #10 to the owner (critical).\n\nreviewer (critical): Keep the user's files; $(literal) is data.\n\nPull request: #11\nHead: 6666666666666666666666666666666666666666\n");
+  assert.deepEqual(issue.labels, ['type:change', 'rigger:escalated']);
+  assert.deepEqual(held().pullRequests[0].comments, [marker]);
+  assert.deepEqual(eventsOf(ran).filter(({ event }) => event === 'transition').map(({ from, to, cause }) => ({ from, to, cause })), [{ from: 'review', to: 'owner', cause: 'escalated' }]);
+  const sent = ran.fake.sent().length;
+  const again = ran.rerun();
+  assert.equal(again.code, 0, again.err);
+  assert.match(again.out, /no card.*pullable/i);
+  assert.equal(held().issues.find(({ number }) => number === 10).comments.length, 1);
+  assert.equal(eventsOf(again).filter(({ event }) => event === 'review.escalate').length, 1);
+  assert.deepEqual(ran.fake.sent().slice(sent).filter((args) => args[3] === 'POST' || args[3]?.startsWith('query=mutation')), []);
+  assert.deepEqual(again.agentRuns(), []);
+  assert.deepEqual(worktreeList(ran.consumer), before);
+  assert.deepEqual(eventsOf(again).filter(({ layer }) => layer === 'L1'), []);
+});
+
 for (const { action, ruling, merged, expectedColumn, line } of [
   { action: 'move', merged: true, expectedColumn: 'Done', line: /#10.*move.*done/ },
   { action: 'return', ruling: { coverage: 'insufficient', coverageReason: 'The card asks for two verbs.' }, expectedColumn: 'Review', line: /#10.*return.*#11/ },
-  { action: 'escalate', ruling: { verdict: 'critical', toSound: 'Keep the user files.' }, expectedColumn: 'Review', line: /#10.*escalate.*critical/ },
+  { action: 'escalate', ruling: { verdict: 'critical', toSound: 'Keep the user files.' }, expectedColumn: 'Owner', line: /#10.*escalate.*critical/ },
 ]) {
   test(`once prints the ${action} it carried out for a Review card and exits zero`, async () => {
     const head = '6'.repeat(40);
@@ -227,7 +258,7 @@ for (const { action, ruling, merged, expectedColumn, line } of [
   });
 }
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('once removes a person-merged card’s real worktrees and scratch before moving it to Done', async () => {
   const temporary = temporaryDirectory('rigger-once-removal-');
   const worktrees = join(temporary, 'workspaces');
@@ -261,8 +292,8 @@ test('once removes a person-merged card’s real worktrees and scratch before mo
   assert.ok(events.filter(({ layer, event }) => layer === 'L1' && event === 'workspace.removed').every((event) => events.indexOf(event) < done), JSON.stringify(events));
 });
 
-// proves R-WORK-33
-test('once leaves a closed unmerged pull request’s workspace in place', async () => {
+// proves R-WORK-35
+test('once retains a workspace when an open line snapshot meets a closed merge preflight', async () => {
   const temporary = temporaryDirectory('rigger-once-closed-');
   const worktrees = join(temporary, 'workspaces');
   const settings = { ...config(), worktrees: { ...config().worktrees, root: worktrees } };
@@ -1448,4 +1479,148 @@ test('the owner label control updates seeded issue facts by repository and issue
   assert.deepEqual(labelled.repository.issues[0], { ...before.repository.issues[0], labels: ['type:change', 'rigger:escalated'] });
   assert.deepEqual(labelled.repository.issues.slice(1), before.repository.issues.slice(1));
   assert.deepEqual(labelled.model.items[0].labels, ['type:change', 'rigger:escalated']);
+});
+
+
+// proves R-WORK-36
+test('once reports the ordinary refusal after closed cleanup exactly once with the existing refusal exit status', async () => {
+  const directory = temporaryDirectory('rigger-once-closed-refusal-');
+  const settings = config();
+  settings.worktrees = { ...settings.worktrees, root: directory };
+  const scratch = join(directory, 'scratch', 'rigger-91', 'reviewer');
+  const ran = once({ items: [card(91, 'Review', { body: 'No acceptance.' })] }, { settings,
+    seed: { pullRequests: [{ number: 1091, head: 'rigger-91', sha: 'a'.repeat(40), closed: true }] },
+    prepare: () => {
+      mkdirSync(scratch, { recursive: true });
+      writeFileSync(join(scratch, 'cleanup-witness.txt'), 'closed card scratch');
+      assert.equal(existsSync(scratch), true, 'actual scratch exists before once');
+    },
+  });
+  assert.equal(existsSync(scratch), false, 'closed cleanup removes actual scratch before the ordinary once refusal');
+  assert.equal(ran.code, 0, ran.err);
+  assert.match(ran.out, /rigger once: card #91 refused: missing acceptance/);
+  assert.equal((ran.out.match(/missing acceptance/g) ?? []).length, 1, ran.out);
+  assert.doesNotMatch(ran.out, /undefined|no card was pullable|judges alone/);
+  assert.deepEqual(ran.agentRuns(), []);
+  assert.deepEqual((await ran.model()).writes(), []);
+  assert.deepEqual((await (await ran.model()).operations.readItems()).map(({ number, column }) => [number, column]), [[91, 'Review']]);
+  const state = JSON.parse(readFileSync(join(dirname(ran.fake.gh), 'board.json'), 'utf8'));
+  assert.equal((state.repository.issues[0].comments ?? []).length, 0);
+  assert.deepEqual(state.repository.issues[0].labels, ['type:change']);
+});
+
+
+import { lockWorktreeAt } from './git-repository.mjs';
+
+// proves R-WORK-36, R-WORK-38
+test('once and run report the ordinary Owner result plus every real remaining cleanup path and wait for label acknowledgement', SETTLES_WITHIN, async () => {
+  const number = 92;
+  const directory = temporaryDirectory('rigger-once-closed-remaining-');
+  const settings = config();
+  settings.worktrees = { ...settings.worktrees, root: directory };
+  const workspace = join(directory, `rigger-${number}`);
+  const escalation = join(directory, 'escalations', `rigger-${number}`, 'reviewer', 'main');
+  const ran = once({ items: [card(number, 'Owner')] }, { settings,
+    seed: { pullRequests: [{ number: 1092, head: `rigger-${number}`, sha: 'a'.repeat(40), closed: true }] },
+    prepare: ({ consumer }) => {
+      worktreeAt(consumer, workspace, `rigger-${number}`, '--lock', '--reason', 'workspace held by a person');
+      detachedWorktreeAt(consumer, escalation, gitIn(consumer, 'rev-parse', 'HEAD').trim());
+      lockWorktreeAt(consumer, escalation, 'escalation held by a person');
+    },
+  });
+  assert.equal(ran.code, 1);
+  const text = ran.out + ran.err;
+  assert.match(text, /rigger once: card #92 escalated ambiguous/);
+  for (const path of [workspace, escalation]) assert.ok(text.includes(path), `lost remaining path ${path}: ${text}`);
+  assert.match(text, /workspace held by a person/);
+  assert.match(text, /escalation held by a person/);
+  assert.doesNotMatch(text, /undefined/);
+  assert.deepEqual(ran.agentRuns(), []);
+  assert.equal(existsSync(workspace), true);
+  assert.equal(existsSync(escalation), true);
+  const before = JSON.parse(readFileSync(join(dirname(ran.fake.gh), 'board.json'), 'utf8')).repository;
+  assert.equal(before.issues[0].comments.length, 1);
+  assert.deepEqual(before.issues[0].labels, ['type:change', 'rigger:escalated']);
+  const waiting = ran.rerun();
+  assert.equal(waiting.code, 0, waiting.err);
+  assert.match(waiting.out, /no card was pullable/);
+  setEscalationLabel(ran.fake, undefined);
+  const run = spawnSync(process.execPath, [bin, 'run'], { cwd: ran.consumer, encoding: 'utf8', env: { ...gitEnvironment(), CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-run-closed-home-'), PATH: `${dirname(ran.fake.gh)}${delimiter}${process.env.PATH}` } });
+  assert.equal(run.error, undefined);
+  assert.equal(run.status, 1);
+  const runText = run.stdout + run.stderr;
+  assert.match(runText, /rigger run: card #92 escalated ambiguous/);
+  for (const path of [workspace, escalation]) assert.ok(runText.includes(path), `run lost ${path}`);
+  assert.doesNotMatch(runText, /undefined/);
+  const after = JSON.parse(readFileSync(join(dirname(ran.fake.gh), 'board.json'), 'utf8')).repository;
+  assert.equal(after.issues[0].comments.length, 2, 'the fresh eligible run really attempted its ordinary action');
+  assert.deepEqual(after.issues[0].labels, ['type:change', 'rigger:escalated']);
+  assert.equal(existsSync(workspace), true);
+  assert.equal(existsSync(escalation), true);
+  assert.deepEqual(ran.agentRuns(), []);
+});
+
+
+// proves R-WORK-36
+test('once removes closed history directories before Coding and a normal redo opens its new pull without removing that new workspace', SETTLES_WITHIN, async (t) => {
+  const number = 93;
+  const settings = { ...config(), kinds: { change: { ...KINDS.change, judges: ['owner'] } } };
+  const agent = standInAgent({ [number]: { engineer: { pr: true } } });
+  let path;
+  const { consumer, fake, ran } = onceWithAgent(t, agent, { items: [card(number, 'Review')] }, { settings,
+    prepare: ({ consumer, fake }) => {
+      path = join(dirname(consumer), 'widgets-worktrees', `rigger-${number}`);
+      worktreeAt(consumer, path, `rigger-${number}`);
+      writeFileSync(join(path, 'old-attempt.txt'), 'closed attempt content');
+      seedRepository(fake, { pullRequests: [{ number: 1093, head: `rigger-${number}`, sha: gitIn(consumer, 'rev-parse', 'HEAD').trim(), closed: true }] });
+    },
+  });
+  const result = await ran;
+  assert.equal(result.code, 0, result.out + result.err);
+  assert.match(result.out, /its maker exited 0 and pull request #1094 is open from rigger-93/);
+  assert.doesNotMatch(result.out + result.err, /undefined/);
+  assert.equal(existsSync(path), true);
+  assert.equal(existsSync(join(path, 'old-attempt.txt')), false);
+  assert.deepEqual(agent.runs().map(({ card, role }) => [card, role]), [[number, 'engineer']]);
+  const events = readEvents(join(consumer, '.rigger'));
+  const removed = events.findIndex((event) => event.layer === 'L1' && event.event === 'workspace.removed' && event.path === path);
+  const coding = events.findIndex((event) => event.event === 'transition' && event.to === 'coding');
+  const made = events.findIndex((event) => event.layer === 'L1' && event.event === 'workspace.made' && event.path === path);
+  assert.ok(removed >= 0 && removed < coding && coding < made, JSON.stringify({ removed, coding, made }));
+  const state = JSON.parse(readFileSync(join(dirname(fake.gh), 'board.json'), 'utf8'));
+  assert.equal(state.repository.pullRequests.find(({ number }) => number === 1093).closed, true);
+  assert.equal(state.repository.pullRequests.find(({ number }) => number === 1094).closed, false);
+  assert.equal((await (await fake.model()).operations.readItems())[0].column, 'Review');
+});
+
+
+// proves R-SCHED-11, R-WORK-36
+test('once ignores closed cards without a kind or carrying the epic label while selected equivalents remove their old directories', SETTLES_WITHIN, async () => {
+  for (const column of ['Review', 'Owner']) for (const branch of [false, true]) {
+    for (const labels of [[], ['type:epic', 'type:change'], ['type:change']]) {
+      const selected = labels.length === 1;
+      let marker;
+      const ran = once({ items: [card(95, column, { labels })] }, {
+        seed: { branches: branch ? ['rigger-95'] : [], pullRequests: [{ number: 1095, head: 'rigger-95', sha: 'a'.repeat(40), closed: true }] },
+        prepare: ({ consumer }) => {
+          marker = join(dirname(consumer), 'widgets-worktrees', 'scratch', 'rigger-95', 'reviewer', 'kept');
+          mkdirSync(dirname(marker), { recursive: true });
+          writeFileSync(marker, 'closed card content');
+        },
+      });
+      const redo = selected && column === 'Review' && !branch;
+      assert.equal(ran.code, redo ? 1 : 0, ran.out + ran.err);
+      if (selected) {
+        assert.equal(existsSync(marker), false, JSON.stringify({ column, branch, labels }));
+        assert.equal(ran.agentRuns().length, redo ? 1 : 0);
+        assert.equal((await columnsOf(ran))[95], redo ? 'Coding' : 'Owner');
+      } else {
+        assert.match(ran.out, /no card was pullable/, ran.out + ran.err);
+        assert.equal(readFileSync(marker, 'utf8'), 'closed card content');
+        assert.deepEqual(ran.agentRuns(), []);
+        assert.deepEqual((await ran.model()).writes(), []);
+        assert.equal((await columnsOf(ran))[95], column);
+      }
+    }
+  }
 });

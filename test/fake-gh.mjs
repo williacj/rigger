@@ -281,14 +281,15 @@ const pullUrl = (state, number) => `https://github.com/${state.repo}/pull/${numb
 const PULLS = 'pageInfo { hasNextPage endCursor } nodes { number state headRefOid baseRefName headRepository { nameWithOwner } }';
 
 /**
- * Answers a page of the pull requests from the branch the read names, open and merged: the states
- * the read asks for, so a pull request closed without a merge is left out, as GitHub leaves it out.
+ * Answers a page of the pull requests from the branch the read names, in the states the query
+ * asks for, including closed requests when selected.
  */
 async function pullRequests(board, state, operation) {
   inTheRepository(state, operation);
   const field = fieldIn(operation.selections, 'pullRequests');
+  const states = argument(field, 'states').values.map((state) => state.value);
   const nodes = repositoryOf(state).held().pullRequests
-    .filter((pull) => pull.head === valueOf(field, 'headRefName') && pullStateOf(pull) !== 'CLOSED')
+    .filter((pull) => pull.head === valueOf(field, 'headRefName') && states.includes(pullStateOf(pull)))
     .map((pull) => ({ number: pull.number, state: pullStateOf(pull), headRefOid: pull.sha, baseRefName: pull.base, headRepository: headRepositoryOf(state, pull) }));
   return { repository: { pullRequests: page(nodes, field) } };
 }
@@ -765,7 +766,7 @@ const AGENT_COMMANDS = {
     if (!sha) throw new GhFailure('aborted: you must first push the current branch to a remote, or use the --head flag');
     if (!headIn(state.origin, base)) throw new GhFailure('pull request create failed: GraphQL: Base ref must be a branch (createPullRequest)');
     const repository = repositoryOf(state);
-    const open = repository.held().pullRequests.find((pull) => pull.head === head && pull.base === base && !pull.merged && pull.from === null);
+    const open = repository.held().pullRequests.find((pull) => pull.head === head && pull.base === base && !pull.merged && !pull.closed && pull.from === null);
     if (open) throw new GhFailure(`a pull request for branch "${head}" into branch "${base}" already exists:\n${pullUrl(state, open.number)}`);
     const numbers = [...(await board.operations.readItems()).map((item) => item.number ?? 0), ...repository.held().pullRequests.map((pull) => pull.number)];
     const number = Math.max(0, ...numbers) + 1;
@@ -814,6 +815,9 @@ export const AGENT_ANSWERED = Object.keys(AGENT_COMMANDS);
 async function boardOf(state) {
   const board = createFakeBoard(state.model);
   for (const { operation, args } of state.writes) await board.operations[operation](...args);
+  for (const issue of state.repository?.issues ?? []) {
+    if (issue.labels !== undefined) board.setIssueLabels(issue.repository ?? state.repo, issue.number, issue.labels);
+  }
   return board;
 }
 
@@ -918,8 +922,10 @@ export function installFakeGh(dir, { repo, owner, project, board = {}, origin })
  */
 export function seedRepository(fake, seed) {
   const statePath = join(dirname(fake.gh), 'board.json');
+  const state = JSON.parse(readFileSync(statePath, 'utf8'));
+  seed = { issues: createFakeBoard(state.model).issues(), ...seed };
   createFakeRepository(seed);
-  writeFileSync(statePath, JSON.stringify({ ...JSON.parse(readFileSync(statePath, 'utf8')), repository: seed }));
+  writeFileSync(statePath, JSON.stringify({ ...state, repository: seed }));
 }
 
 /** The mutation the item-write side sends for a column move (`src/substrate/forge/item-write.mjs`). */

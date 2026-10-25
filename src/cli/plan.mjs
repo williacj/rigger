@@ -14,9 +14,11 @@ import { recording } from './recording.mjs';
  * One line per card: what the run does with it, its number, and the kind or the reason, and for a
  * card pulled for its judges, the judges it would dispatch.
  */
-const pullLine = ({ card, kind, redo, judges, action, to, pull, head, category }) => {
+const pullLine = ({ card, kind, redo, judges, action, to, pull, head, category, reason, following }) => {
   const prefix = `  pull    #${card}  `;
   const suffix = redo ? '  (redo)' : '';
+  if (action === 'remove') return `${prefix}remove directories, then ${pullLine({ card, redo, ...following }).slice(prefix.length)}`;
+  if (action === 'refuse') return `${prefix}refuse: ${reason}${suffix}`;
   if (action === 'move') return `${prefix}move to ${to}${suffix}`;
   if (action === 'continue') return `${prefix}continue pull request #${pull} at ${head}${suffix}`;
   if (action === 'return') return `${prefix}return pull request #${pull}${suffix}`;

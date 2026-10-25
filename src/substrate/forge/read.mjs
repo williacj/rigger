@@ -471,18 +471,18 @@ const pullRequestOf = ({ number, headRefOid, baseRefName }) => ({ number, head: 
  */
 const REPOSITORY_READS = {
   /**
-   * The pull requests whose head is `branch` in the repository, as `{ open, merged }`, each a list
+   * The pull requests whose head is `branch` in the repository, as `{ open, merged, closed }`, each a list
    * of `{ number, head, base }` in the order gh answers them. A fork's branch of the same name is
    * another repository's, and is left out.
    */
   readPullRequests: {
     reading: (branch) => `the pull requests from branch ${branch}`,
     read: async (board, via, branch, addressed) => {
-      const query = (page) => repositoryQuery(board, `pullRequests(headRefName: ${literal(branch)}, states: [OPEN, MERGED], ${page}) { pageInfo { hasNextPage endCursor } nodes { number state headRefOid baseRefName headRepository { nameWithOwner } } }`);
+      const query = (page) => repositoryQuery(board, `pullRequests(headRefName: ${literal(branch)}, states: [OPEN, MERGED, CLOSED], ${page}) { pageInfo { hasNextPage endCursor } nodes { number state headRefOid baseRefName headRepository { nameWithOwner } } }`);
       const nodes = (await everyPage('readPullRequests', board, via, query, (data) => heldIn('readPullRequests', board, data, 'pullRequests', addressed), addressed))
         .filter((node) => node.headRepository && ofRepository(board, node.headRepository.nameWithOwner));
       const inState = (state) => nodes.filter((node) => node.state === state).map(pullRequestOf);
-      return { open: inState('OPEN'), merged: inState('MERGED') };
+      return { open: inState('OPEN'), merged: inState('MERGED'), closed: inState('CLOSED') };
     },
   },
   /**

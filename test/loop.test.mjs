@@ -634,13 +634,13 @@ for (const { action, method, ruling, merged } of [
     assert.equal(writes, 1);
     assert.deepEqual(cardsOf(built, 'slot.release'), [card]);
     assert.equal(triggersOf(built).filter((trigger) => trigger === 'pull').length, 3);
-    assert.equal(built.events().filter(({ event }) => event === 'transition').length, action === 'move' ? 1 : 0);
+    assert.equal(built.events().filter(({ event }) => event === 'transition').length, action === 'move' || action === 'escalate' ? 1 : 0);
     if (action === 'return') assert.equal(built.repository.pull(pull).comments.length, 2);
     if (action === 'escalate') assert.equal(built.events().filter(({ event }) => event === 'review.escalate').length, 1);
   });
 }
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('a pull that reads a person-merged pull request records removal before the transition to Done', async () => {
   let built;
   built = world({
@@ -1996,4 +1996,710 @@ test('the same loop pulls an escalated card after a fresh board read shows the o
     built.dispatches.releaseAll();
     await running;
   }
+});
+
+test('the loop world shares issue facts and successful issue labels by repository and issue identity', async () => {
+  const fake = createFakeBoard({ columns: Object.values(COLUMNS), items: [
+    { ...cardIn(42, COLUMNS.review), labels: ['keep'] },
+    { ...cardIn(42, COLUMNS.review), repository: 'someone/elsewhere', labels: ['foreign'] },
+    { ...cardIn(43, COLUMNS.ready), labels: ['unrelated'] },
+  ] });
+  const built = world({ fake, cards: [] });
+  assert.deepEqual(await built.repository.operations.readIssue(42), { number: 42, title: 'Add a verb', body: PASSING, labels: ['keep'] });
+  const [card] = await fake.operations.readItems();
+  await built.l2.escalated(card, { action: 'escalate', category: 'ambiguous', reason: 'The owner must decide.' });
+  assert.deepEqual((await fake.operations.readItems()).map(({ repository, number, labels }) => ({ repository, number, labels })), [
+    { repository: config.repo, number: 42, labels: ['keep', 'rigger:escalated'] },
+    { repository: 'someone/elsewhere', number: 42, labels: ['foreign'] },
+    { repository: config.repo, number: 43, labels: ['unrelated'] },
+  ]);
+  assert.equal(Object.hasOwn(fake.operations, 'issues'), false);
+  assert.equal(Object.hasOwn(fake.operations, 'setIssueLabels'), false);
+  const absent = world({ cards: [cardIn(44, COLUMNS.review)], forge: { issues: [] } });
+  assert.equal(await absent.repository.operations.readIssue(44), null, 'an explicitly missing issue is not manufactured');
+});
+
+// proves R-ESCALATE-8, R-ESCALATE-9, R-ESCALATE-15
+test('one escalation claim spans every awaited owner write and a fresh labelled pull starts nothing', async (t) => {
+  const number = 96;
+  const pull = 961;
+  const head = '9'.repeat(40);
+  const unexpected = [];
+  const built = world({ cards: [cardIn(number, COLUMNS.owner)], concurrency: 1,
+    forge: { pullRequests: [{ number: pull, head: `rigger-${number}`, sha: head, comments: [markerComment({ card: number, pull, head, body: PASSING, role: 'owner', verdict: 'critical', toSound: 'Keep the user files.' })] }] },
+    workspace: async (...args) => { unexpected.push(['workspace', ...args]); throw new Error('an escalation creates no workspace'); },
+    judgeDirectory: async (...args) => { unexpected.push(['judgeDirectory', ...args]); throw new Error('an escalation creates no judge directory'); },
+    removeDirectories: async (...args) => { unexpected.push(['removeDirectories', ...args]); },
+  });
+  const entered = [];
+  const releases = [];
+  for (const [target, operation] of [[built.repository, 'postIssueComment'], [built.fake.operations, 'moveItem'], [built.repository, 'addIssueLabel']]) {
+    const original = target[operation];
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    releases.push(release);
+    target[operation] = async (...args) => { entered.push(operation); await held; return original(...args); };
+  }
+  let settled = false;
+  const running = built.loop.run().finally(() => { settled = true; });
+  t.after(async () => { for (const release of releases) release(); await running.catch(() => {}); });
+  for (const [at, operation] of ['postIssueComment', 'moveItem', 'addIssueLabel'].entries()) {
+    await waitFor(() => entered.includes(operation) || settled);
+    assert.equal(entered.at(-1), operation, `the operation reaches ${operation} before settling`);
+    assert.deepEqual(entered, ['postIssueComment', 'moveItem', 'addIssueLabel'].slice(0, at + 1));
+    assert.deepEqual(cardsOf(built, 'slot.release'), [], `${operation} still owns the claim`);
+    assert.deepEqual(await built.loop.pull(), [], `${operation}: overlapping trigger takes no second claim`);
+    assert.deepEqual(cardsOf(built, 'slot.release'), []);
+    releases[at]();
+  }
+  await running;
+  assert.deepEqual(await columnsOf(built.fake), { [number]: COLUMNS.owner }, 'the escalated card reaches its configured Owner column');
+  assert.deepEqual(cardsOf(built, 'slot.release'), [number]);
+  assert.equal(built.events().filter(({ event }) => event === 'review.escalate').length, 1);
+  assert.equal(built.events().filter(({ event }) => event === 'transition').length, 1);
+  assert.equal(built.events().find(({ event }) => event === 'transition').to, 'owner');
+  assert.equal(built.repository.held().issues[0].comments.length, 1);
+  assert.deepEqual((await built.fake.operations.readItems())[0].labels, ['type:change', 'rigger:escalated']);
+  assert.deepEqual(await built.loop.pull(), []);
+  assert.deepEqual(await built.loop.run(), []);
+  assert.equal(built.repository.held().issues[0].comments.length, 1, 'fresh reads do not post another escalation');
+  assert.deepEqual(entered, ['postIssueComment', 'moveItem', 'addIssueLabel']);
+  assert.deepEqual(built.dispatches.started, []);
+  assert.deepEqual(unexpected, []);
+});
+
+// proves R-RECORD-9, R-ESCALATE-9
+test('an owner escalation whose transition record is refused starts no later work while the sink remains unavailable', async (t) => {
+  const number = 98;
+  const pull = 981;
+  const head = '9'.repeat(40);
+  const fake = boardOf([cardIn(number, COLUMNS.owner), 99]);
+  let built;
+  const items = { ...fake.operations, moveItem: async (...args) => { await fake.operations.moveItem(...args); built.refuseAppends('owner transition recording unavailable'); } };
+  built = world({ fake, items, concurrency: 1,
+    forge: { pullRequests: [{ number: pull, head: `rigger-${number}`, sha: head, comments: [markerComment({ card: number, pull, head, body: PASSING, role: 'owner', verdict: 'critical', toSound: 'Keep the user files.' })] }] },
+  });
+  t.after(() => built.dispatches.releaseAll());
+  await assert.rejects(built.loop.pull(1), (failure) => {
+    assert.ok(leavesOf(failure).some(({ message }) => /card #98 moved from owner to owner.*refused to record it: owner transition recording unavailable/.test(message)), failure.message);
+    return true;
+  });
+  assert.equal(built.repository.held().issues.find(({ number }) => number === 98).comments.length, 1);
+  assert.deepEqual(built.repository.held().issues.find(({ number }) => number === 98).labels, ['type:change']);
+  assert.deepEqual(await columnsOf(fake), { 98: COLUMNS.owner, 99: COLUMNS.ready });
+  let settled = false;
+  const later = built.loop.pull().finally(() => { settled = true; });
+  later.catch(() => {});
+  await waitFor(() => settled || built.dispatches.held() > 0);
+  built.dispatches.releaseAll();
+  await assert.rejects(later, (failure) => leavesOf(failure).every(({ message }) => message.includes('owner transition recording unavailable')));
+  assert.deepEqual(built.dispatches.started, []);
+  assert.deepEqual(built.fake.writes(), [{ operation: 'moveItem', args: ['item-1', COLUMNS.owner] }]);
+  assert.equal(built.repository.held().issues.find(({ number }) => number === 98).comments.length, 1);
+});
+
+
+test('the loop world opens a new pull after closed history and still suppresses a second genuinely open pull', SETTLES_WITHIN, async (t) => {
+  for (const alreadyOpen of [false, true]) {
+    const number = alreadyOpen ? 189 : 188;
+    const built = world({ cards: [number], fresh: false, forge: { pullRequests: [
+      { number: 733, head: `rigger-${number}`, sha: 'd6d079f3258e1b74aad7baf725895b8d74c5b315', closed: true },
+    ] } });
+    const running = built.loop.pull(1);
+    let ended = false;
+    running.finally(() => { ended = true; }).catch(() => {});
+    t.after(async () => { built.dispatches.releaseAll(); await running.catch(() => {}); });
+    await waitFor(() => ended || built.dispatches.holding().includes(number));
+    assert.deepEqual(built.dispatches.started, [number]);
+    if (alreadyOpen) built.repository.open({ number: 990, head: `rigger-${number}`, sha: 'a'.repeat(40) });
+    built.dispatches.releaseAll();
+    const reached = await running;
+    const facts = await built.repository.operations.readPullRequests(`rigger-${number}`);
+    assert.equal(facts.closed.length, 1, 'closed history stays closed');
+    assert.deepEqual(facts.open.map(({ number }) => number), [alreadyOpen ? 990 : 1001], 'closed history is not an existing open pull');
+    assert.equal(built.repository.held().pullRequests.length, 2, 'exactly one open pull exists');
+    assert.equal(reached[0].settled.status, 'fulfilled');
+  }
+});
+
+
+// proves R-WORK-36, R-WORK-37, R-WORK-39
+test('one closed-card claim removes before redo Coding or the ordinary Owner operation in every eligible stage and branch cell', SETTLES_WITHIN, async (t) => {
+  for (const column of [COLUMNS.review, COLUMNS.owner]) for (const branch of [false, true]) {
+    const number = 190;
+    const order = [];
+    let built;
+    built = world({ cards: [cardIn(number, column)], fresh: false, answer: () => ({ exit: 1 }), forge: {
+      branches: branch ? [`rigger-${number}`] : [],
+      pullRequests: [{ number: 733, head: `rigger-${number}`, sha: 'd6d079f3258e1b74aad7baf725895b8d74c5b315', closed: true }],
+    }, removeDirectories: async (card) => {
+      order.push('remove');
+      assert.equal(card, number);
+      assert.deepEqual(cardsOf(built, 'pull'), [number]);
+      assert.deepEqual(cardsOf(built, 'slot.release'), []);
+      assert.equal((await columnsOf(built.fake))[number], column, 'removal precedes the Coding move');
+      assert.deepEqual(built.dispatches.started, []);
+      assert.deepEqual(built.fake.writes(), []);
+    } });
+    const claimed = built.l2.claimed;
+    built.l2.claimed = async (...args) => { order.push('claimed'); return claimed(...args); };
+    for (const operation of ['postIssueComment', 'addIssueLabel']) {
+      const original = built.repository[operation];
+      built.repository[operation] = async (...args) => { order.push(operation); return original(...args); };
+    }
+    const running = built.loop.pull(1);
+    const ended = settledOf(running);
+    running.catch(() => {});
+    t.after(async () => { built.dispatches.releaseAll(); await running.catch(() => {}); });
+    await waitFor(() => ended() || built.dispatches.holding().includes(number));
+    assert.equal(order[0], 'remove', `${column}/${branch}: ${JSON.stringify(order)}`);
+    built.dispatches.releaseAll();
+    const reached = await running;
+    if (column === COLUMNS.review && !branch) {
+      assert.deepEqual(order, ['remove', 'claimed']);
+      assert.deepEqual(built.dispatches.started, [number]);
+      assert.equal((await columnsOf(built.fake))[number], COLUMNS.coding);
+      assert.equal(reached[0].outcome.value.exit, 1);
+    } else {
+      assert.deepEqual(order, ['remove', 'postIssueComment', 'addIssueLabel']);
+      assert.deepEqual(built.dispatches.started, []);
+      assert.equal(reached[0].action, 'escalate');
+      assert.equal(reached[0].category, 'ambiguous');
+      assert.equal(reached[0].line, `rigger-${number}`);
+      assert.equal((await columnsOf(built.fake))[number], COLUMNS.owner);
+      const comment = built.repository.held().issues[0].comments[0].body;
+      assert.ok(comment.includes(reached[0].reason), comment);
+      assert.ok(comment.includes(`Line of work: rigger-${number}`), comment);
+      assert.doesNotMatch(comment, /Pull request:|Head:/, 'closed history invents no active work identifiers');
+      assert.deepEqual((await built.fake.operations.readItems())[0].labels, ['type:change', 'rigger:escalated']);
+    }
+    assert.deepEqual(cardsOf(built, 'pull'), [number]);
+    assert.deepEqual(cardsOf(built, 'slot.release'), [number]);
+  }
+});
+
+
+// proves R-WORK-36
+test('a closed removal failure retains every remaining path while the ordinary redo or owner escalation still runs under that claim', SETTLES_WITHIN, async (t) => {
+  for (const column of [COLUMNS.review, COLUMNS.owner]) {
+    const number = 191;
+    const remaining = [new Error('/workspaces/rigger-191 remains: denied'), new Error('/judges/rigger-191/reviewer remains: partial removal')];
+    const cleanup = new AggregateError(remaining, 'L1 could not remove all directories of card #191');
+    const built = world({ cards: [cardIn(number, column)], fresh: false, answer: () => ({ exit: 1 }), forge: {
+      pullRequests: [{ number: 733, head: `rigger-${number}`, sha: 'd6d079f3258e1b74aad7baf725895b8d74c5b315', closed: true }],
+    }, removeDirectories: async () => { throw cleanup; } });
+    const running = built.loop.pull(1);
+    const ended = settledOf(running);
+    running.catch(() => {});
+    t.after(async () => { built.dispatches.releaseAll(); await running.catch(() => {}); });
+    await waitFor(() => ended() || built.dispatches.holding().includes(number));
+    if (column === COLUMNS.review) assert.deepEqual(built.dispatches.started, [number], 'failed cleanup does not replace the ordinary redo');
+    else assert.equal(built.repository.held().issues[0].comments.length, 1, 'failed cleanup does not replace the ordinary escalation');
+    built.dispatches.releaseAll();
+    await assert.rejects(running, (failure) => {
+      const leaves = leavesOf(failure);
+      for (const path of remaining) assert.ok(leaves.includes(path), `lost ${path.message}`);
+      assert.equal(failure.reached.length, 1, 'the ordinary reached outcome survives cleanup failure');
+      if (column === COLUMNS.review) assert.equal(failure.reached[0].outcome.value.exit, 1);
+      else assert.equal(failure.reached[0].action, 'escalate');
+      return true;
+    });
+    assert.deepEqual(cardsOf(built, 'pull'), [number]);
+    assert.deepEqual(cardsOf(built, 'slot.release'), [number]);
+    assert.equal((await columnsOf(built.fake))[number], column === COLUMNS.review ? COLUMNS.coding : COLUMNS.owner);
+    if (column === COLUMNS.owner) assert.deepEqual((await built.fake.operations.readItems())[0].labels, ['type:change', 'rigger:escalated']);
+  }
+});
+
+
+import { factsCall } from '../src/workflow/facts.mjs';
+
+// proves R-WORK-36
+test('a closed removal followed by unchanged refusal or injected ignore runs once per invocation and retries on the next invocation', SETTLES_WITHIN, async () => {
+  for (const action of ['refuse', 'ignore']) {
+    const number = 192;
+    const item = { ...cardIn(number, COLUMNS.review), body: action === 'refuse' ? 'No acceptance.' : PASSING };
+    const built = world({ cards: [item], forge: { pullRequests: [{ number: 733, head: `rigger-${number}`, sha: 'd6d079f3258e1b74aad7baf725895b8d74c5b315', closed: true }] } });
+    const settings = { ...config, concurrency: 1, board: { ...config.board, columns: COLUMNS } };
+    const decide = (card) => action === 'ignore'
+      ? { action: 'remove', following: { action: 'ignore' } }
+      : nextAction(card, KINDS, undefined, { roles: settings.roles, provisioning: {}, sink: built.sink });
+    let calls = 0;
+    const handle = loop({ config: settings, board: handleOn(built.fake), decide,
+      facts: factsCall({ config: settings, reads: built.repository.operations, decide }), l2: built.l2, sink: built.sink, kill: async () => {},
+      workspace: async () => { assert.fail('a following refusal or ignore admits no maker'); },
+      judgeDirectory: async () => { assert.fail('a following refusal or ignore admits no judge'); },
+      removeDirectories: async () => {
+        calls += 1;
+        // A broken exclusion ends on its second forbidden call and fails the named count below.
+        if (calls === 2) await built.fake.operations.moveItem('item-1', COLUMNS.done);
+      }, state: built.directory, environment: {},
+    });
+    for (const invocation of [1, 2]) {
+      calls = 0;
+      let failure;
+      const reached = await handle.run().catch((held) => { failure = held; });
+      assert.equal(calls, 1, `${action}: invocation ${invocation} repeats no unchanged cleanup`);
+      assert.equal(failure, undefined, failure?.message);
+      assert.deepEqual(reached, [action === 'refuse' ? { card: number, action, reason: 'missing acceptance' } : { card: number, action }]);
+      assert.deepEqual(built.fake.writes(), []);
+      assert.deepEqual(built.dispatches.started, []);
+    }
+    assert.deepEqual(cardsOf(built, 'pull'), [number, number]);
+    assert.deepEqual(cardsOf(built, 'slot.release'), [number, number]);
+  }
+});
+
+
+// proves R-WORK-36
+test('a refused redo start after closed cleanup releases once without an immediate retry and preserves both actual failures', SETTLES_WITHIN, async () => {
+  for (const cleanupFails of [false, true]) {
+    const number = 193;
+    const fake = boardOf([cardIn(number, COLUMNS.review)]);
+    const cleanup = new Error('/workspaces/rigger-193 remains after partial removal');
+    let calls = 0;
+    let starts = 0;
+    const items = { ...fake.operations, moveItem: async (...args) => {
+      if (args[1] === COLUMNS.coding) { starts += 1; throw new Error('the board refuses the following Coding start'); }
+      return fake.operations.moveItem(...args);
+    } };
+    const built = world({ fake, items, fresh: false, forge: { pullRequests: [{ number: 733, head: `rigger-${number}`, sha: 'd6d079f3258e1b74aad7baf725895b8d74c5b315', closed: true }] },
+      removeDirectories: async () => {
+        calls += 1;
+        if (calls === 2) await fake.operations.moveItem('item-1', COLUMNS.done);
+        if (cleanupFails) throw cleanup;
+      },
+    });
+    for (const invocation of [1, 2]) {
+      calls = 0;
+      starts = 0;
+      await assert.rejects(built.loop.run(), (failure) => {
+        const leaves = leavesOf(failure);
+        assert.ok(leaves.some(({ message }) => message.includes('the board refuses the following Coding start')));
+        assert.equal(leaves.includes(cleanup), cleanupFails, 'cleanup failure is retained exactly when it happened');
+        assert.deepEqual(failure.reached, []);
+        return true;
+      });
+      assert.equal(calls, 1, `invocation ${invocation}: refused start fires no immediate cleanup retry`);
+      assert.equal(starts, 1);
+      assert.deepEqual(built.dispatches.started, []);
+      assert.deepEqual(fake.writes(), []);
+      assert.equal((await columnsOf(fake))[number], COLUMNS.review);
+    }
+    assert.deepEqual(cardsOf(built, 'pull'), [number, number]);
+    assert.deepEqual(cardsOf(built, 'slot.release'), [number, number]);
+  }
+});
+
+
+// proves R-WORK-36
+test('closed cleanup composes each Owner write rejection with actual cleanup failure and excludes that outer claim until the next invocation', BOUNDS[60_000], async () => {
+  for (const column of [COLUMNS.review, COLUMNS.owner]) for (const cleanupFails of [false, true]) for (const rejected of ['postIssueComment', 'moveItem', 'addIssueLabel']) {
+    const number = 194;
+    const cleanup = new Error('/escalations/rigger-194/reviewer remains: partial removal');
+    const ordinary = new Error(`Owner ${rejected} refused`);
+    let calls = 0;
+    let built;
+    let controlMove;
+    built = world({ cards: [cardIn(number, column)], forge: { branches: [`rigger-${number}`], pullRequests: [{ number: 733, head: `rigger-${number}`, sha: 'd6d079f3258e1b74aad7baf725895b8d74c5b315', closed: true }] },
+      removeDirectories: async () => {
+        calls += 1;
+        if (calls === 2) await controlMove('item-1', COLUMNS.done);
+        if (cleanupFails) throw cleanup;
+      },
+    });
+    controlMove = built.fake.operations.moveItem;
+    const writes = [];
+    const operations = [[built.repository, 'postIssueComment'], [built.fake.operations, 'moveItem'], [built.repository, 'addIssueLabel']];
+    for (const [target, operation] of operations) {
+      const original = target[operation];
+      target[operation] = async (...args) => {
+        writes.push(operation);
+        if (operation === rejected) throw ordinary;
+        return original(...args);
+      };
+    }
+    for (const invocation of [1, 2]) {
+      calls = 0;
+      const before = writes.length;
+      await assert.rejects(built.loop.run(), (failure) => {
+        const leaves = leavesOf(failure);
+        assert.equal(leaves.includes(cleanup), cleanupFails);
+        assert.ok(leaves.some((held) => held.cause === ordinary && held.message.includes(`Owner ${rejected} refused`)), `${column}/${cleanupFails}/${rejected}`);
+        assert.deepEqual(failure.reached, []);
+        return true;
+      });
+      assert.equal(calls, 1, `${column}/${cleanupFails}/${rejected}: invocation ${invocation} repeats no cleanup`);
+      assert.deepEqual(writes.slice(before), ['postIssueComment', 'moveItem', 'addIssueLabel'].slice(0, ['postIssueComment', 'moveItem', 'addIssueLabel'].indexOf(rejected) + 1));
+      assert.equal((built.repository.held().issues[0].comments ?? []).length, rejected === 'postIssueComment' ? 0 : invocation);
+      assert.equal((await columnsOf(built.fake))[number], rejected === 'addIssueLabel' ? COLUMNS.owner : column);
+      assert.deepEqual((await built.fake.operations.readItems())[0].labels, ['type:change']);
+      assert.equal(built.events().filter(({ event }) => event === 'transition').length, rejected === 'addIssueLabel' ? invocation : 0);
+      assert.deepEqual(built.dispatches.started, []);
+    }
+    assert.deepEqual(cardsOf(built, 'pull'), [number, number]);
+    assert.deepEqual(cardsOf(built, 'slot.release'), [number, number]);
+  }
+});
+
+
+// proves R-RECORD-9, R-WORK-36
+test('a refused initial closed-cleanup claim record starts neither removal nor its ordinary action and a recordable retry does both', async () => {
+  const number = 195;
+  const removed = [];
+  const built = world({ cards: [cardIn(number, COLUMNS.owner)], forge: { pullRequests: [{ number: 733, head: `rigger-${number}`, sha: 'd6d079f3258e1b74aad7baf725895b8d74c5b315', closed: true }] }, removeDirectories: async (card) => { removed.push(card); } });
+  built.refuseAppends('initial pull recording unavailable');
+  await assert.rejects(built.loop.pull(1), (failure) => {
+    assert.ok(leavesOf(failure).some(({ message }) => /card #195 was not started.*record its pull.*initial pull recording unavailable/.test(message)));
+    return true;
+  });
+  assert.equal(built.decisions[0].action.action, 'remove', 'the fixture is otherwise eligible');
+  assert.deepEqual(removed, []);
+  assert.deepEqual(built.fake.writes(), []);
+  assert.deepEqual(built.dispatches.started, []);
+  assert.equal((built.repository.held().issues[0].comments ?? []).length, 0);
+  assert.deepEqual(cardsOf(built, 'slot.release'), []);
+  built.acceptAppends();
+  const reached = await built.loop.pull(1);
+  assert.deepEqual(removed, [number]);
+  assert.equal(reached[0].action, 'escalate');
+  assert.equal(built.repository.held().issues[0].comments.length, 1);
+  assert.deepEqual(cardsOf(built, 'slot.release'), [number]);
+});
+
+
+import { join } from 'node:path';
+import { repositoryIn } from './git-repository.mjs';
+import { removeCardDirectories } from '../src/execution/workspace.mjs';
+
+// proves R-WORK-36, R-RECORD-9
+test('an actual closed cleanup names its unrecorded removal while a one-shot refusal permits ordinary dispatch and persistent refusal prevents it', BOUNDS[60_000], async (t) => {
+  for (const persistent of [false, true]) {
+    const number = 196;
+    const repository = repositoryIn('rigger-closed-record-repository-');
+    const root = temporaryDirectory('rigger-closed-record-root-');
+    const scratch = join(root, 'scratch', `rigger-${number}`, 'reviewer');
+    fs.mkdirSync(scratch, { recursive: true });
+    fs.writeFileSync(join(scratch, 'retained.txt'), 'scratch to remove');
+    let built;
+    let refused = false;
+    let removals = 0;
+    const sink = { emitter: (context) => {
+      const original = built.sink.emitter(context);
+      return { emit: (event, fields) => {
+        if (!refused && context.layer === 'L1' && event === 'workspace.removed') {
+          refused = true;
+          built.refuseAppends('cleanup event recording unavailable', persistent ? Infinity : 1);
+        }
+        return original.emit(event, fields);
+      } };
+    } };
+    built = world({ cards: [cardIn(number, COLUMNS.review)], fresh: false, answer: () => ({ exit: 1 }), forge: { pullRequests: [{ number: 733, head: `rigger-${number}`, sha: 'd6d079f3258e1b74aad7baf725895b8d74c5b315', closed: true }] },
+      removeDirectories: async (card) => { removals += 1; return removeCardDirectories({ root, repository, topic: 'rigger-{number}', card, sink }); },
+    });
+    const running = built.loop.pull(1);
+    const ended = settledOf(running);
+    running.catch(() => {});
+    t.after(async () => { built.acceptAppends(); built.dispatches.releaseAll(); await running.catch(() => {}); });
+    await waitFor(() => ended() || built.dispatches.holding().includes(number));
+    assert.equal(removals, 1);
+    assert.equal(refused, true, 'the actual L1 removal reached its event');
+    assert.equal(fs.existsSync(scratch), false, 'the removal happened before its refused record');
+    assert.deepEqual(built.dispatches.started, persistent ? [] : [number]);
+    built.dispatches.releaseAll();
+    await assert.rejects(running, (failure) => {
+      const leaves = leavesOf(failure);
+      const removal = leaves.find((held) => held.code === EVENT_REFUSED && held.unrecorded?.some(({ event }) => event === 'workspace.removed'));
+      assert.ok(removal, leaves.map(({ message }) => message).join('\n'));
+      assert.match(removal.message, /L1's workspace.removed of card #196.*went unrecorded.*cleanup event recording unavailable/);
+      assert.equal(removal.unrecorded[0].path, scratch);
+      if (persistent) {
+        assert.ok(leaves.some(({ message }) => /moved from review to coding.*refused to record it/.test(message)));
+        assert.deepEqual(failure.reached, []);
+      } else assert.equal(failure.reached[0].outcome.value.exit, 1);
+      return true;
+    });
+  }
+});
+
+
+// proves R-WORK-40
+test('a held Review judge whose pull closes keeps the card directories until the first eligible pull after its dispatch ends', BOUNDS[60_000], async (t) => {
+  const number = 197;
+  const pull = 1970;
+  const removed = [];
+  const built = world({ cards: [cardIn(number, COLUMNS.review)], fresh: false,
+    kinds: { change: { ...KINDS.change, judges: ['reviewer'] } },
+    forge: { branches: [`rigger-${number}`], pullRequests: [{ ...pullFor(number), number: pull }] },
+    removeDirectories: async (card) => { removed.push(card); },
+  });
+  built.agent.plan(number, 'reviewer', { hold: true, exit: 1 });
+  const running = built.loop.pull(1);
+  const ended = settledOf(running);
+  running.catch(() => {});
+  t.after(async () => { if (built.agent.held(number, 'reviewer')) built.agent.release(number, 'reviewer'); await running.catch(() => {}); });
+  await waitFor(() => ended() || built.agent.held(number, 'reviewer'));
+  assert.equal(built.agent.held(number, 'reviewer'), true);
+  built.repository.update(pull, { closed: true });
+  const closed = await built.repository.operations.readPullRequests(`rigger-${number}`);
+  assert.deepEqual(closed.open, []);
+  assert.deepEqual(closed.merged, []);
+  assert.equal(closed.closed.length, 1);
+  assert.equal((await columnsOf(built.fake))[number], COLUMNS.review);
+  assert.deepEqual((await built.fake.operations.readItems())[0].labels, ['type:change']);
+  assert.deepEqual(await built.loop.pull(1), [], 'a fresh trigger cannot clean beneath this active judge');
+  assert.deepEqual(removed, []);
+  assert.deepEqual(cardsOf(built, 'slot.release'), []);
+  built.agent.release(number, 'reviewer');
+  const first = await running;
+  assert.equal(first[0].judges[0].outcome.value.exit, 1);
+  assert.deepEqual(removed, []);
+  const later = await built.loop.pull(1);
+  assert.deepEqual(removed, [number]);
+  assert.equal(later[0].action, 'escalate');
+  assert.deepEqual(cardsOf(built, 'pull'), [number, number]);
+  assert.deepEqual(cardsOf(built, 'slot.release'), [number, number]);
+});
+
+import { pullFor } from './judge-world.mjs';
+
+
+// proves R-WORK-40
+test('another cards held maker does not exclude an eligible closed cleanup when a concurrency slot remains', BOUNDS[60_000], async (t) => {
+  const target = 198;
+  const other = 199;
+  const removed = [];
+  const built = world({ cards: [cardIn(target, COLUMNS.done), other], concurrency: 2, fresh: false, answer: () => ({ exit: 1 }),
+    forge: { pullRequests: [{ number: 733, head: `rigger-${target}`, sha: 'd6d079f3258e1b74aad7baf725895b8d74c5b315', closed: true }] },
+    removeDirectories: async (card) => { removed.push(card); },
+  });
+  const running = built.loop.pull(1);
+  const ended = settledOf(running);
+  running.catch(() => {});
+  t.after(async () => { built.dispatches.releaseAll(); await running.catch(() => {}); });
+  await waitFor(() => ended() || built.dispatches.holding().includes(other));
+  assert.deepEqual(built.dispatches.started, [other]);
+  await built.fake.operations.moveItem('item-1', COLUMNS.owner);
+  const reached = await built.loop.pull(1);
+  assert.deepEqual(removed, [target]);
+  assert.equal(reached[0].action, 'escalate');
+  assert.equal(built.dispatches.holding().includes(other), true, 'cleanup completes while the other dispatch still runs');
+  assert.deepEqual(cardsOf(built, 'slot.release'), [target]);
+  built.dispatches.releaseAll();
+  await running;
+  assert.deepEqual(cardsOf(built, 'pull'), [other, target]);
+  assert.deepEqual(cardsOf(built, 'slot.release'), [target, other]);
+});
+
+
+// proves R-WORK-36
+test('a closed cleanup rechecks claim availability after an independently delayed facts read', BOUNDS[60_000], async (t) => {
+  const number = 200;
+  const built = world({ cards: [cardIn(number, COLUMNS.owner)], forge: { pullRequests: [{ number: 733, head: `rigger-${number}`, sha: 'd6d079f3258e1b74aad7baf725895b8d74c5b315', closed: true }] } });
+  const settings = { ...config, concurrency: 2, board: { ...config.board, columns: COLUMNS } };
+  const decide = (card) => nextAction(card, KINDS, undefined, { roles: settings.roles, provisioning: {}, sink: built.sink });
+  const readFacts = factsCall({ config: settings, reads: built.repository.operations, decide });
+  let releaseFacts;
+  let releaseRemoval;
+  const factsWait = new Promise((resolve) => { releaseFacts = resolve; });
+  const removalWait = new Promise((resolve) => { releaseRemoval = resolve; });
+  let reads = 0;
+  let heldFacts = false;
+  let removals = 0;
+  const handle = loop({ config: settings, board: handleOn(built.fake), decide, l2: built.l2, sink: built.sink, kill: async () => {},
+    facts: async (cards) => {
+      const answer = await readFacts(cards);
+      if (++reads === 1) { heldFacts = true; await factsWait; }
+      return answer;
+    },
+    workspace: async () => { assert.fail('this closed Owner card starts no maker'); },
+    judgeDirectory: async () => { assert.fail('this closed Owner card starts no judge'); },
+    removeDirectories: async () => { removals += 1; await removalWait; }, state: built.directory, environment: {},
+  });
+  const first = handle.pull(1);
+  const firstEnded = settledOf(first);
+  first.catch(() => {});
+  let second;
+  t.after(async () => { releaseFacts(); releaseRemoval(); await Promise.allSettled([first, second].filter(Boolean)); });
+  await waitFor(() => heldFacts);
+  assert.equal(removals, 0);
+  second = handle.pull(1);
+  const ended = settledOf(second);
+  second.catch(() => {});
+  await waitFor(() => ended() || removals > 0);
+  assert.equal(removals, 1);
+  releaseFacts();
+  await waitFor(() => firstEnded() || removals > 1);
+  assert.equal(removals, 1, 'stale facts must not enter a second removal');
+  assert.deepEqual(await first, [], 'the stale facts caller takes no second same-card claim');
+  assert.equal(removals, 1);
+  assert.deepEqual(cardsOf(built, 'slot.release'), []);
+  assert.equal((built.repository.held().issues[0].comments ?? []).length, 0);
+  releaseRemoval();
+  const reached = await second;
+  assert.equal(reached[0].action, 'escalate');
+  assert.deepEqual(cardsOf(built, 'pull'), [number]);
+  assert.deepEqual(cardsOf(built, 'slot.release'), [number]);
+});
+
+
+// proves R-WORK-36
+test('one closed claim spans delayed removal and every following owner write without duplicate cleanup or early release', BOUNDS[60_000], async (t) => {
+  const number = 201;
+  const entered = [];
+  const releases = [];
+  const wait = () => new Promise((resolve) => { releases.push(resolve); });
+  const removal = wait();
+  const built = world({ cards: [cardIn(number, COLUMNS.review)], forge: { branches: [`rigger-${number}`], pullRequests: [{ number: 733, head: `rigger-${number}`, sha: 'd6d079f3258e1b74aad7baf725895b8d74c5b315', closed: true }] },
+    removeDirectories: async () => { entered.push('remove'); await removal; },
+  });
+  for (const [target, operation] of [[built.repository, 'postIssueComment'], [built.fake.operations, 'moveItem'], [built.repository, 'addIssueLabel']]) {
+    const original = target[operation];
+    const held = wait();
+    target[operation] = async (...args) => { entered.push(operation); await held; return original(...args); };
+  }
+  const overlaps = [];
+  const running = built.loop.run();
+  const ended = settledOf(running);
+  running.catch(() => {});
+  t.after(async () => { for (const release of releases) release(); await Promise.allSettled([running, ...overlaps]); });
+  const order = ['remove', 'postIssueComment', 'moveItem', 'addIssueLabel'];
+  for (const [at, operation] of order.entries()) {
+    await waitFor(() => ended() || entered.includes(operation));
+    assert.deepEqual(entered, order.slice(0, at + 1));
+    assert.deepEqual(cardsOf(built, 'slot.release'), []);
+    const beforeOverlap = entered.length;
+    const overlap = built.loop.pull(1);
+    overlaps.push(overlap);
+    const overlapEnded = settledOf(overlap);
+    overlap.catch(() => {});
+    await waitFor(() => overlapEnded() || entered.length > beforeOverlap);
+    assert.deepEqual(entered, order.slice(0, at + 1), 'an overlapping pull must not enter another operation');
+    assert.deepEqual(await overlap, [], `${operation} still owns the only same-card claim`);
+    assert.deepEqual(cardsOf(built, 'pull'), [number]);
+    assert.deepEqual(cardsOf(built, 'slot.release'), []);
+    if (operation === 'remove') assert.equal((await columnsOf(built.fake))[number], COLUMNS.review);
+    releases[at]();
+  }
+  const reached = await running;
+  assert.equal(reached[0].action, 'escalate');
+  assert.deepEqual(entered, order);
+  assert.deepEqual(cardsOf(built, 'slot.release'), [number]);
+  assert.equal(built.repository.held().issues[0].comments.length, 1);
+  assert.deepEqual(await built.loop.pull(1), [], 'a fresh labelled read starts no more cleanup');
+  assert.deepEqual(entered, order);
+});
+
+
+// proves R-WORK-36, R-WORK-39
+test('reopening before closed facts prevents removal while reopening after the selected snapshot restores no removed directory', BOUNDS[60_000], async () => {
+  for (const when of ['before', 'after']) {
+    const number = 202;
+    const repository = repositoryIn('rigger-closed-reopen-repository-');
+    const root = temporaryDirectory('rigger-closed-reopen-root-');
+    const scratch = join(root, 'scratch', `rigger-${number}`, 'reviewer');
+    fs.mkdirSync(scratch, { recursive: true });
+    fs.writeFileSync(join(scratch, 'kept.txt'), 'scratch');
+    let built;
+    let removals = 0;
+    built = world({ cards: [cardIn(number, COLUMNS.owner)], fresh: false,
+      forge: { pullRequests: [{ ...pullFor(number), closed: true }] },
+      removeDirectories: async (card) => {
+        removals += 1;
+        assert.equal(built.decisions[0].action.action, 'remove');
+        built.repository.update(1000 + number, { closed: false });
+        await removeCardDirectories({ root, repository, topic: 'rigger-{number}', card, sink: built.sink });
+      },
+    });
+    if (when === 'before') built.repository.update(1000 + number, { closed: false });
+    const reached = await built.loop.pull(1);
+    const facts = await built.repository.operations.readPullRequests(`rigger-${number}`);
+    assert.equal(facts.open.length, 1, 'the collaborator really reopened the pull');
+    assert.deepEqual(facts.closed, []);
+    assert.equal(removals, when === 'before' ? 0 : 1);
+    assert.equal(fs.existsSync(scratch), when === 'before');
+    if (when === 'before') assert.deepEqual(reached, []);
+    else {
+      assert.equal(reached[0].action, 'escalate', 'the selected following action is retained');
+      assert.deepEqual(await built.loop.pull(1), []);
+      assert.equal(fs.existsSync(scratch), false, 'a later read does not restore removed scratch');
+    }
+  }
+});
+
+
+import { clonedFromOrigin } from './git-repository.mjs';
+import { makeWorkspace } from '../src/execution/workspace.mjs';
+
+// proves R-WORK-36, R-WORK-37
+test('a new attempt after closed cleanup retains the real directories it creates on later eligible-looking Coding reads after dispatch ends', BOUNDS[60_000], async (t) => {
+  const number = 203;
+  const { repository } = clonedFromOrigin(temporaryDirectory('rigger-closed-coding-git-'));
+  const root = temporaryDirectory('rigger-closed-coding-root-');
+  let built;
+  let removals = 0;
+  let marker;
+  built = world({ cards: [cardIn(number, COLUMNS.review)], fresh: false, answer: () => ({ exit: 1 }),
+    forge: { pullRequests: [{ ...pullFor(number), closed: true }] },
+    removeDirectories: async (card) => { removals += 1; await removeCardDirectories({ root, repository, topic: 'rigger-{number}', card, sink: built.sink }); },
+    workspace: async (card) => {
+      const made = await makeWorkspace({ root, repository, topic: 'rigger-{number}', card, sink: built.sink });
+      marker = join(made.path, 'coding-marker.txt');
+      fs.writeFileSync(marker, 'new attempt content');
+      return made;
+    },
+  });
+  const running = built.loop.pull(1);
+  const ended = settledOf(running);
+  running.catch(() => {});
+  t.after(async () => { built.dispatches.releaseAll(); await running.catch(() => {}); });
+  await waitFor(() => ended() || built.dispatches.holding().includes(number));
+  assert.deepEqual(built.dispatches.started, [number]);
+  assert.equal(removals, 1);
+  assert.equal(fs.readFileSync(marker, 'utf8'), 'new attempt content');
+  built.repository.open({ ...pullFor(number), number: 2031 });
+  built.repository.update(2031, { closed: true });
+  built.dispatches.releaseAll();
+  const reached = await running;
+  assert.equal(reached[0].outcome.value.exit, 1);
+  assert.deepEqual(cardsOf(built, 'slot.release'), [number], 'the active claim no longer masks the Coding predicate');
+  const facts = await built.repository.operations.readPullRequests(`rigger-${number}`);
+  assert.equal(facts.closed.length, 2);
+  assert.deepEqual(facts.open, []);
+  assert.deepEqual(facts.merged, []);
+  assert.equal((await columnsOf(built.fake))[number], COLUMNS.coding);
+  assert.deepEqual((await built.fake.operations.readItems())[0].labels, ['type:change']);
+  assert.deepEqual(await built.loop.pull(1), [], 'the held line makes the ordinary Coding answer inert');
+  assert.equal(built.decisions.at(-1).action.action, 'refuse');
+  assert.equal(removals, 1, 'the later Coding read performs no closed cleanup');
+  assert.equal(fs.readFileSync(marker, 'utf8'), 'new attempt content');
+});
+
+
+// proves R-WORK-36, R-WORK-38
+test('a failed closed cleanup followed by escalation stays withheld until the owner clears the label before a fresh eligible invocation', async () => {
+  const number = 204;
+  const fake = boardOf([cardIn(number, COLUMNS.owner)]);
+  const remaining = new Error('/scratch/rigger-204/reviewer remains after partial removal');
+  let removals = 0;
+  const built = world({ fake, forge: { pullRequests: [{ ...pullFor(number), closed: true }] }, removeDirectories: async () => { removals += 1; throw remaining; } });
+  await assert.rejects(built.loop.pull(1), (failure) => {
+    assert.ok(leavesOf(failure).includes(remaining));
+    assert.equal(failure.reached[0].action, 'escalate');
+    return true;
+  });
+  assert.deepEqual((await fake.operations.readItems())[0].labels, ['type:change', 'rigger:escalated']);
+  assert.deepEqual(await built.loop.pull(1), []);
+  assert.deepEqual(await built.loop.run(), []);
+  assert.equal(removals, 1, 'the new label withholds a retry of even failed removal');
+  const held = built.repository.held();
+  fake.setIssueLabels(config.repo, number, ['type:change']);
+  const cleared = { ...held, issues: held.issues.map((issue) => ({ ...issue, labels: ['type:change'] })) };
+  const retry = world({ fake, forge: cleared, removeDirectories: async () => { removals += 1; } });
+  assert.deepEqual((await retry.repository.operations.readIssue(number)).labels, ['type:change'], 'the owner-cleared issue and fresh board agree');
+  const reached = await retry.loop.pull(1);
+  assert.equal(removals, 2);
+  assert.equal(reached[0].action, 'escalate');
+  assert.equal(retry.repository.held().issues[0].comments.length, 2, 'the fresh invocation preserves the prior issue facts');
+  assert.deepEqual((await fake.operations.readItems())[0].labels, ['type:change', 'rigger:escalated']);
 });
