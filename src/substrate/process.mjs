@@ -526,14 +526,14 @@ function forbidden(pid, kill) {
  * Recording the group's kill whenever signal 0 reaches the group would record the kill of every
  * group left holding only zombies, which L0 did not end.
  */
-function* beforeKill(group, members, sightings, kill, timeout, deadline) {
+function* beforeKill(group, members, sightings, kill, timeout, deadline, now = Date.now) {
   // A settled last round does not erase identities an earlier read obtained.
   const known = [...new Map([...sightings.values()].filter(Boolean).concat(members).map((member) => [member.pid, member])).values()];
   let why;
   for (let wait = 0; why === undefined; wait = longer(wait)) {
     if (wait > 0) yield wait;
     if (!occupied(group, kill)) return { named: [] };
-    if (Date.now() >= deadline) {
+    if (now() >= deadline) {
       why = `the reads of the group just before its kill listed no process for ${timeout} ms while signal 0 still reached it`;
       continue;
     }
@@ -858,7 +858,8 @@ async function reading(looks, ps, timeout, deadline = Date.now() + timeout, trac
 const toolOf = (read, ps) => (Array.isArray(read) ? [ps, read] : [read.tool, read.args]);
 
 /** `reading`, synchronously, for the exit cleanup, which passes over each pause. */
-function readingNow(looks, ps, timeout, deadline = Date.now() + timeout) {
+function readingNow(looks, ps, timeout, deadline, now = Date.now, spawn = spawnSync) {
+  if (deadline === undefined) deadline = now() + timeout;
   let look = looks.next();
   while (!look.done) {
     if (typeof look.value === 'number') {
@@ -867,7 +868,7 @@ function readingNow(looks, ps, timeout, deadline = Date.now() + timeout) {
     }
     let printed;
     try {
-      printed = runNow(...toolOf(look.value, ps), deadline - Date.now(), timeout);
+      printed = runNow(...toolOf(look.value, ps), deadline - now(), timeout, now, spawn);
     } catch (error) {
       look = looks.throw(error);
       continue;
@@ -955,10 +956,10 @@ function run(ps, args, remaining, timeout) {
  * its pipe has closed it, and `ps` starts nothing that outlives it, so its own kill at `remaining`
  * milliseconds ends the wait.
  */
-function runNow(ps, args, remaining, timeout) {
-  const began = Date.now();
+function runNow(ps, args, remaining, timeout, now = Date.now, spawn = spawnSync) {
+  const began = now();
   try {
-    const printed = runOnce(ps, args, remaining, timeout);
+    const printed = runOnce(ps, args, remaining, timeout, spawn);
     unreadSince = undefined;
     return printed;
   } catch (error) {
@@ -968,10 +969,10 @@ function runNow(ps, args, remaining, timeout) {
 }
 
 /** `runNow`'s one run, each failure as it arose. */
-function runOnce(ps, args, remaining, timeout) {
+function runOnce(ps, args, remaining, timeout, spawn = spawnSync) {
   if (remaining <= 0) throw late(timeout);
   if (unanswered.has(ps)) throw new Error(`${timedOut(unanswered.get(ps)).message} earlier in the exit cleanup, which does not wait on it again`);
-  const { error, status, signal: ending, stdout, stderr } = spawnSync(ps, args, { env: PS_ENV, ...reader(remaining) });
+  const { error, status, signal: ending, stdout, stderr } = spawn(ps, args, { env: PS_ENV, ...reader(remaining) });
   if (error?.code === 'ETIMEDOUT') {
     unanswered.set(ps, timeout);
     throw timedOut(timeout);
@@ -1103,20 +1104,20 @@ function reachedUnread(named = [], stuck, { unlisted, unconfirmed }, kill) {
  * `UNREAPED_BOUND` has passed, and the cleanup goes on: it cannot wait longer on a process table it
  * cannot read.
  */
-function containNow(group, { ps, readTimeout, kill = SIGNAL }) {
+export function containNow(group, { ps, readTimeout, kill = SIGNAL, now = Date.now, spawnSync: spawn = spawnSync }) {
   if (!occupied(group, kill)) return { kills: [] };
   // Each step ends `readTimeout` after it begins, and its reads are given up `spare` after that.
   const within = (step, spare = 0) => {
-    const deadline = Date.now() + readTimeout;
-    return readingNow(step(deadline), ps, readTimeout, deadline + spare);
+    const deadline = now() + readTimeout;
+    return readingNow(step(deadline), ps, readTimeout, deadline + spare, now, spawn);
   };
   let named;
   let left;
   let listed;
   let unnamed;
   try {
-    const { members, sightings } = within((deadline) => census(group, kill, deadline));
-    ({ named, left, listed } = within((deadline) => beforeKill(group, members, sightings, kill, readTimeout, deadline), readTimeout));
+    const { members, sightings } = within((deadline) => census(group, kill, deadline, now));
+    ({ named, left, listed } = within((deadline) => beforeKill(group, members, sightings, kill, readTimeout, deadline, now), readTimeout));
   } catch (error) {
     unnamed = error.message;
   }
@@ -1126,7 +1127,7 @@ function containNow(group, { ps, readTimeout, kill = SIGNAL }) {
   let unread;
   let stuck = [];
   try {
-    ({ leader, stuck } = readingNow(emptied(group, seen, kill, readTimeout), ps, readTimeout));
+    ({ leader, stuck } = readingNow(emptied(group, seen, kill, readTimeout, now), ps, readTimeout, undefined, now, spawn));
     if (leader === undefined && stuck.length === 0) unread = 'the process table did not list it';
   } catch (error) {
     // A failed first look is retained in seen.beforeUnread; send its pending group kill now.
@@ -1187,7 +1188,7 @@ function containNow(group, { ps, readTimeout, kill = SIGNAL }) {
  * each live process a read after a kill finds that no read before it listed (`namedNow`), and keeps
  * in `seen.asked` each it has tried to name.
  */
-function* emptied(group, seen, kill, bound) {
+function* emptied(group, seen, kill, bound, now = Date.now) {
   // What the last read after a kill found: the leader's wait status, and each member alive.
   let last;
   const refused = new Set();
@@ -1206,7 +1207,7 @@ function* emptied(group, seen, kill, bound) {
       else seen.beforeUnread ??= error.message;
       // A read the bound cut short leaves each member the last read found alive not ended.
       if (last !== undefined && (error.code === LATE || error.code === 'ETIMEDOUT')) return { leader: last.leader, stuck: last.living.map((pid) => ({ pid, reason: `still alive when the exit cleanup's read bound of ${bound} ms ran out` })) };
-      if (error.code === LATE || unreadSince === undefined || Date.now() - unreadSince >= UNREAPED_BOUND) throw error;
+      if (error.code === LATE || unreadSince === undefined || now() - unreadSince >= UNREAPED_BOUND) throw error;
       continue;
     }
     const living = [...states].filter(([, state]) => live(state)).map(([pid]) => pid);

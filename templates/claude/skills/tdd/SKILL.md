@@ -29,9 +29,9 @@ pass. Minimal is not a style note: anything beyond what the test demands is code
 for. Put it where `ARCHITECTURE.md` says it lives (`AGENTS.md`, "When you write code").
 
 **Refactor.** Improve the code while the suite stays green, rerunning the affected tests after
-each step. Extract rather than copy-paste, by the Rule of Three (`AGENTS.md`, "Any role"). Run
-the whole `npm test` suite before you commit; one focused target passing is not the green suite
-`AGENTS.md`, "Before you start", requires.
+each step. Extract rather than copy-paste, by the Rule of Three (`AGENTS.md`, "Any role"). Follow
+`AGENTS.md`, "Before you start", for deterministic verification before commit and host evidence
+before handoff; a focused pass alone does not meet those obligations.
 
 Then the next test, and one slice at a time: finish red, green and refactor for one behaviour
 before you write the next test. Never batch the tests and then batch the implementation —
@@ -40,52 +40,30 @@ the loop's value is the failure you saw, and a large step throws it away.
 
 ## A test worth keeping
 
-None of this binds. `AGENTS.md` states the loop; this is the craft that decides whether running
-it bought anything.
+The core below implements `AGENTS.md`, "When you write code"; the worked example is craft.
 
-**Test behaviour at the narrowest stable interface** — a public entry point, or a boundary
-`ARCHITECTURE.md` names. A refactor that preserves the behaviour should not need the test
-changed. Assertions about private structure, or about which collaborator was called how, are
-assertions about today's implementation, unless that interaction is itself the contract. Prefer
-real collaborators, and substitute only what is slow, nondeterministic, or across an external
-boundary.
+**Name the break before the body.** State the observable behaviour and plausible defect the test
+must catch. Test the narrowest stable public or architectural boundary. Private call counts and
+source layout are not behaviour unless the contract makes them so.
 
-**Name the break before you write the body.** What plausible production defect should make this
-test fail? If the only answer is that someone renamed a private method, moved the source text
-around, or called a mock differently, the test guards an implementation detail and will cost
-more than it catches.
+**Derive the expected value independently.** Use the requirement, a worked example or a checked
+literal, never the production algorithm or its helpers. Failing first cannot expose an oracle
+that later agrees with the implementation by construction.
 
-**Derive the expected value independently** — from the requirement, from a worked example, or
-from a literal you checked by hand. Never compute it with the production algorithm or one of its
-helpers: a test that asks the code what the answer should be agrees with the code by
-construction, and passes just as happily once the code is wrong. Failing first does not catch
-this one, because such a test fails before the code exists and passes for ever after.
+**Derive doubles independently too.** Use observed responses or documented collaborator
+contracts, never the assertion's expected value. Record that source where the double is defined.
 
-**Derive what a double returns, too.** "Derive the expected value independently" is the rule
-above; this is its other half. A double returning what the assertion expects agrees with your
-assumption by construction, and that argument carries over unchanged. Take the value from the
-real collaborator — a recorded response, a shape its interface guarantees, a literal you read
-from the real thing — never from what makes the test pass. Failing first misses this one for the
-same reason.
+**Separate algorithm and host proof.** Inject clocks to force algorithmic timing decisions.
+Retain real-host checks for changed wiring, tool/OS contracts and real deadlines. A logical clock
+cannot prove an OS deadline. Identify any boundary left unproved; a fake pass earns no host credit.
 
-**Something exercises the real wiring.** A suite green against doubles everywhere can compose
-into software that has never run, and every unit test goes on passing while it does.
-"Prefer real collaborators" is a preference; this is the floor under it. Where you substitute
-across a boundary, one test crosses it for real, in the same work rather than a follow-up. Where
-it cannot be crossed in a test, say so where the substitute is defined, so the next reader knows
-what is unproven.
+**Establish the premise.** Observe fixture readiness with a condition before starting the
+behaviour's timer when readiness is its premise. Keep startup within the bound when startup
+itself is the contract. A readiness failure is not a failure of behaviour never exercised.
 
-**Assert the relation to an authority, not the answer it gives today.** Where code depends on a
-tool or command outside it, `D16` has that tool decide the fact and the code carry at most a copy.
-Write the test that ties the two so that it asks the tool and asserts the relation between its
-answer and the code's. A test pinning the answer the tool gives today goes stale the moment the
-tool changes it, and it goes stale green. Nothing in such a test is tied to the tool, so it agrees
-with the copy it was written beside for ever.
-
-For a worked example, read `test/package-budget.test.mjs`, which covers one fact both ways. Look
-for the difference the two kinds make. A test that pins the tool's answer is the readable one and
-says what that answer is today, while a test that asks the tool is the one that fails when the
-answer moves.
+**Keep the authority live.** Where a tool decides a fact (`D16`), assert the relation between its
+answer and the code's, rather than pinning today's answer. `test/package-budget.test.mjs` is a
+worked example: a fixed answer documents today; asking the tool catches a changed authority.
 
 ## A mutation claim
 
@@ -132,10 +110,15 @@ reason you wanted. So show all of these, for each mutation, before you say what 
 
 One mutation removes one behaviour. Batching several reports the union and hides the gap.
 
-No check can tell whether you ran any of this, and none is coming: requirement 4 is a different
-question for every mutation, which is why there is no helper here to reach for.
-`test/mutation-claim.test.mjs` holds this bar in place and enforces nothing about its use, so it
-is a bar you hold yourself to and a judge reads your claim against.
+`test/verify-mac-containment` guards its bounded Mac claims: anchors, readback/diff, named
+assertion verdicts without cancellation, observed effects, restoration and retained artifacts.
+Those mechanics do not decide whether a mutation represents the right semantic fault or covers
+the claim. The judge still evaluates that scope. `test/mutation-claim.test.mjs` checks the stated
+bar, not its use.
+
+Preserve byte-complete originals with command, executed ref and provenance. Concatenated stdout
+and stderr are aggregate output, not evidence of cross-stream causal order. Use an ordered
+observer or synchronization where the claim depends on that order.
 
 ## A bug fix
 
@@ -151,6 +134,11 @@ the next hypothesis.
 A failing test is a claim that something is wrong. Deleting it deletes the claim, not the fault.
 Fix the code, or raise the test with the owner (`AGENTS.md`). The same holds for weakening an
 assertion until it passes.
+
+With explicit prior owner authorization, remove a redundant live body only with an inspectable
+mapping from each protected behaviour to controlled replacement proof and retained real-boundary
+coverage. Removed host proof without replacement remains unmet. A failing test's claim must
+still be resolved; calling it redundant does not resolve it.
 
 ## No sleeps
 

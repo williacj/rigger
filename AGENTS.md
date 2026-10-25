@@ -101,9 +101,19 @@ third treatment.
 
 ## Before you start
 
-`npm test` green before you begin. Red means stop: fix it, commit the fix on its own, then
-start the work. Never commit or push with a failing suite, and never reach for `--no-verify`
-without the owner's approval. `npm run` lists every script.
+`npm test` is deterministic verification; `npm run test:host` is host verification. Refer to
+`package.json` and `test/suite.sh` for execution. Hooks verify the deterministic tier only.
+
+Before unrelated work, establish a green deterministic baseline. Before changing an external
+boundary, establish its affected host baseline too. An admitted baseline-repair card may work
+only on its specifically recorded red failure; unrelated maker work stops. That failure is the
+repair premise, never permission for new failures. Commit its repair separately. Full
+deterministic and full host baselines must pass before broader work resumes.
+
+Before commit or push, deterministic verification must pass. Never use `--no-verify` without
+the owner's approval. Before handoff or PR review, deterministic and affected host checks must
+pass at the reviewed head. Supported-host checks unavailable locally remain explicitly unproved
+until CI supplies evidence. These checks do not replace the review and merge gates.
 
 ## Any role
 
@@ -133,6 +143,10 @@ without the owner's approval. `npm run` lists every script.
   work in a gitignored spikes directory, never merged.
 - **Every bug fix starts with the failing test.** Never delete a failing test — raise it with
   the owner.
+- **Test behaviour at observable boundaries.** Derive expected values independently and doubles
+  from observed or documented contracts. Use injected clocks for algorithmic time decisions;
+  retain real-host proof for wiring, OS behaviour and real deadlines. Establish fixture premises
+  before timing the behaviour. The `tdd` skill gives the procedure.
 - **No sleeps in tests.** Injectable clocks and condition-based waits.
 - **Put code where `ARCHITECTURE.md` says it lives.** A need that fits no extension point goes
   to the architect (`D18` rule 2), not into a workaround.
