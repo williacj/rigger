@@ -245,7 +245,7 @@ test('a continuing attempt whose workspace fetch fails twice answers hold at L1s
     kinds: { change: { ...KINDS.change, judges: ['reviewer'] } },
     workspace: async (number, head) => {
       fetched.push([number, head]);
-      throw Object.assign(new Error('fetch failed before it answered'), { code: WORKSPACE_NOT_MADE, path });
+      throw Object.assign(new Error('fetch failed before it answered'), { code: 'FETCH_FAILED', path });
     },
   });
 
@@ -254,6 +254,7 @@ test('a continuing attempt whose workspace fetch fails twice answers hold at L1s
   assert.equal(built.decisions[0].answer.action, 'continue');
   assert.equal(stopOf(failure, 1).decision, 'hold');
   assert.deepEqual(fetched, [[1, pull.sha], [1, pull.sha]]);
+  assert.deepEqual(recorded(built, 'L2', 'attempt.failed').map(({ code }) => code), ['FETCH_FAILED', 'FETCH_FAILED']);
   assert.deepEqual(recorded(built, 'L2', 'attempt.decided').map(({ decision }) => decision), ['again', 'hold']);
   assert.deepEqual(recorded(built, 'L3', 'dispatch', (each) => each.role === 'engineer'), []);
 });

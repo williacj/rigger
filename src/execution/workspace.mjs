@@ -86,8 +86,12 @@ const scratchBase = (root, topic, card) => join(root, 'scratch', topicFor(topic,
  * the forge head before removal. L0 then makes the workspace on the branch at main or `head`,
  * resetting the branch where it exists.
  *
- * Every failure rejects with `WORKSPACE_NOT_MADE`, naming the path and why, after L1 has
- * recorded the same. Where the sink refused any event on the way, L0's, L1's record of the
+ * An unanswered check or make rejects with `WORKSPACE_NOT_MADE`; an answered replace-rule refusal
+ * rejects with `WORKSPACE_REFUSED`. A branch checked out elsewhere rejects with
+ * `BRANCH_ELSEWHERE`; a moved or deleted forge line with `LINE_MOVED` or `LINE_DELETED`; a failed
+ * forge read with `FETCH_FAILED`; and a refused branch name or nonabsolute root with
+ * `BRANCH_REFUSED` or `ROOT_NOT_ABSOLUTE`. Each names its path and reason after L1 records the
+ * failure. Where the sink refused any event on the way, L0's, L1's record of the
  * failure, or its record of a workspace made or removed, though the workspace was made or
  * removed, it rejects with `EVENT_REFUSED` instead, naming each such event as unrecorded: a
  * refused event is the halt, not a workspace L1 could not make, so L2 spends no attempt on it (the
@@ -182,9 +186,10 @@ export async function makeJudgeDirectory({ root, topic, card, role, head, reposi
  * A directory already there is removed first, without following any symbolic link inside it, once
  * `scratchReplaceable` has passed what is there. L1
  * records under the card a `workspace.removed` and a `workspace.made`, each carrying `role` and
- * the path, and a `workspace.failed` carrying them and why. Every failure rejects with
- * `WORKSPACE_NOT_MADE`, naming the path and why, or with `EVENT_REFUSED` where the sink refused an
- * event on the way, as `makeWorkspace` does.
+ * the path, and a `workspace.failed` carrying them and why. An answered replace-rule refusal
+ * rejects with `SCRATCH_REFUSED`; an unanswered check or make rejects with `WORKSPACE_NOT_MADE`.
+ * Each names the path and why. A refused sink event rejects with `EVENT_REFUSED`, as in
+ * `makeWorkspace`.
  */
 export async function makeScratch({ base, role, card, repository, sink }) {
   const events = sink.emitter({ layer: 'L1', card });

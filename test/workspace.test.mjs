@@ -34,6 +34,7 @@ import { renameSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { detachedWorktreeAt } from './git-repository.mjs';
 import { unlockWorktreeAt } from './git-repository.mjs';
+import { gitUnansweredWorktreeCheck } from './process-fixtures.mjs';
 
 /**
  * A repository whose `origin` is a local bare repository, a root for workspaces and a sink, in a
@@ -183,6 +184,21 @@ test('an answered workspace replace-rule refusal has its own code and names the 
     && error.message.includes('R-WORK-14'));
   assert.deepEqual(contents(path), before);
   assert.equal(branchAt(here.repository, 'rigger-42'), branch);
+});
+
+// proves R-FAIL-6, R-WORK-13
+test('an unanswered workspace replace-rule git check reports a workspace not made and leaves the earlier worktree untouched', async (t) => {
+  const here = world(t);
+  const earlier = await here.make(42);
+  writeFileSync(join(earlier.path, 'kept'), 'earlier work\n');
+  const before = { contents: contents(earlier.path), branch: branchAt(here.repository, 'rigger-42'), worktrees: worktreeList(here.repository) };
+  const stand = scratch(t);
+  gitUnansweredWorktreeCheck(stand, 'rigger-42', 1);
+
+  const failure = await withFirstOnPath(stand, () => refusedNaming(here.make(42), earlier.path));
+
+  assert.match(failure.message, /fixture: git worktree check gave no answer/);
+  assert.deepEqual({ contents: contents(earlier.path), branch: branchAt(here.repository, 'rigger-42'), worktrees: worktreeList(here.repository) }, before);
 });
 
 /**

@@ -231,6 +231,7 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
       try {
         kind = (await answer(['cat-file', '-t', expected])).trim();
       } catch (cause) {
+        if (cause.code === EVENT_REFUSED) throw cause;
         throw Object.assign(cause, { code: FETCH_FAILED });
       }
       if (kind !== 'commit') throw Object.assign(new Error(`${ORIGIN}'s ${branch} at ${expected} names a ${kind}, not a commit`), { code: FETCH_FAILED });

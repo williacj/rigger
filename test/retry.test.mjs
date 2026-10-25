@@ -27,6 +27,7 @@ import { standInAgent } from './stub-claude.mjs';
 import { readsServing } from './loop-world.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { makingJudgeDirectories } from './loop-world.mjs';
+import { gitUnansweredWorktreeCheck } from './process-fixtures.mjs';
 
 // A bound on a test that waits on real commands and real git, so one whose condition never holds
 // fails here rather than holding the suite.
@@ -190,6 +191,31 @@ test('given a workspace that cannot be made on the first attempt and can on the 
   assert.deepEqual(named(events, 'L1', 'workspace.made').map(({ role, path: at }) => ({ role, path: at })), [{ role: undefined, path }, { role: 'engineer', path: join(dirname(path), 'scratch', 'rigger-1', 'engineer') }]);
   assert.deepEqual(named(events, 'L3', 'dispatch').filter((each) => each.step !== undefined).map(({ step: name, attempt }) => [name, attempt]), [['a', 2]]);
   assert.deepEqual(named(events, 'L1', 'dispatch.start').map((each) => each.workspace), [path, path]);
+});
+
+// proves R-FAIL-6, R-WORK-13
+test('an unanswered replace-rule check retries the same card and starts its maker after a second workspace', SETTLES_WITHIN, async (t) => {
+  let built;
+  built = await retryWorld(t, {
+    steps: ['a'], provisioning: { a: step('true') }, maker: { exit: 0 },
+    before: (call) => {
+      if (call !== 1) return;
+      mkdirSync(built.root, { recursive: true });
+      worktreeAt(join(built.directory, 'repository'), built.path, 'rigger-1');
+    },
+  });
+  const stand = join(built.directory, 'unanswered-check');
+  mkdirSync(stand);
+  gitUnansweredWorktreeCheck(stand, 'rigger-1', 1);
+
+  await withFirstOnPath(stand, () => built.loop.pull());
+
+  const events = built.events();
+  assert.deepEqual(built.made, [1, 1]);
+  assert.deepEqual(named(events, 'L2', 'attempt.failed').map(({ class: namedClass }) => namedClass), ['environment']);
+  assert.deepEqual(named(events, 'L2', 'attempt.decided').map(({ decision }) => decision), ['again']);
+  assert.match(named(events, 'L1', 'workspace.failed')[0].reason, /fixture: git worktree check gave no answer/);
+  assert.equal(built.makerCalls.length, 1);
 });
 
 // proves R-PROV-3, R-FAIL-2

@@ -684,7 +684,7 @@ test('L1 records under the card the scratch directory it made, and the one it re
 
 /**
  * Asserts that a role dispatch through L1 of role `engineer`, handed the scratch base `base`,
- * rejects with NOT_STARTED naming `path`, that the adapter was asked for no invocation, that the
+ * rejects with `code` naming `path`, that the adapter was asked for no invocation, that the
  * stand-in agent never ran, and that L1 recorded no dispatch.start. Hands back the failure.
  */
 async function assertScratchRefused({ root, directory, cwd, state, sink }, base, path, code = NOT_STARTED) {
@@ -704,6 +704,27 @@ async function assertScratchRefused({ root, directory, cwd, state, sink }, base,
   assert.deepEqual(eventsIn(state).filter((event) => event.event === 'dispatch.start'), []);
   return failure;
 }
+
+// proves R-FAIL-6, R-WORK-26, R-WORK-27, R-WORK-28, R-WORK-29
+test('each answered maker scratch refusal names the exact condition that rejected its path', SETTLES_WITHIN, async (t) => {
+  for (const [condition, place] of [
+    ['R-WORK-27', ({ path }) => writeFileSync(path, 'not a directory\n')],
+    ['R-WORK-28', ({ placed, path }) => worktreeAt(repositoryAt(join(placed.root, 'other-repository')), path, 'held')],
+    ['R-WORK-29', ({ placed, path }) => worktreeAt(placed.repository, path, 'held')],
+  ]) {
+    await t.test(condition, async (caseTest) => {
+      const placed = layout(caseTest);
+      const path = join(placed.scratch, 'engineer');
+      place({ placed, path });
+      const before = contents(path);
+
+      const failure = await assertScratchRefused(placed, placed.scratch, path, 'SCRATCH_REFUSED');
+
+      assert.ok(failure.message.includes(condition), failure.message);
+      assert.deepEqual(contents(path), before);
+    });
+  }
+});
 
 // proves R-FAIL-6, R-WORK-26, R-WORK-27
 test('the maker scratch refusal is reported apart from a dispatch that never started', async (t) => {
@@ -729,7 +750,7 @@ function contents(path) {
 }
 
 // proves R-WORK-26, R-WORK-27
-test('given a symbolic link at <root>/scratch or at <root>/scratch/<topic>, roleDispatch rejects with NOT_STARTED naming the link, starts no process, and the link and what it points at are unchanged', SETTLES_WITHIN, async (t) => {
+test('given a symbolic link at <root>/scratch or at <root>/scratch/<topic>, roleDispatch rejects with SCRATCH_REFUSED naming the link, starts no process, and the link and what it points at are unchanged', SETTLES_WITHIN, async (t) => {
   for (const linked of [['scratch'], ['scratch', 'rigger-1412']]) {
     const placed = layout(t);
     const top = join(placed.root, 'worktrees');
@@ -748,7 +769,7 @@ test('given a symbolic link at <root>/scratch or at <root>/scratch/<topic>, role
   }
 });
 
-test('given a worktree of the repository registered at <scratch>/<role> or inside it, roleDispatch rejects with NOT_STARTED naming the path, starts no process, and that worktree\'s files and branch are unchanged', SETTLES_WITHIN, async (t) => {
+test('given a worktree of the repository registered at <scratch>/<role> or inside it, roleDispatch rejects with SCRATCH_REFUSED naming the path, starts no process, and that worktree\'s files and branch are unchanged', SETTLES_WITHIN, async (t) => {
   for (const under of [[], ['deep', 'tree']]) {
     const placed = layout(t);
     const repository = repositoryAt(join(placed.root, 'repository'), { 'kept.txt': 'committed\n' });
@@ -766,7 +787,7 @@ test('given a worktree of the repository registered at <scratch>/<role> or insid
 });
 
 // proves R-WORK-26, R-WORK-27
-test('given a file, a symbolic link to a directory, or a symbolic link to nothing at <scratch>/<role>, roleDispatch rejects with NOT_STARTED naming the path, starts no process, and the path is unchanged', SETTLES_WITHIN, async (t) => {
+test('given a file, a symbolic link to a directory, or a symbolic link to nothing at <scratch>/<role>, roleDispatch rejects with SCRATCH_REFUSED naming the path, starts no process, and the path is unchanged', SETTLES_WITHIN, async (t) => {
   for (const put of [
     (path) => writeFileSync(path, 'not a directory\n'),
     (path, root) => symlinkSync(join(root, 'judge'), path),
@@ -1006,7 +1027,7 @@ test('the Claude Code adapter answers the same invocation with a scratch directo
 });
 
 // proves R-WORK-29
-test('given a worktree of the repository whose .git entry has been moved out of it, registered at <scratch>/<role> or inside it, roleDispatch rejects with NOT_STARTED naming the path and the worktree, starts no process, and the worktree\'s files, its registration and its branch are unchanged', SETTLES_WITHIN, async (t) => {
+test('given a worktree of the repository whose .git entry has been moved out of it, registered at <scratch>/<role> or inside it, roleDispatch rejects with SCRATCH_REFUSED naming the path and the worktree, starts no process, and the worktree\'s files, its registration and its branch are unchanged', SETTLES_WITHIN, async (t) => {
   for (const under of [[], ['deep', 'tree']]) {
     const placed = layout(t);
     repositoryAt(placed.repository, { 'kept.txt': 'committed\n' });
@@ -1059,7 +1080,7 @@ test('given a worktree of the repository registered inside <scratch>/<role> whos
 });
 
 // proves R-WORK-28
-test('given a worktree of another repository, which the repository\'s git does not list, at <scratch>/<role>, roleDispatch rejects with NOT_STARTED naming the path, starts no process, and the worktree\'s files and branch are unchanged', SETTLES_WITHIN, async (t) => {
+test('given a worktree of another repository, which the repository\'s git does not list, at <scratch>/<role>, roleDispatch rejects with SCRATCH_REFUSED naming the path, starts no process, and the worktree\'s files and branch are unchanged', SETTLES_WITHIN, async (t) => {
   const placed = layout(t);
   const another = repositoryAt(join(placed.root, 'another-repository'), { 'kept.txt': 'committed\n' });
   const path = join(placed.scratch, 'engineer');
@@ -1076,7 +1097,7 @@ test('given a worktree of another repository, which the repository\'s git does n
 });
 
 /**
- * Asserts that a role dispatch through L1 handed the scratch base `base` rejects with NOT_STARTED
+ * Asserts that a role dispatch through L1 handed the scratch base `base` rejects with SCRATCH_REFUSED
  * naming `<base>/engineer` and the worktree `tree`, and that nothing under `tree` changed, as
  * `before` held it, and no `<base>/engineer` was made.
  */
@@ -1088,7 +1109,7 @@ async function assertInsideRefused(placed, base, tree) {
   assert.equal(existsSync(join(base, 'engineer')), false, 'L1 made the scratch directory inside the worktree');
 }
 
-test('given a scratch base that is a registered worktree of the repository, holding a staged file, roleDispatch rejects with NOT_STARTED naming the scratch directory and the worktree, and changes nothing', SETTLES_WITHIN, async (t) => {
+test('given a scratch base that is a registered worktree of the repository, holding a staged file, roleDispatch rejects with SCRATCH_REFUSED naming the scratch directory and the worktree, and changes nothing', SETTLES_WITHIN, async (t) => {
   const placed = layout(t);
   repositoryAt(placed.repository, { 'kept.txt': 'committed\n' });
   const tree = worktreeAt(placed.repository, join(placed.root, 'tree'), 'held');
@@ -1102,7 +1123,7 @@ test('given a scratch base that is a registered worktree of the repository, hold
   assert.match(gitIn(tree, 'status', '--porcelain'), /^A {2}engineer\/staged\.txt$/m);
 });
 
-test('given a scratch base lying inside a registered worktree of the repository, not yet made, roleDispatch rejects with NOT_STARTED naming the scratch directory and the worktree, and makes nothing there', SETTLES_WITHIN, async (t) => {
+test('given a scratch base lying inside a registered worktree of the repository, not yet made, roleDispatch rejects with SCRATCH_REFUSED naming the scratch directory and the worktree, and makes nothing there', SETTLES_WITHIN, async (t) => {
   const placed = layout(t);
   repositoryAt(placed.repository, { 'kept.txt': 'committed\n' });
   const tree = worktreeAt(placed.repository, join(placed.root, 'tree'), 'held');
@@ -1110,14 +1131,14 @@ test('given a scratch base lying inside a registered worktree of the repository,
   await assertInsideRefused(placed, join(tree, 'scratch', 'rigger-1412'), tree);
 });
 
-test('given a scratch base lying inside the repository\'s main working tree, roleDispatch rejects with NOT_STARTED naming the scratch directory and the main working tree, and makes nothing there', SETTLES_WITHIN, async (t) => {
+test('given a scratch base lying inside the repository\'s main working tree, roleDispatch rejects with SCRATCH_REFUSED naming the scratch directory and the main working tree, and makes nothing there', SETTLES_WITHIN, async (t) => {
   const placed = layout(t);
   repositoryAt(placed.repository, { 'kept.txt': 'committed\n' });
 
   await assertInsideRefused(placed, join(placed.repository, 'scratch', 'rigger-1412'), placed.repository);
 });
 
-test('given a scratch base spelled through a symbolic link into a registered worktree of the repository, with <scratch>/<role> not yet made, roleDispatch rejects with NOT_STARTED naming the scratch directory and the worktree, and leaves the worktree unchanged', SETTLES_WITHIN, async (t) => {
+test('given a scratch base spelled through a symbolic link into a registered worktree of the repository, with <scratch>/<role> not yet made, roleDispatch rejects with SCRATCH_REFUSED naming the scratch directory and the worktree, and leaves the worktree unchanged', SETTLES_WITHIN, async (t) => {
   const placed = layout(t);
   repositoryAt(placed.repository, { 'kept.txt': 'committed\n' });
   const tree = worktreeAt(placed.repository, join(placed.root, 'tree'), 'held');
@@ -1130,7 +1151,7 @@ test('given a scratch base spelled through a symbolic link into a registered wor
 });
 
 /**
- * Asserts that a role dispatch through L1 handed the scratch base `base` rejects with NOT_STARTED
+ * Asserts that a role dispatch through L1 handed the scratch base `base` rejects with SCRATCH_REFUSED
  * naming `<base>/engineer` and `named`, that every mode and entry under `kept` is unchanged, and
  * that no `<base>/engineer` was made. Hands back the failure.
  */
@@ -1142,7 +1163,7 @@ async function assertAncestorRefused(placed, base, named, kept) {
   return failure;
 }
 
-test('given a scratch base inside a linked worktree of an unrelated repository, with <scratch>/<role> not yet made, roleDispatch rejects with NOT_STARTED naming the scratch directory and the worktree\'s .git, and makes nothing in that worktree', SETTLES_WITHIN, async (t) => {
+test('given a scratch base inside a linked worktree of an unrelated repository, with <scratch>/<role> not yet made, roleDispatch rejects with SCRATCH_REFUSED naming the scratch directory and the worktree\'s .git, and makes nothing in that worktree', SETTLES_WITHIN, async (t) => {
   const placed = layout(t);
   const another = repositoryAt(join(placed.root, 'another-repository'), { 'kept.txt': 'committed\n' });
   const tree = worktreeAt(another, join(placed.root, 'unrelated-tree'), 'held');
@@ -1154,7 +1175,7 @@ test('given a scratch base inside a linked worktree of an unrelated repository, 
 });
 
 // proves R-WORK-28
-test('given a .git file at an ancestor of <scratch>/<role> between it and the worktree root, roleDispatch rejects with NOT_STARTED naming the scratch directory and that .git, and changes nothing', SETTLES_WITHIN, async (t) => {
+test('given a .git file at an ancestor of <scratch>/<role> between it and the worktree root, roleDispatch rejects with SCRATCH_REFUSED naming the scratch directory and that .git, and changes nothing', SETTLES_WITHIN, async (t) => {
   const placed = layout(t);
   const root = join(placed.root, 'worktrees');
   const base = join(root, 'scratch', 'rigger-1412');
@@ -1167,7 +1188,7 @@ test('given a .git file at an ancestor of <scratch>/<role> between it and the wo
   assert.equal(readFileSync(join(base, 'engineer', 'left.txt'), 'utf8'), 'the first attempt\'s\n');
 });
 
-test('given a .git directory at the worktree root itself, the parent of scratch/, roleDispatch rejects with NOT_STARTED naming the scratch directory and that .git, and makes nothing', SETTLES_WITHIN, async (t) => {
+test('given a .git directory at the worktree root itself, the parent of scratch/, roleDispatch rejects with SCRATCH_REFUSED naming the scratch directory and that .git, and makes nothing', SETTLES_WITHIN, async (t) => {
   const placed = layout(t);
   const root = join(placed.root, 'worktrees');
   mkdirSync(join(root, '.git'), { recursive: true });
@@ -1195,7 +1216,7 @@ test('given an ancestor of <scratch>/<role> up to the worktree root that L1 cann
 });
 
 // proves R-WORK-29
-test('given a scratch base inside a registered worktree of the repository whose .git was moved aside, not yet made, plain or through a symbolic link, roleDispatch rejects with NOT_STARTED naming the scratch directory and the worktree, and makes nothing there', SETTLES_WITHIN, async (t) => {
+test('given a scratch base inside a registered worktree of the repository whose .git was moved aside, not yet made, plain or through a symbolic link, roleDispatch rejects with SCRATCH_REFUSED naming the scratch directory and the worktree, and makes nothing there', SETTLES_WITHIN, async (t) => {
   for (const spelled of ['plain', 'through a link']) {
     const placed = layout(t);
     repositoryAt(placed.repository, { 'kept.txt': 'committed\n' });
@@ -1210,7 +1231,7 @@ test('given a scratch base inside a registered worktree of the repository whose 
   }
 });
 
-test('given a scratch base deeper inside the repository\'s main working tree than the worktree root, where no ancestor up to that root holds a .git, roleDispatch rejects with NOT_STARTED naming the scratch directory and the main working tree, and makes nothing there', SETTLES_WITHIN, async (t) => {
+test('given a scratch base deeper inside the repository\'s main working tree than the worktree root, where no ancestor up to that root holds a .git, roleDispatch rejects with SCRATCH_REFUSED naming the scratch directory and the main working tree, and makes nothing there', SETTLES_WITHIN, async (t) => {
   const placed = layout(t);
   repositoryAt(placed.repository, { 'kept.txt': 'committed\n' });
   const base = join(placed.repository, 'x', 'y', 'scratch', 'rigger-1412');
@@ -1223,7 +1244,7 @@ test('given a scratch base deeper inside the repository\'s main working tree tha
   assert.equal(existsSync(join(placed.repository, 'x')), false, 'L1 made a directory inside the main working tree');
 });
 
-test('given a worktree root nested inside an unrelated repository\'s checkout, roleDispatch rejects with NOT_STARTED naming the scratch directory and that checkout\'s .git, and makes nothing in the checkout', SETTLES_WITHIN, async (t) => {
+test('given a worktree root nested inside an unrelated repository\'s checkout, roleDispatch rejects with SCRATCH_REFUSED naming the scratch directory and that checkout\'s .git, and makes nothing in the checkout', SETTLES_WITHIN, async (t) => {
   const placed = layout(t);
   const other = repositoryAt(join(placed.root, 'other-checkout'), { 'kept.txt': 'committed\n' });
   const base = join(other, 'nested-root', 'scratch', 'rigger-1412');
@@ -1233,7 +1254,7 @@ test('given a worktree root nested inside an unrelated repository\'s checkout, r
   assert.equal(existsSync(join(other, 'nested-root')), false, 'L1 made a directory inside the unrelated checkout');
 });
 
-test('given a .git file at an ancestor above the worktree root, roleDispatch rejects with NOT_STARTED naming the scratch directory and that .git, and changes nothing', SETTLES_WITHIN, async (t) => {
+test('given a .git file at an ancestor above the worktree root, roleDispatch rejects with SCRATCH_REFUSED naming the scratch directory and that .git, and changes nothing', SETTLES_WITHIN, async (t) => {
   const placed = layout(t);
   const above = join(placed.root, 'above');
   const root = join(above, 'deep', 'worktrees');
@@ -1247,7 +1268,7 @@ test('given a .git file at an ancestor above the worktree root, roleDispatch rej
   assert.equal(readFileSync(join(base, 'engineer', 'left.txt'), 'utf8'), 'the first attempt\'s\n');
 });
 
-test('given a worktree root that is a symbolic link to a directory nested inside an unrelated repository\'s checkout, roleDispatch rejects with NOT_STARTED naming the scratch directory and that checkout\'s .git, and makes nothing in the checkout', SETTLES_WITHIN, async (t) => {
+test('given a worktree root that is a symbolic link to a directory nested inside an unrelated repository\'s checkout, roleDispatch rejects with SCRATCH_REFUSED naming the scratch directory and that checkout\'s .git, and makes nothing in the checkout', SETTLES_WITHIN, async (t) => {
   const placed = layout(t);
   const foreign = repositoryAt(join(placed.root, 'foreign'), { 'kept.txt': 'committed\n' });
   mkdirSync(join(foreign, 'nested'));

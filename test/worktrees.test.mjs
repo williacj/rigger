@@ -15,6 +15,10 @@ import { clonedFromOrigin, gitIn, repositoryAt, worktreeAt, worktreeList } from 
 import { fixture, GIT, gitCalls, gitHanging, gitRacing, gitRecording, holding, OUTLIVED, read, scratch, withFirstOnPath } from './process-fixtures.mjs';
 import { previousCheckout } from './git-repository.mjs';
 import { ADDING } from '../src/substrate/worktrees.mjs';
+import { makeWorkspace } from '../src/execution/workspace.mjs';
+import { nextAction } from '../src/workflow/next-action.mjs';
+import { KINDS, readyCard } from './loop-world.mjs';
+import { EVENT_REFUSED } from '../src/substrate/process.mjs';
 
 /** Every event an emitter was handed, in order, each as its name and its fields. */
 function recorder() {
@@ -675,6 +679,34 @@ test('a continuing forge read that answers a non-commit is tagged as a forge fai
 
   await assert.rejects(workspaces({ repository, emitter: recorder(), git: standIn }).fetchLineAt('rigger-42', head),
     (error) => error.code === 'FORGE_FETCH_FAILED' && error.message.includes('names a tag'));
+});
+
+// proves R-FAIL-6, R-WORK-25
+test('a refused cat-file timeout event stays EVENT_REFUSED through L1 and gives L2 no retry decision', async (t) => {
+  const { directory, source, repository, push } = world(t);
+  gitIn(source, 'switch', '-q', '-c', 'rigger-42');
+  const head = push('the maker work', 'rigger-42');
+  const stand = fixture(holding(t), 'git', [
+    'if [ "$1" = cat-file ]; then echo cat-file >> "$here/cat-calls"; /usr/bin/tail -f "$here/hold" > /dev/null & wait; fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+  const events = [];
+  const sink = { emitter: (context) => ({ emit: (event, fields) => {
+    if (event === 'timeout.killed') throw new Error('fixture: the sink refuses timeout.killed');
+    events.push({ ...context, event, ...fields });
+  } }) };
+  const root = join(directory, 'worktrees');
+
+  const failure = await withFirstOnPath(dirname(stand), () => makeWorkspace({ root, topic: 'rigger-{number}', card: 42, head, repository, sink, timeout: OUTLIVED }))
+    .then(() => assert.fail('the continuing make succeeded'), (error) => error);
+
+  assert.equal(failure.code, EVENT_REFUSED, failure.stack);
+  assert.ok(failure.unrecorded.length > 0 && failure.unrecorded.every(({ event }) => event === 'timeout.killed'), failure.message);
+  assert.equal(read(dirname(stand), 'cat-calls'), 'cat-file');
+  assert.throws(() => nextAction(readyCard(42), KINDS, undefined, {
+    provisioning: {}, sink, workspace: { status: 'rejected', reason: failure },
+  }), /L2 answers no action/);
+  assert.deepEqual(events.filter(({ layer, event }) => layer === 'L2' && event === 'attempt.decided'), []);
 });
 
 test('no operation but fetch is retried, whatever its standard error says', async (t) => {
