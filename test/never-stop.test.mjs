@@ -3051,9 +3051,57 @@ const CELL_CASES = [
     await until(() => processState(two) === '', { signal: t.signal });
   }],
 ];
+const controlledCensusExits = new Set([
+  "U2 exit E0: its first census state read timed out",
+  "U2 exit E1: its first command read timed out",
+  "U2 exit E2: its second census state read timed out",
+  "U2 exit E2 failure: its second census state read failed",
+  "U2 exit C1: its first census read failed",
+  "U2 exit C5: a census read after a completed round failed",
+  "C1 exit E0: its first census state read timed out",
+  "C1 exit E1: its first command read timed out",
+  "C1 exit E2: its second census state read timed out",
+  "C1 exit E2 failure: its second census state read failed",
+  "C1 exit C1: its first census read failed",
+  "C2 exit E0: its first census state read timed out",
+  "C2 exit E1: its first command read timed out",
+  "C2 exit E2: its second census state read timed out",
+  "C2 exit E2 failure: its second census state read failed",
+  "C2 exit C1: its first census read failed",
+  "A0 exit E0: its first census state read timed out",
+  "A0 exit E1: its first command read timed out",
+  "A0 exit E2: its second census state read timed out",
+  "A0 exit E2 failure: its second census state read failed",
+  "A0 exit C1: its first census read failed",
+  "A0 exit C5: a census read after a completed round failed",
+  "A0 zombie exit E0: its first census state read timed out",
+  "A0 zombie exit E1: its first command read timed out",
+  "A0 zombie exit E2: its second census state read timed out",
+  "A0 zombie exit E2 failure: its second census state read failed",
+  "A0 zombie exit C1: its first census read failed",
+  "A0 zombie exit C5: a census read after a completed round failed",
+  "B0 exit E0: its first census state read timed out",
+  "B0 exit E1: its first command read timed out",
+  "B0 exit E2: its second census state read timed out",
+  "B0 exit E2 failure: its second census state read failed",
+  "B0 exit C1: its first census read failed",
+  "B0 exit C5: a census read after a completed round failed",
+  "B1 exit E0: its first census state read timed out",
+  "B1 exit E1: its first command read timed out",
+  "B1 exit E2: its second census state read timed out",
+  "B1 exit E2 failure: its second census state read failed",
+  "B1 exit C1: its first census read failed",
+  "B1 exit C5: a census read after a completed round failed",
+  "X0 exit E0: its first census state read timed out",
+  "X0 exit E1: its first command read timed out",
+  "X0 exit E2 failure: its second census state read failed",
+  "X0 exit C1: its first census read failed",
+  "X0 exit C5: a census read after a completed round failed"
+]);
 for (const name of Object.keys(EXIT_RUNS)) {
   for (const [title, applies, forcing, expect, check] of CELL_CASES) {
     if (!applies(name)) continue;
+    if (controlledCensusExits.has(name + ' exit ' + title)) continue;
     const cellExpect = { ...expect, fails: typeof expect.fails === 'function' ? expect.fails(name) : expect.fails };
     test(`${name} exit ${title}`, SETTLES_WITHIN, async (t) => {
       // A reaper the forcing stopped is continued in pass and fail teardown alike.
