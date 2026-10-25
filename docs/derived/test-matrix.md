@@ -68,7 +68,7 @@ reports no gap of its own; the register carries the reason.
 | R-SCHED-16 | **gap** |
 | R-SCHED-17 | **gap** |
 | R-SCHED-18 | **gap** |
-| R-SCHED-19 | `test/config.test.mjs` the escalation label is reserved in kind and epic selectors in every letter case |
+| R-SCHED-19 | `test/config.test.mjs` the escalation label is reserved in kind and epic selectors in every letter case<br>`test/config.test.mjs` the status label is reserved in kind and epic selectors in every letter case<br>`test/config.test.mjs` Rigger fixes exactly the escalation and status labels<br>`test/config.test.mjs` role tier and provider labels and step labels may name the status label<br>`test/config.test.mjs` declared labels include a consumer status label case variant once<br>`test/setup-board.test.mjs` setup-board creates the status label once when absent and preserves an already-held spelling |
 | R-SCHED-20 | **gap** |
 | R-SCHED-27 | **gap** |
 | R-SCHED-22 | **gap** |
