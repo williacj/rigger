@@ -79,7 +79,7 @@ function run(where, args, env = {}) {
     encoding: 'utf8',
     env: { ...process.env, PATH: [where.path, process.env.PATH].join(delimiter), GITHUB_REPOSITORY: REPO, ...env },
   });
-  return { status: ran.status, stdout: ran.stdout, stderr: ran.stderr, lines: ran.stdout.split('\n') };
+  return { pid: ran.pid, status: ran.status, stdout: ran.stdout, stderr: ran.stderr, lines: ran.stdout.split('\n') };
 }
 
 /** The pull request's gate answer: the `rule` mode run for `pull`. */
@@ -493,7 +493,7 @@ test('the script imports each L2 function it hands the rule, and copies none', (
 });
 
 // proves R-GATE-1
-test('the gate rule gives the same answer for every mapped workflow event and actor with admitting and refusing markers', () => {
+test('the gate rule gives the same answer for every mapped workflow event and actor with admitting and refusing markers', (t) => {
   const workflow = readFileSync(join(ROOT, '.github', 'workflows', 'rigger-gate.yml'), 'utf8');
   assert.match(workflow, /^  NUMBER: \$\{\{ github\.event\.pull_request\.number \|\| github\.event\.issue\.number \}\}$/m);
   assert.match(workflow, /^  IS_PULL: \$\{\{ github\.event\.pull_request != null \|\| github\.event\.issue\.pull_request != null \}\}$/m);
@@ -512,41 +512,63 @@ test('the gate rule gives the same answer for every mapped workflow event and ac
     ['issues', 'unlabeled'],
   ]);
 
-  for (const { name, comments, status } of [
+  const fixtures = [
     { name: 'admitting', comments: [marker(), marker({ role: 'architect' })], status: 0 },
     { name: 'refusing', comments: [], status: 1 },
-  ]) {
-    const where = forge({ pullRequests: [pullFrom({ comments })] });
-    let first;
-    for (const [event, type] of triggers) {
-      const payload = event === 'pull_request_target'
-        ? { action: type, pull_request: { number: PULL } }
-        : { action: type, issue: event === 'issues'
-          ? { number: CARD }
-          : { number: PULL, pull_request: { url: `https://api.github.com/repos/${REPO}/pulls/${PULL}` } } };
-      const path = join(temporaryDirectory('rigger-gate-event-'), 'event.json');
-      writeFileSync(path, JSON.stringify(payload));
-      for (const actor of ['williacj', 'rigger-gate[bot]']) {
-        const cell = `${name}, ${event}.${type}, ${actor}`;
-        const env = {
+  ].map((fixture) => ({ ...fixture, where: forge({ pullRequests: [pullFrom({ comments: fixture.comments })] }) }));
+  const cells = [];
+  for (const [event, type] of triggers) {
+    const payload = event === 'pull_request_target'
+      ? { action: type, pull_request: { number: PULL } }
+      : { action: type, issue: event === 'issues'
+        ? { number: CARD }
+        : { number: PULL, pull_request: { url: `https://api.github.com/repos/${REPO}/pulls/${PULL}` } } };
+    const path = join(temporaryDirectory('rigger-gate-event-'), 'event.json');
+    writeFileSync(path, JSON.stringify(payload));
+    for (const actor of ['williacj', 'rigger-gate[bot]']) {
+      cells.push({
+        event, type, actor,
+        env: {
           GITHUB_EVENT_NAME: event, GITHUB_EVENT_PATH: path, GITHUB_ACTOR: actor,
           NUMBER: String(payload.pull_request?.number ?? payload.issue.number),
           IS_PULL: String(payload.pull_request !== undefined || payload.issue?.pull_request !== undefined),
-        };
-        const card = run(where, ['card'], env);
-        assert.equal(card.status, 0, `${cell}, card: ${card.stdout}${card.stderr}`);
-        assert.equal(card.stdout, `card=${CARD}\n`, cell);
-        const mapped = run(where, ['map'], { ...env, CARD: String(CARD) });
-        assert.equal(mapped.status, 0, `${cell}, map: ${mapped.stdout}${mapped.stderr}`);
-        assert.equal(mapped.stdout, `${PULL}\n`, cell);
-        const ran = ruled(where, Number(mapped.stdout.trim()), { ...env, CARD: String(CARD) });
-        if (first === undefined) {
-          assert.equal(ran.status, status, `${cell}: ${ran.stdout}${ran.stderr}`);
-          first = ran;
-        }
-        assert.equal(ran.status, first.status, `${cell}: ${ran.stdout}${ran.stderr}`);
-        assert.equal(ran.stdout, first.stdout, cell);
-      }
+        },
+      });
     }
   }
+
+  const launches = [];
+  const launch = (where, args, cell, markerOutcome, env = cell.env) => {
+    const ran = run(where, args, env);
+    launches.push({ mode: args[0], event: env.GITHUB_EVENT_NAME, type: cell.type, actor: env.GITHUB_ACTOR, markerOutcome, pid: ran.pid, status: ran.status });
+    return ran;
+  };
+  for (const cell of cells) {
+    const label = `shared, ${cell.event}.${cell.type}, ${cell.actor}`;
+    const card = launch(fixtures[0].where, ['card'], cell, 'shared');
+    assert.equal(card.status, 0, `${label}, card: ${card.stdout}${card.stderr}`);
+    assert.equal(card.stdout, `card=${CARD}\n`, label);
+    const mapped = launch(fixtures[0].where, ['map'], cell, 'shared', { ...cell.env, CARD: String(CARD) });
+    assert.equal(mapped.status, 0, `${label}, map: ${mapped.stdout}${mapped.stderr}`);
+    assert.equal(mapped.stdout, `${PULL}\n`, label);
+    cell.pull = Number(mapped.stdout.trim());
+  }
+
+  for (const { name, status, where } of fixtures) {
+    assert.equal(readMarkers(where), false, 'card/map modes read marker comments or permissions before rule execution');
+    let first;
+    for (const cell of cells) {
+      const label = `${name}, ${cell.event}.${cell.type}, ${cell.actor}`;
+      const ran = launch(where, ['rule', String(cell.pull)], cell, name, { ...cell.env, CARD: String(CARD) });
+      if (first === undefined) {
+        assert.equal(ran.status, status, `${label}: ${ran.stdout}${ran.stderr}`);
+        first = ran;
+      }
+      assert.equal(ran.status, first.status, `${label}: ${ran.stdout}${ran.stderr}`);
+      assert.equal(ran.stdout, first.stdout, label);
+    }
+  }
+  assert.deepEqual(Object.fromEntries(['card', 'map', 'rule'].map((mode) => [mode, launches.filter((entry) => entry.mode === mode).length])), { card: 20, map: 20, rule: 40 });
+  assert.ok(launches.every(({ pid }) => Number.isInteger(pid) && pid > 0), 'a gate-script launch did not return a positive child PID');
+  t.diagnostic(JSON.stringify({ gateScriptLaunches: launches }));
 });
