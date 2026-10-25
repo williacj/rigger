@@ -86,7 +86,7 @@ function attemptWorld({
   const forgeOfAgent = async (branch) => {
     const number = Number(/^rigger-(\d+)$/.exec(branch)?.[1]);
     const opened = agent.act(number, 'engineer')?.pr || makerCalls.some(({ start }) => start.card.number === number);
-    return { open: opened ? [{ number: 900 + number, head: String(number).padStart(40, 'e'), base: 'main' }] : [], merged: [] };
+    return { open: opened ? [{ number: 900 + number, head: String(number).padStart(40, 'e'), base: 'main' }] : [], merged: [], closed: [] };
   };
   const changes = columnChanges({ config: settings, sink, items: fake.operations, reads: readsServing(forgeOfAgent) });
   const l2 = {
@@ -152,7 +152,7 @@ test('given a workspace handle that is not a function, loop throws when built, n
   }
 });
 
-// proves R-WORK-33
+// proves R-WORK-35
 test('given a removal handle that is not a function, loop throws when built, naming the handle', () => {
   for (const removeDirectories of [undefined, null, '/a/path', { path: '/a/path' }]) {
     assert.throws(() => loop({ ...handed(), removeDirectories }), /\bremoveDirectories\b/, String(removeDirectories));
@@ -373,7 +373,7 @@ const SETTLED_ONE = {
   comments: { status: 'rejected', reason: new Error('the fake repository holds no pull request #901, so readComments has nothing to read') },
   mergeable: { status: 'fulfilled', value: 'unknown' },
   rules: { status: 'fulfilled', value: [] },
-  checks: { status: 'fulfilled', value: {} },
+  checks: { status: 'fulfilled', value: {} }, closed: [],
 };
 
 test('for a card selecting no step, L3 asks decide at the pull, after the maker outcome, and with the facts L2 settled', async () => {

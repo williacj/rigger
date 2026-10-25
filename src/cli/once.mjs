@@ -207,8 +207,9 @@ async function claiming(verb, limit, opened, {
   // judges failed to hand back among them with every judge L2 named, the judges' failure in the
   // failure's errors. A held or stopped card is in the failure alone. It answers nothing about a card
   // that failed before its maker, nor
-  // about one L2 refused, so every card L2 refuses is seen here, through the next action this verb
-  // hands L3 (the reviewer's ruling on #312), the refusals from what the forge holds among them.
+  // about an unclaimed refusal. Those are seen here through the next action this verb hands L3
+  // (the reviewer's ruling on #312). A refusal following closed cleanup is already in reached,
+  // so it is presented there once rather than added to these unclaimed refusals.
   // Nor does it answer why a judge L2 stopped naming was not dispatched, which is seen here too.
   // Within an attempt L2 answers from the provisioning steps as well (ruling 6, Q-A), and answers
   // the maker as a role. A maker that never started is handed back to L2 for its retry decision.
@@ -258,6 +259,7 @@ async function claiming(verb, limit, opened, {
         move: `moved to ${each.to}`,
         return: `returned acceptance on pull request #${each.pull}`,
         escalate: `escalated ${each.category}`,
+        refuse: `refused: ${each.reason}`,
       };
       if (each.action === 'merge') return { ...each, ...mergeOutcome(each), judgesPassed: true, judgeLines: [] };
       return { ...each, said: words[each.action], review: true, judgesPassed: true, judgeLines: [] };

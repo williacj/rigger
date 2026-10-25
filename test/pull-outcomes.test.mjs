@@ -50,7 +50,7 @@ async function threeCards(t) {
   const fake = boardOf([30, 10, failing]);
   const kinds = { change: { ...KINDS.change, provisioning: ['ready', 'fails'] } };
   const decide = (card, outcomes, attempt) => nextAction(card, kinds, undefined, { columns: COLUMNS, roles: config.roles, provisioning: PROVISIONING, outcomes, sink, ...attempt });
-  const l2 = columnChanges({ config: { ...config, concurrency: 3 }, sink, items: fake.operations, reads: readsWith(async () => ({ open: [], merged: [] })) });
+  const l2 = columnChanges({ config: { ...config, concurrency: 3 }, sink, items: fake.operations, reads: readsWith(async () => ({ open: [], merged: [], closed: [] })) });
   const workspaces = join(directory, 'workspaces');
   const built = loop({
     config: { ...config, concurrency: 3 }, board: handleOn(fake), decide, facts: factsOverNothing({ ...config, concurrency: 3 }, decide), l2, sink, kill: async () => {}, workspace: makingWorkspaces(workspaces), judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), removeDirectories: async () => {}, state,
