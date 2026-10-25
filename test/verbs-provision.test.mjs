@@ -199,7 +199,7 @@ test('given a workspace that cannot be made on either attempt, rigger once print
   }
 });
 
-// proves R-FAIL-6
+// proves R-FAIL-7
 test('rigger once names a hold and both failures when the same required step never starts twice', (t) => {
   const here = world(t, { items: [card(10)], steps: { missing: { run: 'true', cwd: 'absent', required: true } }, listed: ['missing'] });
 
@@ -226,7 +226,7 @@ function mixedFailureWorld(t) {
   }, directory);
 }
 
-// proves R-FAIL-6
+// proves R-FAIL-7
 test('rigger once stops a card whose required step never starts then exits non-zero', (t) => {
   const ran = mixedFailureWorld(t).verb('once');
 
@@ -238,7 +238,7 @@ test('rigger once stops a card whose required step never starts then exits non-z
   assert.match(failures[1], /"step":"failing".*"exit":3/);
 });
 
-// proves R-FAIL-6
+// proves R-FAIL-7
 test('rigger run stops a card whose required step never starts then exits non-zero', (t) => {
   const ran = mixedFailureWorld(t).verb('run');
 
