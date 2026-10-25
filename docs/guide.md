@@ -49,7 +49,7 @@ has your config give each column a display name, so this guide calls each by its
    card's current acceptance, and the consumer's own checks have passed
    ([`R-GATE-4`](spec/requirements.md) to [`R-GATE-8`](spec/requirements.md)). Before Rigger moves
    the card here for its merged pull request, it removes the card's directories
-   ([`R-WORK-33`](spec/requirements.md)).
+   ([`R-WORK-35`](spec/requirements.md)).
 
 What a verdict holds is in the reference's [marker vocabulary](reference.md#the-marker-vocabulary),
 which links [`ARCHITECTURE.md`, "Markers"](../ARCHITECTURE.md#markers).
@@ -128,7 +128,7 @@ To answer the escalations waiting on you:
 
 A card carrying the label [`ARCHITECTURE.md`, "Escalation"](../ARCHITECTURE.md#escalation) names,
 whose pull request the forge holds as merged, is the exception, which
-[`R-WORK-33`](spec/requirements.md) answers ([`R-ESCALATE-10`](spec/requirements.md)).
+[`R-WORK-35`](spec/requirements.md) answers ([`R-ESCALATE-10`](spec/requirements.md)).
 
 > **Placeholder.** The owner operation: how an escalation reaches you, with its comment on the
 > card's issue and the label. Written by M6-D2, from M6-04 and M6-05.
