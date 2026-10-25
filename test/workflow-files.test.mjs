@@ -4,7 +4,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:http';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { symlinkSync } from 'node:fs';
 import { delimiter, dirname, join } from 'node:path';
@@ -15,7 +16,7 @@ import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import rigger from '../rigger.config.mjs';
 import { installFakeGh, seedRepository } from './fake-gh.mjs';
-import { gitIn, repositoryIn } from './git-repository.mjs';
+import { gitIn, repositoryAt, repositoryIn } from './git-repository.mjs';
 import { fixture } from './process-fixtures.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -23,13 +24,502 @@ const LIVE = join(ROOT, '.github', 'workflows', 'rigger-gate.yml');
 const TEMPLATE = join(ROOT, 'templates', 'github', 'workflows', 'rigger-gate.yml');
 const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 
-test('CI check and demo run on the GitHub-hosted Mac with Node 26', () => {
+test('CI assigns portable, concurrent hosted candidate and protected-main regression lanes with Node 26', () => {
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
-  for (const name of ['check', 'demo']) assert.equal(ci.jobs[name]['runs-on'], 'macos-latest', name);
+  assert.deepEqual(Object.keys(ci.jobs).sort(), ['check', 'demo', 'fast', 'full_host', 'full_ordinary', 'nightly', 'plan']);
+  for (const name of ['plan', 'fast', 'check']) assert.equal(ci.jobs[name]['runs-on'], 'ubuntu-latest', name);
+  for (const name of ['full_ordinary', 'full_host', 'demo']) assert.equal(ci.jobs[name]['runs-on'], 'macos-latest', name);
+  assert.deepEqual(ci.jobs.nightly['runs-on'], ['self-hosted', 'macOS', 'ARM64']);
   assert.deepEqual(ci.jobs.check.strategy.matrix.node, ['26']);
-  const setup = ci.jobs.demo.steps.find((step) => step.uses === 'actions/setup-node@v5');
-  assert.ok(setup, 'demo has no setup-node step');
-  assert.equal(setup.with['node-version'], '26');
+  for (const name of ['plan', 'fast', 'full_ordinary', 'full_host', 'check', 'demo', 'nightly']) {
+    const setup = ci.jobs[name].steps.find((step) => step.uses === 'actions/setup-node@v5');
+    assert.ok(setup, name + ' has no setup-node step');
+    assert.equal(setup.with['node-version'], name === 'check' ? '${{ matrix.node }}' : '26');
+  }
+});
+
+/** Runs the actual protected literal; fixture outcomes below are independent policy expectations. */
+function ciPolicy(operation, facts, extra = {}) {
+  const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
+  const source = ci.env.CI_POLICY;
+  assert.equal(typeof source, 'string', 'the protected workflow has no inline CI_POLICY');
+  const runner = `const input = JSON.parse(process.env.CI_CONTROL);
+    const policy = await import('data:text/javascript;base64,' + Buffer.from(process.env.CI_SOURCE).toString('base64'));
+    if (input.operation === 'requestJson') {
+      const calls = [];
+      try {
+        const answer = await policy.requestJson('/repos/williacj/rigger', {
+          base: 'https://api.github.test', token: 'fixture-token',
+          send: async (url, options) => { calls.push({ url, method: options.method, authorization: options.headers.authorization }); if (input.facts.networkError) throw new Error('controlled network failure'); return new Response(input.facts.body, { status: input.facts.status ?? 200, headers: input.facts.headers }); },
+        });
+        console.log(JSON.stringify({ answer, calls }));
+      } catch (error) { console.log(JSON.stringify({ error: String(error.message), calls })); }
+    } else if (input.operation === 'collect') {
+      const calls = [];
+      const answer = await policy.collect({
+        event: input.facts.event, context: input.facts.context,
+        run: (args) => { const key = JSON.stringify(args); calls.push(args); if (!Object.hasOwn(input.facts.git, key)) throw new Error('unexpected Git command ' + key); return Buffer.from(input.facts.git[key], 'base64'); },
+        request: async (path) => { if (!Object.hasOwn(input.facts.api, path)) throw new Error('unavailable API page'); return input.facts.api[path]; },
+      });
+      console.log(JSON.stringify({ answer, calls }));
+    } else console.log(JSON.stringify(await policy[input.operation](input.facts, input.extra)));`;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', runner], {
+    encoding: 'utf8',
+    env: { ...process.env, CI_POLICY_ACTION: '', CI_SOURCE: source, CI_CONTROL: JSON.stringify({ operation, facts, extra }) },
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  return JSON.parse(result.stdout);
+}
+
+/** Literal Git/API contract fixture: a synthetic merge of known B and H, with a fresh PR read. */
+function ciFacts() {
+  return {
+    event: 'pull_request', action: 'synchronize', ref: 'refs/pull/7/merge', owner: 'williacj', sender: 'contributor',
+    eventSha: 'a'.repeat(40), complete: true,
+    checkout: { sha: 'a'.repeat(40), tree: 'b'.repeat(40), parents: ['c'.repeat(40), 'd'.repeat(40)] },
+    pr: { number: 7, head: 'd'.repeat(40), base: 'c'.repeat(40), baseRef: 'main', state: 'open', draft: false },
+    live: { head: 'd'.repeat(40), base: 'c'.repeat(40), baseRef: 'main', state: 'open', draft: false, labels: [] },
+    changes: [{ status: 'A', oldMode: '000000', newMode: '100644', path: 'docs/journal/a.md' }],
+  };
+}
+
+test('inline CI policy admits only complete regular direct journal changes or nonmain constituents to fast-only readiness', () => {
+  assert.equal(ciPolicy('policy', ciFacts()).mode, 'FAST_ELIGIBLE');
+  const modified = ciFacts(); Object.assign(modified.changes[0], { status: 'M', oldMode: '100644' });
+  assert.equal(ciPolicy('policy', modified).mode, 'FAST_ELIGIBLE');
+  for (const change of [
+    { status: 'D', oldMode: '100644', newMode: '000000' },
+    { status: 'R', oldMode: '100644', newMode: '100644' },
+    { status: 'T', oldMode: '100644', newMode: '120000' },
+    { newMode: '120000' }, { newMode: '160000' }, { newMode: '100755' },
+    { path: 'docs/journal/nested/a.md' }, { path: 'docs/journal/.hidden.md' },
+    { path: 'docs/derived/test-matrix.md' }, { path: 'ARCHITECTURE.md' },
+  ]) {
+    const facts = ciFacts(); Object.assign(facts.changes[0], change);
+    assert.equal(ciPolicy('policy', facts).mode, 'BROAD_DEFERRED', JSON.stringify(change));
+  }
+  const mixed = ciFacts(); mixed.changes.push({ status: 'M', oldMode: '100644', newMode: '100644', path: 'src/workflow/gate.mjs' });
+  assert.equal(ciPolicy('policy', mixed).mode, 'BROAD_DEFERRED');
+  const nonmain = structuredClone(mixed); nonmain.pr.baseRef = nonmain.live.baseRef = 'batch';
+  assert.equal(ciPolicy('policy', nonmain).mode, 'FAST_ELIGIBLE');
+  nonmain.action = 'edited'; nonmain.pr.baseRef = nonmain.live.baseRef = 'main';
+  assert.equal(ciPolicy('policy', nonmain).mode, 'BROAD_DEFERRED');
+  for (const corrupt of ['complete', 'head', 'base', 'tree', 'parents', 'path-list']) {
+    const facts = ciFacts();
+    if (corrupt === 'complete') facts.complete = false;
+    if (corrupt === 'head') facts.live.head = 'e'.repeat(40);
+    if (corrupt === 'base') facts.live.base = 'e'.repeat(40);
+    if (corrupt === 'tree') facts.checkout.tree = '';
+    if (corrupt === 'parents') facts.checkout.parents.reverse();
+    if (corrupt === 'path-list') delete facts.changes;
+    assert.equal(ciPolicy('policy', facts).mode, 'INVALID', corrupt);
+  }
+});
+
+test('inline CI policy schedules broad proof only on the fresh owner full-label event and treats demo as a separate request', () => {
+  const full = ciFacts();
+  Object.assign(full, { action: 'labeled', sender: 'williacj', label: 'ci:full' });
+  full.live.labels = ['ci:full'];
+  full.changes[0].path = 'src/workflow/action.mjs';
+  assert.equal(ciPolicy('policy', full).mode, 'BROAD_EXECUTED');
+  assert.equal(ciPolicy('policy', full).demoNeeded, true);
+  for (const change of [
+    { action: 'synchronize' }, { action: 'ready_for_review' }, { sender: 'contributor' }, { label: 'unrelated' },
+  ]) {
+    const facts = structuredClone(full); Object.assign(facts, change);
+    assert.equal(ciPolicy('policy', facts).mode, 'BROAD_DEFERRED', JSON.stringify(change));
+  }
+  const draft = structuredClone(full); draft.pr.draft = draft.live.draft = true;
+  assert.equal(ciPolicy('policy', draft).mode, 'BROAD_DEFERRED');
+  const removed = structuredClone(full); removed.live.labels = [];
+  assert.equal(ciPolicy('policy', removed).mode, 'BROAD_DEFERRED');
+  const journal = structuredClone(full); journal.changes[0].path = 'docs/journal/a.md';
+  assert.equal(ciPolicy('policy', journal).mode, 'BROAD_EXECUTED', 'an owner full request precedes journal eligibility');
+  const nonmain = structuredClone(full); nonmain.pr.baseRef = nonmain.live.baseRef = 'batch';
+  assert.equal(ciPolicy('policy', nonmain).mode, 'FAST_ELIGIBLE');
+  const irrelevant = structuredClone(full); irrelevant.changes[0].path = 'test/package-budget.test.mjs';
+  assert.equal(ciPolicy('policy', irrelevant).demoNeeded, false);
+  const demo = ciFacts(); Object.assign(demo, { action: 'labeled', sender: 'williacj', label: 'ci:demo' }); demo.live.labels = ['ci:demo'];
+  assert.equal(ciPolicy('policy', demo).mode, 'FAST_ELIGIBLE');
+  assert.equal(ciPolicy('policy', demo).demoNeeded, true);
+  demo.changes[0].path = 'src/other.mjs';
+  assert.equal(ciPolicy('policy', demo).mode, 'BROAD_DEFERRED');
+  assert.equal(ciPolicy('policy', demo).demoNeeded, true);
+  demo.sender = 'contributor';
+  assert.equal(ciPolicy('policy', demo).demoNeeded, false);
+});
+
+test('inline CI policy keeps smoke and protected-main regression distinct and handles real merge groups as broad', () => {
+  const main = ciFacts(); delete main.pr; delete main.live;
+  Object.assign(main, { event: 'push', ref: 'refs/heads/main', after: 'a'.repeat(40), main: { head: 'a'.repeat(40), defaultBranch: 'main' } });
+  assert.deepEqual(ciPolicy('policy', main), { mode: 'MAIN_SMOKE', demoNeeded: false, sourceValid: true });
+  for (const event of ['schedule', 'workflow_dispatch']) {
+    const nightly = structuredClone(main); nightly.event = event;
+    assert.deepEqual(ciPolicy('policy', nightly), { mode: 'MAIN_FULL', demoNeeded: true, sourceValid: true });
+    for (const change of [{ ref: 'refs/heads/feature' }, { ref: 'refs/pull/7/merge' }, { main: { head: 'e'.repeat(40), defaultBranch: 'main' } }, { main: { head: 'a'.repeat(40), defaultBranch: 'other' } }, { inputs: { ref: 'untrusted' } }]) {
+      assert.equal(ciPolicy('policy', { ...nightly, ...change }).mode, 'INVALID', event + JSON.stringify(change));
+    }
+  }
+  const group = structuredClone(main);
+  Object.assign(group, { event: 'merge_group', ref: 'refs/heads/gh-readonly-queue/main/batch', main: { head: 'c'.repeat(40), defaultBranch: 'main' }, group: { head: 'a'.repeat(40), base: 'c'.repeat(40), baseRef: 'refs/heads/main', baseAncestor: true } });
+  assert.deepEqual(ciPolicy('policy', group), { mode: 'BROAD_EXECUTED', demoNeeded: true, sourceValid: true });
+  group.group.baseAncestor = false;
+  assert.equal(ciPolicy('policy', group).mode, 'INVALID');
+  assert.equal(ciPolicy('policy', { ...main, event: 'pull_request_target' }).mode, 'INVALID');
+});
+
+test('inline CI policy requires demo for unknown full-batch impact while retaining exact known exemptions', () => {
+  for (const [paths, expectedDemo] of [
+    [['unclassified-tool.py'], true],
+    [['docs/journal/a.md'], false],
+    [['test/package-budget.test.mjs'], false],
+    [['docs/journal/a.md', 'unclassified-tool.py'], true],
+    [['test/package-budget.test.mjs', 'unclassified-tool.py'], true],
+    [['docs/journal/a.md', 'test/package-budget.test.mjs'], true],
+    [['src/workflow/action.mjs'], true],
+  ]) for (const status of ['A', 'M']) {
+    const facts = ciFacts();
+    Object.assign(facts, { action: 'labeled', sender: 'williacj', label: 'ci:full' });
+    facts.live.labels = ['ci:full'];
+    facts.changes = paths.map((path) => ({ path, status, oldMode: status === 'A' ? '000000' : '100644', newMode: '100644' }));
+    assert.deepEqual(ciPolicy('policy', facts), { mode: 'BROAD_EXECUTED', demoNeeded: expectedDemo, sourceValid: true }, status + ':' + paths.join(','));
+    const proof = ciProof('BROAD_EXECUTED');
+    proof.demoNeeded = expectedDemo;
+    proof.results.full_ordinary = proof.results.full_host = 'success';
+    proof.results.demo = expectedDemo ? 'success' : 'skipped';
+    assert.equal(ciPolicy('guard', facts, proof), true, 'required demo result:' + paths.join(','));
+    if (expectedDemo) for (const result of ['failure', 'cancelled', 'skipped', '', undefined]) {
+      const rejected = structuredClone(proof);
+      rejected.results.demo = result;
+      assert.equal(ciPolicy('guard', facts, rejected), false, 'missing demo credit:' + paths.join(',') + ':' + result);
+    }
+  }
+});
+
+function ciProof(mode = 'FAST_ELIGIBLE') {
+  return {
+    mode, demoNeeded: false, sourceValid: true,
+    source: { event: 'pull_request', ref: 'refs/pull/7/merge', sha: 'a'.repeat(40), tree: 'b'.repeat(40), parents: ['c'.repeat(40), 'd'.repeat(40)], head: 'd'.repeat(40), base: 'c'.repeat(40), baseRef: 'main' },
+    results: { plan: 'success', fast: 'success', full_ordinary: 'skipped', full_host: 'skipped', demo: 'skipped' },
+  };
+}
+
+test('inline aggregate requires fresh equal source mode and every literally required result, including explicit demo', () => {
+  const safe = ciFacts();
+  assert.equal(ciPolicy('guard', safe, ciProof()), true);
+  for (const mode of ['BROAD_DEFERRED', 'INVALID', 'MAIN_FULL', '', undefined]) {
+    const proof = ciProof(mode); if (mode === undefined) delete proof.mode;
+    assert.equal(ciPolicy('guard', safe, proof), false, String(mode));
+  }
+  for (const key of ['sha', 'tree', 'head', 'base', 'baseRef']) {
+    const proof = ciProof(); proof.source[key] = 'changed';
+    assert.equal(ciPolicy('guard', safe, proof), false, key);
+  }
+  const invalidSource = ciProof(); invalidSource.sourceValid = false;
+  assert.equal(ciPolicy('guard', safe, invalidSource), false);
+  for (const name of ['plan', 'fast']) for (const result of ['failure', 'cancelled', 'skipped', '', undefined]) {
+    const proof = ciProof(); proof.results[name] = result;
+    assert.equal(ciPolicy('guard', safe, proof), false, name + ':' + result);
+  }
+  for (const name of ['full_ordinary', 'full_host', 'demo']) for (const result of ['success', 'failure', 'cancelled', '', undefined]) {
+    const proof = ciProof(); proof.results[name] = result;
+    assert.equal(ciPolicy('guard', safe, proof), false, name + ':' + result);
+  }
+  const full = ciFacts(); Object.assign(full, { action: 'labeled', sender: 'williacj', label: 'ci:full' }); full.live.labels = ['ci:full']; full.changes[0].path = 'test/package-budget.test.mjs';
+  const broad = ciProof('BROAD_EXECUTED'); broad.results.full_ordinary = broad.results.full_host = 'success';
+  assert.equal(ciPolicy('guard', full, broad), true);
+  for (const name of ['plan', 'fast', 'full_ordinary', 'full_host']) for (const result of ['failure', 'cancelled', 'skipped', '', undefined]) {
+    const proof = structuredClone(broad); proof.results[name] = result;
+    assert.equal(ciPolicy('guard', full, proof), false, name + ':' + result);
+  }
+  full.changes[0].path = 'src/workflow/action.mjs'; broad.demoNeeded = true; broad.results.demo = 'success';
+  assert.equal(ciPolicy('guard', full, broad), true);
+  for (const result of ['failure', 'cancelled', 'skipped', '', undefined]) {
+    const proof = structuredClone(broad); proof.results.demo = result;
+    assert.equal(ciPolicy('guard', full, proof), false, 'required demo:' + result);
+  }
+  full.live.labels = [];
+  assert.equal(ciPolicy('guard', full, broad), false, 'removed full label');
+  const demo = ciFacts(); Object.assign(demo, { action: 'labeled', sender: 'williacj', label: 'ci:demo' }); demo.live.labels = ['ci:demo'];
+  const demoProof = ciProof(); demoProof.demoNeeded = true; demoProof.results.demo = 'success';
+  assert.equal(ciPolicy('guard', demo, demoProof), true);
+  demoProof.results.demo = 'skipped';
+  assert.equal(ciPolicy('guard', demo, demoProof), false);
+  const deferred = ciFacts(); deferred.changes[0].path = 'src/other.mjs';
+  assert.equal(ciPolicy('guard', deferred, ciProof('BROAD_DEFERRED')), false);
+});
+
+test('candidate aggregate condition cannot be skipped by a forged MAIN_FULL plan mode', () => {
+  const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
+  const condition = ci.jobs.check.if.slice(3, -2).trim();
+  const actual = new Function('github', 'needs', 'always', 'return (' + condition + ')');
+  const needs = { plan: { result: 'success', outputs: { mode: 'MAIN_FULL' } } };
+  for (const event_name of ['pull_request', 'push', 'merge_group']) {
+    assert.equal(actual({ event_name, ref: 'refs/heads/main' }, needs, () => true), true, event_name);
+  }
+  for (const event_name of ['schedule', 'workflow_dispatch']) {
+    assert.equal(actual({ event_name, ref: 'refs/heads/main' }, needs, () => true), false, event_name);
+    assert.equal(actual({ event_name, ref: 'refs/heads/feature' }, needs, () => true), true, event_name);
+    assert.equal(actual({ event_name, ref: 'refs/heads/main' }, { plan: { result: 'failure', outputs: {} } }, () => true), true);
+  }
+});
+
+test('inline CI policy reads actual raw Git mode and status bytes completely and refuses malformed or non-UTF8 facts', () => {
+  // Header-NUL-path-NUL is observed in git-raw-observed-original.bin at the recorded a23/T refs.
+  const raw = ':000000 100644 0000000 1234567 A\0docs/journal/a.md\0';
+  const facts = ciFacts(); delete facts.changes; facts.rawBase64 = Buffer.from(raw).toString('base64');
+  assert.equal(ciPolicy('policy', facts).mode, 'FAST_ELIGIBLE');
+  for (const bytes of [
+    Buffer.from(raw.slice(0, -1)), Buffer.from(':000000 100644 0000000 1234567 A\0\0'),
+    Buffer.from(':000000 100644 0000000 1234567 Q\0docs/journal/a.md\0'),
+    Buffer.concat([Buffer.from(':000000 100644 0000000 1234567 A\0docs/journal/'), Buffer.from([255]), Buffer.from('.md\0')]),
+    Buffer.from(raw + ':broken\0extra\0'),
+  ]) {
+    assert.equal(ciPolicy('policy', { ...facts, rawBase64: bytes.toString('base64') }).mode, 'INVALID');
+  }
+  for (const row of [
+    ':100644 000000 1234567 0000000 D\0docs/journal/a.md\0',
+    ':100644 120000 1234567 2345678 T\0docs/journal/a.md\0',
+    ':000000 160000 0000000 2345678 A\0docs/journal/a.md\0',
+  ]) {
+    assert.equal(ciPolicy('policy', { ...facts, rawBase64: Buffer.from(row).toString('base64') }).mode, 'BROAD_DEFERRED');
+  }
+});
+
+function ciCollectorFixture() {
+  const a = 'a'.repeat(40), b = 'b'.repeat(40), c = 'c'.repeat(40), d = 'd'.repeat(40);
+  const git = {};
+  for (const [args, output] of [
+    [['rev-parse', 'HEAD'], a + '\n'],
+    [['rev-parse', 'HEAD^{tree}'], b + '\n'],
+    [['show', '-s', '--format=%P', 'HEAD'], c + ' ' + d + '\n'],
+    [['diff', '--raw', '-z', '--no-renames', c, a], ':000000 100644 0000000 1234567 A\0docs/journal/a.md\0'],
+  ]) git[JSON.stringify(args)] = Buffer.from(output).toString('base64');
+  return {
+    context: { eventName: 'pull_request', ref: 'refs/pull/7/merge', sha: a, repository: 'williacj/rigger', owner: 'williacj' },
+    event: {
+      action: 'synchronize', number: 7, sender: { login: 'contributor' },
+      repository: { full_name: 'williacj/rigger' },
+      pull_request: { head: { sha: d }, base: { sha: c, ref: 'main' }, state: 'open', draft: false },
+    },
+    git,
+    api: {
+      '/repos/williacj/rigger': { full_name: 'williacj/rigger', default_branch: 'main', owner: { login: 'williacj' } },
+      '/repos/williacj/rigger/pulls/7': { number: 7, head: { sha: d }, base: { sha: c, ref: 'main' }, state: 'open', draft: false, labels: [] },
+      '/repos/williacj/rigger/git/ref/heads/main': { object: { sha: c } },
+      '/repos/williacj/rigger/issues/7/labels?per_page=100': [],
+    },
+  };
+}
+
+test('actual inline collector binds Git checkout parents and raw diff to fresh repository PR and base facts', () => {
+  const fixture = ciCollectorFixture();
+  const { answer, calls } = ciPolicy('collect', fixture);
+  assert.equal(answer.complete, true);
+  assert.deepEqual(answer.checkout, ciFacts().checkout);
+  assert.deepEqual(answer.pr, ciFacts().pr);
+  assert.deepEqual(answer.live, ciFacts().live);
+  assert.deepEqual(answer.changes, ciFacts().changes);
+  assert.ok(calls.some((args) => JSON.stringify(args) === JSON.stringify(['diff', '--raw', '-z', '--no-renames', 'c'.repeat(40), 'a'.repeat(40)])));
+  assert.equal(ciPolicy('policy', answer).mode, 'FAST_ELIGIBLE');
+  for (const corrupt of ['unavailable-api', 'wrong-base-ref', 'wrong-checkout', 'wrong-owner', 'wrong-repository']) {
+    const bad = ciCollectorFixture();
+    if (corrupt === 'unavailable-api') delete bad.api['/repos/williacj/rigger/pulls/7'];
+    if (corrupt === 'wrong-base-ref') bad.api['/repos/williacj/rigger/git/ref/heads/main'].object.sha = 'e'.repeat(40);
+    if (corrupt === 'wrong-checkout') bad.git[JSON.stringify(['rev-parse', 'HEAD'])] = Buffer.from('e'.repeat(40) + '\n').toString('base64');
+    if (corrupt === 'wrong-owner') bad.context.owner = 'fork-owner';
+    if (corrupt === 'wrong-repository') bad.event.repository.full_name = 'fork-owner/rigger';
+    const current = ciPolicy('collect', bad).answer;
+    assert.equal(ciPolicy('policy', current).mode, 'INVALID', corrupt);
+  }
+});
+
+test('actual inline collector accepts only current protected-main regression source and verified merge-group ancestry', () => {
+  for (const eventName of ['schedule', 'workflow_dispatch', 'push']) {
+    const fixture = ciCollectorFixture();
+    Object.assign(fixture.context, { eventName, ref: 'refs/heads/main' });
+    fixture.event = { repository: { full_name: 'williacj/rigger' }, sender: { login: 'williacj' }, before: 'c'.repeat(40), after: 'a'.repeat(40) };
+    fixture.api['/repos/williacj/rigger/git/ref/heads/main'].object.sha = 'a'.repeat(40);
+    const result = ciPolicy('collect', fixture).answer;
+    assert.equal(ciPolicy('policy', result).mode, eventName === 'push' ? 'MAIN_SMOKE' : 'MAIN_FULL', eventName);
+    const wrongRef = structuredClone(fixture); wrongRef.context.ref = 'refs/heads/feature';
+    assert.equal(ciPolicy('policy', ciPolicy('collect', wrongRef).answer).mode, 'INVALID');
+    const fork = structuredClone(fixture); fork.context.owner = 'fork-owner';
+    assert.equal(ciPolicy('policy', ciPolicy('collect', fork).answer).mode, 'INVALID');
+  }
+  const group = ciCollectorFixture(); group.context.eventName = 'merge_group'; group.context.ref = 'refs/heads/gh-readonly-queue/main/batch';
+  group.event = { repository: { full_name: 'williacj/rigger' }, merge_group: { head_sha: 'a'.repeat(40), base_sha: 'c'.repeat(40), base_ref: 'refs/heads/main' } };
+  const ancestry = JSON.stringify(['merge-base', '--is-ancestor', 'c'.repeat(40), 'a'.repeat(40)]);
+  group.git[ancestry] = '';
+  assert.equal(ciPolicy('policy', ciPolicy('collect', group).answer).mode, 'BROAD_EXECUTED');
+  delete group.git[ancestry];
+  assert.equal(ciPolicy('policy', ciPolicy('collect', group).answer).mode, 'INVALID');
+});
+
+test('actual inline API reader accepts complete read-only JSON and rejects pagination truncation status and transport errors', () => {
+  const answer = ciPolicy('requestJson', { body: '{"full_name":"williacj/rigger"}' });
+  assert.equal(answer.error, undefined);
+  assert.deepEqual(answer.answer, { full_name: 'williacj/rigger' });
+  assert.deepEqual(answer.calls, [{ url: 'https://api.github.test/repos/williacj/rigger', method: 'GET', authorization: 'Bearer fixture-token' }]);
+  for (const bad of [
+    { status: 403, body: '{}' }, { body: '{' },
+    { body: '{}', headers: { link: '<https://api.github.test/next>; rel="next"' } },
+    { body: '{}', headers: { 'content-length': '200' } }, { body: '{}', networkError: true },
+  ]) assert.equal(typeof ciPolicy('requestJson', bad).error, 'string', JSON.stringify(bad));
+});
+
+test('actual inline runtime routes plan worker and aggregate through the same source and result decisions', () => {
+  const facts = ciFacts(), proof = ciProof();
+  const planned = ciPolicy('runPolicy', { action: 'plan', facts });
+  assert.equal(planned.ok, true);
+  assert.equal(planned.output.mode, 'FAST_ELIGIBLE');
+  assert.equal(planned.output.sha, 'a'.repeat(40));
+  assert.equal(planned.output.tree, 'b'.repeat(40));
+  assert.deepEqual(JSON.parse(planned.output.snapshot), proof.source);
+  const worker = ciPolicy('runPolicy', { action: 'worker', facts, proof, worker: 'fast' });
+  assert.equal(worker.ok, true);
+  assert.equal(worker.source.sha, 'a'.repeat(40));
+  assert.equal(ciPolicy('runPolicy', { action: 'aggregate', facts, proof }).ok, true);
+  const forged = ciProof('MAIN_FULL');
+  assert.equal(ciPolicy('runPolicy', { action: 'worker', facts, proof: forged, worker: 'nightly' }).ok, false);
+  assert.equal(ciPolicy('runPolicy', { action: 'worker', facts, proof, worker: 'full_host' }).ok, false);
+  assert.equal(ciPolicy('runPolicy', { action: 'worker', facts, proof, worker: 'demo' }).ok, false);
+  const stale = ciProof(); stale.source.tree = 'e'.repeat(40);
+  assert.equal(ciPolicy('runPolicy', { action: 'worker', facts, proof: stale, worker: 'fast' }).ok, false);
+  assert.equal(ciPolicy('runPolicy', { action: 'aggregate', facts, proof: stale }).ok, false);
+  const deferred = ciFacts(); deferred.changes[0].path = 'src/other.mjs';
+  const result = ciPolicy('runPolicy', { action: 'aggregate', facts: deferred, proof: ciProof('BROAD_DEFERRED') });
+  assert.equal(result.ok, false);
+  assert.match(result.reason, /missing-current-batch-proof/);
+  assert.equal(ciPolicy('runPolicy', { action: 'unknown', facts, proof }).ok, false);
+});
+
+test('inline CI policy refuses unknown event authority and malformed Git records before any fast eligibility', () => {
+  for (const corrupt of ['action', 'owner', 'sender', 'status', 'path', 'mode']) {
+    const facts = ciFacts();
+    if (corrupt === 'action') facts.action = 'unknown';
+    if (corrupt === 'owner') facts.owner = 'fork-owner';
+    if (corrupt === 'sender') delete facts.sender;
+    if (corrupt === 'status') facts.changes[0].status = 'Q';
+    if (corrupt === 'path') facts.changes[0].path = '';
+    if (corrupt === 'mode') facts.changes[0].newMode = 'unknown';
+    assert.equal(ciPolicy('policy', facts).mode, 'INVALID', corrupt);
+  }
+});
+
+test('staged CI preserves finite events, independent full lanes, every command and protected-main personal checkout', () => {
+  const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
+  assert.deepEqual(ci.on.pull_request.types, ['opened', 'synchronize', 'reopened', 'edited', 'ready_for_review', 'labeled', 'unlabeled']);
+  assert.deepEqual(ci.on.push.branches, ['main']);
+  assert.ok(Object.hasOwn(ci.on, 'merge_group'));
+  assert.deepEqual(ci.on.schedule, [{ cron: '0 3 * * *' }]);
+  assert.equal(ci.on.workflow_dispatch, null, 'dispatch must expose no arbitrary ref/input selector');
+  assert.deepEqual(ci.permissions, { contents: 'read', 'pull-requests': 'read' });
+  assert.deepEqual(ci.jobs.check.needs, ['plan', 'fast', 'full_ordinary', 'full_host', 'demo']);
+  for (const name of ['full_ordinary', 'full_host']) assert.deepEqual(ci.jobs[name].needs, ['plan']);
+  const commands = (name) => ci.jobs[name].steps.map((step) => step.run).filter(Boolean);
+  const stats = ['budget:package', 'budget:instructions', 'lint:spec-style', 'check:references', 'check:paths', 'check:ids', 'check:words', 'check:headers', 'matrix:check'].map((name) => 'npm run ' + name);
+  for (const command of ['npm ci', 'npm test', ...stats]) {
+    assert.ok(commands('fast').includes(command), 'fast omits ' + command);
+    assert.ok(commands('nightly').includes(command), 'nightly omits ' + command);
+  }
+  assert.ok(commands('full_ordinary').includes('npm ci'));
+  assert.ok(commands('full_ordinary').includes('npm test'));
+  assert.ok(commands('full_host').includes('npm ci'));
+  assert.ok(commands('full_host').includes('npm run test:host'), 'full host command missing');
+  assert.equal(commands('full_ordinary').includes('npm run test:host'), false);
+  assert.equal(commands('fast').includes('npm run test:host'), false);
+  assert.ok(commands('nightly').includes('npm run test:host'));
+  for (const name of ['full_host', 'nightly']) {
+    assert.ok(commands(name).includes('node test/verify-mac-containment "$RUNNER_TEMP/containment-proof-26"'));
+    const upload = ci.jobs[name].steps.find((step) => step.uses === 'actions/upload-artifact@v7');
+    assert.equal(upload.if, 'always()');
+    assert.equal(upload.with.name, 'containment-proof-26');
+    assert.equal(upload.with.path, '${{ runner.temp }}/containment-proof-26');
+    assert.equal(upload.with['if-no-files-found'], 'ignore');
+  }
+  for (const name of ['plan', 'fast', 'full_ordinary', 'full_host', 'check', 'demo', 'nightly']) {
+    const checkout = ci.jobs[name].steps.find((step) => step.uses === 'actions/checkout@v5');
+    assert.equal(checkout.with['fetch-depth'], '0', name);
+    if (name !== 'plan') assert.equal(checkout.with.ref, name === 'nightly' ? '${{ github.sha }}' : '${{ needs.plan.outputs.sha }}', name);
+    const policy = ci.jobs[name].steps.find((step) => step.env?.CI_POLICY_ACTION);
+    assert.equal(policy.run, 'node --input-type=module -e "$CI_POLICY"', name);
+    assert.equal(policy.env.CI_POLICY_ACTION, name === 'plan' ? 'plan' : name === 'check' ? 'aggregate' : 'worker');
+  }
+  const condition = new Function('github', 'needs', 'return (' + ci.jobs.nightly.if.slice(3, -2).trim() + ')');
+  const needs = { plan: { result: 'success', outputs: { mode: 'MAIN_FULL' } } };
+  for (const event_name of ['pull_request', 'merge_group', 'push']) assert.equal(condition({ event_name, ref: 'refs/heads/main' }, needs), false);
+  assert.equal(condition({ event_name: 'schedule', ref: 'refs/heads/main' }, needs), true);
+  assert.equal(condition({ event_name: 'workflow_dispatch', ref: 'refs/heads/feature' }, needs), false);
+});
+
+test('actual inline collector uses the complete current issue-label read rather than an embedded PR label snapshot', () => {
+  // https://docs.github.com/en/rest/issues/labels#list-labels-for-an-issue owns the paginated label-array shape.
+  const fixture = ciCollectorFixture();
+  fixture.event.action = 'labeled'; fixture.event.sender.login = 'williacj'; fixture.event.label = { name: 'ci:full' };
+  fixture.api['/repos/williacj/rigger/issues/7/labels?per_page=100'] = [{ name: 'ci:full' }];
+  const current = ciPolicy('collect', fixture).answer;
+  assert.deepEqual(current.live.labels, ['ci:full']);
+  assert.equal(ciPolicy('policy', current).mode, 'BROAD_EXECUTED');
+  fixture.api['/repos/williacj/rigger/issues/7/labels?per_page=100'] = [];
+  fixture.api['/repos/williacj/rigger/pulls/7'].labels = [{ name: 'ci:full' }];
+  assert.deepEqual(ciPolicy('collect', fixture).answer.live.labels, []);
+  delete fixture.api['/repos/williacj/rigger/issues/7/labels?per_page=100'];
+  assert.equal(ciPolicy('policy', ciPolicy('collect', fixture).answer).mode, 'INVALID');
+});
+
+test('actual inline CLI plans and verifies real Git source through a local read-only API contract and rejects a changed head', { timeout: 15_000 }, async (t) => {
+  const directory = repositoryAt(temporaryDirectory('rigger-ci-policy-', { context: t }), { 'docs/journal/base.md': 'base\n' });
+  gitIn(directory, 'branch', '-M', 'main');
+  const base = gitIn(directory, 'rev-parse', 'HEAD').trim();
+  gitIn(directory, 'checkout', '-qb', 'change');
+  writeFileSync(join(directory, 'docs/journal/a.md'), 'change\n');
+  gitIn(directory, 'add', '-A'); gitIn(directory, 'commit', '-qm', 'change');
+  const head = gitIn(directory, 'rev-parse', 'HEAD').trim();
+  gitIn(directory, 'checkout', '-qb', 'synthetic', base);
+  gitIn(directory, 'merge', '--no-ff', '-qm', 'synthetic', head);
+  const sha = gitIn(directory, 'rev-parse', 'HEAD').trim(), tree = gitIn(directory, 'rev-parse', 'HEAD^{tree}').trim();
+  const fixture = ciCollectorFixture();
+  Object.assign(fixture.event.pull_request.head, { sha: head }); Object.assign(fixture.event.pull_request.base, { sha: base });
+  Object.assign(fixture.api['/repos/williacj/rigger/pulls/7'].head, { sha: head });
+  Object.assign(fixture.api['/repos/williacj/rigger/pulls/7'].base, { sha: base });
+  fixture.api['/repos/williacj/rigger/git/ref/heads/main'].object.sha = base;
+  const requests = [];
+  const server = createServer((request, response) => {
+    requests.push({ method: request.method, path: request.url });
+    response.writeHead(Object.hasOwn(fixture.api, request.url) ? 200 : 404, { 'content-type': 'application/json' });
+    response.end(JSON.stringify(fixture.api[request.url] ?? {}));
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => server.close(resolve)));
+  const eventPath = join(directory, 'event.json'), outputPath = join(directory, 'outputs');
+  writeFileSync(eventPath, JSON.stringify(fixture.event)); writeFileSync(outputPath, '');
+  const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
+  const { NODE_TEST_CONTEXT, ...env } = gitEnvironment();
+  const execute = (action, extra = {}) => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', ci.env.CI_POLICY], {
+      cwd: directory, signal: t.signal,
+      env: { ...env, GH_TOKEN: 'fixture-token', GITHUB_API_URL: 'http://127.0.0.1:' + server.address().port, GITHUB_EVENT_PATH: eventPath, GITHUB_EVENT_NAME: 'pull_request', GITHUB_REF: 'refs/pull/7/merge', GITHUB_SHA: sha, GITHUB_REPOSITORY: 'williacj/rigger', GITHUB_REPOSITORY_OWNER: 'williacj', GITHUB_OUTPUT: outputPath, CI_POLICY_ACTION: action, ...extra },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    console.log(JSON.stringify({ ciPolicyChild: child.pid, action, sha, tree }));
+    let out = '', err = '';
+    child.stdout.on('data', (bytes) => { out += bytes; }); child.stderr.on('data', (bytes) => { err += bytes; });
+    child.on('error', reject); child.on('close', (status, signal) => resolve({ status, signal, out, err }));
+  });
+  const plan = await execute('plan'); assert.equal(plan.status, 0, plan.out + plan.err);
+  const outputs = Object.fromEntries(readFileSync(outputPath, 'utf8').trim().split('\n').map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]));
+  assert.equal(outputs.mode, 'FAST_ELIGIBLE'); assert.equal(outputs.sha, sha); assert.equal(outputs.tree, tree);
+  const proof = { CI_EXPECTED_SOURCE: outputs.snapshot, CI_EXPECTED_MODE: outputs.mode, CI_EXPECTED_DEMO: outputs.demoNeeded };
+  const worker = await execute('worker', { ...proof, CI_WORKER: 'fast' }); assert.equal(worker.status, 0, worker.out + worker.err);
+  const results = { plan: { result: 'success' }, fast: { result: 'success' }, full_ordinary: { result: 'skipped' }, full_host: { result: 'skipped' }, demo: { result: 'skipped' } };
+  const aggregate = await execute('aggregate', { ...proof, CI_RESULTS: JSON.stringify(results) });
+  assert.equal(aggregate.status, 0, aggregate.out + aggregate.err);
+  fixture.api['/repos/williacj/rigger/pulls/7'].head.sha = 'e'.repeat(40);
+  const changed = await execute('aggregate', { ...proof, CI_RESULTS: JSON.stringify(results) });
+  assert.notEqual(changed.status, 0, changed.out + changed.err);
+  assert.match(changed.err, /current source or required tier result did not verify/);
+  assert.ok(requests.length > 0); assert.ok(requests.every((request) => request.method === 'GET'));
 });
 
 /**

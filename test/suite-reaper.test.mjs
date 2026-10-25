@@ -2,6 +2,7 @@
 
 import { LSOF } from '../src/substrate/process.mjs';
 import { test } from 'node:test';
+import { randomUUID } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
@@ -12,6 +13,8 @@ import { dirname, isAbsolute, relative, sep } from 'node:path';
 
 import { scratch, sweep } from './process-fixtures.mjs';
 import { ended } from './process-fixtures.mjs';
+import { constants } from 'node:fs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 
 const suite = resolve('test/suite.sh');
 const fixtureModule = new URL('./process-fixtures.mjs', import.meta.url).href;
@@ -120,21 +123,90 @@ async function checkEnding(t, tmp, runName, output, { processes = processesIn, e
   }
 }
 
-async function runEnding(t, ending, kind, { holdPidPublication = false } = {}) {
+// Start time and command are the host's identity, not just a PID copied from a file.
+function readinessProcess(pid, within = 10_000, run = spawnSync, cwdBudget) {
+  if (!(within > 0) || !Number.isFinite(within)) return { live: false };
+  const result = run('/bin/ps', ['-ww', '-p', String(pid), '-o', 'stat=', '-o', 'lstart=', '-o', 'pgid=', '-o', 'command='], { env: { ...process.env, LC_ALL: 'C', TZ: 'UTC0' }, encoding: 'utf8', timeout: Math.ceil(within), killSignal: 'SIGKILL' });
+  if (result.error || result.status !== 0) return { live: false };
+  const row = /^\s*(\S+)\s+(.{24})\s+(\d+)\s+(.*)$/.exec(result.stdout.trimEnd());
+  if (!row) return { live: false };
+  const observed = { live: !row[1].startsWith('Z'), signature: row.slice(2).join(' '), group: Number(row[3]), command: row[4] };
+  if (cwdBudget) {
+    const remaining = cwdBudget.deadline - cwdBudget.now();
+    if (!(remaining > 0)) return observed;
+    const cwd = run(LSOF, ['-w', '-n', '-P', '-a', '-p', String(pid), '-d', 'cwd', '-F', 'pn'], {
+      env: process.env, encoding: 'utf8', timeout: Math.ceil(remaining), killSignal: 'SIGKILL',
+    });
+    if (!cwd.error && cwd.status === 0) observed.cwd = cwd.stdout.split('\n').find((line) => line.startsWith('n'))?.slice(1);
+  }
+  return observed;
+}
+
+async function waitForReadiness(t, {
+  invocation, kind, directory, read, observe = readinessProcess, failure = () => undefined,
+  now = performance.now.bind(performance), turn = () => new Promise((resolve) => setImmediate(resolve)),
+  deadline = now() + 10_000,
+}) {
+  let stage = 'missing record';
+  for (;;) {
+    if (t.signal.aborted) throw new Error('setup cancelled before readiness', { cause: t.signal.reason });
+    const failed = failure();
+    if (failed) throw new Error(`setup failed before readiness: ${failed}`);
+    if (now() >= deadline) throw new Error(`setup never became ready by 10000ms: ${stage}`);
+    const bytes = read();
+    if (now() >= deadline) throw new Error('setup never became ready by 10000ms: publication read exceeded deadline');
+    let record;
+    try { record = JSON.parse(bytes); } catch { /* An incomplete publication is not readiness. */ }
+    if (record && Number.isSafeInteger(record.pid) && record.pid > 0) {
+      if (record.invocation !== invocation) throw new Error('setup rejected stale invocation identity');
+      if (record.kind !== kind) throw new Error('setup rejected wrong fixture identity');
+      const pids = kind === 'F4' ? [record.leader, record.pid] : [record.pid];
+      if (pids.every((pid) => Number.isSafeInteger(pid) && pid > 0) && Array.isArray(record.processes)
+          && pids.every((pid) => record.processes.some((entry) => entry.pid === pid && typeof entry.signature === 'string'))) {
+        for (const pid of pids) {
+          const actual = observe(pid, deadline - now(), undefined, kind === 'F5' ? { deadline, now } : undefined);
+          if (now() >= deadline) throw new Error('setup never became ready by 10000ms: process observation exceeded deadline');
+          if (t.signal.aborted) throw new Error('setup cancelled before readiness', { cause: t.signal.reason });
+          const recorded = record.processes.find((entry) => entry.pid === pid);
+          if (!actual.live) throw new Error(`setup recorded pid ${pid} is not live`);
+          if (actual.signature !== recorded.signature || !actual.command?.includes(directory)) throw new Error(`setup rejected reused or foreign pid ${pid}`);
+          if ((kind === 'F3' || kind === 'F5') && actual.group !== record.pid) throw new Error('setup tail does not lead its own group');
+          if (kind === 'F5' && actual.cwd === undefined) throw new Error('setup could not observe tail working directory');
+          if (kind === 'F5' && actual.cwd !== record.working) throw new Error('setup tail is outside its intended working directory');
+          if (kind === 'F7' && (record.group !== record.pid || actual.group !== record.group)) throw new Error('setup rejected group identity');
+        }
+        return record;
+      }
+      stage = 'incomplete process identity';
+    } else stage = bytes == null ? 'missing record' : 'incomplete or malformed PID';
+    await turn();
+  }
+}
+
+async function runEnding(t, ending, kind, { holdPidPublication = false, gateSetup = false, signal = t.signal, onPhase = () => {} } = {}) {
+  const context = { get signal() { return signal.aborted ? signal : t.signal; } };
   const directory = scratch(t);
+  const invocation = randomUUID();
   const tmp = join(directory, 'tmp');
   mkdirSync(tmp);
   const file = join(directory, 'holding.test.mjs');
   writeFileSync(file, [
     "import { test } from 'node:test';",
-    "import { spawn } from 'node:child_process';",
+    "import { spawn, spawnSync } from 'node:child_process';",
     "import { once } from 'node:events';",
     "import { existsSync, writeFileSync } from 'node:fs';",
     "import { join } from 'node:path';",
     `import { scratch, fixture, leave, leaveWorking, read, startGroup, tailIn, TAIL } from ${JSON.stringify(fixtureModule)};`,
     kind === 'F6' ? `import { installStandInAgent } from ${JSON.stringify(agentModule)};` : '',
-    kind === 'F7' ? `import { runCommand } from ${JSON.stringify(processModule)};` : '',
-    `test('holds a ${kind} fixture', { timeout: ${ending === 'E2' ? '1_000' : '600_000'} }, async (t) => {`,
+    `import { LSOF${kind === 'F7' ? ', runCommand' : ''} } from ${JSON.stringify(processModule)};`,
+    readinessProcess.toString(),
+    `test('holds a ${kind} fixture', { timeout: 600_000 }, async (t) => {`,
+    '  const setupDeadline = performance.now() + 10_000;',
+    ...(gateSetup ? [
+      `  writeFileSync(${JSON.stringify(join(directory, 'setup-entered'))}, '');`,
+      `  while (!existsSync(${JSON.stringify(join(directory, 'setup-release'))})) { t.signal.throwIfAborted(); await new Promise((resolve) => setImmediate(resolve)); }`,
+      '  t.signal.throwIfAborted();',
+    ] : []),
     '  const directory = scratch(t);',
     ...(kind === 'F1' ? [
       "  const child = spawn(fixture(directory, 'busy', ': > \"$here/alive\"; while [ ! -f \"$here/release\" ]; do :; done'), [], { stdio: 'ignore' });",
@@ -176,60 +248,156 @@ async function runEnding(t, ending, kind, { holdPidPublication = false } = {}) {
       "  const fixturePid = Number(read(directory, 'group.pid'));",
       "  process.kill(fixturePid, 0);",
     ]),
-    `  writeFileSync(${JSON.stringify(join(directory, 'started'))}, String(fixturePid));`,
+    `  const ready = { invocation: ${JSON.stringify(invocation)}, kind: ${JSON.stringify(kind)}, pid: fixturePid, ${kind === 'F4' ? 'leader: started.leader,' : ''} ${kind === 'F7' ? 'group: fixturePid,' : ''} ${kind === 'F5' ? "working: join(directory, 'working')," : ''} processes: ${kind === 'F4' ? '[started.leader, fixturePid]' : '[fixturePid]'}.map((pid) => ({ pid, ...readinessProcess(pid, setupDeadline - performance.now()) })) };`,
+    `  writeFileSync(${JSON.stringify(join(directory, 'started'))}, JSON.stringify(ready));`,
+    `  while (!existsSync(${JSON.stringify(join(directory, 'ready-accepted'))})) { t.signal.throwIfAborted(); await new Promise((resolve) => setImmediate(resolve)); }`,
+
     ...(holdPidPublication ? [
       `  writeFileSync(${JSON.stringify(join(directory, 'file-pid'))}, '');`,
       `  while (!existsSync(${JSON.stringify(join(directory, 'publish-pid'))})) await new Promise((resolve) => setImmediate(resolve));`,
     ] : []),
     `  writeFileSync(${JSON.stringify(join(directory, 'file-pid'))}, String(process.pid));`,
-    ending === 'E1' ? `  while (!existsSync(${JSON.stringify(join(directory, 'go'))})) await new Promise((resolve) => setImmediate(resolve));\n  ${kind === 'F6' ? 'agent.release(1);' : "writeFileSync(directory + '/release', '');"}\n  ${kind === 'F7' ? 'await dispatch;' : ''}` : '  await new Promise(() => {});',
+    ending === 'E1' ? `  while (!existsSync(${JSON.stringify(join(directory, 'go'))})) await new Promise((resolve) => setImmediate(resolve));\n  ${kind === 'F6' ? 'agent.release(1);' : "writeFileSync(directory + '/release', '');"}\n  ${kind === 'F7' ? 'await dispatch;' : ''}` : ending === 'E2' ? `  const holdDeadline = performance.now() + 1_000;
+  await t.test('holds a ready fixture', { timeout: 1_000 }, async (hold) => {
+    // The deadline begins before t.test; every fixture observation shares its remaining window.
+    const now = performance.now.bind(performance);
+    const observeBy = holdDeadline;
+    const alive = setInterval(() => { throw new Error('E2 ownership lease callback fired'); }, 2 ** 30);
+    const release = () => {
+      clearInterval(alive);
+      hold.signal.removeEventListener('abort', release);
+      t.signal.removeEventListener('abort', release);
+    };
+    try {
+      hold.signal.addEventListener('abort', release, { once: true });
+      t.signal.addEventListener('abort', release, { once: true });
+      hold.signal.throwIfAborted();
+      t.signal.throwIfAborted();
+      const pids = ${kind === 'F4' ? '[ready.leader, ready.pid]' : '[ready.pid]'};
+      for (const pid of pids) {
+        hold.signal.throwIfAborted();
+        const remaining = observeBy - now();
+        if (!(remaining > 0)) throw new Error('E2 fixture observation exhausted its shared hold budget');
+        if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error('E2 fixture has no positive process identity');
+        const recorded = ready.processes.find((entry) => entry.pid === pid);
+        if (!recorded || typeof recorded.signature !== 'string' || !Number.isSafeInteger(recorded.group) || recorded.group <= 0) throw new Error('E2 fixture has incomplete recorded identity');
+        const actual = readinessProcess(pid, remaining, undefined, ${kind === 'F5' ? '{ deadline: observeBy, now }' : 'undefined'});
+        hold.signal.throwIfAborted();
+        t.signal.throwIfAborted();
+        if (now() >= observeBy) throw new Error('E2 fixture observation crossed its shared hold deadline');
+        if (!actual.live || actual.signature !== recorded.signature || actual.group !== recorded.group || !actual.command?.includes(directory)) throw new Error('E2 fixture process identity changed before hold');
+        ${kind === 'F3' || kind === 'F5' ? "if (actual.group !== ready.pid) throw new Error('E2 fixture tail does not lead its own group');" : ''}
+        ${kind === 'F5' ? "if (actual.cwd === undefined || actual.cwd !== ready.working) throw new Error('E2 fixture tail working directory changed before hold');" : ''}
+        ${kind === 'F7' ? "if (ready.group !== ready.pid || actual.group !== ready.group) throw new Error('E2 fixture group identity changed before hold');" : ''}
+      }
+      hold.signal.throwIfAborted();
+      t.signal.throwIfAborted();
+      if (now() >= observeBy) throw new Error('E2 fixture hold entry exceeded its observation deadline');
+      writeFileSync(${JSON.stringify(join(directory, 'holding-entered'))}, '');
+      await new Promise(() => {});
+    } finally {
+      release();
+    }
+  });` : '  await new Promise(() => {});',
     '});',
   ].join('\n'));
   const output = join(directory, 'suite-output');
   const fd = openSync(output, 'w');
   const { NODE_TEST_CONTEXT, ...env } = process.env;
-  const child = spawn('/bin/sh', [suite, '--host', file], { cwd: resolve('.'), env: { ...env, TMPDIR: tmp }, detached: true, stdio: ['ignore', fd, fd] });
+  const child = spawn('/bin/sh', [suite, '--host', ...(ending === 'E2' ? ['--test-reporter=tap'] : []), file], { cwd: resolve('.'), env: { ...env, TMPDIR: tmp }, detached: true, stdio: ['ignore', fd, fd] });
   closeSync(fd);
-  t.after(() => {
-    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  const setupDeadline = performance.now() + 10_000;
+  let spawnError;
+  child.once('error', (error) => { spawnError = error; });
+  const teardown = async () => {
+    await ended(child);
     sweep(directory);
-  });
-  assert.equal(await until(() => existsSync(join(directory, 'started')), 10_000, t), true, `the fixture never started:\n${readFileSync(output, 'utf8')}`);
-  const [runName] = readdirSync(tmp).filter((name) => name.startsWith('rigger-suite.') || name.startsWith('rigger-refusing-gh.'));
-  assert.ok(runName, `the suite made no run directory under ${tmp}`);
-  if (process.env.C667_TRACE_FILE && ending === 'E4' && kind === 'F5') {
-    activeTrace = { eventCase: 'E4-F5', run: join(tmp, runName), fixturePid: Number(readFileSync(join(directory, 'started'), 'utf8')), evidenceRoot: process.env.C615_EVIDENCE_ROOT ? 'inherited' : 'auto-created' };
-    trace({ event: 'start', reaper: reaperState(activeTrace.run) });
-    t.after(() => {
-      trace({ event: 'teardown', reaper: reaperState(activeTrace.run) });
-      activeTrace = undefined;
+  };
+  t.after(teardown);
+  let phase = 'setup';
+  onPhase(phase);
+  try {
+    let gateEntered;
+    const ready = await waitForReadiness(context, {
+      invocation, kind, directory, deadline: setupDeadline,
+      read: () => existsSync(join(directory, 'started')) ? readFileSync(join(directory, 'started'), 'utf8') : undefined,
+      failure: () => spawnError?.message ?? (child.exitCode !== null || child.signalCode !== null ? `nested suite exited (${child.exitCode ?? child.signalCode}): ${readFileSync(output, 'utf8')}` : undefined),
+      turn: async () => {
+        if (gateSetup && existsSync(join(directory, 'setup-entered'))) {
+          gateEntered ??= performance.now();
+          if (performance.now() - gateEntered >= 1_200) writeFileSync(join(directory, 'setup-release'), '');
+        }
+        await new Promise((resolve) => setImmediate(resolve));
+      },
     });
+    phase = 'hold';
+    if (context.signal.aborted) throw new Error('hold cancelled after readiness', { cause: context.signal.reason });
+    writeFileSync(join(directory, 'ready-accepted'), '');
+    if (ending === 'E2') {
+      while (!existsSync(join(directory, 'holding-entered'))) {
+        if (context.signal.aborted) throw new Error('hold cancelled after readiness', { cause: context.signal.reason });
+        if (performance.now() >= setupDeadline) throw new Error('setup never became ready by 10000ms: nested holding body did not enter');
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      if (performance.now() >= setupDeadline) throw new Error('setup never became ready by 10000ms: holding entry exceeded deadline');
+    }
+    onPhase(phase, { holding: join(directory, 'holding-entered') });
+    if (context.signal.aborted) throw new Error('hold cancelled after readiness', { cause: context.signal.reason });
+
+    const [runName] = readdirSync(tmp).filter((name) => name.startsWith('rigger-suite.') || name.startsWith('rigger-refusing-gh.'));
+    assert.ok(runName, `the suite made no run directory under ${tmp}`);
+    if (process.env.C667_TRACE_FILE && ending === 'E4' && kind === 'F5') {
+      activeTrace = { eventCase: 'E4-F5', run: join(tmp, runName), fixturePid: ready.pid, evidenceRoot: process.env.C615_EVIDENCE_ROOT ? 'inherited' : 'auto-created' };
+      trace({ event: 'start', reaper: reaperState(activeTrace.run) });
+      t.after(() => {
+        trace({ event: 'teardown', reaper: reaperState(activeTrace.run) });
+        activeTrace = undefined;
+      });
+    }
+    if (ending === 'E1') writeFileSync(join(directory, 'go'), '');
+    if (ending === 'E3' || ending === 'E7') {
+      const group = spawnSync('/bin/ps', ['-p', String(child.pid), '-o', 'pgid='], { encoding: 'utf8' });
+      assert.equal(group.status, 0, `the suite shell exited before its group could be checked: ${readFileSync(output, 'utf8')}`);
+      assert.equal(Number(group.stdout.trim()), child.pid, `the nested suite is not the leader of its own group: ${group.stdout}`);
+      process.kill(-child.pid, ending === 'E3' ? 'SIGINT' : 'SIGKILL');
+    }
+    if (ending === 'E4' || ending === 'E5') process.kill(child.pid, ending === 'E4' ? 'SIGTERM' : 'SIGKILL');
+    if (ending === 'E6') {
+      if (holdPidPublication) setImmediate(() => {
+        if (existsSync(directory)) writeFileSync(join(directory, 'publish-pid'), '');
+      });
+      const pidFile = join(directory, 'file-pid');
+      let filePid = 0;
+      assert.equal(await until(() => {
+        if (!existsSync(pidFile)) return false;
+        filePid = Number(readFileSync(pidFile, 'utf8'));
+        return Number.isSafeInteger(filePid) && filePid > 0;
+      }, 10_000, context), true, `the test file wrote no positive pid: ${readFileSync(output, 'utf8')}`);
+      assert.notEqual(filePid, process.pid, 'the nested test file named the test hosting this one');
+      const target = spawnSync('/bin/ps', ['-p', String(filePid), '-o', 'command='], { encoding: 'utf8' });
+      assert.ok(target.stdout.includes(file), `the recorded pid no longer names the nested test file: ${target.stdout}`);
+      process.kill(filePid, 'SIGKILL');
+    }
+    await checkEnding(context, tmp, runName, output);
+    if (context.signal.aborted) throw new Error('hold cancelled after readiness', { cause: context.signal.reason });
+    if (ending === 'E2') {
+      const report = readFileSync(output, 'utf8');
+      assert.match(report, /holds a ready fixture/);
+      assert.match(report, /test timed out after 1000ms/);
+      assert.doesNotMatch(report, /event loop has already resolved|started no process|hookFailed/);
+      const types = [...report.matchAll(/^\s*failureType: ['"]([^'"]+)['"]/gm)].map((match) => match[1]);
+      const errors = [...report.matchAll(/^\s*error: ['"]([^'"]+)['"]\s*$/gm)].map((match) => match[1]);
+      assert.match(report, /^TAP version 13$/m);
+      assert.deepEqual(types, ['testTimeoutFailure', 'subtestsFailed'], report);
+      assert.deepEqual(errors, ['test timed out after 1000ms', '1 subtest failed'], report);
+      assert.equal([...report.matchAll(/^\s*not ok /gm)].length, 2, report);
+    }
+  } catch (error) {
+    try { await teardown(); } catch (cleanup) { throw new AggregateError([error, cleanup], `${phase} failed and teardown failed`); }
+    onPhase('teardown');
+    if (context.signal.aborted && phase === 'hold') throw new Error('hold cancelled after readiness', { cause: error });
+    throw error;
   }
-  if (ending === 'E1') writeFileSync(join(directory, 'go'), '');
-  if (ending === 'E3' || ending === 'E7') {
-    const group = spawnSync('/bin/ps', ['-p', String(child.pid), '-o', 'pgid='], { encoding: 'utf8' });
-    assert.equal(group.status, 0, `the suite shell exited before its group could be checked: ${readFileSync(output, 'utf8')}`);
-    assert.equal(Number(group.stdout.trim()), child.pid, `the nested suite is not the leader of its own group: ${group.stdout}`);
-    process.kill(-child.pid, ending === 'E3' ? 'SIGINT' : 'SIGKILL');
-  }
-  if (ending === 'E4' || ending === 'E5') process.kill(child.pid, ending === 'E4' ? 'SIGTERM' : 'SIGKILL');
-  if (ending === 'E6') {
-    if (holdPidPublication) setImmediate(() => {
-      if (existsSync(directory)) writeFileSync(join(directory, 'publish-pid'), '');
-    });
-    const pidFile = join(directory, 'file-pid');
-    let filePid = 0;
-    assert.equal(await until(() => {
-      if (!existsSync(pidFile)) return false;
-      filePid = Number(readFileSync(pidFile, 'utf8'));
-      return Number.isSafeInteger(filePid) && filePid > 0;
-    }, 10_000, t), true, `the test file wrote no positive pid: ${readFileSync(output, 'utf8')}`);
-    assert.notEqual(filePid, process.pid, 'the nested test file named the test hosting this one');
-    const target = spawnSync('/bin/ps', ['-p', String(filePid), '-o', 'command='], { encoding: 'utf8' });
-    assert.ok(target.stdout.includes(file), `the recorded pid no longer names the nested test file: ${target.stdout}`);
-    process.kill(filePid, 'SIGKILL');
-  }
-  await checkEnding(t, tmp, runName, output);
 }
 
 test('E6 waits for a complete positive file pid before signaling', { timeout: 30_000 }, (t) => runEnding(t, 'E6', 'F1', { holdPidPublication: true }));
@@ -439,3 +607,643 @@ test('trace refuses TMPDIR inside a pre-existing checkout', (t) => {
   });
   assert.throws(() => trace({ event: 'probe' }), /TMPDIR/);
 });
+
+test('E2 holds its real one-second timer until delayed setup is ready', { timeout: 30_000 }, (t) => runEnding(t, 'E2', 'F1', { gateSetup: true }));
+
+test('readiness accepts an independently live fixture identity', async (t) => {
+  const record = { invocation: 'one', kind: 'F1', pid: 123, processes: [{ pid: 123, signature: 'Thu Oct 22 10:00:00 2026 123 /fixture/busy' }] };
+  const ready = await waitForReadiness(t, {
+    invocation: 'one', kind: 'F1', directory: '/fixture',
+    read: () => JSON.stringify(record),
+    observe: () => ({ live: true, signature: 'Thu Oct 22 10:00:00 2026 123 /fixture/busy', group: 123, command: '/bin/bash /fixture/busy' }),
+  });
+  assert.equal(ready.pid, 123);
+});
+
+// Host observations below use literal identities; they never derive an expected answer with the waiter.
+for (const [label, bytes] of [
+  ['missing', undefined],
+  ['incomplete', '{"pid":'],
+  ['malformed', '{"pid":"123tail"}'],
+  ['nonpositive', '{"pid":0}'],
+]) {
+  test(`readiness rejects ${label} PID at the setup boundary`, async (t) => {
+    let clock = 0;
+    await assert.rejects(waitForReadiness(t, {
+      invocation: 'one', kind: 'F1', directory: '/fixture', read: () => bytes,
+      observe: () => { assert.fail('an invalid PID must never reach the host observer'); },
+      now: () => clock, turn: async () => { clock = 10_000; },
+    }), /setup never became ready by 10000ms/);
+  });
+}
+
+for (const [label, change, actual, message] of [
+  ['stale invocation', { invocation: 'old' }, {}, /stale invocation/],
+  ['wrong fixture', { kind: 'F2' }, {}, /wrong fixture/],
+  ['absent process', {}, { live: false }, /not live/],
+  ['reused PID', {}, { signature: 'Fri Oct 23 10:00:00 2026 123 /fixture/busy' }, /reused or foreign/],
+]) {
+  test(`readiness rejects ${label} without cleanup credit`, async (t) => {
+    const record = { invocation: 'one', kind: 'F1', pid: 123, processes: [{ pid: 123, signature: 'Thu Oct 22 10:00:00 2026 123 /fixture/busy' }], ...change };
+    await assert.rejects(waitForReadiness(t, {
+      invocation: 'one', kind: 'F1', directory: '/fixture', read: () => JSON.stringify(record),
+      observe: () => ({ live: true, signature: 'Thu Oct 22 10:00:00 2026 123 /fixture/busy', command: '/fixture/busy', ...actual }),
+    }), message);
+  });
+}
+
+for (const failure of ['spawn error: ENOENT', 'early exit: 1']) {
+  test(`readiness reports setup ${failure}`, async (t) => {
+    await assert.rejects(waitForReadiness(t, {
+      invocation: 'one', kind: 'F1', directory: '/fixture', read: () => undefined,
+      failure: () => failure,
+    }), new RegExp(`setup failed before readiness: ${failure}`));
+  });
+}
+
+for (const phase of ['setup', 'hold']) {
+  test(`parent abort during ${phase} tears down its recorded suite child`, { timeout: 30_000 }, async (t) => {
+    const controller = new AbortController();
+    const phases = [];
+    let entered;
+    await assert.rejects(runEnding(t, 'E2', 'F1', {
+      signal: controller.signal,
+      onPhase: (current, detail) => {
+        phases.push(current);
+        if (phase === 'setup' && current === 'setup') controller.abort(new Error('controlled parent ending'));
+        if (phase === 'hold' && current === 'hold') entered = until(() => existsSync(detail.holding), 10_000, t).then((seen) => {
+          assert.equal(seen, true, 'the nested holding body must actually begin');
+          phases.push('holding-entered');
+          controller.abort(new Error('controlled parent ending'));
+        });
+      },
+    }), phase === 'setup' ? /setup cancelled before readiness/ : /hold cancelled after readiness/);
+    await entered;
+    assert.deepEqual(phases, phase === 'setup' ? ['setup', 'teardown'] : ['setup', 'hold', 'holding-entered', 'teardown']);
+  });
+}
+
+test('readiness cannot accept a publication after the setup deadline', async (t) => {
+  let clock = 0;
+  const record = { invocation: 'one', kind: 'F1', pid: 123, processes: [{ pid: 123, signature: 'known-start /fixture/busy' }] };
+  await assert.rejects(waitForReadiness(t, {
+    invocation: 'one', kind: 'F1', directory: '/fixture',
+    read: () => clock === 0 ? undefined : JSON.stringify(record),
+    observe: () => ({ live: true, signature: 'known-start /fixture/busy', command: '/fixture/busy' }),
+    now: () => clock, turn: async () => { clock = 10_001; },
+  }), /setup never became ready by 10000ms/);
+});
+
+test('readiness rejects a process observation that crosses its setup deadline', async (t) => {
+  let clock = 0;
+  const record = { invocation: 'one', kind: 'F1', pid: 123, processes: [{ pid: 123, signature: 'known-start /fixture/busy' }] };
+  await assert.rejects(waitForReadiness(t, {
+    invocation: 'one', kind: 'F1', directory: '/fixture', read: () => JSON.stringify(record),
+    observe: () => {
+      clock = 10_001;
+      return { live: true, signature: 'known-start /fixture/busy', command: '/fixture/busy' };
+    },
+    now: () => clock,
+  }), /setup never became ready by 10000ms/);
+});
+
+test('readiness shares its observation budget across the required leader and member', async (t) => {
+  let clock = 0;
+  const budgets = [];
+  const record = { invocation: 'one', kind: 'F4', leader: 456, pid: 123, processes: [
+    { pid: 456, signature: 'known-leader /fixture/leader' },
+    { pid: 123, signature: 'known-member /fixture/member' },
+  ] };
+  await waitForReadiness(t, {
+    invocation: 'one', kind: 'F4', directory: '/fixture', read: () => JSON.stringify(record),
+    observe: (pid, remaining) => {
+      budgets.push(remaining);
+      clock += 2_500;
+      return { live: true, signature: pid === 456 ? 'known-leader /fixture/leader' : 'known-member /fixture/member', command: '/fixture/command' };
+    },
+    now: () => clock,
+  });
+  assert.deepEqual(budgets, [10_000, 7_500]);
+});
+
+test('the host readiness read bounds its ps invocation by the remaining budget', () => {
+  let timeout;
+  const result = readinessProcess(123, 17, (_command, _args, options) => {
+    timeout = options.timeout;
+    assert.equal(options.killSignal, 'SIGKILL');
+    return { error: Object.assign(new Error('spawnSync /bin/ps ETIMEDOUT'), { code: 'ETIMEDOUT' }) };
+  });
+  assert.equal(timeout, 17);
+  assert.deepEqual(result, { live: false });
+});
+
+for (const kind of ['F3', 'F5']) {
+  test(`readiness rejects an ${kind} tail that does not lead its own group`, async (t) => {
+    const record = { invocation: 'one', kind, pid: 123, working: '/fixture/working',
+      processes: [{ pid: 123, signature: 'known-tail /fixture/tail' }] };
+    await assert.rejects(waitForReadiness(t, {
+      invocation: 'one', kind, directory: '/fixture', read: () => JSON.stringify(record),
+      observe: () => ({ live: true, signature: 'known-tail /fixture/tail', command: '/fixture/tail', group: 456, cwd: '/fixture/working' }),
+    }), /tail does not lead its own group/);
+  });
+}
+
+test('readiness rejects an F5 tail outside its intended working directory', async (t) => {
+  const record = { invocation: 'one', kind: 'F5', pid: 123, working: '/fixture/working',
+    processes: [{ pid: 123, signature: 'known-tail /fixture/tail' }] };
+  await assert.rejects(waitForReadiness(t, {
+    invocation: 'one', kind: 'F5', directory: '/fixture', read: () => JSON.stringify(record),
+    observe: () => ({ live: true, signature: 'known-tail /fixture/tail', command: '/fixture/tail', group: 123, cwd: '/fixture/elsewhere' }),
+  }), /tail is outside its intended working directory/);
+});
+
+test('the F5 cwd read consumes only the remaining shared observation budget', () => {
+  let clock = 0;
+  const timeouts = [];
+  const observed = readinessProcess(123, 10_000, (command, _args, options) => {
+    timeouts.push(options.timeout);
+    assert.equal(options.killSignal, 'SIGKILL');
+    if (command === '/bin/ps') {
+      clock = 2_500;
+      return { status: 0, stdout: 'S Thu Oct 22 10:00:00 2026 123 /fixture/tail\n' };
+    }
+    assert.equal(command, LSOF);
+    return { status: 0, stdout: 'p123\nfcwd\nn/fixture/working\n' };
+  }, { deadline: 10_000, now: () => clock });
+  assert.equal(observed.cwd, '/fixture/working');
+  assert.deepEqual(timeouts, [10_000, 7_500]);
+});
+
+test('readiness rejects an F5 cwd observation completed past the setup deadline', async (t) => {
+  let clock = 0;
+  const record = { invocation: 'one', kind: 'F5', pid: 123, working: '/fixture/working',
+    processes: [{ pid: 123, signature: 'Thu Oct 22 10:00:00 2026 123 /fixture/tail' }] };
+  await assert.rejects(waitForReadiness(t, {
+    invocation: 'one', kind: 'F5', directory: '/fixture', read: () => JSON.stringify(record), now: () => clock,
+    observe: (pid, remaining, _run, budget) => readinessProcess(pid, remaining, (command) => {
+      if (command === '/bin/ps') return { status: 0, stdout: 'S Thu Oct 22 10:00:00 2026 123 /fixture/tail\n' };
+      clock = 10_001;
+      return { status: 0, stdout: 'p123\nfcwd\nn/fixture/working\n' };
+    }, budget),
+  }), /setup never became ready by 10000ms/);
+});
+
+function directReaperPreload() {
+  const cp = require('node:child_process');
+  const fs = require('node:fs');
+  const { syncBuiltinESMExports } = require('node:module');
+  const config = JSON.parse(fs.readFileSync(process.env.RIGGER_919_CONFIG, 'utf8'));
+  if (process.argv[1] !== config.cli) throw new Error('919 preload reached a different entry point');
+  const nativeSpawn = cp.spawnSync;
+  const nativeKill = process.kill.bind(process);
+  const same = (one, two) => JSON.stringify(one) === JSON.stringify(two);
+  const pack = (r) => ({ pid: r.pid, status: r.status, signal: r.signal, stdout: r.stdout, stderr: r.stderr,
+    error: r.error ? { code: r.error.code, message: r.error.message } : null });
+  let sequence = 0;
+  let psReads = 0;
+  let cwdReads = 0;
+  let kills = 0;
+  let acknowledgements = 0;
+  let targetReads = 0;
+  let permissionFaultSent = false;
+  const record = (value) => fs.writeFileSync(config.trace, JSON.stringify({ sequence: ++sequence, cliPid: process.pid, ...value }) + '\n', { flag: 'a' });
+  const fault = (stdout) => {
+    if (config.mode === 'malformed') return 'not-a-process-row\n';
+    if (config.mode === 'wrong-pid') return stdout.replace(/^([ \t]*)[0-9]+/, `$1${config.pid + 1}`);
+    if (config.mode === 'duplicate') return stdout + stdout;
+    if (config.mode === 'extra-lf') return stdout + '\n';
+    if (config.mode === 'vertical') return stdout.replace(/^([ \t]*[0-9]+)[ \t]+/, '$1\v');
+    if (config.mode === 'horizontal') return stdout.replace(/^([ \t]*[0-9]+)[ \t]+(\S+)[ \t]+/, '$1\t$2\t');
+    if (config.mode === 'changed-start') {
+      const changed = config.started === 'Thu Jan  1 00:00:00 1970' ? 'Fri Jan  2 00:00:00 1970' : 'Thu Jan  1 00:00:00 1970';
+      return stdout.replace(/^([ \t]*[0-9]+[ \t]+\S+[ \t]+).{24}/, `$1${changed}`);
+    }
+    return stdout;
+  };
+  cp.spawnSync = function(command, args, options) {
+    if (command === '/bin/ps' && same(args, config.discoveryPS)) {
+      const stdout = psReads++ === 0 ? config.selectedPS : '';
+      record({ event: 'discovery-ps', command, args, historicalLiveSelection: config.mode === 'zombie', result: { status: 0, signal: null, stdout, stderr: '' } });
+      return { status: 0, signal: null, error: undefined, stdout, stderr: '' };
+    }
+    if (command === config.lsof && same(args, config.discoveryCwd)) {
+      const stdout = cwdReads++ === 0 ? config.selectedCwd : '';
+      record({ event: 'discovery-cwd', command, args, historicalLiveSelection: config.mode === 'zombie', result: { status: 0, signal: null, stdout, stderr: '' } });
+      return { status: 0, signal: null, error: undefined, stdout, stderr: '' };
+    }
+    if (command !== '/bin/ps' || !same(args, config.targetedPS)) return nativeSpawn.apply(this, arguments);
+    targetReads++;
+    if (kills > 0 && (config.mode === 'absence' || config.mode === 'timeout')) {
+      if (options.timeout !== 1000 || options.killSignal !== 'SIGKILL') throw new Error('targeted PS did not receive its reviewed owned-child bound');
+      const deadlineNs = (process.hrtime.bigint() + BigInt(options.timeout) * 1000000n).toString();
+      const control = { mode: config.mode, parent: process.pid, deadlineNs, metadata: config.timeoutMetadata, closed: config.closedMarker, pid: config.pid, args };
+      const helper = nativeSpawn(process.execPath, ['--input-type=commonjs', '-e', config.psControl, JSON.stringify(control)], options);
+      if (config.mode === 'timeout' || helper.error || helper.status !== 0) {
+        record({ event: 'targeted', command, args, read: targetReads, afterFreshSignal: kills > 0, mode: config.mode, controlled: true, helper: pack(helper), result: pack(helper) });
+        return helper;
+      }
+      const payload = JSON.parse(helper.stdout);
+      const result = { ...payload.actual, error: payload.actual.error ? Object.assign(new Error(payload.actual.error.message), { code: payload.actual.error.code }) : undefined };
+      record({ event: 'targeted', command, args, read: targetReads, afterFreshSignal: kills > 0, mode: config.mode, controlled: true, helper: pack(helper), barrier: payload.closed, result: pack(result) });
+      return result;
+    }
+    const native = nativeSpawn.apply(this, arguments);
+    let result = native;
+    const controlled = kills > 0 && !['ack', 'native', 'zombie'].includes(config.mode) && !(config.mode === 'changed-start' && targetReads === 1);
+    if (controlled) {
+      result = { ...native, stdout: fault(native.stdout), stderr: '' };
+      if (config.mode === 'spawn-error') result = { status: null, signal: null, stdout: '', stderr: '', error: Object.assign(new Error('controlled target PS spawn error'), { code: 'ENOENT' }) };
+      if (config.mode === 'silent-nonzero') result = { status: 2, signal: null, stdout: '', stderr: '', error: undefined };
+      if (config.mode === 'stderr') result.stderr = 'controlled target PS warning';
+      if (config.mode === 'empty-live' || config.mode === 'eperm') result = { status: 1, signal: null, stdout: '', stderr: '', error: undefined };
+    }
+    record({ event: 'targeted', command, args, read: targetReads, afterFreshSignal: kills > 0, mode: config.mode, controlled, native: pack(native), result: pack(result) });
+    return result;
+  };
+  process.kill = function(pid, signal) {
+    if (signal === 0 && pid === config.pid) {
+      if (config.mode === 'eperm' && acknowledgements > 0 && !permissionFaultSent) {
+        permissionFaultSent = true;
+        record({ event: 'signal-zero', pid, controlled: true, error: 'EPERM' });
+        throw Object.assign(new Error('controlled owned-target signal-zero permission failure'), { code: 'EPERM' });
+      }
+      try {
+        const answer = nativeKill(pid, signal); record({ event: 'signal-zero', pid, controlled: false, answer }); return answer;
+      } catch (error) { record({ event: 'signal-zero', pid, controlled: false, error: error.code }); throw error; }
+    }
+    if (signal !== 'SIGKILL') return nativeKill(pid, signal);
+    if (pid !== config.pid) throw new Error('919 CLI attempted an unowned SIGKILL');
+    kills++;
+    record({ event: 'kill-request', pid, signal, native: config.realKill });
+    if (config.realKill) {
+      const answer = nativeKill(pid, signal); record({ event: 'native-kill-answer', pid, answer }); return answer;
+    }
+    acknowledgements++;
+    record({ event: 'kill-ack-without-effect', pid, signal });
+    return true;
+  };
+  syncBuiltinESMExports();
+}
+
+async function directReaperPSControl() {
+  const { existsSync, readFileSync, writeFileSync } = require('node:fs');
+  const { spawnSync } = require('node:child_process');
+  const config = JSON.parse(process.argv[1]);
+  const startedNs = process.hrtime.bigint().toString();
+  const remaining = () => Number(BigInt(config.deadlineNs) - process.hrtime.bigint()) / 1e6;
+  const pack = (result) => ({ pid: result.pid, status: result.status, signal: result.signal, stdout: result.stdout, stderr: result.stderr,
+    error: result.error ? { code: result.error.code, message: result.error.message } : null });
+  writeFileSync(config.metadata, JSON.stringify({ pid: process.pid, parent: process.ppid, mode: config.mode, startedNs }));
+  if (config.mode === 'timeout') {
+    const held = setInterval(() => { throw new Error('owned PS timeout fixture callback fired'); }, 2 ** 30);
+    try {
+      writeFileSync(config.metadata, JSON.stringify({ pid: process.pid, parent: process.ppid, startedNs, referenced: held.hasRef() }));
+      const native = spawnSync('/bin/ps', ['-p', String(process.pid), '-o', 'pid=,ppid=,stat='], { encoding: 'utf8', timeout: Math.max(1, Math.ceil(remaining())), killSignal: 'SIGKILL' });
+      if (!(remaining() > 0)) throw new Error('owned target-read witness exceeded the same read window');
+      writeFileSync(config.metadata, JSON.stringify({ pid: process.pid, parent: process.ppid, mode: config.mode, startedNs, actual: pack(native), referenced: held.hasRef() }));
+      while (process.ppid === config.parent) await new Promise((resolve) => setImmediate(resolve));
+    } finally { clearInterval(held); }
+  } else {
+    while (!existsSync(config.closed)) {
+      if (process.ppid !== config.parent || !(remaining() > 0)) throw new Error('direct-child close/ESRCH barrier owner ended or deadline expired');
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    const closed = JSON.parse(readFileSync(config.closed, 'utf8'));
+    if (closed.pid !== config.pid || closed.absence !== 'ESRCH' || !(remaining() > 0)) throw new Error('wrong or late direct-child absence barrier');
+    const native = spawnSync('/bin/ps', config.args, { encoding: 'utf8', timeout: Math.max(1, Math.ceil(remaining())), killSignal: 'SIGKILL',
+      env: { ...process.env, LC_ALL: 'C', TZ: 'UTC0' } });
+    if (!(remaining() > 0)) throw new Error('native absence read exceeded the same target-read window');
+    process.stdout.write(JSON.stringify({ closed, actual: pack(native) }));
+  }
+}
+
+const directReaperZombieSource = [
+  "use strict;",
+  "use warnings;",
+  "use POSIX qw(WNOHANG);",
+  "use Errno qw(EINTR);",
+  "$SIG{CHLD} = 'DEFAULT';",
+  "my $run = <STDIN>;",
+  "defined($run) or die \"missing run\";",
+  "chomp($run);",
+  "pipe(my $read, my $write) or die \"pipe: $!\";",
+  "my $child = fork();",
+  "defined($child) or die \"fork: $!\";",
+  "my $reaped = 0;",
+  "sub finish_child {",
+  "  return if !$child || $reaped;",
+  "  my $already = waitpid($child, WNOHANG);",
+  "  die \"child ownership lost before cleanup\" if $already < 0;",
+  "  if ($already == 0) {",
+  "    kill('KILL', $child);",
+  "    my $waited = waitpid($child, 0);",
+  "    die \"owned child did not reap\" if $waited != $child;",
+  "  }",
+  "  $reaped = 1;",
+  "  print \"reaped $child\\n\";",
+  "}",
+  "END { finish_child(); }",
+  "if ($child == 0) {",
+  "  close($write);",
+  "  chdir($run) or die \"chdir: $!\";",
+  "  my $byte;",
+  "  sysread($read, $byte, 1);",
+  "  exit(0);",
+  "}",
+  "close($read);",
+  "$SIG{TERM} = sub { finish_child(); exit(0); };",
+  "$| = 1;",
+  "print \"holder $$ target $child\\n\";",
+  "my $command;",
+  "while (1) {",
+  "  my $count = sysread(STDIN, $command, 1);",
+  "  if (!defined($count)) { next if $! == EINTR; die \"holder read: $!\"; }",
+  "  last if $count == 0;",
+  "  if ($command eq 'K' && !$reaped) { my $sent = kill('KILL', $child); print \"kill $child $sent\\n\"; die \"owned kill failed\" if $sent != 1; }",
+  "  if ($command eq 'R') {",
+  "    my $waited = waitpid($child, 0);",
+  "    die \"R did not reap owned child\" if $waited != $child;",
+  "    $reaped = 1;",
+  "    print \"reaped $child\\n\";",
+  "    exit(0);",
+  "  }",
+  "}",
+].join('\n');
+
+async function directReaperSelection(t, selection) {
+  const mode = selection === false ? 'ack' : selection === true ? 'native' : selection;
+  const positive = ['native', 'absence', 'zombie'].includes(mode);
+  let target; let holder; let cli; let targetPid;
+  let targetClosed = false; let holderClosed = false; let cliClosed = false;
+  let heldTargetAbsent = mode !== 'zombie'; let auxiliarySettled = !['absence', 'timeout'].includes(mode);
+  const directory = realpathSync.native(temporaryDirectory('rigger-reaper-confirm-', { context: t, beforeRemoval: () => {
+    if ((target && !targetClosed) || (holder && !holderClosed) || (cli && !cliClosed) || (holder && targetPid && !heldTargetAbsent) || (cli && !auxiliarySettled)) throw new Error('owned control child ending is unresolved; preserve scratch');
+  } }));
+  const run = join(directory, 'run'); mkdirSync(run); writeFileSync(join(run, 'hold'), '');
+  const pipe = join(directory, 'ended');
+  const traceFile = join(directory, 'trace.jsonl');
+  const configFile = join(directory, 'control.json');
+  const preloadFile = join(directory, 'control.cjs');
+  const closedMarker = join(directory, 'direct-child-closed.json');
+  const timeoutMetadata = join(directory, 'owned-ps.json');
+  const cliFile = resolve('test/suite-reaper');
+  const observations = [];
+  const backgroundErrors = [];
+  let targetClose; let holderClose; let cliClose;
+  let targetError; let holderError; let cliError;
+  let holderOutput = ''; let holderErrors = ''; let output = ''; let errors = '';
+  let reader; let writer; let fifoOpen; let fifoEOF;
+  let cleanupPromise; let cleanupDeadline;
+  const packed = (r) => ({ pid: r.pid, status: r.status, signal: r.signal, stdout: r.stdout, stderr: r.stderr,
+    error: r.error ? { code: r.error.code, message: r.error.message } : null });
+  const nativeAbsence = (pid) => {
+    const actual = spawnSync('/bin/ps', ['-ww', '-p', String(pid), '-o', 'pid=,stat=,lstart=,command='], {
+      encoding: 'utf8', timeout: 1_000, killSignal: 'SIGKILL', env: { ...process.env, LC_ALL: 'C', TZ: 'UTC0' },
+    });
+    assert.equal(actual.error, undefined); assert.equal(actual.signal, null); assert.equal(actual.stderr, '');
+    assert.ok(actual.status === 0 || actual.status === 1); assert.equal(actual.stdout, '');
+    assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+    const observed = { event: 'native-absence', pid, result: packed(actual), signalZero: 'ESRCH' }; observations.push(observed); return observed;
+  };
+  const observed = (pid, parent) => {
+    const actual = spawnSync('/bin/ps', ['-ww', '-p', String(pid), '-o', 'pid=,ppid=,pgid=,stat=,lstart=,command='], {
+      encoding: 'utf8', timeout: 1_000, killSignal: 'SIGKILL', env: { ...process.env, LC_ALL: 'C', TZ: 'UTC0' },
+    });
+    assert.equal(actual.error, undefined); assert.equal(actual.signal, null); assert.equal(actual.status, 0, actual.stderr); assert.equal(actual.stderr, '');
+    const line = actual.stdout.endsWith('\n') ? actual.stdout.slice(0, -1) : actual.stdout;
+    assert.doesNotMatch(line, /[\n\r\v\f\u0085\u2028\u2029]/);
+    const row = /^[ \t]*([0-9]+)[ \t]+([0-9]+)[ \t]+([0-9]+)[ \t]+(\S+)[ \t]+(.{24})(?:[ \t]+(.*))?$/.exec(line);
+    assert.ok(row, actual.stdout); assert.equal(Number(row[1]), pid); assert.equal(Number(row[2]), parent);
+    const witness = { pid, parent: Number(row[2]), group: Number(row[3]), state: row[4], birth: row[5], command: row[6] ?? '', raw: packed(actual) };
+    observations.push({ event: 'native-state', ...witness }); return witness;
+  };
+  const settle = async (closed) => {
+    while (!closed() && performance.now() < cleanupDeadline) await new Promise((resolve) => setImmediate(resolve));
+    if (!closed()) throw new Error('owned recorded child did not close during cleanup');
+  };
+  const cleanup = () => cleanupPromise ??= (async () => {
+    const failures = []; cleanupDeadline = performance.now() + 10_000;
+    for (const fd of [writer, reader]) if (fd !== undefined) { try { closeSync(fd); } catch (error) { failures.push(error); } }
+    writer = reader = undefined;
+    if (cli) {
+      if (cli.exitCode === null && cli.signalCode === null) { try { cli.kill('SIGKILL'); } catch (error) { failures.push(error); } }
+      try { await settle(() => cliClosed); } catch (error) { failures.push(error); }
+    }
+    if (target) {
+      if (target.exitCode === null && target.signalCode === null) { try { target.kill('SIGKILL'); } catch (error) { failures.push(error); } }
+      try { await settle(() => targetClosed); } catch (error) { failures.push(error); }
+    }
+    if (holder) {
+      if (!holderClosed) {
+        try { holder.stdin.end('KR'); } catch (error) { failures.push(error); }
+        try { await settle(() => holderClosed); } catch (error) {
+          failures.push(error);
+          try { holder.kill('SIGTERM'); } catch (signalError) { failures.push(signalError); }
+          try { await settle(() => holderClosed); } catch (closeError) { failures.push(closeError); }
+        }
+      }
+      if (targetPid) { try { assert.ok(holderOutput.includes(`reaped ${targetPid}\n`), 'actual parent did not acknowledge its own waitpid'); nativeAbsence(targetPid); heldTargetAbsent = true; } catch (error) { failures.push(error); } }
+      else if (holderClosed) heldTargetAbsent = true;
+    }
+    if (!holder) heldTargetAbsent = true;
+    if (!cli) auxiliarySettled = true;
+    if (!auxiliarySettled) {
+      try {
+        if (existsSync(timeoutMetadata)) {
+          const auxiliary = JSON.parse(readFileSync(timeoutMetadata, 'utf8'));
+          assert.ok(Number.isSafeInteger(auxiliary.pid) && auxiliary.pid > 0); assert.equal(auxiliary.parent, cli.pid);
+          while (!auxiliarySettled && performance.now() < cleanupDeadline) {
+            const answer = spawnSync('/bin/ps', ['-p', String(auxiliary.pid), '-o', 'pid=,stat='], { encoding: 'utf8', timeout: Math.max(1, Math.ceil(cleanupDeadline - performance.now())), killSignal: 'SIGKILL' });
+            observations.push({ event: 'owned-read-child-final', pid: auxiliary.pid, result: packed(answer) });
+            if (!answer.error && answer.stderr === '' && [0, 1].includes(answer.status)) {
+              if (answer.stdout === '') { try { process.kill(auxiliary.pid, 0); } catch (error) { if (error.code === 'ESRCH') auxiliarySettled = true; else throw error; } }
+              else if (new RegExp(`^[ \\t]*${auxiliary.pid}[ \\t]+Z[A-Za-z+<>]*[ \\t]*\\n?$`).test(answer.stdout)) auxiliarySettled = true;
+            }
+            if (!auxiliarySettled) await new Promise((resolve) => setImmediate(resolve));
+          }
+        } else if (cliClosed && cliClose?.signal === null) auxiliarySettled = true;
+        if (!auxiliarySettled) throw new Error('owned target-read child ending remains unresolved');
+      } catch (error) { failures.push(error); }
+    }
+    if (failures.length) throw new AggregateError(failures, 'direct reaper owned-child cleanup failed');
+    return { cli: cliClose ?? null, target: targetClose ?? null, holder: holderClose ?? null, holderOutput, holderErrors };
+  })();
+  t.after(cleanup);
+  let failure; let outcome; let traceRaw; let preparedZombie;
+  try {
+    const made = spawnSync('/usr/bin/mkfifo', [pipe], { encoding: 'utf8', timeout: 1_000 });
+    assert.equal(made.status, 0, made.stderr); assert.equal(made.error, undefined);
+    reader = openSync(pipe, constants.O_RDONLY | constants.O_NONBLOCK); writer = openSync(pipe, constants.O_WRONLY | constants.O_NONBLOCK);
+    if (mode === 'zombie') {
+      const program = join(directory, 'holder.pl'); writeFileSync(program, directReaperZombieSource);
+      holder = spawn('/usr/bin/perl', [program], { stdio: ['pipe', 'pipe', 'pipe'] });
+      holder.once('error', (error) => { holderError = error; }); holder.once('close', (code, signal) => { holderClosed = true; holderClose = { pid: holder.pid, code, signal }; });
+      holder.stdin.on('error', (error) => { backgroundErrors.push(error); });
+      holder.stdout.on('data', (chunk) => { holderOutput += chunk; }); holder.stderr.on('data', (chunk) => { holderErrors += chunk; });
+      assert.ok(Number.isSafeInteger(holder.pid) && holder.pid > 0); holder.stdin.write(run + '\n');
+      assert.equal(await until(() => {
+        if (holderError) throw holderError;
+        const row = /^holder ([0-9]+) target ([0-9]+)\n/.exec(holderOutput);
+        if (!row) return false;
+        assert.equal(Number(row[1]), holder.pid); targetPid = Number(row[2]); return Number.isSafeInteger(targetPid) && targetPid > 0;
+      }, 10_000, t), true);
+    } else {
+      target = spawn('/usr/bin/tail', ['-f', join(run, 'hold')], { cwd: run, stdio: 'ignore' });
+      target.once('error', (error) => { targetError = error; });
+      target.once('close', (code, signal) => {
+        targetClosed = true; targetClose = { pid: target.pid, code, signal };
+        if (mode === 'absence') {
+          try { assert.throws(() => process.kill(target.pid, 0), { code: 'ESRCH' });
+            writeFileSync(closedMarker, JSON.stringify({ ...targetClose, absence: 'ESRCH' })); }
+          catch (error) { backgroundErrors.push(error); }
+        }
+      });
+      assert.ok(Number.isSafeInteger(target.pid) && target.pid > 0); targetPid = target.pid;
+    }
+    const expectedParent = holder?.pid ?? process.pid;
+    assert.equal(await until(() => {
+      if (targetError || holderError) throw targetError ?? holderError;
+      const row = observed(targetPid, expectedParent);
+      const cwd = spawnSync(LSOF, ['-nP', '-a', '-p', String(targetPid), '-d', 'cwd', '-Fpn'], { env: process.env, encoding: 'utf8', timeout: 1_000 });
+      observations.push({ event: 'native-cwd-ready', pid: targetPid, result: packed(cwd) });
+      return !row.state.startsWith('Z') && !cwd.error && cwd.status === 0 && cwd.stderr === '' && cwd.stdout.split('\n').includes(`n${run}`);
+    }, 10_000, t), true);
+    if (mode !== 'horizontal') {
+      process.kill(targetPid, 'SIGSTOP');
+      assert.equal(await until(() => observed(targetPid, expectedParent).state.startsWith('T'), 10_000, t), true);
+    }
+    const before = observed(targetPid, expectedParent); process.kill(targetPid, 0);
+    const selected = spawnSync('/bin/ps', ['-p', String(targetPid), '-o', 'pid=,ppid=,stat=,command='], { encoding: 'utf8', timeout: 1_000 });
+    const cwd = spawnSync(LSOF, ['-nP', '-a', '-p', String(targetPid), '-d', 'cwd', '-Fpn'], { env: process.env, encoding: 'utf8', timeout: 1_000 });
+    assert.equal(selected.status, 0); assert.equal(selected.error, undefined); assert.equal(selected.stderr, '');
+    assert.equal(cwd.status, 0, cwd.stderr); assert.equal(cwd.error, undefined); assert.equal(cwd.stderr, '');
+    assert.ok(cwd.stdout.split('\n').includes(`p${targetPid}`)); assert.ok(cwd.stdout.split('\n').includes(`n${run}`));
+    if (mode === 'zombie') {
+      holder.stdin.write('K');
+      assert.equal(await until(() => {
+        if (holderError || holderClosed) throw holderError ?? new Error('owned zombie parent ended during fixture setup');
+        return holderOutput.includes(`kill ${targetPid} 1\n`) && observed(targetPid, holder.pid).state.startsWith('Z');
+      }, 10_000, t), true);
+      const zombie = observed(targetPid, holder.pid); const owner = observed(holder.pid, process.pid);
+      assert.equal(zombie.birth, before.birth); assert.doesNotMatch(owner.state, /^Z/); process.kill(targetPid, 0); process.kill(holder.pid, 0);
+      assert.ok(holderOutput.includes(`kill ${targetPid} 1\n`));
+      preparedZombie = { zombie, owner, signalZero: true, cause: 'actual owner-native SIGKILL before CLI launch; historical discovery snapshot only' };
+    }
+    const control = { mode, cli: cliFile, pid: targetPid, realKill: positive, trace: traceFile, lsof: LSOF, selectedPS: selected.stdout, selectedCwd: cwd.stdout,
+      started: before.birth, closedMarker, timeoutMetadata, psControl: `(${directReaperPSControl.toString()})().catch((error) => { console.error(error.stack ?? error); process.exitCode = 1; });`,
+      discoveryPS: ['-U', String(process.getuid()), '-o', 'pid=,ppid=,stat=,command='], discoveryCwd: ['-nP', '-a', '-d', 'cwd', '-u', String(process.getuid()), '-Fpn'],
+      targetedPS: ['-ww', '-p', String(targetPid), '-o', 'pid=,stat=,lstart=,command='] };
+    writeFileSync(configFile, JSON.stringify(control)); writeFileSync(preloadFile, `(${directReaperPreload.toString()})();`);
+    const { NODE_TEST_CONTEXT, ...env } = process.env;
+    cli = spawn(process.execPath, ['--require', preloadFile, cliFile, run, pipe], { env: { ...env, RIGGER_919_CONFIG: configFile }, stdio: ['ignore', 'pipe', 'pipe'] });
+    cli.once('error', (error) => { cliError = error; }); cli.once('close', (code, signal) => { cliClosed = true; cliClose = { pid: cli.pid, code, signal }; });
+    cli.stdout.on('data', (chunk) => { output += chunk; }); cli.stderr.on('data', (chunk) => { errors += chunk; });
+    assert.ok(Number.isSafeInteger(cli.pid) && cli.pid > 0);
+    assert.equal(await until(() => {
+      if (cliError) throw cliError;
+      if (cliClosed) throw new Error(`standalone CLI closed before FIFO-reader proof: ${errors}`);
+      const opened = spawnSync(LSOF, ['-nP', '-a', '-p', String(cli.pid), '-Ffn'], { env: process.env, encoding: 'utf8', timeout: 1_000 });
+      observations.push({ event: 'native-fifo-open', cliPid: cli.pid, result: packed(opened) });
+      if (!opened.error && opened.status === 0 && opened.stderr === '' && opened.stdout.split('\n').includes(`n${pipe}`)) { fifoOpen = packed(opened); return true; }
+      return false;
+    }, 10_000, t), true);
+    closeSync(writer); writer = undefined; closeSync(reader); reader = undefined; fifoEOF = { writerClosed: true, readerClosed: true };
+    assert.equal(await until(() => cliClosed, 10_000, t), true, 'standalone CLI did not settle after actual FIFO EOF');
+    assert.equal(cliError, undefined);
+    traceRaw = readFileSync(traceFile, 'utf8');
+    const trace = traceRaw.trimEnd().split('\n').map((line) => JSON.parse(line));
+    const requests = trace.filter(({ event }) => event === 'kill-request');
+    assert.deepEqual(requests.map(({ pid, signal }) => ({ pid, signal })), [{ pid: targetPid, signal: 'SIGKILL' }], 'remembered target acquired signal authority');
+    const discovery = trace.filter(({ event }) => event === 'discovery-ps');
+    const needsSecondCensus = ['ack', 'horizontal', 'native', 'absence', 'zombie', 'changed-start'].includes(mode);
+    assert.ok(discovery.length >= (needsSecondCensus ? 2 : 1) && discovery.length <= 11 && discovery[0].result.stdout.includes(String(targetPid)));
+    if (discovery.length > 1) assert.equal(discovery[1].result.stdout, '');
+    const cwdDiscovery = trace.filter(({ event }) => event === 'discovery-cwd');
+    assert.equal(cwdDiscovery.length, discovery.length); assert.ok(cwdDiscovery[0].result.stdout.split('\n').includes(`n${run}`)); if (cwdDiscovery.length > 1) assert.equal(cwdDiscovery[1].result.stdout, '');
+    const targeted = trace.filter(({ event }) => event === 'targeted');
+    outcome = { mode, before, preparedZombie, cliPid: cli.pid, targetPid, holderPid: holder?.pid, status: cli.exitCode, output, errors, fifoOpen, fifoEOF, trace, removed: !existsSync(run) };
+    if (positive) {
+      assert.equal(cli.exitCode, 0, errors); assert.equal(existsSync(run), false);
+      assert.equal(trace.filter(({ event }) => event === 'kill-ack-without-effect').length, 0);
+      assert.equal(trace.filter(({ event }) => event === 'native-kill-answer').length, 1);
+      if (mode === 'zombie') {
+        const after = observed(targetPid, holder.pid); process.kill(targetPid, 0); process.kill(holder.pid, 0);
+        assert.match(after.state, /^Z/); assert.equal(after.birth, before.birth); assert.equal(holderClosed, false);
+        assert.equal(targeted[0].controlled, false);
+        assert.ok(new RegExp(`^[ \\t]*${targetPid}[ \\t]+Z`, 'm').test(targeted[0].result.stdout), 'the first passive answer did not show the actual pre-held zombie');
+        const ownerAfter = observed(holder.pid, process.pid); assert.doesNotMatch(ownerAfter.state, /^Z/); outcome.ownerAfter = ownerAfter;
+        outcome.after = after; outcome.heldZombieSignalZero = true;
+      } else {
+        assert.equal(await until(() => targetClosed, 10_000, t), true); outcome.nativeAbsence = nativeAbsence(targetPid);
+        if (mode === 'absence') {
+          assert.ok(targeted.some(({ barrier, result }) => barrier?.pid === targetPid && barrier.absence === 'ESRCH' && [0, 1].includes(result.status) && result.stdout === '' && result.stderr === ''));
+          assert.ok(trace.some(({ event, controlled, error }) => event === 'signal-zero' && !controlled && error === 'ESRCH'));
+        }
+      }
+    } else {
+      const after = observed(targetPid, expectedParent); process.kill(targetPid, 0);
+      assert.equal(targetClosed, false); assert.deepEqual([after.parent, after.group, after.birth, after.command], [before.parent, before.group, before.birth, before.command]);
+      if (mode === 'horizontal') assert.doesNotMatch(after.state, /^[ZTt]/); else assert.match(after.state, /^T/);
+      assert.equal(trace.filter(({ event }) => event === 'kill-ack-without-effect').length, 1);
+      assert.notEqual(cli.exitCode, 0, mode === 'ack' ? 'standalone CLI credited success while its owned stopped target remained alive' : 'standalone CLI credited success while its owned live target remained'); assert.equal(existsSync(run), true);
+      assert.match(errors, new RegExp(String(targetPid))); outcome.after = after; outcome.nativeSignalZero = true;
+      if (mode === 'ack' || mode === 'horizontal') { assert.match(errors, /observed targets unconfirmed/); assert.doesNotMatch(errors, /malformed|framing|changed/); }
+      if (mode !== 'ack') assert.ok(targeted.some(({ controlled }) => controlled), 'declared target-read fault was not applied');
+      const expected = { 'spawn-error': /error=ENOENT/, 'silent-nonzero': /status=2/, stderr: /controlled target PS warning/,
+        malformed: /malformed/, 'wrong-pid': /malformed/, duplicate: /framing/, 'extra-lf': /framing/, vertical: /framing/,
+        timeout: /ETIMEDOUT/, 'empty-live': /signal zero still reaches/, eperm: /EPERM/, 'changed-start': /changed its coarse start/ };
+      if (expected[mode]) assert.match(errors, expected[mode]);
+      if (mode === 'eperm') assert.equal(trace.filter(({ event, controlled, error }) => event === 'signal-zero' && controlled && error === 'EPERM').length, 1);
+      if (mode === 'timeout') {
+        const actual = JSON.parse(readFileSync(timeoutMetadata, 'utf8')); const returned = targeted.find(({ mode: answer }) => answer === 'timeout');
+        assert.equal(actual.referenced, true); assert.equal(actual.parent, cli.pid); assert.equal(actual.actual.status, 0); assert.equal(actual.actual.stderr, '');
+        assert.equal(actual.actual.signal, null); assert.equal(actual.actual.error, null);
+        const heldRow = /^[ \t]*([0-9]+)[ \t]+([0-9]+)[ \t]+([A-Za-z][A-Za-z+<>]*)[ \t]*\n?$/.exec(actual.actual.stdout);
+        assert.ok(heldRow, actual.actual.stdout); assert.equal(Number(heldRow[1]), actual.pid); assert.equal(Number(heldRow[2]), cli.pid);
+        assert.doesNotMatch(heldRow[3], /^Z/);
+        assert.equal(returned.result.pid, actual.pid); assert.equal(returned.result.error.code, 'ETIMEDOUT'); assert.equal(returned.result.signal, 'SIGKILL');
+        outcome.ownedPS = { actual, returned, nativeAbsence: nativeAbsence(actual.pid) };
+      }
+    }
+    assert.ok(targeted.length >= 1, 'no passive target observation followed the fresh signal loop');
+    const signalAnswer = trace.find(({ event }) => event === (positive ? 'native-kill-answer' : 'kill-ack-without-effect'));
+    assert.ok(signalAnswer); assert.ok(targeted.every(({ sequence, afterFreshSignal }) => afterFreshSignal && sequence > signalAnswer.sequence), 'target read preceded fresh signal completion');
+    if (mode === 'changed-start') {
+      assert.ok(targeted.length >= 2); const first = targeted[0];
+      assert.equal(first.controlled, false); assert.equal(first.result.status, 0); assert.equal(first.result.signal, null); assert.equal(first.result.stderr, ''); assert.equal(first.result.error, null);
+      const live = new RegExp(`^[ \\t]*${targetPid}[ \\t]+([A-Za-z][A-Za-z+<>]*)[ \\t]+`).exec(first.result.stdout);
+      assert.ok(live, first.result.stdout); assert.doesNotMatch(live[1], /^Z/); assert.ok(first.result.stdout.includes(before.birth));
+      assert.ok(targeted.slice(1).some(({ controlled }) => controlled), 'changed start was not applied after the actual post-ACK live baseline');
+    }
+  } catch (error) { failure = error; }
+  let cleanupResult; let cleanupError;
+  try { cleanupResult = await cleanup(); } catch (error) { cleanupError = error; }
+  if (backgroundErrors.length) failure = new AggregateError([...(failure ? [failure] : []), ...backgroundErrors], 'original outcome and background observation errors');
+  try {
+    if (traceRaw === undefined && existsSync(traceFile)) traceRaw = readFileSync(traceFile, 'utf8');
+    t.diagnostic(JSON.stringify({ ...(outcome ?? { mode, targetPid, cliPid: cli?.pid, output, errors }), traceRaw: traceRaw ?? null, observations, fifoOpen, fifoEOF,
+    cleanup: cleanupResult ?? { failed: cleanupError?.message }, holderOutput, holderErrors,
+    precision: 'lstart printed seconds are coarse; actual owned-child lifecycle and native state are the physical test premises, never new signal authority' })); }
+  catch (error) { failure = failure ? new AggregateError([failure, error], 'outcome and final evidence retention failed') : error; }
+  if (failure && cleanupError) throw new AggregateError([failure, cleanupError], 'direct reaper assertion and owned cleanup failed');
+  if (cleanupError) throw cleanupError; if (failure) throw failure;
+  return outcome;
+}
+
+test('R1 standalone reaper refuses success after discovery omits its still-stopped observed target', { timeout: 30_000 }, (t) => directReaperSelection(t, false));
+test("R2 standalone reaper accepts confirmed native kill of its owned selected target", { timeout: 30_000 }, (t) => directReaperSelection(t, true));
+test("R3 standalone reaper rejects an omitted running target with valid horizontal field padding", { timeout: 30_000 }, (t) => directReaperSelection(t, 'horizontal'));
+test("R4 standalone reaper accepts an actual held zombie without waiting for its parent to reap", { timeout: 30_000 }, (t) => directReaperSelection(t, 'zombie'));
+test("R5 standalone reaper requires actual direct-child close and ESRCH before clean targeted absence", { timeout: 30_000 }, (t) => directReaperSelection(t, 'absence'));
+test("R6 standalone reaper rejects a controlled targeted spawn error", { timeout: 30_000 }, (t) => directReaperSelection(t, 'spawn-error'));
+test("R6 standalone reaper rejects silent targeted nonzero status", { timeout: 30_000 }, (t) => directReaperSelection(t, 'silent-nonzero'));
+test("R6 standalone reaper rejects stderr accompanying a successful targeted row", { timeout: 30_000 }, (t) => directReaperSelection(t, 'stderr'));
+test("R6 standalone reaper rejects a malformed targeted row", { timeout: 30_000 }, (t) => directReaperSelection(t, 'malformed'));
+test("R6 standalone reaper rejects a targeted row naming a different PID", { timeout: 30_000 }, (t) => directReaperSelection(t, 'wrong-pid'));
+test("R6 standalone reaper rejects duplicate physical targeted rows", { timeout: 30_000 }, (t) => directReaperSelection(t, 'duplicate'));
+test("R6 standalone reaper rejects an extra blank LF after a valid targeted row", { timeout: 30_000 }, (t) => directReaperSelection(t, 'extra-lf'));
+test("R6 standalone reaper rejects vertical whitespace inside a targeted row", { timeout: 30_000 }, (t) => directReaperSelection(t, 'vertical'));
+test("R6 standalone reaper times out and reaps its actual owned target-read stand-in", { timeout: 30_000 }, (t) => directReaperSelection(t, 'timeout'));
+test("R7 standalone reaper rejects clean empty targeted output while native signal zero reaches the live target", { timeout: 30_000 }, (t) => directReaperSelection(t, 'empty-live'));
+test("R7 standalone reaper treats controlled owned-target signal-zero EPERM as unknown", { timeout: 30_000 }, (t) => directReaperSelection(t, 'eperm'));
+test("R8 standalone reaper rejects a controlled changed start field without remembered signal authority", { timeout: 30_000 }, (t) => directReaperSelection(t, 'changed-start'));
