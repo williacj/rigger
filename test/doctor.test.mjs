@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -748,7 +748,7 @@ test('the real doctor clone carries tracked candidate changes without changing i
   assert.equal(readFileSync(join(clone, 'candidate.txt'), 'utf8'), 'tracked candidate value\n');
   assert.equal(readFileSync(join(clone, 'added.txt'), 'utf8'), 'staged addition\n');
   assert.equal(gitIn(clone, 'remote', 'get-url', 'origin').trim(), published);
-  assert.equal(gitIn(clone, 'rev-parse', '--show-toplevel').trim(), clone);
+  assert.equal(realpathSync(gitIn(clone, 'rev-parse', '--show-toplevel').trim()), realpathSync(clone));
   assert.notEqual(clone, source);
   assert.deepEqual(snapshot(), before);
   assert.equal(readFileSync(join(source, 'candidate.txt'), 'utf8'), 'tracked candidate value\n');
