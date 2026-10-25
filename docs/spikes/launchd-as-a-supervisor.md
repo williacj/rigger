@@ -323,8 +323,10 @@ unset, so the stub read `HOME`.
   `operation not permitted: ps`. It then ran `/bin/zsh -lc 'echo …; exit 3'`, whose item has
   `"exit_code": 3`, and said "The shell command exited with status 3, but that did not exit the Codex
   process itself." **The agent could not set the exit status.**
-- **What is not on #744:** the card asks for each standard output on the card. Only the exit
-  statuses and summaries were posted. The outputs stay in the owner's files, quoted above.
+- **What is not on #744 yet:** the card asks for each standard output on the card. Only the exit
+  statuses and summaries have been posted. Under [U55](https://github.com/williacj/rigger/issues/740#issuecomment-6398146653), the coordinator posts the owner's
+  claude-qj.out and codex-qj.out on #744, with their commands and exit statuses, after a token check.
+  That post is pending. Until it lands, the outputs are in the owner's files and quoted above.
 - **After the Q-j2 re-run**, the coordinator saw a `node /opt/homebrew/bin/codex exec
   --skip-git-repo-check --json …` process, pid 20080 with parent pid 1, still alive 21h18m later,
   with a defunct child in its group (c6250134644). The reboot ended it
@@ -701,24 +703,27 @@ drwxr-x---+ 49 cjwilliams  staff   1568 Oct 24 20:31 ..
   nothing at 2026-10-21T17:31:39Z (exit 1, batch4.txt). The same filter with `grep -c` printed 0 on
   2026-10-24.
 - **Classifier or hook refusals:** none is recorded in any surviving comment or file. The transcript
-  that would have quoted one is lost.
+  that would have quoted one is lost, and U55 waives the item.
 - **Shells.** No plist's `ProgramArguments` runs a shell, and no surviving command runs a shell's
   `-c`. The Q-j agents' own tool calls ran `/bin/zsh -c` and `/bin/zsh -lc` inside the owner's runs;
-  those are the CLIs' shells, not commands of this transcript.
+  those are the CLIs' shells, not commands of this transcript. The lost batch 1 to 3 commands cannot
+  be checked, and U55 waives that half.
 - **`rigger doctor` and the install.** The state file says no `rigger doctor` ran, and no cell used
   the install under `<scratch>/install`. No job ran Rigger, and no surviving record holds
-  `rigger run` or `rigger once`.
+  `rigger run` or `rigger once`. The lost transcript cannot be checked for either, and U55 waives the
+  two items that rest on it, along with the item that every bootout named a loaded label.
 
 ## What this report could not settle
 
-U53 carries every one of these but the last to card #951, the re-run on the Mac mini.
+U53 carries every one of these but the last to card #951, the re-run on the Mac mini, and U55 adds
+the bootstrap times.
 
 - Q-n1, Q-n2, Q-o1 and Q-o2 are lost.
 - Whether a banner shows, under a Focus or with none, is unmeasured (`U52`), as is Q-k2 with
   notifications turned off for the posting app.
 - The auth.json path Codex reports is unmeasured.
 - The exact bootstrap time of Q-a1 and Q-a2 is lost. Their first starts are bounded above, not timed
-  from the bootstrap.
+  from the bootstrap. [U55](https://github.com/williacj/rigger/issues/740#issuecomment-6398146653) adds both to #951.
 - Whether removing the plist removes its Login Items entry is unmeasured.
 
 ## Outside this card's acceptance
