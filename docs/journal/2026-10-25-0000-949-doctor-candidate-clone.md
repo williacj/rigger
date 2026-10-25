@@ -36,7 +36,7 @@ A guarded omission of the candidate-patch body at runner458 reached the same
 named content assertion and failed1/1. The source was restored byte-exact,
 then runner499 passed1/1. Fault patch/readback/full streams are retained.
 
-The fixed doctor test source SHA256 is 6cc8703fdf46f7968157c3cd82f7d52e2ccc1d4cfd3ab1b745f43d55ad4e9238.
+At prior head72723a07e703007da2fc0b22dae80e4828727290, the fixed doctor test source SHA256 was 6cc8703fdf46f7968157c3cd82f7d52e2ccc1d4cfd3ab1b745f43d55ad4e9238.
 Removing only the new regression, optional seam, local patch transport/comment
 and necessary import reconstructs the complete original file byte-for-byte;
 no existing assertion changed. Product, config, hooks and shared fixtures are
@@ -48,3 +48,26 @@ of the preserved #778 merge must demonstrate the two original doctor checks
 and full combined suite at the actual integration ref before delivery.
 No current aggregate pass, historical cause beyond the observed configuration
 mismatch, owner ratification or CI result is claimed here.
+
+
+Independent review found that the new clone-location assertion compared Git's
+physical top-level path with a lexical temporary path. A valid symlinked TMPDIR
+therefore failed without any clone defect. The actual alias regression at prior
+72723 source, runner476, failed1/1 at that precise location assertion; its
+physical alias-target and lexical alias-tmp paths name the same directory.
+
+The correction adds realpathSync only to the filesystem import and both
+operands of this new assertion. Patch transport and every old doctor assertion
+remain unchanged. The actual same alias regression runner548 passed1/1, and
+the complete affected doctor file runner598 passed99/99. Header checking passed.
+Normal follow-up7d8c6105cdd2bcd004a78a01d7bea462c5a3daf0 preserves72723 history
+and passed its mandatory ordinary hook before this journal addendum.
+The alias-corrected doctor source SHA256 is a05588c8db277bead43d41d0f985ab3ee2933a3972e185f85ded4740d08f5ea1.
+Complete alias red/green, follow-up hook streams and source receipts remain in
+the same private packet. This journal finalization has no unrun hook result
+claim and changes no executable source.
+
+The extra non-amended journal commit is needed because its instruction arrived
+after the source-only follow-up hook had already started. Source was not edited
+under running tests; that complete attempt remains retained. Only the final
+green head will be offered for publication and independent integration review.
