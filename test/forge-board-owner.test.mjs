@@ -58,8 +58,13 @@ const boardId = (owner) => `PVT_${owner}`;
 function forge() {
   const sent = [];
   const send = (command, args) => {
+    if (args[1] === 'repos/williacj/rigger/issues/214' && args[3] === 'GET') {
+      sent.push(args[1]);
+      return { status: 0, stdout: JSON.stringify({ node_id: 'I_issue214' }), stderr: '' };
+    }
     const document = documentOf(args);
     sent.push(document);
+    if (document.includes('addProjectV2ItemById')) return ok({ addProjectV2ItemById: { item: { id: 'PVTI_added' } } });
     if (!document.startsWith('query')) return ok({});
     const owner = ownerAsked(document);
     if (document.includes('items(')) {
@@ -101,6 +106,7 @@ const OPERATIONS = {
   readLabels: (board, send) => readSide(board, { send }).readLabels(),
   readPriority: (board, send) => readSide(board, { send }).readPriority(),
   readOtherRepositories: (board, send) => readSide(board, { send }).readOtherRepositories(),
+  addIssue: (board, send) => itemWriteSide(board, { send }).addIssue(214),
   moveItem: (board, send) => itemWriteSide(board, { send }).moveItem('PVTI_1', 'Review'),
   createField: (board, send) => schemaWriteSide(board, { send }).createField('Priority', ['High']),
   createColumn: (board, send) => schemaWriteSide(board, { send }).createColumn('Owner'),
@@ -145,6 +151,14 @@ test("the request moveItem sends to find the board names the declared board owne
   assert.match(sent.at(-1), new RegExp(`updateProjectV2ItemFieldValue\\(input: \\{projectId: "${boardId(DECLARED)}"`));
 });
 
+test('adding an issue places it on the declared board or the repository owner board', async () => {
+  for (const [config, owner, other] of [[ownedBy(DECLARED), DECLARED, REPOSITORY_OWNER], [rigger, REPOSITORY_OWNER, DECLARED]]) {
+    const sent = await sentBy('addIssue', config);
+    addressesOnly(owner, other, sent, 'addIssue');
+    assert.match(sent.at(-1), new RegExp(`addProjectV2ItemById\\(input: \\{projectId: "${boardId(owner)}"`));
+  }
+});
+
 // proves R-WORK-7
 test("the request createField sends to find the board names the declared board owner, and never the repository's owner", async () => {
   const sent = await sentBy('createField', ownedBy(DECLARED));
@@ -183,7 +197,7 @@ test('the operations the tests above record are every forge adapter operation th
       if ((await sentBy(operation, config)).some(findsBoard) && !addressing.includes(operation)) addressing.push(operation);
     }
   }
-  assert.deepEqual(addressing.sort(), ['createColumn', 'createField', 'moveItem', 'readColumns', 'readFieldTypes', 'readFields', 'readItems', 'readOtherRepositories', 'readPriority']);
+  assert.deepEqual(addressing.sort(), ['addIssue', 'createColumn', 'createField', 'moveItem', 'readColumns', 'readFieldTypes', 'readFields', 'readItems', 'readOtherRepositories', 'readPriority']);
 });
 
 test("with a board owner declared, readLabels and createLabel address the repository repo names, and no board", async () => {
