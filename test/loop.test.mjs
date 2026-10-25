@@ -2174,18 +2174,31 @@ function admissionAction(action) {
 async function blockedAdmission(action, name, content = closerText()) {
   const directory = stateOf();
   seed(directory, name, content);
-  const built = world({ ...admissionAction(action), directory });
+  const built = world({ ...admissionAction(action), directory,
+    workspace: async () => { throw new Error('a blocked pull made a workspace'); },
+    judgeDirectory: async () => { throw new Error('a blocked pull made a judge directory'); },
+  });
   const forgeBefore = structuredClone(built.repository.held());
   const admissionBefore = picture(admissionOf(directory));
-  if (name === 'not-a-closer') {
-    await assert.rejects(built.loop.pull(), (failure) => {
-      assert.ok(failure.message.includes(`${admissionOf(directory)}/${name} (no closer form)`), failure.message);
-      return true;
-    });
-  } else {
-    const answer = await built.loop.pull();
-    assert.deepEqual(answer.reached, []);
-    assert.equal(answer.admission.state, 'closed');
+  const pulled = built.loop.pull();
+  const done = settledOf(pulled);
+  try {
+    await positive(() => done() || built.l3Events().some(({ event }) => event === 'pull'));
+    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull'), [], 'a blocked pull claimed a card');
+    assert.deepEqual(built.fake.writes(), [], 'a blocked pull wrote to the board');
+    if (name === 'not-a-closer') {
+      await assert.rejects(pulled, (failure) => {
+        assert.ok(failure.message.includes(`${admissionOf(directory)}/${name} (no closer form)`), failure.message);
+        return true;
+      });
+    } else {
+      const answer = await pulled;
+      assert.deepEqual(answer.reached, []);
+      assert.equal(answer.admission.state, 'closed');
+    }
+  } finally {
+    built.dispatches.releaseAll();
+    await pulled.catch(() => {});
   }
   assert.equal(built.decisions[0]?.action.action, action === 'redo' ? 'dispatch' : action, JSON.stringify(built.decisions));
   assert.deepEqual(built.fake.writes(), []);
@@ -2204,17 +2217,40 @@ test('a blocked take attempts no admission write, even one removed before it ret
   const admissionDirectory = admissionOf(directory);
   const writes = [];
   const originals = new Map();
+  const descriptors = new Map();
+  const underAdmission = (path) => String(path) === admissionDirectory || String(path).startsWith(`${admissionDirectory}/`);
   for (const name of ['writeFileSync', 'appendFileSync', 'mkdirSync', 'renameSync', 'unlinkSync', 'rmSync']) {
     const original = fs[name];
     originals.set(name, original);
     fs[name] = (...args) => {
       const paths = name === 'renameSync' ? args.slice(0, 2) : args.slice(0, 1);
-      if (paths.some((path) => String(path) === admissionDirectory || String(path).startsWith(`${admissionDirectory}/`))) {
+      if (paths.some(underAdmission)) {
         writes.push({ operation: name, paths: paths.map(String) });
       }
       return original(...args);
     };
   }
+  for (const name of ['openSync', 'writeSync', 'writevSync', 'ftruncateSync', 'closeSync']) originals.set(name, fs[name]);
+  fs.openSync = (path, flags, ...rest) => {
+    const fd = originals.get('openSync')(path, flags, ...rest);
+    if (underAdmission(path)) {
+      descriptors.set(fd, String(path));
+      const writable = typeof flags === 'string' ? /[wax+]/.test(flags)
+        : (flags & (fs.constants.O_WRONLY | fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_APPEND)) !== 0;
+      if (writable) writes.push({ operation: 'openSync', paths: [String(path)] });
+    }
+    return fd;
+  };
+  for (const name of ['writeSync', 'writevSync', 'ftruncateSync']) {
+    fs[name] = (fd, ...args) => {
+      if (descriptors.has(fd)) writes.push({ operation: name, paths: [descriptors.get(fd)] });
+      return originals.get(name)(fd, ...args);
+    };
+  }
+  fs.closeSync = (fd) => {
+    try { return originals.get('closeSync')(fd); }
+    finally { descriptors.delete(fd); }
+  };
   syncBuiltinESMExports();
   try {
     const answer = await built.loop.pull();
@@ -2223,6 +2259,16 @@ test('a blocked take attempts no admission write, even one removed before it ret
   } finally {
     for (const [name, original] of originals) fs[name] = original;
     syncBuiltinESMExports();
+  }
+  await moduleOver(directory).resume();
+  const next = built.loop.pull();
+  const done = settledOf(next);
+  try {
+    await positive(() => done() || built.dispatches.heldNow(71));
+    assert.deepEqual(built.dispatches.started, [71], 'the closed take retained a claim');
+  } finally {
+    built.dispatches.releaseAll();
+    await next.catch(() => {});
   }
 });
 
