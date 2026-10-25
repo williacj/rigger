@@ -210,6 +210,7 @@ jobs:
           CI_EXPECTED_MODE: ${{ needs.plan.outputs.mode }}
           CI_WORKER: ${{ github.job }}
       - run: npm ci
+      - run: node .github/scripts/check-test-list-growth.mjs
       - run: npm test
       - run: npm run budget:package
       - run: npm run budget:instructions
@@ -354,6 +355,7 @@ jobs:
           CI_EXPECTED_MODE: ${{ needs.plan.outputs.mode }}
           CI_WORKER: ${{ github.job }}
       - run: npm ci
+      - run: node .github/scripts/check-test-list-growth.mjs
       - run: npm test
       - run: npm run test:host
       - name: Verify Mac containment proof claims
