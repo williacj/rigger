@@ -18,7 +18,7 @@ and `ExitTimeOut` set in the plist.**
    them. If launchd kills the engine before that cleanup finishes, every dispatch group outlives
    it, and the next start meets them (`R-STATE-10`).
 3. **The default `ExitTimeOut` on this host is 5 s.** That is shorter than one cleanup read that
-   runs to `READ_TIMEOUT`, which takes 5.48 s in the existing test (Q-d2, Q-e2). Set `ExitTimeOut`
+   runs to `READ_TIMEOUT`, which takes 5.5 s in the existing test (Q-d2, Q-e2). Set `ExitTimeOut`
    explicitly: 150 s at this repository's config (Q-e).
 4. **launchd's default environment finds none of `gh`, `claude` or `codex` by name**, and `codex`
    fails even by absolute path, because its `env node` finds no `node` (Q-f1). With `PATH` set in
@@ -83,7 +83,7 @@ hold.
 | 3 | 2026-10-17 about 15:15:49 | the `l` job written to `~/Library/LaunchAgents`, for Q-k3 and Q-l |
 | reboot | 2026-10-21 17:28:19 | the owner's reboot, at the coordinator's chosen time |
 | 4 | 2026-10-21 17:31:26 to 17:31:39 | Q-l's reading, then the `l` job removed |
-| Q-e2 | 2026-10-24 22:18:20 to 22:19:18 | the exit-cleanup test, re-run because the first run's output is lost |
+| Q-e2 | 2026-10-25 01:31:15 to 01:32:16 | the exit-cleanup test, re-run through `npm run test:host` because the first run's output is lost |
 
 ## The cells
 
@@ -97,12 +97,52 @@ its exit.
   a1.jsonl line 1, at 14:51:16.503Z. The bootstrap's own time is **lost**. Batch 1 began at
   14:50:15Z ([c6235586832](https://github.com/williacj/rigger/issues/744#issuecomment-6235586832)),
   and a2, bootstrapped right after a1, started at 14:50:16.521Z, so the first start came about one
-  interval (60.0 to 61.5 s) after the bootstrap. The starts, on the odd lines 1 to 33: 14:51:16.503,
-  14:52:16.568, 14:53:16.635, 14:54:16.757, 14:55:17.183, and so on to 15:07:18.942Z. Successive gaps
-  run 60.06 to 60.43 s.
+  interval (60.0 to 61.5 s) after the bootstrap. Successive gaps run 60.06 to 60.43 s. Every logged start, in a1.jsonl:
+
+  | Line | Start (UTC) |
+  |---|---|
+  | 1 | 2026-10-17T14:51:16.503Z |
+  | 3 | 2026-10-17T14:52:16.568Z |
+  | 5 | 2026-10-17T14:53:16.635Z |
+  | 7 | 2026-10-17T14:54:16.757Z |
+  | 9 | 2026-10-17T14:55:17.183Z |
+  | 11 | 2026-10-17T14:56:17.256Z |
+  | 13 | 2026-10-17T14:57:17.331Z |
+  | 15 | 2026-10-17T14:58:17.412Z |
+  | 17 | 2026-10-17T14:59:17.528Z |
+  | 19 | 2026-10-17T15:00:17.875Z |
+  | 21 | 2026-10-17T15:01:18.195Z |
+  | 23 | 2026-10-17T15:02:18.275Z |
+  | 25 | 2026-10-17T15:03:18.355Z |
+  | 27 | 2026-10-17T15:04:18.427Z |
+  | 29 | 2026-10-17T15:05:18.531Z |
+  | 31 | 2026-10-17T15:06:18.849Z |
+  | 33 | 2026-10-17T15:07:18.942Z |
+
 - **Q-a2, `RunAtLoad` true: measured.** 18 starts. The first, a2.jsonl line 1 at 14:50:16.521Z,
-  came at the bootstrap. Then 14:51:16.584, 14:52:16.647, 14:53:16.722, 14:54:16.843,
-  14:55:17.001, and so on to 15:07:18.951Z at line 35. Gaps run 60.06 to 60.45 s.
+  came at the bootstrap. Gaps run 60.06 to 60.45 s. Every logged start, in a2.jsonl:
+
+  | Line | Start (UTC) |
+  |---|---|
+  | 1 | 2026-10-17T14:50:16.521Z |
+  | 3 | 2026-10-17T14:51:16.584Z |
+  | 5 | 2026-10-17T14:52:16.647Z |
+  | 7 | 2026-10-17T14:53:16.722Z |
+  | 9 | 2026-10-17T14:54:16.843Z |
+  | 11 | 2026-10-17T14:55:17.001Z |
+  | 13 | 2026-10-17T14:56:17.084Z |
+  | 15 | 2026-10-17T14:57:17.171Z |
+  | 17 | 2026-10-17T14:58:17.265Z |
+  | 19 | 2026-10-17T14:59:17.436Z |
+  | 21 | 2026-10-17T15:00:17.883Z |
+  | 23 | 2026-10-17T15:01:18.196Z |
+  | 25 | 2026-10-17T15:02:18.278Z |
+  | 27 | 2026-10-17T15:03:18.355Z |
+  | 29 | 2026-10-17T15:04:18.427Z |
+  | 31 | 2026-10-17T15:05:18.533Z |
+  | 33 | 2026-10-17T15:06:18.837Z |
+  | 35 | 2026-10-17T15:07:18.951Z |
+
 - **Q-a3, a 150 s stub: measured.** 6 starts, each against the previous exit (a3.jsonl):
 
   | Start | Exit | Next start minus this exit |
@@ -125,9 +165,28 @@ its exit.
 ### Q-b: `KeepAlive` true
 
 - **`ThrottleInterval` 10 s, the default: measured.** 17 starts, each exiting 0 at once, every
-  10.058 to 10.090 s. b10.jsonl lines 1, 3, 5, 7, 9 and 11 are at 14:50:16.561, 14:50:26.619,
-  14:50:36.689, 14:50:46.766, 14:50:56.851 and 14:51:06.915Z, and line 33 at 14:52:57.708Z.
-  `launchctl print` shows `minimum runtime = 10` on a job with no `ThrottleInterval` (batch4.txt).
+  10.058 to 10.090 s. `launchctl print` shows `minimum runtime = 10` on a job with no `ThrottleInterval` (batch4.txt). Every logged start, in b10.jsonl:
+
+  | Line | Start (UTC) |
+  |---|---|
+  | 1 | 2026-10-17T14:50:16.561Z |
+  | 3 | 2026-10-17T14:50:26.619Z |
+  | 5 | 2026-10-17T14:50:36.689Z |
+  | 7 | 2026-10-17T14:50:46.766Z |
+  | 9 | 2026-10-17T14:50:56.851Z |
+  | 11 | 2026-10-17T14:51:06.915Z |
+  | 13 | 2026-10-17T14:51:16.995Z |
+  | 15 | 2026-10-17T14:51:27.077Z |
+  | 17 | 2026-10-17T14:51:37.144Z |
+  | 19 | 2026-10-17T14:51:47.235Z |
+  | 21 | 2026-10-17T14:51:57.295Z |
+  | 23 | 2026-10-17T14:52:07.355Z |
+  | 25 | 2026-10-17T14:52:17.414Z |
+  | 27 | 2026-10-17T14:52:27.479Z |
+  | 29 | 2026-10-17T14:52:37.541Z |
+  | 31 | 2026-10-17T14:52:47.623Z |
+  | 33 | 2026-10-17T14:52:57.708Z |
+
 - **`ThrottleInterval` 30 s: measured.** 6 starts, so 5 restarts, every 30.061 to 30.085 s. b30.jsonl
   lines 1, 3, 5, 7, 9 and 11 are at 14:50:16.584, 14:50:46.646, 14:51:16.714, 14:51:46.799,
   14:52:16.861 and 14:52:46.947Z.
@@ -191,19 +250,25 @@ it is 9 × 10 s = 90 s, and if `concurrency` counts dispatches rather than cards
 
 ### Q-e2: the per-dispatch figure, a measurement
 
-Made on 2026-10-24 at `5a0c9c96ae9d`, in a fresh clone, because the 2026-10-17 run's output is lost:
-`suite-slot.sh 744-spike-report -- node --test --test-reporter=spec test/exit-cleanup.test.mjs`, with
-`TMPDIR` under `<scratch>`. It started at 22:18:20Z at a one-minute load of 13.39 and exited 0 at
-22:19:18Z, reporting `tests 100`, `pass 100`, `fail 0` and `duration_ms 58494.239208`.
+Measured on 2026-10-25 at `303395ff0f34`, through the repository's own test runner, because the
+2026-10-17 run's output is lost:
+`suite-slot.sh 744-spike-report -- npm run test:host -- --test-reporter=spec test/exit-cleanup.test.mjs`,
+with `TMPDIR` under `<scratch>`. `npm test` refuses that file, which is on the host list, and names
+`npm run test:host` instead. The run was queued at 01:19:31Z at a one-minute load of 24.97, and the
+slot started it at 01:31:15Z at 16.48. It exited 0 at 01:32:16Z, reporting `tests 100`, `pass 100`,
+`fail 0`, `cancelled 0`, `skipped 0` and `duration_ms 60379.636875`. An earlier run on 2026-10-24 by
+`node --test` directly gave the same shape: 100 passed, maximum 5,483.86 ms.
 
-Per-test durations: median 321 ms, maximum 5,483.9 ms. The two slowest are the two where a cleanup
+Per-test durations: median 328 ms, maximum 5,541.27 ms. The two slowest are the two where a cleanup
 read does not answer, and so runs to `READ_TIMEOUT`:
 
 - "given a dispatch whose command has exited 3 and is not yet reaped when the caller calls
   process.exit(0), where the cleanup's read of its status does not answer, its one dispatch end
-  carries no exit code and says why", 5,483.86 ms;
+  carries no exit code and says why";
 - "given a dispatch whose command is still running when the caller receives SIGTERM, where the
-  cleanup's last read of its status does not answer, …", 5,476.84 ms.
+  cleanup's last read of its status does not answer, …".
+
+Their durations were 5,495.35 ms and 5,541.27 ms.
 
 So one dispatch's cleanup, with one read that never answers, takes about 5.5 s, which already
 passes the 5 s default `ExitTimeOut`.
@@ -229,10 +294,15 @@ unset, so the stub read `HOME`.
   first line of `codex login status`, which names no path. Whether a later line named one was not
   kept.
 - **Q-i3, a probe from a start before login: out**, because Q-l found no start before login.
-- **The token check.** `grep -rEc 'gho_|ghp_|sk-ant-|"access_token"' ~/Library/Logs/rigger-spike-744/`
-  printed no file with a count above zero (grep exit 1). The same pattern over the owner's two Q-j
-  files counted 0 in each. Over this report, it matches only the line holding the pattern itself,
-  and `grep -oE '(gho_|ghp_|sk-ant-)[A-Za-z0-9_-]+'` finds no token.
+- **The token check**, run on 2026-10-25:
+  - `grep -rEc 'gho_|ghp_|sk-ant-|"access_token"' ~/Library/Logs/rigger-spike-744/` printed a count
+    for each of the 64 files, and every count was 0.
+  - Over this report, that literal pattern matches three lines, and none holds a token. Two are this
+    bullet's own commands, and the third is the stub's `elide` function in the appendix, which holds
+    the scrubbing patterns.
+  - The value check `grep -oE '(gho_|ghp_|sk-ant-)[A-Za-z0-9_-]+|"access_token" *: *"[^"]+"'`
+    printed nothing, with exit 1, over this report, over the log directory with `-r`, and over the
+    owner's two Q-j files.
 
 ### Q-j: whether an agent can set its CLI's own exit status
 
@@ -312,7 +382,7 @@ minutes after boot. **That confirms U1 Q5's "next login" reading.**
 
 ### Q-n: a missing program
 
-Both cells are moved to the dedicated Mac mini (`U50`).
+Both cells are moved to the dedicated Mac mini (`U50`), and [U53](https://github.com/williacj/rigger/issues/740#issuecomment-6391560988) carries them to card #951.
 
 - **Q-n1, the program absent at bootstrap.** No n1.jsonl exists, so the program never ran. launchd
   created n1.out and n1.err, both 0 bytes, at 14:50:16Z (`stat`). **What `launchctl print` and the
@@ -325,7 +395,8 @@ Both cells are moved to the dedicated Mac mini (`U50`).
 ### Q-o: bootstrap and bootout edges
 
 **Q-o1, a label already loaded, and Q-o2, a label not loaded: lost.** Their exit statuses and
-messages were only in the transcript. Both are moved to the dedicated Mac mini (`U50`).
+messages were only in the transcript. Both are moved to the dedicated Mac mini (`U50`), and U53
+carries them to card #951.
 
 ### Out of scope
 
@@ -482,7 +553,10 @@ except where a job log or a comment gives it.
   | 22:0x to 22:2xZ | reads of #744 and its comments, of the job logs (`ls`, `cat`, `stat`, `python3 -I` summaries), and of the host (`sw_vers`, `sysctl`, `launchctl version`, `man launchd.plist`) | 0 | |
   | before 22:18:15Z | `git clone` of the repository into `<scratch>` | 0 | |
   | 22:18:15Z | `npm ci` | 0 | 13.39 |
-  | 22:18:20Z | the Q-e2 run through the suite slot | 0 | 13.39 |
+  | 22:18:20Z | the first Q-e2 run, by `node --test` through the suite slot | 0 | 13.39 |
+  | 10-25 01:08:57Z | `npm test -- --test-reporter=spec test/exit-cleanup.test.mjs` through the slot, refused by the runner: `npm test: test/exit-cleanup.test.mjs is on the host list; run npm run test:host` | 1 | 14.28 |
+  | 10-25 01:19:31Z | the Q-e2 run by `npm run test:host`, started by the slot at 01:31:15Z | 0 | 24.97 queued, 16.48 at start |
+  | 10-25 | `plutil -lint` and `node --check` over the appendix's texts, extracted to `<scratch>` | 0 | |
   | 22:2xZ | `launchctl print gui/501 \| grep -c com.williacj.rigger-spike.744.` | 1, printing 0 | |
 
 ## Writes outside the spike's scratch directory
@@ -504,7 +578,7 @@ waives that.
 | 10-21 17:31:26 | batch4.txt in the log directory | coordinator | **unplanned** as a file | batch 4's transcript |
 | 10-21 17:31:39 | `rm` of the `l` plist | coordinator | planned, batch 4 | cleanup |
 | 10-17 to 10-24 | comments on #744 | spike engineer and coordinator | planned | approvals, relays and the report |
-| 10-24 22:1x to 22:19 | a fresh clone with its own `TMPDIR` under `<scratch>`, `npm ci`, and lines in the suite slot's log | report writer | **unplanned** before 2026-10-24 | the Q-e2 re-run, and this report |
+| 10-24 22:1x to 10-25 01:32 | a clone with its own `TMPDIR` under `<scratch>`, a second fresh clone of the report's branch, `npm ci` in each, and lines in the suite slot's log | report writer | **unplanned** before 2026-10-24 | the Q-e2 re-runs, and this report |
 
 ## Cleanup
 
@@ -517,6 +591,111 @@ waives that.
 | the owner's Q-j directory | **kept** | The owner's |
 | the original scratch directory | **gone** | Not removed by the spike ("What was lost") |
 | the report writer's clone under `<scratch>` | **kept** | Until this report's pull request merges |
+
+The `~/Library/LaunchAgents` listing after the removal, from batch4.txt, its command and output
+verbatim:
+
+```
+$ ls -la /Users/cjwilliams/Library/LaunchAgents  [17:31:39Z]
+total 48
+drwx------@  8 cjwilliams  staff   256 Oct 21 12:31 .
+drwx------@ 92 cjwilliams  staff  2944 Sep 18 13:16 ..
+-rw-r--r--@  1 cjwilliams  staff  1736 Aug 19 15:45 com.cowrite.harness-engine.plist
+-rw-r--r--@  1 cjwilliams  staff  2273 Aug 19 15:45 com.cowrite.harness-watchdog.plist
+-rw-r--r--@  1 cjwilliams  staff   877 Aug  4 13:30 com.google.GoogleUpdater.wake.plist
+-rw-r--r--@  1 cjwilliams  staff   181 Aug  4 13:30 com.google.keystone.agent.plist
+-rw-r--r--@  1 cjwilliams  staff   181 Aug  4 13:30 com.google.keystone.xpcservice.plist
+-rw-r--r--@  1 cjwilliams  staff   876 Jul  6 11:33 com.microsoft.EdgeUpdater.wake.plist
+```
+
+Every file kept outside scratch, listed on 2026-10-25 by
+`ls -la ~/Library/Logs/rigger-spike-744 ~/Library/Logs/rigger-spike-744/m2-absent ~/rigger-spike-744-qj`.
+The log directory and the m2-absent directory are kept as evidence (`U51`). The Q-j directory is
+the owner's.
+
+```
+/Users/cjwilliams/Library/Logs/rigger-spike-744:
+total 288
+drwxr-xr-x@ 65 cjwilliams  staff   2080 Oct 21 12:31 .
+drwx------+ 21 cjwilliams  staff    672 Oct 17 09:34 ..
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:51 a1.err
+-rw-r--r--@  1 cjwilliams  staff   3890 Oct 17 10:07 a1.jsonl
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:51 a1.out
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:50 a2.err
+-rw-r--r--@  1 cjwilliams  staff   4119 Oct 17 10:07 a2.jsonl
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:50 a2.out
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:50 a3.err
+-rw-r--r--@  1 cjwilliams  staff   1386 Oct 17 10:07 a3.jsonl
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:50 a3.out
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:50 b10.err
+-rw-r--r--@  1 cjwilliams  staff   3927 Oct 17 09:52 b10.jsonl
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:50 b10.out
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:50 b30.err
+-rw-r--r--@  1 cjwilliams  staff   1386 Oct 17 09:52 b30.jsonl
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:50 b30.out
+-rw-r--r--@  1 cjwilliams  staff   4425 Oct 21 12:31 batch4.txt
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:50 c0.err
+-rw-r--r--@  1 cjwilliams  staff    229 Oct 17 09:50 c0.jsonl
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:50 c0.out
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:50 c1.err
+-rw-r--r--@  1 cjwilliams  staff   3893 Oct 17 09:52 c1.jsonl
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:50 c1.out
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 10:07 d1.err
+-rw-r--r--@  1 cjwilliams  staff   2455 Oct 17 10:08 d1.jsonl
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 10:07 d1.out
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 10:08 d2.err
+-rw-r--r--@  1 cjwilliams  staff   1180 Oct 17 10:08 d2.jsonl
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 10:08 d2.out
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 10:12 d3n.err
+-rw-r--r--@  1 cjwilliams  staff   8986 Oct 17 10:13 d3n.jsonl
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 10:12 d3n.out
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 10:09 d3t.err
+-rw-r--r--@  1 cjwilliams  staff  10890 Oct 17 10:10 d3t.jsonl
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 10:09 d3t.out
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 10:13 d4n.err
+-rw-r--r--@  1 cjwilliams  staff   8875 Oct 17 10:15 d4n.jsonl
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 10:13 d4n.out
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 10:10 d4t.err
+-rw-r--r--@  1 cjwilliams  staff  10779 Oct 17 10:11 d4t.jsonl
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 10:10 d4t.out
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:50 f1.err
+-rw-r--r--@  1 cjwilliams  staff   1032 Oct 17 09:50 f1.jsonl
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:50 f1.out
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:50 f2.err
+-rw-r--r--@  1 cjwilliams  staff   1211 Oct 17 09:50 f2.jsonl
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:50 f2.out
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:34 k.err
+-rw-r--r--@  1 cjwilliams  staff   5752 Oct 17 09:49 k.jsonl
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:34 k.out
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 10:15 l.err
+-rw-r--r--@  1 cjwilliams  staff    451 Oct 21 12:30 l.jsonl
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 10:15 l.out
+-rw-r--r--   1 cjwilliams  staff     20 Oct 17 09:50 m1.err
+-rw-r--r--@  1 cjwilliams  staff    231 Oct 17 09:50 m1.jsonl
+-rw-r--r--   1 cjwilliams  staff     20 Oct 17 09:50 m1.out
+drwxr--r--   4 cjwilliams  staff    128 Oct 17 09:50 m2-absent
+-rw-r--r--@  1 cjwilliams  staff    231 Oct 17 09:50 m2.jsonl
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:50 n1.err
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:50 n1.out
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:50 n2.err
+-rw-r--r--@  1 cjwilliams  staff    229 Oct 17 09:50 n2.jsonl
+-rw-r--r--   1 cjwilliams  staff      0 Oct 17 09:50 n2.out
+-rw-r--r--@  1 cjwilliams  staff   6581 Oct 17 11:40 state-before-reboot.md
+
+/Users/cjwilliams/Library/Logs/rigger-spike-744/m2-absent:
+total 16
+drwxr--r--   4 cjwilliams  staff   128 Oct 17 09:50 .
+drwxr-xr-x@ 65 cjwilliams  staff  2080 Oct 21 12:31 ..
+-rw-r--r--   1 cjwilliams  staff    20 Oct 17 09:50 m2.err
+-rw-r--r--   1 cjwilliams  staff    20 Oct 17 09:50 m2.out
+
+/Users/cjwilliams/rigger-spike-744-qj:
+total 88
+drwxr-xr-x@  4 cjwilliams  staff    128 Oct 17 10:19 .
+drwxr-x---+ 49 cjwilliams  staff   1568 Oct 24 20:31 ..
+-rw-r--r--@  1 cjwilliams  staff  37887 Oct 17 10:19 claude-qj.out
+-rw-r--r--@  1 cjwilliams  staff   1853 Oct 17 18:46 codex-qj.out
+```
 
 - **Loaded at the end:** `launchctl print gui/501 | grep com.williacj.rigger-spike.744.` found
   nothing at 2026-10-21T17:31:39Z (exit 1, batch4.txt). The same filter with `grep -c` printed 0 on
@@ -532,31 +711,36 @@ waives that.
 
 ## What this report could not settle
 
-- Q-n1, Q-n2, Q-o1 and Q-o2 are lost, and wait for the dedicated Mac mini (`U50`).
+U53 carries every one of these but the last to card #951, the re-run on the Mac mini.
+
+- Q-n1, Q-n2, Q-o1 and Q-o2 are lost.
 - Whether a banner shows, under a Focus or with none, is unmeasured (`U52`), as is Q-k2 with
   notifications turned off for the posting app.
 - The auth.json path Codex reports is unmeasured.
+- The exact bootstrap time of Q-a1 and Q-a2 is lost. Their first starts are bounded above, not timed
+  from the bootstrap.
 - Whether removing the plist removes its Login Items entry is unmeasured.
 
 ## Outside this card's acceptance
 
-Each of these is for the coordinator to file as its own card. None is filed here.
+By the owner's [U54](https://github.com/williacj/rigger/issues/740#issuecomment-6391560988), none of these becomes a card unless it recurs.
 
 1. **Spike evidence kept in a worktree directory was lost**, and with it four cells and four
    acceptance items. Who removed the directory, under what rule, is not established.
 2. **A `codex exec` process lived on after its run had reported its exit status**, with parent pid 1
    and a defunct child (c6250134644). Not root-caused.
 3. **An agent under `claude -p` with Bash tried to attach `lldb` to its own CLI process** to force an
-   exit code, and only macOS's refusal stopped it (Q-j1). A dispatched agent's threat model should
-   name that behaviour.
+   exit code, and only macOS's refusal stopped it (Q-j1).
 
 ## Appendix: the stub and every plist
 
-Copied from the batch plan, c6234435304, with host paths outside `~/Library/Logs` written as
-`<scratch>` and `<owner home>`. The files themselves are gone, so they cannot be checked byte for
-byte against what was bootstrapped. Every job log agrees with its plist's mode and arguments, and
-batch4.txt shows the `l` job's arguments as its plist gives them. The `a4` plist was never
-bootstrapped, because Q-a4 was left out.
+Copied verbatim from the batch plan, c6234435304, host paths included, since a plist with a
+placeholder in a path is no longer a valid plist. Each of the 22 plists below, extracted from this
+page, passes `plutil -lint`, and the stub passes `node --check` and is byte-identical to the batch
+plan's. The files the jobs ran from are gone, so these texts cannot be compared byte for byte with
+what was bootstrapped. Every job log agrees with its plist's mode and arguments, and batch4.txt shows
+the `l` job's arguments as its plist gives them. The `a4` plist was never bootstrapped, because Q-a4
+was left out, and `k` ran in batch 2.
 
 ### Every plist, in full
 
@@ -572,9 +756,9 @@ bootstrapped, because Q-a4 was left out.
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/node</string>
-		<string><scratch>/jobs/stub.mjs</string>
+		<string>/Users/cjwilliams/GitHub/rigger-worktrees/744-spike-engineer/jobs/stub.mjs</string>
 		<string>--log</string>
-		<string>~/Library/Logs/rigger-spike-744/a1.jsonl</string>
+		<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/a1.jsonl</string>
 		<string>--cell</string>
 		<string>a1</string>
 		<string>--mode</string>
@@ -583,14 +767,15 @@ bootstrapped, because Q-a4 was left out.
 	<key>RunAtLoad</key>
 	<false/>
 	<key>StandardErrorPath</key>
-	<string>~/Library/Logs/rigger-spike-744/a1.err</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/a1.err</string>
 	<key>StandardOutPath</key>
-	<string>~/Library/Logs/rigger-spike-744/a1.out</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/a1.out</string>
 	<key>StartInterval</key>
 	<integer>60</integer>
 </dict>
 </plist>
 ```
+
 
 #### com.williacj.rigger-spike.744.a2
 
@@ -604,9 +789,9 @@ bootstrapped, because Q-a4 was left out.
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/node</string>
-		<string><scratch>/jobs/stub.mjs</string>
+		<string>/Users/cjwilliams/GitHub/rigger-worktrees/744-spike-engineer/jobs/stub.mjs</string>
 		<string>--log</string>
-		<string>~/Library/Logs/rigger-spike-744/a2.jsonl</string>
+		<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/a2.jsonl</string>
 		<string>--cell</string>
 		<string>a2</string>
 		<string>--mode</string>
@@ -615,14 +800,15 @@ bootstrapped, because Q-a4 was left out.
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>~/Library/Logs/rigger-spike-744/a2.err</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/a2.err</string>
 	<key>StandardOutPath</key>
-	<string>~/Library/Logs/rigger-spike-744/a2.out</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/a2.out</string>
 	<key>StartInterval</key>
 	<integer>60</integer>
 </dict>
 </plist>
 ```
+
 
 #### com.williacj.rigger-spike.744.a3
 
@@ -636,9 +822,9 @@ bootstrapped, because Q-a4 was left out.
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/node</string>
-		<string><scratch>/jobs/stub.mjs</string>
+		<string>/Users/cjwilliams/GitHub/rigger-worktrees/744-spike-engineer/jobs/stub.mjs</string>
 		<string>--log</string>
-		<string>~/Library/Logs/rigger-spike-744/a3.jsonl</string>
+		<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/a3.jsonl</string>
 		<string>--cell</string>
 		<string>a3</string>
 		<string>--mode</string>
@@ -649,14 +835,15 @@ bootstrapped, because Q-a4 was left out.
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>~/Library/Logs/rigger-spike-744/a3.err</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/a3.err</string>
 	<key>StandardOutPath</key>
-	<string>~/Library/Logs/rigger-spike-744/a3.out</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/a3.out</string>
 	<key>StartInterval</key>
 	<integer>60</integer>
 </dict>
 </plist>
 ```
+
 
 #### com.williacj.rigger-spike.744.a4
 
@@ -670,9 +857,9 @@ bootstrapped, because Q-a4 was left out.
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/node</string>
-		<string><scratch>/jobs/stub.mjs</string>
+		<string>/Users/cjwilliams/GitHub/rigger-worktrees/744-spike-engineer/jobs/stub.mjs</string>
 		<string>--log</string>
-		<string>~/Library/Logs/rigger-spike-744/a4.jsonl</string>
+		<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/a4.jsonl</string>
 		<string>--cell</string>
 		<string>a4</string>
 		<string>--mode</string>
@@ -681,14 +868,15 @@ bootstrapped, because Q-a4 was left out.
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>~/Library/Logs/rigger-spike-744/a4.err</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/a4.err</string>
 	<key>StandardOutPath</key>
-	<string>~/Library/Logs/rigger-spike-744/a4.out</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/a4.out</string>
 	<key>StartInterval</key>
 	<integer>60</integer>
 </dict>
 </plist>
 ```
+
 
 #### com.williacj.rigger-spike.744.b10
 
@@ -704,21 +892,22 @@ bootstrapped, because Q-a4 was left out.
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/node</string>
-		<string><scratch>/jobs/stub.mjs</string>
+		<string>/Users/cjwilliams/GitHub/rigger-worktrees/744-spike-engineer/jobs/stub.mjs</string>
 		<string>--log</string>
-		<string>~/Library/Logs/rigger-spike-744/b10.jsonl</string>
+		<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/b10.jsonl</string>
 		<string>--cell</string>
 		<string>b10</string>
 		<string>--mode</string>
 		<string>exit0</string>
 	</array>
 	<key>StandardErrorPath</key>
-	<string>~/Library/Logs/rigger-spike-744/b10.err</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/b10.err</string>
 	<key>StandardOutPath</key>
-	<string>~/Library/Logs/rigger-spike-744/b10.out</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/b10.out</string>
 </dict>
 </plist>
 ```
+
 
 #### com.williacj.rigger-spike.744.b30
 
@@ -734,23 +923,24 @@ bootstrapped, because Q-a4 was left out.
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/node</string>
-		<string><scratch>/jobs/stub.mjs</string>
+		<string>/Users/cjwilliams/GitHub/rigger-worktrees/744-spike-engineer/jobs/stub.mjs</string>
 		<string>--log</string>
-		<string>~/Library/Logs/rigger-spike-744/b30.jsonl</string>
+		<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/b30.jsonl</string>
 		<string>--cell</string>
 		<string>b30</string>
 		<string>--mode</string>
 		<string>exit0</string>
 	</array>
 	<key>StandardErrorPath</key>
-	<string>~/Library/Logs/rigger-spike-744/b30.err</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/b30.err</string>
 	<key>StandardOutPath</key>
-	<string>~/Library/Logs/rigger-spike-744/b30.out</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/b30.out</string>
 	<key>ThrottleInterval</key>
 	<integer>30</integer>
 </dict>
 </plist>
 ```
+
 
 #### com.williacj.rigger-spike.744.c0
 
@@ -769,21 +959,22 @@ bootstrapped, because Q-a4 was left out.
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/node</string>
-		<string><scratch>/jobs/stub.mjs</string>
+		<string>/Users/cjwilliams/GitHub/rigger-worktrees/744-spike-engineer/jobs/stub.mjs</string>
 		<string>--log</string>
-		<string>~/Library/Logs/rigger-spike-744/c0.jsonl</string>
+		<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/c0.jsonl</string>
 		<string>--cell</string>
 		<string>c0</string>
 		<string>--mode</string>
 		<string>exit0</string>
 	</array>
 	<key>StandardErrorPath</key>
-	<string>~/Library/Logs/rigger-spike-744/c0.err</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/c0.err</string>
 	<key>StandardOutPath</key>
-	<string>~/Library/Logs/rigger-spike-744/c0.out</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/c0.out</string>
 </dict>
 </plist>
 ```
+
 
 #### com.williacj.rigger-spike.744.c1
 
@@ -802,21 +993,22 @@ bootstrapped, because Q-a4 was left out.
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/node</string>
-		<string><scratch>/jobs/stub.mjs</string>
+		<string>/Users/cjwilliams/GitHub/rigger-worktrees/744-spike-engineer/jobs/stub.mjs</string>
 		<string>--log</string>
-		<string>~/Library/Logs/rigger-spike-744/c1.jsonl</string>
+		<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/c1.jsonl</string>
 		<string>--cell</string>
 		<string>c1</string>
 		<string>--mode</string>
 		<string>exit1</string>
 	</array>
 	<key>StandardErrorPath</key>
-	<string>~/Library/Logs/rigger-spike-744/c1.err</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/c1.err</string>
 	<key>StandardOutPath</key>
-	<string>~/Library/Logs/rigger-spike-744/c1.out</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/c1.out</string>
 </dict>
 </plist>
 ```
+
 
 #### com.williacj.rigger-spike.744.d1
 
@@ -832,9 +1024,9 @@ bootstrapped, because Q-a4 was left out.
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/node</string>
-		<string><scratch>/jobs/stub.mjs</string>
+		<string>/Users/cjwilliams/GitHub/rigger-worktrees/744-spike-engineer/jobs/stub.mjs</string>
 		<string>--log</string>
-		<string>~/Library/Logs/rigger-spike-744/d1.jsonl</string>
+		<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/d1.jsonl</string>
 		<string>--cell</string>
 		<string>d1</string>
 		<string>--mode</string>
@@ -845,12 +1037,13 @@ bootstrapped, because Q-a4 was left out.
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>~/Library/Logs/rigger-spike-744/d1.err</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/d1.err</string>
 	<key>StandardOutPath</key>
-	<string>~/Library/Logs/rigger-spike-744/d1.out</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/d1.out</string>
 </dict>
 </plist>
 ```
+
 
 #### com.williacj.rigger-spike.744.d2
 
@@ -864,9 +1057,9 @@ bootstrapped, because Q-a4 was left out.
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/node</string>
-		<string><scratch>/jobs/stub.mjs</string>
+		<string>/Users/cjwilliams/GitHub/rigger-worktrees/744-spike-engineer/jobs/stub.mjs</string>
 		<string>--log</string>
-		<string>~/Library/Logs/rigger-spike-744/d2.jsonl</string>
+		<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/d2.jsonl</string>
 		<string>--cell</string>
 		<string>d2</string>
 		<string>--mode</string>
@@ -877,12 +1070,13 @@ bootstrapped, because Q-a4 was left out.
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>~/Library/Logs/rigger-spike-744/d2.err</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/d2.err</string>
 	<key>StandardOutPath</key>
-	<string>~/Library/Logs/rigger-spike-744/d2.out</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/d2.out</string>
 </dict>
 </plist>
 ```
+
 
 #### com.williacj.rigger-spike.744.d3n
 
@@ -898,9 +1092,9 @@ bootstrapped, because Q-a4 was left out.
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/node</string>
-		<string><scratch>/jobs/stub.mjs</string>
+		<string>/Users/cjwilliams/GitHub/rigger-worktrees/744-spike-engineer/jobs/stub.mjs</string>
 		<string>--log</string>
-		<string>~/Library/Logs/rigger-spike-744/d3n.jsonl</string>
+		<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/d3n.jsonl</string>
 		<string>--cell</string>
 		<string>d3n</string>
 		<string>--mode</string>
@@ -911,12 +1105,13 @@ bootstrapped, because Q-a4 was left out.
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>~/Library/Logs/rigger-spike-744/d3n.err</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/d3n.err</string>
 	<key>StandardOutPath</key>
-	<string>~/Library/Logs/rigger-spike-744/d3n.out</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/d3n.out</string>
 </dict>
 </plist>
 ```
+
 
 #### com.williacj.rigger-spike.744.d3t
 
@@ -932,9 +1127,9 @@ bootstrapped, because Q-a4 was left out.
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/node</string>
-		<string><scratch>/jobs/stub.mjs</string>
+		<string>/Users/cjwilliams/GitHub/rigger-worktrees/744-spike-engineer/jobs/stub.mjs</string>
 		<string>--log</string>
-		<string>~/Library/Logs/rigger-spike-744/d3t.jsonl</string>
+		<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/d3t.jsonl</string>
 		<string>--cell</string>
 		<string>d3t</string>
 		<string>--mode</string>
@@ -945,12 +1140,13 @@ bootstrapped, because Q-a4 was left out.
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>~/Library/Logs/rigger-spike-744/d3t.err</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/d3t.err</string>
 	<key>StandardOutPath</key>
-	<string>~/Library/Logs/rigger-spike-744/d3t.out</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/d3t.out</string>
 </dict>
 </plist>
 ```
+
 
 #### com.williacj.rigger-spike.744.d4n
 
@@ -966,9 +1162,9 @@ bootstrapped, because Q-a4 was left out.
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/node</string>
-		<string><scratch>/jobs/stub.mjs</string>
+		<string>/Users/cjwilliams/GitHub/rigger-worktrees/744-spike-engineer/jobs/stub.mjs</string>
 		<string>--log</string>
-		<string>~/Library/Logs/rigger-spike-744/d4n.jsonl</string>
+		<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/d4n.jsonl</string>
 		<string>--cell</string>
 		<string>d4n</string>
 		<string>--mode</string>
@@ -979,12 +1175,13 @@ bootstrapped, because Q-a4 was left out.
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>~/Library/Logs/rigger-spike-744/d4n.err</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/d4n.err</string>
 	<key>StandardOutPath</key>
-	<string>~/Library/Logs/rigger-spike-744/d4n.out</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/d4n.out</string>
 </dict>
 </plist>
 ```
+
 
 #### com.williacj.rigger-spike.744.d4t
 
@@ -1000,9 +1197,9 @@ bootstrapped, because Q-a4 was left out.
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/node</string>
-		<string><scratch>/jobs/stub.mjs</string>
+		<string>/Users/cjwilliams/GitHub/rigger-worktrees/744-spike-engineer/jobs/stub.mjs</string>
 		<string>--log</string>
-		<string>~/Library/Logs/rigger-spike-744/d4t.jsonl</string>
+		<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/d4t.jsonl</string>
 		<string>--cell</string>
 		<string>d4t</string>
 		<string>--mode</string>
@@ -1013,12 +1210,13 @@ bootstrapped, because Q-a4 was left out.
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>~/Library/Logs/rigger-spike-744/d4t.err</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/d4t.err</string>
 	<key>StandardOutPath</key>
-	<string>~/Library/Logs/rigger-spike-744/d4t.out</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/d4t.out</string>
 </dict>
 </plist>
 ```
+
 
 #### com.williacj.rigger-spike.744.f1
 
@@ -1032,9 +1230,9 @@ bootstrapped, because Q-a4 was left out.
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/node</string>
-		<string><scratch>/jobs/stub.mjs</string>
+		<string>/Users/cjwilliams/GitHub/rigger-worktrees/744-spike-engineer/jobs/stub.mjs</string>
 		<string>--log</string>
-		<string>~/Library/Logs/rigger-spike-744/f1.jsonl</string>
+		<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/f1.jsonl</string>
 		<string>--cell</string>
 		<string>f1</string>
 		<string>--mode</string>
@@ -1043,12 +1241,13 @@ bootstrapped, because Q-a4 was left out.
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>~/Library/Logs/rigger-spike-744/f1.err</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/f1.err</string>
 	<key>StandardOutPath</key>
-	<string>~/Library/Logs/rigger-spike-744/f1.out</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/f1.out</string>
 </dict>
 </plist>
 ```
+
 
 #### com.williacj.rigger-spike.744.f2
 
@@ -1060,18 +1259,18 @@ bootstrapped, because Q-a4 was left out.
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>HOME</key>
-		<string><owner home></string>
+		<string>/Users/cjwilliams</string>
 		<key>PATH</key>
-		<string><owner home>/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<string>/Users/cjwilliams/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
 	</dict>
 	<key>Label</key>
 	<string>com.williacj.rigger-spike.744.f2</string>
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/node</string>
-		<string><scratch>/jobs/stub.mjs</string>
+		<string>/Users/cjwilliams/GitHub/rigger-worktrees/744-spike-engineer/jobs/stub.mjs</string>
 		<string>--log</string>
-		<string>~/Library/Logs/rigger-spike-744/f2.jsonl</string>
+		<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/f2.jsonl</string>
 		<string>--cell</string>
 		<string>f2</string>
 		<string>--mode</string>
@@ -1080,12 +1279,13 @@ bootstrapped, because Q-a4 was left out.
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>~/Library/Logs/rigger-spike-744/f2.err</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/f2.err</string>
 	<key>StandardOutPath</key>
-	<string>~/Library/Logs/rigger-spike-744/f2.out</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/f2.out</string>
 </dict>
 </plist>
 ```
+
 
 #### com.williacj.rigger-spike.744.k
 
@@ -1099,9 +1299,9 @@ bootstrapped, because Q-a4 was left out.
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/node</string>
-		<string><scratch>/jobs/stub.mjs</string>
+		<string>/Users/cjwilliams/GitHub/rigger-worktrees/744-spike-engineer/jobs/stub.mjs</string>
 		<string>--log</string>
-		<string>~/Library/Logs/rigger-spike-744/k.jsonl</string>
+		<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/k.jsonl</string>
 		<string>--cell</string>
 		<string>k</string>
 		<string>--mode</string>
@@ -1110,14 +1310,15 @@ bootstrapped, because Q-a4 was left out.
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>~/Library/Logs/rigger-spike-744/k.err</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/k.err</string>
 	<key>StandardOutPath</key>
-	<string>~/Library/Logs/rigger-spike-744/k.out</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/k.out</string>
 	<key>StartInterval</key>
 	<integer>60</integer>
 </dict>
 </plist>
 ```
+
 
 #### com.williacj.rigger-spike.744.l
 
@@ -1131,9 +1332,9 @@ bootstrapped, because Q-a4 was left out.
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/node</string>
-		<string><scratch>/jobs/stub.mjs</string>
+		<string>/Users/cjwilliams/GitHub/rigger-worktrees/744-spike-engineer/jobs/stub.mjs</string>
 		<string>--log</string>
-		<string>~/Library/Logs/rigger-spike-744/l.jsonl</string>
+		<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/l.jsonl</string>
 		<string>--cell</string>
 		<string>l</string>
 		<string>--mode</string>
@@ -1142,12 +1343,13 @@ bootstrapped, because Q-a4 was left out.
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>~/Library/Logs/rigger-spike-744/l.err</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/l.err</string>
 	<key>StandardOutPath</key>
-	<string>~/Library/Logs/rigger-spike-744/l.out</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/l.out</string>
 </dict>
 </plist>
 ```
+
 
 #### com.williacj.rigger-spike.744.m1
 
@@ -1161,9 +1363,9 @@ bootstrapped, because Q-a4 was left out.
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/node</string>
-		<string><scratch>/jobs/stub.mjs</string>
+		<string>/Users/cjwilliams/GitHub/rigger-worktrees/744-spike-engineer/jobs/stub.mjs</string>
 		<string>--log</string>
-		<string>~/Library/Logs/rigger-spike-744/m1.jsonl</string>
+		<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/m1.jsonl</string>
 		<string>--cell</string>
 		<string>m1</string>
 		<string>--mode</string>
@@ -1172,12 +1374,13 @@ bootstrapped, because Q-a4 was left out.
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>~/Library/Logs/rigger-spike-744/m1.err</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/m1.err</string>
 	<key>StandardOutPath</key>
-	<string>~/Library/Logs/rigger-spike-744/m1.out</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/m1.out</string>
 </dict>
 </plist>
 ```
+
 
 #### com.williacj.rigger-spike.744.m2
 
@@ -1191,9 +1394,9 @@ bootstrapped, because Q-a4 was left out.
 	<key>ProgramArguments</key>
 	<array>
 		<string>/opt/homebrew/bin/node</string>
-		<string><scratch>/jobs/stub.mjs</string>
+		<string>/Users/cjwilliams/GitHub/rigger-worktrees/744-spike-engineer/jobs/stub.mjs</string>
 		<string>--log</string>
-		<string>~/Library/Logs/rigger-spike-744/m2.jsonl</string>
+		<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/m2.jsonl</string>
 		<string>--cell</string>
 		<string>m2</string>
 		<string>--mode</string>
@@ -1202,12 +1405,13 @@ bootstrapped, because Q-a4 was left out.
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>~/Library/Logs/rigger-spike-744/m2-absent/m2.err</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/m2-absent/m2.err</string>
 	<key>StandardOutPath</key>
-	<string>~/Library/Logs/rigger-spike-744/m2-absent/m2.out</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/m2-absent/m2.out</string>
 </dict>
 </plist>
 ```
+
 
 #### com.williacj.rigger-spike.744.n1
 
@@ -1220,9 +1424,9 @@ bootstrapped, because Q-a4 was left out.
 	<string>com.williacj.rigger-spike.744.n1</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string><scratch>/jobs/n1-absent.mjs</string>
+		<string>/Users/cjwilliams/GitHub/rigger-worktrees/744-spike-engineer/jobs/n1-absent.mjs</string>
 		<string>--log</string>
-		<string>~/Library/Logs/rigger-spike-744/n1.jsonl</string>
+		<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/n1.jsonl</string>
 		<string>--cell</string>
 		<string>n1</string>
 		<string>--mode</string>
@@ -1231,12 +1435,13 @@ bootstrapped, because Q-a4 was left out.
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>~/Library/Logs/rigger-spike-744/n1.err</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/n1.err</string>
 	<key>StandardOutPath</key>
-	<string>~/Library/Logs/rigger-spike-744/n1.out</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/n1.out</string>
 </dict>
 </plist>
 ```
+
 
 #### com.williacj.rigger-spike.744.n2
 
@@ -1249,9 +1454,9 @@ bootstrapped, because Q-a4 was left out.
 	<string>com.williacj.rigger-spike.744.n2</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string><scratch>/jobs/n2-stub.mjs</string>
+		<string>/Users/cjwilliams/GitHub/rigger-worktrees/744-spike-engineer/jobs/n2-stub.mjs</string>
 		<string>--log</string>
-		<string>~/Library/Logs/rigger-spike-744/n2.jsonl</string>
+		<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/n2.jsonl</string>
 		<string>--cell</string>
 		<string>n2</string>
 		<string>--mode</string>
@@ -1260,14 +1465,15 @@ bootstrapped, because Q-a4 was left out.
 	<key>RunAtLoad</key>
 	<true/>
 	<key>StandardErrorPath</key>
-	<string>~/Library/Logs/rigger-spike-744/n2.err</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/n2.err</string>
 	<key>StandardOutPath</key>
-	<string>~/Library/Logs/rigger-spike-744/n2.out</string>
+	<string>/Users/cjwilliams/Library/Logs/rigger-spike-744/n2.out</string>
 	<key>StartInterval</key>
 	<integer>60</integer>
 </dict>
 </plist>
 ```
+
 
 ### The stub, in full
 
@@ -1351,7 +1557,7 @@ switch (mode) {
     write('env', env);
     const codexHome = process.env.CODEX_HOME ?? (process.env.HOME ? join(process.env.HOME, '.codex') : null);
     const results = [];
-    for (const [bare, absolute] of [['gh', '/opt/homebrew/bin/gh'], ['claude', '<owner home>/.local/bin/claude'], ['codex', '/opt/homebrew/bin/codex']]) {
+    for (const [bare, absolute] of [['gh', '/opt/homebrew/bin/gh'], ['claude', '/Users/cjwilliams/.local/bin/claude'], ['codex', '/opt/homebrew/bin/codex']]) {
       for (const command of [bare, absolute]) {
         if (bare === 'gh') results.push(probe(command, ['auth', 'status'], (o, e) => ({ firstLine: elide(firstLine(o + e)) })));
         if (bare === 'claude') results.push(probe(command, ['auth', 'status', '--json'], (o) => loggedIn(o)));
@@ -1370,4 +1576,5 @@ switch (mode) {
   default: write('unknown-mode'); process.exit(2);
 }
 ```
+
 
