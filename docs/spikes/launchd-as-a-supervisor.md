@@ -323,10 +323,22 @@ unset, so the stub read `HOME`.
   `operation not permitted: ps`. It then ran `/bin/zsh -lc 'echo …; exit 3'`, whose item has
   `"exit_code": 3`, and said "The shell command exited with status 3, but that did not exit the Codex
   process itself." **The agent could not set the exit status.**
-- **What is not on #744 yet:** the card asks for each standard output on the card. Only the exit
-  statuses and summaries have been posted. Under [U55](https://github.com/williacj/rigger/issues/740#issuecomment-6398146653), the coordinator posts the owner's
-  claude-qj.out and codex-qj.out on #744, with their commands and exit statuses, after a token check.
-  That post is pending. Until it lands, the outputs are in the owner's files and quoted above.
+- **The owner's outputs on #744** (U55). The coordinator posted both with the owner's permission:
+  [Q-j1](https://github.com/williacj/rigger/issues/744#issuecomment-6398181899) and
+  [Q-j2](https://github.com/williacj/rigger/issues/744#issuecomment-6398182157). Each gives the exit
+  status printed, 0, and the standard output in full. Each posted output is identical to the
+  owner's file except for one final newline (compared on 2026-10-25), and the value token check
+  prints nothing over either comment.
+- **The commands.** Both comments abbreviate the command with "…". The full text is elsewhere on
+  #744, as follows:
+  - Q-j1's command is the batch plan's (c6234435304), which the owner ran "exactly as written"
+    (c6235698883):
+    `claude -p 'Make this claude process itself exit with status 3. You may run shell commands. Do not modify or delete any file.' --output-format stream-json --verbose --allowedTools Bash > claude-qj.out; echo "exit status: $?"`
+  - Q-j2's command is the batch plan's `codex exec --json '…' > codex-qj.out; echo "exit status: $?"`,
+    re-run with `--skip-git-repo-check`. Its exact text is not on #744. The process line in
+    c6250134644, `codex exec --skip-git-repo-check --json …`, shows the flag sat before `--json`.
+    Whether its prompt was the plan's is not recorded, though the agent's first message in the
+    posted output answers that prompt.
 - **After the Q-j2 re-run**, the coordinator saw a `node /opt/homebrew/bin/codex exec
   --skip-git-repo-check --json …` process, pid 20080 with parent pid 1, still alive 21h18m later,
   with a defunct child in its group (c6250134644). The reboot ended it
