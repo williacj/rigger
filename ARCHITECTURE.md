@@ -527,7 +527,19 @@ L2 reads notes when it answers the maker's outcome, through the forge adapter's 
 only notes written by an account with write access to the repository. A note a session writes with
 the owner's token is the same residual a marker carries ("What the gate cannot tell apart"). Such
 a note can halt a card. Where a maker's `ambiguous` may go to a role, it can also dispatch that
-role, which may change the acceptance, and the card's judges then rule again.
+role, which may change the acceptance, and the card's judges then rule again. L2 ignores an edited
+note, because the forge answers only a comment's current body and keeps no first version to read.
+That keeps each note as its writer wrote it, as `D25` rule 2 keeps each verdict. Of the notes the
+filters below leave, L2 reads the earliest in the read's oldest-first order, and keeps the forge's
+order between notes that tie. A maker writes one note and ends, so the earliest is the one written
+when it stopped. The event record showing escalations lost to a maker editing its note, or makers
+writing a second note to correct the first, would reverse these two rules. L2 filters the comments
+on the card's issue in this order:
+
+1. by write access to the repository;
+2. by being unedited;
+3. by parsing as a note;
+4. by the dispatch id L2 reads notes under.
 
 L2 answers each escalation's destination from one function in `src/workflow/escalation.mjs`. It
 reads the category, the raiser, the configured destination, the card's kind's maker and judges,
