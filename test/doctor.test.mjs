@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -710,12 +710,13 @@ test('the whole report is lines, and carries no stack trace', async () => {
  */
 function freshClone(from = root) {
   const into = cloneInto(from, join(temporaryDirectory('rigger-clone-'), 'rigger'));
-  const patch = spawnSync('git', ['-C', from, 'diff', '--binary', '--no-color', '--no-ext-diff', '--no-textconv', 'HEAD', '--'], { env: gitEnvironment() });
+  const patchFile = join(temporaryDirectory('rigger-clone-patch-'), 'candidate.patch');
+  const patch = spawnSync('git', ['-C', from, 'diff', '--binary', '--no-color', '--no-ext-diff', '--no-textconv', '--output', patchFile, 'HEAD', '--'], { env: gitEnvironment() });
   assert.ifError(patch.error);
   assert.equal(patch.signal, null, 'reading the tracked candidate patch was interrupted');
   assert.equal(patch.status, 0, patch.stderr.toString());
-  if (patch.stdout.length > 0) {
-    const applied = spawnSync('git', ['-C', into, 'apply', '--binary'], { input: patch.stdout, env: gitEnvironment() });
+  if (statSync(patchFile).size > 0) {
+    const applied = spawnSync('git', ['-C', into, 'apply', '--binary', patchFile], { env: gitEnvironment() });
     assert.ifError(applied.error);
     assert.equal(applied.signal, null, 'applying the tracked candidate patch was interrupted');
     assert.equal(applied.status, 0, applied.stderr.toString());
@@ -755,6 +756,54 @@ test('the real doctor clone carries tracked candidate changes without changing i
   assert.deepEqual(snapshot(), before);
   assert.equal(readFileSync(join(source, 'candidate.txt'), 'utf8'), 'tracked candidate value\n');
   assert.equal(readFileSync(join(source, 'added.txt'), 'utf8'), 'staged addition\n');
+});
+
+test('the real doctor clone carries a tracked patch larger than one MiB without changing its source', () => {
+  const source = repositoryIn('rigger-doctor-large-', {
+    'candidate.txt': 'committed value\n',
+    'binary.dat': Buffer.from([0, 16, 32, 255]),
+  });
+  const published = 'https://github.com/williacj/rigger.git';
+  gitIn(source, 'remote', 'add', 'origin', published);
+  const empty = freshClone(source);
+  assert.equal(readFileSync(join(empty, 'candidate.txt'), 'utf8'), 'committed value\n');
+  assert.deepEqual(readFileSync(join(empty, 'binary.dat')), Buffer.from([0, 16, 32, 255]));
+  assert.equal(gitIn(empty, 'status', '--porcelain=v1'), '');
+
+  const text = 'tracked candidate value\n'.repeat(100000);
+  const binary = Buffer.from([0, 255, 1, 2, 128]);
+  writeFileSync(join(source, 'candidate.txt'), text);
+  writeFileSync(join(source, 'binary.dat'), binary);
+  writeFileSync(join(source, 'added.txt'), 'staged addition\n');
+  gitIn(source, 'add', 'added.txt');
+  const measuredPatch = join(temporaryDirectory('rigger-doctor-patch-'), 'candidate.patch');
+  const measured = spawnSync('git', ['-C', source, 'diff', '--binary', '--no-color', '--no-ext-diff', '--no-textconv', '--output', measuredPatch, 'HEAD', '--'], { env: gitEnvironment() });
+  assert.ifError(measured.error);
+  assert.equal(measured.signal, null);
+  assert.equal(measured.status, 0, measured.stderr.toString());
+  const bytes = statSync(measuredPatch).size;
+  assert.ok(bytes > 1048576, `fixture patch has only ${bytes} bytes`);
+  console.log(`large doctor candidate patch: ${bytes} bytes`);
+  const snapshot = () => ({
+    head: gitIn(source, 'rev-parse', 'HEAD'),
+    index: gitIn(source, 'write-tree'),
+    staged: gitIn(source, 'show', ':added.txt'),
+    text: readFileSync(join(source, 'candidate.txt'), 'utf8'),
+    binary: readFileSync(join(source, 'binary.dat')),
+    addition: readFileSync(join(source, 'added.txt'), 'utf8'),
+    status: gitIn(source, 'status', '--porcelain=v1'),
+  });
+  const before = snapshot();
+
+  const clone = freshClone(source);
+
+  assert.equal(readFileSync(join(clone, 'candidate.txt'), 'utf8'), text);
+  assert.equal(readFileSync(join(clone, 'added.txt'), 'utf8'), 'staged addition\n');
+  assert.deepEqual(readFileSync(join(clone, 'binary.dat')), binary);
+  assert.equal(gitIn(clone, 'remote', 'get-url', 'origin').trim(), published);
+  assert.equal(realpathSync(gitIn(clone, 'rev-parse', '--show-toplevel').trim()), realpathSync(clone));
+  assert.notEqual(realpathSync(clone), realpathSync(source));
+  assert.deepEqual(snapshot(), before);
 });
 
 test('doctor passes on a fresh clone of this repository after init', async () => {
