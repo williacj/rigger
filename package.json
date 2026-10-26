@@ -35,6 +35,7 @@
     "check:references": "node scripts/doc-reference-check.mjs",
     "check:paths": "node scripts/path-check.mjs",
     "check:ids": "node scripts/duplicate-id-check.mjs",
+    "check:card": "node scripts/card-check.mjs",
     "check:words": "node scripts/ruled-out-word-check.mjs",
     "check:headers": "node scripts/aboutme-header-check.mjs",
     "matrix": "node scripts/build-test-matrix.mjs --write",
