@@ -531,24 +531,34 @@ test('plan names the board or facts read failure beside the closers, or beside e
 });
 
 // proves R-SCHED-18
-test('plan creates no admission directory where none existed, writes nothing under one that exists, and records no admission event', async () => {
-  const world = admissionWorld(PULLING, { held: PULLING_HELD });
-  await world.run();
-  assert.equal(existsSync(admissionOf(world.state)), false);
-  for (const [prepare, said] of [
-    [(state) => seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' })), `rigger plan: ${OWNER_WORDS}`],
-    [(state) => seed(state, 'stray.json', closerText()), 'rigger plan: admission cannot be read'],
+test('plan creates no admission directory where none existed, writes nothing under one that exists, open, closed or unreadable, and records no admission event in any', async () => {
+  // As `doctor`'s test of the same: every state on a consumer of its own, each run's own stream
+  // read, and a directory that exists stamped whole, its names starting with `.` among them.
+  const pulls = (text) => assert.deepEqual(pulled(text), [32, 31], text);
+  const names = (said) => (text) => {
+    assert.ok(text.split('\n').some((line) => line.startsWith(said)), text);
+    assert.deepEqual(pullLines(text), [], text);
+  };
+  for (const [prepare, check] of [
+    [null, pulls],
+    [(state) => mkdirSync(admissionOf(state), { recursive: true }), pulls],
+    [(state) => seed(state, '.tmp-a1', 'half written'), pulls],
+    [(state) => seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' })), names(`rigger plan: ${OWNER_WORDS}`)],
+    [(state) => seed(state, 'stray.json', closerText()), names('rigger plan: admission cannot be read')],
   ]) {
     const each = admissionWorld(PULLING, { held: PULLING_HELD });
-    prepare(each.state);
-    pin(each.state);
-    const before = stamped(each.state);
+    let before;
+    if (prepare) {
+      prepare(each.state);
+      pin(each.state);
+      before = stamped(each.state);
+    }
     const ran = await each.run();
-    assert.ok(ran.text.split('\n').some((line) => line.startsWith(said)), ran.text);
-    assert.deepEqual(pullLines(ran.text), [], ran.text);
-    assert.deepEqual(stamped(each.state), before);
+    check(ran.text);
+    if (prepare) assert.deepEqual(stamped(each.state), before);
+    else assert.equal(existsSync(admissionOf(each.state)), false);
     const events = existsSync(join(each.state, 'events.jsonl')) ? readEvents(each.state) : [];
-    assert.deepEqual(events.filter(({ event }) => event.startsWith('admission.')), [], JSON.stringify(events));
+    assert.deepEqual(events.filter(({ event }) => event.startsWith('admission')), [], JSON.stringify(events));
   }
 });
 

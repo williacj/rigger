@@ -1977,26 +1977,32 @@ test('where the board cannot be read, doctor reports a closed admission closed a
 });
 
 // proves R-SCHED-17
-test('doctor creates no admission directory where none existed, writes nothing under one that exists, and records no admission event', async () => {
-  const target = checked(starter());
-  const absent = await doctor(against(target, PASSING));
-  assert.match(admissionLine(absent.text), /admission is open$/, absent.text);
-  assert.equal(existsSync(admissionOf(stateIn(target))), false);
-
+test('doctor creates no admission directory where none existed, writes nothing under one that exists, open, closed or unreadable, and records no admission event in any', async () => {
+  // Every state Table A names, each on a consumer of its own, and each run's own stream read. A
+  // directory that exists is stamped whole, its names starting with `.` among them, so a write a
+  // read made while admission stayed open shows as plainly as one made while it was closed.
   for (const [prepare, said] of [
+    [null, /^\s*ok\s+admission: admission is open$/],
+    [(state) => mkdirSync(admissionOf(state), { recursive: true }), /^\s*ok\s+admission: admission is open$/],
+    [(state) => seed(state, '.tmp-a1', 'half written'), /^\s*ok\s+admission: admission is open$/],
     [(state) => seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' })), /^\s*ok\s+admission: admission is closed by owner/],
     [(state) => seed(state, 'stray.json', closerText()), /^\s*failed\s+admission: admission cannot be read/],
   ]) {
     const each = checked(starter());
-    prepare(stateIn(each));
-    pin(stateIn(each));
-    const before = stamped(stateIn(each));
+    let before;
+    if (prepare) {
+      prepare(stateIn(each));
+      pin(stateIn(each));
+      before = stamped(stateIn(each));
+    }
     const ran = await doctor(against(each, PASSING));
     assert.match(admissionLine(ran.text), said, ran.text);
-    assert.deepEqual(stamped(stateIn(each)), before);
-    assert.deepEqual(readdirSync(stateIn(each)).filter((name) => name !== 'events.jsonl' && name !== 'admission'), []);
+    if (prepare) assert.deepEqual(stamped(stateIn(each)), before);
+    else assert.equal(existsSync(admissionOf(stateIn(each))), false);
+    const left = existsSync(stateIn(each)) ? readdirSync(stateIn(each)) : [];
+    assert.deepEqual(left.filter((name) => name !== 'events.jsonl' && name !== 'admission'), []);
     const events = existsSync(join(stateIn(each), 'events.jsonl')) ? readEvents(stateIn(each)) : [];
-    assert.deepEqual(events.filter(({ event }) => event.startsWith('admission.')), [], JSON.stringify(events));
+    assert.deepEqual(events.filter(({ event }) => event.startsWith('admission')), [], JSON.stringify(events));
   }
 });
 
