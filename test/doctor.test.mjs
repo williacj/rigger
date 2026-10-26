@@ -1780,8 +1780,10 @@ test('gate line names a failed deployment policy read and an absent secret toget
 // The admission check (#962): what `doctor` reports of the admission directory, read through L3's
 // module, and what that does to its heading and its exit status.
 
-import { closedBy } from '../src/cli/doctor.mjs';
-import { existsSync, readdirSync } from 'node:fs';
+// The path a verb names is the one `real` spells, the file system's own casing, so the tests
+// spell it the same way rather than with `realpathSync`, which keeps the casing it was handed.
+import { closedBy, real } from '../src/cli/doctor.mjs';
+import { chmodSync, existsSync, readdirSync } from 'node:fs';
 import { admissionOf, closerText, pin, seed, stamped, TIME } from './admission-world.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 
@@ -1888,7 +1890,7 @@ test('doctor fails the admission line, naming its path and cause, for an entry o
     const { absent, seeded } = await absentThen(target, make);
     const line = admissionLine(seeded.text);
     assert.match(line, /^\s*failed\s+admission: /, seeded.text);
-    assert.ok(line.includes(`${join(admissionOf(stateIn(realpathSync(target))), name)} (${cause})`), line);
+    assert.ok(line.includes(`${join(admissionOf(stateIn(real(target))), name)} (${cause})`), line);
     assert.equal(absent.code, 0, absent.text);
     assert.notEqual(seeded.code, 0, seeded.text);
   }
@@ -1903,7 +1905,7 @@ test('doctor fails the admission line where a readable closer sits beside an unr
   });
   const line = admissionLine(seeded.text);
   assert.match(line, /^\s*failed\s+admission: /, seeded.text);
-  assert.ok(line.includes(`${join(admissionOf(stateIn(realpathSync(target))), 'stray.json')} (no closer form)`), line);
+  assert.ok(line.includes(`${join(admissionOf(stateIn(real(target))), 'stray.json')} (no closer form)`), line);
   assert.notEqual(seeded.code, 0, seeded.text);
 });
 
@@ -1916,7 +1918,7 @@ test('doctor fails the admission line where admission is a file, naming the dire
   });
   const line = admissionLine(seeded.text);
   assert.match(line, /^\s*failed\s+admission: /, seeded.text);
-  assert.ok(line.includes(`${admissionOf(stateIn(realpathSync(target)))} (not a directory)`), line);
+  assert.ok(line.includes(`${admissionOf(stateIn(real(target)))} (not a directory)`), line);
   assert.notEqual(seeded.code, 0, seeded.text);
 });
 
@@ -1998,18 +2000,25 @@ test('doctor creates no admission directory where none existed, writes nothing u
   }
 });
 
-test('the stamp the no-write tests compare moves when a closer is rewritten with the bytes it already holds', () => {
-  // The write these tests exist to catch is one that leaves every byte as it was, which a picture
-  // of names and bytes alone cannot see.
-  const state = join(temporaryDirectory('rigger-stamp-'), '.rigger');
-  seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' }));
-  pin(state);
-  const before = stamped(state);
-  const path = join(admissionOf(state), 'owner-a1.json');
-  writeFileSync(path, readFileSync(path));
-  const after = stamped(state);
-  assert.deepEqual(after.bytes, before.bytes);
-  assert.notDeepEqual(after, before);
+test('the stamp the no-write tests compare moves when a closer is rewritten with the bytes it already holds, or has only its permissions changed', () => {
+  // The changes these tests exist to catch are ones that leave every byte as it was, which a
+  // picture of names and bytes alone cannot see.
+  const changes = [
+    (path) => writeFileSync(path, readFileSync(path)),
+    (path) => chmodSync(path, 0o600),
+  ];
+  for (const change of changes) {
+    const state = join(temporaryDirectory('rigger-stamp-'), '.rigger');
+    seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' }));
+    const path = join(admissionOf(state), 'owner-a1.json');
+    chmodSync(path, 0o644);
+    pin(state);
+    const before = stamped(state);
+    change(path);
+    const after = stamped(state);
+    assert.deepEqual(after.bytes, before.bytes);
+    assert.notDeepEqual(after, before, String(change));
+  }
 });
 
 test('the words that name a closer are once\'s, written out by hand', () => {
@@ -2028,5 +2037,5 @@ test('doctor prints a closer reason or an entry name carrying a line break escap
   seed(stateIn(named), 'x\n  ok  forged check: yes', closerText());
   const ran = await doctor(against(named, PASSING));
   assert.equal(checkLines(ran.text).length, CHECKED.length, ran.text);
-  assert.ok(admissionLine(ran.text).includes(`${join(admissionOf(stateIn(realpathSync(named))), 'x\\n  ok  forged check: yes')} (no closer form)`), ran.text);
+  assert.ok(admissionLine(ran.text).includes(`${join(admissionOf(stateIn(real(named))), 'x\\n  ok  forged check: yes')} (no closer form)`), ran.text);
 });

@@ -99,14 +99,15 @@ export function pin(state) {
 
 /**
  * The admission directory in `state` as `picture` has it, with the directory's and each entry's
- * inode and modification time in nanoseconds beside it, so two stamps are equal only where no
- * entry was written, replaced or renamed, nor any name added to or removed from the directory.
+ * inode, modification time in nanoseconds, mode, link count and owner beside it, so two stamps are
+ * equal only where no entry was written, replaced, renamed, linked, or had its permissions or
+ * owner changed, nor any name added to or removed from the directory.
  */
 export function stamped(state) {
   const directory = admissionOf(state);
   const of = (path) => {
-    const { ino, mtimeNs } = fs.lstatSync(path, { bigint: true });
-    return `${ino}:${mtimeNs}`;
+    const { ino, mtimeNs, mode, nlink, uid, gid } = fs.lstatSync(path, { bigint: true });
+    return `${ino}:${mtimeNs}:${mode.toString(8)}:${nlink}:${uid}:${gid}`;
   };
   const entries = Object.fromEntries(fs.readdirSync(directory).sort().map((name) => [name, of(join(directory, name))]));
   return { directory: of(directory), entries, bytes: picture(directory) };

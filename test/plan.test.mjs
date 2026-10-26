@@ -373,7 +373,8 @@ test('plan describes closed removal followed by redo escalation or refusal and c
 
 // What `plan` shows while admission is closed or cannot be read (#962): no pull, and why.
 
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync } from 'node:fs';
+import { real } from '../src/cli/doctor.mjs';
 import { admissionOf, closerText, pin, seed, stamped, TIME } from './admission-world.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 
@@ -397,7 +398,7 @@ function admissionWorld(board, { held, source = `export default ${JSON.stringify
   const state = join(consumer, '.rigger');
   return {
     consumer, fake, state,
-    unread: admissionOf(join(realpathSync(consumer), '.rigger')),
+    unread: admissionOf(join(real(consumer), '.rigger')),
     run: (send = through) => planVerb({ target: consumer, packageRoot: root, send }),
     through,
   };
