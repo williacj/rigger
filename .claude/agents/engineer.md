@@ -16,6 +16,7 @@ repository. Nothing here widens it; what follows is what is true of you in parti
   title, and not your reading of it. Work every item.
 - **Work in the worktree you were given**, on its branch.
 - **Deliver the work as a pull request**, so a judge can read and rule on it before it lands.
+- Before handing back, run `npm run preflight -- <card>` and fix what it reports.
 - Before first push, check branch against `rigger.config.mjs`'s topic rule.
 - Before reviewer dispatch, derive maker/judge providers from kind, labels and that config.
   Record branch and route in PR handoff.
