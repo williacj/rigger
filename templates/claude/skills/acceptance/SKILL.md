@@ -87,6 +87,11 @@ An ordinary rule bullet by default: a named path exists and states a named thing
 exits zero, or produces named output; a named input is refused, and the refusal names the reason;
 a named document cites a named id.
 
+Items may permit citing, not quoting, persistent evidence: a CI job, run attempt or comment by
+URL; a file by path at a commit reachable from the judged head or `main`. Quote local output;
+never cite CI artifacts or off-forge records. Citations name their record's commit, which must be
+the item's; unopenable records are uncited. Items may demand quotes.
+
 A **Given/When/Then** bullet where the ruling needs its context to make sense. `R-CARD-2` still
 holds, so one item carries one independently ruleable outcome, never a scenario with several
 `Then`s. Split a compound result. Example acceptance (`R-CARD-12`):
