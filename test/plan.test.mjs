@@ -370,3 +370,178 @@ test('plan describes closed removal followed by redo escalation or refusal and c
   assert.deepEqual(readdirSync(directory), files);
   for (const item of items) assert.equal(readFileSync(join(directory, `rigger-${item.number}`, 'kept'), 'utf8'), `keep ${item.number}`);
 });
+
+// What `plan` shows while admission is closed or cannot be read (#962): no pull, and why.
+
+import { existsSync, realpathSync } from 'node:fs';
+import { admissionOf, closerText, picture, seed, TIME } from './admission-world.mjs';
+import { readEvents } from '../src/observation/sink.mjs';
+
+/** A closer's words, written out by hand as `once` printed them at #944's head. */
+const OWNER_WORDS = `admission is closed by owner: owner pause; time ${TIME}`;
+const HOLD_WORDS = `admission is closed by hold: environment hold; time ${TIME}`;
+
+/** The consumer's config, as `plan` above writes it. */
+const CONSUMER = { ...template, repo: REPO, board: { ...template.board, project: PROJECT } };
+
+/**
+ * A consumer repository holding `source` as its config, beside a fake `gh` holding `board` and the
+ * repository `held`, and `plan` run in process over it, its forge reads sent through `send` where
+ * given and to the fake `gh` otherwise.
+ */
+function admissionWorld(board, { held, source = `export default ${JSON.stringify(CONSUMER)};\n` } = {}) {
+  const consumer = repositoryIn('rigger-plan-admission-', { 'rigger.config.mjs': source });
+  const fake = installFakeGh(temporaryDirectory('rigger-plan-admission-gh-'), { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, ...board } });
+  if (held) seedRepository(fake, held);
+  const through = (file, args) => spawnSync(fake.gh, args, { encoding: 'utf8', env: gitEnvironment() });
+  const state = join(consumer, '.rigger');
+  return {
+    consumer, fake, state,
+    unread: admissionOf(join(realpathSync(consumer), '.rigger')),
+    run: (send = through) => planVerb({ target: consumer, packageRoot: root, send }),
+    through,
+  };
+}
+
+/** A board where the next run would pull a Ready card and move a Review card whose pull request merged. */
+const PULLING = { items: [card(31, 'Ready'), card(32, 'Review')] };
+const PULLING_HELD = { pullRequests: [{ ...openFor(32), merged: true }] };
+
+/** A board holding a pull, a card L2 refuses, and an escalated card. */
+const MIXED = { items: [card(41, 'Ready'), card(42, 'Ready', { body: '' }), card(43, 'Ready', { labels: ['type:change', 'rigger:escalated'] })] };
+
+/** The lines a plan names a refused or escalated card on. */
+const reportedLines = (text) => text.split('\n').filter((line) => /^\s*(?:refuse|escalated)\s+#\d+/.test(line));
+
+// proves R-SCHED-18
+test('plan shows the ordinary pull order where the admission directory is absent, empty, or holds only names starting with a dot', async () => {
+  for (const prepare of [() => {}, (state) => mkdirSync(admissionOf(state), { recursive: true }), (state) => seed(state, '.tmp-a1', 'half')]) {
+    const world = admissionWorld(PULLING, { held: PULLING_HELD });
+    const absent = await world.run();
+    prepare(world.state);
+    const ran = await world.run();
+    assert.equal(ran.code, 0, ran.text);
+    assert.deepEqual(pulled(ran.text), [32, 31], ran.text);
+    assert.equal(ran.text, absent.text);
+  }
+});
+
+// proves R-SCHED-18
+test('plan under one owner closer, one hold closer of each name form, or both, shows no pull line of any action, names each closer in once\'s words, and exits 0', async () => {
+  const cases = [
+    [(state) => seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' })), [OWNER_WORDS]],
+    ...['hold-b2.json', 'hold-b2-after-3.json', 'hold-b2-issue-41.json'].map((name) => [(state) => seed(state, name, closerText({ reason: 'environment hold' })), [HOLD_WORDS]]),
+    [(state) => { seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' })); seed(state, 'hold-b2.json', closerText({ reason: 'environment hold' })); }, [OWNER_WORDS, HOLD_WORDS]],
+  ];
+  for (const [prepare, words] of cases) {
+    const world = admissionWorld(PULLING, { held: PULLING_HELD });
+    const open = await world.run();
+    assert.deepEqual(pulled(open.text), [32, 31], open.text);
+    prepare(world.state);
+    const ran = await world.run();
+    assert.equal(ran.code, 0, ran.text);
+    assert.deepEqual(pullLines(ran.text), [], ran.text);
+    assert.doesNotMatch(ran.text, /^\s*pull\b/m, ran.text);
+    assert.match(ran.text, /nothing would be pulled/, ran.text);
+    for (const said of words) assert.ok(ran.text.split('\n').includes(`rigger plan: ${said}`), ran.text);
+    assert.deepEqual((await world.fake.model()).writes(), []);
+  }
+});
+
+/** Each entry admission's module cannot read, with the cause it names, seeded by hand. */
+const UNREADABLE = [
+  { name: 'stray.json', cause: 'no closer form', make: (state) => seed(state, 'stray.json', closerText()) },
+  { name: 'owner-c3.json', cause: 'no reason, time or run', make: (state) => seed(state, 'owner-c3.json', JSON.stringify({ reason: 'r', run: 'x' })) },
+  { name: 'owner-d4.json', cause: 'not a regular file', make: (state) => mkdirSync(join(admissionOf(state), 'owner-d4.json'), { recursive: true }) },
+];
+
+// proves R-SCHED-18
+test('plan under an unreadable admission shows no pull line, names each path and cause, and exits non-zero', async () => {
+  const cases = [
+    ...UNREADABLE.map(({ name, cause, make }) => [make, (dir) => [`${join(dir, name)} (${cause})`]]),
+    [(state) => { seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' })); seed(state, 'stray.json', closerText()); }, (dir) => [`${join(dir, 'stray.json')} (no closer form)`]],
+    [(state) => { mkdirSync(state, { recursive: true }); writeFileSync(admissionOf(state), 'a file'); }, (dir) => [`${dir} (not a directory)`]],
+  ];
+  for (const [prepare, named] of cases) {
+    const world = admissionWorld(PULLING, { held: PULLING_HELD });
+    prepare(world.state);
+    const ran = await world.run();
+    assert.notEqual(ran.code, 0, ran.text);
+    assert.deepEqual(pullLines(ran.text), [], ran.text);
+    assert.doesNotMatch(ran.text, /^\s*pull\b/m, ran.text);
+    assert.match(ran.text, /admission cannot be read/, ran.text);
+    for (const said of named(world.unread)) assert.ok(ran.text.includes(said), `${said} is not in:\n${ran.text}`);
+  }
+});
+
+// proves R-SCHED-18
+test('plan under a closed or unreadable admission still reports each card it refuses and each escalated card, as under an open one', async () => {
+  for (const prepare of [(state) => seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' })), (state) => seed(state, 'stray.json', closerText())]) {
+    const world = admissionWorld(MIXED);
+    const open = await world.run();
+    assert.deepEqual(pulled(open.text), [41], open.text);
+    assert.equal(reportedLines(open.text).length, 2, open.text);
+    prepare(world.state);
+    const ran = await world.run();
+    assert.deepEqual(pullLines(ran.text), [], ran.text);
+    assert.deepEqual(reportedLines(ran.text), reportedLines(open.text), ran.text);
+    assert.match(ran.text, /and refuses 1 card\b/, ran.text);
+  }
+});
+
+// proves R-SCHED-18
+test('plan names the config problem beside the closers where the config cannot be read or is refused, and exits non-zero', async () => {
+  const refused = { ...CONSUMER };
+  delete refused.repo;
+  for (const [source, problem] of [['export default {\n', /could not be read/], [`export default ${JSON.stringify(refused)};\n`, /rigger\.config\.mjs/]]) {
+    const world = admissionWorld(PULLING, { source });
+    seed(world.state, 'owner-a1.json', closerText({ reason: 'owner pause' }));
+    const ran = await world.run();
+    assert.notEqual(ran.code, 0, ran.text);
+    assert.match(ran.text, problem, ran.text);
+    assert.ok(ran.text.split('\n').includes(`rigger plan: ${OWNER_WORDS}`), ran.text);
+    assert.deepEqual(pullLines(ran.text), [], ran.text);
+  }
+});
+
+/** A send failing every forge read, as a forge outage does. */
+const OUTAGE = () => ({ status: 1, stdout: '', stderr: 'HTTP 502: forge unavailable' });
+
+/** A send through the fake `gh` failing only the facts call's pull-request reads. */
+const factsDown = (world) => (file, args) => (args[1] === 'graphql' && args[3].includes('pullRequests(')
+  ? { status: 1, stdout: '', stderr: 'workflow facts refused: HTTP 503' }
+  : world.through(file, args));
+
+// proves R-SCHED-18
+test('plan names the board or facts read failure beside the closers, or beside each unreadable path, and exits non-zero', async () => {
+  for (const [prepare, said] of [
+    [(state) => seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' })), () => `rigger plan: ${OWNER_WORDS}`],
+    [(state) => seed(state, 'stray.json', closerText()), (world) => `${join(world.unread, 'stray.json')} (no closer form)`],
+  ]) {
+    for (const [send, failure] of [[() => OUTAGE, /board 3 could not be read.*HTTP 502/], [factsDown, /workflow facts refused: HTTP 503/]]) {
+      const world = admissionWorld(PULLING, { held: PULLING_HELD });
+      prepare(world.state);
+      const ran = await world.run(send(world));
+      assert.notEqual(ran.code, 0, ran.text);
+      assert.match(ran.text, failure, ran.text);
+      assert.ok(ran.text.includes(said(world)), ran.text);
+      assert.deepEqual(pullLines(ran.text), [], ran.text);
+    }
+  }
+});
+
+// proves R-SCHED-18
+test('plan creates no admission directory where none existed, changes nothing under one that exists, and records no admission event', async () => {
+  const world = admissionWorld(PULLING, { held: PULLING_HELD });
+  await world.run();
+  assert.equal(existsSync(admissionOf(world.state)), false);
+  for (const prepare of [(state) => seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' })), (state) => seed(state, 'stray.json', closerText())]) {
+    const each = admissionWorld(PULLING, { held: PULLING_HELD });
+    prepare(each.state);
+    const before = picture(admissionOf(each.state));
+    await each.run();
+    assert.deepEqual(picture(admissionOf(each.state)), before);
+    const events = existsSync(join(each.state, 'events.jsonl')) ? readEvents(each.state) : [];
+    assert.deepEqual(events.filter(({ event }) => event.startsWith('admission.')), [], JSON.stringify(events));
+  }
+});

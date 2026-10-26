@@ -12,7 +12,8 @@ import { EVENT_REFUSED, NOT_STARTED, runCommand } from '../substrate/process.mjs
 import { ADAPTERS } from '../substrate/providers/adapters.mjs';
 import { validate } from '../config/validate.mjs';
 import { CONFIG } from './init.mjs';
-import { recording } from './recording.mjs';
+import { STATE, recording } from './recording.mjs';
+import { admission } from '../scheduling/admission.mjs';
 import { repositoryReads } from '../substrate/forge/read.mjs';
 import { GATE_CONTEXT } from '../workflow/gate.mjs';
 
@@ -651,15 +652,43 @@ export function report(where, results) {
 }
 
 /**
+ * The words that name one closer of a closed admission: its kind, its reason and its time. `once`,
+ * `run`, `plan` and `doctor` each name a closer in them.
+ */
+export const closedBy = ({ kind, reason, time }) => `admission is closed by ${kind}: ${reason}; time ${time}`;
+
+/** The words that name each entry of an admission that cannot be read, by its path and cause. */
+export const unreadableAdmission = (unreadable) => `admission cannot be read: ${unreadable.map(({ path, cause }) => `${path} (${cause})`).join(', ')}`;
+
+/**
+ * Admission in the repository `named`, as L3's module reads it from the state directory there:
+ * open, closed naming each closer, or unreadable naming each entry it could not read. It reads
+ * through `sink`, and a read records nothing.
+ */
+export const admissionIn = (named, sink) => admission({ directory: join(named, STATE), sink }).read();
+
+/**
+ * Whether admission is open, closed, or cannot be read (`R-SCHED-17`). It needs only the state
+ * directory, so it reports where the config cannot be read. A closed admission passes, so it
+ * leaves the exit status as it is; an unreadable one fails.
+ */
+export function admissionCheck({ target = process.cwd(), sink }) {
+  const name = 'admission';
+  const read = admissionIn(target, sink);
+  if (read.state === 'unreadable') return { name, ok: false, detail: unreadableAdmission(read.unreadable) };
+  return { name, ok: true, detail: read.state === 'open' ? 'admission is open' : read.closers.map(closedBy).join('; ') };
+}
+
+/**
  * The checks `doctor` runs: the four its card lists, in that order, then the board checks, and
- * then the board-sharing check and the required gate check. The forge checks read only once the
- * config earns no refusals.
+ * then the board-sharing check, the required gate check and the admission check. The forge
+ * checks read only once the config earns no refusals.
  *
  * Each takes the same options and reads the ones it needs, so this list is the whole of what
  * decides which checks there are and what order they are reported in. A check answers one line,
  * a list of lines, or null, which has nothing to report and prints no line.
  */
-export const CHECKS = [nodeVersion, ghAuth, agentAuth, configValidity, boardChecks, boardSharing, gateCheck];
+export const CHECKS = [nodeVersion, ghAuth, agentAuth, configValidity, boardChecks, boardSharing, gateCheck, admissionCheck];
 
 /**
  * What a verb named `verb` prints and exits with where `here` and the source tree this Rigger is
@@ -736,7 +765,7 @@ async function checking(opened, {
   const results = [];
   for (const check of checks) {
     try {
-      results.push(await check({ target: named, packageRoot, ask, emitter }));
+      results.push(await check({ target: named, packageRoot, ask, emitter, sink: opened.sink }));
     } catch (failure) {
       // A kill the sink refused stops the verb before its next call, and is never a failed check
       // (the architect's ruling 3, §4, on #332): the failure's kind says so, not its message.

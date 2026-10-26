@@ -581,10 +581,11 @@ const CHECKED = [
   'board priority',
   'board sharing',
   'gate check required',
+  'admission',
 ];
 
 /** The checks `doctor` reports where the config cannot be read or is refused, written out by hand. */
-const UNREAD = ['Node version', 'gh authentication', 'agent CLI authentication', 'config validity', 'board checks', 'gate check required'];
+const UNREAD = ['Node version', 'gh authentication', 'agent CLI authentication', 'config validity', 'board checks', 'gate check required', 'admission'];
 
 /** Everything `doctor` needs fixed to answer deterministically, bar the verdicts under test. */
 const against = (target, answers) => ({
@@ -1048,6 +1049,7 @@ test('the checks doctor names are the four it named at 434b48b, the board-sharin
     'board priority',
     'board checks',
     'gate check required',
+    'admission',
   ];
   const { ran } = await sharing([ours(1)]);
   const refused = await sharing([ours(1)], { source: starter().replace(/^\s*repo:.*$/m, '') });
@@ -1773,4 +1775,229 @@ test('gate line names a failed deployment policy read and an absent secret toget
   const { line } = await gateReport({ failures: { 'environments/gate/deployment-branch-policies?per_page=100&page=1': 'gh: policy denied (HTTP 403)' }, environment: { ...gateEnvironment(), secrets: [] } });
   assert.match(line, /^\s*failed\s.*readEnvironment.*policy denied/);
   assert.match(line, /GATE_APP_PRIVATE_KEY.*absent, or not readable with this token/);
+});
+
+// The admission check (#962): what `doctor` reports of the admission directory, read through L3's
+// module, and what that does to its heading and its exit status.
+
+import { closedBy } from '../src/cli/doctor.mjs';
+import { existsSync, readdirSync } from 'node:fs';
+import { admissionOf, closerText, picture, seed, TIME } from './admission-world.mjs';
+import { readEvents } from '../src/observation/sink.mjs';
+
+/** The state directory `doctor` names in `target`. */
+const stateIn = (target) => join(target, '.rigger');
+
+/** The report's one admission line, asserted to be one. */
+function admissionLine(text) {
+  const lines = linesOf(text, 'admission');
+  assert.equal(lines.length, 1, text);
+  return lines[0];
+}
+
+/** The answers under which every check but admission passes, as the exit-status test above has them. */
+const PASSING = { gh: RECORDED.ghIn, claude: RECORDED.agentIn };
+
+/** A closer's words, written out by hand as `once` printed them at #944's head. */
+const OWNER_WORDS = `admission is closed by owner: owner pause; time ${TIME}`;
+const HOLD_WORDS = `admission is closed by hold: environment hold; time ${TIME}`;
+
+/** The three name forms a hold closer takes, as "Failure model" names them. */
+const HOLD_NAMES = ['hold-b2.json', 'hold-b2-after-3.json', 'hold-b2-issue-41.json'];
+
+/**
+ * Runs `doctor` on `target` with `options`, then seeds its admission directory with `prepare` and
+ * runs it again on the same host and config: the run with the directory absent, and the run with it.
+ */
+async function absentThen(target, prepare, options = against(target, PASSING)) {
+  const absent = await doctor(options);
+  assert.equal(existsSync(admissionOf(stateIn(target))), false, 'the admission directory was there before it was seeded');
+  prepare(stateIn(target));
+  return { absent, seeded: await doctor(options) };
+}
+
+/** The heading line of a report. */
+const headingOf = (text) => text.split('\n')[0];
+
+// proves R-SCHED-17
+test('doctor reports admission open, counted as passed, where the directory is absent, empty, or holds only names starting with a dot', async () => {
+  const preparations = [
+    () => {},
+    (state) => mkdirSync(admissionOf(state), { recursive: true }),
+    (state) => { seed(state, '.tmp-a1', 'half written'); seed(state, '.DS_Store', ''); },
+  ];
+  for (const prepare of preparations) {
+    const target = checked(starter());
+    const { absent, seeded } = await absentThen(target, prepare);
+    assert.match(admissionLine(seeded.text), /^\s*ok\s+admission: admission is open$/, seeded.text);
+    assert.equal(seeded.code, 0, seeded.text);
+    assert.equal(seeded.text, absent.text);
+  }
+});
+
+// proves R-SCHED-17
+test('doctor reports an owner closer as closed, ok, naming the owner, its reason and its time, and its heading and exit are those with the directory absent', async () => {
+  const target = checked(starter());
+  const { absent, seeded } = await absentThen(target, (state) => seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' })));
+
+  assert.match(admissionLine(seeded.text), /^\s*ok\s+admission: /, seeded.text);
+  assert.ok(admissionLine(seeded.text).endsWith(`admission: ${OWNER_WORDS}`), seeded.text);
+  assert.equal(headingOf(seeded.text), headingOf(absent.text));
+  assert.equal(seeded.code, absent.code);
+  assert.equal(seeded.code, 0, seeded.text);
+});
+
+// proves R-SCHED-17
+test('doctor reports a hold closer, under each of its three name forms, as closed by a hold with its reason and time, and exits as with the directory absent', async () => {
+  for (const name of HOLD_NAMES) {
+    const target = checked(starter());
+    const { absent, seeded } = await absentThen(target, (state) => seed(state, name, closerText({ reason: 'environment hold' })));
+    const line = admissionLine(seeded.text);
+    assert.match(line, /^\s*ok\s+admission: /, seeded.text);
+    assert.ok(line.endsWith(`admission: ${HOLD_WORDS}`), `${name}: ${line}`);
+    assert.equal(headingOf(seeded.text), headingOf(absent.text));
+    assert.equal(seeded.code, absent.code, seeded.text);
+  }
+});
+
+// proves R-SCHED-17
+test('doctor names both closers, each by kind, reason and time, where an owner closer and a hold closer close admission', async () => {
+  const target = checked(starter());
+  const { absent, seeded } = await absentThen(target, (state) => {
+    seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' }));
+    seed(state, 'hold-b2.json', closerText({ reason: 'environment hold' }));
+  });
+  const line = admissionLine(seeded.text);
+  assert.match(line, /^\s*ok\s+admission: /, seeded.text);
+  assert.ok(line.includes(OWNER_WORDS), line);
+  assert.ok(line.includes(HOLD_WORDS), line);
+  assert.equal(headingOf(seeded.text), headingOf(absent.text));
+  assert.equal(seeded.code, absent.code, seeded.text);
+});
+
+/** Each entry `read` cannot read, with the cause it names, seeded by hand. */
+const UNREADABLE = [
+  { name: 'stray.json', cause: 'no closer form', make: (state) => seed(state, 'stray.json', closerText()) },
+  { name: 'owner-c3.json', cause: 'no reason, time or run', make: (state) => seed(state, 'owner-c3.json', JSON.stringify({ reason: 'r', run: 'x' })) },
+  { name: 'owner-d4.json', cause: 'not a regular file', make: (state) => mkdirSync(join(admissionOf(state), 'owner-d4.json'), { recursive: true }) },
+];
+
+// proves R-SCHED-17
+test('doctor fails the admission line, naming its path and cause, for an entry of no closer form, a closer lacking its time, and a closer name that is a directory', async () => {
+  for (const { name, cause, make } of UNREADABLE) {
+    const target = checked(starter());
+    const { absent, seeded } = await absentThen(target, make);
+    const line = admissionLine(seeded.text);
+    assert.match(line, /^\s*failed\s+admission: /, seeded.text);
+    assert.ok(line.includes(`${join(admissionOf(stateIn(realpathSync(target))), name)} (${cause})`), line);
+    assert.equal(absent.code, 0, absent.text);
+    assert.notEqual(seeded.code, 0, seeded.text);
+  }
+});
+
+// proves R-SCHED-17
+test('doctor fails the admission line where a readable closer sits beside an unreadable one, naming the unreadable path', async () => {
+  const target = checked(starter());
+  const { seeded } = await absentThen(target, (state) => {
+    seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' }));
+    seed(state, 'stray.json', closerText());
+  });
+  const line = admissionLine(seeded.text);
+  assert.match(line, /^\s*failed\s+admission: /, seeded.text);
+  assert.ok(line.includes(`${join(admissionOf(stateIn(realpathSync(target))), 'stray.json')} (no closer form)`), line);
+  assert.notEqual(seeded.code, 0, seeded.text);
+});
+
+// proves R-SCHED-17
+test('doctor fails the admission line where admission is a file, naming the directory and its cause', async () => {
+  const target = checked(starter());
+  const { seeded } = await absentThen(target, (state) => {
+    mkdirSync(state, { recursive: true });
+    writeFileSync(admissionOf(state), 'not a directory');
+  });
+  const line = admissionLine(seeded.text);
+  assert.match(line, /^\s*failed\s+admission: /, seeded.text);
+  assert.ok(line.includes(`${admissionOf(stateIn(realpathSync(target)))} (not a directory)`), line);
+  assert.notEqual(seeded.code, 0, seeded.text);
+});
+
+// proves R-SCHED-17
+test('under a closed admission with every other check failing, doctor reports it closed and its heading and exit are those with the directory absent', async () => {
+  const target = checked(starter().replace(/^\s*repo:.*$/m, ''));
+  const options = { ...against(target, { gh: RECORDED.ghOut, claude: RECORDED.agentOut, codex: CODEX.signedOut }), packageRoot: packageDeclaring('>=999') };
+  const { absent, seeded } = await absentThen(target, (state) => seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' })), options);
+
+  assert.ok(admissionLine(seeded.text).endsWith(`admission: ${OWNER_WORDS}`), seeded.text);
+  assert.match(admissionLine(seeded.text), /^\s*ok\s/, seeded.text);
+  assert.equal(linesOf(absent.text, 'admission').length, 1, absent.text);
+  assert.ok(checkLines(seeded.text).filter((line) => !line.includes('admission:')).every((line) => !/^\s*ok\s/.test(line)), seeded.text);
+  assert.equal(headingOf(seeded.text), headingOf(absent.text));
+  assert.equal(seeded.code, absent.code);
+  assert.notEqual(seeded.code, 0, seeded.text);
+});
+
+// proves R-SCHED-17
+test('under a closed admission, doctor reports it closed among the checks it runs where the config cannot be read or is refused, and exits as otherwise', async () => {
+  for (const source of ['export default {\n', starter().replace(/^\s*repo:.*$/m, '')]) {
+    const target = checked(source);
+    const options = against(target, { ...PASSING, codex: CODEX.signedIn });
+    const { absent, seeded } = await absentThen(target, (state) => seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' })), options);
+    assert.deepEqual(namesIn(seeded.text), UNREAD, seeded.text);
+    assert.ok(admissionLine(seeded.text).endsWith(`admission: ${OWNER_WORDS}`), seeded.text);
+    assert.equal(headingOf(seeded.text), headingOf(absent.text));
+    assert.equal(seeded.code, absent.code);
+    assert.notEqual(seeded.code, 0, seeded.text);
+  }
+});
+
+/** `answeringEach(PASSING)`, but every board read `gh api` sends fails as a forge outage does. */
+function boardDown() {
+  const through = answeringEach(PASSING);
+  return (command, args) => (command === 'gh' && args[0] === 'api' && gateAnswer(args) === null
+    ? { status: 1, stdout: '', stderr: 'HTTP 502: board unavailable\n' }
+    : through(command, args));
+}
+
+// proves R-SCHED-17
+test('where the board cannot be read, doctor reports a closed admission closed and exits as otherwise, and an unreadable one failed', async () => {
+  const target = checked(starter());
+  const options = { ...against(target, PASSING), ask: boardDown() };
+  const { absent, seeded } = await absentThen(target, (state) => seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' })), options);
+  assert.match(admissionLine(absent.text), /admission is open/, absent.text);
+  assert.ok(linesOf(seeded.text, 'board reachability').every((line) => /^\s*failed\s/.test(line)), seeded.text);
+  assert.ok(admissionLine(seeded.text).endsWith(`admission: ${OWNER_WORDS}`), seeded.text);
+  assert.equal(headingOf(seeded.text), headingOf(absent.text));
+  assert.equal(seeded.code, absent.code);
+
+  seed(stateIn(target), 'stray.json', closerText());
+  const unreadable = await doctor(options);
+  assert.match(admissionLine(unreadable.text), /^\s*failed\s+admission: .*stray\.json \(no closer form\)/, unreadable.text);
+  assert.notEqual(unreadable.code, 0, unreadable.text);
+});
+
+// proves R-SCHED-17
+test('doctor creates no admission directory where none existed, changes nothing under one that exists, and records no admission event', async () => {
+  const target = checked(starter());
+  await doctor(against(target, PASSING));
+  assert.equal(existsSync(admissionOf(stateIn(target))), false);
+
+  for (const prepare of [
+    (state) => seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' })),
+    (state) => seed(state, 'stray.json', closerText()),
+  ]) {
+    const each = checked(starter());
+    prepare(stateIn(each));
+    const before = picture(admissionOf(stateIn(each)));
+    await doctor(against(each, PASSING));
+    assert.deepEqual(picture(admissionOf(stateIn(each))), before);
+    assert.deepEqual(readdirSync(stateIn(each)).filter((name) => name !== 'events.jsonl' && name !== 'admission'), []);
+    const events = existsSync(join(stateIn(each), 'events.jsonl')) ? readEvents(stateIn(each)) : [];
+    assert.deepEqual(events.filter(({ event }) => event.startsWith('admission.')), [], JSON.stringify(events));
+  }
+});
+
+// proves R-SCHED-17
+test('the words that name a closer are once\'s, written out by hand', () => {
+  assert.equal(closedBy({ kind: 'owner', reason: 'owner pause', time: TIME }), OWNER_WORDS);
+  assert.equal(closedBy({ kind: 'hold', reason: 'environment hold', time: TIME }), HOLD_WORDS);
 });
