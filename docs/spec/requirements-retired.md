@@ -43,6 +43,7 @@ Ids allocated here still count as allocated. The duplicate-id check reads both f
 | R-STATE-20 | A process can join a process group Rigger created after Rigger's last read of that group before a kill, be ended by that kill, and be reaped before Rigger reads the group again. No read can show such a process, so Rigger records nothing for it, and `R-STATE-12`, `R-STATE-13` and `R-STATE-19` do not reach it. |  | 2026-10-04 | R-STATE-26 |
 | R-FAIL-3 | A second failure of the same kind, without a success between them, closes admission and records why. | D12 | 2026-10-17 | R-FAIL-5 |
 | R-FAIL-5 | Rigger closes admission, and records why, when a card's second attempt fails in its environment the same way its first did. The ways are in `### R-FAIL-5 — Environment failures and the hold`. | D12 | 2026-10-22 | R-FAIL-6 |
+| R-FAIL-6 | Rigger closes admission, and records why, when a card's second attempt fails in its environment the same way its first did. The ways are in `### R-FAIL-6 — Environment failures and the hold`. | D12 | 2026-10-24 | R-FAIL-7 |
 
 ### R-WORK-30 — When a merged card's directories are removed
 
@@ -135,6 +136,41 @@ Each failure is one of three classes:
 | a host failure on one attempt and a card-local refusal on the other | card-local | — | in: `R-ESCALATE-12`, never a hold |
 | the line of work moved, or deleted, since L2 read it (`R-WORK-25`) | out | — | out: the next pull reads the forge again |
 | two attempts failing in different host ways | out | — | out: the card stops, and admission stays open |
+| an optional step that failed or never started | out | — | out: `R-PROV-2` |
+| a judge's directory not made, or a required step in a judge's `head` that failed or never started | out | — | out: no second attempt is made in that invocation, and the next invocation tries again |
+| a maker that ran its first command and then failed | out | — | out: the work's failure, not the environment's |
+| two cards each failing once | out | — | out: counted per card |
+| a card refused for its acceptance's form (`R-CARD-7`, `R-CARD-8`) | out | — | out: it stays a refusal `rigger plan` reports |
+| a card refused for its kinds (`R-SCHED-12`) | out | — | out: it stays a refusal `rigger plan` reports |
+| a card refused for its labels' tiers or providers (`R-LOOP-13`, `R-LOOP-16`) | out | — | out: it stays a refusal `rigger plan` reports |
+
+### R-FAIL-6 — Environment failures and the hold
+
+Each failure is one of three classes:
+
+- **a host failure:** a second attempt that fails the same way closes admission;
+- **card-local:** it escalates under `R-ESCALATE-12` at once, and an attempt pair that includes one escalates rather than stops;
+- **out:** neither.
+
+| Failure | Class | The same way when | Scope |
+|---|---|---|---|
+| the workspace not made, because git or the file system gave no answer, or none in time | host | always | in |
+| a continuing workspace's fetch failing or timing out (`R-WORK-25`) | host | always | in |
+| a required provisioning step that never started | host | it is the same step | in |
+| a required step that exited non-zero or ran past its time | host | it is the same step | in |
+| the maker's dispatch never started, its scratch directory made, or its scratch directory not made because the file system gave no answer, or none in time | host | always | in |
+| the directory at the card's workspace path, refused under `R-WORK-13` | card-local | — | in: `R-ESCALATE-12` |
+| a role's scratch directory refused under `R-WORK-26`, the maker's or a judge's | card-local | — | in: `R-ESCALATE-12` |
+| a judge's directory refused under `R-WORK-20` | card-local | — | in: `R-ESCALATE-12` |
+| the card's branch checked out in a worktree elsewhere (`R-WORK-25`) | card-local | — | in: `R-ESCALATE-12` |
+| the forge holding the card's line of work, or a merged pull request from it, under `R-WORK-19` | card-local | — | in: `R-ESCALATE-12` |
+| more than one open pull request from the card's line of work | card-local | — | in: `R-ESCALATE-12` |
+| a card in the owner's column with no pull request from its line of work | card-local | — | in: `R-ESCALATE-12` |
+| a host failure on one attempt and a card-local refusal on the other | card-local | — | in: `R-ESCALATE-12`, never a hold |
+| the line of work moved, or deleted, since L2 read it (`R-WORK-25`) | out | — | out: the next pull reads the forge again |
+| two attempts failing in different host ways | out | — | out: the card stops, and admission stays open |
+| a derived branch name git refuses | out | — | out: the card stops at the attempt that meets it, with no second attempt, and admission stays open |
+| a worktree root that is not an absolute path | out | — | out: the card stops at the attempt that meets it, with no second attempt, and admission stays open |
 | an optional step that failed or never started | out | — | out: `R-PROV-2` |
 | a judge's directory not made, or a required step in a judge's `head` that failed or never started | out | — | out: no second attempt is made in that invocation, and the next invocation tries again |
 | a maker that ran its first command and then failed | out | — | out: the work's failure, not the environment's |

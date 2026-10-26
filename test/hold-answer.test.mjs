@@ -11,7 +11,7 @@ import { KINDS, readyCard } from './loop-world.mjs';
 const events = [];
 const sink = { emitter: () => ({ emit: (event, fields) => events.push({ event, ...fields }) }) };
 
-// proves R-FAIL-6
+// proves R-FAIL-7
 test('L2 holds a card whose two workspaces cannot be made', () => {
   events.length = 0;
   const firstFailure = { class: 'environment', workspace: '/work/rigger-7', reason: 'git gave no answer' };
@@ -49,7 +49,7 @@ function second(kind) {
   };
 }
 
-// proves R-FAIL-6
+// proves R-FAIL-7
 test('L2 answers each in-scope Table A pair by host kind and step', async (t) => {
   const rows = ['W', 'F', 'N(s)', 'X(s)', 'M'];
   const columns = ['W', 'F', 'N(s)', 'N(t)', 'X(s)', 'X(t)', 'M'];
@@ -89,7 +89,7 @@ test('L2 answers again on attempt one for each host kind with or without an earl
   }
 });
 
-// proves R-FAIL-6
+// proves R-FAIL-7
 test('L2 holds a required step that exits non-zero then runs past its time', () => {
   events.length = 0;
   const firstFailure = FIRST['X(s)'];
@@ -102,7 +102,7 @@ test('L2 holds a required step that exits non-zero then runs past its time', () 
   assert.deepEqual(answer, { action: 'hold', card: 7, firstFailure, failure: { class: 'environment', step: 's', timeout: 50 } });
 });
 
-// proves R-FAIL-6
+// proves R-FAIL-7
 test('L2 records a hold decision with the attempt and both environment failures and their step', () => {
   events.length = 0;
   const { kinds, options } = second('N(s)');
