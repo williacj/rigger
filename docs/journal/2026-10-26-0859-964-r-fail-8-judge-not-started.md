@@ -30,6 +30,10 @@ each can also last, and then it spins in silence. Host costs nothing for a cause
 since only a second failure the same way closes admission. They also found rows holding three or
 more conditions, which spec-style rule 4 splits one condition to a row.
 
+The second round missed a read. L1 reads its record of process groups before it writes it, and a
+record that cannot be read, or holds no list of entries, stops the judge's dispatch with no write.
+The third round gives it a row of its own, host, and sweeps every read on the judge's path again.
+
 Open cards whose bodies cite the literal `R-FAIL-7` when the head was pushed, by an exact match
 over the bodies of all 31 open issues: #964 alone. The PM retargets a card body only where its
 acceptance turns on the added rows.
@@ -38,4 +42,6 @@ acceptance turns on the added rows.
 request merged `main` and retargeted them, id only, under the architect's delta the card records.
 
 What taught us: "passes by itself" is a judgment about the usual case. A requirement row has to
-hold for the case that lasts, so test each cause's persistence against its worst case.
+hold for the case that lasts, so test each cause's persistence against its worst case. An inventory
+of refusals has to read the arguments of a call, not only the call: `writeGroups(directory,
+readGroups(directory))` fails in its argument first.

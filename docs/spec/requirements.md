@@ -618,6 +618,7 @@ Each failure is one of three classes:
 | a judge's dispatch that never started because a directory made for it was gone or unreadable when it started | host | always | in |
 | a judge's dispatch that never started because its working directory was replaced, so that its real path lies outside the judge's directory | host | always | in |
 | a judge's dispatch that never started because another dispatch's entry in Rigger's record of process groups held the judge's directory | host | always | in |
+| Rigger's record of process groups that cannot be read, or that holds no list of entries Rigger can read, when a judge's dispatch is about to start | host | always | in |
 | a judge's dispatch that never started because Rigger could not record one of its events | out | — | out: `R-RECORD-9` |
 | a maker that ran its first command and then failed | out | — | out: the work's failure, not the environment's |
 | two cards each failing once | out | — | out: counted per card |
