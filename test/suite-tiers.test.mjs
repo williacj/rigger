@@ -165,6 +165,8 @@ const expectedLists = {
 expectedLists.host.push('test/process-table.test.mjs');
 expectedLists.host.push('test/claude-folder-live.test.mjs');
 expectedLists.host.push('test/test-list-growth-host.test.mjs');
+expectedLists.host.push('test/mutation-receipt.test.mjs');
+expectedLists.host.push('test/proof-diff.test.mjs');
 expectedLists.host.sort();
 expectedLists.awaiting.push('test/claude-folder-live.test.mjs');
 expectedLists.awaiting.sort();

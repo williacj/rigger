@@ -108,6 +108,8 @@ reason you wanted. So show all of these, for each mutation, before you say what 
 7. **A failed guard exits non-zero.** A guard that reports a result it could not vouch for is
    itself the defect.
 
+Attach `npm run mutation:receipt` output to each mutation claim.
+
 One mutation removes one behaviour. Batching several reports the union and hides the gap.
 
 `test/verify-mac-containment` guards its bounded Mac claims: anchors, readback/diff, named

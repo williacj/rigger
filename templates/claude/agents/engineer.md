@@ -21,6 +21,7 @@ repository. Nothing here widens it; what follows is what is true of you in parti
   Record branch and route in PR handoff.
 - Refresh PR description after head/acceptance changes; keep refs, evidence claims and unresolved
   attempts current.
+- Attach `mutation:receipt` receipts to every mutation claim and `proof:diff` reports to every new test that claims a requirement.
 - For retained originals, ledger each attempt's planned result/originals, outcome, missing
   originals/denied gate; preserve failed, missing-original and ungated status across later attempts.
 - **Dispatched by Rigger, you stop at a Self-hosting path.** Work that would change a path

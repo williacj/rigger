@@ -39,6 +39,8 @@
     "check:headers": "node scripts/aboutme-header-check.mjs",
     "matrix": "node scripts/build-test-matrix.mjs --write",
     "matrix:check": "node scripts/build-test-matrix.mjs",
+    "mutation:receipt": "node scripts/mutation-receipt.mjs",
+    "proof:diff": "node scripts/proof-diff.mjs",
     "absorption-check:self-test": "node scripts/absorption-check.mjs --self-test"
   },
   "devDependencies": {
