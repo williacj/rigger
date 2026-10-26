@@ -16,6 +16,7 @@ import { gitIn, repositoryAt, withOrigin } from './git-repository.mjs';
 import { scratch } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { standInAgent } from './stub-claude.mjs';
+import { chmodSync } from 'node:fs';
 
 /** The stand-in agent every role in this file runs as, on the PATH each verb runs under. */
 const agent = standInAgent();
@@ -95,3 +96,30 @@ for (const name of ['once', 'run']) {
     assert.ok(events.indexOf(made[0]) < events.indexOf(start),'L1 made the judge\'s directory before the judge\'s dispatch started');
   });
 }
+
+// proves R-FAIL-7
+test('rigger run withholds a judge whose scratch directory was not made because the file system would not list it, pulls its card no more in that invocation, and the next invocation dispatches that judge again', { timeout: SETTLES_WITHIN }, (t) => {
+  const here = world(t);
+  // The card's scratch base sits beside the judges' directories under the worktree root.
+  const path = join(dirname(dirname(here.judges)), 'scratch', LINE, 'reviewer');
+  mkdirSync(path, { recursive: true });
+  chmodSync(path, 0o000);
+  t.after(() => chmodSync(path, 0o700));
+  const ofCard = (layer, event) => here.events().filter((each) => each.layer === layer && each.event === event && each.card === CARD);
+
+  const first = here.verb('run');
+
+  const withheld = ofCard('L2', 'judge.withheld');
+  assert.deepEqual(withheld.map(({ role, scratch: missing, class: classed }) => ({ role, missing, classed })), [{ role: 'reviewer', missing: path, classed: 'environment' }], first.said);
+  assert.ok(withheld[0].reason.includes(path), withheld[0].reason);
+  assert.equal(ofCard('L3', 'pull').length, 1, first.said);
+  assert.equal(ofCard('L1', 'dispatch.start').length, 0, first.said);
+
+  chmodSync(path, 0o700);
+  const second = here.verb('run');
+
+  assert.equal(ofCard('L3', 'pull').length, 2, second.said);
+  const starts = ofCard('L1', 'dispatch.start');
+  assert.equal(starts.length, 1, second.said);
+  assert.equal(here.events().find((each) => each.event === 'dispatch.end' && each.dispatch === starts[0].dispatch)?.exit, 0, second.said);
+});
