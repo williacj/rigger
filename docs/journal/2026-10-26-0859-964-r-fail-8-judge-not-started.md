@@ -50,7 +50,7 @@ acceptance turns on the added rows.
 
 #967 (#961) merged before this card, adding `R-FAIL-7` citations to `ARCHITECTURE.md`. This pull
 request merged `main` and retargeted them, id only, under the architect's delta the card records.
-#985 merged before this card too, citing `R-FAIL-7` in 17 test claims and one comment under
+#985 merged before this card too, citing `R-FAIL-7` in 17 claims in tests and one comment under
 `src/`, and this pull request retargeted them the same way.
 
 What taught us: "passes by itself" is a judgment about the usual case. A requirement row has to
