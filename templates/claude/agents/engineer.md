@@ -21,6 +21,10 @@ repository. Nothing here widens it; what follows is what is true of you in parti
   Record branch and route in PR handoff.
 - Refresh PR description after head/acceptance changes; keep refs, evidence claims and unresolved
   attempts current.
+- For each blocking finding, name its fault class and search the whole head for every instance.
+  Fix each within the card's "Lands in" paths or explain why it is not an instance.
+  Name outside instances in the PR body for their own cards; do not fix them (`R-CARD-11`).
+- Quote each search and its hits in the PR body.
 - For retained originals, ledger each attempt's planned result/originals, outcome, missing
   originals/denied gate; preserve failed, missing-original and ungated status across later attempts.
 - **Dispatched by Rigger, you stop at a Self-hosting path.** Work that would change a path
