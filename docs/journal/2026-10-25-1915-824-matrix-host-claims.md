@@ -57,3 +57,16 @@ The run therefore has no successful aggregate result. Integration with actual ma
 then produced a real conflict in the generated matrix. The generator alone resolved that
 conflict from the combined declarations; no matrix row was hand-edited. Boundary facts are
 remeasured against this actual base rather than carried forward from the earlier source.
+
+After #957 merged, main `330ddad0` had tree `a9ee141b624e1ddf57518018483fe2525e113f94`.
+A clean source integration of this card with that tree changed only the seven card paths.
+The generator resolved the matrix conflict from the combined declarations; it reported
+57 of 223 requirements without a test. The resulting tree was
+`decac264ae139908c327cb73528fa159c458be2f`, measured with `git write-tree`.
+
+At that tree on 2026-10-26, Node 26.12.0 on Linux/WSL ran `npm run matrix:check`
+successfully, `npm test` with 3008 passes, 9 skips and no failures, and the targeted native
+host boundary file with 10 passes and no failures. The five path, reference, instruction-budget,
+header and word checks, plus `git diff --check`, also exited zero. Complete local originals
+are retained privately. These are final integration checks; the accepted supported-macOS
+proof still needs its own current-source run and receipt.
