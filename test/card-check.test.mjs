@@ -312,3 +312,14 @@ test('a register under root that cannot be read names its path and the cause, ex
   assert.ok(out.includes(join(root, 'docs/spec/requirements.md')), out);
   assert.match(out, /EISDIR/);
 });
+
+test('a spec-style skill keeping its one-term rule but ruling out no term names the path and the cause, exit 2', () => {
+  // The rule's heading stays, so the reader finds the section; with no `never` in it, it reads
+  // an empty set, and an empty set would let every pinned term through as nothing found.
+  const skill = SKILL.replace('A card is escalated — never bubbled, parked or forwarded.', 'Use one term for each concept.');
+  const root = repository({ '.claude/skills/spec-style/SKILL.md': skill });
+  const { status, out } = cardCheck(lines('```markdown', 'A card is never parked.', '```'), root);
+  assert.equal(status, 2, out);
+  assert.ok(out.includes(join(root, '.claude/skills/spec-style/SKILL.md')), out);
+  assert.match(out, /states no ruled-out term/);
+});

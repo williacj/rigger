@@ -68,7 +68,11 @@ export function inputs(root) {
   const skill = join(root, SKILL);
   return named([skill], () => {
     const text = readFileSync(skill, 'utf8');
-    return { allocated, rules: { ceiling: sentenceCeiling(text), terms: ruledOutTerms(text) } };
+    const terms = ruledOutTerms(text);
+    // The reader throws only where the rule is missing; a rule naming no spelling reads as an
+    // empty set, which would pass every pinned term as clean.
+    if (terms.size === 0) throw new Error('the spec-style skill states no ruled-out term in its one-term rule');
+    return { allocated, rules: { ceiling: sentenceCeiling(text), terms } };
   });
 }
 

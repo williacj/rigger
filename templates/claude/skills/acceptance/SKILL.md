@@ -91,7 +91,7 @@ A **Given/When/Then** bullet where the ruling needs its context to make sense. `
 holds, so one item carries one independently ruleable outcome, never a scenario with several
 `Then`s. Split a compound result. Example acceptance (`R-CARD-12`):
 
-```markdown
+```text
 ## Acceptance
 
 - Given a Ready card has no acceptance, when `rigger plan` evaluates it, then the card is not
@@ -209,16 +209,16 @@ That agent checks that "Lands in" names every file an item requires or a cited p
 names. It also checks that every cited proposal, ruling or grant is posted as a comment, issue
 or pull request and linked from the card.
 
-Fence pinned binding-document text with `markdown` first in its info string, and nothing else.
-That agent checks these defects:
+Pinned binding-document text, and nothing else, opens its fence with `markdown`; an example takes
+another info string or none. That agent checks these defects:
 
-1. A new `R-` id nothing claims or excepts.
-2. Pinned text failing spec-style, or misfenced binding-document text.
+1. An unclaimed, unexcepted new `R-` id.
+2. Pinned text failing spec-style, or misfenced.
 3. An unbounded negative guarantee ("Write each item"; "Systems outside Rigger's code").
 4. A request no item covers.
 5. Contradicting sibling cards.
 
-`npm run check:card` checks defect 1, and spec-style rules 1 and 2.
+`check:card` checks defect 1, and spec-style rules 1 and 2.
 
 You revise the acceptance before any maker starts. This review is part of filing.
 
