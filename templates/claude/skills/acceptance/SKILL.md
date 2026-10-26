@@ -165,22 +165,27 @@ real OS behaviour or a real deadline. Keep these obligations independently rulea
 
 ## Systems outside Rigger's code
 
-**Map the finite contract states.** For an external boundary, name the outcomes that change the
-branch or result, including errors, absence and nonreturn where reachable. Mark in-scope cells
-and state the scope edge. Each item retains a concrete falsifier.
+**Map the finite contract states.** At external boundaries, name states that change branch or
+result, including reachable errors, absence and nonreturn. Mark in-scope cells and scope edges.
+Each item retains a concrete falsifier.
 
 For each in-scope cell, name controlled algorithm proof, real-boundary proof, or both, according
 to its claim. Real OS behaviour, tool contracts and real deadlines retain real-host evidence;
 injected-clock and fake results alone earn no such credit.
 
-Justify excluded or equivalent states with evidence for independent review. Do not multiply
-unrelated axes or enumerate unbounded external-system states. A proposed equivalence is not
-established merely because the author labels it so. An absolute holds only within the stated
-map and scope edge.
+Steps are concurrent if they can interleave on one store, between processes or async tasks
+within one process. A step is one read, write, rename or forge call. Concurrent actors including
+a writer need an acceptance interleaving table: one row per ordering that can change outcomes
+or reader access point, each with its required outcome. Include writers restarted against their
+own leftovers after mid-write kills. Otherwise, one writer without concurrent readers, or
+readers alone, needs none. An ordering whose outcome no item or structure fixes is a missing cell.
 
-Observe fixture readiness before timing a behaviour that assumes readiness. Keep startup timed
-when startup belongs to the contract. The `tdd` skill gives the test procedure; "Have it attacked
-before dispatch" governs independent acceptance review.
+Justify exclusions and equivalences with evidence for independent review, not labels. Avoid
+unrelated axes and unbounded external states. Bound absolutes by the map and scope edge.
+
+Observe fixture readiness before timing behaviour that assumes it; time startup when it
+belongs to the contract. The `tdd` skill gives procedures; "Have it attacked before dispatch"
+governs independent review.
 
 ## What is checked, and what is not
 
