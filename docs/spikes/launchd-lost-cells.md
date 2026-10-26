@@ -319,6 +319,13 @@ owner saw is in the next table.
 | C: turned off; the same Focus on | not recorded per firing | 01:19:28 unrecorded (194); 01:20:28 unrecorded (195); 01:21:28 not seen (196); 01:22:29 unrecorded (197); 01:23:29 not seen (198) |
 | D: turned off; no Focus | not recorded per firing | not run |
 
+**Lost, and not recoverable by a re-run.** Batch 3 recorded no per-firing observation in any
+phase, and the owner's two statements give none. No reading of the posting app's notification
+setting was taken during batch 3's phases C and D or batch 3b's phase C. The preferences file keeps
+only its current state, last written at 01:23:49Z on 2026-10-26, so whether the app's notifications
+were off in those phases cannot be established. Batch 3c's readings, if run, stand for Q-k2 and the
+banner in their place. These earlier phases are reported as unmeasured for the app setting.
+
 **Batch 3, in the owner's words.** Neither statement gives a per-firing observation, so this report
 reads no firing's outcome from them. The coordinator relayed both:
 - "batch 3 is done … I saw everything I was supposed to see"
@@ -369,6 +376,35 @@ batch 3 statement mentions it.
   and no prompt answer records them.
 - **The posting app's name:** the typed answer is `x`. Asked again afterwards, the owner answered
   "1) scripts editor" (951#6406431897).
+  - **Measured on 2026-10-26, after the run, read-only.** The notification preferences,
+    `~/Library/Group Containers/group.com.apple.usernoted/Library/Preferences/group.com.apple.usernoted.plist`,
+    read with `plutil -p` (entry 252), hold an app entry with `"bundle-id" => "com.apple.ScriptEditor2"`,
+    `"path" => "/System/Applications/Utilities/Script Editor.app"`, whose `src` names
+    `"path" => "/usr/bin/osascript"`. Its `flags` was `41951246` at 02:19:42Z (entry 255).
+  - The file was last written at 01:23:49Z (entry 260), inside batch 3b's phase C.
+  - The meaning of each bit of `flags` is not established here.
+
+**Settings changed for Q-k, each with its end state (item 8).** The plan asked the owner to change
+two settings: the posting app's notification setting, for phases C and D, and a Focus, for phases B
+and C (951#6401933790).
+
+| Setting | What the owner said | What the host's stores show | Kept or restored |
+|---|---|---|---|
+| A Focus: Do Not Disturb | "turned on Do Not Disturb, then restored everything" (951#6406167931) | The Focus store, `~/Library/DoNotDisturb/DB/Assertions.json`, read at 02:20:16Z on 2026-10-26 (entry 259), holds an **active** `com.apple.donotdisturb.mode.default` assertion, reason `user-action`, which began at **01:14:56.144Z**, 2 s before batch 3b's phase B began. It has no invalidation record. | restored, in the owner's words; still active in the store at entry 259's reading |
+| The posting app's notification setting (Script Editor, `com.apple.ScriptEditor2`) | not named in the owner's words | The notification preferences file was last written at 01:23:49Z (entry 260). `flags` read `41951246` afterwards (entry 255). No reading was taken before or during the phases | not recorded |
+
+- **Batch 3's Focus.** The Focus store holds no Focus assertion that began or ended between
+  00:41:03Z and 00:47:59Z, batch 3's phases B to D (entry 259). The store holds one ended record
+  per mode, so a later record may have replaced one. That is a judgment from the store's shape.
+- **A second Focus, not one the spike asked for.** The store holds a Sleep Focus
+  (`com.apple.sleep.sleep-mode`, reason `schedule`), from another device
+  (`5D7C2A2C-D31E-4B51-843B-22B3E06980B3`). It was active from 01:15:03Z to 02:00:02Z, and again from
+  02:00:02Z (entry 259). It was active through batch 3b's phases B and C.
+- **The global "Allow notifications when…" settings were not asked to change.** The preferences'
+  `dnd_prefs`, decoded with `plutil` (entries 253 and 254), read `"dndDisplayLock" => false`,
+  `"dndDisplaySleep" => true` and `"dndMirrored" => true` on 2026-10-26 at 02:19:42Z. How these keys
+  map to the three labels in System Settings is not established here. The report quotes both and
+  maps neither.
 
 **A defect in the throwaway script,** recorded, not chased. Four "unrecorded" firings were stamped
 within 0.1 to 0.5 s of their firing, not after the 55 s timeout: 01:18:28 (entry 192), 01:19:28
@@ -489,6 +525,16 @@ records posting those comments and the checks made on them.
     `batch1.console`, right after entry 039.
     Its first entry is 040, and entry 227 records the start after the fact.
   - The owner started the other three in Terminal.app. Their first entries are 113, 151 and 185.
+- **Lost, and not recoverable by a re-run.** Entries 002, 024, 027, 028, 038, 150, 155, 168 to
+  171, 180, 222, 227, 236, 237, 239, 241, 243, 244 and 262 each group several commands under one time
+  and one status, recorded after the commands ran. Those commands' individual start times, exit
+  statuses and one-minute loads were never recorded. The same holds for the four script
+  invocations, whose starts are bounded by entries 040, 113, 151 and 185, and whose exit statuses
+  were not recorded. A re-run makes new commands, not these. The cells rest on none of them: every
+  command a cell's reading comes from is its own entry.
+- **The four commit commands each have a record of their own outside the transcript.** It is
+  `~/GitHub/rigger-worktrees/suite-slot/suite-slot.log`, in the "Writes outside the log directory" ledger, and gives each one's start,
+  end and load. That load is the laptop's, not the mini's.
 
 ## Token grep
 
@@ -517,14 +563,57 @@ The command is `zsh ~/Library/Logs/rigger-spike-951/bin/tokengrep.zsh <paths>`, 
 
 ## Writes outside the log directory
 
-| When | Machine | Who | What | Why |
-|---|---|---|---|---|
-| 2026-10-25 ~19:00Z | laptop | spike engineer | `~/GitHub/rigger-worktrees/951-spike-engineer`, a clone on `rigger-951` | the brief named a clone that did not exist; it holds this report |
-| ~19:00Z | laptop | spike engineer | copies of #744's plan and report in the session's scratch directory | reading only; nothing the report relies on. Removed at entry 222 |
-| 19:24Z on 2026-10-25 to 01:24Z on 2026-10-26 | mini | launchd | each job's loaded state in gui/501, removed at its `bootout` | the measurements |
-| 19:28Z | mini | codex | tmp/ inside `~/Library/Logs/rigger-spike-951/codex-home`, which is inside the log directory; nothing changed in `~/.codex` that `ls -la` and `stat` show | Q-i |
-| batches 3 and 3b | mini | the owner | the owner's notification settings and Focus. In their words: "turned on Do Not Disturb, then restored everything" (951#6406167931). Their typed answer at the prompt was `Yes` (entry 208) | Q-k, U4.4 as U62 extends it |
-| on #951 | GitHub | spike engineer, through the mini's `gh` | the batch plan and the raw-output comments | the judge's route |
+Every write the spike made, or caused, outside the mini's log directory, on either machine. Where a
+time is a window, its edges are the transcript entries named, because the write itself was not
+timed. Times are UTC. Entry times are the mini's clock. Commit, comment and PR times are GitHub's or
+git's, and the suite-slot times are the laptop's.
+
+**The laptop: the clone.** All by the spike engineer, in `~/GitHub/rigger-worktrees/951-spike-engineer`.
+
+| When | What | Why |
+|---|---|---|
+| 2026-10-25, before 19:03:30Z (entry 001) | `git clone` from GitHub, then `git checkout -b rigger-951` at `a8484080` (recorded in entry 002) | the brief named a clone that did not exist |
+| after 19:03:30Z and up to 21:14:46Z (entry 171) | `git config core.hooksPath .githooks`; `npm ci`, writing `node_modules/`; the edit of `doc-references.json` adding the report's `strict` entry; the journal entry written | commit through the hooks; the PR's diff |
+| after 21:12:00Z and up to 21:13:46Z (entries 169 and 170) | the report written, Q-k pending | the PR's diff |
+| 21:13:46Z to 01:26:23Z on 2026-10-26 (entries 170 and 222) | report edits: Q-k, M6-11d, approvals, cleanup | the PR's diff |
+| 01:26:23Z to 01:33:08Z (entries 222 and 236) | report edits: transcript, token grep, the rewrite of host paths the first commit's `path-check` refused | the PR's diff |
+| 01:33:08Z to 01:37:25Z (entries 236 and 237) | commit `f17b17b2`, at 01:34:00Z (git author time). Its pre-commit suite ran in the suite slot (see below), and the hook added the tree to the clone's `.git/rigger-suite-green-trees` | the report |
+| 01:37:49Z (entry 239) | `git push -u origin rigger-951` | the branch on GitHub |
+| 01:37:49Z to 01:53:30Z (entries 239 and 241) | report edit recording the owner's answers of 951#6406431897; commit `0ba1ee6d`, at 01:50:02Z | the owner's answers |
+| 01:53:30Z to 02:04:20Z (entries 241 and 243) | report edit recording 951#6406447806; commit `c30a4310`, at 02:00:49Z; `git push` | the owner's confirmation |
+| after 02:04:51Z (entry 244) | the round 2 edits to the report and the journal, for 956#6406751551, committed locally in the commit after `c30a4310` | the review |
+
+**The laptop: outside the clone.** All by the spike engineer, except where the table says otherwise.
+
+| When | What | Why |
+|---|---|---|
+| 2026-10-25, before 19:03:30Z | copies of #744's plan and report, under the session's scratch directory, `<scratch>/ref/`. Removed at entry 222, 01:26:23Z on 2026-10-26 | reading only |
+| 01:29:41Z to 01:33:07Z (the refused first commit), 01:34:00Z to 01:37:24Z, 01:50:02Z to 01:53:29Z, and 02:00:49Z to 02:04:17Z, each its log's start and end | `~/GitHub/rigger-worktrees/coordinator-tools/suite-slot.sh` took its lock and added its lines to `~/GitHub/rigger-worktrees/suite-slot/suite-slot.log`, once per commit attempt | the suite slot |
+| at each commit | the commits' console output, `<scratch>/951-commit.log`, `<scratch>/951-commit2.log` and `<scratch>/951-commit3.log`, under the session's scratch directory | the suite's result |
+| 02:04Z | the PR's body, `<scratch>/951-pr-body.md`, under the session's scratch directory | `gh pr create` |
+| through the run | the harness's background-task output files, under the session's scratch directory, written by Claude Code for the waits on batch 3 | waits |
+
+**The mini.**
+
+| When | Who | What | Why |
+|---|---|---|---|
+| 19:24:58Z on 2026-10-25 to 01:23:58Z on 2026-10-26 | launchd, at the spike's bootstraps | each job's loaded state in gui/501, removed at its `bootout` | the measurements |
+| 19:28:45Z | codex | tmp/, inside `~/Library/Logs/rigger-spike-951/codex-home`, which is inside the log directory. Nothing changed in `~/.codex` that `ls -la` and `stat` show (entries 101, 102, 109, 110) | Q-i |
+| batches 3 and 3b | the owner, and macOS for them | the Focus and notification settings in "Settings changed for Q-k". The Focus store's active Do Not Disturb assertion began at 01:14:56.144Z, and the notification preferences file was last written at 01:23:49Z | Q-k, U4.4 as U62 extends it |
+| — | `gh` | `~/.config/gh/config.yml` and `~/.config/gh/hosts.yml` were last written at 18:41:03Z, before the spike's first command, so the mini's `gh` changed neither | — |
+
+**GitHub.** All by the spike engineer, through the mini's `gh` except the pull request.
+
+| When (GitHub's time) | What |
+|---|---|
+| 2026-10-25T19:10:19Z | the batch plan, 951#6401933790 |
+| 21:10:48Z, 21:10:49Z, 21:10:51Z | raw output, parts 1 to 3: 951#6403332484, 951#6403332852, 951#6403333159 |
+| 2026-10-26T00:57:19Z | batch 3b's script, 951#6405848862 |
+| 01:25:47Z, 01:25:49Z, 01:25:50Z | raw output, parts 4 to 6: 951#6406173195, 951#6406173461, 951#6406173757 |
+| 01:28:30Z, 01:28:31Z | the transcript, parts 1 and 2: 951#6406204021, 951#6406204301 |
+| 01:37:49Z | the branch `rigger-951`, pushed from the laptop |
+| 02:04:49Z | pull request #956, opened from the laptop |
+| 02:25:10Z | batch 3c's script, 951#6406842430 |
 
 ## Cleanup
 
@@ -540,8 +629,10 @@ The command is `zsh ~/Library/Logs/rigger-spike-951/bin/tokengrep.zsh <paths>`, 
   - **On the laptop,** the clone `~/GitHub/rigger-worktrees/951-spike-engineer`, which carries this
     report's branch. It goes when the branch merges. The scratch copies of #744's plan and report
     were removed (entry 222).
-  - **On the mini,** the owner's settings, which the owner says they restored: "turned on Do Not
-    Disturb, then restored everything" (951#6406167931).
+  - **On the mini,** the owner's settings. The owner says they restored them: "turned on Do Not
+    Disturb, then restored everything" (951#6406167931). At 02:20:16Z on 2026-10-26 the Focus store
+    still held the Do Not Disturb assertion that began at 01:14:56Z, active (entry 259). The spike
+    changes no setting, so that is the owner's to check.
   - **On the mini, `~/.codex`** is unchanged as far as `ls -la` and `stat` show (Q-i).
 - **Whether the owner keeps the log directory** is the owner's call. The spike deletes nothing in
   it, because the report links it as the original.

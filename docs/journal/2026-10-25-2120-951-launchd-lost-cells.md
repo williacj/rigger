@@ -11,12 +11,21 @@ always a `bootout` then a `bootstrap`. Commands run over SSH, in a `Background` 
 same answers from launchd as the same commands run at the console, in `Aqua`. `codex login status`
 never says which `auth.json` it read.
 
-**What worked.** Every command, on either machine, went through one wrapper that wrote a numbered
-transcript entry on the mini, under `~/Library/Logs`, from the spike's first command. The scripts
-that ran over SSH and in the owner's session were the same file with one argument changed, so each
-pair of readings compared like with like. The raw outputs were posted on the card as the run went,
-so a judge never needs a route to the mini.
+**What worked.** Every command the cells rest on went through one wrapper, which wrote a numbered
+transcript entry on the mini, under `~/Library/Logs`. The scripts that ran over SSH and in the
+owner's session were the same file with one argument changed, so each pair of readings compared
+like with like. The raw outputs were posted on the card as the run went, so a judge never needs a
+route to the mini.
 
-**What failed.** Setup files were first written over SSH outside the wrapper, and had to be
-recorded after the fact with hand-typed, approximate times. The wrapper should exist before the
-first write.
+**What failed.** Not every command went through the wrapper:
+- The first commands, and the setup writes over SSH, ran before the wrapper existed or beside it.
+  They were recorded after the fact, grouped, with hand-typed, approximate times.
+- The four script invocations were never entries of their own.
+- Later laptop commands and read-only SSH reads were recorded in grouped notes.
+
+So the transcript is not one entry per command. The wrapper should exist before the first command,
+and each command, including each script's own start, should be its own entry.
+
+The owner's one-key answers in batch 3b were taken from keys already typed, because the script
+never flushed its input. A prompt should flush input and accept a key only after the event it asks
+about.
