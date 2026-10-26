@@ -5,7 +5,7 @@ import { lstatSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 
 import { within } from './run.mjs';
-import { makeScratch } from './workspace.mjs';
+import { SCRATCH_REFUSED, makeScratch } from './workspace.mjs';
 import { gitEnvironment } from '../substrate/git-environment.mjs';
 import { EVENT_REFUSED, NOT_STARTED } from '../substrate/process.mjs';
 import { ADAPTERS } from '../substrate/providers/adapters.mjs';
@@ -41,11 +41,12 @@ import { ADAPTERS } from '../substrate/providers/adapters.mjs';
  * names it (ruling 20).
  *
  * A dispatch that cannot start rejects with `NOT_STARTED`, before `dispatch` runs, so L1 records no
- * `dispatch.start` for it: a provider the map does not hold, naming it; a `scratch` or `repository`
- * that is no absolute path, naming it; a scratch directory L1 could not make, naming its path and
- * why; an `invocation` that rejects, naming its reason; and a variable the adapter may not set
- * (`unsettable`), naming it. A sink that refused one of L1's scratch events rejects as the refused
- * event it is (`EVENT_REFUSED`).
+ * `dispatch.start` for it: a provider the map does not hold; a `scratch` or `repository` that is
+ * no absolute path; an unanswered scratch check or make; an `invocation` that rejects; or a
+ * variable the adapter may not set (`unsettable`). Each names its reason. An answered maker scratch
+ * refusal rejects with `SCRATCH_REFUSED` when the answer has no judge facts; the same refusal for a
+ * judge remains `NOT_STARTED`. A sink that refused one of L1's scratch events rejects as the
+ * refused event it is (`EVENT_REFUSED`).
  */
 export async function roleDispatch({ answer, cwd, directory, scratch, repository, reach, env, sink, id, card, adapters = ADAPTERS }) {
   const { provider } = answer;
@@ -57,6 +58,7 @@ export async function roleDispatch({ answer, cwd, directory, scratch, repository
     made = await makeScratch({ base: scratch, role: answer.role, card, repository, sink });
   } catch (cause) {
     if (cause.code === EVENT_REFUSED) throw cause;
+    if (cause.code === SCRATCH_REFUSED && !Object.hasOwn(answer, 'facts')) throw cause;
     throw unstarted(cause.message, cause);
   }
   const environment = gitEnvironment(env);

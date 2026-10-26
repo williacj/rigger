@@ -6,16 +6,34 @@ import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 import { within as underOrAt } from './run.mjs';
 import { EVENT_REFUSED } from '../substrate/process.mjs';
-import { ADDING, workspaces } from '../substrate/worktrees.mjs';
+import { ADDING, FETCH_FAILED as L0_FETCH_FAILED, LINE_DELETED as L0_LINE_DELETED, LINE_MOVED as L0_LINE_MOVED, workspaces } from '../substrate/worktrees.mjs';
 
 /**
  * The `code` of the failure L1 rejects with when it could not make a card's workspace, so its
  * caller tells it from a command that ran, or never started, without reading the message.
  */
 export const WORKSPACE_NOT_MADE = 'WORKSPACE_NOT_MADE';
+export const WORKSPACE_REFUSED = 'WORKSPACE_REFUSED';
+export const BRANCH_ELSEWHERE = 'BRANCH_ELSEWHERE';
+export const SCRATCH_REFUSED = 'SCRATCH_REFUSED';
+export const LINE_MOVED = 'LINE_MOVED';
+export const LINE_DELETED = 'LINE_DELETED';
+export const FETCH_FAILED = 'FETCH_FAILED';
+export const BRANCH_REFUSED = 'BRANCH_REFUSED';
+export const ROOT_NOT_ABSOLUTE = 'ROOT_NOT_ABSOLUTE';
 
 /** A completed replace-rule check that refuses the path, distinct from a check that failed. */
-const replacementRefused = (message) => Object.assign(new Error(message), { code: 'REPLACEMENT_REFUSED' });
+const replacementRefused = (message, condition) => Object.assign(new Error(message), { code: 'REPLACEMENT_REFUSED', condition });
+
+/** L1's report for a cause it met while making a card's workspace. */
+function workspaceReport(cause) {
+  if (cause.code === 'REPLACEMENT_REFUSED') return { code: WORKSPACE_REFUSED, requirement: 'R-WORK-13', condition: cause.condition };
+  if ([BRANCH_ELSEWHERE, BRANCH_REFUSED, ROOT_NOT_ABSOLUTE].includes(cause.code)) return { code: cause.code };
+  if (cause.code === L0_LINE_MOVED) return { code: LINE_MOVED };
+  if (cause.code === L0_LINE_DELETED) return { code: LINE_DELETED };
+  if (cause.code === L0_FETCH_FAILED) return { code: FETCH_FAILED };
+  return { code: WORKSPACE_NOT_MADE };
+}
 
 /**
  * The name `topic` derives for `card`: the topic with each `{number}` replaced by the card's issue
@@ -68,8 +86,12 @@ const scratchBase = (root, topic, card) => join(root, 'scratch', topicFor(topic,
  * the forge head before removal. L0 then makes the workspace on the branch at main or `head`,
  * resetting the branch where it exists.
  *
- * Every failure rejects with `WORKSPACE_NOT_MADE`, naming the path and why, after L1 has
- * recorded the same. Where the sink refused any event on the way, L0's, L1's record of the
+ * An unanswered check or make rejects with `WORKSPACE_NOT_MADE`; an answered replace-rule refusal
+ * rejects with `WORKSPACE_REFUSED`. A branch checked out elsewhere rejects with
+ * `BRANCH_ELSEWHERE`; a moved or deleted forge line with `LINE_MOVED` or `LINE_DELETED`; a failed
+ * forge read with `FETCH_FAILED`; and a refused branch name or nonabsolute root with
+ * `BRANCH_REFUSED` or `ROOT_NOT_ABSOLUTE`. Each names its path and reason after L1 records the
+ * failure. Where the sink refused any event on the way, L0's, L1's record of the
  * failure, or its record of a workspace made or removed, though the workspace was made or
  * removed, it rejects with `EVENT_REFUSED` instead, naming each such event as unrecorded: a
  * refused event is the halt, not a workspace L1 could not make, so L2 spends no attempt on it (the
@@ -79,22 +101,22 @@ export async function makeWorkspace({ root, topic, card, head, repository, sink,
   const events = sink.emitter({ layer: 'L1', card });
   const branch = topicFor(topic, card);
   const path = join(root, branch);
-  const adapter = workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card }), timeout });
+  const adapter = workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card }), timeout, rejectFailedChecks: true });
   /** Runs `work`, rejecting as a workspace L1 could not make where it rejects. */
   const step = async (work) => {
     try {
       return await work();
     } catch (cause) {
-      throw notMade(events, `card #${card}'s workspace`, { path }, cause);
+      throw notMade(events, `card #${card}'s workspace`, { path }, cause, workspaceReport(cause));
     }
   };
   const removed = await step(async () => {
-    if (!isAbsolute(root)) throw new Error(`the root ${root} is not an absolute path, and L1 is handed the root the verb resolved`);
+    if (!isAbsolute(root)) throw Object.assign(new Error(`the root ${root} is not an absolute path, and L1 is handed the root the verb resolved`), { code: ROOT_NOT_ABSOLUTE });
     const { accepted, why } = await adapter.acceptsBranch(branch);
-    if (!accepted) throw new Error(`card #${card}'s topic \`${topic}\` derives ${branch}, which git refuses as a branch name: ${why}`);
+    if (!accepted) throw Object.assign(new Error(`card #${card}'s topic \`${topic}\` derives ${branch}, which git refuses as a branch name: ${why}`), { code: BRANCH_REFUSED });
     if (head !== undefined) {
       const elsewhere = (await adapter.listing()).find((each) => each.branch === branch && nearestReal(each.at) !== nearestReal(path));
-      if (elsewhere !== undefined) throw new Error(`${branch} is checked out at ${elsewhere.at}, not ${path}`);
+      if (elsewhere !== undefined) throw Object.assign(new Error(`${branch} is checked out at ${elsewhere.at}, not ${path}; R-WORK-25 refuses another worktree`), { code: BRANCH_ELSEWHERE });
     }
     return cleared({ adapter, card, branch, path, repository }, head === undefined ? undefined : () => adapter.fetchLineAt(branch, head));
   });
@@ -164,9 +186,10 @@ export async function makeJudgeDirectory({ root, topic, card, role, head, reposi
  * A directory already there is removed first, without following any symbolic link inside it, once
  * `scratchReplaceable` has passed what is there. L1
  * records under the card a `workspace.removed` and a `workspace.made`, each carrying `role` and
- * the path, and a `workspace.failed` carrying them and why. Every failure rejects with
- * `WORKSPACE_NOT_MADE`, naming the path and why, or with `EVENT_REFUSED` where the sink refused an
- * event on the way, as `makeWorkspace` does.
+ * the path, and a `workspace.failed` carrying them and why. An answered replace-rule refusal
+ * rejects with `SCRATCH_REFUSED`; an unanswered check or make rejects with `WORKSPACE_NOT_MADE`.
+ * Each names the path and why. A refused sink event rejects with `EVENT_REFUSED`, as in
+ * `makeWorkspace`.
  */
 export async function makeScratch({ base, role, card, repository, sink }) {
   const events = sink.emitter({ layer: 'L1', card });
@@ -175,7 +198,10 @@ export async function makeScratch({ base, role, card, repository, sink }) {
     try {
       return await work();
     } catch (cause) {
-      throw notMade(events, `role ${role}'s scratch directory for card #${card}`, { role, path }, cause);
+      const report = cause.code === 'REPLACEMENT_REFUSED'
+        ? { code: SCRATCH_REFUSED, requirement: 'R-WORK-26', condition: cause.condition }
+        : { code: WORKSPACE_NOT_MADE };
+      throw notMade(events, `role ${role}'s scratch directory for card #${card}`, { role, path }, cause, report);
     }
   };
   const there = await step(() => scratchReplaceable({ base, path, repository, adapter: workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card }) }) }));
@@ -198,7 +224,7 @@ async function scratchReplaceable({ base, path, repository, adapter }) {
   await unregistered({ path, there, repository, adapter });
   if (there) {
     const checkout = checkoutIn(path);
-    if (checkout !== undefined) throw replacementRefused(`${path} holds ${checkout}, a git checkout, which may be a worktree of another repository, so L1 leaves it as it is`);
+    if (checkout !== undefined) throw replacementRefused(`${path} holds ${checkout}, a git checkout, which may be a worktree of another repository, so L1 leaves it as it is`, 'R-WORK-28');
   }
   return there;
 }
@@ -235,7 +261,7 @@ function noCheckoutFrom(start, path) {
       if (error.code !== 'ENOENT') throw new Error(`${path} lies under ${ancestor}, where L1 cannot read whether ${git} is there, so it cannot tell ${path} lies in no checkout: ${error.message}`, { cause: error });
       found = false;
     }
-    if (found) throw replacementRefused(`${path} lies under ${ancestor}${realNamed(ancestor)}, which holds ${git}, so it lies in a git checkout, and L1 makes and removes nothing there`);
+    if (found) throw replacementRefused(`${path} lies under ${ancestor}${realNamed(ancestor)}, which holds ${git}, so it lies in a git checkout, and L1 makes and removes nothing there`, 'R-WORK-28');
     if (dirname(ancestor) === ancestor) return;
   }
 }
@@ -300,8 +326,8 @@ async function unregistered({ path, there, repository, adapter }) {
       if (error.code === 'ENOENT') continue;
       throw new Error(`${path} may lie in or hold the worktree git lists at ${listed}, which L1 could not resolve, so L1 leaves it as it is: ${error.message}`, { cause: error });
     }
-    if (underOrAt(real, tree)) throw replacementRefused(`${path} lies in ${listed}, a worktree git registers for the repository at ${repository}, so L1 makes and removes nothing there`);
-    if (there && underOrAt(tree, real)) throw replacementRefused(`${path} holds ${listed}, a worktree git registers for the repository at ${repository}, so L1 leaves it as it is`);
+    if (underOrAt(real, tree)) throw replacementRefused(`${path} lies in ${listed}, a worktree git registers for the repository at ${repository}, so L1 makes and removes nothing there`, 'R-WORK-29');
+    if (there && underOrAt(tree, real)) throw replacementRefused(`${path} holds ${listed}, a worktree git registers for the repository at ${repository}, so L1 leaves it as it is`, 'R-WORK-29');
   }
 }
 
@@ -319,7 +345,7 @@ function nearestReal(path) {
 }
 
 /** The failure for `path`, which `lstat` read as `there`, no directory: a symbolic link, which is never followed, or anything else. */
-const notDirectory = (path, there) => replacementRefused(`${path} is ${there.isSymbolicLink() ? 'a symbolic link' : 'not a directory'}, so L1 leaves it as it is`);
+const notDirectory = (path, there) => replacementRefused(`${path} is ${there.isSymbolicLink() ? 'a symbolic link' : 'not a directory'}, so L1 leaves it as it is`, 'R-WORK-27');
 
 /** What `lstat` reads at `path`, or nothing where nothing is there; anything else unreadable throws naming it. */
 function lstatOrAbsent(path) {
@@ -545,20 +571,20 @@ async function cleared({ adapter, card, branch, path, repository }, beforeRemove
     return undefined;
   }
   if (!(await adapter.isWorktree(path))) {
-    throw replacementRefused(`${path} holds something that is not a workspace of the repository at ${repository}, so L1 leaves it as it is`);
+    throw replacementRefused(`${path} holds something that is not a workspace of the repository at ${repository}, so L1 leaves it as it is`, 'R-WORK-14');
   }
   const real = realpathSync.native(path);
   if (real === (await adapter.topLevel())) {
-    throw replacementRefused(`${path} is the worktree L1 was handed as the repository, at ${repository}, so L1 leaves it as it is`);
+    throw replacementRefused(`${path} is the worktree L1 was handed as the repository, at ${repository}, so L1 leaves it as it is`, 'R-WORK-16');
   }
   const held = await adapter.registration(real);
   if (held?.branch !== branch) {
     const holding = held?.detached ? 'a detached HEAD' : `the branch ${held?.branch}`;
-    throw replacementRefused(`${path} is a worktree of the repository holding ${holding}, not card #${card}'s branch ${branch}, so L1 leaves it as it is`);
+    throw replacementRefused(`${path} is a worktree of the repository holding ${holding}, not card #${card}'s branch ${branch}, so L1 leaves it as it is`, 'R-WORK-15');
   }
   const nested = (await adapter.registered()).find((listed) => within(path, real, listed));
   if (nested !== undefined) {
-    throw replacementRefused(`${path} holds another worktree of the repository, at ${nested}, so L1 leaves it as it is`);
+    throw replacementRefused(`${path} holds another worktree of the repository, at ${nested}, so L1 leaves it as it is`, 'R-WORK-17');
   }
   await beforeRemove();
   writable(real);
@@ -806,9 +832,10 @@ function present(path) {
  * failure has the code `EVENT_REFUSED` and carries each such event in `unrecorded`: a refused
  * event is the halt, not a workspace L1 could not make (the owner's O4 on #423).
  */
-function notMade(events, what, fields, cause) {
+function notMade(events, what, fields, cause, report = { code: WORKSPACE_NOT_MADE }) {
   const { path } = fields;
-  const failure = Object.assign(new Error(`L1 could not make ${what} at ${path}: ${cause.message}`, { cause }), { code: WORKSPACE_NOT_MADE, path });
+  const requirement = report.requirement === undefined ? '' : `${report.requirement} ${report.condition}: `;
+  const failure = Object.assign(new Error(`L1 could not make ${what} at ${path}: ${requirement}${cause.message}`, { cause }), { code: report.code, path });
   const unrecorded = cause.code === EVENT_REFUSED ? [...cause.unrecorded] : [];
   try {
     events.emit('workspace.failed', { ...fields, reason: cause.message });
