@@ -34,8 +34,14 @@ The second round missed a read. L1 reads its record of process groups before it 
 record that cannot be read, or holds no list of entries, stops the judge's dispatch with no write.
 The third round gives it a row of its own, host, and sweeps every read on the judge's path again.
 
+Rounds three and four found further causes by hand-built inventory: a permission rule that cannot
+be read as text, the owner's home directory that cannot be found for Codex, and an agent named by
+a value that is no string. The fourth round built the inventory mechanically. A script lists every
+line on the judge's path that can throw or convert a value, and each line is mapped to a row or to
+why it raises nothing.
+
 Open cards whose bodies cite the literal `R-FAIL-7` when the head was pushed, by an exact match
-over the bodies of all 31 open issues: #964 alone. The PM retargets a card body only where its
+over the bodies of all 36 open issues: #964 alone. The PM retargets a card body only where its
 acceptance turns on the added rows.
 
 #967 (#961) merged before this card, adding `R-FAIL-7` citations to `ARCHITECTURE.md`. This pull
@@ -44,4 +50,4 @@ request merged `main` and retargeted them, id only, under the architect's delta 
 What taught us: "passes by itself" is a judgment about the usual case. A requirement row has to
 hold for the case that lasts, so test each cause's persistence against its worst case. An inventory
 of refusals has to read the arguments of a call, not only the call: `writeGroups(directory,
-readGroups(directory))` fails in its argument first.
+readGroups(directory))` fails in its argument first. Build it by search, not by reading.
