@@ -14,6 +14,8 @@ import { itemWriteRunner, readRunner, schemaWriteRunner } from '../src/substrate
 import { repositoryWriteRunner } from '../src/substrate/forge/runners.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { installFakeGh } from './fake-gh.mjs';
+import { repositoryWriteSide } from '../src/substrate/forge/repository-write.mjs';
+import { itemWriteSide } from '../src/substrate/forge/item-write.mjs';
 
 /**
  * A stand-in for the one spawn a runner makes, recording every command it is handed and answering
@@ -241,6 +243,7 @@ async function methodGhSends(gh, args, cwd = process.cwd()) {
     request.on('data', (chunk) => (body += chunk));
     request.on('end', () => {
       seen.push({ method: request.method, body });
+      seen.at(-1).path = request.url;
       traceGh('proxy-request', { method: request.method, body });
       if (process.env.RIGGER_GH_PROBE_FAILURE === 'proxy') {
         traceGh('proxy-response', { status: 503 });
@@ -363,6 +366,46 @@ test('repository-write comment and one-label forms match installed gh JSON, and 
   const send = recording();
   await assert.rejects(repositoryWriteRunner(empty, { send }), /repository-write runner refuses/);
   assert.deepEqual(send.sent, []);
+});
+
+test('status-issue request forms match installed gh methods, payloads and encoded label paths', async (t) => {
+  const gh = installedGh();
+  if (!gh) return t.skip('no real gh on PATH; status-issue method/body probe not run');
+  const board = { repo: 'williacj/rigger', project: 6 };
+  const title = 'Status\n"quoted" $(printf data)';
+  const body = 'Hold\n"quoted" $(printf data)';
+  const openingLabel = 'status\n"quoted" $(printf data)';
+  const calls = [];
+  const send = (command, args) => {
+    calls.push(args);
+    if (args[1] === 'repos/williacj/rigger/issues' && args[3] === 'POST') return { status: 0, stdout: JSON.stringify({ number: 214, labels: [{ name: openingLabel }] }), stderr: '' };
+    if (args[1] === 'repos/williacj/rigger/issues/214' && args[3] === 'GET') return { status: 0, stdout: '{"node_id":"I_issue214"}', stderr: '' };
+    if (args.at(-1).startsWith('query=query')) return { status: 0, stdout: '{"data":{"repositoryOwner":{"projectV2":{"id":"PVT_board","field":{"id":"PVTSSF_status","options":[]}}}}}', stderr: '' };
+    if (args[1] === 'graphql') return { status: 0, stdout: '{"data":{"addProjectV2ItemById":{"item":{"id":"PVTI_added"}}}}', stderr: '' };
+    return { status: 0, stdout: '{}', stderr: '' };
+  };
+  const repository = repositoryWriteSide(board, { send });
+  await repository.openIssue(title, body, openingLabel);
+  await repository.closeIssue(214);
+  for (const label of ['a/b', 'a?b', 'a#b', 'a b', 'a\nb']) await repository.removeIssueLabel(214, label);
+  await itemWriteSide(board, { send }).addIssue(214);
+
+  const open = await methodGhSends(gh, calls[0]);
+  assert.equal(open.method, 'POST');
+  assert.deepEqual(JSON.parse(open.body), { title, body, labels: [openingLabel] });
+  const close = await methodGhSends(gh, calls[1]);
+  assert.equal(close.method, 'PATCH');
+  assert.deepEqual(JSON.parse(close.body), { state: 'closed' });
+  for (const [index, label] of ['a/b', 'a?b', 'a#b', 'a b', 'a\nb'].entries()) {
+    const removed = await methodGhSends(gh, calls[index + 2]);
+    assert.equal(removed.method, 'DELETE');
+    assert.equal(removed.body, '');
+    assert.equal(decodeURIComponent(removed.path.split('/').at(-1)), label);
+    assert.ok(removed.path.endsWith(encodeURIComponent(label)));
+  }
+  const add = await methodGhSends(gh, calls.at(-1));
+  assert.equal(add.method, 'POST');
+  assert.deepEqual(JSON.parse(add.body), { query: calls.at(-1).at(-1).slice('query='.length) });
 });
 
 function executableOnPath(name, path = process.env.PATH, accept = () => true) {
@@ -1011,8 +1054,8 @@ test('the item-write runner refuses a request that archives a board item, naming
   await refuses(itemWriteRunner, graphql('mutation { archiveProjectV2Item(input: {projectId: "PVT_1", itemId: "PVTI_1"}) { item { id } } }'), ['archiveProjectV2Item']);
 });
 
-test('the item-write runner refuses every operation but the column move, naming it, and sends nothing', async () => {
-  // In M1 its allowlist is the column move alone. Deleting, clearing and reordering all name a
+test('the item-write runner refuses deletion, clearing, reordering and schema writes, naming them and sending nothing', async () => {
+  // Deleting, clearing and reordering all name a
   // board item, and none is a card's need yet; a schema write is not the item side's at all.
   const refused = [
     ['deleteProjectV2Item', 'mutation { deleteProjectV2Item(input: {projectId: "PVT_1", itemId: "PVTI_1"}) { deletedItemId } }'],

@@ -1643,7 +1643,7 @@ test('readEnvironment answers the bypass setting and every custom deployment bra
     [`${environmentPath}/deployment-branch-policies?per_page=100&page=2`]: JSON.stringify({ total_count: 101, branch_policies: [{ name: 'extra', type: 'tag' }] }),
   });
   const held = await repositoryReads(BOARD, { send }).readEnvironment('release/gate');
-  assert.deepEqual(held, { canAdminsBypass: false, deploymentBranchPolicy: environmentAnswer.deployment_branch_policy, policies: [...policies, { name: 'extra', type: 'tag' }] });
+  assert.deepEqual(held, { canAdminsBypass: false, deploymentBranchPolicy: { protectedBranches: false, customBranchPolicies: true }, policies: [...policies, { name: 'extra', type: 'tag' }] });
   assert.equal(send.sent.length, 3);
 });
 

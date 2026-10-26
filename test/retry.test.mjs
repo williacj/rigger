@@ -193,7 +193,7 @@ test('given a workspace that cannot be made on the first attempt and can on the 
   assert.deepEqual(named(events, 'L1', 'dispatch.start').map((each) => each.workspace), [path, path]);
 });
 
-// proves R-FAIL-6, R-WORK-13
+// proves R-FAIL-7, R-WORK-13
 test('an unanswered replace-rule check retries the same card and starts its maker after a second workspace', SETTLES_WITHIN, async (t) => {
   let built;
   built = await retryWorld(t, {

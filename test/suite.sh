@@ -56,6 +56,7 @@ test/step-restart-kill.test.mjs
 test/suite-reaper.test.mjs
 test/suite-record.test.mjs
 test/suite-tiers.test.mjs
+test/test-list-growth-host.test.mjs
 test/verb-forge-kill.test.mjs
 test/workflow-files.test.mjs
 test/worktrees.test.mjs

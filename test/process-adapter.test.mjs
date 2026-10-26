@@ -1200,6 +1200,178 @@ function controlledCensus(t, size, { firstStep = 1, secondStep = 1, deadline = 3
   return { trace, calls: call, firstCalls: first.length };
 }
 
+// Raw inputs and independent literals follow the reviewed #928 finite table.
+const syncGroup = 42001;
+const syncTool = '/rigger-wp2-no-native/ps';
+const syncTimeout = 'the process-table read timed out after 1000 ms';
+const syncRefused = syncTimeout + ' earlier in the exit cleanup, which does not wait on it again';
+const syncFailure = 'the process-table read failed: forced failure';
+const syncAbsent = { type: 'undefined' };
+const syncLeader9 = { type: 'string', value: '9' };
+const syncSettings = { env: { LC_ALL: 'C.UTF-8', TZ: 'UTC0' }, killSignal: 'SIGKILL', maxBuffer: 'Infinity', encoding: 'utf8', cwd: '/' };
+const syncTuple = (stdout = '', status = 0, stderr = '', error = null, signal = null) => ({ error, status, signal, stdout, stderr });
+const syncRequest = (tool, argv, beforeMs, afterMs, remainingMs, rawReturn) => ({ tool, argv, beforeMs, afterMs, remainingMs, settings: { ...syncSettings, timeout: remainingMs }, rawReturn });
+const syncStates = (pids, state = 'S') => pids.map((pid) => pid + ' ' + state + '\n').join('');
+const syncCommands = (pids, group) => pids.map((pid) => pid + ' ' + (pid === group ? '/bin/bash /fixture/command' : '/usr/bin/tail -f /fixture/hold') + '\n').join('');
+const syncGroupArgs = (group, column) => ['-ww', '-g', String(group), '-o', 'pid=,' + column + '='];
+const syncGroupDecision = (group, reason, leader, unread) => ({ keys: ['kills', 'leader', 'unread'], kills: [['group.killed', { group, census: reason }]], leader, unread, killRequests: [[-group, 0], [-group, 'SIGKILL'], [-group, 0]] });
+const syncTimeoutDecision = syncGroupDecision(syncGroup, syncTimeout, syncAbsent, { type: 'string', value: syncRefused });
+const syncFailureDecision = syncGroupDecision(syncGroup, syncFailure, syncLeader9, syncAbsent);
+// Inputs follow census-sightings.mjs's explicit omissions, not a production classifier.
+const syncRecipes = [
+  { entry: 'U1', firstThree: true, firstCommandThree: true, secondCommandThree: true, emptyTargetName: true, afterThree: false, zombie: false, twoRound: true },
+  { entry: 'U2', firstThree: true, firstCommandThree: true, secondCommandThree: false, emptyTargetName: false, afterThree: false, zombie: false, twoRound: true },
+  { entry: 'C1', firstThree: false, firstCommandThree: true, secondCommandThree: false, emptyTargetName: false, afterThree: false, zombie: false, twoRound: false },
+  { entry: 'C2', firstThree: false, firstCommandThree: false, secondCommandThree: true, emptyTargetName: false, afterThree: false, zombie: false, twoRound: false },
+  { entry: 'A0', firstThree: false, firstCommandThree: false, secondCommandThree: false, emptyTargetName: false, afterThree: true, zombie: false, twoRound: true },
+  { entry: 'A0 zombie', firstThree: false, firstCommandThree: false, secondCommandThree: false, emptyTargetName: false, afterThree: true, zombie: true, twoRound: true },
+  { entry: 'B0', firstThree: true, firstCommandThree: true, secondCommandThree: true, emptyTargetName: false, afterThree: false, zombie: false, twoRound: true },
+  { entry: 'B1', firstThree: true, firstCommandThree: true, secondCommandThree: true, emptyTargetName: false, afterThree: false, zombie: true, twoRound: true },
+  { entry: 'X0', firstThree: true, firstCommandThree: true, secondCommandThree: true, emptyTargetName: false, afterThree: false, zombie: false, twoRound: true },
+];
+const syncTimeoutTuple = syncTuple('', null, '', { code: 'ETIMEDOUT', message: 'spawnSync forced timeout' }, 'SIGKILL');
+const syncFailureTuple = syncTuple('', 2, 'forced failure\n');
+// Each descriptor supplies its expected decision independently of its raw return.
+const syncClasses = [
+  { id: 'E0', position: 'first', timeout: true, postKill: false, tuple: syncTimeoutTuple, expected: syncTimeoutDecision },
+  { id: 'E1', position: 'command', timeout: true, postKill: false, tuple: syncTimeoutTuple, expected: syncTimeoutDecision },
+  { id: 'E2', position: 'after', timeout: true, postKill: false, tuple: syncTimeoutTuple, expected: syncTimeoutDecision },
+  { id: 'E2failure', position: 'after', timeout: false, postKill: true, tuple: syncFailureTuple, expected: syncFailureDecision },
+  { id: 'C1', position: 'first', timeout: false, postKill: true, tuple: syncFailureTuple, expected: syncFailureDecision },
+  { id: 'C5', position: 'next', timeout: false, postKill: true, tuple: syncFailureTuple, expected: syncFailureDecision },
+];
+function syncPrefix(group, recipe) {
+  const all = [group, group + 1, group + 2];
+  const first = recipe.firstThree ? all : all.slice(0, 2);
+  return [
+    [syncGroupArgs(group, 'stat'), syncTuple(syncStates(first))],
+    [syncGroupArgs(group, 'command'), syncTuple(syncCommands(recipe.firstCommandThree ? all : all.slice(0, 2), group))],
+    ...first.map((pid) => [['-p', String(pid), '-o', 'ucomm='], recipe.emptyTargetName && pid === group + 2 ? syncTuple('', 1) : syncTuple(pid === group ? 'command\n' : 'tail\n')]),
+    [syncGroupArgs(group, 'command'), syncTuple(syncCommands(recipe.secondCommandThree ? all : all.slice(0, 2), group))],
+    [syncGroupArgs(group, 'stat'), syncTuple(syncStates(recipe.afterThree ? all : all.slice(0, 2)))],
+  ];
+}
+const syncCleanupScenarios = syncRecipes.flatMap((recipe) => syncClasses.filter((kind) => kind.id !== 'C5' || recipe.twoRound).map((kind) => {
+  const prefix = syncPrefix(syncGroup, recipe);
+  const cut = kind.position === 'first' ? 0 : kind.position === 'command' ? 1 : kind.position === 'after' ? prefix.length - 1 : prefix.length;
+  const rawScript = prefix.slice(0, cut).map(([argv, tuple], index) => syncRequest(syncTool, argv, index, index + 1, 1000 - index, tuple));
+  let clock = cut;
+  const finish = clock + (kind.timeout ? 1000 : 1);
+  rawScript.push(syncRequest(syncTool, syncGroupArgs(syncGroup, kind.id === 'E1' ? 'command' : 'stat'), clock, finish, 1000 - clock, kind.tuple));
+  clock = finish;
+  if (kind.postKill) {
+    rawScript.push(syncRequest(syncTool, ['-g', String(syncGroup), '-o', 'pid=,stat=,xstat='], clock, clock + 1, 1000, syncTuple(syncStates([syncGroup, syncGroup + 1, ...(recipe.zombie ? [syncGroup + 2] : [])], 'Z 9'))));
+    clock += 1;
+  }
+  const expectedLiteral = { ...structuredClone(kind.expected), rawCalls: rawScript.length, finalClockMs: clock };
+  return { id: recipe.entry + '/' + kind.id, startMs: 0, calls: [{ group: syncGroup, ps: syncTool, startMs: 0, readTimeout: 1000, rawScript, expectedLiteral }], expectedTotalRawCalls: rawScript.length, expectedFinalClockMs: clock };
+}));
+function syncFailedCall(group, tool, startMs, confirmations) {
+  const rawScript = [syncRequest(tool, syncGroupArgs(group, 'stat'), startMs, startMs + 250, 1000, syncFailureTuple)];
+  let clock = startMs + 250;
+  const deadline = clock + 1000;
+  for (let index = 0; index < confirmations; index += 1) {
+    rawScript.push(syncRequest(tool, ['-g', String(group), '-o', 'pid=,stat=,xstat='], clock, clock + 250, deadline - clock, syncFailureTuple));
+    clock += 250;
+  }
+  const expectedLiteral = syncGroupDecision(group, syncFailure, syncAbsent, { type: 'string', value: syncFailure });
+  expectedLiteral.killRequests = [[-group, 0], ...Array.from({ length: confirmations }, () => [[-group, 'SIGKILL'], [-group, 0]]).flat()];
+  return { group, ps: tool, startMs, readTimeout: 1000, rawScript, expectedLiteral: { ...expectedLiteral, rawCalls: rawScript.length, finalClockMs: clock } };
+}
+function syncSuccessfulCall() {
+  const group = 42011;
+  const tool = '/rigger-wp2-no-native/ps-b';
+  const all = [group, group + 1, group + 2];
+  const recipe = { firstThree: true, firstCommandThree: true, secondCommandThree: true, emptyTargetName: false, afterThree: true };
+  let clock = 1000;
+  const rawScript = syncPrefix(group, recipe).map(([argv, tuple]) => {
+    const request = syncRequest(tool, argv, clock, clock + 1, 2000 - clock, tuple);
+    clock += 1;
+    return request;
+  });
+  for (const [argv, remaining, output] of [
+    [['-g', String(group), '-o', 'pid=,stat='], 2000, syncStates(all)],
+    [['-g', String(group), '-o', 'pid=,stat=,xstat='], 1000, syncStates(all, 'S 0')],
+    [['-g', String(group), '-o', 'pid=,stat=,xstat='], 999, syncStates(all, 'Z 9')],
+  ]) { rawScript.push(syncRequest(tool, argv, clock, clock + 1, remaining, syncTuple(output))); clock += 1; }
+  const expectedLiteral = {
+    keys: ['kills', 'leader', 'unread'],
+    kills: [
+      ['survivor.killed', { pid: group, name: 'command', cmd: '/bin/bash /fixture/command' }],
+      ['survivor.killed', { pid: group + 1, name: 'tail', cmd: '/usr/bin/tail -f /fixture/hold' }],
+      ['survivor.killed', { pid: group + 2, name: 'tail', cmd: '/usr/bin/tail -f /fixture/hold' }],
+    ],
+    leader: syncLeader9, unread: syncAbsent,
+    killRequests: [[-group, 0], [-group, 0], [-group, 0], [-group, 'SIGKILL'], [-group, 0]],
+    rawCalls: 10, finalClockMs: 1010,
+  };
+  return { group, ps: tool, startMs: 1000, readTimeout: 1000, rawScript, expectedLiteral };
+}
+const syncToolA = '/rigger-wp2-no-native/ps-a';
+const syncToolB = '/rigger-wp2-no-native/ps-b';
+const syncFirstTimeout = {
+  group: 42001, ps: syncToolA, startMs: 0, readTimeout: 1000,
+  rawScript: [syncRequest(syncToolA, syncGroupArgs(42001, 'stat'), 0, 1000, 1000, syncTimeoutTuple)],
+  expectedLiteral: { ...structuredClone(syncTimeoutDecision), rawCalls: 1, finalClockMs: 1000 },
+};
+const syncCachedAgain = {
+  group: 42031, ps: syncToolA, startMs: 2010, readTimeout: 1000, rawScript: [],
+  expectedLiteral: { ...syncGroupDecision(42031, syncRefused, syncAbsent, { type: 'string', value: syncRefused }), rawCalls: 0, finalClockMs: 2010 },
+};
+const syncCleanupStateScenarios = [
+  { id: 'same-worker-timeout-cache-distinct-tool-success-reset-cache-retention', claims: ['first timeout cached by tool without a second raw call', 'distinct tool remains readable', 'successful raw read clears unreadSince so later failures get a fresh full global age', 'success does not clear unanswered for the timed-out tool'], calls: [syncFirstTimeout, syncSuccessfulCall(), syncFailedCall(42021, syncToolB, 1010, 3), syncCachedAgain], expectedTotalRawCalls: 15, expectedFinalClockMs: 2010 },
+  { id: 'same-worker-unread-age-is-cumulative-across-groups', claims: ['failed reads retain first failure age across containNow calls, not one bound per group'], calls: [syncFailedCall(43001, syncToolB, 0, 3), syncFailedCall(43011, syncToolB, 1000, 1)], expectedTotalRawCalls: 6, expectedFinalClockMs: 1500 },
+];
+
+const syncCleanupWorkerBody = "// ABOUTME: Exercises synchronous cleanup with scripted raw responses and an injected clock.\nimport assert from 'node:assert/strict';\nimport { readFileSync } from 'node:fs';\nconst { containNow } = await import(process.env.WP2_MODULE_URL);\nconst scenario = JSON.parse(readFileSync(process.argv[2], 'utf8'));\nlet clock = scenario.startMs ?? 0;\nconst failures = [];\nconst value = (entry) => entry.type === 'undefined' ? undefined : entry.value;\nlet totalRaw = 0;\nfor (const current of scenario.calls) {\n  assert.equal(clock, current.startMs);\n  let rawIndex = 0;\n  const kills = [];\n  const received = [];\n  const usedAlternates = new Set();\n  let clockCalls = 0;\n  const now = () => {\n    if (++clockCalls > 512) {\n      failures.push('finite script made no clock progress');\n      throw new Error('finite script made no clock progress');\n    }\n    return clock;\n  };\n  const kill = (target, signal) => {\n    kills.push([target, signal]);\n    // Pure spy: no OS signal and no dependence on the expected decision.\n  };\n  const rawSpawn = (tool, argv, settings) => {\n    totalRaw += 1;\n    const matches = (entry) => entry && entry.tool === tool && entry.beforeMs === clock && JSON.stringify(entry.argv) === JSON.stringify(argv);\n    let expected = current.rawScript[rawIndex];\n    if (matches(expected)) rawIndex += 1;\n    else {\n      const index = (current.optionalRawAlternates ?? []).findIndex((entry, index) => !usedAlternates.has(index) && matches(entry));\n      expected = current.optionalRawAlternates?.[index];\n      if (expected) usedAlternates.add(index);\n    }\n    try {\n      assert.ok(expected, 'unprovided raw-path request; no semantic fault credit');\n      assert.deepEqual({ ...settings, maxBuffer: settings.maxBuffer === Infinity ? 'Infinity' : settings.maxBuffer }, expected.settings);\n    } catch (error) {\n      failures.push(error.message);\n      clock += 1000;\n      return { error: Object.assign(new Error('unexpected raw read'), { code: 'WP2_UNEXPECTED' }), status: null, signal: null, stdout: '', stderr: '' };\n    }\n    received.push({ tool, argv, beforeMs: clock, settings, rawReturn: expected.rawReturn });\n    clock = expected.afterMs;\n    const tuple = expected.rawReturn;\n    return { ...tuple, error: tuple.error === null ? undefined : Object.assign(new Error(tuple.error.message), tuple.error) };\n  };\n  const actual = containNow(current.group, { ps: current.ps, readTimeout: current.readTimeout, kill, now, spawnSync: rawSpawn });\n  console.log(JSON.stringify({ id: scenario.id, group: current.group, actual, kills, received, clock }));\n  assert.deepEqual(failures, [], 'invalid script/escape profile; no semantic fault credit');\n  // A fault gets legitimate, bounded alternate answers. Its decision fails before\n  // strict normal-path counts, rather than because the callback threw.\n  assert.deepEqual(actual, { kills: current.expectedLiteral.kills, leader: value(current.expectedLiteral.leader), unread: value(current.expectedLiteral.unread) }, 'whole cleanup decision differs');\n  assert.deepEqual(Object.keys(actual).sort(), [...current.expectedLiteral.keys].sort());\n  assert.equal(rawIndex, current.rawScript.length, 'raw script was not consumed exactly');\n  assert.deepEqual(kills, current.expectedLiteral.killRequests);\n  assert.equal(clock, current.expectedLiteral.finalClockMs);\n}\nassert.equal(totalRaw, scenario.expectedTotalRawCalls);\nconsole.log(JSON.stringify({ scenario: scenario.id, totalRaw, clock, scope: 'controlled synchronous driver, not native OS proof' }));\n";
+
+async function syncCleanupWorker(t, scenario) {
+  const directory = scratch(t);
+  const worker = join(directory, 'sync-cleanup.mjs');
+  const input = join(directory, 'sync-cleanup.json');
+  writeFileSync(worker, syncCleanupWorkerBody);
+  writeFileSync(input, JSON.stringify(scenario));
+  const child = spawn(process.execPath, [worker, input], {
+    env: { ...process.env, WP2_MODULE_URL: new URL('../src/substrate/process.mjs', import.meta.url).href },
+    signal: t.signal, stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  t.diagnostic(JSON.stringify({ syncCleanupWorkerPID: child.pid, scenario: scenario.id, scope: 'controlled driver, not native OS proof' }));
+  t.after(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  const [status] = await once(child, 'close');
+  t.diagnostic(stdout);
+  assert.equal(status, 0, stdout + stderr);
+}
+
+// proves R-STATE-12, R-STATE-19
+test('controlled sync cleanup U2/E0 matches the whole recorded decision', SETTLES_WITHIN, async (t) => {
+  await syncCleanupWorker(t, syncCleanupScenarios.find(({ id }) => id === 'U2/E0'));
+});
+
+for (const scenario of syncCleanupScenarios.filter(({ id }) => id !== 'U2/E0')) {
+  test('controlled sync cleanup ' + scenario.id + ' matches the whole recorded decision', SETTLES_WITHIN, async (t) => {
+    await syncCleanupWorker(t, scenario);
+  });
+}
+
+// proves R-STATE-19
+test('controlled sync cleanup keeps timeout cache tool-scoped across successful reads', SETTLES_WITHIN, async (t) => {
+  await syncCleanupWorker(t, syncCleanupStateScenarios[0]);
+});
+
+// proves R-STATE-19
+test('controlled sync cleanup carries unread failure age across groups', SETTLES_WITHIN, async (t) => {
+  await syncCleanupWorker(t, syncCleanupStateScenarios[1]);
+});
+
+
+
+
 test('one survivor is named after a disagreeing census round and an agreeing second round', (t) => {
   controlledCensus(t, 1);
 });

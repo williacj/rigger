@@ -170,7 +170,7 @@ function branchAt(repository, branch) {
   return printed === '' ? undefined : printed;
 }
 
-// proves R-FAIL-6, R-WORK-13, R-WORK-14
+// proves R-FAIL-7, R-WORK-13, R-WORK-14
 test('an answered workspace replace-rule refusal has its own code and names the condition', async (t) => {
   const here = world(t);
   const path = join(here.root, 'rigger-42');
@@ -186,7 +186,7 @@ test('an answered workspace replace-rule refusal has its own code and names the 
   assert.equal(branchAt(here.repository, 'rigger-42'), branch);
 });
 
-// proves R-FAIL-6, R-WORK-13
+// proves R-FAIL-7, R-WORK-13
 test('an unanswered workspace replace-rule git check reports a workspace not made and leaves the earlier worktree untouched', async (t) => {
   const here = world(t);
   const earlier = await here.make(42);
@@ -422,7 +422,7 @@ function publishCard(here, content = 'the maker\'s work\n', force = false) {
   return headOf(here.source);
 }
 
-// proves R-FAIL-6, R-WORK-13, R-WORK-14, R-WORK-15, R-WORK-16, R-WORK-17
+// proves R-FAIL-7, R-WORK-13, R-WORK-14, R-WORK-15, R-WORK-16, R-WORK-17
 test('each workspace replace-rule condition refuses from the beginning and while continuing without changing the path or branches', async (t) => {
   for (const condition of ['R-WORK-14', 'R-WORK-15', 'R-WORK-16', 'R-WORK-17']) {
     for (const continuing of [false, true]) {
@@ -695,7 +695,7 @@ test('a continuing attempt refuses a failed fetch naming its path and preserving
   assert.equal(headOf(first.path), head);
 });
 
-// proves R-FAIL-6
+// proves R-FAIL-7
 test('L1 maps the forge failure code even when git prints words resembling a moved line', async (t) => {
   const here = world(t);
   const head = publishCard(here);

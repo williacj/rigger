@@ -116,7 +116,10 @@ export function createFakeRepository({ branches = [], pullRequests = [], issues 
       const environment = environments[name];
       return environment ? structuredClone({
         canAdminsBypass: environment.can_admins_bypass,
-        deploymentBranchPolicy: environment.deployment_branch_policy,
+        deploymentBranchPolicy: environment.deployment_branch_policy === null ? null : {
+          protectedBranches: environment.deployment_branch_policy.protected_branches,
+          customBranchPolicies: environment.deployment_branch_policy.custom_branch_policies,
+        },
         policies: environment.deployment_branch_policy?.custom_branch_policies === true ? environment.branch_policies ?? [] : [],
       }) : null;
     },
