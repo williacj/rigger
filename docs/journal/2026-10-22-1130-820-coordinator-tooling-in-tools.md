@@ -78,3 +78,13 @@ nine skips. The targeted host oracle's sole failure was its exact expected-list 
 the three coordinator files were present in the suite output but absent from the literal
 expectations. That is the admitted G2 red, not a green host baseline. The baseline integration
 is committed separately through the normal deterministic hook before those expectations change.
+
+## G2 host-oracle continuation
+
+G2 adds only the three literal expected host members for the launchers, suite slot and sweep
+before the existing sort. Every prior member, including the independently admitted list-growth
+host file, and the exact deep-equality assertion remain. The same targeted host test file that
+showed the three missing members now passes under Node 26.12.0 on Linux. The coordinator's
+launcher, slot, sweep and fixture source bytes are unchanged; their required prospective
+Node 26 macOS execution remains separate from this local oracle result. No sweep was run
+against this host's real worktree root.
