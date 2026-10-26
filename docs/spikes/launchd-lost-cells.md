@@ -347,12 +347,13 @@ Settings, Notifications; was it Script Editor), and whether each of the three "A
 when…" settings (the display sleeping, the screen locked, mirroring or sharing the display) was on
 or off. The owner's reply, in their words, is "1) scripts editor, 2)on, 3) on, 4), on"
 ([951#6406431897](https://github.com/williacj/rigger/issues/951#issuecomment-6406431897)). The
-typed entries above stand as they were typed. The owner gave no further answer on where they
-watched.
+typed entries above stand as they were typed.
 
 **Where the owner watched.** The plan asked the owner to watch the mini's own display, never Screen
-Sharing (951#6401933790; U62). The owner's record of it is entry 207's answer above, which is the
-only one. Neither batch 3 statement mentions it.
+Sharing (951#6401933790; U62). Entry 207's typed answer is `through its own displau`. The owner then
+confirmed it, in their words: "I watch on the Mac mini screen"
+([951#6406447806](https://github.com/williacj/rigger/issues/951#issuecomment-6406447806)). Neither
+batch 3 statement mentions it.
 
 **The global settings and the display.**
 - **The three "Allow notifications when…" values:** the prompts' typed answers are empty. Asked
