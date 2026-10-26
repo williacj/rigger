@@ -38,6 +38,7 @@
     "check:card": "node scripts/card-check.mjs",
     "check:words": "node scripts/ruled-out-word-check.mjs",
     "check:headers": "node scripts/aboutme-header-check.mjs",
+    "preflight": "node scripts/preflight.mjs",
     "matrix": "node scripts/build-test-matrix.mjs --write",
     "matrix:check": "node scripts/build-test-matrix.mjs",
     "absorption-check:self-test": "node scripts/absorption-check.mjs --self-test"
