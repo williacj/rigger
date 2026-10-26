@@ -176,8 +176,8 @@ test('every landed verb is one the README lists, and every verb the README lists
 
 test('an argument that is no verb is refused rather than answered as a future verb', () => {
   // The verbs are the whole surface, so anything else has no milestone to wait for. The defect
-  // this catches is the branch above answering for everything: a typo told that it is coming in
-  // a later milestone is told something untrue.
+  // this catches is a word that is no verb answered as one still to come: a typo told that it is
+  // coming in a later milestone is told something untrue.
   const ran = rigger('banana');
 
   assert.notEqual(ran.code, 0);

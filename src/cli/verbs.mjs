@@ -1,5 +1,5 @@
 // ABOUTME: The CLI surface: the verbs Rigger accepts, which of them have landed, what `--help`
-// lists for them, and what one whose milestone has not landed answers.
+// lists for them, and how a word that is no verb is refused.
 
 import { doctor } from './doctor.mjs';
 import { init } from './init.mjs';
