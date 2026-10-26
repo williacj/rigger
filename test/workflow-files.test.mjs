@@ -427,6 +427,7 @@ test('actual CI aggregate JSON exposes recorded base and current main without ch
     assert.equal(result.status, 0, result.stdout + result.stderr);
     const output = JSON.parse(result.stdout);
     assert.equal(output.testedBase, 'c'.repeat(40));
+    assert.equal(output.eventBase, 'c'.repeat(40));
     assert.equal(output.currentMain, main.repeat(40));
     assert.equal(output.mainAdvanced, main === 'e');
     assert.deepEqual(output.source, proof.source);
@@ -1231,5 +1232,72 @@ test('given the diff read fails, or the forge refuses the diff as too large, the
     assert.match(posted.description, /^the read of pull request #12's diff failed: /);
     assert.ok([...posted.description].length <= 140);
     assert.match(check.stdout, named);
+  }
+});
+
+test('actual local Git authenticates forward tested bases and refuses nonancestors and missing objects', async (t) => {
+  const directory = repositoryAt(temporaryDirectory('rigger-ci-forward-', { context: t }), { 'docs/journal/base.md': 'base\n' });
+  gitIn(directory, 'branch', '-M', 'main');
+  const eventBase = gitIn(directory, 'rev-parse', 'HEAD').trim();
+  gitIn(directory, 'checkout', '-qb', 'change');
+  writeFileSync(join(directory, 'docs/journal/candidate.md'), 'candidate\n');
+  gitIn(directory, 'add', '-A'); gitIn(directory, 'commit', '-qm', 'candidate');
+  const head = gitIn(directory, 'rev-parse', 'HEAD').trim();
+  gitIn(directory, 'checkout', '-q', 'main');
+  mkdirSync(join(directory, 'src')); writeFileSync(join(directory, 'src/intervening.mjs'), 'export {};\n');
+  gitIn(directory, 'add', '-A'); gitIn(directory, 'commit', '-qm', 'intervening base');
+  const testedBase = gitIn(directory, 'rev-parse', 'HEAD').trim();
+  gitIn(directory, 'merge', '--no-ff', '-qm', 'synthetic candidate', head);
+  const sha = gitIn(directory, 'rev-parse', 'HEAD').trim(), tree = gitIn(directory, 'rev-parse', 'HEAD^{tree}').trim();
+  assert.deepEqual(gitIn(directory, 'show', '-s', '--format=%P', 'HEAD').trim().split(' '), [testedBase, head]);
+  assert.equal(gitIn(directory, 'merge-base', '--is-ancestor', eventBase, testedBase), '');
+  const ci = parseWorkflow(readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8'));
+  assert.equal(process.env.CI_POLICY_ACTION, undefined);
+  const actual = await import('data:text/javascript;base64,' + Buffer.from(ci.env.CI_POLICY).toString('base64'));
+  const fixture = ciCollectorFixture();
+  fixture.context.sha = sha;
+  fixture.event.pull_request.head.sha = fixture.api['/repos/williacj/rigger/pulls/7'].head.sha = head;
+  fixture.event.pull_request.base.sha = eventBase;
+  fixture.api['/repos/williacj/rigger/pulls/7'].base.sha = testedBase;
+  fixture.api['/repos/williacj/rigger/git/ref/heads/main'].object.sha = testedBase;
+  const calls = [];
+  const collect = () => actual.collect({ context: fixture.context, event: fixture.event,
+    run(args) {
+      calls.push(args);
+      if (args[0] === 'rev-parse') {
+        assert.ok(['HEAD', 'HEAD^{tree}'].includes(args[1])); assert.equal(args.length, 2);
+        return Buffer.from(gitIn(directory, 'rev-parse', args[1]));
+      }
+      if (args[0] === 'show') {
+        assert.deepEqual(args, ['show', '-s', '--format=%P', 'HEAD']);
+        return Buffer.from(gitIn(directory, 'show', '-s', '--format=%P', 'HEAD'));
+      }
+      if (args[0] === 'merge-base') {
+        assert.deepEqual(args, ['merge-base', '--is-ancestor', fixture.event.pull_request.base.sha, testedBase]);
+        return Buffer.from(gitIn(directory, 'merge-base', '--is-ancestor', fixture.event.pull_request.base.sha, testedBase));
+      }
+      if (args[0] === 'diff') {
+        assert.deepEqual(args, ['diff', '--raw', '-z', '--no-renames', testedBase, sha]);
+        return Buffer.from(gitIn(directory, 'diff', '--raw', '-z', '--no-renames', testedBase, sha));
+      }
+      throw new Error('unexpected native Git command ' + JSON.stringify(args));
+    },
+    request: async (path) => { assert.ok(Object.hasOwn(fixture.api, path), path); return fixture.api[path]; },
+  });
+  const facts = await collect();
+  assert.equal(facts.complete, true, facts.reason);
+  assert.equal(facts.pr.eventBaseAncestor, true);
+  assert.deepEqual(calls.filter((args) => args[0] === 'merge-base'), [['merge-base', '--is-ancestor', eventBase, testedBase]]);
+  assert.deepEqual(calls.at(-1), ['diff', '--raw', '-z', '--no-renames', testedBase, sha]);
+  assert.deepEqual(facts.changes, [{ oldMode: '000000', newMode: '100644', status: 'A', path: 'docs/journal/candidate.md' }]);
+  assert.equal(actual.policy(facts).mode, 'FAST_ELIGIBLE');
+  assert.deepEqual(actual.source(facts), { event: 'pull_request', ref: 'refs/pull/7/merge', sha, tree, parents: [testedBase, head], head, base: testedBase, baseRef: 'main', eventBase });
+  for (const refused of [head, sha, 'f'.repeat(40)]) {
+    calls.length = 0; fixture.event.pull_request.base.sha = refused;
+    const rejected = await collect();
+    assert.equal(rejected.complete, false, refused);
+    assert.equal(actual.policy(rejected).mode, 'INVALID', refused);
+    assert.deepEqual(calls.filter((args) => args[0] === 'merge-base'), [['merge-base', '--is-ancestor', refused, testedBase]]);
+    assert.equal(calls.some((args) => args[0] === 'diff'), false);
   }
 });

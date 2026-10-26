@@ -13,7 +13,7 @@ export function ciFacts() {
     eventSha: 'a'.repeat(40), complete: true,
     main: { head: 'c'.repeat(40), defaultBranch: 'main' },
     checkout: { sha: 'a'.repeat(40), tree: 'b'.repeat(40), parents: ['c'.repeat(40), 'd'.repeat(40)] },
-    pr: { number: 7, head: 'd'.repeat(40), base: 'c'.repeat(40), baseRef: 'main', state: 'open', draft: false },
+    pr: { number: 7, head: 'd'.repeat(40), base: 'c'.repeat(40), testedBase: 'c'.repeat(40), baseRef: 'main', state: 'open', draft: false },
     live: { head: 'd'.repeat(40), base: 'c'.repeat(40), baseRef: 'main', state: 'open', draft: false, labels: [] },
     changes: [{ status: 'A', oldMode: '000000', newMode: '100644', path: 'docs/journal/a.md' }],
   };
@@ -22,7 +22,7 @@ export function ciFacts() {
 export function ciProof(mode = 'FAST_ELIGIBLE') {
   return {
     mode, demoNeeded: false, sourceValid: true,
-    source: { event: 'pull_request', ref: 'refs/pull/7/merge', sha: 'a'.repeat(40), tree: 'b'.repeat(40), parents: ['c'.repeat(40), 'd'.repeat(40)], head: 'd'.repeat(40), base: 'c'.repeat(40), baseRef: 'main' },
+    source: { event: 'pull_request', ref: 'refs/pull/7/merge', sha: 'a'.repeat(40), tree: 'b'.repeat(40), parents: ['c'.repeat(40), 'd'.repeat(40)], head: 'd'.repeat(40), base: 'c'.repeat(40), baseRef: 'main', eventBase: 'c'.repeat(40) },
     results: { plan: 'success', fast: 'success', full_ordinary: 'skipped', full_host: 'skipped', demo: 'skipped' },
   };
 }
