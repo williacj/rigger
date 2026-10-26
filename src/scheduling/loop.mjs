@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { roleDispatch } from '../execution/role.mjs';
 import { dispatch as dispatchOnL1 } from '../execution/run.mjs';
 import { stepDispatch } from '../execution/step.mjs';
-import { EVENT_REFUSED, whenElapsed } from '../substrate/process.mjs';
+import { EVENT_REFUSED, NOT_STARTED, whenElapsed } from '../substrate/process.mjs';
 import { dispatched } from '../workflow/marker.mjs';
 import { admission } from './admission.mjs';
 import { lane } from './lane.mjs';
@@ -461,10 +461,14 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * dispatched with `main` as its working directory, its judge directory as the dispatch's, and
    * `head` as the directory it may reach, each as L1's make answered it, never from L2's answer (the
    * architect's ruling 3, P8, and ruling 4's addendum), its instruction carrying its dispatch id as
-   * L2's `dispatched` writes it. Answers `{ role, outcome }`, the judge's
+   * L2's `dispatched` writes it. Where L1 reports that the judge's dispatch did not start, L3 hands
+   * that report unread to L2 as the role's in `directories`, and L2 withholds the judge where the
+   * report names its scratch directory as missing ("Failure model", step 4). Answers `{ role,
+   * outcome }`, the judge's
    * outcome as `Promise.allSettled` records it, or, for a judge L2 withheld, `{ role, withheld }`,
    * `withheld` holding what L3 handed L2 that L2 withheld it for: `{ directory }`, L1's failure to
-   * make its directory, or `{ step, outcome }`, the step in its `head` whose outcome L2 was handed
+   * make its directory, `{ scratch }`, L1's report that its dispatch did not start, or `{ step,
+   * outcome }`, the step in its `head` whose outcome L2 was handed
    * last, by name, and that outcome, since L3 asks after each step.
    */
   const judged = async (card, judge, ask) => {
@@ -483,7 +487,11 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       current = named(ask({ judged: { [role]: [...outcomes] } }), role);
       if (current === undefined) return { role, withheld: { step: step.name, outcome: outcomes.at(-1) } };
     }
-    return { role, outcome: await dispatchRole(card, current, { cwd: main, directory: path, reach: [head], scratch, repository }, {}, dispatched) };
+    const outcome = await dispatchRole(card, current, { cwd: main, directory: path, reach: [head], scratch, repository }, {}, dispatched);
+    if (outcome.status === 'rejected' && outcome.reason?.code === NOT_STARTED && named(ask({ directories: { [role]: outcome } }), role) === undefined) {
+      return { role, withheld: { scratch: outcome } };
+    }
+    return { role, outcome };
   };
 
   /**
