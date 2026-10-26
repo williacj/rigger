@@ -76,6 +76,9 @@ function startSynchronousTrace() {
   };
 }
 
+// The mkdtemp check cites the trace's exact line, so imports for later tests sit below it.
+import { admissionOf, closerText, moduleOver, picture, seed, stateOf, TIME } from './admission-world.mjs';
+
 /** Keep the first and last observed call at each site and every call crossing the shared deadline. */
 function synchronousSummary(bodyStart, deadline, worlds = [], bodyEnd = Infinity) {
   const groups = new Map();
@@ -1316,6 +1319,50 @@ test('given no pullable card, `loop`\'s single pull claims nothing and answers a
   await release();
 });
 
+// proves R-SCHED-3, R-SCHED-16
+test('an owner closer in the state directory stops a Ready card before its claim', async () => {
+  const directory = stateOf();
+  seed(directory, 'owner-a1.json', closerText({ reason: 'owner paused claims' }));
+  const built = world({ cards: [7], directory });
+  const pulled = built.loop.pull();
+  const done = settledOf(pulled);
+  try {
+    await settling(built, done);
+    assert.deepEqual(built.dispatches.started, []);
+    assert.deepEqual(built.fake.writes(), []);
+    const answer = await pulled;
+    assert.deepEqual(answer.admission?.closers.map(({ kind, reason, time }) => ({ kind, reason, time })), [
+      { kind: 'owner', reason: 'owner paused claims', time: TIME },
+    ]);
+  } finally {
+    built.dispatches.releaseAll();
+    await pulled.catch(() => {});
+  }
+});
+
+// proves R-SCHED-3, R-SCHED-16
+test('an unreadable admission names every bad path and cause and claims no Ready card', async () => {
+  const directory = stateOf();
+  seed(directory, 'not-a-closer');
+  seed(directory, 'owner-b2.json', '{}');
+  const built = world({ cards: [7], directory });
+  const pulled = built.loop.pull();
+  const done = settledOf(pulled);
+  try {
+    await settling(built, done);
+    assert.deepEqual(built.dispatches.started, []);
+    assert.deepEqual(built.fake.writes(), []);
+    await assert.rejects(pulled, (failure) => {
+      assert.ok(failure.message.includes(`${admissionOf(directory)}/not-a-closer (no closer form)`), failure.message);
+      assert.ok(failure.message.includes(`${admissionOf(directory)}/owner-b2.json (no reason, time or run)`), failure.message);
+      return true;
+    });
+  } finally {
+    built.dispatches.releaseAll();
+    await pulled.catch(() => {});
+  }
+});
+
 test('a claim limit that is not a positive whole number is refused naming the claim limit, and nothing is claimed', async () => {
   for (const limit of [0, -1, 1.5, '1', Number.NaN, null]) {
     const built = world({ concurrency: 3 });
@@ -2098,6 +2145,242 @@ test('an owner escalation whose transition record is refused starts no later wor
   assert.equal(built.repository.held().issues.find(({ number }) => number === 98).comments.length, 1);
 });
 
+/** A real L2 answer at the pull, with the forge facts that make it. */
+function admissionAction(action) {
+  const number = { dispatch: 71, redo: 70, judge: 72, merge: 73, move: 74, return: 75, escalate: 76, continue: 77 }[action];
+  const head = 'a'.repeat(40);
+  const pull = number + 100;
+  if (action === 'dispatch') return { cards: [cardIn(number, COLUMNS.ready)] };
+  if (action === 'redo') return { cards: [cardIn(number, COLUMNS.coding)] };
+  if (action === 'continue') return {
+    cards: [cardIn(number, COLUMNS.review)],
+    kinds: { change: { ...KINDS.change, judges: ['reviewer'] } },
+    forge: { pullRequests: [{ number: pull, head: `rigger-${number}`, sha: head, mergeBase: 'c'.repeat(40), diff: 'diff --git a/help b/help\n', mergeable: 'mergeable', comments: [
+      markerComment({ card: number, pull, head, body: PASSING, role: 'reviewer', verdict: 'needs revision', items: ['unmet'], toSound: 'Fix the help line.' }),
+    ] }] },
+  };
+  const column = action === 'move' || action === 'judge' ? COLUMNS.review : COLUMNS.owner;
+  const comments = action === 'merge' ? [markerComment({ card: number, pull, head, body: PASSING, role: 'owner' })]
+    : action === 'return' ? [markerComment({ card: number, pull, head, body: PASSING, role: 'owner', coverage: 'insufficient', coverageReason: 'The card asks for two verbs.' })]
+      : action === 'escalate' ? [markerComment({ card: number, pull, head, body: PASSING, role: 'owner', verdict: 'critical', toSound: 'Keep the user files.' })] : [];
+  return {
+    cards: [cardIn(number, column)],
+    ...(action === 'judge' ? { kinds: { change: { ...KINDS.change, judges: ['reviewer'] } } } : {}),
+    forge: { pullRequests: [{ number: pull, head: `rigger-${number}`, sha: head, mergeBase: 'c'.repeat(40), diff: 'diff --git a/help b/help\n', mergeable: 'mergeable', merged: action === 'move', comments }] },
+  };
+}
+
+/** A blocked pull still asks real L2, and changes neither the board, forge nor admission. */
+async function blockedAdmission(action, name, content = closerText()) {
+  const directory = stateOf();
+  seed(directory, name, content);
+  const built = world({ ...admissionAction(action), directory,
+    workspace: async () => { throw new Error('a blocked pull made a workspace'); },
+    judgeDirectory: async () => { throw new Error('a blocked pull made a judge directory'); },
+  });
+  const forgeBefore = structuredClone(built.repository.held());
+  const admissionBefore = picture(admissionOf(directory));
+  const pulled = built.loop.pull();
+  const done = settledOf(pulled);
+  try {
+    await positive(() => done() || built.l3Events().some(({ event }) => event === 'pull'));
+    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull'), [], 'a blocked pull claimed a card');
+    assert.deepEqual(built.fake.writes(), [], 'a blocked pull wrote to the board');
+    if (name === 'not-a-closer') {
+      await assert.rejects(pulled, (failure) => {
+        assert.ok(failure.message.includes(`${admissionOf(directory)}/${name} (no closer form)`), failure.message);
+        return true;
+      });
+    } else {
+      const answer = await pulled;
+      assert.deepEqual(answer.reached, []);
+      assert.equal(answer.admission.state, 'closed');
+    }
+  } finally {
+    built.dispatches.releaseAll();
+    await pulled.catch(() => {});
+  }
+  assert.equal(built.decisions[0]?.action.action, action === 'redo' ? 'dispatch' : action, JSON.stringify(built.decisions));
+  assert.deepEqual(built.fake.writes(), []);
+  assert.deepEqual(built.repository.held(), forgeBefore);
+  assert.deepEqual(built.dispatches.started, []);
+  assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull'), []);
+  assert.equal(built.l3Events().filter(({ event, trigger }) => event === 'trigger' && trigger === 'drain').length, name === 'not-a-closer' ? 0 : 1);
+  assert.deepEqual(picture(admissionOf(directory)), admissionBefore);
+}
+
+// proves R-SCHED-3, R-SCHED-16
+test('a blocked take attempts no admission write, even one removed before it returns', async () => {
+  const directory = stateOf();
+  seed(directory, 'owner-a1.json');
+  const built = world({ ...admissionAction('dispatch'), directory });
+  const admissionDirectory = admissionOf(directory);
+  const writes = [];
+  const originals = new Map();
+  const descriptors = new Map();
+  const underAdmission = (path) => String(path) === admissionDirectory || String(path).startsWith(`${admissionDirectory}/`);
+  for (const name of ['writeFileSync', 'appendFileSync', 'mkdirSync', 'renameSync', 'unlinkSync', 'rmSync']) {
+    const original = fs[name];
+    originals.set(name, original);
+    fs[name] = (...args) => {
+      const paths = name === 'renameSync' ? args.slice(0, 2) : args.slice(0, 1);
+      if (paths.some(underAdmission)) {
+        writes.push({ operation: name, paths: paths.map(String) });
+      }
+      return original(...args);
+    };
+  }
+  for (const name of ['openSync', 'writeSync', 'writevSync', 'ftruncateSync', 'closeSync']) originals.set(name, fs[name]);
+  fs.openSync = (path, flags, ...rest) => {
+    const fd = originals.get('openSync')(path, flags, ...rest);
+    if (underAdmission(path)) {
+      descriptors.set(fd, String(path));
+      const writable = typeof flags === 'string' ? /[wax+]/.test(flags)
+        : (flags & (fs.constants.O_WRONLY | fs.constants.O_RDWR | fs.constants.O_CREAT | fs.constants.O_TRUNC | fs.constants.O_APPEND)) !== 0;
+      if (writable) writes.push({ operation: 'openSync', paths: [String(path)] });
+    }
+    return fd;
+  };
+  for (const name of ['writeSync', 'writevSync', 'ftruncateSync']) {
+    fs[name] = (fd, ...args) => {
+      if (descriptors.has(fd)) writes.push({ operation: name, paths: [descriptors.get(fd)] });
+      return originals.get(name)(fd, ...args);
+    };
+  }
+  fs.closeSync = (fd) => {
+    try { return originals.get('closeSync')(fd); }
+    finally { descriptors.delete(fd); }
+  };
+  syncBuiltinESMExports();
+  try {
+    const pulled = built.loop.pull();
+    const done = settledOf(pulled);
+    try {
+      await positive(() => done() || built.l3Events().some(({ event }) => event === 'pull'));
+      assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull'), [], 'the closed take claimed a card');
+      const answer = await pulled;
+      assert.equal(answer.admission.state, 'closed');
+      assert.deepEqual(writes, [], 'take attempted an admission write');
+    } finally {
+      await settling(built, done);
+      built.dispatches.releaseAll();
+      await pulled.catch(() => {});
+    }
+  } finally {
+    for (const [name, original] of originals) fs[name] = original;
+    syncBuiltinESMExports();
+  }
+  await moduleOver(directory).resume();
+  const next = built.loop.pull();
+  const done = settledOf(next);
+  try {
+    await positive(() => done() || built.dispatches.heldNow(71));
+    assert.deepEqual(built.dispatches.started, [71], 'the closed take retained a claim');
+  } finally {
+    built.dispatches.releaseAll();
+    await next.catch(() => {});
+  }
+});
+
+// proves R-SCHED-3, R-SCHED-16
+test('an owner closer stops L2 maker dispatch from Ready and Coding', async () => {
+  for (const action of ['dispatch', 'redo']) await blockedAdmission(action, 'owner-a1.json');
+});
+
+// proves R-SCHED-3, R-SCHED-16
+test('an owner closer stops L2 judges alone in Review', async () => blockedAdmission('judge', 'owner-a1.json'));
+
+// proves R-SCHED-3, R-SCHED-16
+test('an owner closer stops L2 merge without taking a slot', async () => blockedAdmission('merge', 'owner-a1.json'));
+
+// proves R-SCHED-3, R-SCHED-16
+test('an owner closer stops L2 move, return and escalation writes', async () => {
+  for (const action of ['move', 'return', 'escalate']) await blockedAdmission(action, 'owner-a1.json');
+});
+
+// proves R-SCHED-3, R-SCHED-16
+test('an owner closer stops a returned card continuing its maker work', async () => blockedAdmission('continue', 'owner-a1.json'));
+
+// proves R-SCHED-3, R-SCHED-16
+test('a hold closer stops dispatch, judges, merge, move, return, escalation and continued work', async () => {
+  for (const action of ['dispatch', 'redo', 'judge', 'merge', 'move', 'return', 'escalate', 'continue']) await blockedAdmission(action, 'hold-b2.json');
+});
+
+// proves R-SCHED-3, R-SCHED-16
+test('unreadable admission stops dispatch, judges, merge, move, return, escalation and continued work', async () => {
+  for (const action of ['dispatch', 'redo', 'judge', 'merge', 'move', 'return', 'escalate', 'continue']) await blockedAdmission(action, 'not-a-closer');
+});
+
+// proves R-SCHED-3, R-SCHED-16
+test('a closer linked while the facts call is pending stops the pull in its synchronous claim step', async () => {
+  const directory = stateOf();
+  const fake = boardOf([readyCard(78)]);
+  const built = world({ fake, directory });
+  let entered = false;
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  const gated = loop({
+    config: { ...config, concurrency: 1 }, board: handleOn(fake),
+    facts: async () => { entered = true; await pending; return (card) => nextAction(card, KINDS); },
+    decide: (card) => nextAction(card, KINDS),
+    l2: built.l2, sink: built.sink, kill: async () => {},
+    workspace: async () => { throw new Error('a closed pull makes no workspace'); },
+    judgeDirectory: async () => {}, removeDirectories: async () => {}, state: directory, environment: {},
+  });
+  const pulled = gated.pull();
+  const done = settledOf(pulled);
+  await positive(() => entered);
+  seed(directory, 'owner-a1.json');
+  release();
+  await positive(() => done() || built.l3Events().some(({ event }) => event === 'pull'));
+  assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull'), []);
+  const answer = await pulled;
+
+  assert.equal(answer.admission.state, 'closed');
+  assert.deepEqual(answer.reached, []);
+  assert.deepEqual(fake.writes(), []);
+  assert.deepEqual(built.dispatches.started, []);
+});
+
+// proves R-SCHED-3, R-SCHED-16
+test('a closer linked after a run claims a card lets it finish and stops its freed-slot trigger', async () => {
+  const built = world({ cards: [81, 82, 83], concurrency: 2 });
+  const running = built.loop.run();
+  await positive(() => built.dispatches.heldNow(81) && built.dispatches.heldNow(82));
+  seed(built.directory, 'owner-a1.json');
+  const done = settledOf(running);
+  built.dispatches.releaseAll();
+  await positive(() => done() || built.dispatches.heldNow(83));
+  if (built.dispatches.heldNow(83)) built.dispatches.release(83);
+  const reached = await running;
+
+  assert.deepEqual(reached.map(({ card }) => card).sort(), [81, 82]);
+  assert.deepEqual(built.dispatches.started, [81, 82]);
+  assert.deepEqual(await columnsOf(built.fake), { 81: COLUMNS.review, 82: COLUMNS.review, 83: COLUMNS.ready });
+  assert.equal(built.l3Events().filter(({ event, trigger }) => event === 'trigger' && trigger === 'pull').length, 3);
+});
+
+// proves R-SCHED-3, R-SCHED-16
+test('resume removes the closer through admission and the next pull claims as when open', async () => {
+  const directory = stateOf();
+  seed(directory, 'owner-a1.json');
+  const built = world({ cards: [83], directory });
+  const stopped = await built.loop.pull();
+  assert.equal(stopped.admission.state, 'closed');
+  await moduleOver(directory).resume();
+  const next = built.loop.pull();
+  const done = settledOf(next);
+  try {
+    await positive(() => done() || built.dispatches.heldNow(83));
+    assert.deepEqual(built.dispatches.started, [83]);
+    await positive(() => built.dispatches.heldNow(83));
+    assert.deepEqual(built.dispatches.started, [83]);
+    assert.deepEqual(await columnsOf(built.fake), { 83: COLUMNS.coding });
+  } finally {
+    built.dispatches.releaseAll();
+    await next;
+  }
+});
 
 test('the loop world opens a new pull after closed history and still suppresses a second genuinely open pull', SETTLES_WITHIN, async (t) => {
   for (const alreadyOpen of [false, true]) {
