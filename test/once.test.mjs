@@ -1664,3 +1664,84 @@ test('once ignores closed cards without a kind or carrying the epic label while 
     }
   }
 });
+
+// proves R-SCHED-27
+test('once leaves every status-labelled table row unclaimed with no writes, dispatch or directory removal', SETTLES_WITHIN, async () => {
+  const directory = temporaryDirectory('rigger-once-status-');
+  const settings = { ...config(), worktrees: { ...config().worktrees, root: directory } };
+  const rows = [
+    card(960, 'Ready', { labels: ['type:change', 'rigger:status'] }),
+    card(961, 'Coding', { labels: ['type:change', 'rigger:status'] }),
+    card(962, 'Review', { labels: ['type:change', 'rigger:status'] }),
+    card(963, 'Owner', { labels: ['type:change', 'rigger:status'] }),
+    card(964, 'Done', { labels: ['type:change', 'rigger:status'] }),
+    card(965, 'Elsewhere', { labels: ['type:change', 'rigger:status'] }),
+    card(966, null, { labels: ['type:change', 'rigger:status'] }),
+    card(967, 'Ready', { labels: ['type:change', 'type:spec', 'rigger:status'], body: '' }),
+    card(968, 'Ready', { labels: ['type:change', 'rigger:escalated', 'rigger:status'] }),
+    card(969, 'Review', { labels: ['type:change', 'rigger:escalated', 'rigger:status'] }),
+    card(970, 'Review', { labels: ['type:change', 'rigger:status'] }),
+    card(971, 'Review', { labels: ['type:change', 'rigger:status'] }),
+    card(972, 'Owner', { labels: ['type:change', 'rigger:status'] }),
+    card(973, 'Review', { labels: ['type:change', 'rigger:status'] }),
+    card(974, 'Owner', { labels: ['type:change', 'rigger:status'] }),
+    card(975, 'Ready', { labels: ['type:change', 'RIGGER:STATUS'] }),
+  ];
+  const pull = (number, at, facts = {}) => ({ number: at, head: `rigger-${number}`, sha: '6'.repeat(40), ...facts });
+  const seed = { pullRequests: [
+    pull(969, 1969, { merged: true }),
+    pull(970, 1970, { merged: true }),
+    pull(971, 1971),
+    pull(972, 1972), pull(972, 2072),
+    pull(973, 1973, { closed: true }),
+    pull(974, 1974, { closed: true }),
+  ] };
+  const markers = rows.map(({ number }) => join(directory, 'scratch', `rigger-${number}`, 'reviewer', 'kept'));
+  const ran = once({ columns: [...COLUMNS, 'Elsewhere'], items: rows }, { settings, seed,
+    prepare: () => {
+      for (const marker of markers) {
+        mkdirSync(dirname(marker), { recursive: true });
+        writeFileSync(marker, 'status issue directory\n');
+      }
+    },
+  });
+
+  assert.equal(ran.code, 0, `${ran.out}\n${ran.err}`);
+  assert.match(ran.out, /no card was pullable/);
+  assert.doesNotMatch(ran.out + ran.err, /refus|#96\d\b|#97\d\b/);
+  assert.deepEqual(ran.agentRuns(), []);
+  assert.deepEqual((await ran.model()).writes(), []);
+  const after = await (await ran.model()).operations.readItems();
+  for (const row of rows) {
+    assert.deepEqual(after.find(({ number }) => number === row.number).labels, row.labels, `labels on #${row.number}`);
+    assert.equal((await columnsOf(ran))[row.number], row.column, `column of #${row.number}`);
+  }
+  for (const marker of markers) assert.equal(readFileSync(marker, 'utf8'), 'status issue directory\n', marker);
+  assert.deepEqual(eventsOf(ran).filter(({ event }) => /dispatch|escalat|transition|workspace|merge/.test(event)), []);
+  for (const args of ran.fake.sent()) {
+    assert.equal(args[0], 'api', JSON.stringify(args));
+    if (args[1] === 'graphql') {
+      assert.ok(parseDocument(args[3].slice('query='.length)).operations.every(({ type }) => type === 'query'), JSON.stringify(args));
+    } else {
+      assert.equal(args[args.indexOf('-X') + 1], 'GET', JSON.stringify(args));
+    }
+  }
+});
+
+// proves R-SCHED-27
+test('once works a Ready issue on its next read after the status label is removed', async () => {
+  const ran = once({ items: [card(980, 'Ready', { labels: ['type:change', 'rigger:status'] })] });
+  assert.equal(ran.code, 0, ran.err);
+  assert.deepEqual(ran.agentRuns(), []);
+  assert.deepEqual((await ran.model()).writes(), []);
+
+  // The fixture control updates both the board item and its issue to carry only type:change.
+  setEscalationLabel(ran.fake);
+  const resumed = ran.rerun();
+
+  assert.equal(resumed.code, 1, `${resumed.out}\n${resumed.err}`);
+  assert.match(resumed.err, /claimed #980.*maker exited 0 and opened no pull request/);
+  assert.equal(resumed.agentRuns().length, 1);
+  assert.deepEqual(await columnsOf(resumed), { 980: 'Coding' });
+  assert.deepEqual((await (await resumed.model()).operations.readItems())[0].labels, ['type:change']);
+});

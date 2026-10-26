@@ -370,3 +370,19 @@ test('plan describes closed removal followed by redo escalation or refusal and c
   assert.deepEqual(readdirSync(directory), files);
   for (const item of items) assert.equal(readFileSync(join(directory, `rigger-${item.number}`, 'kept'), 'utf8'), `keep ${item.number}`);
 });
+
+// proves R-SCHED-27
+test('plan neither pulls nor refuses a Ready status issue and counts only an ordinary refusal', async () => {
+  const ran = plan({ items: [
+    card(960, 'Ready', { labels: ['type:change', 'rigger:status'], body: '' }),
+    card(961, 'Ready', { body: '' }),
+  ] });
+
+  assert.equal(ran.code, 0, ran.err);
+  assert.deepEqual(pulled(ran.out), []);
+  assert.equal(refusalOf(ran.out, 960), undefined, ran.out);
+  assert.doesNotMatch(ran.out, /#960\b/, ran.out);
+  assert.match(refusalOf(ran.out, 961) ?? '', /missing acceptance/);
+  assert.match(ran.out, /refuses 1 card\b/);
+  assert.deepEqual((await ran.model()).writes(), []);
+});
