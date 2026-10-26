@@ -206,7 +206,7 @@ export function columnChanges({
       } catch (refusal) {
         throw new Error(`card #${card.number}'s escalation issue comment was refused: ${refusal.message}`, { cause: refusal });
       }
-      await change(card, 'escalated');
+      await change(next.from === undefined ? card : { ...card, column: columns[next.from] }, 'escalated');
       try {
         await writes.addIssueLabel(card.number, FIXED_LABELS.escalated);
       } catch (refusal) {

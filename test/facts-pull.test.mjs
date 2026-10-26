@@ -1,5 +1,5 @@
 // ABOUTME: Tests L3's pull over L2's facts call, driven through the loop world: L3 awaits the call
-// before it claims, a card the forge's facts refuse is never claimed, moved or given a workspace,
+// before it claims, a card-local forge refusal escalates under its claim without a workspace,
 // a Review card with one open pull request answers its agent judges, and is ignored where its kind's
 // only judge is `owner`, and a Review card with none is done again.
 
@@ -118,35 +118,41 @@ test('given L2\'s facts call failing on one card\'s read, the pull rejects namin
 
 /**
  * Pulls once over a board holding `card` alone, with the forge seeded with `forge`, and asserts that
- * L2 refused it at the pull, its reason matching `names`: the write record holds no move of it, the
- * stream holds no L3 pull event for it, no workspace is made for it, and the forge is unchanged.
+ * L2 escalated it at the pull, its reason matching `names`: it moves to Owner under one claim,
+ * with one comment and its escalation label. No workspace or line-of-work change is made.
  */
-async function refusedAtPull(card, forge, names) {
+async function escalatedAtPull(card, forge, names) {
   const workspace = recordingWorkspaces();
   const built = world({ cards: [card], concurrency: 1, forge, workspace });
   const before = built.repository.held();
 
-  assert.deepEqual(await built.loop.pull(), []);
+  const reached = await built.loop.pull();
+  assert.equal(reached[0].action, 'escalate');
 
   const [decision] = built.decisions;
-  assert.equal(decision.action.action, 'refuse', JSON.stringify(decision));
-  assert.equal(decision.action.card, card.number);
+  assert.equal(decision.action.action, 'escalate', JSON.stringify(decision));
+  assert.equal(decision.action.line, `rigger-${card.number}`);
   assert.match(decision.action.reason, names);
-  assert.deepEqual(built.fake.writes(), []);
-  assert.deepEqual(pulledIn(built), []);
+  assert.deepEqual(built.fake.writes(), [{ operation: 'moveItem', args: [card.id ?? 'item-1', COLUMNS.owner] }]);
+  assert.deepEqual(pulledIn(built), [card.number]);
   assert.deepEqual(workspace.asked, []);
-  assert.deepEqual(built.repository.held(), before);
+  const after = built.repository.held();
+  assert.deepEqual(after.pullRequests, before.pullRequests);
+  assert.deepEqual(after.branches, before.branches);
+  assert.equal(after.issues[0].comments.length, 1);
+  assert.match(after.issues[0].comments[0].body, names);
+  assert.ok(after.issues[0].labels.includes('rigger:escalated'));
 }
 
 // proves R-WORK-19
-test('given a Ready card whose line of work the forge holds, L2 refuses it at the pull: no move, no L3 pull event and no workspace for it, and the forge unchanged', () => refusedAtPull(cardIn(1, COLUMNS.ready), { branches: ['rigger-1'] }, /rigger-1/));
+test('given a Ready card whose line of work the forge holds, L2 escalates it at the pull without a workspace and preserves its line of work', () => escalatedAtPull(cardIn(1, COLUMNS.ready), { branches: ['rigger-1'] }, /rigger-1/));
 
 // proves R-WORK-19
-test('given a Coding card whose line of work the forge holds, L2 refuses it at the pull: no move, no L3 pull event and no workspace for it, and the forge unchanged', () => refusedAtPull(cardIn(2, COLUMNS.coding), { branches: ['rigger-2'] }, /rigger-2/));
+test('given a Coding card whose line of work the forge holds, L2 escalates it at the pull without a workspace and preserves its line of work', () => escalatedAtPull(cardIn(2, COLUMNS.coding), { branches: ['rigger-2'] }, /rigger-2/));
 
 // proves R-WORK-19
-test('given a Ready or Coding card with a merged pull request from its line of work, L2 refuses it at the pull: no move, no L3 pull event and no workspace for it, and the forge unchanged', async () => {
-  for (const column of [COLUMNS.ready, COLUMNS.coding]) await refusedAtPull(cardIn(3, column), { pullRequests: [pullFrom(3, 31, true)] }, /#31\b/);
+test('given a Ready or Coding card with a merged pull request from its line of work, L2 escalates it at the pull without a workspace and preserves its line of work', async () => {
+  for (const column of [COLUMNS.ready, COLUMNS.coding]) await escalatedAtPull(cardIn(3, column), { pullRequests: [pullFrom(3, 31, true)] }, /#31\b/);
 });
 
 // proves R-WORK-5
@@ -183,10 +189,10 @@ test('given an Owner card with a merged pull request, L3 has L2 move it to Done 
 });
 
 // proves R-WORK-19
-test('given a Review card with two open pull requests from its line of work, L2 refuses it at the pull: no move, no L3 pull event and no workspace for it, and the forge unchanged', () => refusedAtPull(cardIn(4, COLUMNS.review), { pullRequests: [pullFrom(4, 41), pullFrom(4, 42)] }, /#41\b.*#42\b/));
+test('given a Review card with two open pull requests from its line of work, L2 escalates it at the pull without a workspace and preserves its line of work', () => escalatedAtPull(cardIn(4, COLUMNS.review), { pullRequests: [pullFrom(4, 41), pullFrom(4, 42)] }, /#41\b.*#42\b/));
 
 // proves R-WORK-19
-test('given a Review card with no pull request and its line of work on the forge, L2 refuses it at the pull: no move, no L3 pull event and no workspace for it, and the forge unchanged', () => refusedAtPull(cardIn(5, COLUMNS.review), { branches: ['rigger-5'] }, /rigger-5/));
+test('given a Review card with no pull request and its line of work on the forge, L2 escalates it at the pull without a workspace and preserves its line of work', () => escalatedAtPull(cardIn(5, COLUMNS.review), { branches: ['rigger-5'] }, /rigger-5/));
 
 // proves R-WORK-5
 test('a Review card with one open pull request whose only judge is owner moves to Owner through L2', async () => {
@@ -398,10 +404,9 @@ test('run leaves out a continuing maker that exits without returning its card to
 
 /**
  * Pulls once over a board holding `card` alone, under `kinds`, with the forge seeded with `forge`,
- * and asserts that L2's answer for it, as its facts call reads it, refuses it naming `names`, and
- * that the pull changed nothing: no move of it, no L3 pull event and no workspace for it, and the
- * forge unchanged. L3 offers L2 no Owner card yet (#657), so its answer is read through the facts
- * call over the same forge.
+ * and checks L2's answer through the facts call over that forge. An Owner card escalates with
+ * a comment naming `names`; the Coding card's ordinary refusal leaves everything unchanged.
+ * Neither is given a workspace or changes its line of work.
  */
 async function refusedOnTheBoard(card, forge, names, kinds = KINDS) {
   const workspace = recordingWorkspaces();
@@ -412,18 +417,26 @@ async function refusedOnTheBoard(card, forge, names, kinds = KINDS) {
   const decide = (each) => nextAction(each, kinds, undefined, { sink: quiet });
   const next = (await factsCall({ config: { ...config, board: { ...config.board, columns: COLUMNS } }, reads: built.repository.operations, decide })([card]))(card);
 
-  assert.equal(next.action, 'refuse', JSON.stringify(next));
-  assert.equal(next.card, card.number);
+  const escalates = card.column === COLUMNS.owner;
+  assert.equal(next.action, escalates ? 'escalate' : 'refuse', JSON.stringify(next));
+  assert.equal(escalates ? next.line : next.card, escalates ? `rigger-${card.number}` : card.number);
   assert.match(next.reason, names);
-  for (const { action } of built.decisions) assert.equal(action.action, 'refuse', JSON.stringify(built.decisions));
-  assert.deepEqual(built.fake.writes(), []);
-  assert.deepEqual(pulledIn(built), []);
+  for (const { action } of built.decisions) assert.equal(action.action, escalates ? 'escalate' : 'refuse', JSON.stringify(built.decisions));
+  assert.deepEqual(built.fake.writes(), escalates ? [{ operation: 'moveItem', args: [card.id ?? 'item-1', COLUMNS.owner] }] : []);
+  assert.deepEqual(pulledIn(built), escalates ? [card.number] : []);
   assert.deepEqual(workspace.asked, []);
-  assert.deepEqual(built.repository.held(), before);
+  if (!escalates) assert.deepEqual(built.repository.held(), before);
+  else {
+    const after = built.repository.held();
+    assert.deepEqual(after.pullRequests, before.pullRequests);
+    assert.deepEqual(after.branches, before.branches);
+    assert.equal(after.issues[0].comments.length, 1);
+    assert.match(after.issues[0].comments[0].body, names);
+  }
 }
 
 // proves R-WORK-19
-test('given an Owner card the forge holds no pull request for, more than one open for, or only its line of work for, L2 refuses it naming what the forge holds, and nothing moves, is claimed, is given a workspace or changes on the forge, a row each', async () => {
+test('given an Owner card the forge holds no pull request for, more than one open for, or only its line of work for, L2 escalates it naming what the forge holds and preserves its line of work without a workspace, a row each', async () => {
   await refusedOnTheBoard(cardIn(51, COLUMNS.owner), {}, /no pull request.*rigger-51/);
   await refusedOnTheBoard(cardIn(52, COLUMNS.owner), { pullRequests: [pullFrom(52, 521), pullFrom(52, 522)] }, /#521\b.*#522\b/);
   await refusedOnTheBoard(cardIn(53, COLUMNS.owner), { branches: ['rigger-53'] }, /\brigger-53\b/);

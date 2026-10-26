@@ -26,9 +26,124 @@ import { roleDispatch } from '../src/execution/role.mjs';
 import { admission } from '../src/scheduling/admission.mjs';
 import { GIT_TIMEOUT } from '../src/substrate/worktrees.mjs';
 import { repositoryAt } from './git-repository.mjs';
+import { ownerWrites } from './card-local-world.mjs';
+import { makeJudgeDirectory } from '../src/execution/workspace.mjs';
 import { GIT, fixture, holding, withFirstOnPath } from './process-fixtures.mjs';
 
 const { 60_000: SETTLES_WITHIN } = BOUNDS;
+
+// The counterexample throws away L2's escalation answer or records its move from Ready.
+// proves R-ESCALATE-12
+test('a card-local workspace refusal escalates under its claim and records its move from Coding', SETTLES_WITHIN, async () => {
+  const path = join(temporaryDirectory('rigger-card-local-attempt-'), 'rigger-7');
+  const reason = `R-WORK-13 refuses ${path}\nowner's [file] remains`;
+  let attempts = 0;
+  const built = ownerWrites(judgeWorld({ cards: [cardIn(7, COLUMNS.ready)], workspace: async () => {
+    attempts += 1;
+    throw Object.assign(new Error(reason), { code: 'WORKSPACE_REFUSED', path });
+  } }));
+
+  const [reached] = await built.loop.pull(1);
+
+  assert.equal(reached.action, 'escalate');
+  assert.equal(attempts, 1);
+  assert.deepEqual(await columnsOf(built.fake), { 7: COLUMNS.owner });
+  assert.deepEqual(built.owner.held().issues[0].labels, ['type:change', 'rigger:escalated']);
+  assert.equal(built.owner.held().issues[0].comments.length, 1);
+  assert.ok(built.owner.held().issues[0].comments[0].body.includes(reason));
+  assert.deepEqual(recorded(built, 'L2', 'transition').map(({ from, to }) => [from, to]), [['ready', 'coding'], ['coding', 'owner']]);
+  assert.equal(recorded(built, 'L3', 'slot.release').length, 1);
+});
+
+/** A refused reviewer and a held architect, with the real loop, transitions and stand-in provider. */
+function refusedPanel({ ready = false, scratchRefusal = false, other = 'verdict', refuseWrite } = {}) {
+  const built = ownerWrites(judgeWorld({ cards: [cardIn(7, ready ? COLUMNS.ready : COLUMNS.review)],
+    forge: ready ? {} : { pullRequests: [pullFor(7)] },
+    kinds: { change: { ...KINDS.change, judges: ['reviewer', 'architect'] } },
+    refuse: ({ layer, event, fields }) => other === 'no outcome' && layer === 'L3' && event === 'dispatch' && fields.role === 'architect',
+  }), { refuse: refuseWrite });
+  const reports = {};
+  const judgeDirectory = async (card, role, head) => {
+    if (role === 'reviewer' || other === 'both refused') {
+      if (!scratchRefusal) {
+        const reason = Object.assign(new Error(`R-WORK-20 refuses ${role}'s directory`), { code: 'WORKSPACE_REFUSED', path: join(built.scratch, role) });
+        reports[role] = reason.message;
+        throw reason;
+      }
+      const made = await built.handed.judgeDirectory(card, role, head);
+      mkdirSync(made.scratch, { recursive: true });
+      writeFileSync(join(made.scratch, role), `${role}'s preserved file\n`);
+      return made;
+    }
+    if (other === 'host withheld') throw Object.assign(new Error('EACCES reading architect directory'), { code: WORKSPACE_NOT_MADE, path: join(built.scratch, role) });
+    return built.handed.judgeDirectory(card, role, head);
+  };
+  const decide = (card, outcomes, options) => {
+    for (const [role, report] of Object.entries(options?.directories ?? {})) reports[role] = report.reason.message;
+    return built.handed.decide(card, outcomes, options);
+  };
+  const engine = loop({ ...built.handed, decide, judgeDirectory });
+  return { built, engine, reports };
+}
+
+// The counterexample escalates as soon as one judge is refused, dropping its peer's verdict.
+// proves R-ESCALATE-12
+test('a refused judge waits for the other judge and keeps its verdict before one owner escalation', SETTLES_WITHIN, async () => {
+  const { built, engine, reports } = refusedPanel();
+  built.agent.plan(7, 'architect', { hold: true, exit: 0 });
+  const running = engine.pull(1).then((reached) => ({ reached }), (failure) => ({ failure }));
+  await waitFor(() => built.agent.held(7, 'architect'), 20_000);
+  assert.equal(built.owner.held().issues[0].comments.length, 0, 'the owner write waits for the running judge');
+  built.agent.release(7, 'architect');
+  const { reached, failure } = await running;
+
+  assert.equal(failure, undefined, failure?.stack);
+  assert.equal(built.owner.held().issues[0].comments.length, 1, 'exactly one owner escalation');
+  assert.ok(built.owner.held().issues[0].comments[0].body.includes(reports.reviewer));
+  assert.deepEqual(reached[0].judges.map(({ role }) => role), ['reviewer', 'architect']);
+  assert.equal(reached[0].judges[1].outcome.value.exit, 0);
+  assert.ok(built.repository.pull(1007).comments.some(({ body }) => body.includes('Sound, by architect')));
+  assert.deepEqual(await columnsOf(built.fake), { 7: COLUMNS.owner });
+});
+
+// The counterexample reports a real refused scratch path as NOT_STARTED, so neither refusal escalates.
+// proves R-ESCALATE-12
+test('two real judge scratch refusals stay distinct from not made and produce one escalation naming both', SETTLES_WITHIN, async () => {
+  const { built, engine } = refusedPanel({ scratchRefusal: true, other: 'both refused' });
+  const [reached] = await engine.pull(1);
+  assert.equal(built.owner.held().issues[0].comments.length, 1);
+  const comment = built.owner.held().issues[0].comments[0].body;
+  assert.deepEqual(reached.judges.map(({ outcome }) => outcome.reason.code), ['SCRATCH_REFUSED', 'SCRATCH_REFUSED']);
+  for (const role of ['reviewer', 'architect']) {
+    assert.ok(comment.includes(reached.judges.find((judge) => judge.role === role).outcome.reason.message), comment);
+    assert.equal(readFileSync(join(built.scratch, 'workspaces', 'scratch', 'rigger-7', role), 'utf8'), `${role}'s preserved file\n`);
+  }
+  assert.deepEqual(recorded(built, 'L2', 'judge.withheld'), []);
+  assert.deepEqual(recorded(built, 'L1', 'dispatch.start'), []);
+});
+
+// The counterexample loses the answered replace-rule refusal in WORKSPACE_NOT_MADE.
+// proves R-ESCALATE-12
+test('a real judge directory refused as a file is reported apart from not made and escalates without changing it', SETTLES_WITHIN, async () => {
+  const built = ownerWrites(judgeWorld({ cards: [cardIn(7, COLUMNS.review)], forge: { pullRequests: [pullFor(7)] } }));
+  const root = join(built.scratch, 'refused');
+  const repository = repositoryAt(join(built.scratch, 'repository'), { README: 'fixture\n' });
+  const path = join(root, 'judges', 'rigger-7', 'reviewer');
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, 'owner file\n');
+  const judgeDirectory = (card, role, head) => role === 'reviewer'
+    ? makeJudgeDirectory({ root, topic: 'rigger-{number}', card, role, head, repository, sink: built.handed.sink })
+    : built.handed.judgeDirectory(card, role, head);
+
+  const [reached] = await loop({ ...built.handed, judgeDirectory }).pull(1);
+
+  assert.equal(built.owner.held().issues[0].comments.length, 1);
+  const refused = reached.judges.find(({ role }) => role === 'reviewer').outcome.reason;
+  assert.equal(refused.code, 'WORKSPACE_REFUSED');
+  assert.ok(built.owner.held().issues[0].comments[0].body.includes(refused.message));
+  assert.equal(readFileSync(path, 'utf8'), 'owner file\n');
+  assert.deepEqual(recorded(built, 'L2', 'judge.withheld'), []);
+});
 
 // proves R-FAIL-2
 test('L2 ends an attempt for a maker outcome other than a dispatch that never started', () => {
@@ -96,7 +211,7 @@ test('L2 retries a maker dispatch that never started and holds it after the seco
 });
 
 // proves R-FAIL-7
-test('L2 stops a card-local refusal on its first attempt and records its class', () => {
+test('L2 escalates a card-local refusal on its first attempt and records its class', () => {
   const directory = temporaryDirectory('rigger-card-local-');
   const sink = openSink({ directory, run: 'r-card-local', now: Date.now });
   const path = join(directory, 'rigger-7');
@@ -106,10 +221,10 @@ test('L2 stops a card-local refusal on its first attempt and records its class',
     columns: COLUMNS, roles: config.roles, provisioning: {}, sink, workspace, attempt: 1,
   });
 
-  assert.equal(answer.action, 'stop');
+  assert.equal(answer.action, 'escalate');
   assert.deepEqual(answer.failure, { class: 'card-local', workspace: path, code: 'WORKSPACE_REFUSED', reason: workspace.reason.message });
   assert.deepEqual(readEvents(directory).filter(({ layer }) => layer === 'L2').map(({ event, class: failureClass, decision }) => [event, failureClass, decision]), [
-    ['attempt.failed', 'card-local', undefined], ['attempt.decided', undefined, 'stop'],
+    ['attempt.failed', 'card-local', undefined], ['attempt.decided', undefined, 'escalate'],
   ]);
 });
 
@@ -154,6 +269,7 @@ function failingWorld(kind, { other = true } = {}) {
   const kinds = { change: { select: { labels: ['type:change'] }, maker: 'engineer', judges: ['owner'], provisioning: steps } };
   const cards = [cardIn(1, COLUMNS.ready, ['broken']), ...(other ? [cardIn(2, COLUMNS.ready)] : [])];
   const built = judgeWorld({ cards, kinds, provisioning: steps.length === 0 ? {} : { broken: step }, concurrency: 2, workspace });
+  ownerWrites(built);
   if (other) built.agent.plan(2, 'engineer', { hold: true, exit: 0 });
   const board = built.handed.board;
   let reads = 0;
@@ -267,7 +383,7 @@ test('a continuing attempt whose workspace fetch fails twice answers hold at L1s
 });
 
 // proves R-FAIL-7
-test('run does not pull again a card stopped for each card-local refusal or an out branch or root', SETTLES_WITHIN, async (t) => {
+test('run does not pull again a card escalated for each card-local refusal or stopped for an out branch or root', SETTLES_WITHIN, async (t) => {
   for (const code of ['WORKSPACE_REFUSED', 'BRANCH_ELSEWHERE', 'SCRATCH_REFUSED', 'BRANCH_REFUSED', 'ROOT_NOT_ABSOLUTE']) {
     await t.test(code, async () => {
       const built = failingWorld('workspace', { other: false });
@@ -283,19 +399,20 @@ test('run does not pull again a card stopped for each card-local refusal or an o
         throw Object.assign(new Error(`${code} at ${path}`), { code, path });
       };
 
-      const failure = await loop({ ...built.handed, workspace }).run().then(() => assert.fail('run succeeded'), (thrown) => thrown);
+      const failure = await loop({ ...built.handed, workspace }).run().then(() => undefined, (thrown) => thrown);
 
-      const stopped = stopOf(failure, 1);
+      const out = code === 'BRANCH_REFUSED' || code === 'ROOT_NOT_ABSOLUTE';
+      const stopped = out ? stopOf(failure, 1) : { attemptFailures: recorded(built, 'L2', 'attempt.failed') };
       assert.equal(stopped.attemptFailures.length, 1);
       assert.equal(stopped.attemptFailures[0].code, code);
-      assert.deepEqual(recorded(built, 'L2', 'attempt.decided').map(({ decision }) => decision), ['stop']);
+      assert.deepEqual(recorded(built, 'L2', 'attempt.decided').map(({ decision }) => decision), [out ? 'stop' : 'escalate']);
       assert.deepEqual(recorded(built, 'L2', 'attempt.failed').map(({ class: named }) => named), [code === 'BRANCH_REFUSED' || code === 'ROOT_NOT_ABSOLUTE' ? 'out' : 'card-local']);
     });
   }
 });
 
 // proves R-FAIL-7
-test('run stops one card-local refusal while another card is held for two workspace host failures', SETTLES_WITHIN, async () => {
+test('run escalates one card-local refusal while another card is held for two workspace host failures', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace');
   const path = join(temporaryDirectory('rigger-card-local-beside-host-'), 'rigger-1');
   const workspace = async (number) => {
@@ -305,14 +422,14 @@ test('run stops one card-local refusal while another card is held for two worksp
 
   const failure = await loop({ ...built.handed, workspace }).run().then(() => assert.fail('run succeeded'), (thrown) => thrown);
 
-  assert.equal(stopOf(failure, 1).attemptFailures.length, 1);
+  assert.equal(recorded(built, 'L2', 'attempt.failed', (each) => each.card === 1).length, 1);
   assert.equal(stopOf(failure, 2).decision, 'hold');
-  assert.deepEqual(recorded(built, 'L2', 'attempt.decided', (each) => each.card === 1).map(({ decision }) => decision), ['stop']);
+  assert.deepEqual(recorded(built, 'L2', 'attempt.decided', (each) => each.card === 1).map(({ decision }) => decision), ['escalate']);
   assert.deepEqual(recorded(built, 'L2', 'attempt.decided', (each) => each.card === 2).map(({ decision }) => decision), ['again', 'hold']);
 });
 
-// proves R-FAIL-7
-test('a judge scratch refusal remains NOT_STARTED and causes no card stop', SETTLES_WITHIN, async () => {
+// proves R-ESCALATE-12
+test('a judge scratch refusal remains SCRATCH_REFUSED and escalates its card', SETTLES_WITHIN, async () => {
   let built;
   const judgeDirectory = async (card, role, head) => {
     const made = await built.handed.judgeDirectory(card, role, head);
@@ -322,11 +439,13 @@ test('a judge scratch refusal remains NOT_STARTED and causes no card stop', SETT
   };
   built = judgeWorld({ cards: [cardIn(7, COLUMNS.review)], forge: { pullRequests: [pullFor(7)] },
     kinds: { change: { ...KINDS.change, judges: ['reviewer'] } } });
+  ownerWrites(built);
   const engine = loop({ ...built.handed, judgeDirectory });
 
   const [reached] = await engine.pull(1);
 
-  assert.equal(reached.judges[0].outcome.reason.code, NOT_STARTED);
+  assert.equal(reached.judges[0].outcome.reason.code, 'SCRATCH_REFUSED');
+  assert.equal(built.owner.held().issues[0].comments.length, 1);
   assert.equal(recorded(built, 'L2', 'attempt.decided', (each) => each.card === 7).length, 0);
   assert.equal(readFileSync(join(built.scratch, 'workspaces', 'scratch', 'rigger-7', 'reviewer'), 'utf8'), 'kept\n');
 });
@@ -556,7 +675,7 @@ test('L1 reports neither a judge\'s scratch directory refused under R-WORK-26 no
   const refused = await rejection(placed);
   const other = await rejection(placed, { base: join(placed.root, 'other', 'rigger-7'), adapters: { 'stand-in': { async invocation() { throw new Error('the adapter refuses this invocation'); } } } });
 
-  assert.equal(refused?.code, NOT_STARTED, refused?.stack);
+  assert.equal(refused?.code, 'SCRATCH_REFUSED', refused?.stack);
   assert.ok(refused.message.includes('R-WORK-26'), refused.message);
   assert.equal(other?.code, NOT_STARTED, other?.stack);
   assert.ok(other.message.includes('the adapter refuses this invocation'), other.message);
@@ -586,6 +705,7 @@ function spoiledWorld({ judges = ['reviewer'], spoil = () => undefined, roles, r
     return { ...made, scratch: (await spoil(made, role)) ?? made.scratch };
   };
   built = judgeWorld({ cards: [cardIn(7, ready ? COLUMNS.ready : COLUMNS.review)], forge: ready ? {} : { pullRequests: [pullFor(7)] }, kinds: kindJudgedBy(judges), ...(roles === undefined ? {} : { roles }) });
+  ownerWrites(built);
   const decide = (card, outcomes, options) => {
     if (options?.directories !== undefined) handed.push(options.directories);
     return built.handed.decide(card, outcomes, options);
@@ -771,7 +891,7 @@ test('L2 is handed a judge\'s scratch directory not made apart from one refused 
   const reports = Object.assign({}, ...world.handed);
   assert.deepEqual(Object.keys(reports).sort(), ['architect', 'pm', 'reviewer']);
   assert.deepEqual(Object.fromEntries(Object.entries(reports).map(([role, { reason }]) => [role, [reason.code, reason.missing]])), {
-    reviewer: [NOT_STARTED, path], architect: [NOT_STARTED, undefined], pm: [NOT_STARTED, undefined],
+    reviewer: [NOT_STARTED, path], architect: ['SCRATCH_REFUSED', undefined], pm: [NOT_STARTED, undefined],
   });
   assert.deepEqual(withheldOf(world.built), [{ role: 'reviewer', missing: path, classed: 'environment' }]);
 });
@@ -793,7 +913,7 @@ test('a judge whose adapter rejects its invocation is not withheld as a judge wh
 });
 
 // proves R-FAIL-7
-test('a judge\'s scratch directory refused under R-WORK-26 is not withheld as a judge\'s scratch directory not made, and its outcome is a dispatch that did not start', SETTLES_WITHIN, async () => {
+test('a judge\'s scratch directory refused under R-WORK-26 is not withheld as not made and escalates its card', SETTLES_WITHIN, async () => {
   const world = spoiledWorld({ spoil: (made, role) => {
     mkdirSync(made.scratch, { recursive: true });
     writeFileSync(join(made.scratch, role), 'kept\n');
@@ -801,7 +921,7 @@ test('a judge\'s scratch directory refused under R-WORK-26 is not withheld as a 
 
   const [reached] = await world.invocation().pull(1);
 
-  assert.equal(reached.judges[0].outcome?.reason?.code, NOT_STARTED, JSON.stringify(reached.judges));
+  assert.equal(reached.judges[0].outcome?.reason?.code, 'SCRATCH_REFUSED', JSON.stringify(reached.judges));
   assert.ok(reached.judges[0].outcome.reason.message.includes('R-WORK-26'), reached.judges[0].outcome.reason.message);
   assert.deepEqual(withheldOf(world.built), []);
 });
@@ -847,4 +967,81 @@ test('the invocation after one that withheld a judge whose scratch directory was
   const starts = recorded(world.built, 'L1', 'dispatch.start', (each) => each.card === 7);
   assert.equal(starts.length, 1);
   assert.equal(recorded(world.built, 'L1', 'dispatch.end', (each) => each.dispatch === starts[0].dispatch)[0]?.exit, 0);
+});
+
+// Each panel cell retains its peer's result even when the refused judge finishes first.
+// proves R-ESCALATE-12
+test('each judge entry point and directory refusal retains every panel outcome before one escalation', SETTLES_WITHIN, async (t) => {
+  for (const ready of [false, true]) for (const scratchRefusal of [false, true]) {
+    for (const other of ['verdict', 'both refused', 'host withheld', 'no outcome']) {
+      await t.test(`${ready ? 'after maker' : 'Review pull'} / ${scratchRefusal ? 'scratch' : 'directory'} / ${other}`, async () => {
+        const { built, engine } = refusedPanel({ ready, scratchRefusal, other });
+        const result = await engine.pull(1).then((reached) => ({ reached }), (failure) => ({ failure, reached: failure.reached }));
+        assert.equal(Boolean(result.failure), other === 'no outcome', result.failure?.stack);
+        const [reached] = result.reached;
+        assert.deepEqual(reached.judges.map(({ role }) => role), ['reviewer', 'architect']);
+        const issue = built.owner.held().issues[0];
+        assert.equal(issue.comments.length, 1);
+        assert.deepEqual(issue.labels, ['type:change', 'rigger:escalated']);
+        for (const judge of reached.judges.filter(({ outcome }) => ['WORKSPACE_REFUSED', 'SCRATCH_REFUSED'].includes(outcome?.reason?.code))) {
+          assert.ok(issue.comments[0].body.includes(judge.outcome.reason.message), issue.comments[0].body);
+        }
+        const architect = reached.judges[1];
+        if (other === 'verdict') {
+          assert.equal(architect.outcome.value.exit, 0);
+          assert.ok(built.repository.pull(1007).comments.some(({ body }) => body.includes('Sound, by architect')));
+        } else if (other === 'host withheld') assert.equal(architect.withheld.directory.reason.code, WORKSPACE_NOT_MADE);
+        else if (other === 'no outcome') assert.match(architect.failure.message, /handed back no outcome/);
+        else assert.ok(['WORKSPACE_REFUSED', 'SCRATCH_REFUSED'].includes(architect.outcome.reason.code));
+        assert.equal(recorded(built, 'L2', 'review.escalate').length, 1);
+        assert.equal(recorded(built, 'L3', 'pull').length, 1);
+        const events = built.events();
+        const escalation = events.findIndex(({ event }) => event === 'review.escalate');
+        assert.ok(events.slice(escalation + 1).every(({ event }) => event !== 'dispatch.start'));
+        assert.equal(recorded(built, 'L2', 'transition').at(-1).from, 'review');
+      });
+    }
+  }
+});
+
+// Removing the invocation exclusion would retry refused writes as soon as the claim releases.
+// proves R-ESCALATE-12
+test('run excludes attempt and judge escalations after each refused owner write and retains the exact refusal', SETTLES_WITHIN, async (t) => {
+  for (const stage of ['attempt', 'judges']) for (const write of ['comment', 'move', 'label']) {
+    await t.test(`${stage} / ${write}`, async () => {
+      const base = stage === 'judges' ? refusedPanel({ refuseWrite: write }) : (() => {
+        const built = ownerWrites(judgeWorld({ cards: [cardIn(7, COLUMNS.ready)], workspace: async () => {
+          throw Object.assign(new Error('R-WORK-13 refuses this path'), { code: 'WORKSPACE_REFUSED', path: '/work/rigger-7' });
+        } }), { refuse: write });
+        return { built, engine: built.loop };
+      })();
+      const { built } = base;
+      let reads = 0;
+      const read = built.handed.board.readPriority;
+      built.handed.board.readPriority = async () => {
+        reads += 1;
+        if (reads > 6) throw new Error('the refused escalation was pulled repeatedly');
+        return read();
+      };
+      const failure = await base.engine.run().then(() => assert.fail('the refused owner write succeeded'), (failure) => failure);
+      assert.ok(leaves(failure).some(({ message }) => message.includes(`the forge refused ${write}`)), failure.stack);
+      assert.ok(leaves(failure).every(({ message }) => !message.includes('pulled repeatedly')));
+      assert.equal(recorded(built, 'L3', 'pull').length, 1);
+      assert.equal(recorded(built, 'L2', 'review.escalate').length, 1);
+      assert.equal(built.owner.held().issues[0].comments.length, write === 'comment' ? 0 : 1);
+      assert.deepEqual(built.owner.held().issues[0].labels, ['type:change']);
+    });
+  }
+});
+
+// A successfully escalated card must also stay out of the invocation's next pulls.
+// proves R-ESCALATE-12
+test('run pulls a successfully escalated attempt only once while retaining its one comment', SETTLES_WITHIN, async () => {
+  const built = ownerWrites(judgeWorld({ cards: [cardIn(7, COLUMNS.ready)], workspace: async () => {
+    throw Object.assign(new Error('R-WORK-13 refuses this path'), { code: 'WORKSPACE_REFUSED', path: '/work/rigger-7' });
+  } }));
+  const reached = await built.loop.run();
+  assert.equal(reached[0].action, 'escalate');
+  assert.equal(recorded(built, 'L3', 'pull').length, 1);
+  assert.equal(built.owner.held().issues[0].comments.length, 1);
 });

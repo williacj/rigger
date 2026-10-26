@@ -1745,3 +1745,74 @@ test('once works a Ready issue on its next read after the status label is remove
   assert.deepEqual(await columnsOf(resumed), { 980: 'Coding' });
   assert.deepEqual((await (await resumed.model()).operations.readItems())[0].labels, ['type:change']);
 });
+
+// The counterexample stops at a refused path without completing the owner writes.
+// proves R-ESCALATE-12
+test('once escalates a real workspace path refusal and preserves the refused file', async () => {
+  let path;
+  const ran = once({ items: [card(984, 'Ready')] }, { seed: {}, prepare: ({ consumer }) => {
+    path = join(dirname(consumer), 'widgets-worktrees', 'rigger-984');
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, "owner's file\n");
+  } });
+  assert.deepEqual(await columnsOf(ran), { 984: 'Owner' }, ran.out + ran.err);
+  assert.match(ran.out + ran.err, /#984.*escalated ambiguous/);
+  const issue = JSON.parse(readFileSync(join(dirname(ran.fake.gh), 'board.json'), 'utf8')).repository.issues[0];
+  assert.equal(issue.comments.length, 1);
+  assert.ok(issue.comments[0].body.includes(path), issue.comments[0].body);
+  assert.match(issue.comments[0].body, /R-WORK-13/);
+  assert.deepEqual(issue.labels, ['type:change', 'rigger:escalated']);
+  assert.equal(readFileSync(path, 'utf8'), "owner's file\n");
+  assert.deepEqual(ran.agentRuns(), []);
+  assert.deepEqual(eventsOf(ran).filter(({ event }) => event === 'transition').map(({ from, to }) => [from, to]), [['ready', 'coding'], ['coding', 'owner']]);
+});
+
+// A configured role must not receive a loop-raised forge refusal.
+// proves R-ESCALATE-12
+test('once escalates each Ready forge hold to the owner even with ambiguous configured to pm', async (t) => {
+  for (const merged of [false, true]) await t.test(merged ? 'merged pull request' : 'line of work', async () => {
+    const settings = config();
+    settings.escalate = { ambiguous: 'pm' };
+    const ran = once({ items: [card(984, 'Ready')] }, { settings,
+      seed: merged ? { pullRequests: [{ number: 1984, head: 'rigger-984', sha: 'a'.repeat(40), merged: true }] } : { branches: ['rigger-984'] },
+    });
+    assert.deepEqual(await columnsOf(ran), { 984: 'Owner' }, ran.out + ran.err);
+    assert.match(ran.out + ran.err, /#984.*escalated ambiguous/);
+    const issue = JSON.parse(readFileSync(join(dirname(ran.fake.gh), 'board.json'), 'utf8')).repository.issues[0];
+    assert.equal(issue.comments.length, 1);
+    assert.ok(issue.comments[0].body.includes(merged ? '#1984' : 'rigger-984'));
+    assert.deepEqual(issue.labels, ['type:change', 'rigger:escalated']);
+    assert.deepEqual(ran.agentRuns(), []);
+  });
+});
+
+// The counterexample drops the completed architect's verdict when the reviewer's scratch is refused.
+// proves R-ESCALATE-12
+test('once keeps a Review peer verdict beside a real scratch refusal and escalates the card once', SETTLES_WITHIN, async (t) => {
+  const settings = config();
+  settings.kinds = { change: { ...KINDS.change, judges: ['reviewer', 'architect'] } };
+  const agent = standInAgent({ 984: { architect: { findings: true } } });
+  let scratchPath;
+  const { consumer, fake, ran } = onceWithAgent(t, agent, { items: [card(984, 'Review')] }, { settings, prepare: ({ consumer, fake }) => {
+    gitIn(consumer, 'push', '-q', 'origin', 'HEAD:refs/heads/rigger-984');
+    const head = gitIn(consumer, 'rev-parse', 'HEAD').trim();
+    seedRepository(fake, { branches: ['rigger-984'], pullRequests: [{ number: 1984, head: 'rigger-984', sha: head, mergeBase: head, diff: '' }] });
+    scratchPath = join(dirname(consumer), 'widgets-worktrees', 'scratch', 'rigger-984', 'reviewer');
+    mkdirSync(dirname(scratchPath), { recursive: true });
+    writeFileSync(scratchPath, 'keep reviewer scratch\n');
+  } });
+  const result = await ran;
+  const state = JSON.parse(readFileSync(join(dirname(fake.gh), 'board.json'), 'utf8'));
+  const issue = state.repository.issues[0];
+  assert.equal(issue.comments.length, 1, result.out + result.err);
+  assert.ok(issue.comments[0].body.includes(scratchPath), issue.comments[0].body);
+  assert.match(issue.comments[0].body, /R-WORK-26/);
+  assert.deepEqual(issue.labels, ['type:change', 'rigger:escalated']);
+  assert.deepEqual(agent.runs().map(({ role }) => role), ['architect']);
+  assert.ok(pullComments(fake, 1984).bodies.some((body) => body.includes('role: architect')));
+  assert.equal(readFileSync(scratchPath, 'utf8'), 'keep reviewer scratch\n');
+  const events = eventsOf({ consumer });
+  assert.equal(events.filter(({ event }) => event === 'review.escalate').length, 1);
+  assert.equal(events.filter(({ event }) => event === 'transition').at(-1).to, 'owner');
+  assert.equal(events.filter(({ event }) => event === 'dispatch.end').length, 1);
+});

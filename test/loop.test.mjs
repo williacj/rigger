@@ -2952,8 +2952,11 @@ test('a new attempt after closed cleanup retains the real directories it creates
   assert.deepEqual(facts.merged, []);
   assert.equal((await columnsOf(built.fake))[number], COLUMNS.coding);
   assert.deepEqual((await built.fake.operations.readItems())[0].labels, ['type:change']);
-  assert.deepEqual(await built.loop.pull(1), [], 'the held line makes the ordinary Coding answer inert');
-  assert.equal(built.decisions.at(-1).action.action, 'refuse');
+  assert.equal((await built.loop.pull(1))[0].action, 'escalate', 'the held line escalates the Coding card');
+  assert.equal(built.decisions.at(-1).action.action, 'escalate');
+  assert.equal((await columnsOf(built.fake))[number], COLUMNS.owner);
+  assert.deepEqual((await built.fake.operations.readItems())[0].labels, ['type:change', 'rigger:escalated']);
+  assert.deepEqual(built.dispatches.started, [number], 'the later read dispatches no new maker');
   assert.equal(removals, 1, 'the later Coding read performs no closed cleanup');
   assert.equal(fs.readFileSync(marker, 'utf8'), 'new attempt content');
 });

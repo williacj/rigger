@@ -527,7 +527,7 @@ test('L2 selects closed removal only for unlabelled Review or Owner cards with c
   }
   for (const stage of ['ready', 'coding']) for (const branch of [false, true]) {
     const next = nextAction(withClosedLine(stage, { branch }), KINDS, undefined, { sink: quiet });
-    assert.equal(next.action, branch ? 'refuse' : 'dispatch', `${stage}/${branch}`);
+    assert.equal(next.action, branch ? 'escalate' : 'dispatch', `${stage}/${branch}`);
   }
 });
 

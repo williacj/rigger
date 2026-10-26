@@ -129,7 +129,7 @@ test('L2 does not hold a card whose maker starts on the second attempt', () => {
 });
 
 // proves R-FAIL-7
-test('each card-local and out report stops immediately with its own attempt.failed class', async (t) => {
+test('each card-local report escalates and each out report stops with its own attempt.failed class', async (t) => {
   for (const [code, expected] of [
     ['WORKSPACE_REFUSED', 'card-local'], ['BRANCH_ELSEWHERE', 'card-local'],
     ['SCRATCH_REFUSED', 'card-local'], ['LINE_MOVED', 'out'],
@@ -141,18 +141,18 @@ test('each card-local and out report stops immediately with its own attempt.fail
       const outcome = { status: 'rejected', reason };
       const given = code === 'SCRATCH_REFUSED' ? { maker: outcome } : { workspace: outcome };
       const answer = nextAction(readyCard(7), KINDS, undefined, { provisioning: {}, sink, attempt: 1, ...given });
-      assert.equal(answer.action, 'stop');
+      assert.equal(answer.action, expected === 'card-local' ? 'escalate' : 'stop');
       assert.equal(answer.failure.class, expected);
       assert.equal(answer.failure.code, code);
       assert.deepEqual(events.map(({ event, attempt, class: named, decision }) => [event, attempt, named, decision]), [
-        ['attempt.failed', 1, expected, undefined], ['attempt.decided', 1, undefined, 'stop'],
+        ['attempt.failed', 1, expected, undefined], ['attempt.decided', 1, undefined, expected === 'card-local' ? 'escalate' : 'stop'],
       ]);
     });
   }
 });
 
 // proves R-FAIL-7
-test('a card-local refusal or moved line stops on attempt two after itself or a host failure', async (t) => {
+test('a card-local refusal escalates and a moved line stops on attempt two after itself or a host failure', async (t) => {
   for (const code of ['WORKSPACE_REFUSED', 'SCRATCH_REFUSED', 'LINE_MOVED']) {
     for (const first of [code, 'host']) {
       await t.test(`${first} then ${code}`, () => {
@@ -165,8 +165,8 @@ test('a card-local refusal or moved line stops on attempt two after itself or a 
           code, reason: reason.message,
         };
         const answer = nextAction(readyCard(7), KINDS, undefined, { provisioning: {}, sink, attempt: 2, firstFailure, ...given });
-        assert.equal(answer.action, 'stop');
-        assert.equal(events.at(-1).decision, 'stop');
+        assert.equal(answer.action, code === 'LINE_MOVED' ? 'stop' : 'escalate');
+        assert.equal(events.at(-1).decision, code === 'LINE_MOVED' ? 'stop' : 'escalate');
       });
     }
   }
