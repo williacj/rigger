@@ -169,6 +169,7 @@ test('given a required step that exits non-zero on both attempts, rigger once pr
   const ran = here.verb('once');
 
   assert.notEqual(ran.code, 0, ran.said);
+  assert.match(ran.err, /rigger once: card #10 was held after 2 attempts/);
   for (const attempt of [1, 2]) {
     const line = ran.err.split('\n').find((held) => held.startsWith(`attempt ${attempt}: `));
     assert.ok(line, ran.said);
@@ -190,11 +191,63 @@ test('given a workspace that cannot be made on either attempt, rigger once print
   const ran = here.verb('once');
 
   assert.notEqual(ran.code, 0, ran.said);
+  assert.match(ran.err, /rigger once: card #10 was held after 2 attempts/);
   for (const attempt of [1, 2]) {
     const line = ran.err.split('\n').find((held) => held.startsWith(`attempt ${attempt}: `));
     assert.ok(line, ran.said);
     assert.ok(line.includes(`"workspace":${JSON.stringify(path)}`), line);
   }
+});
+
+// proves R-FAIL-7
+test('rigger once names a hold and both failures when the same required step never starts twice', (t) => {
+  const here = world(t, { items: [card(10)], steps: { missing: { run: 'true', cwd: 'absent', required: true } }, listed: ['missing'] });
+
+  const ran = here.verb('once');
+
+  assert.notEqual(ran.code, 0, ran.said);
+  assert.match(ran.err, /rigger once: card #10 was held after 2 attempts/);
+  const failures = ran.err.split('\n').filter((line) => /^attempt [12]: /.test(line));
+  assert.equal(failures.length, 2, ran.said);
+  assert.ok(failures.every((line) => /"step":"missing"/.test(line) && /"reason":/.test(line)), ran.said);
+});
+
+/** A card whose required step never starts first, then exits 3 on its second attempt. */
+function mixedFailureWorld(t) {
+  const directory = scratch(t);
+  const marker = join(directory, 'first-attempt');
+  return world(t, {
+    items: [card(10)],
+    steps: {
+      prepare: { run: `if [ -e '${marker}' ]; then mkdir missing; else : > '${marker}'; fi`, required: true },
+      failing: { run: 'exit 3', cwd: 'missing', required: true },
+    },
+    listed: ['prepare', 'failing'],
+  }, directory);
+}
+
+// proves R-FAIL-7
+test('rigger once stops a card whose required step never starts then exits non-zero', (t) => {
+  const ran = mixedFailureWorld(t).verb('once');
+
+  assert.notEqual(ran.code, 0, ran.said);
+  assert.match(ran.err, /rigger once: card #10 was stopped after 2 attempts/);
+  const failures = ran.err.split('\n').filter((line) => /^attempt [12]: /.test(line));
+  assert.equal(failures.length, 2, ran.said);
+  assert.match(failures[0], /"step":"failing".*"reason":/);
+  assert.match(failures[1], /"step":"failing".*"exit":3/);
+});
+
+// proves R-FAIL-7
+test('rigger run stops a card whose required step never starts then exits non-zero', (t) => {
+  const ran = mixedFailureWorld(t).verb('run');
+
+  assert.notEqual(ran.code, 0, ran.said);
+  assert.match(ran.err, /rigger run: card #10 was stopped after 2 attempts/);
+  const failures = ran.err.split('\n').filter((line) => /^attempt [12]: /.test(line));
+  assert.equal(failures.length, 2, ran.said);
+  assert.match(failures[0], /"step":"failing".*"reason":/);
+  assert.match(failures[1], /"step":"failing".*"exit":3/);
 });
 
 /**
@@ -421,10 +474,10 @@ test('given four pullable cards and N 3, where one claimed card\'s required step
 
   const ran = here.verb('run');
 
-  const stopped = ran.err.indexOf('rigger run: card #10 was stopped after 2 attempts');
-  assert.ok(stopped >= 0, ran.said);
+  const held = ran.err.indexOf('rigger run: card #10 was held after 2 attempts');
+  assert.ok(held >= 0, ran.said);
   for (const attempt of [1, 2]) {
-    const line = ran.err.slice(stopped).split('\n').find((held) => held.startsWith(`attempt ${attempt}: `));
+    const line = ran.err.slice(held).split('\n').find((held) => held.startsWith(`attempt ${attempt}: `));
     assert.ok(line, ran.said);
     assert.match(line, /"step":"fails"/, line);
     assert.match(line, /"exit":3\b/, line);
@@ -447,10 +500,10 @@ test('given a workspace that cannot be made on either attempt of a card rigger r
 
   const ran = here.verb('run');
 
-  const stopped = ran.err.indexOf('rigger run: card #10 was stopped after 2 attempts');
-  assert.ok(stopped >= 0, ran.said);
+  const held = ran.err.indexOf('rigger run: card #10 was held after 2 attempts');
+  assert.ok(held >= 0, ran.said);
   for (const attempt of [1, 2]) {
-    const line = ran.err.slice(stopped).split('\n').find((held) => held.startsWith(`attempt ${attempt}: `));
+    const line = ran.err.slice(held).split('\n').find((held) => held.startsWith(`attempt ${attempt}: `));
     assert.ok(line?.includes(`"workspace":${JSON.stringify(path)}`), ran.said);
   }
   const events = here.events();
@@ -492,10 +545,10 @@ test('given that world, rigger run prints a line for #30 naming its workspace\'s
 test('given that world, rigger run prints #20\'s two attempts\' failures, each naming the step and its exit code', (t) => {
   const ran = world(t, { items: ONE_FAILING, ...FAILING }).verb('run');
 
-  const stopped = ran.err.indexOf('rigger run: card #20 was stopped after 2 attempts');
-  assert.ok(stopped >= 0, ran.said);
+  const held = ran.err.indexOf('rigger run: card #20 was held after 2 attempts');
+  assert.ok(held >= 0, ran.said);
   for (const attempt of [1, 2]) {
-    const line = ran.err.slice(stopped).split('\n').find((held) => held.startsWith(`attempt ${attempt}: `));
+    const line = ran.err.slice(held).split('\n').find((held) => held.startsWith(`attempt ${attempt}: `));
     assert.ok(line, ran.said);
     assert.match(line, /"step":"fails"/, line);
     assert.match(line, /"exit":3\b/, line);
@@ -510,7 +563,7 @@ test('given that world, rigger run prints each claimed card\'s line, or its fail
     assert.equal(lines.filter((held) => held.startsWith(`rigger run: claimed #${number} `)).length, 1, ran.said);
     assert.equal(lines.filter((held) => new RegExp(`#${number}\\b`).test(held)).length, 1, ran.said);
   }
-  assert.equal(lines.filter((held) => held.startsWith('rigger run: card #20 was stopped')).length, 1, ran.said);
+  assert.equal(lines.filter((held) => held.startsWith('rigger run: card #20 was held')).length, 1, ran.said);
   assert.equal(lines.filter((held) => /#20\b/.test(held)).length, 1, ran.said);
   for (const attempt of [1, 2]) assert.equal(lines.filter((held) => held.startsWith(`attempt ${attempt}: `)).length, 1, ran.said);
 });

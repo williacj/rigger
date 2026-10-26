@@ -182,6 +182,7 @@ function forge(write = () => ok({})) {
   const sent = [];
   const send = (command, args) => {
     sent.push([command, ...args]);
+    if (args[1] === 'repos/williacj/rigger/issues/214' && args[3] === 'GET') return { status: 0, stdout: JSON.stringify({ node_id: 'I_issue214' }), stderr: '' };
     const document = documentOf(args) ?? '';
     if (!document.startsWith('query')) return write(document);
     if (document.includes('repositoryOwner')) return ok(BOARD_READ.data);
@@ -222,6 +223,21 @@ test('moving a card issues exactly one write, through the item-write runner, nam
   assert.ok(!(await admits(readRunner, write)));
   // And it went through that runner, whose own read of the columns field comes just before it.
   assert.match(documentOf(send.sent.at(-2).slice(1)), /field\(name: "Status"\)/);
+});
+
+test('adding an issue uses its node read and the item-write runner for one board add', async () => {
+  const send = forge(() => ok({ addProjectV2ItemById: { item: { id: 'PVTI_added' } } }));
+
+  assert.equal(await itemWriteSide(BOARD, { send }).addIssue(214), 'PVTI_added');
+
+  assert.deepEqual(send.sent[0], ['gh', 'api', 'repos/williacj/rigger/issues/214', '-X', 'GET']);
+  const writes = send.writes();
+  assert.equal(writes.length, 2, JSON.stringify(send.sent));
+  const add = writes.at(-1);
+  assert.match(documentOf(add.slice(1)), /addProjectV2ItemById\(input: \{projectId: "PVT_kwHOBzomGc4Bkn7f", contentId: "I_issue214"\}\)/);
+  assert.ok(await admits(itemWriteRunner, add));
+  assert.ok(!(await admits(schemaWriteRunner, add)));
+  assert.ok(!(await admits(readRunner, add)));
 });
 
 test('moving a card to a column the board does not hold fails naming the column, and writes nothing', async () => {

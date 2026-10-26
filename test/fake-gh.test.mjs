@@ -55,6 +55,40 @@ const COLUMNS = { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Ow
 /** The board the real adapter is pointed at, named as a config names it. */
 const BOARD = { ...WHERE, columns: COLUMNS };
 
+test('a successful issue label is visible on fresh board reads only for the same repository and issue', async () => {
+  const fake = installed({ columns: Object.values(COLUMNS), items: [
+    { type: 'issue', repository: 'WilliaCJ/RIGGER', number: 214, labels: ['keep'], column: 'Review' },
+    { type: 'issue', repository: 'someone/elsewhere', number: 214, labels: ['foreign'], column: 'Review' },
+    { type: 'issue', repository: WHERE.repo, number: 215, labels: ['unrelated'], column: 'Review' },
+  ] });
+  seedRepository(fake, { issues: [{ number: 214, labels: ['keep'] }, { number: 215, labels: ['unrelated'] }], pullRequests: [{ number: 301, head: 'rigger-214', sha: 'a'.repeat(40), comments: [{ body: 'PR comments remain separate.' }] }] });
+  await onPath(fake, () => repositoryWriteSide(BOARD, { emitter: UNKILLED }).addIssueLabel(214, 'rigger:escalated'));
+  const model = await fake.model();
+  assert.deepEqual((await model.operations.readItems()).map(({ repository, number, labels }) => ({ repository, number, labels })), [
+    { repository: 'WilliaCJ/RIGGER', number: 214, labels: ['keep', 'rigger:escalated'] },
+    { repository: 'someone/elsewhere', number: 214, labels: ['foreign'] },
+    { repository: WHERE.repo, number: 215, labels: ['unrelated'] },
+  ]);
+  await onPath(fake, async () => {
+    assert.deepEqual((await readSide(BOARD, { emitter: UNKILLED }).readItems()).map(({ number, labels }) => ({ number, labels })), [
+      { number: 214, labels: ['keep', 'rigger:escalated'] }, { number: 215, labels: ['unrelated'] },
+    ]);
+  });
+  assert.deepEqual(forgeHeld(fake).repository.pullRequests[0].comments, [{ body: 'PR comments remain separate.' }]);
+  assert.equal(Object.hasOwn(model.operations, 'setIssueLabels'), false);
+  assert.equal(Object.hasOwn(model.operations, 'issues'), false);
+});
+
+test('fake gh repository setup shares existing board issues unless the seed explicitly omits them', async () => {
+  const board = { columns: ['Review'], items: [{ type: 'issue', repository: WHERE.repo, number: 214, title: 'Held card', body: 'Existing body.', labels: ['keep'], column: 'Review' }] };
+  const fake = installed(board);
+  seedRepository(fake, { pullRequests: [{ number: 301, head: 'rigger-214', sha: 'a'.repeat(40) }] });
+  assert.deepEqual(await onPath(fake, () => reads().readIssue(214)), { number: 214, title: 'Held card', body: 'Existing body.', labels: ['keep'] });
+  const absent = installed(board);
+  seedRepository(absent, { issues: [] });
+  assert.equal(await onPath(absent, () => reads().readIssue(214)), null, 'explicit absence stays a negative fixture');
+});
+
 test('the real adapter reads cards, columns, fields and labels through the fake gh', async () => {
   const fake = installed({
     columns: ['Backlog', 'Ready', 'Coding', 'Review', 'Owner', 'Done'],
@@ -80,6 +114,27 @@ test('the real adapter reads cards, columns, fields and labels through the fake 
     fields: [{ name: 'Priority', options: ['P1', 'P0', 'P2'] }],
     labels: ['type:change', 'type:spec'],
   });
+});
+
+test('the fake gh opens, adds, moves, unlabels and closes one status issue', async () => {
+  const fake = installed({ columns: ['Ready', 'Owner'] });
+  const result = await onPath(fake, async () => {
+    const repository = repositoryWriteSide(BOARD, { emitter: UNKILLED });
+    const items = itemWriteSide(BOARD, { emitter: UNKILLED });
+    const number = await repository.openIssue('Status', 'Host is down', 'rigger:status');
+    const id = await items.addIssue(number, UNKILLED);
+    await items.moveItem(id, 'Owner', UNKILLED);
+    const labels = await repository.removeIssueLabel(number, 'rigger:status');
+    const closed = await repository.closeIssue(number);
+    return { number, id, labels, closed };
+  });
+
+  assert.deepEqual(result, { number: 1, id: 'item-1', labels: [], closed: { number: 1, state: 'closed' } });
+  const board = await fake.model();
+  assert.deepEqual((await board.operations.readItems()).map(({ id, repository, number, column }) => ({ id, repository, number, column })), [
+    { id: 'item-1', repository: 'williacj/rigger', number: 1, column: 'Owner' },
+  ]);
+  assert.deepEqual(board.writes().map(({ operation }) => operation), ['addIssue', 'moveItem']);
 });
 
 test('the repository read answers a pull request mergeable state through the fake gh', async () => {
@@ -333,17 +388,33 @@ const ADAPTER_TESTS = ['forge-read.test.mjs', 'forge-adapter.test.mjs', 'forge-r
  * The arguments of every `gh` request the forge adapter issues while `file` runs, recorded by
  * running it under `gh-recording.mjs`, which writes what it recorded to the path it is given.
  */
-function commandsIssuedBy(file) {
+function commandsIssuedBy(file, requested = false) {
+  // Only an explicit boolean selects a control; Array.flatMap supplies an index.
+  const selected = requested === true;
+  const target = 'P2-S control: real then fake gh runs the live method and body probe through real gh';
   const into = join(temporaryDirectory('rigger-gh-recording-'), 'requests.json');
   // Run as a test run of its own: a child inheriting `NODE_TEST_CONTEXT` reports to this run's
   // runner instead, in a form only that runner reads.
   const { NODE_TEST_CONTEXT, ...env } = gitEnvironment();
-  const run = spawnSync(process.execPath, ['--import', join(HERE, 'gh-recording.mjs'), '--test-reporter=tap', join(HERE, file), into], {
+  if (selected) env.C755_TRACE = '1';
+  const selection = selected ? ['--test-name-pattern=^' + target + '$'] : [];
+  const run = spawnSync(process.execPath, ['--import', join(HERE, 'gh-recording.mjs'), '--test-reporter=tap', ...selection, join(HERE, file), into], {
     encoding: 'utf8',
     env,
   });
   if (process.env.C755_TRACE && file === 'forge-runners.test.mjs') process.stderr.write(run.stdout + run.stderr);
   const passed = Number(/^# pass (\d+)$/m.exec(run.stdout)?.[1] ?? 0);
+  if (selected) {
+    const failed = Number(/^# fail (\d+)$/m.exec(run.stdout)?.[1] ?? 0);
+    const cells = run.stderr.split('\n')
+      .filter((line) => line.startsWith('C755_TRACE '))
+      .map((line) => JSON.parse(line.slice('C755_TRACE '.length)))
+      .filter(({ stage }) => stage === 'cell-start');
+    assert.equal(cells.length, 1, 'the recorder control must execute exactly one native cell');
+    assert.deepEqual(cells[0].entries, ['R', 'F'], 'the recorder selected a different native fixture');
+    assert.equal(passed + failed, 1, 'the recorder control must execute exactly one test body');
+    assert.match(run.stdout, new RegExp('^(?:not )?ok \\d+ - ' + target + '$', 'm'), 'the selected P2-S target did not execute without a skip');
+  }
   assert.ok(run.status === 0 && passed > 0, `${file} did not run and pass while it was recorded:\n${run.stdout}${run.stderr}`);
   return JSON.parse(readFileSync(into, 'utf8'));
 }
@@ -375,7 +446,7 @@ function hasInstalledGh() {
 
 test('E-C P2-A4m: the recorder sees the target-file failure caused by selected gh loss', (t) => {
   if (!hasInstalledGh()) return t.skip('no installed real gh available for the recorder control');
-  assert.throws(() => withTargetControl('missing', () => commandsIssuedBy('forge-runners.test.mjs')), (error) => {
+  assert.throws(() => withTargetControl('missing', () => commandsIssuedBy('forge-runners.test.mjs', true)), (error) => {
     assert.match(error.message, /forge-runners\.test\.mjs did not run and pass while it was recorded/);
     assert.match(error.message, /P2-S control/);
     assert.match(error.message, /ENOENT/);
@@ -385,12 +456,12 @@ test('E-C P2-A4m: the recorder sees the target-file failure caused by selected g
 
 test('E-C P2-A4r: the recorder keeps its target green after a resolver-only change', (t) => {
   if (!hasInstalledGh()) return t.skip('no installed real gh available for the recorder control');
-  withTargetControl('resolver', () => commandsIssuedBy('forge-runners.test.mjs'));
+  withTargetControl('resolver', () => commandsIssuedBy('forge-runners.test.mjs', true));
 });
 
 test('E-C P1/P2/P3-A1: the unforced recorder observes a passing target file', (t) => {
   if (!hasInstalledGh()) return t.skip('no installed real gh available for the recorder control');
-  commandsIssuedBy('forge-runners.test.mjs');
+  commandsIssuedBy('forge-runners.test.mjs', true);
 });
 
 test('the gh commands the fake gh answers are the ones the adapter issues across its own tests, compared both ways', () => {
@@ -519,7 +590,7 @@ test("a fake gh seeded with nothing answers no branch and no pull request for an
 
   await onPath(fake, async () => {
     for (const { number } of CARDS) {
-      assert.deepEqual(await reads().readPullRequests(`rigger-${number}`), { open: [], merged: [] });
+      assert.deepEqual(await reads().readPullRequests(`rigger-${number}`), { open: [], merged: [], closed: [] });
     }
     assert.deepEqual(await reads().readBranches(['rigger-214', 'rigger-215']), { 'rigger-214': false, 'rigger-215': false });
     await assert.rejects(reads().readComments(1), /Could not resolve to a PullRequest with the number of 1/);
@@ -539,8 +610,8 @@ test("the repository reads through the fake gh answer a card's seeded branch, an
   });
 
   await onPath(fake, async () => {
-    assert.deepEqual(await reads().readPullRequests('rigger-214'), { open: [{ number: 301, head: sha(301), base: 'main' }, { number: 302, head: sha(302), base: 'release' }], merged: [] });
-    assert.deepEqual(await reads().readPullRequests('rigger-215'), { open: [], merged: [{ number: 299, head: sha(299), base: 'main' }] });
+    assert.deepEqual(await reads().readPullRequests('rigger-214'), { open: [{ number: 301, head: sha(301), base: 'main' }, { number: 302, head: sha(302), base: 'release' }], merged: [], closed: [] });
+    assert.deepEqual(await reads().readPullRequests('rigger-215'), { open: [], merged: [{ number: 299, head: sha(299), base: 'main' }], closed: [] });
     assert.deepEqual(await reads().readBranches(['rigger-214', 'rigger-215']), { 'rigger-214': true, 'rigger-215': false });
   });
 });
@@ -627,7 +698,7 @@ test("gh pr create on the fake gh opens a pull request from a branch the local o
   assert.equal(said.stdout, 'https://github.com/williacj/rigger/pull/216\n');
   const expectedDiff = gitIn(origin, 'diff', main, head);
   await onPath(fake, async () => {
-    assert.deepEqual(await reads().readPullRequests('rigger-214'), { open: [{ number: 216, head, base: 'main' }], merged: [] });
+    assert.deepEqual(await reads().readPullRequests('rigger-214'), { open: [{ number: 216, head, base: 'main' }], merged: [], closed: [] });
     assert.deepEqual(await reads().readBranches(['rigger-214', 'main', 'rigger-215']), { 'rigger-214': true, main: true, 'rigger-215': false });
     assert.equal(await reads().readDiff(216), expectedDiff);
     assert.deepEqual(await reads().readMergeBase(216), { base: 'main', head, mergeBase: main });
@@ -648,7 +719,7 @@ test('gh pr create on the fake gh refuses a branch the local origin does not hol
 
   await onPath(fake, async () => {
     assert.deepEqual((await reads().readPullRequests('rigger-214')).open.map(({ number }) => number), [216]);
-    assert.deepEqual(await reads().readPullRequests('rigger-215'), { open: [], merged: [] });
+    assert.deepEqual(await reads().readPullRequests('rigger-215'), { open: [], merged: [], closed: [] });
   });
 });
 
@@ -696,7 +767,7 @@ test('an agent command the fake gh does not model fails, printing itself, and ch
     assert.notEqual(said.status, 0, args.join(' '));
     assert.ok(said.stderr.includes(`gh ${args.join(' ')}`), said.stderr);
   }
-  await onPath(fake, async () => assert.deepEqual(await reads().readPullRequests('rigger-214'), { open: [], merged: [] }));
+  await onPath(fake, async () => assert.deepEqual(await reads().readPullRequests('rigger-214'), { open: [], merged: [], closed: [] }));
 });
 
 /** The text of the file the origin below holds at `config/rigger.config.mjs`: two lines, one past ASCII, with no newline at its end. */
@@ -825,8 +896,8 @@ test('the repository read answers each pull request the fake gh holds by number,
     const before = forgeHeld(fake);
     await assert.rejects(reads().readPullRequestByNumber(306), /pull request #306.*Could not resolve to a PullRequest with the number of 306/);
     await assertNothingChanged(fake, before);
-    // The branch's read leaves out a closed pull request and one whose head repository was deleted, as GitHub does.
-    assert.deepEqual(await reads().readPullRequests('rigger-214'), { open: [{ number: 301, head: sha(301), base: 'main' }], merged: [{ number: 304, head: sha(304), base: 'release' }] });
+    // The branch's read includes closed pulls and excludes forks and deleted head repositories.
+    assert.deepEqual(await reads().readPullRequests('rigger-214'), { open: [{ number: 301, head: sha(301), base: 'main' }], merged: [{ number: 304, head: sha(304), base: 'release' }], closed: [{ number: 305, head: sha(305), base: 'main' }] });
   });
 });
 
@@ -891,4 +962,67 @@ test('the fake repository environment reads agree with the real adapter through 
     assert.deepEqual(await onPath(fake, () => reads()[name](...args)), await operations[name](...args), `${name} ${args.join(' ')}`);
   }
   assert.deepEqual((await fake.model()).writes(), []);
+});
+
+
+test('the executable fake carries every closed page to the real reader and honors a query selecting only open and merged states', async () => {
+  const fake = installed({ columns: ['Review'], items: CARDS });
+  const closed = Array.from({ length: 205 }, (_, at) => ({ number: 2000 + at, head: 'rigger-214', sha: String(2000 + at).padStart(40, 'b'), base: at === 204 ? 'release' : 'main', closed: true }));
+  seedRepository(fake, { pullRequests: [
+    ...closed.slice(0, 100), { number: 2300, head: 'rigger-214', sha: sha(2300) },
+    ...closed.slice(100), { number: 2301, head: 'rigger-214', sha: sha(2301), merged: true },
+    { number: 2302, head: 'rigger-214', sha: sha(2302), closed: true, from: 'WILLIACJ/RIGGER' },
+    { number: 2303, head: 'rigger-214', sha: sha(2303), closed: true, from: 'someone/rigger' },
+    { number: 2304, head: 'rigger-214', sha: sha(2304), closed: true, headRepositoryDeleted: true },
+  ] });
+  await onPath(fake, async () => {
+    const held = await reads().readPullRequests('rigger-214');
+    assert.deepEqual(held.closed, [
+      ...Array.from({ length: 205 }, (_, at) => ({ number: 2000 + at, head: String(2000 + at).padStart(40, 'b'), base: at === 204 ? 'release' : 'main' })),
+      { number: 2302, head: sha(2302), base: 'main' },
+    ]);
+    assert.deepEqual(held.open, [{ number: 2300, head: sha(2300), base: 'main' }]);
+    assert.deepEqual(held.merged, [{ number: 2301, head: sha(2301), base: 'main' }]);
+  });
+  const query = 'query { repository(owner: "williacj", name: "rigger") { pullRequests(headRefName: "rigger-214", states: [OPEN, MERGED], first: 100) { pageInfo { hasNextPage endCursor } nodes { number state headRefOid baseRefName headRepository { nameWithOwner } } } } }';
+  const said = spawnSync(fake.gh, ['api', 'graphql', '-f', `query=${query}`], { encoding: 'utf8', env: gitEnvironment() });
+  assert.equal(said.status, 0, said.stderr);
+  const page = JSON.parse(said.stdout).data.repository.pullRequests;
+  assert.deepEqual(page.nodes.map(({ number, state }) => ({ number, state })), [{ number: 2300, state: 'OPEN' }, { number: 2301, state: 'MERGED' }]);
+  assert.equal(page.pageInfo.hasNextPage, false);
+  assert.deepEqual((await fake.model()).writes(), []);
+});
+
+
+test('the in-process fake distinguishes closed history from open and merged facts and retains full closed identities', async () => {
+  const fake = createFakeRepository({ pullRequests: [
+    { number: 733, head: 'topic', sha: 'd6d079f3258e1b74aad7baf725895b8d74c5b315', closed: true },
+    { number: 734, head: 'topic', sha: 'a'.repeat(40) },
+    { number: 735, head: 'topic', sha: 'b'.repeat(40), base: 'release', merged: true },
+    { number: 736, head: 'topic', sha: 'c'.repeat(40), closed: true, from: 'someone/rigger' },
+    { number: 737, head: 'topic', sha: 'e'.repeat(40), closed: true, headRepositoryDeleted: true },
+  ] });
+  assert.deepEqual(await fake.operations.readPullRequests('topic'), {
+    open: [{ number: 734, head: 'a'.repeat(40), base: 'main' }],
+    merged: [{ number: 735, head: 'b'.repeat(40), base: 'release' }],
+    closed: [{ number: 733, head: 'd6d079f3258e1b74aad7baf725895b8d74c5b315', base: 'main' }],
+  });
+});
+
+
+test('the fake gh creates a new pull after closed history but still refuses a duplicate genuinely open pull', async () => {
+  const { fake, ran, head } = withPushedBranch();
+  seedRepository(fake, { pullRequests: [{ number: 300, head: 'rigger-214', sha: head, closed: true }] });
+  const created = ran('pr', 'create', '--title', 'Replacement work', '--body', 'Why.');
+  assert.equal(created.status, 0, created.stderr);
+  assert.equal(created.stdout, 'https://github.com/williacj/rigger/pull/301\n');
+  const duplicate = ran('pr', 'create', '--title', 'Duplicate work', '--body', 'Why.');
+  assert.notEqual(duplicate.status, 0);
+  assert.match(duplicate.stderr, /already exists/);
+  await onPath(fake, async () => {
+    const facts = await reads().readPullRequests('rigger-214');
+    assert.deepEqual(facts.open, [{ number: 301, head, base: 'main' }]);
+    assert.deepEqual(facts.closed, [{ number: 300, head, base: 'main' }]);
+    assert.deepEqual(facts.merged, []);
+  });
 });

@@ -501,7 +501,7 @@ test('given run over three cards where one card\'s required step fails twice, ru
     assert.ok(lines.some((line) => reviewLine(ran.consumer, number).test(line)), ran.err);
     assert.ok(lines.includes(judgeLine(number, 'reviewer', 'exited 0')), ran.err);
   }
-  assert.ok(lines.some((line) => line.startsWith('rigger run: card #20 was stopped after 2 attempts, each failing before the maker:')), ran.err);
+  assert.ok(lines.some((line) => line.startsWith('rigger run: card #20 was held after 2 attempts, each failing before the maker:')), ran.err);
 });
 
 test('run claims no more than N cards, and dispatches roles for no more cards at once than N, derived from the events it wrote', SETTLES_WITHIN, () => {

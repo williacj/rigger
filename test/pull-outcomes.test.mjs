@@ -50,7 +50,7 @@ async function threeCards(t) {
   const fake = boardOf([30, 10, failing]);
   const kinds = { change: { ...KINDS.change, provisioning: ['ready', 'fails'] } };
   const decide = (card, outcomes, attempt) => nextAction(card, kinds, undefined, { columns: COLUMNS, roles: config.roles, provisioning: PROVISIONING, outcomes, sink, ...attempt });
-  const l2 = columnChanges({ config: { ...config, concurrency: 3 }, sink, items: fake.operations, reads: readsWith(async () => ({ open: [], merged: [] })) });
+  const l2 = columnChanges({ config: { ...config, concurrency: 3 }, sink, items: fake.operations, reads: readsWith(async () => ({ open: [], merged: [], closed: [] })) });
   const workspaces = join(directory, 'workspaces');
   const built = loop({
     config: { ...config, concurrency: 3 }, board: handleOn(fake), decide, facts: factsOverNothing({ ...config, concurrency: 3 }, decide), l2, sink, kill: async () => {}, workspace: makingWorkspaces(workspaces), judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), removeDirectories: async () => {}, state,
@@ -78,14 +78,14 @@ const leavesOf = (failure) => (failure instanceof AggregateError ? failure.error
 test('in that pull, what the pull reports carries #20\'s failure, with both attempts\' failures as L2 recorded them', SETTLES_WITHIN, async (t) => {
   const { failure, events } = await threeCards(t);
 
-  const stopped = leavesOf(failure).filter((each) => /^card #20 was stopped after 2 attempts/.test(each.message));
-  assert.equal(stopped.length, 1, leavesOf(failure).map((each) => each.message).join('\n'));
-  const lines = stopped[0].message.split('\n');
+  const held = leavesOf(failure).filter((each) => /^card #20 was held after 2 attempts/.test(each.message));
+  assert.equal(held.length, 1, leavesOf(failure).map((each) => each.message).join('\n'));
+  const lines = held[0].message.split('\n');
   const recorded = events().filter((event) => event.layer === 'L2' && event.event === 'attempt.failed' && event.card === 20);
   assert.deepEqual(recorded.map((event) => event.attempt), [1, 2], JSON.stringify(recorded));
   for (const event of recorded) {
     const line = lines.find((each) => each.startsWith(`attempt ${event.attempt}: `));
-    assert.ok(line, stopped[0].message);
+    assert.ok(line, held[0].message);
     const reported = JSON.parse(line.slice(`attempt ${event.attempt}: `.length));
     assert.equal(reported.step, 'fails', line);
     assert.equal(reported.exit, 3, line);

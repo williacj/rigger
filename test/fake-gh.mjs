@@ -38,7 +38,12 @@ export function commandOf(args) {
   if (subcommand === 'api' && endpoint?.startsWith('repos/')) {
     const path = pathShapeOf(endpoint);
     const valuePrefix = path.endsWith('/merge') ? 'sha=' : path.endsWith('/comments') ? 'body=' : path.endsWith('/labels') ? 'labels[]=' : null;
-    const fields = args.slice(2).map((word) => valuePrefix !== null && word.startsWith(valuePrefix) ? `${valuePrefix}_` : word);
+    const fields = args.slice(2).map((word) => {
+      if (path === 'repos/_/_/issues') {
+        for (const name of ['title=', 'body=', 'labels[]=']) if (word.startsWith(name)) return `${name}_`;
+      }
+      return valuePrefix !== null && word.startsWith(valuePrefix) ? `${valuePrefix}_` : word;
+    });
     return spelled(['api', path, ...fields]);
   }
   if (subcommand !== 'api' || endpoint !== 'graphql' || flag !== '-f' || !query?.startsWith('query=') || rest.length > 0) {
@@ -61,6 +66,7 @@ class GhFailure extends Error {}
  */
 function pathShapeOf(path) {
   const tail = path.split('/').slice(3).join('/');
+  if (/^issues\/\d+\/labels\/[^/]+$/.test(tail)) return 'repos/_/_/issues/_/labels/_';
   if (/^environments\/[^/]+$/.test(tail)) return 'repos/_/_/environments/_';
   if (/^environments\/[^/]+\/deployment-branch-policies\?per_page=100&page=\d+$/.test(tail)) return 'repos/_/_/environments/_/deployment-branch-policies?per_page=100&page=_';
   if (/^environments\/[^/]+\/(variables|secrets)\/[^/]+$/.test(tail)) return `repos/_/_/environments/_/${tail.split('/')[2]}/_`;
@@ -281,14 +287,15 @@ const pullUrl = (state, number) => `https://github.com/${state.repo}/pull/${numb
 const PULLS = 'pageInfo { hasNextPage endCursor } nodes { number state headRefOid baseRefName headRepository { nameWithOwner } }';
 
 /**
- * Answers a page of the pull requests from the branch the read names, open and merged: the states
- * the read asks for, so a pull request closed without a merge is left out, as GitHub leaves it out.
+ * Answers a page of the pull requests from the branch the read names, in the states the query
+ * asks for, including closed requests when selected.
  */
 async function pullRequests(board, state, operation) {
   inTheRepository(state, operation);
   const field = fieldIn(operation.selections, 'pullRequests');
+  const states = argument(field, 'states').values.map((state) => state.value);
   const nodes = repositoryOf(state).held().pullRequests
-    .filter((pull) => pull.head === valueOf(field, 'headRefName') && pullStateOf(pull) !== 'CLOSED')
+    .filter((pull) => pull.head === valueOf(field, 'headRefName') && states.includes(pullStateOf(pull)))
     .map((pull) => ({ number: pull.number, state: pullStateOf(pull), headRefOid: pull.sha, baseRefName: pull.base, headRepository: headRepositoryOf(state, pull) }));
   return { repository: { pullRequests: page(nodes, field) } };
 }
@@ -481,6 +488,16 @@ const COMMANDS = {
     await board.operations.moveItem(itemId, column);
     return { updateProjectV2ItemFieldValue: { projectV2Item: { id: itemId } } };
   },
+  [graphql('mutation { addProjectV2ItemById(input: {projectId: _, contentId: _}) { item { id } } }')]: async (board, state, operation) => {
+    const input = argument(operation.selections[0], 'input');
+    const projectId = valueOf(input, 'projectId');
+    const contentId = valueOf(input, 'contentId');
+    if (projectId !== PROJECT_ID) throw new GhFailure(`gh: Could not resolve to a node with the global id of '${projectId}'`);
+    const issue = state.repository?.issues?.find(({ number }) => `I_issue${number}` === contentId);
+    if (!issue) throw new GhFailure(`gh: Could not resolve to a node with the global id of '${contentId}'`);
+    const id = await board.operations.addIssue(issue.number, state.repo);
+    return { addProjectV2ItemById: { item: { id } } };
+  },
   [graphql('mutation { createProjectV2Field(input: {projectId: _, dataType: SINGLE_SELECT, name: _, singleSelectOptions: []}) { projectV2Field { ... on ProjectV2SingleSelectField { id } } } }')]: async (board, state, operation) => {
     const input = argument(operation.selections[0], 'input');
     if (valueOf(input, 'projectId') !== PROJECT_ID) throw new GhFailure(`gh: Could not resolve to a node with the global id of '${valueOf(input, 'projectId')}'`);
@@ -608,6 +625,41 @@ const COMMANDS = {
     const pull = repositoryOf(state).pull(number);
     if (!pull) throw notFound('https://docs.github.com/rest/pulls/pulls#get-a-pull-request');
     return JSON.stringify({ state: state.repository?.pullStates?.[number] ?? (pull.merged ? 'closed' : 'open'), merged: pull.merged, mergeable: state.repository?.mergeable && Object.hasOwn(state.repository.mergeable, number) ? state.repository.mergeable[number] : true, head: { sha: pull.sha }, merge_commit_sha: state.repository?.mainSha ?? null });
+  },
+  [commandOf(['api', 'repos/_/_/issues/_', '-X', 'GET'])]: async (board, state, args) => {
+    const number = Number(pathIn(state, args).split('/')[1]);
+    const issue = state.repository?.issues?.find((candidate) => candidate.number === number);
+    if (!issue) throw notFound('https://docs.github.com/rest/issues/issues#get-an-issue');
+    return JSON.stringify({ number, node_id: `I_issue${number}` });
+  },
+  [commandOf(['api', 'repos/_/_/issues', '-X', 'POST', '-f', 'title=_', '-f', 'body=_', '-f', 'labels[]=_'])]: async (board, state, args) => {
+    pathIn(state, args);
+    state.repository ??= {};
+    state.repository.issues ??= [];
+    const numbers = [...state.repository.issues, ...(state.repository.pullRequests ?? [])].map(({ number }) => number);
+    const number = Math.max(0, ...numbers) + 1;
+    const title = args[5].slice('title='.length);
+    const body = args[7].slice('body='.length);
+    const label = args[9].slice('labels[]='.length);
+    state.repository.issues.push({ number, title, body, labels: [label] });
+    return JSON.stringify({ number, title, body, labels: [{ name: label }], node_id: `I_issue${number}` });
+  },
+  [commandOf(['api', 'repos/_/_/issues/_', '-X', 'PATCH', '-f', 'state=closed'])]: async (board, state, args) => {
+    const number = Number(pathIn(state, args).split('/')[1]);
+    const issue = state.repository?.issues?.find((candidate) => candidate.number === number);
+    if (!issue) throw notFound('https://docs.github.com/rest/issues/issues#update-an-issue');
+    state.repository.issueStates ??= {};
+    state.repository.issueStates[number] = 'closed';
+    return JSON.stringify({ number, state: 'closed' });
+  },
+  [commandOf(['api', 'repos/_/_/issues/_/labels/_', '-X', 'DELETE'])]: async (board, state, args) => {
+    const [, number, , encoded] = pathIn(state, args).split('/');
+    const issue = state.repository?.issues?.find((candidate) => candidate.number === Number(number));
+    if (!issue) throw notFound('https://docs.github.com/rest/issues/labels#remove-a-label-from-an-issue');
+    const label = decodeURIComponent(encoded);
+    if (!issue.labels?.includes(label)) throw notFound('https://docs.github.com/rest/issues/labels#remove-a-label-from-an-issue');
+    issue.labels = issue.labels.filter((held) => held !== label);
+    return JSON.stringify(issue.labels.map((name) => ({ name })));
   },
   [commandOf(['api', 'repos/_/_/pulls/_/merge', '-X', 'PUT', '-f', 'sha=_', '-f', 'merge_method=merge'])]: async (board, state, args) => {
     const number = Number(pathIn(state, args).split('/')[1]);
@@ -765,7 +817,7 @@ const AGENT_COMMANDS = {
     if (!sha) throw new GhFailure('aborted: you must first push the current branch to a remote, or use the --head flag');
     if (!headIn(state.origin, base)) throw new GhFailure('pull request create failed: GraphQL: Base ref must be a branch (createPullRequest)');
     const repository = repositoryOf(state);
-    const open = repository.held().pullRequests.find((pull) => pull.head === head && pull.base === base && !pull.merged && pull.from === null);
+    const open = repository.held().pullRequests.find((pull) => pull.head === head && pull.base === base && !pull.merged && !pull.closed && pull.from === null);
     if (open) throw new GhFailure(`a pull request for branch "${head}" into branch "${base}" already exists:\n${pullUrl(state, open.number)}`);
     const numbers = [...(await board.operations.readItems()).map((item) => item.number ?? 0), ...repository.held().pullRequests.map((pull) => pull.number)];
     const number = Math.max(0, ...numbers) + 1;
@@ -814,6 +866,9 @@ export const AGENT_ANSWERED = Object.keys(AGENT_COMMANDS);
 async function boardOf(state) {
   const board = createFakeBoard(state.model);
   for (const { operation, args } of state.writes) await board.operations[operation](...args);
+  for (const issue of state.repository?.issues ?? []) {
+    if (issue.labels !== undefined) board.setIssueLabels(issue.repository ?? state.repo, issue.number, issue.labels);
+  }
   return board;
 }
 
@@ -918,8 +973,10 @@ export function installFakeGh(dir, { repo, owner, project, board = {}, origin })
  */
 export function seedRepository(fake, seed) {
   const statePath = join(dirname(fake.gh), 'board.json');
+  const state = JSON.parse(readFileSync(statePath, 'utf8'));
+  seed = { issues: createFakeBoard(state.model).issues(), ...seed };
   createFakeRepository(seed);
-  writeFileSync(statePath, JSON.stringify({ ...JSON.parse(readFileSync(statePath, 'utf8')), repository: seed }));
+  writeFileSync(statePath, JSON.stringify({ ...state, repository: seed }));
 }
 
 /** The mutation the item-write side sends for a column move (`src/substrate/forge/item-write.mjs`). */

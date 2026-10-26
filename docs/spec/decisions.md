@@ -67,7 +67,8 @@ reused.
 | D24 | A judge's provider is configured and enforced | Ratified |
 | D25 | The owner ratifies by marker, and the gate admits the merge | Ratified |
 | D26 | An escalation goes where the consumer sends it | Ratified |
-| D27 | An escalated card carries a label only the owner removes | Ratified |
+| D27 | An escalated card carries a label only the owner removes | Ratified. Amended in #868. |
+| D28 | A per-user LaunchAgent re-launches the engine on an interval | Ratified |
 
 ## D1 — Redo over resume
 
@@ -988,12 +989,12 @@ forge holds it.
 
 ## D27 — An escalated card carries a label only the owner removes
 
-**Status:** Ratified.
+**Status:** Ratified. Amended in #868.
 
 ### Rule
 
 1. L2 marks a card it escalates to the owner with a label Rigger fixes. L2 answers no action for a
-   card carrying it, except one whose pull request the forge holds as merged, which `R-WORK-33`
+   card carrying it, except one whose pull request the forge holds as merged, which `R-WORK-35`
    answers. No code of Rigger's removes the label.
 2. The owner answers the escalation by removing the label.
 
@@ -1001,7 +1002,7 @@ forge holds it.
 
 - **Rule 1:** a second forge adapter whose forge has no labels.
 - **Rule 1's exception:** the owner wanting a merged escalated card held in Owner until the label
-  goes, which would withdraw `R-WORK-33` under a new id.
+  goes, which would withdraw `R-WORK-35` under a new id.
 - **Rule 2:** labels removed with no decision behind them often enough that the owner wants a
   different answer.
 
@@ -1023,3 +1024,54 @@ L2 writes the label last, so a refused write never leaves it without its comment
 a retried escalation may post its comment again, until L2 reads its own comment back.
 
 The owner ruled rule 2 in U1 Q1 on #740, and rule 1's exception in U4.7 on #740.
+
+## D28 — A per-user LaunchAgent re-launches the engine on an interval
+
+**Status:** Ratified.
+
+### Rule
+
+1. On macOS, a per-user LaunchAgent supervises Rigger's unattended runs, not a LaunchDaemon. The
+   job runs as the owner's own user, and starts after the owner logs in.
+2. The job re-launches the unchanged `rigger run` with `StartInterval`, and `RunAtLoad` true, not
+   with `KeepAlive`.
+
+`ARCHITECTURE.md`'s "Triggers" holds the structure that carries both rules.
+
+**Reversed by:**
+
+- **Rule 1:** a need for the engine to run while the owner is not logged in, since a LaunchAgent
+  never starts before login (Q-l); or the deferred row below returning.
+- **Rule 2:** the report's reversal. A need for a deliberate exit 0 that stays down without a
+  `bootout`, or for a crash restart sooner than the interval, favours `KeepAlive` with
+  `SuccessfulExit` false (Q-c). So would a measured start while a run is in progress, or a measured
+  firing queued during one. Q-a3 measured neither.
+
+### Deferred, and what returns it
+
+| Deferred | Returns when |
+|---|---|
+| A dedicated OS user, and a credential separate from the owner's, for the job. Under rule 1 the job runs as the owner's own user, with the owner's sign-ins. | `D25` rule 2 is reversed. |
+
+### Notes
+
+This decision cites spike #744's report as "the report", and names its cells, such as Q-a3. The
+owner ruled the report enough in U50 on #740. Cells Q-n and Q-o are lost (U50), and this decision
+rests on neither. S7, in the architect's review r1 on #740, placed the three choices. The owner
+ruled the deferred row in U1 Q8 on #740, and that "across a reboot" means the owner's next login
+in U1 Q5.
+
+Rule 1 keeps the job on the owner's account, the account Rigger's sessions already act through
+(`D25` rule 3). Under a LaunchAgent with `PATH` set, `gh`, `claude` and `codex` each reported the
+owner signed in (Q-g to Q-i). A daemon runs outside the owner's login, so it would need a user and
+sign-ins of its own, which the deferred row defers. That is a judgment: the spike ran no daemon,
+because Q-p was out of its scope.
+
+Rule 2 keeps `run`'s contract in `README.md`, which runs until the board drains. Under
+`StartInterval`, launchd never starts the job while a run is in progress, queues no firing, and
+starts it again one interval after it exits (Q-a3). `KeepAlive` restarts a `run` that drained
+after every `ThrottleInterval`, which is 10 s by default (Q-b). Each such start reads the board and
+its cards' pull requests again. That this costs too many forge calls is S7's judgment: the spike
+measured no forge calls.
+
+This decision adds no requirement row.

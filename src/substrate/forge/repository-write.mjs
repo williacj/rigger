@@ -1,5 +1,5 @@
-// ABOUTME: The forge adapter's repository-write side: head-guarded merges, issue and PR comments,
-// and single issue-label additions, sent through its own runner. Only L2 reaches it.
+// ABOUTME: The forge adapter's repository-write side: merges, issue and PR comments, labels,
+// and issue opening and closing, sent through its own runner. Only L2 reaches it.
 
 import { firstLine, readRunner, repositoryWriteRunner } from './runners.mjs';
 
@@ -52,6 +52,11 @@ async function issueWrite(operation, kind, number, write) {
 
 export function repositoryWriteSide(board, { send, emitter, timeout } = {}) {
   const via = { send, emitter, timeout };
+  const sendIssue = async (args) => {
+    const said = await repositoryWriteRunner(args, via);
+    if (said.status !== 0 || said.timedOut) throw new Error(firstLine(said));
+    return JSON.parse(said.stdout);
+  };
   const postIssue = (number, endpoint, value, operation, kind = 'issue') => issueWrite(operation, kind, number, async () => {
     if (!Number.isSafeInteger(number) || number < 1) throw new Error(`${operation} on ${kind} #${number} failed: not an ${kind} number`);
     const args = ['api', `repos/${board.repo}/issues/${number}/${endpoint}`, '-X', 'POST', '-f', value];
@@ -97,5 +102,28 @@ export function repositoryWriteSide(board, { send, emitter, timeout } = {}) {
       if (typeof label !== 'string' || label.length === 0) throw new Error(`addIssueLabel on issue #${number} failed: requires one label name`);
       return postIssue(number, 'labels', `labels[]=${label}`, 'addIssueLabel');
     },
+    /** Open one issue with its label in the same request, and return its issue number. */
+    openIssue: async (title, body, label) => issueWrite('openIssue', 'repository', board.repo, async () => {
+      if (typeof title !== 'string' || !title || typeof body !== 'string' || !body || typeof label !== 'string' || !label) {
+        throw new Error('requires a title, body and one label name');
+      }
+      const args = ['api', `repos/${board.repo}/issues`, '-X', 'POST', '-f', `title=${title}`, '-f', `body=${body}`, '-f', `labels[]=${label}`];
+      const opened = await sendIssue(args);
+      if (!opened.labels?.some((held) => held.name === label)) {
+        throw new Error(`openIssue created issue #${opened.number} without label ${label}`);
+      }
+      return opened.number;
+    }),
+    /** Close one issue. */
+    closeIssue: (number) => issueWrite('closeIssue', 'issue', number, async () => {
+      if (!Number.isSafeInteger(number) || number < 1) throw new Error('not an issue number');
+      return sendIssue(['api', `repos/${board.repo}/issues/${number}`, '-X', 'PATCH', '-f', 'state=closed']);
+    }),
+    /** Remove one label from one issue. */
+    removeIssueLabel: (number, label) => issueWrite('removeIssueLabel', 'issue', number, async () => {
+      if (!Number.isSafeInteger(number) || number < 1) throw new Error('not an issue number');
+      if (typeof label !== 'string' || !label) throw new Error('requires one label name');
+      return sendIssue(['api', `repos/${board.repo}/issues/${number}/labels/${encodeURIComponent(label)}`, '-X', 'DELETE']);
+    }),
   };
 }

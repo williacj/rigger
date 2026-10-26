@@ -57,3 +57,24 @@ source copy fail for each launcher on an assertion about where it writes.
 
 `ARCHITECTURE.md`'s sentence placing `tools/` under no layer rides on T5, as the owner ratified.
 The clones `tq-tools/codex-session.sh` makes get their own card after this one merges.
+
+## Owner-approved baseline integration
+
+The unchanged published source `9b71e0ab` failed its Node 26.12.0 Linux ordinary baseline
+on 2026-10-26: `npm test` reported 2647 passes, three failures and nine skips. Each outer
+failure recorded a forge-runner child whose twenty-six failures all required the macOS
+`sw_vers` tool. Main already fixes that unconditional prerequisite in `d1a7c9b`; no local
+replacement or test weakening is needed.
+
+The owner explicitly approved one clean baseline integration of exact main `85e597f2` into
+that published source before the bounded G2 continuation. The normal no-commit merge is
+conflict-free and brings the existing Linux conditional through its original history. The
+coordinator tools and their test/fixture files retain their published bytes. This integration
+is separate from the later three literal host-oracle expectations; no G2 expectation has
+been added at this preparation stage.
+
+At the prepared exact-85 merge source, Node 26.12.0 `npm test` passed with 2889 passes and
+nine skips. The targeted host oracle's sole failure was its exact expected-list assertion:
+the three coordinator files were present in the suite output but absent from the literal
+expectations. That is the admitted G2 red, not a green host baseline. The baseline integration
+is committed separately through the normal deterministic hook before those expectations change.

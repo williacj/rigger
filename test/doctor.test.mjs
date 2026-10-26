@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, realpathSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join, dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -16,7 +16,7 @@ import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { runCommand } from '../src/substrate/process.mjs';
 import { agentAuth, configValidity, doctor, ghAuth, nodeVersion, report, sameTree } from '../src/cli/doctor.mjs';
 import { installFakeGh } from './fake-gh.mjs';
-import { cloneInto, repositoryIn } from './git-repository.mjs';
+import { cloneInto, gitIn, repositoryIn } from './git-repository.mjs';
 import { stubGh } from './stub-gh.mjs';
 import { UNKILLED } from './process-fixtures.mjs';
 import { stubClaude } from './stub-claude.mjs';
@@ -24,6 +24,8 @@ import { stubCodex } from './stub-claude.mjs';
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { readRunner } from '../src/substrate/forge/runners.mjs';
+import { repositoryReads } from '../src/substrate/forge/read.mjs';
+import { seedRepository } from './fake-gh.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -704,14 +706,105 @@ test('the whole report is lines, and carries no stack trace', async () => {
  * `origin` is then set to the URL this checkout's own `origin` names, because a clone made from a
  * path has a filesystem path as its remote and `repoSlug` reads `owner/name` out of that remote:
  * a local path is no such thing, and the config `init` writes would name a repository nobody has.
+ * Tracked candidate changes are applied through Git so the clone matches the doctor being tested.
  */
-function freshClone() {
-  const into = cloneInto(root, join(temporaryDirectory('rigger-clone-'), 'rigger'));
-  const published = spawnSync('git', ['-C', root, 'remote', 'get-url', 'origin'], { encoding: 'utf8', env: gitEnvironment() });
+function freshClone(from = root) {
+  const into = cloneInto(from, join(temporaryDirectory('rigger-clone-'), 'rigger'));
+  const patchFile = join(temporaryDirectory('rigger-clone-patch-'), 'candidate.patch');
+  const patch = spawnSync('git', ['-C', from, 'diff', '--binary', '--no-color', '--no-ext-diff', '--no-textconv', '--output', patchFile, 'HEAD', '--'], { env: gitEnvironment() });
+  assert.ifError(patch.error);
+  assert.equal(patch.signal, null, 'reading the tracked candidate patch was interrupted');
+  assert.equal(patch.status, 0, patch.stderr.toString());
+  if (statSync(patchFile).size > 0) {
+    const applied = spawnSync('git', ['-C', into, 'apply', '--binary', patchFile], { env: gitEnvironment() });
+    assert.ifError(applied.error);
+    assert.equal(applied.signal, null, 'applying the tracked candidate patch was interrupted');
+    assert.equal(applied.status, 0, applied.stderr.toString());
+  }
+  const published = spawnSync('git', ['-C', from, 'remote', 'get-url', 'origin'], { encoding: 'utf8', env: gitEnvironment() });
   assert.equal(published.status, 0, 'this checkout has no `origin`, so the clone has no name to take');
   assert.equal(spawnSync('git', ['-C', into, 'remote', 'set-url', 'origin', published.stdout.trim()], { env: gitEnvironment() }).status, 0);
   return into;
 }
+
+test('the real doctor clone carries tracked candidate changes without changing its source repository', () => {
+  const source = repositoryIn('rigger-doctor-candidate-');
+  writeFileSync(join(source, 'candidate.txt'), 'committed value\n');
+  gitIn(source, 'add', 'candidate.txt');
+  gitIn(source, 'commit', '-qm', 'committed fixture');
+  const published = 'https://github.com/williacj/rigger.git';
+  gitIn(source, 'remote', 'add', 'origin', published);
+  writeFileSync(join(source, 'added.txt'), 'staged addition\n');
+  gitIn(source, 'add', 'added.txt');
+  writeFileSync(join(source, 'candidate.txt'), 'tracked candidate value\n');
+  const snapshot = () => ({
+    head: gitIn(source, 'rev-parse', 'HEAD'),
+    index: gitIn(source, 'write-tree'),
+    staged: gitIn(source, 'diff', '--cached', '--binary', '--no-ext-diff', '--no-textconv'),
+    working: gitIn(source, 'diff', '--binary', '--no-ext-diff', '--no-textconv'),
+    status: gitIn(source, 'status', '--porcelain=v1'),
+  });
+  const before = snapshot();
+
+  const clone = freshClone(source);
+
+  assert.equal(readFileSync(join(clone, 'candidate.txt'), 'utf8'), 'tracked candidate value\n');
+  assert.equal(readFileSync(join(clone, 'added.txt'), 'utf8'), 'staged addition\n');
+  assert.equal(gitIn(clone, 'remote', 'get-url', 'origin').trim(), published);
+  assert.equal(realpathSync(gitIn(clone, 'rev-parse', '--show-toplevel').trim()), realpathSync(clone));
+  assert.notEqual(clone, source);
+  assert.deepEqual(snapshot(), before);
+  assert.equal(readFileSync(join(source, 'candidate.txt'), 'utf8'), 'tracked candidate value\n');
+  assert.equal(readFileSync(join(source, 'added.txt'), 'utf8'), 'staged addition\n');
+});
+
+test('the real doctor clone carries a tracked patch larger than one MiB without changing its source', () => {
+  const source = repositoryIn('rigger-doctor-large-', {
+    'candidate.txt': 'committed value\n',
+    'binary.dat': Buffer.from([0, 16, 32, 255]),
+  });
+  const published = 'https://github.com/williacj/rigger.git';
+  gitIn(source, 'remote', 'add', 'origin', published);
+  const empty = freshClone(source);
+  assert.equal(readFileSync(join(empty, 'candidate.txt'), 'utf8'), 'committed value\n');
+  assert.deepEqual(readFileSync(join(empty, 'binary.dat')), Buffer.from([0, 16, 32, 255]));
+  assert.equal(gitIn(empty, 'status', '--porcelain=v1'), '');
+
+  const text = 'tracked candidate value\n'.repeat(100000);
+  const binary = Buffer.from([0, 255, 1, 2, 128]);
+  writeFileSync(join(source, 'candidate.txt'), text);
+  writeFileSync(join(source, 'binary.dat'), binary);
+  writeFileSync(join(source, 'added.txt'), 'staged addition\n');
+  gitIn(source, 'add', 'added.txt');
+  const measuredPatch = join(temporaryDirectory('rigger-doctor-patch-'), 'candidate.patch');
+  const measured = spawnSync('git', ['-C', source, 'diff', '--binary', '--no-color', '--no-ext-diff', '--no-textconv', '--output', measuredPatch, 'HEAD', '--'], { env: gitEnvironment() });
+  assert.ifError(measured.error);
+  assert.equal(measured.signal, null);
+  assert.equal(measured.status, 0, measured.stderr.toString());
+  const bytes = statSync(measuredPatch).size;
+  assert.ok(bytes > 1048576, `fixture patch has only ${bytes} bytes`);
+  console.log(`large doctor candidate patch: ${bytes} bytes`);
+  const snapshot = () => ({
+    head: gitIn(source, 'rev-parse', 'HEAD'),
+    index: gitIn(source, 'write-tree'),
+    staged: gitIn(source, 'show', ':added.txt'),
+    text: readFileSync(join(source, 'candidate.txt'), 'utf8'),
+    binary: readFileSync(join(source, 'binary.dat')),
+    addition: readFileSync(join(source, 'added.txt'), 'utf8'),
+    status: gitIn(source, 'status', '--porcelain=v1'),
+  });
+  const before = snapshot();
+
+  const clone = freshClone(source);
+
+  assert.equal(readFileSync(join(clone, 'candidate.txt'), 'utf8'), text);
+  assert.equal(readFileSync(join(clone, 'added.txt'), 'utf8'), 'staged addition\n');
+  assert.deepEqual(readFileSync(join(clone, 'binary.dat')), binary);
+  assert.equal(gitIn(clone, 'remote', 'get-url', 'origin').trim(), published);
+  assert.equal(realpathSync(gitIn(clone, 'rev-parse', '--show-toplevel').trim()), realpathSync(clone));
+  assert.notEqual(realpathSync(clone), realpathSync(source));
+  assert.deepEqual(snapshot(), before);
+});
 
 test('doctor passes on a fresh clone of this repository after init', async () => {
   // The card's fourth item, and M0's own exit condition: `rigger doctor` runs against this
@@ -1389,6 +1482,74 @@ async function gateReport(state = {}, source = starter()) {
   assert.equal(lines.length, 1, ran.text);
   return { ran, line: lines[0], sent, callers };
 }
+
+test('gate line keeps its whole verdict for every deployment policy answer', async () => {
+  const pass = '  ok         gate check required: rigger/gate is required on main; environment gate, GATE_APP_ID and GATE_APP_PRIVATE_KEY pass';
+  const policyFault = "  failed     gate check required: environment gate's deployment-branch policy must admit only branch main";
+  const unreadable = "  failed     gate check required: environment gate's deployment-branch policy list is absent, or not readable with this token";
+  const missing = '  failed     gate check required: readEnvironment on board 12 failed: reading environment gate in acme/widgets, gh answered no deployment-branch policy';
+  const withoutPolicy = gateEnvironment();
+  delete withoutPolicy.deployment_branch_policy;
+  const cases = [
+    ['default branch', {}, pass],
+    ['null policy', { environment: { ...gateEnvironment(), deployment_branch_policy: null } }, policyFault],
+    ['protected branches', { environment: { ...gateEnvironment(), deployment_branch_policy: { protected_branches: true, custom_branch_policies: true } } }, policyFault],
+    ['no custom policies', { environment: { ...gateEnvironment(), deployment_branch_policy: { protected_branches: false, custom_branch_policies: false } } }, policyFault],
+    ['another branch', { environment: { ...gateEnvironment(), branch_policies: [{ name: 'other', type: 'branch' }] } }, policyFault],
+    ['tag', { environment: { ...gateEnvironment(), branch_policies: [{ name: 'main', type: 'tag' }] } }, policyFault],
+    ['two policies', { environment: { ...gateEnvironment(), branch_policies: [{ name: 'main', type: 'branch' }, { name: 'other', type: 'branch' }] } }, policyFault],
+    ['unreadable list', { failures: { 'environments/gate/deployment-branch-policies?per_page=100&page=1': 'gh: Not Found (HTTP 404)' } }, unreadable],
+    ['missing policy field', { environment: withoutPolicy }, missing],
+    ['missing protected flag', { environment: { ...gateEnvironment(), deployment_branch_policy: { custom_branch_policies: true } } }, policyFault],
+    ['non-boolean protected flag', { environment: { ...gateEnvironment(), deployment_branch_policy: { protected_branches: 'false', custom_branch_policies: true } } }, policyFault],
+    ['non-boolean custom flag', { environment: { ...gateEnvironment(), deployment_branch_policy: { protected_branches: false, custom_branch_policies: 'true' } } }, policyFault],
+  ];
+  for (const [title, state, expected] of cases) {
+    const { line } = await gateReport(state);
+    assert.equal(line, expected, title);
+  }
+});
+
+test('readEnvironment answers every deployment policy shape without forge field names', async () => {
+  const normal = { protected_branches: false, custom_branch_policies: true };
+  const cases = [
+    ['default branch', normal, [{ name: 'main', type: 'branch' }]],
+    ['no policy', null, []],
+    ['protected branches', { protected_branches: true, custom_branch_policies: true }, []],
+    ['no custom policies', { protected_branches: false, custom_branch_policies: false }, []],
+    ['another branch', normal, [{ name: 'other', type: 'branch' }]],
+    ['tag', normal, [{ name: 'main', type: 'tag' }]],
+    ['two policies', normal, [{ name: 'main', type: 'branch' }, { name: 'other', type: 'branch' }]],
+    ['unreadable list', normal, [], true],
+    ['missing protected flag', { custom_branch_policies: true }, []],
+    ['non-boolean protected flag', { protected_branches: 'false', custom_branch_policies: true }, []],
+    ['non-boolean custom flag', { protected_branches: false, custom_branch_policies: 'true' }, []],
+  ];
+  const noForgeKeys = (value) => {
+    if (value === null || typeof value !== 'object') return;
+    for (const [key, nested] of Object.entries(value)) {
+      assert.doesNotMatch(key, /_/, `forge field in readEnvironment answer: ${key}`);
+      noForgeKeys(nested);
+    }
+  };
+  for (const [title, policy, branch_policies, unreadable] of cases) {
+    const fake = installFakeGh(temporaryDirectory('rigger-environment-vocabulary-'), STARTER_BOARD);
+    seedRepository(fake, {
+      environments: { gate: { can_admins_bypass: false, deployment_branch_policy: policy, branch_policies } },
+      environmentFailures: unreadable ? { 'environments/gate/deployment-branch-policies?per_page=100&page=1': { message: 'Not Found', status: '404' } } : {},
+    });
+    const send = (command, args) => spawnSync(fake.gh, args, { encoding: 'utf8', env: gitEnvironment() });
+    const held = await repositoryReads(STARTER_BOARD, { send }).readEnvironment('gate');
+    assert.equal(held.canAdminsBypass, false, title);
+    assert.deepEqual(held.deploymentBranchPolicy, policy === null ? null : {
+      protectedBranches: policy.protected_branches,
+      customBranchPolicies: policy.custom_branch_policies,
+    }, title);
+    assert.deepEqual(held.policies, unreadable ? null : policy?.custom_branch_policies === true ? branch_policies : [], title);
+    noForgeKeys(held);
+    assert.deepEqual((await fake.model()).writes(), [], title);
+  }
+});
 
 test('gate line passes when an active ruleset pins its context to the gate App and the environment settings pass', async () => {
   const { ran, line } = await gateReport();

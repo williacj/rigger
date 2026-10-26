@@ -122,6 +122,7 @@ Rigger merges code without a person in the loop, so this section is explicit.
 - dispatches your agent CLI;
 - opens and comments on pull requests, and merges the ones that pass the gate;
 - files follow-up issues, comments on card issues, adds labels to card issues, and moves cards between columns;
+- opens the status issue with its label and puts it on the board, then removes that label and closes the issue;
 - pushes the event stream to a data ref in your repository, if you turn that on.
 
 **What Rigger never does:**
@@ -192,7 +193,7 @@ evidence that would bring it back.
   and labels.
 - [`gh`](https://cli.github.com/), authenticated with access to that repository and board.
 - One coding-agent CLI, authenticated. Claude Code is the default adapter; Codex is shipped beside it.
-- Node.js 20 or later.
+- Node.js 26 or later.
 - **macOS** today. **Windows** is planned through WSL2, pending a spike; native Windows is not in
   v0. Linux is untested as a host in its own right, though the WSL2 route runs on it.
 - The owner provisions the forge settings needed by the required check; see
@@ -225,6 +226,9 @@ npx @williacj/rigger verdict <pr> <verdict>  # post your verdict on a pull reque
 Elsewhere in this document the commands are written in short form; `rigger <verb>` means
 `npx @williacj/rigger <verb>`.
 
+How to operate Rigger is in the [guide](docs/guide.md), and where to look each fact up is in the
+[reference](docs/reference.md).
+
 Unattended runs on macOS use launchd, whose assets are part of the substrate Rigger ships.
 
 ## Configuration
@@ -235,9 +239,11 @@ It names the provisioning steps, each with the card labels that select it and wh
 requires it. And for each kind of work it names one maker role, the judges that review it, and how
 many review rounds that kind gets before a standing disagreement escalates — three by default. A
 code change might have one judge. A requirements proposal might have three, with you last. Which
-outcomes are yours to decide is also configuration. You choose from a fixed set of categories and
-add none to it. The default is all three: a change to a recorded decision, a critical finding, and
-an ambiguity no role could resolve. Scheduled work is declared the same way: a clock trigger
+outcomes are yours to decide is also configuration. The categories are a fixed set of three, and
+you add none to it: a change to a recorded decision, a critical finding, and an ambiguity no role
+could resolve. For each category you name a destination, you or one of your roles, and a category
+you give none goes to you. A critical finding and a change to a recorded decision go only to you,
+and only an ambiguity a maker raises goes to a role. Scheduled work is declared the same way: a clock trigger
 creates a card on your board, and that card goes through the loop like any other.
 [`ARCHITECTURE.md`](ARCHITECTURE.md) lists every extension point; there are no others.
 

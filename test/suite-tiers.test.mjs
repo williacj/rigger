@@ -3,8 +3,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { gitIn, repositoryAt } from './git-repository.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
@@ -164,6 +164,7 @@ const expectedLists = {
 };
 expectedLists.host.push('test/process-table.test.mjs');
 expectedLists.host.push('test/claude-folder-live.test.mjs');
+expectedLists.host.push('test/test-list-growth-host.test.mjs');
 expectedLists.host.sort();
 expectedLists.awaiting.push('test/claude-folder-live.test.mjs');
 expectedLists.awaiting.sort();
@@ -377,7 +378,12 @@ for (const [title, command, args, argument, rule] of [
 test('host mode refuses a case-varied name for an unlisted test', () => {
   const result = spawnSync('sh', ['test/suite.sh', '--host', 'TEST/agent-cli-refusal.test.mjs'], { encoding: 'utf8', timeout: 60_000 });
   assert.notEqual(result.status, 0, 'the case-varied unlisted test ran');
-  assert.match(result.stderr, /test\/agent-cli-refusal\.test\.mjs is not on the host list/);
+  if (existsSync('TEST/agent-cli-refusal.test.mjs')) {
+    assert.equal(realpathSync.native('TEST/agent-cli-refusal.test.mjs'), realpathSync.native('test/agent-cli-refusal.test.mjs'), 'the case-varied fixture must resolve to the intended test');
+    assert.match(result.stderr, /test\/agent-cli-refusal\.test\.mjs is not on the host list/);
+  } else {
+    assert.equal(result.stderr, 'test:host: TEST/agent-cli-refusal.test.mjs is not a literal existing file path; named test files must be on the host list\n');
+  }
   assert.equal(result.stdout, '', 'a test ran before the case-varied refusal');
 });
 
@@ -758,10 +764,67 @@ test('host runner prints the local host key first', (t) => {
   const source = "import { spawnSync } from 'node:child_process';\ntest('starts git', () => { spawnSync('git', ['--version']); });";
   const { result } = hostProbe(t, source, { env: { GITHUB_ACTIONS: '' } });
   assert.equal(result.status, 0, result.stdout + result.stderr);
-  const version = spawnSync('sw_vers', ['-productVersion'], { encoding: 'utf8' }).stdout.trim();
+  const version = process.platform === 'darwin'
+    ? spawnSync('sw_vers', ['-productVersion'], { encoding: 'utf8' }).stdout.trim()
+    : spawnSync('uname', ['-r'], { encoding: 'utf8' }).stdout.trim();
   const arch = spawnSync('uname', ['-m'], { encoding: 'utf8' }).stdout.trim();
-  assert.equal(result.stdout.split('\n')[0], 'macos-' + version + '-' + arch + '-node' + process.versions.node.split('.')[0]);
+  const expected = process.platform === 'darwin'
+    ? 'macos-' + version + '-' + arch + '-node' + process.versions.node.split('.')[0]
+    : 'linux-' + version + '-' + arch + '-node' + process.versions.node.split('.')[0];
+  assert.equal(result.stdout.split('\n')[0], expected);
 });
+
+
+test('host mode refuses an existing case-varied alias for an unlisted test', (t) => {
+  const directory = temporaryDirectory('rigger-case-alias-', { context: t });
+  const tests = join(directory, 'test');
+  mkdirSync(tests);
+  for (const name of readdirSync('test')) {
+    const original = resolve('test', name);
+    if (name === 'agent-cli-refusal.test.mjs') writeFileSync(join(tests, name), readFileSync(original));
+    else symlinkSync(original, join(tests, name));
+  }
+  if (!existsSync(join(directory, 'TEST'))) symlinkSync(tests, join(directory, 'TEST'));
+  const result = spawnSync('sh', [resolve('test/suite.sh'), '--host', 'TEST/agent-cli-refusal.test.mjs'], {
+    cwd: directory, encoding: 'utf8', timeout: 60_000,
+  });
+  const canonical = relative(directory, realpathSync.native(join(directory, 'TEST/agent-cli-refusal.test.mjs')));
+  assert.notEqual(result.status, 0, 'the existing case-varied unlisted alias ran');
+  assert.ok(result.stderr.includes(canonical + ' is not on the host list'), result.stderr);
+  assert.equal(result.stdout, '', 'a test ran before the existing-alias refusal');
+});
+
+for (const [system, version, expected] of [
+  ['Linux', 'kernel-probe', 'linux-kernel-probe-probe-arch-node'],
+  ['Darwin', 'product-probe', 'macos-product-probe-probe-arch-node'],
+]) {
+  test('local host key asks the ' + system + ' version authority', (t) => {
+    const tools = temporaryDirectory('rigger-host-identity-', { context: t });
+    writeFileSync(join(tools, 'uname'), [
+      '#!/bin/sh',
+      '# ABOUTME: Answers the controlled host identity commands for a suite test.',
+      'case "$1" in',
+      "-s) printf '%s\\n' '" + system + "' ;;",
+      "-r) printf '%s\\n' '" + version + "' ;;",
+      "-m) printf '%s\\n' 'probe-arch' ;;",
+      '*) exit 2 ;;',
+      'esac',
+    ].join('\n') + '\n');
+    writeFileSync(join(tools, 'sw_vers'), [
+      '#!/bin/sh',
+      '# ABOUTME: Records a controlled macOS product-version lookup.',
+      ': > "$0.called"',
+      "printf '%s\\n' '" + version + "'",
+    ].join('\n') + '\n');
+    chmodSync(join(tools, 'uname'), 0o755);
+    chmodSync(join(tools, 'sw_vers'), 0o755);
+    const source = "import { spawnSync } from 'node:child_process';\ntest('starts git', () => { spawnSync('git', ['--version']); });";
+    const { result } = hostProbe(t, source, { env: { GITHUB_ACTIONS: '', PATH: tools + ':' + process.env.PATH } });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(result.stdout.split('\n')[0], expected + process.versions.node.split('.')[0]);
+    assert.equal(existsSync(join(tools, 'sw_vers.called')), system === 'Darwin', 'the wrong version authority was consulted');
+  });
+}
 
 test('host runner prints the CI image key first when GITHUB_ACTIONS is true', (t) => {
   const source = "import { spawnSync } from 'node:child_process';\ntest('starts git', () => { spawnSync('git', ['--version']); });";
@@ -769,6 +832,28 @@ test('host runner prints the CI image key first when GITHUB_ACTIONS is true', (t
   assert.equal(result.status, 0, result.stdout + result.stderr);
   assert.equal(result.stdout.split('\n')[0], 'macos-probe-42-ARM64-node' + process.versions.node.split('.')[0]);
 });
+
+for (const [name, imageOS, imageVersion] of [
+  ['both image variables absent', undefined, undefined],
+  ['ImageOS set and ImageVersion absent', 'macos-probe', undefined],
+  ['ImageOS absent and ImageVersion set', undefined, '42'],
+  ['ImageOS empty and ImageVersion set', '', '42'],
+  ['ImageOS set and ImageVersion empty', 'macos-probe', ''],
+]) {
+  test(`host runner uses the local key in CI with ${name}`, (t) => {
+    const checks = [['ImageOS', imageOS], ['ImageVersion', imageVersion]].map(([variable, value]) =>
+      value === undefined
+        ? `assert.equal(Object.hasOwn(process.env, '${variable}'), false);`
+        : `assert.equal(process.env.${variable}, ${JSON.stringify(value)});`).join(' ');
+    const source = `import assert from 'node:assert/strict';\nimport { spawnSync } from 'node:child_process';\ntest('starts git', () => { ${checks} spawnSync('git', ['--version']); });`;
+    const env = { ImageOS: imageOS, ImageVersion: imageVersion };
+    const { result: local } = hostProbe(t, source, { env: { ...env, GITHUB_ACTIONS: '' } });
+    assert.equal(local.status, 0, local.stdout + local.stderr);
+    const { result: ci } = hostProbe(t, source, { env: { ...env, GITHUB_ACTIONS: 'true' } });
+    assert.equal(ci.status, 0, ci.stdout + ci.stderr);
+    assert.equal(ci.stdout.split('\n')[0], local.stdout.split('\n')[0]);
+  });
+}
 
 test('host tests receive both refusing CLI directories on PATH', (t) => {
   const source = "import assert from 'node:assert/strict';\nimport { existsSync } from 'node:fs';\nimport { join } from 'node:path';\nimport { spawnSync } from 'node:child_process';\ntest('sees refusing directories', () => { assert.ok(existsSync(join(process.env.RIGGER_REFUSING_GH_DIR, 'gh'))); assert.ok(existsSync(join(process.env.RIGGER_REFUSING_AGENT_DIR, 'claude'))); assert.ok(existsSync(join(process.env.RIGGER_REFUSING_AGENT_DIR, 'codex'))); assert.ok(process.env.PATH.split(':').includes(process.env.RIGGER_REFUSING_GH_DIR)); assert.ok(process.env.PATH.split(':').includes(process.env.RIGGER_REFUSING_AGENT_DIR)); spawnSync('git', ['--version']); });";
@@ -930,4 +1015,142 @@ for (const api of ['spawn', 'spawnSync', 'execFile', 'execFileSync', 'fork']) {
       assert.equal(result.status, 0, `${command} through ${api} failed:\n${result.stdout}\n${result.stderr}`);
     });
   }
+}
+
+
+test('the local host tier reports the actual platform release architecture and Node major', (t) => {
+  const source = "import { spawnSync } from 'node:child_process';\ntest('host identity body', () => { spawnSync('git', ['--version']); });";
+  const { result } = hostProbe(t, source, { env: { GITHUB_ACTIONS: '' } });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  const queried = (answer) => {
+    assert.equal(answer.status, 0, answer.stderr);
+    assert.ok(answer.stdout.trim());
+    return answer.stdout.trim();
+  };
+  const release = queried(process.platform === 'darwin'
+    ? spawnSync('sw_vers', ['-productVersion'], { encoding: 'utf8' })
+    : spawnSync('uname', ['-r'], { encoding: 'utf8' }));
+  const platform = process.platform === 'darwin' ? 'macos' : 'linux';
+  const architecture = queried(spawnSync('uname', ['-m'], { encoding: 'utf8' }));
+  assert.equal(result.stdout.split('\n')[0], `${platform}-${release}-${architecture}-node${process.versions.node.split('.')[0]}`);
+  assert.ok(reportsPassedTest(result.stdout, 'host identity body'), result.stdout);
+});
+
+
+/** Controlled executable metadata models; these runs are fixture evidence, not Mac host results. */
+function metadataProbe(t, { platform = 'Linux', read, failure, poisonMac = false, ci = false } = {}) {
+  const directory = temporaryDirectory('rigger-host-metadata-', { context: t });
+  const tools = join(directory, 'tools');
+  mkdirSync(tools);
+  const trace = join(directory, 'metadata-calls');
+  const marker = join(directory, 'test-body');
+  const quote = (value) => "'" + String(value).replaceAll("'", "'\\''") + "'";
+  for (const name of ['node', 'sh', 'git', 'mktemp', 'mkdir', 'chmod', 'rm', 'mkfifo', 'cat', 'ln', 'rmdir']) {
+    const lookup = name === 'node' ? { status: 0, stdout: process.execPath } : spawnSync('sh', ['-c', 'command -v "$1"', 'sh', name], { encoding: 'utf8' });
+    assert.equal(lookup.status, 0, `fixture tool ${name}: ${lookup.stderr}`);
+    symlinkSync(lookup.stdout.trim(), join(tools, name));
+  }
+  const answer = (selected, value) => selected === read && failure === 'nonzero'
+    ? "printf '%s\\n' 'fixture metadata read failed' >&2; exit 37"
+    : selected === read && failure === 'empty' ? 'exit 0' : `printf '%s\\n' ${quote(value)}`;
+  const removeAfterOs = failure === 'missing' && ((platform === 'Linux' && read === 'release') || (platform === 'Darwin' && read === 'architecture'));
+  const removeAfterRelease = failure === 'missing' && platform === 'Linux' && read === 'architecture';
+  const uname = `#!/bin/sh
+# ABOUTME: Models selected OS metadata reads and records which were requested.
+printf 'uname %s\\n' "$*" >> ${quote(trace)}
+case "$1" in
+  -s) printf '%s\\n' ${quote(platform)}; ${removeAfterOs ? 'rm -f "$0";' : ''} exit 0 ;;
+  -r) ${answer('release', 'fixture-kernel')}; ${removeAfterRelease ? 'rm -f "$0";' : ''} exit 0 ;;
+  -m) ${answer('architecture', 'fixture-machine')}; exit 0 ;;
+  *) exit 41 ;;
+esac
+`;
+  writeFileSync(join(tools, 'uname'), uname);
+  chmodSync(join(tools, 'uname'), 0o755);
+  if (!(platform === 'Darwin' && read === 'version' && failure === 'missing') && (platform === 'Darwin' || poisonMac)) {
+    writeFileSync(join(tools, 'sw_vers'), `#!/bin/sh\n# ABOUTME: Models Mac metadata or refuses an inactive Linux metadata read.\nprintf 'sw_vers %s\\n' "$*" >> ${quote(trace)}\n${poisonMac ? 'exit 39' : answer('version', 'fixture-product')}\n`);
+    chmodSync(join(tools, 'sw_vers'), 0o755);
+  }
+  const source = "import { spawnSync } from 'node:child_process';\nimport { writeFileSync } from 'node:fs';\ntest('metadata test body', () => { writeFileSync(process.env.HOST_METADATA_BODY, 'ran'); spawnSync('git', ['--version']); });";
+  const { result } = hostProbe(t, source, { env: {
+    PATH: tools, HOST_METADATA_BODY: marker, GITHUB_ACTIONS: ci ? 'true' : '',
+    ...(ci ? { ImageOS: 'fixture-ci', ImageVersion: 'fixture-image', RUNNER_ARCH: 'fixture-architecture' } : {}),
+  } });
+  return { result, marker, calls: existsSync(trace) ? readFileSync(trace, 'utf8').trim().split('\n') : [] };
+}
+
+test('selected local metadata failures refuse before a test body and name every failed read', (t) => {
+  for (const platform of ['Darwin', 'Linux']) {
+    for (const read of [platform === 'Darwin' ? 'version' : 'release', 'architecture']) {
+      for (const failure of ['missing', 'nonzero', 'empty']) {
+        const label = `${platform}/${read}/${failure}`;
+        const { result, marker } = metadataProbe(t, { platform, read, failure });
+        assert.equal(result.error, undefined, label);
+        assert.notEqual(result.status, 0, `${label}: ${result.stdout + result.stderr}`);
+        const command = read === 'version' ? 'sw_vers -productVersion' : read === 'release' ? 'uname -r' : 'uname -m';
+        assert.ok(result.stderr.includes(command), `${label}: ${result.stderr}`);
+        assert.equal(existsSync(marker), false, `${label}: a test body started after invalid metadata`);
+        assert.equal(result.stdout, '', `${label}: no fabricated host key`);
+      }
+    }
+  }
+});
+
+
+test('declared metadata fixtures retain exact Mac and Linux keys and Linux never calls an absent or refusing Mac tool', (t) => {
+  for (const [platform, poisonMac] of [['Darwin', false], ['Linux', false], ['Linux', true]]) {
+    const { result, marker, calls } = metadataProbe(t, { platform, poisonMac });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const expected = platform === 'Darwin' ? 'macos-fixture-product-fixture-machine' : 'linux-fixture-kernel-fixture-machine';
+    assert.equal(result.stdout.split('\n')[0], expected + '-node' + process.versions.node.split('.')[0]);
+    assert.deepEqual(calls, platform === 'Darwin'
+      ? ['uname -s', 'sw_vers -productVersion', 'uname -m']
+      : ['uname -s', 'uname -r', 'uname -m']);
+    assert.equal(readFileSync(marker, 'utf8'), 'ran');
+    assert.ok(reportsPassedTest(result.stdout, 'metadata test body'), result.stdout);
+  }
+});
+
+test('CI metadata takes precedence without consulting local OS or Mac metadata tools', (t) => {
+  const { result, marker, calls } = metadataProbe(t, { platform: 'Unsupported', poisonMac: true, ci: true });
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.equal(result.stdout.split('\n')[0], 'fixture-ci-fixture-image-fixture-architecture-node' + process.versions.node.split('.')[0]);
+  assert.deepEqual(calls, []);
+  assert.equal(readFileSync(marker, 'utf8'), 'ran');
+});
+
+test('an unsupported local OS is named and refused before any host test body', (t) => {
+  const { result, marker, calls } = metadataProbe(t, { platform: 'Unsupported', poisonMac: true });
+  assert.equal(result.error, undefined);
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /unsupported local host Unsupported/);
+  assert.equal(result.stdout, '');
+  assert.deepEqual(calls, ['uname -s']);
+  assert.equal(existsSync(marker), false);
+});
+
+for (const state of ['alias', 'absent']) {
+  test(`host path refusal names an isolated ${state} operand before loading its test body`, (t) => {
+    const { directory, marker, environment } = isolatedHostTree(t);
+    const alias = join(directory, 'TEST');
+    if (state === 'alias' && !existsSync(alias)) symlinkSync('test', alias, 'dir');
+    const operand = state === 'alias' ? 'TEST/other.test.mjs' : 'TEST/missing.test.mjs';
+    if (state === 'alias') {
+      assert.equal(realpathSync.native(join(directory, operand)), realpathSync.native(join(directory, 'test/other.test.mjs')));
+    } else {
+      assert.equal(existsSync(join(directory, operand)), false, 'the absent fixture operand exists');
+    }
+    const result = spawnSync('sh', ['test/suite.sh', '--host', operand], {
+      cwd: directory, env: environment, encoding: 'utf8', timeout: 60_000,
+    });
+    assert.notEqual(result.status, 0, `${state} operand was admitted`);
+    assert.equal(result.stdout, '', `${state} operand ran before its refusal`);
+    assert.equal(existsSync(marker), false, `${state} operand loaded a test body`);
+    assert.equal(result.stderr, state === 'alias'
+      ? 'test:host: test/other.test.mjs is not on the host list\n'
+      : 'test:host: TEST/missing.test.mjs is not a literal existing file path; named test files must be on the host list\n');
+  });
 }

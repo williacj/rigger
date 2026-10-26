@@ -31,8 +31,8 @@ export default {
       select: { labels: ['type:change'] },
       maker: 'engineer',
       judges: [
-        { role: 'reviewer', provider: { claude: 'codex', codex: 'claude' } },
-        { role: 'architect', provider: { claude: 'codex', codex: 'claude' } },
+        { role: 'reviewer', provider: { claude: 'codex', codex: 'codex' } },
+        { role: 'architect', provider: { claude: 'codex', codex: 'codex' } },
       ],
       provisioning: ['npm-ci', 'vhs'],
     },
@@ -81,6 +81,5 @@ export default {
     // work requires it, so the work does not (`R-PROV-1`).
     vhs: { run: 'brew list vhs || brew install vhs', select: { labels: ['area:demo'] } },
   },
-  escalate: ['recorded-decision', 'critical', 'ambiguous'],
   telemetry: { push: false },
 };

@@ -52,7 +52,9 @@ export const SHAPES = {
     // kinds' own labels alone (`ARCHITECTURE.md`, below the extension-point table).
     epicLabel: {},
     provisioning: { entries: 'step' },
-    escalate: { type: 'array' },
+    // Optional: a destination per escalation category, and a category given none goes to the
+    // owner (`ARCHITECTURE.md`, the Escalation destinations row).
+    escalate: { type: 'object' },
     telemetry: { keys: 'telemetry' },
   },
   board: {
@@ -142,14 +144,14 @@ export const OWNER = 'owner';
 export const judgeRole = (entry) => (typeof entry === 'string' ? entry : entry?.role);
 
 /**
- * The escalation categories, which are Rigger's and not the consumer's (`R-ESCALATE-3`). A
- * consumer chooses which of them are the owner's to decide and adds none (`R-ESCALATE-2`), so a
- * config naming anything else names a route to the owner Rigger does not offer.
+ * The escalation categories, which are Rigger's and not the consumer's (`R-ESCALATE-19`). A
+ * consumer names where each of them goes and adds none (`R-ESCALATE-13`), so a config naming
+ * anything else names a category Rigger does not offer.
  */
 export const CATEGORIES = ['recorded-decision', 'critical', 'ambiguous'];
 
 /** Labels Rigger fixes, shared by provisioning, selector validation and L2 (`D27`). */
-export const FIXED_LABELS = { escalated: 'rigger:escalated' };
+export const FIXED_LABELS = { escalated: 'rigger:escalated', status: 'rigger:status' };
 
 /**
  * The tiers a role may run at, which are Rigger's and not the consumer's (`O4` on #467): each
@@ -165,8 +167,11 @@ const TIER_NAMES = TIERS.map((tier) => `\`${tier}\``).join(' or ');
 const at = (path, key) => (path ? `${path}.${key}` : key);
 
 /** What a refusal calls each type a rule can ask for, and whether a value is one. */
-const SAYS = { boolean: 'true or false', array: 'a list' };
-const holds = (value, type) => (type === 'array' ? Array.isArray(value) : typeof value === type);
+const SAYS = { boolean: 'true or false', array: 'a list', object: 'an object' };
+const holds = (value, type) => {
+  if (type === 'array') return Array.isArray(value);
+  return type === 'object' ? declares(value) : typeof value === type;
+};
 
 /** Whether a value is a set of declarations, which is what a shape and a container both hold. */
 const declares = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -676,6 +681,29 @@ function readPriority(priority, refusals) {
   }
 }
 
+/**
+ * What `escalate` may hold: a destination for any of the fixed categories, and nothing else
+ * (`R-ESCALATE-13`). A config that declares none sends every category to the owner, so only a
+ * declared one has anything to read, and one that is no object earned its refusal where the shape
+ * was read.
+ */
+function readEscalate(config, refusals) {
+  if (!Object.hasOwn(config, 'escalate') || !declares(config.escalate)) return;
+  for (const [key, destination] of Object.entries(config.escalate)) {
+    const where = `escalate.${key}`;
+    if (!CATEGORIES.includes(key)) refusals.push(`\`${where}\` is no escalation category Rigger offers`);
+    else if (typeof destination !== 'string') {
+      refusals.push(`\`${where}\` must name a destination, \`${OWNER}\` or a role, and the config gives ${inspect(destination)}`);
+    } else if (destination !== OWNER && declares(config.roles) && !Object.hasOwn(config.roles, destination)) {
+      refusals.push(`\`${where}\` names \`${destination}\`, which is neither \`${OWNER}\` nor a role the config declares`);
+    } else if (destination !== OWNER && key !== 'ambiguous') {
+      // Only an ambiguity may go to a role. Critical and a recorded-decision change are the
+      // owner's alone (`R-ESCALATE-14`).
+      refusals.push(`\`${where}\` names the role \`${destination}\`, and ${key} goes only to the owner`);
+    }
+  }
+}
+
 /** Every refusal this config earns. An accepted config earns none, so the list is empty. */
 export function validate(config) {
   const refusals = [];
@@ -692,11 +720,7 @@ export function validate(config) {
   readProvisioning(config.provisioning, refusals);
   readBoardOwner(config.board, refusals);
   readPriority(config.board?.priority, refusals);
-  for (const category of Array.isArray(config.escalate) ? config.escalate : []) {
-    if (!CATEGORIES.includes(category)) {
-      refusals.push(`\`escalate\` names \`${category}\`, which is no escalation category Rigger offers`);
-    }
-  }
+  readEscalate(config, refusals);
   return refusals;
 }
 

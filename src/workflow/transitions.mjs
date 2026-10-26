@@ -2,6 +2,7 @@
 // dispatch's outcome, the move itself through the forge adapter's item-write side, and its event.
 
 import { worktreeTopic } from '../config/validate.mjs';
+import { FIXED_LABELS } from '../config/validate.mjs';
 import { topicFor } from '../execution/workspace.mjs';
 import { repositoryReads } from '../substrate/forge/read.mjs';
 import { itemWriteSide } from '../substrate/forge/item-write.mjs';
@@ -25,6 +26,7 @@ const CHANGES = {
   mergedFromOwner: { from: 'owner', to: 'done' },
   conflicted: { from: 'review', to: 'coding' },
   conflictedFromOwner: { from: 'owner', to: 'coding' },
+  escalated: { to: 'owner' },
 };
 
 /** The changes L2's `move` answers make, each the one change from its column to the column the answer names. */
@@ -47,11 +49,12 @@ export const REVIEW_WITHHELD = 'REVIEW_WITHHELD';
  */
 export function columnChanges({
   config, sink, send, items = itemWriteSide({ repo: config.repo, project: config.board.project }, { send }),
-  repositoryWrites = repositoryWriteSide({ repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) }),
+  repositoryWrites,
   reads = repositoryReads({ ...config.board, repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) }),
 }) {
   const { columns } = config.board;
   const topic = worktreeTopic(config);
+  const repository = repositoryWrites ?? repositoryWriteSide({ repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) });
 
   /**
    * Appends `card`'s transition event, or fails naming the card, both columns and the sink's
@@ -59,9 +62,9 @@ export function columnChanges({
    * missing, by the owner's ruling (#220; #277): written later, it would carry the wrong time.
    * Starting no further work is L3's halt, not L2's, so L2 keeps no note of the missing event.
    */
-  const record = (card, transition) => {
+  const record = (card, transition, context = {}) => {
     try {
-      sink.emitter({ layer: 'L2', card: card.number }).emit('transition', transition);
+      sink.emitter({ layer: 'L2', card: card.number, ...context }).emit('transition', transition);
     } catch (refusal) {
       const { from, to } = transition;
       throw new Error(`card #${card.number} moved from ${from} to ${to}, and the event sink refused to record it: ${refusal.message}`, { cause: refusal });
@@ -75,13 +78,15 @@ export function columnChanges({
    * recorded with the card's number.
    */
   const change = async (card, cause, fields = {}) => {
-    const { from, to } = CHANGES[cause];
+    const { from: declaredFrom, to } = CHANGES[cause];
+    const from = cause === 'escalated' ? Object.keys(columns).find((key) => columns[key] === card.column) : declaredFrom;
+    const context = cause === 'escalated' ? { dispatch: null } : {};
     try {
-      await items.moveItem(card.id, columns[to], sink.emitter({ layer: 'L0', card: card.number }));
+      await items.moveItem(card.id, columns[to], sink.emitter({ layer: 'L0', card: card.number, ...context }));
     } catch (refusal) {
       throw new Error(`card #${card.number}'s move from ${from} to ${to} (${columns[to]}) was refused: ${refusal.message}`, { cause: refusal });
     }
-    record(card, { from, to, cause, ...fields });
+    record(card, { from, to, cause, ...fields }, context);
   };
 
   /**
@@ -146,7 +151,7 @@ export function columnChanges({
      * through unread, and a failed call rejects as it did.
      */
     merge: async (card, next) => {
-      const answer = await repositoryWrites.mergePullRequest(next.pull, next.head);
+      const answer = await repository.mergePullRequest(next.pull, next.head);
       return answer.outcome === 'refused' && answer.reason === 'unknown' ? { ...answer, unknownMergeability: true } : answer;
     },
 
@@ -178,18 +183,34 @@ export function columnChanges({
     /** Posts L2's return comment on its pull request, without changing the card's column. */
     returned: async (card, next) => {
       try {
-        await repositoryWrites.postComment(next.pull, next.comment);
+        await repository.postComment(next.pull, next.comment);
       } catch (refusal) {
         throw new Error(`card #${card.number}'s return comment on pull request #${next.pull} was refused: ${refusal.message}`, { cause: refusal });
       }
     },
 
-    /** Records L2's escalation for this card and category, leaving routing to M6. */
-    escalated: (card, next) => {
+    /** Records the loop's escalation, then comments on its issue, moves to Owner and labels it. */
+    escalated: async (card, next) => {
+      const evidence = {
+        category: next.category, reason: next.reason,
+        ...Object.fromEntries(['pull', 'head', 'line'].filter((key) => next[key] !== undefined).map((key) => [key, next[key]])),
+      };
       try {
-        sink.emitter({ layer: 'L2', card: card.number }).emit('review.escalate', { category: next.category });
+        sink.emitter({ layer: 'L2', card: card.number, dispatch: null }).emit('review.escalate', evidence);
       } catch (refusal) {
-        throw new Error(`card #${card.number}'s escalation in category ${next.category} was refused: ${refusal.message}`, { cause: refusal });
+        throw new Error(`card #${card.number}'s escalation in category ${next.category} was refused: review.escalate could not be recorded: ${refusal.message}`, { cause: refusal });
+      }
+      const writes = repositoryWrites ?? repositoryWriteSide({ repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0', card: card.number, dispatch: null }) });
+      try {
+        await writes.postIssueComment(card.number, escalationComment(card, evidence));
+      } catch (refusal) {
+        throw new Error(`card #${card.number}'s escalation issue comment was refused: ${refusal.message}`, { cause: refusal });
+      }
+      await change(card, 'escalated');
+      try {
+        await writes.addIssueLabel(card.number, FIXED_LABELS.escalated);
+      } catch (refusal) {
+        throw new Error(`card #${card.number}'s escalation label ${FIXED_LABELS.escalated} was refused: ${refusal.message}`, { cause: refusal });
       }
     },
 
@@ -211,7 +232,7 @@ export function columnChanges({
      * `pullRequestsFrom` reads them. For a continuing attempt, a head other than `expectedHead`
      * answers `waiting` until L3's last read, when L2 withholds review and names both heads.
      * With exactly one open at the expected head, the card moves to review (`R-WORK-18`),
-     * and L2 answers the facts it read, `{ line, open, merged }` with those beside them, to its
+     * and L2 answers the facts it read, `{ line, open, merged, closed }` with those beside them, to its
      * caller, which hands them back unread to L2's next action (the architect's ruling 3, AQ4). With
      * none open, or more than one, the card stays in coding, and L2 records why and
      * tells its caller the card and why, as `withheld` says. A read that fails leaves it in coding too, and its
@@ -253,4 +274,14 @@ export function columnChanges({
       return facts;
     },
   };
+}
+
+/** The selected reason and only available work identifiers, as data on the card's issue. */
+function escalationComment(card, { category, reason, pull, head, line }) {
+  const work = [
+    ...(pull === undefined ? [] : [`Pull request: #${pull}`]),
+    ...(head === undefined ? [] : [`Head: ${head}`]),
+    ...(line === undefined ? [] : [`Line of work: ${line}`]),
+  ];
+  return `Rigger escalates card #${card.number} to the owner (${category}).\n\n${reason}${work.length === 0 ? '' : `\n\n${work.join('\n')}`}\n`;
 }

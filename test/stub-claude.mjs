@@ -12,7 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { spawn } from 'node:child_process';
 import { appendFileSync, chmodSync, existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { mkdirSync } from 'node:fs';
-import { closeSync, constants, openSync, rmSync, writeSync } from 'node:fs';
+import { closeSync, constants, lstatSync, openSync, rmSync, writeSync } from 'node:fs';
 import { Socket } from 'node:net';
 import { basename, delimiter, dirname } from 'node:path';
 import { sweep } from './process-fixtures.mjs';
@@ -111,7 +111,7 @@ export function installStandInAgent(dir, plan = {}) {
   const entry = `process.env.RIGGER_FIXTURE_WARMING || import(${JSON.stringify(import.meta.url)}).then(({ standInMain }) => standInMain());\n`;
   writeFileSync(join(dir, 'claude'), `#!${process.execPath}\n${entry}`);
   // A plan to exec a command under every card installs a shell in its place, which `exec`s the
-  // command: Node 20, the floor the README sets, has no `process.execve` for the stand-in to call.
+  // command: the shell path works when a test removes `process.execve` from the stand-in.
   const exec = Object.values(plan['*'] ?? {}).find((act) => act.exec !== undefined)?.exec;
   if (exec !== undefined) writeFileSync(join(dir, 'claude'), `#!/bin/sh\n${EXIT_IF_WARMING}\nexec ${exec.map(quoted).join(' ')}\n`);
   chmodSync(join(dir, 'claude'), 0o755);
@@ -338,7 +338,9 @@ const awaited = (path) => `${path}.awaited`;
  * Tells the run awaiting the file at `path`, written just now, that it is, by writing `w` to the
  * FIFO that run made (`written`). Where no FIFO is there (`ENOENT`) or none is open (`ENXIO`), no
  * run awaits the file or the one that does has yet to read whether it is there, and so will see
- * it. Any other failure throws, so the run that wrote the file fails and says why.
+ * it. A write EPIPE is also harmless where lstat confirms that the FIFO name is absent; the
+ * reader can close and remove it after seeing the file but before the notification write.
+ * Every other failure throws, including EPIPE where the FIFO is present or its absence is unknown.
  */
 function announce(path) {
   let fd;
@@ -350,6 +352,13 @@ function announce(path) {
   }
   try {
     recorded(tracing, 'the announce\'s write', () => writeSync(fd, 'w'), { path: awaited(path) });
+  } catch (failure) {
+    if (failure.code === 'EPIPE') {
+      try { lstatSync(awaited(path)); } catch (observation) {
+        if (observation.code === 'ENOENT') return;
+      }
+    }
+    throw failure;
   } finally {
     closeSync(fd);
   }
@@ -359,8 +368,9 @@ function announce(path) {
  * The trace of one test that asks for it (test/stand-in-agent.test.mjs): each process the test
  * runs appends its events, one JSON object a line, to `<source>.jsonl` in `directory`, a directory
  * outside the stand-in's own. Every write is synchronous, so the test process's trace makes no
- * request of libuv's threadpool, and each event carries the time it was written, in milliseconds
- * since the epoch, so the events of different processes order against each other.
+ * request of libuv's threadpool. Each event carries its recorded time in milliseconds since the
+ * epoch; timestamps alone do not establish causal order between processes. Synchronizing gates
+ * and actual operation acknowledgements establish the ordering a test asserts.
  */
 export function traceTo(directory, source) {
   const file = join(directory, `${source}.jsonl`);

@@ -211,7 +211,7 @@ function released(release, claim, failure) {
  * maker exits 0. `clock` supplies the time and pause for a repeated forge read.
  * `judgeDirectory(card, role, head)` is L1's make of a judge's directory, injected, as
  * `judged` says (the architect's ruling 4's addendum on #467). `removeDirectories(card)` is L1's
- * merged-card removal, injected. `state` is the state directory L1 records each dispatch's process
+ * shared guarded directory removal, injected. `state` is the state directory L1 records each dispatch's process
  * group in, which L3 hands L1's `dispatch` unread (ruling 10).
  * `kill()` is L1's kill of recorded process groups, injected, and the first call on the handle
  * awaits it before L3 records or reads anything, as `claiming` says. A handle is refused when it
@@ -321,10 +321,10 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * scratch, repository }`, the card's scratch base and repository beside it as L1 answered them,
    * or, where L1 could not make it, L2's answer for that attempt, handed the failure unread.
    */
-  const made = async (card, number, continuing) => {
+  const made = async (card, number, continuing, firstFailure) => {
     const [outcome] = await Promise.allSettled([new Promise((resolve) => resolve(workspace(card.number, continuing?.head)))]);
     if (outcome.status === 'fulfilled') return { path: outcome.value.path, branch: outcome.value.branch, scratch: outcome.value.scratch, repository: outcome.value.repository };
-    return { answer: decide(card, [], { attempt: number, workspace: outcome, continuing }) };
+    return { answer: decide(card, [], { attempt: number, firstFailure, workspace: outcome, continuing }) };
   };
 
   /**
@@ -338,7 +338,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * workspace tip through L1. L3 hands L2 each maker outcome unread, with that tip where read.
    * A stale forge head has L3 pause and ask L2 to settle again under the same claim and slot.
    * Where the settle succeeded, L3 hands its facts to `decide` with the attempt number. L3 follows
-   * L2's `again` or `stop` answer; a retry makes a fresh workspace. Otherwise the attempt
+   * L2's `again`, `hold` or `stop` answer; a retry makes a fresh workspace. Otherwise the attempt
    * answers the card, its
    * workspace, the maker's `outcome` and L2's `settled`, each as `Promise.allSettled` records it.
    * Where the settle
@@ -349,31 +349,31 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * attempt rejects with that failure. Where a judge failed to hand back, the maker's result is
    * handed to `kept` again with every judge L2 named beside it as `judges`, as `judges` hands them
    * to its `keep`. An answer naming the
-   * next attempt has L3 make it; one naming the card stopped fails, naming the card and each
+   * next attempt has L3 make it; one holding or stopping the card fails, naming the card and each
    * attempt's failure, in order, both in the message and as fields `card` and `attemptFailures`.
-   * A stopped card is absent from `reached`. Any other answer stops the attempts, naming the card
+   * A held or stopped card is absent from `reached`. Any other answer stops the attempts, naming the card
    * and what L2 answered. `remember` marks a card whose judges L2 withheld for this run.
    */
   const attempt = async (card, next, kept, remember) => {
     const continuing = next.action === 'continue' ? next : undefined;
-    const askAttempt = (outcomes, options) => decide(card, outcomes, { ...options, continuing });
     const failures = [];
-    /** Follows L2's retry or stop answer, retaining each failure for the final report. */
+    const askAttempt = (outcomes, options) => decide(card, outcomes, { ...options, firstFailure: failures[0], continuing });
+    /** Follows L2's retry, hold or stop answer, retaining each failure for the final report. */
     const advance = (answer, number) => {
       if (answer.action === 'again' && answer.attempt === number + 1) {
         failures.push(answer.failure);
         return true;
       }
-      if (answer.action === 'stop') {
+      if (answer.action === 'stop' || answer.action === 'hold') {
         const attemptFailures = [...failures, answer.failure];
         const each = attemptFailures.map((failure, at) => `attempt ${at + 1}: ${JSON.stringify(failure)}`);
-        throw Object.assign(new Error(`card #${card.number} was stopped after ${each.length} attempts, each failing before the maker:\n${each.join('\n')}`), { card: card.number, attemptFailures });
+        throw Object.assign(new Error(`card #${card.number} was ${answer.action === 'hold' ? 'held' : 'stopped'} after ${each.length} attempts, each failing before the maker:\n${each.join('\n')}`), { card: card.number, attemptFailures, ...(answer.action === 'hold' ? { decision: 'hold' } : {}) });
       }
       return false;
     };
     let answer = next;
     for (let number = 1; ; number += 1) {
-      const { path, branch, scratch, repository, answer: unmade } = await made(card, number, continuing);
+      const { path, branch, scratch, repository, answer: unmade } = await made(card, number, continuing, failures[0]);
       if (unmade !== undefined) {
         answer = unmade;
       } else {
@@ -522,11 +522,15 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * was claimed, and whether or not its release event was refused. L2's report of a refused
    * transition event passes through unchanged as the work's failure where it comes from the claim;
    * from the maker's settle it comes back in the card's `settled`, as `attempt` says. `excluded`
-   * receives a stopped card or a card whose judges L2 withheld before `freed` fires another
-   * trigger, and lives for this run alone.
+   * receives a stopped card, a card whose judges L2 withheld, or a removal's following refusal
+   * or ignore before `freed` fires another trigger, and lives for this run alone.
+   * A removal keeps this claim through guarded cleanup and its following ordinary action.
+   * Cleanup failure is retained beside that action's failure and never replaces the action;
+   * a following Coding move is attempted only after cleanup.
    */
   const work = async (claim, freed, excluded) => {
-    const { card, next, decide: atPull } = claim;
+    const { card, decide: atPull } = claim;
+    let next = claim.next;
     /** Keeps a card whose judges L2 withheld out of later pulls in this run. */
     const remember = (answer) => {
       if (answer.withheld?.length > 0) excluded?.add(card.number);
@@ -535,10 +539,24 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     // Whether the start was made: for a redo as for a Ready card, only once `start` returns.
     let claimed = false;
     let failure = null;
+    let removalFailure = null;
     let reached;
     try {
       await start(claim);
       claimed = true;
+      if (next.action === 'remove') {
+        try {
+          await removeDirectories(card.number);
+        } catch (failure) {
+          removalFailure = failure;
+        }
+        next = next.following;
+        if (['dispatch', 'judge', 'continue'].includes(next.action)) {
+          claimed = false;
+          await l2.claimed(card, next);
+          claimed = true;
+        }
+      }
       const kept = (made) => { reached = made; };
       if (next.action === 'move') {
         if (next.to === 'done') await removeDirectories(card.number);
@@ -551,6 +569,9 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         await l2.escalated(card, next);
         excluded?.add(card.number);
         reached = { card: card.number, ...next };
+      } else if (['refuse', 'ignore'].includes(next.action)) {
+        excluded?.add(card.number);
+        reached = { card: card.number, ...next };
       } else {
         reached = next.action === 'judge'
           ? { card: card.number, judges: await judges(card, next, (options) => remember(atPull(card, [], options)), (ended) => kept({ card: card.number, judges: ended })) }
@@ -560,6 +581,9 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       failure = thrown;
       if (['move', 'return', 'escalate'].includes(next.action)) excluded?.add(card.number);
       if (thrown.card === card.number && Array.isArray(thrown.attemptFailures)) excluded?.add(card.number);
+    }
+    if (removalFailure !== null) {
+      failure = failure === null ? removalFailure : new AggregateError([removalFailure, failure], `card #${card.number}'s directory removal and following action failed`);
     }
     if (next.action === 'continue' && !(reached?.settled?.status === 'fulfilled' && reached.settled.value !== undefined)) {
       excluded?.add(card.number);
