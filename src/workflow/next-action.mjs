@@ -57,6 +57,7 @@ const selecting = (card, kinds) =>
  * answer. Only an actually selected forge refusal becomes an ambiguous escalation; composed
  * tier/provider conflicts and form or kind refusals remain refusals. This answer is selected
  * between attempts, never while L3 is handing back the current attempt's outcomes.
+ * An item carrying the fixed status label has no card action, regardless of its other facts.
  *
  * Whether a verdict covers a Coding or Review card is read from its pull request's markers, never
  * injected: L2 takes no `fresh` input.
@@ -83,6 +84,7 @@ const selecting = (card, kinds) =>
 export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTopic(), provisioning, outcomes = [], sink, attempt = 1, firstFailure, workspace, maker, forge, judged, directories, continuing } = {}) {
   // The facts L2's settle answered are of a card it moved to review.
   const card = forge === undefined ? given : { ...given, forge: { stage: 'review', ...forge } };
+  if (carries(card, FIXED_LABELS.status)) return { action: 'ignore' };
   const escalation = escalationStatus(card);
   if (escalation !== undefined && !(card.forge?.merged?.length > 0)) return { action: 'ignore', ...escalation };
   const betweenAttempts = continuing === undefined && forge === undefined && maker === undefined
