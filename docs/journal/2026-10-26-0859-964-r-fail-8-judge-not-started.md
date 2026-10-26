@@ -19,15 +19,20 @@ measurement.
 
 [K80](https://github.com/williacj/rigger/issues/740#issuecomment-6417606019) allows a card-local
 judge row only where `R-ESCALATE-12`'s first sentence already covers the cause. The proposal adds
-none. Every adapter refusal reads the main line, the same for every card (`R-LOOP-14`). Causes
-that stay until a person acts are classed host, so the hold tells the owner (`R-SCHED-7`).
-Causes that pass by themselves take U43's outcome. Whether a judge's next dispatch counts as the
-card's second attempt goes to the owner as an open question.
+none. An agent file or a settings file is read from the main line, the same for every card
+(`R-LOOP-14`), and the owner kept those host (U72). Every cause that can stay until a person acts
+is classed host, so the hold tells the owner (`R-SCHED-7`). The owner ruled that the same judge's
+next dispatch for the card, failing the same way, is the second attempt (U72).
+
+The first round classed the causes that usually pass, such as a host short of processes or a
+Codex skill check past its time, `out` with U43's outcome. All three judges found a counterexample:
+each can also last, and then it spins in silence. Host costs nothing for a cause that passes,
+since only a second failure the same way closes admission. They also found rows holding three or
+more conditions, which spec-style rule 4 splits one condition to a row.
 
 Open cards whose bodies cite the literal `R-FAIL-7` when the head was pushed, by an exact match
 over the bodies of all 32 open issues: #961 and #964. The PM retargets a card body only where its
 acceptance turns on the added rows.
 
-What taught us: the architect's attack read a judge's adapter directory as outside the judge's
-directory. `makeJudgeDirectory` puts `main` inside it. Open the path's maker before ruling on what
-a directory "shows".
+What taught us: "passes by itself" is a judgment about the usual case. A requirement row has to
+hold for the case that lasts, so test each cause's persistence against its worst case.

@@ -588,18 +588,37 @@ Each failure is one of three classes:
 | a judge's directory not made, or a required step in a judge's `head` that failed or never started | out | — | out: no second attempt is made in that invocation, and the next invocation tries again |
 | a judge's scratch directory not made because the file system gave no answer, or none in time | out | — | out: no second attempt is made in that invocation, and the next invocation tries again |
 | a judge's dispatch that never started because its provider has no adapter, or its tier no model in that adapter | out | — | out: the config validator refuses a configuration naming either, and Rigger pulls no card under a configuration the validator refuses |
-| a judge's dispatch that never started because its provider's CLI is not found, or not executable, on the host | host | it is the same provider | in |
-| a judge's dispatch that never started because the host refused its command line as too long, or as holding a character the host cannot pass | host | it is the same refusal | in |
-| a judge's agent file on the main line that lies outside the repository (`R-SAFE-6`), is a link that cannot be resolved, or cannot be read | host | it is the same file | in |
-| a judge's provider settings on the main line that Rigger refuses: Claude Code settings that are no JSON object or declare a Bash rule for a compound command line, or a Codex configuration that cannot be read | host | it is the same refusal | in |
-| a judge's directory whose path holds a character Claude Code would read as more than a path, in its `CLAUDE.md` exclusions or its permission rules | host | it is the same directory | in |
-| a judge's directory or scratch directory whose real path holds a character Rigger cannot read back from the processes working there | host | it is the same directory | in |
-| a judge's Codex dispatch whose check of the skills Codex would load exited non-zero, answered nothing Rigger can read, or named a skill whose real path cannot be read | host | it is the same refusal | in |
-| a judge's dispatch that never started because Rigger's own code composed it wrongly: an environment variable Rigger may not set, or a dispatch id, time, scratch base, repository or event emitter it cannot use | host | it is the same fault | in |
-| the file system refusing a write a judge's dispatch needs before it starts: Rigger's record of process groups, or a Codex home or temporary directory in its scratch directory | host | it is the same write | in |
-| a judge's dispatch that never started because the file system gave no answer, or none in time, the host lacked a process or memory for it, or its check of Codex's skills ran past its time | out | — | out: no second attempt is made in that invocation, and the next invocation tries again |
-| a judge's dispatch that never started because a directory made for it was gone, replaced, unreadable or held by another dispatch when it started | out | — | out: no second attempt is made in that invocation, and the next invocation tries again |
-| a judge's dispatch whose start Rigger could not record | out | — | out: `R-RECORD-9` |
+| a judge's dispatch that never started because its provider's CLI is not found on the host | host | it is the same provider | in |
+| a judge's dispatch that never started because its provider's CLI is not executable on the host | host | it is the same provider | in |
+| a judge's dispatch that never started because the host refused its command line as too long | host | always | in |
+| a judge's dispatch that never started because its command line holds a character the host cannot pass | host | always | in |
+| a judge's agent file on the main line that lies outside the repository (`R-SAFE-6`) | host | it is the same file | in |
+| a judge's agent file on the main line that is a link that cannot be resolved | host | it is the same file | in |
+| a judge's agent file on the main line that cannot be read | host | it is the same file | in |
+| Claude Code settings on the main line that are no JSON object Rigger can read, for a judge on Claude Code | host | always | in |
+| Claude Code settings on the main line that declare a Bash rule for a compound command line, for a judge on Claude Code | host | always | in |
+| a Codex configuration on the main line that cannot be read, for a judge on Codex | host | always | in |
+| a path above a judge's `main` that holds a character Claude Code's `CLAUDE.md` exclusions read as a pattern, for a judge on Claude Code | host | it is the same path | in |
+| a judge's `head` whose real path holds a character other than a letter, a digit, a space or one of `/._+-`, for a judge on Claude Code | host | it is the same path | in |
+| a judge's directory whose real path holds a character Rigger cannot read back from the processes working there | host | it is the same path | in |
+| a judge's scratch directory whose real path holds a character Rigger cannot read back from the processes working there | host | it is the same path | in |
+| a judge's check of the skills Codex would load that exits non-zero | host | always | in |
+| a judge's check of the skills Codex would load that answers nothing Rigger can read | host | always | in |
+| a judge's check of the skills Codex would load that names a skill whose real path cannot be read | host | always | in |
+| a judge's check of the skills Codex would load that runs past its time | host | always | in |
+| a judge's dispatch that never started because its provider adapter set an environment variable Rigger may not set | host | it is the same variable | in |
+| a judge's dispatch that never started because Rigger handed it a scratch base or repository that is no absolute path | host | always | in |
+| a judge's dispatch that never started because Rigger handed it no dispatch id, or one its record of process groups cannot hold | host | always | in |
+| a judge's dispatch that never started because Rigger handed it a time that is no positive number of milliseconds | host | always | in |
+| a judge's dispatch that never started because Rigger handed it no way to record its events | host | always | in |
+| the file system failing the write of Rigger's record of process groups before a judge's dispatch starts | host | always | in |
+| the file system failing to make the Codex home or temporary directory in a judge's scratch directory | host | always | in |
+| the file system failing to write a file the Codex home in a judge's scratch directory holds | host | always | in |
+| a judge's dispatch that never started because the host could not spare a process or memory for it | host | always | in |
+| a judge's dispatch that never started because a directory made for it was gone or unreadable when it started | host | always | in |
+| a judge's dispatch that never started because its working directory was replaced, so that its real path lies outside the judge's directory | host | always | in |
+| a judge's dispatch that never started because another dispatch's entry in Rigger's record of process groups held the judge's directory | host | always | in |
+| a judge's dispatch that never started because Rigger could not record one of its events | out | — | out: `R-RECORD-9` |
 | a maker that ran its first command and then failed | out | — | out: the work's failure, not the environment's |
 | two cards each failing once | out | — | out: counted per card |
 | a card refused for its acceptance's form (`R-CARD-7`, `R-CARD-8`) | out | — | out: it stays a refusal `rigger plan` reports |
