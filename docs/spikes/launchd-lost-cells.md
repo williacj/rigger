@@ -613,18 +613,20 @@ git's, and the suite-slot times are the laptop's.
 | 02:04:51Z to 02:25:25Z (entry 244 and the commit) | round 2 edits to the report and the journal, for 956#6406751551; commit `b0e1f80d` at 02:25:25Z (git committer time; its suite slot ran 02:25:25Z to 02:28:54Z) | review round 1 |
 | 02:28:55Z to 03:08:17Z (entries 265 and 266) | report edit citing U67 and U68; commit `16eeac98` at 03:08:17Z (its suite slot ran 03:08:17Z to 03:11:49Z) | the owner's rulings |
 | 03:11:49Z to 03:11:52Z (the slot's end and entry 267) | one `git push origin rigger-951` carrying `b0e1f80d` and `16eeac98`, which made PR #956's head `16eeac98` | publication |
-| after 03:11:52Z (entry 267) | round 3 edits to the report, for 956#6407509056, and the commit that adds this row. Its push publishes that commit as #956's head. A commit cannot record its own hash, so this row names it only as the commit that adds the row | review round 2 |
+| 03:11:52Z to 11:58:25Z (entry 267 and the commit's git date) | round 3 edits to the report, for 956#6407509056 and the owner's item 8 answer | review round 2 |
+| 11:58:25Z, git committer time; suite slot 11:58:25Z to 12:01:59Z (the suite-slot log); push 12:02:00Z (GitHub's activity record for `rigger-951`) | commit `1f6f9986`, the round 3 commit, and its push, which made #956's head `1f6f9986` | review round 2 |
+| from 12:02:00Z, the round 3 push, to the push that makes #956's head this round 4 commit | round 4 edits to this ledger, for 956#6415646310, and the commit that adds this row. A commit cannot hold its own time or hash. Its bounds are the round 3 push below, and above: GitHub's head-update record for #956 (the PR timeline's `committed` event and the branch's activity `push` record), this commit's git date, and its suite-slot log entry | review round 3, under U69 |
 
 **The laptop: outside the clone.** All by the spike engineer, except where the table says otherwise.
 
 | When | What | Why |
 |---|---|---|
 | 2026-10-25, before 19:03:30Z | copies of #744's plan and report, under the session's scratch directory, `<scratch>/ref/`. Removed at entry 222, 01:26:23Z on 2026-10-26 | reading only |
-| 01:29:41Z to 01:33:07Z (the refused first commit), 01:34:00Z to 01:37:24Z, 01:50:02Z to 01:53:29Z, 02:00:49Z to 02:04:17Z, 02:25:25Z to 02:28:54Z, and 03:08:17Z to 03:11:49Z, each its log's start and end; and the round 3 commit's run | `~/GitHub/rigger-worktrees/coordinator-tools/suite-slot.sh` took its lock and added its lines to `~/GitHub/rigger-worktrees/suite-slot/suite-slot.log`, once per commit attempt | the suite slot |
-| at each commit | the commits' console output, `<scratch>/951-commit.log`, `<scratch>/951-commit2.log` to `<scratch>/951-commit5.log`, and the round 3 commit's log, under the session's scratch directory | the suite's result |
+| 01:29:41Z to 01:33:07Z (the refused first commit), 01:34:00Z to 01:37:24Z, 01:50:02Z to 01:53:29Z, 02:00:49Z to 02:04:17Z, 02:25:25Z to 02:28:54Z, 03:08:17Z to 03:11:49Z, and 11:58:25Z to 12:01:59Z, each its log's start and end; and the round 4 commit's run, after 12:02:00Z and before its push | `~/GitHub/rigger-worktrees/coordinator-tools/suite-slot.sh` took its lock and added its lines to `~/GitHub/rigger-worktrees/suite-slot/suite-slot.log`, once per commit attempt | the suite slot |
+| at each commit | the commits' console output, `<scratch>/951-commit.log`, `<scratch>/951-commit2.log` to `<scratch>/951-commit6.log` (the last written at 12:01:59Z, its mtime), and the round 4 commit's log, written between the round 3 push and the round 4 push | the suite's result |
 | 02:04Z | the PR's body, `<scratch>/951-pr-body.md`, under the session's scratch directory | `gh pr create` |
-| after 03:11:52Z (entry 268) | a fresh clone of `rigger-951`, `~/GitHub/rigger-worktrees/951-spike-engineer-fresh`, with the round 3 report and journal copied in, `npm ci` and the full suite run there through the suite slot; its output went to `<scratch>/951-fresh-test.log` | the review's fresh-clone check |
-| after 11:49:33Z on 2026-10-26 (951#6415277828) | the item 8 edit to the report, recording the owner's answer on Script Editor's end state; the final report and journal copied into the fresh clone, its path check and full suite re-run there through the suite slot, output to `<scratch>/951-fresh-test2.log` | review round 2, item 8 |
+| 03:25:53Z (the clone directory's birth time) to 03:31:55Z (entry 268); suite slot 03:28:05Z to 03:31:54Z | a fresh clone of `rigger-951`, `~/GitHub/rigger-worktrees/951-spike-engineer-fresh`, with the round 3 report and journal copied in, `npm ci` and the full suite run there through the suite slot; its output went to `<scratch>/951-fresh-test.log`, mtime 03:31:54Z | the review's fresh-clone check |
+| 11:49:33Z (951#6415277828) to 11:54:07Z (entry 269); suite slot 11:50:15Z to 11:54:06Z | the item 8 edit to the report, recording the owner's answer on Script Editor's end state; the final report and journal copied into the fresh clone, its path check and full suite re-run there through the suite slot, output to `<scratch>/951-fresh-test2.log`, mtime 11:54:06Z | review round 2, item 8 |
 | through the run | the harness's background-task output files, under the session's scratch directory, written by Claude Code for the waits on batch 3 | waits |
 
 **The mini.**
@@ -648,7 +650,8 @@ git's, and the suite-slot times are the laptop's.
 | 01:37:49Z | the branch `rigger-951`, pushed from the laptop |
 | 02:04:49Z | pull request #956, opened from the laptop, after the push of `c30a4310` at about 02:04:20Z (entry 243) |
 | 03:11:49Z to 03:11:52Z | the push of `b0e1f80d` and `16eeac98`, from the laptop |
-| after this row's commit | the push of the round 3 commit, from the laptop |
+| 12:02:00Z (GitHub's activity record for `rigger-951`) | the push of the round 3 commit `1f6f9986`, from the laptop |
+| after 12:02:00Z, bounded above by GitHub's head-update record for #956 | the push of the round 4 commit, from the laptop |
 | 02:25:10Z | batch 3c's script, 951#6406842430 |
 
 ## Cleanup
