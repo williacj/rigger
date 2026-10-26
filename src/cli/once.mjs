@@ -341,6 +341,12 @@ async function claiming(verb, limit, opened, {
     };
   }
   const refused = refusals.map(refusalLine);
+  if (reached.admission?.state === 'closed') {
+    return {
+      text: [...reached.admission.closers.map(({ kind, reason, time }) => `rigger ${verb}: admission is closed by ${kind}: ${reason}; time ${time}`), ...refused].join('\n'),
+      code: 0,
+    };
+  }
   // Nothing to pull is the one outcome this verb meets in full, so it alone exits zero (U29).
   if (reached.length === 0) return { text: [`rigger ${verb}: from board ${project}, no card was pullable`, ...refused].join('\n'), code: 0 };
   // Zero only where every card's maker delivered, its card in review; any other outcome is short
