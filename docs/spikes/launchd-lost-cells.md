@@ -326,6 +326,16 @@ only its current state, last written at 01:23:49Z on 2026-10-26, so whether the 
 were off in those phases cannot be established. Batch 3c's readings, if run, stand for Q-k2 and the
 banner in their place. These earlier phases are reported as unmeasured for the app setting.
 
+**The owner's rulings.** The owner accepted this paragraph as a lost cell, in their words:
+"951 I accept the lost records" ([U67](https://github.com/williacj/rigger/issues/740#issuecomment-6407313913); relayed on #951 at
+[951#6407314110](https://github.com/williacj/rigger/issues/951#issuecomment-6407314110)). Batch 3c
+was drafted and posted
+([951#6406842430](https://github.com/williacj/rigger/issues/951#issuecomment-6406842430)) and was
+not run. The owner ruled, in their words: "Skip it" ([U68](https://github.com/williacj/rigger/issues/740#issuecomment-6407319130); relayed at
+[951#6407319389](https://github.com/williacj/rigger/issues/951#issuecomment-6407319389)). Q-k's
+per-firing banner outcomes for phases A and D, and the posting app's setting measured in each
+phase, are therefore unmeasured.
+
 **Batch 3, in the owner's words.** Neither statement gives a per-firing observation, so this report
 reads no firing's outcome from them. The coordinator relayed both:
 - "batch 3 is done … I saw everything I was supposed to see"
@@ -475,6 +485,10 @@ as "scripts editor" and the three "Allow notifications when…" settings as on, 
 after the run (951#6406431897). The settings are host state, which another host or a later change
 can differ from.
 
+**Unmeasured, per [U68](https://github.com/williacj/rigger/issues/740#issuecomment-6407319130):** the banner outcome of each firing in phases A and D, and the posting
+app's notification setting in each phase. M6-11d proceeds without that evidence, and must not
+assume it.
+
 **Would reverse it:** an `osascript` release whose `display notification` fails when the app's
 notifications are off, or a measured banner under a Focus that does not allow the posting app.
 
@@ -532,6 +546,8 @@ records posting those comments and the checks made on them.
   invocations, whose starts are bounded by entries 040, 113, 151 and 185, and whose exit statuses
   were not recorded. A re-run makes new commands, not these. The cells rest on none of them: every
   command a cell's reading comes from is its own entry.
+  The owner accepted this as a lost cell, in their words: "951 I accept the lost records"
+  ([U67](https://github.com/williacj/rigger/issues/740#issuecomment-6407313913); 951#6407314110).
 - **The four commit commands each have a record of their own outside the transcript.** It is
   `~/GitHub/rigger-worktrees/suite-slot/suite-slot.log`, in the "Writes outside the log directory" ledger, and gives each one's start,
   end and load. That load is the laptop's, not the mini's.
