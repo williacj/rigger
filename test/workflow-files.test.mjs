@@ -3,6 +3,7 @@
 // job mints and posts in, and, run with stand-ins for node and curl, what its steps post.
 
 import { test } from 'node:test';
+import { ciFacts, ciProof, ciFullFixture, ciCollectorFixture, parseWorkflow } from './ci-policy-fixtures.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -71,18 +72,6 @@ function ciPolicy(operation, facts, extra = {}) {
   return JSON.parse(result.stdout);
 }
 
-/** Literal Git/API contract fixture: a synthetic merge of known B and H, with a fresh PR read. */
-function ciFacts() {
-  return {
-    event: 'pull_request', action: 'synchronize', ref: 'refs/pull/7/merge', owner: 'williacj', sender: 'contributor',
-    eventSha: 'a'.repeat(40), complete: true,
-    main: { head: 'c'.repeat(40), defaultBranch: 'main' },
-    checkout: { sha: 'a'.repeat(40), tree: 'b'.repeat(40), parents: ['c'.repeat(40), 'd'.repeat(40)] },
-    pr: { number: 7, head: 'd'.repeat(40), base: 'c'.repeat(40), baseRef: 'main', state: 'open', draft: false },
-    live: { head: 'd'.repeat(40), base: 'c'.repeat(40), baseRef: 'main', state: 'open', draft: false, labels: [] },
-    changes: [{ status: 'A', oldMode: '000000', newMode: '100644', path: 'docs/journal/a.md' }],
-  };
-}
 
 test('inline CI policy admits only complete regular direct journal changes or nonmain constituents to fast-only readiness', () => {
   assert.equal(ciPolicy('policy', ciFacts()).mode, 'FAST_ELIGIBLE');
@@ -203,13 +192,6 @@ test('inline CI policy requires demo for unknown full-batch impact while retaini
   }
 });
 
-function ciProof(mode = 'FAST_ELIGIBLE') {
-  return {
-    mode, demoNeeded: false, sourceValid: true,
-    source: { event: 'pull_request', ref: 'refs/pull/7/merge', sha: 'a'.repeat(40), tree: 'b'.repeat(40), parents: ['c'.repeat(40), 'd'.repeat(40)], head: 'd'.repeat(40), base: 'c'.repeat(40), baseRef: 'main' },
-    results: { plan: 'success', fast: 'success', full_ordinary: 'skipped', full_host: 'skipped', demo: 'skipped' },
-  };
-}
 
 test('inline aggregate requires fresh equal source mode and every literally required result, including explicit demo', () => {
   const safe = ciFacts();
@@ -256,133 +238,6 @@ test('inline aggregate requires fresh equal source mode and every literally requ
   assert.equal(ciPolicy('guard', deferred, ciProof('BROAD_DEFERRED')), false);
 });
 
-/** Owner full request and complete results, independent literal source identities from ciProof. */
-function ciFullFixture() {
-  const facts = ciFacts();
-  Object.assign(facts, { action: 'labeled', sender: 'williacj', label: 'ci:full' });
-  facts.live.labels = ['ci:full']; facts.changes[0].path = 'test/package-budget.test.mjs';
-  const proof = ciProof('BROAD_EXECUTED'); proof.results.full_ordinary = proof.results.full_host = 'success';
-  return { facts, proof };
-}
-
-test('recorded CI Table A equal start and unmoved main retains full proof', () => {
-  const { facts, proof } = ciFullFixture();
-  assert.equal(ciPolicy('policy', facts).mode, 'BROAD_EXECUTED');
-  const aggregate = ciPolicy('runPolicy', { action: 'aggregate', facts, proof });
-  assert.equal(aggregate.ok, true);
-  assert.equal(aggregate.testedBase, 'c'.repeat(40));
-  assert.equal(aggregate.mainAdvanced, false);
-  assert.deepEqual(aggregate.source, proof.source);
-});
-
-test('recorded CI Table A stale start and unmoved main runs full against the recorded candidate', () => {
-  const { facts, proof } = ciFullFixture();
-  facts.main.head = 'e'.repeat(40);
-  assert.equal(ciPolicy('policy', facts).mode, 'BROAD_EXECUTED');
-  const plan = ciPolicy('runPolicy', { action: 'plan', facts });
-  assert.deepEqual(JSON.parse(plan.output.snapshot), proof.source);
-  for (const worker of ['fast', 'full_ordinary', 'full_host']) {
-    assert.equal(ciPolicy('runPolicy', { action: 'worker', facts, proof, worker }).ok, true, worker);
-  }
-  const aggregate = ciPolicy('runPolicy', { action: 'aggregate', facts, proof });
-  assert.equal(aggregate.ok, true);
-  assert.equal(aggregate.testedBase, 'c'.repeat(40));
-  assert.equal(aggregate.currentMain, 'e'.repeat(40));
-  assert.equal(aggregate.mainAdvanced, true);
-  assert.deepEqual(aggregate.source, proof.source);
-});
-
-test('recorded CI Table A equal start then main moves retains the planned proof', () => {
-  const { facts, proof } = ciFullFixture();
-  const plan = ciPolicy('runPolicy', { action: 'plan', facts });
-  assert.deepEqual(JSON.parse(plan.output.snapshot), proof.source);
-  facts.main.head = facts.live.base = 'e'.repeat(40);
-  const aggregate = ciPolicy('runPolicy', { action: 'aggregate', facts, proof });
-  assert.equal(aggregate.ok, true);
-  assert.equal(aggregate.testedBase, 'c'.repeat(40));
-  assert.equal(aggregate.currentMain, 'e'.repeat(40));
-  assert.equal(aggregate.mainAdvanced, true);
-  assert.deepEqual(aggregate.source, proof.source);
-});
-
-test('recorded CI Table A stale start then main moves retains only the recorded source', () => {
-  const { facts, proof } = ciFullFixture();
-  facts.main.head = 'e'.repeat(40);
-  const plan = ciPolicy('runPolicy', { action: 'plan', facts });
-  assert.deepEqual(JSON.parse(plan.output.snapshot), proof.source);
-  facts.main.head = 'f'.repeat(40);
-  const aggregate = ciPolicy('runPolicy', { action: 'aggregate', facts, proof });
-  assert.equal(aggregate.ok, true);
-  assert.equal(aggregate.testedBase, 'c'.repeat(40));
-  assert.equal(aggregate.currentMain, 'f'.repeat(40));
-  assert.equal(aggregate.mainAdvanced, true);
-  assert.deepEqual(aggregate.source, proof.source);
-});
-
-test('recorded CI Table A changed head refuses old proof with main moved or unmoved', () => {
-  for (const main of ['c', 'e']) {
-    const { facts, proof } = ciFullFixture();
-    facts.main.head = main.repeat(40); facts.live.head = 'f'.repeat(40);
-    assert.equal(ciPolicy('policy', facts).mode, 'INVALID');
-    assert.equal(ciPolicy('runPolicy', { action: 'aggregate', facts, proof }).ok, false);
-  }
-});
-
-test('recorded CI Table A nonowner full label runs no full worker', () => {
-  const { facts, proof } = ciFullFixture(); facts.sender = 'contributor';
-  assert.equal(ciPolicy('policy', facts).mode, 'BROAD_DEFERRED');
-  for (const worker of ['full_ordinary', 'full_host']) {
-    assert.equal(ciPolicy('runPolicy', { action: 'worker', facts, proof, worker }).ok, false, worker);
-  }
-});
-
-test('recorded CI Table A draft closed and nonmain remain classified as at base', () => {
-  for (const [change, mode] of [['draft', 'BROAD_DEFERRED'], ['closed', 'INVALID'], ['nonmain', 'FAST_ELIGIBLE']]) {
-    const { facts, proof } = ciFullFixture();
-    if (change === 'draft') facts.pr.draft = facts.live.draft = true;
-    if (change === 'closed') facts.pr.state = facts.live.state = 'closed';
-    if (change === 'nonmain') facts.pr.baseRef = facts.live.baseRef = 'batch';
-    assert.equal(ciPolicy('policy', facts).mode, mode, change);
-    assert.equal(ciPolicy('runPolicy', { action: 'worker', facts, proof, worker: 'full_host' }).ok, false, change);
-  }
-});
-
-test('recorded CI nonmain policy retains the original recorded versus current base guard', () => {
-  const facts = ciFacts(); facts.pr.baseRef = facts.live.baseRef = 'batch';
-  facts.live.base = 'e'.repeat(40);
-  assert.equal(ciPolicy('policy', facts).mode, 'INVALID', 'updated nonmain PR base remains refused');
-});
-
-test('recorded CI Table A label removal and another-label events remain deferred', () => {
-  for (const change of ['removed', 'unlabeled', 'other-label']) {
-    const { facts, proof } = ciFullFixture();
-    if (change === 'removed') facts.live.labels = [];
-    if (change === 'unlabeled') facts.action = 'unlabeled';
-    if (change === 'other-label') { facts.label = 'unrelated'; facts.live.labels.push('unrelated'); }
-    assert.equal(ciPolicy('policy', facts).mode, 'BROAD_DEFERRED', change);
-    assert.equal(ciPolicy('runPolicy', { action: 'worker', facts, proof, worker: 'full_host' }).ok, false, change);
-  }
-});
-
-test('recorded CI proof refuses each changed immutable identity despite legitimate main drift', () => {
-  const { facts, proof } = ciFullFixture(); facts.main.head = facts.live.base = 'e'.repeat(40);
-  for (const [key, value] of [
-    ['sha', 'f'.repeat(40)], ['tree', 'f'.repeat(40)], ['parents', ['e'.repeat(40), 'd'.repeat(40)]],
-    ['parents', ['d'.repeat(40), 'c'.repeat(40)]], ['head', 'f'.repeat(40)], ['base', 'e'.repeat(40)],
-    ['baseRef', 'batch'], ['ref', 'refs/pull/8/merge'], ['event', 'push'],
-  ]) {
-    const changed = structuredClone(proof); changed.source[key] = value;
-    assert.equal(ciPolicy('guard', facts, changed), false, key + ':' + JSON.stringify(value));
-    assert.equal(ciPolicy('runPolicy', { action: 'aggregate', facts, proof: changed }).ok, false, key);
-  }
-  const nonmain = structuredClone(facts); nonmain.pr.baseRef = nonmain.live.baseRef = 'batch'; nonmain.live.base = 'c'.repeat(40);
-  const nonmainProof = ciProof(); nonmainProof.source.baseRef = 'batch';
-  const aggregate = ciPolicy('runPolicy', { action: 'aggregate', facts: nonmain, proof: nonmainProof });
-  assert.equal(aggregate.ok, true);
-  assert.equal(aggregate.testedBase, 'c'.repeat(40));
-  assert.equal(aggregate.currentMain, 'e'.repeat(40));
-  assert.equal(aggregate.mainAdvanced, null, 'main advancement is inapplicable to a nonmain base');
-});
 
 test('candidate aggregate condition cannot be skipped by a forged MAIN_FULL plan mode', () => {
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
@@ -421,31 +276,6 @@ test('inline CI policy reads actual raw Git mode and status bytes completely and
   }
 });
 
-function ciCollectorFixture() {
-  const a = 'a'.repeat(40), b = 'b'.repeat(40), c = 'c'.repeat(40), d = 'd'.repeat(40);
-  const git = {};
-  for (const [args, output] of [
-    [['rev-parse', 'HEAD'], a + '\n'],
-    [['rev-parse', 'HEAD^{tree}'], b + '\n'],
-    [['show', '-s', '--format=%P', 'HEAD'], c + ' ' + d + '\n'],
-    [['diff', '--raw', '-z', '--no-renames', c, a], ':000000 100644 0000000 1234567 A\0docs/journal/a.md\0'],
-  ]) git[JSON.stringify(args)] = Buffer.from(output).toString('base64');
-  return {
-    context: { eventName: 'pull_request', ref: 'refs/pull/7/merge', sha: a, repository: 'williacj/rigger', owner: 'williacj' },
-    event: {
-      action: 'synchronize', number: 7, sender: { login: 'contributor' },
-      repository: { full_name: 'williacj/rigger' },
-      pull_request: { head: { sha: d }, base: { sha: c, ref: 'main' }, state: 'open', draft: false },
-    },
-    git,
-    api: {
-      '/repos/williacj/rigger': { full_name: 'williacj/rigger', default_branch: 'main', owner: { login: 'williacj' } },
-      '/repos/williacj/rigger/pulls/7': { number: 7, head: { sha: d }, base: { sha: c, ref: 'main' }, state: 'open', draft: false, labels: [] },
-      '/repos/williacj/rigger/git/ref/heads/main': { object: { sha: c } },
-      '/repos/williacj/rigger/issues/7/labels?per_page=100': [],
-    },
-  };
-}
 
 test('actual inline collector binds Git checkout parents and raw diff to fresh repository PR and base facts', () => {
   const fixture = ciCollectorFixture();
@@ -484,28 +314,6 @@ test('actual inline collector binds Git checkout parents and raw diff to fresh r
     if (corrupt === 'wrong-repository') bad.event.repository.full_name = 'fork-owner/rigger';
     const current = ciPolicy('collect', bad).answer;
     assert.equal(ciPolicy('policy', current).mode, 'INVALID', corrupt);
-  }
-});
-
-test('recorded CI nonmain collector retains the original live base branch guard', () => {
-  const fixture = ciCollectorFixture();
-  fixture.event.pull_request.base.ref = fixture.api['/repos/williacj/rigger/pulls/7'].base.ref = 'batch';
-  fixture.api['/repos/williacj/rigger/git/ref/heads/batch'] = { object: { sha: 'e'.repeat(40) } };
-  const collected = ciPolicy('collect', fixture).answer;
-  assert.equal(collected.complete, false, 'a moved nonmain base branch remains refused');
-  assert.equal(ciPolicy('policy', collected).mode, 'INVALID');
-});
-
-test('recorded CI collector fails closed on unavailable visibility and malformed source facts', () => {
-  for (const change of ['missing-main', 'malformed-main', 'missing-current-base', 'changed-current-head', 'wrong-recorded-parent']) {
-    const fixture = ciCollectorFixture();
-    if (change === 'missing-main') delete fixture.api['/repos/williacj/rigger/git/ref/heads/main'];
-    if (change === 'malformed-main') fixture.api['/repos/williacj/rigger/git/ref/heads/main'].object.sha = 'invalid';
-    if (change === 'missing-current-base') delete fixture.api['/repos/williacj/rigger/pulls/7'].base.sha;
-    if (change === 'changed-current-head') fixture.api['/repos/williacj/rigger/pulls/7'].head.sha = 'e'.repeat(40);
-    if (change === 'wrong-recorded-parent') fixture.git[JSON.stringify(['show', '-s', '--format=%P', 'HEAD'])] = Buffer.from('e'.repeat(40) + ' ' + 'd'.repeat(40) + '\n').toString('base64');
-    const facts = ciPolicy('collect', fixture).answer;
-    assert.equal(ciPolicy('policy', facts).mode, 'INVALID', change);
   }
 });
 
@@ -756,97 +564,6 @@ test('actual inline CLI plans and verifies real Git source through a local read-
   assert.ok(requests.length > 0); assert.ok(requests.every((request) => request.method === 'GET'));
 });
 
-/**
- * The YAML a workflow file in this repository is written in, parsed: block mappings and block
- * sequences by indentation, plain, single- and double-quoted scalars, flow sequences of scalars,
- * literal block scalars (`|`), and comments on lines of their own. Anything else is refused, naming
- * the line, so a file this reads wrongly fails rather than passes. Every scalar is a string.
- */
-function parseWorkflow(text) {
-  const lines = text.split('\n').map((line, at) => ({ at: at + 1, text: line, indent: line.length - line.trimStart().length }));
-  let next = 0;
-  const content = () => {
-    while (next < lines.length && (lines[next].text.trim() === '' || lines[next].text.trim().startsWith('#'))) next += 1;
-    return lines[next];
-  };
-  const refuse = (line, why) => {
-    throw new Error(`line ${line.at}, ${JSON.stringify(line.text)}: ${why}`);
-  };
-  const scalar = (raw, line) => {
-    const value = raw.trim();
-    if (value.startsWith("'")) {
-      if (!/^'(?:[^']|'')*'$/.test(value)) refuse(line, 'an unclosed single-quoted scalar');
-      return value.slice(1, -1).replaceAll("''", "'");
-    }
-    if (value.startsWith('"')) {
-      if (!/^"(?:[^"\\]|\\.)*"$/.test(value)) refuse(line, 'an unclosed double-quoted scalar');
-      return JSON.parse(value);
-    }
-    if (value.startsWith('[')) {
-      if (!value.endsWith(']')) refuse(line, 'a flow sequence on more than one line');
-      const inner = value.slice(1, -1).trim();
-      return inner === '' ? [] : inner.split(',').map((item) => scalar(item, line));
-    }
-    if (/^[{&*!%@`]/.test(value)) refuse(line, 'a form this reader does not read');
-    return value;
-  };
-  const literal = (indent) => {
-    const held = [];
-    let block = null;
-    while (next < lines.length && (lines[next].text.trim() === '' || lines[next].indent > indent)) {
-      const line = lines[next];
-      if (line.text.trim() !== '') block ??= line.indent;
-      held.push(line);
-      next += 1;
-    }
-    while (held.length > 0 && held.at(-1).text.trim() === '') held.pop();
-    return `${held.map((line) => line.text.slice(block ?? 0)).join('\n')}\n`;
-  };
-  const entry = (rest, line, indent, into) => {
-    const pair = /^([A-Za-z0-9_-]+):(?: (.*))?$/.exec(rest);
-    if (!pair) refuse(line, 'not `key: value`');
-    const [, key, value] = pair;
-    if (Object.hasOwn(into, key)) refuse(line, `the key ${key} is given twice`);
-    if (value === undefined || value.trim() === '') into[key] = block(indent);
-    else if (value.trim() === '|') into[key] = literal(indent);
-    else into[key] = scalar(value, line);
-  };
-  const block = (parent) => {
-    const first = content();
-    if (first === undefined || first.indent <= parent) return null;
-    const indent = first.indent;
-    if (first.text.trimStart().startsWith('- ')) {
-      const items = [];
-      for (let line = content(); line !== undefined && line.indent === indent && line.text.trimStart().startsWith('- '); line = content()) {
-        next += 1;
-        const rest = line.text.trimStart().slice(2);
-        if (/^[A-Za-z0-9_-]+:(?: |$)/.test(rest)) {
-          const item = {};
-          entry(rest, line, indent + 2, item);
-          for (let more = content(); more !== undefined && more.indent === indent + 2; more = content()) {
-            next += 1;
-            entry(more.text.trimStart(), more, indent + 2, item);
-          }
-          items.push(item);
-        } else items.push(scalar(rest, line));
-      }
-      const stray = content();
-      if (stray !== undefined && stray.indent > parent && stray.indent !== indent) refuse(stray, 'indented as no sibling of the sequence above');
-      return items;
-    }
-    const map = {};
-    for (let line = content(); line !== undefined && line.indent === indent; line = content()) {
-      next += 1;
-      entry(line.text.trimStart(), line, indent, map);
-    }
-    const stray = content();
-    if (stray !== undefined && stray.indent > parent && stray.indent !== indent) refuse(stray, 'indented as no sibling of the mapping above');
-    return map;
-  };
-  const parsed = block(-1);
-  if (content() !== undefined) refuse(content(), 'left unread');
-  return parsed;
-}
 
 const live = parseWorkflow(readFileSync(LIVE, 'utf8'));
 const template = parseWorkflow(readFileSync(TEMPLATE, 'utf8'));
