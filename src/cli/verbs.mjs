@@ -4,8 +4,10 @@
 import { doctor } from './doctor.mjs';
 import { init } from './init.mjs';
 import { once } from './once.mjs';
+import { pause } from './pause.mjs';
 import { plan } from './plan.mjs';
 import { report } from './report.mjs';
+import { resume } from './resume.mjs';
 import { run as runVerb } from './run.mjs';
 import { setupBoard } from './setup-board.mjs';
 import { verdict } from './verdict.mjs';
@@ -38,11 +40,10 @@ export const VERBS = [
 /**
  * The verbs whose milestone has landed, each with what running it does.
  *
- * A verb is here or it is not, and the answer for one that is not is below. Exported because
- * `test/cli.test.mjs` holds every other verb to that answer, and a list of landed verbs kept in
- * the test would drift from this one the day a verb lands.
+ * Every verb the README lists is here. Exported because `test/cli.test.mjs` holds this list to the
+ * README's both ways, and a list of landed verbs kept in the test would drift from this one.
  */
-export const LANDED = { init, doctor, 'setup-board': setupBoard, plan, once, run: runVerb, report, verdict };
+export const LANDED = { init, doctor, 'setup-board': setupBoard, plan, once, run: runVerb, pause, resume, report, verdict };
 
 /** What `--help` prints: one line per verb, the verb first. */
 export function help(verbs = VERBS) {
@@ -72,7 +73,4 @@ export async function run(argv) {
   }
   // A verb is handed the words after it; those that take none read nothing from them.
   if (Object.hasOwn(LANDED, first)) return LANDED[first]({ args: argv.slice(1) });
-  // The rest gain their behaviour with their own milestone, and until then saying so and failing
-  // is the honest answer: a zero exit would read to whoever called it as work that was done.
-  return { text: `rigger ${first}: not yet implemented`, code: 1 };
 }

@@ -1664,3 +1664,28 @@ test('once ignores closed cards without a kind or carrying the epic label while 
     }
   }
 });
+
+// proves R-SCHED-4
+test('once after the bin\'s pause claims nothing, and after its resume claims as it does where no pause was', async () => {
+  // The defect this catches is a `pause` that `take` does not read as closed, or a `resume` that
+  // leaves admission closed, through the verbs the owner runs rather than closers seeded by hand.
+  const items = [card(20, 'Ready'), card(10, 'Ready')];
+  const owner = (verb, consumer) => {
+    const done = spawnSync(process.execPath, [bin, verb], { cwd: consumer, encoding: 'utf8' });
+    assert.equal(done.status, 0, `${done.stdout}${done.stderr}`);
+    assert.doesNotMatch(`${done.stdout}${done.stderr}`, /not yet implemented/);
+  };
+  const base = once({ items });
+  const paused = once({ items }, { prepare: ({ consumer }) => owner('pause', consumer) });
+
+  assert.equal(paused.code, 0, paused.err);
+  assert.match(paused.out, /admission is closed by owner: the owner's pause/, paused.out);
+  assert.deepEqual(await columnsOf(paused), { 10: 'Ready', 20: 'Ready' });
+  assert.deepEqual((await paused.model()).writes(), []);
+  assert.deepEqual(paused.agentRuns(), []);
+
+  owner('resume', paused.consumer);
+  const resumed = paused.rerun();
+  assert.deepEqual(await columnsOf(resumed), await columnsOf(base), resumed.err);
+  assert.deepEqual(await columnsOf(resumed), { 10: 'Coding', 20: 'Ready' });
+});
