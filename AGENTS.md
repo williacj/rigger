@@ -202,7 +202,7 @@ says how one merges. The paths:
   `.github/scripts/self-hosting-check.mjs`; `.github/workflows/ci.yml`.
 - The git hooks: `.githooks/`, and `templates/githooks/` with it, and what decides what they run:
   `test/suite.sh` and `package.json`, with any file the suite loads to place a test in a tier
-  (`test/suite-guard.cjs` and `test/suite-path.cjs`).
+  (`test/suite-guard.cjs` and `test/suite-path.cjs`), and the check that refuses growth in the two transitional lists: `.github/scripts/check-test-list-growth.mjs`.
 - The live config: `rigger.config.mjs`.
 - The live Codex configuration: `.codex/config.toml`, and the directory `templates/codex/` with it.
 - The CLI entry point: `src/cli/rigger.mjs`, which the package manifest declares as its bin.
