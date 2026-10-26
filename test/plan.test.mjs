@@ -575,3 +575,19 @@ test('plan under a closer whose reason, or an entry whose name, carries a line b
   assert.deepEqual(pullLines(failed.text), [], failed.text);
   assert.ok(failed.text.includes(`${join(unreadable.unread, 'x\\n  pull    #998  change')} (no closer form)`), failed.text);
 });
+
+// proves R-SCHED-27
+test('plan neither pulls nor refuses a Ready status issue and counts only an ordinary refusal', async () => {
+  const ran = plan({ items: [
+    card(960, 'Ready', { labels: ['type:change', 'rigger:status'], body: '' }),
+    card(961, 'Ready', { body: '' }),
+  ] });
+
+  assert.equal(ran.code, 0, ran.err);
+  assert.deepEqual(pulled(ran.out), []);
+  assert.equal(refusalOf(ran.out, 960), undefined, ran.out);
+  assert.doesNotMatch(ran.out, /#960\b/, ran.out);
+  assert.match(refusalOf(ran.out, 961) ?? '', /missing acceptance/);
+  assert.match(ran.out, /refuses 1 card\b/);
+  assert.deepEqual((await ran.model()).writes(), []);
+});
