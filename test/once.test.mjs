@@ -147,6 +147,7 @@ test('once names a maker note escalation, its category and acceptance item ordin
   assert.equal(ran.code, 0, ran.err);
   assert.match(ran.out, /card #10 escalated critical for acceptance item 1/);
   assert.deepEqual(await columnsOf(ran), { 10: 'Owner' });
+  assert.equal(eventsOf(ran).find(({ event }) => event === 'review.escalate').raiser, 'maker');
 });
 
 test('once exits non-zero when the card\'s maker opened no pull request', async () => {

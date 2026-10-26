@@ -30,10 +30,11 @@ export function dispatchedEscalation(answer, dispatch) {
 /** A note under one fence, with the fields the maker's instruction names. */
 export function parseEscalationNote(body, count) {
   const lines = String(body).split(/\r?\n/);
-  if (lines[1] !== '```rigger-escalation' || lines[6] !== '```' || lines.slice(7).some((line) => line !== '')) return null;
+  const start = lines[0] === '```rigger-escalation' ? 0 : 1;
+  if (lines[start] !== '```rigger-escalation' || lines[start + 5] !== '```' || lines.slice(start + 6).some((line) => line !== '')) return null;
   const fields = {};
   for (const [at, key] of FIELDS.entries()) {
-    const line = lines[at + 2];
+    const line = lines[start + at + 1];
     if (!line?.startsWith(`${key}: `)) return null;
     fields[key] = line.slice(key.length + 2);
   }

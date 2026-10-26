@@ -435,8 +435,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       }
       if (settled.status === 'fulfilled' && settled.value?.action === 'escalate') {
         const escalation = settled.value;
-        await l2.escalated(card, escalation);
         excluded?.add(card.number);
+        await l2.escalated(card, escalation);
         const reached = { card: card.number, workspace: path, outcome, settled, ...escalation };
         kept(reached);
         return reached;

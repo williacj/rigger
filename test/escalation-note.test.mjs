@@ -79,6 +79,7 @@ test('a matching note includes the one open pull request and its head', async ()
   const answer = await l2.settled(card, outcome(), { dispatch: DISPATCH });
   assert.equal(answer.pull, 77);
   assert.equal(answer.head, head);
+  assert.equal(answer.raiser, 'maker');
 });
 
 const ignored = [
@@ -181,7 +182,10 @@ test('Claude maker instruction gives the one-note block, ordinal rule, dispatch 
 
 // proves R-LOOP-2
 test('Codex maker instruction gives the same one-note route as Claude', () => {
-  assert.equal(instructionFor('codex'), instructionFor('claude'));
+  const instruction = instructionFor('codex');
+  assert.equal(instruction, instructionFor('claude'));
+  assert.match(instruction, /comment on card #12's issue with this block/);
+  assert.match(instruction, /```rigger-escalation\ncategory:.*\nitem:.*\nreason:.*\ndispatch: <the dispatch id>\n```/);
 });
 
 // proves R-LOOP-2
@@ -194,14 +198,19 @@ test('both provider instructions carry the maker dispatch id when L3 stamps them
 });
 
 // proves R-LOOP-2
-test('a note in the instruction schema parses back to its category, item, reason and maker dispatch', () => {
+test('a note in the instruction schema alone parses and reaches L2 under its maker dispatch', async () => {
   const instruction = instructionFor('claude');
   const block = instruction.match(/```rigger-escalation\n[\s\S]*?\n```/)[0]
     .replace('category: <recorded-decision, critical, or ambiguous>', 'category: critical')
     .replace('item: <the item ordinal>', 'item: 1')
     .replace('reason: <one line naming why>', 'reason: A required condition failed.')
     .replace('dispatch: <the dispatch id>', `dispatch: ${DISPATCH}`);
-  assert.deepEqual(parseEscalationNote(`I cannot meet acceptance item 1.\n${block}\n`, 1), {
+  assert.deepEqual(parseEscalationNote(block, 1), {
     category: 'critical', item: 1, reason: 'A required condition failed.', dispatch: DISPATCH,
+  });
+  const { card, l2 } = await world([posted(block)]);
+  assert.deepEqual(await l2.settled(card, outcome(), { dispatch: DISPATCH }), {
+    action: 'escalate', raiser: 'maker', category: 'critical', item: 1,
+    reason: 'A required condition failed.', dispatch: DISPATCH, line: 'rigger-12',
   });
 });

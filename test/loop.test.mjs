@@ -3031,3 +3031,49 @@ test('L3 stamps the maker id and routes its issue note to Owner without dispatch
   assert.match(issue.comments[1].body, /Acceptance item: 1/);
   assert.equal(built.agent.runs().filter(({ role }) => role === 'reviewer').length, 0);
 });
+
+// proves R-LOOP-2, R-ESCALATE-4
+test('a refused maker note escalation keeps the card out of later pulls in the invocation', { timeout: 20_000 }, async (t) => {
+  const number = 940;
+  const refusal = new Error('the issue comment write was refused');
+  const fake = boardOf([number]);
+  const built = world({ fake, concurrency: 1, fresh: false, answer: () => ({ exit: 4, output: '' }),
+    kinds: { change: { select: { labels: ['type:change'] }, maker: 'engineer', judges: ['reviewer'] } },
+    judgeDirectory: () => assert.fail('a refused maker escalation dispatches no judge'),
+  });
+  const claimed = built.l2.claimed;
+  let claims = 0;
+  built.l2.claimed = async (...args) => {
+    claims += 1;
+    if (claims > 1) {
+      fake.setIssueLabels(config.repo, number, ['type:change', 'rigger:escalated']);
+      throw new Error('a second claim must not begin');
+    }
+    return claimed(...args);
+  };
+  const original = built.repository.postIssueComment;
+  let engineWrites = 0;
+  built.repository.postIssueComment = async () => { engineWrites += 1; throw refusal; };
+  const running = built.loop.run();
+  t.after(async () => { built.dispatches.releaseAll(); await running.catch(() => {}); });
+  await waitFor(() => built.dispatches.heldNow(number));
+  const id = built.events().find(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'engineer').dispatch;
+  await original(number, [
+    '```rigger-escalation', 'category: critical', 'item: 1',
+    'reason: A required condition failed.', `dispatch: ${id}`, '```',
+  ].join('\n'));
+  built.dispatches.release(number);
+  await assert.rejects(running, (failure) => {
+    assert.ok(leavesOf(failure).some((held) => held.cause === refusal && /escalation issue comment was refused/.test(held.message)));
+    return true;
+  });
+  assert.deepEqual(cardsOf(built, 'pull'), [number]);
+  assert.equal(claims, 1);
+  assert.deepEqual(built.dispatches.started, [number]);
+  assert.equal(engineWrites, 1);
+  assert.equal(built.repository.held().issues.find((issue) => issue.number === number).comments.length, 1);
+  assert.deepEqual(await columnsOf(built.fake), { [number]: COLUMNS.coding });
+  assert.deepEqual(built.fake.writes().map(({ operation }) => operation), ['moveItem']);
+  assert.deepEqual((await built.fake.operations.readItems())[0].labels, ['type:change']);
+  assert.equal(built.agent.runs().filter(({ role }) => role === 'reviewer').length, 0);
+});
