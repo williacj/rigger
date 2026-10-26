@@ -461,6 +461,37 @@ export const gitHanging = (directory) => fixture(directory, 'git', [leave(TAIL, 
  */
 export const gitRecording = (directory) => fixture(directory, 'git', ['printf \'%s\\n\' "$*" >> "$here/git-calls"', `exec '${GIT}' "$@"`].join('\n'));
 
+/** Lets the first `times` adds of `branch` exit without an answer, then delegates to real git. */
+export function gitUnansweredAdd(directory, branch, times) {
+  return fixture(directory, 'git', [
+    `if [ "$1" = worktree ] && [ "$2" = add ] && [ "$6" = '${branch}' ]; then`,
+    '  count=$(/bin/cat "$here/unanswered-adds" 2>/dev/null || echo 0)',
+    `  if [ "$count" -lt ${times} ]; then`,
+    '    echo $((count + 1)) > "$here/unanswered-adds"',
+    '    echo "fixture: git worktree add gave no answer" >&2',
+    '    exit 1',
+    '  fi',
+    'fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+}
+
+/** Lets the first `times` replace-rule git checks of `branch` fail, then delegates to real git. */
+export function gitUnansweredWorktreeCheck(directory, branch, times) {
+  writeFileSync(join(directory, 'unanswered-branch'), branch);
+  return fixture(directory, 'git', [
+    'if [ "$1" = -C ] && [ "$3" = rev-parse ] && [ "${2##*/}" = "$(/bin/cat "$here/unanswered-branch")" ]; then',
+    '  count=$(/bin/cat "$here/unanswered-checks" 2>/dev/null || echo 0)',
+    `  if [ "$count" -lt ${times} ]; then`,
+    '    echo $((count + 1)) > "$here/unanswered-checks"',
+    '    echo "fixture: git worktree check gave no answer" >&2',
+    '    exit 1',
+    '  fi',
+    'fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+}
+
 /** Every call the recording stand-in in `directory` was sent, one line each. */
 export const gitCalls = (directory) => (existsSync(join(directory, 'git-calls')) ? read(directory, 'git-calls').split('\n') : []);
 
