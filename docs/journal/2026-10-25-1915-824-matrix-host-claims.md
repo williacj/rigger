@@ -35,3 +35,10 @@ G2 adds the new native test to the suite's host list. G3 adds only its literal e
 before the existing sort, retaining every earlier member and the exact assertion. G1's existing
 matrix-test lines remain; the additional tests carry the new observations. Supported-macOS proof
 still requires a prospectively admitted immutable source and complete original receipts.
+
+Integration with main `85e597f2` required resolving the two cards' competing literal host-member
+additions in the exact suite oracle. The resolution preserves both the list-growth and matrix
+host members before the existing sort and deep-equality assertion. The suite host list merged
+automatically with both entries. No generator, controlled-test or native-test behavior changed.
+Original-head evidence remains attributed to `f4f287a7`; integration checks retain their own
+actual source and native originals. Supported-macOS proof still needs fresh source admission.
