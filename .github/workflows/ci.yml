@@ -53,11 +53,11 @@ env:
         if (f.event === 'push' && f.after !== f.checkout.sha) return invalid;
         return { mode: f.event === 'push' ? 'MAIN_SMOKE' : 'MAIN_FULL', demoNeeded: f.event !== 'push', sourceValid: true };
       }
-      if (f.event !== 'pull_request' || !f.pr || !f.live) return invalid;
+      if (f.event !== 'pull_request' || !f.pr || !f.live || !f.main || f.main.defaultBranch !== 'main' || !sha(f.main.head)) return invalid;
       const { pr, live } = f;
       if (!['opened', 'synchronize', 'reopened', 'edited', 'ready_for_review', 'labeled', 'unlabeled'].includes(f.action) || typeof f.sender !== 'string' || !f.sender) return invalid;
       if (!Number.isSafeInteger(pr.number) || pr.number <= 0 || f.ref !== 'refs/pull/' + pr.number + '/merge' || !sha(pr.head) || !sha(pr.base) || !['open', 'closed'].includes(pr.state) || typeof pr.draft !== 'boolean' || typeof pr.baseRef !== 'string' || !pr.baseRef || !Array.isArray(live.labels) || !live.labels.every((name) => typeof name === 'string')) return invalid;
-      if (pr.state !== 'open' || ['head', 'base', 'baseRef', 'state', 'draft'].some((key) => pr[key] !== live[key]) || f.checkout.parents.length !== 2 || f.checkout.parents[0] !== pr.base || f.checkout.parents[1] !== pr.head) return invalid;
+      if (pr.state !== 'open' || !sha(live.base) || !sha(pr.testedBase) || f.checkout.parents[0] !== pr.testedBase || (pr.baseRef !== 'main' && pr.base !== live.base) || ['head', 'baseRef', 'state', 'draft'].some((key) => pr[key] !== live[key]) || f.checkout.parents.length !== 2 || (pr.baseRef === 'main' ? (pr.testedBase !== pr.base && pr.eventBaseAncestor !== true) : pr.testedBase !== pr.base) || f.checkout.parents[1] !== pr.head) return invalid;
       if (!f.changes.every((row) => row && typeof row.path === 'string' && row.path.length > 0 && !row.path.includes(String.fromCharCode(0)) && /^[AMDRT]$/.test(row.status) && /^(000000|100644|100755|120000|160000)$/.test(row.oldMode) && /^(000000|100644|100755|120000|160000)$/.test(row.newMode))) return invalid;
       const ownerRequest = f.owner === 'williacj' && f.sender === f.owner && f.action === 'labeled' && live.labels.includes(f.label);
       const journalOnly = f.changes.length > 0 && f.changes.every((row) =>
@@ -122,16 +122,25 @@ env:
         const labels = await request('/repos/' + context.repository + '/issues/' + event.number + '/labels?per_page=100');
         if (!Array.isArray(labels) || !labels.every((label) => typeof label?.name === 'string')) throw new Error('incomplete current labels');
         const branch = await request('/repos/' + context.repository + '/git/ref/heads/' + current.base.ref.split('/').map(encodeURIComponent).join('/'));
-        if (branch.object?.sha !== current.base.sha) throw new Error('current base changed');
-        facts.pr = { number: event.number, head: pr.head.sha, base: pr.base.sha, baseRef: pr.base.ref, state: pr.state, draft: pr.draft };
-        facts.live = { head: current.head.sha, base: branch.object.sha, baseRef: current.base.ref, state: current.state, draft: current.draft, labels: labels.map((label) => label.name) };
-        facts.changes = parseRaw(run(['diff', '--raw', '-z', '--no-renames', facts.pr.base, checkout.sha]));
+        if (!sha(branch.object?.sha) || !sha(current.base.sha)) throw new Error('current base unavailable');
+        if (current.base.ref !== 'main' && branch.object.sha !== current.base.sha) throw new Error('current base changed');
+        const main = current.base.ref === 'main' ? branch : await request('/repos/' + context.repository + '/git/ref/heads/main');
+        if (!sha(main.object?.sha)) throw new Error('current main unavailable');
+        facts.main = { head: main.object.sha, defaultBranch: repository.default_branch };
+        facts.pr = { number: event.number, head: pr.head.sha, base: pr.base.sha, testedBase: checkout.parents[0], baseRef: pr.base.ref, state: pr.state, draft: pr.draft };
+        if (facts.pr.baseRef === 'main' && facts.pr.base !== facts.pr.testedBase) {
+          if (!sha(facts.pr.base) || !sha(facts.pr.testedBase)) throw new Error('candidate base unavailable');
+          run(['merge-base', '--is-ancestor', facts.pr.base, facts.pr.testedBase]);
+          facts.pr.eventBaseAncestor = true;
+        }
+        facts.live = { head: current.head.sha, base: current.base.sha, baseRef: current.base.ref, state: current.state, draft: current.draft, labels: labels.map((label) => label.name) };
+        facts.changes = parseRaw(run(['diff', '--raw', '-z', '--no-renames', facts.pr.testedBase, checkout.sha]));
         facts.complete = true;
         return facts;
       } catch (error) { return { complete: false, reason: String(error.message) }; }
     }
     export function source(f) {
-      return { event: f.event, ref: f.ref, sha: f.checkout.sha, tree: f.checkout.tree, parents: f.checkout.parents, head: f.pr?.head ?? f.group?.head ?? f.checkout.sha, base: f.pr?.base ?? f.group?.base ?? f.checkout.sha, baseRef: f.pr?.baseRef ?? f.group?.baseRef ?? 'main' };
+      return { event: f.event, ref: f.ref, sha: f.checkout.sha, tree: f.checkout.tree, parents: f.checkout.parents, head: f.pr?.head ?? f.group?.head ?? f.checkout.sha, base: f.pr?.testedBase ?? f.group?.base ?? f.checkout.sha, baseRef: f.pr?.baseRef ?? f.group?.baseRef ?? 'main', ...(f.pr ? { eventBase: f.pr.base } : {}) };
     }
     export function guard(f, proof) {
       const fresh = policy(f);
@@ -154,7 +163,7 @@ env:
           : false;
         return { ok: Boolean(verified && allowed && process.versions.node.split('.')[0] === '26'), source: fresh.sourceValid ? source(facts) : undefined, reason: 'worker source/mode verification failed' };
       }
-      if (action === 'aggregate') return { ok: verified && guard(facts, proof), reason: fresh.mode === 'BROAD_DEFERRED' ? 'missing-current-batch-proof: explicitly request full proof for the current head and base' : 'current source or required tier result did not verify' };
+      if (action === 'aggregate') return { ok: verified && guard(facts, proof), source: fresh.sourceValid ? source(facts) : undefined, testedBase: fresh.sourceValid ? source(facts).base : undefined, ...(facts?.pr ? { eventBase: facts.pr.base } : {}), currentMain: facts?.main?.head, mainAdvanced: fresh.sourceValid && facts.pr?.baseRef === 'main' ? facts.main.head !== facts.pr.testedBase : null, reason: fresh.mode === 'BROAD_DEFERRED' ? 'missing-current-batch-proof: explicitly request full proof for the current head and base' : 'current source or required tier result did not verify' };
       return { ok: false, reason: 'unknown policy action' };
     }
     if (process.env.CI_POLICY_ACTION) {
@@ -164,7 +173,7 @@ env:
       let results = {};
       try { results = Object.fromEntries(Object.entries(JSON.parse(process.env.CI_RESULTS ?? '{}')).map(([name, job]) => [name, job.result])); } catch { results = {}; }
       const result = runPolicy({ action: process.env.CI_POLICY_ACTION, facts, worker: process.env.CI_WORKER, proof: { mode: process.env.CI_EXPECTED_MODE, demoNeeded: process.env.CI_EXPECTED_DEMO === 'true' ? true : process.env.CI_EXPECTED_DEMO === 'false' ? false : undefined, sourceValid: expected !== null, source: expected, results } });
-      console.log(JSON.stringify({ job: process.env.GITHUB_JOB, mode: policy(facts).mode, source: result.source, node: process.version, platform: process.platform, runner: process.env.RUNNER_NAME, runnerOS: process.env.RUNNER_OS, runnerArch: process.env.RUNNER_ARCH }));
+      console.log(JSON.stringify({ job: process.env.GITHUB_JOB, mode: policy(facts).mode, source: result.source, testedBase: result.testedBase, eventBase: result.eventBase, currentMain: result.currentMain, mainAdvanced: result.mainAdvanced, node: process.version, platform: process.platform, runner: process.env.RUNNER_NAME, runnerOS: process.env.RUNNER_OS, runnerArch: process.env.RUNNER_ARCH }));
       if (result.output) for (const [key, value] of Object.entries(result.output)) appendFileSync(process.env.GITHUB_OUTPUT, key + '=' + String(value) + '\n');
       if (!result.ok) throw new Error(result.reason);
     }
@@ -273,6 +282,7 @@ jobs:
           path: ${{ runner.temp }}/containment-proof-26
           if-no-files-found: ignore
   check:
+    name: ${{ needs.plan.result == 'success' && needs.plan.outputs.mode == 'BROAD_DEFERRED' && 'broad deferred (26)' || 'check (26)' }}
     needs: [plan, fast, full_ordinary, full_host, demo]
     if: ${{ always() && !(needs.plan.result == 'success' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && needs.plan.outputs.mode == 'MAIN_FULL') }}
     runs-on: ubuntu-latest
