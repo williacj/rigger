@@ -2253,9 +2253,19 @@ test('a blocked take attempts no admission write, even one removed before it ret
   };
   syncBuiltinESMExports();
   try {
-    const answer = await built.loop.pull();
-    assert.equal(answer.admission.state, 'closed');
-    assert.deepEqual(writes, [], 'take attempted an admission write');
+    const pulled = built.loop.pull();
+    const done = settledOf(pulled);
+    try {
+      await positive(() => done() || built.l3Events().some(({ event }) => event === 'pull'));
+      assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull'), [], 'the closed take claimed a card');
+      const answer = await pulled;
+      assert.equal(answer.admission.state, 'closed');
+      assert.deepEqual(writes, [], 'take attempted an admission write');
+    } finally {
+      await settling(built, done);
+      built.dispatches.releaseAll();
+      await pulled.catch(() => {});
+    }
   } finally {
     for (const [name, original] of originals) fs[name] = original;
     syncBuiltinESMExports();
