@@ -30,6 +30,7 @@ import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 import { installStandInAgent } from './stub-claude.mjs';
 import { sweep } from './process-fixtures.mjs';
 import { parseDocument } from '../src/substrate/forge/graphql.mjs';
+import { admissionOf, closerText, seed, TIME } from './admission-world.mjs';
 
 // A bound on a test that waits on the real bin and its maker, so one that never settles fails here.
 const { 60_000: SETTLES_WITHIN } = BOUNDS;
@@ -159,6 +160,45 @@ test('once over a board with no pullable card exits 0', () => {
 
 /** A ready card L2 refuses: its body holds no acceptance, so the form check refuses it. */
 const REFUSED = card(11, 'Ready', { body: 'Why this matters, and nothing more.' });
+
+// proves R-SCHED-3, R-SCHED-16
+test('once under owner and hold closers names both, keeps L2 refusals and exits 0 without claiming', async () => {
+  const ran = once({ items: [REFUSED, card(12, 'Ready')] }, { prepare: ({ consumer }) => {
+    const state = join(consumer, '.rigger');
+    seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' }));
+    seed(state, 'hold-b2.json', closerText({ reason: 'environment hold' }));
+  } });
+
+  assert.equal(ran.code, 0, ran.err);
+  assert.match(ran.out, /admission is closed/);
+  for (const [kind, reason] of [['owner', 'owner pause'], ['hold', 'environment hold']]) {
+    assert.match(ran.out, new RegExp(`${kind}.*${reason}.*${TIME}`), ran.out);
+  }
+  assert.match(ran.out, /#11.*missing acceptance/, ran.out);
+  assert.doesNotMatch(ran.out, /no card was pullable/, ran.out);
+  assert.deepEqual(await columnsOf(ran), { 11: 'Ready', 12: 'Ready' });
+  assert.deepEqual((await ran.model()).writes(), []);
+  assert.deepEqual(ran.agentRuns(), []);
+});
+
+// proves R-SCHED-3, R-SCHED-16
+test('once under unreadable admission names every path and cause, keeps L2 refusals and exits non-zero', async () => {
+  const ran = once({ items: [REFUSED, card(12, 'Ready')] }, { prepare: ({ consumer }) => {
+    const state = join(consumer, '.rigger');
+    seed(state, 'not-a-closer');
+    seed(state, 'owner-b2.json', '{}');
+  } });
+  const directory = admissionOf(join(ran.consumer, '.rigger'));
+
+  assert.notEqual(ran.code, 0, ran.out);
+  assert.ok(ran.err.includes(`${directory}/not-a-closer (no closer form)`), ran.err);
+  assert.ok(ran.err.includes(`${directory}/owner-b2.json (no reason, time or run)`), ran.err);
+  assert.match(ran.err, /#11.*missing acceptance/, ran.err);
+  assert.doesNotMatch(ran.err, /no card was pullable/, ran.err);
+  assert.deepEqual(await columnsOf(ran), { 11: 'Ready', 12: 'Ready' });
+  assert.deepEqual((await ran.model()).writes(), []);
+  assert.deepEqual(ran.agentRuns(), []);
+});
 
 test('once, given a ready card L2 refuses, leaves it in the ready column', async () => {
   const ran = once({ items: [REFUSED, card(12, 'Ready')] });
