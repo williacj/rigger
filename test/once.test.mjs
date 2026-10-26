@@ -78,7 +78,8 @@ const consumerRepository = (settings = config()) => {
  */
 function installAgentCli(dir) {
   const record = join(dir, 'agent-runs');
-  writeFileSync(join(dir, 'claude'), `#!/bin/sh\n${EXIT_IF_WARMING}\nprintf '%s\\n' "$*" >> "\${0%/*}/agent-runs"\nexit 0\n`);
+  const fence = '```';
+  writeFileSync(join(dir, 'claude'), `#!/bin/sh\n${EXIT_IF_WARMING}\nprintf '%s\\n' "$*" >> "\${0%/*}/agent-runs"\nif [ "\${RIGGER_TEST_ESCALATE:-}" = 1 ]; then\n  prompt=$(cat)\n  dispatch=$(printf '%s\\n' "$prompt" | awk '/^dispatch: d-/ { print $2; exit }')\n  body=$(printf '%s\\n' 'I cannot meet acceptance item 1.' '${fence}rigger-escalation' 'category: critical' 'item: 1' 'reason: The required condition failed.' "dispatch: $dispatch" '${fence}')\n  gh api repos/acme/widgets/issues/10/comments -X POST -f "body=$body" >/dev/null || exit $?\nfi\nexit 0\n`);
   chmodSync(join(dir, 'claude'), 0o755);
   warmed(join(dir, 'claude'));
   return { runs: () => (existsSync(record) ? readFileSync(record, 'utf8').split('\n').filter(Boolean) : []) };
@@ -134,6 +135,19 @@ test('once names the card it claimed, its workspace and its maker\'s outcome', (
   assert.ok(line, ran.err);
   assert.ok(line.includes(join(dirname(realpathSync(ran.consumer)), 'widgets-worktrees', 'rigger-10')), line);
   assert.match(line, /; its maker exited 0 and opened no pull request from rigger-10, in its workspace, /, line);
+});
+
+// proves R-LOOP-2, R-ESCALATE-4
+test('once names a maker note escalation, its category and acceptance item ordinal', async () => {
+  const ran = once({ items: [card(10, 'Ready')] }, {
+    seed: { issues: [{ number: 10, title: 'Card 10', body: ADMITTED, labels: ['type:change'] }] },
+    extraEnv: { RIGGER_TEST_ESCALATE: '1' },
+  });
+
+  assert.equal(ran.code, 0, ran.err);
+  assert.match(ran.out, /card #10 escalated critical for acceptance item 1/);
+  assert.deepEqual(await columnsOf(ran), { 10: 'Owner' });
+  assert.equal(eventsOf(ran).find(({ event }) => event === 'review.escalate').raiser, 'maker');
 });
 
 test('once exits non-zero when the card\'s maker opened no pull request', async () => {

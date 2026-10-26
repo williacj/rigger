@@ -165,6 +165,20 @@ test('the repository read answers comment identity, author permission and edit, 
   assert.equal(fake.sent().filter((args) => args[1]?.includes('/collaborators/alex/permission')).length, 1);
 });
 
+test('the fake gh reads a card issue’s comments separately from its pull request comments', async () => {
+  const fake = installed();
+  seedRepository(fake, {
+    issues: [{ number: 12, comments: [{ body: 'Issue note', createdAt: '2026-10-09T10:00:00Z', author: { login: 'alex' } }] }],
+    pullRequests: [{ number: 21, head: 'rigger-12', sha: 'a'.repeat(40), comments: [{ body: 'Pull note' }] }],
+    permissions: { alex: 'maintain' },
+  });
+
+  const comments = await onPath(fake, () => repositoryReads(BOARD, { emitter: UNKILLED }).readIssueComments(12));
+
+  assert.deepEqual(comments, [{ body: 'Issue note', createdAt: '2026-10-09T10:00:00Z', id: 'IC_12_1', author: 'alex', permission: 'maintain', edited: false }]);
+  assert.deepEqual(forgeHeld(fake).repository.pullRequests[0].comments, [{ body: 'Pull note' }]);
+});
+
 test('a completed successful check run answers passed through the fake forge', async () => {
   const fake = installed();
   const sha = 'a'.repeat(40);
@@ -662,6 +676,7 @@ test('the fake repository answers in process what the fake gh answers for the sa
   const fake = installed({ columns: ['Review'], items: CARDS });
   seedRepository(fake, seed);
   const calls = [['readPullRequests', 'rigger-214'], ['readBranches', ['rigger-214', 'rigger-216']], ['readDiff', 301], ['readMergeBase', 301], ['readComments', 301], ['readDefaultBranch'], ['readIssue', 214], ['readIssue', 216], ['readIssue', 301], ['readPullRequestByNumber', 301], ['readPullRequestByNumber', 299], ['readFileAt', main, 'README'], ['readFileAt', main, 'absent.txt']];
+  calls.push(['readIssueComments', 214]);
 
   const { operations } = createFakeRepository(seed);
   for (const [name, ...args] of calls) {
