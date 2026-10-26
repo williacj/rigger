@@ -34,12 +34,12 @@ owner's laptop.
    a home whose auth.json links to the owner's (Q-i).
 6. **On the mini, `RunAtLoad` true started the job 0.27 s after the bootstrap began, and `RunAtLoad`
    false 60.12 s after** (Q-a2, Q-a1). Neither contradicts a cell `D28` or "Triggers" cites.
-7. **`display notification` from a LaunchAgent returns 0 whether or not the owner sees anything.**
-   It returned 0 on every one of 223 firings. That includes the 10 posted while the posting app's
-   notifications were turned off, two of which the owner recorded as not seen (Q-k2). With a Focus
-   on that does not allow the posting app, the owner recorded three firings as only in Notification
-   Centre (Q-k, phase B). Phases A and D are not recorded per firing. "Q-k" says what was recorded
-   and what was not.
+7. **`display notification` from a LaunchAgent returned 0 on every one of 223 firings.** That
+   includes the firings the owner recorded as not seen, and those recorded as only in Notification
+   Centre. The exit status therefore says nothing about what the owner saw. The posting app's
+   notification setting was never measured during a phase, and neither was which Focus allowed
+   what. So Q-k2, and the banner in every state, are unmeasured as their states are defined (U68).
+   "Q-k" gives the narrower observations that were made.
 
 ## How it ran
 
@@ -277,8 +277,13 @@ the stub's `codex-status` mode.
 
 ### Q-k2 and the banner: notifications
 
-**Serves:** M6-11d. **Q-k2: measured.** **The banner: measured for phases B and C, and unmeasured
-per firing for phases A and D.**
+**Serves:** M6-11d. **Q-k2: unmeasured.** The posting app's setting was never read during a
+phase, so no firing is established as posted with the app's notifications off. **The banner:
+unmeasured in all four states,** for the same reason, and because no reading shows which Focus
+allowed what. Phases A and D also have no per-firing observation (U68, below). Two narrower
+observations were made, and are kept below as what they are:
+- the exit status of every `display notification` call;
+- the owner's one key at each batch 3b firing, under the state the script's prompt named.
 
 **How it ran.** The notify job `k` (`StartInterval` 60, `RunAtLoad` true) ran in gui/501. Its
 stub posts `display notification "Q-k at HH:MM:SS UTC" with title "Rigger spike 951"` through
@@ -301,18 +306,26 @@ owner bootstrapped and booted out `k` from a shell in their console session (man
   01:19:28Z (entry 193). The bootout came at 01:23:58.898Z (entry 199). After each firing the owner
   pressed one key, recorded in the transcript at the time.
 
-**Q-k2: `display notification` with the posting app's notifications turned off.** It returned 0
-with empty stderr on all 10 such firings:
+**The exit status, a narrower observation.** `display notification` returned 0 with empty stderr
+on every one of the 223 firings in `~/Library/Logs/rigger-spike-951/logs/k.jsonl`. That includes
+the 10 that fell in phases the script labelled with the app's notifications off:
 - batch 3, phase C: 00:43:25Z and 00:44:25Z;
 - batch 3, phase D: 00:45:26Z, 00:46:26Z and 00:47:26Z;
 - batch 3b, phase C: 01:19:28Z, 01:20:28Z, 01:21:28Z, 01:22:29Z and 01:23:29Z.
 
-It returned 0 on every one of the 223 firings in `~/Library/Logs/rigger-spike-951/logs/k.jsonl`, whatever the setting. What the
-owner saw is in the next table.
+The label is the script's prompt, not a reading. Whether the app's notifications were in fact off
+at those firings is unmeasured.
 
-**The banner, per state.** Each row's firing stamps are the ones the notification text carried.
+**The owner's keys, a narrower observation.** Each row is a phase, named by the state the script's
+prompt asked the owner to set. That state is the prompt's label, not a reading, so no row
+establishes the state it names. Each firing stamp is the one the notification text carried.
 
-| State | Batch 3 | Batch 3b, the owner's key at each firing |
+- **Focus in batch 3b.** The only Focus reading is the store read after the run (entry 259). It
+  shows a Do Not Disturb assertion active from 01:14:56Z and a synced Sleep Focus from 01:15:03Z,
+  both through phases B and C.
+- **What was not read:** which apps either Focus allowed.
+
+| Phase, as the prompt labelled it | Batch 3 | Batch 3b, the owner's key at each firing |
 |---|---|---|
 | A: Banners; no Focus | not recorded per firing | not run |
 | B: Banners; a Focus on that does not allow the app | not recorded per firing | 01:15:27 only in Notification Centre (entry 189); 01:16:27 only in Notification Centre (190); 01:17:28 only in Notification Centre (191); 01:18:28 unrecorded (192) |
@@ -401,7 +414,7 @@ and C (951#6401933790).
 | Setting | What the owner said | What the host's stores show | Kept or restored |
 |---|---|---|---|
 | A Focus: Do Not Disturb | "turned on Do Not Disturb, then restored everything" (951#6406167931) | The Focus store, `~/Library/DoNotDisturb/DB/Assertions.json`, read at 02:20:16Z on 2026-10-26 (entry 259), holds an **active** `com.apple.donotdisturb.mode.default` assertion, reason `user-action`, which began at **01:14:56.144Z**, 2 s before batch 3b's phase B began. It has no invalidation record. | restored, in the owner's words; still active in the store at entry 259's reading |
-| The posting app's notification setting (Script Editor, `com.apple.ScriptEditor2`) | not named in the owner's words | The notification preferences file was last written at 01:23:49Z (entry 260). `flags` read `41951246` afterwards (entry 255). No reading was taken before or during the phases | not recorded |
+| The posting app's notification setting (Script Editor, `com.apple.ScriptEditor2`) | not named in the owner's first words. Asked afterwards whether they set Script Editor's notifications back to how they were, the owner answered, in their words: "yes, I restored Script Editor notifications" ([951#6415277828](https://github.com/williacj/rigger/issues/951#issuecomment-6415277828)) | The notification preferences file was last written at 01:23:49Z (entry 260). `flags` read `41951246` afterwards (entry 255). No reading was taken before or during the phases | restored, in the owner's words. That is their statement, not a measurement |
 
 - **Batch 3's Focus.** The Focus store holds no Focus assertion that began or ended between
   00:41:03Z and 00:47:59Z, batch 3's phases B to D (entry 259). The store holds one ended record
@@ -473,11 +486,10 @@ file was used. Both states signed in, so the template has no sign-in reason to s
 
 ### For M6-11d (Q-k2 and the banner)
 
-**Do:** treat `display notification`'s exit 0 as "posted", never as "seen". It returned 0 with the
-posting app's notifications turned off, when the owner recorded firings as not seen (Q-k2). Where
-M6-11d needs the owner to have seen a notice, it needs a second record that does not depend on a
-banner, such as the run's report or a card comment. A notice under a Focus that does not allow the
-posting app lands only in Notification Centre (phase B, three firings).
+**Do:** treat `display notification`'s exit 0 as "the call returned", never as "seen". It returned
+0 on all 223 firings, including the ones the owner recorded as not seen or as only in Notification
+Centre. Where M6-11d needs the owner to have seen a notice, it needs a second record that does not
+depend on a banner, such as the run's report or a card comment.
 
 **Do not assume** anything about phases A and D per firing, which are not recorded, or that the
 owner's global notification settings are the ones this run read. The owner reported the posting app
@@ -489,8 +501,9 @@ can differ from.
 app's notification setting in each phase. M6-11d proceeds without that evidence, and must not
 assume it.
 
-**Would reverse it:** an `osascript` release whose `display notification` fails when the app's
-notifications are off, or a measured banner under a Focus that does not allow the posting app.
+**Would reverse it:** a measured `display notification` that fails when the posting app's
+notifications are off, with the setting read at the time. That would make its exit status
+evidence of delivery to the app's settings, though still not of a banner seen.
 
 ## Approvals
 
@@ -589,24 +602,29 @@ git's, and the suite-slot times are the laptop's.
 | When | What | Why |
 |---|---|---|
 | 2026-10-25, before 19:03:30Z (entry 001) | `git clone` from GitHub, then `git checkout -b rigger-951` at `a8484080` (recorded in entry 002) | the brief named a clone that did not exist |
-| after 19:03:30Z and up to 21:14:46Z (entry 171) | `git config core.hooksPath .githooks`; `npm ci`, writing `node_modules/`; the edit of `doc-references.json` adding the report's `strict` entry; the journal entry written | commit through the hooks; the PR's diff |
+| after 19:03:30Z and up to 21:14:46Z (entry 171) | `git config core.hooksPath .githooks`; `npm ci`, writing node_modules/; the edit of `doc-references.json` adding the report's `strict` entry; the journal entry written | commit through the hooks; the PR's diff |
 | after 21:12:00Z and up to 21:13:46Z (entries 169 and 170) | the report written, Q-k pending | the PR's diff |
 | 21:13:46Z to 01:26:23Z on 2026-10-26 (entries 170 and 222) | report edits: Q-k, M6-11d, approvals, cleanup | the PR's diff |
 | 01:26:23Z to 01:33:08Z (entries 222 and 236) | report edits: transcript, token grep, the rewrite of host paths the first commit's `path-check` refused | the PR's diff |
-| 01:33:08Z to 01:37:25Z (entries 236 and 237) | commit `f17b17b2`, at 01:34:00Z (git author time). Its pre-commit suite ran in the suite slot (see below), and the hook added the tree to the clone's `.git/rigger-suite-green-trees` | the report |
+| 01:33:08Z to 01:37:25Z (entries 236 and 237) | commit `f17b17b2`, at 01:34:00Z (git author time). Its pre-commit suite ran in the suite slot (see below), and the hook added the tree to the clone's .git/rigger-suite-green-trees | the report |
 | 01:37:49Z (entry 239) | `git push -u origin rigger-951` | the branch on GitHub |
 | 01:37:49Z to 01:53:30Z (entries 239 and 241) | report edit recording the owner's answers of 951#6406431897; commit `0ba1ee6d`, at 01:50:02Z | the owner's answers |
 | 01:53:30Z to 02:04:20Z (entries 241 and 243) | report edit recording 951#6406447806; commit `c30a4310`, at 02:00:49Z; `git push` | the owner's confirmation |
-| after 02:04:51Z (entry 244) | the round 2 edits to the report and the journal, for 956#6406751551, committed locally in the commit after `c30a4310` | the review |
+| 02:04:51Z to 02:25:25Z (entry 244 and the commit) | round 2 edits to the report and the journal, for 956#6406751551; commit `b0e1f80d` at 02:25:25Z (git committer time; its suite slot ran 02:25:25Z to 02:28:54Z) | review round 1 |
+| 02:28:55Z to 03:08:17Z (entries 265 and 266) | report edit citing U67 and U68; commit `16eeac98` at 03:08:17Z (its suite slot ran 03:08:17Z to 03:11:49Z) | the owner's rulings |
+| 03:11:49Z to 03:11:52Z (the slot's end and entry 267) | one `git push origin rigger-951` carrying `b0e1f80d` and `16eeac98`, which made PR #956's head `16eeac98` | publication |
+| after 03:11:52Z (entry 267) | round 3 edits to the report, for 956#6407509056, and the commit that adds this row. Its push publishes that commit as #956's head. A commit cannot record its own hash, so this row names it only as the commit that adds the row | review round 2 |
 
 **The laptop: outside the clone.** All by the spike engineer, except where the table says otherwise.
 
 | When | What | Why |
 |---|---|---|
 | 2026-10-25, before 19:03:30Z | copies of #744's plan and report, under the session's scratch directory, `<scratch>/ref/`. Removed at entry 222, 01:26:23Z on 2026-10-26 | reading only |
-| 01:29:41Z to 01:33:07Z (the refused first commit), 01:34:00Z to 01:37:24Z, 01:50:02Z to 01:53:29Z, and 02:00:49Z to 02:04:17Z, each its log's start and end | `~/GitHub/rigger-worktrees/coordinator-tools/suite-slot.sh` took its lock and added its lines to `~/GitHub/rigger-worktrees/suite-slot/suite-slot.log`, once per commit attempt | the suite slot |
-| at each commit | the commits' console output, `<scratch>/951-commit.log`, `<scratch>/951-commit2.log` and `<scratch>/951-commit3.log`, under the session's scratch directory | the suite's result |
+| 01:29:41Z to 01:33:07Z (the refused first commit), 01:34:00Z to 01:37:24Z, 01:50:02Z to 01:53:29Z, 02:00:49Z to 02:04:17Z, 02:25:25Z to 02:28:54Z, and 03:08:17Z to 03:11:49Z, each its log's start and end; and the round 3 commit's run | `~/GitHub/rigger-worktrees/coordinator-tools/suite-slot.sh` took its lock and added its lines to `~/GitHub/rigger-worktrees/suite-slot/suite-slot.log`, once per commit attempt | the suite slot |
+| at each commit | the commits' console output, `<scratch>/951-commit.log`, `<scratch>/951-commit2.log` to `<scratch>/951-commit5.log`, and the round 3 commit's log, under the session's scratch directory | the suite's result |
 | 02:04Z | the PR's body, `<scratch>/951-pr-body.md`, under the session's scratch directory | `gh pr create` |
+| after 03:11:52Z (entry 268) | a fresh clone of `rigger-951`, `~/GitHub/rigger-worktrees/951-spike-engineer-fresh`, with the round 3 report and journal copied in, `npm ci` and the full suite run there through the suite slot; its output went to `<scratch>/951-fresh-test.log` | the review's fresh-clone check |
+| after 11:49:33Z on 2026-10-26 (951#6415277828) | the item 8 edit to the report, recording the owner's answer on Script Editor's end state; the final report and journal copied into the fresh clone, its path check and full suite re-run there through the suite slot, output to `<scratch>/951-fresh-test2.log` | review round 2, item 8 |
 | through the run | the harness's background-task output files, under the session's scratch directory, written by Claude Code for the waits on batch 3 | waits |
 
 **The mini.**
@@ -628,7 +646,9 @@ git's, and the suite-slot times are the laptop's.
 | 01:25:47Z, 01:25:49Z, 01:25:50Z | raw output, parts 4 to 6: 951#6406173195, 951#6406173461, 951#6406173757 |
 | 01:28:30Z, 01:28:31Z | the transcript, parts 1 and 2: 951#6406204021, 951#6406204301 |
 | 01:37:49Z | the branch `rigger-951`, pushed from the laptop |
-| 02:04:49Z | pull request #956, opened from the laptop |
+| 02:04:49Z | pull request #956, opened from the laptop, after the push of `c30a4310` at about 02:04:20Z (entry 243) |
+| 03:11:49Z to 03:11:52Z | the push of `b0e1f80d` and `16eeac98`, from the laptop |
+| after this row's commit | the push of the round 3 commit, from the laptop |
 | 02:25:10Z | batch 3c's script, 951#6406842430 |
 
 ## Cleanup
