@@ -7,6 +7,7 @@
 import { FIXED_LABELS, OWNER, judgeRole, roleTimeout, sameLabel, stepTimeout, workRequires, worktreeTopic } from '../config/validate.mjs';
 import { BRANCH_ELSEWHERE, BRANCH_REFUSED, FETCH_FAILED, LINE_DELETED, LINE_MOVED, ROOT_NOT_ABSOLUTE, SCRATCH_REFUSED, WORKSPACE_NOT_MADE, WORKSPACE_REFUSED, topicFor } from '../execution/workspace.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
+import { escalationInstruction } from './escalation.mjs';
 import { acceptanceItems, checkAcceptanceForm } from './form-check.mjs';
 import { reviewAnswer } from './judges.mjs';
 import { evidenceDigest } from './marker.mjs';
@@ -374,8 +375,8 @@ export function panelOf(card, kind, roles = {}) {
  * The evidence is the card's number, title and acceptance, read as `R-CARD-12` reads it. The
  * instruction is Rigger's contract with every maker, so no role prompt spends words on it (the M4
  * decomposition's §2.5, on #467). It says Rigger dispatched
- * the session, which a role prompt can condition on. Until M6 gives a maker an escalation route, a
- * maker that cannot finish exits non-zero, naming why.
+ * the session, which a role prompt can condition on. A maker that cannot meet an item receives
+ * the escalation note instruction.
  *
  * Handed `continuing`, L2's continuing-attempt answer, the instruction names the open pull request
  * and the head L2 read, and asks for commits pushed to the line of work rather than a pull request
@@ -394,7 +395,7 @@ function makerAnswer(card, name, role, tier, line, continuing) {
         `Once your work meets every acceptance item and answers every ruling below, push your commits to \`${line}\`, so they reach pull request #${continuing.pull}. Open no other pull request.`,
       ]),
     `Never switch this workspace off \`${line}\`, never detach \`HEAD\`, and never add a worktree inside this workspace.`,
-    'Where you cannot finish the work, exit non-zero, naming why.',
+    escalationInstruction(card),
     '',
     '',
   ].join('\n');

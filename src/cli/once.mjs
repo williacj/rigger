@@ -258,7 +258,7 @@ async function claiming(verb, limit, opened, {
       const words = {
         move: `moved to ${each.to}`,
         return: `returned acceptance on pull request #${each.pull}`,
-        escalate: `escalated ${each.category}`,
+        escalate: `escalated ${each.category}${each.item === undefined ? '' : ` for acceptance item ${each.item}`}`,
         refuse: `refused: ${each.reason}`,
       };
       if (each.action === 'merge') return { ...each, ...mergeOutcome(each), judgesPassed: true, judgeLines: [] };

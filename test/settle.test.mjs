@@ -279,7 +279,7 @@ test('L2\'s settle reads, in its one read for the card it settles, its one open 
 
   const facts = await l2.settled(card, exited(0));
 
-  assert.deepEqual(made.sort(), [['readCheckStates', pullFrom(13, 130).sha], ['readComments', 130], ['readDiff', 130], ['readEffectiveRules', 'main'], ['readMergeBase', 130], ['readMergeable', 130], ['readPullRequests', 'rigger-13']]);
+  assert.deepEqual(made.sort(), [['readCheckStates', pullFrom(13, 130).sha], ['readComments', 130], ['readDiff', 130], ['readEffectiveRules', 'main'], ['readIssueComments', 13], ['readMergeBase', 130], ['readMergeable', 130], ['readPullRequests', 'rigger-13']]);
   assert.deepEqual(facts, {
     line: 'rigger-13',
     open: [{ number: 130, head: pullFrom(13, 130).sha, base: 'main' }],

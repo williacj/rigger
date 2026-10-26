@@ -2986,3 +2986,48 @@ test('a failed closed cleanup followed by escalation stays withheld until the ow
   assert.equal(retry.repository.held().issues[0].comments.length, 2, 'the fresh invocation preserves the prior issue facts');
   assert.deepEqual((await fake.operations.readItems())[0].labels, ['type:change', 'rigger:escalated']);
 });
+
+// proves R-LOOP-2, R-ESCALATE-4
+test('L3 stamps the maker id and routes its issue note to Owner without dispatching a judge', { timeout: 20_000 }, async (t) => {
+  const number = 939;
+  const note = (id) => [
+    'I cannot meet acceptance item 1.',
+    '```rigger-escalation',
+    'category: ambiguous',
+    'item: 1',
+    'reason: The needed decision is missing.',
+    `dispatch: ${id}`,
+    '```',
+    '',
+  ].join('\n');
+  const kinds = { change: { select: { labels: ['type:change'] }, maker: 'engineer', judges: ['reviewer'] } };
+  const built = world({ cards: [number], concurrency: 1, kinds,
+    judgeDirectory: () => assert.fail('a maker escalation dispatches no judge'),
+  });
+  const pulled = built.loop.pull(1);
+  t.after(async () => {
+    built.dispatches.releaseAll();
+    await pulled.catch(() => {});
+  });
+  await waitFor(() => built.dispatches.heldNow(number));
+  const id = built.events().find(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'engineer').dispatch;
+  const input = built.agent.runs().find(({ card, role }) => card === number && role === 'engineer').input;
+  assert.ok(input.includes(`dispatch: ${id}`), 'the maker sees the id of its L3 dispatch');
+
+  await built.repository.postIssueComment(number, note(id));
+  built.dispatches.release(number);
+  await pulled;
+
+  const [card] = await built.fake.operations.readItems();
+  assert.equal(card.column, config.board.columns.owner);
+  assert.deepEqual(card.labels, ['type:change', 'rigger:escalated']);
+  const [event] = built.events().filter(({ event }) => event === 'review.escalate');
+  assert.deepEqual({ raiser: event.raiser, dispatch: event.dispatch, category: event.category, item: event.item, reason: event.reason },
+    { raiser: 'maker', dispatch: id, category: 'ambiguous', item: 1, reason: 'The needed decision is missing.' });
+  const issue = built.repository.held().issues.find(({ number: held }) => held === number);
+  assert.equal(issue.comments.length, 2, 'the maker note and one engine comment sit on the issue');
+  assert.match(issue.comments[1].body, /owner \(ambiguous\)/);
+  assert.match(issue.comments[1].body, /The needed decision is missing\./);
+  assert.match(issue.comments[1].body, /Acceptance item: 1/);
+  assert.equal(built.agent.runs().filter(({ role }) => role === 'reviewer').length, 0);
+});

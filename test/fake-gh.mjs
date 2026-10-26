@@ -331,6 +331,16 @@ async function comments(board, state, operation) {
   return { repository: { pullRequest: { comments: page(pull.comments.map((comment, index) => commentOf(comment, pull.number, index)), fieldIn(operation.selections, 'comments')) } } };
 }
 
+/** Answers a page of an issue's comments in the forge's order. */
+async function issueComments(board, state, operation) {
+  inTheRepository(state, operation);
+  const number = Number(valueOf(fieldIn(operation.selections, 'issue'), 'number'));
+  const held = repositoryOf(state).held().issues.find((candidate) => candidate.number === number)
+    ?? (await board.operations.readItems()).find((candidate) => candidate.type === 'issue' && candidate.number === number && candidate.repository.toLowerCase() === state.repo.toLowerCase());
+  if (!held) throw unresolved({ repository: { issue: null } }, ['repository', 'issue'], `Could not resolve to an Issue with the number of ${number}.`);
+  return { repository: { issue: { comments: page((held.comments ?? []).map((comment, index) => commentOf(comment, number, index)), fieldIn(operation.selections, 'comments')) } } };
+}
+
 /** What GitHub answers over REST for a path it holds nothing at, as `gh` reports it. */
 const notFound = (documentation) => new GhPrinted('gh: Not Found (HTTP 404)', JSON.stringify({ message: 'Not Found', documentation_url: documentation, status: '404' }));
 
@@ -518,6 +528,8 @@ const COMMANDS = {
   [graphql(repositoryShape(`refs(refPrefix: _, first: _, after: _) { ${NAMES} }`))]: branches,
   [graphql(repositoryShape(`pullRequest(number: _) { comments(first: _) { ${COMMENTS} } }`))]: comments,
   [graphql(repositoryShape(`pullRequest(number: _) { comments(first: _, after: _) { ${COMMENTS} } }`))]: comments,
+  [graphql(repositoryShape(`issue(number: _) { comments(first: _) { ${COMMENTS} } }`))]: issueComments,
+  [graphql(repositoryShape(`issue(number: _) { comments(first: _, after: _) { ${COMMENTS} } }`))]: issueComments,
   [graphql(repositoryShape('pullRequest(number: _) { baseRefName headRefOid }'))]: async (board, state, operation) => {
     inTheRepository(state, operation);
     const { base, sha } = pullNamed(state, operation);
