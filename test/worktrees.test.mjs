@@ -15,6 +15,10 @@ import { clonedFromOrigin, gitIn, repositoryAt, worktreeAt, worktreeList } from 
 import { fixture, GIT, gitCalls, gitHanging, gitRacing, gitRecording, holding, OUTLIVED, read, scratch, withFirstOnPath } from './process-fixtures.mjs';
 import { previousCheckout } from './git-repository.mjs';
 import { ADDING } from '../src/substrate/worktrees.mjs';
+import { makeWorkspace } from '../src/execution/workspace.mjs';
+import { nextAction } from '../src/workflow/next-action.mjs';
+import { KINDS, readyCard } from './loop-world.mjs';
+import { EVENT_REFUSED } from '../src/substrate/process.mjs';
 
 /** Every event an emitter was handed, in order, each as its name and its fields. */
 function recorder() {
@@ -616,6 +620,95 @@ test('a continuing line fetch that times out rejects without changing an existin
   assert.deepEqual({ file: readFileSync(join(path, 'kept')), worktrees: worktreeList(repository) }, before);
 });
 
+// proves R-FAIL-7
+test('a continuing line moved, deleted, or unreadable at the forge has a distinct L0 code', async (t) => {
+  const { repository, source, origin, push } = world(t);
+  gitIn(source, 'switch', '-q', '-c', 'rigger-42');
+  const head = push('the maker work', 'rigger-42');
+  const adapter = workspaces({ repository, emitter: recorder() });
+  const moved = push('later work', 'rigger-42');
+  await assert.rejects(adapter.fetchLineAt('rigger-42', head), (error) =>
+    error.code === 'FORGE_LINE_MOVED' && error.message.includes(head) && error.message.includes(moved));
+
+  gitIn(source, 'push', '-q', origin, ':refs/heads/rigger-42');
+  await assert.rejects(adapter.fetchLineAt('rigger-42', head), (error) =>
+    error.code === 'FORGE_LINE_DELETED' && error.message.includes('rigger-42'));
+
+  const failing = fixture(scratch(t), 'git', [
+    'if [ "$1" = ls-remote ]; then echo "forge unavailable" >&2; exit 128; fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+  await assert.rejects(workspaces({ repository, emitter: recorder(), git: failing }).fetchLineAt('rigger-42', head), (error) =>
+    error.code === 'FORGE_FETCH_FAILED' && error.message.includes('forge unavailable'));
+});
+
+// proves R-FAIL-7
+test('a continuing fetch failure, lost retry race, or timed-out forge read carries L0 forge-failure code', async (t) => {
+  const { repository, source, push } = world(t);
+  gitIn(source, 'switch', '-q', '-c', 'rigger-42');
+  const head = push('the maker work', 'rigger-42');
+  const failing = fixture(scratch(t), 'git', [
+    'if [ "$1" = fetch ]; then echo "fetch unavailable" >&2; exit 128; fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+  await assert.rejects(workspaces({ repository, emitter: recorder(), git: failing }).fetchLineAt('rigger-42', head),
+    (error) => error.code === 'FORGE_FETCH_FAILED' && error.message.includes('fetch unavailable'));
+
+  const racing = gitRacing(scratch(t), FETCH_TRIES + 1);
+  await assert.rejects(workspaces({ repository, emitter: recorder(), git: racing }).fetchLineAt('rigger-42', head),
+    (error) => error.code === 'FORGE_FETCH_FAILED' && error.message.includes(`${FETCH_TRIES} tries`));
+
+  const held = holding(t);
+  const hanging = fixture(held, 'git', [
+    'if [ "$1" = ls-remote ]; then /usr/bin/tail -f "$here/hold" > /dev/null & wait; fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+  await assert.rejects(workspaces({ repository, emitter: recorder(), git: hanging, timeout: OUTLIVED }).fetchLineAt('rigger-42', head),
+    (error) => error.code === 'FORGE_FETCH_FAILED' && error.message.includes(`${OUTLIVED} ms`));
+});
+
+// proves R-FAIL-7
+test('a continuing forge read that answers a non-commit is tagged as a forge failure', async (t) => {
+  const { repository, source, push } = world(t);
+  gitIn(source, 'switch', '-q', '-c', 'rigger-42');
+  const head = push('the maker work', 'rigger-42');
+  const standIn = fixture(scratch(t), 'git', [
+    'if [ "$1" = cat-file ]; then echo tag; exit 0; fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+
+  await assert.rejects(workspaces({ repository, emitter: recorder(), git: standIn }).fetchLineAt('rigger-42', head),
+    (error) => error.code === 'FORGE_FETCH_FAILED' && error.message.includes('names a tag'));
+});
+
+// proves R-FAIL-7, R-WORK-25
+test('a refused cat-file timeout event stays EVENT_REFUSED through L1 and gives L2 no retry decision', async (t) => {
+  const { directory, source, repository, push } = world(t);
+  gitIn(source, 'switch', '-q', '-c', 'rigger-42');
+  const head = push('the maker work', 'rigger-42');
+  const stand = fixture(holding(t), 'git', [
+    'if [ "$1" = cat-file ]; then echo cat-file >> "$here/cat-calls"; /usr/bin/tail -f "$here/hold" > /dev/null & wait; fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+  const events = [];
+  const sink = { emitter: (context) => ({ emit: (event, fields) => {
+    if (event === 'timeout.killed') throw new Error('fixture: the sink refuses timeout.killed');
+    events.push({ ...context, event, ...fields });
+  } }) };
+  const root = join(directory, 'worktrees');
+
+  const failure = await withFirstOnPath(dirname(stand), () => makeWorkspace({ root, topic: 'rigger-{number}', card: 42, head, repository, sink, timeout: OUTLIVED }))
+    .then(() => assert.fail('the continuing make succeeded'), (error) => error);
+
+  assert.equal(failure.code, EVENT_REFUSED, failure.stack);
+  assert.ok(failure.unrecorded.length > 0 && failure.unrecorded.every(({ event }) => event === 'timeout.killed'), failure.message);
+  assert.equal(read(dirname(stand), 'cat-calls'), 'cat-file');
+  assert.throws(() => nextAction(readyCard(42), KINDS, undefined, {
+    provisioning: {}, sink, workspace: { status: 'rejected', reason: failure },
+  }), /L2 answers no action/);
+  assert.deepEqual(events.filter(({ layer, event }) => layer === 'L2' && event === 'attempt.decided'), []);
+});
+
 test('no operation but fetch is retried, whatever its standard error says', async (t) => {
   const { directory, repository } = world(t);
   const made = worktreeAt(repository, join(directory, 'made'), 'made');
@@ -686,7 +779,7 @@ test('only src/execution/ imports the workspace adapter: an import from any othe
     const found = boundaryMessages({ [file]: `import { workspaces } from '${up}substrate/worktrees.mjs';\nexport const peek = workspaces;` });
     assert.ok(found.some((message) => message.startsWith(`${file} `) && message.includes('breaks rule 10:')), `${file}:\n${found.join('\n') || '(nothing)'}`);
   }
-  assert.deepEqual(boundaryMessages({ 'src/execution/workspace.mjs': "import { workspaces } from '../substrate/worktrees.mjs';\nexport const make = workspaces;\nexport const WORKSPACE_NOT_MADE = 'WORKSPACE_NOT_MADE';\nexport function workspaceHandle() {}\nexport const topicFor = () => '';\nexport function cardOfBranch() {}\nexport function makeScratch() {}\nexport function judgeDirectoryHandle() {}\nexport function removeCardDirectories() {}\nexport function listCliFolder() {}\nexport function sweepCliFolder() {}" }), []);
+  assert.deepEqual(boundaryMessages({ 'src/execution/workspace.mjs': "import { workspaces } from '../substrate/worktrees.mjs';\nexport const make = workspaces;\nexport const WORKSPACE_NOT_MADE = 'WORKSPACE_NOT_MADE';\nexport const WORKSPACE_REFUSED = 'WORKSPACE_REFUSED';\nexport const BRANCH_ELSEWHERE = 'BRANCH_ELSEWHERE';\nexport const SCRATCH_REFUSED = 'SCRATCH_REFUSED';\nexport const LINE_MOVED = 'LINE_MOVED';\nexport const LINE_DELETED = 'LINE_DELETED';\nexport const FETCH_FAILED = 'FETCH_FAILED';\nexport const BRANCH_REFUSED = 'BRANCH_REFUSED';\nexport const ROOT_NOT_ABSOLUTE = 'ROOT_NOT_ABSOLUTE';\nexport function workspaceHandle() {}\nexport const topicFor = () => '';\nexport function cardOfBranch() {}\nexport function makeScratch() {}\nexport function judgeDirectoryHandle() {}\nexport function removeCardDirectories() {}\nexport function listCliFolder() {}\nexport function sweepCliFolder() {}" }), []);
 });
 
 test('rule 10 follows a namespace import, an import binding no name, a dynamic import, and a re-export relayed through src/execution/', () => {

@@ -42,3 +42,18 @@ host members before the existing sort and deep-equality assertion. The suite hos
 automatically with both entries. No generator, controlled-test or native-test behavior changed.
 Original-head evidence remains attributed to `f4f287a7`; integration checks retain their own
 actual source and native originals. Supported-macOS proof still needs fresh source admission.
+
+Run [40262590665](https://github.com/williacj/rigger/actions/runs/40262590665) executed candidate
+`2099d241990f3a6be232134b2428de5d0e37ce56`, tree `1466772856b894b8028f9d6b4e1a430bf13164ac`,
+with parents `85e597f2` and `35b454e9`. Its macOS ARM64 host job used Node 26.12.1 and passed
+all ten native matrix-reader cases. The direct timeout witness measured 5047.72ms, survived
+the TERM probe and recorded the direct process gone after return. These are observations of
+that candidate, not execution credit for a later source. Complete job and artifact originals
+were retained.
+
+Plan, fast, Mac ordinary, Mac host and demo components succeeded. The aggregate reported
+INVALID at 03:30:04 UTC on 2026-10-26 after the external #935 merge advanced main at 03:13:44.
+The run therefore has no successful aggregate result. Integration with actual main `59b9a51f`
+then produced a real conflict in the generated matrix. The generator alone resolved that
+conflict from the combined declarations; no matrix row was hand-edited. Boundary facts are
+remeasured against this actual base rather than carried forward from the earlier source.
