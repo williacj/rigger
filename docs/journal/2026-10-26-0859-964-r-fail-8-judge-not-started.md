@@ -8,7 +8,7 @@ dispatch that never started for a cause other than its directory, its scratch di
 `head` step. [U43](https://github.com/williacj/rigger/issues/740#issuecomment-6377288414) classed
 a judge's scratch directory not made for a host cause as `out`, and those rows stay as they are.
 [U71](https://github.com/williacj/rigger/issues/740#issuecomment-6417450089) widens the table, so
-`R-FAIL-7` retires and `R-FAIL-8` takes its place. The 34 test claims retarget under grant class
+`R-FAIL-7` retires and `R-FAIL-8` takes its place. The 34 claims in tests retarget under grant class
 G1.
 
 The evidence is finding 5 of [the #920 attack](https://github.com/williacj/rigger/issues/920#issuecomment-6377073780).
