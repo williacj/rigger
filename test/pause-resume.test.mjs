@@ -143,6 +143,12 @@ test('pause beside an unreadable closer entry links its owner closer, prints it,
 
   assert.equal(code, 0, text);
   const fresh = added(['not-a-closer'], closersIn(repository));
+  // The closer beside it is the owner's, as with no unreadable entry: a hold here would be one
+  // that the hold's opening may remove, which no owner's pause is.
+  assert.match(fresh, /^owner-[0-9a-z]+\.json$/);
+  const runs = [...new Set(readEvents(stateIn(repository)).map((event) => event.run))];
+  assert.deepEqual(JSON.parse(readFileSync(entryIn(repository, fresh), 'utf8')), { reason: REASON, time: TIME, run: runs[0] });
+  assert.equal(readFileSync(entryIn(repository, 'not-a-closer'), 'utf8'), closerText());
   assert.ok(text.includes(entryIn(repository, fresh)), text);
   assert.ok(text.includes(`${entryIn(repository, 'not-a-closer')} (no closer form)`), text);
 });
@@ -448,19 +454,51 @@ test('resume makes no forge call', async () => {
   assert.deepEqual([...new Set(started)], ['git']);
 });
 
+/** The `node:fs` calls `canonical` makes, held before any test replaces them. */
+const { lstatSync: lstatHeld, realpathSync: realpathHeld } = fsModule;
+const nativeHeld = realpathHeld.native;
+
+/**
+ * `path` as one spelling for every name of one file: resolved against the working directory, so a
+ * relative path, a `.` and a `..` all go, then the real path of its longest existing prefix read
+ * with `realpathSync.native`, so a link and a letter case the disk does not hold go too, and the
+ * rest kept as written. A name the disk does not hold yet, a closer's temporary file before its
+ * write among them, so still reads as inside the directory that will hold it.
+ */
+function canonical(path) {
+  const absolute = resolve(path);
+  let existing = absolute;
+  const rest = [];
+  for (;;) {
+    try {
+      lstatHeld(existing);
+      break;
+    } catch {
+      const parent = dirname(existing);
+      if (parent === existing) return absolute;
+      rest.unshift(basename(existing));
+      existing = parent;
+    }
+  }
+  return join(nativeHeld(existing), ...rest);
+}
+
 /**
  * Every call of a `node:fs` or `node:fs/promises` function made while `work` runs that names a
- * path under `directory`, each with the stack it was made from. Each function is replaced on the
- * module object and the ESM bindings are synced, so a static import, a namespace import and a
- * dynamic `import()` made inside `work` all reach the replacement.
+ * path under `directory`, however spelled (`canonical`), each with the stack it was made from.
+ * Each function is replaced on the module object and the ESM bindings are synced, so a static
+ * import, a namespace import and a dynamic `import()` made inside `work` all reach the replacement.
  */
 async function fsCallsUnder(directory, work) {
   const calls = [];
   const replaced = [];
   const names = (owner) => Object.keys(owner).filter((name) => /^[a-z]/.test(name) && typeof owner[name] === 'function');
+  const inside = canonical(directory);
   const under = (argument) => {
     const path = argument instanceof URL ? fileURLToPath(argument) : Buffer.isBuffer(argument) ? argument.toString() : argument;
-    return typeof path === 'string' && (path === directory || path.startsWith(`${directory}/`));
+    if (typeof path !== 'string') return false;
+    const named = canonical(path);
+    return named === inside || named.startsWith(`${inside}/`);
   };
   for (const owner of [fsModule, fsModule.promises]) {
     for (const name of names(owner)) {
