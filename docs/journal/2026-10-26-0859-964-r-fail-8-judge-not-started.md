@@ -45,11 +45,13 @@ rows now name instances, and one host row takes any other error the host reports
 starts a process or uses the file system for a judge. That row closes the set.
 
 Open cards whose bodies cite the literal `R-FAIL-7` when the head was pushed, by an exact match
-over the bodies of all 38 open issues: #964, #984 and #985. The PM retargets a card body only where its
+over the bodies of all 34 open issues: #964 and #984. The PM retargets a card body only where its
 acceptance turns on the added rows.
 
 #967 (#961) merged before this card, adding `R-FAIL-7` citations to `ARCHITECTURE.md`. This pull
 request merged `main` and retargeted them, id only, under the architect's delta the card records.
+#985 merged before this card too, citing `R-FAIL-7` in 17 test claims and one comment under
+`src/`, and this pull request retargeted them the same way.
 
 What taught us: "passes by itself" is a judgment about the usual case. A requirement row has to
 hold for the case that lasts, so test each cause's persistence against its worst case. An inventory
