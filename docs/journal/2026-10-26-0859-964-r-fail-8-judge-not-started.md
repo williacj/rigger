@@ -40,8 +40,12 @@ a value that is no string. The fourth round built the inventory mechanically. A 
 line on the judge's path that can throw or convert a value, and each line is mapped to a row or to
 why it raises nothing.
 
+The fifth round found one more error code, `EMFILE`, after every round had found one. So the error
+rows now name instances, and one host row takes any other error the host reports while Rigger
+starts a process or uses the file system for a judge. That row closes the set.
+
 Open cards whose bodies cite the literal `R-FAIL-7` when the head was pushed, by an exact match
-over the bodies of all 36 open issues: #964 alone. The PM retargets a card body only where its
+over the bodies of all 39 open issues: #964 alone. The PM retargets a card body only where its
 acceptance turns on the added rows.
 
 #967 (#961) merged before this card, adding `R-FAIL-7` citations to `ARCHITECTURE.md`. This pull

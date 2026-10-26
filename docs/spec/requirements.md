@@ -622,6 +622,8 @@ Each failure is one of three classes:
 | Claude Code settings on the main line holding a permission rule Rigger cannot read as text, for a judge on Claude Code | host | always | in |
 | the owner's home directory that cannot be found, for a judge on Codex where `CODEX_HOME` is not set | host | always | in |
 | a configuration naming, as a judge's agent file, a value that is no string | host | always | in |
+| a judge's dispatch that never started because the host had no file descriptor to spare for it | host | always | in |
+| a judge's dispatch that never started for any other error the host reported while Rigger started a process or used the file system for it, which no other row names | host | always | in |
 | a judge's dispatch that never started because Rigger could not record one of its events | out | — | out: `R-RECORD-9` |
 | a maker that ran its first command and then failed | out | — | out: the work's failure, not the environment's |
 | two cards each failing once | out | — | out: counted per card |
