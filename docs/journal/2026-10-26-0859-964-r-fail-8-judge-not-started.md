@@ -31,8 +31,11 @@ since only a second failure the same way closes admission. They also found rows 
 more conditions, which spec-style rule 4 splits one condition to a row.
 
 Open cards whose bodies cite the literal `R-FAIL-7` when the head was pushed, by an exact match
-over the bodies of all 33 open issues: #961 and #964. The PM retargets a card body only where its
+over the bodies of all 31 open issues: #964 alone. The PM retargets a card body only where its
 acceptance turns on the added rows.
+
+#967 (#961) merged before this card, adding `R-FAIL-7` citations to `ARCHITECTURE.md`. This pull
+request merged `main` and retargeted them, id only, under the architect's delta the card records.
 
 What taught us: "passes by itself" is a judgment about the usual case. A requirement row has to
 hold for the case that lasts, so test each cause's persistence against its worst case.
