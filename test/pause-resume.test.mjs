@@ -9,7 +9,7 @@ import cryptoModule from 'node:crypto';
 import * as fs from 'node:fs';
 import fsModule from 'node:fs';
 import { chmodSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { pause } from '../src/cli/pause.mjs';
@@ -459,28 +459,27 @@ const { lstatSync: lstatHeld, realpathSync: realpathHeld } = fsModule;
 const nativeHeld = realpathHeld.native;
 
 /**
- * `path` as one spelling for every name of one file: resolved against the working directory, so a
- * relative path, a `.` and a `..` all go, then the real path of its longest existing prefix read
- * with `realpathSync.native`, so a link and a letter case the disk does not hold go too, and the
- * rest kept as written. A name the disk does not hold yet, a closer's temporary file before its
- * write among them, so still reads as inside the directory that will hold it.
+ * `path` as one spelling for every name of one file, read one component at a time as the kernel
+ * reads it. A relative path starts at the working directory. Each name that exists is replaced by
+ * its real path, read with `realpathSync.native`, before the next component applies, so a link is
+ * followed before a `..` after it climbs, and a letter case the disk does not hold goes. A `.` is
+ * dropped and a `..` climbs from the real path reached so far. A name the disk does not hold yet,
+ * a closer's temporary file before its write among them, is kept as written.
  */
 function canonical(path) {
-  const absolute = resolve(path);
-  let existing = absolute;
-  const rest = [];
-  for (;;) {
+  let reached = isAbsolute(path) ? sep : nativeHeld(process.cwd());
+  for (const name of path.split(sep)) {
+    if (name === '' || name === '.') continue;
+    if (name === '..') { reached = dirname(reached); continue; }
+    const next = join(reached, name);
     try {
-      lstatHeld(existing);
-      break;
+      lstatHeld(next);
+      reached = nativeHeld(next);
     } catch {
-      const parent = dirname(existing);
-      if (parent === existing) return absolute;
-      rest.unshift(basename(existing));
-      existing = parent;
+      reached = next;
     }
   }
-  return join(nativeHeld(existing), ...rest);
+  return reached;
 }
 
 /**
