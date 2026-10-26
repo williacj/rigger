@@ -231,6 +231,57 @@ How to operate Rigger is in the [guide](docs/guide.md), and where to look each f
 
 Unattended runs on macOS use launchd, whose assets are part of the substrate Rigger ships.
 
+### Installing the launchd job
+
+On macOS, one per-user LaunchAgent re-launches `rigger run`, and `D28` records why. Installing it
+changes your host, so you install it yourself. In these steps, `<uid>` is what `id -u` prints.
+
+1. Copy `templates/launchd/com.williacj.rigger.plist` from the installed package to
+   `~/Library/LaunchAgents/`.
+2. In that copy, replace each placeholder with its value:
+
+   | Placeholder | What you write |
+   |---|---|
+   | `__RIGGER__` | the absolute path of an installed package's `rigger` executable. It lies outside the repository `__REPOSITORY__` names (`R-SAFE-5`). It is neither a link into a Rigger source checkout (`AGENTS.md`, "Self-hosting") nor a path in `npx`'s cache. |
+   | `__REPOSITORY__` | the absolute path of the repository the engine runs against |
+   | `__PATH__` | a `PATH` that reaches `node`, `gh`, `claude` and `codex` (`ARCHITECTURE.md`, "Triggers", "The environment") |
+   | `__HOME__` | your home directory |
+   | `__START_INTERVAL__` | the seconds launchd waits, after a run exits, before starting the next |
+   | `__EXIT_TIMEOUT__` | the seconds launchd waits at the job's exit, at least the bound `ARCHITECTURE.md`'s "Triggers" sets |
+
+3. Install the job, re-install it, or apply an edit to the plist, with these two commands:
+
+   ```bash
+   launchctl bootout gui/<uid>/com.williacj.rigger
+   launchctl bootstrap gui/<uid> ~/Library/LaunchAgents/com.williacj.rigger.plist
+   ```
+
+   - Before a first install, the `bootout` exits 3, `No such process`, which is harmless
+     ([S2 report](docs/spikes/launchd-lost-cells.md), Q-o2).
+   - The `bootstrap` then exits 0, and the job starts at once, because the template sets
+     `RunAtLoad` (S2 report, Q-a2).
+   - A `bootstrap` of a label already loaded exits 5 and leaves the loaded job as it was, edits
+     ignored (S2 report, Q-o1). So always `bootout` first.
+   - Never read exit 5 as "already loaded". It is a generic error, which the S2 report measured
+     for that one cause alone.
+
+4. To learn whether the job is loaded, run `launchctl print gui/<uid>/com.williacj.rigger`. It
+   exits 0 for a loaded label and 113 for one not loaded (S2 report, Q-o2 and "For M6-12b").
+
+Once loaded, the job starts again at your next login after a reboot, never before it (`D28` rule
+1; `ARCHITECTURE.md`, "Triggers", "When it starts").
+
+On the owner's host, a first install raised a "Background Items Added" notice, and Login Items
+then listed the job ([S1 report](https://github.com/williacj/rigger/issues/744#issuecomment-6390300670), Q-k3).
+
+The job writes its standard output to `~/Library/Logs/rigger/rigger.out`, and its standard error
+to `~/Library/Logs/rigger/rigger.err`. Make no directory for them. The S1 report judges, from
+timing and mode, that launchd makes a missing one itself (Q-m2).
+
+To unload the label, run `launchctl bootout gui/<uid>/com.williacj.rigger`. It exits 0 for a
+loaded label, and step 4's `print` then exits 113 (S2 report, Q-o1 and Q-o2). To unload it for
+good, run that `bootout`, then remove `~/Library/LaunchAgents/com.williacj.rigger.plist`.
+
 ## Configuration
 
 One config file names the repository, the board, the column display names, the provider and model
