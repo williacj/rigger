@@ -1679,6 +1679,30 @@ test('once ignores closed cards without a kind or carrying the epic label while 
   }
 });
 
+test('once prints each closer in the words it printed at #944\'s head, and those words are written in one function under src/', async () => {
+  // The words are written out by hand, as `once` printed them at a4edcfb, so a change to the one
+  // function `doctor` and `plan` now share with `once` shows here as a change to `once`'s output.
+  const ran = once({ items: [REFUSED, card(12, 'Ready')] }, { prepare: ({ consumer }) => {
+    const state = join(consumer, '.rigger');
+    seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' }));
+    seed(state, 'hold-b2.json', closerText({ reason: 'environment hold' }));
+  } });
+
+  assert.equal(ran.code, 0, ran.err);
+  const lines = ran.out.split('\n').filter(Boolean);
+  assert.deepEqual(lines.filter((line) => line.startsWith('rigger once: admission')).sort(), [
+    `rigger once: admission is closed by hold: environment hold; time ${TIME}`,
+    `rigger once: admission is closed by owner: owner pause; time ${TIME}`,
+  ], ran.out);
+  assert.equal(lines.length, 3, ran.out);
+  assert.match(lines[2], /^ {2}refuse {2}#11 {2}missing acceptance/, ran.out);
+
+  const sources = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory()
+    ? sources(join(dir, entry.name)) : entry.name.endsWith('.mjs') ? [join(dir, entry.name)] : []));
+  const writing = sources(join(root, 'src')).filter((file) => readFileSync(file, 'utf8').includes('admission is closed by'));
+  assert.deepEqual(writing.map((file) => file.slice(root.length + 1)), ['src/cli/doctor.mjs']);
+});
+
 // proves R-SCHED-27
 test('once leaves every status-labelled table row unclaimed with no writes, dispatch or directory removal', SETTLES_WITHIN, async () => {
   const directory = temporaryDirectory('rigger-once-status-');
