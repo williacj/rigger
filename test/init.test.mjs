@@ -9,6 +9,7 @@ import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync,
 import { chmodSync, lstatSync, readlinkSync, realpathSync, statSync, symlinkSync } from 'node:fs';
 import { join, dirname, isAbsolute, relative, sep } from 'node:path';
 import { resolve } from 'node:path';
+import { platform } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { PLACEHOLDER, validate } from '../src/config/validate.mjs';
@@ -1926,4 +1927,17 @@ test('where the package it is handed records no commit, init writes every other 
     assert.equal(why.length, 1, `${name}: ${ran.text}`);
     assert.match(why[0], /^did not fork `\.github\/workflows\/rigger-gate\.yml`, because the Rigger package records no commit to pin it to: /, name);
   }
+});
+
+test('the filled launchd template parses as an XML property list on macOS', { skip: platform() !== 'darwin' && 'plutil is a macOS host check' }, () => {
+  const template = readFileSync(join(TEMPLATES, 'launchd', 'com.williacj.rigger.plist'), 'utf8');
+  const replacements = {
+    __RIGGER__: '/installed/rigger', __REPOSITORY__: '/repository', __PATH__: '/usr/bin:/bin',
+    __HOME__: '/Users/owner', __START_INTERVAL__: '60', __EXIT_TIMEOUT__: '150',
+  };
+  const filled = Object.entries(replacements).reduce((text, [name, value]) => text.replaceAll(name, value), template);
+  const file = join(temporaryDirectory('rigger-launchd-filled-'), 'job.plist');
+  writeFileSync(file, filled);
+  const result = spawnSync('plutil', ['-lint', file], { encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
 });
