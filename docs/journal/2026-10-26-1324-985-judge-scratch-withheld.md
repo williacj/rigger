@@ -77,4 +77,3 @@ Base `069c200`, through `suite-slot.sh 985-maker -- npm test` before any change:
 ## Left out
 
 `rigger run` says a judge withheld for its scratch directory "was not dispatched, because its directory could not be made: …". The text after the colon names the scratch directory. `src/cli/once.mjs` is outside this card's "Lands in", so the wording stays as it is.
-

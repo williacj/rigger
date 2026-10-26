@@ -777,7 +777,7 @@ test('L2 is handed a judge\'s scratch directory not made apart from one refused 
 });
 
 // proves R-FAIL-7
-test('a judge whose adapter rejects its invocation after its scratch directory was made is not withheld for its scratch directory, and its outcome is a dispatch that did not start', SETTLES_WITHIN, async () => {
+test('a judge whose adapter rejects its invocation is not withheld as a judge whose scratch directory was not made, since its scratch directory was made, and its outcome is a dispatch that did not start', SETTLES_WITHIN, async () => {
   const roles = { ...config.roles, reviewer: { ...config.roles.reviewer, agent: '../outside/reviewer.md' } };
   let path;
   const world = spoiledWorld({ roles, spoil: (made, role) => { path = join(made.scratch, role); } });
@@ -793,7 +793,7 @@ test('a judge whose adapter rejects its invocation after its scratch directory w
 });
 
 // proves R-FAIL-7
-test('a judge\'s scratch directory refused under R-WORK-26 is not withheld, and its outcome is a dispatch that did not start', SETTLES_WITHIN, async () => {
+test('a judge\'s scratch directory refused under R-WORK-26 is not withheld as a judge\'s scratch directory not made, and its outcome is a dispatch that did not start', SETTLES_WITHIN, async () => {
   const world = spoiledWorld({ spoil: (made, role) => {
     mkdirSync(made.scratch, { recursive: true });
     writeFileSync(join(made.scratch, role), 'kept\n');
