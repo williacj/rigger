@@ -5,12 +5,12 @@ import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import childProcess, { spawnSync } from 'node:child_process';
 import { syncBuiltinESMExports } from 'node:module';
+import cryptoModule from 'node:crypto';
 import * as fs from 'node:fs';
+import fsModule from 'node:fs';
 import { chmodSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-import { parse } from 'acorn';
 
 import { pause } from '../src/cli/pause.mjs';
 import { recording } from '../src/cli/recording.mjs';
@@ -40,9 +40,11 @@ const REASON = "the owner's pause";
 
 /**
  * A scratch repository under the test's temporary directory, holding no `rigger.config.mjs`, by
- * its real path, which is the path the verbs resolve and print.
+ * its real path as the verbs resolve and print it: `realpathSync.native`, which `real` in
+ * `src/cli/doctor.mjs` reads, and which spells each name as the file system holds it where the
+ * temporary directory is spelled in another case.
  */
-const scratch = () => realpathSync(repositoryIn('rigger-pause-resume-'));
+const scratch = () => realpathSync.native(repositoryIn('rigger-pause-resume-'));
 
 /** The state directory of repository `repository`. */
 const stateIn = (repository) => join(repository, '.rigger');
@@ -251,13 +253,29 @@ test('resume over owner and hold closers removes every one, prints each and exit
 });
 
 /** A resume over an open admission, its directory as `prepare` leaves it. */
+/**
+ * The admission directory of `repository` as it stands: `absent`, or every entry in it by name and
+ * bytes, so two readings are equal only where nothing was added, removed or rewritten.
+ */
+const admissionNow = (repository) => {
+  const directory = admissionOf(stateIn(repository));
+  return fs.existsSync(directory) ? picture(directory) : 'absent';
+};
+
+/**
+ * A resume over an open admission, its directory as `prepare` leaves it. The defect it catches,
+ * beyond the words and the exit, is a resume that changes admission while saying it was open, a
+ * closer added among them.
+ */
 const resumeOpen = (prepare) => async () => {
   const repository = scratch();
   prepare(repository);
+  const before = admissionNow(repository);
   const { text, code } = await ran(resume, repository);
 
   assert.equal(code, 0, text);
   assert.match(text, /admission was already open/);
+  assert.deepEqual(admissionNow(repository), before);
 };
 
 // proves R-SCHED-4
@@ -337,7 +355,7 @@ test('resume where every closer it read was already gone at its removal removes 
 });
 
 // proves R-SCHED-4
-test('pause and resume, in a scratch repository with no rigger.config.mjs, act on its state directory and no longer answer "not yet implemented"', async () => {
+test('pause, in a scratch repository with no rigger.config.mjs, links its closer in that repository\'s state directory and no longer answers "not yet implemented"', async () => {
   // The defect this catches is a verb still unlanded, or one that refuses or looks elsewhere for
   // want of a config it does not need.
   const repository = scratch();
@@ -349,12 +367,21 @@ test('pause and resume, in a scratch repository with no rigger.config.mjs, act o
   const [closer] = closersIn(repository);
   assert.match(closer, /^owner-[0-9a-z]+\.json$/);
   assert.ok(paused.text.includes(entryIn(repository, closer)), paused.text);
+});
+
+// proves R-SCHED-4
+test('resume, in a scratch repository with no rigger.config.mjs, removes the closers in that repository\'s state directory and no longer answers "not yet implemented"', async () => {
+  // The same defect as the test above, for `resume`, over closers written by hand so that this
+  // test reaches `resume` whatever `pause` does.
+  const repository = scratch();
+  assert.equal(fs.existsSync(join(repository, 'rigger.config.mjs')), false);
+  seedClosers(repository);
 
   const resumed = await ran(resume, repository);
   assert.equal(resumed.code, 0, resumed.text);
   assert.doesNotMatch(resumed.text, /not yet implemented/);
   assert.deepEqual(closersIn(repository), []);
-  assert.ok(resumed.text.includes(entryIn(repository, closer)), resumed.text);
+  for (const name of Object.keys(SEEDED)) assert.ok(resumed.text.includes(entryIn(repository, name)), resumed.text);
 });
 
 // proves R-SCHED-4
@@ -421,42 +448,122 @@ test('resume makes no forge call', async () => {
   assert.deepEqual([...new Set(started)], ['git']);
 });
 
-/** Every import source and every other string literal in the module at `path`, parsed. */
-function literalsOf(path) {
-  const program = parse(readFileSync(join(root, path), 'utf8'), { ecmaVersion: 'latest', sourceType: 'module' });
-  const imports = program.body.filter((node) => node.type === 'ImportDeclaration').map((node) => node.source.value);
-  const sources = new Set(program.body.filter((node) => node.type === 'ImportDeclaration').map((node) => node.source));
-  const strings = [];
-  const visit = (node) => {
-    if (node === null || typeof node !== 'object') return;
-    if (Array.isArray(node)) { node.forEach(visit); return; }
-    if (node.type === 'Literal' && typeof node.value === 'string' && !sources.has(node)) strings.push(node.value);
-    if (node.type === 'TemplateElement') strings.push(node.value.cooked);
-    for (const [key, value] of Object.entries(node)) if (key !== 'loc') visit(value);
+/**
+ * Every call of a `node:fs` or `node:fs/promises` function made while `work` runs that names a
+ * path under `directory`, each with the stack it was made from. Each function is replaced on the
+ * module object and the ESM bindings are synced, so a static import, a namespace import and a
+ * dynamic `import()` made inside `work` all reach the replacement.
+ */
+async function fsCallsUnder(directory, work) {
+  const calls = [];
+  const replaced = [];
+  const names = (owner) => Object.keys(owner).filter((name) => /^[a-z]/.test(name) && typeof owner[name] === 'function');
+  const under = (argument) => {
+    const path = argument instanceof URL ? fileURLToPath(argument) : Buffer.isBuffer(argument) ? argument.toString() : argument;
+    return typeof path === 'string' && (path === directory || path.startsWith(`${directory}/`));
   };
-  visit(program);
-  return { imports, strings, identifiers: readFileSync(join(root, path), 'utf8') };
+  for (const owner of [fsModule, fsModule.promises]) {
+    for (const name of names(owner)) {
+      const original = owner[name];
+      owner[name] = function watched(...args) {
+        if (args.some(under)) {
+          const held = {};
+          Error.captureStackTrace(held, watched);
+          calls.push({ name, stack: held.stack });
+        }
+        return Reflect.apply(original, this, args);
+      };
+      replaced.push([owner, name, original]);
+    }
+  }
+  const limit = Error.stackTraceLimit;
+  Error.stackTraceLimit = Infinity;
+  syncBuiltinESMExports();
+  try {
+    await work();
+  } finally {
+    for (const [owner, name, original] of replaced) owner[name] = original;
+    syncBuiltinESMExports();
+    Error.stackTraceLimit = limit;
+  }
+  return calls;
 }
 
-/**
- * The check that verb `verb`'s module reaches `.rigger/admission/` only through the admission module
- * and draws no id. The defect it catches is the verb reading, linking, renaming or removing a
- * closer itself, which only the module does and records, or drawing a run or closer id rather than
- * taking the run `recording` hands it.
- */
-const throughTheModule = (verb) => () => {
-  const { imports, strings, identifiers } = literalsOf(`src/cli/${verb}.mjs`);
+/** The admission module's file, as a stack frame names it. */
+const MODULE = join(root, 'src', 'scheduling', 'admission.mjs');
 
-  for (const forbidden of ['fs', 'node:fs', 'fs/promises', 'node:fs/promises', 'crypto', 'node:crypto']) {
-    assert.ok(!imports.includes(forbidden), `${verb} imports ${forbidden}`);
-  }
-  assert.ok(imports.includes('../scheduling/admission.mjs'), imports.join(', '));
-  assert.deepEqual(strings.filter((each) => each.includes('admission/') || /^admission$/.test(each)), []);
-  assert.doesNotMatch(identifiers, /random(UUID|Bytes|Int)|admissionPath/);
+/**
+ * The check that `verb` reaches `.rigger/admission/` only through the admission module: every
+ * file system call naming a path there, made while the verb runs over `prepare`'s admission, was
+ * made from inside `src/scheduling/admission.mjs`. The defect it catches is a verb reading,
+ * listing, linking, renaming or removing a closer itself, by any import, static or dynamic.
+ */
+const throughTheModule = (verb, prepare) => async () => {
+  const repository = scratch();
+  prepare(repository);
+  let answer;
+  const calls = await fsCallsUnder(admissionOf(stateIn(repository)), async () => { answer = await ran(verb, repository); });
+
+  assert.equal(answer.code, 0, answer.text);
+  assert.ok(calls.length > 0, 'the verb reached no path under the admission directory, so this check read nothing');
+  const direct = calls.filter(({ stack }) => !stack.includes(MODULE));
+  assert.deepEqual(direct.map(({ name, stack }) => `${name}\n${stack}`), []);
 };
 
 // proves R-SCHED-4
-test('pause reaches .rigger/admission/ only through src/scheduling/admission.mjs, and draws no id of its own', throughTheModule('pause'));
+test('pause reaches .rigger/admission/ only through src/scheduling/admission.mjs', throughTheModule(pause, seedClosers));
 
 // proves R-SCHED-4
-test('resume reaches .rigger/admission/ only through src/scheduling/admission.mjs, and draws no id of its own', throughTheModule('resume'));
+test('resume reaches .rigger/admission/ only through src/scheduling/admission.mjs', throughTheModule(resume, seedClosers));
+
+/**
+ * What `work` answers while `node:crypto` draws known values: `randomBytes` answers `BYTES`, and
+ * each `randomUUID` the next of `RUNS`. Each draw is counted in the counts handed back beside it.
+ */
+async function knownDraws(work) {
+  const counts = { randomBytes: 0, randomUUID: 0 };
+  const { randomBytes, randomUUID } = cryptoModule;
+  cryptoModule.randomBytes = (size, ...rest) => {
+    counts.randomBytes += 1;
+    return rest.length > 0 ? randomBytes(size, ...rest) : Buffer.from(BYTES, 'hex').subarray(0, size);
+  };
+  cryptoModule.randomUUID = () => RUNS[counts.randomUUID++] ?? randomUUID();
+  syncBuiltinESMExports();
+  try {
+    return { answer: await work(), counts };
+  } finally {
+    Object.assign(cryptoModule, { randomBytes, randomUUID });
+    syncBuiltinESMExports();
+  }
+}
+
+/** The bytes every closer id is drawn from here, and the run ids `recording` draws, in order. */
+const BYTES = '937a'.repeat(8);
+const RUNS = ['00000000-0000-4000-8000-000000000937', '00000000-0000-4000-8000-000000000938'];
+
+// proves R-SCHED-4
+test('pause draws no id of its own: its closer carries the module\'s id and the run recording drew', async () => {
+  // The defect this catches is a pause that hands the module an id source or a run of its own,
+  // `Math.random` or a second `randomUUID` among them, rather than the module's id and the run
+  // `recording` hands it.
+  const repository = scratch();
+  const { answer, counts } = await knownDraws(() => ran(pause, repository));
+
+  assert.equal(answer.code, 0, answer.text);
+  assert.deepEqual(closersIn(repository), [`owner-${BYTES}.json`]);
+  const content = JSON.parse(readFileSync(entryIn(repository, `owner-${BYTES}.json`), 'utf8'));
+  assert.equal(content.run, RUNS[0]);
+  assert.deepEqual([...new Set(readEvents(stateIn(repository)).map((event) => event.run))], [RUNS[0]]);
+  assert.deepEqual(counts, { randomBytes: 1, randomUUID: 1 });
+});
+
+// proves R-SCHED-4
+test('resume draws no id of its own: its events carry the run recording drew, and nothing else is drawn', async () => {
+  const repository = scratch();
+  seedClosers(repository);
+  const { answer, counts } = await knownDraws(() => ran(resume, repository));
+
+  assert.equal(answer.code, 0, answer.text);
+  assert.deepEqual([...new Set(readEvents(stateIn(repository)).map((event) => event.run))], [RUNS[0]]);
+  assert.deepEqual(counts, { randomBytes: 0, randomUUID: 1 });
+});
