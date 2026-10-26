@@ -97,7 +97,7 @@ for (const name of ['once', 'run']) {
   });
 }
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('rigger run withholds a judge whose scratch directory was not made because the file system would not list it, pulls its card no more in that invocation, and the next invocation dispatches that judge again', { timeout: SETTLES_WITHIN }, (t) => {
   const here = world(t);
   // The card's scratch base sits beside the judges' directories under the worktree root.

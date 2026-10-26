@@ -95,7 +95,7 @@ test('L2 retries a maker dispatch that never started and holds it after the seco
   ]);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('L2 stops a card-local refusal on its first attempt and records its class', () => {
   const directory = temporaryDirectory('rigger-card-local-');
   const sink = openSink({ directory, run: 'r-card-local', now: Date.now });
@@ -204,7 +204,7 @@ function stopOf(failure, card) {
   return stop;
 }
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('L3 hands L2 the first workspace failure beside the second attempt', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace', { other: false });
   let first;
@@ -222,7 +222,7 @@ test('L3 hands L2 the first workspace failure beside the second attempt', SETTLE
   assert.equal(handed.workspace, first.workspace);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('L3 hands L2 the first workspace failure beside the second attempt of a run', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace', { other: false });
   let first;
@@ -239,7 +239,7 @@ test('L3 hands L2 the first workspace failure beside the second attempt of a run
   assert.deepEqual(handed, first);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('a continuing attempt whose workspace fetch fails twice answers hold at L1s current report', SETTLES_WITHIN, async () => {
   const card = cardIn(1, COLUMNS.review);
   const pull = pullFor(1);
@@ -266,7 +266,7 @@ test('a continuing attempt whose workspace fetch fails twice answers hold at L1s
   assert.deepEqual(recorded(built, 'L3', 'dispatch', (each) => each.role === 'engineer'), []);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('run does not pull again a card stopped for each card-local refusal or an out branch or root', SETTLES_WITHIN, async (t) => {
   for (const code of ['WORKSPACE_REFUSED', 'BRANCH_ELSEWHERE', 'SCRATCH_REFUSED', 'BRANCH_REFUSED', 'ROOT_NOT_ABSOLUTE']) {
     await t.test(code, async () => {
@@ -294,7 +294,7 @@ test('run does not pull again a card stopped for each card-local refusal or an o
   }
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('run stops one card-local refusal while another card is held for two workspace host failures', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace');
   const path = join(temporaryDirectory('rigger-card-local-beside-host-'), 'rigger-1');
@@ -311,7 +311,7 @@ test('run stops one card-local refusal while another card is held for two worksp
   assert.deepEqual(recorded(built, 'L2', 'attempt.decided', (each) => each.card === 2).map(({ decision }) => decision), ['again', 'hold']);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('a judge scratch refusal remains NOT_STARTED and causes no card stop', SETTLES_WITHIN, async () => {
   let built;
   const judgeDirectory = async (card, role, head) => {
@@ -331,7 +331,7 @@ test('a judge scratch refusal remains NOT_STARTED and causes no card stop', SETT
   assert.equal(readFileSync(join(built.scratch, 'workspaces', 'scratch', 'rigger-7', 'reviewer'), 'utf8'), 'kept\n');
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('two once invocations over the same board and state count the held card afresh', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace', { other: false });
   const first = await built.loop.pull(1).then(() => assert.fail('the first pull fulfilled'), (failure) => failure);
@@ -342,7 +342,7 @@ test('two once invocations over the same board and state count the held card afr
   assert.deepEqual(recorded(built, 'L2', 'attempt.decided').map(({ attempt, decision }) => [attempt, decision]), [[1, 'again'], [2, 'hold'], [1, 'again'], [2, 'hold']]);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('a held Ready card stays in Coding with only its claim move', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace', { other: false });
   await assert.rejects(built.loop.pull(1));
@@ -364,14 +364,14 @@ test('a held card records no escalation and writes no comment on its issue', SET
   assert.deepEqual(built.repository.held().issues[0].comments, []);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('a held card writes nothing under admission state', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace', { other: false });
   await assert.rejects(built.loop.pull(1));
   assert.equal(existsSync(join(built.directory, 'admission')), false);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('two cards that each fail once in the same host way each get another attempt and neither is held', SETTLES_WITHIN, async () => {
   const root = temporaryDirectory('rigger-two-retries-');
   const making = makingWorkspaces(root);
@@ -393,7 +393,7 @@ test('two cards that each fail once in the same host way each get another attemp
   assert.equal(built.decisions.some(({ answer }) => answer.action === 'hold'), false);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('a card still holds for two matching host failures beside a card whose maker succeeds', SETTLES_WITHIN, async () => {
   const { built, failure } = await runFailure('workspace');
 
@@ -536,7 +536,7 @@ function unlisted(t, base, role) {
   return path;
 }
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('L1 reports a judge\'s scratch directory not made, whose contents the file system would not list, as a dispatch that did not start naming that directory as missing', SETTLES_WITHIN, async (t) => {
   const placed = layout(t);
   const path = unlisted(t, placed.base, 'reviewer');
@@ -548,7 +548,7 @@ test('L1 reports a judge\'s scratch directory not made, whose contents the file 
   assert.ok(failure.message.includes(path), failure.message);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('L1 reports neither a judge\'s scratch directory refused under R-WORK-26 nor an invocation its adapter rejected as a judge\'s scratch directory not made', SETTLES_WITHIN, async (t) => {
   const placed = layout(t);
   mkdirSync(placed.base, { recursive: true });
@@ -624,7 +624,7 @@ function withheldOnce(built, failure, path) {
   assert.equal(failure, undefined, failure?.stack);
 }
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('run withholds a judge whose scratch directory was not made because the file system would not list it, and pulls its card no more in that invocation', SETTLES_WITHIN, async (t) => {
   let path;
   const world = spoiledWorld({ spoil: (made, role) => { path = unlisted(t, made.scratch, role); } });
@@ -634,7 +634,7 @@ test('run withholds a judge whose scratch directory was not made because the fil
   withheldOnce(world.built, failure, path);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('run withholds a judge whose scratch directory was not made because the file system answered EACCES on its scratch base', SETTLES_WITHIN, async (t) => {
   let path;
   const world = spoiledWorld({ spoil: (made, role) => {
@@ -650,7 +650,7 @@ test('run withholds a judge whose scratch directory was not made because the fil
   assert.ok(recorded(world.built, 'L2', 'judge.withheld')[0].reason.includes('EACCES'));
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('run withholds a judge whose scratch directory was not made because the file system answered an error to its mkdir', SETTLES_WITHIN, async (t) => {
   let path;
   const world = spoiledWorld({ spoil: (made, role) => {
@@ -668,7 +668,7 @@ test('run withholds a judge whose scratch directory was not made because the fil
   assert.ok(recorded(world.built, 'L2', 'judge.withheld')[0].reason.includes('mkdir'));
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('run withholds a judge whose scratch directory was not made because its scratch base lies on a path the file system cannot resolve', SETTLES_WITHIN, async () => {
   let path;
   const world = spoiledWorld({ spoil: (made, role) => {
@@ -684,7 +684,7 @@ test('run withholds a judge whose scratch directory was not made because its scr
   assert.ok(recorded(world.built, 'L2', 'judge.withheld')[0].reason.includes('ELOOP'));
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('run withholds a judge whose scratch directory was not made because git\'s worktree listing for the R-WORK-29 check ran past its time', SETTLES_WITHIN, async (t) => {
   const stand = holding(t);
   fixture(stand, 'git', [
@@ -712,7 +712,7 @@ test('run withholds a judge whose scratch directory was not made because git\'s 
   assert.ok(recorded(world.built, 'L2', 'judge.withheld')[0].reason.includes(`ran past its timeout of ${GIT_TIMEOUT} ms`));
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('run dispatches a judge whose scratch directory was made, as it did before a judge\'s scratch directory not made was withheld', SETTLES_WITHIN, async () => {
   const world = spoiledWorld();
 
@@ -725,7 +725,7 @@ test('run dispatches a judge whose scratch directory was made, as it did before 
   assert.equal(recorded(world.built, 'L1', 'dispatch.end', (each) => each.dispatch === starts[0].dispatch)[0]?.exit, 0);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('of two judges, run withholds the one whose scratch directory was not made and keeps the other\'s verdict', SETTLES_WITHIN, async (t) => {
   let path;
   const world = spoiledWorld({ judges: ['reviewer', 'architect'], spoil: (made, role) => {
@@ -743,7 +743,7 @@ test('of two judges, run withholds the one whose scratch directory was not made 
   assert.equal(recorded(world.built, 'L3', 'pull', (each) => each.card === 7).length, 1);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('L3 carries a judge withheld because its scratch directory was not made among none of the judges it dispatched, as it carries one withheld for its directory', SETTLES_WITHIN, async (t) => {
   const world = spoiledWorld({ judges: ['reviewer', 'architect'], spoil: (made, role) => {
     if (role === 'reviewer') unlisted(t, made.scratch, role);
@@ -754,7 +754,7 @@ test('L3 carries a judge withheld because its scratch directory was not made amo
   assert.deepEqual(reached.judges.map(({ role, outcome }) => [role, outcome?.status, outcome?.value?.exit]), [['architect', 'fulfilled', 0]], JSON.stringify(reached.judges));
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('L2 is handed a judge\'s scratch directory not made apart from one refused under R-WORK-26 and one whose dispatch never started for another cause, and withholds only the first', SETTLES_WITHIN, async (t) => {
   let path;
   const roles = { ...config.roles, pm: { ...config.roles.pm, agent: '../outside/pm.md' } };
@@ -776,7 +776,7 @@ test('L2 is handed a judge\'s scratch directory not made apart from one refused 
   assert.deepEqual(withheldOf(world.built), [{ role: 'reviewer', missing: path, classed: 'environment' }]);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('a judge whose adapter rejects its invocation is not withheld as a judge whose scratch directory was not made, since its scratch directory was made, and its outcome is a dispatch that did not start', SETTLES_WITHIN, async () => {
   const roles = { ...config.roles, reviewer: { ...config.roles.reviewer, agent: '../outside/reviewer.md' } };
   let path;
@@ -792,7 +792,7 @@ test('a judge whose adapter rejects its invocation is not withheld as a judge wh
   assert.deepEqual(withheldOf(world.built), []);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('a judge\'s scratch directory refused under R-WORK-26 is not withheld as a judge\'s scratch directory not made, and its outcome is a dispatch that did not start', SETTLES_WITHIN, async () => {
   const world = spoiledWorld({ spoil: (made, role) => {
     mkdirSync(made.scratch, { recursive: true });
@@ -806,7 +806,7 @@ test('a judge\'s scratch directory refused under R-WORK-26 is not withheld as a 
   assert.deepEqual(withheldOf(world.built), []);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('for a judge withheld because its scratch directory was not made, L2 answers neither again nor hold', SETTLES_WITHIN, async (t) => {
   const world = spoiledWorld({ spoil: (made, role) => { unlisted(t, made.scratch, role); } });
 
@@ -818,7 +818,7 @@ test('for a judge withheld because its scratch directory was not made, L2 answer
   assert.deepEqual(recorded(world.built, 'L2', 'attempt.decided', (each) => each.card === 7), []);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('after an invocation withholding a judge whose scratch directory was not made, admission stays open', SETTLES_WITHIN, async (t) => {
   const world = spoiledWorld({ spoil: (made, role) => { unlisted(t, made.scratch, role); } });
 
@@ -829,7 +829,7 @@ test('after an invocation withholding a judge whose scratch directory was not ma
   assert.deepEqual(state, { state: 'open' });
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('the invocation after one that withheld a judge whose scratch directory was not made dispatches that judge again', SETTLES_WITHIN, async (t) => {
   let spoiling = true;
   const world = spoiledWorld({ spoil: (made, role) => {

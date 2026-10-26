@@ -134,7 +134,7 @@ export function judgeAnswer(card, kinds, epicLabel, { roles = {}, provisioning =
  * `outcome` may instead be L1's report that the judge's dispatch did not start. Where that report
  * names the judge's scratch directory as `missing`, L1 could not make it for a host cause, and L2
  * withholds the judge as for its directory, its event naming the scratch directory as `scratch`
- * (`R-FAIL-7`; U43). Any other such report, a scratch directory refused under `R-WORK-26` or a
+ * (`R-FAIL-8`; U43). Any other such report, a scratch directory refused under `R-WORK-26` or a
  * dispatch that never started for another cause, withholds nothing, and the judge's outcome stands.
  * Any other outcome is no such failure, so L2 answers no action for it, naming the card and the role.
  */

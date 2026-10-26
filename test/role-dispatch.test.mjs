@@ -705,7 +705,7 @@ async function assertScratchRefused({ root, directory, cwd, state, sink }, base,
   return failure;
 }
 
-// proves R-FAIL-7, R-WORK-26, R-WORK-27, R-WORK-28, R-WORK-29
+// proves R-FAIL-8, R-WORK-26, R-WORK-27, R-WORK-28, R-WORK-29
 test('each answered maker scratch refusal names the exact condition that rejected its path', SETTLES_WITHIN, async (t) => {
   for (const [condition, place] of [
     ['R-WORK-27', ({ path }) => writeFileSync(path, 'not a directory\n')],
@@ -726,7 +726,7 @@ test('each answered maker scratch refusal names the exact condition that rejecte
   }
 });
 
-// proves R-FAIL-7, R-WORK-26, R-WORK-27
+// proves R-FAIL-8, R-WORK-26, R-WORK-27
 test('the maker scratch refusal is reported apart from a dispatch that never started', async (t) => {
   const placed = layout(t);
   const path = join(placed.scratch, 'engineer');
