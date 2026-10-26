@@ -25,7 +25,7 @@ Causes that pass by themselves take U43's outcome. Whether a judge's next dispat
 card's second attempt goes to the owner as an open question.
 
 Open cards whose bodies cite the literal `R-FAIL-7` when the head was pushed, by an exact match
-over the bodies of all 33 open issues: #961 and #964. The PM retargets a card body only where its
+over the bodies of all 32 open issues: #961 and #964. The PM retargets a card body only where its
 acceptance turns on the added rows.
 
 What taught us: the architect's attack read a judge's adapter directory as outside the judge's
