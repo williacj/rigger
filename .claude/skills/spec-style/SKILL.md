@@ -97,7 +97,8 @@ sentence introducing it defines. A term that is neither fails.
   finding, and so is a sentence past the ceiling, in a paragraph or a cell alike. Rules 3 and 4
   ask whether an actor matters and whether a structure fits its meaning. Those are judgments, so
   they hold because an author applies them and a reviewer reads for them. Rule 5 asks who owns a
-  fact, and holds the same way.
+  fact, and holds the same way. The lint's `--hints` option gives advisory hints for rules 4
+  and 5, which hold by judgment still.
 
 ## Before you hand it off
 

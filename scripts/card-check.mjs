@@ -1,12 +1,13 @@
 // ABOUTME: An author's check of a card body before filing: a new requirement id with no line naming
-// a claim, and spec-style findings inside a pinned `markdown` fence. It refuses no card.
+// a claim, and spec-style findings inside a pinned `markdown` fence, with its advisory hints apart.
+// It refuses no card.
 
 import { readFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { idRows, retiredIds } from './duplicate-id-check.mjs';
-import { findings, ruledOutTerms, sentenceCeiling } from './spec-style-lint.mjs';
+import { findings, hints, ruledOutTerms, sentenceCeiling } from './spec-style-lint.mjs';
 
 const REQUIREMENTS = 'docs/spec/requirements.md';
 const RETIRED = ['docs/spec/requirements-retired.md', 'docs/spec/decisions-retired.md'];
@@ -79,6 +80,7 @@ export function inputs(root) {
 /**
  * What the body holds: each new id, with the first line naming it and the first line covering it,
  * and each finding the lint makes in a pinned fence, its line moved to the body line it falls on.
+ * The advisory hints the lint gives on pinned text come apart from those findings, moved the same way.
  */
 export function check(body, root, { allocated, rules } = inputs(root)) {
   const lines = body.split(SPLIT);
@@ -91,9 +93,9 @@ export function check(body, root, { allocated, rules } = inputs(root)) {
       named.set(id, entry);
     }
   });
-  const pinnedFindings = fences(lines).filter(pinned).flatMap((fence) =>
-    findings(fence.content.join('\n'), rules).map((one) => ({ ...one, line: one.line + fence.at + 1 })));
-  return { ids: [...named.values()], pinned: pinnedFindings };
+  const moved = (read) => fences(lines).filter(pinned).flatMap((fence) =>
+    read(fence.content.join('\n')).map((one) => ({ ...one, line: one.line + fence.at + 1 })));
+  return { ids: [...named.values()], pinned: moved((text) => findings(text, rules)), hints: moved(hints) };
 }
 
 /**
@@ -132,6 +134,9 @@ export function main(args, { out: print = console.log, err = console.error } = {
     print(`line ${line}  ${why} in pinned text: ${text}`);
   }
   print(count ? `${count} findings` : 'nothing found');
+  // A hint is advisory, so it prints after the count it is no part of and leaves the exit alone.
+  if (result.hints.length) print('advisory hints, for rules 4 and 5, which hold by judgment:');
+  for (const { line, rule, text } of result.hints) print(`  line ${line}  rule ${rule}: ${text}`);
   return count ? 1 : 0;
 }
 

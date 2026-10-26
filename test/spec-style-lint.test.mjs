@@ -17,6 +17,7 @@ import {
   sentences,
 } from '../scripts/spec-style-lint.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { hints } from '../scripts/spec-style-lint.mjs';
 
 const repository = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -366,4 +367,153 @@ test('the skill states as many rules as it holds', () => {
   assert.deepEqual(held, held.map((_, index) => index + 1), `the rule sections run ${held}`);
   assert.ok(counted.length > 0, 'the skill states no number of rules for the sections to match');
   assert.deepEqual(counted, counted.map(() => held.length), `${held.length} sections, counted ${counted}`);
+});
+
+// --- advisory hints for rules 4 and 5: pointers an author reads before a judge does ---
+
+/** The rule and line of each hint `hints` gives on `text`. */
+const hinted = (text) => hints(text).map(({ rule, line }) => ({ rule, line }));
+
+test('a prose sentence of four steps joined by three `then` is a rule 4 hint', () => {
+  const prose = 'The engine pulls, then dispatches, then judges, then merges.\n';
+  assert.deepEqual(hinted(prose), [{ rule: 4, line: 1 }]);
+  // Two occurrences are three steps, which rule 4 leaves to prose.
+  assert.deepEqual(hinted('The engine pulls, then dispatches, then judges.\n'), []);
+});
+
+test('a prose sentence with three conditions is a rule 4 hint', () => {
+  const prose = 'The engine merges if the gate is green, unless a hold is set, where the owner allows it.\n';
+  assert.deepEqual(hinted(prose), [{ rule: 4, line: 1 }]);
+  // Two conditions are below the threshold.
+  assert.deepEqual(hinted('The engine merges if the gate is green, unless a hold is set.\n'), []);
+});
+
+test('a sentence opening `Where` with two more conditions, one of them `and where`, is a rule 4 hint', () => {
+  // `Where` counts case-blind, and `and where` counts once: three conditions, not four.
+  const prose = 'Where a card is open, and where its judge is idle, the engine dispatches it if the board allows.\n';
+  assert.deepEqual(hinted(prose), [{ rule: 4, line: 1 }]);
+  // Without the `if`, `Where` and `and where` are two conditions, so `and where` did not count twice.
+  assert.deepEqual(hinted('Where a card is open, and where its judge is idle, the engine dispatches it.\n'), []);
+});
+
+test('a table cell with three conditions is a rule 4 hint naming its line and its row', () => {
+  const table = [
+    '| id | requirement |',
+    '|---|---|',
+    '| R-LOOP-1 | The engine merges if the gate is green, unless a hold is set, where the owner allows it. |',
+    '',
+  ].join('\n');
+  assert.deepEqual(hints(table).map(({ rule, line, row }) => ({ rule, line, row })), [{ rule: 4, line: 3, row: 'R-LOOP-1' }]);
+});
+
+test('a list item with four steps joined by `then` gives no hint', () => {
+  // A list is rule 4's answer already, so the hint leaves a list item alone.
+  const list = '- The engine pulls, then dispatches, then judges, then merges.\n';
+  assert.deepEqual(hints(list), []);
+  // The same words as prose are hinted, so the list form is what the item escapes by.
+  assert.equal(hints(list.slice(2)).length, 1);
+});
+
+test('fenced code gives no hint', () => {
+  const fenced = [
+    '```',
+    'The engine pulls, then dispatches, then judges, then merges.',
+    '| R-LOOP-1 | It merges if green, unless held, where allowed. |',
+    '```',
+    '',
+  ].join('\n');
+  assert.deepEqual(hints(fenced), []);
+});
+
+test('a sentence citing `R-SCHED-17` with one double-quoted run of eight or more words is a rule 5 hint', () => {
+  const straight = 'R-SCHED-17 says "the engine claims one card at a time per slot".\n';
+  assert.deepEqual(hinted(straight), [{ rule: 5, line: 1 }]);
+  const curly = '`R-SCHED-17` says “the engine claims one card at a time per slot”.\n';
+  assert.deepEqual(hinted(curly), [{ rule: 5, line: 1 }]);
+});
+
+test('a sentence citing a `D#` or a backticked path with a long quoted run is a rule 5 hint too', () => {
+  assert.deepEqual(hinted('D25 says "the engine never dispatches a card that changes a listed path".\n'), [{ rule: 5, line: 1 }]);
+  assert.deepEqual(hinted('`scripts/card-check.mjs` says "it refuses no card, and prints what it finds".\n'), [{ rule: 5, line: 1 }]);
+});
+
+test('a sentence citing `R-SCHED-17` whose quoted runs are each under eight words gives no hint', () => {
+  // Two runs of seven words make fourteen together, so the runs are measured one at a time.
+  const prose = 'R-SCHED-17 says "the engine claims one card per slot" and "the judge reads one pull request".\n';
+  assert.deepEqual(hints(prose), []);
+});
+
+test('a sentence whose only quoted run is a long section name, with no id or path, gives no hint', () => {
+  const prose = 'Read "Who hands to you, and who picks up from you" before you start.\n';
+  assert.deepEqual(hints(prose), []);
+});
+
+/** A repository holding the fixture skill and the three root documents, `files` replacing any. */
+function repositoryOf(files) {
+  const root = temporaryDirectory('rigger-hints-');
+  mkdirSync(join(root, '.claude', 'skills', 'spec-style'), { recursive: true });
+  mkdirSync(join(root, 'docs', 'spec'), { recursive: true });
+  const all = {
+    '.claude/skills/spec-style/SKILL.md': SKILL,
+    'README.md': 'The engine runs the loop.\n',
+    'ARCHITECTURE.md': 'Eight layers, each with one job.\n',
+    'docs/spec/decisions.md': 'A decision was chosen.\n',
+    ...files,
+  };
+  for (const [path, text] of Object.entries(all)) writeFileSync(join(root, path), text);
+  return root;
+}
+
+/** Runs the lint as `npm run lint:spec-style -- ...args` does. */
+const lintWith = (...args) =>
+  spawnSync(process.execPath, [join(repository, 'scripts', 'spec-style-lint.mjs'), ...args], { encoding: 'utf8' });
+
+test('`--hints` prints each hint with its path, its line and its rule', () => {
+  const root = repositoryOf({
+    'README.md': '# Rigger\n\nThe engine pulls, then dispatches, then judges, then merges.\n',
+    'docs/spec/decisions.md': '# Decisions\n\nIntro.\n\nD25 says "the engine never dispatches a card that changes a listed path".\n',
+  });
+  const run = lintWith('--hints', root);
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /^README\.md:3 {2}rule 4 hint\n {8}The engine pulls, then dispatches, then judges, then merges\.$/m);
+  assert.match(run.stdout, /^docs\/spec\/decisions\.md:5 {2}rule 5 hint\n {8}D25 says/m);
+  assert.match(run.stdout, /^ +2 {2}hints\b/m);
+});
+
+test('the usage line names `--hints`, and a root path is still read as the positional argument', () => {
+  const refused = lintWith('--hint');
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /^usage: .*\[--hints\] \[root\]$/m);
+  // The root is read wherever it stands beside the option, and alone as before.
+  const root = repositoryOf({ 'README.md': `${sentenceOf(41)}\n` });
+  for (const args of [[root], ['--hints', root], [root, '--hints']]) {
+    const run = lintWith(...args);
+    assert.equal(run.status, 1, `${args}: ${run.stderr}`);
+    assert.match(run.stderr, /^README\.md:1 {2}sentence of 41 words$/m, `${args}`);
+  }
+});
+
+test('`--hints` gives no hint on a retired register', () => {
+  const root = repositoryOf({
+    'docs/spec/decisions-retired.md': '# Retired\n\nThe engine pulls, then dispatches, then judges, then merges.\n',
+  });
+  const run = lintWith('--hints', root);
+  assert.equal(run.status, 0, run.stderr);
+  assert.doesNotMatch(run.stdout, /decisions-retired|hint\n/);
+  assert.match(run.stdout, /^ +0 {2}hints\b/m);
+});
+
+test('a hint on a binding document is printed under `--hints`, and the exit is what it is without one', () => {
+  const steps = 'The engine pulls, then dispatches, then judges, then merges.';
+  const clean = repositoryOf({ 'README.md': `${steps}\n` });
+  const plain = lintWith(clean);
+  const hinted = lintWith('--hints', clean);
+  assert.equal(plain.status, 0, plain.stderr);
+  assert.equal(hinted.status, 0, hinted.stderr);
+  assert.doesNotMatch(plain.stdout, /hint/);
+  assert.match(hinted.stdout, /^README\.md:1 {2}rule 4 hint$/m);
+  // A finding beside the hint still fails the lint, with the option or without it.
+  const failing = repositoryOf({ 'README.md': `${steps}\n\n${sentenceOf(41)}\n` });
+  assert.equal(lintWith(failing).status, 1);
+  assert.equal(lintWith('--hints', failing).status, 1);
 });
