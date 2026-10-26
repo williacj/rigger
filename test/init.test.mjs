@@ -1940,4 +1940,17 @@ test('the filled launchd template parses as an XML property list on macOS', { sk
   writeFileSync(file, filled);
   const result = spawnSync('plutil', ['-lint', file], { encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr || result.stdout);
+  const parsed = spawnSync('plutil', ['-convert', 'json', '-o', '-', file], { encoding: 'utf8' });
+  assert.equal(parsed.status, 0, parsed.stderr || parsed.stdout);
+  assert.deepEqual(JSON.parse(parsed.stdout), {
+    Label: 'com.williacj.rigger',
+    ProgramArguments: ['/installed/rigger', 'run'],
+    WorkingDirectory: '/repository',
+    StartInterval: 60,
+    RunAtLoad: true,
+    ExitTimeOut: 150,
+    EnvironmentVariables: { PATH: '/usr/bin:/bin' },
+    StandardOutPath: '/Users/owner/Library/Logs/rigger/rigger.out',
+    StandardErrorPath: '/Users/owner/Library/Logs/rigger/rigger.err',
+  });
 });
