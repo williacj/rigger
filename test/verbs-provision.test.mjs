@@ -15,7 +15,7 @@ import { run } from '../src/cli/run.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { repositoryAt, withOrigin } from './git-repository.mjs';
-import { fixture, GIT, scratch, withFirstOnPath } from './process-fixtures.mjs';
+import { fixture, GIT, gitUnansweredAdd, scratch, withFirstOnPath } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { standInAgent } from './stub-claude.mjs';
 
@@ -61,7 +61,7 @@ const ONE_STEP = { steps: { ready: { run: 'true', required: true } }, listed: ['
  * given, with this file's stand-in agent first on PATH, the maker every claimed card runs as, and
  * the fake `gh` after it.
  */
-function world(t, { items, concurrency = 3, steps = ONE_STEP.steps, listed = ONE_STEP.listed, worktrees = template.worktrees }, directory = scratch(t)) {
+function world(t, { items, concurrency = 3, steps = ONE_STEP.steps, listed = ONE_STEP.listed, worktrees = template.worktrees, gitDirectory }, directory = scratch(t)) {
   const kinds = Object.fromEntries(Object.entries(template.kinds).map(([name, kind]) => [name, { ...kind, provisioning: name === 'change' ? listed : [] }]));
   const config = { ...template, repo: REPO, board: { ...template.board, project: PROJECT }, concurrency, worktrees, kinds, provisioning: steps };
   const target = withOrigin(repositoryAt(join(directory, 'target'), { 'rigger.config.mjs': `export default ${JSON.stringify(config)};\n` }), join(directory, 'origin.git'));
@@ -69,7 +69,7 @@ function world(t, { items, concurrency = 3, steps = ONE_STEP.steps, listed = ONE
   const fake = installFakeGh(join(directory, 'fake'), {
     repo: REPO, project: PROJECT, board: { columns: Object.values(template.board.columns), fields: [{ name: template.board.priority.field, options: template.board.priority.options }], items },
   });
-  const env = { ...process.env, PATH: [agent.dir, join(directory, 'fake'), process.env.PATH].join(delimiter) };
+  const env = { ...process.env, PATH: [agent.dir, join(directory, 'fake'), gitDirectory, process.env.PATH].filter(Boolean).join(delimiter) };
   const verb = (name, cwd = target) => {
     const ran = spawnSync(process.execPath, [bin, name], { cwd, encoding: 'utf8', env, timeout: SETTLES_WITHIN, killSignal: 'SIGKILL' });
     assert.equal(ran.error, undefined);
@@ -178,15 +178,18 @@ test('given a required step that exits non-zero on both attempts, rigger once pr
   }
 });
 
-/** Makes a plain directory at the workspace path card `number` derives in `here`, which L1 refuses to replace. */
-function blocked(here, number) {
-  mkdirSync(derived(here, number), { recursive: true });
-  return derived(here, number);
+/** A world where git gives no answer while L1 adds card 10's workspace twice. */
+function unansweredWorkspaceWorld(t, items) {
+  const directory = scratch(t);
+  const stand = join(directory, 'unanswered-git');
+  mkdirSync(stand);
+  gitUnansweredAdd(stand, 'rigger-10', 2);
+  return world(t, { items, gitDirectory: stand }, directory);
 }
 
 test('given a workspace that cannot be made on either attempt, rigger once prints both attempts\' failures, each naming the workspace path, and exits non-zero', (t) => {
-  const here = world(t, { items: [card(10)] });
-  const path = blocked(here, 10);
+  const here = unansweredWorkspaceWorld(t, [card(10)]);
+  const path = derived(here, 10);
 
   const ran = here.verb('once');
 
@@ -495,8 +498,8 @@ test('in that case, rigger run fires no second pull after that card\'s slot is r
 });
 
 test('given a workspace that cannot be made on either attempt of a card rigger run claimed, rigger run prints both failures for that card and fires no second pull after its slot is released', async (t) => {
-  const here = world(t, { items: FOUR });
-  const path = blocked(here, 10);
+  const here = unansweredWorkspaceWorld(t, FOUR);
+  const path = derived(here, 10);
 
   const ran = here.verb('run');
 

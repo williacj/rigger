@@ -27,6 +27,11 @@ export const GIT_TIMEOUT = 300_000;
  */
 export const FETCH_TRIES = 3;
 
+/** Causes L0 can distinguish while verifying a continuing line of work. */
+export const LINE_MOVED = 'FORGE_LINE_MOVED';
+export const LINE_DELETED = 'FORGE_LINE_DELETED';
+export const FETCH_FAILED = 'FORGE_FETCH_FAILED';
+
 /**
  * Git's words for a fetch another process's fetch beat to a remote-tracking ref, and the ref.
  *
@@ -173,10 +178,10 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
   const lineHead = async (branch) => {
     const ref = `refs/heads/${branch}`;
     const result = await call(['ls-remote', '--exit-code', ORIGIN, ref]);
-    if (result.exit === 2 && !result.timedOut) throw new Error(`${ORIGIN}'s ${ref} was deleted`);
-    if (result.exit !== 0 || result.timedOut) throw failed(git, result, timeout);
+    if (result.exit === 2 && !result.timedOut) throw Object.assign(new Error(`${ORIGIN}'s ${ref} was deleted`), { code: LINE_DELETED });
+    if (result.exit !== 0 || result.timedOut) throw Object.assign(failed(git, result, timeout), { code: FETCH_FAILED });
     const line = result.stdout.split('\n').find((each) => each.endsWith(`\t${ref}`));
-    if (line === undefined) throw new Error(`${ORIGIN} named no head for ${ref}: ${JSON.stringify(result.stdout)}`);
+    if (line === undefined) throw Object.assign(new Error(`${ORIGIN} named no head for ${ref}: ${JSON.stringify(result.stdout)}`), { code: FETCH_FAILED });
     return line.split('\t')[0];
   };
 
@@ -212,13 +217,24 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
     async fetchLineAt(branch, expected) {
       const compare = async () => {
         const actual = await lineHead(branch);
-        if (actual !== expected) throw new Error(`${ORIGIN}'s ${branch} moved from ${expected} to ${actual}`);
+        if (actual !== expected) throw Object.assign(new Error(`${ORIGIN}'s ${branch} moved from ${expected} to ${actual}`), { code: LINE_MOVED });
       };
       await compare();
-      await fetched(branch);
+      try {
+        await fetched(branch);
+      } catch (cause) {
+        if (cause.code === EVENT_REFUSED) throw cause;
+        throw Object.assign(cause, { code: FETCH_FAILED });
+      }
       await compare();
-      const kind = (await answer(['cat-file', '-t', expected])).trim();
-      if (kind !== 'commit') throw new Error(`${ORIGIN}'s ${branch} at ${expected} names a ${kind}, not a commit`);
+      let kind;
+      try {
+        kind = (await answer(['cat-file', '-t', expected])).trim();
+      } catch (cause) {
+        if (cause.code === EVENT_REFUSED) throw cause;
+        throw Object.assign(cause, { code: FETCH_FAILED });
+      }
+      if (kind !== 'commit') throw Object.assign(new Error(`${ORIGIN}'s ${branch} at ${expected} names a ${kind}, not a commit`), { code: FETCH_FAILED });
     },
 
     /** Makes the card's worktree at the already fetched forge head. */

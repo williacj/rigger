@@ -30,6 +30,7 @@ import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 import { installStandInAgent } from './stub-claude.mjs';
 import { sweep } from './process-fixtures.mjs';
 import { parseDocument } from '../src/substrate/forge/graphql.mjs';
+import { admissionOf, closerText, seed, TIME } from './admission-world.mjs';
 
 // A bound on a test that waits on the real bin and its maker, so one that never settles fails here.
 const { 60_000: SETTLES_WITHIN } = BOUNDS;
@@ -159,6 +160,45 @@ test('once over a board with no pullable card exits 0', () => {
 
 /** A ready card L2 refuses: its body holds no acceptance, so the form check refuses it. */
 const REFUSED = card(11, 'Ready', { body: 'Why this matters, and nothing more.' });
+
+// proves R-SCHED-3, R-SCHED-16
+test('once under owner and hold closers names both, keeps L2 refusals and exits 0 without claiming', async () => {
+  const ran = once({ items: [REFUSED, card(12, 'Ready')] }, { prepare: ({ consumer }) => {
+    const state = join(consumer, '.rigger');
+    seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' }));
+    seed(state, 'hold-b2.json', closerText({ reason: 'environment hold' }));
+  } });
+
+  assert.equal(ran.code, 0, ran.err);
+  assert.match(ran.out, /admission is closed/);
+  for (const [kind, reason] of [['owner', 'owner pause'], ['hold', 'environment hold']]) {
+    assert.match(ran.out, new RegExp(`${kind}.*${reason}.*${TIME}`), ran.out);
+  }
+  assert.match(ran.out, /#11.*missing acceptance/, ran.out);
+  assert.doesNotMatch(ran.out, /no card was pullable/, ran.out);
+  assert.deepEqual(await columnsOf(ran), { 11: 'Ready', 12: 'Ready' });
+  assert.deepEqual((await ran.model()).writes(), []);
+  assert.deepEqual(ran.agentRuns(), []);
+});
+
+// proves R-SCHED-3, R-SCHED-16
+test('once under unreadable admission names every path and cause, keeps L2 refusals and exits non-zero', async () => {
+  const ran = once({ items: [REFUSED, card(12, 'Ready')] }, { prepare: ({ consumer }) => {
+    const state = join(consumer, '.rigger');
+    seed(state, 'not-a-closer');
+    seed(state, 'owner-b2.json', '{}');
+  } });
+  const directory = admissionOf(join(ran.consumer, '.rigger'));
+
+  assert.notEqual(ran.code, 0, ran.out);
+  assert.ok(ran.err.includes(`${directory}/not-a-closer (no closer form)`), ran.err);
+  assert.ok(ran.err.includes(`${directory}/owner-b2.json (no reason, time or run)`), ran.err);
+  assert.match(ran.err, /#11.*missing acceptance/, ran.err);
+  assert.doesNotMatch(ran.err, /no card was pullable/, ran.err);
+  assert.deepEqual(await columnsOf(ran), { 11: 'Ready', 12: 'Ready' });
+  assert.deepEqual((await ran.model()).writes(), []);
+  assert.deepEqual(ran.agentRuns(), []);
+});
 
 test('once, given a ready card L2 refuses, leaves it in the ready column', async () => {
   const ran = once({ items: [REFUSED, card(12, 'Ready')] });
@@ -1623,4 +1663,85 @@ test('once ignores closed cards without a kind or carrying the epic label while 
       }
     }
   }
+});
+
+// proves R-SCHED-27
+test('once leaves every status-labelled table row unclaimed with no writes, dispatch or directory removal', SETTLES_WITHIN, async () => {
+  const directory = temporaryDirectory('rigger-once-status-');
+  const settings = { ...config(), worktrees: { ...config().worktrees, root: directory } };
+  const rows = [
+    card(960, 'Ready', { labels: ['type:change', 'rigger:status'] }),
+    card(961, 'Coding', { labels: ['type:change', 'rigger:status'] }),
+    card(962, 'Review', { labels: ['type:change', 'rigger:status'] }),
+    card(963, 'Owner', { labels: ['type:change', 'rigger:status'] }),
+    card(964, 'Done', { labels: ['type:change', 'rigger:status'] }),
+    card(965, 'Elsewhere', { labels: ['type:change', 'rigger:status'] }),
+    card(966, null, { labels: ['type:change', 'rigger:status'] }),
+    card(967, 'Ready', { labels: ['type:change', 'type:spec', 'rigger:status'], body: '' }),
+    card(968, 'Ready', { labels: ['type:change', 'rigger:escalated', 'rigger:status'] }),
+    card(969, 'Review', { labels: ['type:change', 'rigger:escalated', 'rigger:status'] }),
+    card(970, 'Review', { labels: ['type:change', 'rigger:status'] }),
+    card(971, 'Review', { labels: ['type:change', 'rigger:status'] }),
+    card(972, 'Owner', { labels: ['type:change', 'rigger:status'] }),
+    card(973, 'Review', { labels: ['type:change', 'rigger:status'] }),
+    card(974, 'Owner', { labels: ['type:change', 'rigger:status'] }),
+    card(975, 'Ready', { labels: ['type:change', 'RIGGER:STATUS'] }),
+  ];
+  const pull = (number, at, facts = {}) => ({ number: at, head: `rigger-${number}`, sha: '6'.repeat(40), ...facts });
+  const seed = { pullRequests: [
+    pull(969, 1969, { merged: true }),
+    pull(970, 1970, { merged: true }),
+    pull(971, 1971),
+    pull(972, 1972), pull(972, 2072),
+    pull(973, 1973, { closed: true }),
+    pull(974, 1974, { closed: true }),
+  ] };
+  const markers = rows.map(({ number }) => join(directory, 'scratch', `rigger-${number}`, 'reviewer', 'kept'));
+  const ran = once({ columns: [...COLUMNS, 'Elsewhere'], items: rows }, { settings, seed,
+    prepare: () => {
+      for (const marker of markers) {
+        mkdirSync(dirname(marker), { recursive: true });
+        writeFileSync(marker, 'status issue directory\n');
+      }
+    },
+  });
+
+  assert.equal(ran.code, 0, `${ran.out}\n${ran.err}`);
+  assert.match(ran.out, /no card was pullable/);
+  assert.doesNotMatch(ran.out + ran.err, /refus|#96\d\b|#97\d\b/);
+  assert.deepEqual(ran.agentRuns(), []);
+  assert.deepEqual((await ran.model()).writes(), []);
+  const after = await (await ran.model()).operations.readItems();
+  for (const row of rows) {
+    assert.deepEqual(after.find(({ number }) => number === row.number).labels, row.labels, `labels on #${row.number}`);
+    assert.equal((await columnsOf(ran))[row.number], row.column, `column of #${row.number}`);
+  }
+  for (const marker of markers) assert.equal(readFileSync(marker, 'utf8'), 'status issue directory\n', marker);
+  assert.deepEqual(eventsOf(ran).filter(({ event }) => /dispatch|escalat|transition|workspace|merge/.test(event)), []);
+  for (const args of ran.fake.sent()) {
+    assert.equal(args[0], 'api', JSON.stringify(args));
+    if (args[1] === 'graphql') {
+      assert.ok(parseDocument(args[3].slice('query='.length)).operations.every(({ type }) => type === 'query'), JSON.stringify(args));
+    } else {
+      assert.equal(args[args.indexOf('-X') + 1], 'GET', JSON.stringify(args));
+    }
+  }
+});
+
+// proves R-SCHED-27
+test('once works a Ready issue on its next read after the status label is removed', async () => {
+  const ran = once({ items: [card(980, 'Ready', { labels: ['type:change', 'rigger:status'] })] });
+  assert.equal(ran.code, 0, ran.err);
+  assert.deepEqual(ran.agentRuns(), []);
+  assert.deepEqual((await ran.model()).writes(), []);
+
+  // The fixture control updates both the board item and its issue to carry only type:change.
+  setEscalationLabel(ran.fake);
+  const resumed = ran.rerun();
+
+  assert.equal(resumed.code, 1, `${resumed.out}\n${resumed.err}`);
+  assert.match(resumed.err, /claimed #980.*maker exited 0 and opened no pull request/);
+  assert.equal(resumed.agentRuns().length, 1);
+  assert.deepEqual(await columnsOf(resumed), { 980: 'Coding' });
+  assert.deepEqual((await (await resumed.model()).operations.readItems())[0].labels, ['type:change']);
 });

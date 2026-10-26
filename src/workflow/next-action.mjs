@@ -5,7 +5,7 @@
 // the card attempted again, held, or stopped.
 
 import { FIXED_LABELS, OWNER, judgeRole, roleTimeout, sameLabel, stepTimeout, workRequires, worktreeTopic } from '../config/validate.mjs';
-import { WORKSPACE_NOT_MADE, topicFor } from '../execution/workspace.mjs';
+import { BRANCH_ELSEWHERE, BRANCH_REFUSED, FETCH_FAILED, LINE_DELETED, LINE_MOVED, ROOT_NOT_ABSOLUTE, SCRATCH_REFUSED, WORKSPACE_NOT_MADE, WORKSPACE_REFUSED, topicFor } from '../execution/workspace.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
 import { acceptanceItems, checkAcceptanceForm } from './form-check.mjs';
 import { reviewAnswer } from './judges.mjs';
@@ -56,6 +56,7 @@ const selecting = (card, kinds) =>
  * answer. Only an actually selected forge refusal becomes an ambiguous escalation; composed
  * tier/provider conflicts and form or kind refusals remain refusals. This answer is selected
  * between attempts, never while L3 is handing back the current attempt's outcomes.
+ * An item carrying the fixed status label has no card action, regardless of its other facts.
  *
  * Whether a verdict covers a Coding or Review card is read from its pull request's markers, never
  * injected: L2 takes no `fresh` input.
@@ -82,6 +83,7 @@ const selecting = (card, kinds) =>
 export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTopic(), provisioning, outcomes = [], sink, attempt = 1, firstFailure, workspace, maker, forge, judged, directories, continuing } = {}) {
   // The facts L2's settle answered are of a card it moved to review.
   const card = forge === undefined ? given : { ...given, forge: { stage: 'review', ...forge } };
+  if (carries(card, FIXED_LABELS.status)) return { action: 'ignore' };
   const escalation = escalationStatus(card);
   if (escalation !== undefined && !(card.forge?.merged?.length > 0)) return { action: 'ignore', ...escalation };
   const betweenAttempts = continuing === undefined && forge === undefined && maker === undefined
@@ -183,8 +185,8 @@ function fromTheForge(card) {
 function within(card, kind, declared, { roles, tier, topic, provisioning, outcomes, sink, attempt, firstFailure, workspace, maker, continuing }) {
   if (workspace !== undefined) return failedAttempt(card, attempt, firstFailure, unmade(workspace, card), sink);
   if (maker !== undefined) {
-    if (maker?.status === 'rejected' && maker.reason?.code === NOT_STARTED) {
-      return failedAttempt(card, attempt, firstFailure, { maker: declared.maker, status: maker.status, code: NOT_STARTED, reason: maker.reason.message }, sink);
+    if (maker?.status === 'rejected' && [NOT_STARTED, SCRATCH_REFUSED].includes(maker.reason?.code)) {
+      return failedAttempt(card, attempt, firstFailure, { maker: declared.maker, status: maker.status, code: maker.reason.code, reason: maker.reason.message }, sink);
     }
     return { action: 'settled' };
   }
@@ -221,7 +223,7 @@ const ATTEMPTS = 2;
 /** Whether two failures L1 reported as environment failures are the same R-FAIL-6 host way. */
 function sameWay(first, second) {
   if (first?.class !== 'environment' || second.class !== 'environment') return false;
-  if (first.workspace !== undefined || second.workspace !== undefined) return first.workspace !== undefined && second.workspace !== undefined;
+  if (first.workspace !== undefined || second.workspace !== undefined) return first.workspace !== undefined && second.workspace !== undefined && first.code === second.code;
   if (first.maker !== undefined || second.maker !== undefined) return first.maker !== undefined && second.maker !== undefined;
   if (first.step === undefined || second.step === undefined || first.step !== second.step) return false;
   const neverStarted = (failure) => failure.reason !== undefined;
@@ -242,9 +244,11 @@ function sameWay(first, second) {
  * card, the attempt and the refusal: the refusal is the halt, and spends no attempt.
  */
 function failedAttempt(card, attempt, firstFailure, what, sink) {
-  const failure = { class: 'environment', ...what };
-  const again = attempt < ATTEMPTS;
-  if (!again && firstFailure === undefined) throw new Error(`card #${card.number}'s second attempt failed without its first attempt's failure, so L2 answers no action`);
+  const cardLocal = [WORKSPACE_REFUSED, BRANCH_ELSEWHERE, SCRATCH_REFUSED].includes(what.code);
+  const out = [LINE_MOVED, LINE_DELETED, BRANCH_REFUSED, ROOT_NOT_ABSOLUTE].includes(what.code);
+  const failure = { class: cardLocal ? 'card-local' : out ? 'out' : 'environment', ...what };
+  const again = failure.class === 'environment' && attempt < ATTEMPTS;
+  if (attempt === ATTEMPTS && firstFailure === undefined) throw new Error(`card #${card.number}'s second attempt failed without its first attempt's failure, so L2 answers no action`);
   const hold = !again && sameWay(firstFailure, failure);
   const events = sink.emitter({ layer: 'L2', card: card.number });
   try {
@@ -262,11 +266,12 @@ function failedAttempt(card, attempt, firstFailure, what, sink) {
  * Any other outcome is no workspace's failure, so L2 answers no action for it, naming the card.
  */
 function unmade(outcome, card) {
-  if (outcome?.status !== 'rejected' || outcome.reason?.code !== WORKSPACE_NOT_MADE) {
+  const code = outcome?.reason?.code;
+  if (outcome?.status !== 'rejected' || ![WORKSPACE_NOT_MADE, WORKSPACE_REFUSED, BRANCH_ELSEWHERE, LINE_MOVED, LINE_DELETED, FETCH_FAILED, BRANCH_REFUSED, ROOT_NOT_ABSOLUTE].includes(code)) {
     const read = outcome?.status === 'rejected' ? outcome.reason?.message : JSON.stringify(outcome);
     throw new Error(`card #${card.number}'s workspace has an outcome that is not L1's failure to make it, so L2 answers no action for it: ${read}`, { cause: outcome?.reason });
   }
-  return { workspace: outcome.reason.path, reason: outcome.reason.message };
+  return { workspace: outcome.reason.path, ...(code === WORKSPACE_NOT_MADE ? {} : { code }), reason: outcome.reason.message };
 }
 
 /**
