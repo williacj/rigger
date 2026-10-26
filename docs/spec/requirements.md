@@ -484,7 +484,7 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | R-ESCALATE-9 | Rigger posts each escalation to the owner as a comment on the card's issue, carrying what `R-ESCALATE-7` lists, and never leaves the escalation label on a card without that comment. A retried escalation may post the comment again, each copy naming the same category and reason. Its edges are in `### R-ESCALATE-9 — An escalation partly written`. | the engine | the test suite | D3 |
 | R-ESCALATE-10 | Rigger dispatches nothing for a card carrying the escalation label, in any column, and escalates it no further, whoever added the label. A card whose pull request the forge holds as merged is the exception, which `R-WORK-35` answers. `rigger plan` names a labelled card as escalated, never as refused. | the engine | the test suite | D3 |
 | R-ESCALATE-11 | Rigger reads an escalation as answered once the escalation label is gone from the card, and never removes that label itself. | the engine | the test suite | D3 |
-| R-ESCALATE-12 | Rigger escalates a card to the owner as ambiguous, naming the refusal, where it refuses the card for what its workspace, a judge's directory, a scratch directory or the forge's hold on its line of work shows. It escalates at the attempt or pull where the refusal happens, with no second attempt. The refusals are the card-local rows of `### R-FAIL-7 — Environment failures and the hold`. | the engine | the test suite | D3 |
+| R-ESCALATE-12 | Rigger escalates a card to the owner as ambiguous, naming the refusal, where it refuses the card for what its workspace, a judge's directory, a scratch directory or the forge's hold on its line of work shows. It escalates at the attempt or pull where the refusal happens, with no second attempt. The refusals are the card-local rows of `### R-FAIL-8 — Environment failures and the hold`. | the engine | the test suite | D3 |
 | R-ESCALATE-13 | The set of categories is Rigger's, and a consumer adds none. A consumer may name each category's destination, the owner or one of its roles. Its bound is in `### R-ESCALATE-13 — Escalation destinations`. | the engine | the config validator, for the destinations it refuses | D3, D26 |
 | R-ESCALATE-14 | Rigger refuses a configuration naming a role as the destination of a recorded-decision change or of critical, and the refusal names the category. | the config validator | the test suite | D14, D26 |
 | R-ESCALATE-15 | Only an ambiguous escalation a maker raises goes to a role, where its category's destination is a role. Rigger sends every escalation the loop raises to the owner, whatever its configured destination. | the engine | the test suite | D26 |
@@ -555,9 +555,9 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | R-FAIL-1 | Work that failed before the maker ran its first command is tried again rather than judged. Nothing about the work has been shown. | the engine | the event record, by whether a maker emitted anything | D12 |
 | R-FAIL-2 | An infrastructure failure dispatches no maker, and the card is tried once more. | the engine | the event record, by attempts against starts | D12 |
 | R-FAIL-4 | An infrastructure failure never escalates to the owner as a fault in the work. | the engine | the event record, by the category on each escalation | D3, D12 |
-| R-FAIL-7 | Rigger closes admission, and records why, when a card's second attempt fails in its environment the same way its first did. The ways are in `### R-FAIL-7 — Environment failures and the hold`. | the engine | the event record, by failures counted against the hold | D12 |
+| R-FAIL-8 | Rigger closes admission, and records why, when a card's second attempt fails in its environment the same way its first did. The ways are in `### R-FAIL-8 — Environment failures and the hold`. | the engine | the event record, by failures counted against the hold | D12 |
 
-### R-FAIL-7 — Environment failures and the hold
+### R-FAIL-8 — Environment failures and the hold
 
 Each failure is one of three classes:
 
@@ -587,6 +587,19 @@ Each failure is one of three classes:
 | an optional step that failed or never started | out | — | out: `R-PROV-2` |
 | a judge's directory not made, or a required step in a judge's `head` that failed or never started | out | — | out: no second attempt is made in that invocation, and the next invocation tries again |
 | a judge's scratch directory not made because the file system gave no answer, or none in time | out | — | out: no second attempt is made in that invocation, and the next invocation tries again |
+| a judge's dispatch that never started because its provider has no adapter, or its tier no model in that adapter | out | — | out: the config validator refuses a configuration naming either, and Rigger pulls no card under a configuration the validator refuses |
+| a judge's dispatch that never started because its provider's CLI is not found, or not executable, on the host | host | it is the same provider | in |
+| a judge's dispatch that never started because the host refused its command line as too long, or as holding a character the host cannot pass | host | it is the same refusal | in |
+| a judge's agent file on the main line that lies outside the repository (`R-SAFE-6`), is a link that cannot be resolved, or cannot be read | host | it is the same file | in |
+| a judge's provider settings on the main line that Rigger refuses: Claude Code settings that are no JSON object or declare a Bash rule for a compound command line, or a Codex configuration that cannot be read | host | it is the same refusal | in |
+| a judge's directory whose path holds a character Claude Code would read as more than a path, in its `CLAUDE.md` exclusions or its permission rules | host | it is the same directory | in |
+| a judge's directory or scratch directory whose real path holds a character Rigger cannot read back from the processes working there | host | it is the same directory | in |
+| a judge's Codex dispatch whose check of the skills Codex would load exited non-zero, answered nothing Rigger can read, or named a skill whose real path cannot be read | host | it is the same refusal | in |
+| a judge's dispatch that never started because Rigger's own code composed it wrongly: an environment variable Rigger may not set, or a dispatch id, time, scratch base, repository or event emitter it cannot use | host | it is the same fault | in |
+| the file system refusing a write a judge's dispatch needs before it starts: Rigger's record of process groups, or a Codex home or temporary directory in its scratch directory | host | it is the same write | in |
+| a judge's dispatch that never started because the file system gave no answer, or none in time, the host lacked a process or memory for it, or its check of Codex's skills ran past its time | out | — | out: no second attempt is made in that invocation, and the next invocation tries again |
+| a judge's dispatch that never started because a directory made for it was gone, replaced, unreadable or held by another dispatch when it started | out | — | out: no second attempt is made in that invocation, and the next invocation tries again |
+| a judge's dispatch whose start Rigger could not record | out | — | out: `R-RECORD-9` |
 | a maker that ran its first command and then failed | out | — | out: the work's failure, not the environment's |
 | two cards each failing once | out | — | out: counted per card |
 | a card refused for its acceptance's form (`R-CARD-7`, `R-CARD-8`) | out | — | out: it stays a refusal `rigger plan` reports |

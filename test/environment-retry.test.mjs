@@ -88,7 +88,7 @@ test('L2 retries a maker dispatch that never started and holds it after the seco
   ]);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('L2 stops a card-local refusal on its first attempt and records its class', () => {
   const directory = temporaryDirectory('rigger-card-local-');
   const sink = openSink({ directory, run: 'r-card-local', now: Date.now });
@@ -197,7 +197,7 @@ function stopOf(failure, card) {
   return stop;
 }
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('L3 hands L2 the first workspace failure beside the second attempt', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace', { other: false });
   let first;
@@ -215,7 +215,7 @@ test('L3 hands L2 the first workspace failure beside the second attempt', SETTLE
   assert.equal(handed.workspace, first.workspace);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('L3 hands L2 the first workspace failure beside the second attempt of a run', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace', { other: false });
   let first;
@@ -232,7 +232,7 @@ test('L3 hands L2 the first workspace failure beside the second attempt of a run
   assert.deepEqual(handed, first);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('a continuing attempt whose workspace fetch fails twice answers hold at L1s current report', SETTLES_WITHIN, async () => {
   const card = cardIn(1, COLUMNS.review);
   const pull = pullFor(1);
@@ -259,7 +259,7 @@ test('a continuing attempt whose workspace fetch fails twice answers hold at L1s
   assert.deepEqual(recorded(built, 'L3', 'dispatch', (each) => each.role === 'engineer'), []);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('run does not pull again a card stopped for each card-local refusal or an out branch or root', SETTLES_WITHIN, async (t) => {
   for (const code of ['WORKSPACE_REFUSED', 'BRANCH_ELSEWHERE', 'SCRATCH_REFUSED', 'BRANCH_REFUSED', 'ROOT_NOT_ABSOLUTE']) {
     await t.test(code, async () => {
@@ -287,7 +287,7 @@ test('run does not pull again a card stopped for each card-local refusal or an o
   }
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('run stops one card-local refusal while another card is held for two workspace host failures', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace');
   const path = join(temporaryDirectory('rigger-card-local-beside-host-'), 'rigger-1');
@@ -304,7 +304,7 @@ test('run stops one card-local refusal while another card is held for two worksp
   assert.deepEqual(recorded(built, 'L2', 'attempt.decided', (each) => each.card === 2).map(({ decision }) => decision), ['again', 'hold']);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('a judge scratch refusal remains NOT_STARTED and causes no card stop', SETTLES_WITHIN, async () => {
   let built;
   const judgeDirectory = async (card, role, head) => {
@@ -324,7 +324,7 @@ test('a judge scratch refusal remains NOT_STARTED and causes no card stop', SETT
   assert.equal(readFileSync(join(built.scratch, 'workspaces', 'scratch', 'rigger-7', 'reviewer'), 'utf8'), 'kept\n');
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('two once invocations over the same board and state count the held card afresh', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace', { other: false });
   const first = await built.loop.pull(1).then(() => assert.fail('the first pull fulfilled'), (failure) => failure);
@@ -335,7 +335,7 @@ test('two once invocations over the same board and state count the held card afr
   assert.deepEqual(recorded(built, 'L2', 'attempt.decided').map(({ attempt, decision }) => [attempt, decision]), [[1, 'again'], [2, 'hold'], [1, 'again'], [2, 'hold']]);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('a held Ready card stays in Coding with only its claim move', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace', { other: false });
   await assert.rejects(built.loop.pull(1));
@@ -357,14 +357,14 @@ test('a held card records no escalation and writes no comment on its issue', SET
   assert.deepEqual(built.repository.held().issues[0].comments, []);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('a held card writes nothing under admission state', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace', { other: false });
   await assert.rejects(built.loop.pull(1));
   assert.equal(existsSync(join(built.directory, 'admission')), false);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('two cards that each fail once in the same host way each get another attempt and neither is held', SETTLES_WITHIN, async () => {
   const root = temporaryDirectory('rigger-two-retries-');
   const making = makingWorkspaces(root);
@@ -386,7 +386,7 @@ test('two cards that each fail once in the same host way each get another attemp
   assert.equal(built.decisions.some(({ answer }) => answer.action === 'hold'), false);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('a card still holds for two matching host failures beside a card whose maker succeeds', SETTLES_WITHIN, async () => {
   const { built, failure } = await runFailure('workspace');
 
