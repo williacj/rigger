@@ -1,6 +1,8 @@
 // ABOUTME: Ordinary recorded-source CI policy cases, evaluated without child processes or network.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { parseWorkflow } from './ci-policy-fixtures.mjs';
 import { evaluateCiPolicy, ciFacts, ciProof, ciFullFixture, ciCollectorFixture } from './ci-policy-fixtures.mjs';
 
 test('recorded CI Table A equal start and unmoved main retains full proof', async () => {
@@ -144,3 +146,70 @@ test('recorded CI collector fails closed on unavailable visibility and malformed
   }
 });
 
+
+/** Reads the real name expression; this evaluator covers only the admitted canonical producer domain.
+ * GitHub missing properties are empty strings. String equality is case-insensitive there; all
+ * compared strings in this bounded fixture domain already have their canonical spelling.
+ * https://docs.github.com/en/actions/reference/workflows-and-actions/contexts
+ * https://docs.github.com/en/actions/reference/workflows-and-actions/expressions
+ */
+function aggregateDisplayName(needs) {
+  const job = parseWorkflow(readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8')).jobs.check;
+  assert.equal(typeof job.name, 'string', 'the aggregate job declares its display name');
+  assert.match(job.name, /^\$\{\{[\s\S]*\}\}$/);
+  const context = { plan: { result: needs.plan?.result ?? '', outputs: { mode: needs.plan?.outputs?.mode ?? '' } } };
+  return new Function('needs', 'return (' + job.name.slice(3, -2).trim() + ')')(context);
+}
+
+test('successful deferred plan uses a nonrequired aggregate display name', () => {
+  assert.equal(aggregateDisplayName({ plan: { result: 'success', outputs: { mode: 'BROAD_DEFERRED' } } }), 'broad deferred (26)');
+});
+
+test('canonical nondeferred or unsuccessful plans retain the exact required aggregate name', () => {
+  for (const needs of [
+    { plan: { result: 'success', outputs: { mode: 'FAST_ELIGIBLE' } } },
+    { plan: { result: 'success', outputs: { mode: 'BROAD_EXECUTED' } } },
+    { plan: { result: 'success', outputs: { mode: 'MAIN_SMOKE' } } },
+    { plan: { result: 'success', outputs: { mode: 'MAIN_FULL' } } },
+    { plan: { result: 'success', outputs: { mode: 'INVALID' } } },
+    { plan: { result: 'success', outputs: { mode: 'UNKNOWN' } } },
+    { plan: { result: 'failure', outputs: { mode: 'BROAD_DEFERRED' } } },
+    { plan: { result: 'cancelled', outputs: { mode: 'BROAD_DEFERRED' } } },
+    { plan: { result: 'skipped', outputs: { mode: 'BROAD_DEFERRED' } } },
+    { plan: { outputs: { mode: 'BROAD_DEFERRED' } } },
+    { plan: { result: 'success', outputs: {} } },
+    { plan: { result: 'success' } },
+    {},
+  ]) assert.equal(aggregateDisplayName(needs), 'check (26)', JSON.stringify(needs));
+});
+
+test('deferred naming preserves refusal and later source invalidation supplies no proof', async () => {
+  const facts = ciFacts(); facts.changes[0].path = 'src/workflow/action.mjs';
+  const proof = ciProof('BROAD_DEFERRED');
+  const planned = { plan: { result: 'success', outputs: { mode: 'BROAD_DEFERRED' } } };
+  const refused = await evaluateCiPolicy('runPolicy', { action: 'aggregate', facts, proof });
+  assert.equal(refused.ok, false);
+  assert.equal(refused.reason, 'missing-current-batch-proof: explicitly request full proof for the current head and base');
+  assert.equal(aggregateDisplayName(planned), 'broad deferred (26)');
+  facts.live.head = 'e'.repeat(40);
+  const invalidated = await evaluateCiPolicy('runPolicy', { action: 'aggregate', facts, proof });
+  assert.equal(invalidated.ok, false);
+  assert.equal(aggregateDisplayName(planned), 'broad deferred (26)', 'a selected name does not change after planning');
+  const eligible = ciFullFixture(); eligible.facts.live.head = 'e'.repeat(40);
+  assert.equal((await evaluateCiPolicy('runPolicy', { action: 'aggregate', ...eligible })).ok, false);
+  assert.equal(aggregateDisplayName({ plan: { result: 'success', outputs: { mode: 'BROAD_EXECUTED' } } }), 'check (26)');
+});
+
+test('aggregate naming preserves the required job routing matrix and failure boundary', () => {
+  const ci = parseWorkflow(readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'));
+  assert.deepEqual(Object.keys(ci.jobs).sort(), ['check', 'demo', 'fast', 'full_host', 'full_ordinary', 'nightly', 'plan']);
+  assert.deepEqual(ci.jobs.check.needs, ['plan', 'fast', 'full_ordinary', 'full_host', 'demo']);
+  assert.equal(ci.jobs.check.if, "${{ always() && !(needs.plan.result == 'success' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && needs.plan.outputs.mode == 'MAIN_FULL') }}");
+  assert.deepEqual(ci.jobs.check.strategy, { 'fail-fast': 'false', matrix: { node: ['26'] } });
+  assert.equal(ci.jobs.check['runs-on'], 'ubuntu-latest');
+  assert.equal(ci.jobs.check['continue-on-error'], undefined);
+  assert.equal(ci.jobs.check.steps.at(-1).run, 'node --input-type=module -e "$CI_POLICY"');
+  assert.equal(ci.jobs.check.steps.at(-1).env.CI_POLICY_ACTION, 'aggregate');
+  assert.equal(ci.jobs.check.steps.at(-1).if, undefined);
+  assert.equal(ci.jobs.check.steps.at(-1)['continue-on-error'], undefined);
+});

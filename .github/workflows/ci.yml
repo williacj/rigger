@@ -277,6 +277,7 @@ jobs:
           path: ${{ runner.temp }}/containment-proof-26
           if-no-files-found: ignore
   check:
+    name: ${{ needs.plan.result == 'success' && needs.plan.outputs.mode == 'BROAD_DEFERRED' && 'broad deferred (26)' || 'check (26)' }}
     needs: [plan, fast, full_ordinary, full_host, demo]
     if: ${{ always() && !(needs.plan.result == 'success' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && needs.plan.outputs.mode == 'MAIN_FULL') }}
     runs-on: ubuntu-latest
