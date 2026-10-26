@@ -36,6 +36,17 @@ export function idRows(text) {
   return found;
 }
 
+/**
+ * Every id the two retired registers hold. A retired requirement is a row, read as `idRows` reads
+ * one. The retired decisions register has no id table: each decision is its own `## D# —` heading.
+ */
+export function retiredIds(root) {
+  const requirements = idRows(readFileSync(join(root, REGISTER, 'requirements-retired.md'), 'utf8'));
+  const decisions = [...readFileSync(join(root, REGISTER, 'decisions-retired.md'), 'utf8')
+    .matchAll(/^## (D\d+) —/gm)].map((heading) => heading[1]);
+  return new Set([...requirements, ...decisions]);
+}
+
 /** Every id the register allocates more than once, and the files the rows sit in. */
 export function check(root) {
   const rows = readdirSync(join(root, REGISTER))
