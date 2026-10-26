@@ -49,7 +49,7 @@ export function preflight(argv, { root = process.cwd(), scriptChecks = SCRIPT_CH
     return execute ? execute(command, args, options) : spawnSync(command, args, { ...options, env: options.env });
   };
   const git = (...args) => {
-    const result = run(['git', '--no-optional-locks', '--literal-pathspecs', ...args]);
+    const result = run(['git', '--no-pager', '-c', 'color.ui=false', '--no-optional-locks', '--literal-pathspecs', ...args]);
     if (result.status !== 0) throw new Error((result.error?.message ?? result.stderr.trim()) || `git exited ${result.status}`);
     return result.stdout;
   };
@@ -94,13 +94,13 @@ export function preflight(argv, { root = process.cwd(), scriptChecks = SCRIPT_CH
   }
   report('clean', dirty);
   const paths = landsIn(body);
-  const changed = git('diff', '--no-renames', '--name-only', '-z', `${base}..HEAD`).split('\0').filter(Boolean);
+  const changed = git('diff', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '--name-only', '-z', `${base}..HEAD`).split('\0').filter(Boolean);
   report('lands-in', paths.length === 0 ? ['no "Lands in" bullet naming paths; lands-in cannot run']
     : changed.filter((path) => !paths.some((named) => covers(named, path))).map((path) => JSON.stringify(path)));
   const retired = retiredIds(root);
   const citations = changed.flatMap((path) => {
     if (path.startsWith('docs/spec/') || path.startsWith('docs/journal/')) return [];
-    const diff = git('diff', '--no-renames', '--no-ext-diff', '--no-textconv', '--unified=0', `${base}..HEAD`, '--', path);
+    const diff = git('diff', '--no-color', '--no-renames', '--no-ext-diff', '--no-textconv', '--unified=0', `${base}..HEAD`, '--', path);
     return addedLines(diff).flatMap(({ number, text }) =>
       [...text.matchAll(/\b(?:R-[A-Z][A-Z0-9]*-\d+|D\d+)\b/g)]
         .filter((match) => retired.has(match[0]))

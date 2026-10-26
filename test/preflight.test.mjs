@@ -308,3 +308,20 @@ test('the CLI entry recognizes a symlink spelling of its script and reports the 
   assert.ok(output[0].startsWith('preflight head '), output.join('\n'));
   assert.match(output.join('\n'), /body.*cannot be read.*absent\.md/);
 });
+
+test('retired ids refuses added citations when repository configuration forces colored patches', () => {
+  const f = fixture();
+  commit(f, { 'allowed/colored.mjs': 'first\nR-EXAMPLE-7 and D713\n' });
+  for (const color of ['ui', 'diff']) {
+    gitIn(f.root, 'config', `color.${color}`, 'always');
+    assert.equal(gitIn(f.root, 'config', '--get', `color.${color}`).trim(), 'always');
+    const patch = gitIn(f.root, 'diff', '--no-renames', '--unified=0', `${f.base}..HEAD`, '--', 'allowed/colored.mjs');
+    assert.match(patch, /\x1b\[[0-9;]*m/, 'the real Git patch must establish the colored-output premise');
+    console.log(`${color} colored hunk premise:`, JSON.stringify(patch.split('\n').find((line) => line.includes('@@'))));
+    const result = run(f);
+    assert.equal(result.status, 1, result.output);
+    assert.match(result.output, /retired ids: failed/);
+    assert.ok(result.output.includes('"allowed/colored.mjs":2 R-EXAMPLE-7'), result.output);
+    assert.ok(result.output.includes('"allowed/colored.mjs":2 D713'), result.output);
+  }
+});
