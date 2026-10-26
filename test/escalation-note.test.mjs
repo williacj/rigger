@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 
 import config from '../rigger.config.mjs';
 import { dispatchedEscalation, parseEscalationNote } from '../src/workflow/escalation.mjs';
-import { openSink } from '../src/observation/sink.mjs';
+import { openSink, readEvents } from '../src/observation/sink.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
 import { createFakeBoard } from './fake-board.mjs';
@@ -33,14 +33,15 @@ async function world(comments, { pullRequests = [], readIssueComments, readPullR
     items: [{ type: 'issue', repository: config.repo, number: 12, title: 'Add a verb', body: BODY, column: config.board.columns.coding }],
   });
   const repository = createFakeRepository({ issues: [{ number: 12, body: BODY, comments }], pullRequests });
-  const sink = openSink({ directory: temporaryDirectory('rigger-escalation-note-'), run: 'r-test', now: () => 0 });
+  const directory = temporaryDirectory('rigger-escalation-note-');
+  const sink = openSink({ directory, run: 'r-test', now: () => 0 });
   const reads = {
     ...repository.operations,
     readIssueComments: readIssueComments ?? (async () => comments),
     ...(readPullRequests === undefined ? {} : { readPullRequests }),
   };
-  const l2 = columnChanges({ config, sink, items: fake.operations, reads });
-  return { card: (await fake.operations.readItems())[0], fake, l2, repository };
+  const l2 = columnChanges({ config, sink, items: fake.operations, reads, repositoryWrites: repository });
+  return { card: (await fake.operations.readItems())[0], fake, l2, repository, events: () => readEvents(directory) };
 }
 
 const posted = (body = NOTE, other = {}) => ({ body, author: 'maker', permission: 'write', edited: false, ...other });
@@ -75,11 +76,13 @@ test('a matching issue note escalates when the maker exits zero', async () => {
 // proves R-LOOP-2, R-ESCALATE-4
 test('a matching note includes the one open pull request and its head', async () => {
   const head = 'a'.repeat(40);
-  const { card, l2 } = await world([posted()], { pullRequests: [{ number: 77, head: 'rigger-12', sha: head }] });
+  const { card, l2, events } = await world([posted()], { pullRequests: [{ number: 77, head: 'rigger-12', sha: head }] });
   const answer = await l2.settled(card, outcome(), { dispatch: DISPATCH });
   assert.equal(answer.pull, 77);
   assert.equal(answer.head, head);
   assert.equal(answer.raiser, 'maker');
+  await l2.escalated(card, answer);
+  assert.equal(events().find(({ event }) => event === 'review.escalate').raiser, 'maker');
 });
 
 const ignored = [

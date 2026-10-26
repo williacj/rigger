@@ -3076,4 +3076,5 @@ test('a refused maker note escalation keeps the card out of later pulls in the i
   assert.deepEqual(built.fake.writes().map(({ operation }) => operation), ['moveItem']);
   assert.deepEqual((await built.fake.operations.readItems())[0].labels, ['type:change']);
   assert.equal(built.agent.runs().filter(({ role }) => role === 'reviewer').length, 0);
+  assert.equal(built.events().find(({ event }) => event === 'review.escalate').raiser, 'maker');
 });
