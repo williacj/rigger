@@ -1782,7 +1782,7 @@ test('gate line names a failed deployment policy read and an absent secret toget
 
 import { closedBy } from '../src/cli/doctor.mjs';
 import { existsSync, readdirSync } from 'node:fs';
-import { admissionOf, closerText, picture, seed, TIME } from './admission-world.mjs';
+import { admissionOf, closerText, pin, seed, stamped, TIME } from './admission-world.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 
 /** The state directory `doctor` names in `target`. */
@@ -1819,7 +1819,6 @@ async function absentThen(target, prepare, options = against(target, PASSING)) {
 /** The heading line of a report. */
 const headingOf = (text) => text.split('\n')[0];
 
-// proves R-SCHED-17
 test('doctor reports admission open, counted as passed, where the directory is absent, empty, or holds only names starting with a dot', async () => {
   const preparations = [
     () => {},
@@ -1976,28 +1975,58 @@ test('where the board cannot be read, doctor reports a closed admission closed a
 });
 
 // proves R-SCHED-17
-test('doctor creates no admission directory where none existed, changes nothing under one that exists, and records no admission event', async () => {
+test('doctor creates no admission directory where none existed, writes nothing under one that exists, and records no admission event', async () => {
   const target = checked(starter());
-  await doctor(against(target, PASSING));
+  const absent = await doctor(against(target, PASSING));
+  assert.match(admissionLine(absent.text), /admission is open$/, absent.text);
   assert.equal(existsSync(admissionOf(stateIn(target))), false);
 
-  for (const prepare of [
-    (state) => seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' })),
-    (state) => seed(state, 'stray.json', closerText()),
+  for (const [prepare, said] of [
+    [(state) => seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' })), /^\s*ok\s+admission: admission is closed by owner/],
+    [(state) => seed(state, 'stray.json', closerText()), /^\s*failed\s+admission: admission cannot be read/],
   ]) {
     const each = checked(starter());
     prepare(stateIn(each));
-    const before = picture(admissionOf(stateIn(each)));
-    await doctor(against(each, PASSING));
-    assert.deepEqual(picture(admissionOf(stateIn(each))), before);
+    pin(stateIn(each));
+    const before = stamped(stateIn(each));
+    const ran = await doctor(against(each, PASSING));
+    assert.match(admissionLine(ran.text), said, ran.text);
+    assert.deepEqual(stamped(stateIn(each)), before);
     assert.deepEqual(readdirSync(stateIn(each)).filter((name) => name !== 'events.jsonl' && name !== 'admission'), []);
     const events = existsSync(join(stateIn(each), 'events.jsonl')) ? readEvents(stateIn(each)) : [];
     assert.deepEqual(events.filter(({ event }) => event.startsWith('admission.')), [], JSON.stringify(events));
   }
 });
 
-// proves R-SCHED-17
+test('the stamp the no-write tests compare moves when a closer is rewritten with the bytes it already holds', () => {
+  // The write these tests exist to catch is one that leaves every byte as it was, which a picture
+  // of names and bytes alone cannot see.
+  const state = join(temporaryDirectory('rigger-stamp-'), '.rigger');
+  seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' }));
+  pin(state);
+  const before = stamped(state);
+  const path = join(admissionOf(state), 'owner-a1.json');
+  writeFileSync(path, readFileSync(path));
+  const after = stamped(state);
+  assert.deepEqual(after.bytes, before.bytes);
+  assert.notDeepEqual(after, before);
+});
+
 test('the words that name a closer are once\'s, written out by hand', () => {
   assert.equal(closedBy({ kind: 'owner', reason: 'owner pause', time: TIME }), OWNER_WORDS);
   assert.equal(closedBy({ kind: 'hold', reason: 'environment hold', time: TIME }), HOLD_WORDS);
+});
+
+// proves R-SCHED-17
+test('doctor prints a closer reason or an entry name carrying a line break escaped, on its admission line alone', async () => {
+  const target = checked(starter());
+  const { absent, seeded } = await absentThen(target, (state) => seed(state, 'owner-a1.json', closerText({ reason: 'owner pause\n  ok  forged check: yes' })));
+  assert.equal(checkLines(seeded.text).length, checkLines(absent.text).length, seeded.text);
+  assert.ok(admissionLine(seeded.text).endsWith(`admission: admission is closed by owner: owner pause\\n  ok  forged check: yes; time ${TIME}`), seeded.text);
+
+  const named = checked(starter());
+  seed(stateIn(named), 'x\n  ok  forged check: yes', closerText());
+  const ran = await doctor(against(named, PASSING));
+  assert.equal(checkLines(ran.text).length, CHECKED.length, ran.text);
+  assert.ok(admissionLine(ran.text).includes(`${join(admissionOf(stateIn(realpathSync(named))), 'x\\n  ok  forged check: yes')} (no closer form)`), ran.text);
 });

@@ -81,3 +81,33 @@ export const fsWith = (overrides) => ({ ...fs, ...overrides });
 
 /** Whether this process runs as root, which reads and writes past every permission bit. */
 export const asRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+
+/** A time in the past every pinned entry carries as its access and modification time, in seconds. */
+const PINNED = 1_600_000_000;
+
+/**
+ * Sets the modification time of the admission directory in `state`, and of every entry in it, to
+ * a fixed time in the past, so that any write after this, one of identical bytes included, moves
+ * a modification time `stamped` reads. A file system's clock may tick too coarsely to tell two
+ * writes made close together apart, but never to tell a write made now from one made in 2020.
+ */
+export function pin(state) {
+  const directory = admissionOf(state);
+  for (const name of fs.readdirSync(directory)) fs.utimesSync(join(directory, name), PINNED, PINNED);
+  fs.utimesSync(directory, PINNED, PINNED);
+}
+
+/**
+ * The admission directory in `state` as `picture` has it, with the directory's and each entry's
+ * inode and modification time in nanoseconds beside it, so two stamps are equal only where no
+ * entry was written, replaced or renamed, nor any name added to or removed from the directory.
+ */
+export function stamped(state) {
+  const directory = admissionOf(state);
+  const of = (path) => {
+    const { ino, mtimeNs } = fs.lstatSync(path, { bigint: true });
+    return `${ino}:${mtimeNs}`;
+  };
+  const entries = Object.fromEntries(fs.readdirSync(directory).sort().map((name) => [name, of(join(directory, name))]));
+  return { directory: of(directory), entries, bytes: picture(directory) };
+}

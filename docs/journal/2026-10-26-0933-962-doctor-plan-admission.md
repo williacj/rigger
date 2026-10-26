@@ -14,4 +14,10 @@ Each new test failed before its code existed for the reason it names: the `docto
 
 The test that compares `doctor`'s check names both ways gains `admission` last, under the card's grant class G2, as `CHECKED` and `UNREAD` do.
 
-`src/cli/verbs.mjs` also changes, outside the card's "Lands in": `test/cli.test.mjs` holds `--help`'s `doctor` summary equal to the README's comment beside `doctor`, so the README line the card asks for cannot land green without the same words in `--help`. That is escalated to the card's author as `ambiguous` against the "Lands in" item.
+`src/cli/verbs.mjs` changes its `doctor` summary alone, because `test/cli.test.mjs` holds it equal to the README's comment beside `doctor`. The card's revision 558d98362f76 added it to "Lands in" after round 1 escalated it.
+
+Round 1's judges found three gaps.
+
+- A closer's reason is any non-empty string, and an entry's name any the file system allows, so either can carry a line break. Printed raw, a reason ending in a line `  pull    #999  change` printed a pull line under a closed admission. `doctor` and `plan` now print each reason, path and cause through `printable`, which escapes the C0 and C1 controls, DEL and the two Unicode separators, and leaves every other character as it is. An ordinary reason so still reads in `once`'s words exactly. `once` itself prints them raw as it did at #944's head, which the card requires unchanged.
+- The no-write tests compared names and bytes, so a rewrite of identical bytes passed them. They now pin the directory's and each entry's modification time to 2020 before the run, and compare inode and nanosecond modification time beside the bytes. Pinning rather than comparing two recent times keeps the check deterministic on a file system whose clock ticks coarsely.
+- Three declarations survived the removal of what they named: the `once` wording test, the `closedBy`-only test, and the open-admission tests. Those declarations are gone. The no-write tests now also assert the closed or unreadable report, so they fail when admission reporting is removed.

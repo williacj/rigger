@@ -374,7 +374,7 @@ test('plan describes closed removal followed by redo escalation or refusal and c
 // What `plan` shows while admission is closed or cannot be read (#962): no pull, and why.
 
 import { existsSync, realpathSync } from 'node:fs';
-import { admissionOf, closerText, picture, seed, TIME } from './admission-world.mjs';
+import { admissionOf, closerText, pin, seed, stamped, TIME } from './admission-world.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 
 /** A closer's words, written out by hand as `once` printed them at #944's head. */
@@ -413,7 +413,6 @@ const MIXED = { items: [card(41, 'Ready'), card(42, 'Ready', { body: '' }), card
 /** The lines a plan names a refused or escalated card on. */
 const reportedLines = (text) => text.split('\n').filter((line) => /^\s*(?:refuse|escalated)\s+#\d+/.test(line));
 
-// proves R-SCHED-18
 test('plan shows the ordinary pull order where the admission directory is absent, empty, or holds only names starting with a dot', async () => {
   for (const prepare of [() => {}, (state) => mkdirSync(admissionOf(state), { recursive: true }), (state) => seed(state, '.tmp-a1', 'half')]) {
     const world = admissionWorld(PULLING, { held: PULLING_HELD });
@@ -531,17 +530,47 @@ test('plan names the board or facts read failure beside the closers, or beside e
 });
 
 // proves R-SCHED-18
-test('plan creates no admission directory where none existed, changes nothing under one that exists, and records no admission event', async () => {
+test('plan creates no admission directory where none existed, writes nothing under one that exists, and records no admission event', async () => {
   const world = admissionWorld(PULLING, { held: PULLING_HELD });
   await world.run();
   assert.equal(existsSync(admissionOf(world.state)), false);
-  for (const prepare of [(state) => seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' })), (state) => seed(state, 'stray.json', closerText())]) {
+  for (const [prepare, said] of [
+    [(state) => seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' })), `rigger plan: ${OWNER_WORDS}`],
+    [(state) => seed(state, 'stray.json', closerText()), 'rigger plan: admission cannot be read'],
+  ]) {
     const each = admissionWorld(PULLING, { held: PULLING_HELD });
     prepare(each.state);
-    const before = picture(admissionOf(each.state));
-    await each.run();
-    assert.deepEqual(picture(admissionOf(each.state)), before);
+    pin(each.state);
+    const before = stamped(each.state);
+    const ran = await each.run();
+    assert.ok(ran.text.split('\n').some((line) => line.startsWith(said)), ran.text);
+    assert.deepEqual(pullLines(ran.text), [], ran.text);
+    assert.deepEqual(stamped(each.state), before);
     const events = existsSync(join(each.state, 'events.jsonl')) ? readEvents(each.state) : [];
     assert.deepEqual(events.filter(({ event }) => event.startsWith('admission.')), [], JSON.stringify(events));
   }
+});
+
+/** A closer reason and an entry name each carrying a line that reads as a `pull` action. */
+const FORGED_REASON = 'owner pause\n  pull    #999  change';
+const FORGED_NAME = 'x\n  pull    #998  change';
+
+// proves R-SCHED-18
+test('plan under a closer whose reason, or an entry whose name, carries a line break prints it escaped on its own line, so no line reads as a pull', async () => {
+  // A reason is any non-empty string the module admits, and a name is any the file system does,
+  // so either can carry a line break. Printed raw, the text after it is a line of its own, and a
+  // reason ending `\n  pull    #999  change` is a pull line under a closed admission.
+  const closed = admissionWorld(PULLING, { held: PULLING_HELD });
+  seed(closed.state, 'owner-a1.json', closerText({ reason: FORGED_REASON }));
+  const ran = await closed.run();
+  assert.equal(ran.code, 0, ran.text);
+  assert.deepEqual(pullLines(ran.text), [], ran.text);
+  assert.ok(ran.text.split('\n').includes(`rigger plan: admission is closed by owner: owner pause\\n  pull    #999  change; time ${TIME}`), ran.text);
+
+  const unreadable = admissionWorld(PULLING, { held: PULLING_HELD });
+  seed(unreadable.state, FORGED_NAME, closerText());
+  const failed = await unreadable.run();
+  assert.notEqual(failed.code, 0, failed.text);
+  assert.deepEqual(pullLines(failed.text), [], failed.text);
+  assert.ok(failed.text.includes(`${join(unreadable.unread, 'x\\n  pull    #998  change')} (no closer form)`), failed.text);
 });

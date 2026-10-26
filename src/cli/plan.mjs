@@ -7,7 +7,7 @@ import { readSide, repositoryReads } from '../substrate/forge/read.mjs';
 import { factsCall } from '../workflow/facts.mjs';
 import { escalationStatus, nextAction } from '../workflow/next-action.mjs';
 import { CONFIG } from './init.mjs';
-import { PACKAGE, admissionIn, closedBy, consumerConfig, settled, unreadableAdmission } from './doctor.mjs';
+import { PACKAGE, admissionIn, closerLine, consumerConfig, settled, unreadableAdmission } from './doctor.mjs';
 import { recording } from './recording.mjs';
 
 /**
@@ -52,7 +52,7 @@ async function planning(opened, { target = process.cwd(), packageRoot = PACKAGE,
   // ("Failure model"), so only the second fails the verb.
   const admission = admissionIn(named, sink);
   let admissionLines = [];
-  if (admission.state === 'closed') admissionLines = admission.closers.map((closer) => `rigger plan: ${closedBy(closer)}`);
+  if (admission.state === 'closed') admissionLines = admission.closers.map((closer) => `rigger plan: ${closerLine(closer)}`);
   if (admission.state === 'unreadable') admissionLines = [`rigger plan: ${unreadableAdmission(admission.unreadable)}`];
   const failed = (said) => ({ text: [said, ...admissionLines].join('\n'), code: 1 });
   const { config, problem } = await consumerConfig(named);

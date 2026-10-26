@@ -657,8 +657,25 @@ export function report(where, results) {
  */
 export const closedBy = ({ kind, reason, time }) => `admission is closed by ${kind}: ${reason}; time ${time}`;
 
+/** The escapes `printable` writes for the line breaks a reader most often meets. */
+const ESCAPES = { '\n': '\\n', '\r': '\\r', '\t': '\\t' };
+
+/**
+ * `text` with every character that ends a line or drives a terminal written as an escape: the C0
+ * and C1 controls, DEL, and the line and paragraph separators. A closer's reason and an entry's
+ * name are whatever anyone who can write the state directory chose, and `doctor` and `plan` print
+ * a line per check and per card, so a break left raw would let either text print a line of its
+ * own, such as one reading as a pull. Any other text prints as it is, so an ordinary reason reads
+ * in `once`'s words exactly.
+ */
+const printable = (text) => String(text).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g,
+  (character) => ESCAPES[character] ?? `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`);
+
+/** The words that name one closer in `doctor`'s and `plan`'s output: `closedBy`'s, its reason printable. */
+export const closerLine = (closer) => closedBy({ ...closer, reason: printable(closer.reason) });
+
 /** The words that name each entry of an admission that cannot be read, by its path and cause. */
-export const unreadableAdmission = (unreadable) => `admission cannot be read: ${unreadable.map(({ path, cause }) => `${path} (${cause})`).join(', ')}`;
+export const unreadableAdmission = (unreadable) => `admission cannot be read: ${unreadable.map(({ path, cause }) => `${printable(path)} (${printable(cause)})`).join(', ')}`;
 
 /**
  * Admission in the repository `named`, as L3's module reads it from the state directory there:
@@ -676,7 +693,7 @@ export function admissionCheck({ target = process.cwd(), sink }) {
   const name = 'admission';
   const read = admissionIn(target, sink);
   if (read.state === 'unreadable') return { name, ok: false, detail: unreadableAdmission(read.unreadable) };
-  return { name, ok: true, detail: read.state === 'open' ? 'admission is open' : read.closers.map(closedBy).join('; ') };
+  return { name, ok: true, detail: read.state === 'open' ? 'admission is open' : read.closers.map(closerLine).join('; ') };
 }
 
 /**

@@ -1665,7 +1665,6 @@ test('once ignores closed cards without a kind or carrying the epic label while 
   }
 });
 
-// proves R-SCHED-17, R-SCHED-18
 test('once prints each closer in the words it printed at #944\'s head, and those words are written in one function under src/', async () => {
   // The words are written out by hand, as `once` printed them at a4edcfb, so a change to the one
   // function `doctor` and `plan` now share with `once` shows here as a change to `once`'s output.
