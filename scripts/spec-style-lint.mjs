@@ -181,6 +181,26 @@ function hinting(sentence) {
 }
 
 /**
+ * The lines, numbered from 1, that an indented line continues a list item on.
+ *
+ * `paragraphs` trims indentation, so it reads such a line as prose, and the hints leave it alone
+ * here instead: a list item is rule 4's answer, however many lines it wraps onto. An indented line
+ * stays in the item across a blank line, and an unindented line ends the list.
+ */
+function listContinuations(text) {
+  const found = new Set();
+  const raw = text.split('\n');
+  let inItem = false;
+  unfenced(text).forEach((line, index) => {
+    if (/^(?:[-*+]|\d+[.)])\s/.test(line)) inItem = true;
+    else if (line === '') return;
+    else if (inItem && /^\s/.test(raw[index])) found.add(index + 1);
+    else inItem = false;
+  });
+  return found;
+}
+
+/**
  * Advisory hints for rules 4 and 5, which are judgments: each points at a sentence a reader
  * should look at, and none is a finding. `findings` and the lint's exit never read them.
  *
@@ -189,7 +209,8 @@ function hinting(sentence) {
  */
 export function hints(text) {
   const found = [];
-  for (const paragraph of paragraphs(text)) {
+  const continued = listContinuations(text);
+  for (const paragraph of paragraphs(text).filter(({ line }) => !continued.has(line))) {
     for (const sentence of sentences(paragraph.text)) {
       for (const rule of hinting(sentence)) found.push({ rule, line: paragraph.line, text: sentence });
     }

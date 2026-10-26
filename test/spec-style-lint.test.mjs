@@ -517,3 +517,11 @@ test('a hint on a binding document is printed under `--hints`, and the exit is w
   assert.equal(lintWith(failing).status, 1);
   assert.equal(lintWith('--hints', failing).status, 1);
 });
+
+test('a list item wrapping onto an indented next line that holds the `then`s gives no hint', () => {
+  // The indented line is the item's own text, so it is a list item and not a paragraph.
+  const wrapped = '- The engine pulls,\n  then dispatches, then judges, then merges.\n';
+  assert.deepEqual(hints(wrapped), []);
+  // The same line under a blank line and no indent is prose after the list, and is hinted.
+  assert.deepEqual(hinted('- The engine pulls.\n\nThen it dispatches, then judges, then merges.\n'), [{ rule: 4, line: 3 }]);
+});
