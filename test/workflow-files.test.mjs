@@ -27,7 +27,7 @@ const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 
 test('CI assigns portable, concurrent hosted candidate and protected-main regression lanes with Node 26', () => {
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
-  assert.deepEqual(Object.keys(ci.jobs).sort(), ['check', 'demo', 'fast', 'full_host', 'full_ordinary', 'nightly', 'plan']);
+  assert.deepEqual(Object.keys(ci.jobs).sort(), ['cancel_superseded', 'check', 'demo', 'fast', 'full_host', 'full_ordinary', 'nightly', 'plan']);
   for (const name of ['plan', 'fast', 'check']) assert.equal(ci.jobs[name]['runs-on'], 'ubuntu-latest', name);
   for (const name of ['full_ordinary', 'full_host', 'demo']) assert.equal(ci.jobs[name]['runs-on'], 'macos-latest', name);
   assert.deepEqual(ci.jobs.nightly['runs-on'], ['self-hosted', 'macOS', 'ARM64']);
@@ -458,7 +458,7 @@ test('staged CI preserves finite events, independent full lanes, every command a
   assert.deepEqual(ci.on.schedule, [{ cron: '0 3 * * *' }]);
   assert.equal(ci.on.workflow_dispatch, null, 'dispatch must expose no arbitrary ref/input selector');
   assert.deepEqual(ci.permissions, { contents: 'read', 'pull-requests': 'read' });
-  assert.deepEqual(ci.jobs.check.needs, ['plan', 'fast', 'full_ordinary', 'full_host', 'demo']);
+  assert.deepEqual(ci.jobs.check.needs, ['plan', 'fast', 'full_ordinary', 'full_host', 'demo', 'cancel_superseded']);
   for (const name of ['full_ordinary', 'full_host']) assert.deepEqual(ci.jobs[name].needs, ['plan']);
   const commands = (name) => ci.jobs[name].steps.map((step) => step.run).filter(Boolean);
   const stats = ['budget:package', 'budget:instructions', 'lint:spec-style', 'check:references', 'check:paths', 'check:ids', 'check:words', 'check:headers', 'matrix:check'].map((name) => 'npm run ' + name);
@@ -555,7 +555,7 @@ test('actual inline CLI plans and verifies real Git source through a local read-
   assert.equal(outputs.mode, 'FAST_ELIGIBLE'); assert.equal(outputs.sha, sha); assert.equal(outputs.tree, tree);
   const proof = { CI_EXPECTED_SOURCE: outputs.snapshot, CI_EXPECTED_MODE: outputs.mode, CI_EXPECTED_DEMO: outputs.demoNeeded };
   const worker = await execute('worker', { ...proof, CI_WORKER: 'fast' }); assert.equal(worker.status, 0, worker.out + worker.err);
-  const results = { plan: { result: 'success' }, fast: { result: 'success' }, full_ordinary: { result: 'skipped' }, full_host: { result: 'skipped' }, demo: { result: 'skipped' } };
+  const results = { plan: { result: 'success' }, fast: { result: 'success' }, full_ordinary: { result: 'skipped' }, full_host: { result: 'skipped' }, demo: { result: 'skipped' }, cancel_superseded: { result: 'success' } };
   const aggregate = await execute('aggregate', { ...proof, CI_RESULTS: JSON.stringify(results) });
   assert.equal(aggregate.status, 0, aggregate.out + aggregate.err);
   fixture.api['/repos/williacj/rigger/pulls/7'].head.sha = 'e'.repeat(40);
