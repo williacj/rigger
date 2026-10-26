@@ -76,6 +76,7 @@ function ciFacts() {
   return {
     event: 'pull_request', action: 'synchronize', ref: 'refs/pull/7/merge', owner: 'williacj', sender: 'contributor',
     eventSha: 'a'.repeat(40), complete: true,
+    main: { head: 'c'.repeat(40), defaultBranch: 'main' },
     checkout: { sha: 'a'.repeat(40), tree: 'b'.repeat(40), parents: ['c'.repeat(40), 'd'.repeat(40)] },
     pr: { number: 7, head: 'd'.repeat(40), base: 'c'.repeat(40), baseRef: 'main', state: 'open', draft: false },
     live: { head: 'd'.repeat(40), base: 'c'.repeat(40), baseRef: 'main', state: 'open', draft: false, labels: [] },
@@ -104,11 +105,17 @@ test('inline CI policy admits only complete regular direct journal changes or no
   assert.equal(ciPolicy('policy', nonmain).mode, 'FAST_ELIGIBLE');
   nonmain.action = 'edited'; nonmain.pr.baseRef = nonmain.live.baseRef = 'main';
   assert.equal(ciPolicy('policy', nonmain).mode, 'BROAD_DEFERRED');
+  for (const main of [undefined, { head: '' }, { head: 'e'.repeat(40), defaultBranch: 'other' }]) {
+    const unavailable = ciFacts(); unavailable.main = main;
+    assert.equal(ciPolicy('policy', unavailable).mode, 'INVALID', 'unavailable actual main');
+  }
+  const advanced = ciFacts(); advanced.live.base = 'e'.repeat(40);
+  assert.equal(ciPolicy('policy', advanced).mode, 'FAST_ELIGIBLE', 'a fresh PR base does not replace the recorded base');
   for (const corrupt of ['complete', 'head', 'base', 'tree', 'parents', 'path-list']) {
     const facts = ciFacts();
     if (corrupt === 'complete') facts.complete = false;
     if (corrupt === 'head') facts.live.head = 'e'.repeat(40);
-    if (corrupt === 'base') facts.live.base = 'e'.repeat(40);
+    if (corrupt === 'base') facts.pr.base = 'e'.repeat(40);
     if (corrupt === 'tree') facts.checkout.tree = '';
     if (corrupt === 'parents') facts.checkout.parents.reverse();
     if (corrupt === 'path-list') delete facts.changes;
@@ -249,6 +256,134 @@ test('inline aggregate requires fresh equal source mode and every literally requ
   assert.equal(ciPolicy('guard', deferred, ciProof('BROAD_DEFERRED')), false);
 });
 
+/** Owner full request and complete results, independent literal source identities from ciProof. */
+function ciFullFixture() {
+  const facts = ciFacts();
+  Object.assign(facts, { action: 'labeled', sender: 'williacj', label: 'ci:full' });
+  facts.live.labels = ['ci:full']; facts.changes[0].path = 'test/package-budget.test.mjs';
+  const proof = ciProof('BROAD_EXECUTED'); proof.results.full_ordinary = proof.results.full_host = 'success';
+  return { facts, proof };
+}
+
+test('recorded CI Table A equal start and unmoved main retains full proof', () => {
+  const { facts, proof } = ciFullFixture();
+  assert.equal(ciPolicy('policy', facts).mode, 'BROAD_EXECUTED');
+  const aggregate = ciPolicy('runPolicy', { action: 'aggregate', facts, proof });
+  assert.equal(aggregate.ok, true);
+  assert.equal(aggregate.testedBase, 'c'.repeat(40));
+  assert.equal(aggregate.mainAdvanced, false);
+  assert.deepEqual(aggregate.source, proof.source);
+});
+
+test('recorded CI Table A stale start and unmoved main runs full against the recorded candidate', () => {
+  const { facts, proof } = ciFullFixture();
+  facts.main.head = 'e'.repeat(40);
+  assert.equal(ciPolicy('policy', facts).mode, 'BROAD_EXECUTED');
+  const plan = ciPolicy('runPolicy', { action: 'plan', facts });
+  assert.deepEqual(JSON.parse(plan.output.snapshot), proof.source);
+  for (const worker of ['fast', 'full_ordinary', 'full_host']) {
+    assert.equal(ciPolicy('runPolicy', { action: 'worker', facts, proof, worker }).ok, true, worker);
+  }
+  const aggregate = ciPolicy('runPolicy', { action: 'aggregate', facts, proof });
+  assert.equal(aggregate.ok, true);
+  assert.equal(aggregate.testedBase, 'c'.repeat(40));
+  assert.equal(aggregate.currentMain, 'e'.repeat(40));
+  assert.equal(aggregate.mainAdvanced, true);
+  assert.deepEqual(aggregate.source, proof.source);
+});
+
+test('recorded CI Table A equal start then main moves retains the planned proof', () => {
+  const { facts, proof } = ciFullFixture();
+  const plan = ciPolicy('runPolicy', { action: 'plan', facts });
+  assert.deepEqual(JSON.parse(plan.output.snapshot), proof.source);
+  facts.main.head = facts.live.base = 'e'.repeat(40);
+  const aggregate = ciPolicy('runPolicy', { action: 'aggregate', facts, proof });
+  assert.equal(aggregate.ok, true);
+  assert.equal(aggregate.testedBase, 'c'.repeat(40));
+  assert.equal(aggregate.currentMain, 'e'.repeat(40));
+  assert.equal(aggregate.mainAdvanced, true);
+  assert.deepEqual(aggregate.source, proof.source);
+});
+
+test('recorded CI Table A stale start then main moves retains only the recorded source', () => {
+  const { facts, proof } = ciFullFixture();
+  facts.main.head = 'e'.repeat(40);
+  const plan = ciPolicy('runPolicy', { action: 'plan', facts });
+  assert.deepEqual(JSON.parse(plan.output.snapshot), proof.source);
+  facts.main.head = 'f'.repeat(40);
+  const aggregate = ciPolicy('runPolicy', { action: 'aggregate', facts, proof });
+  assert.equal(aggregate.ok, true);
+  assert.equal(aggregate.testedBase, 'c'.repeat(40));
+  assert.equal(aggregate.currentMain, 'f'.repeat(40));
+  assert.equal(aggregate.mainAdvanced, true);
+  assert.deepEqual(aggregate.source, proof.source);
+});
+
+test('recorded CI Table A changed head refuses old proof with main moved or unmoved', () => {
+  for (const main of ['c', 'e']) {
+    const { facts, proof } = ciFullFixture();
+    facts.main.head = main.repeat(40); facts.live.head = 'f'.repeat(40);
+    assert.equal(ciPolicy('policy', facts).mode, 'INVALID');
+    assert.equal(ciPolicy('runPolicy', { action: 'aggregate', facts, proof }).ok, false);
+  }
+});
+
+test('recorded CI Table A nonowner full label runs no full worker', () => {
+  const { facts, proof } = ciFullFixture(); facts.sender = 'contributor';
+  assert.equal(ciPolicy('policy', facts).mode, 'BROAD_DEFERRED');
+  for (const worker of ['full_ordinary', 'full_host']) {
+    assert.equal(ciPolicy('runPolicy', { action: 'worker', facts, proof, worker }).ok, false, worker);
+  }
+});
+
+test('recorded CI Table A draft closed and nonmain remain classified as at base', () => {
+  for (const [change, mode] of [['draft', 'BROAD_DEFERRED'], ['closed', 'INVALID'], ['nonmain', 'FAST_ELIGIBLE']]) {
+    const { facts, proof } = ciFullFixture();
+    if (change === 'draft') facts.pr.draft = facts.live.draft = true;
+    if (change === 'closed') facts.pr.state = facts.live.state = 'closed';
+    if (change === 'nonmain') facts.pr.baseRef = facts.live.baseRef = 'batch';
+    assert.equal(ciPolicy('policy', facts).mode, mode, change);
+    assert.equal(ciPolicy('runPolicy', { action: 'worker', facts, proof, worker: 'full_host' }).ok, false, change);
+  }
+});
+
+test('recorded CI nonmain policy retains the original recorded versus current base guard', () => {
+  const facts = ciFacts(); facts.pr.baseRef = facts.live.baseRef = 'batch';
+  facts.live.base = 'e'.repeat(40);
+  assert.equal(ciPolicy('policy', facts).mode, 'INVALID', 'updated nonmain PR base remains refused');
+});
+
+test('recorded CI Table A label removal and another-label events remain deferred', () => {
+  for (const change of ['removed', 'unlabeled', 'other-label']) {
+    const { facts, proof } = ciFullFixture();
+    if (change === 'removed') facts.live.labels = [];
+    if (change === 'unlabeled') facts.action = 'unlabeled';
+    if (change === 'other-label') { facts.label = 'unrelated'; facts.live.labels.push('unrelated'); }
+    assert.equal(ciPolicy('policy', facts).mode, 'BROAD_DEFERRED', change);
+    assert.equal(ciPolicy('runPolicy', { action: 'worker', facts, proof, worker: 'full_host' }).ok, false, change);
+  }
+});
+
+test('recorded CI proof refuses each changed immutable identity despite legitimate main drift', () => {
+  const { facts, proof } = ciFullFixture(); facts.main.head = facts.live.base = 'e'.repeat(40);
+  for (const [key, value] of [
+    ['sha', 'f'.repeat(40)], ['tree', 'f'.repeat(40)], ['parents', ['e'.repeat(40), 'd'.repeat(40)]],
+    ['parents', ['d'.repeat(40), 'c'.repeat(40)]], ['head', 'f'.repeat(40)], ['base', 'e'.repeat(40)],
+    ['baseRef', 'batch'], ['ref', 'refs/pull/8/merge'], ['event', 'push'],
+  ]) {
+    const changed = structuredClone(proof); changed.source[key] = value;
+    assert.equal(ciPolicy('guard', facts, changed), false, key + ':' + JSON.stringify(value));
+    assert.equal(ciPolicy('runPolicy', { action: 'aggregate', facts, proof: changed }).ok, false, key);
+  }
+  const nonmain = structuredClone(facts); nonmain.pr.baseRef = nonmain.live.baseRef = 'batch'; nonmain.live.base = 'c'.repeat(40);
+  const nonmainProof = ciProof(); nonmainProof.source.baseRef = 'batch';
+  const aggregate = ciPolicy('runPolicy', { action: 'aggregate', facts: nonmain, proof: nonmainProof });
+  assert.equal(aggregate.ok, true);
+  assert.equal(aggregate.testedBase, 'c'.repeat(40));
+  assert.equal(aggregate.currentMain, 'e'.repeat(40));
+  assert.equal(aggregate.mainAdvanced, null, 'main advancement is inapplicable to a nonmain base');
+});
+
 test('candidate aggregate condition cannot be skipped by a forged MAIN_FULL plan mode', () => {
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
   const condition = ci.jobs.check.if.slice(3, -2).trim();
@@ -322,15 +457,55 @@ test('actual inline collector binds Git checkout parents and raw diff to fresh r
   assert.deepEqual(answer.changes, ciFacts().changes);
   assert.ok(calls.some((args) => JSON.stringify(args) === JSON.stringify(['diff', '--raw', '-z', '--no-renames', 'c'.repeat(40), 'a'.repeat(40)])));
   assert.equal(ciPolicy('policy', answer).mode, 'FAST_ELIGIBLE');
-  for (const corrupt of ['unavailable-api', 'wrong-base-ref', 'wrong-checkout', 'wrong-owner', 'wrong-repository']) {
+  const drifted = ciCollectorFixture();
+  drifted.api['/repos/williacj/rigger/git/ref/heads/main'].object.sha = 'e'.repeat(40);
+  const drift = ciPolicy('collect', drifted).answer;
+  assert.equal(drift.complete, true, 'live main alone does not invalidate the recorded checkout');
+  assert.deepEqual(drift.pr, ciFacts().pr);
+  assert.equal(drift.main.head, 'e'.repeat(40));
+  assert.equal(drift.live.base, 'c'.repeat(40), 'the current PR base is independent of live main');
+  const batch = ciCollectorFixture();
+  batch.event.pull_request.base.ref = batch.api['/repos/williacj/rigger/pulls/7'].base.ref = 'batch';
+  batch.api['/repos/williacj/rigger/git/ref/heads/batch'] = { object: { sha: 'c'.repeat(40) } };
+  batch.api['/repos/williacj/rigger/git/ref/heads/main'].object.sha = 'e'.repeat(40);
+  const nonmain = ciPolicy('collect', batch).answer;
+  assert.equal(nonmain.complete, true);
+  assert.equal(nonmain.main.head, 'e'.repeat(40), 'current main is not the batch branch head');
+  assert.equal(ciPolicy('policy', nonmain).mode, 'FAST_ELIGIBLE');
+  for (const corrupt of ['unavailable-api', 'wrong-recorded-base', 'wrong-checkout', 'wrong-owner', 'wrong-repository']) {
     const bad = ciCollectorFixture();
     if (corrupt === 'unavailable-api') delete bad.api['/repos/williacj/rigger/pulls/7'];
-    if (corrupt === 'wrong-base-ref') bad.api['/repos/williacj/rigger/git/ref/heads/main'].object.sha = 'e'.repeat(40);
+    if (corrupt === 'wrong-recorded-base') {
+      bad.event.pull_request.base.sha = 'e'.repeat(40);
+      bad.git[JSON.stringify(['diff', '--raw', '-z', '--no-renames', 'e'.repeat(40), 'a'.repeat(40)])] = bad.git[JSON.stringify(['diff', '--raw', '-z', '--no-renames', 'c'.repeat(40), 'a'.repeat(40)])];
+    }
     if (corrupt === 'wrong-checkout') bad.git[JSON.stringify(['rev-parse', 'HEAD'])] = Buffer.from('e'.repeat(40) + '\n').toString('base64');
     if (corrupt === 'wrong-owner') bad.context.owner = 'fork-owner';
     if (corrupt === 'wrong-repository') bad.event.repository.full_name = 'fork-owner/rigger';
     const current = ciPolicy('collect', bad).answer;
     assert.equal(ciPolicy('policy', current).mode, 'INVALID', corrupt);
+  }
+});
+
+test('recorded CI nonmain collector retains the original live base branch guard', () => {
+  const fixture = ciCollectorFixture();
+  fixture.event.pull_request.base.ref = fixture.api['/repos/williacj/rigger/pulls/7'].base.ref = 'batch';
+  fixture.api['/repos/williacj/rigger/git/ref/heads/batch'] = { object: { sha: 'e'.repeat(40) } };
+  const collected = ciPolicy('collect', fixture).answer;
+  assert.equal(collected.complete, false, 'a moved nonmain base branch remains refused');
+  assert.equal(ciPolicy('policy', collected).mode, 'INVALID');
+});
+
+test('recorded CI collector fails closed on unavailable visibility and malformed source facts', () => {
+  for (const change of ['missing-main', 'malformed-main', 'missing-current-base', 'changed-current-head', 'wrong-recorded-parent']) {
+    const fixture = ciCollectorFixture();
+    if (change === 'missing-main') delete fixture.api['/repos/williacj/rigger/git/ref/heads/main'];
+    if (change === 'malformed-main') fixture.api['/repos/williacj/rigger/git/ref/heads/main'].object.sha = 'invalid';
+    if (change === 'missing-current-base') delete fixture.api['/repos/williacj/rigger/pulls/7'].base.sha;
+    if (change === 'changed-current-head') fixture.api['/repos/williacj/rigger/pulls/7'].head.sha = 'e'.repeat(40);
+    if (change === 'wrong-recorded-parent') fixture.git[JSON.stringify(['show', '-s', '--format=%P', 'HEAD'])] = Buffer.from('e'.repeat(40) + ' ' + 'd'.repeat(40) + '\n').toString('base64');
+    const facts = ciPolicy('collect', fixture).answer;
+    assert.equal(ciPolicy('policy', facts).mode, 'INVALID', change);
   }
 });
 
@@ -380,6 +555,12 @@ test('actual inline runtime routes plan worker and aggregate through the same so
   assert.equal(worker.ok, true);
   assert.equal(worker.source.sha, 'a'.repeat(40));
   assert.equal(ciPolicy('runPolicy', { action: 'aggregate', facts, proof }).ok, true);
+  const visible = ciPolicy('runPolicy', { action: 'aggregate', facts, proof });
+  assert.equal(visible.testedBase, 'c'.repeat(40));
+  assert.equal(visible.currentMain, 'c'.repeat(40));
+  assert.equal(visible.mainAdvanced, false);
+  assert.deepEqual(visible.source, proof.source);
+
   const forged = ciProof('MAIN_FULL');
   assert.equal(ciPolicy('runPolicy', { action: 'worker', facts, proof: forged, worker: 'nightly' }).ok, false);
   assert.equal(ciPolicy('runPolicy', { action: 'worker', facts, proof, worker: 'full_host' }).ok, false);
@@ -392,6 +573,59 @@ test('actual inline runtime routes plan worker and aggregate through the same so
   assert.equal(result.ok, false);
   assert.match(result.reason, /missing-current-batch-proof/);
   assert.equal(ciPolicy('runPolicy', { action: 'unknown', facts, proof }).ok, false);
+});
+
+test('actual CI aggregate JSON exposes recorded base and current main without changing its source', (t) => {
+  const directory = temporaryDirectory('ci-runtime-', { context: t }), bin = join(directory, 'bin'); mkdirSync(bin);
+  const eventPath = join(directory, 'event.json'), gitRecord = join(directory, 'git-calls'), apiRecord = join(directory, 'api-calls');
+  const git = join(bin, 'git');
+  // The Git answers are the literal collaborator contract in ciCollectorFixture, never a real forge.
+  writeFileSync(git, '#!' + process.execPath + '\n' + `
+    const fs = require('node:fs');
+    const args = process.argv.slice(2), key = JSON.stringify(args);
+    const answers = JSON.parse(process.env.CI_RUNTIME_FIXTURE).git;
+    fs.appendFileSync(process.env.CI_GIT_RECORD, key + '\\n');
+    if (!Object.hasOwn(answers, key)) throw new Error('unrecorded Git command ' + key);
+    process.stdout.write(Buffer.from(answers[key], 'base64'));
+  `);
+  chmodSync(git, 0o755);
+  const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
+  const { facts, proof } = ciFullFixture();
+  for (const main of ['c', 'e']) {
+    const fixture = ciCollectorFixture();
+    Object.assign(fixture.event, { action: 'labeled', sender: { login: 'williacj' }, label: { name: 'ci:full' } });
+    fixture.api['/repos/williacj/rigger/issues/7/labels?per_page=100'] = [{ name: 'ci:full' }];
+    fixture.api['/repos/williacj/rigger/git/ref/heads/main'].object.sha = main.repeat(40);
+    fixture.api['/repos/williacj/rigger/pulls/7'].base.sha = main.repeat(40);
+    writeFileSync(eventPath, JSON.stringify(fixture.event));
+    writeFileSync(gitRecord, ''); writeFileSync(apiRecord, '');
+    const prefix = `globalThis.fetch = async (url, options) => {
+      const path = new URL(url).pathname + new URL(url).search;
+      const fixture = JSON.parse(process.env.CI_RUNTIME_FIXTURE);
+      const fs = await import('node:fs');
+      fs.appendFileSync(process.env.CI_API_RECORD, JSON.stringify({ path, method: options.method }) + '\\n');
+      if (!Object.hasOwn(fixture.api, path)) throw new Error('unrecorded API request ' + path);
+      return new Response(JSON.stringify(fixture.api[path]), { status: 200 });
+    };`;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', prefix + ci.env.CI_POLICY], {
+      encoding: 'utf8', cwd: directory,
+      env: { ...process.env, PATH: bin + delimiter + process.env.PATH, GH_TOKEN: 'fixture-token', GITHUB_API_URL: 'https://api.github.test',
+        GITHUB_EVENT_PATH: eventPath, GITHUB_EVENT_NAME: 'pull_request', GITHUB_REF: 'refs/pull/7/merge', GITHUB_SHA: facts.eventSha,
+        GITHUB_REPOSITORY: 'williacj/rigger', GITHUB_REPOSITORY_OWNER: 'williacj', CI_POLICY_ACTION: 'aggregate',
+        CI_EXPECTED_SOURCE: JSON.stringify(proof.source), CI_EXPECTED_MODE: proof.mode, CI_EXPECTED_DEMO: 'false',
+        CI_RESULTS: JSON.stringify(Object.fromEntries(Object.entries(proof.results).map(([name, result]) => [name, { result }]))),
+        CI_RUNTIME_FIXTURE: JSON.stringify(fixture), CI_GIT_RECORD: gitRecord, CI_API_RECORD: apiRecord },
+    });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.testedBase, 'c'.repeat(40));
+    assert.equal(output.currentMain, main.repeat(40));
+    assert.equal(output.mainAdvanced, main === 'e');
+    assert.deepEqual(output.source, proof.source);
+    assert.equal(output.mode, 'BROAD_EXECUTED');
+    assert.equal(readFileSync(gitRecord, 'utf8').trim().split('\n').length, 4);
+    assert.equal(readFileSync(apiRecord, 'utf8').trim().split('\n').length, 4);
+  }
 });
 
 test('inline CI policy refuses unknown event authority and malformed Git records before any fast eligibility', () => {
