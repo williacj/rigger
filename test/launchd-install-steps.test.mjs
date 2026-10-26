@@ -117,3 +117,12 @@ test('the README states nothing of a launchd check by doctor', () => {
     if (/doctor/.test(paragraph)) assert.doesNotMatch(paragraph, /launchd|LaunchAgent|launchctl/, paragraph);
   }
 });
+
+test('the steps unload the label rather than claim to stop its process', () => {
+  const text = steps();
+  assert.doesNotMatch(text, /\bstop/i, 'the steps claim a bootout stops the job');
+  assert.doesNotMatch(text, /until (?:your|the) next login/i, 'the steps claim what the next login does');
+  const forGood = text.replace(/\s+/g, ' ').match(/unload it for good.*?\.(?: |$)/i);
+  assert.ok(forGood, 'the steps say nothing of unloading the label for good');
+  assert.match(forGood[0], /`bootout`, then remove `~\/Library\/LaunchAgents\/com\.williacj\.rigger\.plist`/);
+});

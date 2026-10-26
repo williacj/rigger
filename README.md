@@ -278,9 +278,9 @@ The job writes its standard output to `~/Library/Logs/rigger/rigger.out`, and it
 to `~/Library/Logs/rigger/rigger.err`. Make no directory for them. The S1 report judges, from
 timing and mode, that launchd makes a missing one itself (Q-m2).
 
-To stop the job until your next login, run `launchctl bootout gui/<uid>/com.williacj.rigger`,
-which exits 0 for a loaded label (S2 report, Q-o1). To stop it for good, run that `bootout`, then
-remove `~/Library/LaunchAgents/com.williacj.rigger.plist`.
+To unload the label, run `launchctl bootout gui/<uid>/com.williacj.rigger`. It exits 0 for a
+loaded label, and step 4's `print` then exits 113 (S2 report, Q-o1 and Q-o2). To unload it for
+good, run that `bootout`, then remove `~/Library/LaunchAgents/com.williacj.rigger.plist`.
 
 ## Configuration
 
