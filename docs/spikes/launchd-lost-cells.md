@@ -38,8 +38,8 @@ owner's laptop.
    It returned 0 on every one of 223 firings. That includes the 10 posted while the posting app's
    notifications were turned off, two of which the owner recorded as not seen (Q-k2). With a Focus
    on that does not allow the posting app, the owner recorded three firings as only in Notification
-   Centre (Q-k, phase B). Phases A and D and the global settings are not recorded per firing. "Q-k"
-   says what was recorded and what was not.
+   Centre (Q-k, phase B). Phases A and D are not recorded per firing. "Q-k" says what was recorded
+   and what was not.
 
 ## How it ran
 
@@ -342,12 +342,22 @@ The owner then answered the last prompt again, in their words: "turned on Do Not
 restored everything"
 ([951#6406167931](https://github.com/williacj/rigger/issues/951#issuecomment-6406167931)).
 
+The coordinator then asked the owner four questions: which app posted the notifications (System
+Settings, Notifications; was it Script Editor), and whether each of the three "Allow notifications
+when…" settings (the display sleeping, the screen locked, mirroring or sharing the display) was on
+or off. The owner's reply, in their words, is "1) scripts editor, 2)on, 3) on, 4), on"
+([951#6406431897](https://github.com/williacj/rigger/issues/951#issuecomment-6406431897)). The
+typed entries above stand as they were typed. The owner gave no further answer on where they
+watched.
+
 **Where the owner watched.** The plan asked the owner to watch the mini's own display, never Screen
 Sharing (951#6401933790; U62). The owner's record of it is entry 207's answer above, which is the
 only one. Neither batch 3 statement mentions it.
 
 **The global settings and the display.**
-- **The three "Allow notifications when…" values:** unrecorded. Their prompts' answers are empty.
+- **The three "Allow notifications when…" values:** the prompts' typed answers are empty. Asked
+  again afterwards, the owner answered "2)on, 3) on, 4), on" (951#6406431897), in order: the display
+  sleeping, the screen locked, mirroring or sharing the display.
 - **The display asleep:** measured from `pmset -g log` (entries 179 and 209, filtered in entries 181
   and 210). It logged "Display is turned off" at 21:20:50Z and "Display is turned on" at 21:34:44Z,
   inside batch 3's phase A, with the host in Deep Idle and DarkWakes between. It logged no display,
@@ -356,8 +366,8 @@ only one. Neither batch 3 statement mentions it.
   60 s outside it. Display sleep thus covers none of phases B, C or D.
 - **The screen locked, and the display mirrored or shared:** unmeasured. `pmset` does not log them,
   and no prompt answer records them.
-- **The posting app's name:** unrecorded. The answer is `x`. #744's judgment that the app is Script
-  Editor is neither confirmed nor refuted here.
+- **The posting app's name:** the typed answer is `x`. Asked again afterwards, the owner answered
+  "1) scripts editor" (951#6406431897).
 
 **A defect in the throwaway script,** recorded, not chased. Four "unrecorded" firings were stamped
 within 0.1 to 0.5 s of their firing, not after the 55 s timeout: 01:18:28 (entry 192), 01:19:28
@@ -422,9 +432,11 @@ M6-11d needs the owner to have seen a notice, it needs a second record that does
 banner, such as the run's report or a card comment. A notice under a Focus that does not allow the
 posting app lands only in Notification Centre (phase B, three firings).
 
-**Do not assume** that the posting app is Script Editor, that the owner's global notification
-settings allow banners while the display sleeps or the screen is locked, or anything about phases A
-and D per firing. None of these is recorded.
+**Do not assume** anything about phases A and D per firing, which are not recorded, or that the
+owner's global notification settings are the ones this run read. The owner reported the posting app
+as "scripts editor" and the three "Allow notifications when…" settings as on, in an answer given
+after the run (951#6406431897). The settings are host state, which another host or a later change
+can differ from.
 
 **Would reverse it:** an `osascript` release whose `display notification` fails when the app's
 notifications are off, or a measured banner under a Focus that does not allow the posting app.
