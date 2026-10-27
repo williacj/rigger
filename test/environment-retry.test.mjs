@@ -1420,6 +1420,41 @@ test('R38 a refused probe timeout kill is reported as an event refusal and L2 ha
   }
 });
 
+/** Records the physical refusal input before it crosses the dispatch boundary. */
+function refusalInput(path) {
+  const stat = fs.lstatSync(path, { bigint: true });
+  const identity = [stat.dev, stat.ino, stat.mode];
+  if (stat.isDirectory()) return { path, identity, children: fs.readdirSync(path).sort().map((name) => refusalInput(join(path, name))) };
+  assert.equal(stat.isFile(), true, 'the protected fixture input is a regular file');
+  return { path, identity, bytes: readFileSync(path) };
+}
+
+/** Checks existence, exact bytes and entries, kind, identity and permissions of the saved input. */
+function assertRefusalInput(input, label) {
+  assert.equal(existsSync(input.path), true, `${label} must remain after escalation: ${input.path}`);
+  const stat = fs.lstatSync(input.path, { bigint: true });
+  assert.deepEqual([stat.dev, stat.ino, stat.mode], input.identity, `${label} identity and permissions are unchanged`);
+  if (input.children !== undefined) {
+    assert.equal(stat.isDirectory(), true, `${label} remains a directory`);
+    assert.deepEqual(fs.readdirSync(input.path).sort(), input.children.map(({ path }) => path.slice(input.path.length + 1)), `${label} entries are unchanged`);
+    for (const child of input.children) assertRefusalInput(child, label);
+  } else {
+    assert.equal(stat.isFile(), true, `${label} remains a regular file`);
+    assert.deepEqual(readFileSync(input.path), input.bytes, `${label} exact bytes are unchanged`);
+  }
+}
+
+/** Checks that escalation names and preserves the refused input. */
+function assertJudgeRefusal(world, result, role) {
+  const input = world.refusedDirectories.get(role) ?? world.refusedScratch.get(role);
+  assert.ok(input, 'the fixture recorded a physical refused input');
+  const refusal = result.reached[0].judges.find((judge) => judge.role === role).outcome.reason;
+  assert.equal(refusal.code, input.children === undefined ? 'SCRATCH_REFUSED' : 'WORKSPACE_REFUSED');
+  assert.equal(refusal.path, input.path, 'the report names the physical refused input');
+  assertRefusalInput(input, `${role}'s refused input`);
+  for (const [peer, saved] of world.peerInputs) assertRefusalInput(saved, `${peer}'s retained peer input`);
+}
+
 /** A real L1/L2/L3 judge pair whose directory preparations supply the named source faults. */
 function judgePairWorld(t, { ready = false, plans = { reviewer: ['host', 'host'] }, refuse = () => false, provisioning = {}, steps = [] } = {}) {
   const roles = Object.keys(plans);
@@ -1428,6 +1463,9 @@ function judgePairWorld(t, { ready = false, plans = { reviewer: ['host', 'host']
   const workspaces = [];
   const counts = new Map();
   const refusedScratch = new Map();
+  const refusedDirectories = new Map();
+  const peerInputs = new Map();
+  const refusingRoles = new Set(Object.entries(plans).filter(([, modes]) => modes.some((mode) => ['directory-refused', 'scratch-refused'].includes(mode))).map(([role]) => role));
   const directory = async (card, role, head) => {
     const number = (counts.get(role) ?? 0) + 1;
     counts.set(role, number);
@@ -1437,7 +1475,15 @@ function judgePairWorld(t, { ready = false, plans = { reviewer: ['host', 'host']
     const admissionFiles = Object.fromEntries(Object.entries(stateFiles).filter(([path]) => path.startsWith(`${join(built.directory, 'admission')}/`)));
     calls.push({ role, number, events: built.events(), stateFiles, admissionFiles });
     const mode = plans[role][number - 1] ?? 'success';
-    if (mode === 'directory-refused') throw Object.assign(new Error('R-WORK-20 refuses the judge directory'), { code: 'WORKSPACE_REFUSED', path: join(built.scratch, role) });
+    if (mode === 'directory-refused') {
+      const path = join(built.scratch, 'workspaces', 'judges', `rigger-${card}`, role);
+      mkdirSync(path, { recursive: true });
+      writeFileSync(join(path, 'owner-file'), 'owner data must remain\n', { mode: 0o640 });
+      fs.chmodSync(path, 0o750);
+      assert.equal(readFileSync(join(path, 'owner-file'), 'utf8'), 'owner data must remain\n', 'the refused directory contains the owner input');
+      refusedDirectories.set(role, refusalInput(path));
+      throw Object.assign(new Error('R-WORK-20 refuses the judge directory'), { code: 'WORKSPACE_REFUSED', path });
+    }
     if (mode === 'directory-unmade') throw Object.assign(new Error('the judge directory cannot be made'), { code: WORKSPACE_NOT_MADE, path: join(built.scratch, role) });
     const made = await built.handed.judgeDirectory(card, role, head);
     if (mode === 'host') rmSync(made.main, { recursive: true });
@@ -1457,6 +1503,13 @@ function judgePairWorld(t, { ready = false, plans = { reviewer: ['host', 'host']
     if (mode === 'head-step-exit') writeFileSync(join(made.head, 'broken'), 'fail\n');
     if (mode === 'head-step-not-started') rmSync(join(made.head, 'step-dir'), { recursive: true, force: true });
     else mkdirSync(join(made.head, 'step-dir'), { recursive: true });
+    if (refusingRoles.size > 0 && !refusingRoles.has(role) && !peerInputs.has(role)) {
+      const path = join(made.head, 'owner-input');
+      mkdirSync(path, { mode: 0o750 });
+      writeFileSync(join(path, 'owner-file'), `${role} owner data must remain\n`, { mode: 0o640 });
+      assert.equal(readFileSync(join(path, 'owner-file'), 'utf8'), `${role} owner data must remain\n`, 'the peer contains its physical owner input');
+      peerInputs.set(role, refusalInput(path));
+    }
     return made;
   };
   const workspace = async (...args) => {
@@ -1466,7 +1519,7 @@ function judgePairWorld(t, { ready = false, plans = { reviewer: ['host', 'host']
     return made;
   };
   const invocation = () => loop({ ...built.handed, judgeDirectory: directory, workspace });
-  return { built, calls, workspaces, refusedScratch, invocation };
+  return { built, calls, workspaces, refusedScratch, refusedDirectories, peerInputs, invocation };
 }
 
 /** Retains both the result and all reported failures without dropping a panel member. */
@@ -1603,6 +1656,7 @@ test('Table A and B retry-directory-refused', SETTLES_WITHIN, async (t) => {
   assert.equal(recorded(world.built, 'L2', 'review.escalate').length, 1);
   assert.deepEqual(recorded(world.built, 'L2', 'attempt.decided').map((event) => event.decision), ['again']);
   assert.deepEqual(admission({ directory: world.built.directory, sink: world.built.handed.sink }).read(), { state: 'open' });
+  assertJudgeRefusal(world, result, 'reviewer');
 });
 
 // A counterexample changes the table outcome or loses another judge under the same claim.
@@ -1731,6 +1785,7 @@ test('Table A and B initial-peer-refusal', SETTLES_WITHIN, async (t) => {
   assert.equal(world.calls.filter(({ role }) => role === 'reviewer').length, 1);
   assert.equal(world.built.owner.held().issues[0].comments.length, 1);
   assert.deepEqual(admission({ directory: world.built.directory, sink: world.built.handed.sink }).read(), { state: 'open' });
+  assertJudgeRefusal(world, result, 'architect');
 });
 
 // A counterexample changes the table outcome or loses another judge under the same claim.
@@ -1741,6 +1796,7 @@ test('Table A and B initial-peer-scratch-refusal', SETTLES_WITHIN, async (t) => 
   assert.equal(result.failure, undefined, result.failure?.stack);
   assert.equal(world.calls.filter(({ role }) => role === 'reviewer').length, 1);
   assert.equal(world.built.owner.held().issues[0].comments.length, 1);
+  assertJudgeRefusal(world, result, 'architect');
 });
 
 // A counterexample changes the table outcome or loses another judge under the same claim.
@@ -1765,6 +1821,7 @@ test('Table A and B hold-and-escalation-False', SETTLES_WITHIN, async (t) => {
   assert.equal(namesIn(world.built.directory).length, 1);
   const events = world.built.events();
   assert.ok(events.findIndex(({ event }) => event === "admission.close") < events.findIndex(({ event }) => event === "review.escalate"));
+  assertJudgeRefusal(world, result, 'architect');
 });
 
 // A counterexample changes the table outcome or loses another judge under the same claim.
@@ -1778,6 +1835,7 @@ test('Table A and B hold-and-escalation-True', SETTLES_WITHIN, async (t) => {
   assert.equal(namesIn(world.built.directory).length, 1);
   const events = world.built.events();
   assert.ok(events.findIndex(({ event }) => event === "admission.close") < events.findIndex(({ event }) => event === "review.escalate"));
+  assertJudgeRefusal(world, result, 'reviewer');
 });
 
 // A counterexample changes the table outcome or loses another judge under the same claim.
@@ -1791,6 +1849,7 @@ test('Table A and B stop-and-escalation-False', SETTLES_WITHIN, async (t) => {
   assert.deepEqual(admission({ directory: world.built.directory, sink: world.built.handed.sink }).read(), { state: 'open' });
   const events = world.built.events();
 
+  assertJudgeRefusal(world, result, 'architect');
 });
 
 // A counterexample changes the table outcome or loses another judge under the same claim.
@@ -1804,6 +1863,7 @@ test('Table A and B stop-and-escalation-True', SETTLES_WITHIN, async (t) => {
   assert.deepEqual(admission({ directory: world.built.directory, sink: world.built.handed.sink }).read(), { state: 'open' });
   const events = world.built.events();
 
+  assertJudgeRefusal(world, result, 'reviewer');
 });
 
 // The counterexample starts a retry while the initial panel still has a running judge.
