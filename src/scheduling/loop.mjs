@@ -74,7 +74,9 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission }) {
      * claim is taken in the same synchronous step as the pull order it follows, so no other trigger
      * can claim a card between the two. Admission is read after L2 answers and before a claim is
      * taken. A closed admission answers its closers with no claims; an unreadable one rejects,
-     * naming each path and cause. Otherwise answers `claims`, each with its pull, its card, L2's answer
+     * naming each path and cause, and carrying as `unreadable` the entries admission's read
+     * answered, unchanged, for the verb to print as it prints them (the architect's placement
+     * ruling on #981). Otherwise answers `claims`, each with its pull, its card, L2's answer
      * for it, the `decide` the facts call answered, as `queueDepth` the pullable cards it left
      * unclaimed as it took this one, whatever L2 answered them, and as `inFlight` the slots held, and
      * `failures`, holding the trigger
@@ -110,7 +112,8 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission }) {
       });
       const admissionState = readAdmission();
       if (admissionState.state === 'unreadable') {
-        throw new Error(`admission cannot be read, so this pull claims nothing: ${admissionState.unreadable.map(({ path, cause }) => `${path} (${cause})`).join(', ')}`);
+        const { unreadable } = admissionState;
+        throw Object.assign(new Error(`admission cannot be read, so this pull claims nothing: ${unreadable.map(({ path, cause }) => `${path} (${cause})`).join(', ')}`), { unreadable });
       }
       if (admissionState.state === 'closed') return { claims: [], failures, admission: admissionState };
       const taken = [];
