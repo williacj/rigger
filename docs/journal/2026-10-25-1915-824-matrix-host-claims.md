@@ -82,3 +82,20 @@ This integration takes e9e3d7c981f3501469173cdbdf16dd2ea9a01019 as its other par
 After #820 merged through PR #888, main 51a455e5f396f08bd661c61e49ecebe45c91794c became the integration parent. The sole merge conflict was the literal host-member oracle in test/suite-tiers.test.mjs: it now includes all three #820 coordinator host files alongside this card's matrix host file, preserving the existing sort and equality assertion. git diff --name-status origin/main names exactly this card's seven accepted paths; the coordinator paths enter only through the main parent.
 
 On that integrated tree, npm run matrix:check reported 53 of 223 requirements without a test and exited zero. Linux/WSL Node 26.12.0 npm test measured 3,165 pass, 9 skip and 0 fail; npm run test:host -- test/build-test-matrix-host.test.mjs measured 10 pass and 0 fail. git diff --check, the cached diff check and the unmerged-index check were clear. The first direct node --test invocation was an invalid harness invocation: test/suite-tiers.test.mjs expects npm's npm_execpath, and its failure was replaced by the repository-supported npm test result. These are local integration checks, not current-head supported-macOS proof; that still requires a fresh hosted run and independent reviews.
+
+## Integration with launchd main
+
+Main advanced to 0dba1dcbd7ffa3848e8681f64ad05a92d07d8a19 through #997. A fresh clean
+worktree at that ref passed npm ci and npm test with 3,319 passes, 9 skips and no
+failures. The only merge conflict with this card's reviewed head was the generated
+docs/derived/test-matrix.md. Running npm run matrix on the combined source resolved
+it; no matrix row was edited by hand. The combined test/suite.sh and
+test/suite-tiers.test.mjs retain the matrix host member alongside main's host members.
+
+On the combined source, npm run matrix:check reported 49 of 223 requirements without
+a test. npm test passed 3,335 with 9 skips and no failures; the affected native
+matrix host file passed all 10 cases. budget:package, check:paths, check:headers,
+check:words, git diff --check and the unmerged-index check passed. The diff against
+the new main remains the seven accepted card paths. These are local Linux/WSL Node
+26.12.0 measurements, not supported-macOS proof for the new head. Its hosted Mac
+run, fresh independent reviews and protected owner marker remain required.

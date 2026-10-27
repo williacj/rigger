@@ -8,6 +8,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { roleDispatch } from '../execution/role.mjs';
+import { SCRATCH_REFUSED } from '../execution/workspace.mjs';
 import { dispatch as dispatchOnL1 } from '../execution/run.mjs';
 import { stepDispatch } from '../execution/step.mjs';
 import { EVENT_REFUSED, NOT_STARTED, whenElapsed } from '../substrate/process.mjs';
@@ -16,9 +17,7 @@ import { dispatchedEscalation } from '../workflow/escalation.mjs';
 import { admission } from './admission.mjs';
 import { lane } from './lane.mjs';
 import { pullOrder } from './pull-order.mjs';
-
-/** N when the config declares none (`ARCHITECTURE.md`, the Engine settings row). */
-const DEFAULT_CONCURRENCY = 3;
+import { DEFAULT_CONCURRENCY } from '../config/validate.mjs';
 
 /**
  * What the loop holds over the board `config` names: N, the claims held
@@ -349,7 +348,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * workspace tip through L1. L3 hands L2 each maker outcome unread, with that tip where read.
    * A stale forge head has L3 pause and ask L2 to settle again under the same claim and slot.
    * Where the settle succeeded, L3 hands its facts to `decide` with the attempt number. L3 follows
-   * L2's `again`, `hold` or `stop` answer; a retry makes a fresh workspace. Otherwise the attempt
+   * L2's `again`, `hold`, `stop` or `escalate` answer; a retry makes a fresh workspace. Otherwise the attempt
    * answers the card, its
    * workspace, the maker's `outcome` and L2's `settled`, each as `Promise.allSettled` records it.
    * Where the settle
@@ -369,6 +368,11 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     const continuing = next.action === 'continue' ? next : undefined;
     const failures = [];
     const askAttempt = (outcomes, options) => decide(card, outcomes, { ...options, firstFailure: failures[0], continuing });
+    const escalated = async (answer) => {
+      remember(answer);
+      await l2.escalated(card, answer);
+      return { card: card.number, ...answer };
+    };
     /** Follows L2's retry, hold or stop answer, retaining each failure for the final report. */
     const advance = (answer, number) => {
       if (answer.action === 'again' && answer.attempt === number + 1) {
@@ -396,6 +400,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         }
       }
       if (advance(answer, number)) continue;
+      if (answer.action === 'escalate') return escalated(answer);
       if (answer.action !== 'dispatch') {
         throw new Error(`card #${card.number}'s attempt stopped, as L2 answered: ${JSON.stringify(answer)}`);
       }
@@ -444,6 +449,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       if (settled.status === 'fulfilled') {
         answer = askAttempt([], { attempt: number, maker: outcome });
         if (advance(answer, number)) continue;
+        if (answer.action === 'escalate') return escalated(answer);
       }
       const reached = { card: card.number, workspace: path, outcome, settled, ...(continuing === undefined ? {} : { action: 'continue', pull: continuing.pull, head: continuing.head }) };
       kept(reached);
@@ -488,7 +494,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     const { role } = judge;
     const [made] = await Promise.allSettled([new Promise((resolve) => resolve(judgeDirectory(card.number, role, judge.facts.head)))]);
     if (made.status === 'rejected') {
-      ask({ directories: { [role]: made } });
+      const answer = ask({ directories: { [role]: made } });
+      if (answer.action === 'escalate') return { role, outcome: made, escalation: answer };
       return { role, withheld: { directory: made } };
     }
     const { path, main, head, scratch, repository } = made.value;
@@ -501,8 +508,10 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       if (current === undefined) return { role, withheld: { step: step.name, outcome: outcomes.at(-1) } };
     }
     const outcome = await dispatchRole(card, current, { cwd: main, directory: path, reach: [head], scratch, repository }, {}, dispatched);
-    if (outcome.status === 'rejected' && outcome.reason?.code === NOT_STARTED && named(ask({ directories: { [role]: outcome } }), role) === undefined) {
-      return { role, withheld: { scratch: outcome } };
+    if (outcome.status === 'rejected' && [NOT_STARTED, SCRATCH_REFUSED].includes(outcome.reason?.code)) {
+      const answer = ask({ directories: { [role]: outcome } });
+      if (answer.action === 'escalate') return { role, outcome, escalation: answer };
+      if (named(answer, role) === undefined) return { role, withheld: { scratch: outcome } };
     }
     return { role, outcome };
   };
@@ -522,6 +531,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    *   rejection;
    * - `{ role, withheld }`, for one L2 withheld, as `judged` answers it.
    *
+   * Where L2 answered an escalation, every outcome is kept before one write through L2, after
+   * all the named judges finish. L2 is handed every refusal report together for that answer.
    * Then it rejects with an AggregateError naming the card and each judge that failed, and why, in
    * its `errors`, so no judge's outcome is dropped for another's failure.
    */
@@ -531,8 +542,20 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       ? each.value
       : { role: answer.judges[at].role, failure: new Error(`card #${card.number}'s judge \`${answer.judges[at].role}\` handed back no outcome: ${each.reason?.message}`, { cause: each.reason }) }));
     const failed = ended.filter((each) => each.failure !== undefined).map((each) => each.failure);
+    const escalating = ended.filter((each) => each.escalation !== undefined);
+    const carried = ended.map(({ escalation, ...each }) => each);
+    if (escalating.length > 0) {
+      keep(carried);
+      const answer = ask({ directories: Object.fromEntries(escalating.map(({ role, outcome }) => [role, outcome])) });
+      try {
+        await l2.escalated(card, answer);
+      } catch (failure) {
+        failed.push(failure);
+      }
+      if (failed.length === 0) return carried;
+    }
     if (failed.length === 0) return ended.filter((each) => each.outcome !== undefined);
-    keep(ended);
+    keep(carried);
     throw new AggregateError(failed, `card #${card.number}'s judges did not all hand back an outcome`);
   };
 
@@ -562,9 +585,9 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
   const work = async (claim, freed, excluded) => {
     const { card, decide: atPull } = claim;
     let next = claim.next;
-    /** Keeps a card whose judges L2 withheld out of later pulls in this run. */
+    /** Keeps L2's withheld or escalating card out of later pulls, including a refused escalation write. */
     const remember = (answer) => {
-      if (answer.withheld?.length > 0) excluded?.add(card.number);
+      if (answer.action === 'escalate' || answer.withheld?.length > 0) excluded?.add(card.number);
       return answer;
     };
     // Whether the start was made: for a redo as for a Ready card, only once `start` returns.

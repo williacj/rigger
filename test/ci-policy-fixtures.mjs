@@ -23,7 +23,7 @@ export function ciProof(mode = 'FAST_ELIGIBLE') {
   return {
     mode, demoNeeded: false, sourceValid: true,
     source: { event: 'pull_request', ref: 'refs/pull/7/merge', sha: 'a'.repeat(40), tree: 'b'.repeat(40), parents: ['c'.repeat(40), 'd'.repeat(40)], head: 'd'.repeat(40), base: 'c'.repeat(40), baseRef: 'main', eventBase: 'c'.repeat(40) },
-    results: { plan: 'success', fast: 'success', full_ordinary: 'skipped', full_host: 'skipped', demo: 'skipped' },
+    results: { plan: 'success', fast: 'success', full_ordinary: 'skipped', full_host: 'skipped', demo: 'skipped', cancel_superseded: 'success' },
   };
 }
 

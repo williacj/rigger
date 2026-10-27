@@ -587,9 +587,12 @@ const CHECKED = [
 /** The checks `doctor` reports where the config cannot be read or is refused, written out by hand. */
 const UNREAD = ['Node version', 'gh authentication', 'agent CLI authentication', 'config validity', 'board checks', 'gate check required', 'admission'];
 
+const NO_LAUNCHD = { platform: 'darwin', readLaunchdJob: async () => null };
+
 /** Everything `doctor` needs fixed to answer deterministically, bar the verdicts under test. */
 const against = (target, answers) => ({
   target,
+  ...NO_LAUNCHD,
   // A floor every Node reaches, so the one check that reads this host rather than an argument is
   // fixed too and the run below turns on the verdicts this test sets.
   packageRoot: packageDeclaring('>=0'),
@@ -825,6 +828,7 @@ test('doctor passes on a fresh clone of this repository after init', async () =>
   const ran = await doctor({
     target: clone,
     packageRoot: root,
+    ...NO_LAUNCHD,
     ask: answeringEach({ gh: RECORDED.ghIn, claude: RECORDED.agentIn, codex: CODEX.signedIn }),
   });
 
@@ -925,7 +929,7 @@ async function onFakeBoard(board, { source = starter(), project = STARTER_BOARD.
     }
     return spawnSync(command, args, { encoding: 'utf8', env: { ...gitEnvironment(), PATH: path } });
   };
-  const ran = await doctor({ target: checked(source), packageRoot: packageDeclaring('>=0'), ask });
+  const ran = await doctor({ target: checked(source), packageRoot: packageDeclaring('>=0'), ask, ...NO_LAUNCHD });
   return { ran, sent: fake.sent(), writes: (await fake.model()).writes(), path };
 }
 
