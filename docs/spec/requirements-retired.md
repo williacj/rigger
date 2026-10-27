@@ -45,6 +45,7 @@ Ids allocated here still count as allocated. The duplicate-id check reads both f
 | R-FAIL-5 | Rigger closes admission, and records why, when a card's second attempt fails in its environment the same way its first did. The ways are in `### R-FAIL-5 — Environment failures and the hold`. | D12 | 2026-10-22 | R-FAIL-6 |
 | R-FAIL-6 | Rigger closes admission, and records why, when a card's second attempt fails in its environment the same way its first did. The ways are in `### R-FAIL-6 — Environment failures and the hold`. | D12 | 2026-10-24 | R-FAIL-7 |
 | R-FAIL-7 | Rigger closes admission, and records why, when a card's second attempt fails in its environment the same way its first did. The ways are in `### R-FAIL-7 — Environment failures and the hold`. | D12 | 2026-10-26 | R-FAIL-8 |
+| R-RECORD-8 | A copy of the record placed anywhere else holds every event the original holds. | | 2026-10-27 | R-RECORD-13 |
 
 ### R-WORK-30 — When a merged card's directories are removed
 
