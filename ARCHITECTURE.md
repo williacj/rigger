@@ -1200,10 +1200,10 @@ L1's section:
 - **Execution duration**, per run and across the stream: each dispatch's `ms`, from its L1
   `dispatch.end`.
 - **Survivor rate**, per run and across the stream. Its denominator is the L1 `dispatch.end`
-  events. It excludes a `dispatch.end` carrying `reason`, a command that never started and so had
-  no group, and keeps one carrying `unread`. Its numerator is those of the denominator's dispatches
-  whose id an L0 `survivor.killed` or `group.killed` carries as its `dispatch`, anywhere in the
-  stream.
+  events. It excludes a `dispatch.end` carrying `reason`, which L1 records where it got no result
+  for the command, and keeps one carrying `unread`. Its numerator is those of the denominator's
+  dispatches whose id an L0 `survivor.killed` or `group.killed` carries as its `dispatch`,
+  anywhere in the stream.
 - **Redos after an interruption**, across the stream: a count beside the count of first attempts,
   each as "Redos after an interruption" below defines it.
 
@@ -1312,7 +1312,7 @@ events. No other signal is derived.
 
 ### The shape, abbreviated
 
-One card's claim, across four layers:
+One card's claim, across three layers:
 
 ```jsonl
 {"ts":"2026-09-13T14:02:11.310Z","run":"r-8f21","layer":"L3","event":"pull","card":1412,"kind":"change","queueDepth":7,"inFlight":2}

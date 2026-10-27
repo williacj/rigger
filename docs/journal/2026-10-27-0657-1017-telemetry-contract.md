@@ -35,8 +35,9 @@ Choices the card left to the maker, each a judgment on the code at `66e5b7c9`:
   denominator is work claims, as the redo derivation defines them.
 - **Escalation rate** is cards escalated over cards pulled, so an escalation a later invocation
   repeats counts once ("Escalation").
-- **Survivor rate** leaves out a `dispatch.end` carrying `reason`, since a command that never
-  started had no group.
+- **Survivor rate** leaves out a `dispatch.end` carrying `reason`, which L1 records where it got
+  no result for the command. That end can still follow a group L0 killed, as where L0 could
+  not read the leader's start (`src/substrate/process.mjs`, `startOf`).
 - **Tier accuracy** is over pairs of a card and a role. It leaves out a step's L3 `dispatch`, which
   can name a judge's `role` but carries no `tier`.
 
