@@ -75,3 +75,17 @@ test('admission refuses to rename an owner\'s closer, or to a name carrying no n
   assert.deepEqual(picture(admissionOf(state)), before);
   assert.deepEqual(module.events, []);
 });
+
+// proves R-SCHED-20
+test('a hold\'s closer renamed to after 0, as for a repository holding no issue or pull request, reads back as a hold after 0', () => {
+  const state = stateOf();
+  seed(state, 'hold-a1.json', HELD);
+  const module = moduleOver(state);
+
+  const after = module.rename('hold-a1.json', { rename: 'after', number: 0 });
+
+  assert.deepEqual(after, { name: 'hold-a1-after-0.json' });
+  const { state: admitted, closers } = module.read();
+  assert.equal(admitted, 'closed');
+  assert.deepEqual(closers.map(({ name, kind, id, after: number }) => ({ name, kind, id, after: number })), [{ name: 'hold-a1-after-0.json', kind: 'hold', id: 'a1', after: '0' }]);
+});

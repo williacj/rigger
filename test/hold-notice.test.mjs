@@ -138,23 +138,31 @@ test('the picked issue not on the board is added and moved to Owner; one in anot
 
 /**
  * Each refused step of a notice call: the call refused, the forge it is refused on, the names the
- * closer then took, and the step `notice.failed` names.
+ * closer then took, the step `notice.failed` names, and every write the call sent, in order, the
+ * refused one among them where it is a write.
  */
 const REFUSALS = [
-  ['readIssue', { issues: [] }, [40], ['hold-a1.json'], 'read issue #40'],
-  ['readLabelledIssues', { issues: [] }, [], ['hold-a1.json'], 'read the open issues labelled rigger:status'],
-  ['readNewestNumber', { issues: [] }, [], ['hold-a1.json'], 'read the newest number'],
-  ['openIssue', { issues: [] }, [], ['hold-a1.json', 'hold-a1-after-0.json'], 'open the status issue'],
-  ['postIssueComment', { issues: [{ number: 12, title: 'T', body: '', labels: [STATUS], comments: [] }] }, [], ['hold-a1.json', 'hold-a1-issue-12.json'], 'comment on issue #12'],
-  ['readItems', { issues: [] }, [], ['hold-a1.json', 'hold-a1-after-0.json', 'hold-a1-issue-1.json'], 'read the board'],
-  ['addIssue', { issues: [] }, [], ['hold-a1.json', 'hold-a1-after-0.json', 'hold-a1-issue-1.json'], 'add issue #1 to the board'],
-  ['moveItem', { issues: [] }, [], ['hold-a1.json', 'hold-a1-after-0.json', 'hold-a1-issue-1.json'], 'move issue #1 to Owner'],
+  ['readIssue', { issues: [] }, [40], ['hold-a1.json'], 'read issue #40', []],
+  ['readLabelledIssues', { issues: [] }, [], ['hold-a1.json'], 'read the open issues labelled rigger:status', []],
+  ['readNewestNumber', { issues: [] }, [], ['hold-a1.json'], 'read the newest number', []],
+  ['openIssue', { issues: [] }, [], ['hold-a1.json', 'hold-a1-after-0.json'], 'open the status issue', ['openIssue']],
+  ['postIssueComment', { issues: [{ number: 12, title: 'T', body: '', labels: [STATUS], comments: [] }] }, [], ['hold-a1.json', 'hold-a1-issue-12.json'], 'comment on issue #12', ['postIssueComment']],
+  ['readItems', { issues: [] }, [], ['hold-a1.json', 'hold-a1-after-0.json', 'hold-a1-issue-1.json'], 'read the board', ['openIssue']],
+  ['addIssue', { issues: [] }, [], ['hold-a1.json', 'hold-a1-after-0.json', 'hold-a1-issue-1.json'], 'add issue #1 to the board', ['openIssue', 'addIssue']],
+  ['moveItem', { issues: [] }, [], ['hold-a1.json', 'hold-a1-after-0.json', 'hold-a1-issue-1.json'], 'move issue #1 to Owner', ['openIssue', 'addIssue', 'moveItem']],
 ];
 
+/** The calls of the in-memory forge that write to it. */
+const WRITES = ['openIssue', 'postIssueComment', 'addIssue', 'moveItem'];
+
+/** What the forge holds of its issues, the fields a notice's write can change, so two pictures are equal only where no write landed. */
+const issuesOf = (world) => world.issues.map(({ number, title, labels, comments = [] }) => ({ number, title, labels, comments }));
+
 // proves R-SCHED-20
-test('each refused or timed-out step ends the call, records one notice.failed naming the step and the cause, and leaves the closer at the name it reached', async () => {
-  for (const [refused, given, others, names, step] of REFUSALS) {
+test('each refused or timed-out step ends the call, records one notice.failed naming the step and the cause, leaves the closer at the name it reached, and sends no write beyond those before it', async () => {
+  for (const [refused, given, others, names, step, writes] of REFUSALS) {
     const world = forge({ ...structuredClone(given), refuse: { [refused]: `gh: ${refused} timed out` } });
+    const before = issuesOf(world);
     const { notice, events } = noticeOver(world);
 
     const ran = await drive(notice({ closer: closerOf('a1'), others, hold: HOLD }), 'hold-a1.json');
@@ -163,6 +171,11 @@ test('each refused or timed-out step ends the call, records one notice.failed na
     assert.deepEqual(ran.value, { failed: { step, cause: `gh: ${refused} timed out` } }, refused);
     assert.deepEqual(events, [{ layer: 'L2', event: 'notice.failed', hold: 'a1', step, cause: `gh: ${refused} timed out` }], refused);
     assert.equal(world.calls.at(-1)[0], refused, `${refused} was not the call's last`);
+    assert.deepEqual(world.calls.filter(([name]) => WRITES.includes(name)).map(([name]) => name), writes, refused);
+    // Only an opening the forge took changes its issues, and only a board add its board.
+    const opened = writes.includes('openIssue') && refused !== 'openIssue';
+    assert.deepEqual(issuesOf(world), [...before, ...(opened ? [{ number: 1, title: 'Rigger closed admission', labels: [STATUS], comments: [] }] : [])], refused);
+    assert.deepEqual(world.onBoard, refused === 'moveItem' ? [{ id: 'item-1', number: 1, column: null }] : [], refused);
   }
 });
 
@@ -177,7 +190,8 @@ test('a rename L3 hands back as failed ends the call before L2 writes again, nam
 
   assert.deepEqual(first.value, { rename: 'after', number: 0 });
   assert.deepEqual(ended, { done: true, value: { failed: { step: 'rename the closer', cause: 'EACCES' } } });
-  assert.equal(world.calls.filter(([name]) => name === 'openIssue').length, 0);
+  assert.deepEqual(world.calls.filter(([name]) => WRITES.includes(name)), []);
+  assert.deepEqual([world.issues, world.onBoard], [[], []]);
   assert.deepEqual(events.map(({ event, step }) => [event, step]), [['notice.failed', 'rename the closer']]);
 });
 

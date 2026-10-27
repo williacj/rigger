@@ -329,7 +329,7 @@ test('Rigger\'s notice open for an earlier hold, then a second card\'s hold: L2 
   assert.equal(namesIn(handed.state).filter((name) => /-issue-3\.json$/.test(name)).length, 2);
 });
 
-// proves R-SCHED-23, R-SCHED-25
+// proves R-SCHED-23
 test('the owner\'s pause, then a card\'s hold: an issue is opened naming that card', async () => {
   const world = forge({ issues: CARDS() });
   const handed = handles({ workspace: async () => { seed(handed.state, 'owner-o1.json'); throw new Error('no workspace here'); } });
@@ -379,4 +379,47 @@ test('L3 hands L2\'s notice function no means to rename a closer: nothing it is 
 
   assert.equal(handedOver.length, 3);
   assert.deepEqual(functionsIn(handedOver), []);
+});
+
+// proves R-SCHED-7, R-SCHED-20
+test('a bare hold closer at a trigger, once every issue of the repository is gone, takes the name after 0, which admission reads back, and its notice is opened and attached', async () => {
+  const world = forge();
+  const handed = handles({ cards: [] });
+  const notice = changesOver(world, handed.sink).notice;
+  const readBack = [];
+  handed.l2.notice = async function* reading(input) {
+    const inner = notice(input);
+    let step = await inner.next();
+    while (!step.done) {
+      const outcome = yield step.value;
+      readBack.push(moduleOver(handed.state).read());
+      step = await inner.next(outcome);
+    }
+    return step.value;
+  };
+  seed(handed.state, 'hold-a1.json');
+
+  const pulled = await loop(handed).pull();
+
+  assert.deepEqual(pulled.notices, []);
+  assert.deepEqual(readBack.map(({ state, closers }) => [state, closers?.map(({ name, after, issue }) => ({ name, after, issue }))]), [
+    ['closed', [{ name: 'hold-a1-after-0.json', after: '0', issue: undefined }]],
+    ['closed', [{ name: 'hold-a1-issue-1.json', after: undefined, issue: '1' }]],
+  ]);
+  assert.deepEqual(world.issues.map(({ number, title }) => ({ number, title })), [{ number: 1, title: 'Rigger closed admission' }]);
+  assert.deepEqual(namesIn(handed.state), ['hold-a1-issue-1.json']);
+});
+
+// proves R-SCHED-20
+test('a closer left after 0 by a crash after the opening is recovered: the scan attaches issue #1, and no second issue is opened', async () => {
+  const world = forge({ issues: [noticeIssue(1, 'a1')] });
+  const handed = handles({ cards: [] });
+  handed.l2.notice = changesOver(world, handed.sink).notice;
+  seed(handed.state, 'hold-a1-after-0.json');
+
+  const pulled = await loop(handed).pull();
+
+  assert.deepEqual(pulled.notices, []);
+  assert.deepEqual(namesIn(handed.state), ['hold-a1-issue-1.json']);
+  assert.equal(world.calls.filter(([name]) => name === 'openIssue').length, 0);
 });

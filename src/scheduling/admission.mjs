@@ -11,9 +11,12 @@ const KINDS = ['owner', 'hold'];
 /** An id: a non-empty run of `0`-`9` and `a`-`z`, holding no `-` and no `.`. */
 const ID = /^[0-9a-z]+$/;
 
-/** A closer's name, by its kind; a hold's may carry the number after `after-` or `issue-`. */
+/**
+ * A closer's name, by its kind; a hold's may carry the number after `after-`, 0 for a repository
+ * that held no issue or pull request, or the positive number after `issue-`.
+ */
 const OWNER = /^owner-([0-9a-z]+)\.json$/;
-const HOLD = /^hold-([0-9a-z]+)(?:-(after|issue)-([1-9][0-9]*))?\.json$/;
+const HOLD = /^hold-([0-9a-z]+)(?:-after-(0|[1-9][0-9]*)|-issue-([1-9][0-9]*))?\.json$/;
 
 /** The admission directory inside state directory `directory`. */
 export const admissionPath = (directory) => join(directory, 'admission');
@@ -30,7 +33,7 @@ function parseName(name) {
   if (owner) return { kind: 'owner', id: owner[1] };
   const hold = HOLD.exec(name);
   if (!hold) return undefined;
-  return { kind: 'hold', id: hold[1], ...(hold[2] && { [hold[2]]: hold[3] }) };
+  return { kind: 'hold', id: hold[1], ...(hold[2] !== undefined && { after: hold[2] }), ...(hold[3] !== undefined && { issue: hold[3] }) };
 }
 
 /** Whether `content` is a closer's: an object with a non-empty reason and run, and a finite time. */
@@ -229,12 +232,12 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
   /**
    * Renames the hold closer `name` to attach where its notice can be, as L2's notice answered:
    * `rename` is `after` or `issue`, and `number` the number the new name carries beside the hold's
-   * id. Answers `{ name }`, the new name, and records one `admission.rename` event; or `{ gone }`
+   * id, which may be 0 after `after` alone. Answers `{ name }`, the new name, and records one `admission.rename` event; or `{ gone }`
    * where the closer was gone, recording nothing.
    */
   function rename(name, { rename: to, number }) {
     const named = parseName(name);
-    if (named?.kind !== 'hold' || !['after', 'issue'].includes(to) || !Number.isSafeInteger(number) || number < 1) {
+    if (named?.kind !== 'hold' || !['after', 'issue'].includes(to) || !Number.isSafeInteger(number) || number < (to === 'after' ? 0 : 1)) {
       throw new Error(`admission renames only a hold closer to after or issue a number, not ${JSON.stringify(name)} to ${JSON.stringify({ to, number })}`);
     }
     const renamed = `hold-${named.id}-${to}-${number}.json`;
