@@ -261,6 +261,17 @@ test('paths preserve quotes unicode and newlines and placeholders never cross a 
   assert.ok(nested.output.includes('"docs/nested/note.md"'), nested.output);
 });
 
+// Reads only the two prompt files under `root`, never a git ref, so it holds on main and on a branch.
+function assertPreflightPrompt(root) {
+  const prompt = readFileSync(join(root, '.claude/agents/engineer.md'), 'utf8');
+  assert.match(prompt, /Before handing back, run `npm run preflight -- <card>` and fix what it reports\./);
+  const lines = prompt.split('\n').filter((line) => line.includes('npm run preflight'));
+  assert.equal(lines.length, 1, `lines naming npm run preflight: ${lines.length}`);
+  assert.ok(countWords(lines[0]) <= 40, `preflight line words: ${countWords(lines[0])}`);
+  const template = readFileSync(join(root, 'templates/claude/agents/engineer.md'), 'utf8');
+  assert.equal(template, prompt, 'template differs from the live prompt');
+}
+
 test('npm and the mirrored maker prompts wire preflight within the forty-word allowance', () => {
   const root = fileURLToPath(new URL('../', import.meta.url));
   const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
@@ -273,11 +284,24 @@ test('npm and the mirrored maker prompts wire preflight within the forty-word al
   const prompt = readFileSync(join(root, '.claude/agents/engineer.md'), 'utf8');
   assert.match(prompt, /Before handing back, run `npm run preflight -- <card>` and fix what it reports\./);
   assert.equal(readFileSync(join(root, 'templates/claude/agents/engineer.md'), 'utf8'), prompt);
-  const base = gitIn(root, 'merge-base', 'HEAD', 'origin/main').trim();
-  const before = gitIn(root, 'show', `${base}:.claude/agents/engineer.md`);
-  const added = countWords(prompt) - countWords(before);
-  assert.ok(added > 0 && added <= 40, `instruction words added: ${added}`);
+  assertPreflightPrompt(root);
   assert.ok(readFileSync(join(root, 'scripts/preflight.mjs'), 'utf8').startsWith('// ABOUTME:'));
+});
+
+test('the preflight prompt check refuses a preflight line over forty words and a differing template', () => {
+  const root = fileURLToPath(new URL('../', import.meta.url));
+  const prompt = readFileSync(join(root, '.claude/agents/engineer.md'), 'utf8');
+  const line = prompt.split('\n').find((text) => text.includes('npm run preflight'));
+  const files = (live, template = live) => repositoryAt(join(temporaryDirectory('996-prompt-'), 'repository'), {
+    '.claude/agents/engineer.md': live, 'templates/claude/agents/engineer.md': template,
+  });
+  assertPreflightPrompt(files(prompt));
+  const lineWords = line.split(/\s+/).filter(Boolean).length;
+  assertPreflightPrompt(files(`${prompt}\n${' elsewhere'.repeat(50)}\n`));
+  assertPreflightPrompt(files(prompt.replace(line, `${line}${' word'.repeat(40 - lineWords)}`)));
+  const long = prompt.replace(line, `${line}${' word'.repeat(41 - lineWords)}`);
+  assert.throws(() => assertPreflightPrompt(files(long)), /preflight line words: 41/);
+  assert.throws(() => assertPreflightPrompt(files(prompt, `${prompt}\n`)), /template differs from the live prompt/);
 });
 
 test('the CLI entry recognizes a symlink spelling of its script and reports the body refusal', async () => {
