@@ -99,10 +99,26 @@ export async function runTests(tree, temporary, file, { timeout = 60, pattern } 
   const stdout = ran.stdout.toString('utf8');
   const stderr = ran.stderr.toString('utf8');
   const stream = stdout.split('\n').filter((line) => line.startsWith('@@proof ')).map((line) => JSON.parse(line.slice(8)));
-  const registrations = new Map(stream.filter((event) => event.type === 'test:enqueue' && event.data.entryFile !== undefined)
-    .map(({ data }) => [JSON.stringify([data.entryFile, data.testId]), data]));
+  return { ...ran, stdout, stderr, command: ['sh', ...args], ...parseEvents(stream, tree, testFile), events };
+}
+
+/**
+ * Node's reporter events from one file's run, parsed into its named tests and the file's own verdicts.
+ *
+ * Node v26.12.1 marks a named test's events with an entryFile and leaves the file's own unmarked;
+ * Node v26.5.0 marks none, and its file event shares testId, parentId, nesting and file with the
+ * first test. So the file's own verdict is the unmarked event Node names for the file operand and
+ * places at its line 1, column 1, and a test titled after its file is still a named test.
+ */
+export function parseEvents(stream, tree, testFile) {
+  const fileVerdict = (data) => data.entryFile === undefined && data.name === testFile && data.line === 1 && data.column === 1
+    && typeof data.file === 'string' && relative(tree, data.file) === testFile;
+  // One file runs, so an unmarked named test ran from the operand.
+  const entry = (data) => data.entryFile ?? join(tree, testFile);
+  const registrations = new Map(stream.filter((event) => event.type === 'test:enqueue' && !fileVerdict(event.data))
+    .map(({ data }) => [JSON.stringify([entry(data), data.testId]), data]));
   const identity = (test) => {
-    if (typeof test.entryFile !== 'string' || !Number.isInteger(test.nesting) || test.nesting < 0) return;
+    if (typeof entry(test) !== 'string' || !Number.isInteger(test.nesting) || test.nesting < 0) return;
     const path = [];
     let node = test;
     for (let depth = test.nesting; depth >= 0; depth -= 1) {
@@ -111,9 +127,9 @@ export async function runTests(tree, temporary, file, { timeout = 60, pattern } 
       const file = relative(tree, node.file);
       if (file === '..' || file.startsWith('../')) return;
       path.unshift([node.name, file, node.line, node.column]);
-      node = registrations.get(JSON.stringify([node.entryFile, node.parentId]));
+      node = registrations.get(JSON.stringify([entry(node), node.parentId]));
     }
-    return [relative(tree, test.entryFile), path];
+    return [relative(tree, entry(test)), path];
   };
   const registrationKeys = [...registrations.values()].map((test) => JSON.stringify(identity(test)));
   const identityReason = (test) => {
@@ -129,9 +145,8 @@ export async function runTests(tree, temporary, file, { timeout = 60, pattern } 
     .map((event) => ({ ...event.data, outcome: event.type === 'test:pass' ? 'pass' : 'fail',
       identity: identity(event.data), identityReason: identityReason(event.data),
     }));
-  // Node's file-only verdict has no entryFile; an unmatched pattern can otherwise look green.
-  return { ...ran, stdout, stderr, command: ['sh', ...args], count: tests.length,
-    tests: tests.filter((test) => test.entryFile !== undefined), fileVerdicts: tests.filter((test) => test.entryFile === undefined), events };
+  // An unmatched pattern leaves only the file's verdict, which can otherwise look green.
+  return { count: tests.length, tests: tests.filter((test) => !fileVerdict(test)), fileVerdicts: tests.filter(fileVerdict) };
 }
 
 export async function mutationReceipt(options) {
