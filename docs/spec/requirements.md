@@ -85,7 +85,7 @@ under the test above.
 |---|---|---|---|---|
 | R-CARD-1 | A card states its acceptance — what done means — before any work on it starts. | the card's author | the engine, at admission | D2 |
 | R-CARD-2 | Each acceptance item states one condition, and a judge can test it without asking the author. | the card's author | a judge, under R-LOOP-6 | D2 |
-| R-CARD-3 | The card's author writes the acceptance: the owner for a card the owner files, the decomposing role for a card it produced. | the card's author | the event record, by who first set it | D2 |
+| R-CARD-41 | The card's author writes the acceptance. The author is the owner for a card the owner files, and the decomposing role for a card it produced. For a card Rigger opens from a clock trigger, the author is the one that trigger's configuration names, and the owner where it names none. Its cases are in `### R-CARD-41 — The author a clock trigger names`. | the card's author | the test suite | D2 |
 | R-CARD-4 | An author writing an acceptance loads the skill the consumer supplies for it. | the role prompt | nothing yet | D2 |
 | R-CARD-5 | Only the card's author changes an acceptance after admission. A maker never changes the acceptance it is judged against. | the role prompt | the event record, by who changed it | D2 |
 | R-CARD-6 | Rigger records each change to a card's acceptance and who made it, so a later reader can tell that it changed, when, and by whom. | the engine | the event record | D2 |
@@ -121,6 +121,21 @@ under the test above.
 | R-CARD-32 | — a text's compared form is that text lowercased by Unicode's full default case conversion, final sigma included, stripped of every character in Unicode's punctuation and symbol categories, then with each run of whitespace characters made one space, then trimmed; | the engine | the test suite | D2 |
 | R-CARD-33 | — an acceptance only restates the card's title, as `R-CARD-8` uses the phrase, exactly when every item's text has the same compared form as the title. | the engine | the test suite | D2 |
 
+### R-CARD-41 — The author a clock trigger names
+
+A clock trigger whose work is a card may name, in the configuration, the author of the cards it
+opens. In this table, that name is the trigger's author setting.
+
+| The author setting on a clock trigger whose work is a card | The card's author | Scope |
+|---|---|---|
+| absent | the owner | in |
+| `owner` | the owner | in |
+| a role the configuration declares | that role | in |
+| a name that is no declared role | none: Rigger refuses the configuration, under `R-SCHED-42` | in |
+| a value that is not a string | none: Rigger refuses the configuration, under `R-SCHED-42` | in |
+| any value not named above | none: Rigger refuses the configuration, under `R-SCHED-42` | in |
+| any author setting on a trigger whose work is not a card | none from these rows | out: `R-SCHED-10` refuses it wherever the configuration offers no author on such a trigger |
+
 ## R-SCHED — what runs, and when
 
 | id | requirement | made true by | checked by | from |
@@ -143,6 +158,7 @@ under the test above.
 | R-SCHED-17 | `rigger doctor` reports admission as open, as closed with what closed it and why, or as a record it cannot read. A closed admission leaves `doctor`'s exit status as it is, and an unreadable record fails it. | the engine | the test suite | |
 | R-SCHED-18 | While admission is closed, or its record cannot be read, `rigger plan` shows no card the next run would pull, and says why. | the engine | the test suite | |
 | R-SCHED-19 | Rigger refuses a configuration in which a kind of work selects by a label Rigger fixes, or names one as the epic label, in any letter case, and the refusal names both. A role's or a step's labels are outside this row, since they select nothing on a card Rigger will not work. | the config validator | the test suite | |
+| R-SCHED-42 | Rigger refuses a configuration in which a clock trigger names as its card's author anything but `owner` or a role the configuration declares, and the refusal names the trigger and the name. The values it refuses are in `### R-CARD-41 — The author a clock trigger names`. | the config validator | the test suite | |
 | R-SCHED-20 | When Rigger closes admission itself, it opens an issue titled `Rigger closed admission` in the owner's column, carrying the status label Rigger fixes. It opens none where an open issue carrying that label exists. The issue names the reason, the evidence and the card whose failures closed admission. | the engine | the test suite | |
 | R-SCHED-27 | Rigger never works an item carrying the status label as a card: it never claims it, dispatches nothing for it, and never reports it as refused. An issue a person or `rigger resume` removes the label from is no longer the status issue. | the engine | the test suite | |
 | R-SCHED-22 | The card whose second failure closed admission stays in its column. | the engine | the event record, by that card's transitions while admission is closed | |
@@ -658,11 +674,30 @@ Each failure is one of three classes:
 | R-RECORD-5 | Rigger never rewrites what it already recorded. | the engine | the test suite | |
 | R-RECORD-6 | The record loses no event. What Rigger emitted is what a later reader finds. | the engine | the test suite | |
 | R-RECORD-7 | Every event says when it happened, which run it belongs to, and which card and dispatch it concerns, so a reader can put two events beside each other. | the engine | the test suite | |
-| R-RECORD-8 | A copy of the record placed anywhere else holds every event the original holds. | the engine | the test suite | |
 | R-RECORD-9 | When Rigger cannot record an event, it says what went unrecorded and starts no further work until it can. | the engine | the test suite | |
 | R-RECORD-10 | Rigger's record of the end of every merge its lane starts names why the pull request was not merged, whatever the outcome other than merged. What each outcome names is in `### R-RECORD-10 — Why a merge ended unmerged`. | the engine | the test suite | |
 | R-RECORD-11 | After an attempt that continues a card's work, where the maker exits successfully, Rigger's record names the head of the card's pull request that Rigger last read under `R-WORK-34`. | the engine | the test suite | |
 | R-RECORD-12 | Where Rigger read the forge again under `R-SCHED-26` or `R-WORK-34`, its record of the merge's end, or of the card's move to review or stay in coding, names how many reads it made. It also names how long after the first read the last one came. | the engine | the test suite | |
+| R-RECORD-13 | A copy of the record that Rigger places beyond the consumer's own machine holds, as of each successful push, every event the original held when that push started. The push states it covers, and the rows governing each, are in `### R-RECORD-13 — Push states`. | the engine | the test suite | |
+| R-RECORD-14 | Where a push of the record does not succeed, Rigger keeps working. It starts and finishes work as it would have had the push succeeded. | the engine | the test suite | |
+| R-RECORD-15 | Where a push of the record does not succeed, Rigger says so in its output, naming the failure, and records the failure. | the engine | the test suite | |
+| R-RECORD-16 | After a push of the record that did not succeed, Rigger tries the push again at its next push, however many pushes before it did not succeed. | the engine | the test suite | |
+| R-RECORD-17 | Every push of the record has a time limit, and a push that runs past it has not succeeded. | the engine | the test suite | |
+| R-RECORD-18 | A push of the record that does not succeed leaves the exit status of the verb that made it as that verb would otherwise have had it. | the engine | the test suite | |
+
+### R-RECORD-13 — Push states
+
+| Telemetry push | The push | Governing rows | Scope |
+|---|---|---|---|
+| off | — | `R-SAFE-3`: nothing is copied | in |
+| on | succeeds | `R-RECORD-13` | in |
+| on | refused by the forge | `R-RECORD-14`, `R-RECORD-15`, `R-RECORD-16`, `R-RECORD-18` | in |
+| on | runs past its time | `R-RECORD-14`, `R-RECORD-15`, `R-RECORD-16`, `R-RECORD-17`, `R-RECORD-18` | in |
+| on | fails on the host before reaching the forge | `R-RECORD-14`, `R-RECORD-15`, `R-RECORD-16`, `R-RECORD-18` | in |
+| on | the data ref absent before the push | `R-RECORD-13` | in |
+| on | an event is recorded while a push is in flight | `R-RECORD-13` | in |
+| on | Rigger killed outright during the push | `R-RECORD-13` | in |
+| on | any other way the push does not succeed | `R-RECORD-14`, `R-RECORD-15`, `R-RECORD-16`, `R-RECORD-18` | in |
 
 ### R-RECORD-10 — Why a merge ended unmerged
 

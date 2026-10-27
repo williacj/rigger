@@ -346,7 +346,7 @@ the engine on its own. The improvement loops land after v0; the measurement is t
 Rigger writes one JSONL event stream to your repository's state directory: dispatches, verdicts,
 merges, escalations, holds, and every other layer's events. It is sent to nobody. If you turn it
 on, Rigger also pushes that stream to a data ref in your own repository so it survives the machine.
-Rigger makes no network calls except through `gh` and your agent CLI.
+Rigger makes no network calls except through `gh`, `git` and your agent CLI.
 
 ## Contributing
 
