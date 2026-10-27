@@ -642,8 +642,10 @@ test('report lists the duration of a dispatch.end carrying reason and leaves it 
   assert.deepEqual(survivorRates(runs), { run: [1, 1, 1], stream: [1, 1, 1] });
 });
 
-test('report keeps a dispatch.end carrying unread in the survivor rate\'s denominator', () => {
-  const runs = [['r-a', [ended('d-1', 100, { unread: 'the status could not be read' }), ended('d-2', 100), killed('survivor.killed', 'd-1')]]];
+test('report lists the duration of a dispatch.end carrying unread and keeps it in the survivor rate\'s denominator', () => {
+  const runs = [['r-a', [ended('d-1', 120, { unread: 'the status could not be read' }), ended('d-2', 100), killed('survivor.killed', 'd-1')]]];
+  const l1 = section(reported(runs), 'L1');
+  assert.ok(under(l1, 'run r-a').includes('dispatch d-1: 120 ms'), l1.join('\n'));
   assert.deepEqual(survivorRates(runs), { run: [0.5, 1, 2], stream: [0.5, 1, 2] });
 });
 
