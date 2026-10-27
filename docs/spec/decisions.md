@@ -653,7 +653,7 @@ obligation `AGENTS.md` carries for a requirement being added outlives it.
 3. The architect never decides what must be true of Rigger, what Rigger promises, or what good
    means for a kind of work. The PM proposes the first, `README.md` holds the second, and
    `ARCHITECTURE.md` gives the third to the owner.
-4. The PM decomposes larger work into cards, so `R-CARD-3`'s decomposing role is the PM.
+4. The PM decomposes larger work into cards, so `R-CARD-41`'s decomposing role is the PM.
 5. The architect rules before the cards are cut. A consumer names the architect a judge on the
    kind of work that proposes requirements, so a decomposition follows a ratified structure.
 6. v0 gives a maker and its judges no adjudicator. `R-LOOP-9` and `R-LOOP-10` hold what follows:
@@ -708,14 +708,14 @@ architect holds.
 
 ### Notes
 
-`R-CARD-3` names the decomposing role, and `R-CARD-5` reserves revisions to the card's author.
+`R-CARD-41` names the decomposing role, and `R-CARD-5` reserves revisions to the card's author.
 A session ends, but the role can be dispatched again. Keeping authorship with that role lets
 `R-LOOP-6` return an insufficient acceptance to someone who can revise it. It also means a
 different session can file the card without taking over its acceptance.
 
 The event record must let a reader distinguish a role's continuing authority from the particular
 session that acted. The actor on an acceptance change still matters: two sessions of one role
-must not become one indistinguishable writer. This choice uses the identities `R-CARD-3` and
+must not become one indistinguishable writer. This choice uses the identities `R-CARD-41` and
 `R-CARD-6` already require; it adds no requirement.
 
 The cost is that a filer cannot fix an acceptance merely because it filed the card. It must
