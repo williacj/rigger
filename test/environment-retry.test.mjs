@@ -12,6 +12,7 @@ import config from '../rigger.config.mjs';
 import { openSink, readEvents } from '../src/observation/sink.mjs';
 import { loop } from '../src/scheduling/loop.mjs';
 import { NOT_STARTED } from '../src/substrate/process.mjs';
+import { READ_TIMEOUT } from '../src/substrate/process.mjs';
 import { WORKSPACE_NOT_MADE, workspaceHandle } from '../src/execution/workspace.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { cardIn, judgeWorld, pullFor, recorded } from './judge-world.mjs';
@@ -30,6 +31,15 @@ import { repositoryAt } from './git-repository.mjs';
 import { ownerWrites } from './card-local-world.mjs';
 import { makeJudgeDirectory } from '../src/execution/workspace.mjs';
 import { GIT, fixture, holding, withFirstOnPath } from './process-fixtures.mjs';
+import { answer as judgeStartAnswer } from './judge-start-fixture.mjs';
+import { realpathSync, renameSync } from 'node:fs';
+import fs from 'node:fs';
+import os from 'node:os';
+import { syncBuiltinESMExports } from 'node:module';
+import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
+import { standInCodex } from './stub-claude.mjs';
+import { refuseSpawn } from './judge-start-fixture.mjs';
+import { dispatch as judgeDispatchOnL1 } from '../src/execution/run.mjs';
 
 const { 60_000: SETTLES_WITHIN } = BOUNDS;
 
@@ -902,17 +912,17 @@ test('L2 is handed a judge\'s scratch directory not made apart from one refused 
 });
 
 // proves R-FAIL-8
-test('a judge whose adapter rejects its invocation is not withheld as a judge whose scratch directory was not made, since its scratch directory was made, and its outcome is a dispatch that did not start', SETTLES_WITHIN, async () => {
+test('a judge whose adapter rejects its invocation is not withheld for scratch and holds after its matching second dispatch failure', SETTLES_WITHIN, async () => {
   const roles = { ...config.roles, reviewer: { ...config.roles.reviewer, agent: '../outside/reviewer.md' } };
   let path;
   const world = spoiledWorld({ roles, spoil: (made, role) => { path = join(made.scratch, role); } });
 
-  const [reached] = await world.invocation().pull(1);
-
+  const failure = await world.invocation().pull(1).then(() => assert.fail('the matching pair must hold'), (failure) => failure);
+  const [reached] = failure.reached;
   assert.equal(reached.judges.length, 1, JSON.stringify(reached.judges));
   assert.equal(reached.judges[0].role, 'reviewer');
-  assert.equal(reached.judges[0].outcome?.reason?.code, NOT_STARTED);
-  assert.ok(reached.judges[0].outcome.reason.message.includes('R-SAFE-6'), reached.judges[0].outcome.reason.message);
+  assert.equal(reached.judges[0].failure.decision, 'hold');
+  assert.ok(reached.judges[0].failure.failure.reason.includes('R-SAFE-6'), reached.judges[0].failure.message);
   assert.ok(existsSync(path), 'L1 made the judge\'s scratch directory');
   assert.deepEqual(withheldOf(world.built), []);
 });
@@ -1039,6 +1049,66 @@ test('run excludes attempt and judge escalations after each refused owner write 
   }
 });
 
+// The counterexample treats the first host failure as a withheld scratch directory and never retries step 4.
+// proves R-FAIL-8
+test('a Review judge whose CLI is missing is retried once under its claim and ends held', SETTLES_WITHIN, async () => {
+  const built = judgeWorld({ cards: [cardIn(7, COLUMNS.review)], forge: { pullRequests: [pullFor(7)] }, kinds: kindJudgedBy(['reviewer']) });
+  const engine = loop({ ...built.handed, environment: { ...process.env, PATH: temporaryDirectory('rigger-empty-path-') } });
+  const failure = await engine.pull(1).then(() => undefined, (failure) => failure);
+  assert.ok(failure, 'two missing CLI dispatches hold the card');
+  assert.deepEqual(recorded(built, 'L3', 'dispatch').map(({ role }) => role), ['reviewer', 'reviewer']);
+  assert.deepEqual(recorded(built, 'L2', 'attempt.decided').map(({ decision }) => decision), ['again', 'hold']);
+  assert.equal(namesIn(built.directory).length, 1);
+  assert.equal(recorded(built, 'L3', 'pull').length, 1);
+  assert.equal(recorded(built, 'L3', 'slot.release').length, 1);
+  assert.equal(built.log.filter(({ made }) => made?.role === 'reviewer').length, 2);
+  assert.deepEqual(built.agent.runs(), []);
+});
+
+/** Makes a role request under real L1 scratch checks and the named shipped provider adapter. */
+function judgeStartRequest(t, provider = 'claude') {
+  const placed = layout(t);
+  const cwd = join(placed.directory, 'main');
+  writeFileSync(join(cwd, 'agent.md'), '# Agent\n');
+  const request = { answer: { ...JUDGE, provider, agent: 'agent.md' }, cwd, directory: placed.directory, scratch: placed.base, repository: placed.repository, reach: [], env: process.env, sink: placed.sink, id: 'd-judge', card: 7 };
+  return { placed, request };
+}
+
+/** Checks L1's report, the configured identity where counted, L2's row and a matching pair. */
+function judgeStartClass(outcome, cause, row) {
+  assert.equal(outcome.reason?.code, NOT_STARTED);
+  assert.deepEqual(outcome.reason.startCause, cause);
+  assert.equal(judgeStartAnswer({ reviewer: outcome }).next.failure.row, row);
+  assert.equal(judgeStartAnswer({ reviewer: outcome }, { firstFailures: { reviewer: outcome } }).next.action, 'hold');
+  assert.doesNotMatch(JSON.stringify({ ...outcome.reason, message: outcome.reason.message }), /R-FAIL-8|\bR\d+\b/);
+}
+
+/** Installs a controlled builtin refusal across ESM imports for one source-cause test. */
+function judgeStartBuiltin(t, target, name, replacement) {
+  t.mock.method(target, name, replacement);
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+}
+
+// The counterexample loses the configured file's identity when the adapter refuses its real path.
+// proves R-FAIL-8
+test('Claude agent outside the repository is tagged at L0 and reported by L1 by the configured file for R6', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t);
+  request.answer.agent = '../outside.md';
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'agent-outside', file: '../outside.md' }, 'R6');
+});
+
+// The counterexample treats an existing unresolved agent link as a missing file or a generic adapter error.
+// proves R-FAIL-8
+test('Claude unresolved agent link is tagged at L0 and reported by L1 by the configured file for R7', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t);
+  rmSync(join(request.cwd, 'agent.md'));
+  symlinkSync('agent.md', join(request.cwd, 'agent.md'));
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'agent-unresolved', file: 'agent.md' }, 'R7');
+});
+
 // A successfully escalated card must also stay out of the invocation's next pulls.
 // proves R-ESCALATE-12
 test('run pulls a successfully escalated attempt only once while retaining its one comment', SETTLES_WITHIN, async () => {
@@ -1049,4 +1119,1127 @@ test('run pulls a successfully escalated attempt only once while retaining its o
   assert.equal(reached[0].action, 'escalate');
   assert.equal(recorded(built, 'L3', 'pull').length, 1);
   assert.equal(built.owner.held().issues[0].comments.length, 1);
+});
+
+// The counterexample loses the adapter preparation cause or the identity L2 must count.
+// proves R-FAIL-8
+test('source cause R6 codex-outside is tagged at L0 and reported by L1 with its counted identity', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t, 'codex');
+  request.answer.agent = '../outside.md';
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'agent-outside', file: '../outside.md' }, 'R6');
+});
+
+// The counterexample loses the adapter preparation cause or the identity L2 must count.
+// proves R-FAIL-8
+test('source cause R7 codex-link is tagged at L0 and reported by L1 with its counted identity', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t, 'codex');
+  rmSync(join(request.cwd, 'agent.md')); symlinkSync('agent.md', join(request.cwd, 'agent.md'));
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'agent-unresolved', file: 'agent.md' }, 'R7');
+});
+
+// The counterexample loses the adapter preparation cause or the identity L2 must count.
+// proves R-FAIL-8
+test('source cause R8 codex-agent-read is tagged at L0 and reported by L1 with its counted identity', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t, 'codex');
+  rmSync(join(request.cwd, 'agent.md'));
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'agent-unreadable', file: 'agent.md' }, 'R8');
+});
+
+// The counterexample loses the adapter preparation cause or the identity L2 must count.
+// proves R-FAIL-8
+test('source cause R9 claude-settings-json is tagged at L0 and reported by L1 with its counted identity', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t, 'claude');
+  mkdirSync(join(request.cwd, '.claude')); writeFileSync(join(request.cwd, '.claude', 'settings.json'), 'not JSON');
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'claude-settings-unreadable' }, 'R9');
+});
+
+// The counterexample loses the adapter preparation cause or the identity L2 must count.
+// proves R-FAIL-8
+test('source cause R9 claude-settings-object is tagged at L0 and reported by L1 with its counted identity', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t, 'claude');
+  mkdirSync(join(request.cwd, '.claude')); writeFileSync(join(request.cwd, '.claude', 'settings.json'), 'null');
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'claude-settings-unreadable' }, 'R9');
+});
+
+// The counterexample loses the adapter preparation cause or the identity L2 must count.
+// proves R-FAIL-8
+test('source cause R10 claude-compound-rule is tagged at L0 and reported by L1 with its counted identity', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t, 'claude');
+  mkdirSync(join(request.cwd, '.claude')); writeFileSync(join(request.cwd, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: ['Bash(npm ci && npm test)'] } })); const head = join(request.directory, 'head'); mkdirSync(head); request.reach = [head];
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'claude-compound-rule' }, 'R10');
+});
+
+// The counterexample loses the adapter preparation cause or the identity L2 must count.
+// proves R-FAIL-8
+test('source cause R33 claude-permission-text is tagged at L0 and reported by L1 with its counted identity', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t, 'claude');
+  mkdirSync(join(request.cwd, '.claude')); writeFileSync(join(request.cwd, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: [{ toString: null }] } })); const head = join(request.directory, 'head'); mkdirSync(head); request.reach = [head];
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'claude-rule-unreadable' }, 'R33');
+});
+
+// The counterexample loses the adapter preparation cause or the identity L2 must count.
+// proves R-FAIL-8
+test('source cause R12 claude-glob-path is tagged at L0 and reported by L1 with its counted identity', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t, 'claude');
+  const moved = `${request.directory}[host]`; renameSync(request.directory, moved); request.directory = moved; request.cwd = join(moved, 'main');
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'claude-exclusion-path', path: request.directory }, 'R12');
+});
+
+// The counterexample loses the adapter preparation cause or the identity L2 must count.
+// proves R-FAIL-8
+test('source cause R13 claude-head-path is tagged at L0 and reported by L1 with its counted identity', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t, 'claude');
+  const head = join(request.directory, 'head[host]'); mkdirSync(head); request.reach = [head];
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'claude-reached-path', path: head }, 'R13');
+});
+
+// The counterexample drops a preparation cause before L2 can apply its own row.
+// proves R-FAIL-8
+test('source cause R26 codex-home-mkdir is tagged where preparation fails and reaches L2 through L1', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t, 'codex');
+  const original = fs.mkdirSync; judgeStartBuiltin(t, fs, 'mkdirSync', (path, ...args) => { if (String(path).endsWith('/codex-home')) throw Object.assign(new Error('ENOSPC preparing Codex directory'), { code: 'ENOSPC' }); return original(path, ...args); });
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'codex-directory-unmade' }, 'R26');
+});
+
+// The counterexample drops a preparation cause before L2 can apply its own row.
+// proves R-FAIL-8
+test('source cause R11 codex-config-read is tagged where preparation fails and reaches L2 through L1', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t, 'codex');
+  mkdirSync(join(request.cwd, '.codex', 'config.toml'), { recursive: true });
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'codex-config-unreadable' }, 'R11');
+});
+
+// The counterexample drops a preparation cause before L2 can apply its own row.
+// proves R-FAIL-8
+test('source cause R27 codex-config-write is tagged where preparation fails and reaches L2 through L1', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t, 'codex');
+  const original = fs.writeFileSync; judgeStartBuiltin(t, fs, 'writeFileSync', (path, ...args) => { if (String(path).endsWith('/codex-home/config.toml')) throw Object.assign(new Error('EROFS writing Codex config'), { code: 'EROFS' }); return original(path, ...args); });
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'codex-home-file-unwritten' }, 'R27');
+});
+
+// The counterexample drops a preparation cause before L2 can apply its own row.
+// proves R-FAIL-8
+test('source cause R27 codex-auth-link is tagged where preparation fails and reaches L2 through L1', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t, 'codex');
+  const original = fs.symlinkSync; judgeStartBuiltin(t, fs, 'symlinkSync', (from, to, ...args) => { if (String(to).endsWith('/codex-home/auth.json')) throw Object.assign(new Error('EROFS linking Codex auth'), { code: 'EROFS' }); return original(from, to, ...args); });
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'codex-home-file-unwritten' }, 'R27');
+});
+
+// The counterexample drops a preparation cause before L2 can apply its own row.
+// proves R-FAIL-8
+test('source cause R26 codex-tmp-mkdir is tagged where preparation fails and reaches L2 through L1', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t, 'codex');
+  const original = fs.mkdirSync; judgeStartBuiltin(t, fs, 'mkdirSync', (path, ...args) => { if (String(path).endsWith('/tmp')) throw Object.assign(new Error('ENOSPC preparing Codex directory'), { code: 'ENOSPC' }); return original(path, ...args); });
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'codex-directory-unmade' }, 'R26');
+});
+
+// The counterexample drops a preparation cause before L2 can apply its own row.
+// proves R-FAIL-8
+test('source cause R29 claude-main-realpath is tagged where preparation fails and reaches L2 through L1', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t, 'claude');
+  rmSync(request.cwd, { recursive: true });
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'directory-unusable' }, 'R29');
+});
+
+// The counterexample drops a preparation cause before L2 can apply its own row.
+// proves R-FAIL-8
+test('source cause R29 codex-main-realpath is tagged where preparation fails and reaches L2 through L1', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t, 'codex');
+  rmSync(request.cwd, { recursive: true });
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'directory-unusable' }, 'R29');
+});
+
+// The counterexample drops a preparation cause before L2 can apply its own row.
+// proves R-FAIL-8
+test('source cause R29 codex-scratch-realpath is tagged where preparation fails and reaches L2 through L1', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t, 'codex');
+  request.adapters = { codex: { invocation: (input) => { rmSync(input.scratch, { recursive: true }); return ADAPTERS.codex.invocation(input); } } };
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'directory-unusable' }, 'R29');
+});
+
+// The counterexample attributes an unavailable owner home to the subsequent auth-link write.
+// proves R-FAIL-8
+test('source cause R34 missing owner home is tagged before the Codex auth link and reported through L1', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t, 'codex');
+  const inherited = process.env.CODEX_HOME;
+  delete process.env.CODEX_HOME;
+  t.after(() => { if (inherited === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = inherited; });
+  judgeStartBuiltin(t, os, 'homedir', () => { throw new Error('the owner home is unavailable'); });
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'owner-home-missing' }, 'R34');
+});
+
+// The counterexample leaves join's argument error unclassified, losing the invalid declaration.
+// proves R-FAIL-8
+test('source cause R35 a non-string agent name is reported by L1 and classed as a host cause', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t);
+  request.answer.agent = null;
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'agent-name-invalid' }, 'R35');
+});
+
+/** Makes the observed stand-in invocation set only the variables this source case supplies. */
+function judgeStartEnvironment(request, env, unset = []) {
+  request.answer.provider = 'stand-in';
+  request.adapters = { 'stand-in': { invocation: async () => ({ ...await ANSWERING['stand-in'].invocation(), env, unset }) } };
+}
+
+// The counterexample reports an adapter's forbidden value or loses the variable name L2 counts.
+// proves R-FAIL-8
+test('source cause R20 reports a forbidden variable name and keeps its sentinel value out of the L1 report and every event', SETTLES_WITHIN, async (t) => {
+  const { placed, request } = judgeStartRequest(t);
+  const sentinel = 'TOKEN-SENTINEL-1000-NEVER-RECORD';
+  judgeStartEnvironment(request, { ADAPTER_TOKEN: sentinel });
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'adapter-variable', variable: 'ADAPTER_TOKEN' }, 'R20');
+  assert.ok(!JSON.stringify({ report: outcome.reason, message: outcome.reason.message, events: readEvents(join(placed.root, '.rigger')) }).includes(sentinel));
+});
+
+// The counterexample lets a programming error escape the environment report.
+// proves R-FAIL-8
+test('source cause R21 nonabsolute scratch is tagged by L1 before preparation', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t);
+  request.scratch = 'relative';
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'dispatch-location' }, 'R21');
+});
+
+// The counterexample lets a programming error escape the environment report.
+// proves R-FAIL-8
+test('source cause R21 nonabsolute repository is tagged by L1 before preparation', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t);
+  request.repository = 'relative';
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'dispatch-location' }, 'R21');
+});
+
+// The counterexample loses a probe failure behind a generic adapter refusal.
+// proves R-FAIL-8
+test('source cause R16 probe-exit comes from the Codex probe and is carried by L1', SETTLES_WITHIN, async (t) => {
+  const { placed, request } = judgeStartRequest(t, 'codex');
+  const stand = standInCodex({ exit: 3 });
+  const [outcome] = await withFirstOnPath(stand.dir, () => Promise.allSettled([roleDispatch(request)]));
+  assert.equal(stand.probes().length, 1, 'the stand-in probe actually ran');
+  judgeStartClass(outcome, { kind: 'codex-probe-exit' }, 'R16');
+});
+
+// The counterexample loses a probe failure behind a generic adapter refusal.
+// proves R-FAIL-8
+test('source cause R17 probe-answer comes from the Codex probe and is carried by L1', SETTLES_WITHIN, async (t) => {
+  const { placed, request } = judgeStartRequest(t, 'codex');
+  const stand = standInCodex({ answer: 'not JSON' });
+  const [outcome] = await withFirstOnPath(stand.dir, () => Promise.allSettled([roleDispatch(request)]));
+  assert.equal(stand.probes().length, 1, 'the stand-in probe actually ran');
+  judgeStartClass(outcome, { kind: 'codex-probe-answer' }, 'R17');
+});
+
+// The counterexample loses a probe failure behind a generic adapter refusal.
+// proves R-FAIL-8
+test('source cause R18 probe-skill-path comes from the Codex probe and is carried by L1', SETTLES_WITHIN, async (t) => {
+  const { placed, request } = judgeStartRequest(t, 'codex');
+  const skill = join(placed.root, 'skill', 'SKILL.md'); mkdirSync(dirname(skill)); symlinkSync(skill, skill); const stand = standInCodex({ skills: [skill] });
+  const [outcome] = await withFirstOnPath(stand.dir, () => Promise.allSettled([roleDispatch(request)]));
+  assert.equal(stand.probes().length, 1, 'the stand-in probe actually ran');
+  judgeStartClass(outcome, { kind: 'codex-skill-unresolved' }, 'R18');
+});
+
+/** Advances the probe's algorithmic deadline only after the actual stand-in records readiness. */
+async function judgeTimedProbe(t, refused = false, censusTimeout = false) {
+  const refusedKills = [];
+  const { request } = judgeStartRequest(t, 'codex');
+  const stand = standInCodex({ hang: true });
+  request.adapters = { codex: { invocation: (input) => ADAPTERS.codex.invocation({ ...input, probeTimeout: 1000 }) } };
+  if (refused) {
+    const sink = request.sink;
+    request.sink = { emitter: (context) => {
+      const emitter = sink.emitter(context);
+      return { emit: (event, fields) => {
+        if (context.layer === 'L0' && event.endsWith('.killed')) {
+          refusedKills.push({ event, fields });
+          throw new Error('the sink refuses the probe timeout kill');
+        }
+        emitter.emit(event, fields);
+      } };
+    } };
+  }
+  return withFirstOnPath(stand.dir, async () => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let settled = false;
+    const running = Promise.allSettled([roleDispatch(request)]).then(([outcome]) => { settled = true; return outcome; });
+    while (stand.probes().length === 0 && !settled) await oneTurn();
+    assert.equal(stand.probes().length, 1, 'the probe was ready before its deadline was advanced');
+    t.mock.timers.tick(1000);
+    // The ordinary case advances only the probe deadline, leaving real census I/O its real bound.
+    // The counterexample deliberately expires that bound to exercise the unnamed group kill.
+    if (censusTimeout) while (!settled) { t.mock.timers.tick(READ_TIMEOUT); await oneTurn(); }
+    t.mock.timers.reset();
+    const outcome = await running;
+    if (refused) {
+      assert.ok(refusedKills.length > 0, 'the sink actually refused a kill');
+      if (censusTimeout) assert.ok(refusedKills.some(({ event }) => event === 'group.killed'), 'the census deadline reached the unnamed group kill');
+    }
+    return outcome;
+  });
+}
+
+// The counterexample classes a timed-out probe as an ordinary nonzero probe exit.
+// proves R-FAIL-8
+test('source cause R19 the Codex skill probe outlives its deadline and reaches L2 through L1', SETTLES_WITHIN, async (t) => {
+  const outcome = await judgeTimedProbe(t);
+  judgeStartClass(outcome, { kind: 'codex-probe-timeout' }, 'R19');
+});
+
+// The counterexample retries a probe timeout whose kill could not be recorded, treating it as R19.
+// proves R-FAIL-8
+test('R38 a refused probe timeout kill is reported as an event refusal and L2 halts without a retry or hold', SETTLES_WITHIN, async (t) => {
+  for (const censusTimeout of [false, true]) {
+    const outcome = await judgeTimedProbe(t, true, censusTimeout);
+    assert.equal(outcome.reason?.code, NOT_STARTED, 'the L1 wrapping and printed report keep their established shape');
+    assert.deepEqual(outcome.reason.startCause, { kind: 'event-unrecorded' });
+    const { next, events } = judgeStartAnswer({ reviewer: outcome });
+    assert.equal(next.action, 'judge');
+    assert.equal(next.halt, true);
+    assert.deepEqual(events.filter(({ event }) => event === 'attempt.decided'), []);
+  }
+});
+
+/** Records the physical refusal input before it crosses the dispatch boundary. */
+function refusalInput(path) {
+  const stat = fs.lstatSync(path, { bigint: true });
+  const identity = [stat.dev, stat.ino, stat.mode];
+  if (stat.isDirectory()) return { path, identity, children: fs.readdirSync(path).sort().map((name) => refusalInput(join(path, name))) };
+  assert.equal(stat.isFile(), true, 'the protected fixture input is a regular file');
+  return { path, identity, bytes: readFileSync(path) };
+}
+
+/** Checks existence, exact bytes and entries, kind, identity and permissions of the saved input. */
+function assertRefusalInput(input, label) {
+  assert.equal(existsSync(input.path), true, `${label} must remain after escalation: ${input.path}`);
+  const stat = fs.lstatSync(input.path, { bigint: true });
+  assert.deepEqual([stat.dev, stat.ino, stat.mode], input.identity, `${label} identity and permissions are unchanged`);
+  if (input.children !== undefined) {
+    assert.equal(stat.isDirectory(), true, `${label} remains a directory`);
+    assert.deepEqual(fs.readdirSync(input.path).sort(), input.children.map(({ path }) => path.slice(input.path.length + 1)), `${label} entries are unchanged`);
+    for (const child of input.children) assertRefusalInput(child, label);
+  } else {
+    assert.equal(stat.isFile(), true, `${label} remains a regular file`);
+    assert.deepEqual(readFileSync(input.path), input.bytes, `${label} exact bytes are unchanged`);
+  }
+}
+
+/** Checks that escalation names and preserves the refused input. */
+function assertJudgeRefusal(world, result, role) {
+  const input = world.refusedDirectories.get(role) ?? world.refusedScratch.get(role);
+  assert.ok(input, 'the fixture recorded a physical refused input');
+  const refusal = result.reached[0].judges.find((judge) => judge.role === role).outcome.reason;
+  assert.equal(refusal.code, input.children === undefined ? 'SCRATCH_REFUSED' : 'WORKSPACE_REFUSED');
+  assert.equal(refusal.path, input.path, 'the report names the physical refused input');
+  assertRefusalInput(input, `${role}'s refused input`);
+  for (const [peer, saved] of world.peerInputs) assertRefusalInput(saved, `${peer}'s retained peer input`);
+}
+
+/** A real L1/L2/L3 judge pair whose directory preparations supply the named source faults. */
+function judgePairWorld(t, { ready = false, plans = { reviewer: ['host', 'host'] }, refuse = () => false, provisioning = {}, steps = [] } = {}) {
+  const roles = Object.keys(plans);
+  const built = ownerWrites(judgeWorld({ cards: [cardIn(7, ready ? COLUMNS.ready : COLUMNS.review)], forge: ready ? {} : { pullRequests: [pullFor(7)] }, kinds: { change: { ...kindJudgedBy(roles).change, provisioning: steps } }, provisioning, refuse }));
+  const calls = [];
+  const workspaces = [];
+  const counts = new Map();
+  const refusedScratch = new Map();
+  const refusedDirectories = new Map();
+  const peerInputs = new Map();
+  const refusingRoles = new Set(Object.entries(plans).filter(([, modes]) => modes.some((mode) => ['directory-refused', 'scratch-refused'].includes(mode))).map(([role]) => role));
+  const directory = async (card, role, head) => {
+    const number = (counts.get(role) ?? 0) + 1;
+    counts.set(role, number);
+    const stateFiles = Object.fromEntries(fs.readdirSync(built.directory, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name !== 'events.jsonl')
+      .map((entry) => [join(entry.parentPath, entry.name), readFileSync(join(entry.parentPath, entry.name), 'utf8')]));
+    const admissionFiles = Object.fromEntries(Object.entries(stateFiles).filter(([path]) => path.startsWith(`${join(built.directory, 'admission')}/`)));
+    calls.push({ role, number, events: built.events(), stateFiles, admissionFiles });
+    const mode = plans[role][number - 1] ?? 'success';
+    if (mode === 'directory-refused') {
+      const path = join(built.scratch, 'workspaces', 'judges', `rigger-${card}`, role);
+      mkdirSync(path, { recursive: true });
+      writeFileSync(join(path, 'owner-file'), 'owner data must remain\n', { mode: 0o640 });
+      fs.chmodSync(path, 0o750);
+      assert.equal(readFileSync(join(path, 'owner-file'), 'utf8'), 'owner data must remain\n', 'the refused directory contains the owner input');
+      refusedDirectories.set(role, refusalInput(path));
+      throw Object.assign(new Error('R-WORK-20 refuses the judge directory'), { code: 'WORKSPACE_REFUSED', path });
+    }
+    if (mode === 'directory-unmade') throw Object.assign(new Error('the judge directory cannot be made'), { code: WORKSPACE_NOT_MADE, path: join(built.scratch, role) });
+    const made = await built.handed.judgeDirectory(card, role, head);
+    if (mode === 'host') rmSync(made.main, { recursive: true });
+    if (mode === 'other-host') {
+      mkdirSync(join(made.main, '.claude'), { recursive: true });
+      writeFileSync(join(made.main, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: ['Bash(npm ci && npm test)'] } }));
+    }
+    if (mode === 'scratch-refused') {
+      mkdirSync(made.scratch, { recursive: true });
+      rmSync(join(made.scratch, role), { recursive: true, force: true });
+      const path = join(made.scratch, role);
+      writeFileSync(path, 'kept\n');
+      const stat = fs.lstatSync(path, { bigint: true });
+      refusedScratch.set(role, { path, bytes: readFileSync(path), identity: [stat.dev, stat.ino, stat.mode] });
+    }
+    if (mode === 'scratch-unmade') unlisted(t, made.scratch, role);
+    if (mode === 'head-step-exit') writeFileSync(join(made.head, 'broken'), 'fail\n');
+    if (mode === 'head-step-not-started') rmSync(join(made.head, 'step-dir'), { recursive: true, force: true });
+    else mkdirSync(join(made.head, 'step-dir'), { recursive: true });
+    if (refusingRoles.size > 0 && !refusingRoles.has(role) && !peerInputs.has(role)) {
+      const path = join(made.head, 'owner-input');
+      mkdirSync(path, { mode: 0o750 });
+      writeFileSync(join(path, 'owner-file'), `${role} owner data must remain\n`, { mode: 0o640 });
+      assert.equal(readFileSync(join(path, 'owner-file'), 'utf8'), `${role} owner data must remain\n`, 'the peer contains its physical owner input');
+      peerInputs.set(role, refusalInput(path));
+    }
+    return made;
+  };
+  const workspace = async (...args) => {
+    workspaces.push(args[0]);
+    const made = await built.handed.workspace(...args);
+    mkdirSync(join(made.path, 'step-dir'), { recursive: true });
+    return made;
+  };
+  const invocation = () => loop({ ...built.handed, judgeDirectory: directory, workspace });
+  return { built, calls, workspaces, refusedScratch, refusedDirectories, peerInputs, invocation };
+}
+
+/** Retains both the result and all reported failures without dropping a panel member. */
+const judgePairResult = (engine, run = false) => (run ? engine.run() : engine.pull(1))
+  .then((reached) => ({ reached }), (failure) => ({ failure, reached: failure.reached }));
+
+/** Refuses before the world's accepted-start observer, which pairs accepted L1 starts with ends. */
+function judgePairRefusal(world, refuses) {
+  const sink = world.built.handed.sink;
+  world.built.handed.sink = { emitter: (context) => {
+    const emitter = sink.emitter(context);
+    return { emit: (event, fields) => {
+      if (refuses({ ...context, event, fields })) throw new Error(`the sink refuses ${event}`);
+      emitter.emit(event, fields);
+    } };
+  } };
+}
+
+// The counterexample retries the host-failed reviewer after its peer's start event was refused.
+// proves R-FAIL-8
+test('a panel containing an R38 dispatch refusal performs no retry of its other judge', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'host'], architect: ['success'] }, refuse: ({ layer, event, fields }) => layer === 'L3' && event === 'dispatch' && fields.role === 'architect' });
+  const result = await judgePairResult(world.invocation());
+  assert.ok(result.failure);
+  assert.equal(world.calls.filter(({ role }) => role === 'reviewer').length, 1, 'R-RECORD-9 stops further dispatch work');
+  assert.deepEqual(admission({ directory: world.built.directory, sink: world.built.handed.sink }).read(), { state: 'open' });
+  assert.deepEqual(result.reached[0].judges.map(({ role }) => role), ['reviewer', 'architect']);
+});
+
+// The counterexample sees a settled event refusal as a normal judge result and retries its peer.
+// proves R-FAIL-8
+test('a panel containing an R38 dispatch.start refusal performs no retry of its other judge', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'host'], architect: ['success'] } });
+  judgePairRefusal(world, ({ layer, event, fields }) => layer === 'L1' && event === 'dispatch.start' && fields.facts !== undefined);
+  const result = await judgePairResult(world.invocation());
+  assert.equal(world.calls.filter(({ role }) => role === 'reviewer').length, 1, 'R-RECORD-9 stops further dispatch work');
+  assert.deepEqual(admission({ directory: world.built.directory, sink: world.built.handed.sink }).read(), { state: 'open' });
+  const architect = result.reached[0].judges.find(({ role }) => role === 'architect');
+  assert.equal(architect.outcome.reason.code, 'EVENT_REFUSED');
+  assert.match(architect.outcome.reason.message, /dispatch.start/);
+});
+
+// The counterexample calls the second, different host failure a withheld judge and succeeds.
+// proves R-FAIL-8
+test('a judge whose retry meets another host cause stops the card and leaves admission open', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'other-host'] } });
+  const result = await judgePairResult(world.invocation());
+  assert.ok(result.failure, 'different host causes stop the card');
+  assert.ok(leaves(result.failure).some(({ decision }) => decision === 'stop'));
+  assert.deepEqual(recorded(world.built, 'L2', 'attempt.decided').map(({ decision }) => decision), ['again', 'stop']);
+  assert.deepEqual(admission({ directory: world.built.directory, sink: world.built.handed.sink }).read(), { state: 'open' });
+});
+
+// The counterexample releases a stopped card and immediately pulls its still-owed judge again.
+// proves R-FAIL-8
+test('a run keeps a card stopped for two different judge host causes out of later pulls', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'other-host'] } });
+  const read = world.built.handed.board.readPriority;
+  let reads = 0;
+  world.built.handed.board.readPriority = () => { if (++reads > 5) throw new Error('the test bounds repeated pulls'); return read(); };
+  const result = await judgePairResult(world.invocation(), true);
+  assert.ok(result.failure);
+  assert.equal(world.calls.length, 2);
+  assert.equal(recorded(world.built, 'L3', 'pull').length, 1);
+});
+
+// A counterexample changes the table outcome or loses another judge under the same claim.
+// proves R-FAIL-8
+test('Table A and B entry-review-host', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { ready: false, plans: { reviewer: ['host', 'host'] } });
+  const result = await judgePairResult(world.invocation());
+  assert.equal(Boolean(result.failure), true, result.failure?.stack);
+  assert.equal(world.calls.length, 2);
+  assert.equal(world.workspaces.length, 0);
+  assert.equal(world.built.agent.runs().filter((run) => run.role === 'engineer').length, 0);
+  assert.equal(recorded(world.built, 'L3', 'dispatch', (event) => event.role === 'reviewer').length, 2);
+  assert.equal(recorded(world.built, 'L3', 'pull').length, 1);
+  assert.equal(recorded(world.built, 'L3', 'slot.release').length, 1);
+  assert.equal(recorded(world.built, 'L2', 'attempt.decided').at(-1).decision, 'hold');
+});
+
+// A counterexample changes the table outcome or loses another judge under the same claim.
+// proves R-FAIL-8
+test('Table A and B entry-review-success', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { ready: false, plans: { reviewer: ['host', 'success'] } });
+  const result = await judgePairResult(world.invocation());
+  assert.equal(Boolean(result.failure), false, result.failure?.stack);
+  assert.equal(world.calls.length, 2);
+  assert.equal(world.workspaces.length, 0);
+  assert.equal(world.built.agent.runs().filter((run) => run.role === 'engineer').length, 0);
+  assert.equal(recorded(world.built, 'L3', 'dispatch', (event) => event.role === 'reviewer').length, 2);
+  assert.equal(recorded(world.built, 'L3', 'pull').length, 1);
+  assert.equal(recorded(world.built, 'L3', 'slot.release').length, 1);
+  assert.equal(recorded(world.built, 'L2', 'attempt.decided').at(-1).decision, 'again');
+});
+
+// A counterexample changes the table outcome or loses another judge under the same claim.
+// proves R-FAIL-8
+test('Table A and B entry-maker-host', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { ready: true, plans: { reviewer: ['host', 'host'] } });
+  const result = await judgePairResult(world.invocation());
+  assert.equal(Boolean(result.failure), true, result.failure?.stack);
+  assert.equal(world.calls.length, 2);
+  assert.equal(world.workspaces.length, 1);
+  assert.equal(world.built.agent.runs().filter((run) => run.role === 'engineer').length, 1);
+  assert.equal(recorded(world.built, 'L3', 'dispatch', (event) => event.role === 'reviewer').length, 2);
+  assert.equal(recorded(world.built, 'L3', 'pull').length, 1);
+  assert.equal(recorded(world.built, 'L3', 'slot.release').length, 1);
+  assert.equal(recorded(world.built, 'L2', 'attempt.decided').at(-1).decision, 'hold');
+});
+
+// A counterexample changes the table outcome or loses another judge under the same claim.
+// proves R-FAIL-8
+test('Table A and B entry-maker-success', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { ready: true, plans: { reviewer: ['host', 'success'] } });
+  const result = await judgePairResult(world.invocation());
+  assert.equal(Boolean(result.failure), false, result.failure?.stack);
+  assert.equal(world.calls.length, 2);
+  assert.equal(world.workspaces.length, 1);
+  assert.equal(world.built.agent.runs().filter((run) => run.role === 'engineer').length, 1);
+  assert.equal(recorded(world.built, 'L3', 'dispatch', (event) => event.role === 'reviewer').length, 2);
+  assert.equal(recorded(world.built, 'L3', 'pull').length, 1);
+  assert.equal(recorded(world.built, 'L3', 'slot.release').length, 1);
+  assert.equal(recorded(world.built, 'L2', 'attempt.decided').at(-1).decision, 'again');
+});
+
+// A counterexample changes the table outcome or loses another judge under the same claim.
+// proves R-FAIL-8
+test('Table A and B retry-directory-refused', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'directory-refused'] } });
+  const result = await judgePairResult(world.invocation());
+  assert.equal(result.failure, undefined, result.failure?.stack);
+  assert.equal(world.built.owner.held().issues[0].comments.length, 1);
+  assert.equal(recorded(world.built, 'L2', 'review.escalate').length, 1);
+  assert.deepEqual(recorded(world.built, 'L2', 'attempt.decided').map((event) => event.decision), ['again']);
+  assert.deepEqual(admission({ directory: world.built.directory, sink: world.built.handed.sink }).read(), { state: 'open' });
+  assertJudgeRefusal(world, result, 'reviewer');
+});
+
+// A counterexample changes the table outcome or loses another judge under the same claim.
+// proves R-FAIL-8
+test('Table A and B retry-scratch-refused', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'scratch-refused'] } });
+  const result = await judgePairResult(world.invocation());
+  assert.equal(result.failure, undefined, result.failure?.stack);
+  assert.equal(world.built.owner.held().issues[0].comments.length, 1);
+  assert.equal(recorded(world.built, 'L2', 'review.escalate').length, 1);
+  assert.deepEqual(recorded(world.built, 'L2', 'attempt.decided').map((event) => event.decision), ['again']);
+  assert.deepEqual(admission({ directory: world.built.directory, sink: world.built.handed.sink }).read(), { state: 'open' });
+  const refused = result.reached[0].judges.find(({ role }) => role === 'reviewer').outcome.reason;
+  assert.equal(refused.code, 'SCRATCH_REFUSED');
+  const original = world.refusedScratch.get('reviewer');
+  assert.equal(refused.path, original.path, 'the reported refusal names the actual fixture input');
+  assert.equal(existsSync(refused.path), true, 'the refused retry scratch path must remain after escalation');
+  assert.deepEqual(readFileSync(refused.path), original.bytes, 'the refused file bytes are unchanged');
+  assert.equal(readFileSync(refused.path, 'utf8'), 'kept\n', 'the fixture retained its independent content premise');
+  const stat = fs.lstatSync(refused.path, { bigint: true });
+  assert.equal(stat.isFile(), true);
+  assert.deepEqual([stat.dev, stat.ino, stat.mode], original.identity, 'the refused file identity and permissions are unchanged');
+});
+
+// A counterexample changes the table outcome or loses another judge under the same claim.
+// proves R-FAIL-8
+test('Table A and B retry-directory-unmade', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'directory-unmade'] } });
+  const result = await judgePairResult(world.invocation());
+  assert.equal(result.failure, undefined, result.failure?.stack);
+  assert.deepEqual(result.reached[0].judges, []);
+  assert.equal(world.calls.length, 2);
+  assert.equal(recorded(world.built, 'L2', 'judge.withheld').length, 1);
+  assert.deepEqual(recorded(world.built, 'L2', 'attempt.decided').map((event) => event.decision), ['again']);
+});
+
+// A counterexample changes the table outcome or loses another judge under the same claim.
+// proves R-FAIL-8
+test('Table A and B retry-scratch-unmade', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'scratch-unmade'] } });
+  const result = await judgePairResult(world.invocation());
+  assert.equal(result.failure, undefined, result.failure?.stack);
+  assert.deepEqual(result.reached[0].judges, []);
+  assert.equal(world.calls.length, 2);
+  assert.equal(recorded(world.built, 'L2', 'judge.withheld').length, 1);
+  assert.deepEqual(recorded(world.built, 'L2', 'attempt.decided').map((event) => event.decision), ['again']);
+});
+
+// A counterexample changes the table outcome or loses another judge under the same claim.
+// proves R-FAIL-8
+test('Table A and B retry-head-step-exit', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'head-step-exit'] }, steps: ['check'], provisioning: { check: { run: 'test ! -f broken', required: true } } });
+  const result = await judgePairResult(world.invocation());
+  assert.equal(result.failure, undefined, result.failure?.stack);
+  assert.deepEqual(result.reached[0].judges, []);
+  assert.equal(world.calls.length, 2);
+  assert.equal(recorded(world.built, 'L2', 'judge.withheld').length, 1);
+  assert.deepEqual(recorded(world.built, 'L2', 'attempt.decided').map((event) => event.decision), ['again']);
+});
+
+// A counterexample changes the table outcome or loses another judge under the same claim.
+// proves R-FAIL-8
+test('Table A and B retry-head-step-not-started', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'head-step-not-started'] }, steps: ['check'], provisioning: { check: { run: 'test ! -f broken', required: true, cwd: 'step-dir' } } });
+  const result = await judgePairResult(world.invocation());
+  assert.equal(result.failure, undefined, result.failure?.stack);
+  assert.deepEqual(result.reached[0].judges, []);
+  assert.equal(world.calls.length, 2);
+  assert.equal(recorded(world.built, 'L2', 'judge.withheld').length, 1);
+  assert.deepEqual(recorded(world.built, 'L2', 'attempt.decided').map((event) => event.decision), ['again']);
+});
+
+// A counterexample changes the table outcome or loses another judge under the same claim.
+// proves R-FAIL-8
+test('Table A and B sequential-panel', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'success'], architect: ['host', 'success'] } });
+  const result = await judgePairResult(world.invocation());
+  assert.equal(result.failure, undefined, result.failure?.stack);
+  assert.deepEqual(world.calls.filter(({ number }) => number === 2).map(({ role }) => role), ['reviewer', 'architect']);
+  assert.deepEqual(world.built.agent.runs().map(({ role }) => role).sort(), ['architect', 'reviewer']);
+  assert.deepEqual(recorded(world.built, 'L2', 'attempt.decided').map(({ decision }) => decision), ['again', 'again']);
+  const events = world.built.events();
+  const retries = world.calls.filter(({ number }) => number === 2).map(({ role, events: before }) => {
+    const dispatches = events.filter((event) => event.layer === 'L3' && event.event === 'dispatch' && event.role === role);
+    assert.equal(dispatches.length, 2, `${role} has one initial dispatch and one retry`);
+    const { dispatch } = dispatches[1];
+    const started = events.findIndex((event) => event.layer === 'L1' && event.event === 'dispatch.start' && event.dispatch === dispatch);
+    const ended = events.findIndex((event) => event.layer === 'L1' && event.event === 'dispatch.end' && event.dispatch === dispatch);
+    assert.ok(started >= 0 && ended > started, `${role} retry has an observed start and end`);
+    return { role, dispatch, before, started, ended };
+  });
+  const [reviewer, architect] = retries;
+  assert.equal(reviewer.before.filter((event) => event.layer === 'L2' && event.event === 'attempt.failed' && event.attempt === 1).length, 2, 'both initial failures settle before retry preparation');
+  assert.ok(architect.before.some((event) => event.layer === 'L1' && event.event === 'dispatch.end' && event.dispatch === reviewer.dispatch), 'architect retry preparation starts only after reviewer retry ends');
+  assert.ok(reviewer.ended < architect.started, 'the reviewer retry ends before the architect retry starts');
+});
+
+// A counterexample changes the table outcome or loses another judge under the same claim.
+// proves R-FAIL-8
+test('Table A and B keeps-peer-result', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'success'], architect: ['success'] } });
+  const result = await judgePairResult(world.invocation());
+  assert.equal(result.failure, undefined, result.failure?.stack);
+  assert.equal(world.calls.filter(({ role }) => role === 'architect').length, 1);
+  assert.equal(world.built.agent.runs().filter(({ role }) => role === 'architect').length, 1);
+  assert.deepEqual(result.reached[0].judges.map(({ role, outcome }) => [role, outcome.value.exit]), [['reviewer', 0], ['architect', 0]]);
+});
+
+// A counterexample changes the table outcome or loses another judge under the same claim.
+// proves R-FAIL-8
+test('Table A and B peer-withheld', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'success'], architect: ['directory-unmade'] } });
+  const result = await judgePairResult(world.invocation());
+  assert.equal(result.failure, undefined, result.failure?.stack);
+  assert.equal(world.calls.filter(({ role }) => role === 'reviewer').length, 2);
+  assert.deepEqual(result.reached[0].judges.map(({ role }) => role), ['reviewer']);
+  assert.equal(recorded(world.built, 'L2', 'judge.withheld').length, 1);
+});
+
+// A counterexample changes the table outcome or loses another judge under the same claim.
+// proves R-FAIL-8
+test('Table A and B initial-peer-refusal', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'host'], architect: ['directory-refused'] } });
+  const result = await judgePairResult(world.invocation());
+  assert.equal(result.failure, undefined, result.failure?.stack);
+  assert.equal(world.calls.filter(({ role }) => role === 'reviewer').length, 1);
+  assert.equal(world.built.owner.held().issues[0].comments.length, 1);
+  assert.deepEqual(admission({ directory: world.built.directory, sink: world.built.handed.sink }).read(), { state: 'open' });
+  assertJudgeRefusal(world, result, 'architect');
+});
+
+// A counterexample changes the table outcome or loses another judge under the same claim.
+// proves R-FAIL-8
+test('Table A and B initial-peer-scratch-refusal', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'host'], architect: ['scratch-refused'] } });
+  const result = await judgePairResult(world.invocation());
+  assert.equal(result.failure, undefined, result.failure?.stack);
+  assert.equal(world.calls.filter(({ role }) => role === 'reviewer').length, 1);
+  assert.equal(world.built.owner.held().issues[0].comments.length, 1);
+  assertJudgeRefusal(world, result, 'architect');
+});
+
+// A counterexample changes the table outcome or loses another judge under the same claim.
+// proves R-FAIL-8
+test('Table A and B two-holds', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'host'], architect: ['host', 'host'] } });
+  const result = await judgePairResult(world.invocation());
+  assert.ok(result.failure);
+  assert.equal(namesIn(world.built.directory).length, 1);
+  assert.equal(recorded(world.built, 'L3', 'admission.close').length, 1);
+  assert.deepEqual(recorded(world.built, 'L2', 'attempt.decided').filter(({ decision }) => decision === 'hold').map(({ failures }) => failures[0].judge), ['reviewer', 'architect']);
+});
+
+// A counterexample changes the table outcome or loses another judge under the same claim.
+// proves R-FAIL-8
+test('Table A and B hold-and-escalation-False', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'host'], architect: ['host', 'directory-refused'] } });
+  const result = await judgePairResult(world.invocation());
+  assert.ok(result.failure);
+  assert.equal(world.built.owner.held().issues[0].comments.length, 1);
+  assert.ok(recorded(world.built, 'L2', 'attempt.decided').some((event) => event.decision === 'hold'));
+  assert.equal(namesIn(world.built.directory).length, 1);
+  const events = world.built.events();
+  assert.ok(events.findIndex(({ event }) => event === "admission.close") < events.findIndex(({ event }) => event === "review.escalate"));
+  assertJudgeRefusal(world, result, 'architect');
+});
+
+// A counterexample changes the table outcome or loses another judge under the same claim.
+// proves R-FAIL-8
+test('Table A and B hold-and-escalation-True', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'directory-refused'], architect: ['host', 'host'] } });
+  const result = await judgePairResult(world.invocation());
+  assert.ok(result.failure);
+  assert.equal(world.built.owner.held().issues[0].comments.length, 1);
+  assert.ok(recorded(world.built, 'L2', 'attempt.decided').some((event) => event.decision === 'hold'));
+  assert.equal(namesIn(world.built.directory).length, 1);
+  const events = world.built.events();
+  assert.ok(events.findIndex(({ event }) => event === "admission.close") < events.findIndex(({ event }) => event === "review.escalate"));
+  assertJudgeRefusal(world, result, 'reviewer');
+});
+
+// A counterexample changes the table outcome or loses another judge under the same claim.
+// proves R-FAIL-8
+test('Table A and B stop-and-escalation-False', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'other-host'], architect: ['host', 'directory-refused'] } });
+  const result = await judgePairResult(world.invocation());
+  assert.ok(result.failure);
+  assert.equal(world.built.owner.held().issues[0].comments.length, 1);
+  assert.ok(recorded(world.built, 'L2', 'attempt.decided').some((event) => event.decision === 'stop'));
+  assert.deepEqual(admission({ directory: world.built.directory, sink: world.built.handed.sink }).read(), { state: 'open' });
+  const events = world.built.events();
+
+  assertJudgeRefusal(world, result, 'architect');
+});
+
+// A counterexample changes the table outcome or loses another judge under the same claim.
+// proves R-FAIL-8
+test('Table A and B stop-and-escalation-True', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'directory-refused'], architect: ['host', 'other-host'] } });
+  const result = await judgePairResult(world.invocation());
+  assert.ok(result.failure);
+  assert.equal(world.built.owner.held().issues[0].comments.length, 1);
+  assert.ok(recorded(world.built, 'L2', 'attempt.decided').some((event) => event.decision === 'stop'));
+  assert.deepEqual(admission({ directory: world.built.directory, sink: world.built.handed.sink }).read(), { state: 'open' });
+  const events = world.built.events();
+
+  assertJudgeRefusal(world, result, 'reviewer');
+});
+
+// The counterexample starts a retry while the initial panel still has a running judge.
+// proves R-FAIL-8
+test('the retry waits for every initial judge to settle before starting step 4 again', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'host'], architect: ['success'] } });
+  world.built.agent.plan(7, 'architect', { hold: true, exit: 0 });
+  const pending = judgePairResult(world.invocation());
+  await waitFor(() => world.built.agent.held(7, 'architect'), 20_000);
+  await waitFor(() => recorded(world.built, 'L2', 'attempt.decided').some(({ decision }) => decision === 'again'), 20_000);
+  const before = world.calls.filter(({ role }) => role === 'reviewer').length;
+  world.built.agent.release(7, 'architect');
+  const result = await pending;
+  assert.equal(before, 1, 'the host-failed judge was not retried while its peer was running');
+  assert.ok(result.failure);
+  const peer = recorded(world.built, 'L3', 'dispatch', ({ role }) => role === 'architect')[0];
+  assert.ok(world.calls.find(({ role, number }) => role === 'reviewer' && number === 2).events.some(({ event, dispatch }) => event === 'dispatch.end' && dispatch === peer.dispatch));
+});
+
+// The counterexample rebuilds the workspace, reprovisions it, or releases the claim for a retry.
+// proves R-FAIL-8
+test('the retry reprovisions only the judge head while retaining the claim slot and unpersisted first failure', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { ready: true, plans: { reviewer: ['host', 'host'] }, steps: ['check'], provisioning: { check: { run: 'true', required: true } } });
+  const result = await judgePairResult(world.invocation());
+  assert.ok(result.failure);
+  assert.equal(world.workspaces.length, 1);
+  const steps = recorded(world.built, 'L3', 'dispatch', ({ step }) => step === 'check');
+  assert.deepEqual(steps.map(({ role }) => role), [undefined, 'reviewer', 'reviewer']);
+  const second = world.calls[1].events;
+  const at = second.findIndex(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'reviewer');
+  assert.deepEqual(second.slice(at + 1).filter(({ event }) => ['pull', 'transition', 'slot.release'].includes(event)), []);
+  const first = second.find(({ event, judge }) => event === 'attempt.failed' && judge === 'reviewer');
+  assert.ok(first);
+  assert.ok(!second.some(({ event }) => event === 'admission.close'));
+  assert.equal(second.filter(({ event }) => event === 'pull').length, 1);
+  assert.deepEqual(world.calls[0].admissionFiles, world.calls[1].admissionFiles, 'admission is unchanged between the two dispatches');
+  for (const [path, text] of Object.entries(world.calls[1].stateFiles)) {
+    assert.ok(!text.includes(first.reason), `${path} persisted the first failure`);
+    assert.ok(!text.includes('directory-unusable'), `${path} persisted the first cause`);
+  }
+});
+
+// The counterexample reads a first failure from a prior run and holds the current first dispatch.
+// proves R-FAIL-8
+test('a recorded first failure from another invocation is not read to count the current judge pair', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'success'] } });
+  openSink({ directory: world.built.directory, run: 'r-earlier', now: () => 0 }).emitter({ layer: 'L2', card: 7 }).emit('attempt.failed', { attempt: 1, class: 'environment', judge: 'reviewer', row: 'R29', reason: 'earlier invocation' });
+  const original = fs.readFileSync;
+  let reads = 0;
+  judgeStartBuiltin(t, fs, 'readFileSync', (path, ...args) => {
+    if (path === join(world.built.directory, 'events.jsonl')) reads += 1;
+    return original(path, ...args);
+  });
+  const result = await judgePairResult(world.invocation());
+  t.mock.restoreAll();
+  syncBuiltinESMExports();
+  assert.equal(result.failure, undefined, result.failure?.stack);
+  assert.equal(reads, world.calls.length, 'only the fixture snapshots read the record; L2 adds no read');
+  assert.deepEqual(recorded(world.built, 'L2', 'attempt.decided').map(({ attempt, decision }) => [attempt, decision]), [[1, 'again']]);
+});
+
+// The counterexample ignores a scratch event refusal and retries the other judge.
+// proves R-FAIL-8
+test('a panel containing an R38 scratch event refusal performs no retry of its other judge', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'host'], architect: ['success'] } });
+  judgePairRefusal(world, ({ layer, event, fields }) => layer === 'L1' && event === 'workspace.made' && fields.role === 'architect');
+  const result = await judgePairResult(world.invocation());
+  assert.equal(world.calls.filter(({ role }) => role === 'reviewer').length, 1);
+  const architect = result.reached[0].judges.find(({ role }) => role === 'architect');
+  assert.equal(architect.outcome.reason.code, 'EVENT_REFUSED');
+  assert.match(architect.outcome.reason.message, /workspace.made/);
+  assert.deepEqual(admission({ directory: world.built.directory, sink: world.built.handed.sink }).read(), { state: 'open' });
+});
+
+// The counterexample keeps retrying the second judge after the first retry loses its start event.
+// proves R-FAIL-8
+test('an R38 on a retry stops the remaining judge retries before a hold can be reached', SETTLES_WITHIN, async (t) => {
+  const world = judgePairWorld(t, { plans: { reviewer: ['host', 'success'], architect: ['host', 'host'] } });
+  let starts = 0;
+  judgePairRefusal(world, ({ layer, event, fields }) => layer === 'L3' && event === 'dispatch' && fields.role === 'reviewer' && ++starts === 2);
+  const result = await judgePairResult(world.invocation());
+  assert.ok(result.failure);
+  assert.equal(world.calls.filter(({ role }) => role === 'architect').length, 1);
+  assert.deepEqual(admission({ directory: world.built.directory, sink: world.built.handed.sink }).read(), { state: 'open' });
+});
+
+// The counterexample catches an earlier read but misses this later directory read.
+// proves R-FAIL-8
+test('source cause R29 claude-head-realpath is attached where its directory read fails', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t, 'claude');
+  request.reach = [join(request.directory, 'missing-head')];
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'directory-unusable' }, 'R29');
+});
+
+// The counterexample catches an earlier read but misses this later directory read.
+// proves R-FAIL-8
+test('source cause R29 codex-tmp-realpath is attached where its directory read fails', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t, 'codex');
+  let active = false; let reads = 0; const original = fs.realpathSync.native; judgeStartBuiltin(t, fs.realpathSync, 'native', (path, ...args) => { if (active && path === join(request.scratch, request.answer.role) && ++reads === 2) throw Object.assign(new Error('EIO rereading scratch'), { code: 'EIO' }); return original(path, ...args); }); request.adapters = { codex: { invocation: (input) => { active = true; return ADAPTERS.codex.invocation(input); } } };
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'directory-unusable' }, 'R29');
+});
+
+// The counterexample carries the command name through an adapter refusal instead of its provider.
+// proves R-FAIL-8
+test('source cause R2 a missing Codex probe CLI is reported by L1 with the configured provider', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t, 'codex');
+  refuseSpawn(t, { command: 'codex', code: 'ENOENT' });
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'command-missing', provider: 'codex' }, 'R2');
+});
+
+// The counterexample uses an adapter command path as the provider identity of the dispatch itself.
+// proves R-FAIL-8
+test('source cause R2 the role provider survives L1 invocation handoff when the adapter command has another name', SETTLES_WITHIN, async (t) => {
+  const { placed, request } = judgeStartRequest(t);
+  request.answer.provider = 'stand-in';
+  request.adapters = { 'stand-in': { invocation: async () => ({ ...await ANSWERING['stand-in'].invocation(), command: join(placed.root, 'missing-cli') }) } };
+  const handed = await roleDispatch(request);
+  const [outcome] = await Promise.allSettled([judgeDispatchOnL1({ ...handed, id: request.id, card: 7, directory: join(placed.root, '.rigger'), sink: placed.sink })]);
+  judgeStartClass(outcome, { kind: 'command-missing', provider: 'stand-in' }, 'R2');
+});
+
+// Each source in the inventory must retain its own cause, even when another path reaches the same row.
+// proves R-FAIL-8
+test('source inventory covers every Codex probe spawn errno', SETTLES_WITHIN, async (t) => {
+  for (const [errno, kind, row] of [
+    ['EACCES', 'command-not-executable', 'R3'], ['E2BIG', 'command-too-long', 'R4'],
+    ['EAGAIN', 'process-resources', 'R28'], ['ENOMEM', 'process-resources', 'R28'],
+    ['EMFILE', 'file-descriptors', 'R36'], ['ENFILE', 'file-descriptors', 'R36'],
+    ['EUNRECOGNIZED', 'host-error', 'R37'],
+  ]) await t.test(errno, async (t) => {
+    const { request } = judgeStartRequest(t, 'codex');
+    refuseSpawn(t, { command: 'codex', code: errno });
+    const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+    judgeStartClass(outcome, { kind, ...(row === 'R3' ? { provider: 'codex' } : {}) }, row);
+  });
+});
+
+// R1 is outside the host retry, including each adapter's invalid tier and a missing adapter.
+// proves R-FAIL-8
+test('R1 missing adapter and each provider unmapped model never request a retry or hold', SETTLES_WITHIN, async (t) => {
+  for (const provider of ['absent', 'claude', 'codex']) await t.test(provider, async (t) => {
+    const { request } = judgeStartRequest(t, provider);
+    request.answer.tier = 'unmapped';
+    const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+    assert.equal(outcome.reason.code, NOT_STARTED);
+    assert.equal(outcome.reason.startCause, undefined);
+    const { next, events } = judgeStartAnswer({ reviewer: outcome });
+    assert.equal(next.action, 'judge');
+    assert.deepEqual(events.filter(({ event }) => event === 'attempt.decided'), []);
+    assert.deepEqual(judgeStartAnswer({ reviewer: outcome }, { firstFailures: { reviewer: outcome } }).next.action, 'judge');
+  });
+});
+
+// Parsing failures and an unreadable settings file are separate inventory causes of the same row.
+// proves R-FAIL-8
+test('source cause R9 an unreadable Claude settings file reaches L2 through L1', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t);
+  mkdirSync(join(request.cwd, '.claude', 'settings.json'), { recursive: true });
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'claude-settings-unreadable' }, 'R9');
+});
+
+// Each malformed answer shape comes from the probe and must retain R17 rather than a generic adapter error.
+// proves R-FAIL-8
+test('source inventory covers each unreadable Codex skill answer shape', SETTLES_WITHIN, async (t) => {
+  const block = (text) => JSON.stringify([{ type: 'message', role: 'developer', content: [{ type: 'input_text', text }] }]);
+  const answers = {
+    'no JSON': 'not JSON', 'no skill list': '[]',
+    'no heading': block('<skills_instructions>\nno heading\n</skills_instructions>'),
+    'malformed line': block('<skills_instructions>\n### Available skills\nnot a skill\n</skills_instructions>'),
+    'unbound root': block('<skills_instructions>\n### Available skills\n- skill: A skill. (file: r8/skill/SKILL.md)\n</skills_instructions>'),
+  };
+  for (const [shape, answer] of Object.entries(answers)) await t.test(shape, async (t) => {
+    const { request } = judgeStartRequest(t, 'codex');
+    const stand = standInCodex({ answer });
+    const [outcome] = await withFirstOnPath(stand.dir, () => Promise.allSettled([roleDispatch(request)]));
+    assert.equal(stand.probes().length, 1);
+    judgeStartClass(outcome, { kind: 'codex-probe-answer' }, 'R17');
+  });
+});
+
+// Forbidden variables count by name, while unresolvable paths have their own directory row.
+// proves R-FAIL-8
+test('source inventory covers each adapter environment refusal', SETTLES_WITHIN, async (t) => {
+  for (const mode of ['git redirect', 'unset', 'nonabsolute', 'outside', 'unresolvable value', 'unresolvable directory']) await t.test(mode, async (t) => {
+    const { request } = judgeStartRequest(t);
+    const variable = mode === 'git redirect' ? 'GIT_DIR' : 'ADAPTER_PATH';
+    let value = request.cwd;
+    if (mode === 'nonabsolute') value = 'relative';
+    if (mode === 'outside') value = dirname(request.directory);
+    if (mode === 'unresolvable value') { value = join(request.directory, 'loop'); symlinkSync(value, value); }
+    judgeStartEnvironment(request, { [variable]: value }, mode === 'unset' ? [variable] : []);
+    if (mode === 'unresolvable directory') {
+      const invocation = request.adapters['stand-in'].invocation;
+      request.adapters['stand-in'].invocation = async () => { const result = await invocation(); rmSync(request.directory, { recursive: true }); return result; };
+    }
+    const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+    const directory = mode.startsWith('unresolvable');
+    judgeStartClass(outcome, directory ? { kind: 'directory-unusable' } : { kind: 'adapter-variable', variable }, directory ? 'R29' : 'R20');
+  });
+});
+
+// The probe can lose main before its spawn or after answering, at two independent reads.
+// proves R-FAIL-8
+test('source inventory covers Codex probe working directory and post-probe directory reads', SETTLES_WITHIN, async (t) => {
+  for (const mode of ['before probe', 'after probe']) await t.test(mode, async (t) => {
+    const { request } = judgeStartRequest(t, 'codex');
+    const stand = standInCodex();
+    if (mode === 'before probe') {
+      const original = fs.mkdirSync;
+      judgeStartBuiltin(t, fs, 'mkdirSync', (path, ...args) => { const result = original(path, ...args); if (String(path).endsWith('/tmp')) rmSync(request.cwd, { recursive: true }); return result; });
+    } else {
+      let active = false; let reads = 0;
+      const original = fs.realpathSync.native;
+      judgeStartBuiltin(t, fs.realpathSync, 'native', (path, ...args) => { if (active && path === request.cwd && ++reads === 2) throw Object.assign(new Error('EIO after probe'), { code: 'EIO' }); return original(path, ...args); });
+      request.adapters = { codex: { invocation: (input) => { active = true; return ADAPTERS.codex.invocation(input); } } };
+    }
+    const [outcome] = await withFirstOnPath(stand.dir, () => Promise.allSettled([roleDispatch(request)]));
+    assert.equal(stand.probes().length, mode === 'before probe' ? 0 : 1);
+    judgeStartClass(outcome, { kind: 'directory-unusable' }, 'R29');
+  });
+});
+
+// A missing adapter or unmapped tier is R1, and L3 must never turn its outcome into another dispatch.
+// proves R-FAIL-8
+test('L3 does not retry any R1 source on a judge first dispatch', SETTLES_WITHIN, async (t) => {
+  for (const provider of ['absent', 'claude', 'codex']) await t.test(provider, async () => {
+    const roles = { ...config.roles, reviewer: { ...config.roles.reviewer, provider, tier: 'unmapped' } };
+    const built = judgeWorld({ cards: [cardIn(7, COLUMNS.review)], forge: { pullRequests: [pullFor(7)] }, kinds: kindJudgedBy(['reviewer']), roles });
+    const { reached, failure } = await judgePairResult(built.loop);
+    assert.equal(failure, undefined, failure?.stack);
+    assert.equal(reached[0].judges[0].outcome.reason.code, NOT_STARTED);
+    assert.equal(recorded(built, 'L3', 'dispatch').length, 1);
+    assert.deepEqual(recorded(built, 'L2', 'attempt.decided'), []);
+    assert.equal(existsSync(join(built.directory, 'admission')), false);
+    assert.deepEqual(admission({ directory: built.directory, sink: { emitter: () => ({ emit() {} }) } }).read(), { state: 'open' });
+  });
+});
+
+// The card's hold must dominate its stopped peer whatever order L2 named the judges.
+// proves R-FAIL-8
+test('a panel hold dominates a different-host stop in each judge order', SETTLES_WITHIN, async (t) => {
+  for (const stoppedFirst of [false, true]) await t.test(String(stoppedFirst), async (t) => {
+    const plans = stoppedFirst ? { reviewer: ['host', 'other-host'], architect: ['host', 'host'] } : { reviewer: ['host', 'host'], architect: ['host', 'other-host'] };
+    const world = judgePairWorld(t, { plans });
+    const result = await judgePairResult(world.invocation());
+    assert.ok(result.failure);
+    assert.deepEqual(recorded(world.built, 'L2', 'attempt.decided').map(({ decision }) => decision), ['again', 'again', ...(stoppedFirst ? ['stop', 'hold'] : ['hold', 'stop'])]);
+    assert.equal(recorded(world.built, 'L3', 'admission.close').length, 1);
+    const summary = world.built.decisions.at(-1).answer;
+    assert.equal(summary.action, 'hold');
+    assert.equal(summary.role, stoppedFirst ? 'architect' : 'reviewer');
+  });
+});
+
+// Resolving a counted exclusion path can itself fail after main was read successfully.
+// proves R-FAIL-8
+test('source cause R29 Claude exclusion ancestor realpath failure is tagged before L1 reports it', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t);
+  const moved = `${request.directory}[host]`;
+  renameSync(request.directory, moved);
+  request.directory = moved;
+  request.cwd = join(moved, 'main');
+  const original = fs.realpathSync.native;
+  judgeStartBuiltin(t, fs.realpathSync, 'native', (path, ...args) => { if (path === moved) throw Object.assign(new Error('EIO resolving exclusion ancestor'), { code: 'EIO' }); return original(path, ...args); });
+  const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+  judgeStartClass(outcome, { kind: 'directory-unusable' }, 'R29');
+});
+
+/** Changes cwd at the native spawn boundary and counts its report after a genuine earlier R29. */
+async function judgeCwdPair(t, errno, alter, { controlled = false, synchronous = false } = {}) {
+  const { request: roleRequest } = judgeStartRequest(t);
+  const prepared = await roleDispatch(roleRequest);
+  const request = { ...prepared, command: '/usr/bin/true', args: [], id: roleRequest.id, card: 7, directory: join(prepared.workspace, '.rigger'), sink: roleRequest.sink };
+  fs.accessSync(request.command, fs.constants.X_OK);
+  const original = fs.statSync(request.cwd);
+  const held = `${request.cwd}-held`;
+  fs.renameSync(request.cwd, held);
+  let first;
+  try {
+    [first] = await Promise.allSettled([judgeDispatchOnL1({ ...request, id: 'd-first' })]);
+  } finally {
+    fs.renameSync(held, request.cwd);
+  }
+  assert.deepEqual(first.reason?.startCause, { kind: 'directory-unusable' });
+  assert.equal(judgeStartAnswer({ reviewer: first }).next.failure.row, 'R29');
+  let reached = false;
+  let premiseError;
+  refuseSpawn(t, { command: '/usr/bin/true', ...(controlled ? { code: errno, synchronous } : {}), before: () => {
+    reached = true;
+    fs.renameSync(request.cwd, held);
+    alter(request.cwd, held);
+    try { fs.statSync(`${request.cwd}/.`); } catch (error) { premiseError = error; }
+  } });
+  let second;
+  try {
+    [second] = await Promise.allSettled([judgeDispatchOnL1(request)]);
+  } finally {
+    fs.chmodSync(held, original.mode & 0o777);
+    try {
+      fs.lstatSync(request.cwd);
+      fs.unlinkSync(request.cwd);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    fs.renameSync(held, request.cwd);
+  }
+  assert.equal(reached, true, 'cwd changed after the initial checks, at the real spawn');
+  assert.equal(premiseError?.code, controlled ? 'ENOENT' : errno, 'the cwd premise was observed before the spawn');
+  assert.equal(second.reason?.code, NOT_STARTED);
+  assert.match(second.reason.message, new RegExp(`\\b${errno}\\b`));
+  const paired = judgeStartAnswer({ reviewer: second }, { firstFailures: { reviewer: first } });
+  t.diagnostic(JSON.stringify({ errno, evidence: controlled ? (synchronous ? 'controlled throw' : 'controlled event') : 'native spawn', message: second.reason.message, cause: second.reason.startCause, action: paired.next.action }));
+  assert.equal(paired.next.action, 'hold', `an absent cwd and ${controlled ? 'controlled' : 'native'} ${errno} are the same R29 way`);
+  judgeStartClass(second, { kind: 'directory-unusable' }, 'R29');
+  assert.deepEqual(paired.events.find(({ event }) => event === 'attempt.decided').failures.map(({ row }) => row), ['R29', 'R29']);
+  const restored = fs.statSync(request.cwd);
+  assert.deepEqual([restored.dev, restored.ino, restored.mode], [original.dev, original.ino, original.mode], 'the fixture restores the original directory');
+}
+
+// The counterexample treats a cwd search-permission race as an unexecutable provider and stops its R29 pair.
+// proves R-FAIL-8
+test('a real spawn denied search permission in its working directory is R29 and holds after an earlier R29', SETTLES_WITHIN, async (t) => {
+  await judgeCwdPair(t, 'EACCES', (cwd, held) => {
+    fs.chmodSync(held, 0);
+    fs.symlinkSync(held, cwd);
+  });
+});
+
+// The counterexample calls every EACCES a directory failure, including a real non-executable provider.
+// proves R-FAIL-8
+test('a real provider file without execute permission remains R3 while its working directory is searchable', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t);
+  const prepared = await roleDispatch(request);
+  const command = join(prepared.cwd, 'unexecutable-provider');
+  fs.writeFileSync(command, '#!/bin/sh\nexit 0\n', { mode: 0o644 });
+  fs.accessSync(prepared.cwd, fs.constants.X_OK);
+  assert.throws(() => fs.accessSync(command, fs.constants.X_OK), { code: 'EACCES' });
+  const [outcome] = await Promise.allSettled([judgeDispatchOnL1({ ...prepared, command, args: [], id: request.id, card: 7, directory: join(prepared.workspace, '.rigger'), sink: request.sink })]);
+  assert.match(outcome.reason?.message, /EACCES/);
+  judgeStartClass(outcome, { kind: 'command-not-executable', provider: 'claude' }, 'R3');
+});
+
+// The counterexample counts a cwd replaced with a file as an unknown spawn failure and stops its pair.
+// proves R-FAIL-8
+test('native cwd ENOTDIR remains R29 and holds its earlier R29 pair', SETTLES_WITHIN, async (t) => {
+  await judgeCwdPair(t, 'ENOTDIR', (cwd) => fs.writeFileSync(cwd, 'not a directory\n'));
+});
+
+// The counterexample treats a cwd symlink cycle as an unknown provider failure instead of the directory state.
+// proves R-FAIL-8
+test('native cwd ELOOP remains R29 and holds its earlier R29 pair', SETTLES_WITHIN, async (t) => {
+  await judgeCwdPair(t, 'ELOOP', (cwd) => fs.symlinkSync(cwd, cwd));
+});
+
+// The counterexample omits filesystem pathname limits from the cwd recheck and stops the R29 pair.
+// proves R-FAIL-8
+test('native cwd ENAMETOOLONG remains R29 and holds its earlier R29 pair', SETTLES_WITHIN, async (t) => {
+  await judgeCwdPair(t, 'ENAMETOOLONG', (cwd) => fs.symlinkSync(join(dirname(cwd), 'x'.repeat(256)), cwd));
+});
+
+// The counterexample recognizes only today's pathname errno list and loses other OS cwd failures.
+// proves R-FAIL-8
+test('all spawn errors recheck an actually missing cwd through synchronous and asynchronous handoffs', SETTLES_WITHIN, async (t) => {
+  for (const errno of ['EIO', 'ENOMEM', 'EFAULT', 'EAGAIN', 'EMFILE', 'ENFILE', 'EINVAL', 'EPIPE', 'EUNRECOGNIZED']) {
+    for (const synchronous of [false, true]) await t.test(`${errno} ${synchronous ? 'throws' : 'emits'}`, async (t) => {
+      await judgeCwdPair(t, errno, () => {}, { controlled: true, synchronous });
+    });
+  }
+});
+
+// The counterexample mistakes a cwd removed at the real spawn for a missing provider.
+// proves R-FAIL-8
+test('native cwd ENOENT remains R29 and holds its earlier R29 pair', SETTLES_WITHIN, async (t) => {
+  await judgeCwdPair(t, 'ENOENT', () => {});
 });

@@ -145,3 +145,24 @@ reference, spec-style, ID and diff checks.
 The H9 hosted Mac run remains evidence for H9 only. This integration changes
 the head and merge tree, so configured Mac proof, independent judgments and
 the protected owner marker must be repeated at this head before merge.
+
+# Matrix host claims after #1035
+
+Main 6ba7318fb34d7fdf93596deb33083c45201c734a merged #1035 after H10's
+configured hosted Mac proof and exact-head judgments. The H10 head then
+conflicted with main only in docs/derived/test-matrix.md. The suite list,
+its exact host expectation and all source files merged cleanly. npm run
+matrix regenerated the derived document from the combined source, without
+a hand-edited row.
+
+A clean detached worktree at that exact main commit passed Node 26 npm ci
+and npm test: 3654 passed, nine skipped, zero failed. On the integrated
+source, Node 26 npm test passed 3670, skipped nine, and failed zero. The
+selected native matrix-host file passed all ten cases. npm run matrix:check
+reported 62 gaps across 244 requirements; its host-only section retained
+the sixteen IDs measured at the prior main. Package, path, header, word,
+reference, spec-style, ID and diff checks passed.
+
+H10's GitHub-hosted Mac run remains proof for H10 only. The integration
+changes the head and candidate tree, so configured Mac proof, independent
+judgments and the protected owner marker must be repeated before merge.
