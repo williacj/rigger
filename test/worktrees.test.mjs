@@ -620,7 +620,7 @@ test('a continuing line fetch that times out rejects without changing an existin
   assert.deepEqual({ file: readFileSync(join(path, 'kept')), worktrees: worktreeList(repository) }, before);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('a continuing line moved, deleted, or unreadable at the forge has a distinct L0 code', async (t) => {
   const { repository, source, origin, push } = world(t);
   gitIn(source, 'switch', '-q', '-c', 'rigger-42');
@@ -642,7 +642,7 @@ test('a continuing line moved, deleted, or unreadable at the forge has a distinc
     error.code === 'FORGE_FETCH_FAILED' && error.message.includes('forge unavailable'));
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('a continuing fetch failure, lost retry race, or timed-out forge read carries L0 forge-failure code', async (t) => {
   const { repository, source, push } = world(t);
   gitIn(source, 'switch', '-q', '-c', 'rigger-42');
@@ -667,7 +667,7 @@ test('a continuing fetch failure, lost retry race, or timed-out forge read carri
     (error) => error.code === 'FORGE_FETCH_FAILED' && error.message.includes(`${OUTLIVED} ms`));
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('a continuing forge read that answers a non-commit is tagged as a forge failure', async (t) => {
   const { repository, source, push } = world(t);
   gitIn(source, 'switch', '-q', '-c', 'rigger-42');
@@ -681,7 +681,7 @@ test('a continuing forge read that answers a non-commit is tagged as a forge fai
     (error) => error.code === 'FORGE_FETCH_FAILED' && error.message.includes('names a tag'));
 });
 
-// proves R-FAIL-7, R-WORK-25
+// proves R-FAIL-8, R-WORK-25
 test('a refused cat-file timeout event stays EVENT_REFUSED through L1 and gives L2 no retry decision', async (t) => {
   const { directory, source, repository, push } = world(t);
   gitIn(source, 'switch', '-q', '-c', 'rigger-42');

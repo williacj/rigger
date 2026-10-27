@@ -2,13 +2,16 @@
 // dispatch's outcome, the move itself through the forge adapter's item-write side, and its event.
 
 import { worktreeTopic } from '../config/validate.mjs';
-import { FIXED_LABELS } from '../config/validate.mjs';
+import { FIXED_LABELS, OWNER } from '../config/validate.mjs';
 import { topicFor } from '../execution/workspace.mjs';
 import { repositoryReads } from '../substrate/forge/read.mjs';
 import { itemWriteSide } from '../substrate/forge/item-write.mjs';
 import { repositoryWriteSide } from '../substrate/forge/repository-write.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
+import { escalationDestination, makerEscalation, makerNote } from './escalation.mjs';
+import { acceptanceItems } from './form-check.mjs';
 import { pullRequestsFrom } from './facts.mjs';
+import { kindOf } from './next-action.mjs';
 
 /**
  * Each change L2 makes to a card's column, by its cause, as the column keys it leaves and enters.
@@ -189,14 +192,15 @@ export function columnChanges({
       }
     },
 
-    /** Records the loop's escalation, then comments on its issue, moves to Owner and labels it. */
+    /** Records the escalation, then comments on its issue, moves to Owner and labels it. */
     escalated: async (card, next) => {
       const evidence = {
-        category: next.category, reason: next.reason,
-        ...Object.fromEntries(['pull', 'head', 'line'].filter((key) => next[key] !== undefined).map((key) => [key, next[key]])),
+        category: next.category, reason: next.reason, raiser: next.raiser ?? 'loop',
+        ...(next.item === undefined ? {} : { item: next.item }),
+        ...Object.fromEntries(['pull', 'head', 'line', 'destination'].filter((key) => next[key] !== undefined).map((key) => [key, next[key]])),
       };
       try {
-        sink.emitter({ layer: 'L2', card: card.number, dispatch: null }).emit('review.escalate', evidence);
+        sink.emitter({ layer: 'L2', card: card.number, dispatch: next.dispatch ?? null }).emit('review.escalate', evidence);
       } catch (refusal) {
         throw new Error(`card #${card.number}'s escalation in category ${next.category} was refused: review.escalate could not be recorded: ${refusal.message}`, { cause: refusal });
       }
@@ -225,9 +229,11 @@ export function columnChanges({
      * `maker.failed` event under the card, classed as the environment's, as it classes a step
      * that never started (the architect's ruling 5 on #467).
      *
-     * For a fulfilled outcome, the exit code and the forge alone decide, never the output (the
-     * owner's ruling on #220, refined by O5 on #467). Anything but zero leaves the card in coding,
-     * and the forge is not read. Zero has L2 read the pull requests from the card's line of work
+     * For a fulfilled outcome, the forge's issue comments are read before the exit code. A valid
+     * note under the maker's dispatch answers an escalation without a move, with any one open pull
+     * request and its head read from the line of work. Otherwise the exit code and the forge alone
+     * decide, never the output (the owner's ruling on #220, refined by O5 on #467). Anything but
+     * zero leaves the card in coding. Zero has L2 read the pull requests from the card's line of work
      * and, where exactly one is open, what L2's judge answer reads of it, as
      * `pullRequestsFrom` reads them. For a continuing attempt, a head other than `expectedHead`
      * answers `waiting` until L3's last read, when L2 withholds review and names both heads.
@@ -238,7 +244,7 @@ export function columnChanges({
      * tells its caller the card and why, as `withheld` says. A read that fails leaves it in coding too, and its
      * caller is told the card and the read.
      */
-    settled: async (card, outcome, { expectedHead, tipFailure, lastForgeHead, last = false, reads: readCount, elapsedMs } = {}) => {
+    settled: async (card, outcome, { dispatch, expectedHead, tipFailure, lastForgeHead, last = false, reads: readCount, elapsedMs } = {}) => {
       if (outcome?.status === 'rejected') {
         if (outcome.reason?.code === NOT_STARTED) note(card, 'maker.failed', { class: 'environment', reason: outcome.reason.message });
         return undefined;
@@ -246,6 +252,25 @@ export function columnChanges({
       const exit = outcome?.status === 'fulfilled' ? outcome.value?.exit : undefined;
       if (!Number.isInteger(exit)) {
         throw new Error(`card #${card.number}'s dispatch outcome is neither a dispatch that ran with an exit code nor one that threw: ${JSON.stringify(outcome)}`);
+      }
+      let comments;
+      try {
+        comments = await reads.readIssueComments(card.number);
+      } catch (failure) {
+        throw new Error(`card #${card.number}'s issue comments could not be read: ${failure.message}`, { cause: failure });
+      }
+      const escalation = makerNote(comments, dispatch, acceptanceItems(card.body ?? '').length);
+      if (escalation !== null) {
+        let facts;
+        try {
+          facts = await pullRequestsFrom(card.number, topicFor(topic, card.number), reads);
+        } catch (failure) {
+          throw new Error(`card #${card.number}'s pull requests could not be read for its escalation: ${failure.message}`, { cause: failure });
+        }
+        const kinds = config.kinds ?? {};
+        const { kind } = kindOf({ ...card, labels: card.labels ?? [] }, kinds, config.epicLabel);
+        const answer = makerEscalation(escalation, facts);
+        return { ...answer, destination: escalationDestination({ ...answer, escalate: config.escalate, maker: kinds[kind]?.maker, judges: kinds[kind]?.judges, comments }) };
       }
       if (exit !== 0) return undefined;
       if (tipFailure !== undefined) withheld(card, `card #${card.number}'s maker exited 0, but L1 could not read the tip of its line of work in the workspace: ${tipFailure.message}`);
@@ -276,9 +301,15 @@ export function columnChanges({
   };
 }
 
-/** The selected reason and only available work identifiers, as data on the card's issue. */
-function escalationComment(card, { category, reason, pull, head, line }) {
+/**
+ * The selected reason and only available work identifiers, as data on the card's issue. L3
+ * dispatches no role, so an escalation whose `destination` is a role goes to the owner, and the
+ * comment names the role it was not sent to (K96 on #740).
+ */
+function escalationComment(card, { category, item, reason, pull, head, line, destination = OWNER }) {
   const work = [
+    ...(destination === OWNER ? [] : [`Not sent to the role \`${destination}\`, which the configuration names for ${category}.`]),
+    ...(item === undefined ? [] : [`Acceptance item: ${item}`]),
     ...(pull === undefined ? [] : [`Pull request: #${pull}`]),
     ...(head === undefined ? [] : [`Head: ${head}`]),
     ...(line === undefined ? [] : [`Line of work: ${line}`]),

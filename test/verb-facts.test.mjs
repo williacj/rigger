@@ -21,6 +21,7 @@ import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { installFakeGh, seedRepository } from './fake-gh.mjs';
 import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { closerText, seed } from './admission-world.mjs';
 
 /** The consumer's repository and board: not this repository's, so no line here reads as board 6. */
 const REPO = 'acme/widgets';
@@ -199,6 +200,20 @@ test('plan lists every converted forge cell as an ambiguous escalation and keeps
 });
 
 const { 60_000: SETTLES_WITHIN } = BOUNDS;
+
+// A closed admission must hide the forge card once its refusal becomes a pull action.
+// proves R-ESCALATE-12
+test('plan under a closed admission hides a converted forge escalation and retains ordinary refusals', async () => {
+  const result = await ran(plan, [card(701, 'Ready'), card(709, 'Ready', { body: 'No acceptance.' })], {
+    branches: ['rigger-701'],
+  }, { prepare: ({ consumer }) => seed(join(consumer, '.rigger'), 'owner-a1.json', closerText({ reason: 'owner pause' })) });
+
+  assert.equal(result.code, 0, result.text);
+  assert.match(result.text, /admission is closed by owner: owner pause/);
+  assert.doesNotMatch(result.text, /#701\b/);
+  assert.match(refusalOf(result.text, 709), /missing acceptance/);
+  assert.deepEqual(result.model.writes(), []);
+});
 
 // The counterexample retries an escalation write or hides which owner write the forge refused.
 // proves R-ESCALATE-12

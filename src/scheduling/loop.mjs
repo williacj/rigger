@@ -13,6 +13,7 @@ import { dispatch as dispatchOnL1 } from '../execution/run.mjs';
 import { stepDispatch } from '../execution/step.mjs';
 import { EVENT_REFUSED, NOT_STARTED, whenElapsed } from '../substrate/process.mjs';
 import { dispatched } from '../workflow/marker.mjs';
+import { dispatchedEscalation } from '../workflow/escalation.mjs';
 import { admission } from './admission.mjs';
 import { lane } from './lane.mjs';
 import { pullOrder } from './pull-order.mjs';
@@ -365,7 +366,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * A held or stopped card is absent from `reached`. Any other answer stops the attempts, naming the card
    * and what L2 answered. `remember` marks a card whose judges L2 withheld for this run.
    */
-  const attempt = async (card, next, kept, remember) => {
+  const attempt = async (card, next, kept, remember, excluded) => {
     const continuing = next.action === 'continue' ? next : undefined;
     const failures = [];
     const askAttempt = (outcomes, options) => decide(card, outcomes, { ...options, firstFailure: failures[0], continuing });
@@ -405,7 +406,11 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       if (answer.action !== 'dispatch') {
         throw new Error(`card #${card.number}'s attempt stopped, as L2 answered: ${JSON.stringify(answer)}`);
       }
-      const outcome = await dispatchRole(card, answer.maker, { cwd: path, directory: path, reach: [], scratch, repository }, { attempt: number });
+      let dispatch;
+      const outcome = await dispatchRole(card, answer.maker, { cwd: path, directory: path, reach: [], scratch, repository }, { attempt: number }, (given, id) => {
+        dispatch = id;
+        return dispatchedEscalation(given, id);
+      });
       let settled;
       if (continuing !== undefined && outcome.status === 'fulfilled' && outcome.value.exit === 0) {
         let expectedHead;
@@ -424,7 +429,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         for (;;) {
           const elapsedMs = now() - first;
           reads += 1;
-          [settled] = await Promise.allSettled([l2.settled(card, outcome, { expectedHead, tipFailure, lastForgeHead, last: elapsedMs >= 60_000, reads, elapsedMs })]);
+          [settled] = await Promise.allSettled([l2.settled(card, outcome, { dispatch, expectedHead, tipFailure, lastForgeHead, last: elapsedMs >= 60_000, reads, elapsedMs })]);
           if (settled.status !== 'fulfilled' || !settled.value?.waiting) break;
           lastForgeHead = settled.value.forgeHead;
           // D16 rule 3: the forge can still show the old head after a push. #664's journal/P58
@@ -433,7 +438,15 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
           await pause(5_000);
         }
       } else {
-        [settled] = await Promise.allSettled([l2.settled(card, outcome)]);
+        [settled] = await Promise.allSettled([l2.settled(card, outcome, { dispatch })]);
+      }
+      if (settled.status === 'fulfilled' && settled.value?.action === 'escalate') {
+        const escalation = settled.value;
+        excluded?.add(card.number);
+        await l2.escalated(card, escalation);
+        const reached = { card: card.number, workspace: path, outcome, settled, ...escalation };
+        kept(reached);
+        return reached;
       }
       if (settled.status === 'fulfilled') {
         answer = askAttempt([], { attempt: number, maker: outcome });
@@ -618,7 +631,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       } else {
         reached = next.action === 'judge'
           ? { card: card.number, judges: await judges(card, next, (options) => remember(atPull(card, [], options)), (ended) => kept({ card: card.number, judges: ended })) }
-          : await attempt(card, next, kept, remember);
+          : await attempt(card, next, kept, remember, excluded);
       }
     } catch (thrown) {
       failure = thrown;

@@ -7,12 +7,18 @@
 import { FIXED_LABELS, OWNER, judgeRole, roleTimeout, sameLabel, stepTimeout, workRequires, worktreeTopic } from '../config/validate.mjs';
 import { BRANCH_ELSEWHERE, BRANCH_REFUSED, FETCH_FAILED, LINE_DELETED, LINE_MOVED, ROOT_NOT_ABSOLUTE, SCRATCH_REFUSED, WORKSPACE_NOT_MADE, WORKSPACE_REFUSED, topicFor } from '../execution/workspace.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
+import { escalationDestination, escalationInstruction } from './escalation.mjs';
 import { acceptanceItems, checkAcceptanceForm } from './form-check.mjs';
 import { reviewAnswer } from './judges.mjs';
 import { evidenceDigest } from './marker.mjs';
 
 /** Whether a card carries `label`, reading label names as GitHub does, whatever their letter case. */
 const carries = (card, label) => card.labels.some((held) => sameLabel(held, label));
+
+/** A loop-raised escalate answer with the destination L2's one function answers, reading no comment. */
+const routed = (answer) => answer.action === 'escalate'
+  ? { ...answer, destination: escalationDestination({ category: answer.category, raiser: answer.raiser }) }
+  : answer;
 
 /** The escalation status of an already-read board item, without reading its workflow facts. */
 export const escalationStatus = (card) => carries(card, FIXED_LABELS.escalated) ? { escalated: true } : undefined;
@@ -92,7 +98,7 @@ export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTop
   const removing = (ordinary, forgeRefusal = false) => {
     const facts = card.forge;
     const following = forgeRefusal && escalation === undefined
-      ? { action: 'escalate', category: 'ambiguous', raiser: 'loop', reason: ordinary.reason, line: facts.line }
+      ? routed({ action: 'escalate', category: 'ambiguous', raiser: 'loop', reason: ordinary.reason, line: facts.line })
       : ordinary;
     if (!betweenAttempts || ordinary.action === 'ignore' || escalation !== undefined
         || !['review', 'owner'].includes(facts?.stage) || facts.closed.length === 0
@@ -107,7 +113,7 @@ export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTop
   }
   const held = card.forge === undefined ? undefined : fromTheForge(card);
   if (held?.action === 'ignore' || held?.action === 'move') return escalation === undefined ? held : { ...held, ...escalation };
-  if (held?.action === 'judge') return reviewAnswer(card, kinds, epicLabel, { roles, provisioning, sink, outcomes: judged, directories });
+  if (held?.action === 'judge') return routed(reviewAnswer(card, kinds, epicLabel, { roles, provisioning, sink, outcomes: judged, directories }));
   const form = checkAcceptanceForm(card);
   const makerRole = kinds[kind].maker;
   const tier = roles === undefined ? undefined : tierOf(card, makerRole, roles[makerRole]);
@@ -259,7 +265,7 @@ function failedAttempt(card, attempt, firstFailure, what, sink) {
   } catch (refusal) {
     throw new Error(`card #${card.number}'s attempt ${attempt} failed, and the event sink refused to record it, so L2 answers no action: ${refusal.message}`, { cause: refusal });
   }
-  if (refusals.length > 0) return { action: 'escalate', category: 'ambiguous', raiser: 'loop', reason: refusals.map((each) => each.reason).join('\n'), card: card.number, failure, from: 'coding' };
+  if (refusals.length > 0) return routed({ action: 'escalate', category: 'ambiguous', raiser: 'loop', reason: refusals.map((each) => each.reason).join('\n'), card: card.number, failure, from: 'coding' });
   return again ? { action: 'again', card: card.number, attempt: attempt + 1, failure }
     : hold ? { action: 'hold', card: card.number, firstFailure, failure } : { action: 'stop', card: card.number, failure };
 }
@@ -379,8 +385,8 @@ export function panelOf(card, kind, roles = {}) {
  * The evidence is the card's number, title and acceptance, read as `R-CARD-12` reads it. The
  * instruction is Rigger's contract with every maker, so no role prompt spends words on it (the M4
  * decomposition's §2.5, on #467). It says Rigger dispatched
- * the session, which a role prompt can condition on. Until M6 gives a maker an escalation route, a
- * maker that cannot finish exits non-zero, naming why.
+ * the session, which a role prompt can condition on. A maker that cannot meet an item receives
+ * the escalation note instruction.
  *
  * Handed `continuing`, L2's continuing-attempt answer, the instruction names the open pull request
  * and the head L2 read, and asks for commits pushed to the line of work rather than a pull request
@@ -399,7 +405,7 @@ function makerAnswer(card, name, role, tier, line, continuing) {
         `Once your work meets every acceptance item and answers every ruling below, push your commits to \`${line}\`, so they reach pull request #${continuing.pull}. Open no other pull request.`,
       ]),
     `Never switch this workspace off \`${line}\`, never detach \`HEAD\`, and never add a worktree inside this workspace.`,
-    'Where you cannot finish the work, exit non-zero, naming why.',
+    escalationInstruction(card),
     '',
     '',
   ].join('\n');

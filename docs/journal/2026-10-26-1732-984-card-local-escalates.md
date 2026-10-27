@@ -75,3 +75,23 @@ After K95, `984-granted-full.log` recorded tests=3147, pass=3147, fail=0 through
 slot, with actual start load=3.95 and end load=3.47. The test diff remained byte-identical to
 the granted inventory. Committed-head mutation, host, fresh-clone and CI evidence belongs in
 the PR body so it can name the final head without another evidence-only commit.
+
+## Integration with current main
+
+The coordinator resumed PR #995 after #1002 repaired the unrelated preflight baseline. The
+merge takes main at `7723d33fc6a201cc3aa796503af8ce570a585a56`. Both sides are retained:
+`next-action.mjs` converts refusals before closed-removal selection and uses main's shared
+routing function; `judges.mjs` documents refusal handling with R-FAIL-8; the environment and
+hold-answer tests retain escalation expectations with the R-FAIL-8 retarget. The matrix is
+regenerated from both sides' declarations. No conflict required an unrecorded behavior choice.
+
+The attempt destination assertion was written first. `984-merge-red-attempt-route.log` recorded
+tests=6, pass=0, fail=6 on `undefined` instead of `owner`. Routing the existing escalation answer
+through the imported helper made `984-merge-green-attempt-route.log` pass with tests=6,
+pass=6, fail=0. Now that #972 is merged, a new composition test checks that a closed admission
+hides the converted forge card while retaining an ordinary form refusal. That existing combined
+behavior passed in `984-merge-plan-closed.log`, tests=1, pass=1, fail=0. Source and test stages
+for all five conflicts are retained under `984-evidence/merge-main/` in the dispatch's scratch.
+
+The merged working tree passed the deterministic tier in `984-merge-full.log`: tests=3250,
+pass=3250, fail=0. The required host slot recorded start load=2.48 and end load=4.55.

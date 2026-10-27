@@ -787,6 +787,9 @@ function repositoryForge(answers = {}) {
       return { status: 0, stdout: JSON.stringify(held), stderr: '' };
     }
     const document = documentOf(args);
+    if (document.includes('issue(') && document.includes('comments(')) {
+      return ok({ repository: { issue: { comments: { pageInfo: { hasNextPage: false, endCursor: 'Y3Vy' }, nodes: [] } } } });
+    }
     for (const kind of ['pullRequests(', 'refs(', 'comments(']) {
       if (document.includes(kind)) return answer({ 'pullRequests(': 'pull requests', 'refs(': 'branches', 'comments(': 'comments' }[kind], document);
     }
@@ -974,6 +977,31 @@ test('given a pull request number, the repository read answers every comment on 
   assert.equal(send.sent.length, 3);
 });
 
+test('an issue comment read preserves forge order and answers body, author, permission and edit status across pages', async () => {
+  const first = { body: 'First note', createdAt: '2026-10-01T10:00:00Z', id: 'IC_1', author: { login: 'writer' }, lastEditedAt: null, includesCreatedEdit: false };
+  const second = { body: 'Edited note', createdAt: '2026-10-01T10:00:00Z', id: 'IC_2', author: { login: 'reader' }, lastEditedAt: '2026-10-01T11:00:00Z', includesCreatedEdit: false };
+  const sent = [];
+  const send = (command, args) => {
+    sent.push([command, ...args]);
+    if (args[1] === 'graphql') {
+      const after = documentOf(args).includes('after:');
+      const comments = { pageInfo: { hasNextPage: !after, endCursor: 'NEXT' }, nodes: after ? [second] : [first] };
+      return ok({ repository: { issue: { comments } } });
+    }
+    const role_name = args[1].includes('/writer/') ? 'write' : 'read';
+    return { status: 0, stdout: JSON.stringify({ role_name }), stderr: '' };
+  };
+
+  const comments = await repositoryReads(BOARD, { send }).readIssueComments(12);
+
+  assert.deepEqual(comments, [
+    { body: first.body, createdAt: first.createdAt, id: first.id, author: 'writer', permission: 'write', edited: false },
+    { body: second.body, createdAt: second.createdAt, id: second.id, author: 'reader', permission: 'read', edited: true },
+  ]);
+  assert.equal(sent.filter(([, , endpoint]) => endpoint === 'graphql').length, 2);
+  assert.match(documentOf(sent[0].slice(1)), /issue\(number: 12\).*comments\(first: 100\)/);
+});
+
 test("the repository read answers #503's comments as gh answered them on 2026-10-01", async () => {
   const recorded = readFileSync(join(FIXTURES, 'rigger-pull-request-comments-2026-10-01.json'), 'utf8');
   const current = readFileSync(join(FIXTURES, 'rigger-pull-request-comments-2026-10-09.json'), 'utf8');
@@ -1000,6 +1028,7 @@ const REPOSITORY_READS = {
   readCheckStates: { call: (reads) => reads.readCheckStates('a'.repeat(40), []), names: 'checks' },
   readEffectiveRules: { call: (reads) => reads.readEffectiveRules('main'), names: 'effective rules' },
   readComments: { call: (reads) => reads.readComments(12), names: 'pull request #12' },
+  readIssueComments: { call: (reads) => reads.readIssueComments(12), names: 'issue #12' },
   readDefaultBranch: { call: (reads) => reads.readDefaultBranch(), names: 'the default branch' },
   readPullRequestByNumber: { call: (reads) => reads.readPullRequestByNumber(12), names: 'pull request #12' },
   readIssue: { call: (reads) => reads.readIssue(214), names: 'issue #214' },

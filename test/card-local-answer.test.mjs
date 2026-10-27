@@ -32,6 +32,7 @@ test('each workspace and maker scratch refusal escalates on its attempt with its
     assert.equal(answer.action, 'escalate');
     assert.equal(answer.category, 'ambiguous');
     assert.equal(answer.raiser, 'loop');
+    assert.equal(answer.destination, 'owner');
     assert.equal(answer.reason, reason);
     assert.equal(answer.failure.class, 'card-local');
     assert.deepEqual(events.map(({ event, decision }) => [event, decision]), [['attempt.failed', undefined], ['attempt.decided', 'escalate']]);
