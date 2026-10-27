@@ -104,7 +104,6 @@ test('a role that never starts is retried alone under the same routing comment a
 });
 
 // A refused routing write is remembered by this invocation before the slot is freed.
-// proves R-ESCALATE-23
 test('a refused routing post dispatches no role and the run never pulls that card again', { timeout: 20000 }, async () => {
   let reads = 0;
   const here = await world({ refuseRoute: true, beforeRead: () => {
@@ -152,13 +151,13 @@ test('two role starts failing for different causes still go to the owner and nev
   await ownerAfter({ directoryFailures: [unstarted('git gave no answer'), unstarted('filesystem deadline')] }, 2, /git gave no answer.*filesystem deadline/);
 });
 
-// proves R-ESCALATE-21
+// proves R-ESCALATE-12
 test('a refused escalation directory goes through the existing card-local escalation without retry', { timeout: 20000 }, async () => {
   const here = await ownerAfter({ directoryFailures: [refusedDirectory()] }, 1, /R-WORK-32.*escalations/);
   assert.deepEqual(here.agent.runs().map((run) => run.role), ['engineer']);
 });
 
-// proves R-ESCALATE-21
+// proves R-ESCALATE-12
 test('a refused scratch directory goes through the existing card-local escalation without retry', { timeout: 20000 }, async () => {
   const here = await ownerAfter({ beforeDispatch: refusedScratch }, 1, /pm.*scratch.*rigger-12/);
   const path = join(here.directories.made[0].path, '..', '..', '..', 'scratch', 'rigger-12', 'pm');
@@ -166,12 +165,12 @@ test('a refused scratch directory goes through the existing card-local escalatio
   assert.deepEqual(here.agent.runs().map((run) => run.role), ['engineer']);
 });
 
-// proves R-ESCALATE-21, R-ESCALATE-26
+// proves R-ESCALATE-12, R-ESCALATE-26
 test('the retry meeting an escalation directory refusal goes to the owner with no third make', { timeout: 20000 }, async () => {
   await ownerAfter({ directoryFailures: [unstarted('git deadline'), refusedDirectory()] }, 2, /R-WORK-32/);
 });
 
-// proves R-ESCALATE-21, R-ESCALATE-26
+// proves R-ESCALATE-12, R-ESCALATE-26
 test('the retry meeting a scratch refusal goes to the owner with no third make', { timeout: 20000 }, async () => {
   await ownerAfter({ directoryFailures: [unstarted('git deadline')], beforeDispatch: refusedScratch }, 2, /scratch/);
 });
@@ -233,7 +232,7 @@ test('a second invocation after the routing post starts the maker fresh and send
 });
 
 // No forge work remains, so a handled role does not prevent the next maker start from main.
-// proves R-ESCALATE-21
+// proves R-ESCALATE-16
 test('a handled role with no pull leaves the next invocation to start its maker from the beginning', { timeout: 20000 }, async () => {
   const here = await world();
   await here.run();
@@ -246,7 +245,7 @@ test('a handled role with no pull leaves the next invocation to start its maker 
 });
 
 // Table S's handled end must also reread the PR the maker delivered before its note.
-// proves R-ESCALATE-18, R-ESCALATE-21, R-ESCALATE-26
+// proves R-ESCALATE-18, R-ESCALATE-26
 test('a retried role handles its open pull and records only card acceptance reason and work identifiers', { timeout: 20000 }, async () => {
   const here = await world({ openPull: true, directoryFailures: [unstarted('directory missing')] });
   await here.run();
@@ -263,7 +262,6 @@ test('a retried role handles its open pull and records only card acceptance reas
 });
 
 // Conflicts are L2's decision before the post; L3 must carry them through the owner path.
-// proves R-ESCALATE-21
 test('a destination provider conflict goes to the owner without posting a route or dispatching a role', { timeout: 20000 }, async () => {
   const here = await ownerAfter({ labels: ['route:a', 'route:b'], roles: { pm: {
     agent: '.claude/agents/pm.md', provider: 'claude', tier: 'high', providerLabels: { 'route:a': 'claude', 'route:b': 'codex' },
@@ -272,7 +270,6 @@ test('a destination provider conflict goes to the owner without posting a route 
   assert.equal(here.repository.held().issues[0].comments.filter((comment) => comment.body.startsWith(ROUTING_LINE)).length, 0);
 });
 
-// proves R-ESCALATE-21
 test('a destination tier conflict goes to the owner without posting a route or dispatching a role', { timeout: 20000 }, async () => {
   const here = await ownerAfter({ labels: ['route:a', 'route:b'], roles: { pm: {
     agent: '.claude/agents/pm.md', provider: 'claude', tier: 'high', labels: { 'route:a': 'standard', 'route:b': 'high' },
@@ -282,7 +279,6 @@ test('a destination tier conflict goes to the owner without posting a route or d
 });
 
 // An actual refused end event must not turn the open PR into a Review move.
-// proves R-ESCALATE-21
 test('a role whose outcome rejects with EVENT_REFUSED leaves its open pull in Coding', { timeout: 20000 }, async () => {
   const here = await world({ openPull: true, refuseEnd: true });
   const [result] = await here.run();

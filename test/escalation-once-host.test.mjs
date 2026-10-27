@@ -88,7 +88,6 @@ test('once posts the route and dispatches the destination with real escalation a
 });
 
 // An open PR must enter Review after the role settles, and the verb must report that outcome.
-// proves R-ESCALATE-21
 test('once moves an open pull to Review after the escalation role exits zero and reports the role', { timeout: 60000 }, async () => {
   const here = world({ pull: true });
   const ran = here.invoke();
@@ -102,7 +101,7 @@ test('once moves an open pull to Review after the escalation role exits zero and
 });
 
 // The counterexample is starting over and discarding pushed work after the role exits zero.
-// proves R-ESCALATE-21
+// proves R-ESCALATE-12
 test('a handled role with a pushed line and no pull leaves Coding then the next once escalates R-WORK-19 to the owner', { timeout: 60000 }, async () => {
   const here = world({ pushed: true });
   const first = here.invoke();
@@ -120,7 +119,6 @@ test('a handled role with a pushed line and no pull leaves Coding then the next 
 });
 
 // The verb and event must expose the refused write, with no role or escalation directory created.
-// proves R-ESCALATE-23
 test('once reports a refused routing post and records that write without dispatching its role', { timeout: 60000 }, async () => {
   const here = world({ refuseRoute: true });
   const ran = here.invoke();

@@ -41,7 +41,6 @@ test('the role instruction carries the card acceptance note and open work but no
 });
 
 // The counterexample is dispatching the destination at its defaults despite selecting labels.
-// proves R-ESCALATE-23
 test('the escalation role uses providerOf and tierOf label selections and its configured timeout', async () => {
   const here = await escalationWorld({ labels: ['route:codex', 'route:high'], roles: {
     pm: { agent: '.claude/agents/pm.md', provider: 'claude', tier: 'standard', timeout: 12345,
@@ -53,7 +52,6 @@ test('the escalation role uses providerOf and tierOf label selections and its co
 });
 
 // A provider conflict must be found before the routing post, so no false already-routed fact appears.
-// proves R-ESCALATE-21
 test('two providers for the destination go to the owner naming both labels without a routing post', async () => {
   const here = await escalationWorld({ labels: ['route:a', 'route:b'], roles: { pm: {
     agent: '.claude/agents/pm.md', provider: 'claude', tier: 'high', providerLabels: { 'route:a': 'claude', 'route:b': 'codex' },
@@ -66,7 +64,6 @@ test('two providers for the destination go to the owner naming both labels witho
 });
 
 // A tier conflict needs the same pre-post refusal as a provider conflict.
-// proves R-ESCALATE-21
 test('two tiers for the destination go to the owner naming both labels without a routing post', async () => {
   const here = await escalationWorld({ labels: ['route:a', 'route:b'], roles: { pm: {
     agent: '.claude/agents/pm.md', provider: 'claude', tier: 'high', labels: { 'route:a': 'standard', 'route:b': 'high' },
@@ -79,7 +76,6 @@ test('two tiers for the destination go to the owner naming both labels without a
 });
 
 // The counterexample is losing the refused write behind a generic role-dispatch error.
-// proves R-ESCALATE-23
 test('a refused routing write names that write in the failure and its event with no board or issue changes', async () => {
   const here = await escalationWorld({ refuse: 'forge denied routing' });
   await assert.rejects(here.l2.routed(here.card, here.next), /routing comment.*refused.*forge denied routing/);
@@ -91,7 +87,6 @@ test('a refused routing write names that write in the failure and its event with
 });
 
 // Exiting zero without a note must move a card with an open PR to Review.
-// proves R-ESCALATE-21
 test('a role exiting zero without a note moves its open pull to Review', async () => {
   const here = await escalationWorld({ pull: true });
   assert.equal(typeof here.l2.roleSettled, 'function', 'L2 must settle the escalation role');
@@ -144,7 +139,7 @@ test('two role starts failing for different causes go to the owner without a hol
 });
 
 // A directory the replace rule answered and refused must never consume the role retry.
-// proves R-ESCALATE-21
+// proves R-ESCALATE-12
 test('an answered escalation directory refusal goes straight to the owner through the card-local path', async () => {
   const here = await escalationWorld();
   const reason = Object.assign(new Error('R-WORK-32 refuses /escalations/rigger-12/pm'), { code: 'WORKSPACE_REFUSED' });
@@ -155,7 +150,6 @@ test('an answered escalation directory refusal goes straight to the owner throug
 });
 
 // An unrecordable outcome is neither a zero exit nor an environment retry.
-// proves R-ESCALATE-21
 test('a refused role event leaves the card and forge untouched and answers no action', async () => {
   const here = await escalationWorld({ pull: true, comments: [postedNote()] });
   const reason = Object.assign(new Error('the event was refused'), { code: 'EVENT_REFUSED' });
@@ -189,7 +183,6 @@ test('the role settle ignores the maker note under a different dispatch', async 
 });
 
 // The counterexample is attempting a Review move where no PR exists.
-// proves R-ESCALATE-21
 test('a handled role with no pull and no pushed line leaves the card in Coding for a fresh maker attempt', async () => {
   const here = await escalationWorld();
   const next = await here.l2.roleSettled(here.card, here.next, { status: 'fulfilled', value: { exit: 0 } }, { dispatch: DISPATCH });
@@ -200,7 +193,7 @@ test('a handled role with no pull and no pushed line leaves the card in Coding f
 });
 
 // A refused scratch directory is answered, not a failed make.
-// proves R-ESCALATE-21
+// proves R-ESCALATE-12
 test('a scratch refusal goes to the owner on the first try with the refusal path intact', async () => {
   const here = await escalationWorld();
   const reason = Object.assign(new Error('R-WORK-26 refuses /scratch/rigger-12/pm'), { code: 'SCRATCH_REFUSED' });
@@ -209,7 +202,6 @@ test('a scratch refusal goes to the owner on the first try with the refusal path
   assert.deepEqual(here.fake.writes(), []);
 });
 
-// proves R-ESCALATE-21
 test('a refused role process-group record answers no action or forge changes', async () => {
   const here = await escalationWorld({ pull: true, comments: [postedNote()] });
   const before = here.repository.held();
@@ -220,7 +212,6 @@ test('a refused role process-group record answers no action or forge changes', a
 });
 
 // Removing #998's interim must remove the owner-comment fallback, not merely avoid its caller.
-// proves R-ESCALATE-20
 test('owner escalation comments no longer describe a role as not dispatched', async () => {
   const here = await escalationWorld();
   await here.l2.escalated(here.card, here.next);

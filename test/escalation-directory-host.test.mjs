@@ -28,7 +28,6 @@ function world(t) {
 }
 
 // The counterexample is a judge directory, a branch checkout, or a stale main/head.
-// proves R-WORK-32
 test('an escalation directory holds detached main and open head under escalations and no scratch yet', { timeout: 20000 }, async (t) => {
   const here = world(t);
   assert.equal(typeof workspace.makeEscalationDirectory, 'function', 'L1 needs the escalation directory make');
@@ -46,7 +45,6 @@ test('an escalation directory holds detached main and open head under escalation
 });
 
 // A role without an open PR still needs a main worktree and must not invent a head.
-// proves R-WORK-32
 test('an escalation without a pull makes main alone and replaces an earlier detached directory', { timeout: 20000 }, async (t) => {
   const here = world(t);
   const old = await here.make({ head: here.head });
