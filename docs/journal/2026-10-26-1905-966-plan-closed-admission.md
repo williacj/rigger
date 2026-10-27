@@ -3,11 +3,12 @@ under a closed or an unreadable admission.
 
 # #966 — `plan` under a closed or unreadable admission
 
-#940 added two sentences to "Failure model"'s admission paragraph, and they name only `once` and
-`run`. Under a closed admission those verbs name each closer and exit 0. Under an unreadable one
-the verb exits non-zero naming each unreadable path. The paragraph named `plan` only as reading
-the directory through the module before it prints. #962 built `plan`'s answer, and its attack
-(962#6416985847) noted that adding `plan` to the paragraph is a one-clause `structure` delta.
+#940 added four sentences to "Failure model"'s admission paragraph, and the only verbs they name
+are `once` and `run`. Under a closed admission those verbs name each closer and exit 0. Under an
+unreadable one the verb exits non-zero naming each unreadable path. The paragraph named `plan` only
+as reading the directory through the module before it prints. #962 built `plan`'s answer, and its
+attack (962#6416985847) noted that adding `plan` to the paragraph is a one-clause `structure`
+delta.
 
 The delta adds `plan` beside the `once` and `run` sentences and leaves those sentences as they
 were. Under a closed admission, `plan` names each closer's kind, reason and time. A closed
