@@ -1670,6 +1670,20 @@ test('Table A and B sequential-panel', SETTLES_WITHIN, async (t) => {
   assert.deepEqual(world.calls.filter(({ number }) => number === 2).map(({ role }) => role), ['reviewer', 'architect']);
   assert.deepEqual(world.built.agent.runs().map(({ role }) => role).sort(), ['architect', 'reviewer']);
   assert.deepEqual(recorded(world.built, 'L2', 'attempt.decided').map(({ decision }) => decision), ['again', 'again']);
+  const events = world.built.events();
+  const retries = world.calls.filter(({ number }) => number === 2).map(({ role, events: before }) => {
+    const dispatches = events.filter((event) => event.layer === 'L3' && event.event === 'dispatch' && event.role === role);
+    assert.equal(dispatches.length, 2, `${role} has one initial dispatch and one retry`);
+    const { dispatch } = dispatches[1];
+    const started = events.findIndex((event) => event.layer === 'L1' && event.event === 'dispatch.start' && event.dispatch === dispatch);
+    const ended = events.findIndex((event) => event.layer === 'L1' && event.event === 'dispatch.end' && event.dispatch === dispatch);
+    assert.ok(started >= 0 && ended > started, `${role} retry has an observed start and end`);
+    return { role, dispatch, before, started, ended };
+  });
+  const [reviewer, architect] = retries;
+  assert.equal(reviewer.before.filter((event) => event.layer === 'L2' && event.event === 'attempt.failed' && event.attempt === 1).length, 2, 'both initial failures settle before retry preparation');
+  assert.ok(architect.before.some((event) => event.layer === 'L1' && event.event === 'dispatch.end' && event.dispatch === reviewer.dispatch), 'architect retry preparation starts only after reviewer retry ends');
+  assert.ok(reviewer.ended < architect.started, 'the reviewer retry ends before the architect retry starts');
 });
 
 // A counterexample changes the table outcome or loses another judge under the same claim.
@@ -2046,4 +2060,57 @@ test('source cause R29 Claude exclusion ancestor realpath failure is tagged befo
   judgeStartBuiltin(t, fs.realpathSync, 'native', (path, ...args) => { if (path === moved) throw Object.assign(new Error('EIO resolving exclusion ancestor'), { code: 'EIO' }); return original(path, ...args); });
   const [outcome] = await Promise.allSettled([roleDispatch(request)]);
   judgeStartClass(outcome, { kind: 'directory-unusable' }, 'R29');
+});
+
+// The counterexample treats a cwd search-permission race as an unexecutable provider and stops its R29 pair.
+// proves R-FAIL-8
+test('a real spawn denied search permission in its working directory is R29 and holds after an earlier R29', SETTLES_WITHIN, async (t) => {
+  const { request: roleRequest } = judgeStartRequest(t);
+  const prepared = await roleDispatch(roleRequest);
+  const request = { ...prepared, command: '/usr/bin/true', args: [], id: roleRequest.id, card: 7, directory: join(prepared.workspace, '.rigger'), sink: roleRequest.sink };
+  fs.accessSync(request.command, fs.constants.X_OK);
+  const mode = fs.statSync(request.cwd).mode & 0o777;
+  fs.renameSync(request.cwd, `${request.cwd}-held`);
+  let first;
+  try {
+    [first] = await Promise.allSettled([judgeDispatchOnL1({ ...request, id: 'd-first' })]);
+  } finally {
+    fs.renameSync(`${request.cwd}-held`, request.cwd);
+  }
+  assert.deepEqual(first.reason?.startCause, { kind: 'directory-unusable' });
+  assert.equal(judgeStartAnswer({ reviewer: first }).next.failure.row, 'R29');
+  let reached = false;
+  refuseSpawn(t, { command: '/usr/bin/true', before: () => {
+    reached = true;
+    fs.chmodSync(request.cwd, 0);
+    assert.throws(() => fs.accessSync(request.cwd, fs.constants.X_OK), { code: 'EACCES' });
+  } });
+  let second;
+  try {
+    [second] = await Promise.allSettled([judgeDispatchOnL1(request)]);
+  } finally {
+    fs.chmodSync(request.cwd, mode);
+  }
+  assert.equal(reached, true, 'search permission was removed after the initial checks, at the real spawn');
+  assert.equal(second.reason?.code, NOT_STARTED);
+  assert.match(second.reason.message, /spawn \/usr\/bin\/true EACCES/);
+  const paired = judgeStartAnswer({ reviewer: second }, { firstFailures: { reviewer: first } });
+  t.diagnostic(JSON.stringify({ message: second.reason.message, cause: second.reason.startCause, action: paired.next.action }));
+  assert.equal(paired.next.action, 'hold', 'a missing cwd and a cwd denied at spawn are the same R29 way');
+  judgeStartClass(second, { kind: 'directory-unusable' }, 'R29');
+  assert.deepEqual(paired.events.find(({ event }) => event === 'attempt.decided').failures.map(({ row }) => row), ['R29', 'R29']);
+});
+
+// The counterexample calls every EACCES a directory failure, including a real non-executable provider.
+// proves R-FAIL-8
+test('a real provider file without execute permission remains R3 while its working directory is searchable', SETTLES_WITHIN, async (t) => {
+  const { request } = judgeStartRequest(t);
+  const prepared = await roleDispatch(request);
+  const command = join(prepared.cwd, 'unexecutable-provider');
+  fs.writeFileSync(command, '#!/bin/sh\nexit 0\n', { mode: 0o644 });
+  fs.accessSync(prepared.cwd, fs.constants.X_OK);
+  assert.throws(() => fs.accessSync(command, fs.constants.X_OK), { code: 'EACCES' });
+  const [outcome] = await Promise.allSettled([judgeDispatchOnL1({ ...prepared, command, args: [], id: request.id, card: 7, directory: join(prepared.workspace, '.rigger'), sink: request.sink })]);
+  assert.match(outcome.reason?.message, /EACCES/);
+  judgeStartClass(outcome, { kind: 'command-not-executable', provider: 'claude' }, 'R3');
 });

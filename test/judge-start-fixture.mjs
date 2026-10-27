@@ -54,12 +54,13 @@ export const HOST_REPORTS = [
   ['R36', 'file-descriptors'], ['R37', 'host-error'],
 ];
 
-/** Controls Node's spawn boundary, preserving its real contract for commands not selected. */
+/** Runs before the selected spawn, raising a supplied errno or letting the host decide its result. */
 export function refuseSpawn(t, { command, code, before = () => {}, synchronous = false }) {
   const spawn = childProcess.spawn;
   t.mock.method(childProcess, 'spawn', (name, args, options) => {
-    if (command !== undefined && name !== command) return spawn(name, args, { ...options, env: options?.env });
-    before();
+    const selected = command === undefined || name === command;
+    if (selected) before();
+    if (!selected || code === undefined) return spawn(name, args, { ...options, env: options?.env });
     if (synchronous) throw Object.assign(new Error(`spawn ${name} ${code}`), { code });
     return failedSpawn(name, code);
   });
