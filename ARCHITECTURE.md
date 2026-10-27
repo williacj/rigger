@@ -1234,16 +1234,29 @@ How a call ends decides what L0 records and what the call's caller is handed:
 | The sink refused one of the process adapter's own events, as a survivor or group kill, and the call rejects with `EVENT_REFUSED` | One `call.end`, with the outcome the failure's result gives | That `EVENT_REFUSED` failure. Where the sink also refuses the `call.end`, it is among the failure's unrecorded events |
 | The sink refuses the `call.end` | Nothing: the event is unrecorded | An `EVENT_REFUSED` failure naming the `call.end` as unrecorded and carrying the call's result. Where the command never started, its `NOT_STARTED` failure is the cause |
 | The sink holds the event, before the verb names the state directory | One `call.end`, held | As where the sink accepts. A held event is never refused. It is written once the verb names the directory, or to standard error where the verb ends without naming one |
-| L0's exit cleanup ended it | Nothing | Nothing: the call never settles, so neither `throughL0` nor `call` runs again |
+| L0's exit cleanup ended it, and the process ends | Nothing | Nothing: the process ends before the call settles |
+| L0's exit cleanup ended it, and a signal listener of the caller keeps the process running | One `call.end`, with the outcome the call's result gives. The cleanup's kill gives a non-zero exit, so a call it killed records `failed` | The call's result, as the process adapter gives it |
 
 A later start never ends a forge or git call, because L1 records only a dispatch's group for a
-start to end ("Failure model"). Exit cleanup records its own kills before it ends the sink, and a
-call it ended records no `call.end`. So the fault rate's denominator leaves out every such call.
+start to end ("Failure model"). Exit cleanup records its own kills and then ends the sink. A call
+it ended records no `call.end` where the process then ends, so the fault rate's denominator leaves
+that call out.
+
+A caller's signal listener can keep the process running past the cleanup, and the call then
+settles on its result. `throughL0` or `call` records its `call.end` after the sink's end. The sink
+appends it where the verb named the state directory, and writes it to standard error where it did
+not.
 
 Each try of a fetch `fetched` makes is one git call, so each records one `call.end`. A try that
-lost the race for the remote-tracking ref records `failed`, and counts as a fault. L0 records
-`fetch.retried` after that try's `call.end`, as it does at present. Both events are kept, and
-neither derives from the other. No derivation reads `fetch.retried`.
+lost the race for the remote-tracking ref records `failed`, and counts as a fault. Two cases follow
+from such a try:
+
+- **Another try follows:** L0 records `fetch.retried` after that try's `call.end`, as it does at
+  present.
+- **It was try `FETCH_TRIES`:** L0 records no `fetch.retried`, and `fetched` rejects naming the ref
+  and the count of tries.
+
+Both events are kept, and neither derives from the other. No derivation reads `fetch.retried`.
 
 Every forge call records one, whoever makes it. That covers each engine verb, `rigger doctor`'s
 checks, and the gate script. `scripts/gate-check.mjs` takes the gate's sink from `recording` and
