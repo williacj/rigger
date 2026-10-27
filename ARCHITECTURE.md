@@ -825,9 +825,23 @@ stopped reading them. L0 stops once they close after it has killed what was left
 command that never started has no result: L1 reports to its caller that it did not start, naming
 what was missing.
 
+For a judge's dispatch that never started, L1's report to L3 names why it did not start. Where the
+cause concerns one thing that L2 counts by, the report also names it:
+
+- the judge's provider;
+- the agent file, by the path the configuration names;
+- the path, by its real path;
+- the variable, by its name and never its value.
+
+L1 reports in its own terms, and never names a row of `R-FAIL-8`'s table. L2 classes the report,
+and compares two reports by the row each falls under and the thing each names, as that row's "The
+same way when" column has it. Only a judge's scratch directory not made names that directory as
+what was missing, as step 4 below sets out. L1 reports a judge's directory it could not make as
+that make's failure, before any dispatch, so it is never a dispatch that did not start.
+
 L2 classifies a failure as the work's, or in one of three classes that are not the work's:
 
-- **`environment`:** the five failures listed below, which take in every row `R-FAIL-8`'s table
+- **`environment`:** the six failures listed below, which take in every row `R-FAIL-8`'s table
   classes host. It also takes in a judge L2 withholds for one of these causes:
   - its directory was not made;
   - a required step in its `head` failed;
@@ -847,16 +861,20 @@ L2's class `out` is not the whole of `R-FAIL-8`'s out class. Every other row tha
 keeps the outcome the table states. An optional step that failed or never started lets the work
 proceed (`R-PROV-2`). A maker that ran its first command and then failed stays the work's failure.
 
-An environment failure retries the card once, with two exceptions:
+An environment failure retries the card once, with three exceptions:
 
-- a role's dispatch that never started, which L3 retries alone as set out below;
+- a dispatch of the role an escalation goes to that never started, which L3 retries alone as set
+  out below;
+- a judge's dispatch that never started for a cause `R-FAIL-8`'s table classes host, for which L3
+  dispatches that judge again alone, as set out below;
 - a judge L2 withholds, for which L2 answers neither `again` nor `hold`. `R-FAIL-8`'s table sets
   that judge's outcome, in its rows for a judge's directory and a judge's scratch directory not made.
 
 Where the second attempt fails the same way as the first, as `R-FAIL-8`'s table counts it, L2
 answers `hold` in place of `stop`, and L3 closes admission. L3
 hands L2 the first attempt's failure unread, as it hands the attempt number, so the count needs no
-memory and is never persisted.
+memory and is never persisted. For a judge's dispatch that never started for a host cause, the
+second attempt is that judge's next dispatch, as set out below.
 
 L3 keeps one memory, for one invocation alone: the cards it does not pull again in that
 invocation. The next invocation pulls them as it would any other. L3 keeps a card out of later
@@ -866,6 +884,7 @@ pulls for these reasons, and no others:
 |---|---|
 | stopped after two attempts that failed in different ways | no hold fires, and without the memory the next pull attempts the card again at once |
 | stopped at one attempt for a derived branch name git refuses, or for a worktree root that is not an absolute path | no hold fires, and without the memory the next pull attempts the card again at once, which `R-FAIL-8` rules out |
+| stopped after a judge's two dispatches that never started for different host causes | no hold fires, and without the memory the next pull dispatches that judge again at once, where `R-FAIL-8`'s table has the card stop |
 | judges L2 withheld for an environment failure, among them a judge whose scratch directory was not made | the memory is how L3 meets the rows of `R-FAIL-8`'s table for a judge's directory not made and a judge's scratch directory not made |
 | a move, return or escalation whose write the forge refused | it bounds retries of a refused write, since a released claim fires the next trigger (C22) |
 | a merge, whatever it answered | a merge the lane refused, because the head moved, checks were pending or mergeability was unknown, would be pulled again at once and poll the forge |
@@ -951,7 +970,7 @@ L2 preserves an ordinary refusal's reason and precedence. It converts only the q
 L3 rechecks claim availability after asynchronous reads and holds one claim through removal and the following action. The decision uses the facts L2 read. Reopening after that read follows `R-WORK-36`'s table; L3 creates no restoration or persisted cleanup state.
 
 L3 hands L2 each outcome unread, and L2 answers the next action. A provisioning step is a
-dispatch, so L1 records its group as it records any dispatch's. L2 classifies five failures as
+dispatch, so L1 records its group as it records any dispatch's. L2 classifies six failures as
 the environment's:
 
 - a workspace L1 could not make, because git or the file system gave no answer, or none in time,
@@ -960,7 +979,8 @@ the environment's:
 - a required step that exited non-zero or ran past its time;
 - a maker whose dispatch never started, whether its scratch directory was made or was not made
   because the file system gave no answer, or none in time;
-- a dispatch of the role an escalation goes to that never started.
+- a dispatch of the role an escalation goes to that never started;
+- a judge's dispatch that never started for a cause `R-FAIL-8`'s table classes host.
 
 A directory L1 refused under `R-WORK-13`, `R-WORK-20`, `R-WORK-26` or `R-WORK-32`, and a
 continuing workspace `R-WORK-25` refuses for a failure `R-FAIL-8`'s table classes card-local, is
@@ -977,6 +997,32 @@ The fifth environment failure never answers `hold`, and never closes admission
 comment, and never attempts the card again for it. Where the role's dispatch fails to start a
 second time, L2 escalates the card with raiser `loop`, as `ambiguous`, so `R-ESCALATE-15` sends
 it to the owner.
+
+The sixth environment failure never attempts the card again, and never dispatches the maker. L3
+retries it once, under the same claim and slot, by running step 4 above for that judge alone, with
+no other judge. L3 hands L2 the first dispatch's report unread with the second's outcome, as it
+hands an attempt's. L2 counts that second dispatch as the card's second attempt under `R-FAIL-8`. Each
+judge's pair is its own, so another judge of the card failing the same way never completes it. L2
+answers that judge's next dispatch for the card thus:
+
+| That judge's next dispatch | L2's answer |
+|---|---|
+| never starts the same way, as `R-FAIL-8`'s table counts it | `hold` in place of `stop`, and L3 closes admission |
+| never starts, for another cause that table classes host | `stop`, and admission stays open, as that table has it; L3 keeps the card out of later pulls |
+| meets its directory refused under `R-WORK-20`, or its scratch directory refused under `R-WORK-26` | L2 escalates the card under `R-ESCALATE-12`, never answering `hold`, as that table has it |
+| meets its directory or scratch directory not made, or a required step in its `head` that failed or never started | that failure's own row of `R-FAIL-8`'s table governs: L2 withholds the judge, and the first failure counts for nothing |
+| starts | the first failure counts for nothing, and L2 answers the dispatch's result as any judge's |
+
+A judge's directory or scratch directory not made, on its first dispatch or its next, keeps the
+outcome `R-FAIL-8`'s table states. So does a judge's dispatch that table classes out. L2 answers
+neither by a retry of that judge.
+
+L3 keeps the first failure in the one call that dispatched the judge, under the card's claim, and
+nowhere else. It is not in L3's memory of the cards it does not pull again, and not in `.rigger/`.
+A judge's first failure therefore does not survive the end of an invocation, because `R-STATE-4`
+does not let Rigger persist it. A Rigger that stops between the two dispatches loses the count, as
+it does between a maker's two attempts. The next invocation's dispatch of that judge is then a
+first failure.
 
 L2 decides whether the card is attempted again, and L3 attempts it under the same claim.
 
