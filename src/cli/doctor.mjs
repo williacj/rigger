@@ -675,6 +675,9 @@ const printable = (text) => String(text).replace(/[\u0000-\u001f\u007f-\u009f\u2
 /** The words that name one closer in `doctor`'s and `plan`'s output: `closedBy`'s, its reason printable. */
 export const closerLine = (closer) => closedBy({ ...closer, reason: printable(closer.reason) });
 
+/** The words that name one closer removed by `resume`, its reason printable. */
+export const removedCloserLine = ({ kind, path, reason, time }) => `removed the ${kind} closer ${path}: ${printable(reason)}; time ${time}`;
+
 /** The words that name each entry of an admission that cannot be read, by its path and cause. */
 export const unreadableAdmission = (unreadable) => `admission cannot be read: ${unreadable.map(({ path, cause }) => `${printable(path)} (${printable(cause)})`).join(', ')}`;
 
