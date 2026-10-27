@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 import { forgeBody, invoke, mutationArgs, proofRepository } from './proof-repository.mjs';
 import { SETTLES_WITHIN } from './settles-within.mjs';
 import { gitIn } from './git-repository.mjs';
+import { realpathSync } from 'node:fs';
+import { parseEvents, runTests } from '../scripts/mutation-receipt.mjs';
 
 const script = fileURLToPath(new URL('../scripts/mutation-receipt.mjs', import.meta.url));
 
@@ -340,4 +342,16 @@ test('R3 closing catch-all refuses unknown values and non-test runner failures',
   assert.equal(runnerProof.exit, 0);
   assert.equal(runnerProof.report.tests[0].status, 'no verdict at the base');
   assert.match(runnerProof.report.tests[0].baseReason, /expectedFailure/);
+});
+
+// The receipt's own run and the recorded-stream tests must share one parse, or a fixture proves a copy.
+test('runTests books its run through the exported parse the recorded streams are parsed by', SETTLES_WITHIN[60_000], async (t) => {
+  const fixture = proofRepository(t, { body: "test('named before a late throw', () => assert.equal(6 * 7, 42));\nsetImmediate(() => { throw new Error('thrown after the tests'); });\n" });
+  const tree = realpathSync.native(fixture.root);
+  const ran = await runTests(tree, fixture.tmp, fixture.file);
+  const stream = ran.stdout.split('\n').filter((line) => line.startsWith('@@proof ')).map((line) => JSON.parse(line.slice(8)));
+  assert.deepEqual(ran.tests.map(({ name, outcome }) => [name, outcome]), [['named before a late throw', 'pass']]);
+  assert.deepEqual(ran.fileVerdicts.map(({ name, outcome }) => [name, outcome]), [[fixture.file, 'fail']]);
+  const { count, tests, fileVerdicts } = ran;
+  assert.deepEqual({ count, tests, fileVerdicts }, parseEvents(stream, tree, fixture.file));
 });

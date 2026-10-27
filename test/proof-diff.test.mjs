@@ -303,3 +303,18 @@ test('R3 a nested test assertion retains proof beside its aggregate parent failu
   assert.equal(receipt.report.failures.find(({ name }) => name === 'leaf assertion').kind, 'assertion');
   assert.equal(receipt.report.failures.find(({ name }) => name === 'container').kind, 'not an assertion');
 });
+
+// A file's own verdict, at either side, withholds that side's verdict and is never reported as a test.
+test('a file verdict at either side is no verdict, is named as a file verdict and has no entry in tests', SETTLES_WITHIN[60_000], async (t) => {
+  const body = "test('constant named test', () => assert.equal(6 * 7, 42));\n";
+  for (const [side, fileFailure] of [['base', "if (value === 1) throw new Error('the base fails to load');\n"], ['head', "if (value === 2) setImmediate(() => { throw new Error('thrown after the head tests'); });\n"]]) {
+    const fixture = proofRepository(t, { head: source(2), body: fileFailure + body });
+    const { report } = await invoke(fixture, 'proof-diff.mjs', [fixture.file]);
+    assert.equal(report.runs[side].status, 'no verdict', side);
+    assert.match(report.runs[side].reason, /file verdict/, side);
+    assert.deepEqual(report.runs[side].fileVerdicts.map(({ name, outcome }) => [name, outcome]), [[fixture.file, 'fail']], side);
+    assert.deepEqual(report.tests.map(({ name }) => name), ['constant named test'], side);
+    if (side === 'base') assert.match(report.tests[0].baseReason, /file verdict/);
+    else assert.equal(report.tests[0].status, 'no verdict at the head');
+  }
+});
