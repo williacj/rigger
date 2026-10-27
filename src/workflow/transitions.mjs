@@ -48,11 +48,12 @@ export const REVIEW_WITHHELD = 'REVIEW_WITHHELD';
  * from `sink`, and a test passes the fake board's operations in its place, or `send` in place of
  * the runners' spawn. `reads` is the forge adapter's repository reads (`repositoryReads`), by which
  * L2 settles a maker's outcome, and is the read side's own over `config`'s repository where none is
- * given.
+ * given. `roleReads(card, dispatch)` supplies the contextual reader for a completed escalation role.
  */
 export function columnChanges({
   config, sink, send, items = itemWriteSide({ repo: config.repo, project: config.board.project }, { send }),
   repositoryWrites,
+  roleReads = (card, dispatch) => repositoryReads({ ...config.board, repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0', card, dispatch: dispatch ?? null }) }),
   reads = repositoryReads({ ...config.board, repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) }),
 }) {
   const { columns } = config.board;
@@ -80,10 +81,10 @@ export function columnChanges({
    * is handed an `L0` emitter L2 opens from `sink` under the card, so every kill L0 makes in it is
    * recorded with the card's number.
    */
-  const change = async (card, cause, fields = {}) => {
+  const change = async (card, cause, fields = {}, given = {}) => {
     const { from: declaredFrom, to } = CHANGES[cause];
     const from = cause === 'escalated' ? Object.keys(columns).find((key) => columns[key] === card.column) : declaredFrom;
-    const context = cause === 'escalated' ? { dispatch: null } : {};
+    const context = cause === 'escalated' ? { dispatch: null } : given;
     try {
       await items.moveItem(card.id, columns[to], sink.emitter({ layer: 'L0', card: card.number, ...context }));
     } catch (refusal) {
@@ -96,9 +97,9 @@ export function columnChanges({
    * Appends `event`, carrying `fields`, under `card`, or fails naming the card, what the event
    * said and the sink's error.
    */
-  const note = (card, event, fields) => {
+  const note = (card, event, fields, context = {}) => {
     try {
-      sink.emitter({ layer: 'L2', card: card.number }).emit(event, fields);
+      sink.emitter({ layer: 'L2', card: card.number, ...context }).emit(event, fields);
     } catch (refusal) {
       throw new Error(`card #${card.number}: ${fields.reason ?? event}, and the event sink refused to record it: ${refusal.message}`, { cause: refusal });
     }
@@ -221,7 +222,7 @@ export function columnChanges({
         await writes.postIssueComment(card.number, routingComment(next));
       } catch (refusal) {
         const reason = `card #${card.number}'s routing comment was refused: ${refusal.message}`;
-        note(card, 'escalation.route-refused', { reason });
+        note(card, 'escalation.route-refused', { reason }, { dispatch: next.dispatch ?? null });
         throw new Error(reason, { cause: refusal });
       }
       return { ...next, action: 'dispatch', role: { role: name, agent: declared.agent, provider, tier, timeout: roleTimeout(declared), ...escalationRoleInstruction(card, next) } };
@@ -235,14 +236,15 @@ export function columnChanges({
         return ownerEscalation(next, { category: 'ambiguous', reason: `role ${next.destination} did not start twice: ${firstFailure.reason.message}; ${outcome.reason.message}`, dispatch });
       }
       if (outcome.status === 'rejected') return undefined;
-      const comments = await reads.readIssueComments(card.number);
+      const reading = roleReads(card.number, dispatch);
+      const comments = await reading.readIssueComments(card.number);
       const note = makerNote(comments, dispatch, acceptanceItems(card.body ?? '').length);
-      const facts = await pullRequestsFrom(card.number, next.line, reads, false);
+      const facts = await pullRequestsFrom(card.number, next.line, reading, false);
       const { pull: priorPull, head: priorHead, ...route } = next;
       const current = { ...route, ...(facts.open.length === 1 ? { pull: facts.open[0].number, head: facts.open[0].head } : {}) };
       if (note !== null) return ownerEscalation(current, note);
       if (outcome.value.exit !== 0) return ownerEscalation(current, { category: 'ambiguous', reason: `role ${next.destination} exited ${outcome.value.exit}`, dispatch });
-      if (facts.open.length === 1) await change(card, 'returned');
+      if (facts.open.length === 1) await change(card, 'returned', {}, { dispatch: dispatch ?? null });
       return { action: 'handled', facts };
     },
 

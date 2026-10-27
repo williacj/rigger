@@ -37,7 +37,8 @@ export async function escalationWorld({ pull = false, comments = [], labels = []
   const directory = temporaryDirectory('rigger-escalation-');
   const sink = openSink({ directory, run: 'r-test', now: () => 0 });
   const writes = { ...repository, ...(refuse ? { postIssueComment: async () => { throw new Error(refuse); } } : {}) };
-  const l2 = columnChanges({ config: settings, sink, items: fake.operations, reads: repository.operations, repositoryWrites: writes });
+  const l2 = columnChanges({ config: settings, sink, items: fake.operations, reads: repository.operations, repositoryWrites: writes,
+    roleReads: () => repository.operations });
   return { settings, card: (await fake.operations.readItems())[0], fake, repository, sink, directory, l2,
     events: () => existsSync(join(directory, 'events.jsonl')) ? readEvents(directory) : [], next: { ...selected, ...(pull ? { pull: 77, head: HEAD } : {}) } };
 }

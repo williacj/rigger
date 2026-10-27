@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ROUTING_LINE, dispatchedEscalation } from '../src/workflow/escalation.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
+import { repositoryReads } from '../src/substrate/forge/read.mjs';
 import { BODY, DISPATCH, HEAD, REASON, escalationWorld, postedNote } from './escalation-world.mjs';
 
 // The counterexample is a routing post that loses the maker's reason or the open work identifiers.
@@ -257,5 +258,94 @@ test('routing comment transport records its card and dispatch context', async ()
     assert.equal(events.length, 1, 'the production repository writer must reach the transport');
     assert.equal(events[0].card, 12, 'R-RECORD-7: the routing post containment event must name card #12');
     assert.equal(events[0].dispatch, dispatch ?? null, 'R-RECORD-7: the routing post must retain its dispatch context');
+  }
+});
+
+// Both default reads and the CLI's injected shared reader must acquire the completed role's context.
+// proves R-RECORD-7
+test('role settlement production reads retain card and role dispatch even with the CLI shared reader', async () => {
+  const observed = [];
+  for (const injected of [false, true]) for (const dispatch of [DISPATCH, undefined]) {
+    const here = await escalationWorld();
+    const requests = [];
+    // The read runner's documented send seam and empty GraphQL connections, as read.mjs consumes them.
+    const send = async (command, args, { emitter }) => {
+      assert.equal(command, 'gh');
+      assert.equal(args[1], 'graphql');
+      const query = args.find((arg) => arg.startsWith('query=')).slice(6);
+      requests.push(query);
+      emitter.emit('survivor.killed', { group: 424242, pid: 424243, name: 'gh helper', cmd: 'gh helper' });
+      const connection = { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
+      const data = query.includes('issue(number: 12)')
+        ? { repository: { issue: { comments: connection } } }
+        : { repository: { pullRequests: connection } };
+      return { status: 0, stdout: JSON.stringify({ data }), stderr: '' };
+    };
+    const reads = repositoryReads({ ...here.settings.board, repo: here.settings.repo },
+      { send, emitter: here.sink.emitter({ layer: 'L0' }) });
+    const l2 = columnChanges({ config: here.settings, sink: here.sink, send, items: here.fake.operations,
+      ...(injected ? { reads } : {}) });
+    const answer = await l2.roleSettled(here.card, here.next, { status: 'fulfilled', value: { exit: 0 } }, { dispatch });
+    assert.equal(answer.action, 'handled');
+    assert.equal(requests.length, 2);
+    assert.match(requests[0], /issue\(number: 12\)/);
+    assert.match(requests[1], /pullRequests\(headRefName: "rigger-12"/);
+    assert.deepEqual(here.fake.writes(), []);
+    const events = here.events().filter((event) => event.event === 'survivor.killed');
+    assert.equal(events.length, 2, 'both production reads must reach the runner');
+    observed.push(...events.map((event) => ({ card: event.card, dispatch: event.dispatch, expected: dispatch ?? null, injected })));
+  }
+  for (const event of observed) {
+    assert.equal(event.card, 12, 'R-RECORD-7: a role-settle read concerns card #12');
+    assert.equal(event.dispatch, event.expected, 'R-RECORD-7: a role-settle read concerns its role dispatch');
+  }
+});
+
+// A refused routing write must remain correlated with the maker whose note selected that route.
+// proves R-RECORD-7
+test('routing refusal records the maker dispatch and explicit absent-dispatch context', async () => {
+  for (const dispatch of [DISPATCH, undefined]) {
+    const here = await escalationWorld({ refuse: 'forge denied routing' });
+    await assert.rejects(here.l2.routed(here.card, { ...here.next, dispatch }), /routing comment was refused: forge denied routing/);
+    const selected = here.events().find((event) => event.event === 'review.escalate');
+    const refused = here.events().find((event) => event.event === 'escalation.route-refused');
+    assert.equal(selected.dispatch, dispatch ?? null, 'control: the escalation answer carries the maker dispatch');
+    assert.equal(refused.card, 12);
+    assert.equal(refused.dispatch, dispatch ?? null, 'R-RECORD-7: routing refusal must retain its routing write dispatch');
+  }
+});
+
+// The role's handled end must correlate both the board transport and transition with that role.
+// proves R-RECORD-7
+test('handled role move retains its role dispatch on item transport and transition events', async () => {
+  for (const dispatch of [DISPATCH, undefined]) {
+    const here = await escalationWorld({ pull: true });
+    const requests = [];
+    // Recorded board/field IDs and response shape: forge-adapter.test.mjs's BOARD_READ contract.
+    const send = async (command, args, { emitter }) => {
+      assert.equal(command, 'gh');
+      assert.equal(args[1], 'graphql');
+      const document = args.find((arg) => arg.startsWith('query=')).slice(6);
+      requests.push(document);
+      emitter.emit('survivor.killed', { group: 424242, pid: 424243, name: 'gh helper', cmd: 'gh helper' });
+      const data = document.includes('repositoryOwner')
+        ? { repositoryOwner: { projectV2: { id: 'PVT_kwHOBzomGc4Bkn7f', field: { id: 'PVTSSF_lAHOBzomGc4Bkn7fzhjX4Mc', options: [{ id: 'review-option', name: 'Review' }] } } } }
+        : document.startsWith('query') ? { project: { field: { id: 'PVTSSF_lAHOBzomGc4Bkn7fzhjX4Mc' } }, target: { name: 'Status' } } : {};
+      return { status: 0, stdout: JSON.stringify({ data }), stderr: '' };
+    };
+    const l2 = columnChanges({ config: here.settings, sink: here.sink, send,
+      roleReads: () => here.repository.operations });
+    const answer = await l2.roleSettled({ ...here.card, id: 'PVTI_lADOBzomGc4Bkn7fzgd' }, here.next,
+      { status: 'fulfilled', value: { exit: 0 } }, { dispatch });
+    assert.equal(answer.action, 'handled');
+    assert.equal(requests.length, 3, 'the real item writer reads the board and field before its mutation');
+    assert.match(requests[2], /updateProjectV2ItemFieldValue/);
+    assert.match(requests[2], /review-option/);
+    const events = here.events().filter((event) => ['survivor.killed', 'transition'].includes(event.event));
+    assert.equal(events.length, 4);
+    for (const event of events) {
+      assert.equal(event.card, 12);
+      assert.equal(event.dispatch, dispatch ?? null, 'R-RECORD-7: the handled role move must retain its role dispatch');
+    }
   }
 });

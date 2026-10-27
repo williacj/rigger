@@ -45,7 +45,8 @@ async function world(options = {}) {
     if (body.startsWith(ROUTING_LINE) && options.refuseRoute) throw new Error('forge denied routing');
     return here.repository.postIssueComment(number, body);
   } };
-  const l2 = columnChanges({ config: here.settings, sink, items: here.fake.operations, reads: here.repository.operations, repositoryWrites: writes });
+  const l2 = columnChanges({ config: here.settings, sink, items: here.fake.operations, reads: here.repository.operations, repositoryWrites: writes,
+    roleReads: () => here.repository.operations });
   const workspaces = makingWorkspaces(join(here.directory, 'worktrees'));
   const directories = makingJudgeDirectories(join(here.directory, 'escalation-makes'));
   const escalationDirectory = async (...args) => {
