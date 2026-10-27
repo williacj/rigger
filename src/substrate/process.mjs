@@ -1729,25 +1729,28 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
   // The caller opens the emitter, so an `L0` event carries the card L0 never knows. There is no
   // default: a kill with nowhere to be recorded is refused before anything starts, and an emitter
   // is only one that has an `emit` to call.
-  if (typeof emitter?.emit !== 'function') throw new Error(`the process adapter was given no L0 emitter, so it did not start ${command}`);
+  if (typeof emitter?.emit !== 'function') throw startFailure(Object.assign(new Error(`the process adapter was given no L0 emitter, so it did not start ${command}`), { code: NOT_STARTED }), 'event-emitter-missing');
   if (typeof timeout !== 'number' || !Number.isFinite(timeout) || timeout <= 0) {
     // The type is named because a string, a bigint or a boxed number prints as the number it holds.
     const type = timeout === null ? 'null' : typeof timeout;
-    throw new Error(`the process adapter was given the timeout ${shown(timeout)} (of type ${type}), which is not a positive finite number of milliseconds, so it did not start ${command}`);
+    throw startFailure(Object.assign(new Error(`the process adapter was given the timeout ${shown(timeout)} (of type ${type}), which is not a positive finite number of milliseconds, so it did not start ${command}`), { code: NOT_STARTED }), 'dispatch-timeout');
   }
   const unfit = unusable(cwd);
-  if (unfit !== undefined) throw notStarted(command, unfit);
+  if (unfit !== undefined) throw startFailure(notStarted(command, unfit), 'directory-unusable');
   // A dispatch's directory the census could not read would leave every process working there
   // alive, so a command given one runs only where the census can read it.
   const { real, why } = directory === undefined ? {} : placed(directory);
-  if (why !== undefined) throw notStarted(command, why);
+  if (why !== undefined) throw startFailure(notStarted(command, why), real === undefined ? 'directory-unusable' : 'directory-illegible', real === undefined ? {} : { path: real });
   const { real: scratchReal, why: scratchWhy } = scratch === undefined ? {} : placed(scratch);
-  if (scratchWhy !== undefined) throw notStarted(command, scratchWhy);
+  if (scratchWhy !== undefined) throw startFailure(notStarted(command, scratchWhy), scratchReal === undefined ? 'directory-unusable' : 'scratch-illegible', scratchReal === undefined ? {} : { path: scratchReal });
   install();
   const stdin = input === undefined ? 'ignore' : 'pipe';
-  const child = spawned(command, () => spawn(command, args, { cwd, env, detached: true, stdio: [stdin, 'pipe', 'pipe'] }));
+  const child = spawned(command, () => spawn(command, args, { cwd, env, detached: true, stdio: [stdin, 'pipe', 'pipe'] }), cwd);
   // Where the spawn failed after it returned, Node gives the child no pid and emits why after.
-  if (child.pid === undefined) throw notStarted(command, (await once(child, 'error'))[0].message);
+  if (child.pid === undefined) {
+    const [error] = await once(child, 'error');
+    throw spawnFailure(command, error, cwd);
+  }
   if (input !== undefined) {
     // A command that exits without reading all of its input closes the pipe under the write,
     // which Node reports as an error on standard input. What the command read is its own
@@ -2026,12 +2029,34 @@ function lstartOf(seconds) {
  * The child `spawning` makes to run `command`. Where the spawn throws, which Node does for some
  * of the causes of a command that never starts, a `NOT_STARTED` failure naming the command and why.
  */
-function spawned(command, spawning) {
+function spawned(command, spawning, cwd) {
   try {
     return spawning();
   } catch (error) {
-    throw notStarted(command, error.message);
+    throw spawnFailure(command, error, cwd);
   }
+}
+
+/** The host's spawn errors that name a cause, with whether the cause concerns the executable. */
+const SPAWN_CAUSES = {
+  ERR_INVALID_ARG_VALUE: ['command-character'],
+  ENOENT: ['command-missing', true],
+  ENFILE: ['file-descriptors', false],
+  EMFILE: ['file-descriptors', false],
+  ENOMEM: ['process-resources', false],
+  EAGAIN: ['process-resources', false],
+  E2BIG: ['command-too-long', false],
+  EACCES: ['command-not-executable', true],
+};
+
+/** A failed spawn, rechecking the working directory where the host's ENOENT could name either. */
+function spawnFailure(command, error, cwd) {
+  const failure = notStarted(command, error.message);
+  const classified = SPAWN_CAUSES[error.code] ?? ['host-error'];
+  const [kind, executable] = classified;
+  failure.startCause = error.code === 'ENOENT' && unusable(cwd) !== undefined
+    ? { kind: 'directory-unusable' } : { kind, ...(executable ? { command } : {}) };
+  return failure;
 }
 
 /**
@@ -2090,6 +2115,18 @@ function shown(value) {
 
 /** The failure for a call whose `command` never started, saying `why`. */
 const notStarted = (command, why) => Object.assign(new Error(`the process adapter did not start ${command}: ${why}`), { code: NOT_STARTED });
+
+/** Attaches the cause a start could not pass, in substrate terms, with only the identity it concerns. */
+export const startFailure = (failure, kind, identity = {}) => Object.assign(failure, { startCause: { kind, ...identity } });
+
+/** Names the cause of a synchronous preparation operation at the site that raised it. */
+export function atStart(kind, operation, identity = {}) {
+  try {
+    return operation();
+  } catch (failure) {
+    throw startFailure(failure, kind, identity);
+  }
+}
 
 /**
  * Calls `done` once `delay` milliseconds have passed, and hands back what cancels that. A delay

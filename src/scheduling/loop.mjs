@@ -526,10 +526,10 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       if (settled.status !== 'fulfilled' || settled.value === undefined) return reached;
       // The facts L2's settle answered go back to L2 unread, so one read decides both the move and
       // the judges (the architect's ruling 3, AQ4, on #467).
-      const ask = (options) => remember(decide(card, [], { ...options, forge: settled.value }));
+      const ask = (options) => decide(card, [], { ...options, forge: settled.value });
       const judging = ask({});
       if (judging.action !== 'judge') return reached;
-      return { ...reached, judges: await judges(card, judging, ask, (ended) => kept({ ...reached, judges: ended })) };
+      return { ...reached, judges: await judges(card, judging, ask, (ended) => kept({ ...reached, judges: ended }), remember) };
     }
   };
 
@@ -567,9 +567,10 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     const [made] = await Promise.allSettled([new Promise((resolve) => resolve(judgeDirectory(card.number, role, judge.facts.head)))]);
     if (made.status === 'rejected') {
       const answer = ask({ directories: { [role]: made } });
-      if (answer.action === 'hold') return { role, held: await heldJudge(card, role, answer) };
-      if (answer.action === 'escalate') return { role, outcome: made, escalation: answer };
-      return { role, withheld: { directory: made } };
+      if (answer.halt) throw made.reason;
+      if (answer.action === 'hold') return { role, held: await heldJudge(card, role, answer), decision: answer };
+      if (answer.action === 'escalate') return { role, outcome: made, escalation: answer, decision: answer };
+      return { role, withheld: { directory: made }, decision: answer };
     }
     const { path, main, head, scratch, repository } = made.value;
     const outcomes = [];
@@ -577,15 +578,19 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     while (outcomes.length < current.steps.length) {
       const step = current.steps[outcomes.length];
       outcomes.push(await dispatchStep(card, step, head, { role }));
-      current = named(ask({ judged: { [role]: [...outcomes] } }), role);
-      if (current === undefined) return { role, withheld: { step: step.name, outcome: outcomes.at(-1) } };
+      const answer = ask({ judged: { [role]: [...outcomes] } });
+      current = named(answer, role);
+      if (current === undefined) return { role, withheld: { step: step.name, outcome: outcomes.at(-1) }, decision: answer };
     }
     const outcome = await dispatchRole(card, current, { cwd: main, directory: path, reach: [head], scratch, repository }, {}, dispatched);
-    if (outcome.status === 'rejected' && [NOT_STARTED, SCRATCH_REFUSED].includes(outcome.reason?.code)) {
+    if (outcome.status === 'rejected' && [NOT_STARTED, SCRATCH_REFUSED, EVENT_REFUSED].includes(outcome.reason?.code)) {
       const answer = ask({ directories: { [role]: outcome } });
-      if (answer.action === 'hold') return { role, held: await heldJudge(card, role, answer) };
-      if (answer.action === 'escalate') return { role, outcome, escalation: answer };
-      if (named(answer, role) === undefined) return { role, withheld: { scratch: outcome } };
+      if (answer.halt) return { role, outcome, halt: true, decision: answer };
+      if (answer.action === 'hold') return { role, held: await heldJudge(card, role, answer), decision: answer };
+      if (answer.action === 'escalate') return { role, outcome, escalation: answer, decision: answer };
+      if (answer.action === 'again') return { role, retry: { judge: current, failure: outcome } };
+      if (answer.action === 'stop') return { role, decision: answer, failure: Object.assign(new Error(`card #${card.number}'s judge \`${role}\` was stopped after two dispatches:\nfirst: ${JSON.stringify(answer.firstFailure)}\nsecond: ${JSON.stringify(answer.failure)}`), { card: card.number, role, decision: 'stop', firstFailure: answer.firstFailure, failure: answer.failure }) };
+      if (named(answer, role) === undefined) return { role, withheld: { scratch: outcome }, decision: answer };
     }
     return { role, outcome };
   };
@@ -613,15 +618,30 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * Then it rejects with an AggregateError naming the card and each judge that failed, and why, in
    * its `errors`, so no judge's outcome is dropped for another's failure.
    */
-  const judges = async (card, answer, ask, keep) => {
+  const judges = async (card, answer, ask, keep, remember) => {
     const settled = await Promise.allSettled(answer.judges.map((judge) => judged(card, judge, ask)));
+    let interrupted = settled.some((each) => each.status === 'rejected' || each.value.escalation !== undefined || each.value.halt);
+    for (const [at, each] of settled.entries()) {
+      if (each.status !== 'fulfilled' || each.value.retry === undefined) continue;
+      const { judge, failure } = each.value.retry;
+      if (interrupted) {
+        settled[at] = { status: 'fulfilled', value: { role: judge.role, outcome: failure } };
+        continue;
+      }
+      const repeat = (options) => ask({ ...options, ...(options.directories === undefined ? {} : {
+        directories: Object.fromEntries(Object.entries(options.directories).map(([role, outcome]) => [role, { ...outcome, firstFailure: failure }])),
+      }) });
+      [settled[at]] = await Promise.allSettled([judged(card, judge, repeat)]);
+      interrupted ||= settled[at].status === 'rejected' || settled[at].value.halt;
+    }
+    remember(ask({ judged: Object.fromEntries(settled.map((each, at) => [answer.judges[at].role, { decision: each.status === 'fulfilled' ? each.value.decision : undefined }])) }));
     // A judge L2 held fails the card held, as one that handed back no outcome fails it.
     const ended = settled.map((each, at) => (each.status === 'fulfilled'
       ? (each.value.held === undefined ? each.value : { role: each.value.role, failure: each.value.held })
       : { role: answer.judges[at].role, failure: new Error(`card #${card.number}'s judge \`${answer.judges[at].role}\` handed back no outcome: ${each.reason?.message}`, { cause: each.reason }) }));
     const failed = ended.filter((each) => each.failure !== undefined).flatMap((each) => [each.failure, ...(each.failure.unsaved === undefined ? [] : [each.failure.unsaved])]);
     const escalating = ended.filter((each) => each.escalation !== undefined);
-    const carried = ended.map(({ escalation, ...each }) => each);
+    const carried = ended.map(({ escalation, decision, ...each }) => each);
     if (escalating.length > 0) {
       keep(carried);
       const answer = ask({ directories: Object.fromEntries(escalating.map(({ role, outcome }) => [role, outcome])) });
@@ -632,7 +652,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       }
       if (failed.length === 0) return carried;
     }
-    if (failed.length === 0) return ended.filter((each) => each.outcome !== undefined);
+    if (failed.length === 0) return carried.filter((each) => each.outcome !== undefined);
     keep(carried);
     throw new AggregateError(failed, `card #${card.number}'s judges did not all hand back an outcome`);
   };
@@ -665,7 +685,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     let next = claim.next;
     /** Keeps L2's withheld or escalating card out of later pulls, including a refused escalation write. */
     const remember = (answer) => {
-      if (answer.action === 'escalate' || answer.withheld?.length > 0) excluded?.add(card.number);
+      if (answer.action === 'escalate' || answer.action === 'stop' || answer.withheld?.length > 0) excluded?.add(card.number);
       return answer;
     };
     // Whether the start was made: for a redo as for a Ready card, only once `start` returns.
@@ -709,7 +729,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         reached = { card: card.number, ...next };
       } else {
         reached = next.action === 'judge'
-          ? { card: card.number, judges: await judges(card, next, (options) => remember(atPull(card, [], options)), (ended) => kept({ card: card.number, judges: ended })) }
+          ? { card: card.number, judges: await judges(card, next, (options) => atPull(card, [], options), (ended) => kept({ card: card.number, judges: ended }), remember) }
           : await attempt(card, next, kept, remember, excluded);
       }
     } catch (thrown) {

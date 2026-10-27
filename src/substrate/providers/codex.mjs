@@ -2,9 +2,11 @@
 // probe it runs, and the command line, standard input and environment that run one role's agent
 // file in one directory under a Codex home of the dispatch's own.
 
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { atStart } from '../process.mjs';
+import { startFailure } from '../process.mjs';
 
 import { gitEnvironment } from '../git-environment.mjs';
 import { runCommand } from '../process.mjs';
@@ -239,16 +241,16 @@ async function probed({ directory, home, emitter, timeout }) {
   const args = ['-C', directory, ...WITHHELD, 'debug', 'prompt-input'];
   const spelled = `\`codex ${args.join(' ')}\``;
   const { exit, timedOut, stdout, stderr } = await runCommand({ command: 'codex', args, cwd: directory, env: { ...gitEnvironment(), CODEX_HOME: home }, timeout, emitter });
-  if (timedOut) throw new Error(`the skill probe ${spelled} outlived its bound of ${timeout} ms, and L0 killed it`);
-  if (exit !== 0) throw new Error(`the skill probe ${spelled} exited ${exit}: ${stderr.toString('utf8').trim().split('\n')[0] || stdout.toString('utf8').trim().split('\n')[0] || 'it said nothing'}`);
+  if (timedOut) throw startFailure(new Error(`the skill probe ${spelled} outlived its bound of ${timeout} ms, and L0 killed it`), 'codex-probe-timeout');
+  if (exit !== 0) throw startFailure(new Error(`the skill probe ${spelled} exited ${exit}: ${stderr.toString('utf8').trim().split('\n')[0] || stdout.toString('utf8').trim().split('\n')[0] || 'it said nothing'}`), 'codex-probe-exit');
   let skills;
   try {
     skills = skillsIn(stdout.toString('utf8'));
   } catch (failure) {
-    throw new Error(`the skill probe ${spelled} answered nothing this adapter can read: ${failure.message}`);
+    throw startFailure(new Error(`the skill probe ${spelled} answered nothing this adapter can read: ${failure.message}`), 'codex-probe-answer');
   }
-  const real = realpathSync.native(directory);
-  return skills.filter((skill) => !under(realOf(skill), real));
+  const real = atStart('directory-unusable', () => realpathSync.native(directory));
+  return skills.filter((skill) => !under(atStart('codex-skill-unresolved', () => realOf(skill)), real));
 }
 
 /**
@@ -266,12 +268,13 @@ const ownerHome = () => process.env.CODEX_HOME || join(homedir(), '.codex');
  * refused, since L1 makes the scratch directory fresh.
  */
 function homeFor(directory, scratch) {
-  const home = join(realpathSync.native(scratch), HOME);
-  mkdirSync(home);
+  const home = join(atStart('directory-unusable', () => realpathSync.native(scratch)), HOME);
+  atStart('codex-directory-unmade', () => mkdirSync(home));
   const declared = join(directory, assets, 'config.toml');
-  if (existsSync(declared)) copyFileSync(declared, join(home, 'config.toml'));
-  else writeFileSync(join(home, 'config.toml'), '');
-  symlinkSync(join(ownerHome(), 'auth.json'), join(home, 'auth.json'));
+  const content = existsSync(declared) ? atStart('codex-config-unreadable', () => readFileSync(declared)) : '';
+  atStart('codex-home-file-unwritten', () => writeFileSync(join(home, 'config.toml'), content));
+  const authentication = join(atStart('owner-home-missing', ownerHome), 'auth.json');
+  atStart('codex-home-file-unwritten', () => symlinkSync(authentication, join(home, 'auth.json')));
   return home;
 }
 
@@ -293,16 +296,16 @@ export async function invocation({ agent, tier, prompt, directory, scratch, reac
   if (!Object.hasOwn(tiers, tier)) {
     throw new Error(`the Codex adapter maps no model to the tier \`${tier}\`, only to \`standard\` and \`high\``);
   }
-  const real = realpathSync.native(directory);
+  const real = atStart('directory-unusable', () => realpathSync.native(directory));
   const file = resolve(directory, agent);
-  const fileReal = realOf(file);
+  const fileReal = atStart('agent-unresolved', () => realOf(file), { file: agent });
   if (!under(fileReal, real)) {
-    throw new Error(`the agent file ${agent} lies at ${fileReal}, outside the consumer's repository ${real}, so the Codex adapter refused it (R-SAFE-6)`);
+    throw startFailure(new Error(`the agent file ${agent} lies at ${fileReal}, outside the consumer's repository ${real}, so the Codex adapter refused it (R-SAFE-6)`), 'agent-outside', { file: agent });
   }
-  const instructions = readFileSync(file, 'utf8');
+  const instructions = atStart('agent-unreadable', () => readFileSync(file, 'utf8'), { file: agent });
   const home = homeFor(directory, scratch);
-  const temporary = join(realpathSync.native(scratch), TEMPORARY);
-  mkdirSync(temporary);
+  const temporary = join(atStart('directory-unusable', () => realpathSync.native(scratch)), TEMPORARY);
+  atStart('codex-directory-unmade', () => mkdirSync(temporary));
   const outside = await probed({ directory, home, emitter, timeout: probeTimeout });
   const toggles = `[${outside.map((path) => `{path = ${toml(path)}, enabled = false}`).join(', ')}]`;
   return {
