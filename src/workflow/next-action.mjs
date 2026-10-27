@@ -7,13 +7,18 @@
 import { FIXED_LABELS, OWNER, judgeRole, roleTimeout, sameLabel, stepTimeout, workRequires, worktreeTopic } from '../config/validate.mjs';
 import { BRANCH_ELSEWHERE, BRANCH_REFUSED, FETCH_FAILED, LINE_DELETED, LINE_MOVED, ROOT_NOT_ABSOLUTE, SCRATCH_REFUSED, WORKSPACE_NOT_MADE, WORKSPACE_REFUSED, topicFor } from '../execution/workspace.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
-import { escalationInstruction } from './escalation.mjs';
+import { escalationDestination, escalationInstruction } from './escalation.mjs';
 import { acceptanceItems, checkAcceptanceForm } from './form-check.mjs';
 import { reviewAnswer } from './judges.mjs';
 import { evidenceDigest } from './marker.mjs';
 
 /** Whether a card carries `label`, reading label names as GitHub does, whatever their letter case. */
 const carries = (card, label) => card.labels.some((held) => sameLabel(held, label));
+
+/** A loop-raised escalate answer with the destination L2's one function answers, reading no comment. */
+const routed = (answer) => answer.action === 'escalate'
+  ? { ...answer, destination: escalationDestination({ category: answer.category, raiser: answer.raiser }) }
+  : answer;
 
 /** The escalation status of an already-read board item, without reading its workflow facts. */
 export const escalationStatus = (card) => carries(card, FIXED_LABELS.escalated) ? { escalated: true } : undefined;
@@ -96,7 +101,7 @@ export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTop
         || !['review', 'owner'].includes(facts?.stage) || facts.closed.length === 0
         || facts.open.length > 0 || facts.merged.length > 0) return ordinary;
     const following = forgeRefusal
-      ? { action: 'escalate', category: 'ambiguous', raiser: 'loop', reason: ordinary.reason, line: facts.line }
+      ? routed({ action: 'escalate', category: 'ambiguous', raiser: 'loop', reason: ordinary.reason, line: facts.line })
       : ordinary;
     return { action: 'remove', following };
   };
@@ -108,7 +113,7 @@ export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTop
   }
   const held = card.forge === undefined ? undefined : fromTheForge(card);
   if (held?.action === 'ignore' || held?.action === 'move') return escalation === undefined ? held : { ...held, ...escalation };
-  if (held?.action === 'judge') return reviewAnswer(card, kinds, epicLabel, { roles, provisioning, sink, outcomes: judged, directories });
+  if (held?.action === 'judge') return routed(reviewAnswer(card, kinds, epicLabel, { roles, provisioning, sink, outcomes: judged, directories }));
   const form = checkAcceptanceForm(card);
   const makerRole = kinds[kind].maker;
   const tier = roles === undefined ? undefined : tierOf(card, makerRole, roles[makerRole]);
