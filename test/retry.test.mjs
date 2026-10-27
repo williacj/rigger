@@ -95,7 +95,7 @@ async function retryWorld(t, { card = 1, steps = [], provisioning = {}, maker, r
   };
   const agent = standInAgent(maker === undefined ? {} : { [card]: { engineer: maker } });
   const makerCalls = makerRuns(agent, directory, events, maker !== undefined);
-  const built = loop({ config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2, sink, kill: async () => {}, workspace, judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), removeDirectories: async () => {}, state, environment: { ...process.env, PATH: agent.first() } });
+  const built = loop({ config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2, sink, kill: async () => {}, workspace, judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), removeDirectories: async () => {}, state, environment: { ...process.env, PATH: agent.first() }, run: 'r-retry' });
   return { directory, root, path: join(root, `rigger-${card}`), fake, loop: built, events, made, makerCalls, settled };
 }
 

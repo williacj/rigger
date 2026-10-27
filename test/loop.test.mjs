@@ -171,7 +171,7 @@ test('given a board whose column read answers one turn later than the fake\'s, a
   // and the order across cards is the makers'.
   assert.deepEqual(later.started, other.started);
   assert.deepEqual(movesByItem(later.writes.map(({ args }) => args)), movesByItem(other.writes.map(({ args }) => args)));
-  assert.deepEqual(later.started, [1, 2, 2, 3, 4]);
+  assert.deepEqual(later.started, [1, 2, 2]);
 });
 
 test('in one record of board writes and dispatch starts, each card\'s move to the coding column comes before its dispatch starts', async () => {
@@ -209,13 +209,14 @@ const FAILURES = {
 };
 
 for (const [how, failed] of Object.entries(FAILURES)) {
-  test(`a card whose dispatch ${how} frees its slot, and the next pullable card is dispatched`, async () => {
+  test(`a card whose dispatch ${how} frees its slot, and ${how === 'throws' ? 'its hold leaves the next pullable card unclaimed' : 'the next pullable card is dispatched'}`, async () => {
     const built = world({ cards: [1, 2], concurrency: 1, answer: (card) => (card.number === 1 ? failed() : { exit: 0, output: '' }) });
 
     const run = built.loop.run();
+    const ended = settledOf(run);
     if (how === 'throws') {
-      // Card 1's maker never starts. Positive: until card 1's outcome has reached L2 and card 2 is held.
-      await positive(() => built.attempts.some((each) => each.layer === 'L2' && each.card === 1 && each.event === 'maker.failed') && built.dispatches.holding().includes(2));
+      // Card 1's maker never starts, and its hold closes admission. Positive: until card 1's outcome has reached L2 and the run has ended.
+      await positive(() => built.attempts.some((each) => each.layer === 'L2' && each.card === 1 && each.event === 'maker.failed') && ended());
     } else {
       // Positive: until card 1 is held, then until card 2 is.
       await positive(() => built.dispatches.held() === 1);
@@ -224,7 +225,8 @@ for (const [how, failed] of Object.entries(FAILURES)) {
       await positive(() => built.dispatches.holding().includes(2));
     }
 
-    assert.deepEqual(built.dispatches.holding(), [2], "card 1's slot is free, and card 2 holds it");
+    assert.deepEqual(built.dispatches.holding(), how === 'throws' ? [] : [2], how === 'throws' ? "card 1's slot is free, and card 2 is left unclaimed" : "card 1's slot is free, and card 2 holds it");
+    if (how === 'throws') assert.deepEqual(cardsOf(built, 'pull'), [1], 'card 2 was claimed after card 1 held');
     built.dispatches.releaseAll();
     if (how === 'throws') await assert.rejects(run, heldCard(1));
     else await run;
@@ -292,7 +294,7 @@ test('the same run on a board whose five columns carry other display names, with
   const named = await ran(COLUMNS);
   const other = await ran(renamed);
 
-  assert.deepEqual(movesByItem(named.moves.map(([, id, key]) => [id, key])), { 'item-1': ['coding', 'review', 'owner'], 'item-2': ['coding'], 'item-4': ['coding', 'review', 'owner'] });
+  assert.deepEqual(movesByItem(named.moves.map(([, id, key]) => [id, key])), { 'item-1': ['coding', 'review'], 'item-2': ['coding'] });
   assert.deepEqual(other.started, named.started);
   assert.deepEqual(movesByItem(other.moves.map(([, id, key]) => [id, key])), movesByItem(named.moves.map(([, id, key]) => [id, key])));
 });
@@ -434,7 +436,7 @@ test('a continuing attempt retries L1 at the same head L2 named', async () => {
       heads.push(head);
       throw Object.assign(new Error('workspace unavailable'), { code: 'WORKSPACE_NOT_MADE', path: '/nowhere' });
     },
-    judgeDirectory: async () => {}, removeDirectories: async () => {}, state: built.directory, environment: {},
+    judgeDirectory: async () => {}, removeDirectories: async () => {}, state: built.directory, environment: {}, run: 'r-test',
   });
 
   await assert.rejects(l3.pull(), (failure) => {
@@ -930,7 +932,7 @@ test('every slot release writes one event naming the card, whether its dispatch 
 
   await assert.rejects(drive(built), heldCard(2));
 
-  assert.deepEqual([...cardsOf(built, 'slot.release')].sort(), [1, 1, 2, 3, 3]);
+  assert.deepEqual([...cardsOf(built, 'slot.release')].sort(), [1, 2]);
 });
 
 test('a slot freed by a claim move the board refused writes one release event naming the card', async () => {
@@ -2325,7 +2327,7 @@ test('a closer linked while the facts call is pending stops the pull in its sync
     decide: (card) => nextAction(card, KINDS),
     l2: built.l2, sink: built.sink, kill: async () => {},
     workspace: async () => { throw new Error('a closed pull makes no workspace'); },
-    judgeDirectory: async () => {}, removeDirectories: async () => {}, state: directory, environment: {},
+    judgeDirectory: async () => {}, removeDirectories: async () => {}, state: directory, environment: {}, run: 'r-test',
   });
   const pulled = gated.pull();
   const done = settledOf(pulled);
@@ -2516,7 +2518,7 @@ test('a closed removal followed by unchanged refusal or injected ignore runs onc
         calls += 1;
         // A broken exclusion ends on its second forbidden call and fails the named count below.
         if (calls === 2) await built.fake.operations.moveItem('item-1', COLUMNS.done);
-      }, state: built.directory, environment: {},
+      }, state: built.directory, environment: {}, run: 'r-test',
     });
     for (const invocation of [1, 2]) {
       calls = 0;
@@ -2797,7 +2799,7 @@ test('a closed cleanup rechecks claim availability after an independently delaye
     },
     workspace: async () => { assert.fail('this closed Owner card starts no maker'); },
     judgeDirectory: async () => { assert.fail('this closed Owner card starts no judge'); },
-    removeDirectories: async () => { removals += 1; await removalWait; }, state: built.directory, environment: {},
+    removeDirectories: async () => { removals += 1; await removalWait; }, state: built.directory, environment: {}, run: 'r-test',
   });
   const first = handle.pull(1);
   const firstEnded = settledOf(first);

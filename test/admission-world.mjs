@@ -76,6 +76,11 @@ export function picture(directory) {
 /** The names in the admission directory of `state`. */
 export const namesIn = (state) => fs.readdirSync(admissionOf(state)).sort();
 
+/** Removes every closer in the admission directory of `state`, by hand, as the owner's `resume` would. */
+export const removeClosers = (state) => {
+  for (const name of fs.readdirSync(admissionOf(state))) fs.rmSync(join(admissionOf(state), name));
+};
+
 /** The node:fs calls the module makes, each replaced where `overrides` names it. */
 export const fsWith = (overrides) => ({ ...fs, ...overrides });
 

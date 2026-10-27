@@ -81,7 +81,7 @@ test('L3 awaits L2\'s facts call between its board read and its claims: while th
     return (card) => nextAction(card, KINDS, undefined, { roles: config.roles, provisioning: {} });
   };
   built.agent.plan(1, 'engineer', { hold: true });
-  const l3 = loop({ config: { ...config, concurrency: 1 }, board, decide: (card) => nextAction(card, KINDS, undefined, { roles: config.roles, provisioning: {} }), facts, l2: built.l2, sink: built.sink, kill: async () => {}, workspace: makingWorkspaces(temporaryDirectory('rigger-facts-held-')), judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), removeDirectories: async () => {}, state: built.directory, environment: { ...process.env, PATH: built.agent.first() } });
+  const l3 = loop({ config: { ...config, concurrency: 1 }, board, decide: (card) => nextAction(card, KINDS, undefined, { roles: config.roles, provisioning: {} }), facts, l2: built.l2, sink: built.sink, kill: async () => {}, workspace: makingWorkspaces(temporaryDirectory('rigger-facts-held-')), judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), removeDirectories: async () => {}, state: built.directory, environment: { ...process.env, PATH: built.agent.first() }, run: 'r-facts-held' });
 
   const pulled = l3.pull();
   // Positive: until the facts call is held.
@@ -260,7 +260,7 @@ async function pullWithRoles(cards, roles) {
   const settings = { ...config, concurrency: 3 };
   const decide = (card, outcomes, attempt) => nextAction(card, KINDS, undefined, { columns: COLUMNS, roles, provisioning: {}, outcomes, sink, ...attempt });
   const workspace = recordingWorkspaces();
-  const built = loop({ config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2: columnChanges({ config: settings, sink, items: fake.operations }), sink, kill: async () => {}, workspace, judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), removeDirectories: async () => {}, state: directory, environment: { ...process.env, PATH: agent.first() } });
+  const built = loop({ config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2: columnChanges({ config: settings, sink, items: fake.operations }), sink, kill: async () => {}, workspace, judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), removeDirectories: async () => {}, state: directory, environment: { ...process.env, PATH: agent.first() }, run: 'r-tier' });
   const reached = await built.pull().then(() => assert.fail('the stopped pull fulfilled'), (failure) => failure.errors.filter((each) => each.attemptFailures));
   return { fake, reached, events: () => readEvents(directory), asked: workspace.asked };
 }

@@ -14,6 +14,7 @@ import config from '../rigger.config.mjs';
 import { loop } from '../src/scheduling/loop.mjs';
 import { factsCall } from '../src/workflow/facts.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
+import { removeClosers } from './admission-world.mjs';
 
 /** The kind every card here is, judged by the reviewer alone, so a sound reviewer marker at Review answers `merge`. */
 const REVIEWED = { change: { ...KINDS.change, judges: ['reviewer'] } };
@@ -951,6 +952,8 @@ test('given a required check pending at the merge, a run ends with the card wher
   assert.equal(triggersOf(built).filter((trigger) => trigger === 'pull').length, 2, 'the stopped card\'s freed slot fired a second pull');
   assert.deepEqual(built.repository.merges().map(({ number }) => number), [1071]);
   assert.equal((await columnsOf(built.fake))[107], COLUMNS.review);
+  // Card 97's hold closed admission, so the owner resumes before the next invocation.
+  removeClosers(built.directory);
   await built.loop.run().catch(() => {});
   assert.deepEqual(built.repository.merges().map(({ number }) => number), [1071, 1071]);
   assert.equal((await columnsOf(built.fake))[107], COLUMNS.done);
@@ -1070,7 +1073,7 @@ test('given a card returned for a conflict, the next pull has L1 make its worksp
   const heads = [];
   const next = loop({
     config: settings, board: handleOn(built.fake), decide, facts: factsCall({ config: settings, reads: built.repository.operations, decide }),
-    l2: built.l2, sink: built.sink, kill: async () => {}, state: built.directory, environment: {}, judgeDirectory: async () => {}, removeDirectories: async () => {},
+    l2: built.l2, sink: built.sink, kill: async () => {}, state: built.directory, environment: {}, run: 'r-lane', judgeDirectory: async () => {}, removeDirectories: async () => {},
     workspace: async (card, head) => {
       heads.push(head);
       throw Object.assign(new Error('the workspace is not made here'), { code: 'WORKSPACE_NOT_MADE', path: '/nowhere' });

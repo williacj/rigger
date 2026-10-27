@@ -51,5 +51,5 @@ export async function engine({ directory, repository, command, ps, workspace }) 
     return { path, scratch: join(directory, 'workspaces', 'scratch', `rigger-${number}`), repository };
   };
   const kill = () => killRecordedGroups({ directory: state, sink });
-  await loop({ config, board, decide, facts: factsCall({ config, reads, decide }), l2, sink, kill, workspace: handle, judgeDirectory: judgeDirectoryHandle({ root: directory, topic: worktreeTopic(config), repository, sink }), removeDirectories: async () => {}, state, environment: { ...process.env, PATH: agent.first() }, ps }).pull();
+  await loop({ config, board, decide, facts: factsCall({ config, reads, decide }), l2, sink, kill, workspace: handle, judgeDirectory: judgeDirectoryHandle({ root: directory, topic: worktreeTopic(config), repository, sink }), removeDirectories: async () => {}, state, environment: { ...process.env, PATH: agent.first() }, ps, run: 'r-mid-dispatch' }).pull();
 }

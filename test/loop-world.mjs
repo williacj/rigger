@@ -588,7 +588,7 @@ export function world({
     events: recorded,
     /** The events L3 recorded so far, in order. */
     l3Events: () => recorded().filter((event) => event.layer === 'L3'),
-    loop: loop({ config: settings, board, decide, facts, l2, sink: l3Sink, kill, workspace, workspaceTip: workspaceTip ?? (async ({ card }) => repository.held().pullRequests.find((pull) => pull.head === topicFor(worktreeTopic(settings), card) && !pull.merged)?.sha), judgeDirectory: judgeDirectory ?? makingJudgeDirectories(join(under, 'workspaces')), removeDirectories, state: directory, environment: { ...process.env, PATH: agent.first() }, clock }),
+    loop: loop({ config: settings, board, decide, facts, l2, sink: l3Sink, kill, workspace, workspaceTip: workspaceTip ?? (async ({ card }) => repository.held().pullRequests.find((pull) => pull.head === topicFor(worktreeTopic(settings), card) && !pull.merged)?.sha), judgeDirectory: judgeDirectory ?? makingJudgeDirectories(join(under, 'workspaces')), removeDirectories, state: directory, environment: { ...process.env, PATH: agent.first() }, run, clock }),
   };
 }
 
