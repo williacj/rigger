@@ -481,8 +481,9 @@ test('given run where the maker does not start, run exits non-zero, and prints t
   const ran = runWithAgent(agent, { items: [card(10, 'Ready')] }, { files: { '.claude/settings.json': 'not json' } });
 
   assert.notEqual(ran.code, 0, ran.out);
-  const lines = ran.err.split('\n').filter((line) => /#10\b/.test(line));
+  const lines = ran.err.split('\n').filter((line) => /#10\b/.test(line) && !line.startsWith('rigger run: admission is closed by hold: '));
   assert.equal(lines.length, 1, ran.err);
+  assert.equal(ran.err.split('\n').filter((line) => line.startsWith('rigger run: admission is closed by hold: card #10 ')).length, 1, ran.err);
   assert.match(lines[0], /^rigger run: claimed #10 from board 3; its maker did not start: .*settings\.json is no JSON/);
   assert.deepEqual(agent.runs(), []);
   const attempts = ran.err.split('\n').filter((line) => /^attempt [12]: /.test(line));

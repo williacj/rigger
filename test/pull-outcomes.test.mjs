@@ -54,7 +54,7 @@ async function threeCards(t) {
   const workspaces = join(directory, 'workspaces');
   const built = loop({
     config: { ...config, concurrency: 3 }, board: handleOn(fake), decide, facts: factsOverNothing({ ...config, concurrency: 3 }, decide), l2, sink, kill: async () => {}, workspace: makingWorkspaces(workspaces), judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), removeDirectories: async () => {}, state,
-    environment: { ...process.env, PATH: agent.first() },
+    environment: { ...process.env, PATH: agent.first() }, run: 'r-outcomes',
   });
   const failure = await built.pull().then(() => assert.fail('the pull settled, though #20 failed'), (thrown) => thrown);
   return { failure, fake, workspaces, events: () => readEvents(state) };

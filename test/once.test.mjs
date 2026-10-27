@@ -723,8 +723,9 @@ test('given once where the maker does not start, once exits non-zero, and prints
   const { code, out, err } = await ran;
 
   assert.notEqual(code, 0, out);
-  const lines = err.split('\n').filter((line) => /#10\b/.test(line));
+  const lines = err.split('\n').filter((line) => /#10\b/.test(line) && !line.startsWith('rigger once: admission is closed by hold: '));
   assert.equal(lines.length, 1, err);
+  assert.equal(err.split('\n').filter((line) => line.startsWith('rigger once: admission is closed by hold: card #10 ')).length, 1, err);
   assert.match(lines[0], /^rigger once: claimed #10 from board 3; its maker did not start: .*settings\.json is no JSON/);
   assert.match(lines[0], /card was held after 2 attempts/);
   assert.deepEqual(agent.runs(), []);

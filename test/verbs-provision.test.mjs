@@ -567,7 +567,8 @@ test('given that world, rigger run prints each claimed card\'s line, or its fail
     assert.equal(lines.filter((held) => new RegExp(`#${number}\\b`).test(held)).length, 1, ran.said);
   }
   assert.equal(lines.filter((held) => held.startsWith('rigger run: card #20 was held')).length, 1, ran.said);
-  assert.equal(lines.filter((held) => /#20\b/.test(held)).length, 1, ran.said);
+  assert.equal(lines.filter((held) => /#20\b/.test(held) && !held.startsWith('rigger run: admission is closed by hold: ')).length, 1, ran.said);
+  assert.equal(lines.filter((held) => held.startsWith('rigger run: admission is closed by hold: card #20 ')).length, 1, ran.said);
   for (const attempt of [1, 2]) assert.equal(lines.filter((held) => held.startsWith(`attempt ${attempt}: `)).length, 1, ran.said);
 });
 

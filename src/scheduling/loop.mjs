@@ -29,7 +29,7 @@ import { DEFAULT_CONCURRENCY } from '../config/validate.mjs';
  * nothing to stop it recording and reading over what the dead engine left (`ARCHITECTURE.md`,
  * "Failure model").
  */
-function claiming({ config, board, facts, l2, sink, kill, readAdmission }) {
+function claiming({ config, board, facts, l2, sink, kill, readAdmission, halted }) {
   if (typeof kill !== 'function') throw new Error(`L3 was handed no kill of recorded process groups, so it cannot start: kill is ${typeof kill}`);
   if (typeof facts !== 'function') throw new Error(`L3 was handed no facts call of L2's, so it cannot ask L2 about a card before claiming it: the facts call is ${typeof facts}`);
   const concurrency = config.concurrency ?? DEFAULT_CONCURRENCY;
@@ -109,6 +109,7 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission }) {
         answers.set(card.number, next);
         return next;
       });
+      if (halted()) return { claims: [], failures };
       const admissionState = readAdmission();
       if (admissionState.state === 'unreadable') {
         const { unreadable } = admissionState;
@@ -228,7 +229,9 @@ function released(release, claim, failure) {
  * awaits it before L3 records or reads anything, as `claiming` says. A handle is refused when it
  * is built where `kill` or the facts call is not a function, checked in that order, and then, each
  * after those, where the workspace handle, `judgeDirectory` or `removeDirectories` is not a
- * function, `state` not a non-empty string, or `environment` not an object.
+ * function, `state` not a non-empty string, `environment` not an object, or `run` not a non-empty
+ * string. `run` is the invocation's run id, which `recording` drew, and L3 builds its one admission
+ * handle over `state` with it and the clock's `now`, so a hold's closer names the run that linked it.
  * `sink` is L5's, and L3 writes its own events through it under layer `L3`:
  *
  * - `run.start`, with `concurrency`, the run's N, as a run starts.
@@ -259,11 +262,15 @@ function released(release, claim, failure) {
  * one card at a time in the order L3 pulled them (`R-SCHED-15`), as `lane` says. Its claim is
  * released once its merge ends, and the card is left out of this run's later pulls.
  * One run also remembers stopped cards and cards whose
- * judges L2 withheld, leaving them out of its later pulls; a later invocation starts empty.
+ * judges L2 withheld, leaving them out of its later pulls; a later invocation starts empty. A held
+ * card needs no memory, because its hold closes admission ("Failure model"): L3 follows L2's `hold`
+ * at every point it asks L2 within a claim, as `attempt` and `judged` say, and links one closer for
+ * the card through that handle on its first `hold` answer, as `holding` says. Where a hold's close
+ * rejects, no pull of this loop claims a card after it, and claims already held finish.
  */
-export function loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, removeDirectories, state, environment, ps, readTimeout, clock }) {
+export function loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, removeDirectories, state, environment, run, ps, readTimeout, clock }) {
   let admissionRecord;
-  const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, facts, l2, sink, kill, readAdmission: () => admissionRecord.read() });
+  const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, facts, l2, sink, kill, readAdmission: () => admissionRecord.read(), halted: () => unsaved !== undefined });
   const { merge } = lane({ board, facts, l2, record, refused, removeDirectories, clock });
   const now = clock?.now ?? Date.now;
   const pause = clock?.pause ?? ((delay) => new Promise((resolve) => { whenElapsed(delay, resolve, { hold: true }); }));
@@ -272,7 +279,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
   if (typeof removeDirectories !== 'function') throw new Error(`L3 was handed no removeDirectories handle of L1's, so it cannot remove a merged card's directories: removeDirectories is ${typeof removeDirectories}`);
   if (typeof state !== 'string' || state === '') throw new Error(`L3 was handed no state directory for L1's record of process groups, so it cannot dispatch: the state directory is ${JSON.stringify(state)}`);
   if (environment === null || typeof environment !== 'object') throw new Error(`L3 was handed no environment for the dispatches it makes, so it cannot dispatch: the environment is ${environment === null ? 'null' : typeof environment}`);
-  admissionRecord = admission({ directory: state, sink });
+  if (typeof run !== 'string' || run === '') throw new Error(`L3 was handed no run id, so it cannot record a hold's closer: the run id is ${JSON.stringify(run) ?? 'undefined'}`);
+  admissionRecord = admission({ directory: state, run, now, sink });
 
   /**
    * Whether the drain trigger has fired in this idle period. Drain fires once per idle period, by
@@ -329,6 +337,53 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     return outcome;
   };
 
+  /** Each claimed card's close for its first `hold` answer under its claim, by card, until the claim is released. */
+  const holds = new Map();
+
+  /**
+   * The failure of a hold's close, once one has rejected: from then on no pull of this loop claims
+   * a card ("Failure model", "Where a hold's closer could not be saved").
+   */
+  let unsaved;
+
+  /**
+   * Closes admission for L2's `hold` answer `answer`, linking the hold's closer through this loop's
+   * one admission handle, and answers `{ closer }`, or `{ failure }` where the close rejected,
+   * keeping that failure as `unsaved`. Its reason names the card, and each of L2's two failures as
+   * `JSON.stringify` writes it. Only a card's first `hold` under its claim links a closer; a later
+   * one answers that close.
+   */
+  const holding = (answer) => {
+    if (!holds.has(answer.card)) holds.set(answer.card, closing(answer));
+    return holds.get(answer.card);
+  };
+
+  /** Links the closer for `holding`'s first `hold` answer of a card. */
+  const closing = async ({ card, role, firstFailure, failure }) => {
+    const whose = role === undefined ? `card #${card}` : `card #${card}'s judge \`${role}\``;
+    const reason = `${whose} was held after two failures the same way: ${JSON.stringify(firstFailure)}, then ${JSON.stringify(failure)}`;
+    try {
+      return { closer: await admissionRecord.close({ kind: 'hold', reason }) };
+    } catch (thrown) {
+      unsaved ??= thrown;
+      return { failure: thrown };
+    }
+  };
+
+  /**
+   * Closes admission for L2's `hold` answer `answer` for `card`'s judge `role`, as `holding` says,
+   * and answers the failure the card ends held with: it names the card, the judge, that it was held
+   * and both of L2's failures, carrying them, the decision and the closer as fields, or as
+   * `unsaved` the close's failure where it rejected.
+   */
+  const heldJudge = async (card, role, answer) => {
+    const { closer, failure: unsavedBy } = await holding({ ...answer, role });
+    const { firstFailure, failure } = answer;
+    return Object.assign(new Error(`card #${card.number}'s judge \`${role}\` was held after two dispatches that failed the same way:\nfirst: ${JSON.stringify(firstFailure)}\nsecond: ${JSON.stringify(failure)}`), {
+      card: card.number, role, decision: 'hold', firstFailure, failure, ...(unsavedBy === undefined ? { closer } : { unsaved: unsavedBy }),
+    });
+  };
+
   /**
    * Has L1 make `card`'s workspace for the attempt numbered `number`, and answers it as `{ path,
    * scratch, repository }`, the card's scratch base and repository beside it as L1 answered them,
@@ -364,6 +419,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * to its `keep`. An answer naming the
    * next attempt has L3 make it; one holding or stopping the card fails, naming the card and each
    * attempt's failure, in order, both in the message and as fields `card` and `attemptFailures`.
+   * A hold first closes admission, and its failure carries the closer as `closer`, or, where the
+   * close rejected, fails as an AggregateError holding it beside the close's failure.
    * A held or stopped card is absent from `reached`. Any other answer stops the attempts, naming the card
    * and what L2 answered. `remember` marks a card whose judges L2 withheld for this run.
    */
@@ -376,17 +433,27 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       await l2.escalated(card, answer);
       return { card: card.number, ...answer };
     };
-    /** Follows L2's retry, hold or stop answer, retaining each failure for the final report. */
-    const advance = (answer, number) => {
+    /** The failure naming the card as held or stopped after its attempts, each attempt's failure in order. */
+    const ended = (answer, held) => {
+      const attemptFailures = [...failures, answer.failure];
+      const each = attemptFailures.map((failure, at) => `attempt ${at + 1}: ${JSON.stringify(failure)}`);
+      return Object.assign(new Error(`card #${card.number} was ${held ? 'held' : 'stopped'} after ${each.length} attempts, each failing before the maker:\n${each.join('\n')}`), { card: card.number, attemptFailures, ...(held ? { decision: 'hold' } : {}) });
+    };
+    /**
+     * Follows L2's retry, hold or stop answer, retaining each failure for the final report. A hold
+     * closes admission first, through `holding`, and the card then ends held.
+     */
+    const advance = async (answer, number) => {
       if (answer.action === 'again' && answer.attempt === number + 1) {
         failures.push(answer.failure);
         return true;
       }
-      if (answer.action === 'stop' || answer.action === 'hold') {
-        const attemptFailures = [...failures, answer.failure];
-        const each = attemptFailures.map((failure, at) => `attempt ${at + 1}: ${JSON.stringify(failure)}`);
-        throw Object.assign(new Error(`card #${card.number} was ${answer.action === 'hold' ? 'held' : 'stopped'} after ${each.length} attempts, each failing before the maker:\n${each.join('\n')}`), { card: card.number, attemptFailures, ...(answer.action === 'hold' ? { decision: 'hold' } : {}) });
+      if (answer.action === 'hold') {
+        const { closer, failure: unsavedBy } = await holding(answer);
+        if (unsavedBy !== undefined) throw new AggregateError([ended(answer, true), unsavedBy], `card #${card.number} was held, and its closer was not saved`);
+        throw Object.assign(ended(answer, true), { closer });
       }
+      if (answer.action === 'stop') throw ended(answer, false);
       return false;
     };
     let answer = next;
@@ -402,7 +469,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
           answer = askAttempt([...outcomes], { attempt: number });
         }
       }
-      if (advance(answer, number)) continue;
+      if (await advance(answer, number)) continue;
       if (answer.action === 'escalate') return escalated(answer);
       if (answer.action !== 'dispatch') {
         throw new Error(`card #${card.number}'s attempt stopped, as L2 answered: ${JSON.stringify(answer)}`);
@@ -451,7 +518,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       }
       if (settled.status === 'fulfilled') {
         answer = askAttempt([], { attempt: number, maker: outcome });
-        if (advance(answer, number)) continue;
+        if (await advance(answer, number)) continue;
         if (answer.action === 'escalate') return escalated(answer);
       }
       const reached = { card: card.number, workspace: path, outcome, settled, ...(continuing === undefined ? {} : { action: 'continue', pull: continuing.pull, head: continuing.head }) };
@@ -485,7 +552,9 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * architect's ruling 3, P8, and ruling 4's addendum), its instruction carrying its dispatch id as
    * L2's `dispatched` writes it. Where L1 reports that the judge's dispatch did not start, L3 hands
    * that report unread to L2 as the role's in `directories`, and L2 withholds the judge where the
-   * report names its scratch directory as missing ("Failure model", step 4). Answers `{ role,
+   * report names its scratch directory as missing ("Failure model", step 4). Where L2 answers either
+   * of those two asks `hold`, L3 closes admission at once, without waiting for the card's other
+   * judges, and answers `{ role, held }`, `held` the failure `heldJudge` names. Answers `{ role,
    * outcome }`, the judge's
    * outcome as `Promise.allSettled` records it, or, for a judge L2 withheld, `{ role, withheld }`,
    * `withheld` holding what L3 handed L2 that L2 withheld it for: `{ directory }`, L1's failure to
@@ -498,6 +567,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     const [made] = await Promise.allSettled([new Promise((resolve) => resolve(judgeDirectory(card.number, role, judge.facts.head)))]);
     if (made.status === 'rejected') {
       const answer = ask({ directories: { [role]: made } });
+      if (answer.action === 'hold') return { role, held: await heldJudge(card, role, answer) };
       if (answer.action === 'escalate') return { role, outcome: made, escalation: answer };
       return { role, withheld: { directory: made } };
     }
@@ -513,6 +583,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     const outcome = await dispatchRole(card, current, { cwd: main, directory: path, reach: [head], scratch, repository }, {}, dispatched);
     if (outcome.status === 'rejected' && [NOT_STARTED, SCRATCH_REFUSED].includes(outcome.reason?.code)) {
       const answer = ask({ directories: { [role]: outcome } });
+      if (answer.action === 'hold') return { role, held: await heldJudge(card, role, answer) };
       if (answer.action === 'escalate') return { role, outcome, escalation: answer };
       if (named(answer, role) === undefined) return { role, withheld: { scratch: outcome } };
     }
@@ -534,17 +605,21 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    *   rejection;
    * - `{ role, withheld }`, for one L2 withheld, as `judged` answers it.
    *
+   * A judge L2 held is one that failed to hand back, its failure the held one, beside the close's
+   * own where that rejected, so the card ends held once every judge it dispatched has handed back.
+   *
    * Where L2 answered an escalation, every outcome is kept before one write through L2, after
-   * all the named judges finish. L2 is handed every refusal report together for that answer.
+   * all the named judges finish, and so after any hold's close. L2 is handed every refusal report together for that answer.
    * Then it rejects with an AggregateError naming the card and each judge that failed, and why, in
    * its `errors`, so no judge's outcome is dropped for another's failure.
    */
   const judges = async (card, answer, ask, keep) => {
     const settled = await Promise.allSettled(answer.judges.map((judge) => judged(card, judge, ask)));
+    // A judge L2 held fails the card held, as one that handed back no outcome fails it.
     const ended = settled.map((each, at) => (each.status === 'fulfilled'
-      ? each.value
+      ? (each.value.held === undefined ? each.value : { role: each.value.role, failure: each.value.held })
       : { role: answer.judges[at].role, failure: new Error(`card #${card.number}'s judge \`${answer.judges[at].role}\` handed back no outcome: ${each.reason?.message}`, { cause: each.reason }) }));
-    const failed = ended.filter((each) => each.failure !== undefined).map((each) => each.failure);
+    const failed = ended.filter((each) => each.failure !== undefined).flatMap((each) => [each.failure, ...(each.failure.unsaved === undefined ? [] : [each.failure.unsaved])]);
     const escalating = ended.filter((each) => each.escalation !== undefined);
     const carried = ended.map(({ escalation, ...each }) => each);
     if (escalating.length > 0) {
@@ -598,6 +673,9 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     let failure = null;
     let removalFailure = null;
     let reached;
+    // Whether L2 held the card under this claim. A held card needs no memory, because its hold
+    // closed admission; removing the closer is what lets a later pull claim it again.
+    let held = false;
     try {
       await start(claim);
       claimed = true;
@@ -636,16 +714,19 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       }
     } catch (thrown) {
       failure = thrown;
+      held = thrown.card === card.number && thrown.decision === 'hold';
       if (['move', 'return', 'escalate'].includes(next.action)) excluded?.add(card.number);
-      if (thrown.card === card.number && Array.isArray(thrown.attemptFailures)) excluded?.add(card.number);
+      // A stopped card is remembered; a held one is not.
+      if (thrown.card === card.number && Array.isArray(thrown.attemptFailures) && !held) excluded?.add(card.number);
     }
     if (removalFailure !== null) {
       failure = failure === null ? removalFailure : new AggregateError([removalFailure, failure], `card #${card.number}'s directory removal and following action failed`);
     }
-    if (next.action === 'continue' && !(reached?.settled?.status === 'fulfilled' && reached.settled.value !== undefined)) {
+    if (next.action === 'continue' && !held && !(reached?.settled?.status === 'fulfilled' && reached.settled.value !== undefined)) {
       excluded?.add(card.number);
     }
     failure = released(release, claim, failure);
+    holds.delete(card.number);
     if (claimed) await freed();
     return { reached, failure };
   };
@@ -747,7 +828,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
      * fails stops no other, and its cards are carried in its own failure's `reached`. Once the run has ended, every failed pull is reported in
      * one AggregateError naming how many failed, each pull's own failure unchanged in its `errors`,
      * and carrying as `reached` what every pull that settled answered, so no card's outcome is
-     * dropped for another pull's failure.
+     * dropped for another pull's failure, and, where a pull read admission closed, as `admission`
+     * what that read answered, so a run that ended on a hold answers its closer.
      * A start's kill that failed rejects the run with its failure, before `run.start`.
      */
     run: async () => {
@@ -757,14 +839,16 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       const failures = [];
       const reached = [];
       const excluded = new Set();
+      let closed;
       const fire = () => trigger(fire, undefined, excluded).then((each) => {
         reached.push(...(Array.isArray(each) ? each : each.reached));
+        if (!Array.isArray(each)) closed = each.admission;
       }, (failure) => {
         failures.push(failure);
       });
       await fire();
       if (failures.length > 0) {
-        throw Object.assign(new AggregateError(failures, `${failures.length} of the pulls this run fired failed`), { reached });
+        throw Object.assign(new AggregateError(failures, `${failures.length} of the pulls this run fired failed`), { reached, ...(closed && { admission: closed }) });
       }
       return reached;
     },
