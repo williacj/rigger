@@ -57,7 +57,7 @@ reused.
 | D14 | Critical is what a maker revision cannot resolve | Ratified |
 | D15 | A diagram is admitted where prose cannot carry the shape | Ratified |
 | D16 | Code asks the tool that owns the fact, and says where it can disagree | Ratified. Amended in #282. |
-| D17 | A requirement older than this decision is a counted gap | Ratified. Amended in #NNNN. |
+| D17 | A requirement older than this decision is a counted gap | Ratified. Amended in #1042. |
 | D18 | v0 staffs an architect, and the PM decomposes | Ratified |
 | D19 | Until M5, a maker merges its own card | Superseded by D22 |
 | D20 | A card's author survives its writing session | Ratified |
@@ -545,7 +545,7 @@ on an upgrade a restated fact would have survived.
 
 ## D17 — A requirement older than this decision is a counted gap
 
-**Status:** Ratified. Amended in #NNNN.
+**Status:** Ratified. Amended in #1042.
 
 ### Rule
 
