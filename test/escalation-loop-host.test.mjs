@@ -36,6 +36,7 @@ async function world(options = {}) {
       }
       if (context.layer === 'L1' && event === 'dispatch.end' && roles.get(context.dispatch) === 'engineer') {
         if (options.openPull) here.repository.open({ number: 77, head: 'rigger-12', sha: HEAD, comments: [{ body: 'PRIVATE JUDGE VERDICT' }] });
+        options.afterMaker?.(here);
         here.repository.postIssueComment(12, postedNote(context.dispatch).body);
       }
     } };
@@ -287,4 +288,53 @@ test('a role whose outcome rejects with EVENT_REFUSED leaves its open pull in Co
   assert.equal(result.escalationRole.settled, undefined);
   assert.equal((await here.fake.operations.readItems())[0].column, here.settings.board.columns.coding);
   assert.deepEqual(here.repository.held().issues[0].labels, []);
+});
+
+// A freed slot must not pull a maker whose ambiguity the role just handled in this invocation.
+// proves R-LOOP-18
+test('run leaves a handled card with nothing on the forge for a later maker invocation', { timeout: 20000 }, async () => {
+  const here = await world();
+  await here.runAll();
+  assert.deepEqual(here.agent.runs().map((run) => run.role), ['engineer', 'pm'], 'R-LOOP-18: the next maker belongs to a later invocation');
+  assert.equal(here.workspaces.made.length, 1);
+  assert.equal((await here.fake.operations.readItems())[0].column, here.settings.board.columns.coding);
+  assert.deepEqual(here.repository.held().branches, []);
+  assert.deepEqual(here.repository.held().pullRequests, []);
+  assert.deepEqual(here.repository.held().issues[0].labels, []);
+  await here.runAll();
+  assert.deepEqual(here.agent.runs().map((run) => run.role), ['engineer', 'pm', 'engineer'], 'the next invocation must forget the maker exclusion');
+  assert.equal(here.workspaces.made.length, 2);
+  assert.equal(here.repository.held().issues[0].comments.filter((comment) => comment.body.startsWith(ROUTING_LINE)).length, 1);
+  assert.equal((await here.fake.operations.readItems())[0].column, here.settings.board.columns.owner);
+});
+
+// A7's open-PR end must reach Review before this invocation releases the card.
+test('run leaves the handled open pull in Review without dispatching judges in the freed slot', { timeout: 20000 }, async () => {
+  const here = await world({ openPull: true });
+  await assert.doesNotReject(here.runAll(), 'a handled role ends this invocation of the card');
+  assert.deepEqual(here.agent.runs().map((run) => run.role), ['engineer', 'pm']);
+  assert.equal((await here.fake.operations.readItems())[0].column, here.settings.board.columns.review);
+  assert.equal(here.repository.held().pullRequests[0].number, 77);
+  assert.deepEqual(here.repository.held().issues[0].labels, []);
+});
+
+// The fake readBranches contract answers a pushed line only after the maker finishes.
+test('run leaves a handled pushed line in Coding and only the later invocation refuses its fresh start', { timeout: 20000 }, async () => {
+  const here = await world({ afterMaker: ({ repository }) => {
+    repository.operations.readBranches = async (names) => Object.fromEntries(names.map((name) => [name, name === 'rigger-12']));
+  } });
+  await here.runAll();
+  assert.deepEqual(await here.repository.operations.readBranches(['rigger-12']), { 'rigger-12': true });
+  assert.deepEqual(here.repository.held().pullRequests, []);
+  assert.deepEqual(here.agent.runs().map((run) => run.role), ['engineer', 'pm']);
+  assert.equal((await here.fake.operations.readItems())[0].column, here.settings.board.columns.coding, 'pushed work must wait for a later invocation before R-WORK-19 refuses it');
+  assert.deepEqual(here.repository.held().issues[0].labels, []);
+  await here.runAll();
+  assert.deepEqual(here.agent.runs().map((run) => run.role), ['engineer', 'pm'], 'pushed work must refuse a fresh maker');
+  assert.equal(here.workspaces.made.length, 1);
+  assert.equal((await here.fake.operations.readItems())[0].column, here.settings.board.columns.owner);
+  const escalation = here.events().filter((event) => event.event === 'review.escalate').at(-1);
+  assert.equal(escalation.raiser, 'loop');
+  assert.equal(escalation.destination, 'owner');
+  assert.match(escalation.reason, /forge holds its line of work/);
 });

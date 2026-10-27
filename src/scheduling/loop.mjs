@@ -445,6 +445,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       }
       if (settled.status === 'fulfilled' && settled.value?.action === 'escalate') {
         const escalation = settled.value;
+        remember(escalation);
         const reached = { card: card.number, workspace: path, outcome, settled };
         kept(reached);
         if (escalation.destination !== 'owner') {
