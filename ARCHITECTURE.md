@@ -1437,7 +1437,7 @@ no removal. L3 frees a card's slot only once L1 has handed back the
 outcome of every dispatch made under the card's claim.
 
 While L5's sink refuses an event, L3 starts no work. This document calls that the halt. A start
-is a pull, which claims a card, a dispatch, a merge, or a clock trigger's firing. L3 records a
+is one of four: a pull, which claims a card; a dispatch; a merge; or a clock trigger's firing. L3 records a
 firing's start before L2 opens its card or L3 runs its job, and "How a clock trigger fires" gives
 its steps. L3 records each other start before it acts outside Rigger on it, in this order:
 
