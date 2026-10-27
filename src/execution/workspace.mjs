@@ -127,9 +127,9 @@ export async function makeWorkspace({ root, topic, card, head, repository, sink,
 }
 
 /** Reads the line tip the maker left in its linked workspace, through L0's queued git adapter. */
-async function readWorkspaceTip({ card, path, branch, repository, sink }) {
+async function readWorkspaceTip({ card, dispatch, path, branch, repository, sink }) {
   try {
-    return await workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card }) }).tip(path, branch);
+    return await workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card, dispatch }) }).tip(path, branch);
   } catch (cause) {
     if (cause.code === EVENT_REFUSED) throw cause;
     throw new Error(`card #${card}'s line of work has no readable tip in workspace ${path}: ${cause.message}`, { cause });
@@ -200,14 +200,14 @@ async function makeDetachedDirectory({ root, topic, card, role, head, repository
  *
  * A directory already there is removed first, without following any symbolic link inside it, once
  * `scratchReplaceable` has passed what is there. L1
- * records under the card a `workspace.removed` and a `workspace.made`, each carrying `role` and
+ * records under the card and optional dispatch a `workspace.removed` and a `workspace.made`, each carrying `role` and
  * the path, and a `workspace.failed` carrying them and why. An answered replace-rule refusal
  * rejects with `SCRATCH_REFUSED`; an unanswered check or make rejects with `WORKSPACE_NOT_MADE`.
  * Each names the path and why. A refused sink event rejects with `EVENT_REFUSED`, as in
  * `makeWorkspace`.
  */
-export async function makeScratch({ base, role, card, repository, sink }) {
-  const events = sink.emitter({ layer: 'L1', card });
+export async function makeScratch({ base, role, card, dispatch, repository, sink }) {
+  const events = sink.emitter({ layer: 'L1', card, dispatch });
   const path = join(base, role);
   const step = async (work) => {
     try {
@@ -219,7 +219,7 @@ export async function makeScratch({ base, role, card, repository, sink }) {
       throw notMade(events, `role ${role}'s scratch directory for card #${card}`, { role, path }, cause, report);
     }
   };
-  const there = await step(() => scratchReplaceable({ base, path, repository, adapter: workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card }) }) }));
+  const there = await step(() => scratchReplaceable({ base, path, repository, adapter: workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card, dispatch }) }) }));
   if (there) {
     await step(async () => {
       writable(path);
@@ -641,7 +641,7 @@ export async function workspaceHandle({ root, topic, repository, sink }) {
   const { accepted, why } = await workspaces({ repository, emitter: sink.emitter({ layer: 'L0' }) }).acceptsBranch(name);
   if (!accepted) throw new Error(`the worktree topic \`${topic}\` derives ${name} for card #1, which git refuses as a branch name: ${why}`);
   const handle = (card, head) => makeWorkspace({ root, topic, card, head, repository, sink });
-  handle.tip = ({ card, path, branch }) => readWorkspaceTip({ card, path, branch, repository, sink });
+  handle.tip = ({ card, dispatch, path, branch }) => readWorkspaceTip({ card, dispatch, path, branch, repository, sink });
   return handle;
 }
 

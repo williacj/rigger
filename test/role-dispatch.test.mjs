@@ -1,6 +1,9 @@
 // ABOUTME: Tests L1's role runner: what `roleDispatch` hands L1's `dispatch` for a role's answer,
 // through the provider adapter the answer names, and what L1 records of the dispatch it runs.
 
+import { GIT, holding, withFirstOnPath } from './process-fixtures.mjs';
+import { assertCommandContext, commandKills, leavingRecordedChild } from './event-context-world.mjs';
+import { workspaceHandle } from '../src/execution/workspace.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
@@ -236,7 +239,7 @@ test('roleDispatch hands the adapter\'s invocation an L0 emitter under the dispa
   const handed = await roleDispatch({ answer: answerOf(), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-probe', card: 1412, adapters: { 'stand-in': adapter } });
 
   assert.equal(handed.command, '/usr/bin/true');
-  assert.deepEqual(readEvents(state).map(({ layer, event, dispatch: id, card, role, path }) => ({ layer, event, id, card, role, path })), [{ layer: 'L1', event: 'workspace.made', id: undefined, card: 1412, role: 'engineer', path: join(scratchOf(directory), 'engineer') }, { layer: 'L0', event: 'probe.ran', id: 'd-probe', card: 1412, role: undefined, path: undefined }]);
+  assert.deepEqual(readEvents(state).map(({ layer, event, dispatch: id, card, role, path }) => ({ layer, event, id, card, role, path })), [{ layer: 'L1', event: 'workspace.made', id: 'd-probe', card: 1412, role: 'engineer', path: join(scratchOf(directory), 'engineer') }, { layer: 'L0', event: 'probe.ran', id: 'd-probe', card: 1412, role: undefined, path: undefined }]);
 });
 
 test('given a role dispatch through L1, the stand-in agent reads on its standard input exactly the role answer\'s instruction followed by its evidence', SETTLES_WITHIN, async (t) => {
@@ -1653,4 +1656,60 @@ test('a Codex role and a provisioning step leave the configuration home alone', 
   assert.deepEqual(readdirSync(home), ['kept.txt', 'projects']);
   assert.equal(readFileSync(kept, 'utf8'), 'kept\n');
   assert.deepEqual(readdirSync(join(home, 'projects')), []);
+});
+
+// Losing the id before makeScratch must not leave any scratch lifecycle event uncorrelated.
+// proves R-RECORD-7
+test('maker judge and escalation scratch lifecycle events share their dispatch.start identity', SETTLES_WITHIN, async (t) => {
+  for (const role of ['engineer', 'reviewer', 'pm']) {
+    const here = layout(t);
+    const { adapter } = standIn('/usr/bin/true');
+    const request = { answer: answerOf({ role }), cwd: here.cwd, directory: here.directory, scratch: here.scratch,
+      repository: here.repository, reach: [], env: {}, sink: here.sink, state: here.state, adapters: { 'stand-in': adapter } };
+    assert.equal((await throughL1(request)).exit, 0);
+    await roleDispatch({ ...request, id: 'd-role', card: 1412 });
+    writeFileSync(join(here.scratch, role, '.git'), 'a checkout must be refused\n');
+    await assert.rejects(roleDispatch({ ...request, id: 'd-role', card: 1412 }), { code: 'SCRATCH_REFUSED' });
+    assert.equal(readFileSync(join(here.scratch, role, '.git'), 'utf8'), 'a checkout must be refused\n');
+    const events = eventsIn(here.state);
+    const start = events.find((event) => event.event === 'dispatch.start');
+    assert.equal(start.dispatch, 'd-role');
+    const scratchEvents = events.filter((event) => event.layer === 'L1' && event.path === join(here.scratch, role));
+    assert.deepEqual(scratchEvents.map((event) => event.event), ['workspace.made', 'workspace.removed', 'workspace.made', 'workspace.failed']);
+    for (const event of scratchEvents) {
+      assert.equal(event.card, 1412);
+      assert.equal(event.dispatch, start.dispatch, `${role} ${event.event} must name its dispatch.start`);
+    }
+  }
+});
+
+
+// A clean check emits nothing; its recorded surviving child makes the missing L0 context observable.
+// proves R-RECORD-7
+test('scratch worktree check survivor events retain the role dispatch', SETTLES_WITHIN, async (t) => {
+  const here = layout(t);
+  const directory = holding(t);
+  leavingRecordedChild(directory, 'git', `'${GIT}' "$@"`);
+  const { adapter } = standIn('/usr/bin/true');
+  await withFirstOnPath(directory, () => roleDispatch({ answer: answerOf(), cwd: here.cwd, directory: here.directory,
+    scratch: here.scratch, repository: here.repository, reach: [], env: {}, sink: here.sink, id: 'd-scratch', card: 1412,
+    adapters: { 'stand-in': adapter } }));
+  const rows = commandKills(directory, eventsIn(here.state), 'git');
+  assertCommandContext(rows, (args) => args.includes('worktree list'), 1412, 'd-scratch', 'scratch worktree check');
+});
+
+
+// The handle must forward its caller's completed maker dispatch into the git-tip read.
+// proves R-RECORD-7
+test('workspace tip survivor events retain the completed maker dispatch through its handle', SETTLES_WITHIN, async (t) => {
+  const here = layout(t);
+  gitIn(here.repository, 'commit', '-qm', 'fixture tip', '--allow-empty');
+  const path = worktreeAt(here.repository, join(here.root, 'maker'), 'rigger-1412');
+  const expected = gitIn(path, 'rev-parse', 'HEAD').trim();
+  const handle = await workspaceHandle({ root: join(here.root, 'worktrees'), topic: 'rigger-{number}', repository: here.repository, sink: here.sink });
+  const directory = holding(t);
+  leavingRecordedChild(directory, 'git', `'${GIT}' "$@"`);
+  const tip = await withFirstOnPath(directory, () => handle.tip({ card: 1412, path, branch: 'rigger-1412', dispatch: 'd-tip' }));
+  assert.equal(tip, expected);
+  assertCommandContext(commandKills(directory, eventsIn(here.state), 'git'), (args) => args.includes('rev-parse'), 1412, 'd-tip', 'workspace tip');
 });

@@ -201,8 +201,9 @@ async function claiming(verb, limit, opened, {
 
   const forge = { ...config.board, repo: config.repo };
   const board = readSide(forge, { send, emitter: sink.emitter({ layer: 'L0' }) });
-  const reads = repositoryReads(forge, { send, emitter: sink.emitter({ layer: 'L0' }) });
-  const l2 = columnChanges({ config, sink, send, reads });
+  const cardReads = (card, dispatch) => repositoryReads(forge, { send, emitter: sink.emitter({ layer: 'L0', card, dispatch }) });
+  const reads = cardReads();
+  const l2 = columnChanges({ config, sink, send, cardReads });
   // L3 answers, as `trigger` says, a card whose maker ran, with its maker's outcome, L2's settle
   // and the judges L2 then named; a card pulled for its judges alone, with those judges; and,
   // where any card failed, a failure carrying both kinds of card as `reached`, a card one of whose
@@ -251,7 +252,7 @@ async function claiming(verb, limit, opened, {
       panel.withheld.set(role, `was not dispatched, because ${which} could not be made: ${outcome.reason?.message}`);
     }
   };
-  const facts = factsCall({ config, reads, decide });
+  const facts = (cards) => factsCall({ config, reads: cards.length === 1 ? cardReads(cards[0].number) : reads, decide })(cards);
   const state = join(named, STATE);
   const kill = () => killRecordedGroups({ directory: state, sink, ps, readTimeout });
   const { project } = config.board;
