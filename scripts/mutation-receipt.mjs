@@ -99,6 +99,11 @@ export async function runTests(tree, temporary, file, { timeout = 60, pattern } 
   const stdout = ran.stdout.toString('utf8');
   const stderr = ran.stderr.toString('utf8');
   const stream = stdout.split('\n').filter((line) => line.startsWith('@@proof ')).map((line) => JSON.parse(line.slice(8)));
+  return { ...ran, stdout, stderr, command: ['sh', ...args], ...parseEvents(stream, tree), events };
+}
+
+/** Node's reporter events from one file's run, parsed into its named tests and the file's own verdicts. */
+export function parseEvents(stream, tree) {
   const registrations = new Map(stream.filter((event) => event.type === 'test:enqueue' && event.data.entryFile !== undefined)
     .map(({ data }) => [JSON.stringify([data.entryFile, data.testId]), data]));
   const identity = (test) => {
@@ -130,8 +135,7 @@ export async function runTests(tree, temporary, file, { timeout = 60, pattern } 
       identity: identity(event.data), identityReason: identityReason(event.data),
     }));
   // Node's file-only verdict has no entryFile; an unmatched pattern can otherwise look green.
-  return { ...ran, stdout, stderr, command: ['sh', ...args], count: tests.length,
-    tests: tests.filter((test) => test.entryFile !== undefined), fileVerdicts: tests.filter((test) => test.entryFile === undefined), events };
+  return { count: tests.length, tests: tests.filter((test) => test.entryFile !== undefined), fileVerdicts: tests.filter((test) => test.entryFile === undefined) };
 }
 
 export async function mutationReceipt(options) {
