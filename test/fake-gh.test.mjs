@@ -83,7 +83,7 @@ test('fake gh repository setup shares existing board issues unless the seed expl
   const board = { columns: ['Review'], items: [{ type: 'issue', repository: WHERE.repo, number: 214, title: 'Held card', body: 'Existing body.', labels: ['keep'], column: 'Review' }] };
   const fake = installed(board);
   seedRepository(fake, { pullRequests: [{ number: 301, head: 'rigger-214', sha: 'a'.repeat(40) }] });
-  assert.deepEqual(await onPath(fake, () => reads().readIssue(214)), { number: 214, title: 'Held card', body: 'Existing body.', labels: ['keep'] });
+  assert.deepEqual(await onPath(fake, () => reads().readIssue(214)), { number: 214, title: 'Held card', body: 'Existing body.', state: 'open', author: 'rigger-fake', labels: ['keep'] });
   const absent = installed(board);
   seedRepository(absent, { issues: [] });
   assert.equal(await onPath(absent, () => reads().readIssue(214)), null, 'explicit absence stays a negative fixture');
@@ -881,8 +881,8 @@ test('the repository read answers each issue the fake gh holds: every label past
   });
 
   await onPath(fake, async () => {
-    assert.deepEqual(await reads().readIssue(214), { number: 214, title: 'Card 214', body: 'Why.', labels });
-    assert.deepEqual(await reads().readIssue(215), { number: 215, title: 'Card 215', body: '', labels: ['type:change'] });
+    assert.deepEqual(await reads().readIssue(214), { number: 214, title: 'Card 214', body: 'Why.', state: 'open', author: 'rigger-fake', labels });
+    assert.deepEqual(await reads().readIssue(215), { number: 215, title: 'Card 215', body: '', state: 'open', author: 'rigger-fake', labels: ['type:change'] });
     assert.equal(await reads().readIssue(216), null);
     assert.equal(await reads().readIssue(301), null);
     assert.equal(await reads().readIssue(999), null);

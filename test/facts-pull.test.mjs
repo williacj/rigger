@@ -260,7 +260,7 @@ async function pullWithRoles(cards, roles) {
   const settings = { ...config, concurrency: 3 };
   const decide = (card, outcomes, attempt) => nextAction(card, KINDS, undefined, { columns: COLUMNS, roles, provisioning: {}, outcomes, sink, ...attempt });
   const workspace = recordingWorkspaces();
-  const built = loop({ config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2: columnChanges({ config: settings, sink, items: fake.operations }), sink, kill: async () => {}, workspace, judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), removeDirectories: async () => {}, state: directory, environment: { ...process.env, PATH: agent.first() }, run: 'r-tier' });
+  const built = loop({ config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2: columnChanges({ config: settings, sink, items: fake.operations, reads: createFakeRepository().operations }), sink, kill: async () => {}, workspace, judgeDirectory: makingJudgeDirectories(temporaryDirectory('rigger-judge-directories-')), removeDirectories: async () => {}, state: directory, environment: { ...process.env, PATH: agent.first() }, run: 'r-tier' });
   const reached = await built.pull().then(() => assert.fail('the stopped pull fulfilled'), (failure) => failure.errors.filter((each) => each.attemptFailures));
   return { fake, reached, events: () => readEvents(directory), asked: workspace.asked };
 }

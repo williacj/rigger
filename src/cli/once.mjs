@@ -324,14 +324,17 @@ async function claiming(verb, limit, opened, {
     const heading = `rigger ${verb}: claimed #${held.card} from board ${project}; its maker did not start: ${attempts.at(-1).reason}, and the card was ${held.decision === 'hold' ? 'held' : 'stopped'} after ${attempts.length} attempts:`;
     return [heading, ...attempts.map((each, at) => `attempt ${at + 1}: ${JSON.stringify(each)}`)].join('\n');
   };
+  /** The line naming hold `id`'s failed notice: the step L2 names, and its cause. */
+  const noticeLine = (id, { step, cause }) => `rigger ${verb}: the notice for hold ${id} failed to ${step}: ${cause}`;
   /**
    * The lines naming each closer a held card's failure among `held` carries, once each however many
-   * of its judges held: admission closed by it, in `closerLine`'s words, and, where its close left
-   * a temporary file, that file, as `pause` says it.
+   * of its judges held: admission closed by it, in `closerLine`'s words, its notice where that
+   * failed, and, where its close left a temporary file, that file, as `pause` says it.
    */
   const holdLines = (held) => [...new Map(held.filter(({ closer }) => closer !== undefined).map(({ closer }) => [closer.name, closer])).values()]
     .flatMap((closer) => [
       `rigger ${verb}: ${closerLine(closer)}`,
+      ...(closer.notice ? [noticeLine(closer.id, closer.notice)] : []),
       ...(closer.leftover ? [`rigger ${verb}: the temporary file ${closer.leftover} could not be removed, and the close stands`] : []),
     ]);
   let reached;
@@ -361,9 +364,10 @@ async function claiming(verb, limit, opened, {
   }
   const refused = refusals.map(refusalLine);
   if (reached.admission?.state === 'closed') {
+    const notices = (reached.notices ?? []).map((failed) => noticeLine(failed.id, failed));
     return {
-      text: [...reached.admission.closers.map((closer) => `rigger ${verb}: ${closerLine(closer)}`), ...refused].join('\n'),
-      code: 0,
+      text: [...reached.admission.closers.map((closer) => `rigger ${verb}: ${closerLine(closer)}`), ...notices, ...refused].join('\n'),
+      code: notices.length === 0 ? 0 : 1,
     };
   }
   // Nothing to pull is the one outcome this verb meets in full, so it alone exits zero (U29).

@@ -226,6 +226,28 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
     return { name, ...named, alreadyGone: false };
   }
 
+  /**
+   * Renames the hold closer `name` to attach where its notice can be, as L2's notice answered:
+   * `rename` is `after` or `issue`, and `number` the number the new name carries beside the hold's
+   * id. Answers `{ name }`, the new name, and records one `admission.rename` event; or `{ gone }`
+   * where the closer was gone, recording nothing.
+   */
+  function rename(name, { rename: to, number }) {
+    const named = parseName(name);
+    if (named?.kind !== 'hold' || !['after', 'issue'].includes(to) || !Number.isSafeInteger(number) || number < 1) {
+      throw new Error(`admission renames only a hold closer to after or issue a number, not ${JSON.stringify(name)} to ${JSON.stringify({ to, number })}`);
+    }
+    const renamed = `hold-${named.id}-${to}-${number}.json`;
+    try {
+      fs.renameSync(join(dir, name), join(dir, renamed));
+    } catch (error) {
+      if (error.code === 'ENOENT') return { gone: true };
+      throw new Error(`admission cannot rename ${join(dir, name)}: ${causeOf(error)}`, { cause: error });
+    }
+    record('admission.rename', { kind: 'hold', id: named.id, from: name, to: renamed, name: renamed });
+    return { name: renamed };
+  }
+
   /** The names in the directory now carrying hold id `id`. */
   function holdNames(id) {
     const listing = list();
@@ -303,5 +325,5 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
     return { removed, gone };
   }
 
-  return { read, close, open, resume };
+  return { read, close, open, resume, rename };
 }

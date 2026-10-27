@@ -192,7 +192,7 @@ function within(card, kind, declared, { roles, tier, topic, provisioning, outcom
   if (workspace !== undefined) return failedAttempt(card, attempt, firstFailure, unmade(workspace, card), sink);
   if (maker !== undefined) {
     if (maker?.status === 'rejected' && [NOT_STARTED, SCRATCH_REFUSED].includes(maker.reason?.code)) {
-      return failedAttempt(card, attempt, firstFailure, { maker: declared.maker, status: maker.status, code: maker.reason.code, reason: maker.reason.message }, sink);
+      return failedAttempt(card, attempt, firstFailure, { maker: declared.maker, status: maker.status, code: maker.reason.code, reason: maker.reason.message, ...dispatchOf(maker) }, sink);
     }
     return { action: 'settled' };
   }
@@ -204,7 +204,7 @@ function within(card, kind, declared, { roles, tier, topic, provisioning, outcom
     const name = steps[at];
     const failure = failed(outcome, provisioning[name], card, name);
     if (failure === undefined) continue;
-    if (workRequires(provisioning[name])) return failedAttempt(card, attempt, firstFailure, { step: name, ...failure }, sink);
+    if (workRequires(provisioning[name])) return failedAttempt(card, attempt, firstFailure, { step: name, ...failure, ...dispatchOf(outcome) }, sink);
     if (at === outcomes.length - 1) {
       try {
         sink.emitter({ layer: 'L2', card: card.number }).emit('step.failed', { step: name, ...failure, optional: true });
@@ -216,6 +216,9 @@ function within(card, kind, declared, { roles, tier, topic, provisioning, outcom
   if (outcomes.length === steps.length) return { action: 'dispatch', kind, maker: makerAnswer(card, declared.maker, roles?.[declared.maker] ?? {}, tier, topicFor(topic, card.number), continuing) };
   return { action: 'dispatch', kind, step: stepAnswer(steps[outcomes.length], provisioning) };
 }
+
+/** The dispatch id L3 tagged `outcome` with, as a failure carries it, so a hold's notice names it; none where it carries none. */
+const dispatchOf = (outcome) => (outcome?.dispatch === undefined ? {} : { dispatch: outcome.dispatch });
 
 /** L2's answer for the provisioning step named `name`: its name, and what L1 runs, as `provisioning` declares it. */
 export function stepAnswer(name, provisioning) {
@@ -258,9 +261,11 @@ function failedAttempt(card, attempt, firstFailure, what, sink) {
   const again = refusals.length === 0 && failure.class === 'environment' && attempt < ATTEMPTS;
   if (attempt === ATTEMPTS && firstFailure === undefined) throw new Error(`card #${card.number}'s second attempt failed without its first attempt's failure, so L2 answers no action`);
   const hold = refusals.length === 0 && !again && sameWay(firstFailure, failure);
+  const { dispatch, ...recorded } = failure;
+  // The sink stamps a dispatch's id itself, so the failure is recorded under the id it carries.
   const events = sink.emitter({ layer: 'L2', card: card.number });
   try {
-    events.emit('attempt.failed', { attempt, ...failure });
+    sink.emitter({ layer: 'L2', card: card.number, ...(dispatch === undefined ? {} : { dispatch }) }).emit('attempt.failed', { attempt, ...recorded });
     events.emit('attempt.decided', { attempt, decision: refusals.length > 0 ? 'escalate' : again ? 'again' : hold ? 'hold' : 'stop', ...(hold ? { failures: [firstFailure, failure] } : {}) });
   } catch (refusal) {
     throw new Error(`card #${card.number}'s attempt ${attempt} failed, and the event sink refused to record it, so L2 answers no action: ${refusal.message}`, { cause: refusal });
