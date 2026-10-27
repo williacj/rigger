@@ -158,7 +158,7 @@ workaround.
 | | | — a destination names no declared role; | |
 | | | — a role is the destination of critical or a recorded-decision change. | |
 | **Improvement roles** | Per loop: the role, its cadence (drain or clock), and the signals it reads | L6 | After v0 |
-| **Clock triggers** | A schedule, a card template or an internal job, and a catch-up policy | L3 | Yes |
+| **Clock triggers** | Per trigger, a schedule, a card template or an internal job, and a catch-up policy. Beside the triggers, the board poll's interval, which `run` waits between two polls of the board while idle. Both in the form given below the table | L3 | Yes |
 | **Provider adapters** | A module implementing the adapter interface for one agent CLI. It turns an agent file, a tier and a prompt into the CLI's invocation in one directory. It names the one folder its CLI keeps for that directory outside the dispatch's directories, or none. It loads only the tools and connectors that directory declares | L0 | Claude Code shipped; Codex shipped in M4 |
 | **Forge adapter** | A module implementing the board, issue, PR, and CI interface, with the forge assets `init` forks. The one asset is the gate workflow, and `init` reads its destination from `src/substrate/forge/assets.mjs` | L0, and `init` for each asset's destination | GitHub only; the interface exists so a second forge is an L0 change and nothing else |
 | **Deliverable** | Fixed in v0: a pull request merged behind the gate. Content scenarios still deliver by branch and PR. A publish adapter for non-git targets is a later L0 extension | L2 | Fixed |
@@ -249,6 +249,20 @@ topic names directly under `root`, and its line of work as the branch of the sam
 optional, and so is each key under it. Where one is absent, it takes the default the Engine
 settings row states.
 
+The clock declaration is one top-level key, and it reads `clock: { poll, triggers: { … } }`.
+`triggers` holds each clock trigger the consumer declares, keyed by its name, and each declares
+what the Clock triggers row lists. `poll` is the milliseconds `run` waits between two polls of the
+board while idle, as "Triggers" sets out. `poll` is required wherever a trigger is declared, and it
+has no default. The config validator refuses a clock declaration without `poll` (`R-SCHED-10`).
+
+`poll` has no default because nothing in this repository fixes a figure for it, and a default
+with no source would be a judgment presented as a measurement. What would reverse it: a measured
+count of the forge calls one poll makes, giving a figure that stays inside the forge's rate limit
+at a stated board size.
+
+The fenced shape above holds no `clock` key. The key enters it in the change in which the
+validator offers it, so that the shape holds exactly what the validator offers at every commit.
+
 A provider adapter is the one place Rigger holds a fact about its agent CLI. That covers how
 `doctor` asks whether the CLI is signed in and where `init` forks its templates. It also covers
 which model each tier selects, and how an agent file, a prompt and a directory become the CLI's
@@ -306,6 +320,132 @@ without a card. A clock trigger that fires while
 Rigger is not running fires once on the next start if its window was missed; that catch-up policy
 is per trigger in config.
 
+A clock trigger is declared where the clock declaration's `triggers` names at least one trigger. A
+clock declaration holding a `poll` and no trigger declares none. With no clock trigger declared,
+`run` ends once the board drains, and launchd's relaunch is what reads the board again ("How `run`
+is supervised", below). While a clock trigger is declared, `run` stays up after the board drains
+and fires each trigger as it comes due. Under `once`, no clock trigger fires, and nothing in the
+subsection below applies.
+
+### While a clock trigger keeps `run` up
+
+`loop.mjs`'s `run` decides not to end at drain while a clock trigger is declared. No module outside
+it makes that decision. In every state this subsection does not name, `run` acts as it does with no
+clock trigger declared.
+
+**The board poll.** While no claim is held, `run` polls the board every `poll` milliseconds. A
+poll is Pull's own read, not a fourth trigger kind:
+
+- It is how L3 sees a card ready and a slot free once launchd no longer relaunches `run`.
+  `R-SCHED-6`'s three occasions are unchanged.
+- Each poll fires the pull trigger, and records the event a pull trigger records: `trigger`, with
+  `trigger: 'pull'`.
+- A poll that claims nothing fires no second drain in the same idle period. Drain still fires once
+  per idle period.
+- A poll that claims a card ends the idle period.
+
+The poll starts whenever no claim is held, whatever ended the last claim. A drain, a merge claim's
+end and a claim whose move the board refused each leave `run` holding no claim. Where no drain
+fired before the poll started, the first poll that finds nothing in flight and nothing to pull fires
+it.
+
+While one or more claims are held, `run` does not poll. It pulls again at each slot release, as
+with no clock trigger declared. A partly occupied `run` therefore sees a new Ready card only at its
+next release.
+
+Two polls never run at once. The next poll fires `poll` milliseconds after the previous poll
+settles, not after it starts. A poll whose reads outlast `poll` therefore delays the next one, and
+never overlaps it.
+
+The timer lives in `src/scheduling/clock.mjs`, with a clock its caller injects, so a test needs no
+sleeps. That one timer wakes L3 both for the poll and for each trigger's next occurrence.
+`loop.mjs` wires it into `run`, and holds no timer of its own. What would reverse it: a third
+timer need unrelated to the clock, which would make the module a scheduling utility.
+
+Whether an internal job's firing counts as in flight, and so holds back the poll and the drain, is
+the clock declaration's placement, M7-04a on #1009. This subsection does not place it.
+
+**A poll in each idle state.**
+
+| State | What happens |
+|---|---|
+| admission closed | the poll claims nothing (`R-SCHED-3`), and names each closer as "Failure model" says |
+| a read of the board, the priority, the facts or admission fails | the next poll fires on schedule, and `run` hands the failure to the verb as set out below |
+| the sink refuses the poll's `trigger` event | the poll claims nothing, under the halt ("Failure model"); the next poll fires on schedule, and `run` hands the refusal to the verb |
+| a hold's closer could not be saved | `run` polls no more. It ends once the claims it holds finish, and exits non-zero naming the failure, as "Failure model" says |
+
+`run` ends on a hold's closer it could not save, rather than polling on. No pull claims a card
+after that failure, so a `run` that stayed up would poll and claim nothing for the rest of its
+life. Ending it lets launchd's next start read admission again. What would reverse it: a `run`
+that can read admission again and clear that failure itself.
+
+**Where `run`'s outcomes go.** With no clock trigger declared, `run` hands the verb what every card
+answered once it ends. The verb prints it and picks the exit status. While a clock trigger keeps
+`run` up, it hands the verb its outcomes as follows:
+
+- At each drain trigger, `run` hands the verb what settled since its previous hand-over: each
+  card's outcome, the closers a closed admission answered, and each failure.
+- A poll that fails, or whose `trigger` event the sink refuses, hands its failure to the verb as
+  that poll settles, among that idle period's outcomes.
+- The verb prints each hand-over as it prints a whole run with no clock trigger declared, and exits
+  at none of them.
+- A `run` ended by a signal or at a `bootout` runs L0's exit cleanup, which sets the exit status
+  ("Failure model"). launchd then relaunches it.
+- A `run` ended on a hold's closer it could not save hands the verb what settled since its previous
+  hand-over, and the verb exits non-zero, as above.
+
+**Cards this run set aside.** A card L3 keeps out of later pulls under "Failure model"'s memory is
+**set aside**. With no clock trigger declared, a set-aside card stays skipped for the run's life,
+which ends at the drain. While a clock trigger keeps `run` up, a set-aside card stays skipped until a
+read of the board begun after the run set it aside finds it in a column other than its compared
+column (M7-U4 Q20 (c) on #1009). That holds whatever set the card aside.
+
+A set-aside card's **compared column** is the column the pull that claimed it read. Each column
+change this run made to the card that the board accepted changes the compared column to the
+change's target. The claim's move to Coding, L2's moves, the lane's moves at a merge's end and an
+escalation's move to Owner are such changes, so none of them ends the skip. A change the board
+refused leaves the compared column as it was.
+
+Each read of the board ends a skip, or leaves it, as follows:
+
+| A read of the board | What follows |
+|---|---|
+| begun before the run set the card aside | the skip holds, whatever column the read shows the card in |
+| begun after, finding the card in its compared column | the skip holds. A card whose compared column is Ready stays skipped while each read finds it in Ready |
+| begun after, finding the card in Ready, its compared column being another | the skip ends, and a pull claims the card as it claims any Ready card, at the next poll or slot release |
+| begun after, finding the card in a column other than Ready and other than its compared column | the skip ends, and a pull answers the card as it answers any card in that column |
+| begun after a refused change that the forge made anyway | the read finds the card in the change's target column, so the skip ends under the two rows above |
+
+L3 sees only what each read shows. A card moved out of its column and back again between two of
+this run's reads therefore stays skipped, because a change undone before the next read is not
+seen. A skip that ends removes the card from the memory, and a later setting aside starts its
+entry afresh. A new `run`, as after launchd's relaunch, starts with no card set aside.
+
+`loop.mjs`'s `run` keeps the memory, in place of its set of excluded card numbers. For each
+set-aside card it keeps the card's number, its compared column, and how many reads of the board
+had begun when it set the card aside. Each of L2's column changes answers, once the board accepted
+it, the column it left the card in, and `run` takes that as the compared column. `take`'s
+`available` is the step that compares: for a read begun after the setting aside, it compares the
+compared column with the item's `column`, which `readPriority` already answers. No other module
+holds the memory. What would reverse it: a second reader of the memory, such as `plan` or `doctor`
+showing which cards are skipped.
+
+**What a poll costs.** One idle poll is one `take`. With admission open, it makes about 3 + *a* +
+6*r* forge calls, where *a* counts the cards in Ready, Coding, Review or Owner. Of those, *r*
+counts the ones in Coding, Review or Owner holding exactly one open pull request. This figure is a judgment,
+not a measurement, and its premise is the reads `take` and `facts.mjs` make:
+
+- `readColumns` and `readPriority`, once each, with one more page of `readPriority` per 100 items;
+- `readBranches`, once, where any card is in one of those four columns;
+- one read of each such card's pull requests;
+- for each card *r* counts, `readMergeBase`, `readDiff`, `readComments`, `readMergeable` and
+  `readEffectiveRules`, then `readCheckStates`.
+
+The figure leaves out admission's reads, which read the state directory and not the forge. A card
+in Done costs nothing. M7-24 on #1009 measures the figure on a fake forge.
+
+### Supervising `run`
+
 Keeping the Rigger process alive across reboots is the OS scheduler's job. The launchd assets that
 do it are L0. A Windows equivalent arrives with native Windows, which is not in v0. On macOS the
 asset is one per-user LaunchAgent template under `templates/launchd/`, and `D28` records why. Spike
@@ -316,7 +456,9 @@ asset is one per-user LaunchAgent template under `templates/launchd/`, and `D28`
 - **How `run` is supervised.** `StartInterval` re-launches the unchanged `rigger run`, and
   `RunAtLoad` is true. launchd never starts the job while a run is in progress, and starts it again
   one interval after it exits, with no firing queued (Q-a3). Without `RunAtLoad`, the first start
-  waits one interval (Q-a1, Q-a2).
+  waits one interval (Q-a1, Q-a2). While a clock trigger is declared, `run` does not end at drain,
+  so launchd's relaunch covers only an exit: by a signal, at a `bootout`, or on a failure that ends
+  `run`.
 - **When it starts.** A LaunchAgent starts after the owner logs in, never before it (Q-l). Across
   a reboot, the job therefore starts at the owner's next login, not at boot (U1 Q5 on #740).
 - **The job's process groups.** launchd never signals a process in a group of its own, at a

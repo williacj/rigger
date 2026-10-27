@@ -1067,11 +1067,19 @@ owner signed in (Q-g to Q-i). A daemon runs outside the owner's login, so it wou
 sign-ins of its own, which the deferred row defers. That is a judgment: the spike ran no daemon,
 because Q-p was out of its scope.
 
-Rule 2 keeps `run`'s contract in `README.md`, which runs until the board drains. Under
-`StartInterval`, launchd never starts the job while a run is in progress, queues no firing, and
-starts it again one interval after it exits (Q-a3). `KeepAlive` restarts a `run` that drained
-after every `ThrottleInterval`, which is 10 s by default (Q-b). Each such start reads the board and
-its cards' pull requests again. That this costs too many forge calls is S7's judgment: the spike
-measured no forge calls.
+Rule 2 keeps `run`'s contract in `README.md`. With no clock trigger declared, `run` runs until
+the board drains. Under `StartInterval`, launchd never starts the job while a run is in progress,
+queues no firing, and starts it again one interval after it exits (Q-a3). `KeepAlive` restarts a
+`run` that drained after every `ThrottleInterval`, which is 10 s by default (Q-b). Each such start
+reads the board and its cards' pull requests again. That this costs too many forge calls is S7's
+judgment: the spike measured no forge calls.
+
+While a clock trigger is declared, `run` does not end at drain, as the owner ruled in M7-U2 item 1
+on #1009. Rule 2's relaunch then covers only an exit: by a signal, at a `bootout`, or on a failure
+that ends `run`. Neither rule changes. While `run` stays up and idle, it polls the board, reading
+the board and its cards' pull requests again at each poll. That is the cost the paragraph above
+cites against `KeepAlive`, on a timer the consumer declares. That the idle poll's forge cost is
+acceptable is a judgment of the same kind as S7's, and M7-24 on #1009 measures it.
+`ARCHITECTURE.md`'s "Triggers" holds the structure that carries the poll.
 
 This decision adds no requirement row.
