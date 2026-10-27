@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdirSync, readFileSync } from 'node:fs';
+import { namesIn, removeClosers } from './admission-world.mjs';
 import { join } from 'node:path';
 import { dirname } from 'node:path';
 
@@ -454,6 +455,8 @@ test('a judge scratch refusal remains SCRATCH_REFUSED and escalates its card', S
 test('two once invocations over the same board and state count the held card afresh', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace', { other: false });
   const first = await built.loop.pull(1).then(() => assert.fail('the first pull fulfilled'), (failure) => failure);
+  // The hold closed admission, so the owner resumes before the second invocation.
+  removeClosers(built.directory);
   const second = await built.loop.pull(1).then(() => assert.fail('the second pull fulfilled'), (failure) => failure);
 
   assert.equal(stopOf(first, 1).decision, 'hold');
@@ -484,10 +487,10 @@ test('a held card records no escalation and writes no comment on its issue', SET
 });
 
 // proves R-FAIL-8
-test('a held card writes nothing under admission state', SETTLES_WITHIN, async () => {
+test('a held card writes one hold closer under admission state', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace', { other: false });
   await assert.rejects(built.loop.pull(1));
-  assert.equal(existsSync(join(built.directory, 'admission')), false);
+  assert.deepEqual(namesIn(built.directory).map((name) => name.split('-')[0]), ['hold']);
 });
 
 // proves R-FAIL-8
@@ -584,6 +587,8 @@ for (const kind of ['maker', 'workspace']) {
   test(`a later invocation pulls a card held for ${kind} again`, SETTLES_WITHIN, async () => {
     const { built, failure } = await runFailure(kind);
     stopOf(failure, 1);
+    // The hold closed admission, so the owner resumes before the later invocation.
+    removeClosers(built.directory);
 
     const later = await built.loop.pull(1).then(() => assert.fail('the later pull fulfilled'), (thrown) => thrown);
 

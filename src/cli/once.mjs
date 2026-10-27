@@ -333,11 +333,21 @@ async function claiming(verb, limit, opened, {
     const heading = `rigger ${verb}: claimed #${held.card} from board ${project}; its maker did not start: ${attempts.at(-1).reason}, and the card was ${held.decision === 'hold' ? 'held' : 'stopped'} after ${attempts.length} attempts:`;
     return [heading, ...attempts.map((each, at) => `attempt ${at + 1}: ${JSON.stringify(each)}`)].join('\n');
   };
+  /**
+   * The lines naming each closer a held card's failure among `held` carries, once each however many
+   * of its judges held: admission closed by it, in `closerLine`'s words, and, where its close left
+   * a temporary file, that file, as `pause` says it.
+   */
+  const holdLines = (held) => [...new Map(held.filter(({ closer }) => closer !== undefined).map(({ closer }) => [closer.name, closer])).values()]
+    .flatMap((closer) => [
+      `rigger ${verb}: ${closerLine(closer)}`,
+      ...(closer.leftover ? [`rigger ${verb}: the temporary file ${closer.leftover} could not be removed, and the close stands`] : []),
+    ]);
   let reached;
   try {
     // The verb hands L3 the process's own environment, which L3 hands every dispatch it makes
     // (the architect's ruling 2, P7, on #467), and no maker: L3 dispatches it through L1.
-    reached = await loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, environment: process.env }).pull(limit);
+    reached = await loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, environment: process.env, run: opened.run }).pull(limit);
   } catch (failure) {
     // What L3 reports is said whole, one line per failure it holds, and the exit is non-zero:
     // an event the record refused names an action Rigger took and could not record, or a start
@@ -345,7 +355,8 @@ async function claiming(verb, limit, opened, {
     // unconfirmed group or unreadable record. A card held or stopped after its second attempt names each
     // attempt's failure. Each is loud by the owner's ruling (#277; `ARCHITECTURE.md`, "Failure
     // model"). The record is not used to say so, because the record is what failed. A held or stopped
-    // card is named only from its failure. When its last failure was a maker that never started,
+    // card is named only from its failure, and a held card's closer after the failures, once, in
+    // `closerLine`'s words, as `holdLines` says. When its last failure was a maker that never started,
     // the shared presenter puts that reason first; other stops keep L3's wording. The cards the
     // same pull left at their workspaces are named first, as they would be had none failed, a card
     // whose maker ran and whose judges then failed among them. A judge that failed to hand back is
@@ -353,7 +364,7 @@ async function claiming(verb, limit, opened, {
     const reachedCards = failure.reached ?? [];
     const carried = new Set(reachedCards.flatMap(({ judges = [] }) => judges.flatMap(({ failure: held }) => (held === undefined ? [] : [held]))));
     return {
-      text: [...said(outcomes(reachedCards)), ...failuresIn(failure).filter((held) => !carried.has(held)).map(failureLine), ...refusals.map(refusalLine)].join('\n'),
+      text: [...said(outcomes(reachedCards)), ...failuresIn(failure).filter((held) => !carried.has(held)).map(failureLine), ...holdLines([...failuresIn(failure), ...carried]), ...refusals.map(refusalLine)].join('\n'),
       code: 1,
     };
   }

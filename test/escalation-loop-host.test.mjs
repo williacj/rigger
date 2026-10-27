@@ -63,6 +63,7 @@ async function world(options = {}) {
     kill: async () => {}, workspace: workspaces, judgeDirectory: async () => { assert.fail('judges must not run in the escalation role slot'); },
     escalationDirectory, removeDirectories: async () => {}, state: here.directory,
     environment: { ...process.env, PATH: agent.first() },
+    run: 'r-test',
   };
   return { ...here, l2, handed, agent, order, directories, workspaces, run: () => loop(handed).pull(1), runAll: () => loop(handed).run() };
 }

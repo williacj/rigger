@@ -36,6 +36,7 @@ const loopOver = (directory) => loop({
   removeDirectories: async () => { throw new Error('L3 asked L1 to remove directories'); },
   state: directory,
   environment: {},
+  run: 'r-printable-closer',
 });
 
 test('L3\'s rejection for an unreadable admission carries the entries admission\'s read answered, each path and cause unescaped', async () => {
