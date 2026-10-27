@@ -1000,7 +1000,7 @@ test('given every agent judge and the owner sound, L2 answers ignore for an Owne
 });
 
 // proves R-WORK-19
-test('given an Owner card the forge holds no open or merged pull request for, more than one open, or its line of work alone, L2 refuses it naming what the forge holds, a row each', () => {
+test('given an Owner card the forge holds no open or merged pull request for, more than one open, or its line of work alone, L2 escalates it naming what the forge holds, a row each', () => {
   const rows = [
     { facts: { open: [], branch: false }, names: /no pull request.*rigger-7/ },
     { facts: { open: [{ number: 70, head: HEAD, base: 'main' }, { number: 71, head: LATER, base: 'main' }] }, names: /#70\b.*#71\b/ },
@@ -1009,8 +1009,8 @@ test('given an Owner card the forge holds no open or merged pull request for, mo
   for (const { facts, names } of rows) {
     const next = loopAnswer(loopCard({ stage: 'owner', ...facts }));
 
-    assert.equal(next.action, 'refuse', JSON.stringify(next));
-    assert.equal(next.card, 7);
+    assert.equal(next.action, 'escalate', JSON.stringify(next));
+    assert.equal(next.line, 'rigger-7');
     assert.match(next.reason, names);
   }
 });

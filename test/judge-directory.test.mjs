@@ -15,6 +15,7 @@ import { ADDING } from '../src/substrate/worktrees.mjs';
 import { spawnSync } from 'node:child_process';
 import { roleDispatch } from '../src/execution/role.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+import { WORKSPACE_REFUSED } from '../src/execution/workspace.mjs';
 
 /**
  * A repository whose `origin` is a local bare repository, with card 42's pull request head pushed
@@ -105,10 +106,10 @@ test('given two judges of card 42, reviewer and engineer, their directories are 
  * Asserts that `attempt` rejects as a judge's directory L1 could not make, naming `path` and each
  * of `naming`, and hands back its failure.
  */
-async function refusedNaming(attempt, path, ...naming) {
+async function refusedNaming(attempt, path, code = WORKSPACE_REFUSED, ...naming) {
   let failure;
   await attempt.then(() => assert.fail('L1 made the judge\'s directory'), (thrown) => { failure = thrown; });
-  assert.equal(failure.code, WORKSPACE_NOT_MADE, failure.stack);
+  assert.equal(failure.code, code, failure.stack);
   for (const name of [path, ...naming]) assert.ok(failure.message.includes(name), `the failure does not name ${name}: ${failure.message}`);
   return failure;
 }
@@ -116,7 +117,7 @@ async function refusedNaming(attempt, path, ...naming) {
 test('given a head commit the repository does not hold after fetching, L1 makes no directory, and fails naming the path and the commit', async (t) => {
   const here = world(t);
   const missing = gitIn(here.source, 'commit-tree', '-m', 'never pushed', `${here.head}^{tree}`).trim();
-  await refusedNaming(here.make({ head: missing }), here.path, missing);
+  await refusedNaming(here.make({ head: missing }), here.path, WORKSPACE_NOT_MADE, missing);
   assert.equal(existsSync(here.root), false);
 });
 
@@ -350,7 +351,7 @@ test('given a judge directory already made and a head commit the repository does
   writeFileSync(join(earlier.head, 'left-behind'), 'an earlier judge\'s build\n');
   const missing = gitIn(here.source, 'commit-tree', '-m', 'never pushed', `${here.head}^{tree}`).trim();
   const before = { worktrees: worktreeList(here.repository), files: contents(here.path) };
-  await refusedNaming(here.make({ head: missing }), here.path, missing);
+  await refusedNaming(here.make({ head: missing }), here.path, WORKSPACE_NOT_MADE, missing);
   assert.deepEqual({ worktrees: worktreeList(here.repository), files: contents(here.path) }, before);
 });
 
@@ -364,7 +365,7 @@ test('given a judge directory at a path whose real path cannot be resolved, its 
   const state = () => ({ mode: statSync(parent).mode, ...held(here) });
   advanced(here);
   const before = state();
-  await refusedNaming(here.make(), here.path);
+  await refusedNaming(here.make(), here.path, WORKSPACE_NOT_MADE);
   assert.deepEqual(state(), before);
   chmodSync(parent, 0o755);
   assert.equal(headOf(join(here.path, 'head')), here.head);
@@ -401,7 +402,7 @@ test('L1 records a workspace.failed event under the card, carrying the judge\'s 
   writeFileSync(here.path, 'not Rigger\'s\n');
   const refused = await refusedNaming(here.make(), here.path);
   const missing = gitIn(here.source, 'commit-tree', '-m', 'never pushed', `${here.head}^{tree}`).trim();
-  const unmade = await refusedNaming(here.make({ role: 'engineer', head: missing }), join(dirname(here.path), 'engineer'));
+  const unmade = await refusedNaming(here.make({ role: 'engineer', head: missing }), join(dirname(here.path), 'engineer'), WORKSPACE_NOT_MADE);
   const recorded = l1(here.events(), 42, 'workspace.failed');
   assert.deepEqual(recorded.map(({ role, path }) => ({ role, path })), [{ role: 'reviewer', path: here.path }, { role: 'engineer', path: join(dirname(here.path), 'engineer') }]);
   assert.match(recorded[0].reason, /is not a directory/);
