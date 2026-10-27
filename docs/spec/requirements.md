@@ -160,7 +160,7 @@ opens. In this table, that name is the trigger's author setting.
 | R-SCHED-19 | Rigger refuses a configuration in which a kind of work selects by a label Rigger fixes, or names one as the epic label, in any letter case, and the refusal names both. A role's or a step's labels are outside this row, since they select nothing on a card Rigger will not work. | the config validator | the test suite | |
 | R-SCHED-42 | Rigger refuses a configuration in which a clock trigger names as its card's author anything but `owner` or a role the configuration declares, and the refusal names the trigger and the name. The values it refuses are in `### R-CARD-41 — The author a clock trigger names`. | the config validator | the test suite | |
 | R-SCHED-28 | While a clock trigger is declared, `rigger run` does not end when the board drains. | the engine | the test suite | |
-| R-SCHED-29 | While a declared clock trigger keeps `rigger run` up and that run holds no claim, Rigger pulls a card that enters Ready no later than the bound after it enters Ready. The bound is the poll interval the consumer declares, plus one pull's reads of the board. A poll whose reads fail claims nothing, and the bound then runs from the next poll whose reads succeed. The cards it binds are in `### R-SCHED-29 — The Ready cards a clock-held run pulls`. | the engine | the test suite | |
+| R-SCHED-29 | While a declared clock trigger keeps `rigger run` up and that run holds no claim, Rigger pulls a card in Ready no later than the bound after the card's start. A card's start is the later of when it enters Ready and when `R-SCHED-43` last ended a skip of it. The bound is the poll interval the consumer declares, plus one pull's reads of the board. A poll whose reads fail claims nothing, and the bound then runs from the next poll whose reads succeed. The cards it binds are in `### R-SCHED-29 — The Ready cards a clock-held run pulls`. | the engine | the test suite | |
 | R-SCHED-30 | Rigger refuses a configuration that declares a clock trigger and no poll interval, and the refusal names the missing interval. No default interval applies. | the config validator | the test suite | |
 | R-SCHED-31 | When a clock trigger whose work is a card comes due, Rigger creates its card, even while the card from the trigger's previous firing is still open. | the engine | the test suite | |
 | R-SCHED-32 | Rigger creates at most one card for each occurrence of a clock trigger, across a restart that falls between the occurrence's firing and its card. A person's edit to that card before the restart is outside this row. | the engine | the test suite | |
@@ -240,8 +240,8 @@ In this table, "not merged" is the outcome Rigger records for the merge's end, `
 ### R-SCHED-29 — The Ready cards a clock-held run pulls
 
 Each row of this table is one state of the card and of the run. A card is in scope only where its
-state matches the in-scope row at every moment from when it enters Ready until its bound ends. A
-state matching an out-of-scope row at any moment in that span takes the card out of scope.
+state matches the in-scope row at every moment from its start under `R-SCHED-29` until its bound
+ends. A state matching an out-of-scope row at any moment in that span takes the card out of scope.
 
 | A pull would claim the card | `R-SCHED-43` keeps the card skipped | Admission | A slot | Scope |
 |---|---|---|---|---|
