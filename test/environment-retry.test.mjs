@@ -12,6 +12,7 @@ import config from '../rigger.config.mjs';
 import { openSink, readEvents } from '../src/observation/sink.mjs';
 import { loop } from '../src/scheduling/loop.mjs';
 import { NOT_STARTED } from '../src/substrate/process.mjs';
+import { READ_TIMEOUT } from '../src/substrate/process.mjs';
 import { WORKSPACE_NOT_MADE, workspaceHandle } from '../src/execution/workspace.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { cardIn, judgeWorld, pullFor, recorded } from './judge-world.mjs';
@@ -1360,7 +1361,8 @@ test('source cause R18 probe-skill-path comes from the Codex probe and is carrie
 });
 
 /** Advances the probe's algorithmic deadline only after the actual stand-in records readiness. */
-async function judgeTimedProbe(t, refused = false) {
+async function judgeTimedProbe(t, refused = false, censusTimeout = false) {
+  const refusedKills = [];
   const { request } = judgeStartRequest(t, 'codex');
   const stand = standInCodex({ hang: true });
   request.adapters = { codex: { invocation: (input) => ADAPTERS.codex.invocation({ ...input, probeTimeout: 1000 }) } };
@@ -1369,7 +1371,10 @@ async function judgeTimedProbe(t, refused = false) {
     request.sink = { emitter: (context) => {
       const emitter = sink.emitter(context);
       return { emit: (event, fields) => {
-        if (context.layer === 'L0' && event === 'timeout.killed') throw new Error('the sink refuses the probe timeout kill');
+        if (context.layer === 'L0' && event.endsWith('.killed')) {
+          refusedKills.push({ event, fields });
+          throw new Error('the sink refuses the probe timeout kill');
+        }
         emitter.emit(event, fields);
       } };
     } };
@@ -1381,9 +1386,15 @@ async function judgeTimedProbe(t, refused = false) {
     while (stand.probes().length === 0 && !settled) await oneTurn();
     assert.equal(stand.probes().length, 1, 'the probe was ready before its deadline was advanced');
     t.mock.timers.tick(1000);
-    while (!settled) { t.mock.timers.tick(25); await oneTurn(); }
-    const outcome = await running;
+    // The ordinary case advances only the probe deadline, leaving real census I/O its real bound.
+    // The counterexample deliberately expires that bound to exercise the unnamed group kill.
+    if (censusTimeout) while (!settled) { t.mock.timers.tick(READ_TIMEOUT); await oneTurn(); }
     t.mock.timers.reset();
+    const outcome = await running;
+    if (refused) {
+      assert.ok(refusedKills.length > 0, 'the sink actually refused a kill');
+      if (censusTimeout) assert.ok(refusedKills.some(({ event }) => event === 'group.killed'), 'the census deadline reached the unnamed group kill');
+    }
     return outcome;
   });
 }
@@ -1398,13 +1409,15 @@ test('source cause R19 the Codex skill probe outlives its deadline and reaches L
 // The counterexample retries a probe timeout whose kill could not be recorded, treating it as R19.
 // proves R-FAIL-8
 test('R38 a refused probe timeout kill is reported as an event refusal and L2 halts without a retry or hold', SETTLES_WITHIN, async (t) => {
-  const outcome = await judgeTimedProbe(t, true);
-  assert.equal(outcome.reason?.code, NOT_STARTED, 'the L1 wrapping and printed report keep their established shape');
-  assert.deepEqual(outcome.reason.startCause, { kind: 'event-unrecorded' });
-  const { next, events } = judgeStartAnswer({ reviewer: outcome });
-  assert.equal(next.action, 'judge');
-  assert.equal(next.halt, true);
-  assert.deepEqual(events.filter(({ event }) => event === 'attempt.decided'), []);
+  for (const censusTimeout of [false, true]) {
+    const outcome = await judgeTimedProbe(t, true, censusTimeout);
+    assert.equal(outcome.reason?.code, NOT_STARTED, 'the L1 wrapping and printed report keep their established shape');
+    assert.deepEqual(outcome.reason.startCause, { kind: 'event-unrecorded' });
+    const { next, events } = judgeStartAnswer({ reviewer: outcome });
+    assert.equal(next.action, 'judge');
+    assert.equal(next.halt, true);
+    assert.deepEqual(events.filter(({ event }) => event === 'attempt.decided'), []);
+  }
 });
 
 /** A real L1/L2/L3 judge pair whose directory preparations supply the named source faults. */
