@@ -578,7 +578,7 @@ its row says otherwise.
 | the record unreadable at the start | no trigger arms or fires for that run's life; Rigger names the record and the line; pulls continue |
 | no `trigger.armed` of the trigger's name in the record | L3 records `trigger.armed`; no occurrence at or before it is ever due |
 | its schedule differs from its newest arming's | re-armed, as in the row above |
-| its schedule changed back to one an earlier arming holds | re-armed, because the newest arming holds another schedule |
+| its schedule changed back to one an earlier arming holds | re-armed, because the newest arming holds another schedule (`R-SCHED-37`; M7-U7 Q31 (a) on #1009) |
 | removed, then declared again under its name and its newest arming's schedule | not re-armed, so a missed occurrence may fire once under its catch-up policy |
 | its card template, its author included, internal job or catch-up policy changed, and its schedule did not | not re-armed |
 | a card-shaped occurrence comes due, admission open | steps 1 to 4; the card enters Ready |
