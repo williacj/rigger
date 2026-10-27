@@ -1,10 +1,11 @@
 // ABOUTME: The `resume` verb: a thin caller of L3's admission module, whose `resume` removal removes
-// every closer it read and records each, and then says what it removed, or why it removed nothing.
+// every closer it read and records each, and then says what it removed, or why it removed nothing,
+// an unreadable admission's entries in the words `doctor` names them in.
 
 import { join } from 'node:path';
 
 import { admission } from '../scheduling/admission.mjs';
-import { PACKAGE, settled } from './doctor.mjs';
+import { PACKAGE, removedCloserLine, settled, unreadableAdmission } from './doctor.mjs';
 import { STATE, recording } from './recording.mjs';
 
 /**
@@ -27,13 +28,13 @@ async function resuming(opened, {
   try {
     answer = await admissionRecord.resume();
   } catch (failure) {
-    return { text: `rigger resume: ${failure.message}`, code: 1 };
+    return { text: `rigger resume: ${failure.unreadable ? unreadableAdmission(failure.unreadable) : failure.message}`, code: 1 };
   }
   const { removed, gone } = answer;
   if (removed.length === 0 && gone.length === 0) return { text: 'rigger resume: admission was already open', code: 0 };
   return {
     text: [
-      ...removed.map(({ kind, path, reason, time }) => `rigger resume: removed the ${kind} closer ${path}: ${reason}; time ${time}`),
+      ...removed.map((closer) => `rigger resume: ${removedCloserLine(closer)}`),
       ...gone.map(({ kind, path }) => `rigger resume: the ${kind} closer ${path} was already gone`),
     ].join('\n'),
     code: 0,

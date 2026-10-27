@@ -574,3 +574,20 @@ test('a close handed an id a present closer already carries, under any name form
     assert.deepEqual(events, []);
   }
 });
+
+test('a resume removal over an unreadable admission rejects carrying as unreadable the entries read answers, each path and cause unescaped', async () => {
+  // The defect this catches is a rejection that names the entries only in its message, or under
+  // another name than read's, or escaped, so a caller cannot print them in words of its own.
+  const state = stateOf();
+  seed(state, 'owner-a1.json');
+  seed(state, 'a\nb');
+  seed(state, 'owner-x1.json', 'ab\ncd');
+  const read = moduleOver(state).read();
+  assert.equal(read.state, 'unreadable');
+  assert.ok(read.unreadable.some(({ path }) => path === join(admissionOf(state), 'a\nb')), JSON.stringify(read.unreadable));
+  assert.ok(read.unreadable.some(({ cause }) => cause.includes('ab\ncd')), JSON.stringify(read.unreadable));
+  await assert.rejects(moduleOver(state).resume(), (error) => {
+    assert.deepEqual(error.unreadable, read.unreadable);
+    return true;
+  });
+});

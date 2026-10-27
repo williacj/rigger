@@ -604,3 +604,73 @@ test('resume draws no id of its own: its events carry the run recording drew, an
   assert.deepEqual([...new Set(readEvents(stateIn(repository)).map((event) => event.run))], [RUNS[0]]);
   assert.deepEqual(counts, { randomBytes: 0, randomUUID: 1 });
 });
+
+// The tests below hold `rigger resume`'s words for an unreadable admission to `unreadableAdmission`'s,
+// each entry printable, so an entry's name or cause holding a line feed prints no line of its own.
+import { unreadableAdmission } from '../src/cli/doctor.mjs';
+import { moduleOver } from './admission-world.mjs';
+
+/**
+ * Each unreadable admission Table A of #1001 names, by the entry it seeds beside a readable owner
+ * closer: one of ordinary text, a name holding a line feed, and a closer whose content holds one.
+ */
+const UNREADABLE = {
+  'an entry of ordinary text': (repository) => seed(stateIn(repository), 'not-a-closer'),
+  'a path holding a line feed': (repository) => seed(stateIn(repository), 'a\nb'),
+  'a cause holding a line feed': (repository) => seed(stateIn(repository), 'owner-x1.json', 'ab\ncd'),
+};
+
+/**
+ * A resume over a scratch repository holding closers and the unreadable entry `make` seeds: what it
+ * printed, the status it exited with, the entries L3's read answered before it, and the admission
+ * directory's picture before and after.
+ */
+const resumeUnreadable = async (make) => {
+  const repository = scratch();
+  seedClosers(repository);
+  make(repository);
+  const state = stateIn(repository);
+  const { unreadable } = moduleOver(state).read();
+  const before = picture(admissionOf(state));
+  const { text, code } = await ran(resume, repository);
+  return { repository, text, code, unreadable, before, after: picture(admissionOf(state)) };
+};
+
+test('resume over an unreadable admission of ordinary text prints exactly rigger resume: and unreadableAdmission\'s words for its entries', async () => {
+  const { repository, text, unreadable } = await resumeUnreadable(UNREADABLE['an entry of ordinary text']);
+
+  assert.equal(text, `rigger resume: ${unreadableAdmission(unreadable)}`);
+  assert.equal(text, `rigger resume: admission cannot be read: ${entryIn(repository, 'not-a-closer')} (no closer form)`);
+  assert.ok(!text.includes(', so resume removes nothing'), text);
+});
+
+test('resume over an unreadable admission whose entry\'s path holds a line feed prints it as a backslash and n, on one line', async () => {
+  const { repository, text, unreadable } = await resumeUnreadable(UNREADABLE['a path holding a line feed']);
+
+  assert.ok(!text.includes('\n'), JSON.stringify(text));
+  assert.ok(text.includes(`${entryIn(repository, 'a')}\\nb (no closer form)`), text);
+  assert.equal(text, `rigger resume: ${unreadableAdmission(unreadable)}`);
+});
+
+test('resume over an unreadable admission whose entry\'s cause holds a line feed prints it as a backslash and n, on one line', async () => {
+  const { repository, text, unreadable } = await resumeUnreadable(UNREADABLE['a cause holding a line feed']);
+
+  assert.ok(!text.includes('\n'), JSON.stringify(text));
+  assert.ok(text.includes(`${entryIn(repository, 'owner-x1.json')} (`), text);
+  assert.ok(text.includes('ab\\ncd'), text);
+  assert.equal(text, `rigger resume: ${unreadableAdmission(unreadable)}`);
+});
+
+test('resume over each unreadable admission of #1001\'s Table A leaves the admission directory\'s entries and contents unchanged', async () => {
+  for (const [entry, make] of Object.entries(UNREADABLE)) {
+    const { before, after } = await resumeUnreadable(make);
+    assert.deepEqual(after, before, entry);
+  }
+});
+
+test('resume over each unreadable admission of #1001\'s Table A exits non-zero', async () => {
+  for (const [entry, make] of Object.entries(UNREADABLE)) {
+    const { text, code } = await resumeUnreadable(make);
+    assert.notEqual(code, 0, `${entry}: ${text}`);
+  }
+});
