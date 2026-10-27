@@ -381,7 +381,7 @@ Exit:
 - A card re-dispatched after an engine death is recorded as a redo, and `report` counts it apart
   from first-attempt work (D1) (`R-STATE-3`).
 - `report` on this repository's own event stream shows the signals of every layer that has
-  landed (`R-RECORD-2`, `R-RECORD-3`, `R-RECORD-4`).
+  landed (`R-RECORD-2`, `R-RECORD-4`).
 - Telemetry push comes from config: off by default writes nothing to the data ref, and on writes
   the stream there (`R-SAFE-3`).
 
@@ -403,7 +403,8 @@ In order:
 
 Then:
 
-- No counted gap is left: a test claims every requirement in `docs/spec/requirements.md` (D17).
+- No counted gap is left: a test claims every requirement in `docs/spec/requirements.md`, except
+  one that a later milestone's exit list cites, which closes at that milestone (D17).
 - First tagged release and npm publish.
 - The README's Status section and the "nothing is published yet" note are updated.
 - The Telemetry and Security sections are checked against the shipped behaviour.
@@ -421,6 +422,9 @@ Exit:
 - Reading M8's thirty cards of recorded telemetry, one drain-time run produces a reordering with a
   cited signal for every move (`R-IMPROVE-3`).
 - No move changes code, in any layer (`R-IMPROVE-1`).
+- In the same run, a move that touches a recorded decision becomes a proposal and goes to the
+  owner. The record holds the proposal and the owner's answer to it, and `report` shows which
+  proposals were taken (`R-IMPROVE-2`, `R-IMPROVE-6`, `R-RECORD-3`).
 
 **M10. Meta-level improvement loop.**
 

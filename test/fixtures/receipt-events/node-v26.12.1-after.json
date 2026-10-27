@@ -1,0 +1,668 @@
+[
+  {
+    "type": "test:enqueue",
+    "data": {
+      "nesting": 0,
+      "name": "test/fixtures/receipt-events/subject.mjs",
+      "type": "test",
+      "testId": 1,
+      "parentId": 0,
+      "tags": [],
+      "line": 1,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:dequeue",
+    "data": {
+      "nesting": 0,
+      "name": "test/fixtures/receipt-events/subject.mjs",
+      "type": "test",
+      "testId": 1,
+      "parentId": 0,
+      "tags": [],
+      "line": 1,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:enqueue",
+    "data": {
+      "nesting": 0,
+      "name": "value stays one",
+      "type": "test",
+      "testId": 1,
+      "parentId": 0,
+      "tags": [],
+      "line": 11,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:dequeue",
+    "data": {
+      "nesting": 0,
+      "name": "value stays one",
+      "type": "test",
+      "testId": 1,
+      "parentId": 0,
+      "tags": [],
+      "line": 11,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:enqueue",
+    "data": {
+      "nesting": 0,
+      "name": "subject.mjs",
+      "type": "test",
+      "testId": 2,
+      "parentId": 0,
+      "tags": [],
+      "line": 12,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:enqueue",
+    "data": {
+      "nesting": 0,
+      "name": "outer",
+      "type": "test",
+      "testId": 3,
+      "parentId": 0,
+      "tags": [],
+      "line": 13,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:enqueue",
+    "data": {
+      "nesting": 0,
+      "name": "constant holds",
+      "type": "test",
+      "testId": 4,
+      "parentId": 0,
+      "tags": [],
+      "line": 16,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:complete",
+    "data": {
+      "name": "value stays one",
+      "nesting": 0,
+      "testNumber": 1,
+      "testId": 1,
+      "parentId": 0,
+      "details": {
+        "duration_ms": 0.263583,
+        "type": "test",
+        "passed": true,
+        "assertion": false
+      },
+      "tags": [],
+      "line": 11,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:start",
+    "data": {
+      "nesting": 0,
+      "name": "value stays one",
+      "testId": 1,
+      "parentId": 0,
+      "tags": [],
+      "line": 11,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:pass",
+    "data": {
+      "name": "value stays one",
+      "nesting": 0,
+      "testNumber": 1,
+      "testId": 1,
+      "parentId": 0,
+      "details": {
+        "duration_ms": 0.263583,
+        "type": "test",
+        "assertion": false
+      },
+      "tags": [],
+      "line": 11,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:dequeue",
+    "data": {
+      "nesting": 0,
+      "name": "subject.mjs",
+      "type": "test",
+      "testId": 2,
+      "parentId": 0,
+      "tags": [],
+      "line": 12,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:complete",
+    "data": {
+      "name": "subject.mjs",
+      "nesting": 0,
+      "testNumber": 2,
+      "testId": 2,
+      "parentId": 0,
+      "details": {
+        "duration_ms": 0.045792,
+        "type": "test",
+        "passed": true,
+        "assertion": false
+      },
+      "tags": [],
+      "line": 12,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:start",
+    "data": {
+      "nesting": 0,
+      "name": "subject.mjs",
+      "testId": 2,
+      "parentId": 0,
+      "tags": [],
+      "line": 12,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:pass",
+    "data": {
+      "name": "subject.mjs",
+      "nesting": 0,
+      "testNumber": 2,
+      "testId": 2,
+      "parentId": 0,
+      "details": {
+        "duration_ms": 0.045792,
+        "type": "test",
+        "assertion": false
+      },
+      "tags": [],
+      "line": 12,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:dequeue",
+    "data": {
+      "nesting": 0,
+      "name": "outer",
+      "type": "test",
+      "testId": 3,
+      "parentId": 0,
+      "tags": [],
+      "line": 13,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:enqueue",
+    "data": {
+      "nesting": 1,
+      "name": "inner",
+      "type": "test",
+      "testId": 5,
+      "parentId": 3,
+      "tags": [],
+      "line": 14,
+      "column": 11,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:dequeue",
+    "data": {
+      "nesting": 1,
+      "name": "inner",
+      "type": "test",
+      "testId": 5,
+      "parentId": 3,
+      "tags": [],
+      "line": 14,
+      "column": 11,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:complete",
+    "data": {
+      "name": "inner",
+      "nesting": 1,
+      "testNumber": 1,
+      "testId": 5,
+      "parentId": 3,
+      "details": {
+        "duration_ms": 0.043416,
+        "type": "test",
+        "classname": "outer",
+        "passed": true,
+        "assertion": false
+      },
+      "tags": [],
+      "line": 14,
+      "column": 11,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:start",
+    "data": {
+      "nesting": 0,
+      "name": "outer",
+      "testId": 3,
+      "parentId": 0,
+      "tags": [],
+      "line": 13,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:start",
+    "data": {
+      "nesting": 1,
+      "name": "inner",
+      "testId": 5,
+      "parentId": 3,
+      "tags": [],
+      "line": 14,
+      "column": 11,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:pass",
+    "data": {
+      "name": "inner",
+      "nesting": 1,
+      "testNumber": 1,
+      "testId": 5,
+      "parentId": 3,
+      "details": {
+        "duration_ms": 0.043416,
+        "type": "test",
+        "classname": "outer",
+        "assertion": false
+      },
+      "tags": [],
+      "classname": "outer",
+      "line": 14,
+      "column": 11,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:complete",
+    "data": {
+      "name": "outer",
+      "nesting": 0,
+      "testNumber": 3,
+      "testId": 3,
+      "parentId": 0,
+      "details": {
+        "duration_ms": 0.126792,
+        "type": "test",
+        "passed": true,
+        "assertion": false
+      },
+      "tags": [],
+      "line": 13,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:plan",
+    "data": {
+      "nesting": 1,
+      "count": 1,
+      "line": 13,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:pass",
+    "data": {
+      "name": "outer",
+      "nesting": 0,
+      "testNumber": 3,
+      "testId": 3,
+      "parentId": 0,
+      "details": {
+        "duration_ms": 0.126792,
+        "type": "test",
+        "assertion": false
+      },
+      "tags": [],
+      "line": 13,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:dequeue",
+    "data": {
+      "nesting": 0,
+      "name": "constant holds",
+      "type": "test",
+      "testId": 4,
+      "parentId": 0,
+      "tags": [],
+      "line": 16,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:complete",
+    "data": {
+      "name": "constant holds",
+      "nesting": 0,
+      "testNumber": 4,
+      "testId": 4,
+      "parentId": 0,
+      "details": {
+        "duration_ms": 0.035875,
+        "type": "test",
+        "passed": true,
+        "assertion": false
+      },
+      "tags": [],
+      "line": 16,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:start",
+    "data": {
+      "nesting": 0,
+      "name": "constant holds",
+      "testId": 4,
+      "parentId": 0,
+      "tags": [],
+      "line": 16,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:pass",
+    "data": {
+      "name": "constant holds",
+      "nesting": 0,
+      "testNumber": 4,
+      "testId": 4,
+      "parentId": 0,
+      "details": {
+        "duration_ms": 0.035875,
+        "type": "test",
+        "assertion": false
+      },
+      "tags": [],
+      "line": 16,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:diagnostic",
+    "data": {
+      "nesting": 0,
+      "message": "Error: A resource generated asynchronous activity after the test ended. This activity created the error \"Error: thrown after the tests\" which triggered an uncaughtException event, caught by the test runner.",
+      "level": "info",
+      "line": 1,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:summary",
+    "data": {
+      "success": false,
+      "counts": {
+        "tests": 5,
+        "failed": 0,
+        "passed": 5,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "topLevel": 4,
+        "suites": 0
+      },
+      "duration_ms": 4.1175,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:complete",
+    "data": {
+      "name": "test/fixtures/receipt-events/subject.mjs",
+      "nesting": 0,
+      "testNumber": 1,
+      "testId": 1,
+      "parentId": 0,
+      "details": {
+        "duration_ms": 37.320583,
+        "type": "test",
+        "error": {
+          "name": "Error",
+          "message": "test failed",
+          "code": "ERR_TEST_FAILURE",
+          "failureType": "testCodeFailure",
+          "exitCode": 1,
+          "signal": null,
+          "cause": {
+            "name": "string",
+            "message": "'test failed'"
+          },
+          "actual": "undefined",
+          "expected": "undefined"
+        },
+        "passed": false,
+        "assertion": false
+      },
+      "tags": [],
+      "line": 1,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:start",
+    "data": {
+      "nesting": 0,
+      "name": "test/fixtures/receipt-events/subject.mjs",
+      "testId": 1,
+      "parentId": 0,
+      "tags": [],
+      "line": 1,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:fail",
+    "data": {
+      "name": "test/fixtures/receipt-events/subject.mjs",
+      "nesting": 0,
+      "testNumber": 1,
+      "testId": 1,
+      "parentId": 0,
+      "details": {
+        "duration_ms": 37.320583,
+        "type": "test",
+        "error": {
+          "name": "Error",
+          "message": "test failed",
+          "code": "ERR_TEST_FAILURE",
+          "failureType": "testCodeFailure",
+          "exitCode": 1,
+          "signal": null,
+          "cause": {
+            "name": "string",
+            "message": "'test failed'"
+          },
+          "actual": "undefined",
+          "expected": "undefined"
+        },
+        "assertion": false
+      },
+      "tags": [],
+      "line": 1,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:plan",
+    "data": {
+      "nesting": 0,
+      "count": 5
+    }
+  },
+  {
+    "type": "test:diagnostic",
+    "data": {
+      "nesting": 0,
+      "message": "tests 6",
+      "level": "info"
+    }
+  },
+  {
+    "type": "test:diagnostic",
+    "data": {
+      "nesting": 0,
+      "message": "suites 0",
+      "level": "info"
+    }
+  },
+  {
+    "type": "test:diagnostic",
+    "data": {
+      "nesting": 0,
+      "message": "pass 5",
+      "level": "info"
+    }
+  },
+  {
+    "type": "test:diagnostic",
+    "data": {
+      "nesting": 0,
+      "message": "fail 1",
+      "level": "info"
+    }
+  },
+  {
+    "type": "test:diagnostic",
+    "data": {
+      "nesting": 0,
+      "message": "cancelled 0",
+      "level": "info"
+    }
+  },
+  {
+    "type": "test:diagnostic",
+    "data": {
+      "nesting": 0,
+      "message": "skipped 0",
+      "level": "info"
+    }
+  },
+  {
+    "type": "test:diagnostic",
+    "data": {
+      "nesting": 0,
+      "message": "todo 0",
+      "level": "info"
+    }
+  },
+  {
+    "type": "test:diagnostic",
+    "data": {
+      "nesting": 0,
+      "message": "duration_ms 43.595958",
+      "level": "info"
+    }
+  },
+  {
+    "type": "test:summary",
+    "data": {
+      "success": false,
+      "counts": {
+        "tests": 6,
+        "failed": 1,
+        "passed": 5,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "topLevel": 5,
+        "suites": 0
+      },
+      "duration_ms": 43.595958
+    }
+  }
+]
