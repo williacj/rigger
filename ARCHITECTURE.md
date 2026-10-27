@@ -546,8 +546,10 @@ work is a card in this order:
    a closed card included. L3 then records the outcome naming that issue. Where the placing fails,
    L3 records no outcome, and the firing stays pending.
 3. Where none does, L2 opens the card, as step 3 above, and L3 records the outcome, as step 4
-   above. Where the start found the trigger undeclared or re-armed, L2 opens nothing, and L3
-   records the outcome as `trigger.outcome` `{ name, occurrence, outcome: 'abandoned' }`.
+   above. Where the trigger is no longer declared, or the record holds a `trigger.armed` of its
+   name after the pending start, L2 opens nothing. L3 then records the outcome as `trigger.outcome`
+   `{ name, occurrence, outcome: 'abandoned' }`. The record keeps that arming across any later
+   crash, so the exclusion holds at every later start.
 
 A pending firing whose work is `report` is settled as abandoned, and the job does not run again.
 The next occurrence's report shows every event the lost one would have shown, so a late one adds
@@ -588,7 +590,7 @@ its row says otherwise.
 | occurrences missed while Rigger was down | one firing carrying the newest missed occurrence under `fire`, and none under `skip`; never one per missed occurrence |
 | a card-shaped firing pending at a start | settled as "Settling a pending firing" says |
 | a `report` firing pending at a start | its outcome is recorded as abandoned, and the job does not run again |
-| a firing pending, whose trigger the start found undeclared or re-armed | its outcome names the occurrence's card where L2 finds one; otherwise L2 opens nothing and the outcome is abandoned; a `report` firing's is abandoned |
+| a firing pending, whose trigger the start finds undeclared, or re-armed after the pending start at this or any earlier start | its outcome names the occurrence's card where L2 finds one; otherwise L2 opens nothing and the outcome is abandoned; a `report` firing's is abandoned |
 | the occurrence's card, found while settling, on the board in a column other than Ready, or closed | its outcome is recorded; the card is not moved |
 | the occurrence's card, found while settling, open and in no column, and placing it in Ready fails | L3 records no outcome, and the firing stays pending; `run` hands the failure to the verb, and the next trigger settles it |
 | an issue numbered above `k` carrying the mark, written by an account without write access | not read as the occurrence's card |

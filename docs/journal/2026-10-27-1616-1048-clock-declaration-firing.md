@@ -35,8 +35,10 @@ Choices the card left to the maker:
 - **An unreadable record holds for the run's life.** A line that does not parse stays so until a
   person mends it.
 - **The config keys** are `interval`, `anchor`, `card` or `job`, and `catchUp`, with `card` holding
-  `title`, `labels`, `acceptance` and `author`. Every key but `author` is required. The rows #1020
-  landed name no refusal for a missing key, so M7-20's refusal of one rests on this placement.
+  `title`, `labels`, `acceptance` and `author`. Every key but `author` is required. Live rows
+  already refuse a template with no acceptance (`R-SCHED-40`), and one whose labels select no kind,
+  as missing labels do (`R-SCHED-41`). No row refuses a missing `interval`, `anchor`, `catchUp`,
+  `title`, or both `card` and `job`, so M7-20's refusal of those rests on this placement.
 
 A schedule changed back to one an earlier arming holds re-arms the trigger, as `R-SCHED-37` reads.
 The owner ruled so in M7-U7 Q31 (a) (1009#6454836792), once #1020's rows had landed in PR #1045.
@@ -45,3 +47,8 @@ The round-1 review of PR #1050 (1050#6454802746) found the settling order wrong.
 card's outcome before placing it in Ready let a failed placing leave it on no board. A closed marked
 issue in no column was also moved to Ready. The outcome now follows the placing, and only an open
 issue is placed.
+
+The round-2 review (1050#6456002565) found the re-arm exclusion lost across a second crash. A start
+that re-armed and then crashed left the next start seeing no re-arm, so settling opened a card for
+the old schedule. Settling now compares against the record: a `trigger.armed` of the name after the
+pending start excludes a card, at whichever start settles it.
