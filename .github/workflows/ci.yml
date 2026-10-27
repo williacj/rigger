@@ -304,9 +304,9 @@ jobs:
           return JSON.stringify([run.id, run.workflow_id, run.path, run.event, run.repository.id, run.repository.full_name, run.head_repository.id, run.head_repository.full_name, run.head_sha, run.run_number, run.run_attempt]);
         }
         function associationIdentity(run) {
+          if (run.pull_requests.length === 0) return null;
           const association = run.pull_requests[0];
-          if (!association) return null;
-          if (!positive(association.id) || !positive(association.number) || !positive(association.head?.repo?.id) || !positive(association.base?.repo?.id)) refuse('run attribution invalid');
+          if (!positive(association?.id) || !positive(association.number) || !positive(association.head?.repo?.id) || !positive(association.base?.repo?.id)) refuse('run attribution invalid');
           return JSON.stringify([association.id, association.number, association.head.repo.id, association.base.repo.id]);
         }
         function identity(run) {

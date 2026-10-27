@@ -11,3 +11,7 @@ The [continuing acceptance for #903](https://github.com/williacj/rigger/issues/9
 The focused test for a sparse list row failed with run attribution invalid before the change and passed after it. A second test failed because an earlier target received a POST before a later target's invalid detail was discovered; it passed after the owner-approved discovery refactor. The affected controller file then passed 26 tests. On this repair worktree, npm test measured 2,940 pass, 9 skip and 0 fail with Node 26.12.0. The private original test outputs and hashes remain retained.
 
 The implementation at this stage still has read-only Actions permission. Fresh meaningful H1/H2 live overlap, same-head full-run preservation, configured hosted Mac proof, independent final reviews, and the protected exact-head owner marker remain required before #903 can merge.
+
+## Independent review correction
+
+An independent source review of the first repair commit, 5d4fef9f2746f80ffb4c35fff570c6223a829ed6, found that a one-element PR association array containing null was treated like the permitted empty array. A controlled execution sent a cancellation POST, so that commit was not pushed. A new focused regression failed before the guard correction and passed after it. The controller file measured 27 pass and 0 fail; npm test measured 2,941 pass, 9 skip and 0 fail with Node 26.12.0. This later measurement belongs to the corrected working tree, not the earlier reviewed commit. Fresh independent review is required at its committed head.

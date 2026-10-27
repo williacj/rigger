@@ -208,6 +208,30 @@ test('cancellation resolves a sparse list association through the detailed run b
   assert.deepEqual(calls.filter(([method]) => method === 'POST'), [['POST', root + '/actions/runs/60/cancel']]);
 });
 
+test('one malformed list association cannot masquerade as a sparse array', async () => {
+  const f = input(), target = run(60, old, 10);
+  const malformed = { ...structuredClone(target), pull_requests: [null] };
+  const routes = new Map([
+    [root + '/actions/runs/80', run()],
+    [root + '/actions/workflows/ci.yml', { id: 55, path: '.github/workflows/ci.yml' }],
+    [root + '/pulls/7', f.pr],
+    [root + '/actions/runs/60', target],
+  ]);
+  const calls = [];
+  await assert.rejects(controller.cancelSuperseded({ ...f, request: async (path, options = {}) => {
+    const method = options.method ?? 'GET';
+    calls.push([method, path]);
+    if (method === 'POST') return { status: 202, body: null, link: null };
+    if (path.includes('/actions/workflows/55/runs?')) {
+      const status = new URL('https://api.github.com' + path).searchParams.get('status');
+      return list(status, status === 'queued' ? [malformed] : [])[2];
+    }
+    assert.ok(routes.has(path), 'unexpected API route ' + path);
+    return { status: 200, body: structuredClone(routes.get(path)), link: null };
+  }, log: () => {} }), /run attribution invalid/);
+  assert.deepEqual(calls.filter(([method]) => method === 'POST'), []);
+});
+
 test('cancellation refuses incomplete discovery and malformed attribution before any POST', async () => {
   const corruptions = [
     r => { r.link = '<https://api.github.com/next>; rel="next"'; },
