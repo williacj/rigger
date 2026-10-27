@@ -417,8 +417,9 @@ test('a closer left after 0 by a crash after the opening is recovered: the scan 
   handed.l2.notice = changesOver(world, handed.sink).notice;
   seed(handed.state, 'hold-a1-after-0.json');
 
-  const pulled = await loop(handed).pull();
+  const pulled = await loop(handed).pull().catch((failure) => ({ failure: failure.message }));
 
+  assert.equal(pulled.failure, undefined);
   assert.deepEqual(pulled.notices, []);
   assert.deepEqual(namesIn(handed.state), ['hold-a1-issue-1.json']);
   assert.equal(world.calls.filter(([name]) => name === 'openIssue').length, 0);

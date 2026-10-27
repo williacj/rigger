@@ -82,7 +82,8 @@ test('a hold\'s closer renamed to after 0, as for a repository holding no issue 
   seed(state, 'hold-a1.json', HELD);
   const module = moduleOver(state);
 
-  const after = module.rename('hold-a1.json', { rename: 'after', number: 0 });
+  let after;
+  assert.doesNotThrow(() => { after = module.rename('hold-a1.json', { rename: 'after', number: 0 }); });
 
   assert.deepEqual(after, { name: 'hold-a1-after-0.json' });
   const { state: admitted, closers } = module.read();
