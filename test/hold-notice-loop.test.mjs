@@ -144,6 +144,8 @@ test('a hold with no status issue open has L2 open one through its column change
     { number: 3, title: 'Card', labels: ['type:change'] },
     { number: 4, title: 'Rigger closed admission', labels: ['rigger:status'] },
   ]);
+  // The opened body names the admission directory, which L3 holds under its state directory.
+  assert.ok(world.issues[1].body.includes(`- Admission record: ${join(handed.state, 'admission')}\n`), world.issues[1].body);
   assert.deepEqual(world.onBoard, [{ id: 'item-4', number: 4, column: 'Owner' }]);
   assert.equal(moduleOver(handed.state).read().state, 'closed');
 });

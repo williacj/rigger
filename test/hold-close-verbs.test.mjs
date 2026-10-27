@@ -14,6 +14,7 @@ import { readEvents } from '../src/observation/sink.mjs';
 import { moduleOver } from './admission-world.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { seedRepository } from './fake-gh.mjs';
+import { createFakeBoard } from './fake-board.mjs';
 import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { gitUnansweredAdd, scratch } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
@@ -141,6 +142,13 @@ test('where a hold\'s close rejects and its closer is not saved, rigger run exit
   assert.ok(ran.err.split('\n').some((line) => /^rigger run: admission cannot write .*\/admission\/\.tmp-[0-9a-f]+: EACCES$/.test(line)), ran.said);
 });
 
+/** Each board item's column by issue number, as the fake `gh`'s board holds them once every write it took is replayed. */
+async function columnsOf(forge) {
+  const board = createFakeBoard(forge.model);
+  for (const { operation, args } of forge.writes) await board.operations[operation](...args);
+  return Object.fromEntries((await board.operations.readItems()).map(({ number, column }) => [number, column]));
+}
+
 /**
  * The fake `gh`'s board, its repository, its writes and the commands it was sent, as `here`'s run
  * left them: it is installed beside the consumer whose state directory `here` names.
@@ -148,7 +156,7 @@ test('where a hold\'s close rejects and its closer is not saved, rigger run exit
 const forgeOf = (here) => JSON.parse(readFileSync(join(dirname(dirname(here.state)), 'gh', 'board.json'), 'utf8'));
 
 // proves R-SCHED-7, R-SCHED-20, R-SCHED-22, R-SCHED-23
-test('rigger run, on a hold with no status issue open, opens Rigger closed admission carrying rigger:status, attaches its number to the closer, places it in Owner, and leaves the held card in its column', (t) => {
+test('rigger run, on a hold with no status issue open, opens Rigger closed admission carrying rigger:status, attaches its number to the closer, places it in Owner, and leaves the held card in its column', async (t) => {
   const here = consumer(t);
 
   const ran = here.verb('run');
@@ -164,9 +172,9 @@ test('rigger run, on a hold with no status issue open, opens Rigger closed admis
   assert.equal(opens.length, 1, ran.said);
   const items = forge.writes.filter(({ operation }) => operation === 'addIssue');
   assert.deepEqual(items.map(({ args }) => args[0]), [number], ran.said);
-  const moves = forge.writes.filter(({ operation }) => operation === 'moveItem').map(({ args }) => args);
-  assert.deepEqual(moves.at(-1)?.[1], 'Owner', ran.said);
-  assert.ok(!moves.some(([item, column]) => item !== moves.at(-1)[0] && column !== 'Coding'), `the held card moved past Coding: ${JSON.stringify(moves)}`);
+  // Card #10 is the held card, claimed from Ready into Coding; the notice is issue `number`.
+  const columns = await columnsOf(forge);
+  assert.deepEqual({ held: columns[10], notice: columns[number] }, { held: 'Coding', notice: 'Owner' }, `${ran.said}\n${JSON.stringify(forge.writes)}`);
   assert.equal(here.closers().length, 1, ran.said);
 });
 
