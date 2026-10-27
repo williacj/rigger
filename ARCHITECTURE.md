@@ -1205,8 +1205,8 @@ comment lines are outside it too: a comment cannot carry a bug.
 | L1 | 1,500 |
 | L2 | 1,600 |
 | The gate | 400 |
-| L3 | 800 |
-| L5 | 1,500 |
+| L3 | 1,000 |
+| L5 | 1,300 |
 | L6 | 1,200 |
 | CLI and config | 2,000 |
 | **Package** | **12,000** |
