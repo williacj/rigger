@@ -127,6 +127,43 @@ test('the check reads as authored the backticked span of the Document cell of ea
   assert.deepEqual(documents, ['README.md', 'AGENTS.md']);
 });
 
+/** `AGENTS.md`'s "Self-hosting" section at 66e5b7c9, #1026's merge base, copied byte for byte. */
+const SELF_HOSTING_AT_66E5B7C9 = `## Self-hosting
+
+Rigger builds Rigger, so two rules have teeth here. **Never run Rigger from this checkout**
+(\`R-SAFE-5\`). The engine runs from a tarball installed outside the source tree, because an
+agent it dispatches can delete the runtime it is running under. \`npm link\` does not satisfy
+this, and the worktree root belongs outside both the checkout and the package. **The engine
+never dispatches a card that changes a path listed below** (\`D25\` rule 5); "Review and merge"
+says how one merges. The paths:
+
+- The live gate: \`.github/workflows/rigger-gate.yml\` and
+  \`templates/github/workflows/rigger-gate.yml\`; \`.github/workflows/self-hosting.yml\` and
+  \`.github/scripts/self-hosting-check.mjs\`; \`.github/workflows/ci.yml\`.
+- The git hooks: \`.githooks/\`, and \`templates/githooks/\` with it, and what decides what they run:
+  \`test/suite.sh\` and \`package.json\`, with any file the suite loads to place a test in a tier
+  (\`test/suite-guard.cjs\` and \`test/suite-path.cjs\`), and the check that refuses growth in the two transitional lists: \`.github/scripts/check-test-list-growth.mjs\`.
+- The live config: \`rigger.config.mjs\`.
+- The live Codex configuration: \`.codex/config.toml\`, and the directory \`templates/codex/\` with it.
+- The CLI entry point: \`src/cli/rigger.mjs\`, which the package manifest declares as its bin.
+- The gate's code: \`src/workflow/gate.mjs\`, \`src/workflow/marker.mjs\`, \`scripts/gate-check.mjs\`,
+  and \`src/substrate/forge/read.mjs\`, through which the gate script reads every fact it rules on.
+- The coordinator's tooling, which launches its Codex makers and judges: \`tools/coordinator/\`.
+
+The gate's code is listed because it runs live (\`D25\` rule 6; \`ARCHITECTURE.md\`, "The gate").
+
+`;
+
+test('a diff touching src/substrate/forge/runners.mjs touches a Self-hosting path under this repository\'s AGENTS.md at the head, and none under its Self-hosting section at 66e5b7c9', () => {
+  const diff = diffOf({ 'src/substrate/forge/runners.mjs': 'one\n' }, (root) => put(root, 'src/substrate/forge/runners.mjs', 'two\n'));
+  const head = listsOf(readFileSync(join(ROOT, 'AGENTS.md'), 'utf8'));
+  assert.equal(head.problem, undefined);
+  assert.deepEqual(touchedIn(diff, head.paths), { touched: ['src/substrate/forge/runners.mjs'] });
+  const base = listsOf(`# AGENTS.md\n\n${WHAT_BINDS}\n${SELF_HOSTING_AT_66E5B7C9}`);
+  assert.equal(base.problem, undefined);
+  assert.deepEqual(touchedIn(diff, base.paths), { touched: [] });
+});
+
 test('the check fails, naming why, when it cannot read either section: no Self-hosting section, one with no bullet naming a path, no What binds section, or one with no table holding Document and Authority columns', () => {
   const hosting = '## Self-hosting\n\n- The live gate: `.githooks/`.\n';
   const cases = [
