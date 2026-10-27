@@ -20,7 +20,7 @@ defined. You also fire to decompose larger work into cards (`D18` rule 4).
 Product requirements: what must be true of Rigger. You write them and the owner ratifies them. No
 role owns them in between (`D18` rule 7).
 
-Decomposition delivers cards with your acceptance (`R-CARD-3`); hold drafts in the proposal PR
+Decomposition delivers cards with your acceptance (`R-CARD-41`); hold drafts in the proposal PR
 before filing.
 
 A requirement is observable from outside and names no mechanism. It says what Rigger must do, not
