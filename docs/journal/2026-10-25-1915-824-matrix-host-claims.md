@@ -70,3 +70,11 @@ host boundary file with 10 passes and no failures. The five path, reference, ins
 header and word checks, plus `git diff --check`, also exited zero. Complete local originals
 are retained privately. These are final integration checks; the accepted supported-macOS
 proof still needs its own current-source run and receipt.
+
+## Integration with repaired main
+
+The published #824 head ae8209d830b1ccf0b4f3f906644670737965174a became conflicted as main advanced. The only merge conflict against current main was in docs/derived/test-matrix.md, which is generated. No authored source conflict was chosen by hand.
+
+An initial integration attempt against main db1243d5f8130121cc027dacc61c6928bc05088e exposed a preflight instruction-word test failure. The same focused test failed on unmodified main at that ref; the attempt was aborted without a commit or push. Existing [#996](https://github.com/williacj/rigger/issues/996) repaired that moving-base test through [PR #1002](https://github.com/williacj/rigger/pull/1002), which merged normally as e9e3d7c981f3501469173cdbdf16dd2ea9a01019.
+
+This integration takes e9e3d7c981f3501469173cdbdf16dd2ea9a01019 as its other parent and regenerates the derived matrix from the combined source. The generator reported 53 of 223 requirements without a test on this tree; that is its measured count, not a claim about the earlier branch. The affected matrix and preflight tests measured 94 pass and 0 fail on Linux Node 26.12.0. npm test measured 3,160 pass, 9 skip and 0 fail on the integrated tree. These are local checks. A current-head hosted Mac full run, final independent reviews, and the protected owner marker remain required before #824 merges.

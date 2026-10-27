@@ -393,7 +393,7 @@ test('owner escalation preserves payload data and orders issue comment then actu
           const recorded = events();
           assert.deepEqual(recorded.map(({ event }) => event), ['review.escalate', 'transition']);
           const intent = recorded[0];
-          assert.deepEqual(Object.fromEntries(Object.entries(intent).filter(([key]) => !['ts', 'run', 'layer', 'card', 'dispatch', 'event'].includes(key))), { category, reason, ...fields });
+          assert.deepEqual(Object.fromEntries(Object.entries(intent).filter(([key]) => !['ts', 'run', 'layer', 'card', 'dispatch', 'event'].includes(key))), { category, reason, raiser: 'loop', ...fields });
           assert.deepEqual(recorded[1], { ts: '1970-01-01T00:00:00.000Z', run: 'r-owner', layer: 'L2', card: 30, dispatch: null, event: 'transition', from: source, to: 'owner', cause: 'escalated' });
           assert.deepEqual(repository.merges(), []);
         }
@@ -484,7 +484,7 @@ test('a refused owner transition record names the actual move and retains its co
   assert.equal((await itemsOf(fake))[0].column, 'Owner');
   assert.equal(repository.held().issues[0].comments.length, 1);
   assert.deepEqual(repository.held().issues[0].labels, ['keep']);
-  assert.deepEqual(recorded, [{ layer: 'L2', card: 30, dispatch: null, event: 'review.escalate', category: 'recorded-decision', reason: 'The owner must decide.', line: 'rigger-30' }]);
+  assert.deepEqual(recorded, [{ layer: 'L2', card: 30, dispatch: null, event: 'review.escalate', category: 'recorded-decision', reason: 'The owner must decide.', raiser: 'loop', line: 'rigger-30' }]);
   await assert.rejects(l2.escalated((await itemsOf(fake))[0], next), /review.escalate could not be recorded: recording unavailable/);
   assert.equal(trace.length, 2, 'while recording remains unavailable no retry starts another forge write');
 });
@@ -552,6 +552,7 @@ test('L2 records review.escalate under its layer with the card and category', as
   assert.deepEqual(readEvents(directory).filter((event) => event.event === 'review.escalate').map(({ layer, card: number, category }) => ({ layer, number, category })), [
     { layer: 'L2', number: 30, category: 'critical' },
   ]);
+  assert.equal(readEvents(directory).find((event) => event.event === 'review.escalate').raiser, 'loop');
   assert.deepEqual(fake.writes(), [{ operation: 'moveItem', args: [card.id, config.board.columns.owner] }]);
   assert.equal(repository.held().issues[0].comments.length, 1);
   assert.deepEqual(repository.held().issues[0].labels, ['keep', 'rigger:escalated']);

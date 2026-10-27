@@ -162,10 +162,15 @@ Give every blocking finding all of these:
 - **where** — path and line;
 - **what fails** — the observable failure, or the path that reproduces it;
 - **the evidence** — a code trace, a test result, command output;
+- **the probe** — an exact command or guarded mutation (`tdd` skill, "A mutation claim"),
+  showing the failure and output at the head ruled on;
+  rerunnable by the maker changing only the checkout path;
 - **why it matters**;
 - **what binds it** — a requirement id, a `D#`, an `ARCHITECTURE.md` or `AGENTS.md` section — **or
   a plain statement that it is your judgement and binds nothing**;
 - **what would make it sound** (`R-VERDICT-3`).
+
+Say when you found a finding by reading alone.
 
 State the outcome required, not a patch, unless the binding source fixes the mechanism too. The
 maker owns the fix and chooses how (`R-LOOP-3`).
@@ -194,6 +199,7 @@ owns what a marker carries.
 
 1. The work you reviewed, and the acceptance revision you ruled against (`R-VERDICT-5`).
 2. Every acceptance item, each met or unmet, with the evidence (`R-LOOP-5`).
+   For each unmet item, include the same probe.
 3. Whether the acceptance covered what the card asked, and why (`R-LOOP-6`).
 4. The blocking findings.
 5. Non-blocking observations, where they are materially useful.

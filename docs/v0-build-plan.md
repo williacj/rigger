@@ -21,7 +21,7 @@ cites it, and the citation is where the binding text lives; a conflict resolves 
 3. **On a host fault, keep going.** An optional step that fails is recorded and the work proceeds
    (`R-PROV-2`), and survivors are killed and recorded (`R-STATE-17`, `R-STATE-12`). A host fault
    that repeats the same way on one card's attempts closes admission rather than stopping cards
-   (`R-FAIL-7`); L3 owns that hold.
+   (`R-FAIL-8`); L3 owns that hold.
 4. **Rigger is its own first consumer.** Every verb's first real use is against this repository. A
    capability is not finished until Rigger uses it on itself, and no short-term script stands in
    for a capability the product will ship. See §1.1.
@@ -357,7 +357,7 @@ Exit, against a fixture configured with three agent judges:
 Exit:
 
 - A card that fails on infrastructure twice, the same way, yields two attempts, one hold, and zero
-  escalations. Admission is paused, so a third attempt never starts (`R-FAIL-2`, `R-FAIL-7`,
+  escalations. Admission is paused, so a third attempt never starts (`R-FAIL-2`, `R-FAIL-8`,
   `R-FAIL-4`).
 - `pause` during a run finishes in-flight cards and admits none (`R-SCHED-3`).
 - A closed admission and its reason are still in force after the engine restarts (`R-STATE-4`).

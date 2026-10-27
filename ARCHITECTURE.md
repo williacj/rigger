@@ -827,33 +827,33 @@ what was missing.
 
 L2 classifies a failure as the work's, or in one of three classes that are not the work's:
 
-- **`environment`:** the five failures listed below, which take in every row `R-FAIL-7`'s table
+- **`environment`:** the five failures listed below, which take in every row `R-FAIL-8`'s table
   classes host. It also takes in a judge L2 withholds for one of these causes:
   - its directory was not made;
   - a required step in its `head` failed;
   - its scratch directory was not made, because the file system gave no answer, or none in time.
 
-  `R-FAIL-7`'s table classes those judges out, so this class is not exactly that table's host rows.
-- **`card-local`:** a failure `R-FAIL-7`'s table classes card-local. L2 escalates the card, as set
+  `R-FAIL-8`'s table classes those judges out, so this class is not exactly that table's host rows.
+- **`card-local`:** a failure `R-FAIL-8`'s table classes card-local. L2 escalates the card, as set
   out below.
-- **`out`:** exactly three causes, each a row `R-FAIL-7`'s table classes out. They are the line of
+- **`out`:** exactly three causes, each a row `R-FAIL-8`'s table classes out. They are the line of
   work moved or deleted since L2 read it, a derived branch name git refuses, and a worktree root
   that is not an absolute path.
 
 L2 answers `stop` for a failure of class `out`, and never `again` or `hold`. L3 attempts the card no
 more under that claim, and admission stays open.
 
-L2's class `out` is not the whole of `R-FAIL-7`'s out class. Every other row that table classes out
+L2's class `out` is not the whole of `R-FAIL-8`'s out class. Every other row that table classes out
 keeps the outcome the table states. An optional step that failed or never started lets the work
 proceed (`R-PROV-2`). A maker that ran its first command and then failed stays the work's failure.
 
 An environment failure retries the card once, with two exceptions:
 
 - a role's dispatch that never started, which L3 retries alone as set out below;
-- a judge L2 withholds, for which L2 answers neither `again` nor `hold`. `R-FAIL-7`'s table sets
+- a judge L2 withholds, for which L2 answers neither `again` nor `hold`. `R-FAIL-8`'s table sets
   that judge's outcome, in its rows for a judge's directory and a judge's scratch directory not made.
 
-Where the second attempt fails the same way as the first, as `R-FAIL-7`'s table counts it, L2
+Where the second attempt fails the same way as the first, as `R-FAIL-8`'s table counts it, L2
 answers `hold` in place of `stop`, and L3 closes admission. L3
 hands L2 the first attempt's failure unread, as it hands the attempt number, so the count needs no
 memory and is never persisted.
@@ -865,8 +865,8 @@ pulls for these reasons, and no others:
 | Case | Why |
 |---|---|
 | stopped after two attempts that failed in different ways | no hold fires, and without the memory the next pull attempts the card again at once |
-| stopped at one attempt for a derived branch name git refuses, or for a worktree root that is not an absolute path | no hold fires, and without the memory the next pull attempts the card again at once, which `R-FAIL-7` rules out |
-| judges L2 withheld for an environment failure, among them a judge whose scratch directory was not made | the memory is how L3 meets the rows of `R-FAIL-7`'s table for a judge's directory not made and a judge's scratch directory not made |
+| stopped at one attempt for a derived branch name git refuses, or for a worktree root that is not an absolute path | no hold fires, and without the memory the next pull attempts the card again at once, which `R-FAIL-8` rules out |
+| judges L2 withheld for an environment failure, among them a judge whose scratch directory was not made | the memory is how L3 meets the rows of `R-FAIL-8`'s table for a judge's directory not made and a judge's scratch directory not made |
 | a move, return or escalation whose write the forge refused | it bounds retries of a refused write, since a released claim fires the next trigger (C22) |
 | a merge, whatever it answered | a merge the lane refused, because the head moved, checks were pending or mergeability was unknown, would be pulled again at once and poll the forge |
 | a continuing attempt that did not settle | L2 moved nothing, so the next pull would read the same head and markers, answer `continue` again, and dispatch the maker again at once |
@@ -879,7 +879,7 @@ a file-system error leaves a hold unsaved.
 A card stopped after two attempts that failed the same way needs no memory, because the hold closes
 admission. An escalated card needs none either, because L2 answers no action for a card carrying the
 escalation label. A card stopped because its line of work moved or was deleted since L2 read it
-needs no memory either, because `R-FAIL-7` has the next pull read the forge again. A card sent to
+needs no memory either, because `R-FAIL-8` has the next pull read the forge again. A card sent to
 a role needs no case of its own. Each outcome of the role's dispatch either escalates the card, or
 leaves it for the next pull to answer, and a refused routing comment is the case of a refused
 escalation write.
@@ -963,7 +963,7 @@ the environment's:
 - a dispatch of the role an escalation goes to that never started.
 
 A directory L1 refused under `R-WORK-13`, `R-WORK-20`, `R-WORK-26` or `R-WORK-32`, and a
-continuing workspace `R-WORK-25` refuses for a failure `R-FAIL-7`'s table classes card-local, is
+continuing workspace `R-WORK-25` refuses for a failure `R-FAIL-8`'s table classes card-local, is
 never one of them. L1 reports it as a refusal, and L2 escalates the card, never answering `again`
 or `hold`.
 A workspace L1 could not make for a derived branch name git refuses, or for a worktree root that is

@@ -90,7 +90,7 @@ export const pullStateOf = (pull) => (pull.merged ? 'MERGED' : pull.closed ? 'CL
  * `comment` are what an agent does on the forge, `postComment` the repository-write side's comment
  * L2 makes, and `pull` and `held` the fake gh's own controls.
  */
-export function createFakeRepository({ branches = [], pullRequests = [], issues = [], rules, origin, repo, environments = {} } = {}) {
+export function createFakeRepository({ branches = [], pullRequests = [], issues = [], rules, origin, repo, environments = {}, permissions } = {}) {
   const held = structuredClone({ branches, pullRequests: pullRequests.map(heldPull), issues: issues.map(heldIssue) });
   const current = (candidate) => {
     if (candidate === undefined) return null;
@@ -151,6 +151,15 @@ export function createFakeRepository({ branches = [], pullRequests = [], issues 
       const node = commentOf(comment, number, index);
       return { body: node.body, createdAt: node.createdAt, id: node.id, author: node.author?.login ?? null, permission: 'write', edited: node.lastEditedAt !== null || node.includesCreatedEdit };
     })),
+    readIssueComments: async (number) => {
+      const found = issue(number);
+      if (!found && held.issues.length > 0) throw new Error(`the fake repository holds no issue #${number}, so readIssueComments has nothing to read`);
+      return structuredClone((found?.comments ?? []).map((comment, index) => {
+        const node = commentOf(comment, number, index);
+        const author = node.author?.login ?? null;
+        return { body: node.body, createdAt: node.createdAt, id: node.id, author, permission: author === null ? 'none' : permissions === undefined ? 'write' : permissions[author] ?? 'none', edited: node.lastEditedAt !== null || node.includesCreatedEdit };
+      }));
+    },
     readDefaultBranch: async () => {
       const branch = origin === undefined ? null : defaultBranchIn(origin);
       if (!branch) throw new Error('the fake repository holds no default branch');

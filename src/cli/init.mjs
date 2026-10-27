@@ -33,6 +33,9 @@ export const PROVIDER_ASSETS = Object.fromEntries(Object.entries(ADAPTERS).map((
  */
 export const ASSET_DESTINATIONS = { ...PROVIDER_ASSETS, githooks: '.githooks', github: forgeAssets };
 
+/** `ARCHITECTURE.md`, "Triggers": host assets shipped under templates/ that init never forks. */
+const HOST_TEMPLATES = new Set(['launchd']);
+
 /** The forge's templates, which ship under `templates/github/` and hold the gate workflow alone. */
 const FORGE_TEMPLATES = 'github';
 
@@ -191,7 +194,7 @@ export function plan({ templates = TEMPLATES, repo, project, commit } = {}) {
   return [
     { path: CONFIG, content: fill(starter, { repo, project }) },
     ...readdirSync(templates, { withFileTypes: true })
-      .filter((entry) => entry.isDirectory() && (entry.name !== FORGE_TEMPLATES || commit !== undefined))
+      .filter((entry) => entry.isDirectory() && !HOST_TEMPLATES.has(entry.name) && (entry.name !== FORGE_TEMPLATES || commit !== undefined))
       .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
       .flatMap((entry) => forks(templates, entry.name))
       .map((file) => (file.path.startsWith(`${forgeAssets}/`) ? { ...file, content: file.content.replaceAll(PIN, commit) } : file)),
