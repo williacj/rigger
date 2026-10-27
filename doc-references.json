@@ -34,6 +34,7 @@
     "docs/spikes/what-unattended-sessions-are-refused.md": "strict",
     "docs/spikes/launchd-as-a-supervisor.md": "strict",
     "docs/spikes/launchd-lost-cells.md": "strict",
+    "docs/spikes/telemetry-push.md": "strict",
     "docs/guide.md": "strict",
     "docs/reference.md": "strict"
   },
