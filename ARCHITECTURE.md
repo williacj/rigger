@@ -47,9 +47,10 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
    process existed. A card reaches the owner only through L2's escalation categories, never
    through a substrate event.
 2. **Each boundary has one vocabulary.** L1 gives L2 exit codes and output, or that a command never
-   started, or that a directory was refused. L2 gives L3 next actions, and the number of the status issue
-   its notice function found or opened. A next action that dispatches a role carries what that
-   dispatch is handed, which L2 composes. L1 delivers it unread, through L0's provider adapter. L3
+   started, or that a directory was refused. L2 gives L3 next actions. L2's notice function also
+   gives L3 each rename a hold's closer is to take, and the number that rename attaches. A next
+   action that dispatches a role carries what that dispatch is handed, which L2 composes. L1
+   delivers it unread, through L0's provider adapter. L3
    gives L1 dispatches, and has L1 make the workspace each
    attempt at a card runs in. L1 gives L3 the tip of a card's line of work in that workspace once a
    continuing attempt's maker exits, and L3 hands it to L2 unread. L0's workspace adapter,
@@ -721,6 +722,12 @@ A hold runs in this order:
    the hold's id, and L3 attaches `<n>` by renaming the closer to `hold-<id>-issue-<n>.json`.
 6. L2 places the issue on the board in Owner where the board does not hold it there.
 
+L3 makes every rename these steps name, between two of L2's answers. L2's notice function answers
+the rename a step needs, and L3 makes it through `admission.mjs`. L3 then hands L2 the outcome
+unread, before L2 writes again. L2 never renames a closer, and no layer hands it a means to. Where
+a rename finds its closer gone, L3 ends that call, and L2 writes nothing more for it. Each call
+acts on the closer under the name L3 lists when that call starts.
+
 Each name the closer takes says where its notice can be: `hold-<id>.json` that L2 has written
 none, `hold-<id>-after-<k>.json` that an issue numbered above `<k>` may hold it, and
 `hold-<id>-issue-<n>.json` that issue `<n>` holds it. A crash between any two steps therefore
@@ -770,9 +777,11 @@ trigger reads again. At each trigger, after it lists the directory, L3 acts on e
 
 - For a hold's closer that names no issue, L3 calls L2's notice function for it. For
   `hold-<id>.json`, the hold's steps 2 to 6 run.
-- For `hold-<id>-after-<k>.json`, L2 reads each issue numbered above `<k>`, by its number, in any
-  state and with any labels. Where one's body names the hold's id, L3 renames the closer to name
-  that issue, and the next bullet applies. Otherwise the hold's steps 2 to 6 run again.
+- For `hold-<id>-after-<k>.json`, L2 reads the number `<j>` of the repository's newest issue or pull
+  request. It then reads each issue numbered above `<k>` and up to `<j>`, by its number, in any
+  state and with any labels. A number that names no issue of the repository is passed over. Where
+  one's body names the hold's id, L3 renames the closer to name that issue, and the next bullet
+  applies. Otherwise the hold's steps 2 to 6 run again.
 - For a hold's closer naming an issue whose state L3 read, L3 hands L2's notice function the hold's
   id and that number. Where neither the issue's opening nor a comment on it names the hold's id, as
   after a crash in step 4, the notice never reached it. L2 then comments as step 4 says where the
@@ -1204,8 +1213,8 @@ comment lines are outside it too: a comment cannot carry a bug.
 | L0 | 3,000 |
 | L1 | 1,500 |
 | L2 | 1,600 |
-| The gate | 400 |
-| L3 | 800 |
+| The gate | 300 |
+| L3 | 900 |
 | L5 | 1,500 |
 | L6 | 1,200 |
 | CLI and config | 2,000 |
