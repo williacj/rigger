@@ -35,7 +35,7 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
 | **L1 Execution** | How to run one dispatch in one workspace: isolation, lifetime, result as exit code plus captured output. Making the workspace an attempt at a card runs in. | Whether to run it, or what the result means | Dispatch start, end, duration, exit, timeout, and the workspace each runs in. A workspace made or removed. | Engineer cards, within the L1 budget | `src/execution/` |
 | **L2 Workflow** | The next action for a card from its stage and observable facts, including which kind selects a ready card and the provider each role's dispatch runs on, and whether its acceptance passes the form check. Every change to a card's column; the review loop; the gate rule, and whether a card's pull request merges; escalation routing; whether a failure is the work's, or the environment's, card-local or `out`. Which provisioning steps a card runs, whether a step's failure stops its attempt, and whether a failed attempt is tried again. | Which card is next; what good means | Card transitions with cause, verdicts, loop rounds, escalations by category, provisioning failures and attempts, by class | Spec rows, ratified by the owner | `src/workflow/` |
 | **L3 Scheduling** | Pull order by priority; concurrency; claims taken synchronously before any await; the repo lane, which runs the merges L2 decides one at a time. Admission, which is whether any card may be pulled; the hold that closes admission; the three trigger kinds. The halt on starts while the sink refuses an event, which is not the admission hold. When Rigger reads the forge again for a write it has not yet shown, and when it stops. | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput, admission holds and their reason | Spec rows and config | `src/scheduling/` |
-| **L4 Quality** | What the work is and what good means: kinds of work, their maker and judge sets, and the providers those run on, roles, review procedure, provisioning steps, recorded decisions, which improvement roles run and which signals count | How Rigger runs, beyond the engine settings the extension points name | Nothing. L2 records what a role produced: findings by code and judge, rounds per kind of work, rework, tier corrections, later defect escape | The owner, in the consumer's repository | The consumer's repository; Rigger ships templates under `templates/` |
+| **L4 Quality** | What the work is and what good means: kinds of work, their maker and judge sets, and the providers those run on, roles, review procedure, provisioning steps, recorded decisions, which improvement roles run and which signals count | How Rigger runs, beyond the engine settings the extension points name | Nothing. L2 records what a role produced: findings by code and judge, rounds per kind of work, rework, later defect escape. L3 records each dispatch's role and tier, from which L5 derives the tier corrections tier accuracy counts ("Telemetry") | The owner, in the consumer's repository | The consumer's repository; Rigger ships templates under `templates/` |
 | **L5 Observation** | How every layer's events are recorded and which signals derive from them | Anything that acts on them. L5 records and derives, never decides | The report | Engineer cards | `src/observation/` |
 | **L6 Improvement** | What to propose, and to whom, from L5's signals. The object-level loop reorders L3's queue and re-tiers within L4. The meta-level loop proposes changes to any layer. | It changes no code, in any layer, ever | Proposals with target layer, and their outcome | Spec rows | `src/improvement/` |
 | **L7 Owner** | Recorded decisions, config, the last verdict when named as a judge, or where the consumer's own check asks for it, answers to escalations | | | | A person |
@@ -1161,8 +1161,8 @@ The verb ends the sink on every path it returns through. On any other exit, L0's
 the sink after its own kills, so those kills are among what the sink writes.
 
 Six layers produce a signal set. L5 owns the sink rather than a signal, and L7 is a person. A signal
-is derived, where an event is recorded: L2 records a tier correction, and L4's tier accuracy is the
-rate across them.
+is derived, where an event is recorded. L3 records each dispatch's role and tier, and L5 derives
+tier corrections from those records for L4's tier accuracy.
 
 - **L0** substrate fault rate
 - **L1** execution duration and survivor rate
@@ -1179,19 +1179,162 @@ emitting layer as a failure, and no layer drops it. Any layer that acted outside
 that action's event refused reports the refusal to its caller. The report names the action and the
 card. The Failure model states what L3 does with a refusal.
 
-The shape, abbreviated. One card's events, across four layers:
+### The envelope
+
+The sink stamps six fields on every line, ahead of the emitting layer's own, and refuses an event
+whose layer supplies one of them:
+
+| Field | What it holds | Null or absent from the line |
+|---|---|---|
+| `ts` | When the layer emitted the event, read from the run's clock, as an ISO 8601 time in UTC. A held event keeps the time it was emitted | Never |
+| `run` | The run id of the invocation that emitted the event | Never |
+| `layer` | The layer that emitted the event, `L0` to `L6` | Never |
+| `event` | The event's name, which the emitting layer gives it | Never |
+| `card` | The issue number of the card the event arose under | Absent where the event arose under no card, as `run.start` does. Never null |
+| `dispatch` | The id L3 allocated to the dispatch the event arose under | Absent where the layer named no dispatch. Null where the layer named none explicitly, as `review.escalate` outside a dispatch does, and as `marker.read` does for a marker that carries no dispatch id |
+
+A derivation that groups by `card` or `dispatch` treats a null field and an absent one alike. Every
+derivation below reads the stream in line order. Every append is synchronous, so line order is the
+order of events within a run.
+
+### What `report` derives
+
+`report` derives each signal below from the events and fields named for it, and from no others.
+A signal **per run** reads the events one `run` recorded. A signal **across the stream** reads
+every event in the stream, whatever its run. An event no derivation reads keeps the fields the
+card that adds it gives it, and this section names it nowhere.
+
+L1's section:
+
+- **Execution duration**, per run and across the stream: each dispatch's `ms`, from its L1
+  `dispatch.end`.
+- **Survivor rate**, per run and across the stream. Its denominator is the L1 `dispatch.end`
+  events. It excludes a `dispatch.end` carrying `reason`, which L1 records where it got no result
+  for the command, and keeps one carrying `unread`. Its numerator is those of the denominator's
+  dispatches whose id an L0 `survivor.killed` or `group.killed` carries as its `dispatch`,
+  anywhere in the stream.
+- **Redos after an interruption**, across the stream: a count beside the count of first attempts,
+  each as "Redos after an interruption" below defines it.
+
+L2's section:
+
+- **Host faults**, `R-RECORD-2`'s "how often a host fault interrupted it", per run and across the
+  stream. Its numerator counts three kinds of L2 event under a card:
+  - each `maker.failed`, which carries `class: 'environment'`;
+  - each `judge.withheld`, which carries `class: 'environment'`;
+  - each `attempt.failed` carrying `class: 'environment'` and no `maker`.
+
+  An `attempt.failed` carrying `class: 'card-local'` or `class: 'out'` is not counted. One carrying
+  `class: 'environment'` and `maker` records the fault its `maker.failed` already counts. The
+  denominator is the work claims, by `run` and `card`, as "Redos after an interruption" defines
+  them. It excludes every merge claim, which dispatches nothing.
+- **Escalation rate, and why**, per run and across the stream. Its numerator is the cards under
+  which a `review.escalate` is recorded. Its denominator is the cards under which a `pull` is
+  recorded, and it excludes none. Each escalation shows why by its `category`, `raiser` and
+  `reason`, and by its `destination` where the event records one.
+- **Rounds per card, by kind of work**, across the stream: a count per card. A card's rounds are
+  the distinct pairs of `head` and `digest` among its `marker.read` events, since one round is one
+  distinct pair of head and acceptance digest ("Markers"). Its kind is the `kind` of its latest
+  `pull` that carries one. Only a pull L2 answered with a dispatch or with judges carries a `kind`.
+
+L3's section, with throughput and utilization as `report.mjs`'s `l3Signals` derives them:
+
+- **Queue carried**, `R-RECORD-2`'s "what the queue was carrying", per run: each `pull`'s
+  `queueDepth`, a count at each pull, in line order.
+- **Throughput**, per run. Its numerator is the run's `slot.release` events. Its denominator is
+  the run's span in hours, from its first event's `ts` to its last's, whatever layer recorded them.
+  It excludes no event, and a run whose span is zero has no throughput.
+- **Utilization**, per run. Its numerator sums, over each `slot.release`, the time from the latest
+  earlier L3 `pull` under the same card to that release. Its denominator is `n` times the run's
+  span, where `n` is the `concurrency` of the run's `run.start`. It excludes a run with no
+  `run.start` and a run whose span is zero, and neither has a utilization.
+
+L4's section:
+
+- **Rework**, per run and across the stream: the count of `transition` events whose `cause` is
+  `continued`, `continuedFromOwner`, `conflicted` or `conflictedFromOwner`.
+- **First-pass rate**, across the stream. Its denominator is the cards under which a `transition`
+  whose `cause` is `merged` or `mergedFromOwner` is recorded. It excludes a card with no
+  `marker.read`, since no round shows it was judged. Its numerator is those of the denominator's
+  cards with exactly one round, as L2's section counts rounds.
+- **Tier accuracy**, across the stream. Its denominator is each pair of a card and a role with at
+  least one L3 `dispatch` carrying `role` and `tier`. It excludes every L3 `dispatch` carrying
+  `step`, which a provisioning step's dispatch carries with no `tier`, even where it names a
+  judge's `role`. Its numerator is those of the denominator's pairs with no tier correction.
+
+A **tier correction** is an L3 `dispatch` of a card and a role at a different `tier` from that
+role's immediately preceding L3 `dispatch` of the card. L5 derives it from L3's `dispatch` events,
+and no layer records one. A tier a label set before a card's first dispatch is never a correction,
+because no dispatch of that role precedes the first.
+
+After every layer section, `report` shows the marker check, "markers no dispatch wrote", across the
+stream. It reads L2's `marker.read` events, by `card`, `role`, `pull`, `head`, `digest`,
+`evidence`, `dispatch`, `verdict` and `reason`. It matches them against L3's `dispatch` events, by
+`dispatch`, `card` and `role`, and against L1's `dispatch.start`, by `dispatch`, `digest` and the
+`pull` and `head` its `facts` hold. `report.mjs`'s `unwrittenMarkers` derives it, and this
+contract leaves that derivation as it is.
+
+### Redos after an interruption
+
+`R-STATE-3` asks that a redo after an interruption be told apart from a first attempt. `report`
+derives both over L3's claim events alone: `pull`, `slot.release`, `merge.start` and L3's
+`dispatch`, by `run` and `card`, in line order. A claim of card *c* starts at a `pull` under *c*,
+and runs to the next `pull` under *c*.
+
+- A claim of *c* is a **work claim** where it is "a `pull` under *c* with no `merge.start` under *c*
+  before that card's next `pull`". A merge claim is no attempt, so it is left out.
+- A work claim **was interrupted** where, "within its own `run`, no `slot.release` under *c* follows
+  its `pull` before the next `pull` under *c*". That covers an engine killed outright, and an end in
+  L0's exit cleanup, which never records a `slot.release`.
+- A claim **did something** where "an L3 `dispatch` under *c* follows its `pull`, within the claim".
+- A claim is **a redo after an interruption** where "it is a work claim that did something, and
+  *c*'s most recent earlier work claim that did something is in another `run` and was interrupted".
+- A claim is a **first attempt** where it is a work claim of *c* that did something and is no redo
+  after an interruption.
+
+The derivation reads neither `dispatch.start` nor `dispatch.end`. L1's end of a dispatch recorded
+as Rigger exits can carry an exit code, as a normal end does, so the end does not tell them apart.
+
+A `transition` whose `cause` is `redone` is `R-WORK-24`'s restart of a card from Review. `report`
+counts it apart from a redo after an interruption, and never as one.
+
+The derivation's residual is a `slot.release` the sink refused. That claim's normal end is then
+unreadable, and the derivation counts a redo that never happened. `R-RECORD-9` already has Rigger
+say what went unrecorded. Any one of these would reverse the derivation:
+
+- a code path on which a claim ends normally without a `slot.release`;
+- a code path that records `slot.release` in exit cleanup;
+- a stream or a test showing a redo counted from a refused release.
+
+The fix would then be a field on L1's `dispatch.end`, recorded by its exit-cleanup path in
+`src/execution/run.mjs`, and the redo derivation would read it.
+
+### What `report` shows
+
+`report` shows one section per landed layer, in layer order: L1, L2, L3 and L4. A **landed layer**
+is one this section gives a signal to. Each section shows the signals named for it above, per run
+and across the stream as each signal's span says. The marker check follows every layer section.
+
+L0's substrate fault rate needs L0's call events, which this contract does not yet name, so L0 has
+no section until a delta here places that signal. `report` shows no L6 section until L6 emits
+events. No other signal is derived.
+
+### The shape, abbreviated
+
+One card's claim, across three layers:
 
 ```jsonl
 {"ts":"2026-09-13T14:02:11.310Z","run":"r-8f21","layer":"L3","event":"pull","card":1412,"kind":"change","queueDepth":7,"inFlight":2}
-{"ts":"2026-09-13T14:14:45.882Z","run":"r-8f21","layer":"L1","event":"dispatch.end","card":1412,"dispatch":"d-01","role":"engineer","exit":0,"ms":734120}
-{"ts":"2026-09-13T14:19:03.005Z","run":"r-8f21","layer":"L0","event":"survivor.killed","card":1412,"name":"rust-analyzer-proc-macro-srv","cmd":"…"}
-{"ts":"2026-09-13T14:41:52.771Z","run":"r-8f21","layer":"L2","event":"verdict","card":1412,"dispatch":"d-02","role":"reviewer","sha":"9c1af03","verdict":"needs-revision","findings":2}
-{"ts":"2026-09-13T15:02:40.117Z","run":"r-8f21","layer":"L2","event":"escalation","card":1412,"category":"recorded-decision","to":"owner"}
+{"ts":"2026-09-13T14:02:12.004Z","run":"r-8f21","layer":"L3","event":"dispatch","card":1412,"dispatch":"d-01","role":"engineer","tier":"standard","attempt":1}
+{"ts":"2026-09-13T14:14:45.882Z","run":"r-8f21","layer":"L0","event":"survivor.killed","card":1412,"dispatch":"d-01","pid":48213,"name":"rust-analyzer-proc-macro-srv","cmd":"…"}
+{"ts":"2026-09-13T14:14:45.990Z","run":"r-8f21","layer":"L1","event":"dispatch.end","card":1412,"dispatch":"d-01","exit":0,"ms":753986}
+{"ts":"2026-09-13T14:19:03.005Z","run":"r-8f21","layer":"L3","event":"slot.release","card":1412}
 ```
 
-The envelope repeats unchanged across layers and the card id threads through all of them. The L0
-survivor kill is recorded and goes no further: the escalation two lines later is L2's, raised for
-its own reason. Field names are not yet fixed.
+The envelope repeats unchanged across layers, and the card id threads through all of them. The L0
+survivor kill is recorded under the dispatch it arose in, and goes no further: L1 still records the
+dispatch's end with the command's own exit code. The `pull` and the `slot.release` arose under no
+dispatch, so neither line carries one.
 
 ## Budgets
 
