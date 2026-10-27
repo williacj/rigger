@@ -37,7 +37,7 @@ every cell.
 | gh | `gh --version`: `gh version 2.103.2 (2026-10-23)` | #0004 |
 | Time measured | `date -u`: `2026-10-27T21:09:00Z`. The cells ran from 21:13:13Z to 21:23:30Z | #0005 |
 | Sign-in | `gh auth status`: account `williacj` (keyring). Token scopes `gist`, `project`, `read:org`, `repo`, `workflow`; there is no `delete_repo` | #0006 |
-| git's credential | `git config --global --get-all 'credential.https://github.com.helper'`: `!/opt/homebrew/bin/gh auth git-credential`. Read before the transcript began | — |
+| git's credential | `git config --global --get-all 'credential.https://github.com.helper'`: `!/opt/homebrew/bin/gh auth git-credential`. Read before the wrapper existed, so it is in the session record, not the transcript (see "Commands outside the wrapper") | session call 17 |
 | Probe before any write | `gh repo view williacj/rigger-spike-1018-probe --json isEmpty,visibility,createdAt,defaultBranchRef,pushedAt` → `{"createdAt":"2026-10-27T17:46:01Z","defaultBranchRef":{"name":""},"isEmpty":true,"pushedAt":"2026-10-27T17:46:03Z","visibility":"PUBLIC"}` | #0007 |
 | Probe visibility | `gh api repos/williacj/rigger-spike-1018-probe --jq .visibility` → `public` | #0008 |
 | Probe's rulesets, Actions and workflows before any write | `rulesets` → `[]`. actions/permissions → `{"enabled":true,"allowed_actions":"all","sha_pinning_required":false}`. actions/workflows → `{"total_count":0,"workflows":[]}`. `gh run list` → `[]`. git/refs → 409 "Git Repository is empty." | #0010 to #0014 |
@@ -47,11 +47,24 @@ every cell.
 - **The probe's first write came after the emptiness read.** The read is #0007, at 21:09:01Z. The
   first write is the seed push, #0033, at 21:13:13Z.
 - **The full transcript** is `~/Library/Logs/rigger-spike-1018/transcript.txt`, with a one-line
-  index at `~/Library/Logs/rigger-spike-1018/index.tsv`. Both are outside any worktree or scratch
-  directory. Every command ran through a wrapper. The wrapper recorded the command's start and end
-  in UTC to the millisecond, its wall time, its exit status and its full stdout and stderr, and
-  numbered each entry. A script's own entry is written after the entries of the commands it ran,
-  so the index is ordered by entry number and not by line.
+  index at `~/Library/Logs/rigger-spike-1018/index.tsv`, and each entry's stdout and stderr in
+  `~/Library/Logs/rigger-spike-1018/out/`. All of it is outside any worktree or scratch directory.
+  - **What it holds.** Every command against the probe, and every comment I posted on #1018, ran
+    through a wrapper. The wrapper recorded the command's start and end in UTC to the millisecond,
+    its wall time, its exit status and its full stdout and stderr, and numbered each entry. A
+    script's own entry is written after the entries of the commands it ran, so the index is ordered
+    by entry number and not by line. Its 945 entries end at #0945.
+  - **Where it is kept, and its hashes.** It is retained on two hosts at that same path, read-only
+    for the judges: on this host, where it was written, and on the mini, where the coordinator
+    copied the whole `~/Library/Logs/rigger-spike-1018/` tree after round 1. Measured on this host
+    with `shasum -a 256` on 2026-10-27, after the last entry:
+    - transcript.txt: `e427be13d0fe71c60ddcc8c52afdcad5b11482109b19a68fa203248dcff5fdeb`;
+    - index.tsv: `d93854b5efb55ac1c791551ca8ec01380ac41c981db580d72714c187ddaa8d0f`.
+
+    The coordinator reported the mini's copy with hashes beginning `e427be13` and ending `5fdeb`,
+    and beginning `d93854b5` and ending `8d0f`. I did not read the mini myself.
+  - **What it does not hold** is the commands I ran outside the wrapper. "Commands outside the
+    wrapper" below gives each one that reached GitHub, from the session record.
 
 ## Writes
 
@@ -67,12 +80,15 @@ status:
 - 1018#6453933369 covers entries #0622 to #0940: the workflow file, the workflows crossing and the
   rules crossing.
 
-Every write the transcript records went to the probe, except four:
+Every write the transcript records went to the probe, except these comments on #1018:
 
-- the two comments above, the intent comment and its failed first try;
-- the block comment, 1018#6453927183;
-- one edit of 1018#6453811573, to correct an entry number (#0621);
-- the push of branch `rigger-1018` and its pull request.
+- the intent comment (#0027), and its failed first try (#0026), which posted nothing;
+- the two writes comments above (#0620, #0945), and one edit of 1018#6453811573 to correct an entry
+  number (#0621);
+- the block comment, 1018#6453927183 (#0941).
+
+The push of branch `rigger-1018` and its pull request ran outside the wrapper. They are in the
+session record (session call 99), and no other write to GitHub is.
 
 Every write to the probe is one of these:
 
@@ -95,8 +111,10 @@ Every write to the probe is one of these:
     are the cells reported below.
 - **The second copy of "Main"** (#0783). The forge refused the copy as read (#0779). The retry kept
   everything except the three `integration_id`s, which is what was left out. The input to #0779
-  came from a read of ruleset 23968611 that I made outside the wrapper. #0781 repeats that read
-  under the wrapper, and its output is what #0783 was built from.
+  came from a read of ruleset 23968611 that ran outside the wrapper, in the same shell command as
+  #0779. That read is session call 53, started 21:21:35.421Z, and it exited 0: the command chained
+  it with `&&` to the `cat` and the post, and both ran. #0781 is a second, separate read under the
+  wrapper, not the original. Its output is what #0783 was built from.
 - **The `jq` call** (#0782), which stripped those `integration_id`s from the copy. It is a host
   tool, used for the experiment's setup and in neither mechanism.
 
@@ -117,9 +135,18 @@ cells measured, with that check listed as not measured.
 
 ## The streams
 
-Every stream written to the probe was synthetic. Each was made by
-`node spikes/bin/gen-stream.mjs <out> <bytes> <label>`, and each such call is a `gen` entry in the
-transcript. The generator writes JSON lines shaped like Rigger's envelope, with keys `ts`, `run`,
+Every stream written to the probe was synthetic. Each was made by one `gen` entry in the
+transcript, 71 in all, every one with exit 0. Every one of them ran this exact command, with only
+`<label>` and `<bytes>` varying:
+
+```
+node /Users/cjwilliams/GitHub/rigger-worktrees/1018-spike/spikes/bin/gen-stream.mjs /Users/cjwilliams/GitHub/rigger-worktrees/1018-spike/spikes/streams/<label>.jsonl <bytes> <label>
+```
+
+The first, #0028, is
+`node /Users/cjwilliams/GitHub/rigger-worktrees/1018-spike/spikes/bin/gen-stream.mjs /Users/cjwilliams/GitHub/rigger-worktrees/1018-spike/spikes/streams/seed.jsonl 1243 seed`.
+"Each stream's generating command" below gives each call's two varying arguments and the write
+that sent it. The generator writes JSON lines shaped like Rigger's envelope, with keys `ts`, `run`,
 `layer`, `event`, `card` and `dispatch`. Every value is invented from the label and a counter. The
 last line is padded so that the file is exactly `<bytes>` long. Each write used its own label, so
 no two writes sent the same blob, except where noted.
@@ -320,8 +347,8 @@ events.jsonl (the seed's blob `a04de4c7`).
 the second, so the delay lies between 5.08 and 6.08 s. A poll every 2 s found the run 5.5 s after
 polling began.
 
-**The wait used** before each run-list read was at least 60 s after the cell's last write, well
-past that delay:
+**The wait used.** Each run-list read came at least 14 s after the last write it covers, and the
+two after the workflow file existed came 61 s after. Both are past that delay:
 
 | Read | Entry, time | Last write it covers | Wait |
 |---|---|---|---|
@@ -414,6 +441,135 @@ not measured.
 **After every ruleset create**, the probe's rulesets were read back with
 `gh api repos/williacj/rigger-spike-1018-probe/rulesets`: #0780, #0784, #0909, #0911 and #0914.
 The last read, #0943, lists 25993857 "Main" and 25993929 `deny-heads-r2`.
+
+## Each stream's generating command
+
+Each row is one `gen` entry. Its command is the one under "The streams", with the `<label>` and
+`<bytes>` given here. The last column names the write script, and its transcript entry, that sent
+the file to the probe. The workflow commit (#0622) reused the seed's stream and generated none.
+
+| Gen entry | Start (UTC) | Exit | `<label>` | `<bytes>` | Written to the probe by |
+|---|---|---|---|---|---|
+| #0028 | 2026-10-27T21:13:09.224Z | 0 | seed | 1243 | seed (#0029) |
+| #0050 | 2026-10-27T21:13:42.715Z | 0 | w-heads-push-1 | 1243 | W/heads/push/first (#0051) |
+| #0062 | 2026-10-27T21:13:45.727Z | 0 | w-heads-push-2 | 1243 | W/heads/push/update-parent (#0063) |
+| #0074 | 2026-10-27T21:13:48.233Z | 0 | w-heads-push-3 | 1243 | W/heads/push/update-unrelated-unforced (#0075); W/heads/push/update-unrelated-forced (#0086) |
+| #0097 | 2026-10-27T21:13:52.150Z | 0 | w-heads-api-1 | 1243 | W/heads/api/first (#0098) |
+| #0109 | 2026-10-27T21:13:55.761Z | 0 | w-heads-api-2 | 1243 | W/heads/api/update-parent (#0110) |
+| #0120 | 2026-10-27T21:13:58.320Z | 0 | w-heads-api-3 | 1243 | W/heads/api/update-unrelated-unforced (#0121); W/heads/api/update-unrelated-forced (#0132) |
+| #0143 | 2026-10-27T21:14:06.053Z | 0 | w-rigger-push-1 | 1243 | W/rigger/push/first (#0144) |
+| #0155 | 2026-10-27T21:14:09.073Z | 0 | w-rigger-push-2 | 1243 | W/rigger/push/update-parent (#0156) |
+| #0167 | 2026-10-27T21:14:11.973Z | 0 | w-rigger-push-3 | 1243 | W/rigger/push/update-unrelated-unforced (#0168); W/rigger/push/update-unrelated-forced (#0179) |
+| #0190 | 2026-10-27T21:14:19.033Z | 0 | w-rigger-api-1 | 1243 | W/rigger/api/first (#0191) |
+| #0202 | 2026-10-27T21:14:24.214Z | 0 | w-rigger-api-2 | 1243 | W/rigger/api/update-parent (#0203) |
+| #0213 | 2026-10-27T21:14:27.177Z | 0 | w-rigger-api-3 | 1243 | W/rigger/api/update-unrelated-unforced (#0214); W/rigger/api/update-unrelated-forced (#0225) |
+| #0236 | 2026-10-27T21:14:54.775Z | 0 | w2-heads-api-1 | 1243 | W/heads/api/w2/first (#0237) |
+| #0248 | 2026-10-27T21:15:01.411Z | 0 | w2-heads-api-2 | 1243 | W/heads/api/w2/update-parent (#0249) |
+| #0260 | 2026-10-27T21:15:05.509Z | 0 | w2-heads-api-3 | 1243 | W/heads/api/w2/update-unrelated-unforced (#0261); W/heads/api/w2/update-unrelated-forced (#0272) |
+| #0283 | 2026-10-27T21:15:14.647Z | 0 | w2-rigger-api-1 | 1243 | W/rigger/api/w2/first (#0284) |
+| #0295 | 2026-10-27T21:15:20.430Z | 0 | w2-rigger-api-2 | 1243 | W/rigger/api/w2/update-parent (#0296) |
+| #0307 | 2026-10-27T21:15:25.039Z | 0 | w2-rigger-api-3 | 1243 | W/rigger/api/w2/update-unrelated-unforced (#0308); W/rigger/api/w2/update-unrelated-forced (#0319) |
+| #0330 | 2026-10-27T21:15:50.453Z | 0 | s-heads-push-real-1 | 1243 | S/heads/push/real/1 (#0331) |
+| #0342 | 2026-10-27T21:15:53.667Z | 0 | s-heads-api-real-1 | 1243 | S/heads/api/real/1 (#0343) |
+| #0354 | 2026-10-27T21:15:58.929Z | 0 | s-rigger-push-real-1 | 1243 | S/rigger/push/real/1 (#0355) |
+| #0366 | 2026-10-27T21:16:03.881Z | 0 | s-rigger-api-real-1 | 1243 | S/rigger/api/real/1 (#0367) |
+| #0378 | 2026-10-27T21:16:07.330Z | 0 | s-heads-push-10m-1 | 10485760 | S/heads/push/10m/1 (#0379) |
+| #0390 | 2026-10-27T21:16:10.980Z | 0 | s-heads-api-10m-1 | 10485760 | S/heads/api/10m/1 (#0391) |
+| #0402 | 2026-10-27T21:16:18.236Z | 0 | s-rigger-push-10m-1 | 10485760 | S/rigger/push/10m/1 (#0403) |
+| #0414 | 2026-10-27T21:16:23.013Z | 0 | s-rigger-api-10m-1 | 10485760 | S/rigger/api/10m/1 (#0415) |
+| #0426 | 2026-10-27T21:16:30.730Z | 0 | s-heads-push-real-2 | 1243 | S/heads/push/real/2 (#0427) |
+| #0438 | 2026-10-27T21:16:33.286Z | 0 | s-heads-api-real-2 | 1243 | S/heads/api/real/2 (#0439) |
+| #0450 | 2026-10-27T21:16:36.690Z | 0 | s-rigger-push-real-2 | 1243 | S/rigger/push/real/2 (#0451) |
+| #0462 | 2026-10-27T21:16:39.481Z | 0 | s-rigger-api-real-2 | 1243 | S/rigger/api/real/2 (#0463) |
+| #0474 | 2026-10-27T21:16:43.459Z | 0 | s-heads-push-10m-2 | 10485760 | S/heads/push/10m/2 (#0475) |
+| #0486 | 2026-10-27T21:16:48.320Z | 0 | s-heads-api-10m-2 | 10485760 | S/heads/api/10m/2 (#0487) |
+| #0498 | 2026-10-27T21:16:54.983Z | 0 | s-rigger-push-10m-2 | 10485760 | S/rigger/push/10m/2 (#0499) |
+| #0510 | 2026-10-27T21:17:00.398Z | 0 | s-rigger-api-10m-2 | 10485760 | S/rigger/api/10m/2 (#0511) |
+| #0522 | 2026-10-27T21:17:07.931Z | 0 | s-heads-push-real-3 | 1243 | S/heads/push/real/3 (#0523) |
+| #0534 | 2026-10-27T21:17:10.990Z | 0 | s-heads-api-real-3 | 1243 | S/heads/api/real/3 (#0535) |
+| #0546 | 2026-10-27T21:17:16.763Z | 0 | s-rigger-push-real-3 | 1243 | S/rigger/push/real/3 (#0547) |
+| #0558 | 2026-10-27T21:17:19.999Z | 0 | s-rigger-api-real-3 | 1243 | S/rigger/api/real/3 (#0559) |
+| #0570 | 2026-10-27T21:17:25.083Z | 0 | s-heads-push-10m-3 | 10485760 | S/heads/push/10m/3 (#0571) |
+| #0582 | 2026-10-27T21:17:29.722Z | 0 | s-heads-api-10m-3 | 10485760 | S/heads/api/10m/3 (#0583) |
+| #0594 | 2026-10-27T21:17:37.950Z | 0 | s-rigger-push-10m-3 | 10485760 | S/rigger/push/10m/3 (#0595) |
+| #0606 | 2026-10-27T21:17:45.617Z | 0 | s-rigger-api-10m-3 | 10485760 | S/rigger/api/10m/3 (#0607) |
+| #0633 | 2026-10-27T21:19:27.507Z | 0 | f-heads-push | 1243 | F/heads/push (#0634) |
+| #0645 | 2026-10-27T21:19:30.469Z | 0 | f-heads-api | 1243 | F/heads/api (#0646) |
+| #0657 | 2026-10-27T21:19:33.938Z | 0 | f-rigger-push | 1243 | F/rigger/push (#0658) |
+| #0669 | 2026-10-27T21:19:37.664Z | 0 | f-rigger-api | 1243 | F/rigger/api (#0670) |
+| #0683 | 2026-10-27T21:20:58.174Z | 0 | r0-heads-push-1 | 1243 | R/r0/heads/push/first (#0684) |
+| #0695 | 2026-10-27T21:21:02.152Z | 0 | r0-heads-push-2 | 1243 | R/r0/heads/push/update-parent (#0696) |
+| #0707 | 2026-10-27T21:21:05.958Z | 0 | r0-heads-api-1 | 1243 | R/r0/heads/api/first (#0708) |
+| #0719 | 2026-10-27T21:21:09.965Z | 0 | r0-heads-api-2 | 1243 | R/r0/heads/api/update-parent (#0720) |
+| #0731 | 2026-10-27T21:21:14.986Z | 0 | r0-rigger-push-1 | 1243 | R/r0/rigger/push/first (#0732) |
+| #0743 | 2026-10-27T21:21:19.716Z | 0 | r0-rigger-push-2 | 1243 | R/r0/rigger/push/update-parent (#0744) |
+| #0755 | 2026-10-27T21:21:22.908Z | 0 | r0-rigger-api-1 | 1243 | R/r0/rigger/api/first (#0756) |
+| #0767 | 2026-10-27T21:21:27.357Z | 0 | r0-rigger-api-2 | 1243 | R/r0/rigger/api/update-parent (#0768) |
+| #0788 | 2026-10-27T21:21:57.847Z | 0 | r1-heads-push-1 | 1243 | R/r1/heads/push/first (#0789) |
+| #0800 | 2026-10-27T21:22:01.455Z | 0 | r1-heads-push-2 | 1243 | R/r1/heads/push/update-parent (#0801) |
+| #0812 | 2026-10-27T21:22:05.804Z | 0 | r1-heads-api-1 | 1243 | R/r1/heads/api/first (#0813) |
+| #0824 | 2026-10-27T21:22:10.050Z | 0 | r1-heads-api-2 | 1243 | R/r1/heads/api/update-parent (#0825) |
+| #0836 | 2026-10-27T21:22:14.134Z | 0 | r1-rigger-push-1 | 1243 | R/r1/rigger/push/first (#0837) |
+| #0848 | 2026-10-27T21:22:17.745Z | 0 | r1-rigger-push-2 | 1243 | R/r1/rigger/push/update-parent (#0849) |
+| #0860 | 2026-10-27T21:22:20.939Z | 0 | r1-rigger-api-1 | 1243 | R/r1/rigger/api/first (#0861) |
+| #0872 | 2026-10-27T21:22:25.399Z | 0 | r1-rigger-api-2 | 1243 | R/r1/rigger/api/update-parent (#0873) |
+| #0884 | 2026-10-27T21:22:37.082Z | 0 | r2-u-heads-push-1 | 1243 | R/r2/heads/push/precreate (#0885) |
+| #0890 | 2026-10-27T21:22:40.196Z | 0 | r2-u-heads-api-1 | 1243 | R/r2/heads/api/precreate (#0891) |
+| #0896 | 2026-10-27T21:22:42.920Z | 0 | r2-u-rigger-push-1 | 1243 | R/r2/rigger/push/precreate (#0897) |
+| #0902 | 2026-10-27T21:22:46.320Z | 0 | r2-u-rigger-api-1 | 1243 | R/r2/rigger/api/precreate (#0903) |
+| #0915 | 2026-10-27T21:23:22.091Z | 0 | r2-c-heads-push-1 | 1243 | R/r2/heads/push/first-refused (#0916) |
+| #0921 | 2026-10-27T21:23:23.807Z | 0 | r2-u-heads-push-2 | 1243 | R/r2/heads/push/update-parent-refused (#0922) |
+| #0928 | 2026-10-27T21:23:25.946Z | 0 | r2-c-heads-api-1 | 1243 | R/r2/heads/api/first-refused (#0929) |
+| #0934 | 2026-10-27T21:23:28.181Z | 0 | r2-u-heads-api-2 | 1243 | R/r2/heads/api/update-parent-refused (#0935) |
+
+## Commands outside the wrapper
+
+The wrapper did not record the commands I ran before it existed, nor those I ran to read the card,
+to set up the worktree or to deliver. Claude Code keeps its own record of every command this
+session ran, as JSON lines:
+`~/.claude/projects/-Users-cjwilliams-GitHub-rigger/8b20709e-597c-4245-af66-aa286847e27e/subagents/agent-a648ffe445ced5c04.jsonl`.
+It is on this host only. It still grows while the session runs, and it only appends, so I hashed
+a fixed prefix. Its first 439 lines run through the round-1 pr-body-check.sh call, and their
+SHA-256 (`head -n 439 <file> | shasum -a 256`) is
+`ee83ab66e8066baa07a1512d656d8e061163e5864e84bccc0d68c0dc4a9ae1ba`.
+
+For each call the record gives two times and one flag:
+
+- **Issued:** when the call was issued.
+- **Returned:** when its result came back.
+- **Status:** the flag the record sets on an error. "ok" means the whole shell command exited 0.
+  Where one call ran several commands, the record holds the status of the whole command, not of
+  each part.
+
+Every call through the round-1 delivery whose command reached GitHub outside the wrapper is listed
+below. A command that ran wholly inside the wrapper is in the transcript instead. No command
+against the probe ran outside the wrapper. The only writes are session call 99.
+
+| Session call | Issued (UTC) | Returned (UTC) | Status | What reached GitHub |
+|---|---|---|---|---|
+| 1 | 21:03:04.854Z | 21:03:06.386Z | ok | read: `gh issue view 1018 --json body` (twice) |
+| 2 | 21:03:10.585Z | 21:03:12.685Z | ok | read: `gh api repos/williacj/rigger/issues/1018/comments --paginate` |
+| 4 | 21:03:25.528Z | 21:03:27.553Z | ok | read: `gh api repos/williacj/rigger/issues/comments/<id>` for the three #1009 rulings |
+| 5 | 21:03:32.713Z | 21:03:33.998Z | ok | read: `git fetch origin -q` in the main checkout |
+| 6 | 21:03:38.044Z | 21:03:39.354Z | ok | read: `git ls-remote origin 'refs/heads/rigger-1018'`, which printed nothing, then the local `git worktree add` |
+| 17 | 21:07:42.748Z | 21:07:44.713Z | ok | read: `gh auth status`, `gh --version`. The same call also ran `git config --global --get-all credential.helper`, `git config --system --get-all credential.helper`, `git config --global --get-all 'credential.https://github.com.helper'`, `sw_vers`, `git --version` and `node --version`, which are local reads. Each part's own exit status was not recorded, and it is unrecoverable. The output shows the third `git config` printing `!/opt/homebrew/bin/gh auth git-credential`, and the first two printing nothing |
+| 32 | 21:12:48.172Z | 21:12:55.884Z | ok | read: `gh api repos/williacj/rigger/issues/1018/comments --jq '.[-1] \| .id, .created_at'`, which showed that #0026 had posted nothing. The same call then ran #0027 under the wrapper |
+| 53 | 21:21:35.421Z | 21:21:39.449Z | ok | read: `gh api repos/williacj/rigger/rulesets/23968611 --jq '{name,target,enforcement,conditions,rules,bypass_actors}' > ruleset-main-copy.json`, the original copy-input read, chained with `&&` to #0779 and #0780 under the wrapper |
+| 67 | 22:10:45.785Z | 22:10:48.259Z | ok | read: the M7-U7 ruling, 1009#6454836792; `git fetch -q origin` |
+| 71, 72 | 22:11:09.676Z, 22:11:11.702Z | 22:11:13.245Z, 22:11:14.227Z | ok | read: the r1 and r2 reviews on #1009, to quote S9 and the r2 reversal |
+| 97 | 22:21:28.753Z | 22:21:29.569Z (background start) | ok | none. `suite-slot.sh 1018-spike -- npm test`, the suite run that the PR body cites |
+| 99 | 22:48:18.894Z | 22:48:24.895Z | ok | **write:** `git push -u origin rigger-1018`; **write:** `gh pr create -R williacj/rigger --base main --head rigger-1018 …`, which opened #1054 |
+| 100 | 22:48:28.326Z | 22:48:30.135Z | ok | read: `pr-body-check.sh 1054 1018 spikes/suite-head.log` |
+
+Before the wrapper existed, I also ran local reads that reached no network:
+
+- `find` searches for events.jsonl;
+- generator test runs, writing to the system temporary directory, whose files were removed and
+  never sent anywhere;
+- `npm ci`;
+- the baseline `npm test`, which exited 0 with 3415 tests.
+
+The session record holds these too.
 
 ## Every cell
 
