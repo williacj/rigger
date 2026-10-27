@@ -383,16 +383,17 @@ that can read admission again and clear that failure itself.
 answered once it ends. The verb prints it and picks the exit status. While a clock trigger keeps
 `run` up, it hands the verb its outcomes as follows:
 
-- At each drain trigger, `run` hands the verb what settled since its previous hand-over: each
-  card's outcome, the closers a closed admission answered, and each failure.
+- At each drain trigger, `run` hands the verb what settled since the previous drain: each card's
+  outcome, the closers a closed admission answered, and each failure.
 - A poll that fails, or whose `trigger` event the sink refuses, hands its failure to the verb as
-  that poll settles, among that idle period's outcomes.
+  that poll settles. The failure is among that idle period's outcomes, and the next drain does not
+  hand it again.
 - The verb prints each hand-over as it prints a whole run with no clock trigger declared, and exits
   at none of them.
 - A `run` ended by a signal or at a `bootout` runs L0's exit cleanup, which sets the exit status
   ("Failure model"). launchd then relaunches it.
-- A `run` ended on a hold's closer it could not save hands the verb what settled since its previous
-  hand-over, and the verb exits non-zero, as above.
+- A `run` ended on a hold's closer it could not save hands the verb what settled since the previous
+  drain and was not yet handed, and the verb exits non-zero, as above.
 
 **Cards this run set aside.** A card L3 keeps out of later pulls under "Failure model"'s memory is
 **set aside**. With no clock trigger declared, a set-aside card stays skipped for the run's life,

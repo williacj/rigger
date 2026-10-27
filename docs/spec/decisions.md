@@ -68,7 +68,7 @@ reused.
 | D25 | The owner ratifies by marker, and the gate admits the merge | Ratified |
 | D26 | An escalation goes where the consumer sends it | Ratified |
 | D27 | An escalated card carries a label only the owner removes | Ratified. Amended in #868. |
-| D28 | A per-user LaunchAgent re-launches the engine on an interval | Ratified |
+| D28 | A per-user LaunchAgent re-launches the engine on an interval | Ratified. Amended in #1043. |
 
 ## D1 — Redo over resume
 
@@ -1027,7 +1027,7 @@ The owner ruled rule 2 in U1 Q1 on #740, and rule 1's exception in U4.7 on #740.
 
 ## D28 — A per-user LaunchAgent re-launches the engine on an interval
 
-**Status:** Ratified.
+**Status:** Ratified. Amended in #1043.
 
 ### Rule
 
