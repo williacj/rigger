@@ -1,0 +1,174 @@
+# ABOUTME: Carries one frozen #822 bootstrap proof on a separate push-only hosted Mac branch.
+name: host-bootstrap-proof-822-corrected
+
+on:
+  push:
+    branches: [rigger-822-bootstrap-proof-corrected]
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    runs-on: macos-latest
+    steps:
+      - name: Prepare carrier without persistent credentials
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Select supported Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - name: Verify frozen source before bootstrap
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          unset GIT_CONFIG_NOSYSTEM
+          test -z "${GIT_CONFIG_NOSYSTEM+x}"
+          E="$RUNNER_TEMP/rigger-822-proof"
+          mkdir -p "$E"
+          trap 'printf "%s\n" "$?" > "$E/source.status"' EXIT
+          H=b8618111756dcea584d876ec084728fd9632ee85
+          H_TREE=ab946aa661d89baff00003369a6c6280249155f1
+          H_DOC=f7fc306fd38901b4c79de394bbecb9c413d97ef3
+          PIN=b1222c909562c4519666ac043e31b6d03c502149
+          JOURNAL=docs/journal/2026-10-26-2300-822-bootstrap-git-config.md
+          {
+            printf 'event=%s\nref=%s\nsha=%s\nrun=%s\nattempt=%s\njob=%s\n' \
+              "$GITHUB_EVENT_NAME" "$GITHUB_REF" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_JOB"
+            printf 'runner=%s %s\n' "$(uname -s)" "$(uname -m)"
+            printf 'source_GIT_CONFIG_NOSYSTEM=absent\n'
+            sw_vers
+            printf 'node=%s\nnpm=%s\n' "$(node --version)" "$(npm --version)"
+            test "$GITHUB_EVENT_NAME" = push
+            test "$GITHUB_REF" = refs/heads/rigger-822-bootstrap-proof-corrected
+            test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+            test "$(git rev-list --parents -n 1 HEAD | wc -w | tr -d ' ')" = 2
+            test "$(git rev-parse HEAD^)" = "$H"
+            test "$(git rev-parse "$H^{tree}")" = "$H_TREE"
+            test "$(git rev-parse "$H:docs/host-bootstrap.md")" = "$H_DOC"
+            test "$(node -p 'process.versions.node.split(".")[0]')" = 26
+            S_TREE="$(git rev-parse HEAD^{tree})"
+            WORKFLOW="$(git rev-parse HEAD:.github/workflows/host-bootstrap-proof.yml)"
+            LIVE_PIN="$(git show "$H:.github/workflows/rigger-gate.yml" | sed -n 's/^  RIGGER_COMMIT: //p')"
+            test "$LIVE_PIN" = "$PIN"
+            printf 'H=%s\nH_tree=%s\nH_doc=%s\nS=%s\nS_tree=%s\nS_parent=%s\nworkflow_blob=%s\npin=%s\n' \
+              "$H" "$H_TREE" "$H_DOC" "$GITHUB_SHA" "$S_TREE" "$(git rev-parse HEAD^)" "$WORKFLOW" "$LIVE_PIN"
+            git diff --name-only "$H" HEAD | sort > "$E/carrier-paths.txt"
+            printf '%s\n' '.github/workflows/host-bootstrap-proof.yml' "$JOURNAL" | sort > "$E/expected-paths.txt"
+            cmp "$E/carrier-paths.txt" "$E/expected-paths.txt"
+          } > "$E/source.stdout" 2> "$E/source.stderr"
+      - name: Execute document commands in isolated homes
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          unset GIT_CONFIG_NOSYSTEM
+          test -z "${GIT_CONFIG_NOSYSTEM+x}"
+          E="$RUNNER_TEMP/rigger-822-proof"
+          H=b8618111756dcea584d876ec084728fd9632ee85
+          PIN=b1222c909562c4519666ac043e31b6d03c502149
+          test "$(cat "$E/source.status")" = 0
+          capture() {
+            local name="$1"; shift
+            printf '%q ' "$@" > "$E/$name.command"
+            printf '\n' >> "$E/$name.command"
+            local -a clean=(env -i PATH="$PATH" HOME="$HOME" TMPDIR="${TMPDIR:-/tmp}"
+              RUNNER_TEMP="$RUNNER_TEMP" CI=true GITHUB_ACTIONS=true
+              ImageOS="${ImageOS:-}" ImageVersion="${ImageVersion:-}" RUNNER_ARCH="${RUNNER_ARCH:-}"
+              GIT_CONFIG_SYSTEM=/dev/null GIT_TERMINAL_PROMPT=0)
+            if [ "${GIT_CONFIG_GLOBAL+x}" = x ]; then clean+=("GIT_CONFIG_GLOBAL=$GIT_CONFIG_GLOBAL"); fi
+            if [ "${GIT_CONFIG_NOSYSTEM+x}" = x ]; then
+              printf 'parent=present\n' > "$E/$name.nosystem"
+              printf '97\n' > "$E/$name.status"
+              return 97
+            fi
+            if ! "${clean[@]}" bash -c 'test -z "${GIT_CONFIG_NOSYSTEM+x}"'; then
+              printf 'parent=absent child=present\n' > "$E/$name.nosystem"
+              printf '97\n' > "$E/$name.status"
+              return 97
+            fi
+            printf 'parent=absent child=absent\n' > "$E/$name.nosystem"
+            local rc
+            if "${clean[@]}" "$@" > "$E/$name.stdout" 2> "$E/$name.stderr"; then rc=0; else rc=$?; fi
+            printf '%s\n' "$rc" > "$E/$name.status"
+            return "$rc"
+          }
+          unset GH_TOKEN GITHUB_TOKEN GITHUB_ENTERPRISE_TOKEN GIT_ASKPASS SSH_ASKPASS
+          unset GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT GIT_CONFIG_KEY_0 GIT_CONFIG_VALUE_0
+          export HOME="$E/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_TERMINAL_PROMPT=0
+          mkdir "$HOME"
+          test -z "$(ls -A "$HOME")"
+          {
+            printf 'initial_home_empty=true\nHOME=%s\nGIT_CONFIG_GLOBAL=%s\nGIT_CONFIG_SYSTEM=%s\n' \
+              "$HOME" "$GIT_CONFIG_GLOBAL" "$GIT_CONFIG_SYSTEM"
+            test -z "${GIT_CONFIG_NOSYSTEM+x}"
+            printf 'GIT_CONFIG_NOSYSTEM=absent\n'
+            printf 'helper_status='
+            if git config --get-all credential.helper >/dev/null 2>&1; then echo 0; exit 1; else echo "$?"; fi
+          } > "$E/isolation.stdout" 2> "$E/isolation.stderr"
+          cd "$E"
+          mkdir -p "$HOME/GitHub/rigger-worktrees"
+          TEST="$HOME/GitHub/rigger-worktrees/bootstrap-check"
+          capture clone git clone https://github.com/williacj/rigger.git "$TEST"
+          cd "$TEST"
+          capture hooks git config core.hooksPath .githooks
+          capture remote-head git remote set-head origin -a
+          capture checkout-H git checkout --detach "$H"
+          test "$(git rev-parse HEAD)" = "$H"
+          test "$(git rev-parse --is-shallow-repository)" = false
+          test "$(git rev-parse HEAD:docs/host-bootstrap.md)" = f7fc306fd38901b4c79de394bbecb9c413d97ef3
+          capture npm-ci npm ci
+          printf 'not applicable: npm ci has no node --test totals\n' > "$E/npm-ci.totals"
+          capture npm-test npm test
+          grep -E '^ℹ (tests|pass|fail|cancelled|skipped|todo) ' "$E/npm-test.stdout" > "$E/npm-test.totals"
+          test -s "$E/npm-test.totals"
+          capture npm-host npm run test:host
+          grep -E '^ℹ (tests|pass|fail|cancelled|skipped|todo) ' "$E/npm-host.stdout" > "$E/npm-host.totals"
+          test -s "$E/npm-host.totals"
+          awk '/^> sh test\/suite.sh --host$/ {child=1; next} child && NF {print; exit}' "$E/npm-host.stdout" > "$E/host-key.txt"
+          test -s "$E/host-key.txt"
+          test "$(cat "$E/host-key.txt")" = "$ImageOS-$ImageVersion-$RUNNER_ARCH-node26"
+          capture ignore git check-ignore -v .claude/settings.local.json x/.claude/settings.local.json
+          test "$(wc -l < "$E/ignore.stdout" | tr -d ' ')" = 2
+          grep -F '**/.claude/settings.local.json' "$E/ignore.stdout" >/dev/null
+          ID_HOME="$E/identity-home"
+          mkdir "$ID_HOME"
+          (
+            export HOME="$ID_HOME"
+            unset GIT_CONFIG_GLOBAL
+            cd "$E"
+            if capture identity-before git config --get user.email; then rc=0; else rc=$?; fi
+            test "$rc" = 1
+            capture identity-name git config --global user.name Example
+            capture identity-email git config --global user.email example@example.com
+            capture identity-after git config --get user.email
+            test "$(cat "$E/identity-after.stdout")" = example@example.com
+          )
+          LIVE_PIN="$(sed -n 's/^  RIGGER_COMMIT: //p' .github/workflows/rigger-gate.yml)"
+          test "$LIVE_PIN" = "$PIN"
+          printf '%s\n' "$LIVE_PIN" > "$E/install-pin.txt"
+          SRC="$HOME/GitHub/rigger-worktrees/engine-source"
+          capture install-clone git clone https://github.com/williacj/rigger.git "$SRC"
+          capture install-checkout git -C "$SRC" checkout --detach "$LIVE_PIN"
+          test "$(git -C "$SRC" rev-parse HEAD)" = "$PIN"
+          mkdir -p "$HOME/rigger-builds/engine"
+          cd "$SRC"
+          capture install-pack npm pack --pack-destination "$HOME/rigger-builds"
+          capture install-shasum shasum -a 256 "$HOME/rigger-builds/williacj-rigger-0.0.0.tgz"
+          cd "$HOME/rigger-builds/engine"
+          capture install-package npm install ../williacj-rigger-0.0.0.tgz
+          capture install-record cat "$HOME/rigger-builds/engine/node_modules/@williacj/rigger/src/package-commit.json"
+          capture install-verify node -e 'const r=require(process.argv[1]); if(r.commit!==process.argv[2]) process.exit(1)' \
+            "$HOME/rigger-builds/engine/node_modules/@williacj/rigger/src/package-commit.json" "$PIN"
+          printf '%s\n' 'unexercised: live sign-ins, credential-helper push, owner doctor and verdict' > "$E/unexercised.txt"
+          find "$E" -maxdepth 1 -type f ! -name checksums.txt -print0 | xargs -0 shasum -a 256 > "$E/checksums.txt"
+      - name: Retain complete originals
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rigger-822-proof-corrected-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/rigger-822-proof/
+          if-no-files-found: error
+          retention-days: 14
