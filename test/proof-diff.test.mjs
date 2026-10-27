@@ -284,3 +284,22 @@ test('R3 suite names and positions both participate in child identity', SETTLES_
     assert.equal(report.tests[0].status, 'passes at the base: proves nothing new');
   }
 });
+
+// A container's aggregate failure is diagnostic; its completed child assertion remains its own proof.
+test('R3 a nested test assertion retains proof beside its aggregate parent failure', SETTLES_WITHIN[60_000], async (t) => {
+  const fixture = proofRepository(t, { head: source(2), body: "test('container', async (context) => { await context.test('leaf assertion', () => assert.equal(value, 2, 'leaf observed source')); });\n" });
+  const proof = await invoke(fixture, 'proof-diff.mjs', [fixture.file]);
+  assert.equal(proof.exit, 0);
+  assert.equal(proof.report.runs.base.tests.find(({ name }) => name === 'container').details.error.failureType, 'subtestsFailed');
+  assert.equal(proof.report.tests.find(({ name }) => name === 'leaf assertion').status, 'proves');
+  assert.equal(proof.report.tests.find(({ name }) => name === 'container').status, 'no verdict at the base');
+  const args = mutationArgs(fixture);
+  args[args.indexOf('--anchor') + 1] = 'value = 2';
+  args[args.indexOf('--replacement') + 1] = 'value = 1';
+  const receipt = await invoke(fixture, 'mutation-receipt.mjs', args);
+  assert.equal(receipt.exit, 0);
+  assert.equal(receipt.report.unmutated.count, 2);
+  assert.equal(receipt.report.mutant.count, 2);
+  assert.equal(receipt.report.failures.find(({ name }) => name === 'leaf assertion').kind, 'assertion');
+  assert.equal(receipt.report.failures.find(({ name }) => name === 'container').kind, 'not an assertion');
+});

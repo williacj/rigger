@@ -101,7 +101,7 @@ A per-run private property key lets the worker's Error getter record the origina
 with the testCodeFailure stage. Both tools consume that one classification, so copied code,
 name, actual and expected fields do not earn assertion credit. Non-Error causes are rendered by
 type and inspected value, including null, symbols and cycles. A hook, interrupted runner or
-other non-test failure cannot become a successful receipt. Empty skip and todo reasons retain
+other unavailable runner failure cannot become a successful receipt. Empty skip and todo reasons retain
 their directives rather than becoming completed verdicts.
 
 The duplicate-title, nested-suite, colliding-registration, duplicate-parent, forged-fields,
@@ -119,3 +119,12 @@ pass=3331 and fail=0. Its affected host baseline passed with tests=32, pass=32 a
 After these appended cases, the affected working-tree files passed with tests=48, pass=48 and
 fail=0. No existing test body, instruction, template, tier or package entry changes this round.
 Final-head full-suite, fresh-clone and guarded mutation results are recorded in the PR.
+
+The same status inventory includes subtestsFailed, an aggregate container result rather than
+an unrun child. A further test-first red showed that refusing that whole run masked a nested
+child's real AssertionError. The completed leaf now retains its own proof and assertion label;
+the aggregate parent remains non-proving and labelled not an assertion. This distinguishes
+runner containers from unavailable tests without opening the default to unknown failure types.
+The complete affected files then passed with tests=49, pass=49 and fail=0, measured by the
+named host runner on 2026-10-27. The additional aggregate red and its same-target green remain
+separate retained logs rather than replacing the earlier working-tree verification.

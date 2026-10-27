@@ -187,7 +187,7 @@ export function noVerdict(run) {
   if (run.tests.length === 0) return 'no named tests reached a verdict';
   if (run.tests.some((test) => test.skip !== undefined || test.todo !== undefined)) return 'skipped or todo named test';
   if (run.tests.some((test) => ['testAborted', 'cancelledByParent', 'testTimeoutFailure'].includes(test.details.error?.failureType))) return 'cancelled named test';
-  const unavailable = run.tests.find((test) => test.outcome === 'fail' && test.details.error?.failureType !== 'testCodeFailure');
+  const unavailable = run.tests.find((test) => test.outcome === 'fail' && !['testCodeFailure', 'subtestsFailed'].includes(test.details.error?.failureType));
   if (unavailable) {
     const failure = unavailable.details.error;
     return `non-test failure ${failure?.failureType ?? 'unknown'}: ${failure?.cause?.message ?? failure?.message}`;
