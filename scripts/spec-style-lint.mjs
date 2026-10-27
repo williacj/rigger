@@ -15,19 +15,22 @@ const SKILL = '.claude/skills/spec-style/SKILL.md';
  * A document's lines, trimmed, with every line of a fenced block — its fences included — blanked.
  *
  * A fenced block is code rather than a sentence at all, and a blank line is what every reader
- * below already treats as ending whatever ran before it.
+ * below already treats as ending whatever ran before it. `kinds`, where given, gets `open` at
+ * each opening fence's index and `in` at each line after it through the closing fence.
  */
-function unfenced(text) {
+function unfenced(text, kinds = []) {
   let fence = null;
-  return text.split('\n').map((raw) => {
+  return text.split('\n').map((raw, index) => {
     const line = raw.trim();
     const marker = line.match(/^(```+|~~~+)/);
     if (fence) {
       if (marker && line.startsWith(fence)) fence = null;
+      kinds[index] = 'in';
       return '';
     }
     if (marker) {
       fence = marker[1];
+      kinds[index] = 'open';
       return '';
     }
     return line;
@@ -180,42 +183,108 @@ function hinting(sentence) {
   return rules;
 }
 
+// The HTML block starts that can interrupt a paragraph, CommonMark's kinds 1 to 6. Kind 7, a lone
+// open or close tag, cannot, and a line holding one reads as paragraph text.
+const HTML_INTERRUPTS = new RegExp(
+  '^<(?:(?:script|pre|style|textarea)(?:[\\s>]|$)|!--|\\?|![A-Za-z]|!\\[CDATA\\[|/?(?:' +
+  'address|article|aside|base|basefont|blockquote|body|caption|center|col|colgroup|dd|details|' +
+  'dialog|dir|div|dl|dt|fieldset|figcaption|figure|footer|form|frame|frameset|h[1-6]|head|header|' +
+  'hr|html|iframe|legend|li|link|main|menu|menuitem|nav|noframes|ol|optgroup|option|p|param|' +
+  'search|section|summary|table|tbody|td|tfoot|th|thead|title|tr|track|ul)(?:[\\s>]|/>|$))', 'i');
+const HTML_TAG = /^(?:<[A-Za-z][A-Za-z0-9-]*(?:\s+[A-Za-z_:][\w.:-]*(?:\s*=\s*(?:[^\s"'=<>`]+|'[^']*'|"[^"]*"))?)*\s*\/?>|<\/[A-Za-z][A-Za-z0-9-]*\s*>)\s*$/;
+const THEMATIC_BREAK = /^(?:(?:\*[ \t]*){3,}|(?:-[ \t]*){3,}|(?:_[ \t]*){3,})$/;
+const MARKER = /^(?:[-*+]|\d{1,9}[.)])(?=[ \t]|$)/;
+
+/** The column a run of leading whitespace reaches from `column`, a tab running to the next multiple of four. */
+function columnAfter(whitespace, column = 0) {
+  for (const character of whitespace) column = character === '\t' ? column + 4 - (column % 4) : column + 1;
+  return column;
+}
+
 /**
- * The lines, numbered from 1, on which a list item's text goes on past its marker line.
+ * Whether a line, its indentation stripped, starts a block that is not paragraph text: a heading,
+ * a thematic break, a block quote, a table row, or an HTML block that can interrupt a paragraph.
+ * A fenced-code opener is the fourth kind, and `listContinuations` reads it off the fence-blanking.
+ */
+const opensBlock = (rest) =>
+  /^#{1,6}(?:[ \t]|$)/.test(rest) || THEMATIC_BREAK.test(rest) || /^[>|]/.test(rest) || HTML_INTERRUPTS.test(rest);
+
+/**
+ * The lines, numbered from 1, that hold a list item's paragraph text past its marker line.
  *
- * `paragraphs` trims indentation, so it reads such a line as prose, and the hints leave it alone
- * here instead: a list item is rule 4's answer, however many lines it runs onto. The extent is
- * CommonMark's. With no blank line between, a line goes on with the item's text, indented or not.
- * After a blank line, a line stays in an item only when indented to that item's content column,
- * which its marker and the spaces after it set. A line indented less ends every item it falls short of.
+ * `paragraphs` trims indentation, so it reads such a line as prose, and the hints blank it
+ * instead: a list item is rule 4's answer, however many lines it runs onto. The extent is
+ * CommonMark 0.31.2's, from its list-item and block-structure sections.
+ *
+ * 1. A line indented to an item's content column is inside that item. The marker's indent, the
+ *    marker, and up to four columns after it set the column. A tab runs to the next multiple of four.
+ * 2. A line indented less ends each item it falls short of, unless it is a lazy line: paragraph
+ *    text straight after an item's paragraph text, with no blank line between.
+ * 3. A heading, a setext underline, a thematic break, a block quote, a table row, a fenced-code
+ *    opener and an HTML block that can interrupt a paragraph are never lazy. Each ends the
+ *    paragraph, and each indented less than an item's content ends the item.
+ * 4. A lone HTML tag after paragraph text is paragraph text, since it cannot interrupt one.
+ * 5. A marker indented four columns past its container is code, not an item, and an empty item
+ *    ends at a blank line.
  */
 function listContinuations(text) {
   const found = new Set();
   const raw = text.split('\n');
-  // The content column of each open item, outermost first.
+  const fences = [];
+  unfenced(text, fences);
+  // The content column of each open item, outermost first; whether the last line read was
+  // paragraph text a line can continue; and whether the innermost item is still empty.
   let open = [];
-  let blank = true;
-  unfenced(text).forEach((line, index) => {
-    if (line === '') {
-      blank = true;
+  let paragraph = false;
+  let empty = false;
+  raw.forEach((source, index) => {
+    const whitespace = source.match(/^[ \t]*/)[0];
+    const indent = columnAfter(whitespace);
+    const rest = source.slice(whitespace.length);
+    if (fences[index] === 'in') {
+      // A fence's content and closing fence are code, never a lazy line, so one indented less
+      // than an item ends it.
+      if (rest.trim() !== '') open = open.filter((column) => column <= indent);
+      paragraph = false;
       return;
     }
-    const indent = raw[index].match(/^\s*/)[0].length;
-    const marker = line.match(/^(?:[-*+]|\d+[.)])\s+/);
-    const after = blank;
-    blank = false;
-    if (marker) {
-      open = open.filter((column) => column <= indent);
-      open.push(indent + marker[0].length);
+    if (rest.trim() === '') {
+      // An empty item holds nothing past one blank line.
+      if (empty) open.pop();
+      paragraph = false;
+      empty = false;
       return;
     }
-    if (open.length === 0) return;
-    // A heading, a table row or a block quote opens no paragraph, so only its indent matters.
-    if (!after && !/^[|#>]/.test(line)) found.add(index + 1);
-    else if (indent >= open[0]) {
-      open = open.filter((column) => column <= indent);
-      if (!/^[|#>]/.test(line)) found.add(index + 1);
-    } else open = [];
+    empty = false;
+    const kept = open.filter((column) => column <= indent);
+    const matched = kept.length === open.length;
+    const container = kept.length ? kept[kept.length - 1] : 0;
+    const marker = indent - container < 4 && rest.match(MARKER);
+    const content = marker ? rest.slice(marker[0].length).replace(/^[ \t]*/, '') : '';
+    // A lone HTML tag cannot interrupt a paragraph, and a setext underline closes one as a heading.
+    let kind = 'text';
+    if (fences[index] === 'open' || opensBlock(rest)) kind = 'block';
+    else if (paragraph && matched && /^(?:=+|-+)[ \t]*$/.test(rest)) kind = 'block';
+    else if (marker) kind = 'marker';
+    else if (HTML_TAG.test(rest) && !paragraph) kind = 'block';
+    if (kind === 'text' && !matched && paragraph) {
+      // A lazy line: paragraph text past the items' indent, straight after their paragraph text.
+      found.add(index + 1);
+      return;
+    }
+    open = kept;
+    if (kind === 'marker') {
+      const after = rest.slice(marker[0].length);
+      const spaces = after.match(/^[ \t]*/)[0];
+      const markerEnd = indent + marker[0].length;
+      const gap = columnAfter(spaces, markerEnd) - markerEnd;
+      open.push(markerEnd + (content === '' || gap > 4 ? 1 : gap));
+      empty = content === '';
+      paragraph = content !== '' && !opensBlock(content);
+      return;
+    }
+    paragraph = kind === 'text';
+    if (kind === 'text' && open.length) found.add(index + 1);
   });
   return found;
 }
@@ -229,8 +298,10 @@ function listContinuations(text) {
  */
 export function hints(text) {
   const found = [];
+  // Each line of a list item's text is blanked, so a paragraph after the list is read on its own.
   const continued = listContinuations(text);
-  for (const paragraph of paragraphs(text).filter(({ line }) => !continued.has(line))) {
+  const prose = text.split('\n').map((line, index) => (continued.has(index + 1) ? '' : line)).join('\n');
+  for (const paragraph of paragraphs(prose)) {
     for (const sentence of sentences(paragraph.text)) {
       for (const rule of hinting(sentence)) found.push({ rule, line: paragraph.line, text: sentence });
     }
