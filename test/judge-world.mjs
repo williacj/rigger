@@ -120,7 +120,7 @@ export function judgeWorld({
     return made;
   };
   const handed = {
-    config: settings, board: handleOn(fake), decide, facts, l2, sink, kill: async () => {}, workspace: workspace ?? makingWorkspaces(join(scratch, 'workspaces')), judgeDirectory: directories, removeDirectories, state: directory, environment: { ...process.env, PATH: agent.first() },
+    config: settings, board: handleOn(fake), decide, facts, l2, sink, kill: async () => {}, workspace: workspace ?? makingWorkspaces(join(scratch, 'workspaces')), judgeDirectory: directories, removeDirectories, state: directory, environment: { ...process.env, PATH: agent.first() }, run: 'r-judges',
   };
   const events = () => (existsSync(streamPath(directory)) ? readEvents(directory) : []);
   const pid = (card, role) => Number(readFileSync(join(agent.dir, `left-pid-${card}-${role}`), 'utf8'));

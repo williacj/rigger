@@ -1,0 +1,200 @@
+[
+  {
+    "type": "test:enqueue",
+    "data": {
+      "nesting": 0,
+      "name": "test/fixtures/receipt-events/subject.mjs",
+      "type": "test",
+      "testId": 1,
+      "parentId": 0,
+      "tags": [],
+      "line": 1,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:dequeue",
+    "data": {
+      "nesting": 0,
+      "name": "test/fixtures/receipt-events/subject.mjs",
+      "type": "test",
+      "testId": 1,
+      "parentId": 0,
+      "tags": [],
+      "line": 1,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:plan",
+    "data": {
+      "nesting": 0,
+      "count": 0,
+      "line": 1,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:summary",
+    "data": {
+      "success": true,
+      "counts": {
+        "tests": 0,
+        "failed": 0,
+        "passed": 0,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "topLevel": 0,
+        "suites": 0
+      },
+      "duration_ms": 1.799708,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs",
+      "entryFile": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:complete",
+    "data": {
+      "name": "test/fixtures/receipt-events/subject.mjs",
+      "nesting": 0,
+      "testNumber": 1,
+      "testId": 1,
+      "parentId": 0,
+      "details": {
+        "duration_ms": 37.330791,
+        "type": "test",
+        "passed": true,
+        "assertion": false
+      },
+      "tags": [],
+      "line": 1,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:start",
+    "data": {
+      "nesting": 0,
+      "name": "test/fixtures/receipt-events/subject.mjs",
+      "testId": 1,
+      "parentId": 0,
+      "tags": [],
+      "line": 1,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:pass",
+    "data": {
+      "name": "test/fixtures/receipt-events/subject.mjs",
+      "nesting": 0,
+      "testNumber": 1,
+      "testId": 1,
+      "parentId": 0,
+      "details": {
+        "duration_ms": 37.330791,
+        "type": "test",
+        "assertion": false
+      },
+      "tags": [],
+      "line": 1,
+      "column": 1,
+      "file": "/Users/cjwilliams/GitHub/rigger-worktrees/rigger-1038/test/fixtures/receipt-events/subject.mjs"
+    }
+  },
+  {
+    "type": "test:plan",
+    "data": {
+      "nesting": 0,
+      "count": 1
+    }
+  },
+  {
+    "type": "test:diagnostic",
+    "data": {
+      "nesting": 0,
+      "message": "tests 1",
+      "level": "info"
+    }
+  },
+  {
+    "type": "test:diagnostic",
+    "data": {
+      "nesting": 0,
+      "message": "suites 0",
+      "level": "info"
+    }
+  },
+  {
+    "type": "test:diagnostic",
+    "data": {
+      "nesting": 0,
+      "message": "pass 1",
+      "level": "info"
+    }
+  },
+  {
+    "type": "test:diagnostic",
+    "data": {
+      "nesting": 0,
+      "message": "fail 0",
+      "level": "info"
+    }
+  },
+  {
+    "type": "test:diagnostic",
+    "data": {
+      "nesting": 0,
+      "message": "cancelled 0",
+      "level": "info"
+    }
+  },
+  {
+    "type": "test:diagnostic",
+    "data": {
+      "nesting": 0,
+      "message": "skipped 0",
+      "level": "info"
+    }
+  },
+  {
+    "type": "test:diagnostic",
+    "data": {
+      "nesting": 0,
+      "message": "todo 0",
+      "level": "info"
+    }
+  },
+  {
+    "type": "test:diagnostic",
+    "data": {
+      "nesting": 0,
+      "message": "duration_ms 43.387375",
+      "level": "info"
+    }
+  },
+  {
+    "type": "test:summary",
+    "data": {
+      "success": true,
+      "counts": {
+        "tests": 1,
+        "failed": 0,
+        "passed": 1,
+        "cancelled": 0,
+        "skipped": 0,
+        "todo": 0,
+        "topLevel": 1,
+        "suites": 0
+      },
+      "duration_ms": 43.387375
+    }
+  }
+]

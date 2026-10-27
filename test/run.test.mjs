@@ -9,7 +9,6 @@ import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSy
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import template from '../templates/rigger.config.mjs';
 import { run as runVerb } from '../src/cli/run.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
@@ -21,6 +20,7 @@ import { standInAgent } from './stub-claude.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 import { admissionOf, closerText, seed, TIME } from './admission-world.mjs';
+import { COLUMNS, FIELDS, KINDS, PROJECT, REFUSED, REPO, card, consumerConfig } from './verb-consumer.mjs';
 
 // A bound on a test that waits on the real bin and its maker, so one that never settles fails here.
 const { 60_000: SETTLES_WITHIN } = BOUNDS;
@@ -28,27 +28,8 @@ const { 60_000: SETTLES_WITHIN } = BOUNDS;
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger);
 
-/** The consumer's repository and board: not this repository's, so no line here reads as board 6. */
-const REPO = 'acme/widgets';
-const PROJECT = 3;
-
-/** The board's columns, the config's display names among them, and its priority field. */
-const COLUMNS = ['Backlog', 'Ready', 'Coding', 'Review', 'Owner', 'Done'];
-const FIELDS = [{ name: 'Priority', options: ['Low', 'High', 'Normal'] }];
-
-/** A body whose acceptance the form check admits: one item that is not the title. */
-const ADMITTED = '## Acceptance\n\n- The widget turns blue when pressed.\n';
-
-/** A card on the consumer's board that L2 would dispatch: an issue in its repository, selected by the `change` kind. */
-const card = (number, column, extra = {}) => ({
-  type: 'issue', repository: REPO, number, title: `Card ${number}`, body: ADMITTED, labels: ['type:change'], column, ...extra,
-});
-
-/** The template's kinds, each listing no provisioning step, so a claimed card's attempt runs none. */
-const KINDS = Object.fromEntries(Object.entries(template.kinds).map(([name, kind]) => [name, { ...kind, provisioning: [] }]));
-
 /** The consumer's config: the template's, with its repository, its board and N filled in, and kinds listing no provisioning. */
-const config = (concurrency) => ({ ...template, repo: REPO, board: { ...template.board, project: PROJECT }, concurrency, kinds: KINDS });
+const config = (concurrency) => consumerConfig(concurrency);
 
 /**
  * A consumer's repository holding that config, with a local bare `origin` beside it, in a
@@ -208,9 +189,6 @@ test('run names each claimed card, its workspace and its maker\'s outcome', () =
     assert.match(line, new RegExp(`; its maker exited 0 and opened no pull request from rigger-${claimed}, in its workspace, `), ran.err);
   }
 });
-
-/** A ready card L2 refuses: its body holds no acceptance, so the form check refuses it. */
-const REFUSED = card(11, 'Ready', { body: 'Why this matters, and nothing more.' });
 
 // proves R-SCHED-3, R-SCHED-16
 test('run under a hold closer names its reason and time, keeps L2 refusals and exits 0 without another claim', async () => {
@@ -503,8 +481,9 @@ test('given run where the maker does not start, run exits non-zero, and prints t
   const ran = runWithAgent(agent, { items: [card(10, 'Ready')] }, { files: { '.claude/settings.json': 'not json' } });
 
   assert.notEqual(ran.code, 0, ran.out);
-  const lines = ran.err.split('\n').filter((line) => /#10\b/.test(line));
+  const lines = ran.err.split('\n').filter((line) => /#10\b/.test(line) && !line.startsWith('rigger run: admission is closed by hold: '));
   assert.equal(lines.length, 1, ran.err);
+  assert.equal(ran.err.split('\n').filter((line) => line.startsWith('rigger run: admission is closed by hold: card #10 ')).length, 1, ran.err);
   assert.match(lines[0], /^rigger run: claimed #10 from board 3; its maker did not start: .*settings\.json is no JSON/);
   assert.deepEqual(agent.runs(), []);
   const attempts = ran.err.split('\n').filter((line) => /^attempt [12]: /.test(line));

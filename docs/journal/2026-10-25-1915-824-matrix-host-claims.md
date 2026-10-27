@@ -99,3 +99,25 @@ check:words, git diff --check and the unmerged-index check passed. The diff agai
 the new main remains the seven accepted card paths. These are local Linux/WSL Node
 26.12.0 measurements, not supported-macOS proof for the new head. Its hosted Mac
 run, fresh independent reviews and protected owner marker remain required.
+
+# Matrix host claims on current main
+
+The reviewed H8 head could not merge after main advanced to
+c1fc2c656601153205fc15cefd3a583a5587340d. The merge had two content
+conflicts: the generated matrix and the host-list expectation. The suite list
+itself merged cleanly. The expectation now retains both #824's matrix host test
+and the four host members added on main. The matrix was regenerated with
+npm run matrix; no generated row was edited by hand.
+
+A clean detached worktree at that main commit passed Node 26 npm ci and
+npm test: 3406 passed, nine skipped, zero failed. On the integrated source,
+Node 26 npm test passed 3422, skipped nine, and failed zero. The selected
+test/build-test-matrix-host.test.mjs run passed all ten cases. The regenerated
+matrix and npm run matrix:check report 55 gaps across 229 requirements.
+These are measurements of the named source states and commands, not an
+assumption from H8's earlier 49/223 matrix.
+
+[H8's hosted Mac run](https://github.com/williacj/rigger/actions/runs/40455458000)
+remains evidence for H8 only. The integration changes the head and merge tree,
+so it needs its own configured hosted Mac run, independent reviews and owner
+marker before merge.

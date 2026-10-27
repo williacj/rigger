@@ -1,5 +1,6 @@
 // ABOUTME: Checks Rigger's binding documents against the two spec-style rules a machine can
-// read: the ruled-out terms, and the sentence ceiling. Both come from the skill.
+// read: the ruled-out terms, and the sentence ceiling. Both come from the skill. `--hints` adds
+// advisory hints for rules 4 and 5, which change neither the findings nor the exit.
 
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
@@ -33,6 +34,11 @@ function unfenced(text) {
   });
 }
 
+// The lines that end prose and open none of their own: a blank line, a table row, a heading and
+// a block quote, and for `findings` a list marker too.
+const BLOCKS = /^$|^[|#>]/;
+const PROSE_ENDS = /^$|^[|#>]|^(?:[-*+]|\d+[.)])\s/;
+
 /**
  * The prose paragraphs of a markdown document, each with the line its first word sits on.
  *
@@ -40,7 +46,7 @@ function unfenced(text) {
  * as a sentence would fail a document for doing the thing the register asks of it. A table row
  * is not prose either, and `rows` reads it instead.
  */
-export function paragraphs(text) {
+export function paragraphs(text, ends = PROSE_ENDS) {
   const found = [];
   let open = null;
   const close = () => {
@@ -52,7 +58,7 @@ export function paragraphs(text) {
     // that ran before them, and none of them opens prose of its own. A line under a list marker
     // belongs to the item and ends with it, which is why nothing reopens until the next
     // paragraph.
-    if (/^$|^[|#>]|^(?:[-*+]|\d+[.)])\s/.test(line)) {
+    if (ends.test(line)) {
       close();
       return;
     }
@@ -158,6 +164,50 @@ export function findings(text, { ceiling, terms }) {
   return found.sort((a, b) => a.line - b.line);
 }
 
+/** How many whole-word, case-blind occurrences of `words` one sentence holds. */
+const occurrences = (sentence, words) =>
+  (sentence.match(new RegExp(`\\b(?:${words.join('|')})\\b`, 'gi')) ?? []).length;
+
+// What a sentence names a source by: an `R-` id, a `D#`, or a backticked path.
+const SOURCE = /(?<![\w-])R-[A-Z][A-Z0-9]*-\d+(?![\w-])|(?<![\w-])D\d+\b|`[\w.-]*\/[\w./-]*`|`[\w-]+\.\w+`/;
+// One run inside straight or curly double quotes.
+const QUOTED = /"([^"]*)"|\u201c([^\u201d]*)\u201d/g;
+
+/** The rules, 4 and 5, a sentence shows a sign of failing: none, one or both. */
+function hinting(sentence) {
+  const rules = [];
+  // A sequence of four steps holds three `then`. `and where` holds one `where`, so it counts once.
+  const steps = occurrences(sentence, ['then']) >= 3;
+  if (steps || occurrences(sentence, ['where', 'if', 'unless']) >= 3) rules.push(4);
+  // Runs are measured one at a time, so two short quotes are not one restatement.
+  const quotes = [...sentence.matchAll(QUOTED)].map((run) => countWords(run[1] ?? run[2]));
+  if (SOURCE.test(sentence) && quotes.some((words) => words >= 8)) rules.push(5);
+  return rules;
+}
+
+/**
+ * Advisory hints for rules 4 and 5, which are judgments: each points at a sentence a reader
+ * should look at, and none is a finding. `findings` and the lint's exit never read them.
+ *
+ * A hint reads every paragraph, list items included, and every table cell (U85). `paragraphs` is
+ * given only the blocks that end prose, so a marker line reads as prose, and items with no blank
+ * line between them read as one paragraph.
+ */
+export function hints(text) {
+  const found = [];
+  for (const paragraph of paragraphs(text, BLOCKS)) {
+    for (const sentence of sentences(paragraph.text)) {
+      for (const rule of hinting(sentence)) found.push({ rule, line: paragraph.line, text: sentence });
+    }
+  }
+  for (const { line, cells } of rows(text)) {
+    for (const sentence of cells.flatMap(sentences)) {
+      for (const rule of hinting(sentence)) found.push({ rule, line, row: cells[0], text: sentence });
+    }
+  }
+  return found.sort((a, b) => a.line - b.line);
+}
+
 /**
  * What the skill names for the lint: a root document or a directory of documents.
  *
@@ -186,14 +236,18 @@ export function lintFiles(root, skill) {
   });
 }
 
-/** Every rule the documents the lint reads break, in the order it reads them. */
+/**
+ * Every rule the documents the lint reads break, in the order it reads them, and the hints those
+ * documents draw. Only the findings decide `failing`.
+ */
 export function check(root) {
   const skill = readFileSync(join(root, SKILL), 'utf8');
   const rules = { ceiling: sentenceCeiling(skill), terms: ruledOutTerms(skill) };
   const documents = lintFiles(root, skill);
-  const found = documents.flatMap((path) =>
-    findings(readFileSync(join(root, path), 'utf8'), rules).map((one) => ({ path, ...one })));
-  return { documents, findings: found, failing: found.length > 0 };
+  const texts = documents.map((path) => [path, readFileSync(join(root, path), 'utf8')]);
+  const found = texts.flatMap(([path, text]) => findings(text, rules).map((one) => ({ path, ...one })));
+  const hinted = texts.flatMap(([path, text]) => hints(text).map((one) => ({ path, ...one })));
+  return { documents, findings: found, hints: hinted, failing: found.length > 0 };
 }
 
 /**
@@ -225,11 +279,20 @@ export function sentenceCeiling(skill) {
   return Number(stated[1]);
 }
 
+const USAGE = 'usage: node scripts/spec-style-lint.mjs [--hints] [root]';
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   // CI passes no argument and this repository is read. A path reads that repository instead,
-  // which is how a test watches the lint refuse one.
+  // which is how a test watches the lint refuse one. `--hints` adds the advisory hints.
+  const args = process.argv.slice(2);
+  const showHints = args.includes('--hints');
+  const positional = args.filter((arg) => arg !== '--hints');
+  if (positional.length > 1 || positional.some((arg) => arg.startsWith('-'))) {
+    console.error(USAGE);
+    process.exit(2);
+  }
   const here = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-  const { documents, findings: found, failing } = check(process.argv[2] ? resolve(process.argv[2]) : here);
+  const { documents, findings: found, hints: hinted, failing } = check(positional[0] ? resolve(positional[0]) : here);
   for (const { path, line, rule, term, words, row, text } of found) {
     const where = row === undefined ? '' : ` in row ${row}`;
     const why = rule === 'term' ? `ruled-out term \`${term}\`` : `sentence of ${words} words${where}`;
@@ -239,6 +302,13 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.log(`${String(found.filter((one) => one.path === path).length).padStart(6)}  ${path}`);
   }
   console.log(`${String(found.length).padStart(6)}  findings, against the rules ${SKILL} states`);
+  if (showHints) {
+    for (const { path, line, rule, row, text } of hinted) {
+      const where = row === undefined ? '' : ` in row ${row}`;
+      console.log(`${path}:${line}  rule ${rule} hint${where}\n        ${text}`);
+    }
+    console.log(`${String(hinted.length).padStart(6)}  hints, advisory: rules 4 and 5 hold by judgment, and no hint changes the exit`);
+  }
   if (failing) {
     console.error(`Rules 1 and 2 of ${SKILL} bind every document above. A finding is a form to fix, never a rule to loosen.`);
     process.exit(1);
