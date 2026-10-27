@@ -9,7 +9,6 @@ import { chmodSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import template from '../templates/rigger.config.mjs';
 import { closerLine, unreadableAdmission } from '../src/cli/doctor.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 import { admissionOf, closerText, moduleOver, seed, TIME } from './admission-world.mjs';
@@ -18,6 +17,7 @@ import { gitIn, repositoryAt, withOrigin } from './git-repository.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { standInAgent } from './stub-claude.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { COLUMNS, FIELDS, PROJECT, REFUSED, REPO, card, consumerConfig } from './verb-consumer.mjs';
 
 // A bound on a test that waits on the real bin and its maker, so one that never settles fails here.
 const { 60_000: SETTLES_WITHIN } = BOUNDS;
@@ -25,28 +25,8 @@ const { 60_000: SETTLES_WITHIN } = BOUNDS;
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger);
 
-/** The consumer's repository and board, as `once`'s and `run`'s own tests name them. */
-const REPO = 'acme/widgets';
-const PROJECT = 3;
-const COLUMNS = ['Backlog', 'Ready', 'Coding', 'Review', 'Owner', 'Done'];
-const FIELDS = [{ name: 'Priority', options: ['Low', 'High', 'Normal'] }];
-
-/** A body whose acceptance the form check admits. */
-const ADMITTED = '## Acceptance\n\n- The widget turns blue when pressed.\n';
-
-/** A card on the consumer's board, selected by the `change` kind. */
-const card = (number, column, extra = {}) => ({
-  type: 'issue', repository: REPO, number, title: `Card ${number}`, body: ADMITTED, labels: ['type:change'], column, ...extra,
-});
-
-/** A ready card L2 refuses: its body holds no acceptance. */
-const REFUSED = card(11, 'Ready', { body: 'Why this matters, and nothing more.' });
-
-/** The template's kinds, each listing no provisioning step. */
-const KINDS = Object.fromEntries(Object.entries(template.kinds).map(([name, kind]) => [name, { ...kind, provisioning: [] }]));
-
-/** The consumer's config: the template's, with its repository, board and N 3. */
-const config = () => ({ ...template, repo: REPO, board: { ...template.board, project: PROJECT }, concurrency: 3, kinds: KINDS });
+/** The consumer's config, with N 3. */
+const config = () => consumerConfig(3);
 
 /**
  * Runs the real bin's `verb` in a fresh consumer repository whose state directory `prepare`
