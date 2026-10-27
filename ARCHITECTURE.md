@@ -693,8 +693,13 @@ start does for an unreadable record of process groups. A closed admission is no 
 pull. `take` claims nothing and answers the closers it read, and `once` and `run` say whether each
 closer is the owner's or a hold's, name its reason and time, and exit 0. An unreadable admission is
 a failure of the pull. `take` claims nothing and rejects, naming each unreadable path and its cause,
-and the verb exits non-zero naming them. `pause` adds its closer beside an unreadable closer and
-replaces nothing.
+and the verb exits non-zero naming them. Under a closed admission, `plan` names each closer's kind,
+whether the owner's or a hold's, and its reason and time. A closed admission is no failure of
+`plan`, which exits as it would with admission open. Under an unreadable admission, `plan` names
+each unreadable path and its cause, and exits non-zero. Under either, `plan` still reports the cards
+it refuses and the escalated cards, where it reads the board and each card's facts. `R-SCHED-18`
+says what `plan` must show. `pause` adds its closer beside an unreadable closer and replaces
+nothing.
 
 L3's own event family records each change of admission. `pause` and `resume` append those events to
 the same stream from their own process, beside a running engine's.
