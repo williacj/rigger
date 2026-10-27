@@ -144,9 +144,10 @@ async function readWorkspaceTip({ card, path, branch, repository, sink }) {
  * pull request's head commit L1 was handed, fetched from `origin` (the owner's O3; ruling 1 Q3).
  *
  * L1 records under the card a `workspace.made` carrying `role`, the path and both commits, and a
- * `workspace.failed` carrying `role`, the path and why (ruling 2 P5). Every failure rejects with
- * `WORKSPACE_NOT_MADE`, naming the path and why, or with `EVENT_REFUSED` where the sink refused an
- * event on the way, as `makeWorkspace` does.
+ * `workspace.failed` carrying `role`, the path and why (ruling 2 P5). An answered replace-rule
+ * refusal rejects with `WORKSPACE_REFUSED`; an unanswered check or failed make rejects with
+ * `WORKSPACE_NOT_MADE`, naming the path and why. A refused event rejects with `EVENT_REFUSED`,
+ * as `makeWorkspace` does.
  */
 export async function makeJudgeDirectory({ root, topic, card, role, head, repository, sink }) {
   const events = sink.emitter({ layer: 'L1', card });
@@ -158,7 +159,8 @@ export async function makeJudgeDirectory({ root, topic, card, role, head, reposi
     try {
       return await work();
     } catch (cause) {
-      throw notMade(events, `judge ${role}'s directory for card #${card}`, { role, path }, cause);
+      throw notMade(events, `judge ${role}'s directory for card #${card}`, { role, path }, cause,
+        { code: cause.code === 'REPLACEMENT_REFUSED' ? WORKSPACE_REFUSED : WORKSPACE_NOT_MADE });
     }
   };
   const found = await step(() => judgeChecked({ adapter, path, repository }));

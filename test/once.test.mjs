@@ -61,7 +61,7 @@ const consumerRepository = (settings = config()) => {
 function installAgentCli(dir) {
   const record = join(dir, 'agent-runs');
   const fence = '```';
-  writeFileSync(join(dir, 'claude'), `#!/bin/sh\n${EXIT_IF_WARMING}\nprintf '%s\\n' "$*" >> "\${0%/*}/agent-runs"\nif [ "\${RIGGER_TEST_ESCALATE:-}" = 1 ]; then\n  prompt=$(cat)\n  dispatch=$(printf '%s\\n' "$prompt" | awk '/^dispatch: d-/ { print $2; exit }')\n  body=$(printf '%s\\n' 'I cannot meet acceptance item 1.' '${fence}rigger-escalation' 'category: critical' 'item: 1' 'reason: The required condition failed.' "dispatch: $dispatch" '${fence}')\n  gh api repos/acme/widgets/issues/10/comments -X POST -f "body=$body" >/dev/null || exit $?\nfi\nexit 0\n`);
+  writeFileSync(join(dir, 'claude'), `#!/bin/sh\n${EXIT_IF_WARMING}\nprintf '%s\\n' "$*" >> "\${0%/*}/agent-runs"\nif [ "\${RIGGER_TEST_ESCALATE:-}" = 1 ]; then\n  prompt=$(cat)\n  dispatch=$(printf '%s\\n' "$prompt" | awk '/^dispatch: d-/ { print $2; exit }')\n  category=critical\n  if [ "\${RIGGER_TEST_ESCALATE_AMBIGUOUS:-}" = 1 ]; then category=ambiguous; fi\n  body=$(printf '%s\\n' 'I cannot meet acceptance item 1.' '${fence}rigger-escalation' "category: $category" 'item: 1' 'reason: The required condition failed.' "dispatch: $dispatch" '${fence}')\n  gh api repos/acme/widgets/issues/10/comments -X POST -f "body=$body" >/dev/null || exit $?\nfi\nexit 0\n`);
   chmodSync(join(dir, 'claude'), 0o755);
   warmed(join(dir, 'claude'));
   return { runs: () => (existsSync(record) ? readFileSync(record, 'utf8').split('\n').filter(Boolean) : []) };
@@ -130,6 +130,25 @@ test('once names a maker note escalation, its category and acceptance item ordin
   assert.match(ran.out, /card #10 escalated critical for acceptance item 1/);
   assert.deepEqual(await columnsOf(ran), { 10: 'Owner' });
   assert.equal(eventsOf(ran).find(({ event }) => event === 'review.escalate').raiser, 'maker');
+});
+
+// proves R-ESCALATE-22
+test('once sends a maker escalation to the owner where the config has no escalate key or none for its category, recording the owner as its destination', async () => {
+  const { escalate: _, ...withoutEscalate } = config();
+  for (const [what, settings] of [['no escalate key', withoutEscalate], ['its category\'s key absent', { ...withoutEscalate, escalate: { critical: 'owner' } }]]) {
+    const ran = once({ items: [card(10, 'Ready')] }, {
+      settings,
+      seed: { issues: [{ number: 10, title: 'Card 10', body: ADMITTED, labels: ['type:change'] }] },
+      extraEnv: { RIGGER_TEST_ESCALATE: '1', RIGGER_TEST_ESCALATE_AMBIGUOUS: '1' },
+    });
+    assert.equal(ran.code, 0, `${what}: ${ran.err}`);
+    assert.deepEqual(await columnsOf(ran), { 10: 'Owner' }, what);
+    const [event] = eventsOf(ran).filter(({ event: name }) => name === 'review.escalate');
+    assert.deepEqual({ category: event.category, raiser: event.raiser, destination: event.destination }, { category: 'ambiguous', raiser: 'maker', destination: 'owner' }, what);
+    const issue = JSON.parse(readFileSync(join(dirname(ran.fake.gh), 'board.json'), 'utf8')).repository.issues.find(({ number }) => number === 10);
+    assert.match(issue.comments.at(-1).body, /^Rigger escalates card #10 to the owner \(ambiguous\)\./, what);
+    assert.doesNotMatch(issue.comments.at(-1).body, /Not sent/, what);
+  }
 });
 
 test('once exits non-zero when the card\'s maker opened no pull request', async () => {
@@ -1658,6 +1677,31 @@ test('once ignores closed cards without a kind or carrying the epic label while 
   }
 });
 
+// proves R-SCHED-4
+test('once after the bin\'s pause claims nothing, and after its resume claims as it does where no pause was', async () => {
+  // The defect this catches is a `pause` that `take` does not read as closed, or a `resume` that
+  // leaves admission closed, through the verbs the owner runs rather than closers seeded by hand.
+  const items = [card(20, 'Ready'), card(10, 'Ready')];
+  const owner = (verb, consumer) => {
+    const done = spawnSync(process.execPath, [bin, verb], { cwd: consumer, encoding: 'utf8' });
+    assert.equal(done.status, 0, `${done.stdout}${done.stderr}`);
+    assert.doesNotMatch(`${done.stdout}${done.stderr}`, /not yet implemented/);
+  };
+  const base = once({ items });
+  const paused = once({ items }, { prepare: ({ consumer }) => owner('pause', consumer) });
+
+  assert.equal(paused.code, 0, paused.err);
+  assert.match(paused.out, /admission is closed by owner: the owner's pause/, paused.out);
+  assert.deepEqual(await columnsOf(paused), { 10: 'Ready', 20: 'Ready' });
+  assert.deepEqual((await paused.model()).writes(), []);
+  assert.deepEqual(paused.agentRuns(), []);
+
+  owner('resume', paused.consumer);
+  const resumed = paused.rerun();
+  assert.deepEqual(await columnsOf(resumed), await columnsOf(base), resumed.err);
+  assert.deepEqual(await columnsOf(resumed), { 10: 'Coding', 20: 'Ready' });
+});
+
 test('once prints each closer in the words it printed at #944\'s head, and those words are written in one function under src/', async () => {
   // The words are written out by hand, as `once` printed them at a4edcfb, so a change to the one
   // function `doctor` and `plan` now share with `once` shows here as a change to `once`'s output.
@@ -1761,4 +1805,75 @@ test('once works a Ready issue on its next read after the status label is remove
   assert.equal(resumed.agentRuns().length, 1);
   assert.deepEqual(await columnsOf(resumed), { 980: 'Coding' });
   assert.deepEqual((await (await resumed.model()).operations.readItems())[0].labels, ['type:change']);
+});
+
+// The counterexample stops at a refused path without completing the owner writes.
+// proves R-ESCALATE-12
+test('once escalates a real workspace path refusal and preserves the refused file', async () => {
+  let path;
+  const ran = once({ items: [card(984, 'Ready')] }, { seed: {}, prepare: ({ consumer }) => {
+    path = join(dirname(consumer), 'widgets-worktrees', 'rigger-984');
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, "owner's file\n");
+  } });
+  assert.deepEqual(await columnsOf(ran), { 984: 'Owner' }, ran.out + ran.err);
+  assert.match(ran.out + ran.err, /#984.*escalated ambiguous/);
+  const issue = JSON.parse(readFileSync(join(dirname(ran.fake.gh), 'board.json'), 'utf8')).repository.issues[0];
+  assert.equal(issue.comments.length, 1);
+  assert.ok(issue.comments[0].body.includes(path), issue.comments[0].body);
+  assert.match(issue.comments[0].body, /R-WORK-13/);
+  assert.deepEqual(issue.labels, ['type:change', 'rigger:escalated']);
+  assert.equal(readFileSync(path, 'utf8'), "owner's file\n");
+  assert.deepEqual(ran.agentRuns(), []);
+  assert.deepEqual(eventsOf(ran).filter(({ event }) => event === 'transition').map(({ from, to }) => [from, to]), [['ready', 'coding'], ['coding', 'owner']]);
+});
+
+// A configured role must not receive a loop-raised forge refusal.
+// proves R-ESCALATE-12
+test('once escalates each Ready forge hold to the owner even with ambiguous configured to pm', async (t) => {
+  for (const merged of [false, true]) await t.test(merged ? 'merged pull request' : 'line of work', async () => {
+    const settings = config();
+    settings.escalate = { ambiguous: 'pm' };
+    const ran = once({ items: [card(984, 'Ready')] }, { settings,
+      seed: merged ? { pullRequests: [{ number: 1984, head: 'rigger-984', sha: 'a'.repeat(40), merged: true }] } : { branches: ['rigger-984'] },
+    });
+    assert.deepEqual(await columnsOf(ran), { 984: 'Owner' }, ran.out + ran.err);
+    assert.match(ran.out + ran.err, /#984.*escalated ambiguous/);
+    const issue = JSON.parse(readFileSync(join(dirname(ran.fake.gh), 'board.json'), 'utf8')).repository.issues[0];
+    assert.equal(issue.comments.length, 1);
+    assert.ok(issue.comments[0].body.includes(merged ? '#1984' : 'rigger-984'));
+    assert.deepEqual(issue.labels, ['type:change', 'rigger:escalated']);
+    assert.deepEqual(ran.agentRuns(), []);
+  });
+});
+
+// The counterexample drops the completed architect's verdict when the reviewer's scratch is refused.
+// proves R-ESCALATE-12
+test('once keeps a Review peer verdict beside a real scratch refusal and escalates the card once', SETTLES_WITHIN, async (t) => {
+  const settings = config();
+  settings.kinds = { change: { ...KINDS.change, judges: ['reviewer', 'architect'] } };
+  const agent = standInAgent({ 984: { architect: { findings: true } } });
+  let scratchPath;
+  const { consumer, fake, ran } = onceWithAgent(t, agent, { items: [card(984, 'Review')] }, { settings, prepare: ({ consumer, fake }) => {
+    gitIn(consumer, 'push', '-q', 'origin', 'HEAD:refs/heads/rigger-984');
+    const head = gitIn(consumer, 'rev-parse', 'HEAD').trim();
+    seedRepository(fake, { branches: ['rigger-984'], pullRequests: [{ number: 1984, head: 'rigger-984', sha: head, mergeBase: head, diff: '' }] });
+    scratchPath = join(dirname(consumer), 'widgets-worktrees', 'scratch', 'rigger-984', 'reviewer');
+    mkdirSync(dirname(scratchPath), { recursive: true });
+    writeFileSync(scratchPath, 'keep reviewer scratch\n');
+  } });
+  const result = await ran;
+  const state = JSON.parse(readFileSync(join(dirname(fake.gh), 'board.json'), 'utf8'));
+  const issue = state.repository.issues[0];
+  assert.equal(issue.comments.length, 1, result.out + result.err);
+  assert.ok(issue.comments[0].body.includes(scratchPath), issue.comments[0].body);
+  assert.match(issue.comments[0].body, /R-WORK-26/);
+  assert.deepEqual(issue.labels, ['type:change', 'rigger:escalated']);
+  assert.deepEqual(agent.runs().map(({ role }) => role), ['architect']);
+  assert.ok(pullComments(fake, 1984).bodies.some((body) => body.includes('role: architect')));
+  assert.equal(readFileSync(scratchPath, 'utf8'), 'keep reviewer scratch\n');
+  const events = eventsOf({ consumer });
+  assert.equal(events.filter(({ event }) => event === 'review.escalate').length, 1);
+  assert.equal(events.filter(({ event }) => event === 'transition').at(-1).to, 'owner');
+  assert.equal(events.filter(({ event }) => event === 'dispatch.end').length, 1);
 });

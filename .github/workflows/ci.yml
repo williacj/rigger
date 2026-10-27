@@ -1,4 +1,4 @@
-# ABOUTME: Runs portable feedback, explicitly requested hosted candidate proof and protected-main regression.
+# ABOUTME: Verifies main pushes, PR events, merge groups, schedules and main dispatch; guards older-head cancellation.
 name: CI
 
 on:
@@ -147,6 +147,7 @@ env:
       if (!fresh.sourceValid || proof.sourceValid !== true || proof.mode !== fresh.mode || proof.demoNeeded !== fresh.demoNeeded || JSON.stringify(proof.source) !== JSON.stringify(source(f))) return false;
       const results = proof.results ?? {};
       if (results.plan !== 'success' || results.fast !== 'success') return false;
+      if (f.event === 'pull_request' && results.cancel_superseded !== 'success') return false;
       if (!['FAST_ELIGIBLE', 'MAIN_SMOKE', 'BROAD_EXECUTED'].includes(fresh.mode)) return false;
       const required = fresh.mode === 'BROAD_EXECUTED' ? 'success' : 'skipped';
       return results.full_ordinary === required && results.full_host === required && results.demo === (fresh.demoNeeded ? 'success' : 'skipped');
@@ -281,9 +282,147 @@ jobs:
           name: containment-proof-26
           path: ${{ runner.temp }}/containment-proof-26
           if-no-files-found: ignore
+  cancel_superseded:
+    needs: [plan]
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.plan.outputs.snapshot != '' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      pull-requests: read
+    env:
+      CI_CANCEL: |
+        import { readFileSync } from 'node:fs';
+        const ROOT = '/repos/williacj/rigger';
+        const STATUSES = ['queued', 'in_progress', 'waiting', 'pending', 'requested'];
+        const positive = value => Number.isSafeInteger(value) && value > 0;
+        const sha = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value);
+        const repository = value => value && positive(value.id) && value.full_name === 'williacj/rigger';
+        const refuse = message => { throw new Error(message); };
+        function sourceIdentity(run) {
+          if (!run || !positive(run.id) || !positive(run.workflow_id) || !positive(run.run_number) || !positive(run.run_attempt) || !sha(run.head_sha) || !positive(run.repository?.id) || !/^[-A-Za-z0-9_.]+\/[-A-Za-z0-9_.]+$/.test(run.repository.full_name ?? '') || !positive(run.head_repository?.id) || !/^[-A-Za-z0-9_.]+\/[-A-Za-z0-9_.]+$/.test(run.head_repository.full_name ?? '') || !['pull_request', 'push', 'schedule', 'workflow_dispatch', 'merge_group'].includes(run.event) || !/^\.github\/workflows\/[-A-Za-z0-9_.]+\.ya?ml$/.test(run.path ?? '') || !['queued', 'in_progress', 'waiting', 'pending', 'requested', 'completed'].includes(run.status) || !Array.isArray(run.pull_requests) || run.pull_requests.length > 1) refuse('run attribution invalid');
+          // Presentation status and association SHAs/refs may change between list and detail.
+          return JSON.stringify([run.id, run.workflow_id, run.path, run.event, run.repository.id, run.repository.full_name, run.head_repository.id, run.head_repository.full_name, run.head_sha, run.run_number, run.run_attempt]);
+        }
+        function associationIdentity(run) {
+          if (run.pull_requests.length === 0) return null;
+          const association = run.pull_requests[0];
+          if (!positive(association?.id) || !positive(association.number) || !positive(association.head?.repo?.id) || !positive(association.base?.repo?.id)) refuse('run attribution invalid');
+          return JSON.stringify([association.id, association.number, association.head.repo.id, association.base.repo.id]);
+        }
+        function identity(run) {
+          const source = sourceIdentity(run);
+          const association = associationIdentity(run);
+          if (!association) refuse('run attribution invalid');
+          return source + association;
+        }
+        function links(value) {
+          if (!value) return;
+          for (const link of value.split(',')) {
+            const match = /^\s*<([^>]+)>;\s*rel="([a-z]+)"\s*$/.exec(link);
+            if (!match || new URL(match[1]).origin !== 'https://api.github.com' || match[2] === 'next') refuse('API discovery pagination incomplete');
+          }
+        }
+        export async function requestApi(path, { method = 'GET', send = fetch, token = process.env.GH_TOKEN } = {}) {
+          const route = path.startsWith(ROOT) ? path.slice(ROOT.length) : '';
+          const read = /^\/actions\/runs\/[1-9][0-9]*$/.test(route) || /^\/pulls\/[1-9][0-9]*$/.test(route) || route === '/actions/workflows/ci.yml' || /^\/actions\/workflows\/[1-9][0-9]*\/runs\?event=pull_request&exclude_pull_requests=false&status=(queued|in_progress|waiting|pending|requested)&per_page=100&page=1$/.test(route);
+          if (!token || !(method === 'GET' && read || method === 'POST' && /^\/actions\/runs\/[1-9][0-9]*\/cancel$/.test(route))) refuse('API scope unavailable');
+          const response = await send('https://api.github.com' + path, { method, redirect: 'manual', headers: { authorization: 'Bearer ' + token, accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(30_000) });
+          if (response.redirected || response.url && new URL(response.url).origin !== 'https://api.github.com' || response.status >= 300 && response.status < 400) refuse('API redirect refused');
+          const link = response.headers.get('link'); links(link);
+          const bytes = new Uint8Array(await response.arrayBuffer());
+          const length = response.headers.get('content-length'), encoding = response.headers.get('content-encoding');
+          if (bytes.length > 2 * 1024 * 1024 || length !== null && (!encoding || encoding === 'identity') && (!/^[0-9]+$/.test(length) || Number(length) !== bytes.length)) refuse('API body incomplete');
+          const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+          return { status: response.status, body: text === '' ? null : JSON.parse(text), link };
+        }
+        export async function cancelSuperseded({ event, context, plan, request = requestApi, log = entry => console.log(JSON.stringify(entry)) }) {
+          const pr = event?.pull_request;
+          if (context?.eventName !== 'pull_request' || context.repository !== 'williacj/rigger' || !repository(event?.repository) || context.repositoryId !== event.repository.id || !positive(event.number) || !positive(pr?.id) || pr.number !== event.number || pr.state !== 'open' || !repository(pr.head?.repo) || !repository(pr.base?.repo) || pr.head.repo.id !== event.repository.id || pr.base.repo.id !== event.repository.id || !sha(pr.head.sha) || !sha(pr.base.sha) || typeof pr.head.ref !== 'string' || !pr.head.ref || typeof pr.base.ref !== 'string' || !pr.base.ref) refuse('controller source scope invalid');
+          if (!['opened', 'synchronize', 'reopened', 'edited', 'ready_for_review', 'labeled', 'unlabeled'].includes(event.action) || !event.sender?.login || context.actor !== event.sender.login || !positive(context.runId) || !positive(context.runNumber) || !positive(context.runAttempt) || context.ref !== 'refs/pull/' + event.number + '/merge' || context.workflowRef !== 'williacj/rigger/.github/workflows/ci.yml@' + context.ref) refuse('controller source context invalid');
+          if (!plan || plan.event !== context.eventName || plan.ref !== context.ref || plan.sha !== context.sha || !sha(plan.sha) || !sha(plan.tree) || plan.head !== pr.head.sha || !sha(plan.base) || !sha(plan.eventBase) || plan.eventBase !== pr.base.sha || plan.baseRef !== pr.base.ref || !Array.isArray(plan.parents) || plan.parents.length !== 2 || plan.parents[0] !== plan.base || plan.parents[1] !== plan.head) refuse('controller source plan invalid');
+          const get = async path => { const response = await request(path); if (response?.status !== 200) refuse('API read failed'); links(response.link); return response.body; };
+          const own = await get(ROOT + '/actions/runs/' + context.runId);
+          try {
+            identity(own);
+            const association = own.pull_requests[0];
+            if (own.id !== context.runId || own.run_number !== context.runNumber || own.run_attempt !== context.runAttempt || own.head_sha !== plan.head || own.event !== 'pull_request' || own.path !== '.github/workflows/ci.yml' || own.repository.id !== context.repositoryId || own.repository.full_name !== context.repository || own.head_repository.id !== context.repositoryId || own.head_repository.full_name !== context.repository || own.actor?.login !== context.actor || association.id !== pr.id || association.number !== event.number || association.head.repo.id !== context.repositoryId || association.base.repo.id !== context.repositoryId) refuse('scope mismatch');
+          } catch { refuse('own run identity invalid'); }
+          const ownIdentity = identity(own);
+          const workflow = await get(ROOT + '/actions/workflows/ci.yml');
+          if (!workflow || !positive(workflow.id) || workflow.id !== own.workflow_id || workflow.path !== '.github/workflows/ci.yml') refuse('workflow identity invalid');
+          const livePr = live => {
+            if (!live || live.id !== pr.id || live.number !== event.number || live.state !== 'open' || !repository(live.head?.repo) || !repository(live.base?.repo) || live.head.repo.id !== context.repositoryId || live.base.repo.id !== context.repositoryId || live.head.sha !== plan.head || live.head.ref !== pr.head.ref || live.base.ref !== pr.base.ref || !sha(live.base.sha)) refuse('live PR identity changed');
+          };
+          livePr(await get(ROOT + '/pulls/' + event.number));
+          const found = new Map();
+          for (const status of STATUSES) {
+            const response = await request(ROOT + '/actions/workflows/' + workflow.id + '/runs?event=pull_request&exclude_pull_requests=false&status=' + status + '&per_page=100&page=1');
+            const page = response?.body;
+            if (response?.status !== 200 || !page || !Number.isSafeInteger(page.total_count) || page.total_count < 0 || page.total_count > 100 || !Array.isArray(page.workflow_runs) || page.workflow_runs.length !== page.total_count) refuse('discovery incomplete');
+            links(response.link);
+            for (const run of page.workflow_runs) {
+              const source = sourceIdentity(run);
+              const association = associationIdentity(run);
+              const previous = found.get(run.id);
+              if (previous && (previous.source !== source || previous.association && association && previous.association !== association)) refuse('conflicting run identity');
+              found.set(run.id, { run, source, association: association ?? previous?.association });
+            }
+          }
+          // Resolve every older, different-head run before any cancellation request.
+          for (const entry of found.values()) {
+            const listed = entry.run;
+            if (listed.id === own.id || listed.run_number >= own.run_number || listed.head_sha === own.head_sha) {
+              entry.frozen = listed;
+              continue;
+            }
+            const detailed = await get(ROOT + '/actions/runs/' + listed.id);
+            identity(detailed);
+            if (sourceIdentity(detailed) !== entry.source || entry.association && associationIdentity(detailed) !== entry.association) refuse('conflicting run identity');
+            entry.frozen = detailed;
+          }
+          const result = { accepted: [], completed: [] };
+          for (const { frozen } of found.values()) {
+            if (frozen.id === own.id || frozen.repository.id !== own.repository.id || frozen.repository.full_name !== context.repository || frozen.head_repository.id !== own.head_repository.id || frozen.head_repository.full_name !== context.repository || frozen.workflow_id !== workflow.id || frozen.path !== workflow.path || frozen.event !== 'pull_request' || frozen.pull_requests.length !== 1 || frozen.pull_requests[0].id !== event.pull_request.id || frozen.pull_requests[0].number !== event.number || frozen.pull_requests[0].head.repo.id !== own.repository.id || frozen.pull_requests[0].base.repo.id !== own.repository.id || frozen.run_number >= own.run_number || frozen.head_sha === own.head_sha || !STATUSES.includes(frozen.status)) { log({ action: 'exclude', target: frozen.id, reason: 'scope/order/head/status' }); continue; }
+            const live = await get(ROOT + '/pulls/' + event.number);
+            livePr(live);
+            const target = await get(ROOT + '/actions/runs/' + frozen.id);
+            if (identity(target) !== identity(frozen)) refuse('target identity changed');
+            const freshOwn = await get(ROOT + '/actions/runs/' + context.runId);
+            if (identity(freshOwn) !== ownIdentity || freshOwn.actor?.login !== context.actor) refuse('own run identity changed');
+            if (target.status === 'completed') { result.completed.push(target.id); continue; }
+            log({ action: 'cancel-request', target: target.id, targetHead: target.head_sha, targetAttempt: target.run_attempt, targetRunNumber: target.run_number, status: target.status, ownRun: own.id, ownAttempt: freshOwn.run_attempt, ownRunNumber: own.run_number, liveHead: live.head.sha, repository: context.repository, repositoryId: own.repository.id, workflowId: workflow.id, workflowPath: workflow.path, prNumber: live.number, prId: live.id, prState: live.state, baseRef: live.base.ref, ownHead: freshOwn.head_sha });
+            const response = await request(ROOT + '/actions/runs/' + target.id + '/cancel', { method: 'POST' });
+            if (response?.status === 202) {
+              result.accepted.push(target.id);
+              log({ action: 'cancel-accepted', target: target.id, status: 202 });
+            } else if (response?.status === 409) {
+              const concurrent = await get(ROOT + '/actions/runs/' + target.id);
+              if (identity(concurrent) !== identity(frozen) || concurrent.status !== 'completed') refuse('cancel request conflict unresolved');
+              result.completed.push(target.id);
+            } else refuse('cancel request failed');
+          }
+          return result;
+        }
+        export function runtimeInput(env = process.env, read = readFileSync) {
+          return {
+            event: JSON.parse(read(env.GITHUB_EVENT_PATH, 'utf8')),
+            plan: JSON.parse(env.CI_EXPECTED_SOURCE),
+            context: { eventName: env.GITHUB_EVENT_NAME, repository: env.GITHUB_REPOSITORY, repositoryId: Number(env.GITHUB_REPOSITORY_ID), actor: env.GITHUB_ACTOR, runId: Number(env.GITHUB_RUN_ID), runNumber: Number(env.GITHUB_RUN_NUMBER), runAttempt: Number(env.GITHUB_RUN_ATTEMPT), workflowRef: env.GITHUB_WORKFLOW_REF, ref: env.GITHUB_REF, sha: env.GITHUB_SHA },
+          };
+        }
+        if (process.env.CI_CANCEL_ACTION === 'run') await cancelSuperseded(runtimeInput());
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '26'
+      - run: node --input-type=module -e "$CI_CANCEL"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_CANCEL_ACTION: run
+          CI_EXPECTED_SOURCE: ${{ needs.plan.outputs.snapshot }}
   check:
     name: ${{ needs.plan.result == 'success' && needs.plan.outputs.mode == 'BROAD_DEFERRED' && 'broad deferred (26)' || 'check (26)' }}
-    needs: [plan, fast, full_ordinary, full_host, demo]
+    needs: [plan, fast, full_ordinary, full_host, demo, cancel_superseded]
     if: ${{ always() && !(needs.plan.result == 'success' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && needs.plan.outputs.mode == 'MAIN_FULL') }}
     runs-on: ubuntu-latest
     strategy:

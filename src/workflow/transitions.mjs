@@ -2,15 +2,16 @@
 // dispatch's outcome, the move itself through the forge adapter's item-write side, and its event.
 
 import { worktreeTopic } from '../config/validate.mjs';
-import { FIXED_LABELS } from '../config/validate.mjs';
+import { FIXED_LABELS, OWNER } from '../config/validate.mjs';
 import { topicFor } from '../execution/workspace.mjs';
 import { repositoryReads } from '../substrate/forge/read.mjs';
 import { itemWriteSide } from '../substrate/forge/item-write.mjs';
 import { repositoryWriteSide } from '../substrate/forge/repository-write.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
-import { makerEscalation, makerNote } from './escalation.mjs';
+import { escalationDestination, makerEscalation, makerNote } from './escalation.mjs';
 import { acceptanceItems } from './form-check.mjs';
 import { pullRequestsFrom } from './facts.mjs';
+import { kindOf } from './next-action.mjs';
 
 /**
  * Each change L2 makes to a card's column, by its cause, as the column keys it leaves and enters.
@@ -196,7 +197,7 @@ export function columnChanges({
       const evidence = {
         category: next.category, reason: next.reason, raiser: next.raiser ?? 'loop',
         ...(next.item === undefined ? {} : { item: next.item }),
-        ...Object.fromEntries(['pull', 'head', 'line'].filter((key) => next[key] !== undefined).map((key) => [key, next[key]])),
+        ...Object.fromEntries(['pull', 'head', 'line', 'destination'].filter((key) => next[key] !== undefined).map((key) => [key, next[key]])),
       };
       try {
         sink.emitter({ layer: 'L2', card: card.number, dispatch: next.dispatch ?? null }).emit('review.escalate', evidence);
@@ -209,7 +210,7 @@ export function columnChanges({
       } catch (refusal) {
         throw new Error(`card #${card.number}'s escalation issue comment was refused: ${refusal.message}`, { cause: refusal });
       }
-      await change(card, 'escalated');
+      await change(next.from === undefined ? card : { ...card, column: columns[next.from] }, 'escalated');
       try {
         await writes.addIssueLabel(card.number, FIXED_LABELS.escalated);
       } catch (refusal) {
@@ -266,7 +267,10 @@ export function columnChanges({
         } catch (failure) {
           throw new Error(`card #${card.number}'s pull requests could not be read for its escalation: ${failure.message}`, { cause: failure });
         }
-        return makerEscalation(escalation, facts);
+        const kinds = config.kinds ?? {};
+        const { kind } = kindOf({ ...card, labels: card.labels ?? [] }, kinds, config.epicLabel);
+        const answer = makerEscalation(escalation, facts);
+        return { ...answer, destination: escalationDestination({ ...answer, escalate: config.escalate, maker: kinds[kind]?.maker, judges: kinds[kind]?.judges, comments }) };
       }
       if (exit !== 0) return undefined;
       if (tipFailure !== undefined) withheld(card, `card #${card.number}'s maker exited 0, but L1 could not read the tip of its line of work in the workspace: ${tipFailure.message}`);
@@ -297,9 +301,14 @@ export function columnChanges({
   };
 }
 
-/** The selected reason and only available work identifiers, as data on the card's issue. */
-function escalationComment(card, { category, item, reason, pull, head, line }) {
+/**
+ * The selected reason and only available work identifiers, as data on the card's issue. L3
+ * dispatches no role, so an escalation whose `destination` is a role goes to the owner, and the
+ * comment names the role it was not sent to (K96 on #740).
+ */
+function escalationComment(card, { category, item, reason, pull, head, line, destination = OWNER }) {
   const work = [
+    ...(destination === OWNER ? [] : [`Not sent to the role \`${destination}\`, which the configuration names for ${category}.`]),
     ...(item === undefined ? [] : [`Acceptance item: ${item}`]),
     ...(pull === undefined ? [] : [`Pull request: #${pull}`]),
     ...(head === undefined ? [] : [`Head: ${head}`]),

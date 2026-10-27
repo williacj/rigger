@@ -14,8 +14,10 @@ import { atExit } from '../substrate/process.mjs';
 export const STATE = '.rigger';
 
 /**
- * What `work` answers, handed the run's sink, opened before `work` makes any spawn, and `name`,
- * which names the state directory in the repository `named` once the guard has settled it.
+ * What `work` answers, handed the run's sink, opened before `work` makes any spawn; `run`, the run
+ * id the sink stamps on every event, which a verb hands what it writes rather than drawing an id of
+ * its own (the architect's placement ruling, finding 4, on #937); and `name`, which names the state
+ * directory in the repository `named` once the guard has settled it.
  *
  * L0 is handed the sink's end when it opens, so an ending the verb does not return through, a
  * signal among them, still ends it after L0's kills. The sink is ended on every path `work`
@@ -23,10 +25,11 @@ export const STATE = '.rigger';
  * §3, on #332).
  */
 export async function recording(work) {
-  const sink = openSink({ run: randomUUID(), now: Date.now });
+  const run = randomUUID();
+  const sink = openSink({ run, now: Date.now });
   atExit(sink.end);
   try {
-    return await work({ sink, name: (named) => sink.name(join(named, STATE)) });
+    return await work({ sink, run, name: (named) => sink.name(join(named, STATE)) });
   } finally {
     sink.end();
   }
