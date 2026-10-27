@@ -57,7 +57,7 @@ reused.
 | D14 | Critical is what a maker revision cannot resolve | Ratified |
 | D15 | A diagram is admitted where prose cannot carry the shape | Ratified |
 | D16 | Code asks the tool that owns the fact, and says where it can disagree | Ratified. Amended in #282. |
-| D17 | A requirement older than this decision is a counted gap | Ratified |
+| D17 | A requirement older than this decision is a counted gap | Ratified. Amended in #1042. |
 | D18 | v0 staffs an architect, and the PM decomposes | Ratified |
 | D19 | Until M5, a maker merges its own card | Superseded by D22 |
 | D20 | A card's author survives its writing session | Ratified |
@@ -68,7 +68,7 @@ reused.
 | D25 | The owner ratifies by marker, and the gate admits the merge | Ratified |
 | D26 | An escalation goes where the consumer sends it | Ratified |
 | D27 | An escalated card carries a label only the owner removes | Ratified. Amended in #868. |
-| D28 | A per-user LaunchAgent re-launches the engine on an interval | Ratified |
+| D28 | A per-user LaunchAgent re-launches the engine on an interval | Ratified. Amended in #1043. |
 
 ## D1 — Redo over resume
 
@@ -545,7 +545,7 @@ on an upgrade a restated fact would have survived.
 
 ## D17 — A requirement older than this decision is a counted gap
 
-**Status:** Ratified.
+**Status:** Ratified. Amended in #1042.
 
 ### Rule
 
@@ -569,8 +569,8 @@ on an upgrade a restated fact would have survived.
       (`R-CARD-1`), the maker finishes against it (`R-LOOP-1`), and every judge rules on it
       (`R-LOOP-5`).
    2. A milestone closes only when a test claims every requirement its exit list cites.
-   3. v0 ships with the set empty. `docs/v0-build-plan.md`'s M8 holds that, and this decision
-      ends there.
+   3. v0 ships with no counted gap left, except a requirement that the exit list of a milestone
+      after M8 cites, which closes at that milestone. `docs/v0-build-plan.md`'s M8 holds that.
 7. A judge enforces the rules above. No tool holds the set, and the notes record what the
    generator answers instead.
 
@@ -578,7 +578,10 @@ on an upgrade a restated fact would have survived.
 
 | Deferred | Returns when |
 |---|---|
-| A test claiming each requirement `docs/spec/requirements.md` held when this decision bound | The card that makes that requirement true runs and claims it. A milestone whose exit list cites the requirement returns it by that milestone's close, and M8 returns every one still open. |
+| A test claiming each requirement `docs/spec/requirements.md` held when this decision bound | The card that makes that requirement true runs and claims it. The requirement returns by the earliest of these closes that applies to it: |
+| | — the close of any milestone, M8 or earlier, whose exit list cites it; |
+| | — for a requirement that the exit list of a milestone after M8 cites, that milestone's close; |
+| | — for any other requirement still open, M8's close. |
 
 ### Notes
 
@@ -1027,7 +1030,7 @@ The owner ruled rule 2 in U1 Q1 on #740, and rule 1's exception in U4.7 on #740.
 
 ## D28 — A per-user LaunchAgent re-launches the engine on an interval
 
-**Status:** Ratified.
+**Status:** Ratified. Amended in #1043.
 
 ### Rule
 
@@ -1067,11 +1070,21 @@ owner signed in (Q-g to Q-i). A daemon runs outside the owner's login, so it wou
 sign-ins of its own, which the deferred row defers. That is a judgment: the spike ran no daemon,
 because Q-p was out of its scope.
 
-Rule 2 keeps `run`'s contract in `README.md`, which runs until the board drains. Under
-`StartInterval`, launchd never starts the job while a run is in progress, queues no firing, and
-starts it again one interval after it exits (Q-a3). `KeepAlive` restarts a `run` that drained
-after every `ThrottleInterval`, which is 10 s by default (Q-b). Each such start reads the board and
-its cards' pull requests again. That this costs too many forge calls is S7's judgment: the spike
-measured no forge calls.
+Rule 2 keeps `run`'s contract in `README.md`. With no clock trigger declared, `run` runs until
+the board drains. Under `StartInterval`, launchd never starts the job while a run is in progress,
+queues no firing, and starts it again one interval after it exits (Q-a3). `KeepAlive` restarts a
+`run` that drained after every `ThrottleInterval`, which is 10 s by default (Q-b). Each such start
+reads the board and its cards' pull requests again. That this costs too many forge calls is S7's
+judgment: the spike measured no forge calls.
+
+While a clock trigger is declared, `run` does not end at drain, as the owner ruled in M7-U2 item 1
+on #1009. Rule 2's relaunch then covers only an exit while the job stays loaded: by a signal, or on
+a failure that ends `run`. It promises no relaunch after a `bootout`, which unloads the job
+(`README.md`, "To unload the label"). Neither rule changes. While `run` stays up and idle, it
+polls the board, reading the board and its cards' pull requests again at each poll. That is the
+cost the paragraph above cites against `KeepAlive`, on a timer the consumer declares. That the
+idle poll's forge cost is acceptable is a judgment of the same kind as S7's, and M7-24 on #1009
+measures it.
+`ARCHITECTURE.md`'s "Triggers" holds the structure that carries the poll.
 
 This decision adds no requirement row.

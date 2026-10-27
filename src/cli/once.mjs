@@ -9,7 +9,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 
 import { OWNER, validate, worktreeTopic } from '../config/validate.mjs';
 import { killRecordedGroups } from '../execution/run.mjs';
-import { judgeDirectoryHandle, removeCardDirectories, workspaceHandle } from '../execution/workspace.mjs';
+import { escalationDirectoryHandle, judgeDirectoryHandle, removeCardDirectories, workspaceHandle } from '../execution/workspace.mjs';
 import { loop } from '../scheduling/loop.mjs';
 import { readSide, repositoryReads } from '../substrate/forge/read.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
@@ -42,6 +42,7 @@ function makerOutcome({ outcome, settled: settle }) {
   }
   const { exit } = outcome.value;
   if (exit !== 0 || failure !== undefined) return { said: `its maker exited ${exit}`, review: false, failure };
+  if (settle.status === 'fulfilled' && settle.value?.action === 'escalate') return { said: `its maker raised ${settle.value.category} for acceptance item ${settle.value.item}`, review: false };
   if (settle.status === 'fulfilled') {
     const { line, open: [pull] } = settle.value;
     return { said: `its maker exited 0 and pull request #${pull.number} is open from ${line}, so the card is in review`, review: true };
@@ -194,6 +195,7 @@ async function claiming(verb, limit, opened, {
     return { text: `rigger ${verb}: ${failure.message}`, code: 1 };
   }
   const judgeDirectory = judgeDirectoryHandle({ root, topic: worktreeTopic(config), repository: named, sink });
+  const escalationDirectory = escalationDirectoryHandle({ root, topic: worktreeTopic(config), repository: named, sink });
   const workspaceTip = workspace.tip;
   const removeDirectories = (card) => removeCardDirectories({ root, topic: worktreeTopic(config), card, repository: named, sink });
 
@@ -257,6 +259,13 @@ async function claiming(verb, limit, opened, {
   // followed by a line for each of its judges, then one for each failure of L2's settle that was
   // not the card left in coding for what the forge holds.
   const outcomes = (reached) => reached.map((each) => {
+    if (each.action === 'handled') {
+      const role = each.escalationRole;
+      const review = role.settled?.facts?.open.length === 1;
+      const failure = role.outcome.status === 'rejected' ? role.outcome.reason : undefined;
+      return { ...each, said: `role \`${role.role}\` handled its escalation; card is in ${review ? 'Review' : 'Coding'}`,
+        review, failure, judgesPassed: true, judgeLines: [] };
+    }
     if (each.action !== undefined && each.action !== 'continue') {
       const words = {
         move: `moved to ${each.to}`,
@@ -338,7 +347,7 @@ async function claiming(verb, limit, opened, {
   try {
     // The verb hands L3 the process's own environment, which L3 hands every dispatch it makes
     // (the architect's ruling 2, P7, on #467), and no maker: L3 dispatches it through L1.
-    reached = await loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, removeDirectories, state, environment: process.env, run: opened.run }).pull(limit);
+    reached = await loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, environment: process.env, run: opened.run }).pull(limit);
   } catch (failure) {
     // What L3 reports is said whole, one line per failure it holds, and the exit is non-zero:
     // an event the record refused names an action Rigger took and could not record, or a start

@@ -121,3 +121,27 @@ assumption from H8's earlier 49/223 matrix.
 remains evidence for H8 only. The integration changes the head and merge tree,
 so it needs its own configured hosted Mac run, independent reviews and owner
 marker before merge.
+
+# Matrix host claims after the later main merges
+
+Main 928c1f76ba2a929131368d3e3cf0d5629c7da60d added escalation host tests,
+requirements, and the #822 guide. A clean detached worktree at that commit
+passed Node 26 npm ci and npm test: 3435 passed, nine skipped, zero failed.
+The #958 integration had one content conflict in the generated matrix;
+test/suite.sh and its literal host-list expectation merged cleanly, retaining
+all host members from main and #958. npm run matrix regenerated the document
+from the combined source. No generated row was edited by hand.
+
+Running #958's generator against that exact main worktree without writing
+its derived file measured sixteen host-only requirement IDs: R-WORK-32,
+R-LOOP-18, R-STATE-7, R-STATE-8, R-STATE-9, R-STATE-19, R-STATE-10,
+R-STATE-11, R-STATE-12, R-STATE-13, R-STATE-26, R-STATE-14, R-STATE-15,
+R-STATE-16, R-STATE-18 and R-SAFE-1. The integrated matrix and npm run
+matrix:check report 62 gaps across 244 requirements. Node 26 npm test on
+the integrated source passed 3451, skipped nine and failed zero. The ten
+native matrix-host cases passed, as did the package, path, header, word,
+reference, spec-style, ID and diff checks.
+
+The H9 hosted Mac run remains evidence for H9 only. This integration changes
+the head and merge tree, so configured Mac proof, independent judgments and
+the protected owner marker must be repeated at this head before merge.

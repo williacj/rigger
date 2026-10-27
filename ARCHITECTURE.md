@@ -31,7 +31,7 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
 
 | Layer | Decides | Never decides | Emits, in part | Changed by | Lives in |
 |---|---|---|---|---|---|
-| **L0 Substrate** | How to talk to one external system: the forge (board, issues, PRs, CI through `gh`), git, the OS process model, each agent CLI. Retries, timeouts, containment mechanics, and which of its own git operations on one repository run one at a time. | Anything about cards or work. L0 does not know what a card is. | Call latency and failure, process spawn and exit, survivors killed by name and command line | Engineer cards, within the L0 budget | `src/substrate/` |
+| **L0 Substrate** | How to talk to one external system: the forge (board, issues, PRs, CI through `gh`), git, the OS process model, each agent CLI. Retries, timeouts, containment mechanics, and which of its own git operations on one repository run one at a time. | Anything about cards or work. L0 does not know what a card is. | Each forge and git call's latency and outcome, process spawn and exit, survivors killed by name and command line | Engineer cards, within the L0 budget | `src/substrate/` |
 | **L1 Execution** | How to run one dispatch in one workspace: isolation, lifetime, result as exit code plus captured output. Making the workspace an attempt at a card runs in. | Whether to run it, or what the result means | Dispatch start, end, duration, exit, timeout, and the workspace each runs in. A workspace made or removed. | Engineer cards, within the L1 budget | `src/execution/` |
 | **L2 Workflow** | The next action for a card from its stage and observable facts, including which kind selects a ready card and the provider each role's dispatch runs on, and whether its acceptance passes the form check. Every change to a card's column; the review loop; the gate rule, and whether a card's pull request merges; escalation routing; whether a failure is the work's, or the environment's, card-local or `out`. Which provisioning steps a card runs, whether a step's failure stops its attempt, and whether a failed attempt is tried again. | Which card is next; what good means | Card transitions with cause, verdicts, loop rounds, escalations by category, provisioning failures and attempts, by class | Spec rows, ratified by the owner | `src/workflow/` |
 | **L3 Scheduling** | Pull order by priority; concurrency; claims taken synchronously before any await; the repo lane, which runs the merges L2 decides one at a time. Admission, which is whether any card may be pulled; the hold that closes admission; the three trigger kinds. The halt on starts while the sink refuses an event, which is not the admission hold. When Rigger reads the forge again for a write it has not yet shown, and when it stops. | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput, admission holds and their reason | Spec rows and config | `src/scheduling/` |
@@ -158,7 +158,7 @@ workaround.
 | | | — a destination names no declared role; | |
 | | | — a role is the destination of critical or a recorded-decision change. | |
 | **Improvement roles** | Per loop: the role, its cadence (drain or clock), and the signals it reads | L6 | After v0 |
-| **Clock triggers** | A schedule, a card template or an internal job, and a catch-up policy | L3 | Yes |
+| **Clock triggers** | Per trigger, a schedule, a card template or an internal job, and a catch-up policy. Beside the triggers, the board poll's interval, which `run` waits between two polls of the board while idle. Both in the form given below the table | L3 | Yes |
 | **Provider adapters** | A module implementing the adapter interface for one agent CLI. It turns an agent file, a tier and a prompt into the CLI's invocation in one directory. It names the one folder its CLI keeps for that directory outside the dispatch's directories, or none. It loads only the tools and connectors that directory declares | L0 | Claude Code shipped; Codex shipped in M4 |
 | **Forge adapter** | A module implementing the board, issue, PR, and CI interface, with the forge assets `init` forks. The one asset is the gate workflow, and `init` reads its destination from `src/substrate/forge/assets.mjs` | L0, and `init` for each asset's destination | GitHub only; the interface exists so a second forge is an L0 change and nothing else |
 | **Deliverable** | Fixed in v0: a pull request merged behind the gate. Content scenarios still deliver by branch and PR. A publish adapter for non-git targets is a later L0 extension | L2 | Fixed |
@@ -249,6 +249,20 @@ topic names directly under `root`, and its line of work as the branch of the sam
 optional, and so is each key under it. Where one is absent, it takes the default the Engine
 settings row states.
 
+The clock declaration is one top-level key, and it reads `clock: { poll, triggers: { … } }`.
+`triggers` holds each clock trigger the consumer declares, keyed by its name, and each declares
+what the Clock triggers row lists. `poll` is the milliseconds `run` waits between two polls of the
+board while idle, as "Triggers" sets out. `poll` is required wherever a trigger is declared, and it
+has no default. The config validator refuses a clock declaration without `poll` (`R-SCHED-10`).
+
+`poll` has no default because nothing in this repository fixes a figure for it, and a default
+with no source would be a judgment presented as a measurement. What would reverse it: a measured
+count of the forge calls one poll makes, giving a figure that stays inside the forge's rate limit
+at a stated board size.
+
+The fenced shape above holds no `clock` key. The key enters it in the change in which the
+validator offers it, so that the shape holds exactly what the validator offers at every commit.
+
 A provider adapter is the one place Rigger holds a fact about its agent CLI. That covers how
 `doctor` asks whether the CLI is signed in and where `init` forks its templates. It also covers
 which model each tier selects, and how an agent file, a prompt and a directory become the CLI's
@@ -306,6 +320,135 @@ without a card. A clock trigger that fires while
 Rigger is not running fires once on the next start if its window was missed; that catch-up policy
 is per trigger in config.
 
+A clock trigger is declared where the clock declaration's `triggers` names at least one trigger. A
+clock declaration holding a `poll` and no trigger declares none. With no clock trigger declared,
+`run` ends once the board drains, and launchd's relaunch is what reads the board again ("How `run`
+is supervised", below). While a clock trigger is declared, `run` stays up after the board drains
+and fires each trigger as it comes due. Under `once`, no clock trigger fires, and nothing in the
+subsection below applies.
+
+### While a clock trigger keeps `run` up
+
+`loop.mjs`'s `run` decides not to end at drain while a clock trigger is declared. No module outside
+it makes that decision. In every state this subsection does not name, `run` acts as it does with no
+clock trigger declared.
+
+**The board poll.** While no claim is held, `run` polls the board every `poll` milliseconds. A
+poll is Pull's own read, not a fourth trigger kind:
+
+- It is how L3 sees a card ready and a slot free once launchd no longer relaunches `run`.
+  `R-SCHED-6`'s three occasions are unchanged.
+- Each poll fires the pull trigger, and records the event a pull trigger records: `trigger`, with
+  `trigger: 'pull'`.
+- A poll that claims nothing fires no second drain in the same idle period. Drain still fires once
+  per idle period.
+- A poll that claims a card ends the idle period.
+
+The poll starts whenever no claim is held, whatever ended the last claim. A drain, a merge claim's
+end and a claim whose move the board refused each leave `run` holding no claim. Where no drain
+fired before the poll started, the first poll that finds nothing in flight and nothing to pull fires
+it.
+
+While one or more claims are held, `run` does not poll. It pulls again at each slot release, as
+with no clock trigger declared. A partly occupied `run` therefore sees a new Ready card only at its
+next release.
+
+Two polls never run at once. The next poll fires `poll` milliseconds after the previous poll
+settles, not after it starts. A poll whose reads outlast `poll` therefore delays the next one, and
+never overlaps it.
+
+The timer lives in `src/scheduling/clock.mjs`, with a clock its caller injects, so a test needs no
+sleeps. That one timer wakes L3 both for the poll and for each trigger's next occurrence.
+`loop.mjs` wires it into `run`, and holds no timer of its own. What would reverse it: a third
+timer need unrelated to the clock, which would make the module a scheduling utility.
+
+Whether an internal job's firing counts as in flight, and so holds back the poll and the drain, is
+the clock declaration's placement, M7-04a on #1009. This subsection does not place it.
+
+**A poll in each idle state.**
+
+| State | What happens |
+|---|---|
+| admission closed | the poll claims nothing (`R-SCHED-3`), and names each closer as "Failure model" says |
+| a read of the board, the priority, the facts or admission fails | the next poll fires on schedule, and `run` hands the failure to the verb as set out below |
+| the sink refuses the poll's `trigger` event | the poll claims nothing, under the halt ("Failure model"); the next poll fires on schedule, and `run` hands the refusal to the verb |
+| a hold's closer could not be saved | `run` polls no more. It ends once the claims it holds finish, and exits non-zero naming the failure, as "Failure model" says |
+
+`run` ends on a hold's closer it could not save, rather than polling on. No pull claims a card
+after that failure, so a `run` that stayed up would poll and claim nothing for the rest of its
+life. Ending it lets launchd's next start read admission again. What would reverse it: a `run`
+that can read admission again and clear that failure itself.
+
+**Where `run`'s outcomes go.** With no clock trigger declared, `run` hands the verb what every card
+answered once it ends. The verb prints it and picks the exit status. While a clock trigger keeps
+`run` up, it hands the verb its outcomes as follows:
+
+- At each drain trigger, `run` hands the verb what settled since the previous drain: each card's
+  outcome, the closers a closed admission answered, and each failure.
+- A poll that fails, or whose `trigger` event the sink refuses, hands its failure to the verb as
+  that poll settles. The failure is among that idle period's outcomes, and the next drain does not
+  hand it again.
+- The verb prints each hand-over as it prints a whole run with no clock trigger declared, and exits
+  at none of them.
+- A `run` ended by a signal while its launchd job stays loaded runs L0's exit cleanup, which sets
+  the exit status ("Failure model"). launchd relaunches it at the job's next `StartInterval`.
+- A `run` ended at a `bootout` runs the same exit cleanup. The `bootout` unloads the job, so nothing
+  relaunches `run` until the job is loaded again (`README.md`, "To unload the label").
+- A `run` ended on a hold's closer it could not save hands the verb what settled since the previous
+  drain and was not yet handed, and the verb exits non-zero, as above.
+
+**Cards this run set aside.** A card L3 keeps out of later pulls under "Failure model"'s memory is
+**set aside**. With no clock trigger declared, a set-aside card stays skipped for the run's life,
+which ends at the drain. While a clock trigger keeps `run` up, a set-aside card stays skipped until a
+read of the board begun after the run set it aside finds it in a column other than its compared
+column (M7-U4 Q20 (c) on #1009). That holds whatever set the card aside.
+
+A set-aside card's **compared column** is the column the pull that claimed it read. Each column
+change this run made to the card that the board accepted changes the compared column to the
+change's target. The claim's move to Coding, L2's moves, the lane's moves at a merge's end and an
+escalation's move to Owner are such changes, so none of them ends the skip. A change the board
+refused leaves the compared column as it was.
+
+Each read of the board ends a skip, or leaves it, as follows:
+
+| A read of the board | What follows |
+|---|---|
+| begun before the run set the card aside | the skip holds, whatever column the read shows the card in |
+| begun after, finding the card in its compared column | the skip holds. A card whose compared column is Ready stays skipped while each read finds it in Ready |
+| begun after, finding the card in Ready, its compared column being another | the skip ends, and a pull claims the card as it claims any Ready card, at the next poll or slot release |
+| begun after, finding the card in a column other than Ready and other than its compared column | the skip ends, and a pull answers the card as it answers any card in that column |
+| begun after a refused change that the forge made anyway | the read finds the card in the change's target column, so the skip ends under the two rows above |
+
+L3 sees only what each read shows. A card moved out of its column and back again between two of
+this run's reads therefore stays skipped, because a change undone before the next read is not
+seen. A skip that ends removes the card from the memory, and a later setting aside starts its
+entry afresh. A new `run`, as after launchd's relaunch, starts with no card set aside.
+
+`loop.mjs`'s `run` keeps the memory, in place of its set of excluded card numbers. For each
+set-aside card it keeps the card's number, its compared column, and how many reads of the board
+had begun when it set the card aside. Each of L2's column changes answers, once the board accepted
+it, the column it left the card in, and `run` takes that as the compared column. `take`'s
+`available` is the step that compares: for a read begun after the setting aside, it compares the
+compared column with the item's `column`, which `readPriority` already answers. No other module
+holds the memory. What would reverse it: a second reader of the memory, such as `plan` or `doctor`
+showing which cards are skipped.
+
+**What a poll costs.** One idle poll is one `take`. With admission open, it makes about 3 + *a* +
+6*r* forge calls, where *a* counts the cards in Ready, Coding, Review or Owner. Of those, *r*
+counts the ones in Coding, Review or Owner holding exactly one open pull request. This figure is a judgment,
+not a measurement, and its premise is the reads `take` and `facts.mjs` make:
+
+- `readColumns` and `readPriority`, once each, with one more page of `readPriority` per 100 items;
+- `readBranches`, once, where any card is in one of those four columns;
+- one read of each such card's pull requests;
+- for each card *r* counts, `readMergeBase`, `readDiff`, `readComments`, `readMergeable` and
+  `readEffectiveRules`, then `readCheckStates`.
+
+The figure leaves out admission's reads, which read the state directory and not the forge. A card
+in Done costs nothing. M7-24 on #1009 measures the figure on a fake forge.
+
+### Supervising `run`
+
 Keeping the Rigger process alive across reboots is the OS scheduler's job. The launchd assets that
 do it are L0. A Windows equivalent arrives with native Windows, which is not in v0. On macOS the
 asset is one per-user LaunchAgent template under `templates/launchd/`, and `D28` records why. Spike
@@ -316,7 +459,10 @@ asset is one per-user LaunchAgent template under `templates/launchd/`, and `D28`
 - **How `run` is supervised.** `StartInterval` re-launches the unchanged `rigger run`, and
   `RunAtLoad` is true. launchd never starts the job while a run is in progress, and starts it again
   one interval after it exits, with no firing queued (Q-a3). Without `RunAtLoad`, the first start
-  waits one interval (Q-a1, Q-a2).
+  waits one interval (Q-a1, Q-a2). While a clock trigger is declared, `run` does not end at drain,
+  so launchd's relaunch covers only an exit while the job stays loaded: by a signal, or on a failure
+  that ends `run`. A `bootout` unloads the job, and launchd relaunches nothing after it until the job
+  is loaded again (`README.md`, "To unload the label").
 - **When it starts.** A LaunchAgent starts after the owner logs in, never before it (Q-l). Across
   a reboot, the job therefore starts at the owner's next login, not at boot (U1 Q5 on #740).
 - **The job's process groups.** launchd never signals a process in a group of its own, at a
@@ -1197,12 +1343,119 @@ A derivation that groups by `card` or `dispatch` treats a null field and an abse
 derivation below reads the stream in line order. Every append is synchronous, so line order is the
 order of events within a run.
 
+### L0's call events
+
+L0 records one `call.end` as each forge call and each git call ends. A forge call is a `gh`
+command, and a git call is a `git` command, each run through L0's process adapter. Two paths emit
+it, and no other:
+
+- **Forge:** `src/substrate/forge/runners.mjs`'s `throughL0`, the one spawn all four runners send
+  through.
+- **Git:** `src/substrate/worktrees.mjs`'s `call`, the one path every git call in that module takes.
+  `answer` and `fetched` reach it through `call`, so neither emits one of its own.
+
+The emitting layer gives `call.end` these fields:
+
+| Field | What it holds | Absent from the line |
+|---|---|---|
+| `system` | `forge` or `git` | Never |
+| `side` | The runner that sent a forge call: `read`, `schema-write`, `item-write` or `repository-write` | On a git call |
+| `operation` | A git call's subcommand, its first argument after any `-C` and the path that names | On a forge call |
+| `ms` | The milliseconds from L0 handing the command to the process adapter until the call settles or rejects | Never |
+| `outcome` | How the call ended: `ok`, `failed` or `timed-out` | Never |
+
+The outcome takes three values, and two of them count as a fault:
+
+- **`ok`**: the command exited 0. It is no fault.
+- **`failed`**: the command exited non-zero and its timeout did not end it, or it never started, as
+  where it is not on `PATH`. It is a fault, whatever its caller makes of the exit code.
+- **`timed-out`**: L0 killed the call's group at its timeout. It is a fault.
+
+How a call ends decides what L0 records and what the call's caller is handed:
+
+| How the call ends | What L0 records | What the caller is handed |
+|---|---|---|
+| Exit 0, a non-zero exit, or killed at its timeout, and the sink accepts | One `call.end`, with the outcome above | The call's result, as the process adapter gives it |
+| The command never started, and the sink accepts | One `call.end`, outcome `failed` | The process adapter's `NOT_STARTED` failure |
+| The sink refused one of the process adapter's own events, as a survivor or group kill, and the call rejects with `EVENT_REFUSED` | One `call.end`, with the outcome the failure's result gives | That `EVENT_REFUSED` failure. Where the sink also refuses the `call.end`, it is among the failure's unrecorded events |
+| The sink refuses the `call.end` | Nothing: the event is unrecorded | An `EVENT_REFUSED` failure naming the `call.end` as unrecorded and carrying the call's result. Where the command never started, its `NOT_STARTED` failure is the cause |
+| The sink holds the event, before the verb names the state directory | One `call.end`, held | As where the sink accepts. A held event is never refused. It is written once the verb names the directory, or to standard error where the verb ends without naming one |
+| L0's exit cleanup ended it, and the process ends | Nothing | Nothing: the process ends before the call settles |
+| L0's exit cleanup ended it, and a signal listener of the caller keeps the process running | One `call.end`, with the outcome the call's result gives. The cleanup's kill gives a non-zero exit, so a call it killed records `failed` | The call's result, as the process adapter gives it |
+
+A later start never ends a forge or git call, because L1 records only a dispatch's group for a
+start to end ("Failure model"). Exit cleanup records its own kills and then ends the sink. A call
+it ended records no `call.end` where the process then ends, so the fault rate's denominator leaves
+that call out.
+
+A caller's signal listener can keep the process running past the cleanup, and the call then
+settles on its result. `throughL0` or `call` records its `call.end` after the sink's end. The sink
+appends it where the verb named the state directory, and writes it to standard error where it did
+not.
+
+Each try of a fetch `fetched` makes is one git call, so each records one `call.end`. A try that
+lost the race for the remote-tracking ref records `failed`, and counts as a fault. Two cases follow
+from such a try:
+
+- **Another try follows:** L0 records `fetch.retried` after that try's `call.end`, as it does at
+  present.
+- **It was try `FETCH_TRIES`:** L0 records no `fetch.retried`, and `fetched` rejects naming the ref
+  and the count of tries.
+
+Both events are kept, and neither derives from the other. No derivation reads `fetch.retried`.
+
+Every forge call records one, whoever makes it. That covers each engine verb, `rigger doctor`'s
+checks, and the gate script. `scripts/gate-check.mjs` takes the gate's sink from `recording` and
+never names a state directory. So that sink holds every `call.end`, never refuses one, and writes
+them to standard error when it ends. The gate's standard output and exit status carry its ruling,
+so a call event never changes the gate's ruling.
+
+Three kinds of call record no `call.end`:
+
+- **A git call through `src/cli/doctor.mjs`'s `asked`.** That is an engine verb's guard (`settled`,
+  through `sourceTreeGuard`), `once`'s read of the main working tree, `init`'s git calls, and
+  `rigger doctor`'s git checks. Each is a precondition the verb checks before it takes any card. A
+  failure refuses the verb with its reason, so it interrupts no work and reaches no L2 event.
+  Emitting one would move `asked` into `src/substrate/`, since no layer writes another layer's
+  events.
+- **A dispatch, or a provisioning step, run through the process adapter.** L1's `dispatch.end`
+  already times each dispatch and step.
+- **An agent CLI's probe outside a dispatch**, as the Codex adapter's skill probe. Its failure
+  already reaches L2 as `judge.withheld` or `attempt.failed`, whose reason names the probe. So the
+  fault rate gains no third system, and the first reversal below excludes the probe by name.
+
+Any other end of a call on the two emitting paths takes the table's row for the ending it shares. A
+rejection the table names nowhere, as the process adapter's refusal of a call given no emitter, is
+the caller's defect and records nothing. A `gh` or `git` command run on any path other than
+`throughL0`, `call` or `asked` records no `call.end` until a delta here places it.
+
+Any one of these would reverse the placement:
+
+- "An `environment`-class failure in L2's events with no matching L0 call event" (the r1 review on
+  #1009, S5). That is an L2 failure whose reason names a forge or git call, with no fault
+  `call.end` of that system before it under the same `run` and `card`. A failure naming the Codex
+  skill probe is excluded by name.
+- A host fault in a guard's git call that the owner needs counted, shown by verbs refused that way.
+  The fix would move those calls behind an L0 path that emits a `call.end`.
+- The gate naming a state directory. Its sink could then refuse a `call.end`, and the gate would
+  need a ruling on what that refusal does to its ruling.
+- A git fault rate whose faults are answers rather than host faults. Two kinds show it: a fetch try
+  a `fetch.retried` follows, and a non-zero exit its caller reads as an answer, as `git ls-remote
+  --exit-code` gives for a missing ref. The fix would leave those out of the numerator.
+
 ### What `report` derives
 
 `report` derives each signal below from the events and fields named for it, and from no others.
 A signal **per run** reads the events one `run` recorded. A signal **across the stream** reads
 every event in the stream, whatever its run. An event no derivation reads keeps the fields the
 card that adds it gives it, and this section names it nowhere.
+
+L0's section:
+
+- **Substrate fault rate**, per system, per run and across the stream. Its denominator is the L0
+  `call.end` events whose `system` is that system, and it excludes none. Its numerator is those of
+  the denominator's events whose `outcome` is `failed` or `timed-out`, and it excludes `ok`. It
+  reads L0's `call.end` by `run`, `system` and `outcome`, and no other event or field.
 
 L1's section:
 
@@ -1311,13 +1564,11 @@ The fix would then be a field on L1's `dispatch.end`, recorded by its exit-clean
 
 ### What `report` shows
 
-`report` shows one section per landed layer, in layer order: L1, L2, L3 and L4. A **landed layer**
+`report` shows one section per landed layer, in layer order: L0, L1, L2, L3 and L4. A **landed layer**
 is one this section gives a signal to. Each section shows the signals named for it above, per run
 and across the stream as each signal's span says. The marker check follows every layer section.
 
-L0's substrate fault rate needs L0's call events, which this contract does not yet name, so L0 has
-no section until a delta here places that signal. `report` shows no L6 section until L6 emits
-events. No other signal is derived.
+`report` shows no L6 section until L6 emits events. No other signal is derived.
 
 ### The shape, abbreviated
 
@@ -1357,8 +1608,8 @@ comment lines are outside it too: a comment cannot carry a bug.
 | L1 | 1,500 |
 | L2 | 1,600 |
 | The gate | 300 |
-| L3 | 900 |
-| L5 | 1,500 |
+| L3 | 1,100 |
+| L5 | 1,300 |
 | L6 | 1,200 |
 | CLI and config | 2,000 |
 | **Package** | **12,000** |

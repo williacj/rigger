@@ -5,7 +5,7 @@ import { chmodSync, lstatSync, mkdirSync, readdirSync, realpathSync, rmSync, rmd
 import { basename, dirname, isAbsolute, join, relative, sep } from 'node:path';
 
 import { within as underOrAt } from './run.mjs';
-import { EVENT_REFUSED } from '../substrate/process.mjs';
+import { EVENT_REFUSED, NOT_STARTED } from '../substrate/process.mjs';
 import { ADDING, FETCH_FAILED as L0_FETCH_FAILED, LINE_DELETED as L0_LINE_DELETED, LINE_MOVED as L0_LINE_MOVED, workspaces } from '../substrate/worktrees.mjs';
 
 /**
@@ -149,32 +149,45 @@ async function readWorkspaceTip({ card, path, branch, repository, sink }) {
  * `WORKSPACE_NOT_MADE`, naming the path and why. A refused event rejects with `EVENT_REFUSED`,
  * as `makeWorkspace` does.
  */
-export async function makeJudgeDirectory({ root, topic, card, role, head, repository, sink }) {
+export const makeJudgeDirectory = (options) => makeDetachedDirectory({ ...options, family: 'judges' });
+
+/** Makes the escalation role's detached directory under escalations, using the same replace rule. */
+export const makeEscalationDirectory = (options) => makeDetachedDirectory({ ...options, family: 'escalations' });
+
+/** Shared detached-worktree creation and replacement for judges and escalation roles. */
+async function makeDetachedDirectory({ root, topic, card, role, head, repository, sink, family }) {
   const events = sink.emitter({ layer: 'L1', card });
-  const path = join(root, 'judges', topicFor(topic, card), role);
-  const adapter = workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card }) });
-  const trees = { main: join(path, 'main'), head: join(path, 'head') };
-  /** Runs `work`, rejecting as a judge's directory L1 could not make where it rejects. */
+  const path = join(root, family, topicFor(topic, card), role);
+  const adapter = workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card }), rejectFailedChecks: family === 'escalations' });
+  const trees = { main: join(path, 'main'), ...(head === undefined && family === 'escalations' ? {} : { head: join(path, 'head') }) };
+  /** Reports a refused replace rule separately from an unanswered check or make. */
   const step = async (work) => {
     try {
       return await work();
     } catch (cause) {
-      throw notMade(events, `judge ${role}'s directory for card #${card}`, { role, path }, cause,
-        { code: cause.code === 'REPLACEMENT_REFUSED' ? WORKSPACE_REFUSED : WORKSPACE_NOT_MADE });
+      const refused = cause.code === 'REPLACEMENT_REFUSED';
+      const code = refused ? WORKSPACE_REFUSED : family === 'escalations' ? NOT_STARTED : WORKSPACE_NOT_MADE;
+      const what = family === 'escalations' ? 'escalation role' : 'judge';
+      const failure = notMade(events, `${what} ${role}'s directory for card #${card}`, { role, path }, cause,
+        { code, ...(refused && family === 'escalations' ? { requirement: 'R-WORK-32', condition: 'replace rule' } : {}) });
+      if (failure.code === NOT_STARTED) failure.missing = path;
+      throw failure;
     }
   };
   const found = await step(() => judgeChecked({ adapter, path, repository }));
   const main = await step(async () => {
     const { commit } = await adapter.fetchMainLine();
-    const { held, why } = await adapter.holdsAfterFetch(head);
-    if (!held) throw new Error(`the repository does not hold the head commit ${head} after fetching it: ${why}`);
+    if (trees.head !== undefined) {
+      const { held, why } = await adapter.holdsAfterFetch(head);
+      if (!held) throw new Error(`the repository does not hold the head commit ${head} after fetching it: ${why}`);
+    }
     return commit;
   });
   await step(() => judgeCleared(adapter, found));
   if (found.present) recorded(events, card, 'workspace.removed', { role, path });
   await step(async () => {
     await adapter.makeDetached(trees.main, main);
-    await adapter.makeDetached(trees.head, head);
+    if (trees.head !== undefined) await adapter.makeDetached(trees.head, head);
   });
   recorded(events, card, 'workspace.made', { role, path, main, head });
   return { path, ...trees, scratch: scratchBase(root, topic, card), repository };
@@ -639,6 +652,9 @@ export async function workspaceHandle({ root, topic, repository, sink }) {
  * addendum on #467).
  */
 export const judgeDirectoryHandle = ({ root, topic, repository, sink }) => (card, role, head) => makeJudgeDirectory({ root, topic, card, role, head, repository, sink });
+
+/** The escalation-directory make L3 receives from the verb. */
+export const escalationDirectoryHandle = ({ root, topic, repository, sink }) => (card, role, head) => makeEscalationDirectory({ root, topic, card, role, head, repository, sink });
 
 /** Removes a card's directories under their replace rules. */
 export async function removeCardDirectories({ root, topic, card, repository, sink, timeout }) {
