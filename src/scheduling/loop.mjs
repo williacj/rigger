@@ -400,7 +400,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    */
   const noticed = async (id, hold) => {
     const closers = admissionRecord.read().closers ?? [];
-    const closer = closers.find((each) => each.kind === 'hold' && each.id === id);
+    const closer = closers.find((each) => each.id === id);
     if (closer === undefined || closer.issue !== undefined) return undefined;
     const others = closers.filter((each) => each.issue !== undefined).map((each) => Number(each.issue));
     const steps = l2.notice({ closer, others, hold, admission: admissionPath(state) });
