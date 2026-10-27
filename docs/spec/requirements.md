@@ -658,11 +658,30 @@ Each failure is one of three classes:
 | R-RECORD-5 | Rigger never rewrites what it already recorded. | the engine | the test suite | |
 | R-RECORD-6 | The record loses no event. What Rigger emitted is what a later reader finds. | the engine | the test suite | |
 | R-RECORD-7 | Every event says when it happened, which run it belongs to, and which card and dispatch it concerns, so a reader can put two events beside each other. | the engine | the test suite | |
-| R-RECORD-8 | A copy of the record placed anywhere else holds every event the original holds. | the engine | the test suite | |
 | R-RECORD-9 | When Rigger cannot record an event, it says what went unrecorded and starts no further work until it can. | the engine | the test suite | |
 | R-RECORD-10 | Rigger's record of the end of every merge its lane starts names why the pull request was not merged, whatever the outcome other than merged. What each outcome names is in `### R-RECORD-10 — Why a merge ended unmerged`. | the engine | the test suite | |
 | R-RECORD-11 | After an attempt that continues a card's work, where the maker exits successfully, Rigger's record names the head of the card's pull request that Rigger last read under `R-WORK-34`. | the engine | the test suite | |
 | R-RECORD-12 | Where Rigger read the forge again under `R-SCHED-26` or `R-WORK-34`, its record of the merge's end, or of the card's move to review or stay in coding, names how many reads it made. It also names how long after the first read the last one came. | the engine | the test suite | |
+| R-RECORD-13 | A copy of the record that Rigger places beyond the consumer's own machine holds, as of each successful push, every event the original held when that push started. The push states it covers, and the rows governing each, are in `### R-RECORD-13 — Push states`. | the engine | the test suite | |
+| R-RECORD-14 | Where a push of the record does not succeed, Rigger keeps working. It starts and finishes work as it would have had the push succeeded. | the engine | the test suite | |
+| R-RECORD-15 | Where a push of the record does not succeed, Rigger says so in its output, naming the failure, and records the failure. | the engine | the test suite | |
+| R-RECORD-16 | After a push of the record that did not succeed, Rigger tries the push again at its next push, however many pushes before it did not succeed. | the engine | the test suite | |
+| R-RECORD-17 | Every push of the record has a time limit, and a push that runs past it has not succeeded. | the engine | the test suite | |
+| R-RECORD-18 | A push of the record that does not succeed leaves the exit status of the verb that made it as that verb would otherwise have had it. | the engine | the test suite | |
+
+### R-RECORD-13 — Push states
+
+| Telemetry push | The push | Governing rows | Scope |
+|---|---|---|---|
+| off | — | `R-SAFE-3`: nothing is copied | in |
+| on | succeeds | `R-RECORD-13` | in |
+| on | refused by the forge | `R-RECORD-14`, `R-RECORD-15`, `R-RECORD-16`, `R-RECORD-18` | in |
+| on | runs past its time | `R-RECORD-14`, `R-RECORD-15`, `R-RECORD-16`, `R-RECORD-17`, `R-RECORD-18` | in |
+| on | fails on the host before reaching the forge | `R-RECORD-14`, `R-RECORD-15`, `R-RECORD-16`, `R-RECORD-18` | in |
+| on | the data ref absent before the push | `R-RECORD-13` | in |
+| on | an event is recorded while a push is in flight | `R-RECORD-13` | in |
+| on | Rigger killed outright during the push | `R-RECORD-13` | in |
+| on | any other way the push does not succeed | `R-RECORD-14`, `R-RECORD-15`, `R-RECORD-16`, `R-RECORD-18` | in |
 
 ### R-RECORD-10 — Why a merge ended unmerged
 
