@@ -268,12 +268,13 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
    * whatever name its id then carries, and records one `admission.open` event raised by `resume`
    * for each name it unlinked, so two names carrying one hold's id are two events. A closer already
    * gone counts as removed, with no event. Where any closer is unreadable, it removes nothing and
-   * names each.
+   * rejects naming each, carrying as `unreadable` the entries `read` answered, unescaped.
    */
   async function resume() {
     const answer = read();
     if (answer.state === 'unreadable') {
-      throw new Error(`admission cannot be read, so resume removes nothing: ${answer.unreadable.map(({ path, cause }) => `${path} (${cause})`).join(', ')}`);
+      const { unreadable } = answer;
+      throw Object.assign(new Error(`admission cannot be read, so resume removes nothing: ${unreadable.map(({ path, cause }) => `${path} (${cause})`).join(', ')}`), { unreadable });
     }
     const closers = answer.closers ?? [];
     const unlinked = new Set();

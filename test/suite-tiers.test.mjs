@@ -165,12 +165,14 @@ const expectedLists = {
 expectedLists.host.push('test/process-table.test.mjs');
 expectedLists.host.push('test/claude-folder-live.test.mjs');
 expectedLists.host.push('test/test-list-growth-host.test.mjs');
+expectedLists.host.push('test/printable-closer-verbs.test.mjs');
 expectedLists.host.push('test/coordinator-launchers.test.mjs');
 expectedLists.host.push('test/coordinator-suite-slot.test.mjs');
 expectedLists.host.push('test/coordinator-sweep.test.mjs');
 expectedLists.host.push('test/escalation-directory-host.test.mjs');
 expectedLists.host.push('test/escalation-loop-host.test.mjs');
 expectedLists.host.push('test/escalation-once-host.test.mjs');
+expectedLists.host.push('test/launchd-host.test.mjs');
 expectedLists.host.sort();
 expectedLists.awaiting.push('test/claude-folder-live.test.mjs');
 expectedLists.awaiting.sort();

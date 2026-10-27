@@ -323,3 +323,27 @@ test('a spec-style skill keeping its one-term rule but ruling out no term names 
   assert.ok(out.includes(join(root, '.claude/skills/spec-style/SKILL.md')), out);
   assert.match(out, /states no ruled-out term/);
 });
+
+// --- advisory hints for rules 4 and 5 in pinned text ---
+
+const STEPS = 'The engine pulls, then dispatches, then judges, then merges.';
+
+test('pinned text drawing a hint prints it under its own heading, and the exit stays 0', () => {
+  const { status, out } = cardCheck(lines('# A card', '', '```markdown', 'The engine reads the board.', '', STEPS, '```'));
+  assert.equal(status, 0, out);
+  assert.match(out, /nothing found\nadvisory hints, for rules 4 and 5, which hold by judgment:\n {2}line 6 {2}rule 4: The engine pulls/);
+  // A hint is not a finding, so it is never counted with them.
+  assert.doesNotMatch(out, /^line 6/m);
+});
+
+test('a hint beside a finding leaves the exit at 1 and the findings count unchanged', () => {
+  const { status, out } = cardCheck(lines('# A card', '', '```markdown', 'A card is never parked.', '', STEPS, '```'));
+  assert.equal(status, 1, out);
+  assert.match(out, /^1 findings\nadvisory hints, for rules 4 and 5, which hold by judgment:\n {2}line 6 {2}rule 4: /m);
+});
+
+test('the same hinted prose outside a pinned fence draws no hint', () => {
+  const { status, out } = cardCheck(lines('# A card', '', STEPS));
+  assert.equal(status, 0, out);
+  assert.doesNotMatch(out, /hint/);
+});

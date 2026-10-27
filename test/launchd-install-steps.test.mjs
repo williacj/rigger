@@ -111,11 +111,9 @@ test('the steps install by booting the label out and then bootstrapping the plis
   assert.match(steps(), /`<uid>` is what `id -u` prints/);
 });
 
-test('the README states nothing of a launchd check by doctor', () => {
+test('the installation steps omit doctor and its verb line names launchd job last', () => {
   assert.doesNotMatch(steps(), /doctor/);
-  for (const paragraph of readme().split(/\n\s*\n/)) {
-    if (/doctor/.test(paragraph)) assert.doesNotMatch(paragraph, /launchd|LaunchAgent|launchctl/, paragraph);
-  }
+  assert.match(readme(), /^npx @williacj\/rigger doctor\s+# .*admission, launchd job$/m);
 });
 
 test('the steps unload the label rather than claim to stop its process', () => {

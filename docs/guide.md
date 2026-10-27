@@ -159,6 +159,7 @@ Where one fails, do this:
 | board sharing | Remove from the board every issue or pull request of another repository. A board Rigger works holds none ([`R-WORK-8`](spec/requirements.md)). |
 | gate check required | Provision the forge settings [What the owner provisions](../ARCHITECTURE.md#what-the-owner-provisions) lists. |
 | admission | The line reports admission open, closed or unreadable ([`R-SCHED-17`](spec/requirements.md)). A closed admission passes and names each closer; run [`rigger resume`](../README.md#install-and-usage) to reopen it ([`R-SCHED-23`](spec/requirements.md)). An unreadable one fails and names each path and cause: remove or repair each path, then run `rigger resume`, which changes nothing while a closer is unreadable ([`ARCHITECTURE.md`, "Failure model"](../ARCHITECTURE.md#failure-model)). |
+| launchd job | Check the loaded program path and exit timeout against [Installing the launchd job](../README.md#installing-the-launchd-job), then re-install the edited job with those steps. |
 
 A card that seems stuck usually has one of these causes:
 
