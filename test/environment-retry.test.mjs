@@ -1427,6 +1427,7 @@ function judgePairWorld(t, { ready = false, plans = { reviewer: ['host', 'host']
   const calls = [];
   const workspaces = [];
   const counts = new Map();
+  const refusedScratch = new Map();
   const directory = async (card, role, head) => {
     const number = (counts.get(role) ?? 0) + 1;
     counts.set(role, number);
@@ -1447,7 +1448,10 @@ function judgePairWorld(t, { ready = false, plans = { reviewer: ['host', 'host']
     if (mode === 'scratch-refused') {
       mkdirSync(made.scratch, { recursive: true });
       rmSync(join(made.scratch, role), { recursive: true, force: true });
-      writeFileSync(join(made.scratch, role), 'kept\n');
+      const path = join(made.scratch, role);
+      writeFileSync(path, 'kept\n');
+      const stat = fs.lstatSync(path, { bigint: true });
+      refusedScratch.set(role, { path, bytes: readFileSync(path), identity: [stat.dev, stat.ino, stat.mode] });
     }
     if (mode === 'scratch-unmade') unlisted(t, made.scratch, role);
     if (mode === 'head-step-exit') writeFileSync(join(made.head, 'broken'), 'fail\n');
@@ -1462,7 +1466,7 @@ function judgePairWorld(t, { ready = false, plans = { reviewer: ['host', 'host']
     return made;
   };
   const invocation = () => loop({ ...built.handed, judgeDirectory: directory, workspace });
-  return { built, calls, workspaces, invocation };
+  return { built, calls, workspaces, refusedScratch, invocation };
 }
 
 /** Retains both the result and all reported failures without dropping a panel member. */
@@ -1611,6 +1615,16 @@ test('Table A and B retry-scratch-refused', SETTLES_WITHIN, async (t) => {
   assert.equal(recorded(world.built, 'L2', 'review.escalate').length, 1);
   assert.deepEqual(recorded(world.built, 'L2', 'attempt.decided').map((event) => event.decision), ['again']);
   assert.deepEqual(admission({ directory: world.built.directory, sink: world.built.handed.sink }).read(), { state: 'open' });
+  const refused = result.reached[0].judges.find(({ role }) => role === 'reviewer').outcome.reason;
+  assert.equal(refused.code, 'SCRATCH_REFUSED');
+  const original = world.refusedScratch.get('reviewer');
+  assert.equal(refused.path, original.path, 'the reported refusal names the actual fixture input');
+  assert.equal(existsSync(refused.path), true, 'the refused retry scratch path must remain after escalation');
+  assert.deepEqual(readFileSync(refused.path), original.bytes, 'the refused file bytes are unchanged');
+  assert.equal(readFileSync(refused.path, 'utf8'), 'kept\n', 'the fixture retained its independent content premise');
+  const stat = fs.lstatSync(refused.path, { bigint: true });
+  assert.equal(stat.isFile(), true);
+  assert.deepEqual([stat.dev, stat.ino, stat.mode], original.identity, 'the refused file identity and permissions are unchanged');
 });
 
 // A counterexample changes the table outcome or loses another judge under the same claim.
@@ -2062,43 +2076,64 @@ test('source cause R29 Claude exclusion ancestor realpath failure is tagged befo
   judgeStartClass(outcome, { kind: 'directory-unusable' }, 'R29');
 });
 
-// The counterexample treats a cwd search-permission race as an unexecutable provider and stops its R29 pair.
-// proves R-FAIL-8
-test('a real spawn denied search permission in its working directory is R29 and holds after an earlier R29', SETTLES_WITHIN, async (t) => {
+/** Changes cwd at the native spawn boundary and counts its report after a genuine earlier R29. */
+async function judgeCwdPair(t, errno, alter, { controlled = false, synchronous = false } = {}) {
   const { request: roleRequest } = judgeStartRequest(t);
   const prepared = await roleDispatch(roleRequest);
   const request = { ...prepared, command: '/usr/bin/true', args: [], id: roleRequest.id, card: 7, directory: join(prepared.workspace, '.rigger'), sink: roleRequest.sink };
   fs.accessSync(request.command, fs.constants.X_OK);
-  const mode = fs.statSync(request.cwd).mode & 0o777;
-  fs.renameSync(request.cwd, `${request.cwd}-held`);
+  const original = fs.statSync(request.cwd);
+  const held = `${request.cwd}-held`;
+  fs.renameSync(request.cwd, held);
   let first;
   try {
     [first] = await Promise.allSettled([judgeDispatchOnL1({ ...request, id: 'd-first' })]);
   } finally {
-    fs.renameSync(`${request.cwd}-held`, request.cwd);
+    fs.renameSync(held, request.cwd);
   }
   assert.deepEqual(first.reason?.startCause, { kind: 'directory-unusable' });
   assert.equal(judgeStartAnswer({ reviewer: first }).next.failure.row, 'R29');
   let reached = false;
-  refuseSpawn(t, { command: '/usr/bin/true', before: () => {
+  let premiseError;
+  refuseSpawn(t, { command: '/usr/bin/true', ...(controlled ? { code: errno, synchronous } : {}), before: () => {
     reached = true;
-    fs.chmodSync(request.cwd, 0);
-    assert.throws(() => fs.accessSync(request.cwd, fs.constants.X_OK), { code: 'EACCES' });
+    fs.renameSync(request.cwd, held);
+    alter(request.cwd, held);
+    try { fs.statSync(`${request.cwd}/.`); } catch (error) { premiseError = error; }
   } });
   let second;
   try {
     [second] = await Promise.allSettled([judgeDispatchOnL1(request)]);
   } finally {
-    fs.chmodSync(request.cwd, mode);
+    fs.chmodSync(held, original.mode & 0o777);
+    try {
+      fs.lstatSync(request.cwd);
+      fs.unlinkSync(request.cwd);
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    fs.renameSync(held, request.cwd);
   }
-  assert.equal(reached, true, 'search permission was removed after the initial checks, at the real spawn');
+  assert.equal(reached, true, 'cwd changed after the initial checks, at the real spawn');
+  assert.equal(premiseError?.code, controlled ? 'ENOENT' : errno, 'the cwd premise was observed before the spawn');
   assert.equal(second.reason?.code, NOT_STARTED);
-  assert.match(second.reason.message, /spawn \/usr\/bin\/true EACCES/);
+  assert.match(second.reason.message, new RegExp(`\\b${errno}\\b`));
   const paired = judgeStartAnswer({ reviewer: second }, { firstFailures: { reviewer: first } });
-  t.diagnostic(JSON.stringify({ message: second.reason.message, cause: second.reason.startCause, action: paired.next.action }));
-  assert.equal(paired.next.action, 'hold', 'a missing cwd and a cwd denied at spawn are the same R29 way');
+  t.diagnostic(JSON.stringify({ errno, evidence: controlled ? (synchronous ? 'controlled throw' : 'controlled event') : 'native spawn', message: second.reason.message, cause: second.reason.startCause, action: paired.next.action }));
+  assert.equal(paired.next.action, 'hold', `an absent cwd and ${controlled ? 'controlled' : 'native'} ${errno} are the same R29 way`);
   judgeStartClass(second, { kind: 'directory-unusable' }, 'R29');
   assert.deepEqual(paired.events.find(({ event }) => event === 'attempt.decided').failures.map(({ row }) => row), ['R29', 'R29']);
+  const restored = fs.statSync(request.cwd);
+  assert.deepEqual([restored.dev, restored.ino, restored.mode], [original.dev, original.ino, original.mode], 'the fixture restores the original directory');
+}
+
+// The counterexample treats a cwd search-permission race as an unexecutable provider and stops its R29 pair.
+// proves R-FAIL-8
+test('a real spawn denied search permission in its working directory is R29 and holds after an earlier R29', SETTLES_WITHIN, async (t) => {
+  await judgeCwdPair(t, 'EACCES', (cwd, held) => {
+    fs.chmodSync(held, 0);
+    fs.symlinkSync(held, cwd);
+  });
 });
 
 // The counterexample calls every EACCES a directory failure, including a real non-executable provider.
@@ -2113,4 +2148,38 @@ test('a real provider file without execute permission remains R3 while its worki
   const [outcome] = await Promise.allSettled([judgeDispatchOnL1({ ...prepared, command, args: [], id: request.id, card: 7, directory: join(prepared.workspace, '.rigger'), sink: request.sink })]);
   assert.match(outcome.reason?.message, /EACCES/);
   judgeStartClass(outcome, { kind: 'command-not-executable', provider: 'claude' }, 'R3');
+});
+
+// The counterexample counts a cwd replaced with a file as an unknown spawn failure and stops its pair.
+// proves R-FAIL-8
+test('native cwd ENOTDIR remains R29 and holds its earlier R29 pair', SETTLES_WITHIN, async (t) => {
+  await judgeCwdPair(t, 'ENOTDIR', (cwd) => fs.writeFileSync(cwd, 'not a directory\n'));
+});
+
+// The counterexample treats a cwd symlink cycle as an unknown provider failure instead of the directory state.
+// proves R-FAIL-8
+test('native cwd ELOOP remains R29 and holds its earlier R29 pair', SETTLES_WITHIN, async (t) => {
+  await judgeCwdPair(t, 'ELOOP', (cwd) => fs.symlinkSync(cwd, cwd));
+});
+
+// The counterexample omits filesystem pathname limits from the cwd recheck and stops the R29 pair.
+// proves R-FAIL-8
+test('native cwd ENAMETOOLONG remains R29 and holds its earlier R29 pair', SETTLES_WITHIN, async (t) => {
+  await judgeCwdPair(t, 'ENAMETOOLONG', (cwd) => fs.symlinkSync(join(dirname(cwd), 'x'.repeat(256)), cwd));
+});
+
+// The counterexample recognizes only today's pathname errno list and loses other OS cwd failures.
+// proves R-FAIL-8
+test('all spawn errors recheck an actually missing cwd through synchronous and asynchronous handoffs', SETTLES_WITHIN, async (t) => {
+  for (const errno of ['EIO', 'ENOMEM', 'EFAULT', 'EAGAIN', 'EMFILE', 'ENFILE', 'EINVAL', 'EPIPE', 'EUNRECOGNIZED']) {
+    for (const synchronous of [false, true]) await t.test(`${errno} ${synchronous ? 'throws' : 'emits'}`, async (t) => {
+      await judgeCwdPair(t, errno, () => {}, { controlled: true, synchronous });
+    });
+  }
+});
+
+// The counterexample mistakes a cwd removed at the real spawn for a missing provider.
+// proves R-FAIL-8
+test('native cwd ENOENT remains R29 and holds its earlier R29 pair', SETTLES_WITHIN, async (t) => {
+  await judgeCwdPair(t, 'ENOENT', () => {});
 });

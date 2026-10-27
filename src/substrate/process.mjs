@@ -2049,12 +2049,12 @@ const SPAWN_CAUSES = {
   EACCES: ['command-not-executable', true],
 };
 
-/** A failed spawn, rechecking cwd where ENOENT or EACCES can name the directory or executable. */
+/** A failed spawn: recheck cwd for every errno, since OS and filesystem errors are not a closed list. */
 function spawnFailure(command, error, cwd) {
   const failure = notStarted(command, error.message);
   const classified = SPAWN_CAUSES[error.code] ?? ['host-error'];
   const [kind, executable] = classified;
-  failure.startCause = (error.code === 'ENOENT' || error.code === 'EACCES') && unusable(cwd) !== undefined
+  failure.startCause = unusable(cwd) !== undefined
     ? { kind: 'directory-unusable' } : { kind, ...(executable ? { command } : {}) };
   return failure;
 }
