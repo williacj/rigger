@@ -17,7 +17,7 @@ import { factsCall } from '../workflow/facts.mjs';
 import { failed, nextAction } from '../workflow/next-action.mjs';
 import { REVIEW_WITHHELD, columnChanges } from '../workflow/transitions.mjs';
 import { CONFIG } from './init.mjs';
-import { PACKAGE, closedBy, consumerConfig, gitAnswer, real, sameTree, settled, within } from './doctor.mjs';
+import { PACKAGE, closerLine, consumerConfig, gitAnswer, real, sameTree, settled, unreadableAdmission, within } from './doctor.mjs';
 import { refusalLine } from './plan.mjs';
 import { STATE, recording } from './recording.mjs';
 
@@ -230,7 +230,7 @@ async function claiming(verb, limit, opened, {
    * Keeps L2's judge answer `next` for card `number`, and, for each judge L3 handed outcomes of in
    * `judged` or a directory outcome of in `directories` that the answer no longer names, why it was
    * not dispatched: the required step in its `head` that failed and how, its newest outcome, since
-   * L3 asks after each step; or why L1 could not make its directory.
+   * L3 asks after each step; or why L1 could not make its directory or its scratch directory.
    */
   const judging = (number, next, judged, directories) => {
     const panel = panels.get(number) ?? { kind: next.kind, named: new Map(), withheld: new Map() };
@@ -242,8 +242,11 @@ async function claiming(verb, limit, opened, {
       const how = failed(outcomes.at(-1), config.provisioning[name], { number }, name);
       panel.withheld.set(role, `was not dispatched, because its required step \`${name}\` failed in its head: ${stepFailure(how)}`);
     }
+    // L2 withholds a judge for a directory outcome that is L1's failure to make its directory, or
+    // L1's report that its dispatch did not start for a scratch directory not made (`unmade`).
     for (const [role, outcome] of Object.entries(directories).filter(([role]) => absent(role))) {
-      panel.withheld.set(role, `was not dispatched, because its directory could not be made: ${outcome.reason?.message}`);
+      const which = outcome.reason?.code === NOT_STARTED ? 'its scratch directory' : 'its directory';
+      panel.withheld.set(role, `was not dispatched, because ${which} could not be made: ${outcome.reason?.message}`);
     }
   };
   const facts = factsCall({ config, reads, decide });
@@ -309,8 +312,13 @@ async function claiming(verb, limit, opened, {
     ]),
     ...worked.filter(({ failure }) => failure !== undefined).map(({ failure }) => `rigger ${verb}: ${failure.message}`),
   ];
-  /** Presents L3's failure, choosing the held or stopped wording from its last attempt failure. */
+  /**
+   * Presents L3's failure: an unreadable admission's entries, which L3 carries as `unreadable`, in
+   * `unreadableAdmission`'s words, and otherwise the held or stopped wording from its last attempt
+   * failure.
+   */
   const failureLine = (held) => {
+    if (Array.isArray(held.unreadable)) return `rigger ${verb}: ${unreadableAdmission(held.unreadable)}`;
     const attempts = held.attemptFailures;
     if (!Array.isArray(attempts) || attempts.at(-1)?.maker === undefined) return `rigger ${verb}: ${held.message}`;
     const heading = `rigger ${verb}: claimed #${held.card} from board ${project}; its maker did not start: ${attempts.at(-1).reason}, and the card was ${held.decision === 'hold' ? 'held' : 'stopped'} after ${attempts.length} attempts:`;
@@ -343,7 +351,7 @@ async function claiming(verb, limit, opened, {
   const refused = refusals.map(refusalLine);
   if (reached.admission?.state === 'closed') {
     return {
-      text: [...reached.admission.closers.map((closer) => `rigger ${verb}: ${closedBy(closer)}`), ...refused].join('\n'),
+      text: [...reached.admission.closers.map((closer) => `rigger ${verb}: ${closerLine(closer)}`), ...refused].join('\n'),
       code: 0,
     };
   }

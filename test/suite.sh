@@ -43,6 +43,7 @@ test/listing-stand-in.test.mjs
 test/maker-dispatch.test.mjs
 test/never-stop.test.mjs
 test/package.test.mjs
+test/printable-closer-verbs.test.mjs
 test/process-adapter.test.mjs
 test/process-fixtures.test.mjs
 test/process-table.test.mjs
