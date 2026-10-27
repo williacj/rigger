@@ -24,6 +24,9 @@ test/build-test-matrix-host.test.mjs
 test/claude-folder-live.test.mjs
 test/codex-judge-shell.test.mjs
 test/command-gate-hook.test.mjs
+test/coordinator-launchers.test.mjs
+test/coordinator-suite-slot.test.mjs
+test/coordinator-sweep.test.mjs
 test/demo.test.mjs
 test/directory-census.test.mjs
 test/dispatch.test.mjs
