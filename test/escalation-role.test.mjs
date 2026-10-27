@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ROUTING_LINE, dispatchedEscalation } from '../src/workflow/escalation.mjs';
+import { columnChanges } from '../src/workflow/transitions.mjs';
 import { BODY, DISPATCH, HEAD, REASON, escalationWorld, postedNote } from './escalation-world.mjs';
 
 // The counterexample is a routing post that loses the maker's reason or the open work identifiers.
@@ -230,4 +231,31 @@ test('a title and maker reason containing the dispatch slot cannot steal the rol
   assert.ok(block.includes(`dispatch: ${DISPATCH}`), 'the role note form must carry its own dispatch id');
   assert.ok(stamped.includes(here.card.title), 'the title must stay literal');
   assert.ok(stamped.includes(here.next.reason), 'the maker reason must stay literal');
+});
+
+// A route using the shared writer would lose the card and dispatch on L0 containment events.
+// proves R-RECORD-7
+test('routing comment transport records its card and dispatch context', async () => {
+  for (const dispatch of [DISPATCH, undefined]) {
+    const here = await escalationWorld();
+    const requests = [];
+    // runners.mjs hands send the admitted gh arguments and caller-owned L0 emitter.
+    // Stand in for process.mjs recording containment; no forge or process is invoked.
+    const send = async (command, args, { emitter }) => {
+      assert.equal(command, 'gh');
+      requests.push(args);
+      emitter.emit('survivor.killed', { group: 424242, pid: 424243, name: 'gh helper', cmd: 'gh helper' });
+      return { status: 0, stdout: '{"id":1}', stderr: '' };
+    };
+    const l2 = columnChanges({ config: here.settings, sink: here.sink, items: here.fake.operations,
+      reads: here.repository.operations, send });
+    await l2.routed(here.card, { ...here.next, dispatch });
+    assert.deepEqual(requests.map((args) => args.slice(0, 4)),
+      [['api', 'repos/williacj/rigger/issues/12/comments', '-X', 'POST']]);
+    assert.ok(requests[0].some((arg) => arg.startsWith('body=' + ROUTING_LINE)));
+    const events = here.events().filter((event) => event.event === 'survivor.killed');
+    assert.equal(events.length, 1, 'the production repository writer must reach the transport');
+    assert.equal(events[0].card, 12, 'R-RECORD-7: the routing post containment event must name card #12');
+    assert.equal(events[0].dispatch, dispatch ?? null, 'R-RECORD-7: the routing post must retain its dispatch context');
+  }
 });

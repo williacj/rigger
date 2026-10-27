@@ -216,8 +216,9 @@ export function columnChanges({
       const { tier, conflict: tierConflict } = tierOf(card, name, declared, 'escalation');
       if (tierConflict !== undefined) return ownerEscalation(next, { category: 'ambiguous', reason: tierConflict });
       recordEscalation(card, next);
+      const writes = repositoryWrites ?? repositoryWriteSide({ repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0', card: card.number, dispatch: next.dispatch ?? null }) });
       try {
-        await repository.postIssueComment(card.number, routingComment(next));
+        await writes.postIssueComment(card.number, routingComment(next));
       } catch (refusal) {
         const reason = `card #${card.number}'s routing comment was refused: ${refusal.message}`;
         note(card, 'escalation.route-refused', { reason });
