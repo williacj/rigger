@@ -239,7 +239,9 @@ In this table, "not merged" is the outcome Rigger records for the merge's end, `
 
 ### R-SCHED-29 — The Ready cards a clock-held run pulls
 
-Each row of this table is one state of the card and of the run when the card enters Ready.
+Each row of this table is one state of the card and of the run. A card is in scope only where its
+state matches the in-scope row at every moment from when it enters Ready until its bound ends. A
+state matching an out-of-scope row at any moment in that span takes the card out of scope.
 
 | A pull would claim the card | `R-SCHED-43` keeps the card skipped | Admission | A slot | Scope |
 |---|---|---|---|---|
