@@ -57,7 +57,7 @@ reused.
 | D14 | Critical is what a maker revision cannot resolve | Ratified |
 | D15 | A diagram is admitted where prose cannot carry the shape | Ratified |
 | D16 | Code asks the tool that owns the fact, and says where it can disagree | Ratified. Amended in #282. |
-| D17 | A requirement older than this decision is a counted gap | Ratified |
+| D17 | A requirement older than this decision is a counted gap | Ratified. Amended in #1042. |
 | D18 | v0 staffs an architect, and the PM decomposes | Ratified |
 | D19 | Until M5, a maker merges its own card | Superseded by D22 |
 | D20 | A card's author survives its writing session | Ratified |
@@ -545,7 +545,7 @@ on an upgrade a restated fact would have survived.
 
 ## D17 — A requirement older than this decision is a counted gap
 
-**Status:** Ratified.
+**Status:** Ratified. Amended in #1042.
 
 ### Rule
 
@@ -569,8 +569,8 @@ on an upgrade a restated fact would have survived.
       (`R-CARD-1`), the maker finishes against it (`R-LOOP-1`), and every judge rules on it
       (`R-LOOP-5`).
    2. A milestone closes only when a test claims every requirement its exit list cites.
-   3. v0 ships with the set empty. `docs/v0-build-plan.md`'s M8 holds that, and this decision
-      ends there.
+   3. v0 ships with no counted gap left, except a requirement that the exit list of a milestone
+      after M8 cites, which closes at that milestone. `docs/v0-build-plan.md`'s M8 holds that.
 7. A judge enforces the rules above. No tool holds the set, and the notes record what the
    generator answers instead.
 
@@ -578,7 +578,10 @@ on an upgrade a restated fact would have survived.
 
 | Deferred | Returns when |
 |---|---|
-| A test claiming each requirement `docs/spec/requirements.md` held when this decision bound | The card that makes that requirement true runs and claims it. A milestone whose exit list cites the requirement returns it by that milestone's close, and M8 returns every one still open. |
+| A test claiming each requirement `docs/spec/requirements.md` held when this decision bound | The card that makes that requirement true runs and claims it. The requirement returns by the earliest of these closes that applies to it: |
+| | — the close of any milestone, M8 or earlier, whose exit list cites it; |
+| | — for a requirement that the exit list of a milestone after M8 cites, that milestone's close; |
+| | — for any other requirement still open, M8's close. |
 
 ### Notes
 
