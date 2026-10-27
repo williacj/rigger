@@ -74,6 +74,7 @@ function start(f) {
 }
 const list = (status, runs = []) => get(root + '/actions/workflows/55/runs?event=pull_request&exclude_pull_requests=false&status=' + status + '&per_page=100&page=1', { total_count: runs.length, workflow_runs: runs });
 const pages = () => ['queued', 'in_progress', 'waiting', 'pending', 'requested'].map(status => list(status));
+const preflight = (...runs) => runs.map(target => get(root + '/actions/runs/' + target.id, target));
 async function execute(f, script, failure = false) {
   const calls = [], logs = [];
   let result, error;
@@ -104,7 +105,7 @@ test('cancellation accepts a main event base preceding the tested merge parent',
   const f = input(), target = run(60, old, 10);
   f.plan.base = f.plan.parents[0] = 'b'.repeat(40);
   assert.notEqual(f.plan.base, f.plan.eventBase, 'fixture must exercise main drift');
-  const script = [...start(f), list('queued', [target]), ...pages().slice(1), ...recheck(f, target), post(60)];
+  const script = [...start(f), list('queued', [target]), ...pages().slice(1), ...preflight(target), ...recheck(f, target), post(60)];
   const { result, calls } = await execute(f, script);
   assert.deepEqual(result, { accepted: [60], completed: [] });
   assert.deepEqual(calls.filter(([method]) => method === 'POST'), [['POST', root + '/actions/runs/60/cancel']]);
@@ -127,7 +128,7 @@ test('cancellation refuses missing or wrong event base and a false tested parent
 test('cancellation requests each older active head once using immutable run source and final rereads', async () => {
   const f = input();
   const targets = ['queued', 'in_progress', 'waiting', 'pending', 'requested'].map((status, i) => ({ ...run(60 + i, old, 10 + i), status }));
-  const script = [...start(f), ...targets.map(t => list(t.status, [t])), ...targets.flatMap(t => [...recheck(f, t), post(t.id)])];
+  const script = [...start(f), ...targets.map(t => list(t.status, [t])), ...preflight(...targets), ...targets.flatMap(t => [...recheck(f, t), post(t.id)])];
   const { result, logs } = await execute(f, script);
   assert.deepEqual(result, { accepted: [60, 61, 62, 63, 64], completed: [] });
   assert.equal(logs.filter(l => l.action === 'cancel-request').length, 5);
@@ -151,7 +152,8 @@ test('cancellation excludes same-head profiles and known foreign self or non-old
   ];
   for (const change of mutations) {
     const f = input(), target = run(60, old, 10); change(target);
-    const { result, calls, logs } = await execute(f, [...start(f), list('queued', [target]), ...pages().slice(1)]);
+    const candidate = target.id !== f.context.runId && target.head_sha !== current && target.run_number < f.context.runNumber;
+    const { result, calls, logs } = await execute(f, [...start(f), list('queued', [target]), ...pages().slice(1), ...(candidate ? preflight(target) : [])]);
     assert.deepEqual(result.accepted, []); assert.ok(calls.every(([method]) => method === 'GET'));
     assert.deepEqual(logs, [{ action: 'exclude', target: target.id, reason: 'scope/order/head/status' }]);
   }
@@ -196,6 +198,16 @@ test('cancellation freezes attributable own run workflow and live PR without req
   assert.deepEqual((await execute(moved, [...start(moved), ...pages()])).result.accepted, []);
 });
 
+test('cancellation resolves a sparse list association through the detailed run before any POST', async () => {
+  // GitHub's workflow-run list can omit PR associations that its detailed run response supplies.
+  const f = input(), target = run(60, old, 10);
+  const sparse = { ...structuredClone(target), pull_requests: [] };
+  const script = [...start(f), list('queued', [sparse]), ...pages().slice(1), ...preflight(target), ...recheck(f, target), post(60)];
+  const { result, calls } = await execute(f, script);
+  assert.deepEqual(result, { accepted: [60], completed: [] });
+  assert.deepEqual(calls.filter(([method]) => method === 'POST'), [['POST', root + '/actions/runs/60/cancel']]);
+});
+
 test('cancellation refuses incomplete discovery and malformed attribution before any POST', async () => {
   const corruptions = [
     r => { r.link = '<https://api.github.com/next>; rel="next"'; },
@@ -211,11 +223,41 @@ test('cancellation refuses incomplete discovery and malformed attribution before
     const answer = await execute(f, script, true);
     assert.match(answer.error, /discovery/); assert.ok(answer.calls.every(([method]) => method === 'GET'));
   }
-  for (const change of [t => { t.event = ''; }, t => { t.event = 'unknown-event'; }, t => { t.repository.full_name = ''; }, t => { t.path = 'unknown'; }, t => { t.id = 0; }, t => { t.head_sha = 'BAD'; }, t => { delete t.path; }, t => { t.workflow_id = '55'; }, t => { t.run_attempt = 0; }, t => { t.pull_requests = []; }, t => { t.pull_requests.push(assoc()); }, t => { delete t.head_repository; }, t => { delete t.pull_requests[0].base.repo.id; }]) {
+  for (const change of [t => { t.event = ''; }, t => { t.event = 'unknown-event'; }, t => { t.repository.full_name = ''; }, t => { t.path = 'unknown'; }, t => { t.id = 0; }, t => { t.head_sha = 'BAD'; }, t => { delete t.path; }, t => { t.workflow_id = '55'; }, t => { t.run_attempt = 0; }, t => { t.pull_requests.push(assoc()); }, t => { delete t.head_repository; }, t => { delete t.pull_requests[0].base.repo.id; }]) {
     const f = input(), target = run(60, old, 10); change(target);
     const answer = await execute(f, [...start(f), list('queued', [target])], true);
     assert.match(answer.error, /attribution/); assert.ok(answer.calls.every(([method]) => method === 'GET'));
   }
+  const f = input(), target = run(60, old, 10);
+  const sparse = { ...structuredClone(target), pull_requests: [] };
+  const unresolved = await execute(f, [...start(f), list('queued', [sparse]), ...pages().slice(1), ...preflight(sparse)], true);
+  assert.match(unresolved.error, /attribution/);
+  assert.ok(unresolved.calls.every(([method]) => method === 'GET'));
+});
+
+test('cancellation resolves every older target attribution before its first POST', async () => {
+  const f = input(), first = run(60, old, 10), second = run(61, old, 11);
+  const route = new Map([
+    [root + '/actions/runs/80', run()],
+    [root + '/actions/workflows/ci.yml', { id: 55, path: '.github/workflows/ci.yml' }],
+    [root + '/pulls/7', f.pr],
+    [root + '/actions/runs/60', first],
+    [root + '/actions/runs/61', { ...second, pull_requests: [] }],
+  ]);
+  const calls = [];
+  await assert.rejects(controller.cancelSuperseded({ ...f, request: async (path, options = {}) => {
+    const method = options.method ?? 'GET';
+    calls.push([method, path]);
+    if (method === 'POST') return { status: 202, body: null, link: null };
+    if (path.includes('/actions/workflows/55/runs?')) {
+      const status = new URL('https://api.github.com' + path).searchParams.get('status');
+      return list(status, status === 'queued' ? [first, second] : [])[2];
+    }
+    assert.ok(route.has(path), 'unexpected API route ' + path);
+    return { status: 200, body: structuredClone(route.get(path)), link: null };
+  }, log: () => {} }), /attribution/);
+  assert.ok(calls.some(([method, path]) => method === 'GET' && path === root + '/actions/runs/61'));
+  assert.deepEqual(calls.filter(([method]) => method === 'POST'), []);
 });
 
 test('cancellation accepts exactly 100 complete records and deduplicates status drift but refuses conflicting identity', async () => {
@@ -224,7 +266,7 @@ test('cancellation accepts exactly 100 complete records and deduplicates status 
   assert.deepEqual((await execute(f, [...start(f), list('queued', hundred), ...pages().slice(1)])).result.accepted, []);
   const queued = run(60, old, 10), active = { ...structuredClone(queued), status: 'in_progress', updated_at: 'later' };
   active.pull_requests[0].head.sha = 'b'.repeat(40);
-  const script = [...start(f), list('queued', [queued]), list('in_progress', [active]), ...pages().slice(2), ...recheck(f, active), post(60)];
+  const script = [...start(f), list('queued', [queued]), list('in_progress', [active]), ...pages().slice(2), ...preflight(active), ...recheck(f, active), post(60)];
   assert.deepEqual((await execute(f, script)).result.accepted, [60]);
   for (const change of [t => { t.head_sha = current; }, t => { t.run_attempt = 2; }, t => { t.run_number = 11; }, t => { t.workflow_id = 56; }, t => { t.repository.id = 45; }, t => { t.head_repository.id = 45; }, t => { t.pull_requests[0].id = 71; }, t => { t.pull_requests[0].number = 8; }]) {
     const other = structuredClone(queued); change(other);
@@ -233,9 +275,29 @@ test('cancellation accepts exactly 100 complete records and deduplicates status 
   }
 });
 
+test('sparse queued and running rows resolve one detailed run and one cancel route', async () => {
+  const f = input(), queued = run(60, old, 10), active = { ...structuredClone(queued), status: 'in_progress' };
+  const sparse = target => ({ ...structuredClone(target), pull_requests: [] });
+  const script = [...start(f), list('queued', [sparse(queued)]), list('in_progress', [sparse(active)]), ...pages().slice(2), ...preflight(active), ...recheck(f, active), post(60)];
+  const { result, calls } = await execute(f, script);
+  assert.deepEqual(result.accepted, [60]);
+  assert.equal(calls.filter(([method, path]) => method === 'GET' && path === root + '/actions/runs/60').length, 2);
+  assert.deepEqual(calls.filter(([method]) => method === 'POST'), [['POST', root + '/actions/runs/60/cancel']]);
+});
+
+test('sparse older run belonging to another PR is excluded after detailed attribution', async () => {
+  const f = input(), target = run(60, old, 10), foreign = structuredClone(target);
+  foreign.pull_requests[0].id = 71;
+  foreign.pull_requests[0].number = 8;
+  const sparse = { ...structuredClone(target), pull_requests: [] };
+  const { result, calls } = await execute(f, [...start(f), list('queued', [sparse]), ...pages().slice(1), ...preflight(foreign)]);
+  assert.deepEqual(result, { accepted: [], completed: [] });
+  assert.ok(calls.every(([method]) => method === 'GET'));
+});
+
 test('cancellation rechecks frozen attempts and stops on live or target changes while completed targets receive no write', async () => {
   const f = input(), target = run(60, old, 10), done = { ...target, status: 'completed' };
-  const before = () => [...start(f), list('queued', [target]), ...pages().slice(1)];
+  const before = () => [...start(f), list('queued', [target]), ...pages().slice(1), ...preflight(target)];
   assert.deepEqual((await execute(f, [...before(), ...recheck(f, done)])).result, { accepted: [], completed: [60] });
   for (const change of [p => { p.head.sha = old; }, p => { p.state = 'closed'; }, p => { p.base.ref = 'elsewhere'; }, p => { p.head.repo.id = 45; }]) {
     const live = structuredClone(f.pr); change(live);
@@ -252,12 +314,12 @@ test('cancellation rechecks frozen attempts and stops on live or target changes 
   const twice = input(); twice.context.runAttempt = 2;
   const t2 = { ...target, run_attempt: 2 }, initial = start(twice); initial[0][2].body.run_attempt = 2;
   const final = recheck(twice, t2); final[2][2].body.run_attempt = 2;
-  assert.deepEqual((await execute(twice, [...initial, list('queued', [t2]), ...pages().slice(1), ...final, post(60)])).result.accepted, [60]);
+  assert.deepEqual((await execute(twice, [...initial, list('queued', [t2]), ...pages().slice(1), ...preflight(t2), ...final, post(60)])).result.accepted, [60]);
 });
 
 test('cancellation treats 202 as acceptance only and handles 409 once without retry or rollback', async () => {
   const f = input(), first = run(60, old, 10), second = run(61, old, 11);
-  const before = () => [...start(f), list('queued', [first, second]), ...pages().slice(1)];
+  const before = () => [...start(f), list('queued', [first, second]), ...pages().slice(1), ...preflight(first, second)];
   const conflict = ['POST', root + '/actions/runs/60/cancel', { status: 409, body: {}, link: null }];
   const done = { ...first, status: 'completed' };
   const benign = await execute(f, [...before(), ...recheck(f, first), conflict, get(root + '/actions/runs/60', done), ...recheck(f, second), post(61)]);
@@ -330,7 +392,7 @@ test('stale delayed or rerun controllers refuse live head changes and a later ra
     assert.match(answer.error, /live PR/); assert.deepEqual(answer.logs, []);
   }
   const f = input(), a = run(60, old, 10), b = run(61, old, 11), changed = structuredClone(f.pr); changed.head.sha = old;
-  const answer = await execute(f, [...start(f), list('queued', [a, b]), ...pages().slice(1), ...recheck(f, a), post(60), get(root + '/pulls/7', changed)], true);
+  const answer = await execute(f, [...start(f), list('queued', [a, b]), ...pages().slice(1), ...preflight(a, b), ...recheck(f, a), post(60), get(root + '/pulls/7', changed)], true);
   assert.match(answer.error, /live PR/);
   assert.deepEqual(answer.logs.filter(l => l.action === 'cancel-accepted'), [{ action: 'cancel-accepted', target: 60, status: 202 }]);
   assert.equal(answer.calls.filter(([m]) => m === 'POST').length, 1);
@@ -355,7 +417,7 @@ test('final-GET observations permit a request despite head reuse or a new attemp
       assert.equal(logs.at(-1).liveHead, current); assert.equal(logs.at(-1).targetAttempt, 1);
       return { status: 202, body: null, link: null };
     }];
-    const answer = await execute(f, [...start(f), list('queued', [target]), ...pages().slice(1), ...recheck(f, target), request]);
+    const answer = await execute(f, [...start(f), list('queued', [target]), ...pages().slice(1), ...preflight(target), ...recheck(f, target), request]);
     assert.deepEqual(answer.result.accepted, [60]);
     assert.equal(serviceHead, late === 'head-reuse' ? old : current); assert.equal(serviceAttempt, late === 'new-attempt' ? 2 : 1);
   }
@@ -372,6 +434,7 @@ test('older-head cancellation composes its actual HTTP adapter and sends the exa
     ['GET', 'https://api.github.com/repos/williacj/rigger/actions/workflows/55/runs?event=pull_request&exclude_pull_requests=false&status=waiting&per_page=100&page=1', 200, { total_count: 0, workflow_runs: [] }],
     ['GET', 'https://api.github.com/repos/williacj/rigger/actions/workflows/55/runs?event=pull_request&exclude_pull_requests=false&status=pending&per_page=100&page=1', 200, { total_count: 0, workflow_runs: [] }],
     ['GET', 'https://api.github.com/repos/williacj/rigger/actions/workflows/55/runs?event=pull_request&exclude_pull_requests=false&status=requested&per_page=100&page=1', 200, { total_count: 0, workflow_runs: [] }],
+    ['GET', 'https://api.github.com/repos/williacj/rigger/actions/runs/60', 200, target],
     ['GET', 'https://api.github.com/repos/williacj/rigger/pulls/7', 200, f.pr],
     ['GET', 'https://api.github.com/repos/williacj/rigger/actions/runs/60', 200, target],
     ['GET', 'https://api.github.com/repos/williacj/rigger/actions/runs/80', 200, run()],

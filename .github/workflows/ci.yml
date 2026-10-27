@@ -298,12 +298,22 @@ jobs:
         const sha = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value);
         const repository = value => value && positive(value.id) && value.full_name === 'williacj/rigger';
         const refuse = message => { throw new Error(message); };
-        function identity(run) {
-          if (!run || !positive(run.id) || !positive(run.workflow_id) || !positive(run.run_number) || !positive(run.run_attempt) || !sha(run.head_sha) || !positive(run.repository?.id) || !/^[-A-Za-z0-9_.]+\/[-A-Za-z0-9_.]+$/.test(run.repository.full_name ?? '') || !positive(run.head_repository?.id) || !/^[-A-Za-z0-9_.]+\/[-A-Za-z0-9_.]+$/.test(run.head_repository.full_name ?? '') || !['pull_request', 'push', 'schedule', 'workflow_dispatch', 'merge_group'].includes(run.event) || !/^\.github\/workflows\/[-A-Za-z0-9_.]+\.ya?ml$/.test(run.path ?? '') || !['queued', 'in_progress', 'waiting', 'pending', 'requested', 'completed'].includes(run.status) || !Array.isArray(run.pull_requests) || run.pull_requests.length !== 1) refuse('run attribution invalid');
+        function sourceIdentity(run) {
+          if (!run || !positive(run.id) || !positive(run.workflow_id) || !positive(run.run_number) || !positive(run.run_attempt) || !sha(run.head_sha) || !positive(run.repository?.id) || !/^[-A-Za-z0-9_.]+\/[-A-Za-z0-9_.]+$/.test(run.repository.full_name ?? '') || !positive(run.head_repository?.id) || !/^[-A-Za-z0-9_.]+\/[-A-Za-z0-9_.]+$/.test(run.head_repository.full_name ?? '') || !['pull_request', 'push', 'schedule', 'workflow_dispatch', 'merge_group'].includes(run.event) || !/^\.github\/workflows\/[-A-Za-z0-9_.]+\.ya?ml$/.test(run.path ?? '') || !['queued', 'in_progress', 'waiting', 'pending', 'requested', 'completed'].includes(run.status) || !Array.isArray(run.pull_requests) || run.pull_requests.length > 1) refuse('run attribution invalid');
+          // Presentation status and association SHAs/refs may change between list and detail.
+          return JSON.stringify([run.id, run.workflow_id, run.path, run.event, run.repository.id, run.repository.full_name, run.head_repository.id, run.head_repository.full_name, run.head_sha, run.run_number, run.run_attempt]);
+        }
+        function associationIdentity(run) {
           const association = run.pull_requests[0];
-          if (!positive(association?.id) || !positive(association.number) || !positive(association.head?.repo?.id) || !positive(association.base?.repo?.id)) refuse('run attribution invalid');
-          // Association SHAs/refs and presentation status are mutable, unlike immutable run source.
-          return JSON.stringify([run.id, run.workflow_id, run.path, run.event, run.repository.id, run.repository.full_name, run.head_repository.id, run.head_repository.full_name, run.head_sha, run.run_number, run.run_attempt, association.id, association.number, association.head.repo.id, association.base.repo.id]);
+          if (!association) return null;
+          if (!positive(association.id) || !positive(association.number) || !positive(association.head?.repo?.id) || !positive(association.base?.repo?.id)) refuse('run attribution invalid');
+          return JSON.stringify([association.id, association.number, association.head.repo.id, association.base.repo.id]);
+        }
+        function identity(run) {
+          const source = sourceIdentity(run);
+          const association = associationIdentity(run);
+          if (!association) refuse('run attribution invalid');
+          return source + association;
         }
         function links(value) {
           if (!value) return;
@@ -351,13 +361,27 @@ jobs:
             if (response?.status !== 200 || !page || !Number.isSafeInteger(page.total_count) || page.total_count < 0 || page.total_count > 100 || !Array.isArray(page.workflow_runs) || page.workflow_runs.length !== page.total_count) refuse('discovery incomplete');
             links(response.link);
             for (const run of page.workflow_runs) {
-              const key = identity(run);
-              if (found.has(run.id) && identity(found.get(run.id)) !== key) refuse('conflicting run identity');
-              found.set(run.id, run);
+              const source = sourceIdentity(run);
+              const association = associationIdentity(run);
+              const previous = found.get(run.id);
+              if (previous && (previous.source !== source || previous.association && association && previous.association !== association)) refuse('conflicting run identity');
+              found.set(run.id, { run, source, association: association ?? previous?.association });
             }
           }
+          // Resolve every older, different-head run before any cancellation request.
+          for (const entry of found.values()) {
+            const listed = entry.run;
+            if (listed.id === own.id || listed.run_number >= own.run_number || listed.head_sha === own.head_sha) {
+              entry.frozen = listed;
+              continue;
+            }
+            const detailed = await get(ROOT + '/actions/runs/' + listed.id);
+            identity(detailed);
+            if (sourceIdentity(detailed) !== entry.source || entry.association && associationIdentity(detailed) !== entry.association) refuse('conflicting run identity');
+            entry.frozen = detailed;
+          }
           const result = { accepted: [], completed: [] };
-          for (const frozen of found.values()) {
+          for (const { frozen } of found.values()) {
             if (frozen.id === own.id || frozen.repository.id !== own.repository.id || frozen.repository.full_name !== context.repository || frozen.head_repository.id !== own.head_repository.id || frozen.head_repository.full_name !== context.repository || frozen.workflow_id !== workflow.id || frozen.path !== workflow.path || frozen.event !== 'pull_request' || frozen.pull_requests.length !== 1 || frozen.pull_requests[0].id !== event.pull_request.id || frozen.pull_requests[0].number !== event.number || frozen.pull_requests[0].head.repo.id !== own.repository.id || frozen.pull_requests[0].base.repo.id !== own.repository.id || frozen.run_number >= own.run_number || frozen.head_sha === own.head_sha || !STATUSES.includes(frozen.status)) { log({ action: 'exclude', target: frozen.id, reason: 'scope/order/head/status' }); continue; }
             const live = await get(ROOT + '/pulls/' + event.number);
             livePr(live);
