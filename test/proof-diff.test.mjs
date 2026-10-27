@@ -131,3 +131,75 @@ test('proof usage names its timeout default', () => {
   assert.equal(ran.status, 0, ran.stderr);
   assert.match(ran.stdout, /--timeout <seconds>.*default: 60/);
 });
+
+// A dynamic import failure is a named runner failure before the assertion can inspect its value.
+test('B5 a named module-not-found failure is not base proof', SETTLES_WITHIN[60_000], async (t) => {
+  const fixture = proofRepository(t, {
+    base: "export const value = 1;\nexport const load = () => import('./missing.mjs');\n",
+    head: "export const value = 2;\nexport const load = async () => ({ answer: 2 });\n",
+    body: "import { load } from '../subject.mjs';\ntest('loads answer', async () => assert.equal((await load()).answer, 2));\n",
+  });
+  const { exit, report } = await invoke(fixture, 'proof-diff.mjs', [fixture.file]);
+  assert.equal(exit, 0);
+  assert.equal(report.runs.base.tests[0].details.error.cause.code, 'ERR_MODULE_NOT_FOUND');
+  assert.equal(report.runs.head.tests[0].outcome, 'pass');
+  assert.equal(report.tests[0].status, 'no verdict at the base');
+  assert.equal(report.tests[0].base, 'no verdict');
+  assert.match(report.tests[0].baseReason, /ERR_MODULE_NOT_FOUND.*missing\.mjs/s);
+});
+
+// Even an AssertionError in before() belongs to setup, not the constant test assertion.
+test('B5 a failed setup hook cannot prove its unrun assertion', SETTLES_WITHIN[60_000], async (t) => {
+  const fixture = proofRepository(t, { head: source(2),
+    body: "import { before } from 'node:test';\nbefore(() => { if (value === 1) assert.fail('base setup never completed'); });\ntest('requires ready setup', () => assert.equal(6 * 7, 42, 'constant assertion reached'));\n",
+  });
+  const { exit, report } = await invoke(fixture, 'proof-diff.mjs', [fixture.file]);
+  assert.equal(exit, 0);
+  assert.equal(report.runs.base.tests[0].details.error.failureType, 'hookFailed');
+  assert.equal(report.runs.base.tests[0].details.error.cause.code, 'ERR_ASSERTION');
+  assert.equal(report.tests[0].head, 'pass');
+  assert.equal(report.tests[0].status, 'no verdict at the base');
+  assert.match(report.tests[0].baseReason, /hookFailed.*base setup never completed/s);
+});
+
+// The base no-verdict row's catch-all refuses unfamiliar errors, not only known import codes.
+test('B5 an unclassified named base error never becomes proof', SETTLES_WITHIN[60_000], async (t) => {
+  const fixture = proofRepository(t, { head: source(2),
+    body: "test('needs a prerequisite', () => { if (value === 1) throw Object.assign(new Error('unclassified prerequisite unavailable'), { code: 'ERR_UNCLASSIFIED_PREREQUISITE' }); assert.equal(6 * 7, 42); });\n",
+  });
+  const { exit, report } = await invoke(fixture, 'proof-diff.mjs', [fixture.file]);
+  assert.equal(exit, 0);
+  assert.equal(report.runs.base.tests[0].details.error.failureType, 'testCodeFailure');
+  assert.equal(report.runs.base.tests[0].details.error.cause.code, 'ERR_UNCLASSIFIED_PREREQUISITE');
+  assert.equal(report.tests[0].head, 'pass');
+  assert.equal(report.tests[0].status, 'no verdict at the base');
+  assert.match(report.tests[0].baseReason, /testCodeFailure.*Error.*ERR_UNCLASSIFIED_PREREQUISITE.*unclassified prerequisite unavailable/s);
+});
+
+// An application error carrying an assertion-like code is still not an assertion failure.
+test('B5 an assertion code on an ordinary error is not proof', SETTLES_WITHIN[60_000], async (t) => {
+  const fixture = proofRepository(t, { head: source(2),
+    body: "test('needs an actual assertion', () => { if (value === 1) throw Object.assign(new Error('setup copied a code'), { code: 'ERR_ASSERTION' }); assert.equal(6 * 7, 42); });\n",
+  });
+  const { exit, report } = await invoke(fixture, 'proof-diff.mjs', [fixture.file]);
+  assert.equal(exit, 0);
+  assert.equal(report.runs.base.tests[0].details.error.cause.name, 'Error');
+  assert.equal(report.tests[0].status, 'no verdict at the base');
+  assert.match(report.tests[0].baseReason, /Error ERR_ASSERTION.*setup copied a code/);
+});
+
+// Missing prerequisites and missing named results must not hide a neighboring real assertion red.
+test('B5 missing base files and registrations keep independent non-proving outcomes', SETTLES_WITHIN[60_000], async (t) => {
+  const fixture = proofRepository(t, { head: source(2), headFiles: { 'payload.txt': 'ready' },
+    body: "import { readFileSync } from 'node:fs';\ntest('source assertion', () => assert.equal(value, 2));\ntest('needs payload', () => assert.equal(readFileSync(new URL('../payload.txt', import.meta.url), 'utf8'), 'ready'));\nif (value === 2) test('head registration', () => assert.equal(6 * 7, 42));\n",
+  });
+  const { exit, report } = await invoke(fixture, 'proof-diff.mjs', [fixture.file]);
+  assert.equal(exit, 0);
+  assert.deepEqual(report.tests.map(({ name, status }) => ({ name, status })), [
+    { name: 'source assertion', status: 'proves' },
+    { name: 'needs payload', status: 'no verdict at the base' },
+    { name: 'head registration', status: 'no verdict at the base' },
+  ]);
+  assert.match(report.tests[1].baseReason, /ENOENT.*payload\.txt/s);
+  assert.match(report.tests[2].baseReason, /named test did not report/);
+});

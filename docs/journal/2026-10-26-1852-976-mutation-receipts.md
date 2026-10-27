@@ -42,3 +42,35 @@ instruction adds nine. The two distribution copies remain byte-identical to thei
 The final-head full-suite, affected-host, fresh-clone, CI and guarded mutation evidence belongs
 in the PR body. No requirement declaration is added: the card's Claims field is none. G1 changes
 only the host list and its expected enumeration; neither transitional list grows.
+
+## Round 2: assertion evidence at the base
+
+The [architect](https://github.com/williacj/rigger/pull/992#issuecomment-6434959017)
+and [reviewer](https://github.com/williacj/rigger/pull/992#issuecomment-6435082258)
+found the same classification fault: a named runner failure was enough to claim a red base.
+A dynamic import can fail before its assertion; a setup hook can fail before the body runs.
+The original top-level missing-import test did not distinguish these named failures.
+
+The module-not-found regression was written and observed red first, then its minimal fix went
+green. The failed-hook regression followed, using an AssertionError in the hook around a constant
+body assertion; it too was observed red and then green. An unfamiliar prerequisite error gave
+the no-verdict row's catch-all its own red. A separate red showed that an ordinary Error carrying
+ERR_ASSERTION was still insufficient evidence. The final policy requires testCodeFailure with
+an AssertionError cause carrying ERR_ASSERTION. Other named failures preserve their runner type,
+error class, code and message in baseReason. A missing named result has an explicit reason.
+The per-test classification keeps a neighboring genuine assertion proof independent.
+
+The inventory script parses the executing Node runtime's embedded sources with Acorn. It searches
+all ERR_TEST_FAILURE constructions and failureType assignments, including constructor arguments,
+conditional status selection, and the process-event handler callers. On 2026-10-27, Node v26.12.1
+exposed 12 concrete failure types. The retained inventory includes source hashes and line numbers;
+the PR quotes the script, search and output. Skips, todos, absent named results, file-only verdicts,
+setup/cleanup exceptions, harness refusals and outer timeouts are also traced through both scripts.
+Only the named assertion case is eligible; an unknown type or cause defaults to non-proving.
+Table A's explicit non-assertion receipt behavior is unchanged.
+
+The affected host baseline at cda56d0b070906211a572370f65452fb1f79c42d passed with tests=27,
+pass=27 and fail=0. After the five added cases, the affected files passed with tests=32,
+pass=32 and fail=0. Full unfiltered red and green outputs, commands and load observations remain
+in the dispatched scratch directory. No existing test body was rewritten. Final-head suites,
+guarded mutation receipts and fresh-clone results are recorded in the PR rather than predicted here.
