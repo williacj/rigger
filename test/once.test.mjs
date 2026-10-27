@@ -150,6 +150,25 @@ test('once names a maker note escalation, its category and acceptance item ordin
   assert.equal(eventsOf(ran).find(({ event }) => event === 'review.escalate').raiser, 'maker');
 });
 
+// proves R-ESCALATE-22
+test('once sends a maker escalation to the owner where the config has no escalate key or none for its category, recording the owner as its destination', async () => {
+  const { escalate: _, ...withoutEscalate } = config();
+  for (const [what, settings] of [['no escalate key', withoutEscalate], ['its category\'s key absent', { ...withoutEscalate, escalate: { ambiguous: 'pm' } }]]) {
+    const ran = once({ items: [card(10, 'Ready')] }, {
+      settings,
+      seed: { issues: [{ number: 10, title: 'Card 10', body: ADMITTED, labels: ['type:change'] }] },
+      extraEnv: { RIGGER_TEST_ESCALATE: '1' },
+    });
+    assert.equal(ran.code, 0, `${what}: ${ran.err}`);
+    assert.deepEqual(await columnsOf(ran), { 10: 'Owner' }, what);
+    const [event] = eventsOf(ran).filter(({ event: name }) => name === 'review.escalate');
+    assert.deepEqual({ category: event.category, raiser: event.raiser, destination: event.destination }, { category: 'critical', raiser: 'maker', destination: 'owner' }, what);
+    const issue = JSON.parse(readFileSync(join(dirname(ran.fake.gh), 'board.json'), 'utf8')).repository.issues.find(({ number }) => number === 10);
+    assert.match(issue.comments.at(-1).body, /^Rigger escalates card #10 to the owner \(critical\)\./, what);
+    assert.doesNotMatch(issue.comments.at(-1).body, /Not sent/, what);
+  }
+});
+
 test('once exits non-zero when the card\'s maker opened no pull request', async () => {
   const ran = once({ items: [card(10, 'Ready')] });
 
