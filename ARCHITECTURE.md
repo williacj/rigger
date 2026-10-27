@@ -33,8 +33,8 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
 |---|---|---|---|---|---|
 | **L0 Substrate** | How to talk to one external system: the forge (board, issues, PRs, CI through `gh`), git, the OS process model, each agent CLI. Retries, timeouts, containment mechanics, and which of its own git operations on one repository run one at a time. | Anything about cards or work. L0 does not know what a card is. | Each forge and git call's latency and outcome, process spawn and exit, survivors killed by name and command line | Engineer cards, within the L0 budget | `src/substrate/` |
 | **L1 Execution** | How to run one dispatch in one workspace: isolation, lifetime, result as exit code plus captured output. Making the workspace an attempt at a card runs in. | Whether to run it, or what the result means | Dispatch start, end, duration, exit, timeout, and the workspace each runs in. A workspace made or removed. | Engineer cards, within the L1 budget | `src/execution/` |
-| **L2 Workflow** | The next action for a card from its stage and observable facts, including which kind selects a ready card and the provider each role's dispatch runs on, and whether its acceptance passes the form check. Every change to a card's column; the review loop; the gate rule, and whether a card's pull request merges; escalation routing; whether a failure is the work's, or the environment's, card-local or `out`. Which provisioning steps a card runs, whether a step's failure stops its attempt, and whether a failed attempt is tried again. | Which card is next; what good means | Card transitions with cause, verdicts, loop rounds, escalations by category, provisioning failures and attempts, by class | Spec rows, ratified by the owner | `src/workflow/` |
-| **L3 Scheduling** | Pull order by priority; concurrency; claims taken synchronously before any await; the repo lane, which runs the merges L2 decides one at a time. Admission, which is whether any card may be pulled; the hold that closes admission; the three trigger kinds. The halt on starts while the sink refuses an event, which is not the admission hold. When Rigger reads the forge again for a write it has not yet shown, and when it stops. | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput, admission holds and their reason | Spec rows and config | `src/scheduling/` |
+| **L2 Workflow** | The next action for a card from its stage and observable facts, including which kind selects a ready card and the provider each role's dispatch runs on, and whether its acceptance passes the form check. Every change to a card's column; the review loop; the gate rule, and whether a card's pull request merges; escalation routing; whether a failure is the work's, or the environment's, card-local or `out`. Which provisioning steps a card runs, whether a step's failure stops its attempt, and whether a failed attempt is tried again. The card a clock trigger's due firing opens, and whether an earlier firing's card exists. | Which card is next; what good means | Card transitions with cause, verdicts, loop rounds, escalations by category, provisioning failures and attempts, by class | Spec rows, ratified by the owner | `src/workflow/` |
+| **L3 Scheduling** | Pull order by priority; concurrency; claims taken synchronously before any await; the repo lane, which runs the merges L2 decides one at a time. Admission, which is whether any card may be pulled; the hold that closes admission; the three trigger kinds, and when each clock trigger is armed and due. The halt on starts while the sink refuses an event, which is not the admission hold. When Rigger reads the forge again for a write it has not yet shown, and when it stops. | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput, admission holds and their reason, clock triggers' armings and each firing's outcome | Spec rows and config | `src/scheduling/` |
 | **L4 Quality** | What the work is and what good means: kinds of work, their maker and judge sets, and the providers those run on, roles, review procedure, provisioning steps, recorded decisions, which improvement roles run and which signals count | How Rigger runs, beyond the engine settings the extension points name | Nothing. L2 records what a role produced: findings by code and judge, rounds per kind of work, rework, later defect escape. L3 records each dispatch's role and tier, from which L5 derives the tier corrections tier accuracy counts ("Telemetry") | The owner, in the consumer's repository | The consumer's repository; Rigger ships templates under `templates/` |
 | **L5 Observation** | How every layer's events are recorded and which signals derive from them | Anything that acts on them. L5 records and derives, never decides | The report | Engineer cards | `src/observation/` |
 | **L6 Improvement** | What to propose, and to whom, from L5's signals. The object-level loop reorders L3's queue and re-tiers within L4. The meta-level loop proposes changes to any layer. | It changes no code, in any layer, ever | Proposals with target layer, and their outcome | Spec rows | `src/improvement/` |
@@ -47,7 +47,12 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
    process existed. A card reaches the owner only through L2's escalation categories, never
    through a substrate event.
 2. **Each boundary has one vocabulary.** L1 gives L2 exit codes and output, or that a command never
-   started, or that a directory was refused. L2 gives L3 next actions. L2's notice function also
+   started, or that a directory was refused. L2 gives L3 next actions. L3 gives L2 a due firing,
+   the trigger's name and occurrence, and L2 answers the card it opened or found. L2 also gives L3
+   `k`, the number a firing's start records ("How a clock trigger fires"). A card L2 opens from a
+   firing is the only card code moves into Ready, and L2 records that move under the cause
+   `created`, which no other move takes. L5 gives L3 the report it derives, and L3 hands it to
+   the verb unread. L2's notice function also
    gives L3 each rename a hold's closer is to take, and the number that rename attaches. A next
    action that dispatches a role carries what that dispatch is handed, which L2 composes. L1
    delivers it unread, through L0's provider adapter. L3
@@ -107,6 +112,7 @@ flowchart TB
   L3 ~~~ L2 ~~~ L1 ~~~ L0
   L4 -->|names, procedures and settings| below
   L2 -->|next actions| L3
+  L3 -->|due firings| L2
   L3 -->|dispatches| L1
   L1 -->|exit codes and output| L2
   L0 -->|exit code| L1
@@ -158,7 +164,7 @@ workaround.
 | | | — a destination names no declared role; | |
 | | | — a role is the destination of critical or a recorded-decision change. | |
 | **Improvement roles** | Per loop: the role, its cadence (drain or clock), and the signals it reads | L6 | After v0 |
-| **Clock triggers** | Per trigger, a schedule, a card template or an internal job, and a catch-up policy. Beside the triggers, the board poll's interval, which `run` waits between two polls of the board while idle. Both in the form given below the table | L3 | Yes |
+| **Clock triggers** | Per trigger, a schedule, a card template or an internal job, and a catch-up policy. Beside the triggers, the board poll's interval, which `run` waits between two polls of the board while idle. Both in the form given below the table | L3 for the schedule, the catch-up policy, the internal job and the poll. L2 for the card template, its author included | Yes |
 | **Provider adapters** | A module implementing the adapter interface for one agent CLI. It turns an agent file, a tier and a prompt into the CLI's invocation in one directory. It names the one folder its CLI keeps for that directory outside the dispatch's directories, or none. It loads only the tools and connectors that directory declares | L0 | Claude Code shipped; Codex shipped in M4 |
 | **Forge adapter** | A module implementing the board, issue, PR, and CI interface, with the forge assets `init` forks. The one asset is the gate workflow, and `init` reads its destination from `src/substrate/forge/assets.mjs` | L0, and `init` for each asset's destination | GitHub only; the interface exists so a second forge is an L0 change and nothing else |
 | **Deliverable** | Fixed in v0: a pull request merged behind the gate. Content scenarios still deliver by branch and PR. A publish adapter for non-git targets is a later L0 extension | L2 | Fixed |
@@ -255,6 +261,25 @@ what the Clock triggers row lists. `poll` is the milliseconds `run` waits betwee
 board while idle, as "Triggers" sets out. `poll` is required wherever a trigger is declared, and it
 has no default. The config validator refuses a clock declaration without `poll` (`R-SCHED-10`).
 
+Each trigger under `triggers` declares these keys, and every key but `author` is required:
+
+- `interval` and `anchor`, its schedule. `interval` is the milliseconds between two occurrences,
+  and `anchor` is an ISO 8601 date and time carrying its offset. A trigger's occurrences are the
+  anchor plus a whole number of intervals, so none falls before the anchor.
+- `card`, its card template, or `job`, its internal job, and never both. `card` holds the card's
+  `title`, `labels` and `acceptance`, and `author`, who writes that acceptance. `author` names
+  `owner` or a declared role, and the author is `owner` where it is absent (`R-CARD-41`). `job`
+  names `report`.
+- `catchUp`, its catch-up policy: `fire` or `skip`.
+
+One function in `src/config/` parses a trigger and computes its occurrences. The config validator
+refuses with it (`R-SCHED-10`), and L3 imports it, so one parser serves both. The function that
+computes the `ExitTimeOut` bound also lives there ("Supervising `run`").
+
+The schedule is an interval and an anchor, not a calendar expression. Every other duration in the
+config is milliseconds, and the pair covers every trigger M7 names in a few lines. "How a clock
+trigger fires" says what would reverse it.
+
 `poll` has no default because nothing in this repository fixes a figure for it, and a default
 with no source would be a judgment presented as a measurement. What would reverse it: a measured
 count of the forge calls one poll makes, giving a figure that stays inside the forge's rate limit
@@ -315,17 +340,17 @@ L3 owns three trigger kinds. **Pull** fires on board occupancy: a card in Ready 
 
 Scheduled work is visible work. A clock trigger declares whether its work is a card; when it is,
 the trigger creates the card and L2 runs it like any other. A trigger declaring an internal job
-dispatches directly, as do Rigger's own report and stale-card sweep, and nothing else dispatches
-without a card. A clock trigger that fires while
-Rigger is not running fires once on the next start if its window was missed; that catch-up policy
-is per trigger in config.
+runs it in-process, with no card, as "How a clock trigger fires" sets out. `R-SCHED-5` names
+what else may run without a card. An occurrence missed
+while Rigger was down fires once at the next start, or not at all, as the trigger's own catch-up
+policy says.
 
 A clock trigger is declared where the clock declaration's `triggers` names at least one trigger. A
 clock declaration holding a `poll` and no trigger declares none. With no clock trigger declared,
 `run` ends once the board drains, and launchd's relaunch is what reads the board again ("How `run`
 is supervised", below). While a clock trigger is declared, `run` stays up after the board drains
-and fires each trigger as it comes due. Under `once`, no clock trigger fires, and nothing in the
-subsection below applies.
+and fires each trigger as it comes due. Under `once`, no clock trigger arms or fires, and nothing
+in the two subsections below applies (M7-U2 Q12 on #1009).
 
 ### While a clock trigger keeps `run` up
 
@@ -362,8 +387,11 @@ sleeps. That one timer wakes L3 both for the poll and for each trigger's next oc
 `loop.mjs` wires it into `run`, and holds no timer of its own. What would reverse it: a third
 timer need unrelated to the clock, which would make the module a scheduling utility.
 
-Whether an internal job's firing counts as in flight, and so holds back the poll and the drain, is
-the clock declaration's placement, M7-04a on #1009. This subsection does not place it.
+A clock trigger's firing is no claim, so it never counts as in flight. That holds for an internal
+job's firing as for a card's: it holds no claim and no slot, so it holds back neither the poll nor
+the drain, and neither waits for it. A card a firing creates ends the idle period only when a pull
+claims it. What would reverse it is what would reverse the in-process job ("How a clock trigger
+fires").
 
 **A poll in each idle state.**
 
@@ -388,6 +416,8 @@ answered once it ends. The verb prints it and picks the exit status. While a clo
 - A poll that fails, or whose `trigger` event the sink refuses, hands its failure to the verb as
   that poll settles. The failure is among that idle period's outcomes, and the next drain does not
   hand it again.
+- A clock trigger's firing hands the verb, as it settles, each failure "How a clock trigger fires"
+  names. A `report` firing hands it the report L5 returned, unread, as one hand-over.
 - The verb prints each hand-over as it prints a whole run with no clock trigger declared, and exits
   at none of them.
 - A `run` ended by a signal while its launchd job stays loaded runs L0's exit cleanup, which sets
@@ -446,6 +476,146 @@ not a measurement, and its premise is the reads `take` and `facts.mjs` make:
 
 The figure leaves out admission's reads, which read the state directory and not the forge. A card
 in Done costs nothing. M7-24 on #1009 measures the figure on a fake forge.
+
+### How a clock trigger fires
+
+L3 arms and fires each clock trigger under `run` alone. The architect's r1 review on #1009 places
+the schedule and the job (S6), the last firing (S7) and the card's creation (S8). Its r2 review
+places the duplicate guard (§2, F3) and arming (§3, F4).
+
+**Arming.** A start under `run` reads each declared trigger. L3 records `trigger.armed` `{ name,
+interval, anchor }` where the record holds no `trigger.armed` of that name, or where the newest one
+holds another `interval` or `anchor`. Arming acts on nothing outside Rigger, so it is no start. A
+sink that refuses it is the halt, and no trigger fires ("Failure model").
+
+**Identity.** A trigger is its name, the key it is declared under. A changed schedule re-arms it,
+and nothing else does: not its card template, its author included, nor its internal job, nor its
+catch-up policy. The config is read at a start, so a change takes effect at the next start under
+`run`.
+
+**The last firing, and which occurrences are due.** A trigger's last firing is the newest outcome of
+a firing of its name in the event record, and never a file. L3 compares outcomes by the occurrence
+each names, never by when it was recorded. An occurrence is due where it falls after the trigger's
+newest arming and after its last firing's occurrence, and not after the present. An occurrence at
+or before the newest arming is therefore never due (M7-U2 Q13 on #1009).
+
+**Catch-up.** An occurrence due at a start under `run` was missed while Rigger was down. The
+trigger's catch-up policy decides what follows:
+
+- `fire` makes one firing, carrying the newest missed occurrence;
+- `skip` makes none, and no missed occurrence fires later in that run.
+
+Neither makes one firing per missed occurrence (`R-SCHED-8`). After the start, L3 fires a trigger
+at each wake at which an occurrence after the start is due, carrying the newest such occurrence.
+
+**When a firing runs.** The timer in `src/scheduling/clock.mjs` wakes L3 at each trigger's next
+occurrence. L3 fires it then, whether or not claims are held, because a firing claims no card and
+takes no slot. Two firings never run at once. Where several are due together, L3 fires them in the
+order of their occurrences, and by trigger name in code-unit order where two occurrences tie. A
+trigger with a pending firing, set out below, fires no other occurrence until that one settles.
+
+**A firing whose work is a card.** The template carries the card's title, labels and acceptance,
+and the author the trigger names, `owner` where it names none (`R-CARD-41`). The author is a key of
+the template, so a trigger whose work is a job names none. A firing runs in these steps, so that a
+crash never leaves two cards for one occurrence:
+
+1. L2 reads `k`, the number of the repository's newest issue or pull request, as the hold's step 5
+   in "Failure model" reads it.
+2. L3 records the firing's start as `trigger` `{ trigger: 'clock', name, occurrence, after: k }`.
+3. L2 opens the card from the template and adds it to the board in Ready, recording the move under
+   the cause `created`. The card's body opens with the mark line, which names the trigger and the
+   occurrence, outside the card's `## Acceptance` section.
+4. L3 records the outcome as `trigger.outcome` `{ name, occurrence, outcome: 'card', issue }`.
+5. A firing's start with no outcome is **pending**, and L3 settles each pending firing as the next
+   paragraph says.
+
+One module under `src/workflow/` composes the mark line and parses it back, as `escalation.mjs`
+does for notes, so the two cannot drift.
+
+**Settling a pending firing.** At `run`'s start L3 finds each pending firing in the record, and
+after that it knows each firing it made. At each trigger of any kind, as it acts on each hold's
+closer, L3 settles each pending firing before that clock trigger fires again. It settles one whose
+work is a card in this order:
+
+1. L2 reads the number `<j>` of the repository's newest issue or pull request. It then reads each
+   issue numbered above `k` and up to `<j>`, as the `hold-<id>-after-<k>.json` bullet of "Failure
+   model" reads them: by number, in any state, passing over a number that names no issue. L2 reads
+   a mark only on an issue written by an account with write access to the repository.
+2. Where one carries that trigger's and that occurrence's mark, L3 records the outcome naming that
+   issue. L2 places the card in Ready where the board holds it in no column, and otherwise leaves it
+   where it is.
+3. Where none does, L2 opens the card, as step 3 above, and L3 records the outcome, as step 4
+   above. Where the start found the trigger undeclared or re-armed, L2 opens nothing, and L3
+   records the outcome as `trigger.outcome` `{ name, occurrence, outcome: 'abandoned' }`.
+
+A pending firing whose work is `report` is settled as abandoned, and the job does not run again.
+The next occurrence's report shows every event the lost one would have shown, so a late one adds
+nothing.
+
+**A firing whose work is `report`.** `report` is the only internal job (M7-U2 Q6 on #1009). L3
+records the firing's start as `trigger` `{ trigger: 'clock', name, occurrence }`. It then calls L5's
+report in-process, with no L1 dispatch, no agent, no group and no slot. L3 records the outcome as
+`trigger.outcome` `{ name, occurrence, outcome: 'job' }`. L3 hands the verb the report L5 returned,
+unread, as one hand-over, and writes nothing to standard output itself. The verb prints the report
+as it prints each hand-over, and the LaunchAgent's log under `~/Library/Logs/rigger/` keeps it.
+
+**Admission.** A firing is no pull, so admission does not govern it. Under a closed admission, a
+trigger whose work is a card still creates its card, and no pull claims that card until admission
+reopens (`R-SCHED-3`). The `report` job runs whatever admission says (M7-U2 Q4 on #1009).
+
+**An unreadable record.** A start under `run` that cannot read the record arms and fires no clock
+trigger for that run's life. Rigger names the record and why it could not read it, with the line
+that would not parse where one would not. Pulls continue (M7-U2 Q14 on #1009). A line that does not
+parse stays so until a person mends it, so the run reads the record again only at its next start.
+
+**A clock trigger in each state.** Every state below is under `run` with a readable record, unless
+its row says otherwise.
+
+| State | What happens |
+|---|---|
+| under `once` | no trigger arms or fires |
+| the record unreadable at the start | no trigger arms or fires for that run's life; Rigger names the record and the line; pulls continue |
+| no `trigger.armed` of the trigger's name in the record | L3 records `trigger.armed`; no occurrence at or before it is ever due |
+| its schedule differs from its newest arming's | re-armed, as in the row above |
+| its schedule changed back to one an earlier arming holds | re-armed, because the newest arming holds another schedule |
+| removed, then declared again under its name and its newest arming's schedule | not re-armed, so a missed occurrence may fire once under its catch-up policy |
+| its card template, its author included, internal job or catch-up policy changed, and its schedule did not | not re-armed |
+| a card-shaped occurrence comes due, admission open | steps 1 to 4; the card enters Ready |
+| a card-shaped occurrence comes due, admission closed | steps 1 to 4; the card enters Ready, and no pull claims it until admission reopens |
+| an occurrence of `report` comes due, whatever admission says | L3 records the start, runs `report` in-process and records the outcome; no dispatch, no slot |
+| an occurrence comes due while the card of the trigger's previous firing is open | another card (M7-U2 Q3 on #1009) |
+| occurrences missed while Rigger was down | one firing carrying the newest missed occurrence under `fire`, and none under `skip`; never one per missed occurrence |
+| a card-shaped firing pending at a start | settled as "Settling a pending firing" says |
+| a `report` firing pending at a start | its outcome is recorded as abandoned, and the job does not run again |
+| a firing pending, whose trigger the start found undeclared or re-armed | its outcome names the occurrence's card where L2 finds one; otherwise L2 opens nothing and the outcome is abandoned; a `report` firing's is abandoned |
+| the occurrence's card, found while settling, on the board in a column other than Ready, or closed | its outcome is recorded; the card is not moved |
+| an issue numbered above `k` carrying the mark, written by an account without write access | not read as the occurrence's card |
+| the read of `k` fails or times out | L3 records no start, and the occurrence stays due; `run` hands the failure to the verb, and L3 fires the trigger again `poll` milliseconds later |
+| a read of `<j>`, or of an issue numbered above `k`, fails or times out while settling | no card is opened and no outcome is recorded; the firing stays pending, and L2 reads again at the next trigger, as for a hold's `after-<k>` closer |
+| opening the issue, or adding it to the board, fails after the start was recorded | L3 records no outcome, and the firing stays pending; `run` hands the failure to the verb, and the next trigger settles it |
+| the sink refuses `trigger.armed`, or a firing's start | the halt: nothing fires ("Failure model"); `run` hands the refusal to the verb |
+| the sink refuses a firing's outcome | the firing stays pending; `run` hands the refusal to the verb; the next trigger settles it, finding the card, or recording a `report` firing as abandoned |
+| an internal job's firing while no claim is held | not in flight: it holds back neither the poll nor the drain |
+| two triggers come due together | they fire one at a time, by occurrence, then by name |
+| an occurrence comes due while claims are held | it fires then, because a firing takes no slot |
+
+In every other state, a trigger arms and fires as the rows above give for its record, its
+admission and its occurrence, and nothing else fires.
+
+A card whose mark line a person edited out, before a crash, is outside this placement. Settling
+then finds no card, and a second card can follow. That is the residual a note carries ("What the
+gate cannot tell apart").
+
+**What would reverse each choice:**
+
+- **The interval-and-anchor schedule:** a consumer needing a calendar schedule, such as weekdays
+  only.
+- **The in-process job:** a job that must spawn a command, which only L1 runs.
+- **The record as the last firing's source:** a start's whole read of the record becoming
+  measurably slow, or a requirement that a firing survive the loss of the local record.
+- **The duplicate guard:** the event record showing two cards for one occurrence.
+- **Identity by name:** an owner ruling that a renamed trigger keeps its history, which would need
+  an identity key apart from the name.
 
 ### Supervising `run`
 
@@ -1267,8 +1437,9 @@ no removal. L3 frees a card's slot only once L1 has handed back the
 outcome of every dispatch made under the card's claim.
 
 While L5's sink refuses an event, L3 starts no work. This document calls that the halt. A start
-is a pull, which claims a card, a dispatch, or a merge. L3 records each start before it acts outside
-Rigger on it, in this order:
+is a pull, which claims a card, a dispatch, a merge, or a clock trigger's firing. L3 records a
+firing's start before L2 opens its card or L3 runs its job, and "How a clock trigger fires" gives
+its steps. L3 records each other start before it acts outside Rigger on it, in this order:
 
 1. For a pull, L3 takes the card's claim in memory, synchronously.
 2. L3 appends the start's event to the sink. Recording a start follows the claim, and the append
