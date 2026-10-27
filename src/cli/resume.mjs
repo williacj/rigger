@@ -5,7 +5,7 @@
 import { join } from 'node:path';
 
 import { admission } from '../scheduling/admission.mjs';
-import { PACKAGE, settled, unreadableAdmission } from './doctor.mjs';
+import { PACKAGE, removedCloserLine, settled, unreadableAdmission } from './doctor.mjs';
 import { STATE, recording } from './recording.mjs';
 
 /**
@@ -34,7 +34,7 @@ async function resuming(opened, {
   if (removed.length === 0 && gone.length === 0) return { text: 'rigger resume: admission was already open', code: 0 };
   return {
     text: [
-      ...removed.map(({ kind, path, reason, time }) => `rigger resume: removed the ${kind} closer ${path}: ${reason}; time ${time}`),
+      ...removed.map((closer) => `rigger resume: ${removedCloserLine(closer)}`),
       ...gone.map(({ kind, path }) => `rigger resume: the ${kind} closer ${path} was already gone`),
     ].join('\n'),
     code: 0,
