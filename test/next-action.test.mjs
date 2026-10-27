@@ -11,6 +11,8 @@ import { nextAction } from '../src/workflow/next-action.mjs';
 import { acceptanceDigest, composeMarker } from '../src/workflow/marker.mjs';
 import { panelOf, providerOf } from '../src/workflow/next-action.mjs';
 import * as nextActionModule from '../src/workflow/next-action.mjs';
+import { FIXED_LABELS } from '../src/config/validate.mjs';
+import { CATEGORIES } from '../src/config/validate.mjs';
 
 /** Two kinds, each selected by one label, in the shape a config's `kinds` takes. */
 const KINDS = {
@@ -501,7 +503,7 @@ test('L2 selects closed removal only for unlabelled Review or Owner cards with c
         assert.deepEqual(next.following, { action: 'dispatch', kind: 'change' });
       } else {
         assert.deepEqual(next.following, {
-          action: 'escalate', category: 'ambiguous', raiser: 'loop', line: 'rigger-87',
+          action: 'escalate', category: 'ambiguous', raiser: 'loop', destination: 'owner', line: 'rigger-87',
           reason: branch
             ? stage === 'owner' ? 'the forge holds its line of work rigger-87 with no pull request from it' : 'the forge holds its line of work, rigger-87, so its work would not start from the beginning'
             : 'the forge holds no pull request from its line of work rigger-87, open or merged',
@@ -526,7 +528,7 @@ test('L2 selects closed removal only for unlabelled Review or Owner cards with c
   }
   for (const stage of ['ready', 'coding']) for (const branch of [false, true]) {
     const next = nextAction(withClosedLine(stage, { branch }), KINDS, undefined, { sink: quiet });
-    assert.equal(next.action, branch ? 'refuse' : 'dispatch', `${stage}/${branch}`);
+    assert.equal(next.action, branch ? 'escalate' : 'dispatch', `${stage}/${branch}`);
   }
 });
 
@@ -555,7 +557,7 @@ test('closed removal preserves every nonforge refusal and converts only the forg
     assert.equal(malformed.action, 'remove');
     assert.deepEqual(malformed.following, held === undefined
       ? { action: 'refuse', card: 87, reason: 'missing acceptance' }
-      : { action: 'escalate', category: 'ambiguous', raiser: 'loop', reason: held, line: 'rigger-87' });
+      : { action: 'escalate', category: 'ambiguous', raiser: 'loop', destination: 'owner', reason: held, line: 'rigger-87' });
     const multiple = nextAction({ ...original, labels: ['type:change', 'type:spec'], body: 'No acceptance.' }, KINDS, undefined, { roles, sink: quiet });
     assert.deepEqual(multiple, { action: 'remove', following: { action: 'refuse', card: 87, reason: 'selected by more than one kind: change, spec' } });
     for (const labels of [[], ['type:epic', 'type:change']]) {
@@ -584,4 +586,138 @@ test('closed history never wraps current attempt outcomes workspace failure make
   }
   const ignoredInputs = nextAction(given, KINDS, undefined, { roles: PROVIDER_ROLES, sink: quiet, attempt: 2, workspace, outcomes: [{ unrelated: true }] });
   assert.deepEqual(ignoredInputs, { action: 'remove', following: { action: 'dispatch', kind: 'change' } }, 'without provisioning the unrelated attempt inputs retain their old ignored meaning');
+});
+
+// proves R-SCHED-27
+test('a Ready item carrying rigger:status has no card action', () => {
+  assert.deepEqual(nextAction(card(960, ['type:change', 'rigger:status']), KINDS), { action: 'ignore' });
+});
+
+/** The facts the forge read gives L2 for a card, independent of its board labels. */
+const statusForge = (stage, facts = {}) => ({
+  stage, line: 'rigger-960', branch: false, open: [], merged: [], closed: [], ...facts,
+});
+
+// proves R-SCHED-27
+test('the status label answers no action in each configured column', () => {
+  for (const stage of ['ready', 'coding', 'review', 'owner']) {
+    const given = { ...card(960, ['type:change', 'rigger:status']), column: COLUMNS[stage], forge: statusForge(stage) };
+    assert.deepEqual(nextAction(given, KINDS), { action: 'ignore' }, stage);
+  }
+  assert.deepEqual(nextAction({ ...card(960, ['type:change', 'rigger:status']), column: COLUMNS.done }, KINDS), { action: 'ignore' });
+});
+
+// proves R-SCHED-27
+test('the status label answers no action outside configured columns or with no column', () => {
+  for (const column of ['Elsewhere', null]) {
+    assert.deepEqual(nextAction({ ...card(960, ['type:change', 'rigger:status']), column }, KINDS), { action: 'ignore' }, String(column));
+  }
+});
+
+// proves R-SCHED-27
+test('the status label wins before one or several kinds select an item', () => {
+  for (const labels of [['type:change'], ['type:change', 'type:spec']]) {
+    const given = card(960, ['rigger:status', ...labels], 'No acceptance.');
+    assert.deepEqual(nextAction(given, KINDS), { action: 'ignore' }, labels.join(','));
+  }
+});
+
+// proves R-SCHED-27
+test('the status label wins over the escalation label without a merged pull', () => {
+  const given = { ...card(960, ['type:change', 'rigger:status', 'rigger:escalated']), forge: statusForge('review') };
+  assert.deepEqual(nextAction(given, KINDS), { action: 'ignore' });
+});
+
+// proves R-SCHED-27
+test('the status label wins over the escalation label merged-pull exception', () => {
+  const given = { ...card(960, ['type:change', 'rigger:status', 'rigger:escalated']),
+    forge: statusForge('review', { merged: [{ number: 1960 }] }) };
+  assert.deepEqual(nextAction(given, KINDS), { action: 'ignore' });
+});
+
+// proves R-SCHED-27
+test('the status label prevents a merged pull from moving a card to Done', () => {
+  for (const stage of ['ready', 'coding', 'review', 'owner']) {
+    const given = { ...card(960, ['type:change', 'rigger:status']),
+      forge: statusForge(stage, { merged: [{ number: 1960 }] }) };
+    assert.deepEqual(nextAction(given, KINDS), { action: 'ignore' }, stage);
+  }
+});
+
+// proves R-SCHED-27
+test('the status label withholds work for one or several open pulls', () => {
+  const one = openPullDecision('review').given;
+  assert.deepEqual(nextAction({ ...one, labels: [...one.labels, 'rigger:status'] }, KINDS), { action: 'ignore' });
+  const several = { ...card(960, ['type:change', 'rigger:status']),
+    forge: statusForge('owner', { open: [{ number: 1960 }, { number: 1961 }] }) };
+  assert.deepEqual(nextAction(several, KINDS), { action: 'ignore' });
+});
+
+// proves R-SCHED-27
+test('the status label prevents closed-pull directory removal between attempts', () => {
+  for (const stage of ['review', 'owner']) {
+    const given = withClosedLine(stage);
+    assert.deepEqual(nextAction({ ...given, labels: [...given.labels, 'rigger:status'] }, KINDS), { action: 'ignore' }, stage);
+  }
+});
+
+// proves R-SCHED-27
+test('the status label is read without regard to letter case', () => {
+  assert.deepEqual(nextAction(card(960, ['type:change', 'RIGGER:STATUS']), KINDS), { action: 'ignore' });
+});
+
+// proves R-SCHED-27
+test('the next read after the status label is removed treats the issue as a card', () => {
+  const given = card(960, ['type:change', 'rigger:status']);
+  assert.deepEqual(nextAction(given, KINDS), { action: 'ignore' });
+  assert.deepEqual(nextAction({ ...given, labels: ['type:change'] }, KINDS), { action: 'dispatch', kind: 'change' });
+});
+
+// proves R-SCHED-27
+test('L2 reads the status label from FIXED_LABELS', () => {
+  const original = FIXED_LABELS.status;
+  try {
+    FIXED_LABELS.status = 'rigger:notice';
+    assert.deepEqual(nextAction(card(960, ['type:change', 'rigger:notice']), KINDS), { action: 'ignore' });
+    assert.deepEqual(nextAction(card(960, ['type:change', 'rigger:status']), KINDS), { action: 'dispatch', kind: 'change' });
+  } finally {
+    FIXED_LABELS.status = original;
+  }
+});
+
+// proves R-ESCALATE-15, R-ESCALATE-20
+test('every escalate answer nextAction gives, from the loop\'s refusal and each of the review loop\'s three, carries the owner as its destination and one of the categories', () => {
+  const critical = { verdict: 'critical', toSound: 'Keep the user files.' };
+  const revision = { verdict: 'needs revision', items: ['unmet'], toSound: 'Print a help line.' };
+  const sources = [
+    ['an agent judge critical in Review', openPullDecision('review', { reviewer: critical })],
+    ['an agent judge critical in Owner', openPullDecision('owner', { reviewer: critical, ownerPanel: true })],
+    ['the owner critical', openPullDecision('owner', { reviewer: {}, owner: critical, ownerPanel: true })],
+    ['rounds spent', openPullDecision('review', { reviewer: revision, rounds: 1 })],
+  ];
+  for (const [what, { given, kinds }] of sources) {
+    const answer = nextAction(given, kinds, undefined, { roles: PROVIDER_ROLES, sink: quiet });
+    assert.equal(answer.action, 'escalate', what);
+    assert.equal(answer.destination, 'owner', what);
+    assert.ok(CATEGORIES.includes(answer.category), what);
+  }
+  const removal = nextAction(withClosedLine('owner'), KINDS, undefined, { sink: quiet });
+  assert.equal(removal.following.action, 'escalate', 'the loop\'s refusal');
+  assert.equal(removal.following.destination, 'owner', 'the loop\'s refusal');
+  assert.ok(CATEGORIES.includes(removal.following.category), 'the loop\'s refusal');
+});
+
+// proves R-ESCALATE-20
+test('a card escalated to the owner gets no action until the owner removes the label, except that a merged pull request moves it to Done', () => {
+  for (const stage of ['ready', 'coding', 'review', 'owner']) {
+    const { given, kinds } = openPullDecision(stage === 'ready' || stage === 'coding' ? 'review' : stage, { reviewer: { verdict: 'critical', toSound: 'Keep the user files.' }, ownerPanel: stage === 'owner' });
+    const labelled = { ...given, labels: [...given.labels, FIXED_LABELS.escalated], forge: { ...given.forge, stage } };
+    assert.deepEqual(nextAction(labelled, kinds, undefined, { roles: PROVIDER_ROLES, sink: quiet }), { action: 'ignore', escalated: true }, stage);
+    assert.equal(nextAction(given, kinds, undefined, { roles: PROVIDER_ROLES, sink: quiet }).action === 'ignore', false, `${stage}: unlabelled it has an action`);
+  }
+  for (const stage of ['review', 'owner']) {
+    const merged = withClosedLine(stage, { closed: [], merged: [{ number: 880, head: 'b'.repeat(40), base: 'main' }] });
+    const labelled = { ...merged, labels: [...merged.labels, FIXED_LABELS.escalated] };
+    assert.deepEqual(nextAction(labelled, KINDS, undefined, { sink: quiet }), { action: 'move', to: 'done', escalated: true }, stage);
+  }
 });

@@ -1,6 +1,6 @@
 // ABOUTME: Tests L2's facts call: what it reads of each pullable card's line of work before a
 // claim, how it fails, and what L2's next action answers from those facts: a refusal naming what
-// the forge holds, a Review card ignored, or a Review card done again from the beginning.
+// the forge holds, its card-local refusals escalated, or a Review card done again from the beginning.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -94,30 +94,30 @@ const soundFrom = (number, pull) => {
 };
 
 // proves R-WORK-19
-test('given a Ready card whose line of work the forge holds, L2 refuses the card, naming it and its line of work', async () => {
+test('given a Ready card whose line of work the forge holds, L2 escalates the card, naming it and its line of work', async () => {
   const [next] = await decided([cardIn(1, columns.ready)], readsOver({ branches: ['rigger-1'] }).reads);
 
-  assert.equal(next.action, 'refuse', JSON.stringify(next));
-  assert.equal(next.card, 1);
+  assert.equal(next.action, 'escalate', JSON.stringify(next));
+  assert.equal(next.line, 'rigger-1');
   assert.match(next.reason, /\brigger-1\b/);
 });
 
 // proves R-WORK-19
-test('given a Coding card whose line of work the forge holds, L2 refuses the card, naming it and its line of work', async () => {
+test('given a Coding card whose line of work the forge holds, L2 escalates the card, naming it and its line of work', async () => {
   const [next] = await decided([cardIn(2, columns.coding)], readsOver({ branches: ['rigger-2'] }).reads);
 
-  assert.equal(next.action, 'refuse', JSON.stringify(next));
-  assert.equal(next.card, 2);
+  assert.equal(next.action, 'escalate', JSON.stringify(next));
+  assert.equal(next.line, 'rigger-2');
   assert.match(next.reason, /\brigger-2\b/);
 });
 
 // proves R-WORK-19
-test('given a Ready or Coding card with a merged pull request from its line of work, L2 refuses the card, naming it and the pull request, and answers Done for a Review card', async () => {
+test('given a Ready or Coding card with a merged pull request from its line of work, L2 escalates the card, naming it and the pull request, and answers Done for a Review card', async () => {
   for (const column of [columns.ready, columns.coding]) {
     const [next] = await decided([cardIn(3, column)], readsOver({ pullRequests: [pullFrom(3, 31, true)] }).reads);
 
-    assert.equal(next.action, 'refuse', `${column}: ${JSON.stringify(next)}`);
-    assert.equal(next.card, 3);
+    assert.equal(next.action, 'escalate', `${column}: ${JSON.stringify(next)}`);
+    assert.equal(next.line, 'rigger-3');
     assert.match(next.reason, /#31\b/, column);
   }
   const [review] = await decided([cardIn(3, columns.review)], readsOver({ pullRequests: [pullFrom(3, 31, true)] }).reads);
@@ -125,32 +125,32 @@ test('given a Ready or Coding card with a merged pull request from its line of w
 });
 
 // proves R-WORK-19
-test('given a Ready card with a merged pull request from its line of work and the branch deleted, L2 refuses the card, naming the pull request', async () => {
+test('given a Ready card with a merged pull request from its line of work and the branch deleted, L2 escalates the card, naming the pull request', async () => {
   const repository = readsOver({ pullRequests: [pullFrom(4, 41, true)] });
   assert.deepEqual(await repository.reads.readBranches(['rigger-4']), { 'rigger-4': false }, 'the branch is not on the forge');
 
   const [next] = await decided([cardIn(4, columns.ready)], repository.reads);
 
-  assert.equal(next.action, 'refuse', JSON.stringify(next));
+  assert.equal(next.action, 'escalate', JSON.stringify(next));
   assert.match(next.reason, /#41\b/);
 });
 
 // proves R-WORK-19
-test('given a Review card with two open pull requests from its line of work, L2 refuses the card, naming it and each pull request', async () => {
+test('given a Review card with two open pull requests from its line of work, L2 escalates the card, naming it and each pull request', async () => {
   const [next] = await decided([cardIn(5, columns.review)], readsOver({ pullRequests: [pullFrom(5, 51), pullFrom(5, 52)] }).reads);
 
-  assert.equal(next.action, 'refuse', JSON.stringify(next));
-  assert.equal(next.card, 5);
+  assert.equal(next.action, 'escalate', JSON.stringify(next));
+  assert.equal(next.line, 'rigger-5');
   assert.match(next.reason, /#51\b/);
   assert.match(next.reason, /#52\b/);
 });
 
 // proves R-WORK-19
-test('given a Review card with no open or merged pull request and its line of work on the forge, L2 refuses the card, naming it and its line of work', async () => {
+test('given a Review card with no open or merged pull request and its line of work on the forge, L2 escalates the card, naming it and its line of work', async () => {
   const [next] = await decided([cardIn(6, columns.review)], readsOver({ branches: ['rigger-6'] }).reads);
 
-  assert.equal(next.action, 'refuse', JSON.stringify(next));
-  assert.equal(next.card, 6);
+  assert.equal(next.action, 'escalate', JSON.stringify(next));
+  assert.equal(next.line, 'rigger-6');
   assert.match(next.reason, /\brigger-6\b/);
 });
 

@@ -4,7 +4,8 @@
 // steps, the evidence they all share, and the instruction asking each for its marker.
 
 import { OWNER, judgeRole, roleTimeout, workRequires } from '../config/validate.mjs';
-import { WORKSPACE_NOT_MADE } from '../execution/workspace.mjs';
+import { SCRATCH_REFUSED, WORKSPACE_NOT_MADE, WORKSPACE_REFUSED } from '../execution/workspace.mjs';
+import { NOT_STARTED } from '../substrate/process.mjs';
 import { acceptanceItems, checkAcceptanceForm } from './form-check.mjs';
 import { GATE_CONTEXT, gateAnswer } from './gate.mjs';
 import { acceptanceDigest, evidenceDigest, markerInstruction, readMarkers } from './marker.mjs';
@@ -73,8 +74,11 @@ function record(sink, card, name, fields, what, dispatch) {
  * naming the pull request and the forge's reason, and answers `ignore`.
  *
  * `directories` holds, by role, the outcome of L1's make of a judge's directory where L1 could not
- * make it, which L3 hands L2 unread. A judge whose directory was not made is not named, as `unmade`
- * says (the architect's ruling 4's addendum).
+ * make it, or L1's report that a judge's dispatch did not start, which L3 hands L2 unread. A refused
+ * directory or scratch directory answers one loop-raised ambiguous escalation naming every
+ * refusal, with `from` naming the stage the facts hold. A judge
+ * whose directory or scratch directory was not made is not named, as `unmade` says (the architect's
+ * ruling 4's addendum; "Failure model", step 4).
  *
  * `outcomes` holds, by role, the outcomes L3 has handed L2 of a judge's steps in its `head`. A judge
  * whose required step failed is not named, and L2 records a `judge.withheld` event under the card
@@ -113,24 +117,44 @@ export function judgeAnswer(card, kinds, epicLabel, { roles = {}, provisioning =
   const facts = { card: card.number, revision: digest, pull: pull.number, base: pull.base, head: pull.head };
   const steps = selectedSteps(card, declared, provisioning);
   const withheldRoles = [];
+  const refusals = [];
   const judges = owed
     .filter((role) => {
+      const directory = directories[role];
+      if (directory?.status === 'rejected' && [WORKSPACE_REFUSED, SCRATCH_REFUSED].includes(directory.reason?.code)) {
+        refusals.push(`${role}: ${directory.reason.message}`);
+        return false;
+      }
       const missing = (directories[role] !== undefined && unmade(card, role, directories[role], sink))
         || withheld(card, role, steps, outcomes[role] ?? [], provisioning, sink);
       if (missing) withheldRoles.push(role);
       return !missing;
     })
     .map((role) => ({ ...judgeOf(role, roles[role] ?? {}, tiers.get(role).tier, required.get(role), pull, evidence, facts, items), steps: steps.map((name) => stepAnswer(name, provisioning)) }));
-  return { action: 'judge', kind, judges, ...(withheldRoles.length > 0 ? { withheld: withheldRoles } : {}) };
+  const withholding = withheldRoles.length > 0 ? { withheld: withheldRoles } : {};
+  if (refusals.length > 0) return { action: 'escalate', category: 'ambiguous', raiser: 'loop', reason: refusals.join('\n'), pull: pull.number, head: pull.head, from: card.forge.stage, ...withholding };
+  return { action: 'judge', kind, judges, ...withholding };
 }
 
 /**
  * Whether judge `role` of `card` is withheld for its directory: whether `outcome`, of L1's make of
  * it, is L1's failure to make it, which L2 records through `sink` as a `judge.withheld` event naming
- * the role, the directory and why, classed as the environment's. Any other outcome is no such
- * failure, so L2 answers no action for it, naming the card and the role.
+ * the role, the directory and why, classed as the environment's.
+ *
+ * `outcome` may instead be L1's report that the judge's dispatch did not start. Where that report
+ * names the judge's scratch directory as `missing`, L1 could not make it for a host cause, and L2
+ * withholds the judge as for its directory, its event naming the scratch directory as `scratch`
+ * (`R-FAIL-8`; U43). A dispatch that never started for another cause withholds nothing, and its
+ * outcome stands. `judgeAnswer` handles directory refusals before reaching this host-failure rule.
+ * Any other outcome is no such failure, so L2 answers no action for it, naming the card and the role.
  */
 function unmade(card, role, outcome, sink) {
+  if (outcome?.status === 'rejected' && outcome.reason?.code === NOT_STARTED) {
+    const { missing, message } = outcome.reason;
+    if (missing === undefined) return false;
+    record(sink, card, 'judge.withheld', { role, scratch: missing, reason: message, class: 'environment' }, `judge ${role}'s scratch directory was not made`);
+    return true;
+  }
   if (outcome?.status !== 'rejected' || outcome.reason?.code !== WORKSPACE_NOT_MADE) {
     const read = outcome?.status === 'rejected' ? outcome.reason?.message : JSON.stringify(outcome);
     throw new Error(`card #${card.number}'s judge ${role} has a directory outcome that is not L1's failure to make it, so L2 answers no action for it: ${read}`, { cause: outcome?.reason });

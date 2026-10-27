@@ -2,17 +2,23 @@
 // it, refuse it with a reason, dispatch it under the one kind that selects it, or answer it from
 // its pull request's markers, from what the forge holds of its line of work where L2's facts call
 // read it. Within an attempt at it: the next provisioning step it selected, the maker as a role,
-// the card attempted again, held, or stopped.
+// the card attempted again, held, stopped, or escalated.
 
 import { FIXED_LABELS, OWNER, judgeRole, roleTimeout, sameLabel, stepTimeout, workRequires, worktreeTopic } from '../config/validate.mjs';
 import { BRANCH_ELSEWHERE, BRANCH_REFUSED, FETCH_FAILED, LINE_DELETED, LINE_MOVED, ROOT_NOT_ABSOLUTE, SCRATCH_REFUSED, WORKSPACE_NOT_MADE, WORKSPACE_REFUSED, topicFor } from '../execution/workspace.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
+import { escalationDestination, escalationInstruction } from './escalation.mjs';
 import { acceptanceItems, checkAcceptanceForm } from './form-check.mjs';
 import { reviewAnswer } from './judges.mjs';
 import { evidenceDigest } from './marker.mjs';
 
 /** Whether a card carries `label`, reading label names as GitHub does, whatever their letter case. */
 const carries = (card, label) => card.labels.some((held) => sameLabel(held, label));
+
+/** A loop-raised escalate answer with the destination L2's one function answers, reading no comment. */
+const routed = (answer) => answer.action === 'escalate'
+  ? { ...answer, destination: escalationDestination({ category: answer.category, raiser: answer.raiser }) }
+  : answer;
 
 /** The escalation status of an already-read board item, without reading its workflow facts. */
 export const escalationStatus = (card) => carries(card, FIXED_LABELS.escalated) ? { escalated: true } : undefined;
@@ -52,10 +58,11 @@ const selecting = (card, kinds) =>
  * where it would also refuse the card for what the forge holds, for its acceptance's form, or for
  * both, the one refusal names each of those reasons too.
  *
- * An eligible closed card is answered `{ action: 'remove', following }`, carrying its ordinary
- * answer. Only an actually selected forge refusal becomes an ambiguous escalation; composed
- * tier/provider conflicts and form or kind refusals remain refusals. This answer is selected
- * between attempts, never while L3 is handing back the current attempt's outcomes.
+ * An actually selected forge refusal becomes an ambiguous escalation; composed
+ * tier/provider conflicts and form or kind refusals remain refusals. An eligible closed card is
+ * answered `{ action: 'remove', following }`, carrying that answer. Removal is selected between
+ * attempts, never while L3 is handing back the current attempt's outcomes.
+ * An item carrying the fixed status label has no card action, regardless of its other facts.
  *
  * Whether a verdict covers a Coding or Review card is read from its pull request's markers, never
  * injected: L2 takes no `fresh` input.
@@ -82,6 +89,7 @@ const selecting = (card, kinds) =>
 export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTopic(), provisioning, outcomes = [], sink, attempt = 1, firstFailure, workspace, maker, forge, judged, directories, continuing } = {}) {
   // The facts L2's settle answered are of a card it moved to review.
   const card = forge === undefined ? given : { ...given, forge: { stage: 'review', ...forge } };
+  if (carries(card, FIXED_LABELS.status)) return { action: 'ignore' };
   const escalation = escalationStatus(card);
   if (escalation !== undefined && !(card.forge?.merged?.length > 0)) return { action: 'ignore', ...escalation };
   const betweenAttempts = continuing === undefined && forge === undefined && maker === undefined
@@ -89,12 +97,12 @@ export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTop
   /** Carries the ordinary answer through an eligible closed-card removal, preserving its origin. */
   const removing = (ordinary, forgeRefusal = false) => {
     const facts = card.forge;
+    const following = forgeRefusal && escalation === undefined
+      ? routed({ action: 'escalate', category: 'ambiguous', raiser: 'loop', reason: ordinary.reason, line: facts.line })
+      : ordinary;
     if (!betweenAttempts || ordinary.action === 'ignore' || escalation !== undefined
         || !['review', 'owner'].includes(facts?.stage) || facts.closed.length === 0
-        || facts.open.length > 0 || facts.merged.length > 0) return ordinary;
-    const following = forgeRefusal
-      ? { action: 'escalate', category: 'ambiguous', raiser: 'loop', reason: ordinary.reason, line: facts.line }
-      : ordinary;
+        || facts.open.length > 0 || facts.merged.length > 0) return following;
     return { action: 'remove', following };
   };
   const { kind, answer } = kindOf(card, kinds, epicLabel);
@@ -105,7 +113,7 @@ export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTop
   }
   const held = card.forge === undefined ? undefined : fromTheForge(card);
   if (held?.action === 'ignore' || held?.action === 'move') return escalation === undefined ? held : { ...held, ...escalation };
-  if (held?.action === 'judge') return reviewAnswer(card, kinds, epicLabel, { roles, provisioning, sink, outcomes: judged, directories });
+  if (held?.action === 'judge') return routed(reviewAnswer(card, kinds, epicLabel, { roles, provisioning, sink, outcomes: judged, directories }));
   const form = checkAcceptanceForm(card);
   const makerRole = kinds[kind].maker;
   const tier = roles === undefined ? undefined : tierOf(card, makerRole, roles[makerRole]);
@@ -230,31 +238,34 @@ function sameWay(first, second) {
 
 /**
  * What L2 answers for `card`'s attempt numbered `attempt`, which failed before its maker ran as `what`
- * says, once it has recorded the failure and its decision through `sink`. Every such failure is
- * the environment's (`ARCHITECTURE.md`, "Failure model"). An attempt before the last is followed
+ * says, once it has recorded the failure and its decision through `sink`. A card-local refusal
+ * answers `escalate`, as ambiguous with raiser `loop`, naming every refusal in the attempt pair.
+ * Its `from` names Coding, where the claimed attempt runs. An environment attempt before the last is followed
  * by `{ action: 'again', card, attempt, failure }`, naming the attempt to make next. The last is
  * `{ action: 'hold', card, firstFailure, failure }` when both failures are the same R-FAIL-6 host
  * way; otherwise it is `{ action: 'stop', card, failure }`.
  *
  * L2 records an `attempt.failed` event under the card, naming the attempt, what failed and why,
  * and the failure's class, then an `attempt.decided` event naming the attempt and whether the card
- * is attempted `again`, held or stopped. A sink that refuses either has L2 answer no action, naming the
+ * is attempted `again`, held, stopped or escalated. A sink that refuses either has L2 answer no action, naming the
  * card, the attempt and the refusal: the refusal is the halt, and spends no attempt.
  */
 function failedAttempt(card, attempt, firstFailure, what, sink) {
   const cardLocal = [WORKSPACE_REFUSED, BRANCH_ELSEWHERE, SCRATCH_REFUSED].includes(what.code);
   const out = [LINE_MOVED, LINE_DELETED, BRANCH_REFUSED, ROOT_NOT_ABSOLUTE].includes(what.code);
   const failure = { class: cardLocal ? 'card-local' : out ? 'out' : 'environment', ...what };
-  const again = failure.class === 'environment' && attempt < ATTEMPTS;
+  const refusals = [firstFailure, failure].filter((each) => each?.class === 'card-local');
+  const again = refusals.length === 0 && failure.class === 'environment' && attempt < ATTEMPTS;
   if (attempt === ATTEMPTS && firstFailure === undefined) throw new Error(`card #${card.number}'s second attempt failed without its first attempt's failure, so L2 answers no action`);
-  const hold = !again && sameWay(firstFailure, failure);
+  const hold = refusals.length === 0 && !again && sameWay(firstFailure, failure);
   const events = sink.emitter({ layer: 'L2', card: card.number });
   try {
     events.emit('attempt.failed', { attempt, ...failure });
-    events.emit('attempt.decided', { attempt, decision: again ? 'again' : hold ? 'hold' : 'stop', ...(hold ? { failures: [firstFailure, failure] } : {}) });
+    events.emit('attempt.decided', { attempt, decision: refusals.length > 0 ? 'escalate' : again ? 'again' : hold ? 'hold' : 'stop', ...(hold ? { failures: [firstFailure, failure] } : {}) });
   } catch (refusal) {
     throw new Error(`card #${card.number}'s attempt ${attempt} failed, and the event sink refused to record it, so L2 answers no action: ${refusal.message}`, { cause: refusal });
   }
+  if (refusals.length > 0) return routed({ action: 'escalate', category: 'ambiguous', raiser: 'loop', reason: refusals.map((each) => each.reason).join('\n'), card: card.number, failure, from: 'coding' });
   return again ? { action: 'again', card: card.number, attempt: attempt + 1, failure }
     : hold ? { action: 'hold', card: card.number, firstFailure, failure } : { action: 'stop', card: card.number, failure };
 }
@@ -374,8 +385,8 @@ export function panelOf(card, kind, roles = {}) {
  * The evidence is the card's number, title and acceptance, read as `R-CARD-12` reads it. The
  * instruction is Rigger's contract with every maker, so no role prompt spends words on it (the M4
  * decomposition's §2.5, on #467). It says Rigger dispatched
- * the session, which a role prompt can condition on. Until M6 gives a maker an escalation route, a
- * maker that cannot finish exits non-zero, naming why.
+ * the session, which a role prompt can condition on. A maker that cannot meet an item receives
+ * the escalation note instruction.
  *
  * Handed `continuing`, L2's continuing-attempt answer, the instruction names the open pull request
  * and the head L2 read, and asks for commits pushed to the line of work rather than a pull request
@@ -394,7 +405,7 @@ function makerAnswer(card, name, role, tier, line, continuing) {
         `Once your work meets every acceptance item and answers every ruling below, push your commits to \`${line}\`, so they reach pull request #${continuing.pull}. Open no other pull request.`,
       ]),
     `Never switch this workspace off \`${line}\`, never detach \`HEAD\`, and never add a worktree inside this workspace.`,
-    'Where you cannot finish the work, exit non-zero, naming why.',
+    escalationInstruction(card),
     '',
     '',
   ].join('\n');

@@ -2952,8 +2952,11 @@ test('a new attempt after closed cleanup retains the real directories it creates
   assert.deepEqual(facts.merged, []);
   assert.equal((await columnsOf(built.fake))[number], COLUMNS.coding);
   assert.deepEqual((await built.fake.operations.readItems())[0].labels, ['type:change']);
-  assert.deepEqual(await built.loop.pull(1), [], 'the held line makes the ordinary Coding answer inert');
-  assert.equal(built.decisions.at(-1).action.action, 'refuse');
+  assert.equal((await built.loop.pull(1))[0].action, 'escalate', 'the held line escalates the Coding card');
+  assert.equal(built.decisions.at(-1).action.action, 'escalate');
+  assert.equal((await columnsOf(built.fake))[number], COLUMNS.owner);
+  assert.deepEqual((await built.fake.operations.readItems())[0].labels, ['type:change', 'rigger:escalated']);
+  assert.deepEqual(built.dispatches.started, [number], 'the later read dispatches no new maker');
   assert.equal(removals, 1, 'the later Coding read performs no closed cleanup');
   assert.equal(fs.readFileSync(marker, 'utf8'), 'new attempt content');
 });
@@ -2985,4 +2988,96 @@ test('a failed closed cleanup followed by escalation stays withheld until the ow
   assert.equal(reached[0].action, 'escalate');
   assert.equal(retry.repository.held().issues[0].comments.length, 2, 'the fresh invocation preserves the prior issue facts');
   assert.deepEqual((await fake.operations.readItems())[0].labels, ['type:change', 'rigger:escalated']);
+});
+
+// proves R-LOOP-2, R-ESCALATE-4
+test('L3 stamps the maker id and routes its issue note to Owner without dispatching a judge', { timeout: 20_000 }, async (t) => {
+  const number = 939;
+  const note = (id) => [
+    'I cannot meet acceptance item 1.',
+    '```rigger-escalation',
+    'category: ambiguous',
+    'item: 1',
+    'reason: The needed decision is missing.',
+    `dispatch: ${id}`,
+    '```',
+    '',
+  ].join('\n');
+  const kinds = { change: { select: { labels: ['type:change'] }, maker: 'engineer', judges: ['reviewer'] } };
+  const built = world({ cards: [number], concurrency: 1, kinds,
+    judgeDirectory: () => assert.fail('a maker escalation dispatches no judge'),
+  });
+  const pulled = built.loop.pull(1);
+  t.after(async () => {
+    built.dispatches.releaseAll();
+    await pulled.catch(() => {});
+  });
+  await waitFor(() => built.dispatches.heldNow(number));
+  const id = built.events().find(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'engineer').dispatch;
+  const input = built.agent.runs().find(({ card, role }) => card === number && role === 'engineer').input;
+  assert.ok(input.includes(`dispatch: ${id}`), 'the maker sees the id of its L3 dispatch');
+
+  await built.repository.postIssueComment(number, note(id));
+  built.dispatches.release(number);
+  await pulled;
+
+  const [card] = await built.fake.operations.readItems();
+  assert.equal(card.column, config.board.columns.owner);
+  assert.deepEqual(card.labels, ['type:change', 'rigger:escalated']);
+  const [event] = built.events().filter(({ event }) => event === 'review.escalate');
+  assert.deepEqual({ raiser: event.raiser, dispatch: event.dispatch, category: event.category, item: event.item, reason: event.reason },
+    { raiser: 'maker', dispatch: id, category: 'ambiguous', item: 1, reason: 'The needed decision is missing.' });
+  const issue = built.repository.held().issues.find(({ number: held }) => held === number);
+  assert.equal(issue.comments.length, 2, 'the maker note and one engine comment sit on the issue');
+  assert.match(issue.comments[1].body, /owner \(ambiguous\)/);
+  assert.match(issue.comments[1].body, /The needed decision is missing\./);
+  assert.match(issue.comments[1].body, /Acceptance item: 1/);
+  assert.equal(built.agent.runs().filter(({ role }) => role === 'reviewer').length, 0);
+});
+
+// proves R-LOOP-2, R-ESCALATE-4
+test('a refused maker note escalation keeps the card out of later pulls in the invocation', { timeout: 20_000 }, async (t) => {
+  const number = 940;
+  const refusal = new Error('the issue comment write was refused');
+  const fake = boardOf([number]);
+  const built = world({ fake, concurrency: 1, fresh: false, answer: () => ({ exit: 4, output: '' }),
+    kinds: { change: { select: { labels: ['type:change'] }, maker: 'engineer', judges: ['reviewer'] } },
+    judgeDirectory: () => assert.fail('a refused maker escalation dispatches no judge'),
+  });
+  const claimed = built.l2.claimed;
+  let claims = 0;
+  built.l2.claimed = async (...args) => {
+    claims += 1;
+    if (claims > 1) {
+      fake.setIssueLabels(config.repo, number, ['type:change', 'rigger:escalated']);
+      throw new Error('a second claim must not begin');
+    }
+    return claimed(...args);
+  };
+  const original = built.repository.postIssueComment;
+  let engineWrites = 0;
+  built.repository.postIssueComment = async () => { engineWrites += 1; throw refusal; };
+  const running = built.loop.run();
+  t.after(async () => { built.dispatches.releaseAll(); await running.catch(() => {}); });
+  await waitFor(() => built.dispatches.heldNow(number));
+  const id = built.events().find(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'engineer').dispatch;
+  await original(number, [
+    '```rigger-escalation', 'category: critical', 'item: 1',
+    'reason: A required condition failed.', `dispatch: ${id}`, '```',
+  ].join('\n'));
+  built.dispatches.release(number);
+  await assert.rejects(running, (failure) => {
+    assert.ok(leavesOf(failure).some((held) => held.cause === refusal && /escalation issue comment was refused/.test(held.message)));
+    return true;
+  });
+  assert.deepEqual(cardsOf(built, 'pull'), [number]);
+  assert.equal(claims, 1);
+  assert.deepEqual(built.dispatches.started, [number]);
+  assert.equal(engineWrites, 1);
+  assert.equal(built.repository.held().issues.find((issue) => issue.number === number).comments.length, 1);
+  assert.deepEqual(await columnsOf(built.fake), { [number]: COLUMNS.coding });
+  assert.deepEqual(built.fake.writes().map(({ operation }) => operation), ['moveItem']);
+  assert.deepEqual((await built.fake.operations.readItems())[0].labels, ['type:change']);
+  assert.equal(built.agent.runs().filter(({ role }) => role === 'reviewer').length, 0);
+  assert.equal(built.events().find(({ event }) => event === 'review.escalate').raiser, 'maker');
 });

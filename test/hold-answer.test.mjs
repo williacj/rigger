@@ -12,7 +12,7 @@ import { KINDS, readyCard } from './loop-world.mjs';
 const events = [];
 const sink = { emitter: () => ({ emit: (event, fields) => events.push({ event, ...fields }) }) };
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('L2 holds a card whose two workspaces cannot be made', () => {
   events.length = 0;
   const firstFailure = { class: 'environment', workspace: '/work/rigger-7', reason: 'git gave no answer' };
@@ -51,7 +51,7 @@ function second(kind) {
   };
 }
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('L2 answers each in-scope Table A pair by host kind and step', async (t) => {
   const rows = ['W', 'F', 'N(s)', 'X(s)', 'M'];
   const columns = ['W', 'F', 'N(s)', 'N(t)', 'X(s)', 'X(t)', 'M'];
@@ -90,7 +90,7 @@ test('L2 answers again on attempt one for each host kind with or without an earl
   }
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('L2 holds a required step that exits non-zero then runs past its time', () => {
   events.length = 0;
   const firstFailure = FIRST['X(s)'];
@@ -103,7 +103,7 @@ test('L2 holds a required step that exits non-zero then runs past its time', () 
   assert.deepEqual(answer, { action: 'hold', card: 7, firstFailure, failure: { class: 'environment', step: 's', timeout: 50 } });
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('L2 records a hold decision with the attempt and both environment failures and their step', () => {
   events.length = 0;
   const { kinds, options } = second('N(s)');
@@ -128,8 +128,8 @@ test('L2 does not hold a card whose maker starts on the second attempt', () => {
   assert.deepEqual(answer, { action: 'settled' });
 });
 
-// proves R-FAIL-7
-test('each card-local and out report stops immediately with its own attempt.failed class', async (t) => {
+// proves R-FAIL-8
+test('each card-local report escalates and each out report stops with its own attempt.failed class', async (t) => {
   for (const [code, expected] of [
     ['WORKSPACE_REFUSED', 'card-local'], ['BRANCH_ELSEWHERE', 'card-local'],
     ['SCRATCH_REFUSED', 'card-local'], ['LINE_MOVED', 'out'],
@@ -141,18 +141,18 @@ test('each card-local and out report stops immediately with its own attempt.fail
       const outcome = { status: 'rejected', reason };
       const given = code === 'SCRATCH_REFUSED' ? { maker: outcome } : { workspace: outcome };
       const answer = nextAction(readyCard(7), KINDS, undefined, { provisioning: {}, sink, attempt: 1, ...given });
-      assert.equal(answer.action, 'stop');
+      assert.equal(answer.action, expected === 'card-local' ? 'escalate' : 'stop');
       assert.equal(answer.failure.class, expected);
       assert.equal(answer.failure.code, code);
       assert.deepEqual(events.map(({ event, attempt, class: named, decision }) => [event, attempt, named, decision]), [
-        ['attempt.failed', 1, expected, undefined], ['attempt.decided', 1, undefined, 'stop'],
+        ['attempt.failed', 1, expected, undefined], ['attempt.decided', 1, undefined, expected === 'card-local' ? 'escalate' : 'stop'],
       ]);
     });
   }
 });
 
-// proves R-FAIL-7
-test('a card-local refusal or moved line stops on attempt two after itself or a host failure', async (t) => {
+// proves R-FAIL-8
+test('a card-local refusal escalates and a moved line stops on attempt two after itself or a host failure', async (t) => {
   for (const code of ['WORKSPACE_REFUSED', 'SCRATCH_REFUSED', 'LINE_MOVED']) {
     for (const first of [code, 'host']) {
       await t.test(`${first} then ${code}`, () => {
@@ -165,14 +165,14 @@ test('a card-local refusal or moved line stops on attempt two after itself or a 
           code, reason: reason.message,
         };
         const answer = nextAction(readyCard(7), KINDS, undefined, { provisioning: {}, sink, attempt: 2, firstFailure, ...given });
-        assert.equal(answer.action, 'stop');
-        assert.equal(events.at(-1).decision, 'stop');
+        assert.equal(answer.action, code === 'LINE_MOVED' ? 'stop' : 'escalate');
+        assert.equal(events.at(-1).decision, code === 'LINE_MOVED' ? 'stop' : 'escalate');
       });
     }
   }
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('an unanswered maker scratch check and a maker dispatch that never started hold as one host way in either order', () => {
   const scratch = { class: 'environment', maker: 'engineer', status: 'rejected', code: NOT_STARTED, reason: 'scratch check gave no answer' };
   const dispatch = FIRST.M;

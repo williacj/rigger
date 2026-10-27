@@ -3,6 +3,7 @@
 // job mints and posts in, and, run with stand-ins for node and curl, what its steps post.
 
 import { test } from 'node:test';
+import { ciFacts, ciProof, ciFullFixture, ciCollectorFixture, parseWorkflow } from './ci-policy-fixtures.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -26,7 +27,7 @@ const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 
 test('CI assigns portable, concurrent hosted candidate and protected-main regression lanes with Node 26', () => {
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
-  assert.deepEqual(Object.keys(ci.jobs).sort(), ['check', 'demo', 'fast', 'full_host', 'full_ordinary', 'nightly', 'plan']);
+  assert.deepEqual(Object.keys(ci.jobs).sort(), ['cancel_superseded', 'check', 'demo', 'fast', 'full_host', 'full_ordinary', 'nightly', 'plan']);
   for (const name of ['plan', 'fast', 'check']) assert.equal(ci.jobs[name]['runs-on'], 'ubuntu-latest', name);
   for (const name of ['full_ordinary', 'full_host', 'demo']) assert.equal(ci.jobs[name]['runs-on'], 'macos-latest', name);
   assert.deepEqual(ci.jobs.nightly['runs-on'], ['self-hosted', 'macOS', 'ARM64']);
@@ -71,17 +72,6 @@ function ciPolicy(operation, facts, extra = {}) {
   return JSON.parse(result.stdout);
 }
 
-/** Literal Git/API contract fixture: a synthetic merge of known B and H, with a fresh PR read. */
-function ciFacts() {
-  return {
-    event: 'pull_request', action: 'synchronize', ref: 'refs/pull/7/merge', owner: 'williacj', sender: 'contributor',
-    eventSha: 'a'.repeat(40), complete: true,
-    checkout: { sha: 'a'.repeat(40), tree: 'b'.repeat(40), parents: ['c'.repeat(40), 'd'.repeat(40)] },
-    pr: { number: 7, head: 'd'.repeat(40), base: 'c'.repeat(40), baseRef: 'main', state: 'open', draft: false },
-    live: { head: 'd'.repeat(40), base: 'c'.repeat(40), baseRef: 'main', state: 'open', draft: false, labels: [] },
-    changes: [{ status: 'A', oldMode: '000000', newMode: '100644', path: 'docs/journal/a.md' }],
-  };
-}
 
 test('inline CI policy admits only complete regular direct journal changes or nonmain constituents to fast-only readiness', () => {
   assert.equal(ciPolicy('policy', ciFacts()).mode, 'FAST_ELIGIBLE');
@@ -104,11 +94,17 @@ test('inline CI policy admits only complete regular direct journal changes or no
   assert.equal(ciPolicy('policy', nonmain).mode, 'FAST_ELIGIBLE');
   nonmain.action = 'edited'; nonmain.pr.baseRef = nonmain.live.baseRef = 'main';
   assert.equal(ciPolicy('policy', nonmain).mode, 'BROAD_DEFERRED');
+  for (const main of [undefined, { head: '' }, { head: 'e'.repeat(40), defaultBranch: 'other' }]) {
+    const unavailable = ciFacts(); unavailable.main = main;
+    assert.equal(ciPolicy('policy', unavailable).mode, 'INVALID', 'unavailable actual main');
+  }
+  const advanced = ciFacts(); advanced.live.base = 'e'.repeat(40);
+  assert.equal(ciPolicy('policy', advanced).mode, 'FAST_ELIGIBLE', 'a fresh PR base does not replace the recorded base');
   for (const corrupt of ['complete', 'head', 'base', 'tree', 'parents', 'path-list']) {
     const facts = ciFacts();
     if (corrupt === 'complete') facts.complete = false;
     if (corrupt === 'head') facts.live.head = 'e'.repeat(40);
-    if (corrupt === 'base') facts.live.base = 'e'.repeat(40);
+    if (corrupt === 'base') facts.pr.base = 'e'.repeat(40);
     if (corrupt === 'tree') facts.checkout.tree = '';
     if (corrupt === 'parents') facts.checkout.parents.reverse();
     if (corrupt === 'path-list') delete facts.changes;
@@ -196,13 +192,6 @@ test('inline CI policy requires demo for unknown full-batch impact while retaini
   }
 });
 
-function ciProof(mode = 'FAST_ELIGIBLE') {
-  return {
-    mode, demoNeeded: false, sourceValid: true,
-    source: { event: 'pull_request', ref: 'refs/pull/7/merge', sha: 'a'.repeat(40), tree: 'b'.repeat(40), parents: ['c'.repeat(40), 'd'.repeat(40)], head: 'd'.repeat(40), base: 'c'.repeat(40), baseRef: 'main' },
-    results: { plan: 'success', fast: 'success', full_ordinary: 'skipped', full_host: 'skipped', demo: 'skipped' },
-  };
-}
 
 test('inline aggregate requires fresh equal source mode and every literally required result, including explicit demo', () => {
   const safe = ciFacts();
@@ -249,6 +238,7 @@ test('inline aggregate requires fresh equal source mode and every literally requ
   assert.equal(ciPolicy('guard', deferred, ciProof('BROAD_DEFERRED')), false);
 });
 
+
 test('candidate aggregate condition cannot be skipped by a forged MAIN_FULL plan mode', () => {
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
   const condition = ci.jobs.check.if.slice(3, -2).trim();
@@ -286,31 +276,6 @@ test('inline CI policy reads actual raw Git mode and status bytes completely and
   }
 });
 
-function ciCollectorFixture() {
-  const a = 'a'.repeat(40), b = 'b'.repeat(40), c = 'c'.repeat(40), d = 'd'.repeat(40);
-  const git = {};
-  for (const [args, output] of [
-    [['rev-parse', 'HEAD'], a + '\n'],
-    [['rev-parse', 'HEAD^{tree}'], b + '\n'],
-    [['show', '-s', '--format=%P', 'HEAD'], c + ' ' + d + '\n'],
-    [['diff', '--raw', '-z', '--no-renames', c, a], ':000000 100644 0000000 1234567 A\0docs/journal/a.md\0'],
-  ]) git[JSON.stringify(args)] = Buffer.from(output).toString('base64');
-  return {
-    context: { eventName: 'pull_request', ref: 'refs/pull/7/merge', sha: a, repository: 'williacj/rigger', owner: 'williacj' },
-    event: {
-      action: 'synchronize', number: 7, sender: { login: 'contributor' },
-      repository: { full_name: 'williacj/rigger' },
-      pull_request: { head: { sha: d }, base: { sha: c, ref: 'main' }, state: 'open', draft: false },
-    },
-    git,
-    api: {
-      '/repos/williacj/rigger': { full_name: 'williacj/rigger', default_branch: 'main', owner: { login: 'williacj' } },
-      '/repos/williacj/rigger/pulls/7': { number: 7, head: { sha: d }, base: { sha: c, ref: 'main' }, state: 'open', draft: false, labels: [] },
-      '/repos/williacj/rigger/git/ref/heads/main': { object: { sha: c } },
-      '/repos/williacj/rigger/issues/7/labels?per_page=100': [],
-    },
-  };
-}
 
 test('actual inline collector binds Git checkout parents and raw diff to fresh repository PR and base facts', () => {
   const fixture = ciCollectorFixture();
@@ -322,10 +287,28 @@ test('actual inline collector binds Git checkout parents and raw diff to fresh r
   assert.deepEqual(answer.changes, ciFacts().changes);
   assert.ok(calls.some((args) => JSON.stringify(args) === JSON.stringify(['diff', '--raw', '-z', '--no-renames', 'c'.repeat(40), 'a'.repeat(40)])));
   assert.equal(ciPolicy('policy', answer).mode, 'FAST_ELIGIBLE');
-  for (const corrupt of ['unavailable-api', 'wrong-base-ref', 'wrong-checkout', 'wrong-owner', 'wrong-repository']) {
+  const drifted = ciCollectorFixture();
+  drifted.api['/repos/williacj/rigger/git/ref/heads/main'].object.sha = 'e'.repeat(40);
+  const drift = ciPolicy('collect', drifted).answer;
+  assert.equal(drift.complete, true, 'live main alone does not invalidate the recorded checkout');
+  assert.deepEqual(drift.pr, ciFacts().pr);
+  assert.equal(drift.main.head, 'e'.repeat(40));
+  assert.equal(drift.live.base, 'c'.repeat(40), 'the current PR base is independent of live main');
+  const batch = ciCollectorFixture();
+  batch.event.pull_request.base.ref = batch.api['/repos/williacj/rigger/pulls/7'].base.ref = 'batch';
+  batch.api['/repos/williacj/rigger/git/ref/heads/batch'] = { object: { sha: 'c'.repeat(40) } };
+  batch.api['/repos/williacj/rigger/git/ref/heads/main'].object.sha = 'e'.repeat(40);
+  const nonmain = ciPolicy('collect', batch).answer;
+  assert.equal(nonmain.complete, true);
+  assert.equal(nonmain.main.head, 'e'.repeat(40), 'current main is not the batch branch head');
+  assert.equal(ciPolicy('policy', nonmain).mode, 'FAST_ELIGIBLE');
+  for (const corrupt of ['unavailable-api', 'wrong-recorded-base', 'wrong-checkout', 'wrong-owner', 'wrong-repository']) {
     const bad = ciCollectorFixture();
     if (corrupt === 'unavailable-api') delete bad.api['/repos/williacj/rigger/pulls/7'];
-    if (corrupt === 'wrong-base-ref') bad.api['/repos/williacj/rigger/git/ref/heads/main'].object.sha = 'e'.repeat(40);
+    if (corrupt === 'wrong-recorded-base') {
+      bad.event.pull_request.base.sha = 'e'.repeat(40);
+      bad.git[JSON.stringify(['diff', '--raw', '-z', '--no-renames', 'e'.repeat(40), 'a'.repeat(40)])] = bad.git[JSON.stringify(['diff', '--raw', '-z', '--no-renames', 'c'.repeat(40), 'a'.repeat(40)])];
+    }
     if (corrupt === 'wrong-checkout') bad.git[JSON.stringify(['rev-parse', 'HEAD'])] = Buffer.from('e'.repeat(40) + '\n').toString('base64');
     if (corrupt === 'wrong-owner') bad.context.owner = 'fork-owner';
     if (corrupt === 'wrong-repository') bad.event.repository.full_name = 'fork-owner/rigger';
@@ -380,6 +363,12 @@ test('actual inline runtime routes plan worker and aggregate through the same so
   assert.equal(worker.ok, true);
   assert.equal(worker.source.sha, 'a'.repeat(40));
   assert.equal(ciPolicy('runPolicy', { action: 'aggregate', facts, proof }).ok, true);
+  const visible = ciPolicy('runPolicy', { action: 'aggregate', facts, proof });
+  assert.equal(visible.testedBase, 'c'.repeat(40));
+  assert.equal(visible.currentMain, 'c'.repeat(40));
+  assert.equal(visible.mainAdvanced, false);
+  assert.deepEqual(visible.source, proof.source);
+
   const forged = ciProof('MAIN_FULL');
   assert.equal(ciPolicy('runPolicy', { action: 'worker', facts, proof: forged, worker: 'nightly' }).ok, false);
   assert.equal(ciPolicy('runPolicy', { action: 'worker', facts, proof, worker: 'full_host' }).ok, false);
@@ -392,6 +381,60 @@ test('actual inline runtime routes plan worker and aggregate through the same so
   assert.equal(result.ok, false);
   assert.match(result.reason, /missing-current-batch-proof/);
   assert.equal(ciPolicy('runPolicy', { action: 'unknown', facts, proof }).ok, false);
+});
+
+test('actual CI aggregate JSON exposes recorded base and current main without changing its source', (t) => {
+  const directory = temporaryDirectory('ci-runtime-', { context: t }), bin = join(directory, 'bin'); mkdirSync(bin);
+  const eventPath = join(directory, 'event.json'), gitRecord = join(directory, 'git-calls'), apiRecord = join(directory, 'api-calls');
+  const git = join(bin, 'git');
+  // The Git answers are the literal collaborator contract in ciCollectorFixture, never a real forge.
+  writeFileSync(git, '#!' + process.execPath + '\n' + `
+    const fs = require('node:fs');
+    const args = process.argv.slice(2), key = JSON.stringify(args);
+    const answers = JSON.parse(process.env.CI_RUNTIME_FIXTURE).git;
+    fs.appendFileSync(process.env.CI_GIT_RECORD, key + '\\n');
+    if (!Object.hasOwn(answers, key)) throw new Error('unrecorded Git command ' + key);
+    process.stdout.write(Buffer.from(answers[key], 'base64'));
+  `);
+  chmodSync(git, 0o755);
+  const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
+  const { facts, proof } = ciFullFixture();
+  for (const main of ['c', 'e']) {
+    const fixture = ciCollectorFixture();
+    Object.assign(fixture.event, { action: 'labeled', sender: { login: 'williacj' }, label: { name: 'ci:full' } });
+    fixture.api['/repos/williacj/rigger/issues/7/labels?per_page=100'] = [{ name: 'ci:full' }];
+    fixture.api['/repos/williacj/rigger/git/ref/heads/main'].object.sha = main.repeat(40);
+    fixture.api['/repos/williacj/rigger/pulls/7'].base.sha = main.repeat(40);
+    writeFileSync(eventPath, JSON.stringify(fixture.event));
+    writeFileSync(gitRecord, ''); writeFileSync(apiRecord, '');
+    const prefix = `globalThis.fetch = async (url, options) => {
+      const path = new URL(url).pathname + new URL(url).search;
+      const fixture = JSON.parse(process.env.CI_RUNTIME_FIXTURE);
+      const fs = await import('node:fs');
+      fs.appendFileSync(process.env.CI_API_RECORD, JSON.stringify({ path, method: options.method }) + '\\n');
+      if (!Object.hasOwn(fixture.api, path)) throw new Error('unrecorded API request ' + path);
+      return new Response(JSON.stringify(fixture.api[path]), { status: 200 });
+    };`;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', prefix + ci.env.CI_POLICY], {
+      encoding: 'utf8', cwd: directory,
+      env: { ...process.env, PATH: bin + delimiter + process.env.PATH, GH_TOKEN: 'fixture-token', GITHUB_API_URL: 'https://api.github.test',
+        GITHUB_EVENT_PATH: eventPath, GITHUB_EVENT_NAME: 'pull_request', GITHUB_REF: 'refs/pull/7/merge', GITHUB_SHA: facts.eventSha,
+        GITHUB_REPOSITORY: 'williacj/rigger', GITHUB_REPOSITORY_OWNER: 'williacj', CI_POLICY_ACTION: 'aggregate',
+        CI_EXPECTED_SOURCE: JSON.stringify(proof.source), CI_EXPECTED_MODE: proof.mode, CI_EXPECTED_DEMO: 'false',
+        CI_RESULTS: JSON.stringify(Object.fromEntries(Object.entries(proof.results).map(([name, result]) => [name, { result }]))),
+        CI_RUNTIME_FIXTURE: JSON.stringify(fixture), CI_GIT_RECORD: gitRecord, CI_API_RECORD: apiRecord },
+    });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.testedBase, 'c'.repeat(40));
+    assert.equal(output.eventBase, 'c'.repeat(40));
+    assert.equal(output.currentMain, main.repeat(40));
+    assert.equal(output.mainAdvanced, main === 'e');
+    assert.deepEqual(output.source, proof.source);
+    assert.equal(output.mode, 'BROAD_EXECUTED');
+    assert.equal(readFileSync(gitRecord, 'utf8').trim().split('\n').length, 4);
+    assert.equal(readFileSync(apiRecord, 'utf8').trim().split('\n').length, 4);
+  }
 });
 
 test('inline CI policy refuses unknown event authority and malformed Git records before any fast eligibility', () => {
@@ -415,7 +458,7 @@ test('staged CI preserves finite events, independent full lanes, every command a
   assert.deepEqual(ci.on.schedule, [{ cron: '0 3 * * *' }]);
   assert.equal(ci.on.workflow_dispatch, null, 'dispatch must expose no arbitrary ref/input selector');
   assert.deepEqual(ci.permissions, { contents: 'read', 'pull-requests': 'read' });
-  assert.deepEqual(ci.jobs.check.needs, ['plan', 'fast', 'full_ordinary', 'full_host', 'demo']);
+  assert.deepEqual(ci.jobs.check.needs, ['plan', 'fast', 'full_ordinary', 'full_host', 'demo', 'cancel_superseded']);
   for (const name of ['full_ordinary', 'full_host']) assert.deepEqual(ci.jobs[name].needs, ['plan']);
   const commands = (name) => ci.jobs[name].steps.map((step) => step.run).filter(Boolean);
   const stats = ['budget:package', 'budget:instructions', 'lint:spec-style', 'check:references', 'check:paths', 'check:ids', 'check:words', 'check:headers', 'matrix:check'].map((name) => 'npm run ' + name);
@@ -512,7 +555,7 @@ test('actual inline CLI plans and verifies real Git source through a local read-
   assert.equal(outputs.mode, 'FAST_ELIGIBLE'); assert.equal(outputs.sha, sha); assert.equal(outputs.tree, tree);
   const proof = { CI_EXPECTED_SOURCE: outputs.snapshot, CI_EXPECTED_MODE: outputs.mode, CI_EXPECTED_DEMO: outputs.demoNeeded };
   const worker = await execute('worker', { ...proof, CI_WORKER: 'fast' }); assert.equal(worker.status, 0, worker.out + worker.err);
-  const results = { plan: { result: 'success' }, fast: { result: 'success' }, full_ordinary: { result: 'skipped' }, full_host: { result: 'skipped' }, demo: { result: 'skipped' } };
+  const results = { plan: { result: 'success' }, fast: { result: 'success' }, full_ordinary: { result: 'skipped' }, full_host: { result: 'skipped' }, demo: { result: 'skipped' }, cancel_superseded: { result: 'success' } };
   const aggregate = await execute('aggregate', { ...proof, CI_RESULTS: JSON.stringify(results) });
   assert.equal(aggregate.status, 0, aggregate.out + aggregate.err);
   fixture.api['/repos/williacj/rigger/pulls/7'].head.sha = 'e'.repeat(40);
@@ -522,97 +565,6 @@ test('actual inline CLI plans and verifies real Git source through a local read-
   assert.ok(requests.length > 0); assert.ok(requests.every((request) => request.method === 'GET'));
 });
 
-/**
- * The YAML a workflow file in this repository is written in, parsed: block mappings and block
- * sequences by indentation, plain, single- and double-quoted scalars, flow sequences of scalars,
- * literal block scalars (`|`), and comments on lines of their own. Anything else is refused, naming
- * the line, so a file this reads wrongly fails rather than passes. Every scalar is a string.
- */
-function parseWorkflow(text) {
-  const lines = text.split('\n').map((line, at) => ({ at: at + 1, text: line, indent: line.length - line.trimStart().length }));
-  let next = 0;
-  const content = () => {
-    while (next < lines.length && (lines[next].text.trim() === '' || lines[next].text.trim().startsWith('#'))) next += 1;
-    return lines[next];
-  };
-  const refuse = (line, why) => {
-    throw new Error(`line ${line.at}, ${JSON.stringify(line.text)}: ${why}`);
-  };
-  const scalar = (raw, line) => {
-    const value = raw.trim();
-    if (value.startsWith("'")) {
-      if (!/^'(?:[^']|'')*'$/.test(value)) refuse(line, 'an unclosed single-quoted scalar');
-      return value.slice(1, -1).replaceAll("''", "'");
-    }
-    if (value.startsWith('"')) {
-      if (!/^"(?:[^"\\]|\\.)*"$/.test(value)) refuse(line, 'an unclosed double-quoted scalar');
-      return JSON.parse(value);
-    }
-    if (value.startsWith('[')) {
-      if (!value.endsWith(']')) refuse(line, 'a flow sequence on more than one line');
-      const inner = value.slice(1, -1).trim();
-      return inner === '' ? [] : inner.split(',').map((item) => scalar(item, line));
-    }
-    if (/^[{&*!%@`]/.test(value)) refuse(line, 'a form this reader does not read');
-    return value;
-  };
-  const literal = (indent) => {
-    const held = [];
-    let block = null;
-    while (next < lines.length && (lines[next].text.trim() === '' || lines[next].indent > indent)) {
-      const line = lines[next];
-      if (line.text.trim() !== '') block ??= line.indent;
-      held.push(line);
-      next += 1;
-    }
-    while (held.length > 0 && held.at(-1).text.trim() === '') held.pop();
-    return `${held.map((line) => line.text.slice(block ?? 0)).join('\n')}\n`;
-  };
-  const entry = (rest, line, indent, into) => {
-    const pair = /^([A-Za-z0-9_-]+):(?: (.*))?$/.exec(rest);
-    if (!pair) refuse(line, 'not `key: value`');
-    const [, key, value] = pair;
-    if (Object.hasOwn(into, key)) refuse(line, `the key ${key} is given twice`);
-    if (value === undefined || value.trim() === '') into[key] = block(indent);
-    else if (value.trim() === '|') into[key] = literal(indent);
-    else into[key] = scalar(value, line);
-  };
-  const block = (parent) => {
-    const first = content();
-    if (first === undefined || first.indent <= parent) return null;
-    const indent = first.indent;
-    if (first.text.trimStart().startsWith('- ')) {
-      const items = [];
-      for (let line = content(); line !== undefined && line.indent === indent && line.text.trimStart().startsWith('- '); line = content()) {
-        next += 1;
-        const rest = line.text.trimStart().slice(2);
-        if (/^[A-Za-z0-9_-]+:(?: |$)/.test(rest)) {
-          const item = {};
-          entry(rest, line, indent + 2, item);
-          for (let more = content(); more !== undefined && more.indent === indent + 2; more = content()) {
-            next += 1;
-            entry(more.text.trimStart(), more, indent + 2, item);
-          }
-          items.push(item);
-        } else items.push(scalar(rest, line));
-      }
-      const stray = content();
-      if (stray !== undefined && stray.indent > parent && stray.indent !== indent) refuse(stray, 'indented as no sibling of the sequence above');
-      return items;
-    }
-    const map = {};
-    for (let line = content(); line !== undefined && line.indent === indent; line = content()) {
-      next += 1;
-      entry(line.text.trimStart(), line, indent, map);
-    }
-    const stray = content();
-    if (stray !== undefined && stray.indent > parent && stray.indent !== indent) refuse(stray, 'indented as no sibling of the mapping above');
-    return map;
-  };
-  const parsed = block(-1);
-  if (content() !== undefined) refuse(content(), 'left unread');
-  return parsed;
-}
 
 const live = parseWorkflow(readFileSync(LIVE, 'utf8'));
 const template = parseWorkflow(readFileSync(TEMPLATE, 'utf8'));
@@ -1280,5 +1232,72 @@ test('given the diff read fails, or the forge refuses the diff as too large, the
     assert.match(posted.description, /^the read of pull request #12's diff failed: /);
     assert.ok([...posted.description].length <= 140);
     assert.match(check.stdout, named);
+  }
+});
+
+test('actual local Git authenticates forward tested bases and refuses nonancestors and missing objects', async (t) => {
+  const directory = repositoryAt(temporaryDirectory('rigger-ci-forward-', { context: t }), { 'docs/journal/base.md': 'base\n' });
+  gitIn(directory, 'branch', '-M', 'main');
+  const eventBase = gitIn(directory, 'rev-parse', 'HEAD').trim();
+  gitIn(directory, 'checkout', '-qb', 'change');
+  writeFileSync(join(directory, 'docs/journal/candidate.md'), 'candidate\n');
+  gitIn(directory, 'add', '-A'); gitIn(directory, 'commit', '-qm', 'candidate');
+  const head = gitIn(directory, 'rev-parse', 'HEAD').trim();
+  gitIn(directory, 'checkout', '-q', 'main');
+  mkdirSync(join(directory, 'src')); writeFileSync(join(directory, 'src/intervening.mjs'), 'export {};\n');
+  gitIn(directory, 'add', '-A'); gitIn(directory, 'commit', '-qm', 'intervening base');
+  const testedBase = gitIn(directory, 'rev-parse', 'HEAD').trim();
+  gitIn(directory, 'merge', '--no-ff', '-qm', 'synthetic candidate', head);
+  const sha = gitIn(directory, 'rev-parse', 'HEAD').trim(), tree = gitIn(directory, 'rev-parse', 'HEAD^{tree}').trim();
+  assert.deepEqual(gitIn(directory, 'show', '-s', '--format=%P', 'HEAD').trim().split(' '), [testedBase, head]);
+  assert.equal(gitIn(directory, 'merge-base', '--is-ancestor', eventBase, testedBase), '');
+  const ci = parseWorkflow(readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8'));
+  assert.equal(process.env.CI_POLICY_ACTION, undefined);
+  const actual = await import('data:text/javascript;base64,' + Buffer.from(ci.env.CI_POLICY).toString('base64'));
+  const fixture = ciCollectorFixture();
+  fixture.context.sha = sha;
+  fixture.event.pull_request.head.sha = fixture.api['/repos/williacj/rigger/pulls/7'].head.sha = head;
+  fixture.event.pull_request.base.sha = eventBase;
+  fixture.api['/repos/williacj/rigger/pulls/7'].base.sha = testedBase;
+  fixture.api['/repos/williacj/rigger/git/ref/heads/main'].object.sha = testedBase;
+  const calls = [];
+  const collect = () => actual.collect({ context: fixture.context, event: fixture.event,
+    run(args) {
+      calls.push(args);
+      if (args[0] === 'rev-parse') {
+        assert.ok(['HEAD', 'HEAD^{tree}'].includes(args[1])); assert.equal(args.length, 2);
+        return Buffer.from(gitIn(directory, 'rev-parse', args[1]));
+      }
+      if (args[0] === 'show') {
+        assert.deepEqual(args, ['show', '-s', '--format=%P', 'HEAD']);
+        return Buffer.from(gitIn(directory, 'show', '-s', '--format=%P', 'HEAD'));
+      }
+      if (args[0] === 'merge-base') {
+        assert.deepEqual(args, ['merge-base', '--is-ancestor', fixture.event.pull_request.base.sha, testedBase]);
+        return Buffer.from(gitIn(directory, 'merge-base', '--is-ancestor', fixture.event.pull_request.base.sha, testedBase));
+      }
+      if (args[0] === 'diff') {
+        assert.deepEqual(args, ['diff', '--raw', '-z', '--no-renames', testedBase, sha]);
+        return Buffer.from(gitIn(directory, 'diff', '--raw', '-z', '--no-renames', testedBase, sha));
+      }
+      throw new Error('unexpected native Git command ' + JSON.stringify(args));
+    },
+    request: async (path) => { assert.ok(Object.hasOwn(fixture.api, path), path); return fixture.api[path]; },
+  });
+  const facts = await collect();
+  assert.equal(facts.complete, true, facts.reason);
+  assert.equal(facts.pr.eventBaseAncestor, true);
+  assert.deepEqual(calls.filter((args) => args[0] === 'merge-base'), [['merge-base', '--is-ancestor', eventBase, testedBase]]);
+  assert.deepEqual(calls.at(-1), ['diff', '--raw', '-z', '--no-renames', testedBase, sha]);
+  assert.deepEqual(facts.changes, [{ oldMode: '000000', newMode: '100644', status: 'A', path: 'docs/journal/candidate.md' }]);
+  assert.equal(actual.policy(facts).mode, 'FAST_ELIGIBLE');
+  assert.deepEqual(actual.source(facts), { event: 'pull_request', ref: 'refs/pull/7/merge', sha, tree, parents: [testedBase, head], head, base: testedBase, baseRef: 'main', eventBase });
+  for (const refused of [head, sha, 'f'.repeat(40)]) {
+    calls.length = 0; fixture.event.pull_request.base.sha = refused;
+    const rejected = await collect();
+    assert.equal(rejected.complete, false, refused);
+    assert.equal(actual.policy(rejected).mode, 'INVALID', refused);
+    assert.deepEqual(calls.filter((args) => args[0] === 'merge-base'), [['merge-base', '--is-ancestor', refused, testedBase]]);
+    assert.equal(calls.some((args) => args[0] === 'diff'), false);
   }
 });

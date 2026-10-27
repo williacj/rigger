@@ -5,7 +5,7 @@ import { lstatSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 
 import { within } from './run.mjs';
-import { SCRATCH_REFUSED, makeScratch } from './workspace.mjs';
+import { SCRATCH_REFUSED, WORKSPACE_NOT_MADE, makeScratch } from './workspace.mjs';
 import { gitEnvironment } from '../substrate/git-environment.mjs';
 import { EVENT_REFUSED, NOT_STARTED } from '../substrate/process.mjs';
 import { ADAPTERS } from '../substrate/providers/adapters.mjs';
@@ -43,9 +43,11 @@ import { ADAPTERS } from '../substrate/providers/adapters.mjs';
  * A dispatch that cannot start rejects with `NOT_STARTED`, before `dispatch` runs, so L1 records no
  * `dispatch.start` for it: a provider the map does not hold; a `scratch` or `repository` that is
  * no absolute path; an unanswered scratch check or make; an `invocation` that rejects; or a
- * variable the adapter may not set (`unsettable`). Each names its reason. An answered maker scratch
- * refusal rejects with `SCRATCH_REFUSED` when the answer has no judge facts; the same refusal for a
- * judge remains `NOT_STARTED`. A sink that refused one of L1's scratch events rejects as the
+ * variable the adapter may not set (`unsettable`). Each names its reason. An answered scratch
+ * refusal rejects with `SCRATCH_REFUSED`, for a maker or a judge. A scratch directory not made, because the file system or git gave
+ * no answer, none in time, or an error, rejects with `NOT_STARTED` naming that directory as
+ * `missing`, which no other dispatch that never started names, so L2 can withhold a judge for it
+ * ("Failure model", step 4). A sink that refused one of L1's scratch events rejects as the
  * refused event it is (`EVENT_REFUSED`).
  */
 export async function roleDispatch({ answer, cwd, directory, scratch, repository, reach, env, sink, id, card, adapters = ADAPTERS }) {
@@ -58,7 +60,8 @@ export async function roleDispatch({ answer, cwd, directory, scratch, repository
     made = await makeScratch({ base: scratch, role: answer.role, card, repository, sink });
   } catch (cause) {
     if (cause.code === EVENT_REFUSED) throw cause;
-    if (cause.code === SCRATCH_REFUSED && !Object.hasOwn(answer, 'facts')) throw cause;
+    if (cause.code === SCRATCH_REFUSED) throw cause;
+    if (cause.code === WORKSPACE_NOT_MADE) throw Object.assign(unstarted(cause.message, cause), { missing: cause.path });
     throw unstarted(cause.message, cause);
   }
   const environment = gitEnvironment(env);

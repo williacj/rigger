@@ -6,6 +6,7 @@ import { posix } from 'node:path';
 import { inspect } from 'node:util';
 
 import { ADAPTERS } from '../substrate/providers/adapters.mjs';
+import { KILL_BOUND, READ_TIMEOUT } from '../substrate/process.mjs';
 
 /**
  * The value the starter config carries where only the consumer can answer, by the key it sits
@@ -746,6 +747,16 @@ export const stepTimeout = (step) => step.timeout ?? 1_800_000;
  * table). This is the one place the number is held (ruling 3 P10 on #467).
  */
 export const roleTimeout = (role) => role.timeout ?? 14_400_000;
+
+/** N when the config declares none (the Engine settings extension point). */
+export const DEFAULT_CONCURRENCY = 3;
+
+/** The milliseconds launchd must allow for serial cleanup of concurrent cards' largest judge panel. */
+export function launchdExitTimeout(config) {
+  const panel = Math.max(1, ...Object.values(config.kinds).map((kind) =>
+    kind.judges.filter((entry) => judgeRole(entry) !== OWNER).length));
+  return (config.concurrency ?? DEFAULT_CONCURRENCY) * panel * (KILL_BOUND + READ_TIMEOUT);
+}
 
 /**
  * The rule that derives a card's workspace and line of work from its number: the config's
