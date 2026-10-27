@@ -212,7 +212,7 @@ the ordinary test suite; engine installation and supported engine hosts are sepa
 
 ```bash
 npx @williacj/rigger init          # write a starter config, fork the role templates
-npx @williacj/rigger doctor        # check Node, gh auth, agent CLI auth, config, board reachability, board columns, board priority field, board sharing, gate check required, admission
+npx @williacj/rigger doctor        # check Node, gh auth, agent CLI auth, config, board reachability, board columns, board priority field, board sharing, gate check required, admission, launchd job
 npx @williacj/rigger setup-board   # create the board columns, fields, and labels
 npx @williacj/rigger plan          # show what the next run would pull, and what it refuses
 npx @williacj/rigger once          # pull and finish one card, then exit

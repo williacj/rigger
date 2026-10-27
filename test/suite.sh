@@ -38,6 +38,7 @@ test/guard-probe-kill.test.mjs
 test/init.test.mjs
 test/judge-head-live.test.mjs
 test/kill-recorded.test.mjs
+test/launchd-host.test.mjs
 test/listing-stand-in.test.mjs
 test/maker-dispatch.test.mjs
 test/never-stop.test.mjs
@@ -303,6 +304,16 @@ printf '%s\n' "gh: refused under npm test, which reaches no real forge (#276): g
 exit 1
 REFUSING
 chmod 755 "$dir/gh"
+
+# A loaded-job read sees the documented not-loaded status, never the owner's launchd job.
+cat > "$dir/launchctl" <<'LAUNCHCTL'
+#!/bin/sh
+# ABOUTME: Answers the suite's loaded-job reads and refuses host mutations.
+if [ "${1-}" = print ]; then exit 113; fi
+printf '%s\n' "launchctl: refused under npm test: launchctl $*" >&2
+exit 1
+LAUNCHCTL
+chmod 755 "$dir/launchctl"
 
 # The directory holding the refusing `gh`, for the `D16` probe in test/forge-runners.test.mjs
 # alone: it asks the installed `gh` a question that reaches only its own local proxy.

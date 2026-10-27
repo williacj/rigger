@@ -1,7 +1,7 @@
 // ABOUTME: The `doctor` verb: what it asks the tool that owns each fact, what it reports one line
 // at a time, and the source tree it refuses to run against.
 
-import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, dirname, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -10,12 +10,13 @@ import { boardOf, readSide } from '../substrate/forge/read.mjs';
 import { COLUMNS, FORGE_TIMEOUT, readRunner } from '../substrate/forge/runners.mjs';
 import { EVENT_REFUSED, NOT_STARTED, runCommand } from '../substrate/process.mjs';
 import { ADAPTERS } from '../substrate/providers/adapters.mjs';
-import { validate } from '../config/validate.mjs';
+import { launchdExitTimeout, validate } from '../config/validate.mjs';
 import { CONFIG } from './init.mjs';
 import { STATE, recording } from './recording.mjs';
 import { admission } from '../scheduling/admission.mjs';
 import { repositoryReads } from '../substrate/forge/read.mjs';
 import { GATE_CONTEXT } from '../workflow/gate.mjs';
+import { loadedJob } from '../substrate/launchd.mjs';
 
 /**
  * Runs a command through L0's process adapter and hands back what it answered: its exit code as
@@ -696,16 +697,65 @@ export function admissionCheck({ target = process.cwd(), sink }) {
   return { name, ok: true, detail: read.state === 'open' ? 'admission is open' : read.closers.map(closerLine).join('; ') };
 }
 
+/** The label whose shipped template is bound to this value in tests. */
+const LAUNCHD_LABEL = 'com.williacj.rigger';
+
+/** The installed package containing a real program path, or null for a checkout or npx cache. */
+function installedPackage(program) {
+  for (let root = dirname(program); root !== dirname(root); root = dirname(root)) {
+    if (!root.endsWith(`${sep}${join('node_modules', '@williacj', 'rigger')}`)) continue;
+    const manifest = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+    return manifest.name === '@williacj/rigger' && !root.split(sep).includes('_npx') ? root : null;
+  }
+  return null;
+}
+
+/** The loaded job's program and timeout, compared with the target's config. */
+export async function launchdCheck({ target = process.cwd(), platform = process.platform, readLaunchdJob = loadedJob, emitter } = {}) {
+  if (platform !== 'darwin') return null;
+  const name = 'launchd job';
+  const answer = (ok, detail) => ({ name, ok, detail: printable(detail) });
+  let job;
+  try {
+    job = await readLaunchdJob(LAUNCHD_LABEL, { emitter });
+  } catch (error) {
+    if (error?.code === EVENT_REFUSED) throw error;
+    return answer(null, `could not read the loaded job: ${wentWrong(error)}`);
+  }
+  if (job === null) return null;
+  const faults = [];
+  const sharedTree = 'the program and target share a tree (R-SAFE-5)';
+  try {
+    const program = realpathSync.native(job.program);
+    if (!statSync(program).isFile()) faults.push('not a file');
+    const inside = sameTree(target, program);
+    if (inside) faults.push(sharedTree);
+    const root = installedPackage(program);
+    if (!inside && root && sameTree(target, root)) faults.push(sharedTree);
+    if (!root) faults.push('the package name or layout does not match node_modules/@williacj/rigger outside npx cache');
+  } catch (error) {
+    faults.push(wentWrong(error));
+  }
+  const valid = await configValidity({ target });
+  if (valid.ok !== true) return answer(faults.length ? false : null,
+    `${job.program}; ${[...faults, `the bound could not be computed: ${valid.detail}`].join('; ')}`);
+  const { config } = await consumerConfig(target);
+  const bound = launchdExitTimeout(config) / 1_000;
+  if (job.exitTimeout < bound) faults.push('exit timeout is below the bound');
+  return answer(faults.length === 0,
+    `${LAUNCHD_LABEL}; ${job.program}; exit timeout ${job.exitTimeout} s; bound ${bound} s${faults.length ? `; ${faults.join('; ')}` : ''}`);
+}
+
 /**
  * The checks `doctor` runs: the four its card lists, in that order, then the board checks, and
- * then the board-sharing check, the required gate check and the admission check. The forge
+ * then board sharing, the required gate, admission and the launchd job. The forge
  * checks read only once the config earns no refusals.
  *
  * Each takes the same options and reads the ones it needs, so this list is the whole of what
  * decides which checks there are and what order they are reported in. A check answers one line,
  * a list of lines, or null, which has nothing to report and prints no line.
  */
-export const CHECKS = [nodeVersion, ghAuth, agentAuth, configValidity, boardChecks, boardSharing, gateCheck, admissionCheck];
+export const CHECKS = [nodeVersion, ghAuth, agentAuth, configValidity, boardChecks, boardSharing, gateCheck, admissionCheck, launchdCheck];
 
 /**
  * What a verb named `verb` prints and exits with where `here` and the source tree this Rigger is
@@ -774,7 +824,7 @@ export const doctor = (options) => recording((opened) => checking(opened, option
 
 /** `doctor`'s work, recording through the sink `opened` holds once `settled` has named its state directory. */
 async function checking(opened, {
-  target = process.cwd(), packageRoot = PACKAGE, ask, checks = CHECKS,
+  target = process.cwd(), packageRoot = PACKAGE, ask, checks = CHECKS, platform = process.platform, readLaunchdJob,
 } = {}) {
   const { named, refusal } = await settled('doctor', opened, { target, packageRoot, ask });
   if (refusal) return refusal;
@@ -782,7 +832,7 @@ async function checking(opened, {
   const results = [];
   for (const check of checks) {
     try {
-      results.push(await check({ target: named, packageRoot, ask, emitter, sink: opened.sink }));
+      results.push(await check({ target: named, packageRoot, ask, emitter, sink: opened.sink, platform, readLaunchdJob }));
     } catch (failure) {
       // A kill the sink refused stops the verb before its next call, and is never a failed check
       // (the architect's ruling 3, §4, on #332): the failure's kind says so, not its message.

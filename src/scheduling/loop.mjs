@@ -17,9 +17,7 @@ import { dispatchedEscalation } from '../workflow/escalation.mjs';
 import { admission } from './admission.mjs';
 import { lane } from './lane.mjs';
 import { pullOrder } from './pull-order.mjs';
-
-/** N when the config declares none (`ARCHITECTURE.md`, the Engine settings row). */
-const DEFAULT_CONCURRENCY = 3;
+import { DEFAULT_CONCURRENCY } from '../config/validate.mjs';
 
 /**
  * What the loop holds over the board `config` names: N, the claims held
