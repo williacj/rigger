@@ -390,8 +390,10 @@ answered once it ends. The verb prints it and picks the exit status. While a clo
   hand it again.
 - The verb prints each hand-over as it prints a whole run with no clock trigger declared, and exits
   at none of them.
-- A `run` ended by a signal or at a `bootout` runs L0's exit cleanup, which sets the exit status
-  ("Failure model"). launchd then relaunches it.
+- A `run` ended by a signal while its launchd job stays loaded runs L0's exit cleanup, which sets
+  the exit status ("Failure model"). launchd relaunches it at the job's next `StartInterval`.
+- A `run` ended at a `bootout` runs the same exit cleanup. The `bootout` unloads the job, so nothing
+  relaunches `run` until the job is loaded again (`README.md`, "To unload the label").
 - A `run` ended on a hold's closer it could not save hands the verb what settled since the previous
   drain and was not yet handed, and the verb exits non-zero, as above.
 
@@ -458,8 +460,9 @@ asset is one per-user LaunchAgent template under `templates/launchd/`, and `D28`
   `RunAtLoad` is true. launchd never starts the job while a run is in progress, and starts it again
   one interval after it exits, with no firing queued (Q-a3). Without `RunAtLoad`, the first start
   waits one interval (Q-a1, Q-a2). While a clock trigger is declared, `run` does not end at drain,
-  so launchd's relaunch covers only an exit: by a signal, at a `bootout`, or on a failure that ends
-  `run`.
+  so launchd's relaunch covers only an exit while the job stays loaded: by a signal, or on a failure
+  that ends `run`. A `bootout` unloads the job, and launchd relaunches nothing after it until the job
+  is loaded again (`README.md`, "To unload the label").
 - **When it starts.** A LaunchAgent starts after the owner logs in, never before it (Q-l). Across
   a reboot, the job therefore starts at the owner's next login, not at boot (U1 Q5 on #740).
 - **The job's process groups.** launchd never signals a process in a group of its own, at a

@@ -1075,11 +1075,13 @@ reads the board and its cards' pull requests again. That this costs too many for
 judgment: the spike measured no forge calls.
 
 While a clock trigger is declared, `run` does not end at drain, as the owner ruled in M7-U2 item 1
-on #1009. Rule 2's relaunch then covers only an exit: by a signal, at a `bootout`, or on a failure
-that ends `run`. Neither rule changes. While `run` stays up and idle, it polls the board, reading
-the board and its cards' pull requests again at each poll. That is the cost the paragraph above
-cites against `KeepAlive`, on a timer the consumer declares. That the idle poll's forge cost is
-acceptable is a judgment of the same kind as S7's, and M7-24 on #1009 measures it.
+on #1009. Rule 2's relaunch then covers only an exit while the job stays loaded: by a signal, or on
+a failure that ends `run`. It promises no relaunch after a `bootout`, which unloads the job
+(`README.md`, "To unload the label"). Neither rule changes. While `run` stays up and idle, it
+polls the board, reading the board and its cards' pull requests again at each poll. That is the
+cost the paragraph above cites against `KeepAlive`, on a timer the consumer declares. That the
+idle poll's forge cost is acceptable is a judgment of the same kind as S7's, and M7-24 on #1009
+measures it.
 `ARCHITECTURE.md`'s "Triggers" holds the structure that carries the poll.
 
 This decision adds no requirement row.
