@@ -1,8 +1,11 @@
 // ABOUTME: The maker escalation note's syntax, its selection from issue comments, the escalation
 // answer L2 gives for the selected note, and L2's one function answering each escalation's
-// destination, with the routing comment's fixed first line it finds that comment by.
+// destination, the routing post and the escalation role's instruction.
 
 import { CATEGORIES, OWNER, judgeRole } from '../config/validate.mjs';
+
+import { acceptanceItems } from './form-check.mjs';
+import { evidenceDigest } from './marker.mjs';
 
 const WRITERS = ['admin', 'maintain', 'write'];
 const DISPATCH = /^d-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
@@ -23,7 +26,7 @@ export function escalationInstruction(card) {
   ].join('\n');
 }
 
-/** Puts L3's maker dispatch id in the answer the provider sees. */
+/** Puts L3's maker or escalation-role dispatch id in the answer the provider sees. */
 export function dispatchedEscalation(answer, dispatch) {
   return { ...answer, instruction: answer.instruction.replace(`dispatch: ${DISPATCH_SLOT}`, `dispatch: ${dispatch}`) };
 }
@@ -81,4 +84,28 @@ export function escalationDestination({ category, raiser, escalate, maker, judge
   const configured = escalate !== undefined && Object.hasOwn(escalate, category) ? escalate[category] : OWNER;
   if (configured === OWNER || configured === maker || judges.map(judgeRole).includes(configured)) return OWNER;
   return routed(comments) ? OWNER : configured;
+}
+
+/** The routing post's data, below its fixed first line. */
+export function routingComment({ destination, category, item, reason, pull, head }) {
+  return [ROUTING_LINE, '', `Role: ${destination}`, `Category: ${category}`, `Acceptance item: ${item}`, reason,
+    ...(pull === undefined ? [] : [`Pull request: #${pull}`, `Head: ${head}`]), ''].join('\n');
+}
+
+/** The role receives the acceptance and maker's reason, with no judge evidence. */
+export function escalationRoleInstruction(card, next) {
+  const acceptance = acceptanceItems(card.body ?? '');
+  const facts = { card: card.number, title: card.title, acceptance, category: next.category, item: next.item, reason: next.reason,
+    ...(next.pull === undefined ? {} : { pull: next.pull, head: next.head }) };
+  const instruction = [
+    `Rigger dispatched this session to handle an escalation for card #${card.number}.`,
+    "Only the card's author changes an acceptance.",
+    escalationInstruction(card), '',
+    `Card #${card.number}: ${card.title}`,
+    'Acceptance:', ...acceptance.map((item) => `- ${item}`), '',
+    `Maker's ${next.category} note, acceptance item ${next.item}:`, next.reason,
+    ...(next.pull === undefined ? [] : [`Pull request: #${next.pull}`, `Head: ${next.head}`]), '',
+  ].join('\n');
+  const evidence = '';
+  return { instruction, evidence, digest: evidenceDigest(evidence), facts };
 }
