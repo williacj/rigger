@@ -79,7 +79,7 @@ const consumerRepository = (settings = config()) => {
 function installAgentCli(dir) {
   const record = join(dir, 'agent-runs');
   const fence = '```';
-  writeFileSync(join(dir, 'claude'), `#!/bin/sh\n${EXIT_IF_WARMING}\nprintf '%s\\n' "$*" >> "\${0%/*}/agent-runs"\nif [ "\${RIGGER_TEST_ESCALATE:-}" = 1 ]; then\n  prompt=$(cat)\n  dispatch=$(printf '%s\\n' "$prompt" | awk '/^dispatch: d-/ { print $2; exit }')\n  body=$(printf '%s\\n' 'I cannot meet acceptance item 1.' '${fence}rigger-escalation' 'category: critical' 'item: 1' 'reason: The required condition failed.' "dispatch: $dispatch" '${fence}')\n  gh api repos/acme/widgets/issues/10/comments -X POST -f "body=$body" >/dev/null || exit $?\nfi\nexit 0\n`);
+  writeFileSync(join(dir, 'claude'), `#!/bin/sh\n${EXIT_IF_WARMING}\nprintf '%s\\n' "$*" >> "\${0%/*}/agent-runs"\nif [ "\${RIGGER_TEST_ESCALATE:-}" = 1 ]; then\n  prompt=$(cat)\n  dispatch=$(printf '%s\\n' "$prompt" | awk '/^dispatch: d-/ { print $2; exit }')\n  category=critical\n  if [ "\${RIGGER_TEST_ESCALATE_AMBIGUOUS:-}" = 1 ]; then category=ambiguous; fi\n  body=$(printf '%s\\n' 'I cannot meet acceptance item 1.' '${fence}rigger-escalation' "category: $category" 'item: 1' 'reason: The required condition failed.' "dispatch: $dispatch" '${fence}')\n  gh api repos/acme/widgets/issues/10/comments -X POST -f "body=$body" >/dev/null || exit $?\nfi\nexit 0\n`);
   chmodSync(join(dir, 'claude'), 0o755);
   warmed(join(dir, 'claude'));
   return { runs: () => (existsSync(record) ? readFileSync(record, 'utf8').split('\n').filter(Boolean) : []) };
@@ -148,6 +148,25 @@ test('once names a maker note escalation, its category and acceptance item ordin
   assert.match(ran.out, /card #10 escalated critical for acceptance item 1/);
   assert.deepEqual(await columnsOf(ran), { 10: 'Owner' });
   assert.equal(eventsOf(ran).find(({ event }) => event === 'review.escalate').raiser, 'maker');
+});
+
+// proves R-ESCALATE-22
+test('once sends a maker escalation to the owner where the config has no escalate key or none for its category, recording the owner as its destination', async () => {
+  const { escalate: _, ...withoutEscalate } = config();
+  for (const [what, settings] of [['no escalate key', withoutEscalate], ['its category\'s key absent', { ...withoutEscalate, escalate: { critical: 'owner' } }]]) {
+    const ran = once({ items: [card(10, 'Ready')] }, {
+      settings,
+      seed: { issues: [{ number: 10, title: 'Card 10', body: ADMITTED, labels: ['type:change'] }] },
+      extraEnv: { RIGGER_TEST_ESCALATE: '1', RIGGER_TEST_ESCALATE_AMBIGUOUS: '1' },
+    });
+    assert.equal(ran.code, 0, `${what}: ${ran.err}`);
+    assert.deepEqual(await columnsOf(ran), { 10: 'Owner' }, what);
+    const [event] = eventsOf(ran).filter(({ event: name }) => name === 'review.escalate');
+    assert.deepEqual({ category: event.category, raiser: event.raiser, destination: event.destination }, { category: 'ambiguous', raiser: 'maker', destination: 'owner' }, what);
+    const issue = JSON.parse(readFileSync(join(dirname(ran.fake.gh), 'board.json'), 'utf8')).repository.issues.find(({ number }) => number === 10);
+    assert.match(issue.comments.at(-1).body, /^Rigger escalates card #10 to the owner \(ambiguous\)\./, what);
+    assert.doesNotMatch(issue.comments.at(-1).body, /Not sent/, what);
+  }
 });
 
 test('once exits non-zero when the card\'s maker opened no pull request', async () => {
