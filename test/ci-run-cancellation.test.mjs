@@ -7,12 +7,12 @@ const ci = parseWorkflow(readFileSync(new URL('../.github/workflows/ci.yml', imp
 
 const readOnlyPermissions = permissions => permissions === undefined || permissions === 'read-all' || permissions !== null && typeof permissions === 'object' && !Array.isArray(permissions) && Object.values(permissions).every(value => value === 'read' || value === 'none');
 
-test('cancellation controller isolates Node 26 with read-only offline authority', () => {
+test('cancellation controller isolates Node 26 and grants Actions write only to its own job', () => {
   const job = ci.jobs.cancel_superseded;
   assert.ok(job, 'missing guarded cancellation controller');
   assert.deepEqual(job.needs, ['plan']);
   assert.equal(job['runs-on'], 'ubuntu-latest');
-  assert.deepEqual(job.permissions, { actions: 'read', 'pull-requests': 'read' });
+  assert.deepEqual(job.permissions, { actions: 'write', 'pull-requests': 'read' });
   assert.deepEqual(ci.permissions, { contents: 'read', 'pull-requests': 'read' });
   for (const [name, other] of Object.entries(ci.jobs)) if (name !== 'cancel_superseded') assert.ok(readOnlyPermissions(other.permissions), name);
   assert.ok(job.if.includes("github.event_name == 'pull_request'"));

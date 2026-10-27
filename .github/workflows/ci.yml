@@ -287,7 +287,7 @@ jobs:
     if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.plan.outputs.snapshot != '' }}
     runs-on: ubuntu-latest
     permissions:
-      actions: read
+      actions: write
       pull-requests: read
     env:
       CI_CANCEL: |
