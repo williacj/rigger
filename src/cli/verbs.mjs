@@ -23,7 +23,7 @@ export const VERBS = [
   ['init', 'write a starter config, fork the role templates'],
   [
     'doctor',
-    'check Node, gh auth, agent CLI auth, config, board reachability, board columns, board priority field, board sharing, gate check required, admission',
+    'check Node, gh auth, agent CLI auth, config, board reachability, board columns, board priority field, board sharing, gate check required, admission, launchd job',
   ],
   ['setup-board', 'create the board columns, fields, and labels'],
   ['plan', 'show what the next run would pull, and what it refuses'],
