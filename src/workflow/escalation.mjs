@@ -1,7 +1,8 @@
-// ABOUTME: The maker escalation note's syntax, its selection from issue comments, and the
-// escalation answer L2 gives for the selected note.
+// ABOUTME: The maker escalation note's syntax, its selection from issue comments, the escalation
+// answer L2 gives for the selected note, and L2's one function answering each escalation's
+// destination, with the routing comment's fixed first line it finds that comment by.
 
-import { CATEGORIES } from '../config/validate.mjs';
+import { CATEGORIES, OWNER, judgeRole } from '../config/validate.mjs';
 
 const WRITERS = ['admin', 'maintain', 'write'];
 const DISPATCH = /^d-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
@@ -59,4 +60,25 @@ export function makerEscalation(note, { line, open }) {
     action: 'escalate', raiser: 'maker', ...note, line,
     ...(open.length === 1 ? { pull: open[0].number, head: open[0].head } : {}),
   };
+}
+
+/** The routing comment's first line, by which L2 finds the comment on a card's issue, whoever wrote it. */
+export const ROUTING_LINE = 'Rigger sends this card\'s ambiguous escalation to a role.';
+
+/** Whether a comment in `comments`, the card's issue comments, opens with the routing comment's line. */
+const routed = (comments) => comments.some((comment) => String(comment.body).split(/\r?\n/)[0] === ROUTING_LINE);
+
+/**
+ * The one destination of an escalation (`ARCHITECTURE.md`, "Escalation"): the owner, or the role
+ * `escalate`, the configuration's destinations, names for its category. Only a maker's ambiguity
+ * goes to a role (`R-ESCALATE-15`), and a category given none goes to the owner (`R-ESCALATE-22`).
+ * It goes to the owner where `maker`, the card's kind's maker, or one of `judges`, its kind's
+ * judges, is that role (`R-ESCALATE-17`), and where `comments`, the card's issue comments, carry
+ * the routing comment (`R-ESCALATE-16`). A loop-raised escalation reads no comment.
+ */
+export function escalationDestination({ category, raiser, escalate, maker, judges = [], comments = [] }) {
+  if (raiser !== 'maker' || category !== 'ambiguous') return OWNER;
+  const configured = escalate !== undefined && Object.hasOwn(escalate, category) ? escalate[category] : OWNER;
+  if (configured === OWNER || configured === maker || judges.map(judgeRole).includes(configured)) return OWNER;
+  return routed(comments) ? OWNER : configured;
 }

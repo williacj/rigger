@@ -55,7 +55,7 @@ test('L2 settles a maker note under its dispatch id as an escalation even when t
 
   assert.deepEqual(answer, {
     action: 'escalate', raiser: 'maker', category: 'ambiguous', item: 1,
-    reason: 'The needed decision is missing.', dispatch: DISPATCH, line: 'rigger-12',
+    reason: 'The needed decision is missing.', dispatch: DISPATCH, line: 'rigger-12', destination: 'owner',
   });
   assert.deepEqual(fake.writes(), [], 'the settle leaves the card in Coding for L3 to escalate');
 });
@@ -214,6 +214,6 @@ test('a note in the instruction schema alone parses and reaches L2 under its mak
   const { card, l2 } = await world([posted(block)]);
   assert.deepEqual(await l2.settled(card, outcome(), { dispatch: DISPATCH }), {
     action: 'escalate', raiser: 'maker', category: 'critical', item: 1,
-    reason: 'A required condition failed.', dispatch: DISPATCH, line: 'rigger-12',
+    reason: 'A required condition failed.', dispatch: DISPATCH, line: 'rigger-12', destination: 'owner',
   });
 });
