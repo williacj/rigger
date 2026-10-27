@@ -1,7 +1,7 @@
 // ABOUTME: L3's loop: the pull trigger that reads the board, claims up to N cards in pull order
 // before any await, has L2 carry each claimed answer, and drives its attempts: L1 makes the workspace,
 // L3 dispatches each step L2 names one at a time, then the maker through L1, or attempts the card again as L2
-// says, and then the judges L2 names, under the one claim and slot; the run that fires that trigger
+// says, and then the judges or escalation role L2 names, under the one claim and slot; the run that fires that trigger
 // again each time a slot frees, excluding stopped cards and withheld judges for that run; the merge claims
 // it hands the repo lane; the drain trigger; and L3's events.
 
@@ -219,6 +219,8 @@ function released(release, claim, failure) {
  * and the repository it made from as `repository` (ruling 5, P4; the architect's rulings 19 and
  * 21 on #467). `workspaceTip` is L1's read of the branch's tip in that workspace after a continuing
  * maker exits 0. `clock` supplies the time and pause for a repeated forge read.
+ * `escalationDirectory(card, role, head)` makes an escalation role's detached directory before
+ * dispatch, and its retry makes both directories fresh under the same routing comment.
  * `judgeDirectory(card, role, head)` is L1's make of a judge's directory, injected, as
  * `judged` says (the architect's ruling 4's addendum on #467). `removeDirectories(card)` is L1's
  * shared guarded directory removal, injected. `state` is the state directory L1 records each dispatch's process
@@ -260,7 +262,7 @@ function released(release, claim, failure) {
  * One run also remembers stopped cards and cards whose
  * judges L2 withheld, leaving them out of its later pulls; a later invocation starts empty.
  */
-export function loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, removeDirectories, state, environment, ps, readTimeout, clock }) {
+export function loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, environment, ps, readTimeout, clock }) {
   let admissionRecord;
   const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, facts, l2, sink, kill, readAdmission: () => admissionRecord.read() });
   const { merge } = lane({ board, facts, l2, record, refused, removeDirectories, clock });
@@ -442,11 +444,42 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       }
       if (settled.status === 'fulfilled' && settled.value?.action === 'escalate') {
         const escalation = settled.value;
-        excluded?.add(card.number);
-        await l2.escalated(card, escalation);
-        const reached = { card: card.number, workspace: path, outcome, settled, ...escalation };
+        const reached = { card: card.number, workspace: path, outcome, settled };
         kept(reached);
-        return reached;
+        if (escalation.destination !== 'owner') {
+          let routed;
+          try {
+            routed = await l2.routed(card, escalation);
+          } catch (failure) {
+            excluded?.add(card.number);
+            throw failure;
+          }
+          if (routed.action === 'escalate') return { ...reached, ...await escalated(routed) };
+          let firstFailure;
+          for (;;) {
+            const [made] = await Promise.allSettled([new Promise((resolve) => resolve(escalationDirectory(card.number, routed.role.role, escalation.head)))]);
+            let roleId;
+            let roleOutcome = made;
+            if (made.status === 'fulfilled') {
+              const directory = made.value;
+              roleOutcome = await dispatchRole(card, routed.role, {
+                cwd: directory.main, directory: directory.path, reach: directory.head === undefined ? [] : [directory.head], scratch: directory.scratch, repository: directory.repository,
+              }, {}, (given, id) => { roleId = id; return dispatchedEscalation(given, id); });
+            }
+            const ended = await l2.roleSettled(card, escalation, roleOutcome, { dispatch: roleId, firstFailure });
+            if (ended?.action === 'again') {
+              firstFailure = roleOutcome;
+              continue;
+            }
+            const handled = { ...reached, action: 'handled', escalationRole: { role: routed.role.role, outcome: roleOutcome, settled: ended } };
+            kept(handled);
+            if (ended?.action === 'escalate') return { ...handled, ...await escalated(ended) };
+            return handled;
+          }
+        }
+        const ended = { ...reached, ...await escalated(escalation) };
+        kept(ended);
+        return ended;
       }
       if (settled.status === 'fulfilled') {
         answer = askAttempt([], { attempt: number, maker: outcome });

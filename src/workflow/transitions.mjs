@@ -2,16 +2,16 @@
 // dispatch's outcome, the move itself through the forge adapter's item-write side, and its event.
 
 import { worktreeTopic } from '../config/validate.mjs';
-import { FIXED_LABELS, OWNER } from '../config/validate.mjs';
-import { topicFor } from '../execution/workspace.mjs';
+import { FIXED_LABELS, roleTimeout } from '../config/validate.mjs';
+import { topicFor, SCRATCH_REFUSED, WORKSPACE_REFUSED } from '../execution/workspace.mjs';
 import { repositoryReads } from '../substrate/forge/read.mjs';
 import { itemWriteSide } from '../substrate/forge/item-write.mjs';
 import { repositoryWriteSide } from '../substrate/forge/repository-write.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
-import { escalationDestination, makerEscalation, makerNote } from './escalation.mjs';
+import { escalationDestination, makerEscalation, makerNote, routingComment, escalationRoleInstruction } from './escalation.mjs';
 import { acceptanceItems } from './form-check.mjs';
 import { pullRequestsFrom } from './facts.mjs';
-import { kindOf } from './next-action.mjs';
+import { kindOf, providerOf, tierOf } from './next-action.mjs';
 
 /**
  * Each change L2 makes to a card's column, by its cause, as the column keys it leaves and enters.
@@ -126,6 +126,21 @@ export function columnChanges({
     await change(card, cause);
   };
 
+  /** Records the destination and evidence before either escalation write. */
+  const recordEscalation = (card, next) => {
+    const evidence = {
+      category: next.category, reason: next.reason, raiser: next.raiser ?? 'loop',
+      ...(next.item === undefined ? {} : { item: next.item }),
+      ...Object.fromEntries(['pull', 'head', 'line', 'destination'].filter((key) => next[key] !== undefined).map((key) => [key, next[key]])),
+    };
+    try {
+      sink.emitter({ layer: 'L2', card: card.number, dispatch: next.dispatch ?? null }).emit('review.escalate', evidence);
+    } catch (refusal) {
+      throw new Error(`card #${card.number}'s escalation in category ${next.category} was refused: review.escalate could not be recorded: ${refusal.message}`, { cause: refusal });
+    }
+    return evidence;
+  };
+
   return {
     /**
      * L3 has claimed `card`, a board item as the forge adapter read it, on `next`, L2's answer for
@@ -192,18 +207,47 @@ export function columnChanges({
       }
     },
 
+    /** Posts the route before L3 makes any directory or dispatches the role. */
+    routed: async (card, next) => {
+      const name = next.destination;
+      const declared = config.roles[name];
+      const { provider, conflict } = providerOf(card, name, declared, 'escalation');
+      if (conflict !== undefined) return ownerEscalation(next, { category: 'ambiguous', reason: conflict });
+      const { tier, conflict: tierConflict } = tierOf(card, name, declared, 'escalation');
+      if (tierConflict !== undefined) return ownerEscalation(next, { category: 'ambiguous', reason: tierConflict });
+      recordEscalation(card, next);
+      try {
+        await repository.postIssueComment(card.number, routingComment(next));
+      } catch (refusal) {
+        const reason = `card #${card.number}'s routing comment was refused: ${refusal.message}`;
+        note(card, 'escalation.route-refused', { reason });
+        throw new Error(reason, { cause: refusal });
+      }
+      return { ...next, action: 'dispatch', role: { role: name, agent: declared.agent, provider, tier, timeout: roleTimeout(declared), ...escalationRoleInstruction(card, next) } };
+    },
+
+    /** Settles the escalation role against the forge under the card's existing claim. */
+    roleSettled: async (card, next, outcome, { dispatch, firstFailure } = {}) => {
+      if (outcome.status === 'rejected' && [WORKSPACE_REFUSED, SCRATCH_REFUSED].includes(outcome.reason?.code)) return ownerEscalation(next, { category: 'ambiguous', reason: outcome.reason.message, dispatch });
+      if (outcome.status === 'rejected' && outcome.reason?.code === NOT_STARTED) {
+        if (firstFailure === undefined) return { action: 'again' };
+        return ownerEscalation(next, { category: 'ambiguous', reason: `role ${next.destination} did not start twice: ${firstFailure.reason.message}; ${outcome.reason.message}`, dispatch });
+      }
+      if (outcome.status === 'rejected') return undefined;
+      const comments = await reads.readIssueComments(card.number);
+      const note = makerNote(comments, dispatch, acceptanceItems(card.body ?? '').length);
+      const facts = await pullRequestsFrom(card.number, next.line, reads, false);
+      const { pull: priorPull, head: priorHead, ...route } = next;
+      const current = { ...route, ...(facts.open.length === 1 ? { pull: facts.open[0].number, head: facts.open[0].head } : {}) };
+      if (note !== null) return ownerEscalation(current, note);
+      if (outcome.value.exit !== 0) return ownerEscalation(current, { category: 'ambiguous', reason: `role ${next.destination} exited ${outcome.value.exit}`, dispatch });
+      if (facts.open.length === 1) await change(card, 'returned');
+      return { action: 'handled', facts };
+    },
+
     /** Records the escalation, then comments on its issue, moves to Owner and labels it. */
     escalated: async (card, next) => {
-      const evidence = {
-        category: next.category, reason: next.reason, raiser: next.raiser ?? 'loop',
-        ...(next.item === undefined ? {} : { item: next.item }),
-        ...Object.fromEntries(['pull', 'head', 'line', 'destination'].filter((key) => next[key] !== undefined).map((key) => [key, next[key]])),
-      };
-      try {
-        sink.emitter({ layer: 'L2', card: card.number, dispatch: next.dispatch ?? null }).emit('review.escalate', evidence);
-      } catch (refusal) {
-        throw new Error(`card #${card.number}'s escalation in category ${next.category} was refused: review.escalate could not be recorded: ${refusal.message}`, { cause: refusal });
-      }
+      const evidence = recordEscalation(card, next);
       const writes = repositoryWrites ?? repositoryWriteSide({ repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0', card: card.number, dispatch: null }) });
       try {
         await writes.postIssueComment(card.number, escalationComment(card, evidence));
@@ -301,18 +345,19 @@ export function columnChanges({
   };
 }
 
-/**
- * The selected reason and only available work identifiers, as data on the card's issue. L3
- * dispatches no role, so an escalation whose `destination` is a role goes to the owner, and the
- * comment names the role it was not sent to (K96 on #740).
- */
-function escalationComment(card, { category, item, reason, pull, head, line, destination = OWNER }) {
+/** The selected reason and available work identifiers, as data on the card's issue. */
+function escalationComment(card, { category, item, reason, pull, head, line }) {
   const work = [
-    ...(destination === OWNER ? [] : [`Not sent to the role \`${destination}\`, which the configuration names for ${category}.`]),
     ...(item === undefined ? [] : [`Acceptance item: ${item}`]),
     ...(pull === undefined ? [] : [`Pull request: #${pull}`]),
     ...(head === undefined ? [] : [`Head: ${head}`]),
     ...(line === undefined ? [] : [`Line of work: ${line}`]),
   ];
   return `Rigger escalates card #${card.number} to the owner (${category}).\n\n${reason}${work.length === 0 ? '' : `\n\n${work.join('\n')}`}\n`;
+}
+
+/** A role's unresolved card always returns through L2's one destination function as loop-raised. */
+function ownerEscalation(next, fields) {
+  const answer = { ...next, ...fields, action: 'escalate', raiser: 'loop' };
+  return { ...answer, destination: escalationDestination(answer) };
 }

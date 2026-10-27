@@ -30,6 +30,9 @@ test/demo.test.mjs
 test/directory-census.test.mjs
 test/dispatch.test.mjs
 test/doctor-claude-live.test.mjs
+test/escalation-directory-host.test.mjs
+test/escalation-loop-host.test.mjs
+test/escalation-once-host.test.mjs
 test/event-sink.test.mjs
 test/exit-cleanup.test.mjs
 test/forge-runners.test.mjs
