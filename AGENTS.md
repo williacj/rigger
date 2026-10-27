@@ -206,9 +206,20 @@ says how one merges. The paths:
 - The live config: `rigger.config.mjs`.
 - The live Codex configuration: `.codex/config.toml`, and the directory `templates/codex/` with it.
 - The CLI entry point: `src/cli/rigger.mjs`, which the package manifest declares as its bin.
-- The gate's code: `src/workflow/gate.mjs`, `src/workflow/marker.mjs`, `scripts/gate-check.mjs`,
-  `src/substrate/forge/read.mjs`, through which the gate script reads every fact it rules on, and
-  `src/substrate/forge/runners.mjs`, through which every read the gate script makes is sent.
+- The gate's code: the import closure of `scripts/gate-check.mjs` and
+  `.github/scripts/self-hosting-check.mjs`, as .github/scripts/gate-closure.mjs measures it:
+  `src/cli/doctor.mjs`, `src/cli/init.mjs`, `src/cli/recording.mjs`, `src/config/validate.mjs`,
+  `src/execution/groups.mjs`, `src/execution/run.mjs`, `src/execution/workspace.mjs`,
+  `src/observation/sink.mjs`, `src/scheduling/admission.mjs`, `src/substrate/forge/assets.mjs`,
+  `src/substrate/forge/graphql.mjs`, `src/substrate/forge/read.mjs`,
+  `src/substrate/forge/runners.mjs`, `src/substrate/git-environment.mjs`,
+  `src/substrate/launchd.mjs`, `src/substrate/process.mjs`, `src/substrate/providers/adapters.mjs`,
+  `src/substrate/providers/claude.mjs`, `src/substrate/providers/codex.mjs`,
+  `src/substrate/standard-error.mjs`, `src/substrate/worktrees.mjs`, `src/workflow/escalation.mjs`,
+  `src/workflow/form-check.mjs`, `src/workflow/gate.mjs`, `src/workflow/judges.mjs`,
+  `src/workflow/marker.mjs`, `src/workflow/next-action.mjs`.
+- The closure guard: `.github/scripts/gate-closure.mjs` and `test/gate-closure.test.mjs`.
+  The executable the live checks run outside that closure: `src/substrate/process-table.sh`.
 - The coordinator's tooling, which launches its Codex makers and judges: `tools/coordinator/`.
 
 The gate's code is listed because it runs live (`D25` rule 6; `ARCHITECTURE.md`, "The gate").
