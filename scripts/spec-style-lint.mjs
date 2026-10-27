@@ -181,21 +181,41 @@ function hinting(sentence) {
 }
 
 /**
- * The lines, numbered from 1, that an indented line continues a list item on.
+ * The lines, numbered from 1, on which a list item's text goes on past its marker line.
  *
  * `paragraphs` trims indentation, so it reads such a line as prose, and the hints leave it alone
- * here instead: a list item is rule 4's answer, however many lines it wraps onto. An indented line
- * stays in the item across a blank line, and an unindented line ends the list.
+ * here instead: a list item is rule 4's answer, however many lines it runs onto. The extent is
+ * CommonMark's. With no blank line between, a line goes on with the item's text, indented or not.
+ * After a blank line, a line stays in an item only when indented to that item's content column,
+ * which its marker and the spaces after it set. A line indented less ends every item it falls short of.
  */
 function listContinuations(text) {
   const found = new Set();
   const raw = text.split('\n');
-  let inItem = false;
+  // The content column of each open item, outermost first.
+  let open = [];
+  let blank = true;
   unfenced(text).forEach((line, index) => {
-    if (/^(?:[-*+]|\d+[.)])\s/.test(line)) inItem = true;
-    else if (line === '') return;
-    else if (inItem && /^\s/.test(raw[index])) found.add(index + 1);
-    else inItem = false;
+    if (line === '') {
+      blank = true;
+      return;
+    }
+    const indent = raw[index].match(/^\s*/)[0].length;
+    const marker = line.match(/^(?:[-*+]|\d+[.)])\s+/);
+    const after = blank;
+    blank = false;
+    if (marker) {
+      open = open.filter((column) => column <= indent);
+      open.push(indent + marker[0].length);
+      return;
+    }
+    if (open.length === 0) return;
+    // A heading, a table row or a block quote opens no paragraph, so only its indent matters.
+    if (!after && !/^[|#>]/.test(line)) found.add(index + 1);
+    else if (indent >= open[0]) {
+      open = open.filter((column) => column <= indent);
+      if (!/^[|#>]/.test(line)) found.add(index + 1);
+    } else open = [];
   });
   return found;
 }

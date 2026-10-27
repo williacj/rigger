@@ -525,3 +525,33 @@ test('a list item wrapping onto an indented next line that holds the `then`s giv
   // The same line under a blank line and no indent is prose after the list, and is hinted.
   assert.deepEqual(hinted('- The engine pulls.\n\nThen it dispatches, then judges, then merges.\n'), [{ rule: 4, line: 3 }]);
 });
+
+// A list item's extent follows CommonMark's list-item rules: an item holds a lazy continuation
+// line, and a line after a blank stays in the item only when indented to the item's content.
+
+test('judge probe: lazy continuation of a list item gives no rule 4 hint', () => {
+  // The second line has no indent, and no blank line comes before it, so it continues the item.
+  const item = '- The engine pulls,\nthen dispatches, then judges, then merges.\n';
+  assert.deepEqual(hints(item), []);
+});
+
+test('prose after a blank line, indented less than the item content, is hinted', () => {
+  // One space falls short of the two columns `- ` gives the item, so the paragraph is outside it.
+  assert.deepEqual(hinted('- The engine pulls.\n\n Then it dispatches, then judges, then merges.\n'), [{ rule: 4, line: 3 }]);
+  // `10. ` gives four columns, so three spaces fall short too.
+  assert.deepEqual(hinted('10. The engine pulls.\n\n   Then it dispatches, then judges, then merges.\n'), [{ rule: 4, line: 3 }]);
+});
+
+test('a paragraph after a blank line, indented to the item content, continues the item', () => {
+  assert.deepEqual(hints('- The engine pulls.\n\n  Then it dispatches, then judges, then merges.\n'), []);
+  assert.deepEqual(hints('10. The engine pulls.\n\n    Then it dispatches, then judges, then merges.\n'), []);
+});
+
+test('a nested list item holds its lazy line, and prose under the list after a blank is hinted', () => {
+  const nested = '- The engine runs a card.\n  - It pulls,\nthen dispatches, then judges, then merges.\n';
+  assert.deepEqual(hints(nested), []);
+  // Indented to the outer item's content, the paragraph after a blank stays in the outer item.
+  assert.deepEqual(hints('- The engine runs a card.\n  - It pulls.\n\n  Then it dispatches, then judges, then merges.\n'), []);
+  // Indented one space, it is under neither item.
+  assert.deepEqual(hinted('- The engine runs a card.\n  - It pulls.\n\n Then it dispatches, then judges, then merges.\n'), [{ rule: 4, line: 4 }]);
+});
