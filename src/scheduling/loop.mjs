@@ -673,6 +673,9 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     let failure = null;
     let removalFailure = null;
     let reached;
+    // Whether L2 held the card under this claim. A held card needs no memory, because its hold
+    // closed admission; removing the closer is what lets a later pull claim it again.
+    let held = false;
     try {
       await start(claim);
       claimed = true;
@@ -711,14 +714,15 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       }
     } catch (thrown) {
       failure = thrown;
+      held = thrown.card === card.number && thrown.decision === 'hold';
       if (['move', 'return', 'escalate'].includes(next.action)) excluded?.add(card.number);
-      // A held card needs no memory, because its hold closed admission; a stopped one does.
-      if (thrown.card === card.number && Array.isArray(thrown.attemptFailures) && thrown.decision !== 'hold') excluded?.add(card.number);
+      // A stopped card is remembered; a held one is not.
+      if (thrown.card === card.number && Array.isArray(thrown.attemptFailures) && !held) excluded?.add(card.number);
     }
     if (removalFailure !== null) {
       failure = failure === null ? removalFailure : new AggregateError([removalFailure, failure], `card #${card.number}'s directory removal and following action failed`);
     }
-    if (next.action === 'continue' && !(reached?.settled?.status === 'fulfilled' && reached.settled.value !== undefined)) {
+    if (next.action === 'continue' && !held && !(reached?.settled?.status === 'fulfilled' && reached.settled.value !== undefined)) {
       excluded?.add(card.number);
     }
     failure = released(release, claim, failure);

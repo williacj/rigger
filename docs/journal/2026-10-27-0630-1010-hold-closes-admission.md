@@ -39,3 +39,13 @@ The verb tests start the bin, so they sit in `test/hold-close-verbs.test.mjs` on
 (K97). The L3 tests build `loop` by hand with no process: a provider no adapter is held for makes a maker
 or a judge that never started without a spawn.
 A leftover temporary file comes from a module the bin preloads, which refuses only that unlink.
+
+## Round 2: a held continuation
+
+The reviewer found a second memory of a held card (1014#6436225316). `work` also remembers a
+continuing card whose settle did not succeed, and a continuation held before its maker reaches no
+settle. So the card stayed out of the run after its closer was removed. `work` now notes that L2
+held the card under its claim, and neither that memory nor the stop memory takes a held card. A
+card pulled to remove its directories carries the same continuation, and it is tested too. A card
+pulled for its judges alone is remembered only for an escalation or a withheld judge, never a hold.
+Its test fails where that memory is made to take a hold.

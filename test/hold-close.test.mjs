@@ -166,24 +166,51 @@ const stoppingOnWorkspace = (card, outcomes, options = {}) => {
     : { action: 'stop', card: card.number, failure: { ...SECOND, reason: 'another way' } };
 };
 
-// proves R-FAIL-8
-test('given a hold in loop().run() whose closer is removed before that run\'s next pull, that pull claims the held card', async () => {
+/**
+ * The cards claimed in a `loop().run()` whose first pull's facts call answers `first`, L2's next
+ * action for card 1, which then holds, for a workspace not made twice where `first` names no hold of
+ * its own, and whose second pull's facts call removes every closer before L3 reads admission. Later
+ * pulls answer a dispatch that stops, and after the third none. The run fails as `held` validates.
+ */
+async function claimedAfterRemoval(first, held = heldCard(1)) {
   let pulls = 0;
   const handed = handles({
-    // The second pull's facts call removes every closer before L3 reads admission.
     facts: async () => {
       pulls += 1;
       if (pulls === 2) removeClosers(handed.state);
       // Pulls after the third answer no card, so a run that never stops claiming still ends.
-      return () => (pulls <= 3 ? DISPATCH : { action: 'none' });
+      return pulls === 1 ? first : () => (pulls <= 3 ? DISPATCH : { action: 'none' });
     },
     decide: (...args) => (pulls === 1 ? holdingOnWorkspace : stoppingOnWorkspace)(...args),
   });
   handed.config = { ...config, concurrency: 1 };
 
-  await assert.rejects(loop(handed).run());
+  await assert.rejects(loop(handed).run(), held);
 
-  assert.deepEqual(pulled(handed.state), [1, 1]);
+  return pulled(handed.state);
+}
+
+// proves R-FAIL-8
+test('given a hold in loop().run() whose closer is removed before that run\'s next pull, that pull claims the held card', async () => {
+  assert.deepEqual(await claimedAfterRemoval(() => DISPATCH), [1, 1]);
+});
+
+/** L2's answer at the pull for a card whose maker continues on its open pull request. */
+const CONTINUE = { action: 'continue', kind: 'change', pull: 101, head: 'b'.repeat(40) };
+
+// proves R-FAIL-8
+test('given a continuing card held in loop().run() whose closer is removed before that run\'s next pull, that pull claims the held card', async () => {
+  assert.deepEqual(await claimedAfterRemoval(() => CONTINUE), [1, 1]);
+});
+
+// proves R-FAIL-8
+test('given a card whose directories are removed and whose maker then continues, held in loop().run() with its closer removed before the next pull, that pull claims the held card', async () => {
+  assert.deepEqual(await claimedAfterRemoval(() => ({ action: 'remove', kind: 'change', following: CONTINUE })), [1, 1]);
+});
+
+// proves R-FAIL-8
+test('given a card pulled for its judges alone, held in loop().run() with its closer removed before the next pull, that pull claims the held card', async () => {
+  assert.deepEqual(await claimedAfterRemoval(holdingJudges(['reviewer'], ['reviewer']), heldJudge(1, 'reviewer')), [1, 1]);
 });
 
 // proves R-FAIL-8
