@@ -1,5 +1,5 @@
 // ABOUTME: Tests the CLI surface against the README's "Install and usage" block, which is the
-// CLI spec: which verbs `--help` lists, in what order, and what an unlanded verb does.
+// CLI spec: which verbs `--help` lists, in what order, and that every one of them has landed.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -159,34 +159,25 @@ test("the readers take a verb's description from its own line, whatever that lin
   assert.equal(helpSummary(help(summaries), 'alpha'), 'alpha does something else');
 });
 
-test('a verb whose milestone has not landed says so and exits non-zero', () => {
-  // Every verb but the landed ones takes this path. The defect it catches is a verb that exits
-  // zero, or prints nothing, and so reads to whoever called it as work that was done.
+test('every landed verb is one the README lists, and every verb the README lists has landed', () => {
+  // The defect this catches is the README's verb list and the CLI's drifting apart: a landed verb
+  // the contract does not name, or a listed verb the CLI has nothing to run for.
   //
-  // A landed verb is excluded by name, and the names are read out of the CLI rather than kept
-  // here, so a verb landing moves this test with it. It is excluded at all because running one
-  // would run it against this checkout: `rigger()` above inherits this process's directory, and
-  // `init` is a verb that writes (`R-SAFE-5`). `test/init.test.mjs` runs it, from a copy of the
-  // package against a scratch repository.
+  // The names are read out of the CLI rather than kept here, and no verb is run, because running
+  // one would run it against this checkout: `rigger()` above inherits this process's directory
+  // (`R-SAFE-5`).
   const listed = usageVerbs(read('README.md'), manifest.name);
   for (const verb of Object.keys(LANDED)) {
     assert.ok(listed.includes(verb), `\`${verb}\` has landed, and the README's block lists no such verb`);
   }
   const unlanded = listed.filter((verb) => !Object.hasOwn(LANDED, verb));
-  assert.ok(unlanded.length > 0, 'every verb has landed, so this test holds nothing');
-  for (const verb of unlanded) {
-    const ran = rigger(verb);
-
-    assert.notEqual(ran.code, 0, `\`rigger ${verb}\` exited 0 without doing anything`);
-    assert.match(ran.err, /not yet implemented/);
-    assert.match(ran.err, new RegExp(verb));
-  }
+  assert.deepEqual(unlanded, [], 'the README lists verbs that have not landed');
 });
 
 test('an argument that is no verb is refused rather than answered as a future verb', () => {
   // The verbs are the whole surface, so anything else has no milestone to wait for. The defect
-  // this catches is the branch above answering for everything: a typo told that it is coming in
-  // a later milestone is told something untrue.
+  // this catches is a word that is no verb answered as one still to come: a typo told that it is
+  // coming in a later milestone is told something untrue.
   const ran = rigger('banana');
 
   assert.notEqual(ran.code, 0);
