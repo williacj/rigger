@@ -31,7 +31,7 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
 
 | Layer | Decides | Never decides | Emits, in part | Changed by | Lives in |
 |---|---|---|---|---|---|
-| **L0 Substrate** | How to talk to one external system: the forge (board, issues, PRs, CI through `gh`), git, the OS process model, each agent CLI. Retries, timeouts, containment mechanics, and which of its own git operations on one repository run one at a time. | Anything about cards or work. L0 does not know what a card is. | Call latency and failure, process spawn and exit, survivors killed by name and command line | Engineer cards, within the L0 budget | `src/substrate/` |
+| **L0 Substrate** | How to talk to one external system: the forge (board, issues, PRs, CI through `gh`), git, the OS process model, each agent CLI. Retries, timeouts, containment mechanics, and which of its own git operations on one repository run one at a time. | Anything about cards or work. L0 does not know what a card is. | Each forge and git call's latency and outcome, process spawn and exit, survivors killed by name and command line | Engineer cards, within the L0 budget | `src/substrate/` |
 | **L1 Execution** | How to run one dispatch in one workspace: isolation, lifetime, result as exit code plus captured output. Making the workspace an attempt at a card runs in. | Whether to run it, or what the result means | Dispatch start, end, duration, exit, timeout, and the workspace each runs in. A workspace made or removed. | Engineer cards, within the L1 budget | `src/execution/` |
 | **L2 Workflow** | The next action for a card from its stage and observable facts, including which kind selects a ready card and the provider each role's dispatch runs on, and whether its acceptance passes the form check. Every change to a card's column; the review loop; the gate rule, and whether a card's pull request merges; escalation routing; whether a failure is the work's, or the environment's, card-local or `out`. Which provisioning steps a card runs, whether a step's failure stops its attempt, and whether a failed attempt is tried again. | Which card is next; what good means | Card transitions with cause, verdicts, loop rounds, escalations by category, provisioning failures and attempts, by class | Spec rows, ratified by the owner | `src/workflow/` |
 | **L3 Scheduling** | Pull order by priority; concurrency; claims taken synchronously before any await; the repo lane, which runs the merges L2 decides one at a time. Admission, which is whether any card may be pulled; the hold that closes admission; the three trigger kinds. The halt on starts while the sink refuses an event, which is not the admission hold. When Rigger reads the forge again for a write it has not yet shown, and when it stops. | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput, admission holds and their reason | Spec rows and config | `src/scheduling/` |
@@ -1197,12 +1197,119 @@ A derivation that groups by `card` or `dispatch` treats a null field and an abse
 derivation below reads the stream in line order. Every append is synchronous, so line order is the
 order of events within a run.
 
+### L0's call events
+
+L0 records one `call.end` as each forge call and each git call ends. A forge call is a `gh`
+command, and a git call is a `git` command, each run through L0's process adapter. Two paths emit
+it, and no other:
+
+- **Forge:** `src/substrate/forge/runners.mjs`'s `throughL0`, the one spawn all four runners send
+  through.
+- **Git:** `src/substrate/worktrees.mjs`'s `call`, the one path every git call in that module takes.
+  `answer` and `fetched` reach it through `call`, so neither emits one of its own.
+
+The emitting layer gives `call.end` these fields:
+
+| Field | What it holds | Absent from the line |
+|---|---|---|
+| `system` | `forge` or `git` | Never |
+| `side` | The runner that sent a forge call: `read`, `schema-write`, `item-write` or `repository-write` | On a git call |
+| `operation` | A git call's subcommand, its first argument after any `-C` and the path that names | On a forge call |
+| `ms` | The milliseconds from L0 handing the command to the process adapter until the call settles or rejects | Never |
+| `outcome` | How the call ended: `ok`, `failed` or `timed-out` | Never |
+
+The outcome takes three values, and two of them count as a fault:
+
+- **`ok`**: the command exited 0. It is no fault.
+- **`failed`**: the command exited non-zero and its timeout did not end it, or it never started, as
+  where it is not on `PATH`. It is a fault, whatever its caller makes of the exit code.
+- **`timed-out`**: L0 killed the call's group at its timeout. It is a fault.
+
+How a call ends decides what L0 records and what the call's caller is handed:
+
+| How the call ends | What L0 records | What the caller is handed |
+|---|---|---|
+| Exit 0, a non-zero exit, or killed at its timeout, and the sink accepts | One `call.end`, with the outcome above | The call's result, as the process adapter gives it |
+| The command never started, and the sink accepts | One `call.end`, outcome `failed` | The process adapter's `NOT_STARTED` failure |
+| The sink refused one of the process adapter's own events, as a survivor or group kill, and the call rejects with `EVENT_REFUSED` | One `call.end`, with the outcome the failure's result gives | That `EVENT_REFUSED` failure. Where the sink also refuses the `call.end`, it is among the failure's unrecorded events |
+| The sink refuses the `call.end` | Nothing: the event is unrecorded | An `EVENT_REFUSED` failure naming the `call.end` as unrecorded and carrying the call's result. Where the command never started, its `NOT_STARTED` failure is the cause |
+| The sink holds the event, before the verb names the state directory | One `call.end`, held | As where the sink accepts. A held event is never refused. It is written once the verb names the directory, or to standard error where the verb ends without naming one |
+| L0's exit cleanup ended it, and the process ends | Nothing | Nothing: the process ends before the call settles |
+| L0's exit cleanup ended it, and a signal listener of the caller keeps the process running | One `call.end`, with the outcome the call's result gives. The cleanup's kill gives a non-zero exit, so a call it killed records `failed` | The call's result, as the process adapter gives it |
+
+A later start never ends a forge or git call, because L1 records only a dispatch's group for a
+start to end ("Failure model"). Exit cleanup records its own kills and then ends the sink. A call
+it ended records no `call.end` where the process then ends, so the fault rate's denominator leaves
+that call out.
+
+A caller's signal listener can keep the process running past the cleanup, and the call then
+settles on its result. `throughL0` or `call` records its `call.end` after the sink's end. The sink
+appends it where the verb named the state directory, and writes it to standard error where it did
+not.
+
+Each try of a fetch `fetched` makes is one git call, so each records one `call.end`. A try that
+lost the race for the remote-tracking ref records `failed`, and counts as a fault. Two cases follow
+from such a try:
+
+- **Another try follows:** L0 records `fetch.retried` after that try's `call.end`, as it does at
+  present.
+- **It was try `FETCH_TRIES`:** L0 records no `fetch.retried`, and `fetched` rejects naming the ref
+  and the count of tries.
+
+Both events are kept, and neither derives from the other. No derivation reads `fetch.retried`.
+
+Every forge call records one, whoever makes it. That covers each engine verb, `rigger doctor`'s
+checks, and the gate script. `scripts/gate-check.mjs` takes the gate's sink from `recording` and
+never names a state directory. So that sink holds every `call.end`, never refuses one, and writes
+them to standard error when it ends. The gate's standard output and exit status carry its ruling,
+so a call event never changes the gate's ruling.
+
+Three kinds of call record no `call.end`:
+
+- **A git call through `src/cli/doctor.mjs`'s `asked`.** That is an engine verb's guard (`settled`,
+  through `sourceTreeGuard`), `once`'s read of the main working tree, `init`'s git calls, and
+  `rigger doctor`'s git checks. Each is a precondition the verb checks before it takes any card. A
+  failure refuses the verb with its reason, so it interrupts no work and reaches no L2 event.
+  Emitting one would move `asked` into `src/substrate/`, since no layer writes another layer's
+  events.
+- **A dispatch, or a provisioning step, run through the process adapter.** L1's `dispatch.end`
+  already times each dispatch and step.
+- **An agent CLI's probe outside a dispatch**, as the Codex adapter's skill probe. Its failure
+  already reaches L2 as `judge.withheld` or `attempt.failed`, whose reason names the probe. So the
+  fault rate gains no third system, and the first reversal below excludes the probe by name.
+
+Any other end of a call on the two emitting paths takes the table's row for the ending it shares. A
+rejection the table names nowhere, as the process adapter's refusal of a call given no emitter, is
+the caller's defect and records nothing. A `gh` or `git` command run on any path other than
+`throughL0`, `call` or `asked` records no `call.end` until a delta here places it.
+
+Any one of these would reverse the placement:
+
+- "An `environment`-class failure in L2's events with no matching L0 call event" (the r1 review on
+  #1009, S5). That is an L2 failure whose reason names a forge or git call, with no fault
+  `call.end` of that system before it under the same `run` and `card`. A failure naming the Codex
+  skill probe is excluded by name.
+- A host fault in a guard's git call that the owner needs counted, shown by verbs refused that way.
+  The fix would move those calls behind an L0 path that emits a `call.end`.
+- The gate naming a state directory. Its sink could then refuse a `call.end`, and the gate would
+  need a ruling on what that refusal does to its ruling.
+- A git fault rate whose faults are answers rather than host faults. Two kinds show it: a fetch try
+  a `fetch.retried` follows, and a non-zero exit its caller reads as an answer, as `git ls-remote
+  --exit-code` gives for a missing ref. The fix would leave those out of the numerator.
+
 ### What `report` derives
 
 `report` derives each signal below from the events and fields named for it, and from no others.
 A signal **per run** reads the events one `run` recorded. A signal **across the stream** reads
 every event in the stream, whatever its run. An event no derivation reads keeps the fields the
 card that adds it gives it, and this section names it nowhere.
+
+L0's section:
+
+- **Substrate fault rate**, per system, per run and across the stream. Its denominator is the L0
+  `call.end` events whose `system` is that system, and it excludes none. Its numerator is those of
+  the denominator's events whose `outcome` is `failed` or `timed-out`, and it excludes `ok`. It
+  reads L0's `call.end` by `run`, `system` and `outcome`, and no other event or field.
 
 L1's section:
 
@@ -1311,13 +1418,11 @@ The fix would then be a field on L1's `dispatch.end`, recorded by its exit-clean
 
 ### What `report` shows
 
-`report` shows one section per landed layer, in layer order: L1, L2, L3 and L4. A **landed layer**
+`report` shows one section per landed layer, in layer order: L0, L1, L2, L3 and L4. A **landed layer**
 is one this section gives a signal to. Each section shows the signals named for it above, per run
 and across the stream as each signal's span says. The marker check follows every layer section.
 
-L0's substrate fault rate needs L0's call events, which this contract does not yet name, so L0 has
-no section until a delta here places that signal. `report` shows no L6 section until L6 emits
-events. No other signal is derived.
+`report` shows no L6 section until L6 emits events. No other signal is derived.
 
 ### The shape, abbreviated
 
