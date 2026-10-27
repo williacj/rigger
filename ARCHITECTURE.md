@@ -541,9 +541,10 @@ work is a card in this order:
    issue numbered above `k` and up to `<j>`, as the `hold-<id>-after-<k>.json` bullet of "Failure
    model" reads them: by number, in any state, passing over a number that names no issue. L2 reads
    a mark only on an issue written by an account with write access to the repository.
-2. Where one carries that trigger's and that occurrence's mark, L3 records the outcome naming that
-   issue. L2 places the card in Ready where the board holds it in no column, and otherwise leaves it
-   where it is.
+2. Where one carries that trigger's and that occurrence's mark, L2 places the card in Ready where
+   the issue is open and the board holds it in no column. It leaves the card where it is otherwise,
+   a closed card included. L3 then records the outcome naming that issue. Where the placing fails,
+   L3 records no outcome, and the firing stays pending.
 3. Where none does, L2 opens the card, as step 3 above, and L3 records the outcome, as step 4
    above. Where the start found the trigger undeclared or re-armed, L2 opens nothing, and L3
    records the outcome as `trigger.outcome` `{ name, occurrence, outcome: 'abandoned' }`.
@@ -589,6 +590,7 @@ its row says otherwise.
 | a `report` firing pending at a start | its outcome is recorded as abandoned, and the job does not run again |
 | a firing pending, whose trigger the start found undeclared or re-armed | its outcome names the occurrence's card where L2 finds one; otherwise L2 opens nothing and the outcome is abandoned; a `report` firing's is abandoned |
 | the occurrence's card, found while settling, on the board in a column other than Ready, or closed | its outcome is recorded; the card is not moved |
+| the occurrence's card, found while settling, open and in no column, and placing it in Ready fails | L3 records no outcome, and the firing stays pending; `run` hands the failure to the verb, and the next trigger settles it |
 | an issue numbered above `k` carrying the mark, written by an account without write access | not read as the occurrence's card |
 | the read of `k` fails or times out | L3 records no start, and the occurrence stays due; `run` hands the failure to the verb, and L3 fires the trigger again `poll` milliseconds later |
 | a read of `<j>`, or of an issue numbered above `k`, fails or times out while settling | no card is opened and no outcome is recorded; the firing stays pending, and L2 reads again at the next trigger, as for a hold's `after-<k>` closer |
