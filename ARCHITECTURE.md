@@ -1010,7 +1010,9 @@ answers that judge's next dispatch for the card thus:
 | never starts the same way, as `R-FAIL-8`'s table counts it | `hold` in place of `stop`, and L3 closes admission |
 | never starts, for another cause that table classes host | `stop`, and admission stays open, as that table has it; L3 keeps the card out of later pulls |
 | meets its directory refused under `R-WORK-20`, or its scratch directory refused under `R-WORK-26` | L2 escalates the card under `R-ESCALATE-12`, never answering `hold`, as that table has it |
-| meets its directory or scratch directory not made, or a required step in its `head` that failed or never started | that failure's own row of `R-FAIL-8`'s table governs: L2 withholds the judge, and the first failure counts for nothing |
+| meets its directory not made | that failure's own row of `R-FAIL-8`'s table governs: L2 withholds the judge, and the first failure counts for nothing |
+| meets its scratch directory not made | that failure's own row of `R-FAIL-8`'s table governs: L2 withholds the judge, and the first failure counts for nothing |
+| meets a required step in its `head` that failed or never started | that failure's own row of `R-FAIL-8`'s table governs: L2 withholds the judge, and the first failure counts for nothing |
 | starts | the first failure counts for nothing, and L2 answers the dispatch's result as any judge's |
 
 A judge's directory or scratch directory not made, on its first dispatch or its next, keeps the
