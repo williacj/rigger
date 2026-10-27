@@ -5,6 +5,7 @@
 import { CATEGORIES, OWNER, judgeRole } from '../config/validate.mjs';
 
 import { acceptanceItems } from './form-check.mjs';
+import { evidenceDigest } from './marker.mjs';
 
 const WRITERS = ['admin', 'maintain', 'write'];
 const DISPATCH = /^d-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
@@ -105,5 +106,6 @@ export function escalationRoleInstruction(card, next) {
     `Maker's ${next.category} note, acceptance item ${next.item}:`, next.reason,
     ...(next.pull === undefined ? [] : [`Pull request: #${next.pull}`, `Head: ${next.head}`]), '',
   ].join('\n');
-  return { instruction, evidence: '', facts };
+  const evidence = '';
+  return { instruction, evidence, digest: evidenceDigest(evidence), facts };
 }

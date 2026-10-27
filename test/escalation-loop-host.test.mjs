@@ -253,6 +253,7 @@ test('a retried role handles its open pull and records only card acceptance reas
   assert.equal((await here.fake.operations.readItems())[0].column, here.settings.board.columns.review);
   const start = here.events().find((event) => event.event === 'dispatch.start' && event.facts?.pull === 77);
   assert.ok(start, 'the role dispatch must identify its open work');
+  assert.equal(start.digest, 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', 'Telemetry: the role start must record the SHA-256 of its empty evidence');
   assert.equal(start.facts.head, HEAD);
   assert.deepEqual(start.facts.acceptance, ['The widget prints "ready".', 'A second press stops it.']);
   assert.doesNotMatch(JSON.stringify(start.facts), /PRIVATE JUDGE VERDICT|verdict|marker|comments/);
