@@ -17,7 +17,7 @@ import { factsCall } from '../workflow/facts.mjs';
 import { failed, nextAction } from '../workflow/next-action.mjs';
 import { REVIEW_WITHHELD, columnChanges } from '../workflow/transitions.mjs';
 import { CONFIG } from './init.mjs';
-import { PACKAGE, consumerConfig, gitAnswer, real, sameTree, settled, within } from './doctor.mjs';
+import { PACKAGE, closedBy, consumerConfig, gitAnswer, real, sameTree, settled, within } from './doctor.mjs';
 import { refusalLine } from './plan.mjs';
 import { STATE, recording } from './recording.mjs';
 
@@ -258,7 +258,7 @@ async function claiming(verb, limit, opened, {
       const words = {
         move: `moved to ${each.to}`,
         return: `returned acceptance on pull request #${each.pull}`,
-        escalate: `escalated ${each.category}`,
+        escalate: `escalated ${each.category}${each.item === undefined ? '' : ` for acceptance item ${each.item}`}`,
         refuse: `refused: ${each.reason}`,
       };
       if (each.action === 'merge') return { ...each, ...mergeOutcome(each), judgesPassed: true, judgeLines: [] };
@@ -343,7 +343,7 @@ async function claiming(verb, limit, opened, {
   const refused = refusals.map(refusalLine);
   if (reached.admission?.state === 'closed') {
     return {
-      text: [...reached.admission.closers.map(({ kind, reason, time }) => `rigger ${verb}: admission is closed by ${kind}: ${reason}; time ${time}`), ...refused].join('\n'),
+      text: [...reached.admission.closers.map((closer) => `rigger ${verb}: ${closedBy(closer)}`), ...refused].join('\n'),
       code: 0,
     };
   }

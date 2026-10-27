@@ -117,8 +117,8 @@ test('L2\'s maker prompt tells the maker never to switch its workspace off its l
   assert.match(prompt, /never add a worktree inside (the|this|your) workspace/i);
 });
 
-test('L2\'s maker prompt tells the maker to exit non-zero, naming why, where it cannot finish the work', () => {
-  assert.match(promptOf(card(48)), /where you cannot finish the work, exit non-zero, naming why/i);
+test('L2\'s maker prompt tells the maker to write an escalation note where it cannot meet an acceptance item', () => {
+  assert.match(promptOf(card(48)), /where you cannot meet an acceptance item, write one comment on card #48's issue/i);
 });
 
 // proves R-LOOP-13

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- ABOUTME: Per-user launchd job template that relaunches Rigger after login. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.williacj.rigger</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>__RIGGER__</string>
+    <string>run</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>__REPOSITORY__</string>
+  <key>StartInterval</key>
+  <integer>__START_INTERVAL__</integer>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>ExitTimeOut</key>
+  <integer>__EXIT_TIMEOUT__</integer>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>__PATH__</string>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>__HOME__/Library/Logs/rigger/rigger.out</string>
+  <key>StandardErrorPath</key>
+  <string>__HOME__/Library/Logs/rigger/rigger.err</string>
+</dict>
+</plist>

@@ -469,13 +469,41 @@ const FULL_SHA = /^[0-9a-f]{40}$/i;
 /** A pull request as the reads answer it: its number, head SHA and base branch. */
 const pullRequestOf = ({ number, headRefOid, baseRefName }) => ({ number, head: headRefOid, base: baseRefName });
 
+/** Comment nodes as L0 answers them, with each author's repository permission read once. */
+async function commentsOf(operation, board, via, nodes, addressed) {
+  const permissions = new Map();
+  const permissionOf = async (author) => {
+    if (author === null) return 'none';
+    if (!permissions.has(author)) {
+      const path = `repos/${board.repo}/collaborators/${encodeURIComponent(author)}/permission`;
+      permissions.set(author, (async () => {
+        const said = await readRunner(['api', path, '-X', 'GET'], via);
+        if (said.status !== 0) {
+          if (/\b404\b/.test(firstLine(said))) return 'none';
+          fail(operation, board, `${addressed}permission for ${author}: ${firstLine(said)}`);
+        }
+        const role = JSON.parse(said.stdout).role_name;
+        if (typeof role !== 'string') fail(operation, board, `${addressed}permission for ${author}: gh answered no role_name`);
+        return role;
+      })());
+    }
+    return permissions.get(author);
+  };
+  const comments = [];
+  for (const node of nodes) {
+    const author = node.author?.login ?? null;
+    comments.push({ body: node.body, createdAt: node.createdAt, id: node.id, author, permission: await permissionOf(author), edited: node.lastEditedAt != null || node.includesCreatedEdit === true });
+  }
+  return comments;
+}
+
 /**
  * The reads of a card's facts held in the repository `board.repo` names: its line of work's
- * branch and pull requests, a pull request's diff, merge base and comments, the repository's
- * default branch, and one issue or pull request by its number. Each is sent through the read
- * runner, as `readSide`'s reads are, with `send`, `emitter` and `timeout`. Each is given what it
- * reads, and what a failure says it was reading. A read that fails rejects naming what it read and
- * why, and never answers none in its place.
+ * branch and pull requests, a pull request's diff, merge base and comments, an issue's comments,
+ * the repository's default branch, and one issue or pull request by its number. Each is sent
+ * through the read runner, as `readSide`'s reads are, with `send`, `emitter` and `timeout`. Each
+ * is given what it reads, and what a failure says it was reading. A read that fails rejects
+ * naming what it read and why, and never answers none in its place.
  */
 const REPOSITORY_READS = {
   /**
@@ -546,30 +574,16 @@ const REPOSITORY_READS = {
     read: async (board, via, number, addressed) => {
       const query = (page) => repositoryQuery(board, `pullRequest(number: ${numbered('readComments', board, number)}) { comments(${page}) { pageInfo { hasNextPage endCursor } nodes { body createdAt id author { login } lastEditedAt includesCreatedEdit } } }`);
       const nodes = await everyPage('readComments', board, via, query, (data) => heldIn('readComments', board, data, 'pullRequest', addressed).comments, addressed);
-      const permissions = new Map();
-      const permissionOf = async (author) => {
-        if (author === null) return 'none';
-        if (!permissions.has(author)) {
-          const path = `repos/${board.repo}/collaborators/${encodeURIComponent(author)}/permission`;
-          permissions.set(author, (async () => {
-            const said = await readRunner(['api', path, '-X', 'GET'], via);
-            if (said.status !== 0) {
-              if (/\b404\b/.test(firstLine(said))) return 'none';
-              fail('readComments', board, `${addressed}permission for ${author}: ${firstLine(said)}`);
-            }
-            const role = JSON.parse(said.stdout).role_name;
-            if (typeof role !== 'string') fail('readComments', board, `${addressed}permission for ${author}: gh answered no role_name`);
-            return role;
-          })());
-        }
-        return permissions.get(author);
-      };
-      const comments = [];
-      for (const node of nodes) {
-        const author = node.author?.login ?? null;
-        comments.push({ body: node.body, createdAt: node.createdAt, id: node.id, author, permission: await permissionOf(author), edited: node.lastEditedAt != null || node.includesCreatedEdit === true });
-      }
-      return comments;
+      return commentsOf('readComments', board, via, nodes, addressed);
+    },
+  },
+  /** Every comment on issue `number`, oldest first, with its author, edit and permission. */
+  readIssueComments: {
+    reading: (number) => `issue #${number}'s comments`,
+    read: async (board, via, number, addressed) => {
+      const query = (page) => repositoryQuery(board, `issue(number: ${numbered('readIssueComments', board, number)}) { comments(${page}) { pageInfo { hasNextPage endCursor } nodes { body createdAt id author { login } lastEditedAt includesCreatedEdit } } }`);
+      const nodes = await everyPage('readIssueComments', board, via, query, (data) => heldIn('readIssueComments', board, data, 'issue', addressed).comments, addressed);
+      return commentsOf('readIssueComments', board, via, nodes, addressed);
     },
   },
   /**

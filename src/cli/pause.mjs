@@ -4,14 +4,17 @@
 import { join } from 'node:path';
 
 import { admission } from '../scheduling/admission.mjs';
-import { PACKAGE, settled } from './doctor.mjs';
+import { PACKAGE, closerLine, settled } from './doctor.mjs';
 import { STATE, recording } from './recording.mjs';
 
 /** The reason every closer `pause` adds names. */
 const OWNER_PAUSE = "the owner's pause";
 
-/** The line verb `verb` prints for closer `closer`: its kind, its path, its reason and its time. */
-const closerLine = (verb) => ({ kind, path, reason, time }) => `rigger ${verb}: admission is closed by ${kind} at ${path}: ${reason}; time ${time}`;
+/**
+ * The line `pause` prints for closer `closer`: the words `once`, `plan` and `doctor` name a closer
+ * in (`closerLine`), then the closer's path (K100 on #740).
+ */
+const presentLine = (closer) => `rigger pause: ${closerLine(closer)}; at ${closer.path}`;
 
 /** The line verb `verb` prints for an entry it could not read: its path and the cause. */
 const unreadableLine = (verb) => ({ path, cause }) => `rigger ${verb}: unreadable closer ${path} (${cause})`;
@@ -33,7 +36,7 @@ async function pausing(opened, {
   /** Every closer present, and every entry that cannot be read, a line each. */
   const present = () => {
     const state = admissionRecord.read();
-    return [...(state.closers ?? []).map(closerLine('pause')), ...(state.unreadable ?? []).map(unreadableLine('pause'))];
+    return [...(state.closers ?? []).map(presentLine), ...(state.unreadable ?? []).map(unreadableLine('pause'))];
   };
   let closer;
   try {

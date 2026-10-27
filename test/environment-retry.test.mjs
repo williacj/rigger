@@ -20,6 +20,13 @@ import { COLUMNS, KINDS, columnsOf, makingWorkspaces, readyCard, waitFor } from 
 import { scratch } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { chmodSync, symlinkSync } from 'node:fs';
+import { setImmediate as oneTurn } from 'node:timers/promises';
+import { roleDispatch } from '../src/execution/role.mjs';
+import { admission } from '../src/scheduling/admission.mjs';
+import { GIT_TIMEOUT } from '../src/substrate/worktrees.mjs';
+import { repositoryAt } from './git-repository.mjs';
+import { GIT, fixture, holding, withFirstOnPath } from './process-fixtures.mjs';
 
 const { 60_000: SETTLES_WITHIN } = BOUNDS;
 
@@ -88,7 +95,7 @@ test('L2 retries a maker dispatch that never started and holds it after the seco
   ]);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('L2 stops a card-local refusal on its first attempt and records its class', () => {
   const directory = temporaryDirectory('rigger-card-local-');
   const sink = openSink({ directory, run: 'r-card-local', now: Date.now });
@@ -197,7 +204,7 @@ function stopOf(failure, card) {
   return stop;
 }
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('L3 hands L2 the first workspace failure beside the second attempt', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace', { other: false });
   let first;
@@ -215,7 +222,7 @@ test('L3 hands L2 the first workspace failure beside the second attempt', SETTLE
   assert.equal(handed.workspace, first.workspace);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('L3 hands L2 the first workspace failure beside the second attempt of a run', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace', { other: false });
   let first;
@@ -232,7 +239,7 @@ test('L3 hands L2 the first workspace failure beside the second attempt of a run
   assert.deepEqual(handed, first);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('a continuing attempt whose workspace fetch fails twice answers hold at L1s current report', SETTLES_WITHIN, async () => {
   const card = cardIn(1, COLUMNS.review);
   const pull = pullFor(1);
@@ -259,7 +266,7 @@ test('a continuing attempt whose workspace fetch fails twice answers hold at L1s
   assert.deepEqual(recorded(built, 'L3', 'dispatch', (each) => each.role === 'engineer'), []);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('run does not pull again a card stopped for each card-local refusal or an out branch or root', SETTLES_WITHIN, async (t) => {
   for (const code of ['WORKSPACE_REFUSED', 'BRANCH_ELSEWHERE', 'SCRATCH_REFUSED', 'BRANCH_REFUSED', 'ROOT_NOT_ABSOLUTE']) {
     await t.test(code, async () => {
@@ -287,7 +294,7 @@ test('run does not pull again a card stopped for each card-local refusal or an o
   }
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('run stops one card-local refusal while another card is held for two workspace host failures', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace');
   const path = join(temporaryDirectory('rigger-card-local-beside-host-'), 'rigger-1');
@@ -304,7 +311,7 @@ test('run stops one card-local refusal while another card is held for two worksp
   assert.deepEqual(recorded(built, 'L2', 'attempt.decided', (each) => each.card === 2).map(({ decision }) => decision), ['again', 'hold']);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('a judge scratch refusal remains NOT_STARTED and causes no card stop', SETTLES_WITHIN, async () => {
   let built;
   const judgeDirectory = async (card, role, head) => {
@@ -324,7 +331,7 @@ test('a judge scratch refusal remains NOT_STARTED and causes no card stop', SETT
   assert.equal(readFileSync(join(built.scratch, 'workspaces', 'scratch', 'rigger-7', 'reviewer'), 'utf8'), 'kept\n');
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('two once invocations over the same board and state count the held card afresh', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace', { other: false });
   const first = await built.loop.pull(1).then(() => assert.fail('the first pull fulfilled'), (failure) => failure);
@@ -335,7 +342,7 @@ test('two once invocations over the same board and state count the held card afr
   assert.deepEqual(recorded(built, 'L2', 'attempt.decided').map(({ attempt, decision }) => [attempt, decision]), [[1, 'again'], [2, 'hold'], [1, 'again'], [2, 'hold']]);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('a held Ready card stays in Coding with only its claim move', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace', { other: false });
   await assert.rejects(built.loop.pull(1));
@@ -357,14 +364,14 @@ test('a held card records no escalation and writes no comment on its issue', SET
   assert.deepEqual(built.repository.held().issues[0].comments, []);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('a held card writes nothing under admission state', SETTLES_WITHIN, async () => {
   const built = failingWorld('workspace', { other: false });
   await assert.rejects(built.loop.pull(1));
   assert.equal(existsSync(join(built.directory, 'admission')), false);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('two cards that each fail once in the same host way each get another attempt and neither is held', SETTLES_WITHIN, async () => {
   const root = temporaryDirectory('rigger-two-retries-');
   const making = makingWorkspaces(root);
@@ -386,7 +393,7 @@ test('two cards that each fail once in the same host way each get another attemp
   assert.equal(built.decisions.some(({ answer }) => answer.action === 'hold'), false);
 });
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('a card still holds for two matching host failures beside a card whose maker succeeds', SETTLES_WITHIN, async () => {
   const { built, failure } = await runFailure('workspace');
 
@@ -490,4 +497,354 @@ test('run withholds a failed judge only once while another maker frees a slot', 
   assert.equal(recorded(built, 'L2', 'judge.withheld', (each) => each.card === 1).length, 1);
   assert.equal(recorded(built, 'L3', 'dispatch', (each) => each.card === 1 && each.role === 'reviewer' && each.step === undefined).length, 0);
   assert.equal(built.agent.runs().filter(({ card, role }) => card === 2 && role === 'engineer').length, 1);
+});
+
+/** A judge's role answer as L2 gives one, carrying the facts that make it a judge's, naming the stand-in provider. */
+const JUDGE = {
+  role: 'reviewer', agent: '.claude/agents/reviewer.md', provider: 'stand-in', tier: 'high', timeout: 60_000,
+  instruction: 'Judge card #7.\n', evidence: 'Card #7: the acceptance.\n', digest: 'd', facts: { card: 7, head: 'h' },
+};
+
+/** A provider adapter that answers `/usr/bin/true` for every role. */
+const ANSWERING = { 'stand-in': { async invocation() { return { command: '/usr/bin/true', args: [], input: Buffer.from(''), unset: [], env: {} }; } } };
+
+/**
+ * A judge's layout in the test's own temporary directory: the judge's directory `judge/` with its
+ * `main/`, a repository L1 made from at `repository/`, a sink over `.rigger/`, and the card's
+ * scratch base `scratch/rigger-7/`, which is not made.
+ */
+function layout(t) {
+  const root = scratch(t);
+  const directory = join(root, 'judge');
+  mkdirSync(join(directory, 'main'), { recursive: true });
+  const repository = repositoryAt(join(root, 'repository'));
+  const sink = openSink({ directory: join(root, '.rigger'), run: 'r-judge-scratch', now: () => 0 });
+  return { root, directory, base: join(root, 'scratch', 'rigger-7'), repository, sink };
+}
+
+/** What L1's role dispatch of the judge in `placed`, over scratch base `base`, rejected with, or nothing where it answered. */
+const rejection = (placed, { base = placed.base, adapters = ANSWERING } = {}) => roleDispatch({
+  answer: JUDGE, cwd: join(placed.directory, 'main'), directory: placed.directory, scratch: base, repository: placed.repository, reach: [], env: {}, sink: placed.sink, id: 'd-judge', card: 7, adapters,
+}).then(() => undefined, (failure) => failure);
+
+/** Makes `<base>/<role>` a directory whose contents the file system will not list, putting its mode back once `t` ends. */
+function unlisted(t, base, role) {
+  const path = join(base, role);
+  mkdirSync(path, { recursive: true });
+  chmodSync(path, 0o000);
+  t.after(() => chmodSync(path, 0o700));
+  return path;
+}
+
+// proves R-FAIL-8
+test('L1 reports a judge\'s scratch directory not made, whose contents the file system would not list, as a dispatch that did not start naming that directory as missing', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  const path = unlisted(t, placed.base, 'reviewer');
+
+  const failure = await rejection(placed);
+
+  assert.equal(failure?.code, NOT_STARTED, failure?.stack);
+  assert.equal(failure.missing, path);
+  assert.ok(failure.message.includes(path), failure.message);
+});
+
+// proves R-FAIL-8
+test('L1 reports neither a judge\'s scratch directory refused under R-WORK-26 nor an invocation its adapter rejected as a judge\'s scratch directory not made', SETTLES_WITHIN, async (t) => {
+  const placed = layout(t);
+  mkdirSync(placed.base, { recursive: true });
+  writeFileSync(join(placed.base, 'reviewer'), 'kept\n');
+  const refused = await rejection(placed);
+  const other = await rejection(placed, { base: join(placed.root, 'other', 'rigger-7'), adapters: { 'stand-in': { async invocation() { throw new Error('the adapter refuses this invocation'); } } } });
+
+  assert.equal(refused?.code, NOT_STARTED, refused?.stack);
+  assert.ok(refused.message.includes('R-WORK-26'), refused.message);
+  assert.equal(other?.code, NOT_STARTED, other?.stack);
+  assert.ok(other.message.includes('the adapter refuses this invocation'), other.message);
+  assert.ok(existsSync(join(placed.root, 'other', 'rigger-7', 'reviewer')), 'L1 made the scratch directory before the adapter rejected');
+  assert.deepEqual([Object.hasOwn(refused, 'missing'), Object.hasOwn(other, 'missing')], [false, false]);
+});
+
+/** The kind every card of the loop's world is selected by, judged by `judges` alone. */
+const kindJudgedBy = (judges) => ({ change: { select: { labels: ['type:change'] }, maker: 'engineer', judges } });
+
+/**
+ * A world holding card 7 in Review with its one open pull request, judged by `judges` under
+ * `roles`, whose judge directories are made as the harness makes them, after which `spoil(made,
+ * role)` runs on each before L3 dispatches its judge, answering the scratch base L3 is handed, or
+ * nothing for the one made. `invocation()` answers a fresh loop over the world, as a new
+ * invocation of the verb starts one, whose board refuses its ninth read of priorities, so a run
+ * that pulls the card again at once ends rather than pulling it for ever. `handed` records what
+ * each of L3's asks of L2 handed it as `directories` through the `decide` L3 is handed, which it
+ * asks after a maker's attempt; with `ready`, card 7 starts in Ready, with no pull request until its
+ * maker exits 0, so its judges are asked through it.
+ */
+function spoiledWorld({ judges = ['reviewer'], spoil = () => undefined, roles, ready = false } = {}) {
+  let built;
+  const handed = [];
+  const judgeDirectory = async (card, role, head) => {
+    const made = await built.handed.judgeDirectory(card, role, head);
+    return { ...made, scratch: (await spoil(made, role)) ?? made.scratch };
+  };
+  built = judgeWorld({ cards: [cardIn(7, ready ? COLUMNS.ready : COLUMNS.review)], forge: ready ? {} : { pullRequests: [pullFor(7)] }, kinds: kindJudgedBy(judges), ...(roles === undefined ? {} : { roles }) });
+  const decide = (card, outcomes, options) => {
+    if (options?.directories !== undefined) handed.push(options.directories);
+    return built.handed.decide(card, outcomes, options);
+  };
+  const invocation = () => {
+    const { board } = built.handed;
+    let reads = 0;
+    const guarded = { ...board, readPriority: async () => {
+      reads += 1;
+      if (reads > 8) throw new Error('the run pulled card 7 again and again');
+      return board.readPriority();
+    } };
+    return loop({ ...built.handed, board: guarded, decide, judgeDirectory });
+  };
+  return { built, handed, invocation };
+}
+
+/** What a run of `engine` rejected with, or nothing where it fulfilled. */
+const ran = (engine) => engine.run().then(() => undefined, (failure) => failure);
+
+/** The `judge.withheld` events of card 7 in `built`, each as its role, its scratch directory and its class. */
+const withheldOf = (built) => recorded(built, 'L2', 'judge.withheld', (each) => each.card === 7)
+  .map(({ role, scratch: missing, class: classed }) => ({ role, missing, classed }));
+
+/**
+ * Asserts that `failure`, the run's, is none, that the run over `built` withheld card 7's
+ * `reviewer` once for its scratch directory `path`, naming it and the cause, started no dispatch of
+ * it, and pulled the card once.
+ */
+function withheldOnce(built, failure, path) {
+  const withheld = recorded(built, 'L2', 'judge.withheld', (each) => each.card === 7);
+  assert.deepEqual(withheldOf(built), [{ role: 'reviewer', missing: path, classed: 'environment' }], JSON.stringify(withheld));
+  assert.ok(withheld[0].reason.includes(path), withheld[0].reason);
+  assert.equal(recorded(built, 'L1', 'dispatch.start', (each) => each.card === 7).length, 0);
+  assert.equal(recorded(built, 'L3', 'pull', (each) => each.card === 7).length, 1);
+  assert.equal(failure, undefined, failure?.stack);
+}
+
+// proves R-FAIL-8
+test('run withholds a judge whose scratch directory was not made because the file system would not list it, and pulls its card no more in that invocation', SETTLES_WITHIN, async (t) => {
+  let path;
+  const world = spoiledWorld({ spoil: (made, role) => { path = unlisted(t, made.scratch, role); } });
+
+  const failure = await ran(world.invocation());
+
+  withheldOnce(world.built, failure, path);
+});
+
+// proves R-FAIL-8
+test('run withholds a judge whose scratch directory was not made because the file system answered EACCES on its scratch base', SETTLES_WITHIN, async (t) => {
+  let path;
+  const world = spoiledWorld({ spoil: (made, role) => {
+    mkdirSync(made.scratch, { recursive: true });
+    chmodSync(made.scratch, 0o000);
+    t.after(() => chmodSync(made.scratch, 0o700));
+    path = join(made.scratch, role);
+  } });
+
+  const failure = await ran(world.invocation());
+
+  withheldOnce(world.built, failure, path);
+  assert.ok(recorded(world.built, 'L2', 'judge.withheld')[0].reason.includes('EACCES'));
+});
+
+// proves R-FAIL-8
+test('run withholds a judge whose scratch directory was not made because the file system answered an error to its mkdir', SETTLES_WITHIN, async (t) => {
+  let path;
+  const world = spoiledWorld({ spoil: (made, role) => {
+    const above = join(made.path, 'read-only');
+    mkdirSync(above);
+    chmodSync(above, 0o500);
+    t.after(() => chmodSync(above, 0o700));
+    path = join(above, 'rigger-7', role);
+    return join(above, 'rigger-7');
+  } });
+
+  const failure = await ran(world.invocation());
+
+  withheldOnce(world.built, failure, path);
+  assert.ok(recorded(world.built, 'L2', 'judge.withheld')[0].reason.includes('mkdir'));
+});
+
+// proves R-FAIL-8
+test('run withholds a judge whose scratch directory was not made because its scratch base lies on a path the file system cannot resolve', SETTLES_WITHIN, async () => {
+  let path;
+  const world = spoiledWorld({ spoil: (made, role) => {
+    const loopAt = join(made.path, 'loop');
+    symlinkSync(loopAt, loopAt);
+    path = join(loopAt, 'rigger-7', role);
+    return join(loopAt, 'rigger-7');
+  } });
+
+  const failure = await ran(world.invocation());
+
+  withheldOnce(world.built, failure, path);
+  assert.ok(recorded(world.built, 'L2', 'judge.withheld')[0].reason.includes('ELOOP'));
+});
+
+// proves R-FAIL-8
+test('run withholds a judge whose scratch directory was not made because git\'s worktree listing for the R-WORK-29 check ran past its time', SETTLES_WITHIN, async (t) => {
+  const stand = holding(t);
+  fixture(stand, 'git', [
+    'if [ "$1" = worktree ] && [ "$2" = list ]; then : > "$here/listing"; exec /usr/bin/tail -f "$here/hold"; fi',
+    `exec '${GIT}' "$@"`,
+  ].join('\n'));
+  let path;
+  const world = spoiledWorld({ spoil: (made, role) => { path = join(made.scratch, role); } });
+  const engine = world.invocation();
+
+  const failure = await withFirstOnPath(stand, async () => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let settled = false;
+    const running = ran(engine).then((value) => { settled = true; return value; });
+    while (!existsSync(join(stand, 'listing'))) await oneTurn();
+    t.mock.timers.tick(GIT_TIMEOUT);
+    while (!settled) {
+      t.mock.timers.tick(50);
+      await oneTurn();
+    }
+    return running;
+  });
+
+  withheldOnce(world.built, failure, path);
+  assert.ok(recorded(world.built, 'L2', 'judge.withheld')[0].reason.includes(`ran past its timeout of ${GIT_TIMEOUT} ms`));
+});
+
+// proves R-FAIL-8
+test('run dispatches a judge whose scratch directory was made, as it did before a judge\'s scratch directory not made was withheld', SETTLES_WITHIN, async () => {
+  const world = spoiledWorld();
+
+  const failure = await ran(world.invocation());
+
+  assert.equal(failure, undefined, failure?.stack);
+  assert.deepEqual(withheldOf(world.built), []);
+  const starts = recorded(world.built, 'L1', 'dispatch.start', (each) => each.card === 7);
+  assert.equal(starts.length, 1);
+  assert.equal(recorded(world.built, 'L1', 'dispatch.end', (each) => each.dispatch === starts[0].dispatch)[0]?.exit, 0);
+});
+
+// proves R-FAIL-8
+test('of two judges, run withholds the one whose scratch directory was not made and keeps the other\'s verdict', SETTLES_WITHIN, async (t) => {
+  let path;
+  const world = spoiledWorld({ judges: ['reviewer', 'architect'], spoil: (made, role) => {
+    if (role === 'reviewer') path = unlisted(t, made.scratch, role);
+  } });
+
+  const failure = await ran(world.invocation());
+
+  assert.equal(failure, undefined, failure?.stack);
+  assert.deepEqual(withheldOf(world.built), [{ role: 'reviewer', missing: path, classed: 'environment' }]);
+  const [architect] = recorded(world.built, 'L3', 'dispatch', (each) => each.card === 7 && each.role === 'architect');
+  assert.equal(recorded(world.built, 'L1', 'dispatch.end', (each) => each.dispatch === architect?.dispatch)[0]?.exit, 0);
+  const markers = world.built.repository.held().pullRequests.find(({ number }) => number === 1007).comments.map(({ body }) => body);
+  assert.equal(markers.filter((body) => body.includes('Sound, by architect')).length, 1, JSON.stringify(markers));
+  assert.equal(recorded(world.built, 'L3', 'pull', (each) => each.card === 7).length, 1);
+});
+
+// proves R-FAIL-8
+test('L3 carries a judge withheld because its scratch directory was not made among none of the judges it dispatched, as it carries one withheld for its directory', SETTLES_WITHIN, async (t) => {
+  const world = spoiledWorld({ judges: ['reviewer', 'architect'], spoil: (made, role) => {
+    if (role === 'reviewer') unlisted(t, made.scratch, role);
+  } });
+
+  const [reached] = await world.invocation().pull(1);
+
+  assert.deepEqual(reached.judges.map(({ role, outcome }) => [role, outcome?.status, outcome?.value?.exit]), [['architect', 'fulfilled', 0]], JSON.stringify(reached.judges));
+});
+
+// proves R-FAIL-8
+test('L2 is handed a judge\'s scratch directory not made apart from one refused under R-WORK-26 and one whose dispatch never started for another cause, and withholds only the first', SETTLES_WITHIN, async (t) => {
+  let path;
+  const roles = { ...config.roles, pm: { ...config.roles.pm, agent: '../outside/pm.md' } };
+  const world = spoiledWorld({ judges: ['reviewer', 'architect', 'pm'], roles, ready: true, spoil: (made, role) => {
+    if (role === 'reviewer') path = unlisted(t, made.scratch, role);
+    if (role === 'architect') {
+      mkdirSync(made.scratch, { recursive: true });
+      writeFileSync(join(made.scratch, role), 'kept\n');
+    }
+  } });
+
+  await ran(world.invocation());
+
+  const reports = Object.assign({}, ...world.handed);
+  assert.deepEqual(Object.keys(reports).sort(), ['architect', 'pm', 'reviewer']);
+  assert.deepEqual(Object.fromEntries(Object.entries(reports).map(([role, { reason }]) => [role, [reason.code, reason.missing]])), {
+    reviewer: [NOT_STARTED, path], architect: [NOT_STARTED, undefined], pm: [NOT_STARTED, undefined],
+  });
+  assert.deepEqual(withheldOf(world.built), [{ role: 'reviewer', missing: path, classed: 'environment' }]);
+});
+
+// proves R-FAIL-8
+test('a judge whose adapter rejects its invocation is not withheld as a judge whose scratch directory was not made, since its scratch directory was made, and its outcome is a dispatch that did not start', SETTLES_WITHIN, async () => {
+  const roles = { ...config.roles, reviewer: { ...config.roles.reviewer, agent: '../outside/reviewer.md' } };
+  let path;
+  const world = spoiledWorld({ roles, spoil: (made, role) => { path = join(made.scratch, role); } });
+
+  const [reached] = await world.invocation().pull(1);
+
+  assert.equal(reached.judges.length, 1, JSON.stringify(reached.judges));
+  assert.equal(reached.judges[0].role, 'reviewer');
+  assert.equal(reached.judges[0].outcome?.reason?.code, NOT_STARTED);
+  assert.ok(reached.judges[0].outcome.reason.message.includes('R-SAFE-6'), reached.judges[0].outcome.reason.message);
+  assert.ok(existsSync(path), 'L1 made the judge\'s scratch directory');
+  assert.deepEqual(withheldOf(world.built), []);
+});
+
+// proves R-FAIL-8
+test('a judge\'s scratch directory refused under R-WORK-26 is not withheld as a judge\'s scratch directory not made, and its outcome is a dispatch that did not start', SETTLES_WITHIN, async () => {
+  const world = spoiledWorld({ spoil: (made, role) => {
+    mkdirSync(made.scratch, { recursive: true });
+    writeFileSync(join(made.scratch, role), 'kept\n');
+  } });
+
+  const [reached] = await world.invocation().pull(1);
+
+  assert.equal(reached.judges[0].outcome?.reason?.code, NOT_STARTED, JSON.stringify(reached.judges));
+  assert.ok(reached.judges[0].outcome.reason.message.includes('R-WORK-26'), reached.judges[0].outcome.reason.message);
+  assert.deepEqual(withheldOf(world.built), []);
+});
+
+// proves R-FAIL-8
+test('for a judge withheld because its scratch directory was not made, L2 answers neither again nor hold', SETTLES_WITHIN, async (t) => {
+  const world = spoiledWorld({ spoil: (made, role) => { unlisted(t, made.scratch, role); } });
+
+  await ran(world.invocation());
+
+  assert.equal(withheldOf(world.built).length, 1);
+  const actions = world.built.decisions.filter(({ card }) => card === 7).map(({ answer }) => answer.action);
+  assert.deepEqual(actions.filter((action) => action === 'again' || action === 'hold'), [], JSON.stringify(actions));
+  assert.deepEqual(recorded(world.built, 'L2', 'attempt.decided', (each) => each.card === 7), []);
+});
+
+// proves R-FAIL-8
+test('after an invocation withholding a judge whose scratch directory was not made, admission stays open', SETTLES_WITHIN, async (t) => {
+  const world = spoiledWorld({ spoil: (made, role) => { unlisted(t, made.scratch, role); } });
+
+  await ran(world.invocation());
+
+  assert.equal(withheldOf(world.built).length, 1);
+  const state = admission({ directory: world.built.directory, sink: { emitter: () => ({ emit: () => {} }) } }).read();
+  assert.deepEqual(state, { state: 'open' });
+});
+
+// proves R-FAIL-8
+test('the invocation after one that withheld a judge whose scratch directory was not made dispatches that judge again', SETTLES_WITHIN, async (t) => {
+  let spoiling = true;
+  const world = spoiledWorld({ spoil: (made, role) => {
+    if (spoiling) unlisted(t, made.scratch, role);
+  } });
+  await ran(world.invocation());
+  assert.equal(withheldOf(world.built).length, 1);
+  chmodSync(withheldOf(world.built)[0].missing, 0o700);
+  spoiling = false;
+
+  const failure = await ran(world.invocation());
+
+  assert.equal(failure, undefined, failure?.stack);
+  assert.equal(recorded(world.built, 'L3', 'pull', (each) => each.card === 7).length, 2);
+  const starts = recorded(world.built, 'L1', 'dispatch.start', (each) => each.card === 7);
+  assert.equal(starts.length, 1);
+  assert.equal(recorded(world.built, 'L1', 'dispatch.end', (each) => each.dispatch === starts[0].dispatch)[0]?.exit, 0);
 });

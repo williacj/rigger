@@ -78,7 +78,8 @@ const consumerRepository = (settings = config()) => {
  */
 function installAgentCli(dir) {
   const record = join(dir, 'agent-runs');
-  writeFileSync(join(dir, 'claude'), `#!/bin/sh\n${EXIT_IF_WARMING}\nprintf '%s\\n' "$*" >> "\${0%/*}/agent-runs"\nexit 0\n`);
+  const fence = '```';
+  writeFileSync(join(dir, 'claude'), `#!/bin/sh\n${EXIT_IF_WARMING}\nprintf '%s\\n' "$*" >> "\${0%/*}/agent-runs"\nif [ "\${RIGGER_TEST_ESCALATE:-}" = 1 ]; then\n  prompt=$(cat)\n  dispatch=$(printf '%s\\n' "$prompt" | awk '/^dispatch: d-/ { print $2; exit }')\n  body=$(printf '%s\\n' 'I cannot meet acceptance item 1.' '${fence}rigger-escalation' 'category: critical' 'item: 1' 'reason: The required condition failed.' "dispatch: $dispatch" '${fence}')\n  gh api repos/acme/widgets/issues/10/comments -X POST -f "body=$body" >/dev/null || exit $?\nfi\nexit 0\n`);
   chmodSync(join(dir, 'claude'), 0o755);
   warmed(join(dir, 'claude'));
   return { runs: () => (existsSync(record) ? readFileSync(record, 'utf8').split('\n').filter(Boolean) : []) };
@@ -134,6 +135,19 @@ test('once names the card it claimed, its workspace and its maker\'s outcome', (
   assert.ok(line, ran.err);
   assert.ok(line.includes(join(dirname(realpathSync(ran.consumer)), 'widgets-worktrees', 'rigger-10')), line);
   assert.match(line, /; its maker exited 0 and opened no pull request from rigger-10, in its workspace, /, line);
+});
+
+// proves R-LOOP-2, R-ESCALATE-4
+test('once names a maker note escalation, its category and acceptance item ordinal', async () => {
+  const ran = once({ items: [card(10, 'Ready')] }, {
+    seed: { issues: [{ number: 10, title: 'Card 10', body: ADMITTED, labels: ['type:change'] }] },
+    extraEnv: { RIGGER_TEST_ESCALATE: '1' },
+  });
+
+  assert.equal(ran.code, 0, ran.err);
+  assert.match(ran.out, /card #10 escalated critical for acceptance item 1/);
+  assert.deepEqual(await columnsOf(ran), { 10: 'Owner' });
+  assert.equal(eventsOf(ran).find(({ event }) => event === 'review.escalate').raiser, 'maker');
 });
 
 test('once exits non-zero when the card\'s maker opened no pull request', async () => {
@@ -614,7 +628,7 @@ const prepareContinuation = ({ ruling = 'reviewer', owner = false, conflicting =
   return oldHead;
 };
 
-// proves R-FAIL-7
+// proves R-FAIL-8
 test('once names a continuing fetch hold with both failures in order', SETTLES_WITHIN, async (t) => {
   const agent = standInAgent();
   const git = spawnSync('/bin/sh', ['-c', 'command -v git'], { encoding: 'utf8' }).stdout.trim();
@@ -1688,6 +1702,30 @@ test('once after the bin\'s pause claims nothing, and after its resume claims as
   const resumed = paused.rerun();
   assert.deepEqual(await columnsOf(resumed), await columnsOf(base), resumed.err);
   assert.deepEqual(await columnsOf(resumed), { 10: 'Coding', 20: 'Ready' });
+});
+
+test('once prints each closer in the words it printed at #944\'s head, and those words are written in one function under src/', async () => {
+  // The words are written out by hand, as `once` printed them at a4edcfb, so a change to the one
+  // function `doctor` and `plan` now share with `once` shows here as a change to `once`'s output.
+  const ran = once({ items: [REFUSED, card(12, 'Ready')] }, { prepare: ({ consumer }) => {
+    const state = join(consumer, '.rigger');
+    seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' }));
+    seed(state, 'hold-b2.json', closerText({ reason: 'environment hold' }));
+  } });
+
+  assert.equal(ran.code, 0, ran.err);
+  const lines = ran.out.split('\n').filter(Boolean);
+  assert.deepEqual(lines.filter((line) => line.startsWith('rigger once: admission')).sort(), [
+    `rigger once: admission is closed by hold: environment hold; time ${TIME}`,
+    `rigger once: admission is closed by owner: owner pause; time ${TIME}`,
+  ], ran.out);
+  assert.equal(lines.length, 3, ran.out);
+  assert.match(lines[2], /^ {2}refuse {2}#11 {2}missing acceptance/, ran.out);
+
+  const sources = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory()
+    ? sources(join(dir, entry.name)) : entry.name.endsWith('.mjs') ? [join(dir, entry.name)] : []));
+  const writing = sources(join(root, 'src')).filter((file) => readFileSync(file, 'utf8').includes('admission is closed by'));
+  assert.deepEqual(writing.map((file) => file.slice(root.length + 1)), ['src/cli/doctor.mjs']);
 });
 
 // proves R-SCHED-27
