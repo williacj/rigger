@@ -578,7 +578,10 @@ on an upgrade a restated fact would have survived.
 
 | Deferred | Returns when |
 |---|---|
-| A test claiming each requirement `docs/spec/requirements.md` held when this decision bound | The card that makes that requirement true runs and claims it. A milestone whose exit list cites the requirement returns it by that milestone's close. A requirement that the exit list of a milestone after M8 cites returns by that milestone's close. M8 returns each one still open that no later milestone's exit list cites. |
+| A test claiming each requirement `docs/spec/requirements.md` held when this decision bound | The card that makes that requirement true runs and claims it. The requirement returns by the earliest of these closes that applies to it: |
+| | — the close of any milestone, M8 or earlier, whose exit list cites it; |
+| | — for a requirement that the exit list of a milestone after M8 cites, that milestone's close; |
+| | — for any other requirement still open, M8's close. |
 
 ### Notes
 
