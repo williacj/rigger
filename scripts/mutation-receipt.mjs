@@ -1,5 +1,7 @@
 // ABOUTME: Runs one guarded mutation in a disposable worktree and reports the tests' evidence.
 
+import { AssertionError } from 'node:assert';
+import { randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -8,6 +10,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { inspect, parseArgs } from 'node:util';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { runCommand } from '../src/substrate/process.mjs';
+
+// Node copies Error getters before worker transport erases custom prototypes. A per-run key
+// carries the original instanceof result; application codes, names and fields are not evidence.
+const assertionKey = process.env.RIGGER_PROOF_ASSERTION_KEY;
+if (assertionKey) Object.defineProperty(Error.prototype, assertionKey, {
+  get() { return this instanceof AssertionError; }, configurable: true,
+});
 
 export const mutationUsage = 'usage: mutation:receipt --source <file> --anchor <text> --count <number> --replacement <text> --test <file> [--test-name-pattern <pattern>] [--timeout <seconds> (default: 60)]';
 
@@ -57,11 +66,17 @@ export async function withTree(context, sha, run) {
 /** Node's event stream preserves names and Error causes without parsing human TAP diagnostics. */
 export default async function* reporter(events) {
   for await (const event of events) {
-    yield `@@proof ${JSON.stringify(event, (_key, value) => {
+    if (event.data.details) {
+      const failure = event.data.details.error;
+      event.data.details.assertion = failure?.failureType === 'testCodeFailure'
+        && failure.cause instanceof Error && failure.cause[assertionKey] === true;
+    }
+    yield `@@proof ${JSON.stringify(event, (key, value) => {
+      if (key === 'cause' && !(value instanceof Error)) return { name: typeof value, message: inspect(value) };
       if (value instanceof Error) return {
         name: value.name, message: value.message, code: value.code, stack: value.stack,
         failureType: value.failureType, exitCode: value.exitCode, signal: value.signal,
-        cause: value.cause, actual: inspect(value.actual), expected: inspect(value.expected),
+        ...(Object.hasOwn(value, 'cause') ? { cause: value.cause } : {}), actual: inspect(value.actual), expected: inspect(value.expected),
       };
       return typeof value === 'bigint' ? String(value) : value;
     })}\n`;
@@ -72,20 +87,48 @@ export async function runTests(tree, temporary, file, { timeout = 60, pattern } 
   const testFile = relative(tree, inside(tree, file));
   const listed = execFileSync('sh', ['test/suite.sh', '--list', 'host'], { cwd: tree, env: gitEnvironment(), encoding: 'utf8' });
   const host = listed.trim().split('\n').includes(testFile);
-  const args = ['test/suite.sh', ...(host ? ['--host'] : []), `--test-reporter=${fileURLToPath(import.meta.url)}`,
+  const args = ['test/suite.sh', ...(host ? ['--host'] : []), `--import=${import.meta.url}`, `--test-reporter=${fileURLToPath(import.meta.url)}`,
     ...(pattern === undefined ? [] : [`--test-name-pattern=${pattern}`]), testFile];
   const runTmp = mkdtempSync(join(temporary, 'run-'));
   const { NODE_TEST_CONTEXT, ...env } = gitEnvironment();
   const events = [];
   const ran = await runCommand({ command: 'sh', args, cwd: tree,
-    env: { ...env, TMPDIR: runTmp }, timeout: timeout * 1000,
+    env: { ...env, TMPDIR: runTmp, RIGGER_PROOF_ASSERTION_KEY: randomUUID() }, timeout: timeout * 1000,
     directory: tree, scratch: runTmp, emitter: { emit: (...event) => events.push(event) },
   });
   const stdout = ran.stdout.toString('utf8');
   const stderr = ran.stderr.toString('utf8');
   const stream = stdout.split('\n').filter((line) => line.startsWith('@@proof ')).map((line) => JSON.parse(line.slice(8)));
+  const registrations = new Map(stream.filter((event) => event.type === 'test:enqueue' && event.data.entryFile !== undefined)
+    .map(({ data }) => [JSON.stringify([data.entryFile, data.testId]), data]));
+  const identity = (test) => {
+    if (typeof test.entryFile !== 'string' || !Number.isInteger(test.nesting) || test.nesting < 0) return;
+    const path = [];
+    let node = test;
+    for (let depth = test.nesting; depth >= 0; depth -= 1) {
+      if (!node || node.nesting !== depth || typeof node.file !== 'string' || !isAbsolute(node.file)
+        || !Number.isInteger(node.line) || node.line <= 0 || !Number.isInteger(node.column) || node.column <= 0) return;
+      const file = relative(tree, node.file);
+      if (file === '..' || file.startsWith('../')) return;
+      path.unshift([node.name, file, node.line, node.column]);
+      node = registrations.get(JSON.stringify([node.entryFile, node.parentId]));
+    }
+    return [relative(tree, test.entryFile), path];
+  };
+  const registrationKeys = [...registrations.values()].map((test) => JSON.stringify(identity(test)));
+  const identityReason = (test) => {
+    const identified = identity(test);
+    if (!identified) return 'unavailable source identity: missing file, position or ancestry';
+    const [file, path] = identified;
+    for (let length = 1; length <= path.length; length += 1) {
+      const key = JSON.stringify([file, path.slice(0, length)]);
+      if (registrationKeys.filter((candidate) => candidate === key).length > 1) return 'ambiguous registration identity';
+    }
+  };
   const tests = stream.filter((event) => ['test:pass', 'test:fail'].includes(event.type) && event.data.details?.type !== 'suite')
-    .map((event) => ({ ...event.data, outcome: event.type === 'test:pass' ? 'pass' : 'fail' }));
+    .map((event) => ({ ...event.data, outcome: event.type === 'test:pass' ? 'pass' : 'fail',
+      identity: identity(event.data), identityReason: identityReason(event.data),
+    }));
   // Node's file-only verdict has no entryFile; an unmatched pattern can otherwise look green.
   return { ...ran, stdout, stderr, command: ['sh', ...args], count: tests.length,
     tests: tests.filter((test) => test.entryFile !== undefined), fileVerdicts: tests.filter((test) => test.entryFile === undefined), events };
@@ -126,10 +169,14 @@ export async function mutationReceipt(options) {
   return { report, exit: ['killed', 'survived'].includes(report.status) ? 0 : 1 };
 }
 
+export function isAssertionFailure(test) {
+  return test.details.assertion === true;
+}
+
 export function failures(run) {
   return run.tests.filter((test) => test.outcome === 'fail').map((test) => {
     const error = test.details.error.cause ?? test.details.error;
-    return { name: test.name, error, kind: error.code === 'ERR_ASSERTION' ? 'assertion' : 'not an assertion' };
+    return { name: test.name, error, kind: isAssertionFailure(test) ? 'assertion' : 'not an assertion' };
   });
 }
 
@@ -138,8 +185,13 @@ export function noVerdict(run) {
   if (run.timedOut) return 'run exceeded its timeout';
   if (run.fileVerdicts.length > 0) return 'file verdict; no named tests reached a verdict';
   if (run.tests.length === 0) return 'no named tests reached a verdict';
-  if (run.tests.some((test) => test.skip || test.todo)) return 'skipped or todo named test';
+  if (run.tests.some((test) => test.skip !== undefined || test.todo !== undefined)) return 'skipped or todo named test';
   if (run.tests.some((test) => ['testAborted', 'cancelledByParent', 'testTimeoutFailure'].includes(test.details.error?.failureType))) return 'cancelled named test';
+  const unavailable = run.tests.find((test) => test.outcome === 'fail' && test.details.error?.failureType !== 'testCodeFailure');
+  if (unavailable) {
+    const failure = unavailable.details.error;
+    return `non-test failure ${failure?.failureType ?? 'unknown'}: ${failure?.cause?.message ?? failure?.message}`;
+  }
   if (run.exit !== 0 && failures(run).length === 0) return 'suite exited non-zero without a failing named test';
 }
 

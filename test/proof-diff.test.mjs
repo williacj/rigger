@@ -203,3 +203,84 @@ test('B5 missing base files and registrations keep independent non-proving outco
   assert.match(report.tests[1].baseReason, /ENOENT.*payload\.txt/s);
   assert.match(report.tests[2].baseReason, /named test did not report/);
 });
+
+// A disappearing registration cannot lend its failed assertion to a constant sibling's title.
+test('R3 duplicate titles pair by source position instead of occurrence', SETTLES_WITHIN[60_000], async (t) => {
+  const fixture = proofRepository(t, { head: source(2), body: "if (value === 1) test('same title', () => assert.equal(value, 2, 'base-only red'));\ntest('same title', () => assert.equal(6 * 7, 42, 'constant assertion'));\n" });
+  const { exit, report } = await invoke(fixture, 'proof-diff.mjs', [fixture.file]);
+  assert.equal(exit, 0);
+  assert.equal(report.runs.base.tests.length, 2);
+  assert.equal(report.runs.base.tests[1].outcome, 'pass');
+  assert.equal(report.runs.head.tests.length, 1);
+  assert.equal(report.tests[0].status, 'passes at the base: proves nothing new');
+});
+
+// Shared child call sites are distinct when their suite ancestry differs.
+test('R3 nested suites distinguish shared child positions by parent path', SETTLES_WITHIN[60_000], async (t) => {
+  const fixture = proofRepository(t, { head: source(2), body: "import { describe } from 'node:test';\nfunction register(red) { test('same child', () => red ? assert.equal(value, 2, 'other suite red') : assert.equal(6 * 7, 42)); }\nif (value === 1) describe('base-only suite', () => register(true));\ndescribe('stable suite', () => register(false));\n" });
+  const { exit, report } = await invoke(fixture, 'proof-diff.mjs', [fixture.file]);
+  assert.equal(exit, 0);
+  assert.equal(report.runs.base.tests.length, 2);
+  assert.equal(report.runs.base.tests[1].outcome, 'pass');
+  assert.equal(report.tests[0].status, 'passes at the base: proves nothing new');
+});
+
+// A factory can register indistinguishable tests even after file, ancestry and position are known.
+test('R3 colliding registration identities have an explicit non-proving outcome', SETTLES_WITHIN[60_000], async (t) => {
+  const fixture = proofRepository(t, { head: source(2), body: "for (const red of value === 1 ? [true, false] : [false]) test('factory title', () => red ? assert.equal(value, 2, 'ambiguous red') : assert.equal(6 * 7, 42));\n" });
+  const { exit, report } = await invoke(fixture, 'proof-diff.mjs', [fixture.file]);
+  assert.equal(exit, 0);
+  assert.equal(report.runs.base.tests.length, 2);
+  assert.equal(report.runs.base.tests[1].outcome, 'pass');
+  assert.equal(report.tests[0].status, 'no verdict at the base');
+  assert.match(report.tests[0].baseReason, /ambiguous.*identity/i);
+});
+
+// A unique leaf result is still ambiguous if its indistinguishable parent registrations differ.
+test('R3 duplicate parent registrations cannot lend their only child a red', SETTLES_WITHIN[60_000], async (t) => {
+  const fixture = proofRepository(t, { head: source(2), body: "import { describe } from 'node:test';\nfor (const red of value === 1 ? [true, false] : [false]) describe('factory suite', () => { if (red || value === 2) test('only child', () => red ? assert.equal(value, 2) : assert.equal(6 * 7, 42)); });\n" });
+  const { exit, report } = await invoke(fixture, 'proof-diff.mjs', [fixture.file]);
+  assert.equal(exit, 0);
+  assert.equal(report.runs.base.tests.length, 1);
+  assert.equal(report.runs.head.tests.length, 1);
+  assert.equal(report.tests[0].status, 'no verdict at the base');
+  assert.match(report.tests[0].baseReason, /ambiguous.*identity/i);
+});
+
+// Generated registrations can lack a resolvable source position; no title fallback is safe.
+test('R3 missing source identity has its own non-proving outcome', SETTLES_WITHIN[60_000], async (t) => {
+  const fixture = proofRepository(t, { head: source(2), body: "new Function('test', 'assert', \"test('generated constant', () => assert.equal(6 * 7, 42));\")(test, assert);\n" });
+  const { exit, report } = await invoke(fixture, 'proof-diff.mjs', [fixture.file]);
+  assert.equal(exit, 0);
+  assert.equal(report.runs.head.tests[0].outcome, 'pass');
+  assert.equal(report.tests[0].status, 'no verdict at the base');
+  assert.match(report.tests[0].baseReason, /unavailable.*identity/i);
+});
+
+// Two helpers can register the same title at exactly the same line and column.
+test('R3 identical positions in different files retain separate identities', SETTLES_WITHIN[60_000], async (t) => {
+  const helper = (active, assertion) => "import { test } from 'node:test';\nimport assert from 'node:assert/strict';\nimport { value } from '../subject.mjs';\nconst active = " + active + ";\nif (active) test('helper title', () => " + assertion + ");\n";
+  const fixture = proofRepository(t, { head: source(2), body: "import './base-registration.mjs';\nimport './constant-registration.mjs';\n",
+    headFiles: { 'test/base-registration.mjs': helper('value === 1', 'assert.equal(value, 2)'), 'test/constant-registration.mjs': helper('true', 'assert.equal(6 * 7, 42)') },
+  });
+  const { exit, report } = await invoke(fixture, 'proof-diff.mjs', [fixture.file]);
+  assert.equal(exit, 0);
+  assert.equal(report.runs.base.tests.length, 2);
+  assert.equal(report.runs.head.tests.length, 1);
+  assert.equal(report.tests[0].status, 'passes at the base: proves nothing new');
+});
+
+// Both a parent's full name and its position distinguish otherwise identical child registrations.
+test('R3 suite names and positions both participate in child identity', SETTLES_WITHIN[60_000], async (t) => {
+  for (const body of [
+    "import { describe } from 'node:test';\nfor (const [title, red] of value === 1 ? [['other suite', true], ['stable suite', false]] : [['stable suite', false]]) describe(title, () => { test('same child', () => red ? assert.equal(value, 2) : assert.equal(6 * 7, 42)); });\n",
+    "import { describe } from 'node:test';\nfunction register(red) { test('same child', () => red ? assert.equal(value, 2) : assert.equal(6 * 7, 42)); }\nif (value === 1) describe('same suite', () => register(true));\ndescribe('same suite', () => register(false));\n",
+  ]) {
+    const fixture = proofRepository(t, { head: source(2), body });
+    const { exit, report } = await invoke(fixture, 'proof-diff.mjs', [fixture.file]);
+    assert.equal(exit, 0);
+    assert.equal(report.runs.base.tests.length, 2);
+    assert.equal(report.runs.head.tests.length, 1);
+    assert.equal(report.tests[0].status, 'passes at the base: proves nothing new');
+  }
+});
