@@ -406,14 +406,6 @@ test('a table cell with three conditions is a rule 4 hint naming its line and it
   assert.deepEqual(hints(table).map(({ rule, line, row }) => ({ rule, line, row })), [{ rule: 4, line: 3, row: 'R-LOOP-1' }]);
 });
 
-test('a list item with four steps joined by `then` gives no hint', () => {
-  // A list is rule 4's answer already, so the hint leaves a list item alone.
-  const list = '- The engine pulls, then dispatches, then judges, then merges.\n';
-  assert.deepEqual(hints(list), []);
-  // The same words as prose are hinted, so the list form is what the item escapes by.
-  assert.equal(hints(list.slice(2)).length, 1);
-});
-
 test('fenced code gives no hint', () => {
   const fenced = [
     '```',
@@ -518,120 +510,18 @@ test('a hint on a binding document is printed under `--hints`, and the exit is w
   assert.equal(lintWith('--hints', failing).status, 1);
 });
 
-test('a list item wrapping onto an indented next line that holds the `then`s gives no hint', () => {
-  // The indented line is the item's own text, so it is a list item and not a paragraph.
-  const wrapped = '- The engine pulls,\n  then dispatches, then judges, then merges.\n';
-  assert.deepEqual(hints(wrapped), []);
-  // The same line under a blank line and no indent is prose after the list, and is hinted.
-  assert.deepEqual(hinted('- The engine pulls.\n\nThen it dispatches, then judges, then merges.\n'), [{ rule: 4, line: 3 }]);
+// --- U85: the hints read every paragraph, list items included ---
+
+test('a list item and the same text as a paragraph get the same hints', () => {
+  const sentence = 'The engine pulls, then dispatches, then judges, then merges.';
+  const asParagraph = hinted(`${sentence}\n`);
+  assert.deepEqual(asParagraph, [{ rule: 4, line: 1 }]);
+  assert.deepEqual(hinted(`- ${sentence}\n`), asParagraph);
+  assert.deepEqual(hinted(`1. ${sentence}\n`), asParagraph);
+  // An item wrapping onto an indented line reads as the paragraph it wraps.
+  assert.deepEqual(hinted('- The engine pulls,\n  then dispatches, then judges, then merges.\n'), asParagraph);
 });
 
-// A list item's extent follows CommonMark's list-item rules: an item holds a lazy continuation
-// line, and a line after a blank stays in the item only when indented to the item's content.
-
-test('judge probe: lazy continuation of a list item gives no rule 4 hint', () => {
-  // The second line has no indent, and no blank line comes before it, so it continues the item.
-  const item = '- The engine pulls,\nthen dispatches, then judges, then merges.\n';
-  assert.deepEqual(hints(item), []);
-});
-
-test('prose after a blank line, indented less than the item content, is hinted', () => {
-  // One space falls short of the two columns `- ` gives the item, so the paragraph is outside it.
-  assert.deepEqual(hinted('- The engine pulls.\n\n Then it dispatches, then judges, then merges.\n'), [{ rule: 4, line: 3 }]);
-  // `10. ` gives four columns, so three spaces fall short too.
-  assert.deepEqual(hinted('10. The engine pulls.\n\n   Then it dispatches, then judges, then merges.\n'), [{ rule: 4, line: 3 }]);
-});
-
-test('a paragraph after a blank line, indented to the item content, continues the item', () => {
-  assert.deepEqual(hints('- The engine pulls.\n\n  Then it dispatches, then judges, then merges.\n'), []);
-  assert.deepEqual(hints('10. The engine pulls.\n\n    Then it dispatches, then judges, then merges.\n'), []);
-});
-
-test('a nested list item holds its lazy line, and prose under the list after a blank is hinted', () => {
-  const nested = '- The engine runs a card.\n  - It pulls,\nthen dispatches, then judges, then merges.\n';
-  assert.deepEqual(hints(nested), []);
-  // Indented to the outer item's content, the paragraph after a blank stays in the outer item.
-  assert.deepEqual(hints('- The engine runs a card.\n  - It pulls.\n\n  Then it dispatches, then judges, then merges.\n'), []);
-  // Indented one space, it is under neither item.
-  assert.deepEqual(hinted('- The engine runs a card.\n  - It pulls.\n\n Then it dispatches, then judges, then merges.\n'), [{ rule: 4, line: 4 }]);
-});
-
-// What ends a list item, after CommonMark 0.31.2's list-item and block-structure sections. Only an
-// item's paragraph takes a lazy line, and any block that can interrupt a paragraph ends the item
-// unless it is indented to the item's content.
-
-test('architect probe: tab-indented paragraph remains inside its list item', () => {
-  // A tab runs to the next multiple of four columns, past the two `- ` gives the item.
-  assert.deepEqual(hints('- The engine pulls.\n\n\tThen it dispatches, then judges, then merges.\n'), []);
-});
-
-test('architect probe: prose after a list heading is outside the list', () => {
-  assert.deepEqual(hinted('- # Steps\nThen it dispatches, then judges, then merges.\n'), [{ rule: 4, line: 2 }]);
-  // The reviewer's probe: the item holds a heading, not a paragraph, so the next line has none to continue.
-  assert.deepEqual(hinted('- # Heading\nThen it dispatches, then judges, then merges.\n'), [{ rule: 4, line: 2 }]);
-});
-
-test('a setext underline indented into an item ends its paragraph, so the next unindented line is prose', () => {
-  // The prose joins the underline's paragraph in the shared reader, which anchors it on line 2.
-  assert.deepEqual(hinted('- The engine pulls.\n  ---\nThen it dispatches, then judges, then merges.\n'), [{ rule: 4, line: 2 }]);
-});
-
-test('reviewer probe: prose after a list-ending thematic break still draws its rule 4 hint', () => {
-  // The shared reader opens a paragraph on `***`, so the hint keeps that line, as before.
-  assert.deepEqual(hinted('- First.\n***\nThen it dispatches, then judges, then merges.\n'), [{ rule: 4, line: 2 }]);
-  // `* * *` is a thematic break before it is a list item.
-  assert.deepEqual(hinted('- First.\n* * *\nThen it dispatches, then judges, then merges.\n'), [{ rule: 4, line: 3 }]);
-});
-
-test('an unindented fenced-code opener ends the list, so an indented paragraph after the fence is prose', () => {
-  const text = '- The engine pulls,\n```\ncode\n```\n  Then it dispatches, then judges, then merges.\n';
-  assert.deepEqual(hinted(text), [{ rule: 4, line: 5 }]);
-});
-
-test('an HTML block start ends the list, and an HTML tag that cannot interrupt a paragraph does not', () => {
-  // `<div>` starts a block that can interrupt a paragraph, and the block runs to the blank line.
-  assert.deepEqual(hinted('- The engine pulls,\n<div>\n\n  Then it dispatches, then judges, then merges.\n'), [{ rule: 4, line: 4 }]);
-  assert.deepEqual(hinted('- The engine pulls,\n<!-- a note -->\n\n  Then it dispatches, then judges, then merges.\n'), [{ rule: 4, line: 4 }]);
-  // A lone `<span>` line cannot interrupt a paragraph, so it and the next line stay lazy text.
-  assert.deepEqual(hints('- The engine pulls,\n<span>\nthen dispatches, then judges, then merges.\n'), []);
-});
-
-test('a block quote ends the list, so an indented paragraph after a blank is prose', () => {
-  assert.deepEqual(hinted('- The engine pulls,\n> A quote.\n\n  Then it dispatches, then judges, then merges.\n'), [{ rule: 4, line: 4 }]);
-});
-
-test('a marker indented four columns is code, not a list item, so the next line is prose', () => {
-  assert.deepEqual(hinted('    - The engine pulls,\nthen dispatches, then judges, then merges.\n'), [{ rule: 4, line: 2 }]);
-});
-
-test('an empty list item ends at a blank line, so the indented paragraph after it is prose', () => {
-  // A list item can begin with at most one blank line.
-  assert.deepEqual(hinted('-\n\n  Then it dispatches, then judges, then merges.\n'), [{ rule: 4, line: 3 }]);
-});
-
-test('an indented `===` underline ends an item paragraph, and an unindented one is a lazy line', () => {
-  // Indented into the item, `===` makes its paragraph a heading, so the next unindented line is prose.
-  assert.deepEqual(hinted('- The engine pulls.\n  ===\nThen it dispatches, then judges, then merges.\n'), [{ rule: 4, line: 2 }]);
-  // Unindented, `===` cannot underline the item's paragraph, so it and the next line go on with it.
-  assert.deepEqual(hints('- The engine pulls,\n===\nthen dispatches, then judges, then merges.\n'), []);
-});
-
-test('an item content column is the marker plus up to four columns after it', () => {
-  // Five spaces after `-` make indented code, so the content column is one past the marker.
-  assert.deepEqual(hints('-     The engine pulls.\n\n  Then it dispatches, then judges, then merges.\n'), []);
-  // A tab after `-` runs to column four, and the paragraph indented to it stays in the item.
-  assert.deepEqual(hints('-\tThe engine pulls.\n\n    Then it dispatches, then judges, then merges.\n'), []);
-  // Three spaces after `-` set column four, so two spaces fall short of it.
-  assert.deepEqual(hinted('-   The engine pulls.\n\n  Then it dispatches, then judges, then merges.\n'), [{ rule: 4, line: 3 }]);
-});
-
-test('a fence inside an item keeps it open, and fence content indented less than the item ends it', () => {
-  const inside = '- The engine pulls:\n  ```\n  code\n  ```\n\n  Then it dispatches, then judges, then merges.\n';
-  assert.deepEqual(hints(inside), []);
-  // Fence content is no lazy line, so `code` at column 0 ends the item, and the paragraph is prose.
-  const outside = '- The engine pulls:\n  ```\ncode\n  ```\n\n  Then it dispatches, then judges, then merges.\n';
-  assert.deepEqual(hinted(outside), [{ rule: 4, line: 6 }]);
-  // A second content line at column 0 is code too, never a lazy line keeping the item open.
-  const later = '- The engine pulls:\n  ```\n  code\nmore\n  ```\n\n  Then it dispatches, then judges, then merges.\n';
-  assert.deepEqual(hinted(later), [{ rule: 4, line: 7 }]);
+test('a list item with four steps joined by three `then` is a rule 4 hint', () => {
+  assert.deepEqual(hinted('- The engine pulls, then dispatches, then judges, then merges.\n'), [{ rule: 4, line: 1 }]);
 });
