@@ -221,7 +221,9 @@ test('missing emitters and invalid deadlines retain adapter refusals without cal
     await workspaces({ repository: directory, git, emitter }).acceptsBranch('rigger-1');
     assert.equal(emitter.events.length, 2, 'the positive controls must record both emitting paths');
     for (const missing of [undefined, {}]) {
-      const noEmitter = (error) => error.code === NOT_STARTED && /no L0 emitter/.test(error.message);
+      const adapterRefusal = await runCommand({ command: 'gh', args: [], cwd: directory, env: gitEnvironment(), timeout: OUTLIVED, emitter: missing }).catch((error) => error);
+      assert.match(adapterRefusal.message, /no L0 emitter/);
+      const noEmitter = (error) => error.code === adapterRefusal.code && /no L0 emitter/.test(error.message);
       await assert.rejects(readRunner(['auth', 'status'], { emitter: missing }), noEmitter);
       await assert.rejects(workspaces({ repository: directory, git, emitter: missing }).acceptsBranch('rigger-1'), noEmitter);
     }
