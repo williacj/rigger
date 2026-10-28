@@ -1594,7 +1594,9 @@ that failed.
 | a verb that named it and appended no event | no push |
 | the forge refuses the push | `refused`, naming the text `git push` printed; as a push that did not succeed |
 | the push runs past `PUSH_TIMEOUT` | `timed-out`; as a push that did not succeed (`R-RECORD-17`) |
-| `git` absent, no credential, or no committer identity | `failed`, naming the failure; as a push that did not succeed |
+| `git` absent from the host | `failed`, naming the failure; as a push that did not succeed (`R-RECORD-14`, `R-RECORD-15`, `R-RECORD-16`, `R-RECORD-18`) |
+| no credential for `origin` | `failed`, naming the failure; as a push that did not succeed (`R-RECORD-14`, `R-RECORD-15`, `R-RECORD-16`, `R-RECORD-18`) |
+| no committer identity for `git commit-tree` | `failed`, naming the failure; as a push that did not succeed (`R-RECORD-14`, `R-RECORD-15`, `R-RECORD-16`, `R-RECORD-18`) |
 | an event recorded while a push is in flight | the push copies the stream as L5 read it at the push's start; the next push carries the event (`R-RECORD-13`) |
 | Rigger killed outright during a push | see below |
 | a ruleset that names no ref, as a `branch` ruleset over `~ALL`, refuses the write | not measured: the residual below |
