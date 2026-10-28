@@ -162,3 +162,9 @@ test('report\'s queue lines do not change for an event of another name, L3\'s pu
   assert.deepEqual(await queue([...noise.slice(0, 1), ...base.slice(0, 3), ...noise.slice(1), ...base.slice(3)]), expected);
   assert.deepEqual(await queue(fielded), expected);
 });
+
+test('report lists a run\'s pulls in the order the stream holds them, not by card number', async () => {
+  // #9 is pulled first, then #3, then #5: sorted by card the lines would read #3, #5, #9.
+  const lines = block(await reported([['r-a', [runStart(0, 3), pull(0, 9, 2), pull(0, 3, 1, 2), pull(0, 5, 0, 3), release(30, 9), release(30, 3), release(30, 5)]]]), 'r-a');
+  assert.deepEqual(lines.slice(2), [queueLine(9, 2), queueLine(3, 1), queueLine(5, 0)]);
+});
