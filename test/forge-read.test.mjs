@@ -171,6 +171,8 @@ function forge({
     if (document.includes('items(')) return answer('item', pages, document);
     if (document.includes('dataType')) return printed('typed field', typedFields);
     if (document.includes('fields(')) return printed('field', fields);
+    // The state read of one issue, answered as gh printed it for #949 on 2026-10-28.
+    if (document.includes('issue(number:')) return { status: 0, stdout: readFileSync(join(FIXTURES, 'rigger-issue-state-2026-10-28.json'), 'utf8'), stderr: '' };
     if (document.includes('repository(')) return answer('label', labels, document);
     throw new Error(`the test forge does not answer ${document}`);
   };
@@ -623,6 +625,12 @@ async function fullRead() {
       },
       typedFields: typedFieldPage([{ name: 'Status', options: Object.values(COLUMNS) }, { name: 'Priority', options: ['High', 'Normal', 'Low'] }]),
     });
+    if (name === 'readIssueState') {
+      await readSide(RANKED, { send }).readIssueState(949);
+      sent.push(...send.sent);
+      callers.push(...send.callers);
+      continue;
+    }
     await readSide(RANKED, { send })[name]();
     sent.push(...send.sent);
     callers.push(...send.callers);
@@ -743,6 +751,8 @@ const PRINTED_REPOSITORY = Object.fromEntries(
     ['pull request', 'rigger-pull-request-2026-10-12.json'],
     ['issue', 'rigger-issue-2026-10-12.json'],
     ['file', 'rigger-file-at-commit-2026-10-11.json'],
+    // Captured with gh 2.103.2 on 2026-10-28, for the timeline read of #794.
+    ['timeline', 'rigger-issue-timeline-2026-10-28.json'],
   ].map(([kind, file]) => [kind, pathsOf(JSON.parse(readFileSync(join(FIXTURES, file), 'utf8')))]),
 );
 
@@ -796,6 +806,7 @@ function repositoryForge(answers = {}) {
     if (document.includes('defaultBranchRef')) return answer('default branch', document);
     if (document.includes('headRepository')) return answer('pull request', document);
     if (document.includes('issues(states:')) return ok({ repository: { issues: { pageInfo: { hasNextPage: false, endCursor: 'MQ' }, nodes: [] } } });
+    if (document.includes('timelineItems(')) return answer('timeline', document);
     if (document.includes('issue(')) return answer('issue', document);
     if (document.includes('object(oid:')) return answer('file', document);
     if (document.includes('mergeable')) return answer('mergeable', document);
@@ -1033,6 +1044,7 @@ const REPOSITORY_READS = {
   readDefaultBranch: { call: (reads) => reads.readDefaultBranch(), names: 'the default branch' },
   readPullRequestByNumber: { call: (reads) => reads.readPullRequestByNumber(12), names: 'pull request #12' },
   readIssue: { call: (reads) => reads.readIssue(214), names: 'issue #214' },
+  readIssueTimeline: { call: (reads) => reads.readIssueTimeline(214), names: 'issue #214\'s timeline' },
   readFileAt: { call: (reads) => reads.readFileAt('a'.repeat(40), 'rigger.config.mjs'), names: `rigger.config.mjs at ${'a'.repeat(40)}` },
   readPermission: { call: (reads) => reads.readPermission('rigger-bot'), names: 'rigger-bot\'s permission' },
   readLabelledIssues: { call: (reads) => reads.readLabelledIssues('rigger:status'), names: 'the open issues labelled rigger:status' },
@@ -1097,6 +1109,7 @@ test('every request a full repository read issues reaches the spawn through the 
     'default branch': { repository: { defaultBranchRef: { name: 'main', target: { oid: head } } } },
     'pull request': { repository: { pullRequest: pullNode({ number: 12 }) } },
     issue: { paged: { null: { repository: { issue: issueNode({ number: 214 }) } } } },
+    timeline: { paged: { null: { repository: { issue: { timelineItems: { pageInfo: { hasNextPage: false, endCursor: 'MQ' }, nodes: [{ __typename: 'ClosedEvent', createdAt: '2026-10-18T18:19:57Z', actor: { login: 'williacj' } }] } } } } } },
     file: { repository: { object: { oid: 'a'.repeat(40), file: { mode: 0o100644, type: 'blob', object: { text: 'x', isBinary: false, isTruncated: false, byteSize: 1 } } } } },
   };
   const sent = [];

@@ -39,7 +39,43 @@ const PULL_FACTS = ['number', 'head', 'sha', 'base', 'merged', 'diff', 'declined
  * answers it in, which is another repository's for an issue transferred out of this one and null
  * for this repository's own. Its `comments` carry the comments appended to that issue.
  */
-const ISSUE_FACTS = ['number', 'title', 'body', 'labels', 'repository', 'comments'];
+const ISSUE_FACTS = ['number', 'title', 'body', 'labels', 'repository', 'comments', 'opened', 'events'];
+
+/** The time the fake answers for every timeline entry but a comment: the timeline's order is what it models. */
+const EVENT_TIME = '2026-10-01T00:00:00Z';
+
+/** The node GitHub answers for each kind of timeline event the fake holds. */
+const EVENT_TYPES = { labeled: 'LabeledEvent', unlabeled: 'UnlabeledEvent', closed: 'ClosedEvent', reopened: 'ReopenedEvent' };
+
+/**
+ * Issue `issue`'s timeline as the timeline read's GraphQL nodes, oldest first: a label event for
+ * each label it carried at its opening, `opened` where a write has since changed them and its
+ * `labels` otherwise, then its `events` and `comments` interleaved. Each event is `{ kind, actor,
+ * label, after }`: `kind` one of `EVENT_TYPES`' keys, `actor` the login that made it, `rigger-fake`
+ * where none is given and null for a deleted account, `label` a label change's label, and `after`
+ * how many of the issue's comments came before it, 0 where none is given.
+ */
+export function timelineNodes(issue) {
+  const actor = (login) => (login === null ? null : { login: login ?? 'rigger-fake' });
+  const event = ({ kind, actor: login, label }) => ({ __typename: EVENT_TYPES[kind], createdAt: EVENT_TIME, actor: actor(login), ...(label === undefined ? {} : { label: { name: label } }) });
+  const comments = issue.comments ?? [];
+  const events = issue.events ?? [];
+  const nodes = (issue.opened ?? issue.labels ?? []).map((label) => event({ kind: 'labeled', label }));
+  for (let at = 0; at <= comments.length; at += 1) {
+    nodes.push(...events.filter(({ after = 0 }) => after === at).map(event));
+    if (at < comments.length) nodes.push({ __typename: 'IssueComment', ...commentOf(comments[at], issue.number, at) });
+  }
+  return nodes;
+}
+
+/**
+ * Records event `kind`, with `fields`, on held issue `issue`, after its comments so far, keeping
+ * the labels it carried at its opening before the first event changes them.
+ */
+export function recordEvent(issue, kind, fields = {}) {
+  issue.opened ??= [...(issue.labels ?? [])];
+  (issue.events ??= []).push({ kind, ...fields, after: (issue.comments ?? []).length });
+}
 
 /** The SHA the fake's merge answers as the merge commit. */
 const MERGE_SHA = 'e'.repeat(40);
@@ -158,6 +194,17 @@ export function createFakeRepository({ branches = [], pullRequests = [], issues 
         const node = commentOf(comment, number, index);
         const author = node.author?.login ?? null;
         return { body: node.body, createdAt: node.createdAt, id: node.id, author, permission: author === null ? 'none' : permissions === undefined ? 'write' : permissions[author] ?? 'none', edited: node.lastEditedAt !== null || node.includesCreatedEdit };
+      }));
+    },
+    /** Issue `number`'s timeline, as `timelineNodes` holds it, each entry as the timeline read answers it. */
+    readIssueTimeline: async (number) => {
+      const found = issue(number);
+      if (!found) throw new Error(`the fake repository holds no issue #${number}, so readIssueTimeline has nothing to read`);
+      const kinds = Object.fromEntries(Object.entries(EVENT_TYPES).map(([kind, type]) => [type, kind]));
+      return structuredClone(timelineNodes(found).map((node) => {
+        if (node.__typename !== 'IssueComment') return { kind: kinds[node.__typename], createdAt: node.createdAt, actor: node.actor?.login ?? null, ...(node.label && { label: node.label.name }) };
+        const author = node.author?.login ?? null;
+        return { kind: 'comment', body: node.body, createdAt: node.createdAt, id: node.id, author, permission: author === null ? 'none' : permissions === undefined ? 'write' : permissions[author] ?? 'none', edited: node.lastEditedAt !== null || node.includesCreatedEdit };
       }));
     },
     readDefaultBranch: async () => {

@@ -10,7 +10,7 @@ import { parseDocument } from '../src/substrate/forge/graphql.mjs';
 import { dirname } from 'node:path';
 import { branchesIn, checkedOut, commentOf, comparedIn, createFakeRepository, headIn } from './fake-repository.mjs';
 import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
-import { defaultBranchIn, entryIn, pullStateOf } from './fake-repository.mjs';
+import { defaultBranchIn, entryIn, pullStateOf, recordEvent, timelineNodes } from './fake-repository.mjs';
 
 /** How the fake `gh` names a command it was run with: as the command line itself. */
 const spelled = (args) => ['gh', ...args].join(' ');
@@ -389,6 +389,31 @@ async function issue(board, state, operation) {
   return { repository: { issue: { number, title: held.title, body: held.body, state: state.repository?.issueStates?.[number] === 'closed' ? 'CLOSED' : 'OPEN', author: { login: 'rigger-fake' }, repository: { nameWithOwner: held.repository ?? state.repo }, labels } } };
 }
 
+/** The held issue the read names in the repository the forge answers it in, or GitHub's not-found answer for it. */
+function heldIssue(state, operation) {
+  inTheRepository(state, operation);
+  const number = Number(valueOf(fieldIn(operation.selections, 'issue'), 'number'));
+  const held = repositoryOf(state).held().issues.find((candidate) => candidate.number === number);
+  if (!held) throw unresolved({ repository: { issue: null } }, ['repository', 'issue'], `Could not resolve to an Issue with the number of ${number}.`);
+  return held;
+}
+
+/** Answers the state of the issue the read names, and the repository the forge answers it in. */
+async function issueState(board, state, operation) {
+  const held = heldIssue(state, operation);
+  return { repository: { issue: { state: state.repository?.issueStates?.[held.number] === 'closed' ? 'CLOSED' : 'OPEN', repository: { nameWithOwner: held.repository ?? state.repo } } } };
+}
+
+/** What the timeline read selects of each entry. */
+const TIMELINE = 'pageInfo { hasNextPage endCursor } nodes { __typename ... on IssueComment { body createdAt id author { login } lastEditedAt includesCreatedEdit } ... on LabeledEvent { createdAt actor { login } label { name } } ... on UnlabeledEvent { createdAt actor { login } label { name } } ... on ClosedEvent { createdAt actor { login } } ... on ReopenedEvent { createdAt actor { login } } }';
+
+/** Answers a page of the timeline of the issue the read names, as `timelineNodes` holds it. */
+async function timeline(board, state, operation) {
+  const held = heldIssue(state, operation);
+  const field = fieldIn(fieldIn(operation.selections, 'issue').selections, 'timelineItems');
+  return { repository: { issue: { timelineItems: page(timelineNodes(held), field) } } };
+}
+
 /**
  * Answers a page of the repository's open issues carrying the label the read names, in number
  * order: the issues it holds, an issue closed through the fake `gh` left out, as GitHub's issues
@@ -558,6 +583,8 @@ const COMMANDS = {
     return { repository: { pullRequest: { number: pull.number, state: pullStateOf(pull), headRefOid: pull.sha, headRefName: pull.head, baseRefName: pull.base, headRepository: headRepositoryOf(state, pull) } } };
   },
   [graphql(repositoryShape(`issue(number: _) { ${ISSUE} labels(first: _) { ${LABELS} } }`))]: issue,
+  [graphql(repositoryShape('issue(number: _) { state repository { nameWithOwner } }'))]: issueState,
+  [graphql(repositoryShape(`issue(number: _) { timelineItems(itemTypes: [], first: _) { ${TIMELINE} } }`))]: timeline,
   [graphql(repositoryShape(`issue(number: _) { ${ISSUE} labels(first: _, after: _) { ${LABELS} } }`))]: issue,
   [graphql(repositoryShape(`issues(states: [], labels: [], first: _) { ${LABELS.replace('name', 'number')} }`))]: labelledIssues,
   [graphql(repositoryShape(`issues(states: [], labels: [], first: _, after: _) { ${LABELS.replace('name', 'number')} }`))]: labelledIssues,
@@ -686,6 +713,7 @@ const COMMANDS = {
     const issue = state.repository?.issues?.find((candidate) => candidate.number === number);
     if (!issue) throw notFound('https://docs.github.com/rest/issues/issues#update-an-issue');
     state.repository.issueStates ??= {};
+    if (state.repository.issueStates[number] !== 'closed') recordEvent(issue, 'closed');
     state.repository.issueStates[number] = 'closed';
     return JSON.stringify({ number, state: 'closed' });
   },
@@ -695,6 +723,7 @@ const COMMANDS = {
     if (!issue) throw notFound('https://docs.github.com/rest/issues/labels#remove-a-label-from-an-issue');
     const label = decodeURIComponent(encoded);
     if (!issue.labels?.includes(label)) throw notFound('https://docs.github.com/rest/issues/labels#remove-a-label-from-an-issue');
+    recordEvent(issue, 'unlabeled', { label });
     issue.labels = issue.labels.filter((held) => held !== label);
     return JSON.stringify(issue.labels.map((name) => ({ name })));
   },
@@ -732,6 +761,7 @@ const COMMANDS = {
     if (refused) throw new GhPrinted(`gh: ${refused.message} (HTTP ${refused.status})`, JSON.stringify(refused));
     const label = args[5].slice('labels[]='.length);
     target.labels ??= [];
+    if (!target.labels.includes(label) && state.repository.issues?.includes(target)) recordEvent(target, 'labeled', { label });
     if (!target.labels.includes(label)) target.labels.push(label);
     return JSON.stringify(target.labels.map((name) => ({ name })));
   },
