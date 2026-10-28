@@ -13,17 +13,23 @@ const figure = (value) => String(Number(value.toFixed(4)));
 /** A duration in milliseconds, printed in hours. */
 const hours = (ms) => `${figure(ms / HOUR)} h`;
 
-/** The lines one run's L3 signals print as, each figure beside the facts it was computed from. */
-function runLines({ run, from, to, releases, pulled, n, throughput, utilization }) {
+/** The lines one run's queue carried prints as: one per L3 `pull`, in line order, or one saying it recorded none. */
+const queueLines = (queue) => (queue.length === 0
+  ? ['    the run recorded no pull, so L3 has no queue carried for it']
+  : queue.map(({ card, queueDepth }) => `    queue carried at the pull of card #${card}: ${queueDepth}`));
+
+/** The lines one run's L3 signals print as, each figure beside the facts it was computed from, then its queue carried. */
+function runLines({ run, from, to, releases, pulled, n, throughput, utilization, queue }) {
   const span = to - from;
   const heading = `  run ${run}: from ${new Date(from).toISOString()} to ${new Date(to).toISOString()}, a span of ${hours(span)}`;
-  if (span === 0) return [heading, '    the span is zero, so L3 has no throughput and no utilization for this run'];
+  if (span === 0) return [heading, '    the span is zero, so L3 has no throughput and no utilization for this run', ...queueLines(queue)];
   return [
     heading,
     `    L3 throughput: ${figure(throughput)} slot releases per hour (${releases} slot releases over ${hours(span)})`,
     utilization === null
       ? '    the run recorded no N, so L3 has no utilization for it'
       : `    L3 utilization: ${figure(utilization)} (${hours(pulled)} from pull to release, over N ${n} x ${hours(span)})`,
+    ...queueLines(queue),
   ];
 }
 
