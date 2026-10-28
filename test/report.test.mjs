@@ -392,6 +392,9 @@ test('report states both edges below its marker heading', () => {
   assert.match(out, /markers no dispatch wrote\n(?:  card[^\n]*\n)*  only markers L2 recorded in this state directory are named\n  markers of role owner are never checked/);
 });
 
+/** Any line of L1's or L2's sections: a heading, a duration, the stream's count, or a rate or its absence. */
+const L1_L2_SIGNAL = /^L[12]$|survivor rate|host-fault rate|dispatch\.end events|^ *dispatch \S+(?:, card #\d+)?: \d+ ms$/m;
+
 test('report over a state directory holding no event stream says no events are recorded, naming the path it looked at', () => {
   const consumer = realpathSync(repositoryIn('rigger-report-'));
 
@@ -400,6 +403,7 @@ test('report over a state directory holding no event stream says no events are r
   assert.equal(ran.code, 0, ran.err);
   assert.match(ran.out, /no events are recorded/, ran.out);
   assert.ok(ran.out.includes(streamIn(consumer)), ran.out);
+  assert.doesNotMatch(`${ran.out}${ran.err}`, L1_L2_SIGNAL);
 });
 
 // proves R-SAFE-5
@@ -456,7 +460,9 @@ test('report over a stream holding the layers a maker\'s dispatch records prints
 
   assert.equal(ran.code, 0, ran.err);
   assert.match(ran.out, /\bL3\b/, ran.out);
-  assert.doesNotMatch(ran.out.replace(/^  only markers L2 recorded in this state directory are named\n/m, ''), /\bL[0-24-9]\b/, ran.out);
+  assert.doesNotMatch(ran.out.replace(/^  only markers L2 recorded in this state directory are named\n/m, ''), /\bL[04-9]\b/, ran.out);
+  assert.match(ran.out, /^L1$/m, ran.out);
+  assert.match(ran.out, /^L2$/m, ran.out);
 });
 
 test('report over a stream holding a line that does not parse exits non-zero, names that line, and prints no signal', async () => {
@@ -471,6 +477,7 @@ test('report over a stream holding a line that does not parse exits non-zero, na
   assert.notEqual(ran.code, 0, ran.out);
   assert.match(ran.err, /\bline 3\b/, ran.err);
   assert.doesNotMatch(`${ran.out}${ran.err}`, /throughput|utilization/);
+  assert.doesNotMatch(`${ran.out}${ran.err}`, L1_L2_SIGNAL);
 });
 
 test('report leaves the stream\'s bytes as they were', async () => {
@@ -509,7 +516,7 @@ test('report over a stream holding two runs prints each run\'s signals over that
   const ran = report(consumer);
 
   assert.equal(ran.code, 0, ran.err);
-  const [first, second] = ran.out.split(/^run /m).slice(1);
+  const [first, second] = ran.out.slice(ran.out.indexOf('\nL3\n')).split(/^  run /m).slice(1);
   assert.match(first, /^r-237:/, ran.out);
   assert.match(second, /^r-second:/, ran.out);
   assert.deepEqual([printed(first, 'throughput'), printed(first, 'utilization')], [2, 0.8], ran.out);
@@ -557,4 +564,298 @@ test('report issues no gh command, by a record of every command it issues', asyn
 
 test('the recording path, once made, has recorded no command', () => {
   assert.deepEqual(recordingPath().calls(), []);
+});
+
+/** Runs the real bin's `report` over a stream holding `runs`, each a run id and the events it records, in order. */
+function reported(runs) {
+  const consumer = realpathSync(repositoryIn('rigger-report-'));
+  for (const [run, events] of runs) recordEvents(consumer, run, events);
+  const ran = report(consumer);
+  assert.equal(ran.code, 0, ran.err);
+  return ran.out;
+}
+
+/** The lines of `out` under the unindented heading `layer`, up to the next unindented line. */
+function section(out, layer) {
+  const lines = out.split('\n');
+  const start = lines.indexOf(layer);
+  assert.notEqual(start, -1, `no ${layer} section in:\n${out}`);
+  const end = lines.findIndex((line, index) => index > start && !line.startsWith(' '));
+  return lines.slice(start + 1, end === -1 ? undefined : end);
+}
+
+/** The lines of a section under its heading `heading`, `run <id>` or `across the stream`, unindented. */
+function under(lines, heading) {
+  const start = lines.indexOf(`  ${heading}`);
+  assert.notEqual(start, -1, `no heading "${heading}" in:\n${lines.join('\n')}`);
+  const end = lines.findIndex((line, index) => index > start && !line.startsWith('    '));
+  return lines.slice(start + 1, end === -1 ? undefined : end).map((line) => line.slice(4));
+}
+
+/** The rate `name` among `lines` as [rate, numerator, denominator], or the line saying why it has none. */
+function rateIn(lines, name) {
+  const found = lines.filter((line) => line.startsWith(`${name}: `) || line.startsWith(`no ${name}: `));
+  assert.equal(found.length, 1, `not one ${name} line in:\n${lines.join('\n')}`);
+  const figures = found[0].match(new RegExp(`^${name}: (\\d+(?:\\.\\d+)?) \\(.* (\\d+), over .* (\\d+)\\)$`));
+  return figures ? figures.slice(1).map(Number) : found[0];
+}
+
+/** One L1 `dispatch.end` of `dispatch`, taking `ms`, under `card` where one is given, with `fields` besides. */
+const ended = (dispatch, ms, { card, ...fields } = {}) => ({ layer: 'L1', card, dispatch, event: 'dispatch.end',
+  // L1 records `reason` in place of `exit` where it got no result for the command (`src/execution/run.mjs`).
+  fields: 'reason' in fields ? { ms, ...fields } : { exit: 0, ms, ...fields } });
+
+/** One L0 kill event `name` carrying `dispatch`, as L0 records a survivor or group it killed. */
+const killed = (name, dispatch, card = 7) => ({ layer: 'L0', card, dispatch, event: name, fields: { pid: 4242 } });
+
+test('report prints an L1 section, then L2, then L3, each headed by its layer, ahead of the marker check', () => {
+  const out = reported([['r-a', [ended('d-1', 1000, { card: 7 })]]]);
+  const headings = out.split('\n').filter((line) => /^L\d$/.test(line) || line === 'markers no dispatch wrote');
+  assert.deepEqual(headings, ['L1', 'L2', 'L3', 'markers no dispatch wrote'], out);
+});
+
+test('report lists each dispatch.end of a run under that run, with its card where it carries one, and counts it across the stream', () => {
+  const l1 = section(reported([['r-a', [ended('d-1', 1500, { card: 7 }), ended('d-2', 300)]]]), 'L1');
+  const run = under(l1, 'run r-a');
+  assert.ok(run.includes('dispatch d-1, card #7: 1500 ms'), run.join('\n'));
+  assert.ok(run.includes('dispatch d-2: 300 ms'), run.join('\n'));
+  assert.ok(under(l1, 'across the stream').includes('dispatch.end events: 2, each listed under its run'), l1.join('\n'));
+});
+
+/** The survivor rate L1's section prints for run `run`, and across the stream, over `runs`. */
+function survivorRates(runs, run = runs[0][0]) {
+  const l1 = section(reported(runs), 'L1');
+  return { run: rateIn(under(l1, `run ${run}`), 'survivor rate'), stream: rateIn(under(l1, 'across the stream'), 'survivor rate') };
+}
+
+test('report counts a dispatch whose id a survivor.killed carries in the survivor rate\'s numerator', () => {
+  // Two dispatches ended with a result, and L0 killed a survivor of d-1: 1 of 2, 0.5.
+  const rates = survivorRates([['r-a', [ended('d-1', 100), ended('d-2', 100), killed('survivor.killed', 'd-1')]]]);
+  assert.deepEqual(rates, { run: [0.5, 1, 2], stream: [0.5, 1, 2] });
+});
+
+test('report counts a dispatch whose id a group.killed carries in the survivor rate\'s numerator', () => {
+  const rates = survivorRates([['r-a', [ended('d-1', 100), ended('d-2', 100), killed('group.killed', 'd-2')]]]);
+  assert.deepEqual(rates, { run: [0.5, 1, 2], stream: [0.5, 1, 2] });
+});
+
+test('report lists the duration of a dispatch.end carrying reason and leaves it out of the survivor rate\'s denominator', () => {
+  // d-2 got no result, so only d-1 is in the denominator, and L0 killed d-1's survivor: 1 of 1.
+  const runs = [['r-a', [ended('d-1', 100), ended('d-2', 250, { reason: 'spawn ENOENT' }), killed('survivor.killed', 'd-1')]]];
+  const l1 = section(reported(runs), 'L1');
+  assert.ok(under(l1, 'run r-a').includes('dispatch d-2: 250 ms'), l1.join('\n'));
+  assert.deepEqual(survivorRates(runs), { run: [1, 1, 1], stream: [1, 1, 1] });
+});
+
+test('report lists the duration of a dispatch.end carrying unread and keeps it in the survivor rate\'s denominator', () => {
+  const runs = [['r-a', [ended('d-1', 120, { unread: 'the status could not be read' }), ended('d-2', 100), killed('survivor.killed', 'd-1')]]];
+  const l1 = section(reported(runs), 'L1');
+  assert.ok(under(l1, 'run r-a').includes('dispatch d-1: 120 ms'), l1.join('\n'));
+  assert.deepEqual(survivorRates(runs), { run: [0.5, 1, 2], stream: [0.5, 1, 2] });
+});
+
+test('report counts a dispatch both kill events carry, or one carries twice, once in the survivor rate\'s numerator', () => {
+  // Four kill events name two of three dispatches: 2 of 3, where counting events would give 4.
+  const runs = [['r-a', [ended('d-1', 100), ended('d-2', 100), ended('d-3', 100),
+    killed('survivor.killed', 'd-1'), killed('group.killed', 'd-1'), killed('group.killed', 'd-2'), killed('group.killed', 'd-2')]]];
+  assert.deepEqual(survivorRates(runs), { run: [0.6667, 2, 3], stream: [0.6667, 2, 3] });
+});
+
+test('report counts a kill event carrying a dispatch id another run recorded for the run whose dispatch.end has that id', () => {
+  const runs = [
+    ['r-a', [ended('d-1', 100), ended('d-2', 100)]],
+    ['r-b', [killed('survivor.killed', 'd-1'), ended('d-3', 100)]],
+  ];
+  assert.deepEqual(survivorRates(runs, 'r-a'), { run: [0.5, 1, 2], stream: [0.3333, 1, 3] });
+  assert.deepEqual(survivorRates(runs, 'r-b').run, [0, 0, 1]);
+});
+
+test('report leaves out of the survivor rate\'s numerator a dispatch whose dispatch.end carries reason and whose id a kill event carries', () => {
+  const runs = [['r-a', [ended('d-1', 100, { reason: 'spawn ENOENT' }), ended('d-2', 100), killed('survivor.killed', 'd-1')]]];
+  assert.deepEqual(survivorRates(runs), { run: [0, 0, 1], stream: [0, 0, 1] });
+});
+
+test('report counts nowhere a kill event whose dispatch no dispatch.end in the stream carries', () => {
+  const runs = [['r-a', [ended('d-1', 100), ended('d-2', 100), killed('survivor.killed', 'd-9'), killed('group.killed', 'd-9')]]];
+  assert.deepEqual(survivorRates(runs), { run: [0, 0, 2], stream: [0, 0, 2] });
+});
+
+test('report counts nowhere a kill event whose dispatch is null or absent', () => {
+  const runs = [['r-a', [ended('d-1', 100), ended('d-2', 100), killed('survivor.killed', null), killed('group.killed', undefined)]]];
+  assert.deepEqual(survivorRates(runs), { run: [0, 0, 2], stream: [0, 0, 2] });
+});
+
+test('report leaves out of the survivor rate\'s numerator a dispatch only a timeout.killed or recorded.killed carries', () => {
+  const runs = [['r-a', [ended('d-1', 100), ended('d-2', 100), killed('timeout.killed', 'd-1'), killed('recorded.killed', 'd-2')]]];
+  assert.deepEqual(survivorRates(runs), { run: [0, 0, 2], stream: [0, 0, 2] });
+});
+
+test('report lists a provisioning step\'s dispatch.end and keeps it in the survivor rate\'s denominator', () => {
+  const runs = [['r-a', [
+    { layer: 'L3', card: 7, dispatch: 'd-step', event: 'dispatch', fields: { step: 'install', role: 'reviewer' } },
+    ended('d-step', 400, { card: 7 }), ended('d-1', 100), killed('survivor.killed', 'd-step'),
+  ]]];
+  const l1 = section(reported(runs), 'L1');
+  assert.ok(under(l1, 'run r-a').includes('dispatch d-step, card #7: 400 ms'), l1.join('\n'));
+  assert.deepEqual(survivorRates(runs), { run: [0.5, 1, 2], stream: [0.5, 1, 2] });
+});
+
+/** One L3 event `name` under `card`, as L3 records a claim. */
+const claim = (name, card) => ({ layer: 'L3', card, event: name, fields: {} });
+
+/** One L2 event `name` under `card`, carrying `fields`. */
+const l2Event = (name, card, fields) => ({ layer: 'L2', card, event: name, fields });
+
+/** One L2 maker.failed under `card`, as L2 records a maker that never started. */
+const makerFailed = (card) => l2Event('maker.failed', card, { class: 'environment', reason: 'spawn ENOENT' });
+
+test('report prints no duration line and no survivor rate for a run with no dispatch.end', () => {
+  const l1 = section(reported([['r-a', [ended('d-1', 100)]], ['r-b', [claim('pull', 7)]]]), 'L1');
+  assert.deepEqual(under(l1, 'run r-b'), ['no survivor rate: no dispatch in this run ended with a result']);
+});
+
+test('report prints no survivor rate across a stream with no dispatch.end, and never a 0', () => {
+  const l1 = section(reported([['r-a', [claim('pull', 7)]]]), 'L1');
+  assert.equal(rateIn(under(l1, 'across the stream'), 'survivor rate'), 'no survivor rate: no dispatch in the stream ended with a result');
+});
+
+/** The host-fault rate L2's section prints for run `run`, and across the stream, over `runs`. */
+function hostFaultRates(runs, run = runs[0][0]) {
+  const l2 = section(reported(runs), 'L2');
+  return { run: rateIn(under(l2, `run ${run}`), 'host-fault rate'), stream: rateIn(under(l2, 'across the stream'), 'host-fault rate') };
+}
+
+test('report counts a maker.failed under a card in the host-fault numerator, over the run\'s work claims', () => {
+  const runs = [['r-a', [claim('pull', 7), makerFailed(7), claim('slot.release', 7), claim('pull', 8)]]];
+  assert.deepEqual(hostFaultRates(runs), { run: [0.5, 1, 2], stream: [0.5, 1, 2] });
+});
+
+test('report counts a judge.withheld under a card in the host-fault numerator', () => {
+  const runs = [['r-a', [claim('pull', 7), l2Event('judge.withheld', 7, { role: 'reviewer', reason: 'no scratch', class: 'environment' }), claim('pull', 8)]]];
+  assert.deepEqual(hostFaultRates(runs), { run: [0.5, 1, 2], stream: [0.5, 1, 2] });
+});
+
+test('report counts an environment attempt.failed carrying no maker in the host-fault numerator', () => {
+  const runs = [['r-a', [claim('pull', 7), l2Event('attempt.failed', 7, { attempt: 1, class: 'environment', reason: 'fetch failed' }), claim('pull', 8)]]];
+  assert.deepEqual(hostFaultRates(runs), { run: [0.5, 1, 2], stream: [0.5, 1, 2] });
+});
+
+test('report does not count an environment attempt.failed carrying maker, whose maker.failed is already counted', () => {
+  const runs = [['r-a', [claim('pull', 7), makerFailed(7), l2Event('attempt.failed', 7, { attempt: 1, class: 'environment', maker: 'engineer', reason: 'spawn ENOENT' }), claim('pull', 8)]]];
+  assert.deepEqual(hostFaultRates(runs), { run: [0.5, 1, 2], stream: [0.5, 1, 2] });
+});
+
+test('report does not count a card-local or out attempt.failed as a host fault', () => {
+  const runs = [['r-a', [claim('pull', 7), l2Event('attempt.failed', 7, { attempt: 1, class: 'card-local', reason: 'workspace refused' }),
+    claim('pull', 8), l2Event('attempt.failed', 8, { attempt: 1, class: 'out', reason: 'line moved' }), makerFailed(8)]]];
+  assert.deepEqual(hostFaultRates(runs), { run: [0.5, 1, 2], stream: [0.5, 1, 2] });
+});
+
+test('report counts a pull with no merge.start under its card before that card\'s next pull as a work claim, and leaves out a merge claim', () => {
+  // #7's first claim is a work claim: its merge.start follows #7's next pull. #8's claim and #7's
+  // second are merge claims. One work claim, with one host fault: 1 of 1, where 3 pulls would give 1 of 3.
+  const runs = [['r-a', [claim('pull', 7), makerFailed(7), claim('pull', 8), claim('merge.start', 8), claim('pull', 7), claim('merge.start', 7)]]];
+  assert.deepEqual(hostFaultRates(runs), { run: [1, 1, 1], stream: [1, 1, 1] });
+});
+
+test('report prints no host-fault rate for a run with no work claim', () => {
+  const l2 = section(reported([['r-a', [claim('pull', 7), claim('merge.start', 7)]], ['r-b', [claim('pull', 8)]]]), 'L2');
+  assert.equal(rateIn(under(l2, 'run r-a'), 'host-fault rate'), 'no host-fault rate: no work claim in this run');
+  assert.deepEqual(rateIn(under(l2, 'run r-b'), 'host-fault rate'), [0, 0, 1]);
+});
+
+test('report over two runs derives each run\'s L1 and L2 figures from its own events, and the stream\'s from both', () => {
+  // r-a: d-1 killed, 1 of 1; one host fault over two work claims. r-b: neither of 2 killed; one
+  // host fault over one work claim. The stream: 1 of 3, and 2 host faults over 3 work claims.
+  const runs = [
+    ['r-a', [claim('pull', 7), makerFailed(7), claim('pull', 8), ended('d-1', 100), killed('survivor.killed', 'd-1')]],
+    ['r-b', [claim('pull', 9), l2Event('judge.withheld', 9, { role: 'reviewer', reason: 'no scratch', class: 'environment' }), ended('d-2', 100), ended('d-3', 100)]],
+  ];
+  assert.deepEqual(survivorRates(runs, 'r-a'), { run: [1, 1, 1], stream: [0.3333, 1, 3] });
+  assert.deepEqual(survivorRates(runs, 'r-b').run, [0, 0, 2]);
+  assert.deepEqual(hostFaultRates(runs, 'r-a'), { run: [0.5, 1, 2], stream: [0.6667, 2, 3] });
+  assert.deepEqual(hostFaultRates(runs, 'r-b').run, [1, 1, 1]);
+});
+
+test('report\'s L1 and L2 figures do not change for an event or a field that no L1 or L2 signal reads', () => {
+  const base = [claim('pull', 7), makerFailed(7), claim('pull', 8), ended('d-1', 100, { card: 7 }), ended('d-2', 100), killed('survivor.killed', 'd-1')];
+  const noise = [
+    { layer: 'L0', card: 7, event: 'call.end', fields: { system: 'git', operation: 'fetch', ms: 12, outcome: 'failed' } },
+    { layer: 'L1', card: 8, dispatch: 'd-2', event: 'dispatch.start', fields: { command: 'agent' } },
+    l2Event('attempt.decided', 7, { attempt: 1, decision: 'again' }),
+    l2Event('review.waiting', 8, { category: 'ambiguous', raiser: 'loop', reason: 'x' }),
+    { layer: 'L1', card: 8, dispatch: 'd-2', event: 'dispatch.timeout', fields: { timeout: 1000 } },
+  ];
+  // The same events with fields no signal reads added to them.
+  const fielded = base.map((event) => ({ ...event, fields: { ...event.fields, queueDepth: 3, folderLeft: [], kept: 'x' } }));
+  const sections = (events) => {
+    const out = reported([['r-a', events]]);
+    return [section(out, 'L1'), section(out, 'L2')];
+  };
+  const expected = sections(base);
+  assert.deepEqual([rateIn(under(expected[0], 'run r-a'), 'survivor rate'), rateIn(under(expected[1], 'run r-a'), 'host-fault rate')], [[0.5, 1, 2], [0.5, 1, 2]]);
+  assert.deepEqual(sections([...base, ...noise]), expected);
+  assert.deepEqual(sections(fielded), expected);
+});
+
+/** The attempt counts and redo names, immediately after the stream's survivor rate. */
+function attemptLines(runs) {
+  const stream = under(section(reported(runs), 'L1'), 'across the stream');
+  return stream.slice(stream.findIndex((line) => line.includes('survivor rate:')) + 1);
+}
+
+test('report counts first attempts from work claims with an L3 dispatch', () => {
+  // "Redos after an interruption" counts claims, including provisioning, rather than dispatches.
+  const cases = [
+    ['one active claim', [claim('pull', 7), claim('dispatch', 7)], 1],
+    ['no dispatch', [claim('pull', 7)], 0],
+    ['provisioning only', [claim('pull', 7), { ...claim('dispatch', 7), fields: { step: 'install' } }], 1],
+    ['merge claim', [claim('pull', 7), claim('dispatch', 7), claim('merge.start', 7)], 0],
+    ['dispatch before pull', [claim('dispatch', 7), claim('pull', 7)], 0],
+    ['another card dispatched', [claim('pull', 7), claim('dispatch', 8)], 0],
+    ['another layer dispatched', [claim('pull', 7), { ...claim('dispatch', 7), layer: 'L1' }], 0],
+    ['several dispatches in one claim', [claim('pull', 7), claim('dispatch', 7), claim('dispatch', 7)], 1],
+    ['normally released claim', [claim('pull', 7), claim('dispatch', 7), claim('slot.release', 7)], 1],
+    ['next pull bounds merge detection', [claim('pull', 7), claim('dispatch', 7), claim('pull', 7), claim('merge.start', 7)], 1],
+    ['next pull bounds dispatch detection', [claim('pull', 7), claim('pull', 7), claim('dispatch', 7)], 1],
+  ];
+  const actual = Object.fromEntries(cases.map(([name, events]) => [name, attemptLines([['r-a', events]])]));
+  const expected = Object.fromEntries(cases.map(([name, , first]) => [name, [`redos after an interruption: 0, first attempts: ${first}`]]));
+  assert.deepEqual(actual, expected);
+});
+
+// proves R-STATE-3
+test('report names redos after interruptions using the most recent earlier active work claim', () => {
+  // Each expected count follows "Redos after an interruption", independently of workClaims.
+  const active = (card = 7) => [claim('pull', card), claim('dispatch', card)];
+  const cases = [
+    ['redo beside another card first attempted', [['r-a', active()], ['r-b', [...active(), ...active(8)]]], 2, [[7, 'r-b']]],
+    ['normal release', [['r-a', [...active(), claim('slot.release', 7)]], ['r-b', active()]], 2, []],
+    ['same run', [['r-a', [...active(), ...active()]]], 2, []],
+    ['idle intervening claim', [['r-a', active()], ['r-b', [claim('pull', 7), claim('slot.release', 7)]], ['r-c', active()]], 1, [[7, 'r-c']]],
+    ['exit cleanup without release', [['r-a', [...active(), ended('d-a', 100, { card: 7 }), killed('group.killed', 'd-a')]], ['r-b', active()]], 1, [[7, 'r-b']]],
+    ['redone transition alone', [['r-a', [l2Event('transition', 7, { cause: 'redone' })]]], 0, []],
+    ['redone after normal release', [['r-a', [...active(), claim('slot.release', 7)]], ['r-b', [l2Event('transition', 7, { cause: 'redone' }), ...active()]]], 2, []],
+    ['idle earlier claim', [['r-a', [claim('pull', 7)]], ['r-b', active()]], 1, []],
+    ['merge intervening claim', [['r-a', active()], ['r-b', [...active(), claim('merge.start', 7)]], ['r-c', active()]], 1, [[7, 'r-c']]],
+    ['most recent attempt ended normally', [['r-a', active()], ['r-b', [...active(), claim('slot.release', 7)]], ['r-c', active()]], 2, [[7, 'r-b']]],
+    ['most recent attempt is in this run', [['r-a', active()], ['r-b', [...active(), ...active()]]], 2, [[7, 'r-b']]],
+    ['release under another card', [['r-a', [...active(), claim('slot.release', 8)]], ['r-b', active()]], 1, [[7, 'r-b']]],
+    ['release in another run', [['r-a', active()], ['r-b', [claim('slot.release', 7), ...active()]]], 1, [[7, 'r-b']]],
+    ['release before pull', [['r-a', [claim('slot.release', 7), ...active()]], ['r-b', active()]], 1, [[7, 'r-b']]],
+    ['each redo is named', [['r-z', active()], ['r-b', active()], ['r-a', active()]], 1, [[7, 'r-b'], [7, 'r-a']]],
+    ['separate cards', [['r-a', active()], ['r-b', active(8)]], 2, []],
+    ['unread events and fields', [
+      ['r-a', [...active(), ended('d-a', 100, { card: 7 }), claim('pull', 9),
+        { layer: 'L1', card: 9, event: 'dispatch.start', fields: {} }, ended('d-idle', 1, { card: 9 }),
+        claim('dispatch.start', 9), claim('dispatch.end', 9), claim('unread', 9), l2Event('transition', 7, { cause: 'redone' })]],
+      ['r-b', [...active(), ...active(8)].map((event) => ({ ...event, fields: { ...event.fields, interrupted: false, didSomething: false, merging: true, step: 'install' } }))],
+    ], 2, [[7, 'r-b']]],
+  ];
+  const actual = Object.fromEntries(cases.map(([name, runs]) => [name, attemptLines(runs)]));
+  const expected = Object.fromEntries(cases.map(([name, , first, redos]) => [name, [
+    `redos after an interruption: ${redos.length}, first attempts: ${first}`,
+    ...redos.map(([card, run]) => `redo after an interruption: card #${card}, run ${run}`),
+  ]]));
+  assert.deepEqual(actual, expected);
 });

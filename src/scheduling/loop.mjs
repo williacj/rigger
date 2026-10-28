@@ -14,7 +14,7 @@ import { stepDispatch } from '../execution/step.mjs';
 import { EVENT_REFUSED, NOT_STARTED, whenElapsed } from '../substrate/process.mjs';
 import { dispatched } from '../workflow/marker.mjs';
 import { dispatchedEscalation } from '../workflow/escalation.mjs';
-import { admission } from './admission.mjs';
+import { admission, admissionPath } from './admission.mjs';
 import { lane } from './lane.mjs';
 import { pullOrder } from './pull-order.mjs';
 import { DEFAULT_CONCURRENCY } from '../config/validate.mjs';
@@ -297,7 +297,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * appends its start, under the id and the card, naming the step and `fields`, the attempt
    * numbered `attempt` for a step in an attempt's workspace, or the judge `role` for one in a
    * judge's `head`, before L1 acts (`ARCHITECTURE.md`, "Failure model" and "Telemetry"). A start
-   * the sink refuses starts nothing, and rejects naming the card and the step.
+   * the sink refuses starts nothing, and rejects naming the card and the step. The outcome carries
+   * the id as `dispatch`, from which L2 composes a hold's dispatch ids.
    */
   const dispatchStep = async (card, step, path, fields) => {
     const id = `d-${randomUUID()}`;
@@ -307,7 +308,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       throw refused(`card #${card.number}'s step \`${step.name}\` was not started, because the event sink refused to record its start`, refusal);
     }
     const [outcome] = await Promise.allSettled([dispatchOnL1({ id, card: card.number, directory: state, sink, ps, readTimeout, ...stepDispatch(step, path, environment) })]);
-    return outcome;
+    return { ...outcome, dispatch: id };
   };
 
   /**
@@ -322,7 +323,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * repository unread (the architect's rulings 19 and 21, and ruling 3, P8), and `environment`. A
    * start the sink refuses starts nothing, and rejects naming the card and the role. `stamp`, handed
    * the answer and the id, answers the answer `roleDispatch` is handed, so that L2's `dispatched`
-   * writes a judge's id into its instruction (the architect's r2 ruling 6 on #642).
+   * writes a judge's id into its instruction (the architect's r2 ruling 6 on #642). The outcome
+   * carries the id as `dispatch`, as `dispatchStep`'s does.
    */
   const dispatchRole = async (card, answer, { cwd, directory, reach, scratch, repository }, fields, stamp = (given) => given) => {
     const id = `d-${randomUUID()}`;
@@ -336,7 +338,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       return dispatchOnL1({ id, card: card.number, directory: state, sink, ps, readTimeout, ...handed });
     };
     const [outcome] = await Promise.allSettled([run()]);
-    return outcome;
+    return { ...outcome, dispatch: id };
   };
 
   /** Each claimed card's close for its first `hold` answer under its claim, by card, until the claim is released. */
@@ -360,16 +362,62 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     return holds.get(answer.card);
   };
 
-  /** Links the closer for `holding`'s first `hold` answer of a card. */
+  /**
+   * Links the closer for `holding`'s first `hold` answer of a card, then, under the card's claim,
+   * awaits L2's notice call for it, as `notify` says. A notice that failed is carried on the closer
+   * as `notice`, naming the step and its cause.
+   */
   const closing = async ({ card, role, firstFailure, failure }) => {
     const whose = role === undefined ? `card #${card}` : `card #${card}'s judge \`${role}\``;
     const reason = `${whose} was held after two failures the same way: ${JSON.stringify(firstFailure)}, then ${JSON.stringify(failure)}`;
+    let closer;
     try {
-      return { closer: await admissionRecord.close({ kind: 'hold', reason }) };
+      closer = await admissionRecord.close({ kind: 'hold', reason });
     } catch (thrown) {
       unsaved ??= thrown;
       return { failure: thrown };
     }
+    const notice = await notify(closer.id, { card, firstFailure, failure });
+    return { closer: notice?.failed === undefined ? closer : { ...closer, notice: notice.failed } };
+  };
+
+  /** The tail of L3's calls to L2's notice function, which run one at a time ("Failure model"). */
+  let noticing = Promise.resolve();
+
+  /**
+   * Queues a call to L2's notice function for hold `id`, handed `hold`, L2's `hold` answer, where
+   * the call is the hold's own, and answers how it ended: undefined where, as it starts, no closer
+   * carries the id or the closer names an issue; `{ gone }` where a rename found the closer gone and
+   * L3 ended the call; otherwise what L2 answered, a call that threw answering as `failed`.
+   */
+  const notify = (id, hold) => {
+    noticing = noticing.then(() => noticed(id, hold)).catch((thrown) => ({ failed: { step: 'notice', cause: thrown.message } }));
+    return noticing;
+  };
+
+  /**
+   * One notice call for hold `id`, on its closer as L3 lists it as the call starts, handing L2 the
+   * issue numbers the other hold closers name. L3 makes each rename L2 answers through `admission.mjs`
+   * and hands L2 the outcome unread, as `Promise.allSettled` records it, before L2 writes again.
+   */
+  const noticed = async (id, hold) => {
+    const closers = admissionRecord.read().closers ?? [];
+    const closer = closers.find((each) => each.id === id);
+    if (closer === undefined || closer.issue !== undefined) return undefined;
+    const others = closers.filter((each) => each.issue !== undefined).map((each) => Number(each.issue));
+    const steps = l2.notice({ closer, others, hold, admission: admissionPath(state) });
+    let { name } = closer;
+    let step = await steps.next();
+    while (!step.done) {
+      const [outcome] = await Promise.allSettled([(async () => admissionRecord.rename(name, step.value))()]);
+      if (outcome.value?.gone) {
+        await steps.return();
+        return { gone: true };
+      }
+      if (outcome.status === 'fulfilled') ({ name } = outcome.value);
+      step = await steps.next(outcome);
+    }
+    return step.value;
   };
 
   /**
@@ -487,7 +535,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         let tipFailure;
         try {
           if (typeof workspaceTip !== 'function') throw new Error('L3 was handed no L1 workspace-tip reader');
-          expectedHead = await workspaceTip({ card: card.number, path, branch, repository });
+          expectedHead = await workspaceTip({ card: card.number, dispatch, path, branch, repository });
           if (typeof expectedHead !== 'string' || expectedHead === '') throw new Error(`L1 found no tip for card #${card.number}'s line of work`);
         } catch (failure) {
           if (failure.code === EVENT_REFUSED) throw failure;
@@ -840,6 +888,11 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    */
   const trigger = async (freed = () => {}, limit = undefined, excluded) => {
     const { claims: claimed, failures, admission: closed } = await take(limit, excluded);
+    const notices = [];
+    for (const { kind, id, issue } of closed?.closers ?? []) {
+      const ended = kind === 'hold' && issue === undefined ? await notify(id) : undefined;
+      if (ended?.failed !== undefined) notices.push({ id, ...ended.failed });
+    }
     if (claimed.length > 0) idle = false;
     if (claims.size === 0 && !idle) {
       idle = true;
@@ -856,7 +909,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     if (failures.length > 0) {
       throw Object.assign(new AggregateError(failures, `${failures.length} failures across the ${claimed.length} cards this pull claimed`), { reached });
     }
-    return closed === undefined ? reached : { admission: closed, reached };
+    return closed === undefined ? reached : { admission: closed, reached, notices };
   };
 
   return {
