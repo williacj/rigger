@@ -211,7 +211,7 @@ function assertKillsFirst(world, pids) {
 function assertOneMakerOfItsOwn(world, verb, ran) {
   const { restarted } = restartRecord(world);
   const own = restarted.filter((event) => event.dispatch !== undefined && event.event !== 'recorded.killed');
-  assert.deepEqual(own.map(({ layer, event }) => `${layer} ${event}`), ['L3 dispatch', 'L1 dispatch.start', 'L1 dispatch.end'], JSON.stringify(own));
+  assert.deepEqual(own.map(({ layer, event }) => `${layer} ${event}`), ['L3 dispatch', 'L1 workspace.made', 'L1 dispatch.start', 'L1 dispatch.end', 'L2 review.withheld'], JSON.stringify(own));
   assert.equal(new Set(own.map(({ dispatch }) => dispatch)).size, 1, JSON.stringify(own));
   assert.equal(ran.stdout, '');
   const workspace = join(realpathSync(world.directory), 'widgets-worktrees', 'rigger-10');

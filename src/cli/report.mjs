@@ -47,6 +47,8 @@ function l1Lines({ runs, stream }) {
     '  across the stream',
     `    dispatch.end events: ${stream.ended}, each listed under its run`,
     survivorLine(stream.survivors, 'the stream'),
+    `    redos after an interruption: ${stream.redos.length}, first attempts: ${stream.firstAttempts}`,
+    ...stream.redos.map(({ card, run }) => `    redo after an interruption: card #${card}, run ${run}`),
   ];
 }
 

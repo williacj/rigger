@@ -487,7 +487,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         let tipFailure;
         try {
           if (typeof workspaceTip !== 'function') throw new Error('L3 was handed no L1 workspace-tip reader');
-          expectedHead = await workspaceTip({ card: card.number, path, branch, repository });
+          expectedHead = await workspaceTip({ card: card.number, dispatch, path, branch, repository });
           if (typeof expectedHead !== 'string' || expectedHead === '') throw new Error(`L1 found no tip for card #${card.number}'s line of work`);
         } catch (failure) {
           if (failure.code === EVENT_REFUSED) throw failure;
