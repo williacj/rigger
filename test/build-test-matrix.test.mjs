@@ -10,6 +10,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { check, declarationsIn, register, render } from '../scripts/build-test-matrix.mjs';
+import { createHash } from 'node:crypto';
+import { generate } from '../scripts/build-test-matrix.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -1212,4 +1214,120 @@ test('every row the committed matrix holds is one line with the cells the format
       `this row does not hold exactly the two cells the format gives it: ${JSON.stringify(row)}`,
     );
   }
+});
+
+test('a host claim is marked without marking a portable claim beside it', () => {
+  const document = render([{ id: 'R-ONE-1', checkedBy: 'the test suite' }], [
+    { file: 'test/a.test.mjs', ids: ['R-ONE-1'], title: 'host proof', host: true },
+    { file: 'test/b.test.mjs', ids: ['R-ONE-1'], title: 'portable proof' },
+  ]);
+  assert.equal(rowFor(document, 'R-ONE-1'), '| R-ONE-1 | `test/a.test.mjs` **host** host proof<br>`test/b.test.mjs` portable proof |');
+});
+
+test('the host-only heading names exactly requirements with no portable claim', () => {
+  const document = render([
+    { id: 'R-ONE-1', checkedBy: 'the test suite' }, { id: 'R-ONE-2', checkedBy: 'the test suite' },
+    { id: 'R-ONE-3', checkedBy: 'the test suite' },
+  ], [
+    { file: 'test/a.test.mjs', ids: ['R-ONE-1', 'R-ONE-2'], title: 'host proof', host: true },
+    { file: 'test/b.test.mjs', ids: ['R-ONE-2'], title: 'portable proof' },
+  ]);
+  assert.equal(document.split('## Requirements claimed only by host tests\n\n')[1], '- R-ONE-1\n');
+  assert.equal(rowFor(document, 'R-ONE-3'), '| R-ONE-3 | **gap** |');
+});
+
+/** Literal filesystem and spawn-result fixtures for the finite host-list contract. */
+function hostFixture(includeSuite = true) {
+  return fixture({
+    'docs/spec/requirements.md': registerOf(['R-ONE-1', 'the test suite'], ['R-ONE-2', 'the test suite']),
+    'docs/spec/requirements-retired.md': retiredOf(),
+    'test/a.test.mjs': proving('// proves R-ONE-1', 'the host requirement'),
+    'test/b.test.mjs': proving('// proves R-ONE-2', 'the portable requirement'),
+    'test/unclaimed.test.mjs': '// no declaration\n',
+    'docs/derived/test-matrix.md': 'prior matrix bytes\n',
+    ...(includeSuite ? { 'test/suite.sh': '#!/bin/sh\n' } : {}),
+  });
+}
+const validHostResult = { status: 0, signal: null, stdout: 'test/a.test.mjs\n', stderr: '' };
+
+test('a valid list read uses the repository cwd and selected direct-process limits', () => {
+  const dir = hostFixture();
+  const calls = [];
+  const report = check(dir, { spawn: (...args) => { calls.push(args); return validHostResult; } });
+  assert.deepEqual(calls, [['sh', ['test/suite.sh', '--list', 'host'], {
+    cwd: dir, encoding: 'utf8', timeout: 5000, killSignal: 'SIGKILL', maxBuffer: 1048576,
+  }]]);
+  assert.equal(rowFor(report.document, 'R-ONE-1'), '| R-ONE-1 | `test/a.test.mjs` **host** the host requirement |');
+  assert.equal(rowFor(report.document, 'R-ONE-2'), '| R-ONE-2 | `test/b.test.mjs` the portable requirement |');
+  assert.equal(report.document.split('## Requirements claimed only by host tests\n\n')[1], '- R-ONE-1\n');
+});
+
+// Measured with the base generator at a848408; complete golden bytes remain in the retained baseline.
+const baseNoHostSHA256 = 'a851897b749db04b07cf87f83c7ab98a91f5a217c6b0a01bafecd42b8f58a5ea';
+test('a repository without the suite retains base bytes and starts no list command', () => {
+  const report = check(hostFixture(false), { spawn: () => assert.fail('a consumer without a suite started a process') });
+  assert.equal(createHash('sha256').update(report.document).digest('hex'), baseNoHostSHA256);
+});
+test('a host list with no declarations retains the base document byte for byte', () => {
+  const report = check(hostFixture(), { spawn: () => ({ ...validHostResult, stdout: 'test/unclaimed.test.mjs\n' }) });
+  assert.equal(createHash('sha256').update(report.document).digest('hex'), baseNoHostSHA256);
+});
+
+test('write mode writes only the document from the successful list read', () => {
+  const dir = hostFixture();
+  const report = generate(dir, { write: true, spawn: () => validHostResult });
+  assert.equal(readFileSync(join(dir, 'docs/derived/test-matrix.md'), 'utf8'), report.document);
+  assert.match(report.document, /\*\*host\*\* the host requirement/);
+});
+
+// Independent result shapes: official Node 26 spawnSync contract and native baseline observations at a848408.
+// https://nodejs.org/api/child_process.html#child_processspawnsynccommand-args-options
+function refusesHostResult(result, message) {
+  const dir = hostFixture();
+  const matrix = join(dir, 'docs/derived/test-matrix.md');
+  const original = readFileSync(matrix);
+  assert.throws(() => generate(dir, { write: true, spawn: () => result }), message);
+  assert.deepEqual(readFileSync(matrix), original, 'a failed --write changed the previous matrix');
+}
+
+
+test('empty host output refuses write and preserves matrix bytes', () => {
+  refusesHostResult({ ...validHostResult, stdout: '' }, /host list output is empty/);
+});
+
+test('a malformed host path is named and preserves matrix bytes', () => {
+  refusesHostResult({ ...validHostResult, stdout: 'outside.test.mjs\n' }, /malformed.*outside\.test\.mjs/);
+});
+
+test('a host file absent from generator input is named and preserves matrix bytes', () => {
+  refusesHostResult({ ...validHostResult, stdout: 'test/absent.test.mjs\n' }, /not read.*test\/absent\.test\.mjs/);
+});
+
+test('a nonzero list exit is named and preserves matrix bytes', () => {
+  refusesHostResult({ ...validHostResult, status: 7, stderr: 'controlled exit refusal' }, /host list command failed with exit 7/);
+});
+
+test('a signalled list command is named and preserves matrix bytes', () => {
+  refusesHostResult({ ...validHostResult, status: null, signal: 'SIGTERM' }, /host list command ended by SIGTERM/);
+});
+
+test('a list launch failure is named and preserves matrix bytes', () => {
+  refusesHostResult({ status: null, signal: null, error: Object.assign(new Error('spawnSync sh ENOENT'), { code: 'ENOENT' }) }, /host list launch failed: ENOENT/);
+});
+
+test('the selected list timeout is named and preserves matrix bytes', () => {
+  refusesHostResult({ ...validHostResult, status: null, signal: 'SIGKILL', error: Object.assign(new Error('spawnSync sh ETIMEDOUT'), { code: 'ETIMEDOUT' }) }, /host list timed out after 5000ms.*SIGKILL/);
+});
+
+test('an output-limit error with exit zero cannot become partial success or change matrix bytes', () => {
+  refusesHostResult({ ...validHostResult, error: Object.assign(new Error('spawnSync sh ENOBUFS'), { code: 'ENOBUFS' }) }, /host list exceeded the 1048576 byte output limit/);
+});
+
+test('the exact 1MiB list boundary is accepted and one further byte with ENOBUFS is refused', () => {
+  const dir = hostFixture();
+  const stdout = 'test/a.test.mjs\n'.repeat(65536);
+  assert.equal(Buffer.byteLength(stdout), 1048576);
+  const report = check(dir, { spawn: () => ({ ...validHostResult, stdout }) });
+  assert.match(rowFor(report.document, 'R-ONE-1'), /\*\*host\*\*/);
+  refusesHostResult({ ...validHostResult, stdout: stdout + 'x', error: Object.assign(new Error('spawnSync sh ENOBUFS'), { code: 'ENOBUFS' }) }, /1048576 byte output limit/);
 });
