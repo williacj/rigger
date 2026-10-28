@@ -4,13 +4,14 @@
 import { worktreeTopic } from '../config/validate.mjs';
 import { FIXED_LABELS, roleTimeout } from '../config/validate.mjs';
 import { topicFor, SCRATCH_REFUSED, WORKSPACE_REFUSED } from '../execution/workspace.mjs';
-import { repositoryReads } from '../substrate/forge/read.mjs';
+import { readSide, repositoryReads } from '../substrate/forge/read.mjs';
 import { itemWriteSide } from '../substrate/forge/item-write.mjs';
 import { repositoryWriteSide } from '../substrate/forge/repository-write.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
 import { escalationDestination, makerEscalation, makerNote, routingComment, escalationRoleInstruction } from './escalation.mjs';
 import { acceptanceItems } from './form-check.mjs';
 import { pullRequestsFrom } from './facts.mjs';
+import { statusNotice } from './status-issue.mjs';
 import { kindOf, providerOf, tierOf } from './next-action.mjs';
 
 /**
@@ -50,7 +51,8 @@ export const REVIEW_WITHHELD = 'REVIEW_WITHHELD';
  * L2 settles a maker's outcome when injected. `cardReads(card, dispatch)` builds a reader under
  * that card and optional dispatch, defaulting to the injected `reads` or the repository read side.
  * Maker settlement and refused-merge reads use it. `roleReads(card, dispatch)` supplies the
- * contextual reader for a completed escalation role.
+ * contextual reader for a completed escalation role. `board` is the read side's board reads, by
+ * which L2's notice finds where the status issue stands on the board.
  */
 export function columnChanges({
   config, sink, send, items = itemWriteSide({ repo: config.repo, project: config.board.project }, { send }),
@@ -58,6 +60,7 @@ export function columnChanges({
   roleReads = (card, dispatch) => repositoryReads({ ...config.board, repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0', card, dispatch: dispatch ?? null }) }),
   reads,
   cardReads = (card, dispatch) => reads ?? repositoryReads({ ...config.board, repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0', card, dispatch }) }),
+  board = readSide({ ...config.board, repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) }),
 }) {
   const { columns } = config.board;
   const topic = worktreeTopic(config);
@@ -146,6 +149,9 @@ export function columnChanges({
   };
 
   return {
+    /** L2's notice function for a hold's closer, as `statusNotice` says, its item writes recorded under `L0`. */
+    notice: statusNotice({ reads: reads ?? repositoryReads({ ...config.board, repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) }), writes: repositoryWrites ?? repositoryWriteSide({ repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) }), board, items: { addIssue: (number) => items.addIssue(number, sink.emitter({ layer: 'L0' })), moveItem: (id, column) => items.moveItem(id, column, sink.emitter({ layer: 'L0' })) }, columns, sink }),
+
     /**
      * L3 has claimed `card`, a board item as the forge adapter read it, on `next`, L2's answer for
      * it at the pull, which L3 hands over unread. A card claimed from coding is there already, and

@@ -15,6 +15,7 @@ import { columnChanges } from '../src/workflow/transitions.mjs';
 import { acceptanceDigest, composeMarker } from '../src/workflow/marker.mjs';
 import { acceptanceItems } from '../src/workflow/form-check.mjs';
 import { createFakeRepository } from './fake-repository.mjs';
+import { refusingWrites } from './notice-forge.mjs';
 import { COLUMNS, PASSING, boardOf, handleOn, makingJudgeDirectories, makingWorkspaces, waitFor } from './loop-world.mjs';
 import { sweep } from './process-fixtures.mjs';
 import { standInAgent } from './stub-claude.mjs';
@@ -106,7 +107,7 @@ export function judgeWorld({
       };
     },
   };
-  const l2 = columnChanges({ config: settings, sink, items: fake.operations, reads });
+  const l2 = columnChanges({ config: settings, sink, items: fake.operations, reads, repositoryWrites: refusingWrites() });
   const decide = (card, outcomes, options = {}) => {
     const answer = nextAction(card, kinds, undefined, { columns: COLUMNS, roles, provisioning, outcomes, sink, ...options });
     decisions.push({ card: card.number, answer });

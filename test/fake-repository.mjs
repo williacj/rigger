@@ -168,8 +168,12 @@ export function createFakeRepository({ branches = [], pullRequests = [], issues 
     readIssue: async (number) => {
       const issue = held.issues.find((candidate) => candidate.number === number);
       if (!issue || !isOwn(issue.repository)) return null;
-      return { number, title: issue.title, body: issue.body, labels: [...issue.labels] };
+      return { number, title: issue.title, body: issue.body, state: 'open', author: 'rigger-fake', labels: [...issue.labels] };
     },
+    // The fake holds no issue's state, so every issue it holds is open.
+    readLabelledIssues: async (label) => held.issues.filter((candidate) => isOwn(candidate.repository) && candidate.labels.includes(label)).map(({ number }) => number),
+    readNewestNumber: async () => Math.max(0, ...[...held.issues, ...held.pullRequests].map(({ number }) => number)),
+    readPermission: async (login) => (permissions === undefined ? 'write' : permissions[login] ?? 'none'),
     readPullRequestByNumber: async (number) => {
       const found = known('readPullRequestByNumber', number);
       if (repo === undefined) throw new Error(`the fake repository was given no repo, so it cannot name pull request #${number}'s head repository`);

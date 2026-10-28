@@ -178,7 +178,7 @@ test('once under owner and hold closers names both, keeps L2 refusals and exits 
   const ran = once({ items: [REFUSED, card(12, 'Ready')] }, { prepare: ({ consumer }) => {
     const state = join(consumer, '.rigger');
     seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' }));
-    seed(state, 'hold-b2.json', closerText({ reason: 'environment hold' }));
+    seed(state, 'hold-b2-issue-7.json', closerText({ reason: 'environment hold' }));
   } });
 
   assert.equal(ran.code, 0, ran.err);
@@ -1709,7 +1709,7 @@ test('once prints each closer in the words it printed at #944\'s head, and those
   const ran = once({ items: [REFUSED, card(12, 'Ready')] }, { prepare: ({ consumer }) => {
     const state = join(consumer, '.rigger');
     seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' }));
-    seed(state, 'hold-b2.json', closerText({ reason: 'environment hold' }));
+    seed(state, 'hold-b2-issue-7.json', closerText({ reason: 'environment hold' }));
   } });
 
   assert.equal(ran.code, 0, ran.err);

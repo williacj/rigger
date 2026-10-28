@@ -795,6 +795,7 @@ function repositoryForge(answers = {}) {
     }
     if (document.includes('defaultBranchRef')) return answer('default branch', document);
     if (document.includes('headRepository')) return answer('pull request', document);
+    if (document.includes('issues(states:')) return ok({ repository: { issues: { pageInfo: { hasNextPage: false, endCursor: 'MQ' }, nodes: [] } } });
     if (document.includes('issue(')) return answer('issue', document);
     if (document.includes('object(oid:')) return answer('file', document);
     if (document.includes('mergeable')) return answer('mergeable', document);
@@ -826,8 +827,8 @@ const commentNodes = (comments) => comments.map((comment, index) => ({ ...commen
  * An issue as the issue read answers it: `labels` its page of label names, pointing on to the
  * page `next` when there is one, and `repo` the repository the forge answers it in.
  */
-const issueNode = ({ number, title = `Card ${number}`, body = '', labels = [], next = null, repo = 'williacj/rigger' }) =>
-  ({ number, title, body, repository: { nameWithOwner: repo }, labels: { pageInfo: { hasNextPage: next !== null, endCursor: next ?? 'MQ' }, nodes: labels.map((name) => ({ name })) } });
+const issueNode = ({ number, title = `Card ${number}`, body = '', state = 'OPEN', author = { login: 'williacj' }, labels = [], next = null, repo = 'williacj/rigger' }) =>
+  ({ number, title, body, state, author, repository: { nameWithOwner: repo }, labels: { pageInfo: { hasNextPage: next !== null, endCursor: next ?? 'MQ' }, nodes: labels.map((name) => ({ name })) } });
 
 /** The pull requests a read answers, one page of them. */
 const pulls = (...nodes) => ({ paged: { null: pullPage(nodes.map(pullNode)) } });
@@ -1033,6 +1034,9 @@ const REPOSITORY_READS = {
   readPullRequestByNumber: { call: (reads) => reads.readPullRequestByNumber(12), names: 'pull request #12' },
   readIssue: { call: (reads) => reads.readIssue(214), names: 'issue #214' },
   readFileAt: { call: (reads) => reads.readFileAt('a'.repeat(40), 'rigger.config.mjs'), names: `rigger.config.mjs at ${'a'.repeat(40)}` },
+  readPermission: { call: (reads) => reads.readPermission('rigger-bot'), names: 'rigger-bot\'s permission' },
+  readLabelledIssues: { call: (reads) => reads.readLabelledIssues('rigger:status'), names: 'the open issues labelled rigger:status' },
+  readNewestNumber: { call: (reads) => reads.readNewestNumber(), names: 'the newest issue or pull request' },
 };
 
 test('the table of repository reads names every read the repository side offers', () => {
@@ -1088,6 +1092,8 @@ test('every request a full repository read issues reaches the spawn through the 
     [`repos/williacj/rigger/commits/${'a'.repeat(40)}/statuses?per_page=100&page=1`]: [],
     'repos/williacj/rigger/rules/branches/main?per_page=100&page=1': [],
     'repos/williacj/rigger/branches/main/protection': { required_status_checks: { checks: [], contexts: [] } },
+    'repos/williacj/rigger/collaborators/rigger-bot/permission': { role_name: 'write' },
+    'repos/williacj/rigger/issues?state=all&sort=created&direction=desc&per_page=1': '[]',
     'default branch': { repository: { defaultBranchRef: { name: 'main', target: { oid: head } } } },
     'pull request': { repository: { pullRequest: pullNode({ number: 12 }) } },
     issue: { paged: { null: { repository: { issue: issueNode({ number: 214 }) } } } },
@@ -1245,15 +1251,15 @@ test('readPullRequestByNumber rejects a state gh answers that is none of open, c
   await assert.rejects(repositoryReads(BOARD, { send }).readPullRequestByNumber(12), /pull request #12.*gh answered state DRAFT/);
 });
 
-test('readIssue answers a closed issue as an open one, with its number, title, body and labels in the order gh answered them for this repository on 2026-10-12', async () => {
-  // Captured with gh 2.99.0 on 2026-10-12: #492, closed, labelled type:change and area:demo. The
-  // read selects no state, so a closed issue is answered as an open one is.
+test('readIssue answers a closed issue as closed, with its number, title, body, author\'s login and labels in the order gh answered them for this repository', async () => {
+  // Captured with gh 2.99.0 on 2026-10-12, and recaptured with gh 2.103.2 on 2026-10-27 once the
+  // read selected the state and the author: #492, closed, by williacj, labelled type:change and area:demo.
   const recorded = captured('rigger-issue-2026-10-12.json');
   const send = () => ({ status: 0, stdout: recorded, stderr: '' });
 
   const read = await repositoryReads(BOARD, { send }).readIssue(492);
 
-  assert.deepEqual(read, { number: 492, title: 'M4-11 — The demo tape records `once` dispatching a maker, and the README\'s alt text says so', body: JSON.parse(recorded).data.repository.issue.body, labels: ['type:change', 'area:demo'] });
+  assert.deepEqual(read, { number: 492, title: 'M4-11 — The demo tape records `once` dispatching a maker, and the README\'s alt text says so', body: JSON.parse(recorded).data.repository.issue.body, state: 'closed', author: 'williacj', labels: ['type:change', 'area:demo'] });
   assert.ok(read.body.length > 0);
 });
 
@@ -1271,7 +1277,7 @@ test("readIssue answers every label of an issue holding more than gh's first pag
 
   const read = await repositoryReads(BOARD, { send }).readIssue(214);
 
-  assert.deepEqual(read, { number: 214, title: 'Card 214', body: 'Why.', labels });
+  assert.deepEqual(read, { number: 214, title: 'Card 214', body: 'Why.', state: 'open', author: 'williacj', labels });
   assert.equal(send.sent.length, 2);
   assert.match(documentOf(send.sent[1].slice(1)), /labels\(first: 100, after: "MTAw"\)/);
 });
@@ -1281,7 +1287,7 @@ test('readIssue answers an issue with an empty body with its body as the empty s
 
   const read = await repositoryReads(BOARD, { send }).readIssue(214);
 
-  assert.deepEqual(read, { number: 214, title: 'Card 214', body: '', labels: ['type:change'] });
+  assert.deepEqual(read, { number: 214, title: 'Card 214', body: '', state: 'open', author: 'williacj', labels: ['type:change'] });
   assert.equal(typeof read.body, 'string');
 });
 
@@ -1611,6 +1617,7 @@ function endings() {
     ['readIssue', 'no issue, with gh exiting 0', () => ok({ repository: { issue: null } }), 'gh answered no issue'],
     ['readIssue', 'a not-found answer beside another error', () => ({ status: 1, stdout: JSON.stringify({ data: { repository: { issue: null } }, errors: [{ type: 'NOT_FOUND', path: ['repository', 'issue'] }, { message: 'Something went wrong.' }] }), stderr: 'gh: Something went wrong.\n' }), 'Something went wrong.'],
     ['readIssue', 'an issue with no labels field', () => ok({ repository: { issue: { number: 214, body: '', repository: { nameWithOwner: 'williacj/rigger' } } } }), ''],
+    ['readIssue', 'a state that is neither open nor closed', () => issue({ state: 'PINNED' }), 'gh answered state PINNED'],
     ['readIssue', 'a later label page that fails', (args) => (cursorOf(documentOf(args)) === null ? issue({ labels: ['a'], next: 'MQ' }) : failed(line)), line],
     ['readIssue', 'a number that is no issue number', null, 'not an issue or pull request number', (r) => r.readIssue(0)],
     ['readIssue', 'an issue in another repository', () => issue({ repo: 'someone/elsewhere' }), null],
@@ -1821,4 +1828,25 @@ test('a later closed-result page failure or timeout cannot become partial cleanu
     assert.equal(decisions, 0);
     assert.equal(send.sent.length, 2 + ['null', 'middle', 'last'].indexOf(position), 'branch read followed by exactly the prefix through the failed page');
   }
+});
+
+/** One page of the label read's answer: `numbers` its issues, pointing on to `next` where given. */
+const labelledPage = (numbers, next = null) => ok({ repository: { issues: { pageInfo: { hasNextPage: next !== null, endCursor: next ?? 'MQ' }, nodes: numbers.map((number) => ({ number })) } } });
+
+// proves R-SCHED-20
+test('readLabelledIssues requests the repository\'s open issues carrying the label, which leaves out pull requests, by label and not the search index, reading every page', async () => {
+  const sent = [];
+  const send = (command, args) => {
+    sent.push(args);
+    return documentOf(args).includes('after:') ? labelledPage([140]) : labelledPage([12, 31], 'MTAw');
+  };
+
+  const numbers = await repositoryReads(BOARD, { send }).readLabelledIssues('rigger:status');
+
+  assert.deepEqual(numbers, [12, 31, 140]);
+  assert.equal(sent.length, 2);
+  const [first, second] = sent.map((args) => documentOf(args));
+  assert.equal(first, 'query { repository(owner: "williacj", name: "rigger") { issues(states: [OPEN], labels: ["rigger:status"], first: 100) { pageInfo { hasNextPage endCursor } nodes { number } } } }');
+  assert.match(second, /issues\(states: \[OPEN\], labels: \["rigger:status"\], first: 100, after: "MTAw"\)/);
+  assert.ok(!sent.some((args) => args.join(' ').includes('search')), 'the label read went through the search index');
 });
