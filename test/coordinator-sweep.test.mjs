@@ -187,7 +187,16 @@ test('an entry a process has its working directory in, or holds a file in open, 
 
 test('an entry is kept, named with the reason, when lsof is missing from PATH, writes to standard error, or exits other than 0 or 1', () => {
   for (const [env, reason] of [
-    [(s) => ({ PATH: `${s.w.bin}:/usr/bin:/bin` }), /kept.*lsof.*not found/],
+    [(s) => {
+      const PATH = s.w.bin;
+      const childEnv = { ...s.w.env, PATH };
+      const missing = spawnSync('/bin/sh', ['-c', 'command -v lsof'], { env: childEnv, encoding: 'utf8' });
+      assert.notEqual(missing.status, 0, 'lsof must be absent from the sweep child PATH');
+      const stub = spawnSync('/bin/sh', ['-c', 'command -v gh && gh pr view 12 -R williacj/rigger --json state --jq .state'], { env: childEnv, encoding: 'utf8' });
+      assert.equal(stub.status, 0, stub.stderr);
+      assert.equal(stub.stdout.trim(), join(s.w.bin, 'gh') + '\nMERGED');
+      return { PATH };
+    }, /kept.*lsof.*not found/],
     [(s) => lsofStub(s, 'echo "lsof: WARNING: can\'t stat()" >&2; exit 1'), /kept.*lsof.*WARNING/],
     [(s) => lsofStub(s, 'exit 2'), /kept.*lsof.*exited 2/],
   ]) {
