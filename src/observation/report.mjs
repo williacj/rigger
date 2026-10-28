@@ -1,5 +1,5 @@
-// ABOUTME: L5's report: L1's, L2's, L3's and L4's signals and marker dispatch checks derived from
-// one state directory's event stream.
+// ABOUTME: L5's report: L0's, L1's, L2's, L3's and L4's signals and marker dispatch checks derived
+// from one state directory's event stream.
 
 import { existsSync } from 'node:fs';
 
@@ -16,6 +16,22 @@ function byRun(events) {
     runs.get(event.run).push(event);
   }
   return runs;
+}
+
+/**
+ * L0's substrate fault rate, for the forge and for git, per run in the order each run first
+ * appears and across the stream: `faults` of `calls`. `calls` is the L0 `call.end` events whose
+ * `system` is that system, excluding none; `faults` is those whose `outcome` is `failed` or
+ * `timed-out`. Beyond the `layer` and `event` that select a `call.end`, it reads `run`, `system`
+ * and `outcome`, and no other event or field.
+ */
+function l0Signals(events) {
+  const rate = (recorded, system) => {
+    const calls = recorded.filter((event) => event.layer === 'L0' && event.event === 'call.end' && event.system === system);
+    return { faults: calls.filter((event) => ['failed', 'timed-out'].includes(event.outcome)).length, calls: calls.length };
+  };
+  const rates = (recorded) => ({ forge: rate(recorded, 'forge'), git: rate(recorded, 'git') });
+  return { runs: [...byRun(events)].map(([run, recorded]) => ({ run, ...rates(recorded) })), stream: rates(events) };
 }
 
 /**
@@ -252,15 +268,15 @@ function unwrittenMarkers(events) {
 }
 
 /**
- * The report over the state directory `directory`: its stream's `path`, L1's and L2's signals per
- * run and across the stream, L3's signals per run, L4's rework per run and its signals across the
- * stream, and agent markers with no unique matching recorded dispatch. The latter joins the whole stream,
- * across runs. It reads through the sink and writes nothing; an unreadable line throws as the
+ * The report over the state directory `directory`: its stream's `path`, L0's, L1's and L2's
+ * signals per run and across the stream, L3's signals per run, L4's rework per run and its signals
+ * across the stream, and agent markers with no unique matching recorded dispatch. The latter joins
+ * the whole stream, across runs. It reads through the sink and writes nothing; an unreadable line throws as the
  * reader does, naming that line.
  */
 export function report(directory) {
   const path = streamPath(directory);
-  if (!existsSync(path)) return { path, l1: null, l2: null, runs: null, l4: null, markers: null };
+  if (!existsSync(path)) return { path, l0: null, l1: null, l2: null, runs: null, l4: null, markers: null };
   const events = readEvents(directory);
-  return { path, l1: l1Signals(events), l2: l2Signals(events), runs: l3Signals(events), l4: l4Signals(events), markers: unwrittenMarkers(events) };
+  return { path, l0: l0Signals(events), l1: l1Signals(events), l2: l2Signals(events), runs: l3Signals(events), l4: l4Signals(events), markers: unwrittenMarkers(events) };
 }
