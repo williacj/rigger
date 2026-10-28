@@ -263,10 +263,10 @@ export function failedAttempt(card, attempt, firstFailure, what, sink) {
   if (attempt === ATTEMPTS && firstFailure === undefined) throw new Error(`card #${card.number}'s second attempt failed without its first attempt's failure, so L2 answers no action`);
   const hold = refusals.length === 0 && !again && sameWay(firstFailure, failure);
   const { dispatch, ...recorded } = failure;
-  // The sink stamps a dispatch's id itself, so the failure is recorded under the id it carries.
-  const events = sink.emitter({ layer: 'L2', card: card.number });
+  // The sink stamps a dispatch's id itself, so both events use the failure's context.
+  const events = sink.emitter({ layer: 'L2', card: card.number, ...(dispatch === undefined ? {} : { dispatch }) });
   try {
-    sink.emitter({ layer: 'L2', card: card.number, ...(dispatch === undefined ? {} : { dispatch }) }).emit('attempt.failed', { attempt, ...recorded });
+    events.emit('attempt.failed', { attempt, ...recorded });
     events.emit('attempt.decided', { attempt, decision: refusals.length > 0 ? 'escalate' : again ? 'again' : hold ? 'hold' : 'stop', ...(hold ? { failures: [firstFailure, failure] } : {}) });
   } catch (refusal) {
     throw new Error(`card #${card.number}'s attempt ${attempt} failed, and the event sink refused to record it, so L2 answers no action: ${refusal.message}`, { cause: refusal });
