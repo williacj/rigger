@@ -9,7 +9,7 @@ import { NOT_STARTED } from '../substrate/process.mjs';
 import { EVENT_REFUSED } from '../substrate/process.mjs';
 import { acceptanceItems, checkAcceptanceForm } from './form-check.mjs';
 import { GATE_CONTEXT, gateAnswer } from './gate.mjs';
-import { acceptanceDigest, evidenceDigest, markerInstruction, readMarkers } from './marker.mjs';
+import { acceptanceDigest, evidenceDigest, markerInstruction, readMarkers, WRITERS } from './marker.mjs';
 import { failed, kindOf, panelOf, selectedSteps, stepAnswer, tierOf } from './next-action.mjs';
 import { failedAttempt } from './next-action.mjs';
 
@@ -455,13 +455,6 @@ function ownerAnswer(card, panel, pull, comments, round, owner, items) {
 }
 
 /**
- * The permissions on the repository whose holders' comments can be the engine's earlier return:
- * the engine posts with write access, as a judge's marker counts only from an account holding one
- * of these (`readMarkers`).
- */
-const RETURNERS = ['admin', 'maintain', 'write'];
-
-/**
  * L2's answer returning `card`'s acceptance to its author for `marker`, which rules its coverage
  * insufficient: one comment on `pull`, the card's open pull request, quoting the marker's role and
  * its `coverageReason` (`R-LOOP-6`). Its first line names the marker's role, head and digest, so
@@ -475,7 +468,7 @@ function returned(card, pull, comments, { role, head, digest, coverageReason }) 
   const first = `Rigger returns card #${card.number}'s acceptance to its author: the judge ${role} ruled its coverage insufficient at head ${head}, acceptance digest ${digest}.`;
   const comment = [first, '', `${role}'s reason: ${coverageReason}`, '', 'The acceptance returns to its author, who revises it. No judge rewrites it.', ''].join('\n');
   const same = (body) => String(body).replace(/\r\n/g, '\n').trimEnd() === comment.trimEnd();
-  if (comments.some((each) => each.author !== null && RETURNERS.includes(each.permission) && same(each.body))) {
+  if (comments.some((each) => each.author !== null && WRITERS.includes(each.permission) && same(each.body))) {
     return { action: 'ignore', reason: `pull request #${pull.number} already holds the comment returning the acceptance for ${role}'s marker at head ${head}, acceptance digest ${digest}` };
   }
   return { action: 'return', pull: pull.number, comment };
