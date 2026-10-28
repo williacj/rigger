@@ -848,8 +848,9 @@ test('a name git does not print back unchanged as a full object name, such as a 
 
 // The push side's one host test (#1081, reading 7): its default spawn is L0's process adapter,
 // which the deterministic tier refuses, so only here does a push run through it.
-test('the push side pushes the stream through L0\'s process adapter to a local bare origin, and origin holds the commit it answers', async (t) => {
+test('the push side pushes the stream through L0\'s process adapter to a local bare origin, and origin holds the commit it answers, with no tracking ref written under a fetch mapping of refs/rigger/*', async (t) => {
   const { origin, repository } = clonedFromOrigin(scratch(t));
+  gitIn(repository, 'config', '--add', 'remote.origin.fetch', '+refs/rigger/*:refs/remotes/origin/rigger/*');
   const stream = Buffer.from('{"event":"one"}\n{"event":"two"}\n');
   const environment = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
   const answer = await pushStream({ repository, stream, emitter: recorder(), environment });
@@ -857,4 +858,5 @@ test('the push side pushes the stream through L0\'s process adapter to a local b
   assert.equal(gitIn(origin, 'rev-parse', 'refs/rigger/events').trim(), answer.commit);
   assert.equal(gitIn(origin, 'ls-tree', '--name-only', answer.commit), 'events.jsonl\n');
   assert.equal(gitIn(origin, 'cat-file', 'blob', `${answer.commit}:events.jsonl`), stream.toString('utf8'));
+  assert.equal(gitIn(repository, 'for-each-ref', 'refs/remotes/origin/rigger/events'), '');
 });

@@ -10,6 +10,9 @@ export const PUSH_TIMEOUT = 30_000;
 /** The data ref on `origin`, the one ref the push side writes (boundary rule 2). */
 const DATA_REF = 'refs/rigger/events';
 
+/** The remote the push names, which exists only on the push's own command line. */
+const PUSH_REMOTE = 'rigger-data-push';
+
 /** The message every stream commit carries. */
 const MESSAGE = 'rigger: the event stream';
 
@@ -40,9 +43,9 @@ export async function pushStream({ repository, stream, emitter, limit = PUSH_TIM
   const git = async (args, input) => {
     const timeout = limit - (now() - start);
     // `runCommand` starts nothing given no positive timeout, and the push has then run out of time.
-    if (timeout <= 0) throw new Ended('timed-out', `the push's limit of ${limit} ms was spent before git ${args[0]} started`);
+    if (timeout <= 0) throw new Ended('timed-out', `the push's limit of ${limit} ms was spent before git ${subcommandIn(args)} started`);
     const result = await run({ command: 'git', args, cwd: repository, env, input, timeout, emitter });
-    if (result.timedOut) throw new Ended('timed-out', `the timeout of ${timeout} ms ended git ${args[0]}`);
+    if (result.timedOut) throw new Ended('timed-out', `the timeout of ${timeout} ms ended git ${subcommandIn(args)}`);
     return { ...result, stdout: result.stdout.toString('utf8'), stderr: result.stderr.toString('utf8') };
   };
   /** Runs git as `git` does, ending the push as failed, in git's words, where it exits non-zero. */
@@ -60,6 +63,10 @@ export async function pushStream({ repository, stream, emitter, limit = PUSH_TIM
     // One URL only: a push to one of several would reach that one alone.
     if (urls.length !== 1) throw new Ended('failed', `origin has ${urls.length} push URLs, ${urls.join(', ') || 'none'}, where the push needs exactly one, so the push wrote nothing`);
     const [url] = urls;
+    // The push names a remote that exists only on its own command line; one the consumer's
+    // configuration also names would lend it that remote's settings, so the push stops there.
+    const named = await git(['remote', 'get-url', '--push', '--all', PUSH_REMOTE]);
+    if (named.exit === 0 || named.stdout.trim() !== '') throw new Ended('failed', `the consumer's configuration names a remote ${PUSH_REMOTE}, which the push uses for itself, so the push wrote nothing`);
     const { parent, other } = tipIn(await needed(['ls-remote', url, DATA_REF, 'refs/remotes/refs/rigger/events/HEAD']));
     if (parent !== undefined) known.parent = parent;
     if (other !== undefined) throw new Ended('failed', `${url} holds ${other}, to which git push would resolve ${DATA_REF}, so the push wrote nothing`);
@@ -72,12 +79,15 @@ export async function pushStream({ repository, stream, emitter, limit = PUSH_TIM
       // depend on the locale, so the tip is taken as lacking where a commit with no parent can be
       // built and one onto the tip cannot. Only then is it fetched.
       if ((await committed(undefined)).exit !== 0) throw new Ended('failed', printed(built));
-      await needed(['fetch', '--no-write-fetch-head', '--no-tags', url, parent]);
+      await needed(['fetch', '--no-write-fetch-head', url, parent]);
       built = await committed(parent);
     }
     if (built.exit !== 0) throw new Ended('failed', printed(built));
     const commit = built.stdout.trim();
-    const sent = await git(['push', '--porcelain', '--no-signed', '--no-verify', url, `${commit}:${DATA_REF}`]);
+    // A push to a bare URL still updates the tracking ref of a configured remote with that URL
+    // under git 2.56, so the push names a remote whose one URL is <url> and which has no fetch
+    // mapping: it exists only here, and git matches no other remote to a configured one.
+    const sent = await git(['-c', `remote.${PUSH_REMOTE}.url=${url}`, 'push', '--porcelain', '--no-signed', '--no-verify', PUSH_REMOTE, `${commit}:${DATA_REF}`]);
     if (sent.exit !== 0) throw new Ended(rejected(sent.stdout) ? 'refused' : 'failed', printed(sent));
     return { outcome: 'pushed', ...known, commit };
   };
@@ -106,6 +116,9 @@ class Ended {
  * gives it.
  */
 const rejected = (porcelain) => porcelain.split('\n').some((line) => line.startsWith('!\t') && line.split('\t')[1]?.endsWith(`:${DATA_REF}`));
+
+/** The `git` subcommand in `args`, the first argument after any `-c` option and its value. */
+const subcommandIn = (args) => (args[0] === '-c' ? args[2] : args[0]);
 
 /** What a `git` call printed, its standard error and then its standard output, trimmed. */
 const printed = ({ stdout, stderr }) => `${stderr}${stdout}`.trim();
