@@ -1690,16 +1690,20 @@ process adapter, with the environment `gitEnvironment` gives:
 1. `git remote get-url --push --all origin`, which reads `<url>`, the URL a push to `origin` goes
    to. Where it prints other than exactly one URL, the push fails, naming what it printed, and runs
    no later step.
-2. `git ls-remote <url> refs/rigger/events refs/remotes/refs/rigger/events/HEAD`, which reads the
+2. `git remote get-url --push --all rigger-data-push`, which must answer that no such remote
+   exists. Where it prints anything, the consumer's configuration already names that remote, and
+   the push fails, naming it, and runs no later step.
+3. `git ls-remote <url> refs/rigger/events refs/remotes/refs/rigger/events/HEAD`, which reads the
    tip, or finds the ref absent. Where it prints any ref other than `refs/rigger/events`, the push
    fails, naming that ref, and runs no later step.
-3. Where the repository's object store lacks the tip, a fetch of that commit alone from `<url>`,
+4. Where the repository's object store lacks the tip, a fetch of that commit alone from `<url>`,
    which writes no ref and no `FETCH_HEAD`.
-4. `git hash-object -w --stdin`, given the stream's bytes, then `git mktree` and `git
+5. `git hash-object -w --stdin`, given the stream's bytes, then `git mktree` and `git
    commit-tree`, as the report's `push` mechanism ran them ("The mechanisms").
-5. `git push --porcelain --no-signed --no-verify <url> <commit>:refs/rigger/events`.
+6. `git -c remote.rigger-data-push.url=<url> push --porcelain --no-signed --no-verify
+   rigger-data-push <commit>:refs/rigger/events`.
 
-Every step after the first addresses `<url>`, so the guard, the parent and the write all name one
+Every step from the third addresses `<url>`, so the guard, the parent and the write all name one
 repository. Where `origin` has a push URL other than its fetch URL, the push never reads the fetch
 URL.
 
@@ -1712,13 +1716,13 @@ measure:
   objects is a judgment.
 - The bytes come on standard input, so that what the commit holds is what L5 read.
 
-Step 1, step 2's guard and step 5's two flags are not the report's either. The architect measured
-each with `git` 2.54.0 against a local bare origin, in the architect's proposal on #1009,
-"ARCHITECTURE.md deltas from the #1081 attack", and its two amendments.
+Steps 1 and 2, step 3's guard and step 6's remote and flags are not the report's either. The
+architect measured each with `git` 2.54.0 against a local bare origin, in the architect's proposal
+on #1009, "ARCHITECTURE.md deltas from the #1081 attack", and its three amendments.
 
 **Only the data ref.** `git push` resolves `refs/rigger/events` at `<url>` by `git`'s ref-matching
 rules. Where the data ref is absent, a ref those rules match takes the write: a branch named
-`refs/rigger/events` was moved, as measured. Step 2's first pattern prints every ref those rules
+`refs/rigger/events` was moved, as measured. Step 3's first pattern prints every ref those rules
 match but `refs/remotes/refs/rigger/events/HEAD`, and its second pattern prints that one. So a
 printed ref other than the data ref means the push would write elsewhere, and the push side writes
 nothing. That `git` matches by those rules alone is an assumption; a `git` that adds a rule would
@@ -1734,12 +1738,19 @@ ref, is a judgment.
 remote-tracking ref that remote's fetch mappings give its destination. A consumer mapping
 `+refs/rigger/*:refs/remotes/origin/rigger/*` would then have the push write
 `refs/remotes/origin/rigger/events`, as measured. Adding an empty `remote.origin.fetch`, by `-c`
-or by `GIT_CONFIG_COUNT`, did not stop that write, as measured. A push to a URL names no remote and
-updated no ref, as measured. So step 5 pushes to the URL step 1 reads. Step 1 reads it as `git`
-would push to `origin`, following `remote.origin.pushurl` and `url.<base>.pushInsteadOf`, as
-measured. A setting of `origin`'s other than its URLs does not reach the push. That `git` finds the
-same credential for that URL as for `origin` is an assumption; a host where it does not would
-reverse this step. That a read of `<url>` contacts the repository a push to it writes is an
+or by `GIT_CONFIG_COUNT`, did not stop that write, as measured. A push to a URL updated no ref under
+`git` 2.54.0, as measured. `git` 2.56.0 matches a push to a URL to the one configured remote whose
+push URL it is, and updates that remote's remote-tracking refs (its source, `remote.c`,
+`repo_remote_for_push_tracking`).
+
+So step 6 pushes to `rigger-data-push`, a remote that exists only on that call's command line. Its
+one URL is `<url>`, and it has no fetch mapping. `git` matches no other remote to a remote that is
+configured, so the push updates no remote-tracking ref under either version. Step 2 makes sure the
+consumer's configuration holds no remote of that name. Step 1 reads `<url>` as `git` would push to
+`origin`, following `remote.origin.pushurl` and `url.<base>.pushInsteadOf`, as measured. A setting
+of `origin`'s other than its URLs does not reach the push. The push runs in the consumer's
+repository, so the consumer's credential helpers reach it, the repository's own included, as
+measured. That a read of `<url>` contacts the repository a push to it writes is an
 assumption too; a URL rewrite rule matching the printed URL itself would falsify it.
 
 **Never forced.** No push is ever forced, in any state. A rejected push has not succeeded, and the
@@ -1753,10 +1764,10 @@ none, and sets no credential helper. It sets `GIT_TERMINAL_PROMPT=0`, so that a 
 fails rather than waits for a prompt; that `git` then fails at once is a judgment.
 
 The push signs nothing. `git commit-tree` does not read `commit.gpgSign`, so a consumer's setting
-leaves the data commit unsigned, as measured. `git push` does read `push.gpgSign`, and step 5's
+leaves the data commit unsigned, as measured. `git push` does read `push.gpgSign`, and step 6's
 `--no-signed` overrides it, so no push asks `origin` for a certificate or runs `gpg`.
 
-The push runs no hook. Step 5's `--no-verify` skips the consumer's `pre-push` hook, which guards the
+The push runs no hook. Step 6's `--no-verify` skips the consumer's `pre-push` hook, which guards the
 consumer's own lines of work. A hook that ran on the data push could refuse it or outlast
 `PUSH_TIMEOUT`, as measured. `origin`'s own refusals still reach the push, as `refused`.
 
@@ -1838,6 +1849,7 @@ that failed.
 | a `pre-push` hook in the consumer's repository | the push runs as with none; the hook does not run |
 | a fetch mapping of `origin`'s that names `refs/rigger/events`, such as `+refs/rigger/*:refs/remotes/origin/rigger/*` | the push writes no ref in the consumer's repository |
 | `origin` with more than one push URL | `failed`, naming them; no commit is written and nothing is pushed |
+| a remote named `rigger-data-push` in the consumer's configuration | `failed`, naming it; no commit is written and nothing is pushed |
 | `origin` with a push URL other than its fetch URL | the guard, the parent and the fetch of a missing tip all read the push URL; the fetch URL is not read |
 | an event recorded while a push is in flight | the push copies the stream as L5 read it at the push's start; the next push carries the event (`R-RECORD-13`) |
 | Rigger killed outright during a push | see below |
