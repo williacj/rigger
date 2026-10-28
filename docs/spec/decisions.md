@@ -69,6 +69,8 @@ reused.
 | D26 | An escalation goes where the consumer sends it | Ratified |
 | D27 | An escalated card carries a label only the owner removes | Ratified. Amended in #868. |
 | D28 | A per-user LaunchAgent re-launches the engine on an interval | Ratified. Amended in #1043. |
+| D29 | Rigger's suite runs in two tiers, and the hooks run one | Ratified |
+| D30 | Until the conversion closes, two lists exempt files from D29's bounds | Ratified |
 
 ## D1 — Redo over resume
 
@@ -1088,3 +1090,81 @@ measures it.
 `ARCHITECTURE.md`'s "Triggers" holds the structure that carries the poll.
 
 This decision adds no requirement row.
+
+## D29 — Rigger's suite runs in two tiers, and the hooks run one
+
+**Status:** Ratified.
+
+### Rule
+
+1. Rigger's own suite has two tiers. A test is in the host tier when the host list in `test/suite.sh` names its file. Every other test under `test/` is in the deterministic tier.
+2. A maker places each test by the first of these that holds:
+   1. A test that starts no process, or starts only `git` or `tar`, is deterministic.
+   2. A test whose claim is what Rigger decides from an answer is deterministic. Except as `D30` allows, it takes that answer from the fake host or from an in-process stand-in. What Rigger decides includes what it kills, in what order, what it records, what it refuses and what a verb prints.
+   3. Every other test is a host test. Its claim is about what the operating system or a real program did, such as a process that ended, a signal that arrived, or a tool's printed form.
+3. Except as `D30` allows, a deterministic test keeps to these bounds. In the test file's own process, the deterministic runner fails a test, or a file while it loads, that breaks the first through `node:child_process` or the second through a signal. It names the test or file and what it started or signalled. It imposes the third and the fourth on every `git` and `tar` it admits.
+   1. It starts no process but `git` or `tar`.
+   2. It sends no signal to any process but its own.
+   3. Its `git` and `tar` run with a `PATH` that holds only those two programs, so a hook, alias or helper that starts a program by name fails.
+   4. Its `git` reads no global or system configuration.
+4. Except as `D30` allows, Rigger's code under a deterministic test reads only the clock the test injects.
+5. A host test starts at least one real process. Except as `D30` allows, the host runner fails a host test that starts none, naming it.
+6. `npm test` runs the deterministic tier at `node --test`'s own concurrency, and the commit, merge and push hooks run `npm test`. It is the suite `AGENTS.md` means where a failing suite stops work. `npm run test:host` runs the host tier one file at a time, and no hook runs it.
+7. CI uses staged verification on Node 26. `.github/workflows/ci.yml` owns its event, worker and command routing. The required `check (26)` verifies the current source and the tier results that routing requires. The owner keeps that context required under the `Main` ruleset; `D23` rule 1 governs its refusal.
+8. A host-tier failure at the default branch's head is a card of its own, and no other card's maker owns it. The owner files it, or has it filed, at the highest priority the board declares (`R-SCHED-1`).
+9. Wherever the fake host gives an answer for a state a host test can create, a host test ties that answer to the real operating system's, in its form and its value (`D16` rule 2). The fake's scripted faults and its timing are copies no test can tie. The fake host records beside each one where the real operating system can differ (`D16` rule 3).
+10. `docs/derived/test-matrix.md` marks each claim a host test makes. Its generator names every requirement that no deterministic test claims.
+
+### Notes
+
+The commit hooks ran the whole suite, so a test whose outcome turned on this host's load and process table refused commits that never touched it. Card #740's U12 records the owner's ruling, and #816 holds the proposal behind this entry. The proposal measured three things:
+
+1. At `96a4caf`, 87 of the 115 `*.test.mjs` files started a process. A throwaway preload measured this, by recording every `child_process` call in each test file's own process over one full `npm test` run on 2026-10-19.
+2. On 2026-10-19, `gh issue list --search 'Root-cause in:title' --state all` returned 46 cards filed to find the cause of a flake. By the architect's reading of their titles, which is a judgment, 37 named a file this entry's rule puts on the host list.
+3. On 2026-10-19, `gh run list --workflow ci.yml --limit 200` held 198 completed runs, from 2026-10-14 to 2026-10-19. In 40 of them the first attempt failed at the step `Run npm test`. For each of the 17 that were rerun, `gh api` on the run's first attempt showed it failed and a rerun at the same commit passed.
+
+The split follows a line the code already draws. L0 owns the process model (`ARCHITECTURE.md`, the layer table). One module already spawns every process, and L3 already takes its clock. A decision Rigger makes from an OS answer can therefore be proven with that answer given. Only the answer itself needs the real host.
+
+Rule 2 admits `git` and `tar`, because each answers one input the same way under any load. That is a judgment, not a measurement. Git is also the authority on the repository facts Rigger reads (`D16` rule 1), and a fake git would be a copy of that authority that nothing ties back. Rule 3's restricted `PATH` keeps a hook from running a suite inside a deterministic test, as `test/command-gate-hook.test.mjs` does at `96a4caf`. Its isolated configuration keeps a host's own helpers, such as a credential helper named by absolute path, out of the tier's answers. Rule 3's runner sees only what the test file's own process does through `node:child_process` and its signals. A hook or helper a test itself configures by absolute path still runs. So does a process started by a child of the test's process, or through `worker_threads`, `node:cluster` or `process.binding`, and so does a helper module under `test/` that `node --test` runs as a file of its own. The bounds still bind those routes, and the judges read for them.
+
+Rule 7 follows the staged CI policy approved in #921 and ratified through #906. Its required aggregate checks current-source evidence; a deferred broad profile is not host success. A card's own proof obligations remain independently binding. Rule 8 gives a red default branch an owner and adds no merge bar. Who may merge once checks are green stays `D25` rule 5's. A Self-hosting fix is never dispatched by the engine (`D25` rule 5), so priority orders only its dispatch by hand.
+
+Rule 9 promises only what a test can tie. A scripted fault, such as `EPERM` or a read that times out, cannot be asked of the real operating system on demand. Nor can an interleaving, such as a group still non-empty at the census after its kill. An in-process stand-in's answer is a copy rule 9 does not tie. It copies what the fake `gh` and the stand-in agent answered as processes before the split, and no rule tied those to the real programs either.
+
+This entry is permanent. `D30` covers rule 2.2's answer source and rules 3, 4 and 5; it ends when its two lists are empty.
+
+Three observations would reverse it:
+
+1. Over the 100 CI runs after `D30` ends, a CI worker's step that runs `npm test` fails in 4 or more first attempts whose rerun at the same head passes. The base is 17 in 198 first attempts of that step, taken over the whole suite. About half the flakes would then remain in the deterministic tier, so the tier boundary would not be where they came from. Each step's actual executed attempts are read with `gh run view --json jobs`; skipped or deferred work is not a passing execution. The threshold is a judgment.
+2. A defect reaches the default branch that a host test would have caught, while every required check was green. The rule then put a claim on the fake that only the real host could prove.
+3. Over 100 pull requests, a CI worker's step that runs `npm run test:host` fails more first attempts that pass on rerun than it fails for a defect, counting only actual executed attempts in that sample and read the same way. Rule 7 alone is then reversed, and the host tier moves to a check that is not required.
+
+
+## D30 — Until the conversion closes, two lists exempt files from D29's bounds
+
+**Status:** Ratified.
+
+### Rule
+
+1. Beside its host list, `test/suite.sh` holds two lists: the conversion list and the awaiting-split list.
+2. A file on the conversion list is exempt from `D29` rules 3 and 4, and from rule 2.2's requirement that the answer come from the fake host or an in-process stand-in. It is a deterministic-tier file that still starts processes and may read the real clock, and the hooks still run it.
+3. A file on the awaiting-split list is exempt from `D29` rule 5. Its tests that rule 2 places in the deterministic tier may stay in the file until it is split. It is a host-tier file that still holds tests that start no process.
+4. Neither list gains an entry. Where the head's base holds the lists, the list-growth steps in `fast` and `nightly` fail when either list at the head names a file that the same list at the base does not.
+5. A deterministic test fails when any list in `test/suite.sh` names a file that does not exist.
+
+### Deferred, and what returns it
+
+| Deferred | Returns when |
+|---|---|
+| Converting a conversion-list file to the fake host, to in-process stand-ins and to an injected clock | The card that converts it merges, taking it off the list. The owner sees that merge, because the card changes `test/suite.sh`. |
+| Splitting an awaiting-split file into deterministic and host tests | The card that splits it merges, taking it off the list. The owner sees that merge, because the card changes `test/suite.sh`. |
+
+### Notes
+
+`D29` binds every test from the start. The original #816 proposal records which files could not meet its bounds when the runners landed. Keeping conversion-list files in the hooks retains their claims inside the commit gate during conversion. The awaiting-split exemption lets the host runner run those files whole until they are split.
+
+The exemption is a decision of its own, not a consequence of `D29`. A **Deferred, and what returns it** table records consequences only (this register's preamble), so the exemption could not be a row in `D29`. A boundary that expires also never shares an entry with a permanent principle, so the exemption is this entry and not a rule of `D29`.
+
+This decision holds one lifespan. It begins with the two lists, and it ends when both are empty. Rule 4 holds that only cards emptying the lists change them, and #816 names those cards.
+
+One observation would reverse it: across a milestone, no entry leaves either list. The conversion would then have stalled, and the files still listed would go to the host list whole. That would take their claims out of the hooks, which is the owner's decision.
