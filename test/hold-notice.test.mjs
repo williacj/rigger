@@ -240,3 +240,80 @@ test('only the after scan reads a permission: a hold\'s first call, picking or o
 
   assert.deepEqual([...picked.calls, ...opened.calls].filter(([name]) => name === 'readPermission'), []);
 });
+
+/**
+ * The failure a forge write side rejects with where the forge took the write and only an event of
+ * it was refused: `refused` in `src/substrate/process.mjs` builds its message, `code`, `unrecorded`
+ * and `result`, and `written` in `src/substrate/forge/write-made.mjs` adds `made`, holding the
+ * side's parsed `answer`. Where `answer` is omitted, the failure carries no `made`, as one whose
+ * result the side's check refused does.
+ */
+function sinkRefused(name, made) {
+  const unrecorded = [{ event: 'call.end', command: 'gh', exit: 0, cause: new Error('EIO') }];
+  const failure = Object.assign(new Error(`the sink refused 1 L0 event(s), so they went unrecorded:\ncall.end {"command":"gh","exit":0}: EIO (${name})`), {
+    code: 'EVENT_REFUSED',
+    unrecorded,
+    result: { exit: 0, timedOut: false, stdout: '', stderr: '' },
+  });
+  return made === undefined ? failure : Object.assign(failure, { made });
+}
+
+/**
+ * `world` with its write `name` taken by the forge and then rejected with `failure`, as a write side
+ * rejects a write whose event the sink refused.
+ */
+function takenThenRejected(world, name, failure) {
+  const side = name in world.writes ? 'writes' : 'items';
+  const take = world[side][name];
+  return { ...world, [side]: { ...world[side], [name]: async (...args) => { await take(...args); throw failure; } } };
+}
+
+/** Each write step's made answer, as its side's check parses it, `moveItem`'s `undefined` among them. */
+const ANSWERS = { openIssue: 1, postIssueComment: { id: 'IC_1', body: 'x' }, addIssue: 'item-1', moveItem: undefined };
+
+test('a write step the forge made, whose event the sink refused, records nothing, ends the call there, and returns its step, cause, made mark and unrecorded events under failed', async () => {
+  for (const [name, given, others, names, step, writes] of REFUSALS.filter(([refused]) => WRITES.includes(refused))) {
+    const world = forge(structuredClone(given));
+    const failure = sinkRefused(name, { answer: ANSWERS[name] });
+    const { notice, events } = noticeOver(takenThenRejected(world, name, failure));
+
+    const ran = await drive(notice({ closer: closerOf('a1'), others, hold: HOLD }), 'hold-a1.json');
+
+    assert.deepEqual(events, [], name);
+    assert.deepEqual(ran.value, { failed: { step, cause: failure.message, made: { answer: ANSWERS[name] }, unrecorded: failure.unrecorded } }, name);
+    assert.deepEqual(ran.names, names, name);
+    assert.equal(world.calls.at(-1)[0], name, `${name} was not the call's last`);
+    assert.deepEqual(world.calls.filter(([called]) => WRITES.includes(called)).map(([called]) => called), writes, name);
+  }
+});
+
+test('an opening the forge made, whose event the sink refused, leaves the closer at its after-name, and the next call\'s after scan attaches the opened issue and opens no second', async () => {
+  const world = forge();
+  const failure = sinkRefused('openIssue', { answer: 1 });
+
+  const first = await drive(noticeOver(takenThenRejected(world, 'openIssue', failure)).notice({ closer: closerOf('a1'), others: [], hold: HOLD }), 'hold-a1.json');
+  const opened = world.calls.length;
+  const { notice, events } = noticeOver(world);
+  const next = await drive(notice({ closer: closerOf('a1', 'hold-a1-after-0.json'), others: [], hold: HOLD }), 'hold-a1-after-0.json');
+
+  assert.deepEqual(first.names, ['hold-a1.json', 'hold-a1-after-0.json']);
+  assert.deepEqual(first.value, { failed: { step: 'open the status issue', cause: failure.message, made: { answer: 1 }, unrecorded: failure.unrecorded } });
+  assert.deepEqual(next.names, ['hold-a1-after-0.json', 'hold-a1-issue-1.json']);
+  assert.deepEqual(next.value, { issue: 1 });
+  assert.deepEqual(world.calls.slice(opened).filter(([name]) => name === 'openIssue'), []);
+  assert.deepEqual(events, []);
+});
+
+test('a write step rejected with no made mark, a refused event whose result exited 0 among them, records one notice.failed and returns its step and cause alone, as before', async () => {
+  for (const [name, given, others, names, step] of REFUSALS.filter(([refused]) => WRITES.includes(refused))) {
+    const world = forge(structuredClone(given));
+    const failure = sinkRefused(name);
+    const { notice, events } = noticeOver(takenThenRejected(world, name, failure));
+
+    const ran = await drive(notice({ closer: closerOf('a1'), others, hold: HOLD }), 'hold-a1.json');
+
+    assert.deepEqual(ran.value, { failed: { step, cause: failure.message } }, name);
+    assert.deepEqual(events, [{ layer: 'L2', event: 'notice.failed', hold: 'a1', step, cause: failure.message }], name);
+    assert.deepEqual(ran.names, names, name);
+  }
+});

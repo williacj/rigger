@@ -49,7 +49,9 @@ export const holdOf = (text) => /^Hold: `([0-9a-z]+)`$/m.exec(String(text ?? '')
  * #1016): each value it yields is the rename the closer is to take, `{ rename: 'after' | 'issue',
  * number }`, which L3 makes through `admission.mjs` and hands back unread, as `next(outcome)`, before
  * L2 writes again. L2 holds no admission handle and no callback. Where a rename found its closer
- * gone, L3 ends the call, and L2 writes nothing more. It returns `{ issue }`, the status issue.
+ * gone, L3 ends the call, and L2 writes nothing more. It returns `{ issue }`, the status issue, or
+ * `{ failed }`, naming the step it stopped at and the cause, and, where the forge made that step's
+ * write and the sink refused its events, its `made` mark and those `unrecorded` events.
  */
 export function statusNotice({ reads, writes, board, items, columns, sink }) {
   const status = FIXED_LABELS.status;
@@ -92,6 +94,11 @@ export function statusNotice({ reads, writes, board, items, columns, sink }) {
       }
       return { issue: number };
     } catch (failure) {
+      // A write the forge made, whose event the sink refused, failed nowhere: L2 records no
+      // notice.failed of it, since the sink is refusing, and returns it under the `failed` L3 passes
+      // on, with its mark and its unrecorded events, for the verb to say (the architect's placement
+      // ruling on #1056).
+      if (failure?.made !== undefined) return { failed: { step: at, cause: failure.message, made: failure.made, unrecorded: failure.unrecorded } };
       const failed = { step: at, cause: failure.message };
       sink.emitter({ layer: 'L2' }).emit('notice.failed', { hold: closer.id, ...failed });
       return { failed };
