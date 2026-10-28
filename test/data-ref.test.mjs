@@ -10,13 +10,13 @@ import { join } from 'node:path';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { PUSH_TIMEOUT, pushStream } from '../src/substrate/data-ref.mjs';
 import { EVENT_REFUSED, NOT_STARTED } from '../src/substrate/process.mjs';
-import { cloneInto, clonedFromOrigin, gitIn } from './git-repository.mjs';
+import { bareCloneInto, cloneInto, clonedFromOrigin, gitIn } from './git-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 const DATA_REF = 'refs/rigger/events';
 
 /** The only `git` subcommands "Pushing the stream", "The steps", gives the push side. */
-const SUBCOMMANDS = ['ls-remote', 'fetch', 'hash-object', 'mktree', 'commit-tree', 'push'];
+const SUBCOMMANDS = ['ls-remote', 'remote', 'fetch', 'hash-object', 'mktree', 'commit-tree', 'push'];
 
 /** Every event an emitter was handed, in order, each as its name and its fields. */
 function recorder() {
@@ -76,7 +76,8 @@ function hook(hooks, name, body) {
 const keysOf = (answer) => Object.keys(answer).sort();
 
 /**
- * Runs one push from `repository`, the world's pushing repository unless another is named,
+ * Runs one push from `repository`, the world's pushing repository unless another is named, whose
+ * commit the reader fetches from `pushedTo`, origin unless another is named,
  * against a real `git`, and checks what every push must leave, whatever it answers. At once: the
  * answer's fields; the pushing repository's refs unchanged and no `FETCH_HEAD` in it; no
  * `call.end` recorded; and a pushed commit, fetched into a second repository, holding exactly
@@ -86,7 +87,7 @@ const keysOf = (answer) => Object.keys(answer).sort();
  * `PUSH_TIMEOUT` and the emitter the side was handed; `ls-remote` and `push` carry exactly their
  * pinned arguments.
  */
-async function pushed(w, stream, { before, environment = process.env, repository = w.repository, ...options } = {}) {
+async function pushed(w, stream, { before, environment = process.env, repository = w.repository, pushedTo = 'origin', ...options } = {}) {
   const calls = [];
   const emitter = recorder();
   const refs = gitIn(repository, 'for-each-ref');
@@ -97,7 +98,7 @@ async function pushed(w, stream, { before, environment = process.env, repository
   assertFields(answer, calls);
   if (answer.outcome === 'pushed') {
     const held = stream.subarray(0, stream.lastIndexOf(0x0a) + 1);
-    gitIn(w.reader, 'fetch', '-q', '--no-write-fetch-head', 'origin', answer.commit);
+    gitIn(w.reader, 'fetch', '-q', '--no-write-fetch-head', pushedTo, answer.commit);
     const blob = gitIn(w.reader, 'rev-parse', `${answer.commit}:events.jsonl`).trim();
     assert.equal(gitIn(w.reader, 'ls-tree', answer.commit), `100644 blob ${blob}\tevents.jsonl\n`);
     assert.deepEqual(await catBlob(w.reader, blob), held);
@@ -115,10 +116,13 @@ async function pushed(w, stream, { before, environment = process.env, repository
       assert.ok(call.timeout > 0 && call.timeout <= PUSH_TIMEOUT, `timeout ${call.timeout}`);
       assert.equal(call.emitter, emitter);
       if (call.args[0] === 'ls-remote') assert.deepEqual(call.args, ['ls-remote', 'origin', DATA_REF, 'refs/remotes/refs/rigger/events/HEAD']);
+      if (call.args[0] === 'remote') assert.deepEqual(call.args, ['remote', 'get-url', '--push', '--all', 'origin']);
       if (call.args[0] === 'push') {
         const built = calls.filter((c) => c.args[0] === 'commit-tree' && c.result.exit === 0).at(-1)?.result.stdout.toString().trim();
         assert.ok(built, 'the push side ran git push with no commit built');
-        assert.deepEqual(call.args, ['push', '--porcelain', '--no-signed', '--no-verify', 'origin', `${built}:${DATA_REF}`]);
+        const url = calls.find((c) => c.args[0] === 'remote')?.result.stdout.toString().trim();
+        assert.ok(url && !url.includes('\n'), `the push side pushed with no one URL read: ${url}`);
+        assert.deepEqual(call.args, ['push', '--porcelain', '--no-signed', '--no-verify', url, `${built}:${DATA_REF}`]);
       }
     }
   });
@@ -279,14 +283,18 @@ const BLOB = 'b'.repeat(40);
 const TREE = 'c'.repeat(40);
 const COMMIT = 'd'.repeat(40);
 
+/** The push URL the controlled rows' `git remote get-url` prints. */
+const URL = 'https://example.invalid/consumer.git';
+
 /**
  * What a real `git` printed for each step of a push that succeeds, as git 2.54.0 printed it
  * against a local bare origin (the maker's run, in the journal entry for this card): `ls-remote`
- * one `<object>\t<ref>` line a ref, `hash-object`, `mktree` and `commit-tree` the object they
+ * one `<object>\t<ref>` line a ref, `remote get-url --push --all` one URL a line, `hash-object`, `mktree` and `commit-tree` the object they
  * wrote, and `push --porcelain` a `To` line, one status line and `Done`.
  */
 const SUCCEEDING = {
   'ls-remote': () => ({ stdout: `${TIP}\t${DATA_REF}\n` }),
+  remote: () => ({ stdout: `${URL}\n` }),
   'hash-object': () => ({ stdout: `${BLOB}\n` }),
   mktree: () => ({ stdout: `${TREE}\n` }),
   'commit-tree': () => ({ stdout: `${COMMIT}\n` }),
@@ -335,7 +343,8 @@ async function controlled(t, { steps, cost, stream = STREAM, ...options } = {}) 
       assert.ok(call.timeout > 0 && call.timeout <= PUSH_TIMEOUT, `timeout ${call.timeout}`);
       assert.equal(call.emitter, emitter);
       if (call.args[0] === 'ls-remote') assert.deepEqual(call.args, ['ls-remote', 'origin', DATA_REF, 'refs/remotes/refs/rigger/events/HEAD']);
-      if (call.args[0] === 'push') assert.deepEqual(call.args, ['push', '--porcelain', '--no-signed', '--no-verify', 'origin', `${COMMIT}:${DATA_REF}`]);
+      if (call.args[0] === 'remote') assert.deepEqual(call.args, ['remote', 'get-url', '--push', '--all', 'origin']);
+      if (call.args[0] === 'push') assert.deepEqual(call.args, ['push', '--porcelain', '--no-signed', '--no-verify', URL, `${COMMIT}:${DATA_REF}`]);
     }
   });
   return { answer, calls, clock };
@@ -401,8 +410,9 @@ test('P14: where the process adapter rejects a push\'s git call with EVENT_REFUS
   const refusal = Object.assign(new Error('the sink refused 1 L0 event(s), so they went unrecorded'), { code: EVENT_REFUSED, unrecorded: [] });
   for (const [step, ran] of [
     ['ls-remote', ['ls-remote']],
-    ['hash-object', ['ls-remote', 'hash-object']],
-    ['push', ['ls-remote', 'hash-object', 'mktree', 'commit-tree', 'push']],
+    ['remote', ['ls-remote', 'remote']],
+    ['hash-object', ['ls-remote', 'remote', 'hash-object']],
+    ['push', ['ls-remote', 'remote', 'hash-object', 'mktree', 'commit-tree', 'push']],
   ]) {
     const calls = [];
     const clock = { now: 0 };
@@ -426,7 +436,7 @@ test('P15: handed bytes that are empty, or that hold no newline, the push answer
 });
 
 test('P12: where the push\'s limit runs out during any of its git calls, the push answers timed-out with the reason reading 9 gives, and runs no later step', async (t) => {
-  for (const step of ['ls-remote', 'fetch', 'hash-object', 'mktree', 'commit-tree', 'push']) {
+  for (const step of ['ls-remote', 'remote', 'fetch', 'hash-object', 'mktree', 'commit-tree', 'push']) {
     // The process adapter's result for a call its timeout ended: a signal's exit code, and `timedOut`.
     const ended = () => ({ exit: 143, timedOut: true });
     const steps = step === 'fetch' ? { ...LACKING, fetch: ended } : { [step]: ended };
@@ -440,7 +450,7 @@ test('P12: where the push\'s limit runs out during any of its git calls, the pus
 test('a push handed no limit hands each later git call a timeout no greater than PUSH_TIMEOUT less the time its earlier calls took', async (t) => {
   const { answer, calls } = await controlled(t, { cost: () => 4_000 });
   assert.equal(answer.outcome, 'pushed');
-  assert.equal(calls.length, 5);
+  assert.equal(calls.length, 6);
   for (const call of calls) {
     const spent = call.at - 1_000;
     assert.ok(call.timeout <= PUSH_TIMEOUT - spent, `git ${call.args[0]} after ${spent} ms was handed ${call.timeout} ms`);
@@ -453,8 +463,8 @@ test('PUSH_TIMEOUT is 30000 milliseconds', () => {
 
 test('P13: where the injected clock shows the limit spent when a git call is about to start, the push answers timed-out with the reason reading 9 gives, and starts neither that call nor any later one', async (t) => {
   for (const [limit, spentBy, next, ran] of [
-    [undefined, 'ls-remote', 'hash-object', ['ls-remote']],
-    [5_000, 'mktree', 'commit-tree', ['ls-remote', 'hash-object', 'mktree']],
+    [undefined, 'ls-remote', 'remote', ['ls-remote']],
+    [5_000, 'mktree', 'commit-tree', ['ls-remote', 'remote', 'hash-object', 'mktree']],
   ]) {
     const { answer, calls } = await controlled(t, { ...(limit === undefined ? {} : { limit }), cost: (args) => (args[0] === spentBy ? 30_000 : 1) });
     assert.deepEqual(answer, { outcome: 'timed-out', bytes: STREAM.length, parent: TIP, reason: `the push's limit of ${limit ?? 30_000} ms was spent before git ${next} started` });
@@ -565,7 +575,7 @@ test('I4: where a push wrote its objects and ended before its git push, a later 
   assert.notEqual(answer.parent, left);
 });
 
-test('P23: where a lacking tip\'s fetch succeeds and the commit onto it then fails, the push answers failed in that commit-tree\'s words and runs no git push', async (t) => {
+test('P26: where a lacking tip\'s fetch succeeds and the commit onto it then fails, the push answers failed in that commit-tree\'s words and runs no git push', async (t) => {
   let ontoTip = 0;
   const steps = {
     'commit-tree': (args) => {
@@ -576,5 +586,40 @@ test('P23: where a lacking tip\'s fetch succeeds and the commit onto it then fai
   };
   const { answer, calls } = await controlled(t, { steps });
   assert.deepEqual(answer, { outcome: 'failed', bytes: STREAM.length, parent: TIP, reason: 'fatal: cannot write commit object' });
-  assert.deepEqual(subcommandsOf(calls), ['ls-remote', 'hash-object', 'mktree', 'commit-tree', 'commit-tree', 'fetch', 'commit-tree']);
+  assert.deepEqual(subcommandsOf(calls), ['ls-remote', 'remote', 'hash-object', 'mktree', 'commit-tree', 'commit-tree', 'fetch', 'commit-tree']);
+});
+
+test('P19: with a fetch mapping of refs/rigger/* in the pushing repository\'s own config, the push answers pushed and writes no remote-tracking ref there', async (t) => {
+  const w = world(t);
+  gitIn(w.repository, 'config', '--add', 'remote.origin.fetch', '+refs/rigger/*:refs/remotes/origin/rigger/*');
+  const before = gitIn(w.repository, 'for-each-ref');
+  const { answer } = await pushed(w, STREAM);
+  assert.equal(answer.outcome, 'pushed', answer.reason);
+  assert.equal(gitIn(w.repository, 'for-each-ref', 'refs/remotes/origin/rigger/events'), '');
+  assert.equal(gitIn(w.repository, 'for-each-ref'), before);
+});
+
+test('P21: with two push URLs for origin in the pushing repository\'s own config, the push answers failed naming both, and runs no git hash-object and no git push', async (t) => {
+  const w = world(t);
+  const first = bareCloneInto(w.origin, join(w.directory, 'first.git'));
+  const second = bareCloneInto(w.origin, join(w.directory, 'second.git'));
+  gitIn(w.repository, 'config', '--add', 'remote.origin.pushurl', first);
+  gitIn(w.repository, 'config', '--add', 'remote.origin.pushurl', second);
+  const { answer, calls } = await pushed(w, STREAM);
+  assert.deepEqual(keysOf(answer), ['bytes', 'outcome', 'reason']);
+  assert.equal(answer.outcome, 'failed');
+  assert.ok(answer.reason.includes(first) && answer.reason.includes(second), answer.reason);
+  assert.deepEqual(calls.filter((call) => ['hash-object', 'push'].includes(call.args[0])), []);
+  for (const bare of [w.origin, first, second]) assert.equal(tipOf(bare), undefined);
+});
+
+test('P20: with origin\'s push URL set to a second bare repository in the pushing repository\'s own config, the push answers pushed to that repository, and the data ref at origin\'s URL is unchanged', async (t) => {
+  const w = world(t);
+  const first = (await pushed(w, STREAM)).answer.commit;
+  const elsewhere = bareCloneInto(w.origin, join(w.directory, 'elsewhere.git'));
+  gitIn(w.repository, 'config', 'remote.origin.pushurl', elsewhere);
+  const { answer } = await pushed(w, Buffer.concat([STREAM, STREAM]), { pushedTo: elsewhere });
+  assert.equal(answer.outcome, 'pushed', answer.reason);
+  assert.equal(tipOf(elsewhere), answer.commit);
+  assert.equal(tipOf(w.origin), first);
 });

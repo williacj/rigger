@@ -15,8 +15,9 @@ const MESSAGE = 'rigger: the event stream';
 
 /**
  * Pushes `stream`, the stream's bytes as L5 read them, to the data ref on `origin` of the
- * repository at `repository`, and answers how the push went: `{ outcome, bytes, parent, commit,
- * reason }`, each field present where "The outcome" says a `push.end` line holds it.
+ * repository at `repository`, by origin's one push URL, and answers how the push went: `{ outcome,
+ * bytes, parent, commit, reason }`, each field present where "The outcome" says a `push.end` line
+ * holds it.
  *
  * Every `git` call goes through `spawn`, which has `runCommand`'s contract and is `runCommand`
  * unless the caller hands another, with `emitter` for the process adapter's kill events and the
@@ -56,6 +57,12 @@ export async function pushStream({ repository, stream, emitter, limit = PUSH_TIM
     const { parent, other } = tipIn(await needed(['ls-remote', 'origin', DATA_REF, 'refs/remotes/refs/rigger/events/HEAD']));
     if (parent !== undefined) known.parent = parent;
     if (other !== undefined) throw new Ended('failed', `origin holds ${other}, to which git push would resolve ${DATA_REF}, so the push wrote nothing`);
+    // A push that names `origin` would also write the remote-tracking ref a fetch mapping of
+    // origin's gives the data ref, so the push goes to the URL a push to `origin` goes to.
+    const urls = (await needed(['remote', 'get-url', '--push', '--all', 'origin'])).split('\n').filter(Boolean);
+    // One URL only: a push to one of several would reach that one alone.
+    if (urls.length !== 1) throw new Ended('failed', `origin has ${urls.length} push URLs, ${urls.join(', ') || 'none'}, where the push needs exactly one, so the push wrote nothing`);
+    const [url] = urls;
     const blob = (await needed(['hash-object', '-w', '--stdin'], held)).trim();
     const tree = (await needed(['mktree'], `100644 blob ${blob}\tevents.jsonl\n`)).trim();
     const committed = (onto) => git(['commit-tree', tree, ...(onto === undefined ? [] : ['-p', onto]), '-m', MESSAGE]);
@@ -70,7 +77,7 @@ export async function pushStream({ repository, stream, emitter, limit = PUSH_TIM
     }
     if (built.exit !== 0) throw new Ended('failed', printed(built));
     const commit = built.stdout.trim();
-    const sent = await git(['push', '--porcelain', '--no-signed', '--no-verify', 'origin', `${commit}:${DATA_REF}`]);
+    const sent = await git(['push', '--porcelain', '--no-signed', '--no-verify', url, `${commit}:${DATA_REF}`]);
     if (sent.exit !== 0) throw new Ended(rejected(sent.stdout) ? 'refused' : 'failed', printed(sent));
     return { outcome: 'pushed', ...known, commit };
   };
