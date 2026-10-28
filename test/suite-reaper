@@ -1,8 +1,11 @@
 // ABOUTME: Ends a test run's processes after its suite shell closes a pipe, even if that shell was killed.
 
 import { spawnSync } from 'node:child_process';
-import { closeSync, constants as files, createReadStream, existsSync, lstatSync, openSync, realpathSync, statSync, writeSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { createReadStream } from 'node:fs';
+import { realpathSync } from 'node:fs';
+import { join } from 'node:path';
+import { closeSync, constants as files, existsSync, lstatSync, openSync, statSync, writeSync } from 'node:fs';
+import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { targetReadRecord } from './suite-reaper-probe.mjs';
 
 import { removeTemporaryDirectory } from './temporary-directory.mjs';
@@ -21,7 +24,6 @@ function read(command, args) {
   return result.stdout;
 }
 
-let targetReadSequence = 0;
 function targetState(pid) {
   const result = spawnSync('/bin/ps', ['-ww', '-p', String(pid), '-o', 'pid=,stat=,lstart=,command='], {
     cwd: '/', env: { ...process.env, LC_ALL: 'C', TZ: 'UTC0' }, encoding: 'utf8', maxBuffer: Infinity,
@@ -83,7 +85,7 @@ function targetState(pid) {
         }
         const record = targetReadRecord({
           cell: process.env.RIGGER_REAPER_CELL,
-          pid, readSequence: ++targetReadSequence, parserClass, signalZero, result,
+          pid, parserClass, signalZero, result,
         });
         const descriptor = openSync(resolve(destination), files.O_CREAT | files.O_APPEND | files.O_WRONLY | files.O_NOFOLLOW, 0o600);
         try { writeSync(descriptor, `${JSON.stringify(record)}\n`); }

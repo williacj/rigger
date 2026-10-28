@@ -6,7 +6,8 @@ import { randomUUID } from 'node:crypto';
 import { runInNewContext } from 'node:vm';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, statSync, writeSync } from 'node:fs';
 import { symlinkSync } from 'node:fs';
 import { lstatSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -523,6 +524,7 @@ test('missing or truncated reaper trace remains incomplete evidence', () => {
   });
   const line = JSON.stringify(record) + '\n';
   assert.deepEqual(traceEvidence(line, 'E5-F1'), { records: [record], incomplete: false });
+  assert.deepEqual(traceEvidence(line + line, 'E5-F1'), { records: [record, { ...record, readSequence: 2 }], incomplete: false });
   assert.deepEqual(traceEvidence(undefined, 'E5-F1'), { records: [], incomplete: true });
   assert.deepEqual(traceEvidence(line.slice(0, -1), 'E5-F1'), { records: [], incomplete: true });
   assert.deepEqual(traceEvidence(JSON.stringify({ ...record, skeleton: 'SECRET_WALRUS' }) + '\n', 'E5-F1'), { records: [], incomplete: true });
@@ -530,7 +532,7 @@ test('missing or truncated reaper trace remains incomplete evidence', () => {
 
 test('targeted read outcomes and trace failures retain the confirmed-ending decision', (t) => {
   const source = readFileSync(new URL('./suite-reaper', import.meta.url), 'utf8');
-  const start = source.indexOf('let targetReadSequence = 0;');
+  const start = source.indexOf('function targetState(pid) {');
   const end = source.indexOf('\nfunction inside(path) {', start);
   assert.ok(start >= 0 && end > start, 'the targeted read function is present');
   const targetFunction = source.slice(start, end);

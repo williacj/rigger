@@ -55,7 +55,7 @@ export function targetReadRecord({ cell, pid, readSequence, parserClass, signalZ
   return {
     cell: /^E[56]-F[1-7]$/.test(cell) ? cell : 'other',
     pid: positive(pid),
-    readSequence: positive(readSequence),
+    readSequence: readSequence === undefined ? undefined : positive(readSequence),
     parserClass: known(PARSER_CLASSES, parserClass),
     signalZero: known(SIGNAL_ZERO, signalZero),
     status: nonnegative(result?.status),
@@ -71,14 +71,14 @@ export function targetReadRecord({ cell, pid, readSequence, parserClass, signalZ
   };
 }
 
-export function safeTargetReadRecord(record) {
+export function safeTargetReadRecord(record, readSequence = record?.readSequence) {
   const validNumber = (value) => value === null || nonnegative(value) !== null;
   const validEnum = (set, value) => value === 'other' || set.has(value);
   const validSeparators = Array.isArray(record?.separators) && record.separators.length <= 64
     && record.separators.every((entry) => nonnegative(entry?.at) !== null && SEPARATOR_KINDS.has(entry?.kind));
   if (!record || typeof record !== 'object'
       || !/^E[56]-F[1-7]$/.test(record.cell)
-      || positive(record.pid) === null || positive(record.readSequence) === null
+      || positive(record.pid) === null || positive(readSequence) === null
       || !validEnum(PARSER_CLASSES, record.parserClass)
       || !SIGNAL_ZERO.has(record.signalZero)
       || !validNumber(record.status)
@@ -95,7 +95,7 @@ export function safeTargetReadRecord(record) {
   return {
     cell: record.cell,
     pid: record.pid,
-    readSequence: record.readSequence,
+    readSequence,
     parserClass: record.parserClass,
     signalZero: record.signalZero,
     status: record.status,
@@ -119,9 +119,9 @@ export function traceEvidence(bytes, cell) {
   lines.pop();
   const records = [];
   let incomplete = !complete;
-  for (const line of lines) {
+  for (const [at, line] of lines.entries()) {
     try {
-      const record = safeTargetReadRecord(JSON.parse(line));
+      const record = safeTargetReadRecord(JSON.parse(line), at + 1);
       if (record.cell !== cell) { incomplete = true; continue; }
       records.push(record);
     } catch {
