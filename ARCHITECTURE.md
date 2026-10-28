@@ -1583,8 +1583,8 @@ that failed.
 | State | What happens |
 |---|---|
 | telemetry push off | no push, and no push side is reached (`R-SAFE-3`) |
-| a verb's normal return, the verb having written events, the data ref absent | the first push creates the ref, with a commit that has no parent |
-| a verb's normal return, the data ref's tip the previous stream commit | a plain push of a child of that tip |
+| the data ref absent | the first push creates the ref, with a commit that has no parent |
+| the data ref's tip the previous stream commit | a plain push of a child of that tip |
 | the tip not in the local object store | the push fetches that commit from `origin` before it builds the child |
 | the tip moved by another writer after the push read it | `git push` rejects it as non-fast-forward, and the push is `refused`; the next push reads the new tip and builds on it |
 | a drain trigger while `run` stays up | the same push; the drain does not wait on it, and the poll keeps its schedule |
