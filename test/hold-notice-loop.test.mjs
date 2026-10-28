@@ -426,3 +426,140 @@ test('a closer left after 0 by a crash after the opening is recovered: the scan 
   assert.deepEqual(namesIn(handed.state), ['hold-a1-issue-1.json']);
   assert.equal(world.calls.filter(([name]) => name === 'openIssue').length, 0);
 });
+
+/**
+ * L0's handle on a board holding `cards`, whose issue state read answers `states`, by number, a
+ * state given as an Error refusing that read, and which records each number it was asked for.
+ */
+function stateBoard(cards, states) {
+  const asked = [];
+  const board = {
+    ...handleOn(boardOf(cards)),
+    readIssueState: async (number) => {
+      asked.push(number);
+      if (states[number] instanceof Error) throw states[number];
+      return { state: states[number] ?? 'none' };
+    },
+  };
+  return { board, asked };
+}
+
+/** A notice function answering, for each closer naming an issue, `answers[issue]`, and recording what it was handed. */
+function followingNotice(answers) {
+  const calls = [];
+  async function* notice({ closer, others, state }) {
+    calls.push({ name: closer.name, others, state });
+    return answers[closer.issue];
+  }
+  return Object.assign(notice, { calls });
+}
+
+// proves R-SCHED-23
+test('at each trigger L3 reads each issue a hold\'s closer names once, through board.readIssueState, whatever number of closers name it, and hands L2\'s notice each closer\'s hold with the state it read', async () => {
+  const { board, asked } = stateBoard([], { 12: 'open', 14: 'closed' });
+  const notice = followingNotice({ 12: { issue: 12 }, 14: { issue: 14 } });
+  const handed = handles({ cards: [], notice, board });
+  for (const name of ['hold-a1-issue-12.json', 'hold-b2-issue-12.json', 'hold-c3-issue-14.json', 'owner-o4.json']) seed(handed.state, name);
+  const built = loop(handed);
+
+  await built.pull();
+  await built.pull();
+
+  // Two triggers, two issues: four reads, never one per closer or per claim.
+  assert.deepEqual(asked, [12, 14, 12, 14]);
+  assert.deepEqual(notice.calls.slice(0, 3).sort((one, other) => one.name.localeCompare(other.name)), [
+    { name: 'hold-a1-issue-12.json', others: [12, 14], state: 'open' },
+    { name: 'hold-b2-issue-12.json', others: [12, 14], state: 'open' },
+    { name: 'hold-c3-issue-14.json', others: [12, 12], state: 'closed' },
+  ]);
+});
+
+// proves R-SCHED-4, R-SCHED-23
+test('where L2 answers that the notice closed for a hold, L3 removes that hold\'s closer, the event naming the issue\'s close as what reopened admission, and the same trigger then claims', async () => {
+  const { board } = stateBoard([1], { 12: 'closed' });
+  const notice = followingNotice({ 12: { issue: 12, closed: true } });
+  const handed = handles({ cards: [1], notice, board });
+  seed(handed.state, 'hold-a1-issue-12.json');
+
+  await assert.rejects(loop(handed).pull(), (failure) => failure.errors.some(({ message }) => /card #1 was held/.test(message)));
+
+  const opened = readEvents(handed.state).filter(({ event }) => event === 'admission.open');
+  assert.deepEqual(opened.map(({ layer, kind, id, name, by, issue }) => ({ layer, kind, id, name, by, issue })), [{ layer: 'L3', kind: 'hold', id: 'a1', name: 'hold-a1-issue-12.json', by: 'issue', issue: 12 }]);
+  // Admission opened, so this trigger claimed card #1, which then held again under a closer of its own.
+  assert.ok(readEvents(handed.state).some(({ event, card }) => event === 'pull' && card === 1));
+  assert.ok(!namesIn(handed.state).includes('hold-a1-issue-12.json'));
+});
+
+// proves R-SCHED-23
+test('a closed notice removes only that hold\'s closer: the owner\'s pause, before or after the hold, stays, and admission stays closed', async () => {
+  for (const names of [['hold-a1-issue-12.json', 'owner-o4.json'], ['owner-o4.json', 'hold-a1-issue-12.json']]) {
+    const { board } = stateBoard([1], { 12: 'closed' });
+    const handed = handles({ cards: [1], notice: followingNotice({ 12: { issue: 12, closed: true } }), board });
+    for (const name of names) seed(handed.state, name);
+
+    const pulled = await loop(handed).pull();
+
+    assert.deepEqual(namesIn(handed.state), ['owner-o4.json'], names.join(', '));
+    assert.equal(pulled.admission.state, 'closed', names.join(', '));
+    assert.ok(!readEvents(handed.state).some(({ event }) => event === 'pull'), names.join(', '));
+  }
+});
+
+// proves R-SCHED-23
+test('an issue whose state read is refused or times out is unreadable: L3 hands L2 nothing for it, claims nothing, records notice.failed naming the issue, answers it, and reads again at the next trigger', async () => {
+  const { board, asked } = stateBoard([1], { 12: new Error('gh: readIssueState timed out after 30000 ms') });
+  const notice = followingNotice({});
+  const handed = handles({ cards: [1], notice, board });
+  seed(handed.state, 'hold-a1-issue-12.json');
+  const built = loop(handed);
+
+  const pulled = await built.pull();
+  await built.pull();
+
+  assert.deepEqual(notice.calls, []);
+  assert.deepEqual(asked, [12, 12]);
+  assert.equal(pulled.admission.state, 'closed');
+  const step = "read issue #12's state";
+  assert.deepEqual(pulled.notices, [{ id: 'a1', step, cause: 'gh: readIssueState timed out after 30000 ms' }]);
+  const failed = readEvents(handed.state).filter(({ event }) => event === 'notice.failed');
+  assert.deepEqual(failed.map(({ layer, hold, issue, step: named }) => ({ layer, hold, issue, step: named })), [{ layer: 'L3', hold: 'a1', issue: 12, step }, { layer: 'L3', hold: 'a1', issue: 12, step }]);
+  assert.deepEqual(namesIn(handed.state), ['hold-a1-issue-12.json']);
+  assert.ok(!readEvents(handed.state).some(({ event }) => event === 'pull'));
+});
+
+// proves R-SCHED-23
+test('with no closer, a status issue a person reopened changes nothing: L3 reads no issue\'s state and makes no notice call', async () => {
+  const { board, asked } = stateBoard([], { 12: 'open' });
+  const notice = followingNotice({});
+  const handed = handles({ cards: [], notice, board });
+
+  await loop(handed).pull();
+
+  assert.deepEqual(asked, []);
+  assert.deepEqual(notice.calls, []);
+});
+
+// proves R-SCHED-23
+test('through L2\'s column changes, an issue no longer the notice has L2 open another and L3 rename the closer to it, and a close after the notice reached it removes the closer', async () => {
+  const STATUS = 'rigger:status';
+  // #3 carried the label and lost it, then was closed; #5 is the notice, closed while labelled.
+  const labelled = { kind: 'labeled', createdAt: '2026-10-01T00:00:00Z', actor: 'rigger-bot', label: STATUS };
+  const world = forge({
+    issues: [
+      ...CARDS(),
+      { number: 3, title: 'Rigger closed admission', body: 'Hold: `a1`', author: 'rigger-bot', state: 'closed', labels: [], comments: [], timeline: [labelled, { ...labelled, kind: 'unlabeled' }, { kind: 'closed', createdAt: '2026-10-01T00:00:00Z', actor: 'williacj' }] },
+      { number: 5, title: 'Rigger closed admission', body: 'Hold: `b2`', author: 'rigger-bot', state: 'closed', labels: [STATUS], comments: [], timeline: [labelled, { kind: 'closed', createdAt: '2026-10-01T00:00:00Z', actor: 'github-project-automation[bot]' }] },
+    ],
+  });
+  const { board } = stateBoard([], { 3: 'closed', 5: 'closed' });
+  const handed = handles({ cards: [], board });
+  handed.l2.notice = changesOver(world, handed.sink).notice;
+  for (const name of ['hold-a1-issue-3.json', 'hold-b2-issue-5.json']) seed(handed.state, name);
+
+  const pulled = await loop(handed).pull();
+
+  assert.deepEqual(namesIn(handed.state), ['hold-a1-issue-6.json']);
+  assert.equal(pulled.admission.state, 'closed');
+  assert.deepEqual(world.issues.at(-1).labels, [STATUS]);
+  assert.deepEqual(readEvents(handed.state).filter(({ event }) => event === 'admission.open').map(({ name, by, issue }) => ({ name, by, issue })), [{ name: 'hold-b2-issue-5.json', by: 'issue', issue: 5 }]);
+});

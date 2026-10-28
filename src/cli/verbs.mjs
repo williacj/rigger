@@ -32,7 +32,7 @@ export const VERBS = [
   ['once', 'claim one card, provision its workspace and dispatch its maker, then exit'],
   ['run', 'claim cards until the slots are full, provision their workspaces and dispatch their makers, then exit'],
   ['pause', 'stop admitting new cards; in-flight cards finish'],
-  ['resume', 'reopen admission'],
+  ['resume', 'reopen admission and close the status issue'],
   ['report', 'derive the signals from the event stream'],
   ['verdict', 'post your verdict on a pull request, once you confirm it'],
 ];

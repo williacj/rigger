@@ -175,7 +175,7 @@ test('once over a board with no pullable card exits 0', () => {
 
 // proves R-SCHED-3, R-SCHED-16
 test('once under owner and hold closers names both, keeps L2 refusals and exits 0 without claiming', async () => {
-  const ran = once({ items: [REFUSED, card(12, 'Ready')] }, { prepare: ({ consumer }) => {
+  const ran = once({ items: [REFUSED, card(12, 'Ready')] }, { seed: { issues: [{ number: 7, title: 'Rigger closed admission', body: 'Why.\n\nHold: `b2`\n', labels: ['rigger:status'] }] }, prepare: ({ consumer }) => {
     const state = join(consumer, '.rigger');
     seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' }));
     seed(state, 'hold-b2-issue-7.json', closerText({ reason: 'environment hold' }));
@@ -188,8 +188,8 @@ test('once under owner and hold closers names both, keeps L2 refusals and exits 
   }
   assert.match(ran.out, /#11.*missing acceptance/, ran.out);
   assert.doesNotMatch(ran.out, /no card was pullable/, ran.out);
-  assert.deepEqual(await columnsOf(ran), { 11: 'Ready', 12: 'Ready' });
-  assert.deepEqual((await ran.model()).writes(), []);
+  assert.deepEqual(await columnsOf(ran), { 7: 'Owner', 11: 'Ready', 12: 'Ready' });
+  assert.deepEqual((await ran.model()).writes(), [{ operation: 'addIssue', args: [7, REPO] }, { operation: 'moveItem', args: ['item-3', 'Owner'] }]);
   assert.deepEqual(ran.agentRuns(), []);
 });
 
@@ -1683,13 +1683,13 @@ test('once after the bin\'s pause claims nothing, and after its resume claims as
   // The defect this catches is a `pause` that `take` does not read as closed, or a `resume` that
   // leaves admission closed, through the verbs the owner runs rather than closers seeded by hand.
   const items = [card(20, 'Ready'), card(10, 'Ready')];
-  const owner = (verb, consumer) => {
-    const done = spawnSync(process.execPath, [bin, verb], { cwd: consumer, encoding: 'utf8' });
+  const owner = (verb, consumer, fake) => {
+    const done = spawnSync(process.execPath, [bin, verb], { cwd: consumer, encoding: 'utf8', env: { ...process.env, PATH: [dirname(fake.gh), process.env.PATH].join(delimiter) } });
     assert.equal(done.status, 0, `${done.stdout}${done.stderr}`);
     assert.doesNotMatch(`${done.stdout}${done.stderr}`, /not yet implemented/);
   };
   const base = once({ items });
-  const paused = once({ items }, { prepare: ({ consumer }) => owner('pause', consumer) });
+  const paused = once({ items }, { prepare: ({ consumer, fake }) => owner('pause', consumer, fake) });
 
   assert.equal(paused.code, 0, paused.err);
   assert.match(paused.out, /admission is closed by owner: the owner's pause/, paused.out);
@@ -1697,7 +1697,7 @@ test('once after the bin\'s pause claims nothing, and after its resume claims as
   assert.deepEqual((await paused.model()).writes(), []);
   assert.deepEqual(paused.agentRuns(), []);
 
-  owner('resume', paused.consumer);
+  owner('resume', paused.consumer, paused.fake);
   const resumed = paused.rerun();
   assert.deepEqual(await columnsOf(resumed), await columnsOf(base), resumed.err);
   assert.deepEqual(await columnsOf(resumed), { 10: 'Coding', 20: 'Ready' });

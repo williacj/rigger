@@ -24,12 +24,14 @@ import { DEFAULT_CONCURRENCY } from '../config/validate.mjs';
  * in memory, L3's events, the start's kill, and the steps that take a claim, start it and release
  * it. The arguments are `loop`'s, less those only a dispatch reads.
  *
+ * `follow` is L3's act on the hold closers naming an issue, which `take` awaits at each trigger.
+ *
  * `kill` is L1's kill of the process groups a dead engine left, injected. A handle is refused
  * where it is not a function, when the handle is built, because a start that could not kill has
  * nothing to stop it recording and reading over what the dead engine left (`ARCHITECTURE.md`,
  * "Failure model").
  */
-function claiming({ config, board, facts, l2, sink, kill, readAdmission, halted }) {
+function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow, halted }) {
   if (typeof kill !== 'function') throw new Error(`L3 was handed no kill of recorded process groups, so it cannot start: kill is ${typeof kill}`);
   if (typeof facts !== 'function') throw new Error(`L3 was handed no facts call of L2's, so it cannot ask L2 about a card before claiming it: the facts call is ${typeof facts}`);
   const concurrency = config.concurrency ?? DEFAULT_CONCURRENCY;
@@ -64,7 +66,8 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, halted 
     refused,
 
     /**
-     * Fires the pull trigger's read: records the trigger, reads the board, awaits L2's facts call
+     * Fires the pull trigger's read: records the trigger, acts on each hold's closer naming an issue
+     * through `follow`, whose failed notices it answers as `notices`, reads the board, awaits L2's facts call
      * over the cards no claim holds, and claims as many cards as there are free slots and no more
      * than `limit` where one is given, first pulled first, deciding each with the `decide` that call
      * answered. A card L2 answered `merge` holds no slot, so N does not bound it (the architect's r2
@@ -94,6 +97,7 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, halted 
       } catch (refusal) {
         failures.push(refused('the event sink refused to record the pull trigger', refusal));
       }
+      const notices = await follow();
       const columns = await board.readColumns();
       const { items, declared } = await board.readPriority();
       /** A board item neither claimed nor withheld from another pull in this run. */
@@ -109,13 +113,13 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, halted 
         answers.set(card.number, next);
         return next;
       });
-      if (halted()) return { claims: [], failures };
+      if (halted()) return { claims: [], failures, notices };
       const admissionState = readAdmission();
       if (admissionState.state === 'unreadable') {
         const { unreadable } = admissionState;
         throw Object.assign(new Error(`admission cannot be read, so this pull claims nothing: ${unreadable.map(({ path, cause }) => `${path} (${cause})`).join(', ')}`), { unreadable });
       }
-      if (admissionState.state === 'closed') return { claims: [], failures, admission: admissionState };
+      if (admissionState.state === 'closed') return { claims: [], failures, admission: admissionState, notices };
       const taken = [];
       for (const pull of pulls) {
         if (limit !== undefined && taken.length >= limit) break;
@@ -195,8 +199,9 @@ function released(release, claim, failure) {
  *
  * `board` is L0's handle on it, the forge adapter's read side: `readColumns()` answers the
  * declared columns by key, and `readPriority()` answers the cards with their priority and the
- * declared order, which is what L0 hands L3 for the pull order. `readItems()` answers the cards,
- * which the repo lane reads again as it reaches a merge, as `lane` says. `facts` is L2's facts call, which
+ * declared order, which is what L0 hands L3 for the pull order. `readIssueState(number)` answers
+ * one issue's state, which L3 reads for each issue a hold's closer names, as `follow` says.
+ * `readItems()` answers the cards, which the repo lane reads again as it reaches a merge, as `lane` says. `facts` is L2's facts call, which
  * L3 awaits over the cards it read, between its board read and its claims, and which answers the
  * next action L3 asks once for each card at the pull, as `take` says. `decide` is L2's next action
  * for a card, which L3 asks within each attempt as `decide(card, outcomes, options)`: with the
@@ -272,7 +277,7 @@ function released(release, claim, failure) {
  */
 export function loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, environment, run, ps, readTimeout, clock }) {
   let admissionRecord;
-  const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, facts, l2, sink, kill, readAdmission: () => admissionRecord.read(), halted: () => unsaved !== undefined });
+  const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, facts, l2, sink, kill, readAdmission: () => admissionRecord.read(), follow: () => follow(), halted: () => unsaved !== undefined });
   const { merge } = lane({ board, facts, l2, record, refused, removeDirectories, clock });
   const now = clock?.now ?? Date.now;
   const pause = clock?.pause ?? ((delay) => new Promise((resolve) => { whenElapsed(delay, resolve, { hold: true }); }));
@@ -390,8 +395,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * carries the id or the closer names an issue; `{ gone }` where a rename found the closer gone and
    * L3 ended the call; otherwise what L2 answered, a call that threw answering as `failed`.
    */
-  const notify = (id, hold) => {
-    noticing = noticing.then(() => noticed(id, hold)).catch((thrown) => ({ failed: { step: 'notice', cause: thrown.message } }));
+  const notify = (id, hold, issueState) => {
+    noticing = noticing.then(() => noticed(id, hold, issueState)).catch((thrown) => ({ failed: { step: 'notice', cause: thrown.message } }));
     return noticing;
   };
 
@@ -399,13 +404,16 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * One notice call for hold `id`, on its closer as L3 lists it as the call starts, handing L2 the
    * issue numbers the other hold closers name. L3 makes each rename L2 answers through `admission.mjs`
    * and hands L2 the outcome unread, as `Promise.allSettled` records it, before L2 writes again.
+   * A closer naming an issue is followed only where L3 read that issue's state, `issueState`, which
+   * L3 hands L2; where L2 answers that the notice closed for that hold, L3 removes its closer
+   * through `admission.mjs`, the event naming the issue's close as what reopened admission.
    */
-  const noticed = async (id, hold) => {
+  const noticed = async (id, hold, issueState) => {
     const closers = admissionRecord.read().closers ?? [];
     const closer = closers.find((each) => each.id === id);
-    if (closer === undefined || closer.issue !== undefined) return undefined;
-    const others = closers.filter((each) => each.issue !== undefined).map((each) => Number(each.issue));
-    const steps = l2.notice({ closer, others, hold, admission: admissionPath(state) });
+    if (closer === undefined || (closer.issue !== undefined) !== (issueState !== undefined)) return undefined;
+    const others = closers.filter((each) => each.issue !== undefined && each.id !== id).map((each) => Number(each.issue));
+    const steps = l2.notice({ closer, others, hold, admission: admissionPath(state), ...(issueState === undefined ? {} : { state: issueState }) });
     let { name } = closer;
     let step = await steps.next();
     while (!step.done) {
@@ -417,7 +425,37 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       if (outcome.status === 'fulfilled') ({ name } = outcome.value);
       step = await steps.next(outcome);
     }
+    if (step.value?.closed) await admissionRecord.open(name, { issue: step.value.issue });
     return step.value;
+  };
+
+  /**
+   * L3's act at a trigger on each hold's closer naming an issue, after it lists admission: it reads
+   * each issue those closers name by its number, once whatever number of closers name it, through
+   * `board.readIssueState`, and hands L2's notice function each closer's hold and that state, as
+   * `noticed` says. A read that fails or times out counts as unreadable: L3 hands L2 nothing for that
+   * closer, records `notice.failed` naming the issue, and the next trigger reads again. Answers each
+   * failed notice as `{ id, step, cause }`.
+   */
+  const follow = async () => {
+    const listed = admissionRecord.read();
+    if (listed.state !== 'closed') return [];
+    const states = new Map();
+    const notices = [];
+    for (const { kind, id, issue } of listed.closers) {
+      if (kind !== 'hold' || issue === undefined) continue;
+      if (!states.has(issue)) states.set(issue, (async () => board.readIssueState(Number(issue)))().then(({ state: read }) => ({ read }), (failure) => ({ failure })));
+      const { read, failure } = await states.get(issue);
+      if (failure !== undefined) {
+        const failed = { step: `read issue #${issue}'s state`, cause: failure.message };
+        record('notice.failed', { hold: id, issue: Number(issue), ...failed });
+        notices.push({ id, ...failed });
+        continue;
+      }
+      const ended = await notify(id, undefined, read);
+      if (ended?.failed !== undefined) notices.push({ id, ...ended.failed });
+    }
+    return notices;
   };
 
   /**
@@ -887,8 +925,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * as `released` says.
    */
   const trigger = async (freed = () => {}, limit = undefined, excluded) => {
-    const { claims: claimed, failures, admission: closed } = await take(limit, excluded);
-    const notices = [];
+    const { claims: claimed, failures, admission: closed, notices = [] } = await take(limit, excluded);
     for (const { kind, id, issue } of closed?.closers ?? []) {
       const ended = kind === 'hold' && issue === undefined ? await notify(id) : undefined;
       if (ended?.failed !== undefined) notices.push({ id, ...ended.failed });

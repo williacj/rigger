@@ -1,5 +1,6 @@
 // ABOUTME: L2's status issue: the title, body and comment a hold's notice writes, the hold's id
-// parsed back from them, and the notice function, phased so that L3 makes every rename it answers.
+// parsed back from them, and the notice function, phased so that L3 makes every rename it answers,
+// which also follows the notice on an issue a closer names and closes the status issues for `resume`.
 
 import { FIXED_LABELS } from '../config/validate.mjs';
 
@@ -44,6 +45,26 @@ export const holdComment = ({ id, reason, card }) => `Rigger closed admission ag
 export const holdOf = (text) => /^Hold: `([0-9a-z]+)`$/m.exec(String(text ?? ''))?.[1] ?? null;
 
 /**
+ * Where hold `id`'s notice stands on an issue L2 read: `closed` where the timeline shows a close
+ * after the notice reached it, made while the issue carried the status label `status`; otherwise
+ * `reached` where the opening or a comment names the hold's id. `opened` is whether the issue's
+ * opening names it, by an account with write access. A comment counts only where an account with
+ * write access wrote it and it was never edited. The timeline's order is the order that counts, so
+ * a close and a reopen between two reads still count, and a label applied at the opening is carried
+ * from it.
+ */
+function noticeIn(id, status, opened, timeline) {
+  let reached = opened;
+  let labelled = false;
+  for (const entry of timeline) {
+    if (entry.label === status) labelled = entry.kind === 'labeled';
+    if (entry.kind === 'comment' && holdOf(entry.body) === id && WRITERS.includes(entry.permission) && !entry.edited) reached = true;
+    if (entry.kind === 'closed' && reached && labelled) return { closed: true, reached };
+  }
+  return { closed: false, reached };
+}
+
+/**
  * L2's notice function, over the forge adapter's `reads`, repository `writes`, `board` reads and
  * item writes `items`, placing by `columns` and recording through `sink`. It answers, for one hold's
  * `closer` as L3 listed it, an async generator L3 drives (the architect's placement ruling on
@@ -51,12 +72,20 @@ export const holdOf = (text) => /^Hold: `([0-9a-z]+)`$/m.exec(String(text ?? '')
  * number }`, which L3 makes through `admission.mjs` and hands back unread, as `next(outcome)`, before
  * L2 writes again. L2 holds no admission handle and no callback. Where a rename found its closer
  * gone, L3 ends the call, and L2 writes nothing more. It returns `{ issue }`, the status issue.
+ *
+ * For a closer naming an issue, L3 hands over `state`, the issue's state as it read it, and L2
+ * follows the notice there, as `ARCHITECTURE.md`, "Failure model", says: it answers `{ issue,
+ * closed: true }` where the notice closed for that hold, for L3 to remove its closer; places the
+ * issue in Owner where it is still the notice, first commenting where the notice never reached it;
+ * and otherwise finds or opens another, as the hold's steps 2 to 6 do.
+ *
+ * The function also carries `close`, `rigger resume`'s third step.
  */
 export function statusNotice({ reads, writes, board, items, columns, sink }) {
   const status = FIXED_LABELS.status;
   /** Whether `issue`, as `readIssue` answers it, is open and carries the status label. */
   const isStatus = (issue) => issue !== null && issue.state === 'open' && issue.labels.includes(status);
-  return async function* notice({ closer, others = [], hold, admission }) {
+  async function* notice({ closer, others = [], hold, admission, state }) {
     let at;
     /** Answers `act`'s answer as the step `named`, so that a failure names that step. */
     const step = (named, act) => {
@@ -82,9 +111,31 @@ export function statusNotice({ reads, writes, board, items, columns, sink }) {
       }
       return undefined;
     };
+    /**
+     * How the notice stands on the issue the closer names: `closed`, `notice` once L2 has commented
+     * where the notice never reached the open labelled issue, or `gone` where it is no longer the
+     * hold's notice.
+     */
+    const followed = async (number) => {
+      if (state === 'none') return 'gone';
+      const issue = await step(`read issue #${number}`, () => reads.readIssue(number));
+      if (issue === null) return 'gone';
+      const timeline = await step(`read issue #${number}'s timeline`, () => reads.readIssueTimeline(number));
+      const opened = holdOf(issue.body) === closer.id && issue.author !== null
+        && WRITERS.includes(await step(`read ${issue.author}'s permission`, () => reads.readPermission(issue.author)));
+      const { closed, reached } = noticeIn(closer.id, status, opened, timeline);
+      if (closed) return 'closed';
+      if (!isStatus(issue)) return 'gone';
+      if (!reached) await step(`comment on issue #${number}`, () => writes.postIssueComment(number, holdComment({ id: closer.id, reason: closer.reason, card: hold?.card })));
+      return 'notice';
+    };
     try {
       let number = closer.after === undefined ? undefined : await scanned();
-      if (number !== undefined) yield* renamed('issue', number);
+      const named = closer.issue === undefined ? undefined : Number(closer.issue);
+      const follows = named === undefined ? undefined : await followed(named);
+      if (follows === 'closed') return { issue: named, closed: true };
+      if (follows === 'notice') number = named;
+      else if (number !== undefined) yield* renamed('issue', number);
       else number = yield* written();
       const item = (await step('read the board', () => board.readItems())).find((each) => each.number === number);
       if (item?.column !== columns.owner) {
@@ -118,5 +169,39 @@ export function statusNotice({ reads, writes, board, items, columns, sink }) {
       }
       return number;
     }
+  }
+
+  /**
+   * `rigger resume`'s third step, once it has removed the closers it read: closes each issue in
+   * `named`, the numbers the closers' file names gave, and every other open issue carrying the
+   * status label. For each, it removes the label where the issue carries it, then closes it. An
+   * issue the repository no longer holds, or already closed, takes no write. A read or write refused
+   * for one issue leaves it open, and L2 goes on to the next. Answers `{ closed, left, unread }`:
+   * the numbers it closed, each issue left open as `{ issue, why }`, and, where the read of the
+   * labelled issues was refused, why, in which case only the issues `named` gave were closed.
+   */
+  notice.close = async (named) => {
+    let labelled = [];
+    let unread;
+    try {
+      labelled = await reads.readLabelledIssues(status);
+    } catch (failure) {
+      unread = failure.message;
+    }
+    const closed = [];
+    const left = [];
+    for (const number of [...new Set([...named, ...labelled])]) {
+      try {
+        const issue = await reads.readIssue(number);
+        if (issue === null || issue.state === 'closed') continue;
+        if (issue.labels.includes(status)) await writes.removeIssueLabel(number, status);
+        await writes.closeIssue(number);
+        closed.push(number);
+      } catch (failure) {
+        left.push({ issue: number, why: failure.message });
+      }
+    }
+    return { closed, left, ...(unread === undefined ? {} : { unread }) };
   };
+  return notice;
 }

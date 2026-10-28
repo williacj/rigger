@@ -12,6 +12,9 @@ import { fileURLToPath } from 'node:url';
 import { closerLine } from '../src/cli/doctor.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 import { moduleOver } from './admission-world.mjs';
+import { closerText, seed as seedCloser } from './admission-world.mjs';
+import { repositoryReads } from '../src/substrate/forge/read.mjs';
+import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { seedRepository } from './fake-gh.mjs';
 import { createFakeBoard } from './fake-board.mjs';
@@ -316,4 +319,67 @@ test('rigger run, on a judge pair held after two compound-rule failures, opens o
   assert.equal(notices.length, 1, JSON.stringify(ran.events.filter(({ event }) => event === 'notice.failed')));
   for (const id of ids) assert.ok(notices[0].body.includes(id), `the body omits the recorded judge dispatch ${id}; recorded: ${ids.join(', ')}:\n${notices[0].body}`);
   assert.ok(notices[0].body.includes('Attempt 1: environment, judge `reviewer`') && notices[0].body.includes('Attempt 2: environment, judge `reviewer`'), notices[0].body);
+});
+
+/**
+ * A consumer for the test `t` whose admission holds `closers`, each a closer's file name, beside a
+ * fake `gh` whose board holds no card and whose repository holds `issues`. `verb(name)` runs the
+ * real bin's verb there; `gh(...args)` runs the fake `gh` as a person on the forge would; and
+ * `reads` are the repository reads, through the fake `gh`, of what it then holds.
+ */
+function statusConsumer(t, { closers, issues }) {
+  const directory = scratch(t);
+  const target = withOrigin(repositoryAt(join(directory, 'consumer'), { 'rigger.config.mjs': `export default ${JSON.stringify(consumerConfig(3))};\n` }), join(directory, 'origin.git'));
+  const dir = join(directory, 'gh');
+  mkdirSync(dir);
+  const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, items: [] } });
+  seedRepository(fake, { issues });
+  const state = join(realpathSync.native(target), '.rigger');
+  for (const name of closers) seedCloser(state, name, closerText({ reason: `reason of ${name}` }));
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), PATH: [dir, process.env.PATH].join(delimiter) };
+  const verb = (name) => {
+    const ran = spawnSync(process.execPath, [bin, name], { cwd: target, encoding: 'utf8', env, timeout: SETTLES_WITHIN, killSignal: 'SIGKILL' });
+    assert.equal(ran.error, undefined);
+    return { out: ran.stdout, err: ran.stderr, code: ran.status, said: `exited ${ran.status}: ${ran.stdout}${ran.stderr}` };
+  };
+  const gh = (...args) => spawnSync(fake.gh, args, { encoding: 'utf8', env: gitEnvironment() });
+  const reads = repositoryReads({ repo: REPO, project: PROJECT }, { send: (command, args) => spawnSync(fake.gh, args, { encoding: 'utf8', env: gitEnvironment() }) });
+  return { state, verb, gh, reads, events: () => readEvents(state), closers: () => moduleOver(state).read().closers ?? [] };
+}
+
+/** A status issue the fake holds: carrying the label, its body naming hold `id`, as Rigger opens one. */
+const statusIssue = (number, id) => ({ number, title: 'Rigger closed admission', body: `Why.\n\nHold: \`${id}\`\n`, labels: ['rigger:status'] });
+
+// proves R-SCHED-4, R-SCHED-23
+test('rigger run, once the status issue a hold\'s closer names is closed by a person, removes that closer, records the issue\'s close as what reopened admission, and claims again', (t) => {
+  const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [statusIssue(7, 'a1')] });
+  const closed = here.gh('api', `repos/${REPO}/issues/7`, '-X', 'PATCH', '-f', 'state=closed');
+  assert.equal(closed.status, 0, closed.stderr);
+
+  const ran = here.verb('run');
+
+  assert.equal(ran.code, 0, ran.said);
+  assert.deepEqual(here.closers(), [], ran.said);
+  const opened = here.events().filter(({ event }) => event === 'admission.open');
+  assert.deepEqual(opened.map(({ layer, name, by, issue }) => ({ layer, name, by, issue })), [{ layer: 'L3', name: 'hold-a1-issue-7.json', by: 'issue', issue: 7 }], ran.said);
+  // Admission opened, so the same trigger read the board and found nothing to pull.
+  assert.match(ran.out, /no card was pullable/, ran.said);
+});
+
+// proves R-SCHED-24
+test('rigger resume over hold closers naming issues, beside another open issue carrying the label, removes every closer, then removes the label from each issue before closing it, and exits 0', async (t) => {
+  const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json', 'owner-o4.json'], issues: [statusIssue(7, 'a1'), { number: 9, title: 'Copied', body: '', labels: ['rigger:status', 'type:change'] }] });
+
+  const ran = here.verb('resume');
+
+  assert.equal(ran.code, 0, ran.said);
+  assert.deepEqual(here.closers(), [], ran.said);
+  for (const number of [7, 9]) {
+    const issue = await here.reads.readIssue(number);
+    assert.equal(issue.state, 'closed', `#${number}: ${ran.said}`);
+    assert.ok(!issue.labels.includes('rigger:status'), `#${number}`);
+    assert.match(ran.out, new RegExp(`^rigger resume: closed the status issue #${number}$`, 'm'), ran.said);
+    const changes = (await here.reads.readIssueTimeline(number)).filter(({ kind, label }) => kind === 'closed' || label === 'rigger:status');
+    assert.deepEqual(changes.map(({ kind }) => kind), ['labeled', 'unlabeled', 'closed'], `#${number}`);
+  }
 });

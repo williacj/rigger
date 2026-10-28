@@ -213,9 +213,10 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
    * `admission.open` event. A name that is no hold closer's is refused, so no opening lifts the
    * owner's `pause`. An entry under that name that is no readable closer, a directory, a link or a
    * file that does not parse, is refused and left in place, as `resume` leaves an unreadable
-   * admission. A closer already gone answers so, and records nothing, since nothing changed.
+   * admission. A closer already gone answers so, and records nothing, since nothing changed. Where
+   * the close of status issue `issue` reopened it, the event names that issue as what raised it.
    */
-  async function open(name) {
+  async function open(name, { issue } = {}) {
     const named = parseName(name);
     if (named?.kind !== 'hold') throw new Error(`admission opens only by a hold closer's name, not ${JSON.stringify(name)}`);
     const path = join(dir, name);
@@ -225,7 +226,7 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
       throw new Error(`admission opens only a readable closer, and ${path} is not one (${found.failed ?? 'no reason, time or run'}), so it removes nothing`);
     }
     if (!remove(name)) return { name, ...named, alreadyGone: true };
-    record('admission.open', { kind: named.kind, id: named.id, name, by: 'opening' });
+    record('admission.open', { kind: named.kind, id: named.id, name, ...(issue === undefined ? { by: 'opening' } : { by: 'issue', issue }) });
     return { name, ...named, alreadyGone: false };
   }
 
