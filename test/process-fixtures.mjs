@@ -404,11 +404,12 @@ export function outliving(directory, body) {
 
 /**
  * An `L0` emitter for a call whose command leaves nothing behind, as the fake `gh` leaves nothing.
- * It refuses every event, so a kill L0 makes anyway rejects the call as an unrecorded kill, naming
+ * It accepts call.end and refuses every other event, so a kill rejects as an unrecorded kill, naming
  * the process, and the test fails on it rather than passing over it.
  */
 export const UNKILLED = {
   emit(event, fields) {
+    if (event === 'call.end') return;
     throw new Error(`this test's command leaves no process behind, and L0 recorded ${event} ${JSON.stringify(fields)}`);
   },
 };

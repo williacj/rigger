@@ -6,7 +6,7 @@ import { lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 
 import { gitEnvironment } from './git-environment.mjs';
-import { EVENT_REFUSED, runCommand } from './process.mjs';
+import { EVENT_REFUSED, NOT_STARTED, runCommand } from './process.mjs';
 
 /**
  * How long L0 lets one git call run before it kills the call's group, where the caller passes no
@@ -89,9 +89,33 @@ function queued(step) {
  * .git entry or administrative directory still reads as no linked worktree.
  */
 export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIMEOUT, rejectFailedChecks = false }) {
-  /** Runs git with `args`, one call at a time, and hands back its result. */
+  /** Runs git one call at a time, records its end, and hands back its result or recording refusal. */
   const call = (args) => queued(async () => {
-    const { exit, timedOut, stdout, stderr } = await runCommand({ command: git, args, cwd: repository, env: gitEnvironment(), timeout, emitter });
+    const began = performance.now();
+    let result, failure;
+    try {
+      result = await runCommand({ command: git, args, cwd: repository, env: gitEnvironment(), timeout, emitter });
+    } catch (error) {
+      if (![NOT_STARTED, EVENT_REFUSED].includes(error.code) || typeof emitter?.emit !== 'function' || error.startCause?.kind === 'dispatch-timeout') throw error;
+      failure = error;
+      result = error.result;
+    }
+    const { exit, timedOut, stdout, stderr } = result ?? {};
+    const operation = args[0] === '-C' ? args[2] : args[0];
+    const fields = { system: 'git', operation, ms: performance.now() - began, outcome: timedOut ? 'timed-out' : exit === 0 ? 'ok' : 'failed' };
+    try {
+      emitter.emit('call.end', fields);
+    } catch (cause) {
+      if (failure?.code === EVENT_REFUSED) {
+        failure.unrecorded.push({ event: 'call.end', ...fields, cause });
+        failure.message += `\ncall.end ${JSON.stringify(fields)} went unrecorded: ${cause.message}`;
+        throw failure;
+      }
+      throw Object.assign(new Error(`the sink refused L0's call.end ${JSON.stringify(fields)}, so it went unrecorded: ${cause.message}`, { cause: failure ?? cause }), {
+        code: EVENT_REFUSED, result, unrecorded: [{ event: 'call.end', ...fields, cause }],
+      });
+    }
+    if (failure) throw failure;
     return { args, exit, timedOut, stdout: stdout.toString('utf8'), stderr: stderr.toString('utf8') };
   });
 
