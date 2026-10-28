@@ -157,6 +157,17 @@ async function rootInsideTree(verb, root, top, options) {
  * `judgeDirectory` (the architect's ruling 4's addendum on #467). `ps` and `readTimeout` stand in for L0's own process-table read and its
  * bound where a test gives them.
  */
+/**
+ * The line `verb` prints for hold `id`'s notice that did not finish, from the `failed` L2 returned:
+ * a step the forge made, which L2 marks `made`, named as made with each event of it that went
+ * unrecorded, and otherwise the step the notice failed to take, and its cause. Both of `claiming`'s
+ * paths print it, the closer's `notice` and the pull's `notices` (the architect's placement rulings
+ * on #1056).
+ */
+export const noticeLine = (verb, id, { step, cause, made, unrecorded }) => (made === undefined
+  ? `rigger ${verb}: the notice for hold ${id} failed to ${step}: ${cause}`
+  : `rigger ${verb}: the notice for hold ${id} made its step to ${step}, but the sink refused its record, so these events went unrecorded: ${unrecorded.map(({ event }) => event).join(', ')}`);
+
 export const claimVerb = (verb, limit, options) => recording((opened) => claiming(verb, limit, opened, options));
 
 /**
@@ -334,8 +345,6 @@ async function claiming(verb, limit, opened, {
     const heading = `rigger ${verb}: claimed #${held.card} from board ${project}; its maker did not start: ${attempts.at(-1).reason}, and the card was ${held.decision === 'hold' ? 'held' : 'stopped'} after ${attempts.length} attempts:`;
     return [heading, ...attempts.map((each, at) => `attempt ${at + 1}: ${JSON.stringify(each)}`)].join('\n');
   };
-  /** The line naming hold `id`'s failed notice: the step L2 names, and its cause. */
-  const noticeLine = (id, { step, cause }) => `rigger ${verb}: the notice for hold ${id} failed to ${step}: ${cause}`;
   /**
    * The lines naming each closer a held card's failure among `held` carries, once each however many
    * of its judges held: admission closed by it, in `closerLine`'s words, its notice where that
@@ -344,7 +353,7 @@ async function claiming(verb, limit, opened, {
   const holdLines = (held) => [...new Map(held.filter(({ closer }) => closer !== undefined).map(({ closer }) => [closer.name, closer])).values()]
     .flatMap((closer) => [
       `rigger ${verb}: ${closerLine(closer)}`,
-      ...(closer.notice ? [noticeLine(closer.id, closer.notice)] : []),
+      ...(closer.notice ? [noticeLine(verb, closer.id, closer.notice)] : []),
       ...(closer.leftover ? [`rigger ${verb}: the temporary file ${closer.leftover} could not be removed, and the close stands`] : []),
     ]);
   let reached;
@@ -374,7 +383,7 @@ async function claiming(verb, limit, opened, {
   }
   const refused = refusals.map(refusalLine);
   if (reached.admission?.state === 'closed') {
-    const notices = (reached.notices ?? []).map((failed) => noticeLine(failed.id, failed));
+    const notices = (reached.notices ?? []).map((failed) => noticeLine(verb, failed.id, failed));
     return {
       text: [...reached.admission.closers.map((closer) => `rigger ${verb}: ${closerLine(closer)}`), ...notices, ...refused].join('\n'),
       code: notices.length === 0 ? 0 : 1,
