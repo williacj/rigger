@@ -7,3 +7,4 @@ node_modules/
 /docs/demo.txt
 # The commit a pack was made from, which the prepack script writes and `init` reads (#702).
 /src/package-commit.json
+**/.claude/settings.local.json
