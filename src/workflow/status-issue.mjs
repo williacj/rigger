@@ -4,8 +4,7 @@
 
 import { FIXED_LABELS } from '../config/validate.mjs';
 
-/** The permissions on the repository whose holders' issues can be a notice Rigger opened. */
-const WRITERS = ['admin', 'maintain', 'write'];
+import { WRITERS } from './marker.mjs';
 
 /** The status issue's title (`R-SCHED-20`). */
 export const TITLE = 'Rigger closed admission';

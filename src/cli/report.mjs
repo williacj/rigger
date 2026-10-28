@@ -13,17 +13,23 @@ const figure = (value) => String(Number(value.toFixed(4)));
 /** A duration in milliseconds, printed in hours. */
 const hours = (ms) => `${figure(ms / HOUR)} h`;
 
-/** The lines one run's L3 signals print as, each figure beside the facts it was computed from. */
-function runLines({ run, from, to, releases, pulled, n, throughput, utilization }) {
+/** The lines one run's queue carried prints as: one per L3 `pull`, in line order, or one saying it recorded none. */
+const queueLines = (queue) => (queue.length === 0
+  ? ['    the run recorded no pull, so L3 has no queue carried for it']
+  : queue.map(({ card, queueDepth }) => `    queue carried at the pull of card #${card}: ${queueDepth}`));
+
+/** The lines one run's L3 signals print as, each figure beside the facts it was computed from, then its queue carried. */
+function runLines({ run, from, to, releases, pulled, n, throughput, utilization, queue }) {
   const span = to - from;
   const heading = `  run ${run}: from ${new Date(from).toISOString()} to ${new Date(to).toISOString()}, a span of ${hours(span)}`;
-  if (span === 0) return [heading, '    the span is zero, so L3 has no throughput and no utilization for this run'];
+  if (span === 0) return [heading, '    the span is zero, so L3 has no throughput and no utilization for this run', ...queueLines(queue)];
   return [
     heading,
     `    L3 throughput: ${figure(throughput)} slot releases per hour (${releases} slot releases over ${hours(span)})`,
     utilization === null
       ? '    the run recorded no N, so L3 has no utilization for it'
       : `    L3 utilization: ${figure(utilization)} (${hours(pulled)} from pull to release, over N ${n} x ${hours(span)})`,
+    ...queueLines(queue),
   ];
 }
 
@@ -95,6 +101,19 @@ function l2Lines({ runs, stream }) {
   ];
 }
 
+/** The lines L4 prints: each run's rework, then the stream's rework, first-pass rate and tier accuracy. */
+function l4Lines({ runs, stream: { rework, firstPass, tierAccuracy } }) {
+  return [
+    ...runs.flatMap((each) => [`  run ${each.run}`, `    rework: ${each.rework}`]),
+    '  across the stream',
+    `    rework: ${rework}`,
+    rateLine('first-pass rate', 'cards merged after one round', 'cards judged and merged',
+      { counted: firstPass.first, of: firstPass.of, none: 'no card in the stream was judged and merged' }),
+    rateLine('tier accuracy', 'card and role pairs with no tier correction', 'card and role pairs dispatched at a tier',
+      { counted: tierAccuracy.accurate, of: tierAccuracy.of, none: 'no card and role in the stream was dispatched at a tier' }),
+  ];
+}
+
 /**
  * What the command prints for a `report` run, and the status it exits with. It writes nothing but
  * what L0 records of a process it kills, through the sink `recording` opens.
@@ -111,7 +130,7 @@ async function reporting(opened, { target = process.cwd(), packageRoot = PACKAGE
   } catch (refused) {
     return { text: `rigger report: ${refused.message}, so no signal is derived`, code: 1 };
   }
-  const { path, l1, l2, runs, markers } = derived;
+  const { path, l1, l2, runs, l4, markers } = derived;
   if (runs === null) return { text: `rigger report: no events are recorded; there is no stream at ${path}`, code: 0 };
   const markerLines = markers.map(({ card, role, head, dispatch, reason }) =>
     `  card #${card}, ${role}, head ${head}, dispatch ${dispatch}${reason === undefined ? '' : `: ${reason}`}`);
@@ -123,6 +142,8 @@ async function reporting(opened, { target = process.cwd(), packageRoot = PACKAGE
     ...l2Lines(l2),
     'L3',
     ...runs.flatMap(runLines),
+    'L4',
+    ...l4Lines(l4),
     'markers no dispatch wrote',
     ...markerLines,
     '  only markers L2 recorded in this state directory are named',

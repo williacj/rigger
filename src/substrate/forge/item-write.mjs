@@ -4,6 +4,22 @@
 import { literal } from './graphql.mjs';
 import { answerOf, boardOf } from './read.mjs';
 import { COLUMNS, firstLine, graphqlRequest, itemWriteRunner, readRunner } from './runners.mjs';
+import { carried, written } from './write-made.mjs';
+
+/**
+ * The check a refused event on an item write's call is marked made by: the call `said` exited 0
+ * within its timeout, and its answer's `data` holds the mutation's `root` field, non-null. The
+ * root tells the write's answer from that of the runner's own read inside the same call
+ * (`columnsField`), whose `data` holds no such field. Answers that field.
+ */
+function mutated(operation, board, root) {
+  return (said) => {
+    if (said.timedOut) throw new Error(firstLine(said));
+    const answer = answerOf(operation, board, said)?.[root];
+    if (answer == null) throw new Error(`${operation} on board ${board.project} answered no ${root}`);
+    return answer;
+  };
+}
 
 /**
  * The item writes on `board`, which names its `repo`, its `project` number and, where the config
@@ -23,13 +39,12 @@ export function itemWriteSide(board, { send, timeout } = {}) {
         if (typeof contentId !== 'string' || !contentId) throw new Error('the read answered no node id');
         const { id } = await boardOf('addIssue', board, via);
         const add = `mutation { addProjectV2ItemById(input: {projectId: ${literal(id)}, contentId: ${literal(contentId)}}) { item { id } } }`;
-        const said = await itemWriteRunner(graphqlRequest(add), via);
+        const added = mutated('addIssue', board, 'addProjectV2ItemById');
+        const said = await written(itemWriteRunner(graphqlRequest(add), via), (answer) => added(answer).item.id);
         if (said.timedOut) throw new Error(firstLine(said));
         return answerOf('addIssue', board, said).addProjectV2ItemById.item.id;
       } catch (error) {
-        const failure = new Error(`addIssue on issue #${number} failed: ${error.message}`, { cause: error });
-        if (error.code !== undefined) failure.code = error.code;
-        throw failure;
+        throw carried(new Error(`addIssue on issue #${number} failed: ${error.message}`, { cause: error }), error);
       }
     },
     /**
@@ -52,7 +67,8 @@ export function itemWriteSide(board, { send, timeout } = {}) {
         throw new Error(`moveItem on board ${board.project} failed: its ${COLUMNS} field has no option named ${column}`);
       }
       const move = `mutation { updateProjectV2ItemFieldValue(input: {projectId: ${literal(id)}, itemId: ${literal(itemId)}, fieldId: ${literal(columns.id)}, value: {singleSelectOptionId: ${literal(option.id)}}}) { projectV2Item { id } } }`;
-      answerOf('moveItem', board, await itemWriteRunner(graphqlRequest(move), via));
+      const moved = mutated('moveItem', board, 'updateProjectV2ItemFieldValue');
+      answerOf('moveItem', board, await written(itemWriteRunner(graphqlRequest(move), via), (said) => { moved(said); }));
     },
   };
 }

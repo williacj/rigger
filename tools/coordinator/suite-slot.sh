@@ -19,7 +19,10 @@ mkdir -p "$DIR" || exit 71
 iso() { date -u +%Y-%m-%dT%H:%M:%SZ; }
 lstart() { local s; s=$(ps -o lstart= -p "$1" 2>/dev/null) || return 1; echo $s; }
 # epoch <lstart text>: that wall-clock time read as UTC, in seconds; fails if it does not parse.
-epoch() { LC_ALL=C TZ=UTC date -j -f '%a %b %d %T %Y' "$*" +%s 2>/dev/null; }
+epoch() {
+  LC_ALL=C TZ=UTC date -j -f '%a %b %d %T %Y' "$*" +%s 2>/dev/null ||
+    LC_ALL=C TZ=UTC date -d "$*" +%s 2>/dev/null
+}
 # pstart <pid>: the process's start in seconds since the epoch, whatever the host's timezone.
 pstart() { local s; s=$(LC_ALL=C TZ=UTC ps -o lstart= -p "$1" 2>/dev/null) && [ -n "$s" ] && epoch $s; }
 field() { printf '%s\n' "$2" | sed -n "s/^$1=//p"; }

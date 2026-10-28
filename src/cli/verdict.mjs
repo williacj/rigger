@@ -11,6 +11,7 @@ import { repositoryWriteSide } from '../substrate/forge/repository-write.mjs';
 import { acceptanceItems, checkAcceptanceForm } from '../workflow/form-check.mjs';
 import { OWNER } from '../workflow/gate.mjs';
 import { acceptanceDigest, composeMarker } from '../workflow/marker.mjs';
+import { unrecordedNamed } from '../workflow/transitions.mjs';
 import { PACKAGE, consumerConfig, settled } from './doctor.mjs';
 import { CONFIG } from './init.mjs';
 import { recording } from './recording.mjs';
@@ -176,6 +177,8 @@ async function posting(opened, given) {
   try {
     posted = await repositoryWriteSide(forge, { emitter }).postComment(number, body);
   } catch (error) {
+    // A post the repository-write side marked made is on the pull request; only its record was refused.
+    if (error.made) return { text: `rigger verdict: posted the owner's verdict on pull request #${number}: ${error.made.answer.html_url}, and the event sink refused to record it: ${unrecordedNamed(error)}`, code: 1 };
     return { text: `rigger verdict: the post failed, and it is not tried again: ${error.message}`, code: 1 };
   }
   return { text: `rigger verdict: posted the owner's verdict on pull request #${number}: ${posted.html_url}`, code: 0 };

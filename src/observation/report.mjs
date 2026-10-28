@@ -1,5 +1,5 @@
-// ABOUTME: L5's report: L1's, L2's and L3's signals and marker dispatch checks derived from one
-// state directory's event stream.
+// ABOUTME: L5's report: L1's, L2's, L3's and L4's signals and marker dispatch checks derived from
+// one state directory's event stream.
 
 import { existsSync } from 'node:fs';
 
@@ -139,6 +139,8 @@ function l2Signals(events) {
  *   last, whichever layer recorded them.
  * - **Utilization:** the sum of each card's pull-to-release interval, divided by the run's
  *   recorded N, the `concurrency` its `run.start` carries, multiplied by that span.
+ * - **Queue carried:** each L3 `pull`'s `card` and `queueDepth`, the pullable cards it left
+ *   unclaimed, in line order, a merge claim's among them, as `queue`.
  *
  * Each run answers the facts the two are computed from as well as the two, so a reader can check
  * the arithmetic: `from` and `to` in epoch milliseconds, `releases`, `pulled` (the summed
@@ -164,12 +166,59 @@ function l3Signals(events) {
       }
     }
     const span = to - from;
+    const queue = l3.filter((event) => event.event === 'pull').map(({ card, queueDepth }) => ({ card, queueDepth }));
     return {
-      run, from, to, releases, pulled, n,
+      run, from, to, releases, pulled, n, queue,
       throughput: span === 0 ? null : releases / (span / HOUR),
       utilization: span === 0 || n === undefined ? null : pulled / (n * span),
     };
   });
+}
+
+/** The four `transition` causes that send a card back for more work: L4's rework. */
+const REWORK = new Set(['continued', 'continuedFromOwner', 'conflicted', 'conflictedFromOwner']);
+
+/** How many of `recorded`'s L2 `transition` events send a card back, by their `cause`. */
+const rework = (recorded) => recorded.filter((event) => event.layer === 'L2' && event.event === 'transition' && REWORK.has(event.cause)).length;
+
+/**
+ * L4's first-pass rate across the stream: `first` of `of`. `of` is the cards under which an L2
+ * `transition` whose `cause` is `merged` or `mergedFromOwner` is recorded, less those with no
+ * `marker.read`; `first` is those with exactly one round, as L2's roundsPerCard counts rounds.
+ */
+function firstPass(events) {
+  const merged = new Set(events
+    .filter((event) => event.layer === 'L2' && event.event === 'transition' && ['merged', 'mergedFromOwner'].includes(event.cause))
+    .map((event) => event.card));
+  const judged = roundsPerCard(events).filter(({ card }) => merged.has(card));
+  return { first: judged.filter(({ rounds }) => rounds === 1).length, of: judged.length };
+}
+
+/**
+ * L4's tier accuracy across the stream: `accurate` of `of`. `of` is the pairs of a card and a role
+ * with an L3 `dispatch` carrying `role` and `tier` and no `step`; `accurate` is those with no tier
+ * correction, a dispatch at another `tier` than the pair's nearest earlier one carrying a `tier`.
+ * A role dispatch carrying no `tier` is not read (the architect's ruling, 1067#6459717512).
+ */
+function tierAccuracy(events) {
+  const tiers = new Map();
+  const corrected = new Set();
+  for (const event of events) {
+    if (event.layer !== 'L3' || event.event !== 'dispatch' || event.card == null || event.step !== undefined
+      || event.role === undefined || event.tier === undefined) continue;
+    const pair = JSON.stringify([event.card, event.role]);
+    if (tiers.has(pair) && tiers.get(pair) !== event.tier) corrected.add(pair);
+    tiers.set(pair, event.tier);
+  }
+  return { accurate: tiers.size - corrected.size, of: tiers.size };
+}
+
+/** L4's signals: rework per run, in the order each run first appears, and rework, the first-pass rate and tier accuracy across the stream. */
+function l4Signals(events) {
+  return {
+    runs: [...byRun(events)].map(([run, recorded]) => ({ run, rework: rework(recorded) })),
+    stream: { rework: rework(events), firstPass: firstPass(events), tierAccuracy: tierAccuracy(events) },
+  };
 }
 
 /** Whether L3 and L1 recorded the judge dispatch that could have written this marker. */
@@ -204,14 +253,14 @@ function unwrittenMarkers(events) {
 
 /**
  * The report over the state directory `directory`: its stream's `path`, L1's and L2's signals per
- * run and across the stream, L3's signals per run, and
- * agent markers with no unique matching recorded dispatch. The latter joins the whole stream,
+ * run and across the stream, L3's signals per run, L4's rework per run and its signals across the
+ * stream, and agent markers with no unique matching recorded dispatch. The latter joins the whole stream,
  * across runs. It reads through the sink and writes nothing; an unreadable line throws as the
  * reader does, naming that line.
  */
 export function report(directory) {
   const path = streamPath(directory);
-  if (!existsSync(path)) return { path, l1: null, l2: null, runs: null, markers: null };
+  if (!existsSync(path)) return { path, l1: null, l2: null, runs: null, l4: null, markers: null };
   const events = readEvents(directory);
-  return { path, l1: l1Signals(events), l2: l2Signals(events), runs: l3Signals(events), markers: unwrittenMarkers(events) };
+  return { path, l1: l1Signals(events), l2: l2Signals(events), runs: l3Signals(events), l4: l4Signals(events), markers: unwrittenMarkers(events) };
 }
