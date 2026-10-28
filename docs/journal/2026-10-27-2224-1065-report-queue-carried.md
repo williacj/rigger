@@ -69,3 +69,19 @@ base's output differs from the head's only by those three added lines (`diff`, r
 A run that recorded no N: its queue lines follow "the run recorded no N, so L3 has no
 utilization for it". The card's output text covers it ("or the line saying it has none"), and a
 test holds it.
+
+## Round 2: order and one line per pull
+
+The reviewer's B1 on PR #1069 found that the nine tests above all used increasing, distinct card
+numbers, so a sort by card or a dedupe by card passed every one of them. Two tests were added,
+one at a time. The source already preserved order and count, so each red was taken by running the
+new test against the defect it targets, applied uncommitted and restored byte-exact after the run
+(`scratch/guarded.sh`). Each green was taken at the unchanged source. No source changed in this
+round.
+
+| Test | Red: the defect, and its run | Green |
+|---|---|---|
+| lists a run's pulls in the order the stream holds them, not by card number (#9, #3, #5) | sort by card: `tests 1`, `pass 0`, `fail 1`; actual `#3: 1, #5: 0, #9: 2` | `tests 1`, `pass 1` |
+| lists a card pulled twice in one run once for each pull (#7, #3, #7) | dedupe by card: `tests 1`, `pass 0`, `fail 1`; actual `#7: 0, #3: 1` | `tests 1`, `pass 1` |
+
+The second test also fails under the sort (`tests 1`, `pass 0`, `fail 1`).

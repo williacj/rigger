@@ -168,3 +168,9 @@ test('report lists a run\'s pulls in the order the stream holds them, not by car
   const lines = block(await reported([['r-a', [runStart(0, 3), pull(0, 9, 2), pull(0, 3, 1, 2), pull(0, 5, 0, 3), release(30, 9), release(30, 3), release(30, 5)]]]), 'r-a');
   assert.deepEqual(lines.slice(2), [queueLine(9, 2), queueLine(3, 1), queueLine(5, 0)]);
 });
+
+test('report lists a card pulled twice in one run once for each pull, at each pull\'s place', async () => {
+  // #7 is pulled, then #3, then #7 again once its first claim is released: three pulls, three lines.
+  const lines = block(await reported([['r-a', [runStart(0, 2), pull(0, 7, 2), pull(0, 3, 1, 2), release(20, 7), pull(20, 7, 0, 2), release(40, 3), release(40, 7)]]]), 'r-a');
+  assert.deepEqual(lines.slice(2), [queueLine(7, 2), queueLine(3, 1), queueLine(7, 0)]);
+});
