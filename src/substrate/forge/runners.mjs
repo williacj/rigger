@@ -2,7 +2,7 @@
 // operation of its own side and refuses everything else by name before anything is sent.
 
 import { gitEnvironment } from '../git-environment.mjs';
-import { runCommand } from '../process.mjs';
+import { EVENT_REFUSED, NOT_STARTED, runCommand } from '../process.mjs';
 import { literal, parseDocument } from './graphql.mjs';
 
 /**
@@ -22,13 +22,38 @@ export const FORGE_TIMEOUT = 60_000;
  * recorded through `emitter`. It hands back `gh`'s exit code as `status`, its output as text, and
  * whether the timeout ended it. A command that never started, and a kill the sink refused, reject
  * as the adapter rejects, each failure's `code` naming which.
+ * Each settled call records call.end with its runner's side and duration. A refused end carries
+ * the adapter's raw result, so the caller can still tell whether its action was made.
  *
  * The environment is the one a git child is given, as `doctor` gave `gh auth status` before this
  * runner existed: `gh` reads the repository it runs in, and an inherited `GIT_DIR` would point it
  * at a repository nobody named.
  */
-async function throughL0(command, args, { emitter, timeout }) {
-  const { exit, timedOut, stdout, stderr } = await runCommand({ command, args, cwd: process.cwd(), env: gitEnvironment(), timeout, emitter });
+async function throughL0(command, args, { emitter, timeout, side }) {
+  const began = performance.now();
+  let result, failure;
+  try {
+    result = await runCommand({ command, args, cwd: process.cwd(), env: gitEnvironment(), timeout, emitter });
+  } catch (error) {
+    if (![NOT_STARTED, EVENT_REFUSED].includes(error.code) || typeof emitter?.emit !== 'function' || error.startCause?.kind === 'dispatch-timeout') throw error;
+    failure = error;
+    result = error.result;
+  }
+  const { exit, timedOut, stdout, stderr } = result ?? {};
+  const fields = { system: 'forge', side, ms: performance.now() - began, outcome: timedOut ? 'timed-out' : exit === 0 ? 'ok' : 'failed' };
+  try {
+    emitter.emit('call.end', fields);
+  } catch (cause) {
+    if (failure?.code === EVENT_REFUSED) {
+      failure.unrecorded.push({ event: 'call.end', ...fields, cause });
+      failure.message += `\ncall.end ${JSON.stringify(fields)} went unrecorded: ${cause.message}`;
+      throw failure;
+    }
+    throw Object.assign(new Error(`the sink refused L0's call.end ${JSON.stringify(fields)}, so it went unrecorded: ${cause.message}`, { cause: failure ?? cause }), {
+      code: EVENT_REFUSED, result, unrecorded: [{ event: 'call.end', ...fields, cause }],
+    });
+  }
+  if (failure) throw failure;
   return { status: exit, timedOut, timeout, stdout: stdout.toString('utf8'), stderr: stderr.toString('utf8') };
 }
 
@@ -141,7 +166,7 @@ export async function readRunner(args, { send = throughL0, emitter, timeout = FO
   } else if (!oneOf(args, READ_SUBCOMMANDS)) {
     refuse('read', `${spelled(args)}, which its read allowlist does not name`);
   }
-  return send(FORGE, args, { emitter, timeout });
+  return send(FORGE, args, { emitter, timeout, side: 'read' });
 }
 
 /**
@@ -369,7 +394,7 @@ export async function schemaWriteRunner(args, { send = throughL0, emitter, timeo
   if (!SCHEMA_WRITES.has(field.name)) refuse('schema-write', `${field.name}, which its allowlist does not hold`);
   if (field.name === OPTIONS_WRITE) await checkOptionsWrite(field, { send, emitter, timeout });
   else checkColours(field);
-  return send(FORGE, args, { emitter, timeout });
+  return send(FORGE, args, { emitter, timeout, side: 'schema-write' });
 }
 
 /** The operations the item-write runner admits: a column move and an issue added to the board. */
@@ -440,14 +465,14 @@ export async function itemWriteRunner(args, { send = throughL0, emitter, timeout
   if (!ITEM_WRITES.has(field.name)) refuse('item-write', `${field.name}, which its allowlist does not hold`);
   if (field.name === 'addProjectV2ItemById') {
     addInput(field);
-    return send(FORGE, args, { emitter, timeout });
+    return send(FORGE, args, { emitter, timeout, side: 'item-write' });
   }
   const { projectId, fieldId } = moveInput(field);
   const columns = await columnsField(projectId, fieldId, { send, emitter, timeout });
   if (columns.id !== fieldId) {
     refuse('item-write', `a field-value write on ${columns.target ?? 'a field'} (${fieldId}), which is not the field holding the columns`);
   }
-  return send(FORGE, args, { emitter, timeout });
+  return send(FORGE, args, { emitter, timeout, side: 'item-write' });
 }
 
 /** Sends only a head-guarded merge, a comment, a label addition or removal, or an issue opening or closing. */
@@ -470,5 +495,5 @@ export async function repositoryWriteRunner(args, { send = throughL0, emitter, t
   const removeLabel = api === 'api' && /^repos\/[^/]+\/[^/]+\/issues\/[1-9]\d*\/labels\/[^/]+$/.test(path ?? '')
     && method === '-X' && verb === 'DELETE' && args.length === 4;
   if (!merge && !comment && !label && !open && !close && !removeLabel) refuse('repository-write', spelled(args));
-  return send(FORGE, args, { emitter, timeout });
+  return send(FORGE, args, { emitter, timeout, side: 'repository-write' });
 }

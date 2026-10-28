@@ -5,6 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { refuseAfterBoardRead } from './call-event-fixtures.mjs';
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -81,6 +82,8 @@ function run(board, { concurrency, record = 'accepting' }) {
   if (record === 'refusing') mkdirSync(stream, { recursive: true });
   const ahead = record === 'refusing-after-move' ? [dirname(installGhRefusingStreamAfterMove(temporaryDirectory('rigger-run-wrap-'), fake.gh, stream))] : [];
   const env = { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), PATH: [...ahead, dir, process.env.PATH].join(delimiter) };
+  // The board wrapper arms refusal; all reads finish before the pull start attempts its append.
+  if (record === 'refusing-after-board-read') env.NODE_OPTIONS = refuseAfterBoardRead(temporaryDirectory('rigger-run-board-refusal-'), fake.gh, stream);
   const shared = { consumer, model: fake.model, agentRuns: agent.runs, fake };
   return { ...spawnRun(consumer, env), ...shared, again: () => ({ ...spawnRun(consumer, env), ...shared }) };
 }
@@ -384,10 +387,12 @@ test('given an event stream that refuses every append from the start, run leaves
 
   assert.deepEqual(await columnsOf(ran), { 10: 'Ready', 20: 'Ready' }, ran.err);
   assert.deepEqual(await movesOf(ran), []);
+  assert.match(ran.err, /call\.end/);
+  assert.match(ran.err, /EISDIR/);
 });
 
-test('given an event stream that refuses every append from the start, run says in a line of its own each card it did not start, and the sink\'s error', () => {
-  const ran = run(TWO_READY, { concurrency: 3, record: 'refusing' });
+test('given an event stream that refuses every append after the board read, run says in a line of its own each card it did not start, and the sink\'s error', () => {
+  const ran = run(TWO_READY, { concurrency: 3, record: 'refusing-after-board-read' });
 
   for (const number of [10, 20]) {
     const line = ran.err.split('\n').find((held) => new RegExp(`#${number}\\b`).test(held));

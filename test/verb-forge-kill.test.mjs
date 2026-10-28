@@ -12,6 +12,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { refuseAfterCommand } from './call-event-fixtures.mjs';
 
 import template from '../templates/rigger.config.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
@@ -108,7 +109,7 @@ test('given a sink that refuses every append and a gh stand-in for the board rea
   const directory = holding(t);
   const fake = fakeLeavingChild(directory, { ...BOARD, items: [card(10)] });
   const { where, stream } = consumer();
-  mkdirSync(stream, { recursive: true });
+  refuseAfterCommand(directory, 'gh', stream);
 
   const ran = runBin('once', where, directory);
 
@@ -287,7 +288,8 @@ test('given a sink that refuses the L0 kill event of the claim\'s column move, w
   const ran = runBin('once', where, directory);
 
   assert.notEqual(ran.code, 0, ran.out);
-  assert.match(ran.err, /card #10 moved from ready to coding, and the event sink refused to record it: 1 L0 event\(s\) went unrecorded: survivor\.killed/, ran.err);
+  assert.match(ran.err, /card #10 moved from ready to coding, and the event sink refused to record it: 2 L0 event\(s\) went unrecorded: survivor\.killed/, ran.err);
+  assert.match(ran.err, /; call\.end \{\"system\":\"forge\",\"side\":\"item-write\"/, ran.err);
   reportsMade(ran.err, directory);
   assert.deepEqual(await columnsOf(fake), { 10: template.board.columns.coding });
   for (const child of childrenIn(directory)) assert.equal(await gone(child), true, `child ${child} is alive`);

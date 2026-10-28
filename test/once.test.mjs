@@ -5,6 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { refuseAfterBoardRead } from './call-event-fixtures.mjs';
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -487,10 +488,15 @@ test('given an event stream that refuses every append from the start, once leave
 
   assert.deepEqual(await columnsOf(ran), { 10: 'Ready', 20: 'Ready' }, ran.err);
   assert.deepEqual(await movesOf(ran), []);
+  assert.match(ran.err, /call\.end/);
+  assert.match(ran.err, /EISDIR/);
 });
 
-test('given an event stream that refuses every append from the start, once says in a line of its own which card it did not start, and the sink\'s error', () => {
-  const ran = once({ items: [card(10, 'Ready'), card(20, 'Ready')] }, { record: 'refusing' });
+test('given an event stream that refuses every append after the board read, once says in a line of its own which card it did not start, and the sink\'s error', () => {
+  const extraEnv = {};
+  const ran = once({ items: [card(10, 'Ready'), card(20, 'Ready')] }, { extraEnv, prepare: ({ consumer, fake }) => {
+    extraEnv.NODE_OPTIONS = refuseAfterBoardRead(temporaryDirectory('rigger-once-board-refusal-'), fake.gh, join(consumer, '.rigger', 'events.jsonl'));
+  } });
 
   const line = ran.err.split('\n').find((held) => /#10\b/.test(held));
   assert.ok(line, ran.err);
