@@ -445,8 +445,8 @@ function readJudgeEntry(entry, where, providers, refusals) {
  * anything to read.
  */
 function readTimeout(holder, where, refusals) {
-  if (Object.hasOwn(holder, 'timeout') && !milliseconds(holder.timeout)) {
-    refusals.push(`\`${where}.timeout\` ${durationReason(holder.timeout)}`);
+  if (Object.hasOwn(holder, 'timeout') && !(Number.isInteger(holder.timeout) && holder.timeout >= 1)) {
+    refusals.push(`\`${where}.timeout\` must be a positive whole number of milliseconds, and the config gives ${inspect(holder.timeout)}`);
   }
 }
 
@@ -774,7 +774,8 @@ function readClockCard(config, card, where, refusals, canSelect) {
   if (Object.hasOwn(card, 'title') && !names(card.title)) {
     refusals.push(`\`${where}.title\` must be a string holding something other than whitespace`);
   }
-  if (Object.hasOwn(card, 'labels') && (!Array.isArray(card.labels) || holdsUnnamed(card.labels))) {
+  // Read indices through an array-like value: a custom iterator can hide an invalid entry.
+  if (Object.hasOwn(card, 'labels') && (!Array.isArray(card.labels) || holdsUnnamed(Array.from({ length: card.labels.length }, (_, index) => card.labels[index])))) {
     refusals.push(`\`${where}.labels\` must be a list of label names`);
   }
   if (Object.hasOwn(card, 'acceptance') && typeof card.acceptance !== 'string') {

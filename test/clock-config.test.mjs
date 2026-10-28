@@ -20,6 +20,18 @@ const cardTrigger = () => {
   return { ...trigger, card: template() };
 };
 
+/** Import the actual merge-base validator, preserving its value rendering and property reads. */
+async function baseValidator() {
+  // Git owns the merge base. Import its actual validator with only its relative import URLs
+  // resolved, so the oracle includes the base's JSON rendering, not a reimplementation of it.
+  const base = execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], { encoding: 'utf8', env: gitEnvironment() }).trim();
+  const source = execFileSync('git', ['show', `${base}:src/config/validate.mjs`], { encoding: 'utf8', env: gitEnvironment() });
+  const moduleURL = new URL('../src/config/validate.mjs', import.meta.url);
+  const resolved = source.replace(/from '(\.[^']+)'/g, (_, path) => `from '${new URL(path, moduleURL).href}'`);
+  const original = await import(`data:text/javascript,${encodeURIComponent(resolved)}`);
+  return { validate: original.validate, base };
+}
+
 /** Observe refusals without allowing validation to change the configuration it reads. */
 function refusals(value) {
   const before = inspect(value, { depth: Infinity, showHidden: true });
@@ -91,13 +103,8 @@ test('C30 C37 C40: unserializable nonobjects earn one refusal and every answered
       assert.ok(answer[0].includes(`\`${path}\``) && answer[0].includes('holds no declarations'), inspect(answer));
     }
   }
-  // Git owns the merge base. Import its actual validator with only its relative import URLs
-  // resolved, so the oracle includes the base's JSON rendering, not a reimplementation of it.
-  const base = execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], { encoding: 'utf8', env: gitEnvironment() }).trim();
-  const source = execFileSync('git', ['show', `${base}:src/config/validate.mjs`], { encoding: 'utf8', env: gitEnvironment() });
-  const moduleURL = new URL('../src/config/validate.mjs', import.meta.url);
-  const resolved = source.replace(/from '(\.[^']+)'/g, (_, path) => `from '${new URL(path, moduleURL).href}'`);
-  const original = await import(`data:text/javascript,${encodeURIComponent(resolved)}`);
+  const original = await baseValidator();
+  const base = original.base;
   const paths = [];
   const visit = (value, parts = []) => {
     paths.push(parts);
@@ -394,4 +401,52 @@ test('the published clock declares both work shapes and validates on this reposi
   assert.ok(triggers.some((trigger) => trigger.job === 'report'));
   assert.ok(triggers.some((trigger) => Object.hasOwn(trigger.card ?? {}, 'author')));
   assert.deepEqual(refusals(clocked(published.clock)), []);
+});
+
+// C40 preserves existing returned answers even when consumer getters change between reads.
+test('C40: role and provisioning timeout getters retain the exact base answer', async (t) => {
+  const original = await baseValidator();
+  for (const [section, name, timeout] of [
+    ['roles', 'engineer', config.roleTimeout], ['provisioning', 'npm-ci', config.stepTimeout],
+  ]) {
+    await t.test(`${section}.${name}.timeout`, () => {
+      const make = () => {
+        let reads = 0;
+        return { ...rigger, [section]: { ...rigger[section], [name]: {
+          ...rigger[section][name], get timeout() { return ++reads === 1 ? 1000 : 0; },
+        } } };
+      };
+      const expected = [`\`${section}.${name}.timeout\` must be a positive whole number of milliseconds, and the config gives 0`];
+      assert.deepEqual(original.validate(make()), expected, 'the base refuses the changing getter');
+      const value = make();
+      const actual = config.validate(value);
+      assert.equal(timeout(value[section][name]), 0, 'the execution boundary sees the invalid timeout');
+      assert.deepEqual(actual, expected, 'C40: preserve the base timeout refusal');
+    });
+  }
+});
+
+// C17 reads indexed entries, including holes, rather than an array's replaceable iterator.
+test('C17 C40: template label validation reads indexed entries without changing nonclock selectors', async () => {
+  const original = await baseValidator();
+  for (const hidden of [3, undefined]) {
+    const labels = ['type:change', hidden];
+    labels[Symbol.iterator] = function* () { yield 'type:change'; };
+    assert.equal(labels.length, 2);
+    assert.equal(labels[1], hidden);
+    assert.equal(JSON.stringify(labels), hidden === 3 ? '["type:change",3]' : '["type:change",null]');
+    const value = triggered({ ...cardTrigger(), card: { ...template(), labels } });
+    const answer = refusals(value);
+    assert.ok(answer.includes('`clock.triggers.daily.card.labels` must be a list of label names'),
+      `C17: the indexed nonstring must be refused; got ${inspect(answer)}`);
+    // The same existing selector is intentionally left at its base answer under C40.
+    const nonclock = { ...rigger, kinds: { ...rigger.kinds, change: { ...rigger.kinds.change, select: { labels } } } };
+    assert.deepEqual(original.validate(nonclock), []);
+    assert.deepEqual(config.validate(nonclock), original.validate(nonclock), 'C40: keep existing selector answers');
+  }
+  const labels = ['type:change', 'area:indexed'];
+  labels[Symbol.iterator] = function* () { throw new Error('a template label iterator is not its entries'); };
+  const value = triggered({ ...cardTrigger(), card: { ...template(), labels } });
+  assert.deepEqual(refusals(value), []);
+  assert.ok(config.declaredLabels(value).includes('area:indexed'), 'the inventory reads the same indexed labels');
 });
