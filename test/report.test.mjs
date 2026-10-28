@@ -760,7 +760,7 @@ test('report counts a pull with no merge.start under its card before that card\'
 
 test('report prints no host-fault rate for a run with no work claim', () => {
   const l2 = section(reported([['r-a', [claim('pull', 7), claim('merge.start', 7)]], ['r-b', [claim('pull', 8)]]]), 'L2');
-  assert.deepEqual(under(l2, 'run r-a'), ['no host-fault rate: no work claim in this run']);
+  assert.equal(rateIn(under(l2, 'run r-a'), 'host-fault rate'), 'no host-fault rate: no work claim in this run');
   assert.deepEqual(rateIn(under(l2, 'run r-b'), 'host-fault rate'), [0, 0, 1]);
 });
 
@@ -784,7 +784,7 @@ test('report\'s L1 and L2 figures do not change for an event or a field that no 
     { layer: 'L1', card: 8, dispatch: 'd-2', event: 'dispatch.start', fields: { command: 'agent' } },
     { layer: 'L3', card: 8, dispatch: 'd-2', event: 'dispatch', fields: { role: 'engineer', tier: 'standard' } },
     l2Event('attempt.decided', 7, { attempt: 1, decision: 'again' }),
-    l2Event('review.escalate', 8, { category: 'ambiguous', raiser: 'loop', reason: 'x' }),
+    l2Event('review.waiting', 8, { category: 'ambiguous', raiser: 'loop', reason: 'x' }),
     claim('slot.release', 8),
     { layer: 'L1', card: 8, dispatch: 'd-2', event: 'dispatch.timeout', fields: { timeout: 1000 } },
   ];

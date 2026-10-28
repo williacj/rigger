@@ -69,19 +69,46 @@ function workClaims(recorded) {
   return work;
 }
 
+/** Distinct cards escalated by L2 and pulled by L3, counted independently over the given span. */
+function escalationsIn(recorded) {
+  const escalations = recorded.filter((event) => event.layer === 'L2' && event.event === 'review.escalate' && event.card != null);
+  const pulls = recorded.filter((event) => event.layer === 'L3' && event.event === 'pull' && event.card != null);
+  return {
+    escalated: new Set(escalations.map((event) => event.card)).size, pulled: new Set(pulls.map((event) => event.card)).size,
+    entries: escalations.map(({ card, category, raiser, reason, destination }) => ({ card, category, raiser, reason, destination })),
+  };
+}
+
+/** The one rounds derivation: distinct head/digest pairs per card over all L2 marker reads. */
+function roundsPerCard(events) {
+  const cards = new Map();
+  const kinds = new Map();
+  for (const event of events) {
+    if (event.layer === 'L3' && event.event === 'pull' && event.card != null && event.kind != null) kinds.set(event.card, event.kind);
+    if (event.layer !== 'L2' || event.event !== 'marker.read' || event.card == null) continue;
+    if (!cards.has(event.card)) cards.set(event.card, new Set());
+    cards.get(event.card).add(JSON.stringify([event.head, event.digest]));
+  }
+  return [...cards].map(([card, pairs]) => ({ card, kind: kinds.get(card) ?? null, rounds: pairs.size }));
+}
+
 /**
  * L2's host faults per run, in the order each run first appears, and across the stream: `faults`
  * of `claims`. `faults` counts each `maker.failed`, each `judge.withheld`, and each
  * `attempt.failed` carrying `class: 'environment'` and no `maker`, under a card; one carrying
  * `maker` records the fault its `maker.failed` already counts. `claims` is the work claims, by
- * `run` and `card`, so the stream's is the sum of its runs'.
+ * `run` and `card`, so the stream's is the sum of its runs'. Escalations count distinct cards
+ * independently in each span; rounds read the whole stream once through roundsPerCard.
  */
 function l2Signals(events) {
   const runs = [...byRun(events)].map(([run, recorded]) => ({
-    run, hostFaults: { faults: recorded.filter(hostFault).length, claims: workClaims(recorded) },
+    run, hostFaults: { faults: recorded.filter(hostFault).length, claims: workClaims(recorded) }, escalations: escalationsIn(recorded),
   }));
   const claims = runs.reduce((sum, { hostFaults }) => sum + hostFaults.claims, 0);
-  return { runs, stream: { hostFaults: { faults: events.filter(hostFault).length, claims } } };
+  return { runs, stream: {
+    hostFaults: { faults: events.filter(hostFault).length, claims },
+    escalations: escalationsIn(events), rounds: roundsPerCard(events),
+  } };
 }
 
 /**

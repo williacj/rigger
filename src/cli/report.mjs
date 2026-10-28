@@ -50,13 +50,46 @@ function l1Lines({ runs, stream }) {
   ];
 }
 
-/** The lines L2's section prints under its heading: each run's host-fault rate, then the stream's. */
+/** The escalation rate over the named span, beside its distinct card counts. */
+const escalationLine = ({ escalated, pulled }, where) => rateLine('escalation rate', 'cards escalated', 'cards pulled',
+  { counted: escalated, of: pulled, none: `no card pulled in ${where}` });
+
+/** Each escalation in line order, with subsequent reason lines indented two spaces further. */
+function escalationLines(entries) {
+  return entries.flatMap(({ card, category, raiser, reason, destination }) => {
+    const [first, ...later] = String(reason).split('\n');
+    return [
+      `    card #${card}, category ${category}, raiser ${raiser}${destination == null ? '' : `, destination ${JSON.stringify(destination)}`}: ${first}`,
+      ...later.map((line) => `      ${line}`),
+    ];
+  });
+}
+
+/** Across-stream rounds grouped by kind; only cards the rounds derivation supplies are listed. */
+function roundLines(rounds) {
+  const kinds = new Map();
+  for (const row of rounds) {
+    if (!kinds.has(row.kind)) kinds.set(row.kind, []);
+    kinds.get(row.kind).push(row);
+  }
+  return ['    rounds per card, by kind of work', ...[...kinds].flatMap(([kind, cards]) => [
+    kind === null ? '      no kind' : `      kind ${JSON.stringify(kind)}`,
+    ...cards.map(({ card, rounds: count }) => `        card #${card}: ${count} round${count === 1 ? '' : 's'}`),
+  ])];
+}
+
+/** The lines L2 prints: rates and escalations per run, then stream rates and rounds by kind. */
 function l2Lines({ runs, stream }) {
   const line = ({ faults, claims }, where) => rateLine('host-fault rate', 'host faults', 'work claims', { counted: faults, of: claims, none: `no work claim in ${where}` });
   return [
-    ...runs.flatMap(({ run, hostFaults }) => [`  run ${run}`, line(hostFaults, 'this run')]),
+    ...runs.flatMap(({ run, hostFaults, escalations }) => [
+      `  run ${run}`, line(hostFaults, 'this run'), escalationLine(escalations, 'this run'), ...escalationLines(escalations.entries),
+    ]),
     '  across the stream',
     line(stream.hostFaults, 'the stream'),
+    escalationLine(stream.escalations, 'the stream'),
+    '    each escalation is listed under its run',
+    ...roundLines(stream.rounds),
   ];
 }
 
