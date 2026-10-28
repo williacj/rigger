@@ -151,7 +151,13 @@ export function statusNotice({ reads, writes, board, items, columns, sink }) {
       // ruling on #1056).
       if (failure?.made !== undefined) return { failed: { step: at, cause: failure.message, made: failure.made, unrecorded: failure.unrecorded } };
       const failed = { step: at, cause: failure.message };
-      sink.emitter({ layer: 'L2' }).emit('notice.failed', { hold: closer.id, ...failed });
+      try {
+        sink.emitter({ layer: 'L2' }).emit('notice.failed', { hold: closer.id, ...failed });
+      } catch (refusal) {
+        // The failure stays the answer, whatever it says was made, and the refused record of it is
+        // added to its cause, so neither is lost to the caller.
+        return { failed: { ...failed, cause: `${failed.cause}; and the sink refused its notice.failed event: ${refusal.message}` } };
+      }
       return { failed };
     }
 

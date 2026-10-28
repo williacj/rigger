@@ -718,3 +718,120 @@ test('a rename made on a closer naming an issue whose admission.rename event the
   assert.equal(handedBack[0].status, 'rejected');
   assert.deepEqual(pulled.notices, [{ id: 'a1', step: 'rename the closer', cause: 'admission changed at hold-a1-issue-13.json, and the sink refused its admission.rename event: the stream refused admission.rename' }]);
 });
+
+/** Every message a pull's failure holds, through each AggregateError and cause. */
+const messagesOf = (error) => (error === undefined ? [] : [error.message, ...(error.errors ?? []).flatMap(messagesOf), ...(error.cause === undefined ? [] : messagesOf(error.cause))]);
+
+/** `handed`'s sink, refusing each event `events` names with `EIO while recording <event>`, and recording each refusal in `refused`. */
+function refusingEvents(handed, events) {
+  const original = handed.sink;
+  const refused = [];
+  handed.sink = {
+    ...original,
+    emitter: (where) => {
+      const emitter = original.emitter(where);
+      return {
+        ...emitter,
+        emit: (event, fields) => {
+          if (events.includes(event)) {
+            refused.push({ event, fields });
+            throw new Error(`EIO while recording ${event}`);
+          }
+          return emitter.emit(event, fields);
+        },
+      };
+    },
+  };
+  return refused;
+}
+
+// proves R-SCHED-23
+test('a closer rename made on the follow path whose admission.rename record was refused stays reported when L2\'s notice.failed record is refused too', async () => {
+  // The architect's round-3 B1 probe on #1079.
+  const world = forge({ issues: [{ number: 20, title: 'Rigger closed admission', body: 'Hold: `z9`', author: 'rigger-bot', labels: ['rigger:status'], comments: [] }] });
+  const { board } = stateBoard([], { 12: 'none' });
+  const handed = handles({ cards: [], board });
+  const refused = refusingEvents(handed, ['admission.rename', 'notice.failed']);
+  handed.l2.notice = changesOver(world, handed.sink).notice;
+  seed(handed.state, 'hold-a1-issue-12.json');
+
+  const pulled = await loop(handed).pull();
+
+  assert.deepEqual(namesIn(handed.state), ['hold-a1-issue-20.json']);
+  assert.deepEqual(refused.map(({ event }) => event), ['admission.rename', 'notice.failed']);
+  const reported = JSON.stringify(pulled.notices);
+  assert.match(reported, /admission changed at hold-a1-issue-20\.json/);
+  assert.match(reported, /EIO while recording admission\.rename/);
+  assert.match(reported, /EIO while recording notice\.failed/);
+});
+
+// proves R-SCHED-23
+test('a closer opening made on the follow path whose admission.open record was refused stays reported when a later read of the trigger fails', async () => {
+  // The architect's round-3 B2 probe on #1079, and the same for each later read of the trigger:
+  // the columns, the priority read, L2's facts call, and an admission read that cannot be read.
+  const later = {
+    columns: (handed) => { handed.board.readColumns = async () => { throw new Error('HTTP 502 reading board columns after opening'); }; },
+    priority: (handed) => { handed.board.readPriority = async () => { throw new Error('HTTP 502 reading board columns after opening'); }; },
+    facts: (handed) => { handed.facts = async () => { throw new Error('HTTP 502 reading board columns after opening'); }; },
+  };
+  for (const [what, failLater] of Object.entries(later)) {
+    const { board } = stateBoard([], { 12: 'closed' });
+    const handed = handles({ cards: [], board, notice: followingNotice({ 12: { issue: 12, closed: true } }) });
+    const refused = refusingEvents(handed, ['admission.open']);
+    failLater(handed);
+    seed(handed.state, 'hold-a1-issue-12.json');
+
+    const outcome = await loop(handed).pull().then((value) => ({ value }), (error) => ({ error }));
+
+    assert.deepEqual(namesIn(handed.state), [], what);
+    assert.equal(refused.length, 1, what);
+    const reported = messagesOf(outcome.error).join('; ');
+    assert.match(reported, /admission changed at hold-a1-issue-12\.json/, what);
+    assert.match(reported, /EIO while recording admission\.open/, what);
+    assert.match(reported, /HTTP 502 reading board columns after opening/, what);
+  }
+});
+
+// proves R-SCHED-23
+test('a notice write the forge made whose record was refused stays reported when a concurrent resume opens admission while the write is in flight', async () => {
+  // The reviewer's round-3 B1 interleaving on #1079: L2 comments on #12, whose notice never
+  // reached it; during that write `resume` removes the closer; the write is made and its call.end
+  // refused. The trigger then reads admission open and claims; the refused record must still reach
+  // the caller.
+  const STATUS = 'rigger:status';
+  const world = forge({ issues: [{ number: 12, title: 'Rigger closed admission', body: 'Hold: `z9`', author: 'rigger-bot', labels: [STATUS], comments: [] }] });
+  const { board } = stateBoard([], { 12: 'open' });
+  const handed = handles({ cards: [], board });
+  handed.l2.notice = changesOver(world, handed.sink).notice;
+  const comment = world.writes.postIssueComment;
+  world.writes.postIssueComment = async (...args) => {
+    await comment(...args);
+    await moduleOver(handed.state).resume();
+    throw Object.assign(new Error('the sink refused 1 L0 event: call.end went unrecorded: EIO'), { code: 'EVENT_REFUSED', made: { answer: { id: 1 } }, unrecorded: [{ event: 'call.end' }] });
+  };
+  seed(handed.state, 'hold-a1-issue-12.json');
+
+  const outcome = await loop(handed).pull().then((value) => ({ value }), (error) => ({ error }));
+
+  assert.equal(world.issues[0].comments.length, 1, 'the comment was made');
+  assert.deepEqual(namesIn(handed.state), [], 'resume removed the closer');
+  assert.equal(world.issues[0].state ?? 'open', 'open');
+  assert.match(messagesOf(outcome.error).join('; '), /hold a1.*comment on issue #12.*call\.end/, JSON.stringify(outcome.value ?? null));
+});
+
+// proves R-SCHED-23
+test('an unreadable state read whose notice.failed record is refused stays reported, beside an earlier made opening on the same trigger', async () => {
+  const { board } = stateBoard([], { 12: 'closed', 14: new Error('gh: HTTP 502') });
+  const handed = handles({ cards: [], board, notice: followingNotice({ 12: { issue: 12, closed: true } }) });
+  const refused = refusingEvents(handed, ['admission.open', 'notice.failed']);
+  for (const name of ['hold-a1-issue-12.json', 'hold-b2-issue-14.json']) seed(handed.state, name);
+
+  const outcome = await loop(handed).pull().then((value) => ({ value }), (error) => ({ error }));
+
+  assert.deepEqual(refused.map(({ event }) => event), ['admission.open', 'notice.failed']);
+  assert.deepEqual(namesIn(handed.state), ['hold-b2-issue-14.json']);
+  const reported = [...messagesOf(outcome.error), JSON.stringify(outcome.value?.notices ?? outcome.error?.notices ?? [])].join('; ');
+  assert.match(reported, /EIO while recording admission\.open/);
+  assert.match(reported, /read issue #14's state/);
+  assert.match(reported, /EIO while recording notice\.failed/);
+});

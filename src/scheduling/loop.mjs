@@ -20,6 +20,16 @@ import { pullOrder } from './pull-order.mjs';
 import { DEFAULT_CONCURRENCY } from '../config/validate.mjs';
 
 /**
+ * The failure L3 reports for hold `id`'s notice, as its caller would otherwise answer it under a
+ * closed admission's `notices`: a step L2's notice failed to take, and its cause, or a step the
+ * forge made whose record the sink refused, with its unrecorded events. It carries the notice as
+ * `notice`, so nothing of it is lost where admission is open or a later read fails.
+ */
+const noticeFailure = ({ id, step, cause, made, unrecorded }) => Object.assign(new Error(made === undefined
+  ? `the notice for hold ${id} failed to ${step}: ${cause}`
+  : `the notice for hold ${id} made its step to ${step}, but the sink refused its record, so these events went unrecorded: ${(unrecorded ?? []).map(({ event }) => event).join(', ')}: ${cause}`), { notice: { id, step, cause, ...(made === undefined ? {} : { made, unrecorded }) } });
+
+/**
  * What the loop holds over the board `config` names: N, the claims held
  * in memory, L3's events, the start's kill, and the steps that take a claim, start it and release
  * it. The arguments are `loop`'s, less those only a dispatch reads.
@@ -57,6 +67,50 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow,
 
   /** The failure L3 reports for an append the sink refused: `sentence`, then the sink's error, kept as the cause. */
   const refused = (sentence, refusal) => new Error(`${sentence}: ${refusal.message}`, { cause: refusal });
+
+  /**
+   * The rest of a trigger's read once `take` has recorded the trigger and `follow` has acted:
+   * reads the board, awaits L2's facts call, reads admission and takes the claims, answering as
+   * `take` does with `failures` and `notices` beside them.
+   */
+  const claim = async (limit, excluded, failures, notices) => {
+    const columns = await board.readColumns();
+    const { items, declared } = await board.readPriority();
+    /** A board item neither claimed nor withheld from another pull in this run. */
+    const available = (item) => !claims.has(item.number) && !excluded.has(item.number);
+    const decide = await facts(items.filter(available));
+    // Another trigger may have claimed a card while the facts were read, so the cards no claim
+    // holds are read again here, in the synchronous step that takes the claims.
+    const unclaimed = items.filter(available);
+    // Each card's answer is kept as L2 gave it at the pull, so L3 asks nothing again to begin.
+    const answers = new Map();
+    const { pulls } = pullOrder({ items: unclaimed, columns, declared }, (card) => {
+      const next = decide(card);
+      answers.set(card.number, next);
+      return next;
+    });
+    if (halted()) return { claims: [], failures, notices };
+    const admissionState = readAdmission();
+    if (admissionState.state === 'unreadable') {
+      const { unreadable } = admissionState;
+      throw Object.assign(new Error(`admission cannot be read, so this pull claims nothing: ${unreadable.map(({ path, cause }) => `${path} (${cause})`).join(', ')}`), { unreadable });
+    }
+    if (admissionState.state === 'closed') return { claims: [], failures, admission: admissionState, notices };
+    const taken = [];
+    for (const pull of pulls) {
+      if (limit !== undefined && taken.length >= limit) break;
+      const next = answers.get(pull.card);
+      // A merge claim holds no slot, so N does not bound it (the architect's r2 ruling 3); a limit
+      // given counts every card claimed, since each claim finishes a card.
+      const merge = next.action === 'merge';
+      if (!merge && slots.size >= concurrency) continue;
+      claims.add(pull.card);
+      if (!merge) slots.add(pull.card);
+      const card = unclaimed.find((item) => item.number === pull.card);
+      taken.push({ ...pull, card, next, decide, queueDepth: pulls.length - taken.length - 1, inFlight: slots.size });
+    }
+    return { claims: taken, failures, notices };
+  };
 
   return {
     concurrency,
@@ -99,42 +153,13 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow,
       }
       const { notices, unrecorded } = await follow();
       failures.push(...unrecorded);
-      const columns = await board.readColumns();
-      const { items, declared } = await board.readPriority();
-      /** A board item neither claimed nor withheld from another pull in this run. */
-      const available = (item) => !claims.has(item.number) && !excluded.has(item.number);
-      const decide = await facts(items.filter(available));
-      // Another trigger may have claimed a card while the facts were read, so the cards no claim
-      // holds are read again here, in the synchronous step that takes the claims.
-      const unclaimed = items.filter(available);
-      // Each card's answer is kept as L2 gave it at the pull, so L3 asks nothing again to begin.
-      const answers = new Map();
-      const { pulls } = pullOrder({ items: unclaimed, columns, declared }, (card) => {
-        const next = decide(card);
-        answers.set(card.number, next);
-        return next;
-      });
-      if (halted()) return { claims: [], failures, notices };
-      const admissionState = readAdmission();
-      if (admissionState.state === 'unreadable') {
-        const { unreadable } = admissionState;
-        throw Object.assign(new Error(`admission cannot be read, so this pull claims nothing: ${unreadable.map(({ path, cause }) => `${path} (${cause})`).join(', ')}`), { unreadable });
+      try {
+        return await claim(limit, excluded, failures, notices);
+      } catch (thrown) {
+        // A later read that fails keeps what this trigger already did and could not record.
+        const kept = [...failures, ...notices.map(noticeFailure)];
+        throw kept.length === 0 ? thrown : Object.assign(new AggregateError([...kept, thrown], `${thrown.message}, after ${kept.length} earlier failure${kept.length === 1 ? '' : 's'} of this trigger`), { cause: thrown });
       }
-      if (admissionState.state === 'closed') return { claims: [], failures, admission: admissionState, notices };
-      const taken = [];
-      for (const pull of pulls) {
-        if (limit !== undefined && taken.length >= limit) break;
-        const next = answers.get(pull.card);
-        // A merge claim holds no slot, so N does not bound it (the architect's r2 ruling 3); a limit
-        // given counts every card claimed, since each claim finishes a card.
-        const merge = next.action === 'merge';
-        if (!merge && slots.size >= concurrency) continue;
-        claims.add(pull.card);
-        if (!merge) slots.add(pull.card);
-        const card = unclaimed.find((item) => item.number === pull.card);
-        taken.push({ ...pull, card, next, decide, queueDepth: pulls.length - taken.length - 1, inFlight: slots.size });
-      }
-      return { claims: taken, failures };
     },
 
     /**
@@ -457,8 +482,12 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       const { read, failure } = await states.get(issue);
       if (failure !== undefined) {
         const failed = { step: `read issue #${issue}'s state`, cause: failure.message };
-        record('notice.failed', { hold: id, issue: Number(issue), ...failed });
-        notices.push({ id, ...failed });
+        try {
+          record('notice.failed', { hold: id, issue: Number(issue), ...failed });
+          notices.push({ id, ...failed });
+        } catch (refusal) {
+          notices.push({ id, ...failed, cause: `${failed.cause}; and the sink refused its notice.failed event: ${refusal.message}` });
+        }
         continue;
       }
       const ended = await notify(id, undefined, { issue, state: read });
@@ -936,6 +965,9 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    */
   const trigger = async (freed = () => {}, limit = undefined, excluded) => {
     const { claims: claimed, failures, admission: closed, notices = [] } = await take(limit, excluded);
+    // Where admission is open, as after a concurrent `resume`, no closed admission carries the
+    // notices, so each is a failure of this pull and reaches the caller there.
+    if (closed === undefined) failures.push(...notices.map(noticeFailure));
     for (const { kind, id, issue } of closed?.closers ?? []) {
       const ended = kind === 'hold' && issue === undefined ? await notify(id) : undefined;
       if (ended?.failed !== undefined) notices.push({ id, ...ended.failed });
@@ -954,6 +986,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     failures.push(...ended.filter((each) => each.failure !== null).map((each) => each.failure));
     const reached = ended.map((each) => each.reached).filter((each) => each !== undefined);
     if (failures.length > 0) {
+      // A closed admission's notices would otherwise go only with the answer this throw replaces.
+      if (closed !== undefined) failures.push(...notices.map(noticeFailure));
       throw Object.assign(new AggregateError(failures, `${failures.length} failures across the ${claimed.length} cards this pull claimed`), { reached });
     }
     return closed === undefined ? reached : { admission: closed, reached, notices };
