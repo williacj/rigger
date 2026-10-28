@@ -90,7 +90,7 @@ async function pushed(w, stream, { before, environment = process.env, repository
   const calls = [];
   const emitter = recorder();
   const refs = gitIn(repository, 'for-each-ref');
-  const answer = await pushStream({ repository, stream, emitter, spawn: realGit(calls, before), environment, ...options });
+  const answer = await pushStream({ repository, stream, emitter, spawn: realGit(calls, before), now: STILL, environment, ...options });
   assert.equal(gitIn(repository, 'for-each-ref'), refs, 'the push changed a ref in the pushing repository');
   assert.equal(existsSync(join(repository, '.git', 'FETCH_HEAD')), false, 'the push left a FETCH_HEAD');
   assert.deepEqual(emitter.events.filter(({ event }) => event === 'call.end'), []);
@@ -158,6 +158,12 @@ function catBlob(root, blob) {
     child.on('close', (code) => (code === 0 ? resolve(Buffer.concat(out)) : reject(new Error(`cat-file exited ${code}`))));
   });
 }
+
+/**
+ * The clock every real-git push reads: one that never moves, since no real-git row decides
+ * anything by time, and code under a deterministic test reads only the clock the test injects.
+ */
+const STILL = () => 0;
 
 const STREAM = Buffer.from('{"event":"one"}\n{"event":"two"}\n');
 
@@ -390,11 +396,21 @@ test('P11: where git never starts, as where it is not on PATH, the push answers 
   assert.deepEqual(subcommandsOf(calls), ['ls-remote']);
 });
 
-test('P14: where the process adapter rejects a push\'s git call with EVENT_REFUSED, the push side rejects with that failure as it stands', async (t) => {
+test('P14: where the process adapter rejects a push\'s git call with EVENT_REFUSED, the push side rejects with that failure as it stands, starts no later call and records nothing', async () => {
   // The shape `runCommand` rejects with where the sink refused a kill event: `refused` in process.mjs.
   const refusal = Object.assign(new Error('the sink refused 1 L0 event(s), so they went unrecorded'), { code: EVENT_REFUSED, unrecorded: [] });
-  for (const step of ['ls-remote', 'hash-object', 'push']) {
-    await assert.rejects(controlled(t, { steps: { [step]: () => { throw refusal; } } }), (failure) => failure === refusal, step);
+  for (const [step, ran] of [
+    ['ls-remote', ['ls-remote']],
+    ['hash-object', ['ls-remote', 'hash-object']],
+    ['push', ['ls-remote', 'hash-object', 'mktree', 'commit-tree', 'push']],
+  ]) {
+    const calls = [];
+    const clock = { now: 0 };
+    const emitter = recorder();
+    const spawn = scripted(calls, clock, { [step]: () => { throw refusal; } });
+    await assert.rejects(pushStream({ repository: '/nowhere', stream: STREAM, emitter, spawn, now: () => clock.now }), (failure) => failure === refusal, step);
+    assert.deepEqual(subcommandsOf(calls), ran, step);
+    assert.deepEqual(emitter.events, [], step);
   }
 });
 
@@ -528,7 +544,7 @@ test('I2: where another writer\'s push lands after the push side\'s git ls-remot
 test('I3: where a push\'s git push succeeded and the push side then ended before answering, a later push answers pushed with parent naming the earlier push\'s commit', async (t) => {
   const w = world(t);
   const calls = [];
-  await assert.rejects(pushStream({ repository: w.repository, stream: STREAM, emitter: recorder(), spawn: endingAt(realGit(calls), (args, result) => args[0] === 'push' && result !== undefined) }), { code: EVENT_REFUSED });
+  await assert.rejects(pushStream({ repository: w.repository, stream: STREAM, emitter: recorder(), spawn: endingAt(realGit(calls), (args, result) => args[0] === 'push' && result !== undefined), now: STILL }), { code: EVENT_REFUSED });
   const earlier = calls.find((call) => call.args[0] === 'push').args.at(-1).split(':')[0];
   assert.equal(tipOf(w.origin), earlier);
   const { answer } = await pushed(w, Buffer.concat([STREAM, STREAM]));
@@ -540,11 +556,25 @@ test('I4: where a push wrote its objects and ended before its git push, a later 
   const w = world(t);
   const tip = (await pushed(w, STREAM)).answer.commit;
   const calls = [];
-  await assert.rejects(pushStream({ repository: w.repository, stream: Buffer.concat([STREAM, STREAM]), emitter: recorder(), spawn: endingAt(realGit(calls), (args, result) => args[0] === 'push' && result === undefined) }), { code: EVENT_REFUSED });
+  await assert.rejects(pushStream({ repository: w.repository, stream: Buffer.concat([STREAM, STREAM]), emitter: recorder(), spawn: endingAt(realGit(calls), (args, result) => args[0] === 'push' && result === undefined), now: STILL }), { code: EVENT_REFUSED });
   const left = calls.find((call) => call.args[0] === 'commit-tree').result.stdout.toString().trim();
   assert.equal(gitIn(w.repository, 'cat-file', '-t', left).trim(), 'commit', 'the ended push left no commit in the local store, so this proves nothing');
   const { answer } = await pushed(w, Buffer.concat([STREAM, STREAM, STREAM]));
   assert.equal(answer.outcome, 'pushed', answer.reason);
   assert.equal(answer.parent, tip);
   assert.notEqual(answer.parent, left);
+});
+
+test('P23: where a lacking tip\'s fetch succeeds and the commit onto it then fails, the push answers failed in that commit-tree\'s words and runs no git push', async (t) => {
+  let ontoTip = 0;
+  const steps = {
+    'commit-tree': (args) => {
+      if (!args.includes('-p')) return { stdout: `${COMMIT}\n` };
+      ontoTip += 1;
+      return { exit: 128, stderr: ontoTip === 1 ? `fatal: ${TIP} is not a valid object\n` : 'fatal: cannot write commit object\n' };
+    },
+  };
+  const { answer, calls } = await controlled(t, { steps });
+  assert.deepEqual(answer, { outcome: 'failed', bytes: STREAM.length, parent: TIP, reason: 'fatal: cannot write commit object' });
+  assert.deepEqual(subcommandsOf(calls), ['ls-remote', 'hash-object', 'mktree', 'commit-tree', 'commit-tree', 'fetch', 'commit-tree']);
 });
