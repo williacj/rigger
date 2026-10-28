@@ -1687,12 +1687,14 @@ still appending out of the copy, until the next push.
 **The steps.** The push side runs these in the consumer's repository, each a `git` call through L0's
 process adapter, with the environment `gitEnvironment` gives:
 
-1. `git ls-remote origin refs/rigger/events`, which reads the tip, or finds the ref absent.
+1. `git ls-remote origin refs/rigger/events refs/remotes/refs/rigger/events/HEAD`, which reads the
+   tip, or finds the ref absent. Where it prints any ref other than `refs/rigger/events`, the push
+   fails, naming that ref, and runs no later step.
 2. Where the repository's object store lacks the tip, a fetch of that commit alone from `origin`,
    which writes no ref and no `FETCH_HEAD`.
 3. `git hash-object -w --stdin`, given the stream's bytes, then `git mktree` and `git
    commit-tree`, as the report's `push` mechanism ran them ("The mechanisms").
-4. `git push --porcelain origin <commit>:refs/rigger/events`.
+4. `git push --porcelain --no-signed --no-verify origin <commit>:refs/rigger/events`.
 
 The steps are the report's `push` mechanism with three changes, each a judgment the report did not
 measure:
@@ -1702,6 +1704,17 @@ measure:
 - The fetch names no destination and is told to write no `FETCH_HEAD`. That `git` then writes only
   objects is a judgment.
 - The bytes come on standard input, so that what the commit holds is what L5 read.
+
+Step 1's guard and step 4's two flags are not the report's either. The architect measured each
+with `git` 2.54.0 against a local bare origin, in the architect's proposal on #1009, "ARCHITECTURE.md deltas from the #1081 attack".
+
+**Only the data ref.** `git push` resolves `refs/rigger/events` on `origin` by `git`'s ref-matching
+rules. Where the data ref is absent, a ref those rules match takes the write: a branch named
+`refs/rigger/events` was moved, as measured. Step 1's first pattern prints every ref those rules
+match but `refs/remotes/refs/rigger/events/HEAD`, and its second pattern prints that one. So a
+printed ref other than the data ref means the push would write elsewhere, and the push side writes
+nothing. That `git` matches by those rules alone is an assumption; a `git` that adds a rule would
+reverse the guard.
 
 The push side writes objects in the consumer's object store and no ref there. No later push reads
 them back, because each push reads the tip from the forge afresh, so `.rigger/` gains nothing. Its
@@ -1718,6 +1731,14 @@ tip needed no forced write ("Whether an update needed a forced write").
 for github.com ("Host tools each mechanism needed"). The push side stores no credential, passes
 none, and sets no credential helper. It sets `GIT_TERMINAL_PROMPT=0`, so that a missing credential
 fails rather than waits for a prompt; that `git` then fails at once is a judgment.
+
+The push signs nothing. `git commit-tree` does not read `commit.gpgSign`, so a consumer's setting
+leaves the data commit unsigned, as measured. `git push` does read `push.gpgSign`, and step 4's
+`--no-signed` overrides it, so no push asks `origin` for a certificate or runs `gpg`.
+
+The push runs no hook. Step 4's `--no-verify` skips the consumer's `pre-push` hook, which guards the
+consumer's own lines of work. A hook that ran on the data push could refuse it or outlast
+`PUSH_TIMEOUT`, as measured. `origin`'s own refusals still reach the push, as `refused`.
 
 **When L5 pushes.** L5 pushes on two occasions, and on no other:
 
@@ -1792,6 +1813,9 @@ that failed.
 | `git` absent from the host | `failed`, naming the failure; as a push that did not succeed (`R-RECORD-14`, `R-RECORD-15`, `R-RECORD-16`, `R-RECORD-18`) |
 | no credential for `origin` | `failed`, naming the failure; as a push that did not succeed (`R-RECORD-14`, `R-RECORD-15`, `R-RECORD-16`, `R-RECORD-18`) |
 | no committer identity for `git commit-tree` | `failed`, naming the failure; as a push that did not succeed (`R-RECORD-14`, `R-RECORD-15`, `R-RECORD-16`, `R-RECORD-18`) |
+| `origin` holds another ref that `refs/rigger/events` resolves to, such as a branch of that name | `failed`, naming that ref; no commit is written and nothing is pushed (boundary rule 2) |
+| `push.gpgSign` or `commit.gpgSign` set in the consumer's config | the push runs as with neither set |
+| a `pre-push` hook in the consumer's repository | the push runs as with none; the hook does not run |
 | an event recorded while a push is in flight | the push copies the stream as L5 read it at the push's start; the next push carries the event (`R-RECORD-13`) |
 | Rigger killed outright during a push | see below |
 | a ruleset that names no ref, as a `branch` ruleset over `~ALL`, refuses the write | not measured: the residual below |
