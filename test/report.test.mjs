@@ -782,10 +782,8 @@ test('report\'s L1 and L2 figures do not change for an event or a field that no 
   const noise = [
     { layer: 'L0', card: 7, event: 'call.end', fields: { system: 'git', operation: 'fetch', ms: 12, outcome: 'failed' } },
     { layer: 'L1', card: 8, dispatch: 'd-2', event: 'dispatch.start', fields: { command: 'agent' } },
-    { layer: 'L3', card: 8, dispatch: 'd-2', event: 'dispatch', fields: { role: 'engineer', tier: 'standard' } },
     l2Event('attempt.decided', 7, { attempt: 1, decision: 'again' }),
     l2Event('review.escalate', 8, { category: 'ambiguous', raiser: 'loop', reason: 'x' }),
-    claim('slot.release', 8),
     { layer: 'L1', card: 8, dispatch: 'd-2', event: 'dispatch.timeout', fields: { timeout: 1000 } },
   ];
   // The same events with fields no signal reads added to them.
@@ -798,4 +796,66 @@ test('report\'s L1 and L2 figures do not change for an event or a field that no 
   assert.deepEqual([rateIn(under(expected[0], 'run r-a'), 'survivor rate'), rateIn(under(expected[1], 'run r-a'), 'host-fault rate')], [[0.5, 1, 2], [0.5, 1, 2]]);
   assert.deepEqual(sections([...base, ...noise]), expected);
   assert.deepEqual(sections(fielded), expected);
+});
+
+/** The attempt counts and redo names, immediately after the stream's survivor rate. */
+function attemptLines(runs) {
+  const stream = under(section(reported(runs), 'L1'), 'across the stream');
+  return stream.slice(stream.findIndex((line) => line.includes('survivor rate:')) + 1);
+}
+
+test('report counts first attempts from work claims with an L3 dispatch', () => {
+  // "Redos after an interruption" counts claims, including provisioning, rather than dispatches.
+  const cases = [
+    ['one active claim', [claim('pull', 7), claim('dispatch', 7)], 1],
+    ['no dispatch', [claim('pull', 7)], 0],
+    ['provisioning only', [claim('pull', 7), { ...claim('dispatch', 7), fields: { step: 'install' } }], 1],
+    ['merge claim', [claim('pull', 7), claim('dispatch', 7), claim('merge.start', 7)], 0],
+    ['dispatch before pull', [claim('dispatch', 7), claim('pull', 7)], 0],
+    ['another card dispatched', [claim('pull', 7), claim('dispatch', 8)], 0],
+    ['another layer dispatched', [claim('pull', 7), { ...claim('dispatch', 7), layer: 'L1' }], 0],
+    ['several dispatches in one claim', [claim('pull', 7), claim('dispatch', 7), claim('dispatch', 7)], 1],
+    ['normally released claim', [claim('pull', 7), claim('dispatch', 7), claim('slot.release', 7)], 1],
+    ['next pull bounds merge detection', [claim('pull', 7), claim('dispatch', 7), claim('pull', 7), claim('merge.start', 7)], 1],
+    ['next pull bounds dispatch detection', [claim('pull', 7), claim('pull', 7), claim('dispatch', 7)], 1],
+  ];
+  const actual = Object.fromEntries(cases.map(([name, events]) => [name, attemptLines([['r-a', events]])]));
+  const expected = Object.fromEntries(cases.map(([name, , first]) => [name, [`redos after an interruption: 0, first attempts: ${first}`]]));
+  assert.deepEqual(actual, expected);
+});
+
+// proves R-STATE-3
+test('report names redos after interruptions using the most recent earlier active work claim', () => {
+  // Each expected count follows "Redos after an interruption", independently of workClaims.
+  const active = (card = 7) => [claim('pull', card), claim('dispatch', card)];
+  const cases = [
+    ['redo beside another card first attempted', [['r-a', active()], ['r-b', [...active(), ...active(8)]]], 2, [[7, 'r-b']]],
+    ['normal release', [['r-a', [...active(), claim('slot.release', 7)]], ['r-b', active()]], 2, []],
+    ['same run', [['r-a', [...active(), ...active()]]], 2, []],
+    ['idle intervening claim', [['r-a', active()], ['r-b', [claim('pull', 7), claim('slot.release', 7)]], ['r-c', active()]], 1, [[7, 'r-c']]],
+    ['exit cleanup without release', [['r-a', [...active(), ended('d-a', 100, { card: 7 }), killed('group.killed', 'd-a')]], ['r-b', active()]], 1, [[7, 'r-b']]],
+    ['redone transition alone', [['r-a', [l2Event('transition', 7, { cause: 'redone' })]]], 0, []],
+    ['redone after normal release', [['r-a', [...active(), claim('slot.release', 7)]], ['r-b', [l2Event('transition', 7, { cause: 'redone' }), ...active()]]], 2, []],
+    ['idle earlier claim', [['r-a', [claim('pull', 7)]], ['r-b', active()]], 1, []],
+    ['merge intervening claim', [['r-a', active()], ['r-b', [...active(), claim('merge.start', 7)]], ['r-c', active()]], 1, [[7, 'r-c']]],
+    ['most recent attempt ended normally', [['r-a', active()], ['r-b', [...active(), claim('slot.release', 7)]], ['r-c', active()]], 2, [[7, 'r-b']]],
+    ['most recent attempt is in this run', [['r-a', active()], ['r-b', [...active(), ...active()]]], 2, [[7, 'r-b']]],
+    ['release under another card', [['r-a', [...active(), claim('slot.release', 8)]], ['r-b', active()]], 1, [[7, 'r-b']]],
+    ['release in another run', [['r-a', active()], ['r-b', [claim('slot.release', 7), ...active()]]], 1, [[7, 'r-b']]],
+    ['release before pull', [['r-a', [claim('slot.release', 7), ...active()]], ['r-b', active()]], 1, [[7, 'r-b']]],
+    ['each redo is named', [['r-z', active()], ['r-b', active()], ['r-a', active()]], 1, [[7, 'r-b'], [7, 'r-a']]],
+    ['separate cards', [['r-a', active()], ['r-b', active(8)]], 2, []],
+    ['unread events and fields', [
+      ['r-a', [...active(), ended('d-a', 100, { card: 7 }), claim('pull', 9),
+        { layer: 'L1', card: 9, event: 'dispatch.start', fields: {} }, ended('d-idle', 1, { card: 9 }),
+        claim('dispatch.start', 9), claim('dispatch.end', 9), claim('unread', 9), l2Event('transition', 7, { cause: 'redone' })]],
+      ['r-b', [...active(), ...active(8)].map((event) => ({ ...event, fields: { ...event.fields, interrupted: false, didSomething: false, merging: true, step: 'install' } }))],
+    ], 2, [[7, 'r-b']]],
+  ];
+  const actual = Object.fromEntries(cases.map(([name, runs]) => [name, attemptLines(runs)]));
+  const expected = Object.fromEntries(cases.map(([name, , first, redos]) => [name, [
+    `redos after an interruption: ${redos.length}, first attempts: ${first}`,
+    ...redos.map(([card, run]) => `redo after an interruption: card #${card}, run ${run}`),
+  ]]));
+  assert.deepEqual(actual, expected);
 });
