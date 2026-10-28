@@ -91,7 +91,7 @@ test('the world\'s held maker is a stand-in process run through L1: every card t
   assert.deepEqual(makers.map((each) => each.card).sort(), [1, 2, 3]);
   for (const maker of makers) {
     const own = events.filter((each) => each.layer === 'L1' && each.dispatch === maker.dispatch).map((each) => each.event);
-    assert.deepEqual(own, ['dispatch.start', 'dispatch.end'], `card ${maker.card}: ${JSON.stringify(events)}`);
+    assert.deepEqual(own, ['workspace.made', 'dispatch.start', 'dispatch.end'], `card ${maker.card}: ${JSON.stringify(events)}`);
   }
   assert.deepEqual(built.agent.runs().map((run) => run.card).sort(), [1, 2, 3]);
   assert.deepEqual(built.agent.runs().map((run) => run.role), ['engineer', 'engineer', 'engineer']);

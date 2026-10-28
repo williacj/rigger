@@ -58,7 +58,7 @@ export async function roleDispatch({ answer, cwd, directory, scratch, repository
   if (typeof repository !== 'string' || !isAbsolute(repository)) throw startFailure(unstarted(`L3 handed it ${JSON.stringify(repository)} as repository, which is no absolute path`), 'dispatch-location');
   let made;
   try {
-    made = await makeScratch({ base: scratch, role: answer.role, card, repository, sink });
+    made = await makeScratch({ base: scratch, role: answer.role, card, dispatch: id, repository, sink });
   } catch (cause) {
     if (cause.code === EVENT_REFUSED) throw cause;
     if (cause.code === SCRATCH_REFUSED) throw cause;

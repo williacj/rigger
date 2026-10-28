@@ -48,21 +48,23 @@ export const REVIEW_WITHHELD = 'REVIEW_WITHHELD';
  * forge adapter's item-write side for that board, whose move L2 hands an `L0` emitter it opens
  * from `sink`, and a test passes the fake board's operations in its place, or `send` in place of
  * the runners' spawn. `reads` is the forge adapter's repository reads (`repositoryReads`), by which
- * L2 settles a maker's outcome, and is the read side's own over `config`'s repository where none is
- * given. `roleReads(card, dispatch)` supplies the contextual reader for a completed escalation role.
- * `board` is the read side's board reads, by which L2's notice finds where the status issue stands
- * on the board.
+ * L2 settles a maker's outcome when injected. `cardReads(card, dispatch)` builds a reader under
+ * that card and optional dispatch, defaulting to the injected `reads` or the repository read side.
+ * Maker settlement and refused-merge reads use it. `roleReads(card, dispatch)` supplies the
+ * contextual reader for a completed escalation role. `board` is the read side's board reads, by
+ * which L2's notice finds where the status issue stands on the board.
  */
 export function columnChanges({
   config, sink, send, items = itemWriteSide({ repo: config.repo, project: config.board.project }, { send }),
   repositoryWrites,
   roleReads = (card, dispatch) => repositoryReads({ ...config.board, repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0', card, dispatch: dispatch ?? null }) }),
-  reads = repositoryReads({ ...config.board, repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) }),
+  reads,
+  cardReads = (card, dispatch) => reads ?? repositoryReads({ ...config.board, repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0', card, dispatch }) }),
   board = readSide({ ...config.board, repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) }),
 }) {
   const { columns } = config.board;
   const topic = worktreeTopic(config);
-  const repository = repositoryWrites ?? repositoryWriteSide({ repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) });
+  const repositoryFor = (card) => repositoryWrites ?? repositoryWriteSide({ repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0', card: card.number }) });
 
   /**
    * Appends `card`'s transition event, or fails naming the card, both columns and the sink's
@@ -114,8 +116,8 @@ export function columnChanges({
    * event under the card saying why, and tells its caller the card and why, with the `facts` L2
    * read, as a `REVIEW_WITHHELD` failure.
    */
-  const withheld = (card, why, facts, fields = {}) => {
-    note(card, 'review.withheld', { reason: why, ...fields });
+  const withheld = (card, why, facts, fields = {}, context = {}) => {
+    note(card, 'review.withheld', { reason: why, ...fields }, context);
     throw Object.assign(new Error(`card #${card.number} stays in coding: ${why}`), { code: REVIEW_WITHHELD, facts });
   };
 
@@ -148,7 +150,7 @@ export function columnChanges({
 
   return {
     /** L2's notice function for a hold's closer, as `statusNotice` says, its item writes recorded under `L0`. */
-    notice: statusNotice({ reads, writes: repository, board, items: { addIssue: (number) => items.addIssue(number, sink.emitter({ layer: 'L0' })), moveItem: (id, column) => items.moveItem(id, column, sink.emitter({ layer: 'L0' })) }, columns, sink }),
+    notice: statusNotice({ reads: reads ?? repositoryReads({ ...config.board, repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) }), writes: repositoryWrites ?? repositoryWriteSide({ repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) }), board, items: { addIssue: (number) => items.addIssue(number, sink.emitter({ layer: 'L0' })), moveItem: (id, column) => items.moveItem(id, column, sink.emitter({ layer: 'L0' })) }, columns, sink }),
 
     /**
      * L3 has claimed `card`, a board item as the forge adapter read it, on `next`, L2's answer for
@@ -177,7 +179,7 @@ export function columnChanges({
      * through unread, and a failed call rejects as it did.
      */
     merge: async (card, next) => {
-      const answer = await repository.mergePullRequest(next.pull, next.head);
+      const answer = await repositoryFor(card).mergePullRequest(next.pull, next.head);
       return answer.outcome === 'refused' && answer.reason === 'unknown' ? { ...answer, unknownMergeability: true } : answer;
     },
 
@@ -199,7 +201,7 @@ export function columnChanges({
       if (answer.outcome !== 'refused' || answer.unknownMergeability) return;
       let mergeable;
       try {
-        mergeable = await reads.readMergeable(next.pull);
+        mergeable = await cardReads(card.number).readMergeable(next.pull);
       } catch (failure) {
         throw new Error(`card #${card.number}'s merge of pull request #${next.pull} was refused, and L2 could not read its mergeability: ${failure.message}`, { cause: failure });
       }
@@ -209,7 +211,7 @@ export function columnChanges({
     /** Posts L2's return comment on its pull request, without changing the card's column. */
     returned: async (card, next) => {
       try {
-        await repository.postComment(next.pull, next.comment);
+        await repositoryFor(card).postComment(next.pull, next.comment);
       } catch (refusal) {
         throw new Error(`card #${card.number}'s return comment on pull request #${next.pull} was refused: ${refusal.message}`, { cause: refusal });
       }
@@ -300,16 +302,17 @@ export function columnChanges({
      */
     settled: async (card, outcome, { dispatch, expectedHead, tipFailure, lastForgeHead, last = false, reads: readCount, elapsedMs } = {}) => {
       if (outcome?.status === 'rejected') {
-        if (outcome.reason?.code === NOT_STARTED) note(card, 'maker.failed', { class: 'environment', reason: outcome.reason.message });
+        if (outcome.reason?.code === NOT_STARTED) note(card, 'maker.failed', { class: 'environment', reason: outcome.reason.message }, { dispatch });
         return undefined;
       }
       const exit = outcome?.status === 'fulfilled' ? outcome.value?.exit : undefined;
       if (!Number.isInteger(exit)) {
         throw new Error(`card #${card.number}'s dispatch outcome is neither a dispatch that ran with an exit code nor one that threw: ${JSON.stringify(outcome)}`);
       }
+      const reading = cardReads(card.number, dispatch);
       let comments;
       try {
-        comments = await reads.readIssueComments(card.number);
+        comments = await reading.readIssueComments(card.number);
       } catch (failure) {
         throw new Error(`card #${card.number}'s issue comments could not be read: ${failure.message}`, { cause: failure });
       }
@@ -317,7 +320,7 @@ export function columnChanges({
       if (escalation !== null) {
         let facts;
         try {
-          facts = await pullRequestsFrom(card.number, topicFor(topic, card.number), reads);
+          facts = await pullRequestsFrom(card.number, topicFor(topic, card.number), reading);
         } catch (failure) {
           throw new Error(`card #${card.number}'s pull requests could not be read for its escalation: ${failure.message}`, { cause: failure });
         }
@@ -327,29 +330,29 @@ export function columnChanges({
         return { ...answer, destination: escalationDestination({ ...answer, escalate: config.escalate, maker: kinds[kind]?.maker, judges: kinds[kind]?.judges, comments }) };
       }
       if (exit !== 0) return undefined;
-      if (tipFailure !== undefined) withheld(card, `card #${card.number}'s maker exited 0, but L1 could not read the tip of its line of work in the workspace: ${tipFailure.message}`);
+      if (tipFailure !== undefined) withheld(card, `card #${card.number}'s maker exited 0, but L1 could not read the tip of its line of work in the workspace: ${tipFailure.message}`, undefined, {}, { dispatch });
       let facts;
       try {
-        facts = await pullRequestsFrom(card.number, topicFor(topic, card.number), reads);
+        facts = await pullRequestsFrom(card.number, topicFor(topic, card.number), reading);
       } catch (failure) {
         if (expectedHead === undefined) throw failure;
         withheld(card, failure.message, undefined, {
           ...(lastForgeHead === undefined ? {} : { forgeHead: lastForgeHead }),
           ...(readCount > 1 ? { reads: readCount, elapsedMs } : {}),
-        });
+        }, { dispatch });
       }
       const { line, open } = facts;
       const observed = expectedHead === undefined ? {} : {
         ...(open.length === 1 ? { forgeHead: open[0].head } : lastForgeHead === undefined ? {} : { forgeHead: lastForgeHead }),
         ...(readCount > 1 ? { reads: readCount, elapsedMs } : {}),
       };
-      if (open.length === 0) withheld(card, `its maker exited 0, and the forge holds no open pull request from its line of work ${line}`, facts, observed);
-      if (open.length > 1) withheld(card, `its maker exited 0, and the forge holds more than one open pull request from its line of work ${line}: ${open.map((pull) => `#${pull.number}`).join(', ')}`, facts, observed);
+      if (open.length === 0) withheld(card, `its maker exited 0, and the forge holds no open pull request from its line of work ${line}`, facts, observed, { dispatch });
+      if (open.length > 1) withheld(card, `its maker exited 0, and the forge holds more than one open pull request from its line of work ${line}: ${open.map((pull) => `#${pull.number}`).join(', ')}`, facts, observed, { dispatch });
       if (expectedHead !== undefined && open[0].head !== expectedHead) {
         if (!last) return { waiting: true, forgeHead: open[0].head };
-        withheld(card, `card #${card.number}'s maker exited 0 at head ${expectedHead}, but the forge last showed pull request #${open[0].number} at head ${open[0].head}`, facts, observed);
+        withheld(card, `card #${card.number}'s maker exited 0 at head ${expectedHead}, but the forge last showed pull request #${open[0].number} at head ${open[0].head}`, facts, observed, { dispatch });
       }
-      await change(card, 'returned', observed);
+      await change(card, 'returned', observed, { dispatch });
       return facts;
     },
   };
