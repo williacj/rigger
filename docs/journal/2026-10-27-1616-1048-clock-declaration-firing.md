@@ -52,3 +52,11 @@ The round-2 review (1050#6456002565) found the re-arm exclusion lost across a se
 that re-armed and then crashed left the next start seeing no re-arm, so settling opened a card for
 the old schedule. Settling now compares against the record: a `trigger.armed` of the name after the
 pending start excludes a card, at whichever start settles it.
+
+The round-3 review (1050#6457591915) found a pending card firing with no way to settle once its
+trigger declared `report` at the same schedule: no template remained to open the card from. The
+owner granted a fourth round for it (M7-U8 Q34 (a), on #1009). Settling now tells a pending
+firing's work by its recorded start, a start carrying `after` being a card's. The scan for its card
+always runs, and a card is opened only where the trigger is still declared, still a card, and not
+re-armed since the start. The state table now has a row for each change a trigger can undergo while
+a firing is pending.

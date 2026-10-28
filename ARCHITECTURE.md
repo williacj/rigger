@@ -534,8 +534,10 @@ does for notes, so the two cannot drift.
 
 **Settling a pending firing.** At `run`'s start L3 finds each pending firing in the record, and
 after that it knows each firing it made. At each trigger of any kind, as it acts on each hold's
-closer, L3 settles each pending firing before that clock trigger fires again. It settles one whose
-work is a card in this order:
+closer, L3 settles each pending firing before that clock trigger fires again. L3 tells a pending
+firing's work by its recorded start, never by the trigger's present declaration: a start carrying
+`after` is a card's, and one without it is `report`'s. It settles one whose work is a card in this
+order, whatever the trigger now declares:
 
 1. L2 reads the number `<j>` of the repository's newest issue or pull request. It then reads each
    issue numbered above `k` and up to `<j>`, as the `hold-<id>-after-<k>.json` bullet of "Failure
@@ -545,15 +547,20 @@ work is a card in this order:
    the issue is open and the board holds it in no column. It leaves the card where it is otherwise,
    a closed card included. L3 then records the outcome naming that issue. Where the placing fails,
    L3 records no outcome, and the firing stays pending.
-3. Where none does, L2 opens the card, as step 3 above, and L3 records the outcome, as step 4
-   above. Where the trigger is no longer declared, or the record holds a `trigger.armed` of its
-   name after the pending start, L2 opens nothing. L3 then records the outcome as `trigger.outcome`
-   `{ name, occurrence, outcome: 'abandoned' }`. The record keeps that arming across any later
-   crash, so the exclusion holds at every later start.
+3. Where none does, L2 opens the card only where all of these hold:
+   - the trigger is still declared under its name;
+   - its work is still a card;
+   - the record holds no `trigger.armed` of its name after the pending start.
 
-A pending firing whose work is `report` is settled as abandoned, and the job does not run again.
-The next occurrence's report shows every event the lost one would have shown, so a late one adds
-nothing.
+   L2 then opens the card from the template the start reads now, its author included, as step 3
+   above, and L3 records the outcome, as step 4 above. Otherwise L2 opens nothing, and L3 records
+   the outcome as `trigger.outcome` `{ name, occurrence, outcome: 'abandoned' }`. The record keeps
+   an arming across any later crash, so that exclusion holds at every later start.
+
+A pending firing whose work is `report` is settled as abandoned, whatever the trigger now declares,
+and the job does not run again. The next occurrence's report shows every event the lost one would
+have shown, so a late one adds nothing. Its start carries no `k`, so no card is opened for it even
+where the trigger now declares one.
 
 **A firing whose work is `report`.** `report` is the only internal job (M7-U2 Q6 on #1009). L3
 records the firing's start as `trigger` `{ trigger: 'clock', name, occurrence }`. It then calls L5's
@@ -589,8 +596,16 @@ its row says otherwise.
 | an occurrence comes due while the card of the trigger's previous firing is open | another card (M7-U2 Q3 on #1009) |
 | occurrences missed while Rigger was down | one firing carrying the newest missed occurrence under `fire`, and none under `skip`; never one per missed occurrence |
 | a card-shaped firing pending at a start | settled as "Settling a pending firing" says |
-| a `report` firing pending at a start | its outcome is recorded as abandoned, and the job does not run again |
-| a firing pending, whose trigger the start finds undeclared, or re-armed after the pending start at this or any earlier start | its outcome names the occurrence's card where L2 finds one; otherwise L2 opens nothing and the outcome is abandoned; a `report` firing's is abandoned |
+| a card's firing pending, its trigger unchanged | step 1's scan; a card found is placed as step 2 says; none found: L2 opens the card |
+| a card's firing pending, its trigger no longer declared under its name, as after its removal, its renaming or the clock declaration's removal | step 1's scan; a card found is placed as step 2 says; none found: the outcome is abandoned |
+| a card's firing pending, its schedule changed, or changed back, so that a `trigger.armed` of its name follows the pending start, at this or any earlier start | step 1's scan; a card found is placed as step 2 says; none found: the outcome is abandoned |
+| a card's firing pending, its trigger removed and declared again under its name and its newest arming's schedule | as with the trigger unchanged, because no arming follows the pending start |
+| a card's firing pending, its trigger now declaring `job: 'report'` at an unchanged schedule | step 1's scan; a card found, as when the crash followed its opening, is placed as step 2 says; none found: the outcome is abandoned, because no template remains to open it from |
+| a card's firing pending, its card template changed, title, labels or acceptance, at an unchanged schedule | step 1's scan; a card found is placed as step 2 says, as it was opened; none found: L2 opens the card from the template the start reads now |
+| a card's firing pending, its template's author changed at an unchanged schedule | as for a changed template: a card not found is opened with the author the start reads now |
+| a card's firing pending, its catch-up policy changed | as with the trigger unchanged: the policy decides only which missed occurrences fire, never how a pending one settles |
+| a `report` firing pending, its trigger unchanged, undeclared, re-armed, now declaring a card, or with its catch-up policy changed | its outcome is recorded as abandoned, and no job runs and no card is opened |
+| a firing pending, another trigger or `poll` changed | the pending firing settles as its own trigger's row gives |
 | the occurrence's card, found while settling, on the board in a column other than Ready, or closed | its outcome is recorded; the card is not moved |
 | the occurrence's card, found while settling, open and in no column, and placing it in Ready fails | L3 records no outcome, and the firing stays pending; `run` hands the failure to the verb, and the next trigger settles it |
 | an issue numbered above `k` carrying the mark, written by an account without write access | not read as the occurrence's card |
