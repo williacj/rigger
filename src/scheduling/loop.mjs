@@ -1018,6 +1018,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
      * and carrying as `reached` what every pull that settled answered, so no card's outcome is
      * dropped for another pull's failure, and, where a pull read admission closed, as `admission`
      * what that read answered, so a run that ended on a hold answers its closer.
+     * A closed pull's notices, which `pull` answers beside its admission, are failures of the run.
      * A start's kill that failed rejects the run with its failure, before `run.start`.
      */
     run: async () => {
@@ -1031,6 +1032,9 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       const fire = () => trigger(fire, undefined, excluded).then((each) => {
         reached.push(...(Array.isArray(each) ? each : each.reached));
         if (!Array.isArray(each)) closed = each.admission;
+        // A closed pull's notices are its failures to report, a made write's refused record among
+        // them, so the run passes each on to its caller rather than ending with `reached` alone.
+        if (!Array.isArray(each)) failures.push(...(each.notices ?? []).map(noticeFailure));
       }, (failure) => {
         failures.push(failure);
       });

@@ -835,3 +835,49 @@ test('an unreadable state read whose notice.failed record is refused stays repor
   assert.match(reported, /read issue #14's state/);
   assert.match(reported, /EIO while recording notice\.failed/);
 });
+
+// The architect's round-4 probes on #1079: `loop.run` must carry every trigger's notices to its
+// caller, as `pull` does, a made write's refused record among them.
+for (const write of ['postIssueComment', 'addIssue', 'moveItem']) {
+  test(`loop.run reports a made ${write} on the follow path whose call.end record was refused`, async () => {
+    const world = forge({ issues: [{ number: 12, title: 'Rigger closed admission', body: 'Hold: `z9`', author: 'rigger-bot', labels: ['rigger:status'], comments: [] }] });
+    const { board } = stateBoard([], { 12: 'open' });
+    const handed = handles({ cards: [], board });
+    handed.l2.notice = changesOver(world, handed.sink).notice;
+    const side = write === 'postIssueComment' ? world.writes : world.items;
+    const original = side[write];
+    let made = false;
+    side[write] = async (...args) => {
+      const answer = await original(...args);
+      made = true;
+      throw Object.assign(new Error(`call.end went unrecorded: EIO (${write})`), { code: 'EVENT_REFUSED', made: { answer }, unrecorded: [{ event: 'call.end' }] });
+    };
+    seed(handed.state, 'hold-a1-issue-12.json');
+
+    const outcome = await loop(handed).run().then((value) => ({ value }), (error) => ({ error }));
+
+    assert.equal(made, true, `${write} was made`);
+    assert.equal(world.issues[0].comments.length, 1);
+    if (write !== 'postIssueComment') assert.equal(world.onBoard.length, 1);
+    if (write === 'moveItem') assert.equal(world.onBoard[0].column, 'Owner');
+    assert.deepEqual(namesIn(handed.state), ['hold-a1-issue-12.json']);
+    assert.deepEqual(readEvents(handed.state).filter(({ event }) => event === 'notice.failed'), []);
+    assert.match([...messagesOf(outcome.error), JSON.stringify(outcome.value)].join('; '), /call\.end/, `${write}: loop.run lost the made write and its refused record`);
+  });
+}
+
+// proves R-SCHED-23
+test('loop.run reports a made closer rename on the follow path whose admission.rename record was refused', async () => {
+  const world = forge({ issues: [{ number: 20, title: 'Rigger closed admission', body: 'Hold: `z9`', author: 'rigger-bot', labels: ['rigger:status'], comments: [] }] });
+  const { board } = stateBoard([], { 12: 'none' });
+  const handed = handles({ cards: [], board });
+  const refused = refusingEvents(handed, ['admission.rename']);
+  handed.l2.notice = changesOver(world, handed.sink).notice;
+  seed(handed.state, 'hold-a1-issue-12.json');
+
+  const outcome = await loop(handed).run().then((value) => ({ value }), (error) => ({ error }));
+
+  assert.deepEqual(namesIn(handed.state), ['hold-a1-issue-20.json']);
+  assert.equal(refused.length, 1);
+  assert.match([...messagesOf(outcome.error), JSON.stringify(outcome.value)].join('; '), /admission\.rename/, 'loop.run lost the made rename and its refused record');
+});
