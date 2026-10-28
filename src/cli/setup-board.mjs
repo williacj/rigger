@@ -4,6 +4,7 @@
 import { declaredLabels, sameLabel, validate } from '../config/validate.mjs';
 import { boardOf, readSide } from '../substrate/forge/read.mjs';
 import { schemaWriteSide } from '../substrate/forge/schema-write.mjs';
+import { unrecordedNamed } from '../workflow/transitions.mjs';
 import { consumerConfig, settled, sharedWith } from './doctor.mjs';
 import { recording } from './recording.mjs';
 
@@ -96,7 +97,10 @@ async function settingUp(opened, { target = process.cwd() } = {}) {
     try {
       await side[operation](...args);
     } catch (error) {
-      return { text: [`rigger setup-board: ${made.length} writes to ${where} before one failed`, ...made, `  ${shown(error.message)}`].join('\n'), code: 1 };
+      if (!error.made) return { text: [`rigger setup-board: ${made.length} writes to ${where} before one failed`, ...made, `  ${shown(error.message)}`].join('\n'), code: 1 };
+      // The schema-write side marked the write made: the board took it, and only its record was refused.
+      made.push(`  ${line}`);
+      return { text: [`rigger setup-board: ${made.length} writes to ${where}`, ...made, `  and the event sink refused to record the last of them: ${shown(unrecordedNamed(error))}`].join('\n'), code: 1 };
     }
     made.push(`  ${line}`);
   }

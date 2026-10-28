@@ -1573,6 +1573,11 @@ How a call ends decides what L0 records and what the call's caller is handed:
 | L0's exit cleanup ended it, and the process ends | Nothing | Nothing: the process ends before the call settles |
 | L0's exit cleanup ended it, and a signal listener of the caller keeps the process running | One `call.end`, with the outcome the call's result gives. The cleanup's kill gives a non-zero exit, so a call it killed records `failed` | The call's result, as the process adapter gives it |
 
+A forge write side marks an `EVENT_REFUSED` failure from its write call as `made`, with its parsed
+answer, where the call's result passes the side's success check. A refusal on any read before the
+write is never marked, and a GraphQL write's check also requires the mutation's root field in
+`data`, non-null.
+
 A later start never ends a forge or git call, because L1 records only a dispatch's group for a
 start to end ("Failure model"). Exit cleanup records its own kills and then ends the sink. A call
 it ended records no `call.end` where the process then ends, so the fault rate's denominator leaves
