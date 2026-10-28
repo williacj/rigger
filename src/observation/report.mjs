@@ -91,6 +91,8 @@ function l2Signals(events) {
  *   last, whichever layer recorded them.
  * - **Utilization:** the sum of each card's pull-to-release interval, divided by the run's
  *   recorded N, the `concurrency` its `run.start` carries, multiplied by that span.
+ * - **Queue carried:** each L3 `pull`'s `card` and `queueDepth`, the pullable cards it left
+ *   unclaimed, in line order, a merge claim's among them, as `queue`.
  *
  * Each run answers the facts the two are computed from as well as the two, so a reader can check
  * the arithmetic: `from` and `to` in epoch milliseconds, `releases`, `pulled` (the summed
@@ -116,8 +118,9 @@ function l3Signals(events) {
       }
     }
     const span = to - from;
+    const queue = l3.filter((event) => event.event === 'pull').map(({ card, queueDepth }) => ({ card, queueDepth }));
     return {
-      run, from, to, releases, pulled, n,
+      run, from, to, releases, pulled, n, queue,
       throughput: span === 0 ? null : releases / (span / HOUR),
       utilization: span === 0 || n === undefined ? null : pulled / (n * span),
     };
