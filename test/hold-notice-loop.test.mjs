@@ -563,3 +563,32 @@ test('through L2\'s column changes, an issue no longer the notice has L2 open an
   assert.deepEqual(world.issues.at(-1).labels, [STATUS]);
   assert.deepEqual(readEvents(handed.state).filter(({ event }) => event === 'admission.open').map(({ name, by, issue }) => ({ name, by, issue })), [{ name: 'hold-b2-issue-5.json', by: 'issue', issue: 5 }]);
 });
+
+// proves R-SCHED-23
+test('a close made while the issue carried the label, then the label removed, still counts for a closer that had not yet attached the issue: the scan attaches it, and the next trigger removes the closer', async () => {
+  const STATUS = 'rigger:status';
+  const at = '2026-10-01T00:00:00Z';
+  // #3 is the hold's notice, opened before a crash left the closer after 2; it was closed while
+  // labelled, and its label then removed.
+  const world = forge({
+    issues: [...CARDS(), { number: 3, title: 'Rigger closed admission', body: 'Why.\n\nHold: `a1`\n', author: 'rigger-bot', state: 'closed', labels: [], comments: [], timeline: [
+      { kind: 'labeled', createdAt: at, actor: 'rigger-bot', label: STATUS },
+      { kind: 'closed', createdAt: at, actor: 'williacj' },
+      { kind: 'unlabeled', createdAt: at, actor: 'williacj', label: STATUS },
+    ] }],
+  });
+  const { board, asked } = stateBoard([], { 3: 'closed' });
+  const handed = handles({ cards: [], board });
+  handed.l2.notice = changesOver(world, handed.sink).notice;
+  seed(handed.state, 'hold-a1-after-2.json');
+  const built = loop(handed);
+
+  await built.pull();
+  assert.deepEqual(namesIn(handed.state), ['hold-a1-issue-3.json']);
+  await built.pull();
+
+  assert.deepEqual(namesIn(handed.state), []);
+  assert.deepEqual(asked, [3]);
+  assert.deepEqual(readEvents(handed.state).filter(({ event }) => event === 'admission.open').map(({ name, by, issue }) => ({ name, by, issue })), [{ name: 'hold-a1-issue-3.json', by: 'issue', issue: 3 }]);
+  assert.equal(world.calls.filter(([name]) => name === 'openIssue').length, 0);
+});

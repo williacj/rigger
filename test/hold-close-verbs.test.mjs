@@ -325,18 +325,26 @@ test('rigger run, on a judge pair held after two compound-rule failures, opens o
  * A consumer for the test `t` whose admission holds `closers`, each a closer's file name, beside a
  * fake `gh` whose board holds no card and whose repository holds `issues`. `verb(name)` runs the
  * real bin's verb there; `gh(...args)` runs the fake `gh` as a person on the forge would; and
- * `reads` are the repository reads, through the fake `gh`, of what it then holds.
+ * `reads` are the repository reads, through the fake `gh`, of what it then holds. Where
+ * `refuseState` is given, the `gh` the verb finds refuses every read of one issue's state, saying
+ * what gh says of a server error, and answers every other request as the fake does.
  */
-function statusConsumer(t, { closers, issues }) {
+function statusConsumer(t, { closers, issues, refuseState = false }) {
   const directory = scratch(t);
   const target = withOrigin(repositoryAt(join(directory, 'consumer'), { 'rigger.config.mjs': `export default ${JSON.stringify(consumerConfig(3))};\n` }), join(directory, 'origin.git'));
   const dir = join(directory, 'gh');
   mkdirSync(dir);
   const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, items: [] } });
   seedRepository(fake, { issues });
+  const ahead = join(directory, 'refusing');
+  if (refuseState) {
+    mkdirSync(ahead);
+    writeFileSync(join(ahead, 'gh'), `#!/bin/sh\ncase "$*" in *'{ state repository { nameWithOwner } }'*) printf '%s\\n' 'gh: HTTP 502: Bad Gateway (https://api.github.com/graphql)' >&2; exit 1;; esac\nexec ${JSON.stringify(fake.gh)} "$@"\n`);
+    chmodSync(join(ahead, 'gh'), 0o755);
+  }
   const state = join(realpathSync.native(target), '.rigger');
   for (const name of closers) seedCloser(state, name, closerText({ reason: `reason of ${name}` }));
-  const env = { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), PATH: [dir, process.env.PATH].join(delimiter) };
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), PATH: [...(refuseState ? [ahead] : []), dir, process.env.PATH].join(delimiter) };
   const verb = (name) => {
     const ran = spawnSync(process.execPath, [bin, name], { cwd: target, encoding: 'utf8', env, timeout: SETTLES_WITHIN, killSignal: 'SIGKILL' });
     assert.equal(ran.error, undefined);
@@ -381,5 +389,21 @@ test('rigger resume over hold closers naming issues, beside another open issue c
     assert.match(ran.out, new RegExp(`^rigger resume: closed the status issue #${number}$`, 'm'), ran.said);
     const changes = (await here.reads.readIssueTimeline(number)).filter(({ kind, label }) => kind === 'closed' || label === 'rigger:status');
     assert.deepEqual(changes.map(({ kind }) => kind), ['labeled', 'unlabeled', 'closed'], `#${number}`);
+  }
+});
+
+// proves R-SCHED-23
+test('rigger once and rigger run, where the state of the issue a hold\'s closer names cannot be read, claim nothing, name the issue in their output and the event, and exit non-zero', (t) => {
+  for (const name of ['once', 'run']) {
+    const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [statusIssue(7, 'a1')], refuseState: true });
+
+    const ran = here.verb(name);
+
+    assert.equal(ran.code, 1, `${name}: ${ran.said}`);
+    assert.match(ran.err, new RegExp(`^rigger ${name}: the notice for hold a1 failed to read issue #7's state: .*HTTP 502`, 'm'), `${name}: ${ran.said}`);
+    assert.deepEqual(here.closers().map(({ name: closer }) => closer), ['hold-a1-issue-7.json'], name);
+    const failed = here.events().filter(({ event }) => event === 'notice.failed');
+    assert.deepEqual(failed.map(({ layer, hold, issue }) => ({ layer, hold, issue })), [{ layer: 'L3', hold: 'a1', issue: 7 }], name);
+    assert.deepEqual(here.events().filter(({ event }) => event === 'pull'), [], name);
   }
 });
