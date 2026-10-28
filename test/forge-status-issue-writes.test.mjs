@@ -85,7 +85,7 @@ test('the opening runner refuses missing, empty, multiple or foreign fields with
     ['-f', 'title=', ...fields.slice(2)],
     [...fields.slice(0, 2), '-f', 'body=', ...fields.slice(4)],
     [...fields.slice(0, 4), '-f', 'labels[]='],
-    [...fields, '-f', 'labels[]=second'],
+    [...fields.slice(0, 2), ...fields],
     [...fields, '-f', 'milestone=1'],
   ];
   for (const tail of refused) {
@@ -246,4 +246,57 @@ test('a timed-out board add names its issue and the timeout', async () => {
     return { status: 0, timedOut: true, timeout: 42, stdout: '', stderr: '' };
   };
   await assert.rejects(itemWriteSide(BOARD, { send }).addIssue(214), /addIssue.*issue #214.*timeout of 42 ms/);
+});
+
+// A runner that still limits openings to one label drops valid two- and three-label requests.
+test('the opening runner sends one, two or three non-empty labels in their given order', async () => {
+  for (const labels of [['one'], ['one', 'two'], ['one', 'two', 'three']]) {
+    const args = ['api', 'repos/williacj/rigger/issues', '-X', 'POST', '-f', 'title=T', '-f', 'body=B',
+      ...labels.flatMap((label) => ['-f', `labels[]=${label}`])];
+    const sent = [];
+    await assert.doesNotReject(repositoryWriteRunner(args, {
+      send: (command, request) => { sent.push([command, ...request]); return ok({}); },
+    }));
+    assert.deepEqual(sent, [['gh', ...args]]);
+  }
+});
+
+// Reading just the first variadic label silently loses the rest before the runner sees them.
+test('opening an issue sends all three labels in one request after its title and body', async () => {
+  const sent = [];
+  const side = repositoryWriteSide(BOARD, { send: (command, args) => {
+    sent.push([command, ...args]);
+    return ok({ number: 214, labels: [{ name: 'one' }, { name: 'two' }, { name: 'three' }] });
+  } });
+  assert.equal(await side.openIssue('T', 'B', 'one', 'two', 'three'), 214);
+  assert.deepEqual(sent, [['gh', 'api', 'repos/williacj/rigger/issues', '-X', 'POST',
+    '-f', 'title=T', '-f', 'body=B', '-f', 'labels[]=one', '-f', 'labels[]=two', '-f', 'labels[]=three']]);
+});
+
+// GitHub can return the existing repository label's case rather than the requested spelling.
+test('the status opening accepts the requested label in another ASCII letter case', async () => {
+  const side = repositoryWriteSide(BOARD, { send: () => ok({ number: 214, labels: [{ name: 'Rigger:Status' }] }) });
+  await assert.doesNotReject(async () => assert.equal(await side.openIssue('Status', 'Hold', 'rigger:status'), 214));
+});
+
+// Stopping at the first missing label hides the other labels the forge omitted.
+test('an opening rejection names every requested label absent from the answer', async () => {
+  const sent = [];
+  const side = repositoryWriteSide(BOARD, { send: (command, args) => { sent.push(args); return ok({ number: 214, labels: [] }); } });
+  await assert.rejects(side.openIssue('T', 'B', 'one', 'two', 'three'), (error) => {
+    for (const missing of ['#214', 'one', 'two', 'three']) assert.ok(error.message.includes(missing), error.message);
+    return true;
+  });
+  assert.equal(sent.length, 1);
+});
+
+// Checking just one of the repeated fields lets an empty second label cross the runner boundary.
+test('the opening runner refuses an empty label in either of two fields without sending', async () => {
+  for (const labels of [['one', ''], ['', 'two']]) {
+    const sent = [];
+    const args = ['api', 'repos/williacj/rigger/issues', '-X', 'POST', '-f', 'title=T', '-f', 'body=B',
+      ...labels.flatMap((label) => ['-f', `labels[]=${label}`])];
+    await assert.rejects(repositoryWriteRunner(args, { send: (command, request) => { sent.push(request); return ok({}); } }), /repository-write runner refuses/);
+    assert.deepEqual(sent, []);
+  }
 });

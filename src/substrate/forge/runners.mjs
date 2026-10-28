@@ -489,7 +489,8 @@ export async function repositoryWriteRunner(args, { send = throughL0, emitter, t
   const open = api === 'api' && /^repos\/[^/]+\/[^/]+\/issues$/.test(path ?? '')
     && method === '-X' && verb === 'POST' && field === '-f' && typeof value === 'string' && value.startsWith('title=') && value.length > 'title='.length
     && option === '-f' && typeof mergeMethod === 'string' && mergeMethod.startsWith('body=') && mergeMethod.length > 'body='.length
-    && extra.length === 2 && extra[0] === '-f' && typeof extra[1] === 'string' && extra[1].startsWith('labels[]=') && extra[1].length > 'labels[]='.length;
+    && extra.length >= 2 && extra.length % 2 === 0 && extra.every((word, index) => index % 2 === 0 ? word === '-f'
+      : typeof word === 'string' && word.startsWith('labels[]=') && word.length > 'labels[]='.length);
   const close = api === 'api' && /^repos\/[^/]+\/[^/]+\/issues\/[1-9]\d*$/.test(path ?? '')
     && method === '-X' && verb === 'PATCH' && field === '-f' && value === 'state=closed' && args.length === 6;
   const removeLabel = api === 'api' && /^repos\/[^/]+\/[^/]+\/issues\/[1-9]\d*\/labels\/[^/]+$/.test(path ?? '')
