@@ -4,8 +4,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { basename, isAbsolute, join, relative, sep } from 'node:path';
 
 import { TOOLS, answer, assertToolingClean, forge, ghCalls, run, tree, world } from './coordinator-fixtures.mjs';
 import { cloneInto, detachedWorktreeAt, gitIn, worktreeAt } from './git-repository.mjs';
@@ -30,11 +30,48 @@ function pull(s, n, state, branch = `other-${n}`) {
   answer(s.w, { prs: s.prs, ...s.extra });
 }
 
+/** Read only the process and fixture resources named by a completed sweep refusal. */
+function inspectHolder(entry, pid) {
+  const options = { encoding: 'utf8', timeout: 5_000, maxBuffer: 64 * 1024 };
+  const image = spawnSync('/bin/ps', ['-p', String(pid), '-o', 'comm='], { ...options, env: process.env });
+  const files = spawnSync(process.platform === 'darwin' ? '/usr/sbin/lsof' : '/usr/bin/lsof',
+    ['-n', '-P', '-p', String(pid), '-F', 'pfn'], { ...options, env: process.env });
+  const record = { entry, pid, state: 'could-not-inspect', executable: null, resources: [] };
+  if (image.error?.code === 'ETIMEDOUT' || files.error?.code === 'ETIMEDOUT') record.state = 'unanswered';
+  else if (image.status === 1 || (image.status === 0 && !image.stdout.trim())) record.state = 'disappeared';
+  else if (image.status === 0 && !image.error) {
+    record.executable = basename(image.stdout.trim());
+    for (const line of files.stdout?.split('\n') ?? []) {
+      if (!line.startsWith('n')) continue;
+      try {
+        const root = realpathSync.native(entry);
+        const resource = realpathSync.native(line.slice(1));
+        const rel = relative(root, resource);
+        if (rel === '' || (rel !== '..' && !rel.startsWith('..' + sep) && !isAbsolute(rel))) record.resources.push(resource);
+      } catch { /* The resource may have disappeared after lsof's read. */ }
+    }
+    if (record.resources.length > 0) record.state = 'observed';
+  }
+  process.stderr.write('SWEEP_DIAGNOSTIC ' + JSON.stringify(record) + '\n');
+  return record;
+}
+
+/** Inspect only numeric PIDs in completed in-use lines, after the sweep child returns. */
+function sweepDiagnostics(stderr) {
+  const records = [];
+  for (const line of stderr.split('\n')) {
+    const match = /^sweep: kept (.*): in use by pid ([0-9]+(?:, pid [0-9]+)*)$/.exec(line);
+    if (!match) continue;
+    for (const pid of match[2].split(', pid ').map(Number)) records.push(inspectHolder(match[1], pid));
+  }
+  return records;
+}
+
 /** Runs the sweep, returning its status and what it printed on each stream, one line each. */
 function sweep(s, args = [], env = {}) {
   const result = run(s.w, process.execPath, [SWEEP, ...args], { env: { RIGGER_WORKTREE_ROOT: s.root, RIGGER_CONFIG: s.config, ...env } });
   const lines = (text) => text.split('\n').filter(Boolean);
-  return { status: result.status, out: lines(result.stdout), err: lines(result.stderr), stderr: result.stderr };
+  return { status: result.status, out: lines(result.stdout), err: lines(result.stderr), stderr: result.stderr, diagnostics: sweepDiagnostics(result.stderr) };
 }
 
 /** A judge's entry holding a clone of the forge in its `repo`. */
@@ -181,6 +218,8 @@ test('an entry a process has its working directory in, or holds a file in open, 
   assert.deepEqual(r.out, []);
   assert.match(named(r, cwdIn), new RegExp(`kept.*in use by pid ${inside}\\b`));
   assert.match(named(r, fileIn), new RegExp(`kept.*in use by pid ${opener}\\b`));
+  assert.ok(r.diagnostics?.some((record) => record.entry === cwdIn && record.pid === inside && record.resources?.includes(join(cwdIn, 'repo', 'deep'))), 'the sweep diagnostic did not observe the known working directory');
+  assert.ok(r.diagnostics?.some((record) => record.entry === fileIn && record.pid === opener && record.resources?.includes(join(fileIn, 'repo', 'README'))), 'the sweep diagnostic did not observe the known open file');
   assert.ok(alive(inside) && alive(opener), 'the sweep ended no process');
   assertToolingClean();
 });
