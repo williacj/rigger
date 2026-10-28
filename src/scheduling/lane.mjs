@@ -2,6 +2,7 @@
 // L1 to remove merged cards' directories before L2 moves them to Done.
 
 import { whenElapsed } from '../substrate/process.mjs';
+import { unrecordedNamed } from '../workflow/transitions.mjs';
 
 /** What `merge.end` names of L2's merge answer `answer`: its outcome, reason and context. */
 const named = ({ outcome, reason, context }) => ({ outcome, ...(outcome === 'merged' ? {} : { reason: reason ?? (outcome === 'already merged' ? 'the forge held the pull request as merged already' : `the forge ${outcome} the merge call`) }), ...(context === undefined ? {} : { context }) });
@@ -32,12 +33,17 @@ export function lane({ board, facts, l2, record, refused, removeDirectories, clo
    *
    * - `merged` or `already merged`, as the call answered;
    * - `refused`, with the adapter's `reason`, and its `context` where it names one;
-   * - `failed`, where the merge call threw, with its message as `reason`;
+   * - `merged` or `already merged`, with the merge's `sha`, where the merge call rejected with a
+   *   failure the repository-write side marked made: the forge made the merge, and only an event of
+   *   it went unrecorded;
+   * - `failed`, where the merge call threw otherwise, with its message as `reason`;
    * - `not merged`, where L2 answered other than that, with the `action` it answered, or where the
    *   card could not be read again, with why as `reason`.
    *
-   * After a recorded `merge.end` of `merged` or `already merged`, L1 removes the card's directories
-   * before L2 settles it through `mergeEnded`. A `merge.end` the sink refuses is the halt: nothing
+   * After a recorded `merge.end` of `merged` or `already merged` that the merge call answered, L1
+   * removes the card's directories before L2 settles it through `mergeEnded`. A merge marked made
+   * is neither removed nor settled: the lane returns its failure, and the next pass reads the pull
+   * request as already merged. A `merge.end` the sink refuses is the halt: nothing
    * more is done for the card, and the failure names it. Answers `{ reached, failure }`: `reached`, the card's number, `action`
    * `merge`, the pull request and head, and `merge`, what `merge.end` named; and `failure`, the
    * failure to report, or null where there was none.
@@ -83,8 +89,15 @@ export function lane({ board, facts, l2, record, refused, removeDirectories, clo
         answer = called;
         ended = named(answer);
       } catch (thrown) {
-        failure = new Error(`card #${card.number}'s merge of pull request #${next.pull} failed: ${thrown.message}`, { cause: thrown });
-        ended = { outcome: 'failed', reason: thrown.message };
+        if (thrown.made) {
+          // The forge made the merge and only its record was refused, so `merge.end` records it
+          // merged. Nothing more is done for the card: the next pass reads it already merged.
+          failure = new Error(`card #${card.number}'s merge of pull request #${next.pull} was made, and the event sink refused to record it: ${unrecordedNamed(thrown)}`, { cause: thrown });
+          ended = { ...named(thrown.made.answer), sha: thrown.made.answer.sha };
+        } else {
+          failure = new Error(`card #${card.number}'s merge of pull request #${next.pull} failed: ${thrown.message}`, { cause: thrown });
+          ended = { outcome: 'failed', reason: thrown.message };
+        }
       }
       break;
     }
@@ -94,7 +107,8 @@ export function lane({ board, facts, l2, record, refused, removeDirectories, clo
       record('merge.end', { ...fields, ...ended }, card.number);
     } catch (refusal) {
       const unrecorded = refused(`card #${card.number}'s merge of pull request #${next.pull} ended ${ended.outcome}, and the event sink refused to record its end, so nothing more is done for it`, refusal);
-      return { reached, failure: beside(failure, unrecorded, `card #${card.number}'s merge failed, and its end went unrecorded`) };
+      const sentence = failure?.cause?.made ? `card #${card.number}'s merge was made, and the event sink refused to record its events and its end` : `card #${card.number}'s merge failed, and its end went unrecorded`;
+      return { reached, failure: beside(failure, unrecorded, sentence) };
     }
     if (answer !== undefined) {
       try {

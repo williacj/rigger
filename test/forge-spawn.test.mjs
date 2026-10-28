@@ -2,6 +2,9 @@
 // first on PATH that leaves a child alive or never exits, what each side answers, what L0 kills
 // and records, the forge timeout, and the environment the `gh` child is given.
 
+import { seedRepository } from './fake-gh.mjs';
+import { assertCommandContext, commandKills, leavingRecordedChild } from './event-context-world.mjs';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readdirSync } from 'node:fs';
@@ -222,4 +225,130 @@ test('a gh child the read runner starts, from an engine whose environment sets G
   const environment = read(directory, 'environment').split('\n');
   assert.ok(environment.some((line) => line.startsWith('PATH=')), 'the stand-in wrote no environment, so this proves nothing');
   assert.deepEqual(environment.filter((line) => line.startsWith('GIT_DIR=')), []);
+});
+
+
+const MAKER_DISPATCH = 'd-11111111-2222-3333-4444-555555555555';
+const MAKER_BODY = '## Acceptance\n\n- The widget turns blue when pressed.\n';
+const MAKER_HEAD = 'b'.repeat(40);
+
+/** Production forge sides over the established fake-gh protocol, with one recorded child per call. */
+function makerForge(t, { comments = [], pulls = [{ number: 77, head: 'rigger-12', sha: MAKER_HEAD,
+  mergeBase: 'a'.repeat(40), diff: 'diff --git a/widget b/widget\n', mergeable: 'mergeable',
+  comments: [{ body: 'A human note.', createdAt: '2026-10-01T10:00:00Z' }] }] } = {}) {
+  const directory = holding(t);
+  const fake = fakeLeavingChild(directory, [{ ...READY, body: MAKER_BODY, column: 'Coding' }]);
+  seedRepository(fake, { issues: [{ number: 12, body: MAKER_BODY, comments }], pullRequests: pulls });
+  leavingRecordedChild(directory, 'gh', '"$here/fake/gh" "$@"');
+  const { sink, events } = sinkIn(directory);
+  const l2 = columnChanges({ config: CONFIG, sink });
+  const card = { ...READY, body: MAKER_BODY, column: 'Coding', id: 'item-1' };
+  return { directory, fake, sink, events, card, l2,
+    run: (work) => onPath(directory, work),
+    rows: () => commandKills(directory, events(), 'gh') };
+}
+
+// Every read is forced to emit, including the second requests inside compound repository reads.
+// proves R-RECORD-7
+test('maker settle production reads and board move events name their card and dispatch', { timeout: 20000 }, async (t) => {
+  const here = makerForge(t);
+  const facts = await here.run(() => here.l2.settled(here.card, { status: 'fulfilled', value: { exit: 0 } }, { dispatch: MAKER_DISPATCH }));
+  assert.equal(facts.open[0].number, 77);
+  const rows = here.rows();
+  const requests = [
+    ['issue comments', (s) => s.includes('issue(number: 12)')],
+    ['pull requests', (s) => s.includes('pullRequests(headRefName: "rigger-12"')],
+    ['merge base head', (s) => s.includes('baseRefName headRefOid')],
+    ['merge base compare', (s) => s.includes('/compare/main...')],
+    ['diff', (s) => s.includes('Accept: application/vnd.github.diff')],
+    ['PR comments', (s) => s.includes('pullRequest(number: 77) { comments')],
+    ['comment permission', (s) => s.includes('/collaborators/')],
+    ['mergeability', (s) => s.includes('{ mergeable }')],
+    ['effective rules', (s) => s.includes('/rules/branches/main')],
+    ['classic protection', (s) => s.includes('/branches/main/protection')],
+    ['check runs', (s) => s.includes('/check-runs?')],
+    ['commit statuses', (s) => s.includes('/statuses?')],
+    ['board read', (s) => s.includes('repositoryOwner')],
+    ['field read', (s) => s.includes('target: node')],
+    ['item write', (s) => s.includes('updateProjectV2ItemFieldValue')],
+  ];
+  for (const [what, matches] of requests) assertCommandContext(rows, matches, 12, MAKER_DISPATCH, what);
+  for (const { event } of rows) {
+    assert.equal(event.card, 12);
+    assert.equal(event.dispatch, MAKER_DISPATCH);
+  }
+  const transition = here.events().find((event) => event.event === 'transition');
+  assert.equal(transition.cause, 'returned');
+  assert.equal(transition.card, 12);
+  assert.equal(transition.dispatch, MAKER_DISPATCH);
+});
+
+// A merge's preflight GET is part of the card's write, as is the actual merge request.
+// proves R-RECORD-7
+test('merge preflight and write survivor events name the card without a dispatch', { timeout: 20000 }, async (t) => {
+  const here = makerForge(t);
+  const result = await here.run(() => here.l2.merge(here.card, { pull: 77, head: MAKER_HEAD }));
+  assert.equal(result.outcome, 'merged');
+  const rows = here.rows();
+  assertCommandContext(rows, (s) => s.includes('/pulls/77 -X GET'), 12, undefined, 'merge preflight');
+  assertCommandContext(rows, (s) => s.includes('/pulls/77/merge -X PUT'), 12, undefined, 'merge write');
+});
+
+// A refused merge still reads one known card's mergeability, without a dispatch.
+// proves R-RECORD-7
+test('refused merge mergeability survivor events name the card without a dispatch', { timeout: 20000 }, async (t) => {
+  const here = makerForge(t);
+  await assert.doesNotReject(here.run(() => here.l2.mergeEnded(here.card, { pull: 77, head: MAKER_HEAD }, { outcome: 'refused', reason: 'pending' })));
+  assertCommandContext(here.rows(), (s) => s.includes('{ mergeable }'), 12, undefined, 'refused merge mergeability');
+  assert.deepEqual((await here.fake.model()).writes(), [], 'a refusal must leave the board unchanged');
+});
+
+// Both the PR-confirmation read and return POST must use the known card's writer.
+// proves R-RECORD-7
+test('return confirmation and comment survivor events name the card without a dispatch', { timeout: 20000 }, async (t) => {
+  const here = makerForge(t);
+  const comment = 'Return acceptance: newline\nquote " and $HOME stay literal.';
+  await here.run(() => here.l2.returned(here.card, { pull: 77, comment }));
+  const rows = here.rows();
+  assertCommandContext(rows, (s) => s.includes('/pulls/77 -X GET'), 12, undefined, 'return confirmation');
+  assertCommandContext(rows, (s) => s.includes('/issues/77/comments -X POST'), 12, undefined, 'return comment');
+  const state = JSON.parse(readFileSync(join(here.directory, 'fake', 'board.json'), 'utf8'));
+  assert.equal(state.repository.pullRequests[0].comments.at(-1).body, comment);
+});
+
+
+// The escalation-note path uses the same scoped reader before returning the escalation answer.
+// proves R-RECORD-7
+test('maker escalation-note settlement reads retain card and maker dispatch', { timeout: 20000 }, async (t) => {
+  const body = ['```rigger-escalation', 'category: ambiguous', 'item: 1', 'reason: Choose the widget colour.',
+    `dispatch: ${MAKER_DISPATCH}`, '```'].join('\n');
+  const here = makerForge(t, { comments: [{ body, createdAt: '2026-10-01T10:00:00Z' }] });
+  const answer = await here.run(() => here.l2.settled(here.card, { status: 'fulfilled', value: { exit: 7 } }, { dispatch: MAKER_DISPATCH }));
+  assert.equal(answer.action, 'escalate');
+  assert.equal(answer.dispatch, MAKER_DISPATCH);
+  const rows = here.rows();
+  assertCommandContext(rows, (s) => s.includes('issue(number: 12)'), 12, MAKER_DISPATCH, 'escalation comments');
+  assertCommandContext(rows, (s) => s.includes('pullRequests(headRefName: "rigger-12"'), 12, MAKER_DISPATCH, 'escalation pull requests');
+  assertCommandContext(rows, (s) => s.includes('/compare/'), 12, MAKER_DISPATCH, 'escalation merge base');
+  for (const { event } of rows) {
+    assert.equal(event.card, 12);
+    assert.equal(event.dispatch, MAKER_DISPATCH);
+  }
+  assert.deepEqual((await here.fake.model()).writes(), []);
+});
+
+// Optional dispatch preserves absence throughout the successful settlement, including L0 and L2.
+// proves R-RECORD-7
+test('maker settlement without dispatch omits its key on reads move and transition', { timeout: 20000 }, async (t) => {
+  const here = makerForge(t);
+  const facts = await here.run(() => here.l2.settled(here.card, { status: 'fulfilled', value: { exit: 0 } }));
+  assert.equal(facts.open[0].number, 77);
+  const rows = here.rows();
+  assertCommandContext(rows, () => true, 12, undefined, 'settlement without dispatch');
+  const events = here.events();
+  assert.ok(events.some((event) => event.event === 'transition'));
+  for (const event of events) {
+    assert.equal(event.card, 12);
+    assert.equal(Object.hasOwn(event, 'dispatch'), false);
+  }
 });

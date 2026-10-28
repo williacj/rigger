@@ -33,10 +33,10 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
 |---|---|---|---|---|---|
 | **L0 Substrate** | How to talk to one external system: the forge (board, issues, PRs, CI through `gh`), git, the OS process model, each agent CLI. Retries, timeouts, containment mechanics, and which of its own git operations on one repository run one at a time. | Anything about cards or work. L0 does not know what a card is. | Each forge and git call's latency and outcome, process spawn and exit, survivors killed by name and command line | Engineer cards, within the L0 budget | `src/substrate/` |
 | **L1 Execution** | How to run one dispatch in one workspace: isolation, lifetime, result as exit code plus captured output. Making the workspace an attempt at a card runs in. | Whether to run it, or what the result means | Dispatch start, end, duration, exit, timeout, and the workspace each runs in. A workspace made or removed. | Engineer cards, within the L1 budget | `src/execution/` |
-| **L2 Workflow** | The next action for a card from its stage and observable facts, including which kind selects a ready card and the provider each role's dispatch runs on, and whether its acceptance passes the form check. Every change to a card's column; the review loop; the gate rule, and whether a card's pull request merges; escalation routing; whether a failure is the work's, or the environment's, card-local or `out`. Which provisioning steps a card runs, whether a step's failure stops its attempt, and whether a failed attempt is tried again. | Which card is next; what good means | Card transitions with cause, verdicts, loop rounds, escalations by category, provisioning failures and attempts, by class | Spec rows, ratified by the owner | `src/workflow/` |
-| **L3 Scheduling** | Pull order by priority; concurrency; claims taken synchronously before any await; the repo lane, which runs the merges L2 decides one at a time. Admission, which is whether any card may be pulled; the hold that closes admission; the three trigger kinds. The halt on starts while the sink refuses an event, which is not the admission hold. When Rigger reads the forge again for a write it has not yet shown, and when it stops. | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput, admission holds and their reason | Spec rows and config | `src/scheduling/` |
+| **L2 Workflow** | The next action for a card from its stage and observable facts, including which kind selects a ready card and the provider each role's dispatch runs on, and whether its acceptance passes the form check. Every change to a card's column; the review loop; the gate rule, and whether a card's pull request merges; escalation routing; whether a failure is the work's, or the environment's, card-local or `out`. Which provisioning steps a card runs, whether a step's failure stops its attempt, and whether a failed attempt is tried again. The card a clock trigger's due firing opens, and whether an earlier firing's card exists. | Which card is next; what good means | Card transitions with cause, verdicts, loop rounds, escalations by category, provisioning failures and attempts, by class | Spec rows, ratified by the owner | `src/workflow/` |
+| **L3 Scheduling** | Pull order by priority; concurrency; claims taken synchronously before any await; the repo lane, which runs the merges L2 decides one at a time. Admission, which is whether any card may be pulled; the hold that closes admission; the three trigger kinds, and when each clock trigger is armed and due. The halt on starts while the sink refuses an event, which is not the admission hold. When Rigger reads the forge again for a write it has not yet shown, and when it stops. | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput, admission holds and their reason, clock triggers' armings and each firing's outcome | Spec rows and config | `src/scheduling/` |
 | **L4 Quality** | What the work is and what good means: kinds of work, their maker and judge sets, and the providers those run on, roles, review procedure, provisioning steps, recorded decisions, which improvement roles run and which signals count | How Rigger runs, beyond the engine settings the extension points name | Nothing. L2 records what a role produced: findings by code and judge, rounds per kind of work, rework, later defect escape. L3 records each dispatch's role and tier, from which L5 derives the tier corrections tier accuracy counts ("Telemetry") | The owner, in the consumer's repository | The consumer's repository; Rigger ships templates under `templates/` |
-| **L5 Observation** | How every layer's events are recorded and which signals derive from them | Anything that acts on them. L5 records and derives, never decides | The report | Engineer cards | `src/observation/` |
+| **L5 Observation** | How every layer's events are recorded and which signals derive from them. Whether and when the stream is pushed to the data ref | Anything that acts on them. L5 records and derives, never decides | The report. Each push's outcome | Engineer cards | `src/observation/` |
 | **L6 Improvement** | What to propose, and to whom, from L5's signals. The object-level loop reorders L3's queue and re-tiers within L4. The meta-level loop proposes changes to any layer. | It changes no code, in any layer, ever | Proposals with target layer, and their outcome | Spec rows | `src/improvement/` |
 | **L7 Owner** | Recorded decisions, config, the last verdict when named as a judge, or where the consumer's own check asks for it, answers to escalations | | | | A person |
 
@@ -47,7 +47,12 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
    process existed. A card reaches the owner only through L2's escalation categories, never
    through a substrate event.
 2. **Each boundary has one vocabulary.** L1 gives L2 exit codes and output, or that a command never
-   started, or that a directory was refused. L2 gives L3 next actions. L2's notice function also
+   started, or that a directory was refused. L2 gives L3 next actions. L3 gives L2 a due firing,
+   the trigger's name and occurrence, and L2 answers the card it opened or found. L2 also gives L3
+   `k`, the number a firing's start records ("How a clock trigger fires"). A card L2 opens from a
+   firing is the only card code moves into Ready, and L2 records that move under the cause
+   `created`, which no other move takes. L5 gives L3 the report it derives, and L3 hands it to
+   the verb unread. L2's notice function also
    gives L3 each rename a hold's closer is to take, and the number that rename attaches. A next
    action that dispatches a role carries what that dispatch is handed, which L2 composes. L1
    delivers it unread, through L0's provider adapter. L3
@@ -73,6 +78,12 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
 
      L2 is the one layer that reaches it. The `verdict` verb also reaches it, for one write: a
      comment on a pull request holding the owner's verdict, which L2's `composeMarker` composes.
+
+   Beside the forge adapter's four sides, L0 has a push side, `src/substrate/data-ref.mjs`. It
+   admits one write: setting the data ref, `refs/rigger/events` on `origin`, to a commit holding
+   the whole stream. Only L5 reaches it. It is no part of `src/substrate/forge/read.mjs`, and it
+   sends through no forge runner. L3 has L5 push at each drain trigger, and L5 gives L3 each push
+   that did not succeed, which L3 hands to the verb unread ("Pushing the stream").
 
    The gate script reaches only the read side. The gate's workflow, which is no layer, posts the
    gate's status. L4 gives the layers below it names, procedures and settings. If a layer needs to
@@ -107,6 +118,7 @@ flowchart TB
   L3 ~~~ L2 ~~~ L1 ~~~ L0
   L4 -->|names, procedures and settings| below
   L2 -->|next actions| L3
+  L3 -->|due firings| L2
   L3 -->|dispatches| L1
   L1 -->|exit codes and output| L2
   L0 -->|exit code| L1
@@ -142,7 +154,7 @@ workaround.
 
 | Extension point | Declared by the consumer as | Read by | v0 |
 |---|---|---|---|
-| **Engine settings** | The repository, the board, and its column display names as options of the board's `Status` field. The board's owner, as `board.owner` in the form given below the table. The concurrency N, the state directory (`.rigger/` by default), and whether telemetry pushes. The worktree root and the rule that derives a worktree's topic from a card, as `worktrees` in the form given below the table. The board field holding a card's priority, and that field's options in rank order, as `board.priority` in the form given below the table. The declared order ranks cards, whatever order or options the board's own field holds. A card with no value and a card holding a value the consumer did not declare share one rank, below every declared option. Cards that share a rank are ordered by issue number, oldest first | L0 for the repository, the board and the board's owner. L1 for the worktree root, which the verb resolves and hands it, and the topic rule. L2 for the topic rule's line of work, by which it finds a card's pull request. L3 for N. L5 for the push | Yes, N defaults to 3. The worktree root defaults to `../<name>-worktrees`, where `<name>` is the part of `repo` after the slash. The topic rule defaults to `rigger-{number}`. |
+| **Engine settings** | The repository, the board, and its column display names as options of the board's `Status` field. The board's owner, as `board.owner` in the form given below the table. The concurrency N, the state directory (`.rigger/` by default), and whether telemetry pushes. The worktree root and the rule that derives a worktree's topic from a card, as `worktrees` in the form given below the table. The board field holding a card's priority, and that field's options in rank order, as `board.priority` in the form given below the table. The declared order ranks cards, whatever order or options the board's own field holds. A card with no value and a card holding a value the consumer did not declare share one rank, below every declared option. Cards that share a rank are ordered by issue number, oldest first | L0 for the repository, the board and the board's owner. L1 for the worktree root, which the verb resolves and hands it, and the topic rule. L2 for the topic rule's line of work, by which it finds a card's pull request. L3 for N. L5 for whether telemetry pushes, and with it off L5 reaches no push side | Yes, N defaults to 3. The worktree root defaults to `../<name>-worktrees`, where `<name>` is the part of `repo` after the slash. The topic rule defaults to `rigger-{number}`. |
 | **Kinds of work** | A name per kind, with its maker role, ordered judges (`owner` last if at all), each a role and optionally its provider rule, provisioning steps, the review loop bound in rounds, and the card labels that select the kind. Beside the kinds, the one card label that marks an epic, in the form given below the table | L2 for which kind selects a card, the provisioning steps it runs, the loop, the gate, the provider each judge runs on, and the provider the gate requires of each judge's marker | Yes |
 | **Roles** | A name, an agent file in the consumer's repository, a provider, a default model tier, the card labels that select another tier, the card labels that select another provider, and the time its dispatch may run | L2 selects the role a card needs and the tier its labels select. L2 selects the provider its labels select. L3 dispatches it. L1 runs it through L0's provider adapter | Yes |
 | **Where provider assets live** | Nothing. A role names its agent file by path, so the directory is whatever the provider reads: Claude Code reads `.claude/` and `.mcp.json`, and a second adapter reads its own. The tools and connectors a dispatched agent may use are among those assets. `init` forks each template where its provider looks for it | L0, through the provider adapter, from the directory the dispatch runs in | Fixed by the provider |
@@ -158,7 +170,7 @@ workaround.
 | | | — a destination names no declared role; | |
 | | | — a role is the destination of critical or a recorded-decision change. | |
 | **Improvement roles** | Per loop: the role, its cadence (drain or clock), and the signals it reads | L6 | After v0 |
-| **Clock triggers** | Per trigger, a schedule, a card template or an internal job, and a catch-up policy. Beside the triggers, the board poll's interval, which `run` waits between two polls of the board while idle. Both in the form given below the table | L3 | Yes |
+| **Clock triggers** | Per trigger, a schedule, a card template or an internal job, and a catch-up policy. Beside the triggers, the board poll's interval, which `run` waits between two polls of the board while idle. Both in the form given below the table | L3 for the schedule, the catch-up policy, the internal job and the poll. L2 for the card template, its author included | Yes |
 | **Provider adapters** | A module implementing the adapter interface for one agent CLI. It turns an agent file, a tier and a prompt into the CLI's invocation in one directory. It names the one folder its CLI keeps for that directory outside the dispatch's directories, or none. It loads only the tools and connectors that directory declares | L0 | Claude Code shipped; Codex shipped in M4 |
 | **Forge adapter** | A module implementing the board, issue, PR, and CI interface, with the forge assets `init` forks. The one asset is the gate workflow, and `init` reads its destination from `src/substrate/forge/assets.mjs` | L0, and `init` for each asset's destination | GitHub only; the interface exists so a second forge is an L0 change and nothing else |
 | **Deliverable** | Fixed in v0: a pull request merged behind the gate. Content scenarios still deliver by branch and PR. A publish adapter for non-git targets is a later L0 extension | L2 | Fixed |
@@ -255,6 +267,25 @@ what the Clock triggers row lists. `poll` is the milliseconds `run` waits betwee
 board while idle, as "Triggers" sets out. `poll` is required wherever a trigger is declared, and it
 has no default. The config validator refuses a clock declaration without `poll` (`R-SCHED-10`).
 
+Each trigger under `triggers` declares these keys, and every key but `author` is required:
+
+- `interval` and `anchor`, its schedule. `interval` is the milliseconds between two occurrences,
+  and `anchor` is an ISO 8601 date and time carrying its offset. A trigger's occurrences are the
+  anchor plus a whole number of intervals, so none falls before the anchor.
+- `card`, its card template, or `job`, its internal job, and never both. `card` holds the card's
+  `title`, `labels` and `acceptance`, and `author`, who writes that acceptance. `author` names
+  `owner` or a declared role, and the author is `owner` where it is absent (`R-CARD-41`). `job`
+  names `report`.
+- `catchUp`, its catch-up policy: `fire` or `skip`.
+
+One function in `src/config/` parses a trigger and computes its occurrences. The config validator
+refuses with it (`R-SCHED-10`), and L3 imports it, so one parser serves both. The function that
+computes the `ExitTimeOut` bound also lives there ("Supervising `run`").
+
+The schedule is an interval and an anchor, not a calendar expression. Every other duration in the
+config is milliseconds, and the pair covers every trigger M7 names in a few lines. "How a clock
+trigger fires" says what would reverse it.
+
 `poll` has no default because nothing in this repository fixes a figure for it, and a default
 with no source would be a judgment presented as a measurement. What would reverse it: a measured
 count of the forge calls one poll makes, giving a figure that stays inside the forge's rate limit
@@ -315,17 +346,17 @@ L3 owns three trigger kinds. **Pull** fires on board occupancy: a card in Ready 
 
 Scheduled work is visible work. A clock trigger declares whether its work is a card; when it is,
 the trigger creates the card and L2 runs it like any other. A trigger declaring an internal job
-dispatches directly, as do Rigger's own report and stale-card sweep, and nothing else dispatches
-without a card. A clock trigger that fires while
-Rigger is not running fires once on the next start if its window was missed; that catch-up policy
-is per trigger in config.
+runs it in-process, with no card, as "How a clock trigger fires" sets out. `R-SCHED-5` names
+what else may run without a card. An occurrence missed
+while Rigger was down fires once at the next start, or not at all, as the trigger's own catch-up
+policy says.
 
 A clock trigger is declared where the clock declaration's `triggers` names at least one trigger. A
 clock declaration holding a `poll` and no trigger declares none. With no clock trigger declared,
 `run` ends once the board drains, and launchd's relaunch is what reads the board again ("How `run`
 is supervised", below). While a clock trigger is declared, `run` stays up after the board drains
-and fires each trigger as it comes due. Under `once`, no clock trigger fires, and nothing in the
-subsection below applies.
+and fires each trigger as it comes due. Under `once`, no clock trigger arms or fires, and nothing
+in the two subsections below applies (M7-U2 Q12 on #1009).
 
 ### While a clock trigger keeps `run` up
 
@@ -362,8 +393,11 @@ sleeps. That one timer wakes L3 both for the poll and for each trigger's next oc
 `loop.mjs` wires it into `run`, and holds no timer of its own. What would reverse it: a third
 timer need unrelated to the clock, which would make the module a scheduling utility.
 
-Whether an internal job's firing counts as in flight, and so holds back the poll and the drain, is
-the clock declaration's placement, M7-04a on #1009. This subsection does not place it.
+A clock trigger's firing is no claim, so it never counts as in flight. That holds for an internal
+job's firing as for a card's: it holds no claim and no slot, so it holds back neither the poll nor
+the drain, and neither waits for it. A card a firing creates ends the idle period only when a pull
+claims it. What would reverse it is what would reverse the in-process job ("How a clock trigger
+fires").
 
 **A poll in each idle state.**
 
@@ -388,6 +422,8 @@ answered once it ends. The verb prints it and picks the exit status. While a clo
 - A poll that fails, or whose `trigger` event the sink refuses, hands its failure to the verb as
   that poll settles. The failure is among that idle period's outcomes, and the next drain does not
   hand it again.
+- A clock trigger's firing hands the verb, as it settles, each failure "How a clock trigger fires"
+  names. A `report` firing hands it the report L5 returned, unread, as one hand-over.
 - The verb prints each hand-over as it prints a whole run with no clock trigger declared, and exits
   at none of them.
 - A `run` ended by a signal while its launchd job stays loaded runs L0's exit cleanup, which sets
@@ -447,6 +483,165 @@ not a measurement, and its premise is the reads `take` and `facts.mjs` make:
 The figure leaves out admission's reads, which read the state directory and not the forge. A card
 in Done costs nothing. M7-24 on #1009 measures the figure on a fake forge.
 
+### How a clock trigger fires
+
+L3 arms and fires each clock trigger under `run` alone. The architect's r1 review on #1009 places
+the schedule and the job (S6), the last firing (S7) and the card's creation (S8). Its r2 review
+places the duplicate guard (§2, F3) and arming (§3, F4).
+
+**Arming.** A start under `run` reads each declared trigger. L3 records `trigger.armed` `{ name,
+interval, anchor }` where the record holds no `trigger.armed` of that name, or where the newest one
+holds another `interval` or `anchor`. Arming acts on nothing outside Rigger, so it is no start. A
+sink that refuses it is the halt, and no trigger fires ("Failure model").
+
+**Identity.** A trigger is its name, the key it is declared under. A changed schedule re-arms it,
+and nothing else does: not its card template, its author included, nor its internal job, nor its
+catch-up policy. The config is read at a start, so a change takes effect at the next start under
+`run`.
+
+**The last firing, and which occurrences are due.** A trigger's last firing is the newest outcome of
+a firing of its name in the event record, and never a file. L3 compares outcomes by the occurrence
+each names, never by when it was recorded. An occurrence is due where it falls after the trigger's
+newest arming and after its last firing's occurrence, and not after the present. An occurrence at
+or before the newest arming is therefore never due (M7-U2 Q13 on #1009).
+
+**Catch-up.** An occurrence due at a start under `run` was missed while Rigger was down. The
+trigger's catch-up policy decides what follows:
+
+- `fire` makes one firing, carrying the newest missed occurrence;
+- `skip` makes none, and no missed occurrence fires later in that run.
+
+Neither makes one firing per missed occurrence (`R-SCHED-8`). After the start, L3 fires a trigger
+at each wake at which an occurrence after the start is due, carrying the newest such occurrence.
+
+**When a firing runs.** The timer in `src/scheduling/clock.mjs` wakes L3 at each trigger's next
+occurrence. L3 fires it then, whether or not claims are held, because a firing claims no card and
+takes no slot. Two firings never run at once. Where several are due together, L3 fires them in the
+order of their occurrences, and by trigger name in code-unit order where two occurrences tie. A
+trigger with a pending firing, set out below, fires no other occurrence until that one settles.
+
+**A firing whose work is a card.** The template carries the card's title, labels and acceptance,
+and the author the trigger names, `owner` where it names none (`R-CARD-41`). The author is a key of
+the template, so a trigger whose work is a job names none. A firing runs in these steps, so that a
+crash never leaves two cards for one occurrence:
+
+1. L2 reads `k`, the number of the repository's newest issue or pull request, as the hold's step 5
+   in "Failure model" reads it.
+2. L3 records the firing's start as `trigger` `{ trigger: 'clock', name, occurrence, after: k }`.
+3. L2 opens the card from the template and adds it to the board in Ready, recording the move under
+   the cause `created`. The card's body opens with the mark line, which names the trigger and the
+   occurrence, outside the card's `## Acceptance` section.
+4. L3 records the outcome as `trigger.outcome` `{ name, occurrence, outcome: 'card', issue }`.
+5. A firing's start with no outcome is **pending**, and L3 settles each pending firing as the next
+   paragraph says.
+
+One module under `src/workflow/` composes the mark line and parses it back, as `escalation.mjs`
+does for notes, so the two cannot drift.
+
+**Settling a pending firing.** At `run`'s start L3 finds each pending firing in the record, and
+after that it knows each firing it made. At each trigger of any kind, as it acts on each hold's
+closer, L3 settles each pending firing before that clock trigger fires again. L3 tells a pending
+firing's work by its recorded start, never by the trigger's present declaration: a start carrying
+`after` is a card's, and one without it is `report`'s. It settles one whose work is a card in this
+order, whatever the trigger now declares:
+
+1. L2 reads the number `<j>` of the repository's newest issue or pull request. It then reads each
+   issue numbered above `k` and up to `<j>`, as the `hold-<id>-after-<k>.json` bullet of "Failure
+   model" reads them: by number, in any state, passing over a number that names no issue. L2 reads
+   a mark only on an issue written by an account with write access to the repository.
+2. Where one carries that trigger's and that occurrence's mark, L2 places the card in Ready where
+   the issue is open and the board holds it in no column. It leaves the card where it is otherwise,
+   a closed card included. L3 then records the outcome naming that issue. Where the placing fails,
+   L3 records no outcome, and the firing stays pending.
+3. Where none does, L2 opens the card only where all of these hold:
+   - the trigger is still declared under its name;
+   - its work is still a card;
+   - the record holds no `trigger.armed` of its name after the pending start.
+
+   L2 then opens the card from the template the start reads now, its author included, as step 3
+   above, and L3 records the outcome, as step 4 above. Otherwise L2 opens nothing, and L3 records
+   the outcome as `trigger.outcome` `{ name, occurrence, outcome: 'abandoned' }`. The record keeps
+   an arming across any later crash, so that exclusion holds at every later start.
+
+A pending firing whose work is `report` is settled as abandoned, whatever the trigger now declares,
+and the job does not run again. The next occurrence's report shows every event the lost one would
+have shown, so a late one adds nothing. Its start carries no `k`, so no card is opened for it even
+where the trigger now declares one.
+
+**A firing whose work is `report`.** `report` is the only internal job (M7-U2 Q6 on #1009). L3
+records the firing's start as `trigger` `{ trigger: 'clock', name, occurrence }`. It then calls L5's
+report in-process, with no L1 dispatch, no agent, no group and no slot. L3 records the outcome as
+`trigger.outcome` `{ name, occurrence, outcome: 'job' }`. L3 hands the verb the report L5 returned,
+unread, as one hand-over, and writes nothing to standard output itself. The verb prints the report
+as it prints each hand-over, and the LaunchAgent's log under `~/Library/Logs/rigger/` keeps it.
+
+**Admission.** A firing is no pull, so admission does not govern it. Under a closed admission, a
+trigger whose work is a card still creates its card, and no pull claims that card until admission
+reopens (`R-SCHED-3`). The `report` job runs whatever admission says (M7-U2 Q4 on #1009).
+
+**An unreadable record.** A start under `run` that cannot read the record arms and fires no clock
+trigger for that run's life. Rigger names the record and why it could not read it, with the line
+that would not parse where one would not. Pulls continue (M7-U2 Q14 on #1009). A line that does not
+parse stays so until a person mends it, so the run reads the record again only at its next start.
+
+**A clock trigger in each state.** Every state below is under `run` with a readable record, unless
+its row says otherwise.
+
+| State | What happens |
+|---|---|
+| under `once` | no trigger arms or fires |
+| the record unreadable at the start | no trigger arms or fires for that run's life; Rigger names the record and the line; pulls continue |
+| no `trigger.armed` of the trigger's name in the record | L3 records `trigger.armed`; no occurrence at or before it is ever due |
+| its schedule differs from its newest arming's | re-armed, as in the row above |
+| its schedule changed back to one an earlier arming holds | re-armed, because the newest arming holds another schedule (`R-SCHED-37`; M7-U7 Q31 (a) on #1009) |
+| removed, then declared again under its name and its newest arming's schedule | not re-armed, so a missed occurrence may fire once under its catch-up policy |
+| its card template, its author included, internal job or catch-up policy changed, and its schedule did not | not re-armed |
+| a card-shaped occurrence comes due, admission open | steps 1 to 4; the card enters Ready |
+| a card-shaped occurrence comes due, admission closed | steps 1 to 4; the card enters Ready, and no pull claims it until admission reopens |
+| an occurrence of `report` comes due, whatever admission says | L3 records the start, runs `report` in-process and records the outcome; no dispatch, no slot |
+| an occurrence comes due while the card of the trigger's previous firing is open | another card (M7-U2 Q3 on #1009) |
+| occurrences missed while Rigger was down | one firing carrying the newest missed occurrence under `fire`, and none under `skip`; never one per missed occurrence |
+| a card-shaped firing pending at a start | settled as "Settling a pending firing" says |
+| a card's firing pending, its trigger unchanged | step 1's scan; a card found is placed as step 2 says; none found: L2 opens the card |
+| a card's firing pending, its trigger no longer declared under its name, as after its removal, its renaming or the clock declaration's removal | step 1's scan; a card found is placed as step 2 says; none found: the outcome is abandoned |
+| a card's firing pending, its schedule changed, or changed back, so that a `trigger.armed` of its name follows the pending start, at this or any earlier start | step 1's scan; a card found is placed as step 2 says; none found: the outcome is abandoned |
+| a card's firing pending, its trigger removed and declared again under its name and its newest arming's schedule | as with the trigger unchanged, because no arming follows the pending start |
+| a card's firing pending, its trigger now declaring `job: 'report'` at an unchanged schedule | step 1's scan; a card found, as when the crash followed its opening, is placed as step 2 says; none found: the outcome is abandoned, because no template remains to open it from |
+| a card's firing pending, its card template changed, title, labels or acceptance, at an unchanged schedule | step 1's scan; a card found is placed as step 2 says, as it was opened; none found: L2 opens the card from the template the start reads now |
+| a card's firing pending, its template's author changed at an unchanged schedule | as for a changed template: a card not found is opened with the author the start reads now |
+| a card's firing pending, its catch-up policy changed | as with the trigger unchanged: the policy decides only which missed occurrences fire, never how a pending one settles |
+| a `report` firing pending, its trigger unchanged, undeclared, re-armed, now declaring a card, or with its catch-up policy changed | its outcome is recorded as abandoned, and no job runs and no card is opened |
+| a firing pending, another trigger or `poll` changed | the pending firing settles as its own trigger's row gives |
+| the occurrence's card, found while settling, on the board in a column other than Ready, or closed | its outcome is recorded; the card is not moved |
+| the occurrence's card, found while settling, open and in no column, and placing it in Ready fails | L3 records no outcome, and the firing stays pending; `run` hands the failure to the verb, and the next trigger settles it |
+| an issue numbered above `k` carrying the mark, written by an account without write access | not read as the occurrence's card |
+| the read of `k` fails or times out | L3 records no start, and the occurrence stays due; `run` hands the failure to the verb, and L3 fires the trigger again `poll` milliseconds later |
+| a read of `<j>`, or of an issue numbered above `k`, fails or times out while settling | no card is opened and no outcome is recorded; the firing stays pending, and L2 reads again at the next trigger, as for a hold's `after-<k>` closer |
+| opening the issue, or adding it to the board, fails after the start was recorded | L3 records no outcome, and the firing stays pending; `run` hands the failure to the verb, and the next trigger settles it |
+| the sink refuses `trigger.armed`, or a firing's start | the halt: nothing fires ("Failure model"); `run` hands the refusal to the verb |
+| the sink refuses a firing's outcome | the firing stays pending; `run` hands the refusal to the verb; the next trigger settles it, finding the card, or recording a `report` firing as abandoned |
+| an internal job's firing while no claim is held | not in flight: it holds back neither the poll nor the drain |
+| two triggers come due together | they fire one at a time, by occurrence, then by name |
+| an occurrence comes due while claims are held | it fires then, because a firing takes no slot |
+
+In every other state, a trigger arms and fires as the rows above give for its record, its
+admission and its occurrence, and nothing else fires.
+
+A card whose mark line a person edited out, before a crash, is outside this placement. Settling
+then finds no card, and a second card can follow. That is the residual a note carries ("What the
+gate cannot tell apart").
+
+**What would reverse each choice:**
+
+- **The interval-and-anchor schedule:** a consumer needing a calendar schedule, such as weekdays
+  only.
+- **The in-process job:** a job that must spawn a command, which only L1 runs.
+- **The record as the last firing's source:** a start's whole read of the record becoming
+  measurably slow, or a requirement that a firing survive the loss of the local record.
+- **The duplicate guard:** the event record showing two cards for one occurrence.
+- **Identity by name:** an owner ruling that a renamed trigger keeps its history, which would need
+  an identity key apart from the name.
+
 ### Supervising `run`
 
 Keeping the Rigger process alive across reboots is the OS scheduler's job. The launchd assets that
@@ -479,7 +674,8 @@ asset is one per-user LaunchAgent template under `templates/launchd/`, and `D28`
   plus `READ_TIMEOUT`, which L0's process adapter exports and the function imports. The bound is a
   judgment on Q-e's premises: `concurrency` counts cards, a panel's judges run at once, and Rigger
   cleans up dispatches one after another, each within that figure. At this repository's config the
-  report recommends 150 s (Q-e, a judgment).
+  report recommends 150 s (Q-e, a judgment). Exit cleanup makes no push, so the bound holds no
+  network call ("Pushing the stream").
 - **What L0 answers, and what `doctor` compares.** `doctor` reads a loaded job through a new L0
   module, `src/substrate/launchd.mjs`, which spawns only through the process adapter. It answers
   only the loaded job's fields, because L0 knows neither `concurrency` nor a kind. `doctor`
@@ -1267,8 +1463,9 @@ no removal. L3 frees a card's slot only once L1 has handed back the
 outcome of every dispatch made under the card's claim.
 
 While L5's sink refuses an event, L3 starts no work. This document calls that the halt. A start
-is a pull, which claims a card, a dispatch, or a merge. L3 records each start before it acts outside
-Rigger on it, in this order:
+is one of four: a pull, which claims a card; a dispatch; a merge; or a clock trigger's firing. L3 records a
+firing's start before L2 opens its card or L3 runs its job, and "How a clock trigger fires" gives
+its steps. L3 records each other start before it acts outside Rigger on it, in this order:
 
 1. For a pull, L3 takes the card's claim in memory, synchronously.
 2. L3 appends the start's event to the sink. Recording a start follows the claim, and the append
@@ -1304,7 +1501,8 @@ first spawn, which may come before it knows the state directory. The sink holds 
 until the verb names that directory, and writes it there before anything later. A verb that ends
 without naming one writes what the sink held to standard error, and writes nothing under its target.
 The verb ends the sink on every path it returns through. On any other exit, L0's exit cleanup ends
-the sink after its own kills, so those kills are among what the sink writes.
+the sink after its own kills, so those kills are among what the sink writes. Exit cleanup makes no
+push ("Pushing the stream").
 
 Six layers produce a signal set. L5 owns the sink rather than a signal, and L7 is a person. A signal
 is derived, where an event is recorded. L3 records each dispatch's role and tier, and L5 derives
@@ -1383,6 +1581,11 @@ How a call ends decides what L0 records and what the call's caller is handed:
 | L0's exit cleanup ended it, and the process ends | Nothing | Nothing: the process ends before the call settles |
 | L0's exit cleanup ended it, and a signal listener of the caller keeps the process running | One `call.end`, with the outcome the call's result gives. The cleanup's kill gives a non-zero exit, so a call it killed records `failed` | The call's result, as the process adapter gives it |
 
+A forge write side marks an `EVENT_REFUSED` failure from its write call as `made`, with its parsed
+answer, where the call's result passes the side's success check. A refusal on any read before the
+write is never marked, and a GraphQL write's check also requires the mutation's root field in
+`data`, non-null.
+
 A later start never ends a forge or git call, because L1 records only a dispatch's group for a
 start to end ("Failure model"). Exit cleanup records its own kills and then ends the sink. A call
 it ended records no `call.end` where the process then ends, so the fault rate's denominator leaves
@@ -1442,6 +1645,204 @@ Any one of these would reverse the placement:
 - A git fault rate whose faults are answers rather than host faults. Two kinds show it: a fetch try
   a `fetch.retried` follows, and a non-zero exit its caller reads as an answer, as `git ls-remote
   --exit-code` gives for a missing ref. The fix would leave those out of the numerator.
+
+### Pushing the stream
+
+Once the owner turns telemetry push on, L5 copies the stream to the data ref in the consumer's
+repository. The architect's r1 review on #1009 places the push (S9), and its r2 review adds the
+drain (§1). M7-03's report, `docs/spikes/telemetry-push.md`, measured the mechanism, and this
+section calls it "the report". Every figure below is the report's, cited to its section, unless it
+is marked a judgment.
+
+**Whose it is.** The push is L5's. L5 reads `telemetry.push` from the config the verb hands it.
+With it off, L5 makes no push and reaches no push side (`R-SAFE-3`). L0's push side,
+`src/substrate/data-ref.mjs`, admits the one write boundary rule 2 names, and only L5 reaches it.
+
+**The mechanism.** The push side writes through `git push`, as the report recommends. Three of the
+report's measured results carry that choice:
+
+- `git push` was faster in every cell of its size crossing. Its medians were 1.643 s and 1.694 s
+  at 1,243 bytes, and 2.447 s and 3.286 s at 10 MB, against the API's 2.624 s, 2.379 s, 5.563 s
+  and 5.734 s ("The size crossing").
+- A ruleset's refusal through `git push` named its rule, on a create and on an update. The API's
+  refused create answered only "Reference update failed" ("Rules"). `R-RECORD-15` names the
+  failure, so the push side hands L5 the text `git push` printed.
+- An unforced `git push` of a commit with no shared history was rejected as non-fast-forward on
+  both namespaces. The API accepted one on `refs/rigger/` with `force=false` ("Whether an update
+  needed a forced write").
+
+**The ref.** The data ref is `refs/rigger/events`, outside `refs/heads/` and `refs/tags/`. The
+forge refused every ruleset naming `refs/rigger/*`, as a `branch` target and as a `tag` target
+("Rules"). No measured stream-only write, on either namespace, started a workflow run
+("Workflows"). The remote is `origin`, the remote L0's workspace adapter already reads the main
+line from.
+
+**The commit.** Each update is one commit whose tree holds one entry, `events.jsonl`, and nothing
+else. That entry holds the stream's bytes as L5 read them at the push's start, up to and including
+the last newline. The commit's parent is the data ref's tip as the push read it, and a first push's
+commit has none. A tree that holds only the stream carries no `.github/`, which is the tree the
+report measured. Trimming to the last newline is a judgment: it keeps a line another process is
+still appending out of the copy, until the next push.
+
+**The steps.** The push side runs these in the consumer's repository, each a `git` call through L0's
+process adapter, with the environment `gitEnvironment` gives:
+
+1. `git ls-remote origin refs/rigger/events`, which reads the tip, or finds the ref absent.
+2. Where the repository's object store lacks the tip, a fetch of that commit alone from `origin`,
+   which writes no ref and no `FETCH_HEAD`.
+3. `git hash-object -w --stdin`, given the stream's bytes, then `git mktree` and `git
+   commit-tree`, as the report's `push` mechanism ran them ("The mechanisms").
+4. `git push --porcelain origin <commit>:refs/rigger/events`.
+
+The steps are the report's `push` mechanism with three changes, each a judgment the report did not
+measure:
+
+- The parent comes from the forge, because the report's scratch repository made every parent it
+  pushed ("What M7-07 must not assume").
+- The fetch names no destination and is told to write no `FETCH_HEAD`. That `git` then writes only
+  objects is a judgment.
+- The bytes come on standard input, so that what the commit holds is what L5 read.
+
+The push side writes objects in the consumer's object store and no ref there. No later push reads
+them back, because each push reads the tip from the forge afresh, so `.rigger/` gains nothing. Its
+`git` calls run beside the workspace adapter's one-at-a-time queue, not in it, so a push never holds
+a workspace back. That two such calls share one object store safely, when neither writes a local
+ref, is a judgment.
+
+**Never forced.** No push is ever forced, in any state. A rejected push has not succeeded, and the
+next push builds on the tip it then reads. The report measured that an update whose parent is the
+tip needed no forced write ("Whether an update needed a forced write").
+
+**Sign-ins and tools.** The push uses `git` alone, and whatever credential `git` already uses for
+`origin` (`R-SAFE-1`, `R-SAFE-2`). On the measured host that was `gh`, as `git`'s credential helper
+for github.com ("Host tools each mechanism needed"). The push side stores no credential, passes
+none, and sets no credential helper. It sets `GIT_TERMINAL_PROMPT=0`, so that a missing credential
+fails rather than waits for a prompt; that `git` then fails at once is a judgment.
+
+**When L5 pushes.** L5 pushes on two occasions, and on no other:
+
+- **At a verb's normal return**, where the verb named the state directory and its sink appended at
+  least one event there. The push runs as the verb ends the sink, before the sink's end.
+- **At each drain trigger**, while a clock trigger keeps `run` up. L3 has L5 push, and does not wait
+  on it.
+
+A drain that ends `run`, as with no clock trigger declared, makes no push of its own. The return's
+push follows at once and serves it. Exit cleanup makes no push, because a network call there would
+break the `ExitTimeOut` bound (S9; "Supervising `run`"). An in-flight push's `git` call is one of
+L0's calls, and exit cleanup ends it as it ends any call ("L0's call events").
+
+**One push at a time.** L5 never runs two pushes at once. A drain while a push is in flight starts
+no second push. L5 instead makes one more push once that push settles, carrying the stream as it
+holds then, however many drains came meanwhile. A verb's return waits for an in-flight push to
+settle, then pushes.
+
+**The time limit.** Every push has a time limit of `PUSH_TIMEOUT` milliseconds, which
+`src/substrate/data-ref.mjs` exports (`R-RECORD-17`). It is 30,000 ms over the whole push. At the
+limit L0 kills the group of the call in flight, and the push has timed out. The figure is a
+judgment: about nine times the slowest whole push the report measured, 3.420 s at 10 MB ("Every
+cell", S/rigger/push/10m/2). The report measured no push that timed out. A consumer-set limit
+would change the config shape, and a later card carries it.
+
+**The outcome.** L5 records each push's outcome as `push.end`, after the push settles. Its fields:
+
+| Field | What it holds | Absent from the line |
+|---|---|---|
+| `ref` | `refs/rigger/events` | Never |
+| `outcome` | `pushed`, `refused`, `timed-out` or `failed` | Never |
+| `ms` | The milliseconds from the push's start until it settles | Never |
+| `bytes` | The byte length of the stream the commit holds | Where the push failed before it read the stream |
+| `parent` | The tip the push read | Where the ref was absent, or the read failed |
+| `commit` | The commit pushed | Unless `outcome` is `pushed` |
+| `reason` | The failure, in the words `git` or the process adapter gave it | Where `outcome` is `pushed` |
+
+`refused` is a push `git push` reported as rejected. `timed-out` is a push stopped at
+`PUSH_TIMEOUT`. `failed` is every other push that did not succeed, a `git` that never started
+included. The push side's `git` calls record no `call.end`, because `push.end` records them, so the
+substrate fault rate counts no push. A `push.end` is in the stream the next push copies, and not in
+the one its own push copied.
+
+**What a push that did not succeed leaves.** It leaves the same in every way it can fail:
+
+- Rigger says so in its output, naming the failure, and records `push.end` (`R-RECORD-15`). At a
+  drain, `run` hands it to the verb as the push settles, as it hands a poll's failure.
+- Work starts and finishes as it would have, and the exit status is unchanged (`R-RECORD-14`,
+  `R-RECORD-18`).
+- The next push tries again (`R-RECORD-16`). It needs no memory, because every push copies the
+  whole stream.
+
+A sink that refuses `push.end` is a refused event, as "Failure model" sets out, and not a push
+that failed.
+
+**A push in each state.**
+
+| State | What happens |
+|---|---|
+| telemetry push off | no push, and no push side is reached (`R-SAFE-3`) |
+| the data ref absent | the first push creates the ref, with a commit that has no parent |
+| the data ref's tip the previous stream commit | a plain push of a child of that tip |
+| the tip not in the local object store | the push fetches that commit from `origin` before it builds the child |
+| the tip moved by another writer after the push read it | `git push` rejects it as non-fast-forward, and the push is `refused`; the next push reads the new tip and builds on it |
+| a drain trigger while `run` stays up | the same push; the drain does not wait on it, and the poll keeps its schedule |
+| a drain trigger while a push is in flight | no second push; one more push follows when the first settles |
+| L0's exit cleanup | no push; an in-flight push's call is ended as any call is |
+| a verb that ends without naming the state directory | no push, since no stream was written |
+| a verb that named it and appended no event | no push |
+| the forge refuses the push | `refused`, naming the text `git push` printed; as a push that did not succeed |
+| the push runs past `PUSH_TIMEOUT` | `timed-out`; as a push that did not succeed (`R-RECORD-17`) |
+| `git` absent from the host | `failed`, naming the failure; as a push that did not succeed (`R-RECORD-14`, `R-RECORD-15`, `R-RECORD-16`, `R-RECORD-18`) |
+| no credential for `origin` | `failed`, naming the failure; as a push that did not succeed (`R-RECORD-14`, `R-RECORD-15`, `R-RECORD-16`, `R-RECORD-18`) |
+| no committer identity for `git commit-tree` | `failed`, naming the failure; as a push that did not succeed (`R-RECORD-14`, `R-RECORD-15`, `R-RECORD-16`, `R-RECORD-18`) |
+| an event recorded while a push is in flight | the push copies the stream as L5 read it at the push's start; the next push carries the event (`R-RECORD-13`) |
+| Rigger killed outright during a push | see below |
+| a ruleset that names no ref, as a `branch` ruleset over `~ALL`, refuses the write | not measured: the residual below |
+| any other state | as a push that did not succeed (`R-RECORD-14`, `R-RECORD-15`, `R-RECORD-16`, `R-RECORD-18`) |
+
+The tip-moved row rests on the report's measured rejection of an unforced push with no shared
+history ("Whether an update needed a forced write"). That the same check rejects a child of an
+older tip is a judgment.
+
+**Killed outright.** A Rigger killed outright runs no exit cleanup, so its `git push` may finish or
+die on its own. Either way the ref holds the tip it held, or the commit that push sent. The next
+push reads whichever it holds and builds on it, and the stream only grows, so the copy then holds
+every earlier event. That the forge moves a ref whole or not at all is a judgment the report did
+not measure. A forge that left a ref naming a commit it does not hold would reverse it.
+
+**The residual.** Whether a ruleset that names no ref, such as a `branch` ruleset over `~ALL`,
+reaches `refs/rigger/events` is not measured. The host's permission classifier blocked that step,
+and the owner ruled the report go ahead without it ("What I could not measure"; M7-U7 Q32 (a) on
+#1009). The step that settles it is the one the report names: on a probe, a `branch` ruleset with
+`include: ["~ALL"]` and a `creation` rule, then a first write to a fresh `refs/rigger/` ref and a
+fresh `refs/heads/` ref. Until it is measured, such a refusal is a `refused` push like any other.
+
+**The two placement reversals, ruled.** S9 and the r2 review each named a reversal for M7-03 to
+measure. Neither is met:
+
+- **S9's, "a whole-stream push too slow at the stream's present size".** Not met. At 1,243 bytes
+  the median whole push was 1.643 s and 1.694 s ("The size crossing"). The `git push` command took
+  1.3 to 1.8 s of that, and each local object command about 0.01 s ("The reversals the architect
+  named"). The premise, a judgment the report states, is that an incremental push would shrink the
+  bytes sent and not those round trips. The stream's present size is a test fixture's, so the
+  ruling holds only at the sizes measured.
+- **The r2 review's, "a push too slow to run once per idle period".** Not met, whatever `poll` is.
+  The premise is this section's own: the drain does not wait on the push, and L5 runs one push at a
+  time. A push slower than an idle period therefore delays no poll, pull or dispatch. Where `poll`
+  is shorter than a push, drains during it make one follow-up push, and the copy lags the stream
+  by at most the events since that push's start. The report's own premise, a poll in tens of
+  seconds, is then not needed.
+
+**What would revisit S9's reversal.** A `push.end` with `outcome: 'pushed'` whose `ms` exceeds half
+of `PUSH_TIMEOUT`, or whose `bytes` exceed 10,485,760, the largest size measured. Either would call
+for measuring the whole push on the host at that size, as the report's size crossing did. Where the
+round trips no longer dominate, the push becomes incremental.
+
+**The report's four reversals, and what Rigger would change** ("What would reverse it"):
+
+| Reversal | What Rigger would change |
+|---|---|
+| The `~ALL` check measured refusing a write to `refs/rigger/*` | the namespace gains nothing over a branch; a delta here rules again between `refs/rigger/events` and a branch, on the workflow and refusal grounds left |
+| A required stream commit carrying the consumer's `.github/` | this placement requires none, since the tree holds the stream alone; a requirement that asked for one would need the workflows measured again before any delta places it |
+| `git push` measured at or above the API's time at 10 MB, on the host Rigger runs on | the push keeps `git push` on its other grounds, the named refusal and the fast-forward guard; it moves to the API only where those fall too |
+| The forge refusing pushes outside `refs/heads/` and `refs/tags/`, or hiding them from `git fetch` | the data ref moves under `refs/heads/`; a delta here then places how the consumer's rulesets and `push` workflows treat it |
 
 ### What `report` derives
 

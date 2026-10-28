@@ -195,7 +195,7 @@ test('run under a hold closer names its reason and time, keeps L2 refusals and e
   const first = run({ items: [REFUSED, card(12, 'Ready')] }, { concurrency: 1 });
   const writes = (await first.model()).writes();
   const agents = first.agentRuns().length;
-  seed(join(first.consumer, '.rigger'), 'hold-c3.json', closerText({ reason: 'environment hold' }));
+  seed(join(first.consumer, '.rigger'), 'hold-c3-issue-7.json', closerText({ reason: 'environment hold' }));
   const ran = first.again();
 
   assert.equal(ran.code, 0, ran.err);

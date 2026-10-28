@@ -178,7 +178,7 @@ test('once under owner and hold closers names both, keeps L2 refusals and exits 
   const ran = once({ items: [REFUSED, card(12, 'Ready')] }, { prepare: ({ consumer }) => {
     const state = join(consumer, '.rigger');
     seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' }));
-    seed(state, 'hold-b2.json', closerText({ reason: 'environment hold' }));
+    seed(state, 'hold-b2-issue-7.json', closerText({ reason: 'environment hold' }));
   } });
 
   assert.equal(ran.code, 0, ran.err);
@@ -1047,8 +1047,8 @@ test('given once where a judge does not start, once prints the judge\'s role and
   assert.notEqual(code, 0, out);
   const line = err.split('\n').find((held) => held.startsWith(judgeLine(10, 'reviewer', '')));
   assert.ok(line, err);
-  assert.ok(line.startsWith(judgeLine(10, 'reviewer', 'did not start: the role\'s dispatch did not start: the claude adapter answered no invocation for role reviewer: ')), line);
-  assert.match(line, /Bash\(npm ci && npm test\), a rule for a compound command line/, line);
+  assert.ok(line.startsWith(judgeLine(10, 'reviewer', 'was held after two dispatches that failed the same way:')), line);
+  assert.match(err, /second:.*Bash\(npm ci && npm test\), a rule for a compound command line/, err);
   assert.deepEqual(agent.runs().map(({ role }) => role), ['engineer']);
 });
 
@@ -1709,7 +1709,7 @@ test('once prints each closer in the words it printed at #944\'s head, and those
   const ran = once({ items: [REFUSED, card(12, 'Ready')] }, { prepare: ({ consumer }) => {
     const state = join(consumer, '.rigger');
     seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' }));
-    seed(state, 'hold-b2.json', closerText({ reason: 'environment hold' }));
+    seed(state, 'hold-b2-issue-7.json', closerText({ reason: 'environment hold' }));
   } });
 
   assert.equal(ran.code, 0, ran.err);

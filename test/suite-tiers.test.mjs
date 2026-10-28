@@ -165,6 +165,7 @@ const expectedLists = {
 expectedLists.host.push('test/process-table.test.mjs');
 expectedLists.host.push('test/claude-folder-live.test.mjs');
 expectedLists.host.push('test/test-list-growth-host.test.mjs');
+expectedLists.host.push('test/build-test-matrix-host.test.mjs');
 expectedLists.host.push('test/mutation-receipt.test.mjs');
 expectedLists.host.push('test/proof-diff.test.mjs');
 expectedLists.host.push('test/printable-closer-verbs.test.mjs');

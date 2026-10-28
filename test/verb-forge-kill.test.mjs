@@ -3,6 +3,9 @@
 // stops the verb before its next forge call, SIGTERM mid-read, even inside L0's spawn, ends the verb
 // by that signal, and a test's teardown ends its verb before it sweeps the verb's fixture.
 
+import { onceEventWorld, makerSpan } from './once-event-world.mjs';
+import { assertCommandContext } from './event-context-world.mjs';
+import { card as consumerCard } from './verb-consumer.mjs';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
@@ -17,6 +20,7 @@ import { installFakeGh } from './fake-gh.mjs';
 import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { childrenIn, ended, fixture, gone, holding, leave, running as naming, sweep, TAIL, until } from './process-fixtures.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { PULL, atTerminal, world as verdictWorld } from './verdict-world.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const bin = join(root, JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger);
@@ -264,3 +268,155 @@ for (const verb of ['once', 'run', 'plan', 'setup-board', 'doctor']) {
 
   test(`given ${verb} receiving SIGTERM inside L0's spawn of a forge read's gh stand-in, once the stand-in has started a child and before the spawn returns, the child is dead, its L0 kill event is in the target's stream, and ${verb} ends reporting SIGTERM`, { timeout: 30_000 }, (t) => endsTheChildOnSigterm(t, verb, { inSpawn: true }));
 }
+
+/** Asserts `text` names the stand-in's kill in `directory` as unrecorded, and says no write was refused or failed. */
+function reportsMade(text, directory) {
+  assert.ok(text.includes(`/usr/bin/tail -f ${directory}/hold`), text);
+  assert.match(text, /survivor\.killed \{[^\n]*"cmd":"\/usr\/bin\/tail -f [^"]*\/hold"[^\n]*\}: EISDIR/, text);
+  assert.doesNotMatch(text, /was refused|before one failed|the post failed/, text);
+}
+
+test('given a sink that refuses the L0 kill event of the claim\'s column move, which the board took, rigger once reports card #10 moved from ready to coding, naming the unrecorded kill, and never that the move was refused', async (t) => {
+  const directory = holding(t);
+  const { where, stream } = consumer();
+  const fake = fakeLeavingChild(directory, { ...BOARD, items: [card(10)] }, {
+    on: '*updateProjectV2ItemFieldValue*',
+    then: `rm -f ${quoted(stream)}; mkdir -p ${quoted(stream)}`,
+  });
+
+  const ran = runBin('once', where, directory);
+
+  assert.notEqual(ran.code, 0, ran.out);
+  assert.match(ran.err, /card #10 moved from ready to coding, and the event sink refused to record it: 1 L0 event\(s\) went unrecorded: survivor\.killed/, ran.err);
+  reportsMade(ran.err, directory);
+  assert.deepEqual(await columnsOf(fake), { 10: template.board.columns.coding });
+  for (const child of childrenIn(directory)) assert.equal(await gone(child), true, `child ${child} is alive`);
+});
+
+test('given a sink that refuses the L0 kill event of setup-board\'s column write, which the board took, setup-board lists that write among those made, names the unrecorded kill, tries no later write and exits non-zero', async (t) => {
+  // A board lacking the first declared column, which setup-board adds before any other write.
+  const directory = holding(t);
+  const { where, stream } = consumer();
+  const fake = fakeLeavingChild(directory, { ...BOARD, columns: BOARD.columns.slice(1) }, {
+    on: '*updateProjectV2Field\\(*',
+    then: `rm -f ${quoted(stream)}; mkdir -p ${quoted(stream)}`,
+  });
+
+  const ran = runBin('setup-board', where, directory);
+  const said = `${ran.out}${ran.err}`;
+
+  assert.notEqual(ran.code, 0, said);
+  assert.match(said, new RegExp(`rigger setup-board: 1 writes to board ${PROJECT}\\n  added the column ${BOARD.columns[0]}\\n`), said);
+  reportsMade(said, directory);
+  assert.equal(fake.sent().filter((args) => args.join(' ').includes('query=mutation')).length, 1, JSON.stringify(fake.sent()));
+  for (const child of childrenIn(directory)) assert.equal(await gone(child), true, `child ${child} is alive`);
+});
+
+test('given a sink that refuses the L0 kill event of the owner\'s verdict post, which the forge took, rigger verdict prints the comment\'s URL, names the unrecorded kill, never says the post failed, and exits non-zero', { timeout: 120_000 }, async (t) => {
+  const where = verdictWorld();
+  const directory = holding(t);
+  const stream = join(where.cwd, '.rigger', 'events.jsonl');
+  fixture(directory, 'gh', [
+    `${quoted(where.gh)} "$@"`,
+    'status=$?',
+    `case "$*" in *"issues/${PULL}/comments -X POST"*)`,
+    `/bin/rm -f ${quoted(stream)}; /bin/mkdir -p ${quoted(stream)}`,
+    leave(TAIL, 'child-$$'),
+    ';;',
+    'esac',
+    'exit $status',
+  ].join('\n'));
+  const before = where.comments().length;
+
+  const ran = await atTerminal({ ...where, env: { ...where.env, PATH: `${directory}${delimiter}${where.env.PATH}` } }, [String(PULL), 'sound']);
+
+  assert.notEqual(ran.status, 0, ran.shown);
+  assert.match(ran.shown, new RegExp(`posted the owner's verdict on pull request #${PULL}: https://github\\.com/williacj/rigger/pull/${PULL}#issuecomment-1\\b`), ran.shown);
+  reportsMade(ran.shown, directory);
+  assert.equal(where.comments().length, before + 1);
+  assert.equal(childrenIn(directory).length, 1, 'the stand-in did not leave one child on the post');
+  for (const child of childrenIn(directory)) assert.equal(await gone(child), true, `child ${child} is alive`);
+});
+
+// The real once wiring must not substitute its shared pull-time reader during maker settlement.
+// proves R-RECORD-7
+test('fresh once records scratch comments pull-request reads and move under the maker dispatch', { timeout: 60000 }, (t) => {
+  const here = onceEventWorld(t);
+  const ran = here.invoke();
+  assert.equal(ran.status, 0, ran.stdout + ran.stderr);
+  const span = makerSpan(here.events());
+  assertCommandContext(here.rows('git', span.scratch), (s) => s.includes('worktree list'), 12, span.dispatch, 'once scratch check');
+  const rows = here.rows('gh', span.settle);
+  assertCommandContext(rows, (s) => s.includes('issue(number: 12)'), 12, span.dispatch, 'once comments');
+  assertCommandContext(rows, (s) => s.includes('pullRequests(headRefName: "rigger-12"'), 12, span.dispatch, 'once pull requests');
+  assertCommandContext(rows, (s) => s.includes('updateProjectV2ItemFieldValue'), 12, span.dispatch, 'once move');
+  for (const { event } of rows) {
+    assert.equal(event.card, 12);
+    assert.equal(event.dispatch, span.dispatch);
+  }
+});
+
+// Continuing work must keep its maker identity after exit 0, including the extra tip read.
+// proves R-RECORD-7
+test('continuing once records scratch tip comments pull-request reads and move under the maker dispatch', { timeout: 60000 }, (t) => {
+  const here = onceEventWorld(t, { continuing: true });
+  const ran = here.invoke();
+  assert.equal(ran.status, 0, ran.stdout + ran.stderr);
+  const span = makerSpan(here.events());
+  assertCommandContext(here.rows('git', span.scratch), (s) => s.includes('worktree list'), 12, span.dispatch, 'continuing scratch check');
+  assertCommandContext(here.rows('git', span.settle), (s) => s.includes('rev-parse --verify HEAD^{commit}'), 12, span.dispatch, 'continuing tip');
+  const rows = here.rows('gh', span.settle);
+  assertCommandContext(rows, (s) => s.includes('issue(number: 12)'), 12, span.dispatch, 'continuing comments');
+  assertCommandContext(rows, (s) => s.includes('pullRequests(headRefName: "rigger-12"'), 12, span.dispatch, 'continuing pull requests');
+  assertCommandContext(rows, (s) => s.includes('updateProjectV2ItemFieldValue'), 12, span.dispatch, 'continuing move');
+  for (const { event } of rows) {
+    assert.equal(event.card, 12);
+    assert.equal(event.dispatch, span.dispatch);
+  }
+});
+
+// The lane's facts([item]) is a card read even though the initial board facts are shared.
+// proves R-RECORD-7
+test('once lane rerun records one-card facts under that card without a dispatch', { timeout: 60000 }, (t) => {
+  const here = onceEventWorld(t, { merging: true });
+  const ran = here.invoke();
+  assert.equal(ran.status, 0, ran.stdout + ran.stderr);
+  const events = here.events();
+  const begin = events.findIndex((event) => event.event === 'merge.start');
+  const end = events.findIndex((event) => event.event === 'merge.end');
+  assert.ok(begin >= 0 && end > begin, 'the lane must have started and ended its merge');
+  const rows = here.rows('gh', events.slice(begin + 1, end));
+  const facts = [
+    ['lane branches', (s) => s.includes('refs(refPrefix: "refs/heads/"')],
+    ['lane pull requests', (s) => s.includes('pullRequests(headRefName: "rigger-12"')],
+    ['lane merge base', (s) => s.includes('/compare/')],
+    ['lane diff', (s) => s.includes('Accept: application/vnd.github.diff')],
+    ['lane comments', (s) => s.includes('pullRequest(number: 77) { comments')],
+    ['lane mergeability', (s) => s.includes('{ mergeable }')],
+    ['lane rules', (s) => s.includes('/rules/branches/')],
+    ['lane checks', (s) => s.includes('/check-runs?')],
+  ];
+  for (const [what, matches] of facts) assertCommandContext(rows, matches, 12, undefined, what);
+});
+
+
+// A pull over several cards must not attribute the shared facts read to its first card.
+// proves R-RECORD-7
+test('once pull-time facts over multiple cards retain absent card and dispatch context', { timeout: 60000 }, (t) => {
+  const here = onceEventWorld(t, { merging: true, peers: [consumerCard(20, 'Coding')] });
+  const ran = here.invoke();
+  assert.equal(ran.status, 0, ran.stdout + ran.stderr);
+  const events = here.events();
+  const start = events.findIndex((event) => event.event === 'merge.start');
+  assert.ok(start >= 0);
+  const rows = here.rows('gh', events.slice(0, start));
+  for (const matches of [(s) => s.includes('refs(refPrefix: "refs/heads/"'),
+    (s) => s.includes('pullRequests(headRefName: "rigger-12"'), (s) => s.includes('pullRequests(headRefName: "rigger-20"')]) {
+    const selected = rows.filter(({ args }) => matches(args.join(' ')));
+    assert.ok(selected.length > 0, 'the multi-card pull must have emitted a read event');
+    for (const { event } of selected) {
+      assert.equal(Object.hasOwn(event, 'card'), false);
+      assert.equal(Object.hasOwn(event, 'dispatch'), false);
+    }
+  }
+});

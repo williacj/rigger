@@ -2,6 +2,7 @@
 // and issue opening and closing, sent through its own runner. Only L2 reaches it.
 
 import { firstLine, readRunner, repositoryWriteRunner } from './runners.mjs';
+import { carried, written } from './write-made.mjs';
 
 /** The HTTP status and message `gh api` printed for a refused write. */
 function refusal(said) {
@@ -37,32 +38,44 @@ async function pullOf(board, number, via) {
   return JSON.parse(said.stdout);
 }
 
-/** Name an issue write's target and reason, keeping transport and event-refusal codes. */
+/**
+ * Name an issue write's target and reason, keeping transport and event-refusal codes, and an event
+ * refusal's result, unrecorded events and mark.
+ */
 async function issueWrite(operation, kind, number, write) {
   const named = `${operation} on ${kind} #${number} failed: `;
   try {
     return await write();
   } catch (error) {
     if (error.message.startsWith(named)) throw error;
-    const failure = new Error(`${named}${error.message}`, { cause: error });
-    if (error.code !== undefined) failure.code = error.code;
-    throw failure;
+    throw carried(new Error(`${named}${error.message}`, { cause: error }), error);
   }
 }
 
 export function repositoryWriteSide(board, { send, emitter, timeout } = {}) {
   const via = { send, emitter, timeout };
-  const sendIssue = async (args) => {
-    const said = await repositoryWriteRunner(args, via);
+  /** The parsed answer of an issue write's call `said`, where it exited 0 within its timeout. */
+  const issueAnswer = (said) => {
     if (said.status !== 0 || said.timedOut) throw new Error(firstLine(said));
     return JSON.parse(said.stdout);
+  };
+  /**
+   * Sends the issue write `args` and answers what `accept` makes of its parsed answer. A refused
+   * event on the call is marked made where that same check passes on the call's result.
+   */
+  const sendIssue = async (args, accept = (answer) => answer) => {
+    const check = (said) => accept(issueAnswer(said));
+    return check(await written(repositoryWriteRunner(args, via), check));
   };
   const postIssue = (number, endpoint, value, operation, kind = 'issue') => issueWrite(operation, kind, number, async () => {
     if (!Number.isSafeInteger(number) || number < 1) throw new Error(`${operation} on ${kind} #${number} failed: not an ${kind} number`);
     const args = ['api', `repos/${board.repo}/issues/${number}/${endpoint}`, '-X', 'POST', '-f', value];
-    const said = await repositoryWriteRunner(args, via);
-    if (said.status !== 0 || said.timedOut) throw new Error(`${operation} on ${kind} #${number} failed: ${firstLine(said)}`);
-    return JSON.parse(said.stdout);
+    // The error names its operation here, so `issueWrite` passes it on as it stands, whatever gh said.
+    const posted = (said) => {
+      if (said.status !== 0 || said.timedOut) throw new Error(`${operation} on ${kind} #${number} failed: ${firstLine(said)}`);
+      return JSON.parse(said.stdout);
+    };
+    return posted(await written(repositoryWriteRunner(args, via), posted));
   });
   return {
     /** Merge by merge commit only at `expectedHead`, or answer why the forge refused it. */
@@ -74,7 +87,13 @@ export function repositoryWriteSide(board, { send, emitter, timeout } = {}) {
       if (!pull.merged && pull.mergeable === null) return { outcome: 'refused', reason: 'unknown' };
       if (!pull.merged && pull.mergeable === false) return { outcome: 'refused', reason: 'conflict' };
       const args = ['api', `repos/${board.repo}/pulls/${number}/merge`, '-X', 'PUT', '-f', `sha=${expectedHead}`, '-f', 'merge_method=merge'];
-      const said = await repositoryWriteRunner(args, via);
+      const merged = (made) => {
+        if (made.status !== 0 || made.timedOut) throw new Error(firstLine(made));
+        const body = JSON.parse(made.stdout);
+        if (body.merged !== true) throw new Error(`mergePullRequest #${number} answered merged ${body.merged}`);
+        return { outcome: pull.merged ? 'already merged' : 'merged', sha: body.sha };
+      };
+      const said = await written(repositoryWriteRunner(args, via), merged);
       if (said.timedOut) throw new Error(`mergePullRequest #${number} failed: ${firstLine(said)}`);
       if (said.status === 0) {
         const body = JSON.parse(said.stdout);
@@ -108,11 +127,12 @@ export function repositoryWriteSide(board, { send, emitter, timeout } = {}) {
         throw new Error('requires a title, body and one label name');
       }
       const args = ['api', `repos/${board.repo}/issues`, '-X', 'POST', '-f', `title=${title}`, '-f', `body=${body}`, '-f', `labels[]=${label}`];
-      const opened = await sendIssue(args);
-      if (!opened.labels?.some((held) => held.name === label)) {
-        throw new Error(`openIssue created issue #${opened.number} without label ${label}`);
-      }
-      return opened.number;
+      return sendIssue(args, (opened) => {
+        if (!opened.labels?.some((held) => held.name === label)) {
+          throw new Error(`openIssue created issue #${opened.number} without label ${label}`);
+        }
+        return opened.number;
+      });
     }),
     /** Close one issue. */
     closeIssue: (number) => issueWrite('closeIssue', 'issue', number, async () => {

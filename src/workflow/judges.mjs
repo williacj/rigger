@@ -6,10 +6,12 @@
 import { OWNER, judgeRole, roleTimeout, workRequires } from '../config/validate.mjs';
 import { SCRATCH_REFUSED, WORKSPACE_NOT_MADE, WORKSPACE_REFUSED } from '../execution/workspace.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
+import { EVENT_REFUSED } from '../substrate/process.mjs';
 import { acceptanceItems, checkAcceptanceForm } from './form-check.mjs';
 import { GATE_CONTEXT, gateAnswer } from './gate.mjs';
 import { acceptanceDigest, evidenceDigest, markerInstruction, readMarkers } from './marker.mjs';
 import { failed, kindOf, panelOf, selectedSteps, stepAnswer, tierOf } from './next-action.mjs';
+import { failedAttempt } from './next-action.mjs';
 
 /** What each read of a Review card's facts the judge answer uses reads, as its failure names it. */
 const READS = {
@@ -88,10 +90,21 @@ function record(sink, card, name, fields, what, dispatch) {
  * (the architect's ruling 2, P3). L2 keeps no memory, so it records the failure each time it is
  * handed it, and L3 hands a judge's outcomes to it once.
  */
-export function judgeAnswer(card, kinds, epicLabel, { roles = {}, provisioning = {}, sink, outcomes = {}, directories = {} } = {}) {
+export function judgeAnswer(card, kinds, epicLabel, { roles = {}, provisioning = {}, sink, outcomes = {}, directories: reports = {} } = {}) {
   const { kind, answer } = kindOf(card, kinds, epicLabel);
   if (answer !== undefined) return answer;
   const declared = kinds[kind];
+  const decisions = panelDecisions(outcomes);
+  if (decisions !== undefined) {
+    const escalations = decisions.filter((answer) => answer.action === 'escalate');
+    if (escalations.length > 0) return { ...escalations[0], reason: escalations.map((answer) => answer.reason).join('\n') };
+    const ended = decisions.find((answer) => answer.action === 'hold') ?? decisions.find((answer) => answer.action === 'stop');
+    if (ended !== undefined) return ended;
+    const withheld = [...new Set(decisions.flatMap((answer) => answer.withheld ?? []))];
+    return { action: 'ignore', ...(withheld.length === 0 ? {} : { withheld }) };
+  }
+  const directories = reports;
+  const firstFailures = Object.fromEntries(Object.entries(reports).filter(([, report]) => report?.firstFailure !== undefined).map(([role, report]) => [role, report.firstFailure]));
   const agents = declared.judges.map(judgeRole).filter((role) => role !== OWNER);
   if (agents.length === 0) return { action: 'ignore' };
   const tiers = new Map(agents.map((role) => [role, tierOf(card, role, roles[role] ?? {}, 'judge')]));
@@ -133,7 +146,72 @@ export function judgeAnswer(card, kinds, epicLabel, { roles = {}, provisioning =
     .map((role) => ({ ...judgeOf(role, roles[role] ?? {}, tiers.get(role).tier, required.get(role), pull, evidence, facts, items), steps: steps.map((name) => stepAnswer(name, provisioning)) }));
   const withholding = withheldRoles.length > 0 ? { withheld: withheldRoles } : {};
   if (refusals.length > 0) return { action: 'escalate', category: 'ambiguous', raiser: 'loop', reason: refusals.join('\n'), pull: pull.number, head: pull.head, from: card.forge.stage, ...withholding };
+  if (Object.values(directories).some(({ reason }) => reason?.code === EVENT_REFUSED || reason?.startCause?.kind === 'event-unrecorded')) return { action: 'judge', kind, judges, halt: true, ...withholding };
+  const retry = owed.find((role) => judgeFailure(role, directories[role]) !== undefined);
+  if (retry !== undefined) {
+    const classified = (report) => ({ class: 'environment', ...judgeFailure(retry, report), ...(report?.dispatch === undefined ? {} : { dispatch: report.dispatch }) });
+    const firstFailure = firstFailures[retry] === undefined ? undefined : classified(firstFailures[retry]);
+    return { ...failedAttempt(card, firstFailure === undefined ? 1 : 2, firstFailure, classified(directories[retry]), sink), role: retry, ...(firstFailure === undefined ? {} : { firstFailure }) };
+  }
   return { action: 'judge', kind, judges, ...withholding };
+}
+
+/** The completed panel's L2 decisions, carried beside its per-role step outcomes. */
+function panelDecisions(reports = {}) {
+  const entries = Object.values(reports);
+  return entries.length > 0 && entries.every((report) => Object.hasOwn(report, 'decision'))
+    ? entries.map((report) => report.decision).filter((decision) => decision !== undefined) : undefined;
+}
+
+/** The host causes L1 names, in its vocabulary, and L2's row and counted identity for each. */
+const START_FAILURES = {
+  'codex-probe-timeout': ['R19'],
+  'codex-skill-unresolved': ['R18'],
+  'codex-probe-answer': ['R17'],
+  'codex-probe-exit': ['R16'],
+  'dispatch-location': ['R21'],
+  'adapter-variable': ['R20', 'variable'],
+  'agent-name-invalid': ['R35'],
+  'owner-home-missing': ['R34'],
+  'codex-home-file-unwritten': ['R27'],
+  'codex-config-unreadable': ['R11'],
+  'codex-directory-unmade': ['R26'],
+  'claude-reached-path': ['R13', 'path'],
+  'claude-exclusion-path': ['R12', 'path'],
+  'claude-rule-unreadable': ['R33'],
+  'claude-compound-rule': ['R10'],
+  'claude-settings-unreadable': ['R9'],
+  'agent-unreadable': ['R8', 'file'],
+  'agent-unresolved': ['R7', 'file'],
+  'agent-outside': ['R6', 'file'],
+  'directory-occupied': ['R31'],
+  'working-directory-outside': ['R30'],
+  'groups-unwritable': ['R25'],
+  'event-emitter-missing': ['R24'],
+  'dispatch-timeout': ['R23'],
+  'dispatch-identity': ['R22'],
+  'groups-unreadable': ['R32'],
+  'directory-illegible': ['R14', 'path'],
+  'scratch-illegible': ['R15', 'path'],
+  'command-character': ['R5'],
+  'command-missing': ['R2', 'provider'],
+  'host-error': ['R37'],
+  'file-descriptors': ['R36'],
+  'process-resources': ['R28'],
+  'command-too-long': ['R4'],
+  'command-not-executable': ['R3', 'provider'],
+  'directory-unusable': ['R29'],
+};
+
+/** L2's classification of a judge's never-started report, apart from a scratch directory not made. */
+function judgeFailure(judge, outcome) {
+  const reason = outcome?.reason;
+  if (outcome?.status !== 'rejected' || reason?.code !== NOT_STARTED || reason.missing !== undefined) return undefined;
+  const cause = reason.startCause;
+  const classified = START_FAILURES[cause?.kind];
+  if (classified === undefined) return undefined;
+  const [row, identity] = classified;
+  return { judge, row, reason: reason.message, ...(identity === undefined ? {} : { [identity]: cause[identity] }) };
 }
 
 /**
@@ -149,6 +227,7 @@ export function judgeAnswer(card, kinds, epicLabel, { roles = {}, provisioning =
  * Any other outcome is no such failure, so L2 answers no action for it, naming the card and the role.
  */
 function unmade(card, role, outcome, sink) {
+  if (outcome?.status === 'rejected' && outcome.reason?.code === EVENT_REFUSED) return false;
   if (outcome?.status === 'rejected' && outcome.reason?.code === NOT_STARTED) {
     const { missing, message } = outcome.reason;
     if (missing === undefined) return false;
@@ -266,6 +345,7 @@ function judgeOf(role, declared, tier, provider, pull, evidence, facts, items) {
  * `{ action: 'ignore', reason }`, which L3 carries out.
  */
 export function reviewAnswer(card, kinds, epicLabel, options = {}) {
+  if (panelDecisions(options.outcomes) !== undefined) return judgeAnswer(card, kinds, epicLabel, options);
   const { kind, answer } = kindOf(card, kinds, epicLabel);
   if (answer !== undefined) return answer;
   const declared = kinds[kind];
