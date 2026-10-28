@@ -289,3 +289,33 @@ test('a label removal the forge made whose event was refused still lets resume c
   assert.match(text, /^rigger resume: removed the status label from issue #7, but the sink refused its record: .*call\.end went unrecorded/m, text);
   assert.match(text, /^rigger resume: closed the status issue #7$/m, text);
 });
+
+// proves R-SCHED-24
+test('resume reports a close the forge made truthfully when only its event was refused, and goes on to close the next issue carrying the label', async () => {
+  // The architect's round-2 probe on #1079: the real repository-write side marks the refusal made,
+  // with the forge's answer, before L2 sees it.
+  const here = world({ closers: ['hold-a1-issue-7.json'] });
+  const gh = statusGh({ issues: [7, 9].map((number) => ({ number, labels: [STATUS] })) });
+  let refusal;
+  const send = (command, args) => {
+    const answer = gh(command, args);
+    if (rest(args, '/issues/7', 'PATCH')) {
+      refusal = Object.assign(new Error('the sink refused 1 L0 event(s): call.end: EIO'), {
+        code: 'EVENT_REFUSED',
+        result: { exit: answer.status, timedOut: false, stdout: Buffer.from(answer.stdout), stderr: Buffer.from('') },
+        unrecorded: [{ event: 'call.end', command: 'gh', exit: 0, cause: new Error('EIO') }],
+      });
+      throw refusal;
+    }
+    return answer;
+  };
+
+  const { text, code } = await here.run({ send });
+
+  assert.equal(refusal.made.answer.state, 'closed', 'the repository-write side must confirm that the close was made');
+  assert.deepEqual(gh.issues.map(({ number, state }) => [number, state]), [[7, 'closed'], [9, 'closed']]);
+  assert.equal(code, 1, text);
+  assert.match(text, /call\.end: EIO/, text);
+  assert.doesNotMatch(text, /the status issue #7 was left open/, text);
+  assert.match(text, /^rigger resume: closed the status issue #9$/m, text);
+});
