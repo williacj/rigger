@@ -1747,19 +1747,33 @@ test('a second removal pass changes nothing and records no removal event', async
   await remove();
   const afterFirst = { entries: readdirSync(here.root), list: worktreeList(here.repository), events: here.events() };
 
+  const began = performance.now();
   await remove();
 
-  assert.deepEqual({ entries: readdirSync(here.root), list: worktreeList(here.repository), events: here.events() }, afterFirst);
+  const added = here.events().slice(afterFirst.events.length);
+  // Registration, unlockedIfAdding's registration, two family listings, and prune are git calls.
+  assert.equal(added.length, 5);
+  const expected = added.map(({ ms }) => {
+    assert.ok(typeof ms === 'number' && ms >= 0 && ms <= performance.now() - began);
+    return { ts: '1970-01-01T00:00:00.000Z', run: 'r-test', layer: 'L0', card: 42, event: 'call.end', system: 'git', operation: 'worktree', outcome: 'ok', ms };
+  });
+  assert.deepEqual({ entries: readdirSync(here.root), list: worktreeList(here.repository), events: here.events() }, { ...afterFirst, events: [...afterFirst.events, ...expected] });
 });
 
 // proves R-WORK-35
 test('a card with no directories can be removed without an event or a failure', async (t) => {
   const here = world(t);
 
+  const began = performance.now();
   await workspaceRemoval.removeCardDirectories({ root: here.root, topic: 'rigger-{number}', card: 42, repository: here.repository, sink: here.sink });
 
   assert.equal(existsSync(here.root), false);
-  assert.deepEqual(here.events(), []);
+  const events = here.events();
+  assert.equal(events.length, 5);
+  assert.deepEqual(events, events.map(({ ms }) => {
+    assert.ok(typeof ms === 'number' && ms >= 0 && ms <= performance.now() - began);
+    return { ts: '1970-01-01T00:00:00.000Z', run: 'r-test', layer: 'L0', card: 42, event: 'call.end', system: 'git', operation: 'worktree', outcome: 'ok', ms };
+  }));
 });
 
 // proves R-WORK-35
