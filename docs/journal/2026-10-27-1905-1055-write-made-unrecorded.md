@@ -51,11 +51,22 @@ parsed answer, and each caller writes its own report from the mark.
 Each new test ran against `6ba7318f`'s source in a detached worktree of that commit, before the
 code that makes it pass.
 
-- `node --test test/write-made.test.mjs test/write-sides-made.test.mjs test/write-made-callers.test.mjs`:
-  `tests 20, pass 0, fail 20`.
-  - `write-made.test.mjs` fails to load: `ERR_MODULE_NOT_FOUND`, `write-made.mjs`. Against a
-    skeleton that marks nothing, two of its four tests failed on the mark, as in
-    `actual: undefined, expected: { answer: { id: 7, html_url: … } }`.
+- `test/write-made.test.mjs` tests a module the merge base does not hold, so a run at the merge
+  base only fails to load (`ERR_MODULE_NOT_FOUND`). That is no red, so its reds are runs against
+  a skeleton `write-made.mjs` that neither marks nor carries
+  (`export async function written(call) { return await call; }`, `export const carried =
+  (failure) => failure;`).
+  - Round 1: before the module's code, the file held four tests, and two failed against the
+    skeleton. The other two were controls, a resolving call and the unmarked rejections, which
+    the skeleton passes.
+  - Round 2, at PR #1057's judges' finding: the two controls are folded into the marking test,
+    so each retained test can fail on behaviour. The module's code already existed, so the
+    skeleton was written over it for the run, and the code was then restored byte for byte
+    (`cmp` clean). `tests 2, pass 0, fail 2`: the marking test on `actual: undefined, expected:
+    { answer: { id: 7, html_url: … } }`, and the carry test on `actual: undefined, expected:
+    'EVENT_REFUSED'`.
+- `node --test test/write-sides-made.test.mjs test/write-made-callers.test.mjs`, in the same run
+  as the helper file's load failure: every one of these 19 tests failed.
   - Each of the 12 side tests fails on `made`: `+ undefined - { answer: 'PVTI_added' }` for
     `addIssue`, and the same for each other operation.
   - Each of the 7 caller tests fails on the report, as in `Input: "card #30's move from ready to

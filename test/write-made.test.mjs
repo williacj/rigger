@@ -16,36 +16,29 @@ function checking(seen) {
   };
 }
 
-test('a write call that resolves answers what it resolved with, and its check is never run', async () => {
-  const seen = [];
+test('a write call is answered as it resolved, unchecked, and its EVENT_REFUSED rejection is marked made, with the check\'s answer and the result read as text, only where the side\'s check passes; every other rejection stays unmarked', async () => {
+  const resolvedSeen = [];
   const said = { status: 0, timedOut: false, stdout: '{"id":1}', stderr: '' };
+  assert.equal(await written(Promise.resolve(said), checking(resolvedSeen)), said);
+  assert.deepEqual(resolvedSeen, []);
 
-  assert.equal(await written(Promise.resolve(said), checking(seen)), said);
-  assert.deepEqual(seen, []);
-});
-
-test('a write call rejecting with EVENT_REFUSED whose result passes the side\'s check is marked made, carrying the check\'s answer, and the check reads the result as text', async () => {
   const seen = [];
   const refusal = refusedCall({ id: 7, html_url: 'https://github.com/o/r/pull/3#issuecomment-7' });
-
   const thrown = await written(Promise.reject(refusal), checking(seen)).catch((error) => error);
-
   assert.equal(thrown, refusal);
   assert.deepEqual(thrown.made, { answer: { id: 7, html_url: 'https://github.com/o/r/pull/3#issuecomment-7' } });
   assert.deepEqual(seen, [{ status: 0, timedOut: false, stdout: '{"id":7,"html_url":"https://github.com/o/r/pull/3#issuecomment-7"}', stderr: '' }]);
-});
 
-test('a write call rejecting with EVENT_REFUSED whose result fails the side\'s check, or with no result, or with another failure, is left unmarked', async () => {
-  for (const refusal of [
+  for (const unmarked of [
     refusedCall({ id: 7 }, { exit: 1 }),
     refusedCall({ id: 7 }, { timedOut: true }),
     refusedCall('not json'),
     Object.assign(refusedCall({ id: 7 }), { result: undefined }),
     Object.assign(new Error('gh: not found'), { code: 'NOT_STARTED' }),
   ]) {
-    const thrown = await written(Promise.reject(refusal), checking([])).catch((error) => error);
-    assert.equal(thrown, refusal);
-    assert.equal('made' in thrown, false, thrown.message);
+    const passed = await written(Promise.reject(unmarked), checking([])).catch((error) => error);
+    assert.equal(passed, unmarked);
+    assert.equal('made' in passed, false, passed.message);
   }
 });
 
