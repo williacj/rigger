@@ -97,7 +97,8 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow,
       } catch (refusal) {
         failures.push(refused('the event sink refused to record the pull trigger', refusal));
       }
-      const notices = await follow();
+      const { notices, unrecorded } = await follow();
+      failures.push(...unrecorded);
       const columns = await board.readColumns();
       const { items, declared } = await board.readPriority();
       /** A board item neither claimed nor withheld from another pull in this run. */
@@ -404,16 +405,19 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * One notice call for hold `id`, on its closer as L3 lists it as the call starts, handing L2 the
    * issue numbers the other hold closers name. L3 makes each rename L2 answers through `admission.mjs`
    * and hands L2 the outcome unread, as `Promise.allSettled` records it, before L2 writes again.
-   * A closer naming an issue is followed only where L3 read that issue's state, `issueState`, which
-   * L3 hands L2; where L2 answers that the notice closed for that hold, L3 removes its closer
-   * through `admission.mjs`, the event naming the issue's close as what reopened admission.
+   * A closer naming an issue is followed only where L3 read that issue's state, `issueState`, as `{
+   * issue, state }`, and only while the closer still names the issue that state was read for: a
+   * call queued behind another that renamed the closer hands L2 nothing, and the next trigger reads
+   * the issue it now names. L3 hands L2 that state; where L2 answers that the notice closed for that
+   * hold, L3 removes its closer through `admission.mjs`, the event naming the issue's close as what
+   * reopened admission. A removal whose event the sink refused answers as `unrecorded`, the refusal.
    */
   const noticed = async (id, hold, issueState) => {
     const closers = admissionRecord.read().closers ?? [];
     const closer = closers.find((each) => each.id === id);
-    if (closer === undefined || (closer.issue !== undefined) !== (issueState !== undefined)) return undefined;
+    if (closer === undefined || closer.issue !== issueState?.issue) return undefined;
     const others = closers.filter((each) => each.issue !== undefined && each.id !== id).map((each) => Number(each.issue));
-    const steps = l2.notice({ closer, others, hold, admission: admissionPath(state), ...(issueState === undefined ? {} : { state: issueState }) });
+    const steps = l2.notice({ closer, others, hold, admission: admissionPath(state), ...(issueState === undefined ? {} : { state: issueState.state }) });
     let { name } = closer;
     let step = await steps.next();
     while (!step.done) {
@@ -425,7 +429,10 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       if (outcome.status === 'fulfilled') ({ name } = outcome.value);
       step = await steps.next(outcome);
     }
-    if (step.value?.closed) await admissionRecord.open(name, { issue: step.value.issue });
+    if (step.value?.closed) {
+      const [opened] = await Promise.allSettled([admissionRecord.open(name, { issue: step.value.issue })]);
+      if (opened.status === 'rejected') return { ...step.value, unrecorded: opened.reason };
+    }
     return step.value;
   };
 
@@ -434,14 +441,16 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * each issue those closers name by its number, once whatever number of closers name it, through
    * `board.readIssueState`, and hands L2's notice function each closer's hold and that state, as
    * `noticed` says. A read that fails or times out counts as unreadable: L3 hands L2 nothing for that
-   * closer, records `notice.failed` naming the issue, and the next trigger reads again. Answers each
-   * failed notice as `{ id, step, cause }`.
+   * closer, records `notice.failed` naming the issue, and the next trigger reads again. Answers
+   * `notices`, each failed notice as `{ id, step, cause }`, and `unrecorded`, the failure of each
+   * opening whose event the sink refused, which the trigger reports whether or not admission opened.
    */
   const follow = async () => {
     const listed = admissionRecord.read();
-    if (listed.state !== 'closed') return [];
-    const states = new Map();
     const notices = [];
+    const unrecorded = [];
+    if (listed.state !== 'closed') return { notices, unrecorded };
+    const states = new Map();
     for (const { kind, id, issue } of listed.closers) {
       if (kind !== 'hold' || issue === undefined) continue;
       if (!states.has(issue)) states.set(issue, (async () => board.readIssueState(Number(issue)))().then(({ state: read }) => ({ read }), (failure) => ({ failure })));
@@ -452,10 +461,11 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         notices.push({ id, ...failed });
         continue;
       }
-      const ended = await notify(id, undefined, read);
+      const ended = await notify(id, undefined, { issue, state: read });
       if (ended?.failed !== undefined) notices.push({ id, ...ended.failed });
+      if (ended?.unrecorded !== undefined) unrecorded.push(ended.unrecorded);
     }
-    return notices;
+    return { notices, unrecorded };
   };
 
   /**

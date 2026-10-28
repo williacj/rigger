@@ -592,3 +592,90 @@ test('a close made while the issue carried the label, then the label removed, st
   assert.deepEqual(readEvents(handed.state).filter(({ event }) => event === 'admission.open').map(({ name, by, issue }) => ({ name, by, issue })), [{ name: 'hold-a1-issue-3.json', by: 'issue', issue: 3 }]);
   assert.equal(world.calls.filter(([name]) => name === 'openIssue').length, 0);
 });
+
+// proves R-SCHED-23
+test('a state read stays bound to the issue it was read for: a trigger queued behind a notice call that renamed the closer hands L2 nothing, and the replacement\'s close then reopens admission', async () => {
+  // The architect's round-1 probe on #1079: two triggers read #12 as deleted; the first call opens
+  // and attaches #14, which a person then closes; the second must not follow #14 with #12's state.
+  const world = forge({ issues: CARDS(), pulls: [13] });
+  const states = { 12: 'none' };
+  const { board, asked } = stateBoard([], states);
+  const handed = handles({ cards: [], board });
+  const notice = changesOver(world, handed.sink).notice;
+  let entered;
+  const firstEntered = new Promise((resolve) => { entered = resolve; });
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const readLabelled = world.reads.readLabelledIssues;
+  let firstRead = true;
+  world.reads.readLabelledIssues = async (...args) => {
+    if (firstRead) {
+      firstRead = false;
+      entered();
+      await gate;
+    }
+    return readLabelled(...args);
+  };
+  let calls = 0;
+  handed.l2.notice = async function* followed(input) {
+    const value = yield* notice(input);
+    calls += 1;
+    if (calls === 1) {
+      // A person closes the replacement as soon as its notice reaches it.
+      await world.writes.closeIssue(value.issue);
+      states[value.issue] = 'closed';
+    }
+    return value;
+  };
+  seed(handed.state, 'hold-a1-issue-12.json');
+  const built = loop(handed);
+  const one = built.pull();
+  await firstEntered;
+  const two = built.pull();
+  // A condition, not elapsed time, establishes the second trigger's read of #12.
+  while (asked.length < 2) await new Promise((resolve) => setImmediate(resolve));
+  release();
+  await Promise.all([one, two]);
+
+  const opened = world.issues.filter(({ title }) => title === 'Rigger closed admission').map(({ number }) => number);
+  assert.deepEqual(opened, [14], 'the stale state of #12 opened a second issue');
+  assert.deepEqual(namesIn(handed.state), ['hold-a1-issue-14.json']);
+  assert.equal(calls, 1, 'the second trigger handed L2 a state read for another issue');
+  await built.pull();
+  assert.deepEqual(namesIn(handed.state), [], 'the close of the replacement must reopen admission');
+  assert.deepEqual(asked, [12, 12, 14]);
+});
+
+// proves R-SCHED-23
+test('where the sink refuses the admission.open event of an issue close that removed the last closer, the closer stays removed and the pull rejects naming the refused event', async () => {
+  // The architect's round-1 event probe on #1079.
+  const { board } = stateBoard([], { 12: 'closed' });
+  const handed = handles({ cards: [], notice: followingNotice({ 12: { issue: 12, closed: true } }), board });
+  const original = handed.sink;
+  let refused = 0;
+  handed.sink = {
+    ...original,
+    emitter: (where) => {
+      const emitter = original.emitter(where);
+      return {
+        ...emitter,
+        emit: (event, fields) => {
+          if (event === 'admission.open') {
+            refused += 1;
+            throw new Error('the stream refused admission.open');
+          }
+          return emitter.emit(event, fields);
+        },
+      };
+    },
+  };
+  seed(handed.state, 'hold-a1-issue-12.json');
+
+  const outcome = await loop(handed).pull().then((value) => ({ value }), (error) => ({ error }));
+
+  assert.equal(refused, 1);
+  assert.deepEqual(namesIn(handed.state), []);
+  assert.deepEqual(readEvents(handed.state).filter(({ event }) => event === 'admission.open'), []);
+  const messages = (error) => (error === undefined ? [] : [error.message, ...(error.errors ?? []).flatMap(messages)]);
+  assert.match(messages(outcome.error).join('; '), /hold-a1-issue-12\.json, and the sink refused its admission\.open event: the stream refused admission\.open/);
+});

@@ -55,6 +55,12 @@ function world({ closers = [], issues = [], config = true, refuse, observe = () 
   };
 }
 
+/**
+ * A config whose evaluation leaves a mark at `mark`, whatever its importer then does with it, and
+ * which throws, so a reader that swallowed the throw still leaves the mark.
+ */
+const marking = (mark) => `import { writeFileSync } from 'node:fs';\nwriteFileSync(${JSON.stringify(mark)}, 'evaluated');\nthrow new Error('this config was read');\n`;
+
 /** The closers left in `here`'s admission directory. */
 const left = (here) => readdirSync(here.admission).filter((name) => !name.startsWith('.'));
 
@@ -106,7 +112,8 @@ test('resume removes the closers it read before it reads the config or makes any
 // proves R-SCHED-23
 test('resume whose closers were each already gone at their removal changes nothing: it names each one gone, reads no config, makes no forge call and exits 0', async () => {
   // Injected: each closer goes between the read and the unlink, as another `resume` removing it would.
-  const here = world({ closers: ['hold-a1-issue-7.json'], issues: [status(7, 'a1')], config: 'throw new Error(\'this config was read\');\n' });
+  const mark = join(temporaryDirectory('rigger-resume-close-mark-'), 'evaluated');
+  const here = world({ closers: ['hold-a1-issue-7.json'], issues: [status(7, 'a1')], config: marking(mark) });
   const unlinkSync = (path) => { nodeFs.unlinkSync(path); nodeFs.unlinkSync(path); };
 
   const { text, code } = await here.run({ fs: { ...nodeFs, unlinkSync } });
@@ -114,6 +121,7 @@ test('resume whose closers were each already gone at their removal changes nothi
   assert.equal(code, 0, text);
   assert.match(text, /hold-a1-issue-7\.json was already gone/, text);
   assert.doesNotMatch(text, /config was read|closed the status issue/, text);
+  assert.equal(nodeFs.existsSync(mark), false, 'resume evaluated the config');
   assert.deepEqual(here.sent, []);
   assert.equal((await here.issue(7)).state, 'open');
 });
@@ -206,12 +214,14 @@ test('resume over an unreadable closer names it, changes nothing, closes no issu
 
 // proves R-SCHED-23
 test('resume with nothing to remove removes no label, closes no issue, reads no config and exits 0', async () => {
-  const here = world({ issues: [status(7, 'a1')], config: 'throw new Error(\'this config was read\');\n' });
+  const mark = join(temporaryDirectory('rigger-resume-close-mark-'), 'evaluated');
+  const here = world({ issues: [status(7, 'a1')], config: marking(mark) });
 
   const { text, code } = await here.run();
 
   assert.equal(code, 0, text);
   assert.equal(text, 'rigger resume: admission was already open');
+  assert.equal(nodeFs.existsSync(mark), false, 'resume evaluated the config');
   assert.deepEqual(here.sent, []);
   assert.deepEqual((await here.issue(7)).labels, [STATUS]);
 });
