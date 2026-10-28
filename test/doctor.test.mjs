@@ -545,7 +545,7 @@ test('a config that throws anything at all is one failed line, and the other thr
 test('doctor prints its report when validation throws from a BigInt or a getter', () => {
   const bin = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger;
   const cases = [
-    ['export default 10n;', 'Do not know how to serialize a BigInt'],
+    ['export default { get repo() { return JSON.stringify(10n); } };', 'Do not know how to serialize a BigInt'],
     ["export default { get repo() { throw new Error('repo getter failed'); } };", 'repo getter failed'],
   ];
 
@@ -1631,7 +1631,7 @@ test('gate line fails naming the default branch read and does not judge the depl
 });
 
 test('gate line is not asked and sends no forge command for a missing unreadable refused or throwing config', async () => {
-  const sources = [null, 'export default {', starter().replace(/^\s*repo:.*$/m, ''), 'export default 10n;'];
+  const sources = [null, 'export default {', starter().replace(/^\s*repo:.*$/m, ''), 'export default { get repo() { return JSON.stringify(10n); } };'];
   for (const source of sources) {
     const { line, sent } = await gateReport({}, source);
     assert.match(line, /^\s*not asked\s.*gate.*not checked.*config/);
