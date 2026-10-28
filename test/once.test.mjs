@@ -1047,8 +1047,8 @@ test('given once where a judge does not start, once prints the judge\'s role and
   assert.notEqual(code, 0, out);
   const line = err.split('\n').find((held) => held.startsWith(judgeLine(10, 'reviewer', '')));
   assert.ok(line, err);
-  assert.ok(line.startsWith(judgeLine(10, 'reviewer', 'did not start: the role\'s dispatch did not start: the claude adapter answered no invocation for role reviewer: ')), line);
-  assert.match(line, /Bash\(npm ci && npm test\), a rule for a compound command line/, line);
+  assert.ok(line.startsWith(judgeLine(10, 'reviewer', 'was held after two dispatches that failed the same way:')), line);
+  assert.match(err, /second:.*Bash\(npm ci && npm test\), a rule for a compound command line/, err);
   assert.deepEqual(agent.runs().map(({ role }) => role), ['engineer']);
 });
 

@@ -21,6 +21,7 @@ import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { standInAgent } from './stub-claude.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { COLUMNS, FIELDS, PROJECT, REPO, card, consumerConfig } from './verb-consumer.mjs';
+import { judgeVerbWorld } from './judge-start-verb.mjs';
 
 // A bound on each run of the real bin, so one that never settles fails its test rather than the suite.
 const { 60_000: { timeout: SETTLES_WITHIN } } = BOUNDS;
@@ -219,4 +220,85 @@ test('where the hold\'s own notice fails at a step, rigger run names the failed 
   assert.match(lines[at + 1] ?? '', new RegExp(`^rigger run: the notice for hold ${closer.id} failed to move issue #${closer.issue} to Owner: `), ran.said);
   const items = forgeOf(here).writes.filter(({ operation }) => operation === 'moveItem');
   assert.deepEqual(items, [], ran.said);
+});
+
+// The counterexample succeeds, omits either report, dispatches a third judge, or uses maker wording.
+// proves R-FAIL-8
+test('rigger run holds a judge pair nonzero with its card role and both reports and makes no third dispatch', (t) => {
+  const ran = judgeVerbWorld(t);
+  const said = `${ran.out}${ran.err}`;
+  assert.equal(ran.code, 1, `${said}\n${JSON.stringify(ran.events.filter(({ layer }) => layer !== 'L0'))}`);
+  assert.match(said, /card #10.*judge.*reviewer.*held/);
+  assert.match(said, /first:.*R10/);
+  assert.match(said, /second:.*R10/);
+  assert.doesNotMatch(said, /each failing before the maker/);
+  assert.equal(ran.events.filter(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'reviewer').length, 2, said);
+  const held = ran.events.find(({ event, decision }) => event === 'attempt.decided' && decision === 'hold');
+  assert.deepEqual(held.failures.map(({ judge, row }) => [judge, row]), [['reviewer', 'R10'], ['reviewer', 'R10']]);
+  assert.equal(ran.events.filter(({ event }) => event === 'admission.close').length, 1);
+});
+
+// Refusing this event must retain the baseline report, never spend a host retry or close admission.
+// proves R-FAIL-8
+test('rigger run R38 dispatch keeps the established report without retry or hold', (t) => {
+  const ran = judgeVerbWorld(t, 'dispatch');
+  const said = `${ran.out}${ran.err}`;
+  assert.equal(ran.code, 1, said);
+  assert.match(said, /card #10.*judge.*reviewer.*handed back no outcome/);
+  assert.match(said, /dispatch/);
+  assert.equal(ran.events.filter(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'reviewer').length, 0, said);
+  assert.deepEqual(ran.events.filter(({ event }) => event === 'attempt.decided' || event === 'admission.close'), []);
+  assert.doesNotMatch(said, /R19|was held|first:/);
+});
+
+// Refusing this event must retain the baseline report, never spend a host retry or close admission.
+// proves R-FAIL-8
+test('rigger run R38 scratch keeps the established report without retry or hold', (t) => {
+  const ran = judgeVerbWorld(t, 'scratch');
+  const said = `${ran.out}${ran.err}`;
+  assert.equal(ran.code, 1, said);
+  assert.match(said, /card #10.*judge.*reviewer.*was dispatched, and its dispatch failed/);
+  assert.match(said, /workspace.made/);
+  assert.equal(ran.events.filter(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'reviewer').length, 1, said);
+  assert.deepEqual(ran.events.filter(({ event }) => event === 'attempt.decided' || event === 'admission.close'), []);
+  assert.doesNotMatch(said, /R19|was held|first:/);
+});
+
+// Refusing this event must retain the baseline report, never spend a host retry or close admission.
+// proves R-FAIL-8
+test('rigger run R38 start keeps the established report without retry or hold', (t) => {
+  const ran = judgeVerbWorld(t, 'start');
+  const said = `${ran.out}${ran.err}`;
+  assert.equal(ran.code, 1, said);
+  assert.match(said, /card #10.*judge.*reviewer.*was dispatched, and its dispatch failed/);
+  assert.match(said, /dispatch.start/);
+  assert.equal(ran.events.filter(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'reviewer').length, 1, said);
+  assert.deepEqual(ran.events.filter(({ event }) => event === 'attempt.decided' || event === 'admission.close'), []);
+  assert.doesNotMatch(said, /R19|was held|first:/);
+});
+
+// Refusing this event must retain the baseline report, never spend a host retry or close admission.
+// proves R-FAIL-8
+test('rigger run R38 survivor keeps the established report without retry or hold', (t) => {
+  const ran = judgeVerbWorld(t, 'survivor');
+  const said = `${ran.out}${ran.err}`;
+  assert.equal(ran.code, 1, said);
+  assert.match(said, /card #10.*judge.*reviewer.*did not start: the role/);
+  assert.match(said, /survivor.killed/);
+  assert.equal(ran.events.filter(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'reviewer').length, 1, said);
+  assert.deepEqual(ran.events.filter(({ event }) => event === 'attempt.decided' || event === 'admission.close'), []);
+  assert.doesNotMatch(said, /R19|was held|first:/);
+});
+
+// Refusing this event must retain the baseline report, never spend a host retry or close admission.
+// proves R-FAIL-8
+test('rigger run R38 timeout keeps the established report without retry or hold', (t) => {
+  const ran = judgeVerbWorld(t, 'timeout');
+  const said = `${ran.out}${ran.err}`;
+  assert.equal(ran.code, 1, said);
+  assert.match(said, /card #10.*judge.*reviewer.*did not start: the role/);
+  assert.match(said, /timeout.killed/);
+  assert.equal(ran.events.filter(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'reviewer').length, 1, said);
+  assert.deepEqual(ran.events.filter(({ event }) => event === 'attempt.decided' || event === 'admission.close'), []);
+  assert.doesNotMatch(said, /R19|was held|first:/);
 });

@@ -8,6 +8,7 @@ import { within } from './run.mjs';
 import { SCRATCH_REFUSED, WORKSPACE_NOT_MADE, makeScratch } from './workspace.mjs';
 import { gitEnvironment } from '../substrate/git-environment.mjs';
 import { EVENT_REFUSED, NOT_STARTED } from '../substrate/process.mjs';
+import { startFailure } from '../substrate/process.mjs';
 import { ADAPTERS } from '../substrate/providers/adapters.mjs';
 
 /**
@@ -53,8 +54,8 @@ import { ADAPTERS } from '../substrate/providers/adapters.mjs';
 export async function roleDispatch({ answer, cwd, directory, scratch, repository, reach, env, sink, id, card, adapters = ADAPTERS }) {
   const { provider } = answer;
   if (!Object.hasOwn(adapters, provider)) throw unstarted(`L0 holds no provider adapter named ${JSON.stringify(provider)}, which role ${answer.role} names`);
-  if (typeof scratch !== 'string' || !isAbsolute(scratch)) throw unstarted(`L3 handed it the scratch base ${JSON.stringify(scratch)} as scratch, which is no absolute path`);
-  if (typeof repository !== 'string' || !isAbsolute(repository)) throw unstarted(`L3 handed it ${JSON.stringify(repository)} as repository, which is no absolute path`);
+  if (typeof scratch !== 'string' || !isAbsolute(scratch)) throw startFailure(unstarted(`L3 handed it the scratch base ${JSON.stringify(scratch)} as scratch, which is no absolute path`), 'dispatch-location');
+  if (typeof repository !== 'string' || !isAbsolute(repository)) throw startFailure(unstarted(`L3 handed it ${JSON.stringify(repository)} as repository, which is no absolute path`), 'dispatch-location');
   let made;
   try {
     made = await makeScratch({ base: scratch, role: answer.role, card, repository, sink });
@@ -67,6 +68,7 @@ export async function roleDispatch({ answer, cwd, directory, scratch, repository
   const environment = gitEnvironment(env);
   let invoked;
   try {
+    if (typeof answer.agent !== 'string') throw startFailure(new TypeError('the configured agent file is no string'), 'agent-name-invalid');
     invoked = await adapters[provider].invocation({
       agent: resolve(join(cwd, answer.agent)),
       tier: answer.tier,
@@ -78,16 +80,25 @@ export async function roleDispatch({ answer, cwd, directory, scratch, repository
       emitter: sink.emitter({ layer: 'L0', card, dispatch: id }),
     });
   } catch (cause) {
-    throw unstarted(`the ${provider} adapter answered no invocation for role ${answer.role}: ${cause.message}`, cause);
+    const failure = unstarted(`the ${provider} adapter answered no invocation for role ${answer.role}: ${cause.message}`, cause);
+    if (cause.startCause !== undefined) {
+      const { command, file, ...detail } = cause.startCause;
+      failure.startCause = { ...detail, ...(command === undefined ? {} : { provider }), ...(file === undefined ? {} : { file: answer.agent }) };
+    }
+    if (cause.code === EVENT_REFUSED) failure.startCause = { kind: 'event-unrecorded' };
+    throw failure;
   }
   const { command, args, input, unset, env: set, folder } = invoked;
   for (const [key, value] of Object.entries(set)) {
     const why = unsettable(key, value, unset, [directory, made]);
-    if (why !== undefined) throw unstarted(`the ${provider} adapter sets ${key}, which ${why}`);
+    if (why !== undefined) {
+      const { reason, ...startCause } = why;
+      throw Object.assign(unstarted(`the ${provider} adapter sets ${key}, which ${reason}`), { startCause });
+    }
   }
   for (const name of unset) delete environment[name];
   Object.assign(environment, set);
-  return { command, args, input, cwd, workspace: directory, scratch: made, env: environment, folder, timeout: answer.timeout, facts: answer.facts, digest: answer.digest };
+  return { provider, command, args, input, cwd, workspace: directory, scratch: made, env: environment, folder, timeout: answer.timeout, facts: answer.facts, digest: answer.digest };
 }
 
 /**
@@ -109,18 +120,19 @@ const unstarted = (reason, cause) => Object.assign(new Error(`the role's dispatc
  * credential by mistake would carry to whoever records the failure.
  */
 function unsettable(key, value, unset, directories) {
-  if (Object.keys(gitEnvironment({ [key]: '' })).length === 0) return 'is a variable that redirects git, which L1 removes';
-  if (unset.includes(key)) return 'is a variable the same adapter says its CLI must not inherit';
-  if (typeof value !== 'string' || !isAbsolute(value)) return 'is set to no absolute path';
+  const disallowed = (reason) => ({ reason, kind: 'adapter-variable', variable: key });
+  if (Object.keys(gitEnvironment({ [key]: '' })).length === 0) return disallowed('is a variable that redirects git, which L1 removes');
+  if (unset.includes(key)) return disallowed('is a variable the same adapter says its CLI must not inherit');
+  if (typeof value !== 'string' || !isAbsolute(value)) return disallowed('is set to no absolute path');
   let real;
   let roots;
   try {
     real = realOnDisk(value);
     roots = directories.map((directory) => realpathSync.native(directory));
   } catch (cause) {
-    return `is set to a path that cannot be resolved (${cause.code ?? 'unreadable'})`;
+    return { reason: `is set to a path that cannot be resolved (${cause.code ?? 'unreadable'})`, kind: 'directory-unusable' };
   }
-  return roots.some((root) => within(real, root)) ? undefined : `is set to a path whose real path lies outside both the dispatch's directory ${roots[0]} and its scratch directory ${roots[1]}`;
+  return roots.some((root) => within(real, root)) ? undefined : disallowed(`is set to a path whose real path lies outside both the dispatch's directory ${roots[0]} and its scratch directory ${roots[1]}`);
 }
 
 /**
