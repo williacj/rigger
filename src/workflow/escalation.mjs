@@ -5,9 +5,8 @@
 import { CATEGORIES, OWNER, judgeRole } from '../config/validate.mjs';
 
 import { acceptanceItems } from './form-check.mjs';
-import { evidenceDigest } from './marker.mjs';
+import { evidenceDigest, WRITERS } from './marker.mjs';
 
-const WRITERS = ['admin', 'maintain', 'write'];
 const DISPATCH = /^d-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 const POSITIVE = /^[1-9][0-9]*$/;
 const FIELDS = ['category', 'item', 'reason', 'dispatch'];
