@@ -460,9 +460,10 @@ test('report over a stream holding the layers a maker\'s dispatch records prints
 
   assert.equal(ran.code, 0, ran.err);
   assert.match(ran.out, /\bL3\b/, ran.out);
-  assert.doesNotMatch(ran.out.replace(/^  only markers L2 recorded in this state directory are named\n/m, ''), /\bL[04-9]\b/, ran.out);
+  assert.doesNotMatch(ran.out.replace(/^  only markers L2 recorded in this state directory are named\n/m, ''), /\bL[05-9]\b/, ran.out);
   assert.match(ran.out, /^L1$/m, ran.out);
   assert.match(ran.out, /^L2$/m, ran.out);
+  assert.match(ran.out, /^L4$/m, ran.out);
 });
 
 test('report over a stream holding a line that does not parse exits non-zero, names that line, and prints no signal', async () => {
@@ -608,10 +609,10 @@ const ended = (dispatch, ms, { card, ...fields } = {}) => ({ layer: 'L1', card, 
 /** One L0 kill event `name` carrying `dispatch`, as L0 records a survivor or group it killed. */
 const killed = (name, dispatch, card = 7) => ({ layer: 'L0', card, dispatch, event: name, fields: { pid: 4242 } });
 
-test('report prints an L1 section, then L2, then L3, each headed by its layer, ahead of the marker check', () => {
+test('report prints an L1 section, then L2, then L3, then L4, each headed by its layer, ahead of the marker check', () => {
   const out = reported([['r-a', [ended('d-1', 1000, { card: 7 })]]]);
   const headings = out.split('\n').filter((line) => /^L\d$/.test(line) || line === 'markers no dispatch wrote');
-  assert.deepEqual(headings, ['L1', 'L2', 'L3', 'markers no dispatch wrote'], out);
+  assert.deepEqual(headings, ['L1', 'L2', 'L3', 'L4', 'markers no dispatch wrote'], out);
 });
 
 test('report lists each dispatch.end of a run under that run, with its card where it carries one, and counts it across the stream', () => {
@@ -858,4 +859,103 @@ test('report names redos after interruptions using the most recent earlier activ
     ...redos.map(([card, run]) => `redo after an interruption: card #${card}, run ${run}`),
   ]]));
   assert.deepEqual(actual, expected);
+});
+
+/** One L2 `transition` of `card` whose `cause` is `cause`, as L2's column changes record it. */
+const transition = (card, cause) => l2Event('transition', card, { cause, from: 'review', to: 'coding' });
+
+test('report counts rework per run and across the stream over the four causes that send a card back, and no other cause', () => {
+  // By hand: r-a holds continued, conflicted, redone and merged, so 2; r-b holds continuedFromOwner,
+  // conflictedFromOwner, continued, sound and rejudged, so 3; r-c holds none of the four, so 0; the stream 5.
+  const out = reported([
+    ['r-a', [transition(7, 'continued'), transition(8, 'conflicted'), transition(7, 'redone'), transition(8, 'merged')]],
+    ['r-b', [transition(7, 'continuedFromOwner'), transition(9, 'conflictedFromOwner'), transition(9, 'continued'), transition(7, 'sound'), transition(9, 'rejudged')]],
+    ['r-c', [transition(10, 'redone'), transition(10, 'mergedFromOwner'), claim('pull', 10)]],
+  ]);
+  const l4 = section(out, 'L4');
+  assert.deepEqual([under(l4, 'run r-a')[0], under(l4, 'run r-b')[0], under(l4, 'run r-c')[0], under(l4, 'across the stream')[0]],
+    ['rework: 2', 'rework: 3', 'rework: 0', 'rework: 5'], out);
+});
+
+/** The L4 lines across the stream that `runs` records. */
+const l4Stream = (runs) => under(section(reported(runs), 'L4'), 'across the stream');
+
+test('report derives the first-pass rate across the stream from merged cards with a marker read, over the rounds L2 counts', () => {
+  // By hand: #7 merged, one round (head-a, read twice, once by the owner): numerator and denominator.
+  // #8 merged from the owner, two rounds (head-a, head-b): denominator only. #9 merged, no marker
+  // read: neither. #10 judged, never merged: neither. #11 merged in r-a, judged once in r-b: both.
+  // So 2 of 3.
+  const runs = [
+    ['r-a', [
+      markerRead({ card: 7 }), markerRead({ card: 7, role: 'owner' }), transition(7, 'merged'),
+      markerRead({ card: 8 }), transition(8, 'continued'), markerRead({ card: 8, head: 'head-b' }), transition(8, 'mergedFromOwner'),
+      transition(9, 'merged'),
+      markerRead({ card: 10 }), transition(10, 'continued'),
+      transition(11, 'merged'),
+    ]],
+    ['r-b', [markerRead({ card: 11 })]],
+  ];
+  assert.deepEqual(rateIn(l4Stream(runs), 'first-pass rate'), [0.6667, 2, 3]);
+  assert.deepEqual([
+    rateIn(l4Stream([['r-a', [markerRead({ card: 10 }), transition(10, 'continued')]]]), 'first-pass rate'),
+    rateIn(l4Stream([['r-a', [transition(9, 'merged')]]]), 'first-pass rate'),
+  ], Array(2).fill('no first-pass rate: no card in the stream was judged and merged'));
+});
+
+/**
+ * One L3 `dispatch` of `card` by `role` at `tier`, as L3 records a maker's or a judge's
+ * (`src/scheduling/loop.mjs`); a `tier` of undefined is left out, as JSON drops it.
+ */
+const dispatched = (card, role, tier, fields = {}) => ({ layer: 'L3', card, dispatch: `d-${card}-${role}`, event: 'dispatch',
+  fields: { role, ...(tier === undefined ? {} : { tier }), attempt: 1, ...fields } });
+
+test('report derives tier accuracy across the stream over card and role pairs, with a tier correction against the nearest earlier tiered dispatch', () => {
+  // Each expected figure is counted by hand from the case's dispatches, in line order.
+  const none = 'no tier accuracy: no card and role in the stream was dispatched at a tier';
+  const cases = [
+    ['one tier throughout', [['r-a', [dispatched(7, 'engineer', 'standard'), dispatched(7, 'engineer', 'standard')]]], [1, 1, 1]],
+    ['a later dispatch at another tier', [['r-a', [dispatched(7, 'engineer', 'standard'), dispatched(7, 'engineer', 'high')]]], [0, 0, 1]],
+    ['standard, high, standard', [['r-a', [dispatched(7, 'engineer', 'standard'), dispatched(7, 'engineer', 'high'), dispatched(7, 'engineer', 'standard')]]], [0, 0, 1]],
+    ['two roles of one card, judged apart', [['r-a', [
+      dispatched(7, 'engineer', 'standard'), dispatched(7, 'reviewer', 'high'), dispatched(7, 'engineer', 'standard'), dispatched(7, 'reviewer', 'standard'),
+    ]]], [0.5, 1, 2]],
+    ['two cards of one role, judged apart', [['r-a', [dispatched(7, 'engineer', 'standard'), dispatched(8, 'engineer', 'high'), dispatched(7, 'engineer', 'standard')]]], [1, 2, 2]],
+    ['standard, no tier, high', [['r-a', [dispatched(7, 'engineer', 'standard'), dispatched(7, 'engineer'), dispatched(7, 'engineer', 'high')]]], [0, 0, 1]],
+    ['standard, no tier, standard', [['r-a', [dispatched(7, 'engineer', 'standard'), dispatched(7, 'engineer'), dispatched(7, 'engineer', 'standard')]]], [1, 1, 1]],
+    ['no tier, then standard', [['r-a', [dispatched(7, 'engineer'), dispatched(7, 'engineer', 'standard')]]], [1, 1, 1]],
+    ['no tier only', [['r-a', [dispatched(7, 'engineer'), dispatched(7, 'engineer')]]], none],
+    ['a step dispatch between, naming the role at another tier', [['r-a', [
+      dispatched(7, 'reviewer', 'standard'), dispatched(7, 'reviewer', 'high', { step: 'install' }), dispatched(7, 'reviewer', 'standard'),
+    ]]], [1, 1, 1]],
+    ['a step dispatch alone, naming a judge\'s role', [['r-a', [dispatched(7, 'reviewer', 'high', { step: 'install' })]]], none],
+    ['one pair across two runs', [['r-a', [dispatched(7, 'engineer', 'standard')]], ['r-b', [dispatched(7, 'engineer', 'high')]]], [0, 0, 1]],
+    ['one tier across two runs', [['r-a', [dispatched(7, 'engineer', 'standard')]], ['r-b', [dispatched(7, 'engineer', 'standard')]]], [1, 1, 1]],
+    ['no dispatch', [['r-a', [claim('pull', 7)]]], none],
+  ];
+  const actual = Object.fromEntries(cases.map(([name, runs]) => [name, rateIn(l4Stream(runs), 'tier accuracy')]));
+  assert.deepEqual(actual, Object.fromEntries(cases.map(([name, , expected]) => [name, expected])));
+});
+
+test('report\'s L4 figures do not change for an event or a field that no L4 signal reads', () => {
+  // By hand: rework 1 (continued); #7 merged after one round, 1 of 1; #7's engineer at one tier, 1 of 1.
+  const base = [
+    claim('pull', 7), dispatched(7, 'engineer', 'standard'), markerRead({ card: 7 }), transition(7, 'continued'),
+    dispatched(7, 'engineer', 'standard'), transition(7, 'merged'),
+  ];
+  const noise = [
+    { layer: 'L0', card: 7, event: 'call.end', fields: { system: 'git', operation: 'fetch', ms: 12, outcome: 'failed' } },
+    { layer: 'L1', card: 7, dispatch: 'd-7-engineer', event: 'dispatch.start', fields: { command: 'agent' } },
+    ended('d-7-engineer', 100, { card: 7 }),
+    l2Event('attempt.decided', 7, { attempt: 1, decision: 'again' }),
+    l2Event('review.waiting', 7, { category: 'ambiguous', raiser: 'loop', reason: 'x' }),
+    claim('slot.release', 7), claim('merge.start', 7),
+  ];
+  // The same events with fields no L4 signal reads added to them.
+  const fielded = base.map((event) => ({ ...event, fields: { ...event.fields, queueDepth: 3, folderLeft: [], kept: 'x', attempt: 9 } }));
+  const l4 = (events) => section(reported([['r-a', events]]), 'L4');
+  const expected = l4(base);
+  assert.deepEqual([under(expected, 'run r-a'), under(expected, 'across the stream')[0], rateIn(under(expected, 'across the stream'), 'first-pass rate'),
+    rateIn(under(expected, 'across the stream'), 'tier accuracy')], [['rework: 1'], 'rework: 1', [1, 1, 1], [1, 1, 1]]);
+  assert.deepEqual(l4([...base, ...noise]), expected);
+  assert.deepEqual(l4(fielded), expected);
 });
