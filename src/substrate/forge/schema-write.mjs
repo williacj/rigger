@@ -4,7 +4,8 @@
 
 import { literal } from './graphql.mjs';
 import { answerOf, boardOf, repositoryOf } from './read.mjs';
-import { graphqlRequest, schemaWriteRunner } from './runners.mjs';
+import { firstLine, graphqlRequest, schemaWriteRunner } from './runners.mjs';
+import { written } from './write-made.mjs';
 
 /**
  * The colours a new field option and a new label are given. GitHub requires one for each (the
@@ -24,13 +25,26 @@ const LABEL_COLOUR = 'ededed';
  */
 export function schemaWriteSide(board, { send, emitter, timeout } = {}) {
   const via = { send, emitter, timeout };
+  /**
+   * Sends the mutation `document` for `operation`, whose root field is `root`, and reads its answer.
+   * A refused event on the call is marked made where the call exited 0 within its timeout and its
+   * answer's `data` holds `root`, non-null. The root tells the write's answer from that of the
+   * runner's own read inside the same call (`heldOptions`), whose `data` holds no such field.
+   */
+  const write = async (operation, root, document) => {
+    const made = (said) => {
+      if (said.timedOut) throw new Error(firstLine(said));
+      if (answerOf(operation, board, said)?.[root] == null) throw new Error(`${operation} on board ${board.project} answered no ${root}`);
+    };
+    answerOf(operation, board, await written(schemaWriteRunner(graphqlRequest(document), via), made));
+  };
   return {
     /** Creates the single-select field `name` holding `options`, in the order given. */
     createField: async (name, options) => {
       const { id } = await boardOf('createField', board, via);
       const held = options.map((option) => `{name: ${literal(option)}, color: ${OPTION_COLOUR}, description: ""}`);
       const create = `mutation { createProjectV2Field(input: {projectId: ${literal(id)}, dataType: SINGLE_SELECT, name: ${literal(name)}, singleSelectOptions: [${held.join(', ')}]}) { projectV2Field { ... on ProjectV2SingleSelectField { id } } } }`;
-      answerOf('createField', board, await schemaWriteRunner(graphqlRequest(create), via));
+      await write('createField', 'createProjectV2Field', create);
     },
     /**
      * Adds the column `name`, an option of the field holding the columns, after the options the
@@ -44,13 +58,13 @@ export function schemaWriteSide(board, { send, emitter, timeout } = {}) {
       const held = columns.options.map((option) => `{id: ${literal(option.id)}, name: ${literal(option.name)}, color: ${option.color}, description: ${literal(option.description)}}`);
       const added = `{name: ${literal(name)}, color: ${OPTION_COLOUR}, description: ""}`;
       const update = `mutation { updateProjectV2Field(input: {fieldId: ${literal(columns.id)}, singleSelectOptions: [${[...held, added].join(', ')}]}) { projectV2Field { ... on ProjectV2SingleSelectField { id } } } }`;
-      answerOf('createColumn', board, await schemaWriteRunner(graphqlRequest(update), via));
+      await write('createColumn', 'updateProjectV2Field', update);
     },
     /** Creates the label `name` in the board's repository. */
     createLabel: async (name) => {
       const repositoryId = await repositoryOf('createLabel', board, via);
       const create = `mutation { createLabel(input: {repositoryId: ${literal(repositoryId)}, name: ${literal(name)}, color: ${literal(LABEL_COLOUR)}}) { label { id } } }`;
-      answerOf('createLabel', board, await schemaWriteRunner(graphqlRequest(create), via));
+      await write('createLabel', 'createLabel', create);
     },
   };
 }
