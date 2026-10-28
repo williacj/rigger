@@ -8,6 +8,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { repositoryReads } from '../src/substrate/forge/read.mjs';
+import { statusNotice } from '../src/workflow/status-issue.mjs';
+import { recordingSink } from './admission-world.mjs';
+import { forge as notices } from './notice-forge.mjs';
 
 /** The board every read here is made for, as a config names it. */
 const BOARD = { repo: 'williacj/rigger', project: 6, columns: { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' } };
@@ -71,11 +74,13 @@ test('the timeline read sends the command the recaptured fixture names, and answ
 
   assert.equal(documentOf(send.sent[0]), QUERY);
   // Derived by hand from the fixture: a comment and two labels at the opening, a comment, a close by
-  // a merged pull request's keyword, a comment, a reopen, six comments, and a close.
+  // a merged pull request's keyword, a comment, a reopen, six comments, a close, and U91's two
+  // writes, the removal of maker:codex and its return.
   assert.deepEqual(timeline.map(({ kind, label }) => (label ? `${kind} ${label}` : kind)), [
     'comment', 'labeled type:change', 'labeled maker:codex', 'comment', 'closed', 'comment', 'reopened',
-    'comment', 'comment', 'comment', 'comment', 'comment', 'comment', 'closed',
+    'comment', 'comment', 'comment', 'comment', 'comment', 'comment', 'closed', 'unlabeled maker:codex', 'labeled maker:codex',
   ]);
+  assert.deepEqual(timeline[14], { kind: 'unlabeled', createdAt: '2026-10-28T14:39:38Z', actor: 'williacj', label: 'maker:codex' });
   assert.deepEqual(timeline[1], { kind: 'labeled', createdAt: '2026-10-17T15:16:31Z', actor: 'williacj', label: 'type:change' });
   assert.deepEqual(timeline[4], { kind: 'closed', createdAt: '2026-10-18T14:32:22Z', actor: 'williacj' });
   assert.deepEqual(timeline[6], { kind: 'reopened', createdAt: '2026-10-18T14:32:40Z', actor: 'williacj' });
@@ -118,7 +123,6 @@ test('the timeline read answers every close whoever made it, a deleted account\'
     commentNode({ body: 'Hold: `a1`', createdAt: '2026-10-01T00:02:00Z', edited: true }),
     commentNode({ body: 'Gone.', createdAt: '2026-10-01T00:03:00Z', login: null }),
     eventNode('LabeledEvent', '2026-10-01T00:04:00Z', 'williacj', 'type:change'),
-    eventNode('UnlabeledEvent', '2026-10-01T00:05:00Z', 'williacj', 'type:change'),
     eventNode('ClosedEvent', '2026-10-01T00:06:00Z', 'williacj'),
     eventNode('ReopenedEvent', '2026-10-01T00:07:00Z', 'triager'),
     eventNode('ClosedEvent', '2026-10-01T00:08:00Z', 'triager'),
@@ -136,6 +140,24 @@ test('the timeline read answers every close whoever made it, a deleted account\'
     { author: 'williacj', permission: 'admin', edited: true },
     { author: null, permission: 'none', edited: false },
   ]);
-  assert.deepEqual(timeline.filter(({ label }) => label !== undefined).map(({ kind, label }) => `${kind} ${label}`), ['labeled rigger:status', 'labeled type:change', 'unlabeled type:change']);
+  assert.deepEqual(timeline.filter(({ label }) => label !== undefined).map(({ kind, label }) => `${kind} ${label}`), ['labeled rigger:status', 'labeled type:change']);
   assert.equal(timeline[0].createdAt, '2026-10-01T00:00:00Z');
+});
+
+// proves R-SCHED-23
+test('the recaptured removal of another label, read from the fixture, is not a status-label change to L2: a close after it still counts for the hold', async () => {
+  const timeline = await repositoryReads(BOARD, { send: forge({ null: { status: 0, stdout: PRINTED, stderr: '' } }) }).readIssueTimeline(794);
+  const changes = timeline.slice(-2);
+  assert.deepEqual(changes.map(({ kind, label }) => `${kind} ${label}`), ['unlabeled maker:codex', 'labeled maker:codex']);
+  // The hold's notice reached the issue at its opening, which carried the status label; then the
+  // two real label changes; then a close.
+  const opened = { kind: 'labeled', createdAt: '2026-10-01T00:00:00Z', actor: 'rigger-bot', label: 'rigger:status' };
+  const closed = { kind: 'closed', createdAt: '2026-10-28T15:00:00Z', actor: 'williacj' };
+  const world = notices({ issues: [{ number: 794, title: 'Rigger closed admission', body: 'Hold: `a1`', author: 'rigger-bot', state: 'closed', labels: ['rigger:status'], comments: [], timeline: [opened, ...changes, closed] }] });
+  const { sink } = recordingSink();
+  const notice = statusNotice({ reads: world.reads, writes: world.writes, board: world.board, items: world.items, columns: BOARD.columns, sink });
+
+  const ended = await notice({ closer: { name: 'hold-a1-issue-794.json', kind: 'hold', id: 'a1', issue: '794', reason: 'r', time: 1, run: 'r-1' }, others: [], state: 'closed' }).next();
+
+  assert.deepEqual(ended, { done: true, value: { issue: 794, closed: true } });
 });
