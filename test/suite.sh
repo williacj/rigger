@@ -49,6 +49,7 @@ test/maker-dispatch.test.mjs
 test/mutation-receipt.test.mjs
 test/never-stop.test.mjs
 test/package.test.mjs
+test/path-spelling.test.mjs
 test/printable-closer-verbs.test.mjs
 test/process-adapter.test.mjs
 test/process-fixtures.test.mjs
