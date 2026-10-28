@@ -768,16 +768,17 @@ export function schedule(trigger, instant) {
   return { refusals, newest, next: following <= 8640000000000000 ? following : null };
 }
 
+/** A plain label list, read once by length and own index without consumer traversal methods. */
+const plainLabels = (labels) => Array.isArray(labels) ? Array.from({ length: labels.length }, (_, index) => Object.hasOwn(labels, index) ? labels[index] : undefined) : labels;
+
 /** Card-template values; readShape already refused a malformed card and its missing keys. */
 function readClockCard(config, card, where, refusals, canSelect) {
   if (!declares(card)) return;
+  const labels = Object.hasOwn(card, 'labels') ? plainLabels(card.labels) : undefined;
   if (Object.hasOwn(card, 'title') && !names(card.title)) {
     refusals.push(`\`${where}.title\` must be a string holding something other than whitespace`);
   }
-  // Read indices through an array-like value: a custom iterator can hide an invalid entry.
-  if (Object.hasOwn(card, 'labels') && (!Array.isArray(card.labels) || holdsUnnamed(Array.from({ length: card.labels.length }, (_, index) => card.labels[index])))) {
-    refusals.push(`\`${where}.labels\` must be a list of label names`);
-  }
+  if (Object.hasOwn(card, 'labels') && (!Array.isArray(labels) || holdsUnnamed(labels))) refusals.push(`\`${where}.labels\` must be a list of label names`);
   if (Object.hasOwn(card, 'acceptance') && typeof card.acceptance !== 'string') {
     refusals.push(`\`${where}.acceptance\` must be one string`);
   }
@@ -789,13 +790,13 @@ function readClockCard(config, card, where, refusals, canSelect) {
       || (card.author !== OWNER && declares(config.roles) && !Object.hasOwn(config.roles, card.author)))) {
     refusals.push(`\`${where}.author\` must name \`owner\` or a declared role, and the config gives ${inspect(card.author)}`);
   }
-  if (Array.isArray(card.labels)) {
+  if (Array.isArray(labels)) {
     if (canSelect) {
-      const { answer } = kindOf({ labels: card.labels }, config.kinds, config.epicLabel);
-      if (answer) refusals.push(`\`${where}.labels\` ${inspect(card.labels)}: ${answer.reason ?? 'selects no kind'}`);
+      const { answer } = kindOf({ labels }, config.kinds, config.epicLabel);
+      if (answer) refusals.push(`\`${where}.labels\` ${inspect(labels)}: ${answer.reason ?? 'selects no kind'}`);
     }
-    if (card.labels.some((label) => sameLabel(label, FIXED_LABELS.status))) {
-      refusals.push(`\`${where}.labels\` ${inspect(card.labels)} holds the status label`);
+    if (labels.some((label) => sameLabel(label, FIXED_LABELS.status))) {
+      refusals.push(`\`${where}.labels\` ${inspect(labels)} holds the status label`);
     }
   }
 }
@@ -915,7 +916,7 @@ export function declaredLabels(config) {
     ...Object.values(config.roles).flatMap((role) => Object.keys(role.labels ?? {})),
     ...Object.values(config.roles).flatMap((role) => Object.keys(role.providerLabels ?? {})),
     ...(Object.hasOwn(config, 'clock') && Object.hasOwn(config.clock, 'triggers')
-      ? Object.values(config.clock.triggers).flatMap((trigger) => Object.hasOwn(trigger, 'card') ? trigger.card.labels : []) : []),
+      ? Object.values(config.clock.triggers).flatMap((trigger) => Object.hasOwn(trigger, 'card') ? plainLabels(trigger.card.labels) : []) : []),
     ...Object.values(FIXED_LABELS),
   ];
   return declared.filter((name, at) => !declared.slice(0, at).some((earlier) => sameLabel(earlier, name)));

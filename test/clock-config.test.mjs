@@ -46,7 +46,10 @@ function refusals(value) {
     for (const [name, trigger] of Object.entries(clock?.triggers ?? {})) {
       const labels = trigger && Object.hasOwn(trigger, 'card') ? trigger.card?.labels : undefined;
       if (!Array.isArray(labels)) continue;
-      const selection = kindOf({ number: 1, labels }, rest.kinds, rest.epicLabel);
+      const copied = [];
+      const length = labels.length;
+      for (let index = 0; index < length; index += 1) copied[index] = Object.hasOwn(labels, index) ? labels[index] : undefined;
+      const selection = kindOf({ number: 1, labels: copied }, rest.kinds, rest.epicLabel);
       const found = answer.some((line) => line.includes(`clock.triggers.${name}.card.labels`)
         && (line.includes('selects no kind') || line.includes('selected by more than one kind')));
       assert.equal(found, selection.kind === undefined, `R-SCHED-41 relation for ${inspect(labels)}`);
@@ -81,7 +84,7 @@ test('C1-C6: clock is optional, and every declared clock requires a positive who
 });
 
 // The shared refusal must render JavaScript values that JSON cannot serialize, at every shape site.
-test('C30 C37 C40: unserializable nonobjects earn one refusal and every answered base probe retains its exact rendering', async (t) => {
+test('C30 C37 C41: unserializable nonobjects earn one refusal and every answered base probe retains its exact rendering', async (t) => {
   const cycle = [];
   cycle.push(cycle);
   const trigger = cardTrigger();
@@ -136,7 +139,7 @@ test('C30 C37 C40: unserializable nonobjects earn one refusal and every answered
           assert.ok(answer[0].includes(`\`${path}\``) && answer[0].includes('holds no declarations'), inspect(answer));
           sharedSites.add(path);
         }
-        continue; // C39 remains outside the card.
+        continue; // C40 remains outside the card.
       }
       assert.deepEqual(config.validate(probe), expected, `${parts.join('.')}: ${inspect(value)}`);
       answered += 1;
@@ -145,8 +148,21 @@ test('C30 C37 C40: unserializable nonobjects earn one refusal and every answered
   assert.ok(answered > 0, 'the base answered no parity probe');
   assert.ok(sharedSites.size > 0, 'no shared-formatter throw was probed at the base');
   t.diagnostic(JSON.stringify({ base, paths: paths.length, answered, sharedSites: [...sharedSites] }));
+  // C41 explicitly keeps the base's consumer rendering hooks in the shared shape refusal.
+  const rendered = (read) => {
+    const calls = [];
+    const roles = [];
+    Object.defineProperties(roles, {
+      toJSON: { value() { calls.push('toJSON'); return undefined; } },
+      toString: { value() { calls.push('toString'); return 'consumer rendering'; } },
+    });
+    return { answer: read({ ...rigger, roles }), calls };
+  };
+  const expectedRendering = { answer: ['`roles` holds no declarations, and Rigger reads consumer rendering as none'], calls: ['toJSON', 'toString'] };
+  assert.deepEqual(rendered(original.validate), expectedRendering, 'C41: the base invokes the rendering hooks');
+  assert.deepEqual(rendered(config.validate), expectedRendering, 'C41: retain the base rendering hooks');
   const inherited = Object.assign(Object.create({ clock: { poll: 0 } }), structuredClone(rigger));
-  assert.deepEqual(config.validate(inherited), original.validate(inherited), 'C40: an inherited clock is no declaration');
+  assert.deepEqual(config.validate(inherited), original.validate(inherited), 'C41: an inherited clock is no declaration');
 });
 
 // Each shape must be read as declarations, including scalar values a JavaScript config can hold.
@@ -403,8 +419,8 @@ test('the published clock declares both work shapes and validates on this reposi
   assert.deepEqual(refusals(clocked(published.clock)), []);
 });
 
-// C40 preserves existing returned answers even when consumer getters change between reads.
-test('C40: role and provisioning timeout getters retain the exact base answer', async (t) => {
+// C41 preserves existing returned answers even when consumer getters change between reads.
+test('C41: role and provisioning timeout getters retain the exact base answer', async (t) => {
   const original = await baseValidator();
   for (const [section, name, timeout] of [
     ['roles', 'engineer', config.roleTimeout], ['provisioning', 'npm-ci', config.stepTimeout],
@@ -421,13 +437,13 @@ test('C40: role and provisioning timeout getters retain the exact base answer', 
       const value = make();
       const actual = config.validate(value);
       assert.equal(timeout(value[section][name]), 0, 'the execution boundary sees the invalid timeout');
-      assert.deepEqual(actual, expected, 'C40: preserve the base timeout refusal');
+      assert.deepEqual(actual, expected, 'C41: preserve the base timeout refusal');
     });
   }
 });
 
 // C17 reads indexed entries, including holes, rather than an array's replaceable iterator.
-test('C17 C40: template label validation reads indexed entries without changing nonclock selectors', async () => {
+test('C17 C41: template label validation reads indexed entries without changing nonclock selectors', async () => {
   const original = await baseValidator();
   for (const hidden of [3, undefined]) {
     const labels = ['type:change', hidden];
@@ -439,14 +455,101 @@ test('C17 C40: template label validation reads indexed entries without changing 
     const answer = refusals(value);
     assert.ok(answer.includes('`clock.triggers.daily.card.labels` must be a list of label names'),
       `C17: the indexed nonstring must be refused; got ${inspect(answer)}`);
-    // The same existing selector is intentionally left at its base answer under C40.
+    // The same existing selector is intentionally left at its base answer under C41.
     const nonclock = { ...rigger, kinds: { ...rigger.kinds, change: { ...rigger.kinds.change, select: { labels } } } };
     assert.deepEqual(original.validate(nonclock), []);
-    assert.deepEqual(config.validate(nonclock), original.validate(nonclock), 'C40: keep existing selector answers');
+    assert.deepEqual(config.validate(nonclock), original.validate(nonclock), 'C41: keep existing selector answers');
   }
   const labels = ['type:change', 'area:indexed'];
   labels[Symbol.iterator] = function* () { throw new Error('a template label iterator is not its entries'); };
   const value = triggered({ ...cardTrigger(), card: { ...template(), labels } });
   assert.deepEqual(refusals(value), []);
   assert.ok(config.declaredLabels(value).includes('area:indexed'), 'the inventory reads the same indexed labels');
+});
+
+// C20's indexed label must remain visible despite a consumer-defined traversal method.
+test('C20: a non-enumerable own some cannot hide an indexed status label', () => {
+  const labels = ['type:change', 'Rigger:Status'];
+  let calls = 0;
+  Object.defineProperty(labels, 'some', { value(predicate, thisArg) {
+    calls += 1;
+    return predicate.call(thisArg, this[0], 0, this);
+  } });
+  assert.equal(Object.getOwnPropertyDescriptor(labels, 'some').enumerable, false);
+  assert.equal(labels.length, 2);
+  assert.equal(labels[1], 'Rigger:Status');
+  assert.equal(JSON.stringify(labels), '["type:change","Rigger:Status"]');
+  const value = triggered({ ...cardTrigger(), card: { ...template(), labels } });
+  const before = inspect(value, { depth: Infinity, showHidden: true });
+  const answer = config.validate(value);
+  assert.ok(answer.some((line) => line.includes('clock.triggers.daily.card.labels') && line.includes('status label')),
+    `C20 must refuse the indexed status label; got ${inspect(answer)}`);
+  assert.equal(calls, 0, 'the clock path must not dispatch the consumer array method');
+  assert.equal(inspect(value, { depth: Infinity, showHidden: true }), before, 'validation changed the config');
+  const methods = ['some', 'every', 'includes', 'map', 'filter', 'indexOf', 'join', 'forEach',
+    'toString', 'valueOf', 'constructor', Symbol.iterator];
+  for (const entries of [[], ['unselected'], ['type:change', 'type:spec'],
+    ['type:change', 'Rigger:Status'], ['type:change', 'area:extra'], ['type:change', 3], ['']]) {
+    const plain = Array.of(...entries);
+    const altered = Array.of(...entries);
+    for (const method of methods) Object.defineProperty(altered, method, {
+      get() { throw new Error(`template labels must not read ${String(method)}`); },
+    });
+    const make = (labels) => triggered({ ...cardTrigger(), card: { ...template(), labels } });
+    const expected = config.validate(make(plain));
+    const actual = config.validate(make(altered));
+    assert.deepEqual(actual, expected, `C38: indexed answers for ${inspect(entries)}`);
+    const selected = kindOf({ labels: plain }, rigger.kinds, rigger.epicLabel);
+    const selectionRefused = actual.some((line) => line.includes('selects no kind') || line.includes('selected by more than one kind'));
+    assert.equal(selectionRefused, selected.kind === undefined, 'C38: kindOf reads the plain copy');
+  }
+
+});
+
+// C38 distinguishes absent own elements from values supplied by the array's prototype.
+test('C38: validation reads length and indexed own label elements once', () => {
+  const reads = [];
+  const target = new Array(2);
+  Object.defineProperty(target, '0', { get() { reads.push('0'); return 'type:change'; }, configurable: true });
+  const prototype = Object.create(Array.prototype);
+  Object.defineProperty(prototype, '1', { get() { reads.push('inherited 1'); return 'Rigger:Status'; } });
+  Object.setPrototypeOf(target, prototype);
+  const labels = new Proxy(target, { get(value, key, receiver) {
+    if (key === 'length') reads.push('length');
+    return Reflect.get(value, key, receiver);
+  } });
+  const make = (labels) => triggered({ ...cardTrigger(), card: { ...template(), labels } });
+  const expected = config.validate(make(['type:change', undefined]));
+  assert.deepEqual(expected, ['`clock.triggers.daily.card.labels` must be a list of label names']);
+  const actual = config.validate(make(labels));
+  assert.deepEqual(actual, expected, 'C38: an inherited label is not an indexed own element');
+  assert.deepEqual(reads, ['length', '0'], 'C38: capture length once and read each own element once');
+  assert.equal(Object.hasOwn(target, '1'), false, 'validation must not fill the input hole');
+});
+
+test('C38: label inventory uses the same plain own-element copy', () => {
+  const reads = [];
+  const target = new Array(3);
+  Object.defineProperties(target, {
+    0: { get() { reads.push('0'); return 'type:change'; } },
+    1: { get() { reads.push('1'); return 'area:own'; } },
+  });
+  const prototype = Object.create(Array.prototype);
+  Object.defineProperty(prototype, '2', { get() { reads.push('inherited 2'); return 'area:inherited'; } });
+  Object.setPrototypeOf(target, prototype);
+  const labels = new Proxy(target, { get(value, key, receiver) {
+    if (key === 'length') reads.push('length');
+    return Reflect.get(value, key, receiver);
+  } });
+  const make = (labels) => triggered({ ...cardTrigger(), card: { ...template(), labels } });
+  const expected = config.declaredLabels(make(['type:change', 'area:own', undefined]));
+  assert.deepEqual(config.declaredLabels(make(labels)), expected, 'C38: inventory ignores an inherited element');
+  assert.deepEqual(reads, ['length', '0', '1'], 'C38: inventory reads each own element once');
+  assert.equal(Object.hasOwn(target, '2'), false, 'inventory must not fill the input hole');
+  const ordinary = ['type:change', 'area:own'];
+  const altered = Array.of(...ordinary);
+  for (const method of ['some', 'every', 'includes', 'map', 'filter', 'join', 'forEach', 'constructor', Symbol.iterator]) {
+    Object.defineProperty(altered, method, { get() { throw new Error(`inventory must not read ${String(method)}`); } });
+  }
+  assert.deepEqual(config.declaredLabels(make(altered)), config.declaredLabels(make(ordinary)));
 });
