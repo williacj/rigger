@@ -453,14 +453,15 @@ test('report over a stream holding the layers a maker\'s dispatch records prints
   const consumer = realpathSync(repositoryIn('rigger-report-'));
   await recordRun(join(consumer, '.rigger'), FIVE_CARDS);
   const layers = new Set(readFileSync(streamIn(consumer), 'utf8').trim().split('\n').map((line) => JSON.parse(line).layer));
-  // L0 records only where it kills or sweeps something, which a clean exit may not need.
+  // L0 records a call.end for each git call, and a kill or sweep only where the host needed one.
   assert.deepEqual([...layers].filter((layer) => layer !== 'L0').sort(), ['L1', 'L2', 'L3']);
 
   const ran = report(consumer);
 
   assert.equal(ran.code, 0, ran.err);
   assert.match(ran.out, /\bL3\b/, ran.out);
-  assert.doesNotMatch(ran.out.replace(/^  only markers L2 recorded in this state directory are named\n/m, ''), /\bL[05-9]\b/, ran.out);
+  assert.doesNotMatch(ran.out.replace(/^  only markers L2 recorded in this state directory are named\n/m, ''), /\bL[5-9]\b/, ran.out);
+  assert.match(ran.out, /^L0$/m, ran.out);
   assert.match(ran.out, /^L1$/m, ran.out);
   assert.match(ran.out, /^L2$/m, ran.out);
   assert.match(ran.out, /^L4$/m, ran.out);
@@ -609,10 +610,10 @@ const ended = (dispatch, ms, { card, ...fields } = {}) => ({ layer: 'L1', card, 
 /** One L0 kill event `name` carrying `dispatch`, as L0 records a survivor or group it killed. */
 const killed = (name, dispatch, card = 7) => ({ layer: 'L0', card, dispatch, event: name, fields: { pid: 4242 } });
 
-test('report prints an L1 section, then L2, then L3, then L4, each headed by its layer, ahead of the marker check', () => {
+test('report prints an L0 section, then L1, then L2, then L3, then L4, each headed by its layer, ahead of the marker check', () => {
   const out = reported([['r-a', [ended('d-1', 1000, { card: 7 })]]]);
   const headings = out.split('\n').filter((line) => /^L\d$/.test(line) || line === 'markers no dispatch wrote');
-  assert.deepEqual(headings, ['L1', 'L2', 'L3', 'L4', 'markers no dispatch wrote'], out);
+  assert.deepEqual(headings, ['L0', 'L1', 'L2', 'L3', 'L4', 'markers no dispatch wrote'], out);
 });
 
 test('report lists each dispatch.end of a run under that run, with its card where it carries one, and counts it across the stream', () => {
@@ -958,4 +959,213 @@ test('report\'s L4 figures do not change for an event or a field that no L4 sign
     rateIn(under(expected, 'across the stream'), 'tier accuracy')], [['rework: 1'], 'rework: 1', [1, 1, 1], [1, 1, 1]]);
   assert.deepEqual(l4([...base, ...noise]), expected);
   assert.deepEqual(l4(fielded), expected);
+});
+
+/**
+ * One L0 `call.end` of `system` ending in `outcome`, in the shape "L0's call events" gives it: a
+ * forge call carries `side`, a git call `operation`, and both carry `ms`. `fields` replaces or adds
+ * to those. An undefined `system` or `outcome` leaves that field out of the line.
+ */
+const callEnd = (system, outcome, fields = {}) => ({ layer: 'L0', event: 'call.end',
+  fields: { system, ...(system === 'git' ? { operation: 'fetch' } : { side: 'read' }), ms: 7, outcome, ...fields } });
+
+test('report prints the L0, L1, L2, L3 and L4 headings, then the marker check, and no other layer, for a stream holding events of each', () => {
+  const out = reported([['r-a', [
+    callEnd('forge', 'ok'), ended('d-1', 1000, { card: 7 }), transition(7, 'continued'), claim('pull', 7),
+    { layer: 'L4', card: 7, event: 'quality.noted', fields: {} },
+  ]]]);
+  const headings = out.split('\n').filter((line) => /^L\d$/.test(line) || line === 'markers no dispatch wrote');
+  assert.deepEqual(headings, ['L0', 'L1', 'L2', 'L3', 'L4', 'markers no dispatch wrote'], out);
+  assert.deepEqual(out.split('\n').filter((line) => /^L\d/.test(line)), ['L0', 'L1', 'L2', 'L3', 'L4'], out);
+});
+
+/** What a stream's every run records beside its calls: a work claim and a dispatch that ended, so no run is only calls. */
+const floor = [claim('pull', 7), ended('d-1', 100, { card: 7 })];
+
+/**
+ * The substrate fault rate of `system` over `events`, as `rateIn` reads its line, derived from
+ * "What `report` derives": the denominator is the L0 `call.end` events whose `system` is `system`,
+ * the numerator those whose `outcome` is `failed` or `timed-out`. Where the denominator is zero, the
+ * line saying there is no rate, `where` naming the span.
+ */
+function expectedFaultRate(events, system, where) {
+  const calls = events.filter(({ layer, event, fields }) => layer === 'L0' && event === 'call.end' && fields.system === system);
+  const faults = calls.filter(({ fields }) => fields.outcome === 'failed' || fields.outcome === 'timed-out').length;
+  return calls.length === 0 ? `no ${system} fault rate: no ${system} call in ${where}` : [Number((faults / calls.length).toFixed(4)), faults, calls.length];
+}
+
+/** The two rate lines under `heading` in `out`'s L0 section, checked to be exactly two, forge first and git second, each read by rateIn. */
+function faultRates(out, heading) {
+  const lines = under(section(out, 'L0'), heading);
+  assert.equal(lines.length, 2, `not exactly two lines under "${heading}" in:\n${out}`);
+  return { forge: rateIn(lines.slice(0, 1), 'forge fault rate'), git: rateIn(lines.slice(1), 'git fault rate') };
+}
+
+/**
+ * Runs `report` over `runs` and asserts its L0 section: each run's heading in the order the runs
+ * first appear, then `across the stream`, and under each the forge and git rates derived from the
+ * events recorded there. Returns the output.
+ */
+function assertFaultRates(runs) {
+  const out = reported(runs);
+  const ids = [...new Set(runs.map(([run]) => run))];
+  assert.deepEqual(section(out, 'L0').filter((line) => /^ {2}\S/.test(line)), [...ids.map((run) => `  run ${run}`), '  across the stream'], out);
+  for (const run of ids) {
+    const events = runs.filter(([id]) => id === run).flatMap(([, recorded]) => recorded);
+    assert.deepEqual(faultRates(out, `run ${run}`), { forge: expectedFaultRate(events, 'forge', 'this run'), git: expectedFaultRate(events, 'git', 'this run') }, out);
+  }
+  const all = runs.flatMap(([, recorded]) => recorded);
+  assert.deepEqual(faultRates(out, 'across the stream'), { forge: expectedFaultRate(all, 'forge', 'the stream'), git: expectedFaultRate(all, 'git', 'the stream') }, out);
+  return out;
+}
+
+/** F7's calls before their fields change: one of each outcome of each system. */
+const F7_CALLS = ['ok', 'failed', 'timed-out'].flatMap((outcome) => [callEnd('forge', outcome), callEnd('git', outcome)]);
+
+/** Table F's streams, by row: each a list of runs, each a run id and the events it records, in order. */
+const TABLE_F = {
+  F1: [['r-a', [...floor, callEnd('forge', 'ok'), callEnd('forge', 'failed'), callEnd('forge', 'timed-out')]]],
+  F2: [['r-a', [...floor, callEnd('forge', 'ok'), callEnd('git', 'ok'), callEnd('git', 'failed'), callEnd('git', 'timed-out')]]],
+  F3: [['r-a', [...floor, callEnd('forge', 'failed'), callEnd('forge', 'cancelled'), callEnd('forge', undefined), callEnd('git', 'refused'), callEnd('git', undefined)]]],
+  F5: [['r-a', [...floor, callEnd('forge', 'ok'), callEnd('git', 'ok'),
+    ...['L1', 'L2', 'L3', 'L4'].flatMap((layer) => [{ ...callEnd('forge', 'failed'), layer }, { ...callEnd('git', 'timed-out'), layer }])]]],
+  F4: [['r-a', [...floor, callEnd('forge', 'ok'), callEnd('git', 'ok'),
+    callEnd('gh', 'failed'), callEnd('Git', 'failed'), callEnd(null, 'timed-out'), callEnd(undefined, 'failed'), callEnd('', 'failed')]]],
+  F6: [['r-a', [...floor, callEnd('forge', 'failed'), callEnd('git', 'ok'),
+    { layer: 'L5', event: 'push.end', fields: { ref: 'refs/rigger/events', outcome: 'failed', ms: 40, reason: 'git exited 128' } },
+    { layer: 'L0', event: 'fetch.retried', fields: { ref: 'refs/heads/main', tries: 2 } },
+    killed('survivor.killed', 'd-1'), killed('group.killed', 'd-1'), ended('d-2', 200, { card: 8 }),
+    callEnd('git', 'timed-out')]]],
+  F7: [['r-a', [...floor, ...F7_CALLS.map((call, index) => [
+    { ...call, card: 9, dispatch: 'd-9', fields: { ...call.fields, side: 'item-write', operation: 'worktree', ms: 90_000 } },
+    { ...call, fields: { system: call.fields.system, outcome: call.fields.outcome } },
+    { ...call, card: 7, fields: { ...call.fields, queueDepth: 3, reason: 'timed-out', exit: 1, tries: 4, kept: 'x' } },
+  ][index % 3])]]],
+  F8: [
+    ['r-a', [...floor, callEnd('forge', 'failed'), callEnd('git', 'ok')]],
+    ['r-b', [...floor, callEnd('forge', 'timed-out'), callEnd('git', 'failed'), callEnd('git', 'failed')]],
+    ['r-a', [callEnd('forge', 'ok'), callEnd('git', 'ok')]],
+  ],
+  F9: [['r-a', [...floor, callEnd('forge', 'failed'), callEnd('forge', 'ok')]], ['r-b', [...floor, callEnd('git', 'timed-out')]]],
+  F10: [['r-a', [...floor, killed('survivor.killed', 'd-1')]], ['r-b', [...floor]]],
+  F14: [['r-a', [...floor, callEnd('forge', 'ok'), callEnd('forge', 'ok'), callEnd('forge', null), callEnd('git', 'ok')]]],
+};
+
+test('report over a stream holding no call.end prints the L0 section, with no forge and no git fault rate in each run and across the stream (F10)', () => {
+  const out = assertFaultRates(TABLE_F.F10);
+  assert.deepEqual(faultRates(out, 'run r-a'), { forge: 'no forge fault rate: no forge call in this run', git: 'no git fault rate: no git call in this run' });
+  assert.deepEqual(faultRates(out, 'across the stream'), { forge: 'no forge fault rate: no forge call in the stream', git: 'no git fault rate: no git call in the stream' });
+});
+
+test('report counts a forge call.end that failed or timed out in the run\'s forge fault rate, over every forge call.end (F1)', () => {
+  // By hand: ok, failed and timed-out, one each, so 2 faults over 3 forge calls.
+  const out = assertFaultRates(TABLE_F.F1);
+  assert.deepEqual(faultRates(out, 'run r-a').forge, [0.6667, 2, 3], out);
+});
+
+test('report counts a git call.end that failed or timed out in the run\'s git fault rate, and leaves the forge rate to the forge calls (F2)', () => {
+  // By hand: git ok, failed and timed-out, one each, so 2 of 3; the one forge call is ok, so forge is 0 of 1.
+  const out = assertFaultRates(TABLE_F.F2);
+  assert.deepEqual(faultRates(out, 'run r-a'), { forge: [0, 0, 1], git: [0.6667, 2, 3] }, out);
+  const forgeOnly = TABLE_F.F2.map(([run, events]) => [run, events.filter(({ fields }) => fields.system !== 'git')]);
+  assert.deepEqual(faultRates(reported(forgeOnly), 'run r-a').forge, faultRates(out, 'run r-a').forge, out);
+});
+
+test('report counts a call.end whose outcome is none of ok, failed and timed-out, or is absent, in its system\'s denominator and not its numerator (F3)', () => {
+  // By hand: forge failed, cancelled and no outcome, so 1 of 3; git refused and no outcome, so 0 of 2.
+  const out = assertFaultRates(TABLE_F.F3);
+  assert.deepEqual(faultRates(out, 'run r-a'), { forge: [0.3333, 1, 3], git: [0, 0, 2] }, out);
+});
+
+test('report counts a call.end recorded under a layer other than L0 in neither rate (F5)', () => {
+  // By hand: the L0 calls are one ok forge call and one ok git call, 0 of 1 each; the failed and
+  // timed-out calls under L1 to L4 count nowhere.
+  const out = assertFaultRates(TABLE_F.F5);
+  assert.deepEqual(faultRates(out, 'run r-a'), { forge: [0, 0, 1], git: [0, 0, 1] }, out);
+});
+
+test('report counts a call.end whose system is neither forge nor git, or is absent, in neither rate (F4)', () => {
+  // By hand: one ok forge call and one ok git call, 0 of 1 each; the failed and timed-out calls of
+  // gh, Git, null, no system and the empty system count nowhere.
+  const out = assertFaultRates(TABLE_F.F4);
+  assert.deepEqual(faultRates(out, 'run r-a'), { forge: [0, 0, 1], git: [0, 0, 1] }, out);
+});
+
+/** The events F6 adds beside the calls: every one that is not an L0 `call.end`. */
+const OTHER_EVENTS = new Set(['push.end', 'fetch.retried', 'survivor.killed', 'group.killed', 'dispatch.end']);
+
+test('report prints the same L0 section for a stream with push.end, fetch.retried, kills and a dispatch.end beside its calls as without them (F6)', () => {
+  // By hand: forge failed, 1 of 1; git ok and timed-out, 1 of 2. The failed push.end counts nowhere.
+  const out = assertFaultRates(TABLE_F.F6);
+  assert.deepEqual(faultRates(out, 'run r-a'), { forge: [1, 1, 1], git: [0.5, 1, 2] }, out);
+  const callsOnly = TABLE_F.F6.map(([run, events]) => [run, events.filter(({ event }) => !OTHER_EVENTS.has(event))]);
+  assert.deepEqual(section(reported(callsOnly), 'L0'), section(out, 'L0'), out);
+});
+
+test('report prints the same L0 section for calls whose side, operation, ms, card and dispatch change, are absent, or are joined by fields no signal reads (F7)', () => {
+  const out = assertFaultRates(TABLE_F.F7);
+  // By hand: each system ok, failed and timed-out, so 2 of 3 each, whatever the other fields hold.
+  assert.deepEqual(faultRates(out, 'run r-a'), { forge: [0.6667, 2, 3], git: [0.6667, 2, 3] }, out);
+  assert.deepEqual(section(out, 'L0'), section(reported([['r-a', [...floor, ...F7_CALLS]]]), 'L0'), out);
+});
+
+test('report derives each run\'s fault rates from its own calls, and the stream\'s as the sums of the runs\' (F8)', () => {
+  // By hand: r-a records forge failed, ok and git ok, ok, in two stretches: forge 1 of 2, git 0 of 2.
+  // r-b: forge timed-out, 1 of 1; git failed, failed, 2 of 2. The stream: forge 2 of 3, git 2 of 4.
+  const out = assertFaultRates(TABLE_F.F8);
+  const [a, b, stream] = ['run r-a', 'run r-b', 'across the stream'].map((heading) => faultRates(out, heading));
+  assert.deepEqual([a, b], [{ forge: [0.5, 1, 2], git: [0, 0, 2] }, { forge: [1, 1, 1], git: [1, 2, 2] }], out);
+  assert.deepEqual(stream, { forge: [0.6667, 2, 3], git: [0.5, 2, 4] }, out);
+  for (const system of ['forge', 'git']) {
+    assert.deepEqual(stream[system].slice(1), [a[system][1] + b[system][1], a[system][2] + b[system][2]], out);
+  }
+});
+
+test('report says a run with calls of one system only has no rate for the other, and never prints 0 for it (F9)', () => {
+  const out = assertFaultRates(TABLE_F.F9);
+  assert.deepEqual(faultRates(out, 'run r-a'), { forge: [0.5, 1, 2], git: 'no git fault rate: no git call in this run' }, out);
+  assert.deepEqual(faultRates(out, 'run r-b'), { forge: 'no forge fault rate: no forge call in this run', git: [1, 1, 1] }, out);
+  assert.deepEqual(faultRates(out, 'across the stream'), { forge: [0.5, 1, 2], git: [1, 1, 1] }, out);
+});
+
+test('report prints a fault rate of 0 where no call of a system failed or timed out, and counts an outcome of null in the denominator (F14)', () => {
+  // By hand: forge ok, ok and null, 0 of 3; git ok, 0 of 1. A zero numerator over calls is a rate of 0, not no rate.
+  const out = assertFaultRates(TABLE_F.F14);
+  assert.deepEqual(faultRates(out, 'run r-a'), { forge: [0, 0, 3], git: [0, 0, 1] }, out);
+  assert.deepEqual(faultRates(out, 'across the stream'), { forge: [0, 0, 3], git: [0, 0, 1] }, out);
+});
+
+test('report over a state directory holding no stream prints no L0 heading and no fault rate, and says no events are recorded as it did (F11)', () => {
+  const consumer = realpathSync(repositoryIn('rigger-report-'));
+
+  const ran = report(consumer);
+
+  assert.equal(ran.code, 0, ran.err);
+  assert.equal(ran.out, `rigger report: no events are recorded; there is no stream at ${streamIn(consumer)}\n`, ran.out);
+  assert.doesNotMatch(`${ran.out}${ran.err}`, /^L0$|fault rate/m);
+});
+
+test('report over a stream of calls holding a line that does not parse exits 1, names that line, and prints no L0 heading and no fault rate (F12)', () => {
+  const consumer = realpathSync(repositoryIn('rigger-report-'));
+  recordEvents(consumer, 'r-a', [...floor, ...F7_CALLS]);
+  const whole = readFileSync(streamIn(consumer), 'utf8').trim().split('\n');
+  // The damage sits at line 3, with whole calls either side of it.
+  writeFileSync(streamIn(consumer), `${[...whole.slice(0, 2), '{"ts":"2026-01-01T00:', ...whole.slice(2)].join('\n')}\n`);
+
+  const ran = report(consumer);
+
+  assert.equal(ran.code, 1, ran.out);
+  assert.match(ran.err, /^rigger report: .*\bline 3\b.*, so no signal is derived$/m, ran.err);
+  assert.doesNotMatch(`${ran.out}${ran.err}`, /^L0$|fault rate/m);
+});
+
+test('report prints the same L1, L2, L3 and L4 sections and marker check for each Table F stream as for that stream with its call.end events removed', () => {
+  // From the L1 heading to the end: every section after L0, and the marker check.
+  const afterL0 = (out) => out.split('\n').slice(out.split('\n').indexOf('L1'));
+  for (const [row, runs] of Object.entries(TABLE_F)) {
+    const out = reported(runs);
+    const without = reported(runs.map(([run, events]) => [run, events.filter(({ event }) => event !== 'call.end')]));
+    assert.ok(afterL0(out).length > 1, `${row}: no L1 section in:\n${out}`);
+    assert.deepEqual(afterL0(out), afterL0(without), `${row}:\n${out}`);
+  }
 });
