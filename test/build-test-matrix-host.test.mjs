@@ -1,7 +1,7 @@
 // ABOUTME: Proves the matrix generator's native suite-list launch, exit, signal, deadline and output limits.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
@@ -15,6 +15,10 @@ import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 const { 20_000: SETTLES_WITHIN } = BOUNDS;
 const generator = fileURLToPath(new URL('../scripts/build-test-matrix.mjs', import.meta.url));
 const original = Buffer.from('preserve these matrix bytes\n');
+
+function replyComplete(path) {
+  return existsSync(path) && readFileSync(path, 'utf8') === 'survived';
+}
 
 /** A real direct shell, observed from outside the generator's synchronous process wait. */
 function nativeRead(t, name, body, { missingSh = false, importOnly = false } = {}) {
@@ -138,7 +142,7 @@ test('native TERM-resistant direct shell times out at the selected policy and is
   t.diagnostic(JSON.stringify({ nativeMatrixCase: 'timeout', directPID: pid, ready: true }));
   process.kill(pid, 'SIGTERM');
   writeFileSync(run.probe, 'probe');
-  await until(() => existsSync(run.reply), t);
+  await until(() => replyComplete(run.reply), t);
   assert.equal(readFileSync(run.reply, 'utf8'), 'survived');
   const result = await run.finish();
   assert.equal(result.status, 1, result.stderr);
@@ -147,6 +151,25 @@ test('native TERM-resistant direct shell times out at the selected policy and is
   assert.ok(result.elapsedMs < SETTLES_WITHIN.timeout, 'the witness exceeded the existing test bound');
   assert.equal(result.directGone, true, 'the direct shell was not reaped');
   assert.deepEqual(readFileSync(join(run.root, 'docs/derived/test-matrix.md')), original);
+});
+
+test('native reply observation waits for the complete literal', (t) => {
+  const root = temporaryDirectory('rigger-matrix-reply-', { context: t });
+  const reply = join(root, 'reply');
+  const replyObserved = () => replyComplete(reply);
+  const publish = (value) => {
+    const writer = spawnSync(process.execPath, ['-e',
+      "require('node:fs').writeFileSync(process.argv[1], process.argv[2])", reply, value]);
+    assert.equal(writer.status, 0, writer.stderr.toString());
+  };
+
+  assert.equal(replyObserved(), false, 'an absent reply was accepted');
+  publish('');
+  assert.equal(replyObserved(), false, 'an empty reply was accepted');
+  publish('surv');
+  assert.equal(replyObserved(), false, 'a partial reply was accepted');
+  publish('survived');
+  assert.equal(replyObserved(), true, 'the complete reply was not accepted');
 });
 
 test('native bounded overflow refuses partial output without changing matrix bytes', SETTLES_WITHIN, (t) =>
