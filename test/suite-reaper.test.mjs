@@ -3,9 +3,10 @@
 import { LSOF } from '../src/substrate/process.mjs';
 import { test } from 'node:test';
 import { randomUUID } from 'node:crypto';
+import { runInNewContext } from 'node:vm';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, statSync, writeFileSync, writeSync } from 'node:fs';
 import { symlinkSync } from 'node:fs';
 import { lstatSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -15,6 +16,7 @@ import { scratch, sweep } from './process-fixtures.mjs';
 import { ended } from './process-fixtures.mjs';
 import { constants } from 'node:fs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { safeTargetReadRecord, targetReadRecord, traceEvidence } from './suite-reaper-probe.mjs';
 
 const suite = resolve('test/suite.sh');
 const fixtureModule = new URL('./process-fixtures.mjs', import.meta.url).href;
@@ -303,8 +305,23 @@ async function runEnding(t, ending, kind, { holdPidPublication = false, gateSetu
   ].join('\n'));
   const output = join(directory, 'suite-output');
   const fd = openSync(output, 'w');
-  const { NODE_TEST_CONTEXT, ...env } = process.env;
-  const child = spawn('/bin/sh', [suite, '--host', ...(ending === 'E2' ? ['--test-reporter=tap'] : []), file], { cwd: resolve('.'), env: { ...env, TMPDIR: tmp }, detached: true, stdio: ['ignore', fd, fd] });
+  const { NODE_TEST_CONTEXT, RIGGER_REAPER_TRACE_FILE, RIGGER_REAPER_TRACE_ROOT, RIGGER_REAPER_CELL, ...env } = process.env;
+  const traceFile = ending === 'E5' || ending === 'E6' ? join(tmp, 'reaper-reads.jsonl') : undefined;
+  const probeCell = ending + '-' + kind;
+  let tracePublished = false;
+  const publishReadEvidence = () => {
+    if (!traceFile || tracePublished) return;
+    tracePublished = true;
+    let bytes;
+    try { bytes = readFileSync(traceFile, 'utf8'); } catch { /* The probe did not retain a trace. */ }
+    const evidence = traceEvidence(bytes, probeCell);
+    for (const record of evidence.records) console.error('RIGGER_REAPER_READ ' + JSON.stringify(record));
+    console.error('RIGGER_REAPER_CASE ' + JSON.stringify({ cell: probeCell, records: evidence.records.length, evidence: evidence.incomplete ? 'incomplete' : 'complete' }));
+  };
+  const child = spawn('/bin/sh', [suite, '--host', ...(ending === 'E2' ? ['--test-reporter=tap'] : []), file], { cwd: resolve('.'), env: {
+    ...env, TMPDIR: tmp,
+    ...(traceFile ? { RIGGER_REAPER_TRACE_FILE: traceFile, RIGGER_REAPER_TRACE_ROOT: tmp, RIGGER_REAPER_CELL: probeCell } : {}),
+  }, detached: true, stdio: ['ignore', fd, fd] });
   closeSync(fd);
   const setupDeadline = performance.now() + 10_000;
   let spawnError;
@@ -379,6 +396,7 @@ async function runEnding(t, ending, kind, { holdPidPublication = false, gateSetu
       process.kill(filePid, 'SIGKILL');
     }
     await checkEnding(context, tmp, runName, output);
+    publishReadEvidence();
     if (context.signal.aborted) throw new Error('hold cancelled after readiness', { cause: context.signal.reason });
     if (ending === 'E2') {
       const report = readFileSync(output, 'utf8');
@@ -393,6 +411,7 @@ async function runEnding(t, ending, kind, { holdPidPublication = false, gateSetu
       assert.equal([...report.matchAll(/^\s*not ok /gm)].length, 2, report);
     }
   } catch (error) {
+    publishReadEvidence();
     try { await teardown(); } catch (cleanup) { throw new AggregateError([error, cleanup], `${phase} failed and teardown failed`); }
     onPhase('teardown');
     if (context.signal.aborted && phase === 'hold') throw new Error('hold cancelled after readiness', { cause: error });
@@ -429,6 +448,168 @@ for (const ending of ['E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E7']) {
 for (const ending of ['E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E7']) {
   test(`${ending} ends an F7 L0 process group by ten seconds after the run ends`, { timeout: 30_000 }, (t) => runEnding(t, ending, 'F7'));
 }
+
+test('E5 publishes a safe structural record for completed targeted reads', { timeout: 30_000 }, async (t) => {
+  const diagnostics = [];
+  const previous = console.error;
+  console.error = (...args) => {
+    diagnostics.push(args.join(' '));
+    previous(...args);
+  };
+  try {
+    await runEnding(t, 'E5', 'F1');
+  } finally {
+    console.error = previous;
+  }
+  const records = diagnostics.filter((line) => line.startsWith('RIGGER_REAPER_READ '));
+  assert.ok(records.length > 0, 'E5 produced no structural targeted-read record');
+  const record = JSON.parse(records[0].slice('RIGGER_REAPER_READ '.length));
+  assert.equal(record.cell, 'E5-F1');
+  assert.ok(Number.isSafeInteger(record.pid) && record.pid > 0);
+  assert.equal(typeof record.readSequence, 'number');
+  assert.equal(typeof record.parserClass, 'string');
+  if (record.parserClass === 'absent') assert.equal(record.signalZero, 'ESRCH');
+});
+
+test('targeted read projection retains framing but hides command text and paths', () => {
+  const stdout = '123 Z Mon Oct 28 10:00:00 2026 SECRET_WALRUS=/private/branch\nnext\r\n';
+  const record = targetReadRecord({
+    cell: 'E5-F1', pid: 123, readSequence: 1, parserClass: 'malformed',
+    result: { status: 0, signal: null, error: null, stdout, stderr: '' },
+  });
+  assert.equal(record.stdoutUnits, stdout.length);
+  assert.equal(record.stderrUnits, 0);
+  assert.equal(record.rowCount, 2);
+  assert.equal(record.separatorCount, 2);
+  assert.deepEqual(record.separators, [
+    { at: stdout.indexOf('\n'), kind: 'lf' },
+    { at: stdout.lastIndexOf('\r\n'), kind: 'crlf' },
+  ]);
+  assert.doesNotMatch(JSON.stringify(record), /SECRET_WALRUS|\/private\/branch/);
+  assert.match(record.skeleton, /^[Aad0. |]*$/);
+});
+
+test('targeted read projection caps its public shape for large tool answers', () => {
+  const stdout = 'X'.repeat(300) + '\n'.repeat(80);
+  const record = targetReadRecord({
+    cell: 'E6-F7', pid: 123, readSequence: 2, parserClass: 'framing',
+    result: { status: 0, signal: null, error: null, stdout, stderr: '' },
+  });
+  assert.equal(record.stdoutUnits, 380);
+  assert.equal(record.skeleton.length, 256);
+  assert.equal(record.skeletonTruncated, true);
+  assert.equal(record.separatorCount, 80);
+  assert.equal(record.separators.length, 64);
+  assert.equal(record.separatorsTruncated, true);
+  assert.equal(record.rowCount, 80);
+  assert.doesNotMatch(JSON.stringify(record), /X{10}/);
+});
+
+test('unsafe or incomplete targeted-read records cannot become complete public evidence', () => {
+  const record = targetReadRecord({
+    cell: 'E5-F1', pid: 123, readSequence: 1, parserClass: 'absent', signalZero: 'ESRCH',
+    result: { status: 1, signal: null, error: null, stdout: '', stderr: '' },
+  });
+  assert.throws(() => safeTargetReadRecord({ ...record, pid: null }), /trace record is incomplete/);
+  assert.throws(() => safeTargetReadRecord({ ...record, skeleton: 'SECRET_WALRUS' }), /trace record is incomplete/);
+  assert.throws(() => safeTargetReadRecord({ ...record, separators: [{ at: 0, kind: 'private' }] }), /trace record is incomplete/);
+  assert.equal(JSON.stringify(safeTargetReadRecord({ ...record, command: '/private/secret' })).includes('/private/secret'), false);
+});
+
+test('missing or truncated reaper trace remains incomplete evidence', () => {
+  const record = targetReadRecord({
+    cell: 'E5-F1', pid: 123, readSequence: 1, parserClass: 'absent', signalZero: 'ESRCH',
+    result: { status: 1, signal: null, error: null, stdout: '', stderr: '' },
+  });
+  const line = JSON.stringify(record) + '\n';
+  assert.deepEqual(traceEvidence(line, 'E5-F1'), { records: [record], incomplete: false });
+  assert.deepEqual(traceEvidence(undefined, 'E5-F1'), { records: [], incomplete: true });
+  assert.deepEqual(traceEvidence(line.slice(0, -1), 'E5-F1'), { records: [], incomplete: true });
+  assert.deepEqual(traceEvidence(JSON.stringify({ ...record, skeleton: 'SECRET_WALRUS' }) + '\n', 'E5-F1'), { records: [], incomplete: true });
+});
+
+test('targeted read outcomes and trace failures retain the confirmed-ending decision', (t) => {
+  const source = readFileSync(new URL('./suite-reaper', import.meta.url), 'utf8');
+  const start = source.indexOf('let targetReadSequence = 0;');
+  const end = source.indexOf('\nfunction inside(path) {', start);
+  assert.ok(start >= 0 && end > start, 'the targeted read function is present');
+  const targetFunction = source.slice(start, end);
+  const root = temporaryDirectory('rigger-reaper-probe-', { context: t });
+  const row = '123 S Mon Oct 28 10:00:00 2026 command\n';
+  const zombie = '123 Z Mon Oct 28 10:00:00 2026 command\n';
+  const answer = (changes = {}) => ({ status: 0, signal: null, error: null, stdout: row, stderr: '', ...changes });
+  const cases = [
+    ['live row', answer(), 'reached', 'live', 'return'],
+    ['zombie row', answer({ stdout: zombie }), 'reached', 'zombie', 'return'],
+    ['status 0 absent', answer({ stdout: '' }), 'ESRCH', 'absent', 'return'],
+    ['status 0 reached', answer({ stdout: '' }), 'reached', 'omitted', 'throw'],
+    ['status 0 forbidden', answer({ stdout: '' }), 'EPERM', 'absence-unconfirmed', 'throw'],
+    ['status 1 absent', answer({ status: 1, stdout: '' }), 'ESRCH', 'absent', 'return'],
+    ['status 1 reached', answer({ status: 1, stdout: '' }), 'reached', 'omitted', 'throw'],
+    ['status 1 forbidden', answer({ status: 1, stdout: '' }), 'EPERM', 'absence-unconfirmed', 'throw'],
+    ['status 1 nonempty', answer({ status: 1 }), 'reached', 'read-failed', 'throw'],
+    ['multiple rows', answer({ stdout: row + row }), 'reached', 'framing', 'throw'],
+    ['malformed row', answer({ stdout: 'wrong row\n' }), 'reached', 'malformed', 'throw'],
+    ['spawn error', answer({ error: Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }) }), 'reached', 'read-failed', 'throw'],
+    ['signal', answer({ signal: 'SIGKILL' }), 'reached', 'read-failed', 'throw'],
+    ['nonempty stderr', answer({ stderr: 'tool failed' }), 'reached', 'read-failed', 'throw'],
+  ];
+  const run = (result, signalZero, traceFile, traceRoot) => {
+    const mockedProcess = {
+      env: traceFile ? { RIGGER_REAPER_TRACE_FILE: traceFile, RIGGER_REAPER_TRACE_ROOT: traceRoot, RIGGER_REAPER_CELL: 'E5-F1' } : {},
+      getuid: process.getuid.bind(process),
+      kill: () => {
+        if (signalZero === 'reached') return;
+        throw Object.assign(new Error(signalZero), { code: signalZero });
+      },
+    };
+    const context = {
+      spawnSync: () => result, process: mockedProcess, targetReadRecord,
+      realpathSync, dirname, isAbsolute, relative, sep, statSync, existsSync, join,
+      lstatSync, openSync, resolve, files: constants, writeSync, closeSync,
+    };
+    try {
+      return { kind: 'return', value: JSON.stringify(runInNewContext(targetFunction + '\ntargetState(123)', context)) };
+    } catch (error) {
+      return { kind: 'throw', value: error.message };
+    }
+  };
+  for (const [name, result, signalZero, parserClass, kind] of cases) {
+    const destination = join(root, randomUUID() + '.jsonl');
+    const untraced = run(result, signalZero);
+    const traced = run(result, signalZero, destination, root);
+    assert.deepEqual(traced, untraced, name + ' changed the reaper decision');
+    assert.equal(traced.kind, kind, name);
+    const records = readFileSync(destination, 'utf8').trimEnd().split('\n');
+    assert.equal(records.length, 1, name);
+    const record = JSON.parse(records[0]);
+    assert.equal(record.parserClass, parserClass, name);
+    assert.equal(record.signalZero, result.stdout === '' ? signalZero : 'not-checked', name);
+    assert.equal(record.cell, 'E5-F1', name);
+  }
+  const outside = join(dirname(root), randomUUID() + '.jsonl');
+  const checkout = join(resolve('.'), randomUUID() + '.jsonl');
+  const link = join(root, 'link.jsonl');
+  const linkTarget = join(root, 'link-target');
+  writeFileSync(linkTarget, 'untouched');
+  symlinkSync(linkTarget, link);
+  const unwritable = join(root, 'unwritable.jsonl');
+  writeFileSync(unwritable, 'untouched');
+  chmodSync(unwritable, 0o400);
+  t.after(() => chmodSync(unwritable, 0o600));
+  for (const [name, destination, traceRoot] of [
+    ['outside TMPDIR', outside, root],
+    ['checkout TMPDIR', checkout, resolve('.')],
+    ['symlink', link, root],
+    ['unwritable', unwritable, root],
+    ['missing root', join(root, 'missing-root.jsonl'), undefined],
+  ]) {
+    assert.deepEqual(run(answer(), 'reached', destination, traceRoot), run(answer(), 'reached'), name);
+    if (name === 'unwritable') assert.equal(readFileSync(unwritable, 'utf8'), 'untouched');
+    else if (name === 'symlink') assert.equal(readFileSync(linkTarget, 'utf8'), 'untouched');
+    else assert.equal(existsSync(destination), false, name + ' wrote outside its permitted trace');
+  }
+});
 
 test('the ending check waits for a transient reaper after removal', async (t) => {
   const directory = scratch(t);
