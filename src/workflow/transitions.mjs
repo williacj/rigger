@@ -32,6 +32,20 @@ const CHANGES = {
   escalated: { to: 'owner' },
 };
 
+/**
+ * How many events a forge write's failure names as unrecorded, and each with its fields and the
+ * sink's error, as a report of a write the forge made names them. A write side marks such a failure `made` where
+ * the forge took the write and only its record was refused (`ARCHITECTURE.md`, "L0's call events").
+ */
+export const unrecordedNamed = ({ unrecorded }) => `${unrecorded.length} L0 event(s) went unrecorded: ${unrecorded
+  .map(({ event, cause, ...fields }) => `${event} ${JSON.stringify(fields)}: ${cause?.message ?? cause}`).join('; ')}`;
+
+/**
+ * The report of `what`, a forge write the forge made, whose record the sink refused as `failure`
+ * names, followed by `also`, any further event that went unrecorded.
+ */
+const madeUnrecorded = (what, failure, also = '') => new Error(`${what}, and the event sink refused to record it: ${unrecordedNamed(failure)}${also}`, { cause: failure });
+
 /** The changes L2's `move` answers make, each the one change from its column to the column the answer names. */
 const MOVES = ['sound', 'rejudged', 'merged', 'mergedFromOwner'];
 
@@ -77,7 +91,9 @@ export function columnChanges({
 
   /**
    * Moves `card` for `cause`, then records the move as one `transition` event. A move the board
-   * refuses is recorded as nothing, and its caller is told which card and column it was. The move
+   * refuses is recorded as nothing, and its caller is told which card and column it was. A move the
+   * item-write side marks made still records its transition, and rejects naming the card, both
+   * columns and each event that went unrecorded. The move
    * is handed an `L0` emitter L2 opens from `sink` under the card, so every kill L0 makes in it is
    * recorded with the card's number.
    */
@@ -88,7 +104,15 @@ export function columnChanges({
     try {
       await items.moveItem(card.id, columns[to], sink.emitter({ layer: 'L0', card: card.number, ...context }));
     } catch (refusal) {
-      throw new Error(`card #${card.number}'s move from ${from} to ${to} (${columns[to]}) was refused: ${refusal.message}`, { cause: refusal });
+      if (!refusal.made) throw new Error(`card #${card.number}'s move from ${from} to ${to} (${columns[to]}) was refused: ${refusal.message}`, { cause: refusal });
+      // The board took the move, so its transition is still recorded where the sink takes it (`R-RECORD-6`).
+      let transition = '';
+      try {
+        record(card, { from, to, cause, ...fields }, context);
+      } catch (unrecorded) {
+        transition = `; its transition went unrecorded too: ${unrecorded.cause.message}`;
+      }
+      throw madeUnrecorded(`card #${card.number} moved from ${from} to ${to}`, refusal, transition);
     }
     record(card, { from, to, cause, ...fields }, context);
   };
@@ -204,6 +228,7 @@ export function columnChanges({
       try {
         await repository.postComment(next.pull, next.comment);
       } catch (refusal) {
+        if (refusal.made) throw madeUnrecorded(`card #${card.number}'s return comment on pull request #${next.pull} was posted`, refusal);
         throw new Error(`card #${card.number}'s return comment on pull request #${next.pull} was refused: ${refusal.message}`, { cause: refusal });
       }
     },
@@ -221,6 +246,7 @@ export function columnChanges({
       try {
         await writes.postIssueComment(card.number, routingComment(next));
       } catch (refusal) {
+        if (refusal.made) throw madeUnrecorded(`card #${card.number}'s routing comment was posted`, refusal);
         const reason = `card #${card.number}'s routing comment was refused: ${refusal.message}`;
         note(card, 'escalation.route-refused', { reason }, { dispatch: next.dispatch ?? null });
         throw new Error(reason, { cause: refusal });
@@ -255,12 +281,14 @@ export function columnChanges({
       try {
         await writes.postIssueComment(card.number, escalationComment(card, evidence));
       } catch (refusal) {
+        if (refusal.made) throw madeUnrecorded(`card #${card.number}'s escalation issue comment was posted`, refusal);
         throw new Error(`card #${card.number}'s escalation issue comment was refused: ${refusal.message}`, { cause: refusal });
       }
       await change(next.from === undefined ? card : { ...card, column: columns[next.from] }, 'escalated');
       try {
         await writes.addIssueLabel(card.number, FIXED_LABELS.escalated);
       } catch (refusal) {
+        if (refusal.made) throw madeUnrecorded(`card #${card.number}'s escalation label ${FIXED_LABELS.escalated} was added`, refusal);
         throw new Error(`card #${card.number}'s escalation label ${FIXED_LABELS.escalated} was refused: ${refusal.message}`, { cause: refusal });
       }
     },
