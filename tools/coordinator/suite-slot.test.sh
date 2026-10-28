@@ -365,8 +365,14 @@ done
 # 9. Start times survive a timezone change; a reused pid is still caught.
 # epoch_of <pid>: the process's start in seconds since the epoch. local_at <epoch> <zone>: that
 # instant in ps's lstart form, as a writer whose timezone was <zone> recorded it.
-epoch_of() { LC_ALL=C TZ=UTC date -j -f '%a %b %d %T %Y' "$(echo $(LC_ALL=C TZ=UTC /bin/ps -o lstart= -p "$1"))" +%s 2>/dev/null; }
-local_at() { echo $(LC_ALL=C TZ=$2 date -r "$1" '+%a %b %e %T %Y'); }
+epoch_of() {
+  local start
+  start=$(LC_ALL=C TZ=UTC /bin/ps -o lstart= -p "$1") || return 1
+  LC_ALL=C TZ=UTC perl -MTime::Piece -e 'print Time::Piece->strptime($ARGV[0], "%a %b %e %T %Y")->epoch, "\n"' "$start"
+}
+local_at() {
+  LC_ALL=C TZ="$2" perl -MPOSIX=strftime -e 'print strftime("%a %b %e %T %Y\n", localtime($ARGV[0]))' "$1"
+}
 
 setup tz-lock
 sleeper; mkdir -p "$SUITE_SLOT_DIR"
