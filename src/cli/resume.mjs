@@ -50,14 +50,19 @@ async function resuming(opened, {
   const why = problem ?? (invalid.length > 0 ? `\`${CONFIG}\`: ${invalid.join('; ')}` : undefined);
   if (why !== undefined) return { text: [...lines, `rigger resume: no status issue was closed, because ${why}`].join('\n'), code: 1 };
   const issues = [...removed, ...gone].filter(({ issue }) => issue !== undefined).map(({ issue }) => Number(issue));
-  const { closed, left, unread } = await columnChanges({ config, sink: opened.sink, send }).notice.close(issues);
+  const { closed, left, unrecorded, unread } = await columnChanges({ config, sink: opened.sink, send }).notice.close(issues);
+  /** The record a write the forge made for issue `number` and the sink refused, as `write` names it, or undefined. */
+  const refused = (number, write) => unrecorded.find((each) => each.issue === number && each.write === write)?.why;
+  /** `said`, then, where `why` names a refused record, that the sink refused it. */
+  const but = (said, why) => (why === undefined ? said : `${said}, but the sink refused its record: ${why}`);
   return {
     text: [
       ...lines,
-      ...closed.map((number) => `rigger resume: closed the status issue #${number}`),
+      ...unrecorded.filter(({ write }) => write === 'label').map(({ issue, why }) => `rigger resume: ${but(`removed the status label from issue #${issue}`, why)}`),
+      ...closed.map((number) => `rigger resume: ${but(`closed the status issue #${number}`, refused(number, 'close'))}`),
       ...(unread === undefined ? [] : [`rigger resume: the read of the open issues labelled ${FIXED_LABELS.status} failed, so only the issues the closers named were closed: ${unread}`]),
       ...left.map(({ issue, why: cause }) => `rigger resume: the status issue #${issue} was left open: ${cause}`),
     ].join('\n'),
-    code: left.length === 0 && unread === undefined ? 0 : 1,
+    code: left.length === 0 && unrecorded.length === 0 && unread === undefined ? 0 : 1,
   };
 }

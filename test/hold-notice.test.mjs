@@ -435,7 +435,7 @@ test('resume\'s close removes the status label from each issue a closer named an
 
   const { answer, writes } = await closedFor(world, [12]);
 
-  assert.deepEqual(answer, { closed: [12, 20, 30], left: [] });
+  assert.deepEqual(answer, { closed: [12, 20, 30], left: [], unrecorded: [] });
   assert.deepEqual(writes, [['removeIssueLabel', 12], ['closeIssue', 12], ['removeIssueLabel', 20], ['closeIssue', 20], ['removeIssueLabel', 30], ['closeIssue', 30]]);
   assert.deepEqual(world.issues.map(({ state, labels }) => [state, labels]), [['closed', []], ['closed', []], ['closed', ['type:change']]]);
 });
@@ -446,7 +446,7 @@ test('resume\'s close closes a named issue that no longer carries the label with
 
   const { answer, writes } = await closedFor(world, [12, 14, 16]);
 
-  assert.deepEqual(answer, { closed: [12], left: [] });
+  assert.deepEqual(answer, { closed: [12], left: [], unrecorded: [] });
   assert.deepEqual(writes, [['closeIssue', 12]]);
 });
 
@@ -457,7 +457,7 @@ test('resume\'s close leaves an issue open whose read, label removal or close is
 
     const { answer } = await closedFor(world, [12]);
 
-    assert.deepEqual(answer, { closed: [], left: [{ issue: 12, why: `gh: ${refused} timed out` }] }, refused);
+    assert.deepEqual(answer, { closed: [], left: [{ issue: 12, why: `gh: ${refused} timed out` }], unrecorded: [] }, refused);
   }
   // One refused issue does not stop the next.
   const world = forge({ issues: [opened(12, 'a1'), opened(14, 'b2')] });
@@ -466,7 +466,7 @@ test('resume\'s close leaves an issue open whose read, label removal or close is
     if (number === 12) throw new Error('gh: HTTP 403');
     return removeIssueLabel(number, label);
   };
-  assert.deepEqual((await closedFor(world, [12, 14])).answer, { closed: [14], left: [{ issue: 12, why: 'gh: HTTP 403' }] });
+  assert.deepEqual((await closedFor(world, [12, 14])).answer, { closed: [14], left: [{ issue: 12, why: 'gh: HTTP 403' }], unrecorded: [] });
 });
 
 // proves R-SCHED-24
@@ -475,7 +475,7 @@ test('where the read of the labelled issues is refused, resume\'s close still cl
 
   const { answer, writes } = await closedFor(world, [12]);
 
-  assert.deepEqual(answer, { closed: [12], left: [], unread: 'gh: HTTP 502' });
+  assert.deepEqual(answer, { closed: [12], left: [], unrecorded: [], unread: 'gh: HTTP 502' });
   assert.deepEqual(writes, [['removeIssueLabel', 12], ['closeIssue', 12]]);
   assert.equal(world.issues[1].state ?? 'open', 'open');
 });
@@ -554,5 +554,25 @@ test('a write step rejected with no made mark, a refused event whose result exit
     assert.deepEqual(ran.value, { failed: { step, cause: failure.message } }, name);
     assert.deepEqual(events, [{ layer: 'L2', event: 'notice.failed', hold: 'a1', step, cause: failure.message }], name);
     assert.deepEqual(ran.names, names, name);
+  }
+});
+
+// proves R-SCHED-23
+test('following a closer naming an issue, each write the forge made whose record the sink refused, the comment, the board add and the move, is answered as made with its unrecorded events, and no notice.failed is recorded', async () => {
+  const refusedRecord = (write, answer) => Object.assign(new Error(`the sink refused 1 L0 event: call.end went unrecorded (${write})`), { code: 'EVENT_REFUSED', made: { answer }, unrecorded: [{ event: 'call.end' }] });
+  for (const [write, step] of [['postIssueComment', 'comment on issue #12'], ['addIssue', 'add issue #12 to the board'], ['moveItem', 'move issue #12 to Owner']]) {
+    // The notice never reached #12, so L2 comments, then places it.
+    const world = forge({ issues: [opened(12, 'z9', { timeline: [LABELLED] })] });
+    const side = write === 'postIssueComment' ? world.writes : world.items;
+    const original = side[write];
+    side[write] = async (...args) => {
+      await original(...args);
+      throw refusedRecord(write, 'item-12');
+    };
+
+    const ran = await followed(world, 'a1', 12);
+
+    assert.deepEqual(ran.value, { failed: { step, cause: `the sink refused 1 L0 event: call.end went unrecorded (${write})`, made: { answer: 'item-12' }, unrecorded: [{ event: 'call.end' }] } }, write);
+    assert.deepEqual(ran.events, [], write);
   }
 });

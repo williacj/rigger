@@ -234,3 +234,58 @@ test('the README\'s resume line says the verb closes the status issue, and the v
   assert.equal(comment, 'reopen admission and close the status issue');
   assert.deepEqual(VERBS.find(([verb]) => verb === 'resume'), ['resume', comment]);
 });
+
+/**
+ * A spawn over `gh` that, for the request `matches` names, lets the stand-in make the write and
+ * then rejects as L0 does where the sink refused the call's `call.end`: `EVENT_REFUSED`, carrying
+ * the call's result and the unrecorded event. The write side then marks the failure `made` itself.
+ * Answers the spawn and `made`, the requests that were made and refused their record.
+ */
+function recordRefused(gh, matches) {
+  const made = [];
+  const send = (command, args) => {
+    const result = gh(command, args);
+    if (matches(args) && result.status === 0) {
+      made.push(`${args[3]} ${args[1]}`);
+      throw Object.assign(new Error('the sink refused 1 L0 event: call.end went unrecorded: EIO'), {
+        code: 'EVENT_REFUSED',
+        result: { exit: 0, timedOut: false, stdout: result.stdout, stderr: result.stderr },
+        unrecorded: [{ event: 'call.end', command: 'gh', exit: 0, cause: new Error('EIO') }],
+      });
+    }
+    return result;
+  };
+  return { send, made };
+}
+
+// proves R-SCHED-24
+test('resume never reports a forge-confirmed close as an issue left open when only its event was refused: it says the issue was closed, names the unrecorded event, and exits non-zero', async () => {
+  // The reviewer's round-2 probe on #1079.
+  const here = world({ closers: ['hold-a1-issue-7.json'], issues: [status(7, 'a1')] });
+  const gh = statusGh({ issues: [status(7, 'a1')] });
+  const { send, made } = recordRefused(gh, (args) => rest(args, '/issues/7', 'PATCH'));
+
+  const { text, code } = await here.run({ send });
+
+  assert.deepEqual(made, [`PATCH repos/${REPO}/issues/7`]);
+  assert.equal(gh.issues[0].state, 'closed');
+  assert.equal(code, 1, text);
+  assert.doesNotMatch(text, /the status issue #7 was left open/, text);
+  assert.match(text, /^rigger resume: closed the status issue #7, but the sink refused its record: .*call\.end went unrecorded/m, text);
+});
+
+// proves R-SCHED-24
+test('a label removal the forge made whose event was refused still lets resume close the issue, and resume names the unrecorded removal and exits non-zero', async () => {
+  const here = world({ closers: ['hold-a1-issue-7.json'], issues: [status(7, 'a1')] });
+  const gh = statusGh({ issues: [status(7, 'a1')] });
+  const { send, made } = recordRefused(gh, (args) => rest(args, '/issues/7/labels/rigger%3Astatus', 'DELETE'));
+
+  const { text, code } = await here.run({ send });
+
+  assert.deepEqual(made, [`DELETE repos/${REPO}/issues/7/labels/rigger%3Astatus`]);
+  assert.deepEqual([gh.issues[0].state, gh.issues[0].labels], ['closed', []]);
+  assert.equal(code, 1, text);
+  assert.doesNotMatch(text, /left open/, text);
+  assert.match(text, /^rigger resume: removed the status label from issue #7, but the sink refused its record: .*call\.end went unrecorded/m, text);
+  assert.match(text, /^rigger resume: closed the status issue #7$/m, text);
+});

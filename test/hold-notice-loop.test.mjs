@@ -679,3 +679,42 @@ test('where the sink refuses the admission.open event of an issue close that rem
   const messages = (error) => (error === undefined ? [] : [error.message, ...(error.errors ?? []).flatMap(messages)]);
   assert.match(messages(outcome.error).join('; '), /hold-a1-issue-12\.json, and the sink refused its admission\.open event: the stream refused admission\.open/);
 });
+
+// proves R-SCHED-23
+test('a notice step the forge made whose record the sink refused, on a closer naming an issue, reaches the pull\'s notices with its made mark and unrecorded events, and the closer stays', async () => {
+  const failed = { step: 'comment on issue #12', cause: 'the sink refused 1 L0 event', made: { answer: { id: 1 } }, unrecorded: [{ event: 'call.end' }] };
+  const { board } = stateBoard([], { 12: 'open' });
+  const handed = handles({ cards: [], notice: followingNotice({ 12: { failed } }), board });
+  seed(handed.state, 'hold-a1-issue-12.json');
+
+  const pulled = await loop(handed).pull();
+
+  assert.deepEqual(pulled.notices, [{ id: 'a1', ...failed }]);
+  assert.deepEqual(namesIn(handed.state), ['hold-a1-issue-12.json']);
+});
+
+// proves R-SCHED-23
+test('a rename made on a closer naming an issue whose admission.rename event the sink refused keeps the closer under its new name, and L2 is handed the refusal, which names the change as made', async () => {
+  const { board } = stateBoard([], { 12: 'none' });
+  const handed = handles({ cards: [], board });
+  const handedBack = [];
+  handed.l2.notice = async function* renaming() {
+    handedBack.push(yield { rename: 'issue', number: 13 });
+    return { failed: { step: 'rename the closer', cause: handedBack[0].reason.message } };
+  };
+  const original = handed.sink;
+  handed.sink = {
+    ...original,
+    emitter: (where) => {
+      const emitter = original.emitter(where);
+      return { ...emitter, emit: (event, fields) => { if (event === 'admission.rename') throw new Error('the stream refused admission.rename'); return emitter.emit(event, fields); } };
+    },
+  };
+  seed(handed.state, 'hold-a1-issue-12.json');
+
+  const pulled = await loop(handed).pull();
+
+  assert.deepEqual(namesIn(handed.state), ['hold-a1-issue-13.json']);
+  assert.equal(handedBack[0].status, 'rejected');
+  assert.deepEqual(pulled.notices, [{ id: 'a1', step: 'rename the closer', cause: 'admission changed at hold-a1-issue-13.json, and the sink refused its admission.rename event: the stream refused admission.rename' }]);
+});
