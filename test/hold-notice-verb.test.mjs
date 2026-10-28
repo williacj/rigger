@@ -20,10 +20,10 @@ const MADE = {
 
 /** Asserts `verb`'s line for MADE names the hold, the step as made and each unrecorded event, and says no "failed to". */
 function saysMade(verb) {
-  const line = noticeLine(verb, 'a1', MADE);
+  const line = noticeLine(verb, 'k7q', MADE);
 
   assert.ok(line.startsWith(`rigger ${verb}: `), line);
-  for (const named of ['a1', 'open the status issue', 'made', 'call.end', 'call.output']) assert.ok(line.includes(named), `${named} in ${line}`);
+  for (const named of ['k7q', 'open the status issue', 'made', 'call.end', 'call.output']) assert.ok(line.includes(named), `${named} in ${line}`);
   assert.ok(!line.includes('failed to'), line);
 }
 
@@ -37,6 +37,6 @@ test('for a step the forge made whose events went unrecorded, rigger run\'s noti
 
 test('for a step that failed, the notice line of rigger once and of rigger run says the notice failed to take it, and why', () => {
   for (const verb of ['once', 'run']) {
-    assert.equal(noticeLine(verb, 'a1', { step: 'read the board', cause: 'gh: readItems timed out' }), `rigger ${verb}: the notice for hold a1 failed to read the board: gh: readItems timed out`);
+    assert.equal(noticeLine(verb, 'k7q', { step: 'read the board', cause: 'gh: readItems timed out' }), `rigger ${verb}: the notice for hold k7q failed to read the board: gh: readItems timed out`);
   }
 });
