@@ -1,9 +1,11 @@
 // ABOUTME: Builds docs/derived/test-matrix.md from the declarations in Rigger's own tests, reading
 // each test file as the syntax it is, and refuses a matrix gone stale or edited by hand.
 
-import { readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, mkdirSync, lstatSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { spawnSync } from 'node:child_process';
 
 import { TEST_FILE } from './package-budget.mjs';
 
@@ -539,11 +541,16 @@ export function render(requirements, claims) {
   const rows = requirements.map((requirement) => {
     const proofs = claims
       .filter((claim) => claim.ids.includes(requirement.id))
-      .map((claim) => `\`${claim.file}\` ${claim.title}`);
+      .map((claim) => `\`${claim.file}\` ${claim.host ? '**host** ' : ''}${claim.title}`);
     const cell = proofs.length > 0 ? proofs.join('<br>') : unchecked(requirement.checkedBy);
     return `| ${requirement.id} | ${cell} |`;
   });
-  return [...PREAMBLE, '| requirement | proved by |', '|---|---|', ...rows, ''].join('\n');
+  const portable = new Set(claims.filter((claim) => !claim.host).flatMap((claim) => claim.ids));
+  const hostOnly = requirements.filter(({ id }) => !portable.has(id)
+    && claims.some((claim) => claim.host && claim.ids.includes(id)));
+  const heading = hostOnly.length === 0 ? []
+    : ['', '## Requirements claimed only by host tests', '', ...hostOnly.map(({ id }) => '- ' + id)];
+  return [...PREAMBLE, '| requirement | proved by |', '|---|---|', ...rows, ...heading, ''].join('\n');
 }
 
 const REQUIREMENTS = 'docs/spec/requirements.md';
@@ -610,13 +617,38 @@ export function declarations(root) {
     .map((declaration) => ({ file, ...declaration })));
 }
 
+/** The suite owns host membership; a consumer with no suite has no host claims. */
+function readHostList(root, files, spawn) {
+  try { lstatSync(join(root, 'test/suite.sh')); }
+  catch (error) { if (error.code === 'ENOENT') return new Set(); throw error; }
+  const result = spawn('sh', ['test/suite.sh', '--list', 'host'], {
+    cwd: root, encoding: 'utf8', timeout: 5000, killSignal: 'SIGKILL', maxBuffer: 1048576,
+  });
+  if (result.error?.code === 'ETIMEDOUT') throw new Error('host list timed out after 5000ms; signal ' + result.signal);
+  if (result.error?.code === 'ENOBUFS') throw new Error('host list exceeded the 1048576 byte output limit');
+  if (result.error) throw new Error('host list launch failed: ' + result.error.code);
+  if (result.signal) throw new Error('host list command ended by ' + result.signal);
+  if (result.status !== 0) throw new Error('host list command failed with exit ' + result.status);
+  if (!result.stdout) throw new Error('host list output is empty');
+  const lines = result.stdout.split(/\r?\n/);
+  if (lines.at(-1) === '') lines.pop();
+  for (const line of lines) {
+    if (!/^test\/.+$/.test(line)) throw new Error('malformed host-list line ' + JSON.stringify(line));
+  }
+  for (const line of lines) {
+    if (!files.includes(line)) throw new Error('host-list line is not read by the generator: ' + JSON.stringify(line));
+  }
+  return new Set(lines);
+}
+
 /** What a run finds in one repository. */
-export function check(root) {
+export function check(root, { spawn = spawnSync } = {}) {
   const read = (path) => readFileSync(join(root, path), 'utf8');
   const requirements = register(read(REQUIREMENTS));
   const live = new Set(requirements.map((row) => row.id));
   const withdrawn = new Set(register(read(RETIRED)).map((row) => row.id));
-  const claims = declarations(root);
+  const hosts = readHostList(root, testFiles(root), spawn);
+  const claims = declarations(root).map((claim) => ({ ...claim, host: hosts.has(claim.file) }));
 
   for (const claim of claims) {
     for (const id of claim.ids) {
@@ -655,15 +687,20 @@ export function write(root, document) {
   writeFileSync(join(root, MATRIX), document);
 }
 
+/** The actual synchronous check-before-write path shared by the CLI and controlled callers. */
+export function generate(root, { write: shouldWrite = false, spawn } = {}) {
+  const report = check(root, { spawn });
+  if (shouldWrite) write(root, report.document);
+  return report;
+}
+
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   // CI passes no path and this repository is measured. A path reads that repository instead,
   // which is how a test watches the check refuse one.
   const here = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const args = process.argv.slice(2);
   const root = resolve(args.find((argument) => !argument.startsWith('--')) ?? here);
-  const report = check(root);
-
-  if (args.includes('--write')) write(root, report.document);
+  const report = generate(root, { write: args.includes('--write') });
   console.log(`${report.untested} of ${report.total} requirements have no test.`);
 
   // A stray is refused whichever way the tool was run: it is a file no generator wrote, and
