@@ -319,23 +319,37 @@ jobs:
           if (!value) return;
           for (const link of value.split(',')) {
             const match = /^\s*<([^>]+)>;\s*rel="([a-z]+)"\s*$/.exec(link);
-            if (!match || new URL(match[1]).origin !== 'https://api.github.com' || match[2] === 'next') refuse('API discovery pagination incomplete');
+            let origin;
+            try { origin = match && new URL(match[1]).origin; } catch { refuse('API discovery pagination incomplete'); }
+            if (!match || origin !== 'https://api.github.com' || match[2] === 'next') refuse('API discovery pagination incomplete');
           }
         }
         export async function requestApi(path, { method = 'GET', send = fetch, token = process.env.GH_TOKEN } = {}) {
           const route = path.startsWith(ROOT) ? path.slice(ROOT.length) : '';
           const read = /^\/actions\/runs\/[1-9][0-9]*$/.test(route) || /^\/pulls\/[1-9][0-9]*$/.test(route) || route === '/actions/workflows/ci.yml' || /^\/actions\/workflows\/[1-9][0-9]*\/runs\?event=pull_request&exclude_pull_requests=false&status=(queued|in_progress|waiting|pending|requested)&per_page=100&page=1$/.test(route);
           if (!token || !(method === 'GET' && read || method === 'POST' && /^\/actions\/runs\/[1-9][0-9]*\/cancel$/.test(route))) refuse('API scope unavailable');
-          const response = await send('https://api.github.com' + path, { method, redirect: 'manual', headers: { authorization: 'Bearer ' + token, accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(30_000) });
+          let response;
+          try { response = await send('https://api.github.com' + path, { method, redirect: 'manual', headers: { authorization: 'Bearer ' + token, accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(30_000) }); }
+          catch { refuse('API transport failed'); }
           if (response.redirected || response.url && new URL(response.url).origin !== 'https://api.github.com' || response.status >= 300 && response.status < 400) refuse('API redirect refused');
           const link = response.headers.get('link'); links(link);
-          const bytes = new Uint8Array(await response.arrayBuffer());
+          let bytes;
+          try { bytes = new Uint8Array(await response.arrayBuffer()); }
+          catch { refuse('API transport failed'); }
           const length = response.headers.get('content-length'), encoding = response.headers.get('content-encoding');
           if (bytes.length > 2 * 1024 * 1024 || length !== null && (!encoding || encoding === 'identity') && (!/^[0-9]+$/.test(length) || Number(length) !== bytes.length)) refuse('API body incomplete');
-          const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-          return { status: response.status, body: text === '' ? null : JSON.parse(text), link };
+          let text;
+          try { text = new TextDecoder('utf-8', { fatal: true }).decode(bytes); }
+          catch { throw new TypeError('API decode failed'); }
+          let body = null;
+          if (text !== '') {
+            try { body = JSON.parse(text); }
+            catch { throw new SyntaxError('API JSON invalid'); }
+          }
+          return { status: response.status, body, link };
         }
         export async function cancelSuperseded({ event, context, plan, request = requestApi, log = entry => console.log(JSON.stringify(entry)) }) {
+          const diagnostic = entry => console.error(JSON.stringify(entry));
           const pr = event?.pull_request;
           if (context?.eventName !== 'pull_request' || context.repository !== 'williacj/rigger' || !repository(event?.repository) || context.repositoryId !== event.repository.id || !positive(event.number) || !positive(pr?.id) || pr.number !== event.number || pr.state !== 'open' || !repository(pr.head?.repo) || !repository(pr.base?.repo) || pr.head.repo.id !== event.repository.id || pr.base.repo.id !== event.repository.id || !sha(pr.head.sha) || !sha(pr.base.sha) || typeof pr.head.ref !== 'string' || !pr.head.ref || typeof pr.base.ref !== 'string' || !pr.base.ref) refuse('controller source scope invalid');
           if (!['opened', 'synchronize', 'reopened', 'edited', 'ready_for_review', 'labeled', 'unlabeled'].includes(event.action) || !event.sender?.login || context.actor !== event.sender.login || !positive(context.runId) || !positive(context.runNumber) || !positive(context.runAttempt) || context.ref !== 'refs/pull/' + event.number + '/merge' || context.workflowRef !== 'williacj/rigger/.github/workflows/ci.yml@' + context.ref) refuse('controller source context invalid');
@@ -356,10 +370,42 @@ jobs:
           livePr(await get(ROOT + '/pulls/' + event.number));
           const found = new Map();
           for (const status of STATUSES) {
-            const response = await request(ROOT + '/actions/workflows/' + workflow.id + '/runs?event=pull_request&exclude_pull_requests=false&status=' + status + '&per_page=100&page=1');
+            let response;
+            try { response = await request(ROOT + '/actions/workflows/' + workflow.id + '/runs?event=pull_request&exclude_pull_requests=false&status=' + status + '&per_page=100&page=1'); }
+            catch (error) {
+              const reason = error?.message === 'API discovery pagination incomplete' ? 'pagination incomplete'
+                : error?.message === 'API body incomplete' ? 'body incomplete'
+                : error?.message === 'API decode failed' ? 'decode failed'
+                : error?.message === 'API JSON invalid' ? 'JSON invalid' : 'transport failed';
+              diagnostic({ action: 'discovery-refused', query: status, reason });
+              throw error;
+            }
             const page = response?.body;
-            if (response?.status !== 200 || !page || !Number.isSafeInteger(page.total_count) || page.total_count < 0 || page.total_count > 100 || !Array.isArray(page.workflow_runs) || page.workflow_runs.length !== page.total_count) refuse('discovery incomplete');
-            links(response.link);
+            if (response?.status !== 200) {
+              diagnostic({ action: 'discovery-refused', query: status, reason: 'HTTP status', ...(Number.isInteger(response?.status) && response.status >= 100 && response.status <= 599 ? { httpStatus: response.status } : {}) });
+              refuse('discovery incomplete');
+            }
+            const count = page?.total_count;
+            if (!Number.isSafeInteger(count) || count < 0) {
+              diagnostic({ action: 'discovery-refused', query: status, reason: 'count invalid' });
+              refuse('discovery incomplete');
+            }
+            if (count > 100) {
+              diagnostic({ action: 'discovery-refused', query: status, reason: 'page limit reached', count });
+              refuse('discovery incomplete');
+            }
+            if (!Array.isArray(page.workflow_runs)) {
+              diagnostic({ action: 'discovery-refused', query: status, reason: 'list invalid', count });
+              refuse('discovery incomplete');
+            }
+            if (page.workflow_runs.length !== count) {
+              diagnostic({ action: 'discovery-refused', query: status, reason: 'count/list mismatch', count, length: page.workflow_runs.length });
+              refuse('discovery incomplete');
+            }
+            try { links(response.link); } catch {
+              diagnostic({ action: 'discovery-refused', query: status, reason: 'pagination incomplete' });
+              refuse('API discovery pagination incomplete');
+            }
             for (const run of page.workflow_runs) {
               const source = sourceIdentity(run);
               const association = associationIdentity(run);

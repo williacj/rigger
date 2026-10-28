@@ -1,0 +1,10 @@
+<!-- ABOUTME: Records the source premise, controlled refusal proof, and evidence limits for card #1092. -->
+# #1092 — Cancellation discovery diagnostics
+
+Before editing, I read the accepted #1092 boundary map, the #739 incident report cited there, and the cancellation literal at main `b61c216fd5cdc86c9f1e25313f6050125fcad53a`. Run 40468324659 attempt 1 failed with `discovery incomplete`; the retained log contains no response status, count, or list length. Attempt 2 passed. The original API response and historical cause are unknown. The pagination explanation in the incident report remains a hypothesis.
+
+The source grouped a non-200 response, invalid count, count above 100, invalid list, and count/list mismatch behind one refusal. It refused pagination separately. The controller completed five status pages before any cancellation POST. I kept the one-page-per-status, 100-run cap and fail-before-write order.
+
+The focused baseline at the accepted base passed 27/27 tests. Test-first controlled cases then demonstrated missing diagnostics for HTTP, page-shape, pagination, and pre-page failures. The added cases now distinguish numeric HTTP status, invalid count, page cap, invalid list, count/list mismatch, pagination, transport, UTF-8 decode, body size, and JSON parsing without logging remote body, header, run row, token, or arbitrary exception text. Complete 0, 1, and 100-row pages emit no refusal diagnostic. An eligible old-head row on an earlier page still causes zero cancellation POSTs if a later page refuses. The affected file passed 33/33 tests locally after the edit.
+
+These controlled responses prove the new classification and the preserved refusal boundary for the scenarios they exercise. They do not reconstruct the 2026-10-27 response or establish its cause. The reviewed-head GitHub controller job remains separate evidence and is not claimed here.

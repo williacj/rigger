@@ -497,3 +497,93 @@ test('CI response decoding rejects invalid UTF8 inside valid JSON syntax', async
   assert.deepEqual(accepted.body, { x: '\uFFFD' });
   await assert.rejects(controller.requestApi(root + '/actions/runs/80', { token: 'synthetic-token', send: async () => new Response(invalid, { status: 200 }) }), TypeError);
 });
+
+async function diagnosed(f, script, failure = false) {
+  const diagnostics = [], previous = console.error;
+  console.error = line => diagnostics.push(JSON.parse(line));
+  try { return { ...await execute(f, script, failure), diagnostics }; }
+  finally { console.error = previous; }
+}
+
+test('discovery HTTP refusal logs its status query and numeric code without response content or a cancel write', async () => {
+  const f = input(), page = list('in_progress', []);
+  page[2] = { status: 403, body: { secret: 'synthetic-api-body' }, link: null };
+  const answer = await diagnosed(f, [...start(f), list('queued', [run(60, old, 10)]), page], true);
+  assert.match(answer.error, /discovery incomplete/);
+  assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), []);
+  assert.deepEqual(answer.diagnostics, [{ action: 'discovery-refused', query: 'in_progress', reason: 'HTTP status', httpStatus: 403 }]);
+  assert.doesNotMatch(JSON.stringify(answer.diagnostics), /synthetic-api-body/);
+});
+
+test('discovery page shape refusals explain the bounded count and list failure before any cancel write', async () => {
+  const cases = [
+    { name: 'missing count', change: p => { delete p.body.total_count; }, reason: 'count invalid' },
+    { name: 'fractional count', change: p => { p.body.total_count = 0.5; }, reason: 'count invalid' },
+    { name: 'negative count', change: p => { p.body.total_count = -1; }, reason: 'count invalid' },
+    { name: 'over cap', change: p => { p.body.total_count = 101; }, reason: 'page limit reached', count: 101 },
+    { name: 'missing list', change: p => { delete p.body.workflow_runs; }, reason: 'list invalid', count: 0 },
+    { name: 'non-array list', change: p => { p.body.workflow_runs = null; }, reason: 'list invalid', count: 0 },
+    { name: 'mismatched list', change: p => { p.body.total_count = 1; }, reason: 'count/list mismatch', count: 1, length: 0 },
+  ];
+  for (const sample of cases) {
+    const f = input(), page = list('waiting', []);
+    sample.change(page[2]);
+    const answer = await diagnosed(f, [...start(f), list('queued', [run(60, old, 10)]), list('in_progress'), page], true);
+    assert.match(answer.error, /discovery incomplete/, sample.name);
+    assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), [], sample.name);
+    assert.deepEqual(answer.diagnostics, [{ action: 'discovery-refused', query: 'waiting', reason: sample.reason, ...(sample.count === undefined ? {} : { count: sample.count }), ...(sample.length === undefined ? {} : { length: sample.length }) }], sample.name);
+  }
+});
+
+test('discovery pagination refusals name the status and preserve zero writes', async () => {
+  for (const link of [
+    '<https://api.github.com/next>; rel="next"',
+    '<https://evil.test/page>; rel="last"',
+    'synthetic-secret-link',
+  ]) {
+    const f = input(), page = list('pending', []);
+    page[2].link = link;
+    const answer = await diagnosed(f, [...start(f), ...pages().slice(0, 3), page], true);
+    assert.match(answer.error, /pagination incomplete/);
+    assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), []);
+    assert.deepEqual(answer.diagnostics, [{ action: 'discovery-refused', query: 'pending', reason: 'pagination incomplete' }]);
+    assert.doesNotMatch(JSON.stringify(answer.diagnostics), /synthetic-secret/);
+  }
+});
+
+test('pre-page API failures name the active query and a safe refusal class once', async () => {
+  const route = list('requested')[1];
+  const samples = [
+    { reason: 'transport failed', response: async () => { throw new Error('synthetic-remote-exception-secret'); } },
+    { reason: 'decode failed', response: async () => new Response(new Uint8Array([0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xff, 0x22, 0x7d])) },
+    { reason: 'body incomplete', response: async () => new Response('{"secret":"synthetic-api-body"}', { headers: { 'content-length': '1' } }) },
+    { reason: 'JSON invalid', response: async () => new Response('{"secret":"synthetic-api-body"', { status: 200 }) },
+    { reason: 'pagination incomplete', response: async () => new Response('{}', { headers: { link: '<https://api.github.com/next>; rel="next"' } }) },
+  ];
+  for (const sample of samples) {
+    const f = input(), request = ['GET', route, () => controller.requestApi(route, { token: 'synthetic-token-secret', send: sample.response })];
+    const answer = await diagnosed(f, [...start(f), ...pages().slice(0, 4), request], true);
+    assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), [], sample.reason);
+    assert.deepEqual(answer.diagnostics, [{ action: 'discovery-refused', query: 'requested', reason: sample.reason }], sample.reason);
+    assert.doesNotMatch(JSON.stringify(answer.diagnostics) + answer.error, /synthetic-(remote|api|token)/, sample.reason);
+  }
+});
+
+test('discovery refuses a malformed HTTP status without echoing untrusted status text', async () => {
+  const f = input(), page = list('requested', []);
+  page[2] = { status: 'synthetic-status-secret', body: {}, link: null };
+  const answer = await diagnosed(f, [...start(f), ...pages().slice(0, 4), page], true);
+  assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), []);
+  assert.deepEqual(answer.diagnostics, [{ action: 'discovery-refused', query: 'requested', reason: 'HTTP status' }]);
+  assert.doesNotMatch(JSON.stringify(answer.diagnostics), /synthetic-status-secret/);
+});
+
+test('complete discovery pages with zero one and one hundred rows produce no refusal diagnostic', async () => {
+  const f = input(), one = [run(61, current, 10)];
+  const hundred = Array.from({ length: 100 }, (_, index) => run(1000 + index, current, 10));
+  const script = [...start(f), list('queued'), list('in_progress', one), list('waiting', hundred), list('pending'), list('requested', one)];
+  const answer = await diagnosed(f, script);
+  assert.deepEqual(answer.result, { accepted: [], completed: [] });
+  assert.deepEqual(answer.diagnostics.filter(entry => entry.action === 'discovery-refused'), []);
+  assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), []);
+});
