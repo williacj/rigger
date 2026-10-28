@@ -236,7 +236,7 @@ export RIGGER_SUITE_MODE RIGGER_SUITE_HOST_FILES RIGGER_SUITE_AWAITING_FILES RIG
 
 
 # Keep Mac control originals beside, not inside, the suite's disposable TMPDIR.
-suite_caller_tmpdir=$(cd "${TMPDIR:-/tmp}" && pwd -P) || exit 1
+suite_caller_tmpdir=$(node -p "require('node:fs').realpathSync.native(process.argv[1])" "${TMPDIR:-/tmp}") || exit 1
 suite_auto_evidence_root=
 cleanup_auto_evidence_root() {
   if [ -n "$suite_auto_evidence_root" ]; then
@@ -251,8 +251,8 @@ if [ "${C615_EVIDENCE_ROOT+x}" != x ]; then
   export C615_EVIDENCE_ROOT
 fi
 
-run=$(mktemp -d "${TMPDIR:-/tmp}/rigger-suite.XXXXXX") || exit 1
-run=$(cd "$run" && pwd -P) || exit 1
+run=$(mktemp -d "$suite_caller_tmpdir/rigger-suite.XXXXXX") || exit 1
+run=$(node -p "require('node:fs').realpathSync.native(process.argv[1])" "$run") || exit 1
 TMPDIR=$run
 export TMPDIR
 allowed="$run/allowed"
