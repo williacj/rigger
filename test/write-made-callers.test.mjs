@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 
 import config from '../rigger.config.mjs';
 import { lane } from '../src/scheduling/lane.mjs';
+import { repositoryWriteSide } from '../src/substrate/forge/repository-write.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
 import { madeFailure, unmarkedFailure } from './write-made-fixtures.mjs';
 
@@ -92,7 +93,29 @@ test('given a return comment its side marked made, returned reports it posted on
   const unmarked = unmarkedFailure('postComment on pull request #300 failed');
   const plain = await rejectionOf(l2With({ repositoryWrites: { postComment: async () => { throw unmarked; } } }).returned(cardIn('coding'), { action: 'return', pull: 300, comment: 'return' }));
   assert.equal(plain.message, `card #30's return comment on pull request #300 was refused: ${unmarked.message}`);
+
+  // An unmarked side error whose first line already carries the operation's prefix, through the real side.
+  const prefixed = sideRefusing('issues/300/comments', 'postComment on pull request #300 failed: forge unavailable');
+  const passed = await rejectionOf(l2With({ repositoryWrites: prefixed }).returned(cardIn('coding'), { action: 'return', pull: 300, comment: 'return' }));
+  assert.equal(passed.message, "card #30's return comment on pull request #300 was refused: postComment on pull request #300 failed: postComment on pull request #300 failed: forge unavailable");
 });
+
+/**
+ * The repository-write side over the repository's own config, whose `send` answers every call in the
+ * runners' result shape: a pull request read confirms a pull request, and the one write whose
+ * arguments hold `refused` exits 1 with `stderr` as its first error line, free-form text that may
+ * itself begin with the operation's own prefix. Every other write answers a comment.
+ */
+function sideRefusing(refused, stderr) {
+  const ok = (body) => ({ status: 0, timedOut: false, stdout: JSON.stringify(body), stderr: '' });
+  return repositoryWriteSide({ repo: config.repo }, {
+    send: (command, args) => {
+      if (args[3] === 'GET') return ok({ number: 300, head: { sha: 'e'.repeat(40) } });
+      if (args.join(' ').includes(refused)) return { status: 1, timedOut: false, stdout: '', stderr };
+      return ok(COMMENT);
+    },
+  });
+}
 
 /** A maker's escalation L2 routes to the pm, as `settled` answers one. */
 const ROUTE = { action: 'escalate', category: 'ambiguous', reason: 'Which column?', raiser: 'maker', destination: 'pm', dispatch: 'd-1' };
@@ -111,6 +134,11 @@ test('given a routing comment its side marked made, routed reports it posted, na
   const plain = await rejectionOf(l2With({ sink: plainSink, repositoryWrites: { postIssueComment: async () => { throw unmarked; } } }).routed(cardIn('coding'), ROUTE));
   assert.equal(plain.message, `card #30's routing comment was refused: ${unmarked.message}`);
   assert.deepEqual(plainSink.events.filter(({ event }) => event === 'escalation.route-refused').map(({ reason }) => reason), [plain.message]);
+
+  // An unmarked side error whose first line already carries the operation's prefix, through the real side.
+  const prefixed = sideRefusing('issues/30/comments', 'postIssueComment on issue #30 failed: forge unavailable');
+  const passed = await rejectionOf(l2With({ repositoryWrites: prefixed }).routed(cardIn('coding'), ROUTE));
+  assert.equal(passed.message, "card #30's routing comment was refused: postIssueComment on issue #30 failed: postIssueComment on issue #30 failed: forge unavailable");
 });
 
 /** An escalation to the owner, as L2's escalate answer gives one. */
@@ -134,6 +162,11 @@ test('given an escalation issue comment its side marked made, escalated reports 
   const unmarked = unmarkedFailure('postIssueComment on issue #30 failed');
   const plain = await rejectionOf(l2With({ repositoryWrites: { postIssueComment: async () => { throw unmarked; } } }).escalated(cardIn('coding'), ESCALATION));
   assert.equal(plain.message, `card #30's escalation issue comment was refused: ${unmarked.message}`);
+
+  // An unmarked side error whose first line already carries the operation's prefix, through the real side.
+  const prefixed = sideRefusing('issues/30/comments', 'postIssueComment on issue #30 failed: forge unavailable');
+  const passed = await rejectionOf(l2With({ repositoryWrites: prefixed }).escalated(cardIn('coding'), ESCALATION));
+  assert.equal(passed.message, "card #30's escalation issue comment was refused: postIssueComment on issue #30 failed: postIssueComment on issue #30 failed: forge unavailable");
 });
 
 test('given an escalation label its side marked made, escalated reports the label added, naming the card and the unrecorded kill, and rejects; unmarked, it reports it refused as it did', async () => {
@@ -148,6 +181,11 @@ test('given an escalation label its side marked made, escalated reports the labe
   const unmarked = unmarkedFailure('addIssueLabel on issue #30 failed');
   const plain = await rejectionOf(l2With(writes(unmarked)).escalated(cardIn('coding'), ESCALATION));
   assert.equal(plain.message, `card #30's escalation label rigger:escalated was refused: ${unmarked.message}`);
+
+  // An unmarked side error whose first line already carries the operation's prefix, through the real side.
+  const prefixed = sideRefusing('issues/30/labels', 'addIssueLabel on issue #30 failed: forge unavailable');
+  const passed = await rejectionOf(l2With({ items: { moveItem: async () => {} }, repositoryWrites: prefixed }).escalated(cardIn('coding'), ESCALATION));
+  assert.equal(passed.message, "card #30's escalation label rigger:escalated was refused: addIssueLabel on issue #30 failed: addIssueLabel on issue #30 failed: forge unavailable");
 });
 
 /** Card #40 at Review, the merge answer L2 gives for it, and the head its pull request is at. */

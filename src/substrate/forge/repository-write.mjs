@@ -69,7 +69,13 @@ export function repositoryWriteSide(board, { send, emitter, timeout } = {}) {
   };
   const postIssue = (number, endpoint, value, operation, kind = 'issue') => issueWrite(operation, kind, number, async () => {
     if (!Number.isSafeInteger(number) || number < 1) throw new Error(`${operation} on ${kind} #${number} failed: not an ${kind} number`);
-    return sendIssue(['api', `repos/${board.repo}/issues/${number}/${endpoint}`, '-X', 'POST', '-f', value]);
+    const args = ['api', `repos/${board.repo}/issues/${number}/${endpoint}`, '-X', 'POST', '-f', value];
+    // The error names its operation here, so `issueWrite` passes it on as it stands, whatever gh said.
+    const posted = (said) => {
+      if (said.status !== 0 || said.timedOut) throw new Error(`${operation} on ${kind} #${number} failed: ${firstLine(said)}`);
+      return JSON.parse(said.stdout);
+    };
+    return posted(await written(repositoryWriteRunner(args, via), posted));
   });
   return {
     /** Merge by merge commit only at `expectedHead`, or answer why the forge refused it. */

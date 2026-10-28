@@ -80,3 +80,22 @@ code that makes it pass.
   - `rigger setup-board: 0 writes to board 3 before one failed`.
   - `rigger verdict: the post failed, and it is not tried again: postComment on pull request #12
     failed: the sink refused 1 L0 event(s) …`.
+
+## Round 3: an unmarked report the extraction changed
+
+The PR #1057 round-2 reviewer found a regression this card introduced, B3. Round 1 sent
+`postIssue` through `sendIssue`, which throws gh's first error line bare. `issueWrite` passes on
+unchanged any error that already begins with the operation's prefix. So a first line such as
+`postComment on pull request #300 failed: forge unavailable` lost the prefix `postIssue` had added
+in front of it at the merge base. The report then differed from the merge base's.
+
+- **The fix:** `postIssue` again throws its own prefixed error, with the mark wrapped around the
+  same check.
+- **The tests:** the four unmarked-report checks for the return comment, the routing comment,
+  the escalation comment and the escalation label now also drive the real repository-write side.
+  Its `send` exits 1 with that prefixed first line.
+- **Red before the fix**, at round 2's head `f245b1a4`: `tests 7, pass 3, fail 4`. Each of the
+  four failed on report equality, as in `actual: "… was refused: postComment on pull request #300
+  failed: forge unavailable"`, against an expected report holding the prefix twice.
+- **The oracle:** the same four checks, run alone against `6ba7318f`'s source, gave `tests 4, pass
+  4`. They still fail at the merge base as whole tests, on their marked halves.
