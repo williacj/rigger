@@ -3,6 +3,8 @@
 
 import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { startFailure } from '../process.mjs';
+import { atStart } from '../process.mjs';
 
 /*
  * Every flag and setting here is grounded in #473's report, `docs/spikes/what-headless-sessions-
@@ -216,10 +218,10 @@ function declaredIn(directory) {
   try {
     declared = JSON.parse(readFileSync(file, 'utf8'));
   } catch (failure) {
-    throw new Error(`${file} is no JSON the Claude Code adapter can read, so it started nothing: ${failure.message}`);
+    throw startFailure(new Error(`${file} is no JSON the Claude Code adapter can read, so it started nothing: ${failure.message}`), 'claude-settings-unreadable');
   }
   if (declared === null || typeof declared !== 'object' || Array.isArray(declared)) {
-    throw new Error(`${file} holds no JSON object, so the Claude Code adapter started nothing`);
+    throw startFailure(new Error(`${file} holds no JSON object, so the Claude Code adapter started nothing`), 'claude-settings-unreadable');
   }
   return declared;
 }
@@ -282,14 +284,14 @@ const PLAIN = /^[A-Za-z0-9/._+ -]+$/;
  */
 function granting(rules, reach, real) {
   if (reach.length === 0) return rules;
-  const compound = Object.values(rules ?? {}).flat().find((rule) => /^Bash\(/.test(rule) && COMPOUND.test(rule));
+  const compound = atStart('claude-rule-unreadable', () => Object.values(rules ?? {}).flat().find((rule) => /^Bash\(/.test(rule) && COMPOUND.test(rule)));
   if (compound !== undefined) {
-    throw new Error(`the directory's settings declare ${compound}, a rule for a compound command line, which admits nothing (#519's report, c17), so the Claude Code adapter started nothing`);
+    throw startFailure(new Error(`the directory's settings declare ${compound}, a rule for a compound command line, which admits nothing (#519's report, c17), so the Claude Code adapter started nothing`), 'claude-compound-rule');
   }
-  const heads = reach.map((each) => realpathSync.native(each));
+  const heads = reach.map((each) => atStart('directory-unusable', () => realpathSync.native(each)));
   const unplain = heads.find((head) => !PLAIN.test(head));
   if (unplain !== undefined) {
-    throw new Error(`the reached directory ${unplain} holds a character outside letters, digits, a space and \`/._+-\`, which its rules would read as more than a path, so the Claude Code adapter started nothing`);
+    throw startFailure(new Error(`the reached directory ${unplain} holds a character outside letters, digits, a space and \`/._+-\`, which its rules would read as more than a path, so the Claude Code adapter started nothing`), 'claude-reached-path', { path: unplain });
   }
   const grants = heads.flatMap((head) => [`Read(/${head}/**)`, `Edit(/${head}/**)`]);
   const denied = rules?.deny ?? [];
@@ -369,16 +371,17 @@ export async function invocation({ agent, tier, prompt, directory, reach = [], e
   if (!Object.hasOwn(tiers, tier)) {
     throw new Error(`the Claude Code adapter maps no model to the tier \`${tier}\`, only to \`standard\` and \`high\``);
   }
-  const real = realpathSync.native(directory);
+  const real = atStart('directory-unusable', () => realpathSync.native(directory));
   const file = resolve(directory, agent);
-  const fileReal = realOf(file);
+  const fileReal = atStart('agent-unresolved', () => realOf(file), { file: agent });
   if (!under(fileReal, real)) {
-    throw new Error(`the agent file ${agent} lies at ${fileReal}, outside the consumer's repository ${real}, so the Claude Code adapter refused it (R-SAFE-6)`);
+    throw startFailure(new Error(`the agent file ${agent} lies at ${fileReal}, outside the consumer's repository ${real}, so the Claude Code adapter refused it (R-SAFE-6)`), 'agent-outside', { file: agent });
   }
   const excludes = [...new Set([...above(resolve(directory)), ...above(real)])];
   const globbed = excludes.find((each) => GLOB.test(each));
   if (globbed !== undefined) {
-    throw new Error(`the directory ${directory} lies under a path holding a glob character, as ${globbed} does, so its \`claudeMdExcludes\` entries would match other files`);
+    const path = atStart('directory-unusable', () => realpathSync.native(dirname(globbed)));
+    throw startFailure(new Error(`the directory ${directory} lies under a path holding a glob character, as ${globbed} does, so its \`claudeMdExcludes\` entries would match other files`), 'claude-exclusion-path', { path });
   }
   const mcp = join(directory, '.mcp.json');
   const declared = declaredIn(directory);
