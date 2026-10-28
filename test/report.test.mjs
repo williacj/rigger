@@ -392,6 +392,9 @@ test('report states both edges below its marker heading', () => {
   assert.match(out, /markers no dispatch wrote\n(?:  card[^\n]*\n)*  only markers L2 recorded in this state directory are named\n  markers of role owner are never checked/);
 });
 
+/** Any line of L1's or L2's sections: a heading, a duration, the stream's count, or a rate or its absence. */
+const L1_L2_SIGNAL = /^L[12]$|survivor rate|host-fault rate|dispatch\.end events|^ *dispatch \S+(?:, card #\d+)?: \d+ ms$/m;
+
 test('report over a state directory holding no event stream says no events are recorded, naming the path it looked at', () => {
   const consumer = realpathSync(repositoryIn('rigger-report-'));
 
@@ -400,6 +403,7 @@ test('report over a state directory holding no event stream says no events are r
   assert.equal(ran.code, 0, ran.err);
   assert.match(ran.out, /no events are recorded/, ran.out);
   assert.ok(ran.out.includes(streamIn(consumer)), ran.out);
+  assert.doesNotMatch(`${ran.out}${ran.err}`, L1_L2_SIGNAL);
 });
 
 // proves R-SAFE-5
@@ -473,6 +477,7 @@ test('report over a stream holding a line that does not parse exits non-zero, na
   assert.notEqual(ran.code, 0, ran.out);
   assert.match(ran.err, /\bline 3\b/, ran.err);
   assert.doesNotMatch(`${ran.out}${ran.err}`, /throughput|utilization/);
+  assert.doesNotMatch(`${ran.out}${ran.err}`, L1_L2_SIGNAL);
 });
 
 test('report leaves the stream\'s bytes as they were', async () => {
