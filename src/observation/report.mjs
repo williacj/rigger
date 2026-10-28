@@ -1,5 +1,5 @@
-// ABOUTME: L5's report: L3's per-run signals and marker dispatch checks derived from one state
-// directory's event stream.
+// ABOUTME: L5's report: L1's, L2's and L3's signals and marker dispatch checks derived from one
+// state directory's event stream.
 
 import { existsSync } from 'node:fs';
 
@@ -7,6 +7,82 @@ import { readEvents, streamPath } from './sink.mjs';
 
 /** Milliseconds in an hour: the unit throughput is counted per, and a duration is printed in. */
 export const HOUR = 3_600_000;
+
+/** `events` grouped by run, each run's events in line order, the runs in the order each first appears. */
+function byRun(events) {
+  const runs = new Map();
+  for (const event of events) {
+    if (!runs.has(event.run)) runs.set(event.run, []);
+    runs.get(event.run).push(event);
+  }
+  return runs;
+}
+
+/**
+ * L1's signals per run, in the order each run first appears, and across the stream.
+ *
+ * - **Execution duration:** each L1 `dispatch.end`'s `dispatch`, `card` where it carries one, and
+ *   `ms`. The stream's figure is the count of those ends, each listed under its run.
+ * - **Survivor rate:** `killed` of `of`. `of` is the L1 `dispatch.end` events, less those carrying
+ *   `reason`, which L1 records where it got no result for the command. `killed` is those whose id an
+ *   L0 `survivor.killed` or `group.killed` carries as its `dispatch`, anywhere in the stream; a kill
+ *   naming no dispatch, null or absent alike, is counted nowhere.
+ */
+function l1Signals(events) {
+  const ends = (recorded) => recorded.filter((event) => event.layer === 'L1' && event.event === 'dispatch.end');
+  const killed = new Set(events
+    .filter((event) => event.layer === 'L0' && ['survivor.killed', 'group.killed'].includes(event.event) && event.dispatch != null)
+    .map((event) => event.dispatch));
+  const survivors = (recorded) => {
+    const counted = ends(recorded).filter((event) => event.reason === undefined);
+    return { killed: counted.filter((event) => killed.has(event.dispatch)).length, of: counted.length };
+  };
+  const runs = [...byRun(events)].map(([run, recorded]) => ({
+    run, durations: ends(recorded).map(({ dispatch, card, ms }) => ({ dispatch, card, ms })), survivors: survivors(recorded),
+  }));
+  return { runs, stream: { ended: ends(events).length, survivors: survivors(events) } };
+}
+
+/** Whether `event` is a host fault L2 recorded under a card: `R-RECORD-2`'s "how often a host fault interrupted it". */
+const hostFault = (event) => event.layer === 'L2' && event.card != null && (['maker.failed', 'judge.withheld'].includes(event.event)
+  || (event.event === 'attempt.failed' && event.class === 'environment' && event.maker === undefined));
+
+/**
+ * The work claims among one run's events. A claim of a card runs from an L3 `pull` under it to its
+ * next, and is a work claim where no L3 `merge.start` under the card falls within it.
+ */
+function workClaims(recorded) {
+  const merging = new Map();
+  let work = 0;
+  const close = (card) => {
+    if (merging.get(card) === false) work += 1;
+  };
+  for (const event of recorded) {
+    if (event.layer !== 'L3' || event.card == null) continue;
+    if (event.event === 'pull') {
+      close(event.card);
+      merging.set(event.card, false);
+    }
+    if (event.event === 'merge.start' && merging.has(event.card)) merging.set(event.card, true);
+  }
+  for (const card of merging.keys()) close(card);
+  return work;
+}
+
+/**
+ * L2's host faults per run, in the order each run first appears, and across the stream: `faults`
+ * of `claims`. `faults` counts each `maker.failed`, each `judge.withheld`, and each
+ * `attempt.failed` carrying `class: 'environment'` and no `maker`, under a card; one carrying
+ * `maker` records the fault its `maker.failed` already counts. `claims` is the work claims, by
+ * `run` and `card`, so the stream's is the sum of its runs'.
+ */
+function l2Signals(events) {
+  const runs = [...byRun(events)].map(([run, recorded]) => ({
+    run, hostFaults: { faults: recorded.filter(hostFault).length, claims: workClaims(recorded) },
+  }));
+  const claims = runs.reduce((sum, { hostFaults }) => sum + hostFaults.claims, 0);
+  return { runs, stream: { hostFaults: { faults: events.filter(hostFault).length, claims } } };
+}
 
 /**
  * L3's signals for each run in `events`, in the order each run first appears.
@@ -23,12 +99,7 @@ export const HOUR = 3_600_000;
  * alone does not, has no N, and its `n` is undefined and its `utilization` null.
  */
 function l3Signals(events) {
-  const runs = new Map();
-  for (const event of events) {
-    if (!runs.has(event.run)) runs.set(event.run, []);
-    runs.get(event.run).push(event);
-  }
-  return [...runs].map(([run, recorded]) => {
+  return [...byRun(events)].map(([run, recorded]) => {
     const times = recorded.map((event) => Date.parse(event.ts));
     const [from, to] = [times[0], times.at(-1)];
     const l3 = recorded.filter((event) => event.layer === 'L3');
@@ -84,14 +155,15 @@ function unwrittenMarkers(events) {
 }
 
 /**
- * The report over the state directory `directory`: its stream's `path`, L3 signals per run, and
+ * The report over the state directory `directory`: its stream's `path`, L1's and L2's signals per
+ * run and across the stream, L3's signals per run, and
  * agent markers with no unique matching recorded dispatch. The latter joins the whole stream,
  * across runs. It reads through the sink and writes nothing; an unreadable line throws as the
  * reader does, naming that line.
  */
 export function report(directory) {
   const path = streamPath(directory);
-  if (!existsSync(path)) return { path, runs: null, markers: null };
+  if (!existsSync(path)) return { path, l1: null, l2: null, runs: null, markers: null };
   const events = readEvents(directory);
-  return { path, runs: l3Signals(events), markers: unwrittenMarkers(events) };
+  return { path, l1: l1Signals(events), l2: l2Signals(events), runs: l3Signals(events), markers: unwrittenMarkers(events) };
 }

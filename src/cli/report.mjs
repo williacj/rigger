@@ -1,5 +1,5 @@
-// ABOUTME: The `report` verb: prints L5's derived signals and unmatched marker reads from the
-// consumer's event stream, and refuses its own source tree.
+// ABOUTME: The `report` verb: prints L5's derived signals, one section per layer, and unmatched
+// marker reads from the consumer's event stream, and refuses its own source tree.
 
 import { join } from 'node:path';
 
@@ -16,14 +16,47 @@ const hours = (ms) => `${figure(ms / HOUR)} h`;
 /** The lines one run's L3 signals print as, each figure beside the facts it was computed from. */
 function runLines({ run, from, to, releases, pulled, n, throughput, utilization }) {
   const span = to - from;
-  const heading = `run ${run}: from ${new Date(from).toISOString()} to ${new Date(to).toISOString()}, a span of ${hours(span)}`;
-  if (span === 0) return [heading, '  the span is zero, so L3 has no throughput and no utilization for this run'];
+  const heading = `  run ${run}: from ${new Date(from).toISOString()} to ${new Date(to).toISOString()}, a span of ${hours(span)}`;
+  if (span === 0) return [heading, '    the span is zero, so L3 has no throughput and no utilization for this run'];
   return [
     heading,
-    `  L3 throughput: ${figure(throughput)} slot releases per hour (${releases} slot releases over ${hours(span)})`,
+    `    L3 throughput: ${figure(throughput)} slot releases per hour (${releases} slot releases over ${hours(span)})`,
     utilization === null
-      ? '  the run recorded no N, so L3 has no utilization for it'
-      : `  L3 utilization: ${figure(utilization)} (${hours(pulled)} from pull to release, over N ${n} x ${hours(span)})`,
+      ? '    the run recorded no N, so L3 has no utilization for it'
+      : `    L3 utilization: ${figure(utilization)} (${hours(pulled)} from pull to release, over N ${n} x ${hours(span)})`,
+  ];
+}
+
+/** A rate's line, beside its numerator and denominator, or why there is none where the denominator is zero. */
+const rateLine = (name, part, whole, { counted, of, none }) => (of === 0
+  ? `    no ${name}: ${none}`
+  : `    ${name}: ${figure(counted / of)} (${part} ${counted}, over ${whole} ${of})`);
+
+/** The survivor rate's line, `where` naming the run or the stream it is over. */
+const survivorLine = ({ killed, of }, where) => rateLine('survivor rate', 'dispatches with a survivor or group killed', 'dispatches that ended with a result',
+  { counted: killed, of, none: `no dispatch in ${where} ended with a result` });
+
+/** The lines L1's section prints under its heading: each run's durations and survivor rate, then the stream's. */
+function l1Lines({ runs, stream }) {
+  return [
+    ...runs.flatMap(({ run, durations, survivors }) => [
+      `  run ${run}`,
+      ...durations.map(({ dispatch, card, ms }) => `    dispatch ${dispatch}${card === undefined ? '' : `, card #${card}`}: ${ms} ms`),
+      survivorLine(survivors, 'this run'),
+    ]),
+    '  across the stream',
+    `    dispatch.end events: ${stream.ended}, each listed under its run`,
+    survivorLine(stream.survivors, 'the stream'),
+  ];
+}
+
+/** The lines L2's section prints under its heading: each run's host-fault rate, then the stream's. */
+function l2Lines({ runs, stream }) {
+  const line = ({ faults, claims }, where) => rateLine('host-fault rate', 'host faults', 'work claims', { counted: faults, of: claims, none: `no work claim in ${where}` });
+  return [
+    ...runs.flatMap(({ run, hostFaults }) => [`  run ${run}`, line(hostFaults, 'this run')]),
+    '  across the stream',
+    line(stream.hostFaults, 'the stream'),
   ];
 }
 
@@ -43,12 +76,17 @@ async function reporting(opened, { target = process.cwd(), packageRoot = PACKAGE
   } catch (refused) {
     return { text: `rigger report: ${refused.message}, so no signal is derived`, code: 1 };
   }
-  const { path, runs, markers } = derived;
+  const { path, l1, l2, runs, markers } = derived;
   if (runs === null) return { text: `rigger report: no events are recorded; there is no stream at ${path}`, code: 0 };
   const markerLines = markers.map(({ card, role, head, dispatch, reason }) =>
     `  card #${card}, ${role}, head ${head}, dispatch ${dispatch}${reason === undefined ? '' : `: ${reason}`}`);
   return { text: [
     `rigger report: the events recorded at ${path}`,
+    'L1',
+    ...l1Lines(l1),
+    'L2',
+    ...l2Lines(l2),
+    'L3',
     ...runs.flatMap(runLines),
     'markers no dispatch wrote',
     ...markerLines,
