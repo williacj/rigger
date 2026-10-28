@@ -2054,7 +2054,7 @@ test('the loop world shares issue facts and successful issue labels by repositor
     { ...cardIn(43, COLUMNS.ready), labels: ['unrelated'] },
   ] });
   const built = world({ fake, cards: [] });
-  assert.deepEqual(await built.repository.operations.readIssue(42), { number: 42, title: 'Add a verb', body: PASSING, labels: ['keep'] });
+  assert.deepEqual(await built.repository.operations.readIssue(42), { number: 42, title: 'Add a verb', body: PASSING, state: 'open', author: 'rigger-fake', labels: ['keep'] });
   const [card] = await fake.operations.readItems();
   await built.l2.escalated(card, { action: 'escalate', category: 'ambiguous', reason: 'The owner must decide.' });
   assert.deepEqual((await fake.operations.readItems()).map(({ repository, number, labels }) => ({ repository, number, labels })), [
@@ -2305,7 +2305,7 @@ test('an owner closer stops a returned card continuing its maker work', async ()
 
 // proves R-SCHED-3, R-SCHED-16
 test('a hold closer stops dispatch, judges, merge, move, return, escalation and continued work', async () => {
-  for (const action of ['dispatch', 'redo', 'judge', 'merge', 'move', 'return', 'escalate', 'continue']) await blockedAdmission(action, 'hold-b2.json');
+  for (const action of ['dispatch', 'redo', 'judge', 'merge', 'move', 'return', 'escalate', 'continue']) await blockedAdmission(action, 'hold-b2-issue-7.json');
 });
 
 // proves R-SCHED-3, R-SCHED-16

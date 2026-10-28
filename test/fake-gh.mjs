@@ -369,7 +369,7 @@ function environmentIn(state, args) {
 const unresolved = (data, path, message) => new GhPrinted(`gh: ${message}`, JSON.stringify({ data, errors: [{ type: 'NOT_FOUND', path, locations: [{ line: 1, column: 1 }], message }] }));
 
 /** What the issue read selects of an issue, but its labels. */
-const ISSUE = 'number title body repository { nameWithOwner }';
+const ISSUE = 'number title body state author { login } repository { nameWithOwner }';
 
 /** What the issue read selects of a page of an issue's labels. */
 const LABELS = 'pageInfo { hasNextPage endCursor } nodes { name }';
@@ -386,7 +386,23 @@ async function issue(board, state, operation) {
   const held = repositoryOf(state).held().issues.find((candidate) => candidate.number === number);
   if (!held) throw unresolved({ repository: { issue: null } }, ['repository', 'issue'], `Could not resolve to an Issue with the number of ${number}.`);
   const labels = page(held.labels.map((name) => ({ name })), fieldIn(field.selections, 'labels'));
-  return { repository: { issue: { number, title: held.title, body: held.body, repository: { nameWithOwner: held.repository ?? state.repo }, labels } } };
+  return { repository: { issue: { number, title: held.title, body: held.body, state: state.repository?.issueStates?.[number] === 'closed' ? 'CLOSED' : 'OPEN', author: { login: 'rigger-fake' }, repository: { nameWithOwner: held.repository ?? state.repo }, labels } } };
+}
+
+/**
+ * Answers a page of the repository's open issues carrying the label the read names, in number
+ * order: the issues it holds, an issue closed through the fake `gh` left out, as GitHub's issues
+ * connection holds no pull request.
+ */
+async function labelledIssues(board, state, operation) {
+  inTheRepository(state, operation);
+  const field = fieldIn(operation.selections, 'issues');
+  const [label] = argument(field, 'labels').values.map((value) => value.value);
+  const open = repositoryOf(state).held().issues
+    .filter((issue) => issue.repository === null && state.repository?.issueStates?.[issue.number] !== 'closed' && issue.labels.includes(label))
+    .map(({ number }) => ({ number }))
+    .sort((one, other) => one.number - other.number);
+  return { repository: { issues: page(open, field) } };
 }
 
 /** What the file read selects of the tree entry at its path. */
@@ -543,6 +559,15 @@ const COMMANDS = {
   },
   [graphql(repositoryShape(`issue(number: _) { ${ISSUE} labels(first: _) { ${LABELS} } }`))]: issue,
   [graphql(repositoryShape(`issue(number: _) { ${ISSUE} labels(first: _, after: _) { ${LABELS} } }`))]: issue,
+  [graphql(repositoryShape(`issues(states: [], labels: [], first: _) { ${LABELS.replace('name', 'number')} }`))]: labelledIssues,
+  [graphql(repositoryShape(`issues(states: [], labels: [], first: _, after: _) { ${LABELS.replace('name', 'number')} }`))]: labelledIssues,
+  // The newest issue or pull request, as the REST issues list answers its first, newest-created, entry.
+  [commandOf(['api', 'repos/_/_/issues?state=all&sort=created&direction=desc&per_page=1', '-X', 'GET'])]: async (board, state, args) => {
+    pathIn(state, args);
+    const { issues, pullRequests } = repositoryOf(state).held();
+    const newest = Math.max(0, ...[...issues, ...pullRequests].map(({ number }) => number));
+    return JSON.stringify(newest === 0 ? [] : [{ number: newest }]);
+  },
   // The default branch is the one the test's `origin` names as its `HEAD`; with no `origin`, or no
   // commit on that branch, the repository holds none, which GitHub answers as null
   // (https://docs.github.com/en/graphql/reference/objects#repository).

@@ -29,6 +29,7 @@ import { readdirSync } from 'node:fs';
 import { running } from './process-fixtures.mjs';
 import { readsServing } from './loop-world.mjs';
 import { makingJudgeDirectories } from './loop-world.mjs';
+import { refusingWrites } from './notice-forge.mjs';
 
 // A bound on a test that waits on real processes, so one whose pull never settles fails here
 // rather than holding the suite.
@@ -113,7 +114,7 @@ function makerWorld({
     const open = agent.act(number, 'engineer')?.pr && ran(number) ? [{ number: 500 + number, head: String(number).padStart(40, 'a'), base: 'main' }] : [];
     return { open, merged: [], closed: [] };
   };
-  const l2 = columnChanges({ config: settings, sink, items: fake.operations, reads: readsServing(pullRequests) });
+  const l2 = columnChanges({ config: settings, sink, items: fake.operations, reads: readsServing(pullRequests), repositoryWrites: refusingWrites() });
   const kinds = { change: { ...KINDS.change, provisioning: steps } };
   const decide = (card, outcomes, attempt) => nextAction(card, kinds, undefined, { columns: COLUMNS, roles, provisioning, outcomes, sink, ...attempt });
   const workspaces = join(directory, 'workspaces');

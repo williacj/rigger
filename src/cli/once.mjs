@@ -9,7 +9,7 @@ import { basename, dirname, join, resolve } from 'node:path';
 
 import { OWNER, validate, worktreeTopic } from '../config/validate.mjs';
 import { killRecordedGroups } from '../execution/run.mjs';
-import { judgeDirectoryHandle, removeCardDirectories, workspaceHandle } from '../execution/workspace.mjs';
+import { escalationDirectoryHandle, judgeDirectoryHandle, removeCardDirectories, workspaceHandle } from '../execution/workspace.mjs';
 import { loop } from '../scheduling/loop.mjs';
 import { readSide, repositoryReads } from '../substrate/forge/read.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
@@ -42,6 +42,7 @@ function makerOutcome({ outcome, settled: settle }) {
   }
   const { exit } = outcome.value;
   if (exit !== 0 || failure !== undefined) return { said: `its maker exited ${exit}`, review: false, failure };
+  if (settle.status === 'fulfilled' && settle.value?.action === 'escalate') return { said: `its maker raised ${settle.value.category} for acceptance item ${settle.value.item}`, review: false };
   if (settle.status === 'fulfilled') {
     const { line, open: [pull] } = settle.value;
     return { said: `its maker exited 0 and pull request #${pull.number} is open from ${line}, so the card is in review`, review: true };
@@ -194,13 +195,15 @@ async function claiming(verb, limit, opened, {
     return { text: `rigger ${verb}: ${failure.message}`, code: 1 };
   }
   const judgeDirectory = judgeDirectoryHandle({ root, topic: worktreeTopic(config), repository: named, sink });
+  const escalationDirectory = escalationDirectoryHandle({ root, topic: worktreeTopic(config), repository: named, sink });
   const workspaceTip = workspace.tip;
   const removeDirectories = (card) => removeCardDirectories({ root, topic: worktreeTopic(config), card, repository: named, sink });
 
   const forge = { ...config.board, repo: config.repo };
   const board = readSide(forge, { send, emitter: sink.emitter({ layer: 'L0' }) });
-  const reads = repositoryReads(forge, { send, emitter: sink.emitter({ layer: 'L0' }) });
-  const l2 = columnChanges({ config, sink, send, reads });
+  const cardReads = (card, dispatch) => repositoryReads(forge, { send, emitter: sink.emitter({ layer: 'L0', card, dispatch }) });
+  const reads = cardReads();
+  const l2 = columnChanges({ config, sink, send, cardReads });
   // L3 answers, as `trigger` says, a card whose maker ran, with its maker's outcome, L2's settle
   // and the judges L2 then named; a card pulled for its judges alone, with those judges; and,
   // where any card failed, a failure carrying both kinds of card as `reached`, a card one of whose
@@ -249,7 +252,7 @@ async function claiming(verb, limit, opened, {
       panel.withheld.set(role, `was not dispatched, because ${which} could not be made: ${outcome.reason?.message}`);
     }
   };
-  const facts = factsCall({ config, reads, decide });
+  const facts = (cards) => factsCall({ config, reads: cards.length === 1 ? cardReads(cards[0].number) : reads, decide })(cards);
   const state = join(named, STATE);
   const kill = () => killRecordedGroups({ directory: state, sink, ps, readTimeout });
   const { project } = config.board;
@@ -257,6 +260,13 @@ async function claiming(verb, limit, opened, {
   // followed by a line for each of its judges, then one for each failure of L2's settle that was
   // not the card left in coding for what the forge holds.
   const outcomes = (reached) => reached.map((each) => {
+    if (each.action === 'handled') {
+      const role = each.escalationRole;
+      const review = role.settled?.facts?.open.length === 1;
+      const failure = role.outcome.status === 'rejected' ? role.outcome.reason : undefined;
+      return { ...each, said: `role \`${role.role}\` handled its escalation; card is in ${review ? 'Review' : 'Coding'}`,
+        review, failure, judgesPassed: true, judgeLines: [] };
+    }
     if (each.action !== undefined && each.action !== 'continue') {
       const words = {
         move: `moved to ${each.to}`,
@@ -324,21 +334,24 @@ async function claiming(verb, limit, opened, {
     const heading = `rigger ${verb}: claimed #${held.card} from board ${project}; its maker did not start: ${attempts.at(-1).reason}, and the card was ${held.decision === 'hold' ? 'held' : 'stopped'} after ${attempts.length} attempts:`;
     return [heading, ...attempts.map((each, at) => `attempt ${at + 1}: ${JSON.stringify(each)}`)].join('\n');
   };
+  /** The line naming hold `id`'s failed notice: the step L2 names, and its cause. */
+  const noticeLine = (id, { step, cause }) => `rigger ${verb}: the notice for hold ${id} failed to ${step}: ${cause}`;
   /**
    * The lines naming each closer a held card's failure among `held` carries, once each however many
-   * of its judges held: admission closed by it, in `closerLine`'s words, and, where its close left
-   * a temporary file, that file, as `pause` says it.
+   * of its judges held: admission closed by it, in `closerLine`'s words, its notice where that
+   * failed, and, where its close left a temporary file, that file, as `pause` says it.
    */
   const holdLines = (held) => [...new Map(held.filter(({ closer }) => closer !== undefined).map(({ closer }) => [closer.name, closer])).values()]
     .flatMap((closer) => [
       `rigger ${verb}: ${closerLine(closer)}`,
+      ...(closer.notice ? [noticeLine(closer.id, closer.notice)] : []),
       ...(closer.leftover ? [`rigger ${verb}: the temporary file ${closer.leftover} could not be removed, and the close stands`] : []),
     ]);
   let reached;
   try {
     // The verb hands L3 the process's own environment, which L3 hands every dispatch it makes
     // (the architect's ruling 2, P7, on #467), and no maker: L3 dispatches it through L1.
-    reached = await loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, removeDirectories, state, environment: process.env, run: opened.run }).pull(limit);
+    reached = await loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, environment: process.env, run: opened.run }).pull(limit);
   } catch (failure) {
     // What L3 reports is said whole, one line per failure it holds, and the exit is non-zero:
     // an event the record refused names an action Rigger took and could not record, or a start
@@ -361,9 +374,10 @@ async function claiming(verb, limit, opened, {
   }
   const refused = refusals.map(refusalLine);
   if (reached.admission?.state === 'closed') {
+    const notices = (reached.notices ?? []).map((failed) => noticeLine(failed.id, failed));
     return {
-      text: [...reached.admission.closers.map((closer) => `rigger ${verb}: ${closerLine(closer)}`), ...refused].join('\n'),
-      code: 0,
+      text: [...reached.admission.closers.map((closer) => `rigger ${verb}: ${closerLine(closer)}`), ...notices, ...refused].join('\n'),
+      code: notices.length === 0 ? 0 : 1,
     };
   }
   // Nothing to pull is the one outcome this verb meets in full, so it alone exits zero (U29).

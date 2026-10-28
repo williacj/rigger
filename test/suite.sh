@@ -20,6 +20,7 @@ unset NODE_TEST_CONTEXT
 # These three lists implement the file placements in #816, Part 2. The last two shrink as
 # their cards convert and split tests. An entry must name the file that still exists.
 host_tests='
+test/build-test-matrix-host.test.mjs
 test/claude-folder-live.test.mjs
 test/codex-judge-shell.test.mjs
 test/command-gate-hook.test.mjs
@@ -30,6 +31,9 @@ test/demo.test.mjs
 test/directory-census.test.mjs
 test/dispatch.test.mjs
 test/doctor-claude-live.test.mjs
+test/escalation-directory-host.test.mjs
+test/escalation-loop-host.test.mjs
+test/escalation-once-host.test.mjs
 test/event-sink.test.mjs
 test/exit-cleanup.test.mjs
 test/forge-runners.test.mjs

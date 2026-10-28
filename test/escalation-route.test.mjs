@@ -127,17 +127,17 @@ test('a maker\'s escalate answer at the settle carries the destination the funct
 });
 
 // proves R-ESCALATE-13, R-ESCALATE-20
-test('an escalation the function sends to a role goes to the owner, whose comment names the role it was not sent to, and its event records it', async () => {
+test('an escalation the function sends to a role posts the routing comment and leaves its column and labels alone', async () => {
   const { card, fake, l2, repository, events } = await world({ ambiguous: 'pm' }, [note()]);
   const answer = await l2.settled(card, exited, { dispatch: DISPATCH });
-  await l2.escalated(card, answer);
+  assert.equal(typeof l2.routed, 'function', 'L2 must post the route before a role dispatch');
+  const routed = await l2.routed(card, answer);
   const [event] = events().filter(({ event: name }) => name === 'review.escalate');
   assert.deepEqual({ category: event.category, raiser: event.raiser, destination: event.destination }, { category: 'ambiguous', raiser: 'maker', destination: 'pm' });
-  const [comment] = repository.held().issues[0].comments;
-  assert.match(comment.body, /^Rigger escalates card #12 to the owner \(ambiguous\)\./);
-  assert.match(comment.body, /^Not sent to the role `pm`, which the configuration names for ambiguous\.$/m);
-  assert.deepEqual(fake.writes(), [{ operation: 'moveItem', args: [card.id, rigger.board.columns.owner] }], 'the card moves to Owner');
-  assert.deepEqual(repository.held().issues[0].labels, ['rigger:escalated']);
+  assert.equal(repository.held().issues[0].comments[0].body.split('\n')[0], ROUTING_LINE);
+  assert.equal(routed.role.role, 'pm');
+  assert.deepEqual(fake.writes(), [], 'the card keeps its column');
+  assert.deepEqual(repository.held().issues[0].labels, []);
 });
 
 // proves R-ESCALATE-20

@@ -469,30 +469,33 @@ const FULL_SHA = /^[0-9a-f]{40}$/i;
 /** A pull request as the reads answer it: its number, head SHA and base branch. */
 const pullRequestOf = ({ number, headRefOid, baseRefName }) => ({ number, head: headRefOid, base: baseRefName });
 
+/**
+ * The role `author` holds on the repository, as the collaborator permission endpoint names it, or
+ * `none` where it answers Not Found.
+ */
+async function permissionOf(operation, board, via, author, addressed) {
+  const said = await readRunner(['api', `repos/${board.repo}/collaborators/${encodeURIComponent(author)}/permission`, '-X', 'GET'], via);
+  if (said.status !== 0) {
+    if (/\b404\b/.test(firstLine(said))) return 'none';
+    fail(operation, board, `${addressed}permission for ${author}: ${firstLine(said)}`);
+  }
+  const role = JSON.parse(said.stdout).role_name;
+  if (typeof role !== 'string') fail(operation, board, `${addressed}permission for ${author}: gh answered no role_name`);
+  return role;
+}
+
 /** Comment nodes as L0 answers them, with each author's repository permission read once. */
 async function commentsOf(operation, board, via, nodes, addressed) {
   const permissions = new Map();
-  const permissionOf = async (author) => {
+  const permissionsOf = async (author) => {
     if (author === null) return 'none';
-    if (!permissions.has(author)) {
-      const path = `repos/${board.repo}/collaborators/${encodeURIComponent(author)}/permission`;
-      permissions.set(author, (async () => {
-        const said = await readRunner(['api', path, '-X', 'GET'], via);
-        if (said.status !== 0) {
-          if (/\b404\b/.test(firstLine(said))) return 'none';
-          fail(operation, board, `${addressed}permission for ${author}: ${firstLine(said)}`);
-        }
-        const role = JSON.parse(said.stdout).role_name;
-        if (typeof role !== 'string') fail(operation, board, `${addressed}permission for ${author}: gh answered no role_name`);
-        return role;
-      })());
-    }
+    if (!permissions.has(author)) permissions.set(author, permissionOf(operation, board, via, author, addressed));
     return permissions.get(author);
   };
   const comments = [];
   for (const node of nodes) {
     const author = node.author?.login ?? null;
-    comments.push({ body: node.body, createdAt: node.createdAt, id: node.id, author, permission: await permissionOf(author), edited: node.lastEditedAt != null || node.includesCreatedEdit === true });
+    comments.push({ body: node.body, createdAt: node.createdAt, id: node.id, author, permission: await permissionsOf(author), edited: node.lastEditedAt != null || node.includesCreatedEdit === true });
   }
   return comments;
 }
@@ -602,14 +605,14 @@ const REPOSITORY_READS = {
     },
   },
   /**
-   * Issue `number`, open or closed, as `{ number, title, body, labels }`: its title, its body, the
-   * empty string where it has none, and every label's name across pages, in the order gh answers
-   * them.
+   * Issue `number`, open or closed, as `{ number, title, body, state, author, labels }`: its title,
+   * its body, the empty string where it has none, `open` or `closed`, its author's login, or null
+   * where the account was deleted, and every label's name across pages, in the order gh answers them.
    */
   readIssue: {
     reading: (number) => `issue #${number}`,
     read: async (board, via, number, addressed) => {
-      const query = (page) => repositoryQuery(board, `issue(number: ${numbered('readIssue', board, number)}) { number title body repository { nameWithOwner } labels(${page}) { pageInfo { hasNextPage endCursor } nodes { name } } }`);
+      const query = (page) => repositoryQuery(board, `issue(number: ${numbered('readIssue', board, number)}) { number title body state author { login } repository { nameWithOwner } labels(${page}) { pageInfo { hasNextPage endCursor } nodes { name } } }`);
       const labels = [];
       for (let after = '';;) {
         const said = await readRunner(graphqlRequest(query(`first: ${PAGE}${after}`)), via);
@@ -617,10 +620,39 @@ const REPOSITORY_READS = {
         const issue = heldIn('readIssue', board, answerOf('readIssue', board, said, addressed), 'issue', addressed);
         if (!ofRepository(board, issue.repository.nameWithOwner)) return null;
         labels.push(...issue.labels.nodes.map((label) => label.name));
-        if (!issue.labels.pageInfo.hasNextPage) return { number: issue.number, title: issue.title, body: issue.body, labels };
+        const state = { OPEN: 'open', CLOSED: 'closed' }[issue.state];
+        if (state === undefined) fail('readIssue', board, `${addressed}gh answered state ${issue.state}`);
+        if (!issue.labels.pageInfo.hasNextPage) return { number: issue.number, title: issue.title, body: issue.body, state, author: issue.author?.login ?? null, labels };
         after = `, after: ${literal(issue.labels.pageInfo.endCursor)}`;
       }
     },
+  },
+  /**
+   * The numbers of the repository's open issues carrying `label`, read by label from its issues,
+   * which hold no pull request, and never through the search index, across every page.
+   */
+  readLabelledIssues: {
+    reading: (label) => `the open issues labelled ${label}`,
+    read: async (board, via, label, addressed) => {
+      const query = (page) => repositoryQuery(board, `issues(states: [OPEN], labels: [${literal(label)}], ${page}) { pageInfo { hasNextPage endCursor } nodes { number } }`);
+      return (await everyPage('readLabelledIssues', board, via, query, (data) => heldIn('readLabelledIssues', board, data, 'issues', addressed), addressed)).map((node) => node.number);
+    },
+  },
+  /**
+   * The number of the repository's newest issue or pull request, or 0 where it holds none: the
+   * issues list holds pull requests beside issues, newest created first.
+   */
+  readNewestNumber: {
+    reading: () => 'the newest issue or pull request',
+    read: async (board, via, target, addressed) => {
+      const [newest] = JSON.parse(await restRead('readNewestNumber', board, via, 'issues?state=all&sort=created&direction=desc&per_page=1', [], addressed));
+      return newest?.number ?? 0;
+    },
+  },
+  /** The role account `login` holds on the repository, as `permissionOf` answers it. */
+  readPermission: {
+    reading: (login) => `${login}'s permission`,
+    read: (board, via, login, addressed) => permissionOf('readPermission', board, via, login, addressed),
   },
   /**
    * Pull request `number`, whatever its state or the repository its head is in, as `{ number,

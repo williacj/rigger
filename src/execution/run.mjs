@@ -8,6 +8,7 @@ import { addGroup, holdsDispatch, partialPath, readGroups, removeGroup, removePa
 import { listCliFolder, sweepCliFolder } from './workspace.mjs';
 import { gitEnvironment } from '../substrate/git-environment.mjs';
 import { EVENT_REFUSED, NOT_STARTED, identityOf, killRecordedGroup, runCommand } from '../substrate/process.mjs';
+import { startFailure } from '../substrate/process.mjs';
 
 /**
  * The `code` of the failure a dispatch rejects with when its command ran and the record refused
@@ -84,13 +85,13 @@ export const RECORD_REFUSED = 'RECORD_REFUSED';
  * call rejects with a `RECORD_REFUSED` failure carrying the result, and the record's failure as
  * `recordFailure`.
  */
-export async function dispatch({ id, card, directory, sink, command, args, input, cwd, workspace, scratch, env, folder, timeout, facts, digest, ps, lsof, readTimeout, clock = () => performance.now() }) {
+export async function dispatch({ id, card, directory, sink, provider, command, args, input, cwd, workspace, scratch, env, folder, timeout, facts, digest, ps, lsof, readTimeout, clock = () => performance.now() }) {
   // L3 allocates the id (the architect's ruling 1, P4 on #332), and an entry without one could
   // not be told from another dispatch's. Null and the empty string are no id either.
-  if (id === undefined || id === null || id === '') throw new Error(`L1 was given no dispatch id, so it did not start ${command}`);
+  if (id === undefined || id === null || id === '') throw startFailure(Object.assign(new Error(`L1 was given no dispatch id, so it did not start ${command}`), { code: NOT_STARTED }), 'dispatch-identity');
   // An id or card the record would refuse on its next read would refuse every later dispatch and
   // start, so it is refused here, before anything is recorded or started.
-  if (!holdsDispatch(id, card)) throw new Error(`L1's record of process groups cannot hold dispatch id ${JSON.stringify(id)} with card ${JSON.stringify(card)}, so it did not start ${command}`);
+  if (!holdsDispatch(id, card)) throw startFailure(Object.assign(new Error(`L1's record of process groups cannot hold dispatch id ${JSON.stringify(id)} with card ${JSON.stringify(card)}, so it did not start ${command}`), { code: NOT_STARTED }), 'dispatch-identity');
   const events = sink.emitter({ layer: 'L1', card, dispatch: id });
   const began = clock();
   const start = { command, timeout, ...(workspace === undefined ? {} : { workspace }), ...(facts === undefined ? {} : { facts }), ...(digest === undefined ? {} : { digest }) };
@@ -108,19 +109,20 @@ export async function dispatch({ id, card, directory, sink, command, args, input
   try {
     // The record is shown writable before anything starts, by writing it back as it stands, so a
     // dispatch whose group could not be recorded runs no command.
+    const entries = startingGroups(directory);
     try {
-      writeGroups(directory, readGroups(directory));
+      writeGroups(directory, entries);
     } catch (cause) {
-      throw Object.assign(new Error(`L1 cannot write its record of process groups in the state directory ${directory}, so dispatch ${id} did not start ${command}: ${cause.message}`, { cause }), { code: NOT_STARTED });
+      throw startFailure(Object.assign(new Error(`L1 cannot write its record of process groups in the state directory ${directory}, so dispatch ${id} did not start ${command}: ${cause.message}`, { cause }), { code: NOT_STARTED }), 'groups-unwritable');
     }
     // The dispatch's directory, its workspace's real path, as the record names it and L0's census
     // of it compares.
-    const { escape, place, identity } = workspace === undefined ? {} : placed(cwd, workspace, directory);
-    if (escape !== undefined) throw Object.assign(new Error(`dispatch ${id} did not start ${command}: ${escape}`), { code: NOT_STARTED });
+    const { escape, place, identity, startCause } = workspace === undefined ? {} : placed(cwd, workspace, directory);
+    if (escape !== undefined) throw Object.assign(new Error(`dispatch ${id} did not start ${command}: ${escape}`), { code: NOT_STARTED, startCause });
     // A role's scratch directory, by its real path, device and inode, as the record names it and
     // L0's census of it compares (the architect's ruling 20 on #467).
     const { unread, held } = scratch === undefined ? {} : scratchHeld(scratch);
-    if (unread !== undefined) throw Object.assign(new Error(`dispatch ${id} did not start ${command}: ${unread}`), { code: NOT_STARTED });
+    if (unread !== undefined) throw startFailure(Object.assign(new Error(`dispatch ${id} did not start ${command}: ${unread}`), { code: NOT_STARTED }), 'directory-unusable');
     if (folder !== undefined) folderListing = listCliFolder(folder);
     result = await runCommand({
       command,
@@ -179,6 +181,10 @@ export async function dispatch({ id, card, directory, sink, command, args, input
     });
   } catch (thrown) {
     failure = thrown;
+    if (failure.startCause?.command !== undefined) {
+      const { command: named, ...cause } = failure.startCause;
+      failure.startCause = { ...cause, provider: provider ?? named };
+    }
     result = thrown.result;
   }
   // The exit cleanup has ended the dispatch, and a process kept running past its ending records
@@ -255,10 +261,10 @@ function escapes(cwd, workspace) {
     real = realpathSync(cwd);
     root = realpathSync(workspace);
   } catch (cause) {
-    return `its working directory ${cwd} in the workspace ${workspace} cannot be read: ${cause.message}`;
+    return { escape: `its working directory ${cwd} in the workspace ${workspace} cannot be read: ${cause.message}`, startCause: { kind: 'directory-unusable' } };
   }
   if (within(real, root)) return undefined;
-  return `its working directory ${cwd} is ${real}, which lies outside the workspace ${workspace}`;
+  return { escape: `its working directory ${cwd} is ${real}, which lies outside the workspace ${workspace}`, startCause: { kind: 'working-directory-outside' } };
 }
 
 /**
@@ -271,18 +277,28 @@ function escapes(cwd, workspace) {
  */
 function placed(cwd, workspace, directory) {
   const escape = escapes(cwd, workspace);
-  if (escape !== undefined) return { escape };
+  if (escape !== undefined) return escape;
   let place;
   let identity;
   try {
     place = realpathSync.native(workspace);
     identity = identityOf(place);
   } catch (cause) {
-    return { escape: `its workspace ${workspace} cannot be read: ${cause.message}` };
+    return { escape: `its workspace ${workspace} cannot be read: ${cause.message}`, startCause: { kind: 'directory-unusable' } };
   }
-  const holder = readGroups(directory).find((entry) => entry.workspace !== undefined && (within(place, entry.workspace) || within(entry.workspace, place)));
+  const entries = startingGroups(directory);
+  const holder = entries.find((entry) => entry.workspace !== undefined && (within(place, entry.workspace) || within(entry.workspace, place)));
   if (holder === undefined) return { place, identity };
-  return { escape: `its directory ${place} is held by ${named(holder.dispatch, holder.card)}, whose entry in the record names ${holder.workspace}` };
+  return { escape: `its directory ${place} is held by ${named(holder.dispatch, holder.card)}, whose entry in the record names ${holder.workspace}`, startCause: { kind: 'directory-occupied' } };
+}
+
+/** Reads the groups before a dispatch starts, including a reread after the writability check. */
+function startingGroups(directory) {
+  try {
+    return readGroups(directory);
+  } catch (cause) {
+    throw startFailure(Object.assign(new Error(`L1 cannot read its record of process groups in ${directory}, so the dispatch did not start: ${cause.message}`, { cause }), { code: NOT_STARTED }), 'groups-unreadable');
+  }
 }
 
 /**

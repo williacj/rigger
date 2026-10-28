@@ -159,6 +159,21 @@ opens. In this table, that name is the trigger's author setting.
 | R-SCHED-18 | While admission is closed, or its record cannot be read, `rigger plan` shows no card the next run would pull, and says why. | the engine | the test suite | |
 | R-SCHED-19 | Rigger refuses a configuration in which a kind of work selects by a label Rigger fixes, or names one as the epic label, in any letter case, and the refusal names both. A role's or a step's labels are outside this row, since they select nothing on a card Rigger will not work. | the config validator | the test suite | |
 | R-SCHED-42 | Rigger refuses a configuration in which a clock trigger names as its card's author anything but `owner` or a role the configuration declares, and the refusal names the trigger and the name. The values it refuses are in `### R-CARD-41 — The author a clock trigger names`. | the config validator | the test suite | |
+| R-SCHED-28 | While a clock trigger is declared, `rigger run` does not end when the board drains. | the engine | the test suite | |
+| R-SCHED-29 | While a declared clock trigger keeps `rigger run` up and that run holds no claim, Rigger pulls a card in Ready no later than the bound after the card's start. A card's start is the later of when it enters Ready and when `R-SCHED-43` last ended a skip of it. The bound is the poll interval the consumer declares, plus one pull's reads of the board. A poll whose reads fail claims nothing, and the bound then runs from the next poll whose reads succeed. The cards it binds are in `### R-SCHED-29 — The Ready cards a clock-held run pulls`. | the engine | the test suite | |
+| R-SCHED-30 | Rigger refuses a configuration that declares a clock trigger and no poll interval, and the refusal names the missing interval. No default interval applies. | the config validator | the test suite | |
+| R-SCHED-31 | When a clock trigger whose work is a card comes due, Rigger creates its card, even while the card from the trigger's previous firing is still open. | the engine | the test suite | |
+| R-SCHED-32 | Rigger creates at most one card for each occurrence of a clock trigger, across a restart that falls between the occurrence's firing and its card. A person's edit to that card before the restart is outside this row. | the engine | the test suite | |
+| R-SCHED-33 | While admission is closed, Rigger still creates the card of a clock trigger whose work is a card when the trigger comes due. Rigger does not pull that card until admission reopens. | the engine | the test suite | |
+| R-SCHED-34 | While admission is closed, Rigger still runs the internal job `report` when a clock trigger declaring it comes due. | the engine | the test suite | |
+| R-SCHED-35 | Rigger fires clock triggers under `rigger run` only, and never under `rigger once`. | the engine | the test suite | |
+| R-SCHED-36 | A clock trigger is newly declared until a start under `rigger run` reads it under its name and schedule. It first fires at its first scheduled occurrence after the first such start, and never for an occurrence before that start. | the engine | the test suite | |
+| R-SCHED-37 | A clock trigger is identified by its name. A trigger whose schedule changes is newly declared under `R-SCHED-36`. A change to its card template, its internal job or its catch-up setting leaves it as it was declared. | the engine | the test suite | |
+| R-SCHED-38 | A start that cannot read the record fires no clock trigger. It names the record it could not read, and says why. | the engine | the test suite | |
+| R-SCHED-39 | A start that cannot read the record still pulls cards. | the engine | the test suite | |
+| R-SCHED-40 | Rigger refuses a configuration in which a clock trigger's card template carries no acceptance, or an acceptance that only restates the template's title. The refusal names the trigger. | the config validator | the test suite | |
+| R-SCHED-41 | Rigger refuses a configuration in which a clock trigger's card template carries labels that `### R-SCHED-41 — The template labels Rigger refuses` marks refused. The refusal names the trigger and the labels. | the config validator | the test suite | |
+| R-SCHED-43 | While a declared clock trigger keeps `rigger run` up, that run skips each card it has set aside, and never claims a skipped card. A run sets a card aside when, having claimed it, it leaves it out of its later pulls. The skip ends when a read of the board that Rigger begins after setting the card aside finds the card in a column other than the one Rigger last knew it in. That column is the one Rigger read when it claimed the card, as changed by each of the run's own column changes of it that the board accepted. A read begun after setting the card aside that finds it in Ready ends the skip where the column Rigger last knew it in is another. A column change undone before Rigger next reads the board can go unseen, and the card then stays skipped. | the engine | the test suite | |
 | R-SCHED-20 | When Rigger closes admission itself, it opens an issue titled `Rigger closed admission` in the owner's column, carrying the status label Rigger fixes. It opens none where an open issue carrying that label exists. The issue names the reason, the evidence and the card whose failures closed admission. | the engine | the test suite | |
 | R-SCHED-27 | Rigger never works an item carrying the status label as a card: it never claims it, dispatches nothing for it, and never reports it as refused. An issue a person or `rigger resume` removes the label from is no longer the status issue. | the engine | the test suite | |
 | R-SCHED-22 | The card whose second failure closed admission stays in its column. | the engine | the event record, by that card's transitions while admission is closed | |
@@ -221,6 +236,31 @@ In this table, "not merged" is the outcome Rigger records for the merge's end, `
 | another merge queued behind this one | in: it waits until this merge ends, under `R-SCHED-15` |
 | unknown at a pull, before any merge starts | out: no merge starts, and a later pull reads it again |
 | a merge a person makes | out: Rigger makes no merge call |
+
+### R-SCHED-29 — The Ready cards a clock-held run pulls
+
+Each row of this table is one state of the card and of the run. A card is in scope only where its
+state matches the in-scope row at every moment from its start under `R-SCHED-29` until its bound
+ends. A state matching an out-of-scope row at any moment in that span takes the card out of scope.
+
+| A pull would claim the card | `R-SCHED-43` keeps the card skipped | Admission | A slot | Scope |
+|---|---|---|---|---|
+| yes | no | open | free | in |
+| no | any | any | any | out: `R-CARD-7`, `R-SCHED-11`, `R-SCHED-12` and `R-SCHED-27` govern it |
+| yes | yes | any | any | out: `R-SCHED-43` governs it |
+| yes | no | closed | any | out: `R-SCHED-3` governs it |
+| yes | no | open | none free | out |
+
+### R-SCHED-41 — The template labels Rigger refuses
+
+In this table, "the labels" are the labels a clock trigger's card template carries.
+
+| The labels | What follows | Scope |
+|---|---|---|
+| no kind of work would select the template's card by them | Rigger refuses the configuration | in |
+| two or more kinds of work would select the template's card by them | Rigger refuses the configuration | in |
+| they include the status label | Rigger refuses the configuration | in |
+| exactly one kind of work would select the template's card by them, and they exclude the status label | this row refuses nothing | in |
 
 ## R-WORK — isolation and exclusivity
 
