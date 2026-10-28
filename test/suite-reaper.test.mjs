@@ -18,6 +18,8 @@ import { ended } from './process-fixtures.mjs';
 import { constants } from 'node:fs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { safeTargetReadRecord, targetReadRecord, traceEvidence } from './suite-reaper-probe.mjs';
+import { proofRepository } from './proof-repository.mjs';
+import { gitIn } from './git-repository.mjs';
 
 const suite = resolve('test/suite.sh');
 const fixtureModule = new URL('./process-fixtures.mjs', import.meta.url).href;
@@ -611,6 +613,18 @@ test('targeted read outcomes and trace failures retain the confirmed-ending deci
     else if (name === 'symlink') assert.equal(readFileSync(linkTarget, 'utf8'), 'untouched');
     else assert.equal(existsSync(destination), false, name + ' wrote outside its permitted trace');
   }
+});
+
+test('proof repositories commit and import the suite-reaper projection beside the reaper', (t) => {
+  const fixture = proofRepository(t);
+  for (const ref of [fixture.baseSha, fixture.headSha]) {
+    const paths = gitIn(fixture.root, 'ls-tree', '--name-only', ref, 'test/suite-reaper', 'test/suite-reaper-probe.mjs');
+    assert.deepEqual(paths.trim().split('\n'), ['test/suite-reaper', 'test/suite-reaper-probe.mjs']);
+  }
+  const imported = spawnSync(process.execPath, ['--input-type=module', '-e', "import('./test/suite-reaper-probe.mjs')"], {
+    cwd: fixture.root, encoding: 'utf8', timeout: 5_000,
+  });
+  assert.equal(imported.status, 0, 'isolated fixture import must resolve the copied projection');
 });
 
 test('the ending check waits for a transient reaper after removal', async (t) => {
