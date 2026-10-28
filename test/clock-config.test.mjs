@@ -48,7 +48,7 @@ function refusals(value) {
       if (!Array.isArray(labels)) continue;
       const copied = [];
       const length = labels.length;
-      for (let index = 0; index < length; index += 1) copied[index] = Object.hasOwn(labels, index) ? labels[index] : undefined;
+      for (let index = 0; index < length; index += 1) copied[index] = labels[index];
       const selection = kindOf({ number: 1, labels: copied }, rest.kinds, rest.epicLabel);
       const found = answer.some((line) => line.includes(`clock.triggers.${name}.card.labels`)
         && (line.includes('selects no kind') || line.includes('selected by more than one kind')));
@@ -506,8 +506,8 @@ test('C20: a non-enumerable own some cannot hide an indexed status label', () =>
 
 });
 
-// C38 distinguishes absent own elements from values supplied by the array's prototype.
-test('C38: validation reads length and indexed own label elements once', () => {
+// C38 reads inherited indexed elements as the forge receives them, once each.
+test('C38: validation reads length and indexed label elements once', () => {
   const reads = [];
   const target = new Array(2);
   Object.defineProperty(target, '0', { get() { reads.push('0'); return 'type:change'; }, configurable: true });
@@ -519,15 +519,15 @@ test('C38: validation reads length and indexed own label elements once', () => {
     return Reflect.get(value, key, receiver);
   } });
   const make = (labels) => triggered({ ...cardTrigger(), card: { ...template(), labels } });
-  const expected = config.validate(make(['type:change', undefined]));
-  assert.deepEqual(expected, ['`clock.triggers.daily.card.labels` must be a list of label names']);
+  const expected = config.validate(make(['type:change', 'Rigger:Status']));
+  assert.deepEqual(expected, ["`clock.triggers.daily.card.labels` [ 'type:change', 'Rigger:Status' ] holds the status label"]);
   const actual = config.validate(make(labels));
-  assert.deepEqual(actual, expected, 'C38: an inherited label is not an indexed own element');
-  assert.deepEqual(reads, ['length', '0'], 'C38: capture length once and read each own element once');
+  assert.deepEqual(actual, expected, 'C38: an inherited label is carried to the forge');
+  assert.deepEqual(reads, ['length', '0', 'inherited 1'], 'C38: capture length once and read each element once');
   assert.equal(Object.hasOwn(target, '1'), false, 'validation must not fill the input hole');
 });
 
-test('C38: label inventory uses the same plain own-element copy', () => {
+test('C38: label inventory uses the same plain indexed copy', () => {
   const reads = [];
   const target = new Array(3);
   Object.defineProperties(target, {
@@ -542,9 +542,9 @@ test('C38: label inventory uses the same plain own-element copy', () => {
     return Reflect.get(value, key, receiver);
   } });
   const make = (labels) => triggered({ ...cardTrigger(), card: { ...template(), labels } });
-  const expected = config.declaredLabels(make(['type:change', 'area:own', undefined]));
-  assert.deepEqual(config.declaredLabels(make(labels)), expected, 'C38: inventory ignores an inherited element');
-  assert.deepEqual(reads, ['length', '0', '1'], 'C38: inventory reads each own element once');
+  const expected = config.declaredLabels(make(['type:change', 'area:own', 'area:inherited']));
+  assert.deepEqual(config.declaredLabels(make(labels)), expected, 'C38: inventory includes an inherited element');
+  assert.deepEqual(reads, ['length', '0', '1', 'inherited 2'], 'C38: inventory reads each element once');
   assert.equal(Object.hasOwn(target, '2'), false, 'inventory must not fill the input hole');
   const ordinary = ['type:change', 'area:own'];
   const altered = Array.of(...ordinary);
@@ -552,4 +552,28 @@ test('C38: label inventory uses the same plain own-element copy', () => {
     Object.defineProperty(altered, method, { get() { throw new Error(`inventory must not read ${String(method)}`); } });
   }
   assert.deepEqual(config.declaredLabels(make(altered)), config.declaredLabels(make(ordinary)));
+});
+
+// Inherited indexed labels are carried to the forge even when an own traversal method differs.
+test('C38: inherited template labels with an own some match the forge labels', () => {
+  const labels = new Array(2);
+  Object.setPrototypeOf(labels, Object.assign(Object.create(Array.prototype), {
+    0: 'type:change', 1: 'area:inherited',
+  }));
+  let calls = 0;
+  Object.defineProperty(labels, 'some', { value(predicate) { calls += 1; return predicate(this[0]); } });
+  assert.equal(Object.hasOwn(labels, '0'), false);
+  assert.equal(Object.hasOwn(labels, '1'), false);
+  assert.equal(Object.hasOwn(labels, 'some'), true);
+  assert.equal(JSON.stringify(labels), '["type:change","area:inherited"]');
+  const carried = JSON.parse(JSON.stringify(labels));
+  assert.equal(kindOf({ labels }, rigger.kinds, rigger.epicLabel).kind, 'change', 'the engine selects the inherited label');
+  assert.equal(kindOf({ labels: carried }, rigger.kinds, rigger.epicLabel).kind, 'change', 'the forge labels select the same kind');
+  calls = 0;
+  const make = (labels) => triggered({ ...cardTrigger(), card: { ...template(), labels } });
+  assert.deepEqual(config.validate(make(labels)), [], 'C38: inherited labels carried to the forge remain accepted');
+  assert.deepEqual(config.declaredLabels(make(labels)), config.declaredLabels(make(carried)), 'C38: inventory includes the inherited labels');
+  assert.equal(calls, 0, 'validation and inventory ignore the consumer method');
+  assert.equal(Object.hasOwn(labels, '0'), false, 'the inherited label remains inherited');
+  assert.equal(Object.hasOwn(labels, '1'), false, 'inventory leaves the input unchanged');
 });

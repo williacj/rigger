@@ -768,8 +768,8 @@ export function schedule(trigger, instant) {
   return { refusals, newest, next: following <= 8640000000000000 ? following : null };
 }
 
-/** A plain label list, read once by length and own index without consumer traversal methods. */
-const plainLabels = (labels) => Array.isArray(labels) ? Array.from({ length: labels.length }, (_, index) => Object.hasOwn(labels, index) ? labels[index] : undefined) : labels;
+/** A plain label list, read once by length and index as carried to the forge, without consumer traversal methods. */
+const plainLabels = (labels) => Array.isArray(labels) ? Array.from({ length: labels.length }, (_, index) => labels[index]) : labels;
 
 /** Card-template values; readShape already refused a malformed card and its missing keys. */
 function readClockCard(config, card, where, refusals, canSelect) {
