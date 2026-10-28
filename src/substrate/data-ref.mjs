@@ -54,25 +54,25 @@ export async function pushStream({ repository, stream, emitter, limit = PUSH_TIM
   const steps = async () => {
     // A tip holding an empty copy would read as an empty record over a full stream.
     if (held.length === 0) throw new Ended('failed', 'the stream\'s bytes hold no complete line, so the push wrote nothing');
-    const { parent, other } = tipIn(await needed(['ls-remote', 'origin', DATA_REF, 'refs/remotes/refs/rigger/events/HEAD']));
-    if (parent !== undefined) known.parent = parent;
-    if (other !== undefined) throw new Ended('failed', `origin holds ${other}, to which git push would resolve ${DATA_REF}, so the push wrote nothing`);
-    // A push that names `origin` would also write the remote-tracking ref a fetch mapping of
-    // origin's gives the data ref, so the push goes to the URL a push to `origin` goes to.
+    // Every step addresses the one URL a push to `origin` goes to, so the guard, the parent and
+    // the write name one repository, and a fetch mapping of origin's gets no ref to update.
     const urls = (await needed(['remote', 'get-url', '--push', '--all', 'origin'])).split('\n').filter(Boolean);
     // One URL only: a push to one of several would reach that one alone.
     if (urls.length !== 1) throw new Ended('failed', `origin has ${urls.length} push URLs, ${urls.join(', ') || 'none'}, where the push needs exactly one, so the push wrote nothing`);
     const [url] = urls;
+    const { parent, other } = tipIn(await needed(['ls-remote', url, DATA_REF, 'refs/remotes/refs/rigger/events/HEAD']));
+    if (parent !== undefined) known.parent = parent;
+    if (other !== undefined) throw new Ended('failed', `${url} holds ${other}, to which git push would resolve ${DATA_REF}, so the push wrote nothing`);
     const blob = (await needed(['hash-object', '-w', '--stdin'], held)).trim();
     const tree = (await needed(['mktree'], `100644 blob ${blob}\tevents.jsonl\n`)).trim();
     const committed = (onto) => git(['commit-tree', tree, ...(onto === undefined ? [] : ['-p', onto]), '-m', MESSAGE]);
     let built = await committed(parent);
     if (built.exit !== 0 && parent !== undefined) {
-      // None of the six calls asks whether the store holds an object in words that do not depend
-      // on the locale, so the tip is taken as lacking where a commit with no parent can be built
-      // and one onto the tip cannot. Only then is it fetched.
+      // None of the allowed calls asks whether the store holds an object in words that do not
+      // depend on the locale, so the tip is taken as lacking where a commit with no parent can be
+      // built and one onto the tip cannot. Only then is it fetched.
       if ((await committed(undefined)).exit !== 0) throw new Ended('failed', printed(built));
-      await needed(['fetch', '--no-write-fetch-head', '--no-tags', 'origin', parent]);
+      await needed(['fetch', '--no-write-fetch-head', '--no-tags', url, parent]);
       built = await committed(parent);
     }
     if (built.exit !== 0) throw new Ended('failed', printed(built));
