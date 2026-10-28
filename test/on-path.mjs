@@ -1,7 +1,7 @@
 // ABOUTME: Finds an executable the way a spawn finds it on a PATH, for tests that need to know
 // which of several same-named executables a child would run.
 
-import { accessSync, constants } from 'node:fs';
+import { accessSync, constants, statSync } from 'node:fs';
 import { delimiter, join, resolve } from 'node:path';
 
 /**
@@ -12,8 +12,10 @@ export function onPath(name, path = '', skipping = null) {
   for (const dir of path.split(delimiter).map((entry) => resolve(entry || '.'))) {
     if (skipping !== null && dir === resolve(skipping)) continue;
     try {
-      accessSync(join(dir, name), constants.X_OK);
-      return join(dir, name);
+      const candidate = join(dir, name);
+      if (!statSync(candidate).isFile()) continue;
+      accessSync(candidate, constants.X_OK);
+      return candidate;
     } catch {
       // Not here, so the next directory is where a spawn would look.
     }

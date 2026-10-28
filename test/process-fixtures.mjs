@@ -8,14 +8,13 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync as rawSpawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { closeSync, constants as files, existsSync, openSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { accessSync } from 'node:fs';
-import { statSync } from 'node:fs';
 import { mkdirSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { join } from 'node:path';
-import { delimiter } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { onPath } from './on-path.mjs';
 
 /** Observe the raw synchronous command result before a fixture caller interprets it. */
 const spawnSync = (...input) => {
@@ -417,19 +416,8 @@ export const UNKILLED = {
 export const ready = (directory) => assert.ok(existsSync(join(directory, 'ready')), `the timeout of ${OUTLIVED} ms ended the command before it was ready`);
 
 /** The git this host runs, by its absolute path, which a stand-in hands every call on to. */
-export const GIT = (() => {
-  for (const directory of (process.env.PATH ?? '').split(delimiter)) {
-    const candidate = join(directory || '.', 'git');
-    try {
-      if (!statSync(candidate).isFile()) continue;
-      accessSync(candidate, files.X_OK);
-      return candidate;
-    } catch {
-      // Continue through PATH when this entry has no executable git.
-    }
-  }
-  throw new Error('git is not executable on PATH');
-})();
+export const GIT = onPath('git', process.env.PATH ?? '');
+if (GIT === null) throw new Error('git is not executable on PATH');
 
 /**
  * A `git` stand-in in `directory` that answers as the real git does, then leaves a child alive,
