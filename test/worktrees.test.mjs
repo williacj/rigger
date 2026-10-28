@@ -19,6 +19,7 @@ import { makeWorkspace } from '../src/execution/workspace.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { KINDS, readyCard } from './loop-world.mjs';
 import { EVENT_REFUSED } from '../src/substrate/process.mjs';
+import { pushStream } from '../src/substrate/data-ref.mjs';
 
 /** Every event an emitter was handed, in order, each as its name and its fields. */
 function recorder() {
@@ -843,4 +844,17 @@ test('a name git does not print back unchanged as a full object name, such as a 
     assert.ok(why.includes(name), why);
   }
   assert.equal(gitIn(repository, 'for-each-ref'), refs);
+});
+
+// The push side's one host test (#1081, reading 7): its default spawn is L0's process adapter,
+// which the deterministic tier refuses, so only here does a push run through it.
+test('the push side pushes the stream through L0\'s process adapter to a local bare origin, and origin holds the commit it answers', async (t) => {
+  const { origin, repository } = clonedFromOrigin(scratch(t));
+  const stream = Buffer.from('{"event":"one"}\n{"event":"two"}\n');
+  const environment = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+  const answer = await pushStream({ repository, stream, emitter: recorder(), environment });
+  assert.equal(answer.outcome, 'pushed', answer.reason);
+  assert.equal(gitIn(origin, 'rev-parse', 'refs/rigger/events').trim(), answer.commit);
+  assert.equal(gitIn(origin, 'ls-tree', '--name-only', answer.commit), 'events.jsonl\n');
+  assert.equal(gitIn(origin, 'cat-file', 'blob', `${answer.commit}:events.jsonl`), stream.toString('utf8'));
 });
