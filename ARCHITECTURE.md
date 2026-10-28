@@ -36,7 +36,7 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
 | **L2 Workflow** | The next action for a card from its stage and observable facts, including which kind selects a ready card and the provider each role's dispatch runs on, and whether its acceptance passes the form check. Every change to a card's column; the review loop; the gate rule, and whether a card's pull request merges; escalation routing; whether a failure is the work's, or the environment's, card-local or `out`. Which provisioning steps a card runs, whether a step's failure stops its attempt, and whether a failed attempt is tried again. | Which card is next; what good means | Card transitions with cause, verdicts, loop rounds, escalations by category, provisioning failures and attempts, by class | Spec rows, ratified by the owner | `src/workflow/` |
 | **L3 Scheduling** | Pull order by priority; concurrency; claims taken synchronously before any await; the repo lane, which runs the merges L2 decides one at a time. Admission, which is whether any card may be pulled; the hold that closes admission; the three trigger kinds. The halt on starts while the sink refuses an event, which is not the admission hold. When Rigger reads the forge again for a write it has not yet shown, and when it stops. | What a card requires or whether it passed | Triggers by kind and target, queue depth, in-flight count, wait, lock contention, throughput, admission holds and their reason | Spec rows and config | `src/scheduling/` |
 | **L4 Quality** | What the work is and what good means: kinds of work, their maker and judge sets, and the providers those run on, roles, review procedure, provisioning steps, recorded decisions, which improvement roles run and which signals count | How Rigger runs, beyond the engine settings the extension points name | Nothing. L2 records what a role produced: findings by code and judge, rounds per kind of work, rework, later defect escape. L3 records each dispatch's role and tier, from which L5 derives the tier corrections tier accuracy counts ("Telemetry") | The owner, in the consumer's repository | The consumer's repository; Rigger ships templates under `templates/` |
-| **L5 Observation** | How every layer's events are recorded and which signals derive from them | Anything that acts on them. L5 records and derives, never decides | The report | Engineer cards | `src/observation/` |
+| **L5 Observation** | How every layer's events are recorded and which signals derive from them. Whether and when the stream is pushed to the data ref | Anything that acts on them. L5 records and derives, never decides | The report. Each push's outcome | Engineer cards | `src/observation/` |
 | **L6 Improvement** | What to propose, and to whom, from L5's signals. The object-level loop reorders L3's queue and re-tiers within L4. The meta-level loop proposes changes to any layer. | It changes no code, in any layer, ever | Proposals with target layer, and their outcome | Spec rows | `src/improvement/` |
 | **L7 Owner** | Recorded decisions, config, the last verdict when named as a judge, or where the consumer's own check asks for it, answers to escalations | | | | A person |
 
@@ -73,6 +73,12 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
 
      L2 is the one layer that reaches it. The `verdict` verb also reaches it, for one write: a
      comment on a pull request holding the owner's verdict, which L2's `composeMarker` composes.
+
+   Beside the forge adapter's four sides, L0 has a push side, `src/substrate/data-ref.mjs`. It
+   admits one write: setting the data ref, `refs/rigger/events` on `origin`, to a commit holding
+   the whole stream. Only L5 reaches it. It is no part of `src/substrate/forge/read.mjs`, and it
+   sends through no forge runner. L3 has L5 push at each drain trigger, and L5 gives L3 each push
+   that did not succeed, which L3 hands to the verb unread ("Pushing the stream").
 
    The gate script reaches only the read side. The gate's workflow, which is no layer, posts the
    gate's status. L4 gives the layers below it names, procedures and settings. If a layer needs to
@@ -142,7 +148,7 @@ workaround.
 
 | Extension point | Declared by the consumer as | Read by | v0 |
 |---|---|---|---|
-| **Engine settings** | The repository, the board, and its column display names as options of the board's `Status` field. The board's owner, as `board.owner` in the form given below the table. The concurrency N, the state directory (`.rigger/` by default), and whether telemetry pushes. The worktree root and the rule that derives a worktree's topic from a card, as `worktrees` in the form given below the table. The board field holding a card's priority, and that field's options in rank order, as `board.priority` in the form given below the table. The declared order ranks cards, whatever order or options the board's own field holds. A card with no value and a card holding a value the consumer did not declare share one rank, below every declared option. Cards that share a rank are ordered by issue number, oldest first | L0 for the repository, the board and the board's owner. L1 for the worktree root, which the verb resolves and hands it, and the topic rule. L2 for the topic rule's line of work, by which it finds a card's pull request. L3 for N. L5 for the push | Yes, N defaults to 3. The worktree root defaults to `../<name>-worktrees`, where `<name>` is the part of `repo` after the slash. The topic rule defaults to `rigger-{number}`. |
+| **Engine settings** | The repository, the board, and its column display names as options of the board's `Status` field. The board's owner, as `board.owner` in the form given below the table. The concurrency N, the state directory (`.rigger/` by default), and whether telemetry pushes. The worktree root and the rule that derives a worktree's topic from a card, as `worktrees` in the form given below the table. The board field holding a card's priority, and that field's options in rank order, as `board.priority` in the form given below the table. The declared order ranks cards, whatever order or options the board's own field holds. A card with no value and a card holding a value the consumer did not declare share one rank, below every declared option. Cards that share a rank are ordered by issue number, oldest first | L0 for the repository, the board and the board's owner. L1 for the worktree root, which the verb resolves and hands it, and the topic rule. L2 for the topic rule's line of work, by which it finds a card's pull request. L3 for N. L5 for whether telemetry pushes, and with it off L5 reaches no push side | Yes, N defaults to 3. The worktree root defaults to `../<name>-worktrees`, where `<name>` is the part of `repo` after the slash. The topic rule defaults to `rigger-{number}`. |
 | **Kinds of work** | A name per kind, with its maker role, ordered judges (`owner` last if at all), each a role and optionally its provider rule, provisioning steps, the review loop bound in rounds, and the card labels that select the kind. Beside the kinds, the one card label that marks an epic, in the form given below the table | L2 for which kind selects a card, the provisioning steps it runs, the loop, the gate, the provider each judge runs on, and the provider the gate requires of each judge's marker | Yes |
 | **Roles** | A name, an agent file in the consumer's repository, a provider, a default model tier, the card labels that select another tier, the card labels that select another provider, and the time its dispatch may run | L2 selects the role a card needs and the tier its labels select. L2 selects the provider its labels select. L3 dispatches it. L1 runs it through L0's provider adapter | Yes |
 | **Where provider assets live** | Nothing. A role names its agent file by path, so the directory is whatever the provider reads: Claude Code reads `.claude/` and `.mcp.json`, and a second adapter reads its own. The tools and connectors a dispatched agent may use are among those assets. `init` forks each template where its provider looks for it | L0, through the provider adapter, from the directory the dispatch runs in | Fixed by the provider |
@@ -479,7 +485,8 @@ asset is one per-user LaunchAgent template under `templates/launchd/`, and `D28`
   plus `READ_TIMEOUT`, which L0's process adapter exports and the function imports. The bound is a
   judgment on Q-e's premises: `concurrency` counts cards, a panel's judges run at once, and Rigger
   cleans up dispatches one after another, each within that figure. At this repository's config the
-  report recommends 150 s (Q-e, a judgment).
+  report recommends 150 s (Q-e, a judgment). Exit cleanup makes no push, so the bound holds no
+  network call ("Pushing the stream").
 - **What L0 answers, and what `doctor` compares.** `doctor` reads a loaded job through a new L0
   module, `src/substrate/launchd.mjs`, which spawns only through the process adapter. It answers
   only the loaded job's fields, because L0 knows neither `concurrency` nor a kind. `doctor`
@@ -1304,7 +1311,8 @@ first spawn, which may come before it knows the state directory. The sink holds 
 until the verb names that directory, and writes it there before anything later. A verb that ends
 without naming one writes what the sink held to standard error, and writes nothing under its target.
 The verb ends the sink on every path it returns through. On any other exit, L0's exit cleanup ends
-the sink after its own kills, so those kills are among what the sink writes.
+the sink after its own kills, so those kills are among what the sink writes. Exit cleanup makes no
+push ("Pushing the stream").
 
 Six layers produce a signal set. L5 owns the sink rather than a signal, and L7 is a person. A signal
 is derived, where an event is recorded. L3 records each dispatch's role and tier, and L5 derives
@@ -1442,6 +1450,202 @@ Any one of these would reverse the placement:
 - A git fault rate whose faults are answers rather than host faults. Two kinds show it: a fetch try
   a `fetch.retried` follows, and a non-zero exit its caller reads as an answer, as `git ls-remote
   --exit-code` gives for a missing ref. The fix would leave those out of the numerator.
+
+### Pushing the stream
+
+Once the owner turns telemetry push on, L5 copies the stream to the data ref in the consumer's
+repository. The architect's r1 review on #1009 places the push (S9), and its r2 review adds the
+drain (§1). M7-03's report, `docs/spikes/telemetry-push.md`, measured the mechanism, and this
+section calls it "the report". Every figure below is the report's, cited to its section, unless it
+is marked a judgment.
+
+**Whose it is.** The push is L5's. L5 reads `telemetry.push` from the config the verb hands it.
+With it off, L5 makes no push and reaches no push side (`R-SAFE-3`). L0's push side,
+`src/substrate/data-ref.mjs`, admits the one write boundary rule 2 names, and only L5 reaches it.
+
+**The mechanism.** The push side writes through `git push`, as the report recommends. Three of the
+report's measured results carry that choice:
+
+- `git push` was faster in every cell of its size crossing. Its medians were 1.643 s and 1.694 s
+  at 1,243 bytes, and 2.447 s and 3.286 s at 10 MB, against the API's 2.624 s, 2.379 s, 5.563 s
+  and 5.734 s ("The size crossing").
+- A ruleset's refusal through `git push` named its rule, on a create and on an update. The API's
+  refused create answered only "Reference update failed" ("Rules"). `R-RECORD-15` names the
+  failure, so the push side hands L5 the text `git push` printed.
+- An unforced `git push` of a commit with no shared history was rejected as non-fast-forward on
+  both namespaces. The API accepted one on `refs/rigger/` with `force=false` ("Whether an update
+  needed a forced write").
+
+**The ref.** The data ref is `refs/rigger/events`, outside `refs/heads/` and `refs/tags/`. The
+forge refused every ruleset naming `refs/rigger/*`, as a `branch` target and as a `tag` target
+("Rules"). No measured stream-only write, on either namespace, started a workflow run
+("Workflows"). The remote is `origin`, the remote L0's workspace adapter already reads the main
+line from.
+
+**The commit.** Each update is one commit whose tree holds one entry, `events.jsonl`, and nothing
+else. That entry holds the stream's bytes as L5 read them at the push's start, up to and including
+the last newline. The commit's parent is the data ref's tip as the push read it, and a first push's
+commit has none. A tree that holds only the stream carries no `.github/`, which is the tree the
+report measured. Trimming to the last newline is a judgment: it keeps a line another process is
+still appending out of the copy, until the next push.
+
+**The steps.** The push side runs these in the consumer's repository, each a `git` call through L0's
+process adapter, with the environment `gitEnvironment` gives:
+
+1. `git ls-remote origin refs/rigger/events`, which reads the tip, or finds the ref absent.
+2. Where the repository's object store lacks the tip, a fetch of that commit alone from `origin`,
+   which writes no ref and no `FETCH_HEAD`.
+3. `git hash-object -w --stdin`, given the stream's bytes, then `git mktree` and `git
+   commit-tree`, as the report's `push` mechanism ran them ("The mechanisms").
+4. `git push --porcelain origin <commit>:refs/rigger/events`.
+
+The steps are the report's `push` mechanism with three changes, each a judgment the report did not
+measure:
+
+- The parent comes from the forge, because the report's scratch repository made every parent it
+  pushed ("What M7-07 must not assume").
+- The fetch names no destination and is told to write no `FETCH_HEAD`. That `git` then writes only
+  objects is a judgment.
+- The bytes come on standard input, so that what the commit holds is what L5 read.
+
+The push side writes objects in the consumer's object store and no ref there. No later push reads
+them back, because each push reads the tip from the forge afresh, so `.rigger/` gains nothing. Its
+`git` calls run beside the workspace adapter's one-at-a-time queue, not in it, so a push never holds
+a workspace back. That two such calls share one object store safely, when neither writes a local
+ref, is a judgment.
+
+**Never forced.** No push is ever forced, in any state. A rejected push has not succeeded, and the
+next push builds on the tip it then reads. The report measured that an update whose parent is the
+tip needed no forced write ("Whether an update needed a forced write").
+
+**Sign-ins and tools.** The push uses `git` alone, and whatever credential `git` already uses for
+`origin` (`R-SAFE-1`, `R-SAFE-2`). On the measured host that was `gh`, as `git`'s credential helper
+for github.com ("Host tools each mechanism needed"). The push side stores no credential, passes
+none, and sets no credential helper. It sets `GIT_TERMINAL_PROMPT=0`, so that a missing credential
+fails rather than waits for a prompt; that `git` then fails at once is a judgment.
+
+**When L5 pushes.** L5 pushes on two occasions, and on no other:
+
+- **At a verb's normal return**, where the verb named the state directory and its sink appended at
+  least one event there. The push runs as the verb ends the sink, before the sink's end.
+- **At each drain trigger**, while a clock trigger keeps `run` up. L3 has L5 push, and does not wait
+  on it.
+
+A drain that ends `run`, as with no clock trigger declared, makes no push of its own. The return's
+push follows at once and serves it. Exit cleanup makes no push, because a network call there would
+break the `ExitTimeOut` bound (S9; "Supervising `run`"). An in-flight push's `git` call is one of
+L0's calls, and exit cleanup ends it as it ends any call ("L0's call events").
+
+**One push at a time.** L5 never runs two pushes at once. A drain while a push is in flight starts
+no second push. L5 instead makes one more push once that push settles, carrying the stream as it
+holds then, however many drains came meanwhile. A verb's return waits for an in-flight push to
+settle, then pushes.
+
+**The time limit.** Every push has a time limit of `PUSH_TIMEOUT` milliseconds, which
+`src/substrate/data-ref.mjs` exports (`R-RECORD-17`). It is 30,000 ms over the whole push. At the
+limit L0 kills the group of the call in flight, and the push has timed out. The figure is a
+judgment: about nine times the slowest whole push the report measured, 3.420 s at 10 MB ("Every
+cell", S/rigger/push/10m/2). The report measured no push that timed out. A consumer-set limit
+would change the config shape, and a later card carries it.
+
+**The outcome.** L5 records each push's outcome as `push.end`, after the push settles. Its fields:
+
+| Field | What it holds | Absent from the line |
+|---|---|---|
+| `ref` | `refs/rigger/events` | Never |
+| `outcome` | `pushed`, `refused`, `timed-out` or `failed` | Never |
+| `ms` | The milliseconds from the push's start until it settles | Never |
+| `bytes` | The byte length of the stream the commit holds | Where the push failed before it read the stream |
+| `parent` | The tip the push read | Where the ref was absent, or the read failed |
+| `commit` | The commit pushed | Unless `outcome` is `pushed` |
+| `reason` | The failure, in the words `git` or the process adapter gave it | Where `outcome` is `pushed` |
+
+`refused` is a push `git push` reported as rejected. `timed-out` is a push stopped at
+`PUSH_TIMEOUT`. `failed` is every other push that did not succeed, a `git` that never started
+included. The push side's `git` calls record no `call.end`, because `push.end` records them, so the
+substrate fault rate counts no push. A `push.end` is in the stream the next push copies, and not in
+the one its own push copied.
+
+**What a push that did not succeed leaves.** It leaves the same in every way it can fail:
+
+- Rigger says so in its output, naming the failure, and records `push.end` (`R-RECORD-15`). At a
+  drain, `run` hands it to the verb as the push settles, as it hands a poll's failure.
+- Work starts and finishes as it would have, and the exit status is unchanged (`R-RECORD-14`,
+  `R-RECORD-18`).
+- The next push tries again (`R-RECORD-16`). It needs no memory, because every push copies the
+  whole stream.
+
+A sink that refuses `push.end` is a refused event, as "Failure model" sets out, and not a push
+that failed.
+
+**A push in each state.**
+
+| State | What happens |
+|---|---|
+| telemetry push off | no push, and no push side is reached (`R-SAFE-3`) |
+| a verb's normal return, the verb having written events, the data ref absent | the first push creates the ref, with a commit that has no parent |
+| a verb's normal return, the data ref's tip the previous stream commit | a plain push of a child of that tip |
+| the tip not in the local object store | the push fetches that commit from `origin` before it builds the child |
+| the tip moved by another writer after the push read it | `git push` rejects it as non-fast-forward, and the push is `refused`; the next push reads the new tip and builds on it |
+| a drain trigger while `run` stays up | the same push; the drain does not wait on it, and the poll keeps its schedule |
+| a drain trigger while a push is in flight | no second push; one more push follows when the first settles |
+| L0's exit cleanup | no push; an in-flight push's call is ended as any call is |
+| a verb that ends without naming the state directory | no push, since no stream was written |
+| a verb that named it and appended no event | no push |
+| the forge refuses the push | `refused`, naming the text `git push` printed; as a push that did not succeed |
+| the push runs past `PUSH_TIMEOUT` | `timed-out`; as a push that did not succeed (`R-RECORD-17`) |
+| `git` absent, no credential, or no committer identity | `failed`, naming the failure; as a push that did not succeed |
+| an event recorded while a push is in flight | the push copies the stream as L5 read it at the push's start; the next push carries the event (`R-RECORD-13`) |
+| Rigger killed outright during a push | see below |
+| a ruleset that names no ref, as a `branch` ruleset over `~ALL`, refuses the write | not measured: the residual below |
+| any other state | as a push that did not succeed (`R-RECORD-14`, `R-RECORD-15`, `R-RECORD-16`, `R-RECORD-18`) |
+
+The tip-moved row rests on the report's measured rejection of an unforced push with no shared
+history ("Whether an update needed a forced write"). That the same check rejects a child of an
+older tip is a judgment.
+
+**Killed outright.** A Rigger killed outright runs no exit cleanup, so its `git push` may finish or
+die on its own. Either way the ref holds the tip it held, or the commit that push sent. The next
+push reads whichever it holds and builds on it, and the stream only grows, so the copy then holds
+every earlier event. That the forge moves a ref whole or not at all is a judgment the report did
+not measure. A forge that left a ref naming a commit it does not hold would reverse it.
+
+**The residual.** Whether a ruleset that names no ref, such as a `branch` ruleset over `~ALL`,
+reaches `refs/rigger/events` is not measured. The host's permission classifier blocked that step,
+and the owner ruled the report go ahead without it ("What I could not measure"; M7-U7 Q32 (a) on
+#1009). The step that settles it is the one the report names: on a probe, a `branch` ruleset with
+`include: ["~ALL"]` and a `creation` rule, then a first write to a fresh `refs/rigger/` ref and a
+fresh `refs/heads/` ref. Until it is measured, such a refusal is a `refused` push like any other.
+
+**The two placement reversals, ruled.** S9 and the r2 review each named a reversal for M7-03 to
+measure. Neither is met:
+
+- **S9's, "a whole-stream push too slow at the stream's present size".** Not met. At 1,243 bytes
+  the median whole push was 1.643 s and 1.694 s ("The size crossing"). The `git push` command took
+  1.3 to 1.8 s of that, and each local object command about 0.01 s ("The reversals the architect
+  named"). The premise, a judgment the report states, is that an incremental push would shrink the
+  bytes sent and not those round trips. The stream's present size is a test fixture's, so the
+  ruling holds only at the sizes measured.
+- **The r2 review's, "a push too slow to run once per idle period".** Not met, whatever `poll` is.
+  The premise is this section's own: the drain does not wait on the push, and L5 runs one push at a
+  time. A push slower than an idle period therefore delays no poll, pull or dispatch. Where `poll`
+  is shorter than a push, drains during it make one follow-up push, and the copy lags the stream
+  by at most the events since that push's start. The report's own premise, a poll in tens of
+  seconds, is then not needed.
+
+**What would revisit S9's reversal.** A `push.end` with `outcome: 'pushed'` whose `ms` exceeds half
+of `PUSH_TIMEOUT`, or whose `bytes` exceed 10,485,760, the largest size measured. Either would call
+for measuring the whole push on the host at that size, as the report's size crossing did. Where the
+round trips no longer dominate, the push becomes incremental.
+
+**The report's four reversals, and what Rigger would change** ("What would reverse it"):
+
+| Reversal | What Rigger would change |
+|---|---|
+| The `~ALL` check measured refusing a write to `refs/rigger/*` | the namespace gains nothing over a branch; a delta here rules again between `refs/rigger/events` and a branch, on the workflow and refusal grounds left |
+| A required stream commit carrying the consumer's `.github/` | this placement requires none, since the tree holds the stream alone; a requirement that asked for one would need the workflows measured again before any delta places it |
+| `git push` measured at or above the API's time at 10 MB, on the host Rigger runs on | the push keeps `git push` on its other grounds, the named refusal and the fast-forward guard; it moves to the API only where those fall too |
+| The forge refusing pushes outside `refs/heads/` and `refs/tags/`, or hiding them from `git fetch` | the data ref moves under `refs/heads/`; a delta here then places how the consumer's rulesets and `push` workflows treat it |
 
 ### What `report` derives
 
