@@ -326,11 +326,13 @@ jobs:
         }
         export async function requestApi(path, { method = 'GET', send = fetch, token = process.env.GH_TOKEN } = {}) {
           const route = path.startsWith(ROOT) ? path.slice(ROOT.length) : '';
-          const read = /^\/actions\/runs\/[1-9][0-9]*$/.test(route) || /^\/pulls\/[1-9][0-9]*$/.test(route) || route === '/actions/workflows/ci.yml' || /^\/actions\/workflows\/[1-9][0-9]*\/runs\?event=pull_request&exclude_pull_requests=false&status=(queued|in_progress|waiting|pending|requested)&per_page=100&page=1$/.test(route);
+          const discoveryRead = /^\/actions\/workflows\/[1-9][0-9]*\/runs\?event=pull_request&exclude_pull_requests=false&status=(queued|in_progress|waiting|pending|requested)&per_page=100&page=1$/.test(route);
+          const read = /^\/actions\/runs\/[1-9][0-9]*$/.test(route) || /^\/pulls\/[1-9][0-9]*$/.test(route) || route === '/actions/workflows/ci.yml' || discoveryRead;
           if (!token || !(method === 'GET' && read || method === 'POST' && /^\/actions\/runs\/[1-9][0-9]*\/cancel$/.test(route))) refuse('API scope unavailable');
           let response;
           try { response = await send('https://api.github.com' + path, { method, redirect: 'manual', headers: { authorization: 'Bearer ' + token, accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(30_000) }); }
           catch { refuse('API transport failed'); }
+          if (method === 'GET' && discoveryRead && response.status !== 200) return { status: response.status, body: null, link: null };
           if (response.redirected || response.url && new URL(response.url).origin !== 'https://api.github.com' || response.status >= 300 && response.status < 400) refuse('API redirect refused');
           const link = response.headers.get('link'); links(link);
           let bytes;

@@ -587,3 +587,20 @@ test('complete discovery pages with zero one and one hundred rows produce no ref
   assert.deepEqual(answer.diagnostics.filter(entry => entry.action === 'discovery-refused'), []);
   assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), []);
 });
+
+test('discovery records numeric redirect and malformed error statuses before parsing untrusted bodies', async () => {
+  const route = list('requested')[1];
+  const samples = [
+    new Response('<html>synthetic-redirect-body-secret', { status: 302, headers: { location: 'https://evil.test/synthetic-location-secret' } }),
+    new Response('<html>synthetic-error-body-secret', { status: 403 }),
+  ];
+  for (const response of samples) {
+    const f = input();
+    const request = ['GET', route, () => controller.requestApi(route, { token: 'synthetic-token-secret', send: async () => response })];
+    const answer = await diagnosed(f, [...start(f), list('queued', [run(60, old, 10)]), ...pages().slice(1, 4), request], true);
+    assert.match(answer.error, /discovery incomplete/);
+    assert.deepEqual(answer.diagnostics, [{ action: 'discovery-refused', query: 'requested', reason: 'HTTP status', httpStatus: response.status }]);
+    assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), []);
+    assert.doesNotMatch(JSON.stringify(answer.diagnostics) + answer.error, /synthetic-(redirect|location|error|token)/);
+  }
+});
