@@ -149,7 +149,7 @@ export function judgeAnswer(card, kinds, epicLabel, { roles = {}, provisioning =
   if (Object.values(directories).some(({ reason }) => reason?.code === EVENT_REFUSED || reason?.startCause?.kind === 'event-unrecorded')) return { action: 'judge', kind, judges, halt: true, ...withholding };
   const retry = owed.find((role) => judgeFailure(role, directories[role]) !== undefined);
   if (retry !== undefined) {
-    const classified = (report) => ({ class: 'environment', ...judgeFailure(retry, report) });
+    const classified = (report) => ({ class: 'environment', ...judgeFailure(retry, report), ...(report?.dispatch === undefined ? {} : { dispatch: report.dispatch }) });
     const firstFailure = firstFailures[retry] === undefined ? undefined : classified(firstFailures[retry]);
     return { ...failedAttempt(card, firstFailure === undefined ? 1 : 2, firstFailure, classified(directories[retry]), sink), role: retry, ...(firstFailure === undefined ? {} : { firstFailure }) };
   }

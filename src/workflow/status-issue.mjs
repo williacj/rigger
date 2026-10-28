@@ -14,7 +14,7 @@ const holdLine = (id) => `Hold: \`${id}\``;
 
 /** What failed in an attempt, as L2's failure names it: a step, the maker, the workspace or the judge. */
 const failedPart = (failure) => (failure.step !== undefined ? `step \`${failure.step}\``
-  : failure.maker !== undefined ? `maker \`${failure.maker}\`` : failure.workspace !== undefined ? 'workspace' : 'dispatch');
+  : failure.maker !== undefined ? `maker \`${failure.maker}\`` : failure.judge !== undefined ? `judge \`${failure.judge}\`` : failure.workspace !== undefined ? 'workspace' : 'dispatch');
 
 /**
  * The status issue's body for hold `id`: its closer's `reason` and `run`, and, where it is opened at

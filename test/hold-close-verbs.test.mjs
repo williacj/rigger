@@ -302,3 +302,18 @@ test('rigger run R38 timeout keeps the established report without retry or hold'
   assert.deepEqual(ran.events.filter(({ event }) => event === 'attempt.decided' || event === 'admission.close'), []);
   assert.doesNotMatch(said, /R19|was held|first:/);
 });
+
+// The counterexample drops either attempt's dispatch id, or the judge's name, from the opened body.
+// proves R-SCHED-20
+test('rigger run, on a judge pair held after two compound-rule failures, opens one status issue whose body names each dispatch id L3 recorded for the judge and the judge as judge `reviewer`', (t) => {
+  const ran = judgeVerbWorld(t);
+  const said = `${ran.out}${ran.err}`;
+  assert.equal(ran.code, 1, said);
+  const ids = ran.events.filter(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'reviewer').map(({ dispatch }) => dispatch);
+  assert.equal(ids.length, 2, said);
+  const forge = JSON.parse(readFileSync(join(dirname(dirname(ran.state)), 'gh', 'board.json'), 'utf8'));
+  const notices = (forge.repository?.issues ?? []).filter(({ labels }) => labels.includes('rigger:status'));
+  assert.equal(notices.length, 1, JSON.stringify(ran.events.filter(({ event }) => event === 'notice.failed')));
+  for (const id of ids) assert.ok(notices[0].body.includes(id), `the body omits the recorded judge dispatch ${id}; recorded: ${ids.join(', ')}:\n${notices[0].body}`);
+  assert.ok(notices[0].body.includes('Attempt 1: environment, judge `reviewer`') && notices[0].body.includes('Attempt 2: environment, judge `reviewer`'), notices[0].body);
+});
