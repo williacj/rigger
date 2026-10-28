@@ -23,8 +23,8 @@ export const VERDICTS = ['sound', 'needs revision', 'critical'];
 const RULINGS = ['met', 'unmet'];
 const COVERAGES = ['covered', 'insufficient'];
 
-/** The permissions on the repository whose holders' markers count. */
-const WRITERS = ['admin', 'maintain', 'write'];
+/** The permissions on the repository that count as write access. */
+export const WRITERS = ['admin', 'maintain', 'write'];
 
 const POSITIVE = /^[1-9][0-9]*$/;
 const SHA = /^[0-9a-f]{40}$/;
