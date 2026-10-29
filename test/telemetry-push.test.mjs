@@ -260,6 +260,7 @@ test('C6: each config-reading verb run in process, telemetry.push true, pushes o
     const answer = await IN_PROCESS[verb](w, watch.push);
     const said = `${verb}: ${answer.text}`;
     assert.equal(watch.pushes.length, 1, said);
+    assert.equal(watch.pushes.length, 1, 'the verb made no push, or more than one');
     const [{ given, stream, answered }] = watch.pushes;
     assert.equal(given.repository, w.repository, said);
     const lines = readFileSync(join(w.state, 'events.jsonl'));
@@ -300,8 +301,8 @@ test('C8: a real doctor run, telemetry.push true, whose run writes no line to a 
   const watch = pushing();
   const answer = await IN_PROCESS.doctor(w, watch.push, asking({ mark: false }));
   assert.equal(answer.code, 0, answer.text);
-  assert.equal(readFileSync(join(w.state, 'events.jsonl'), 'utf8'), earlier, 'the run wrote a line, so this proves nothing');
   assertNoPush(w, watch, answer.text);
+  assert.equal(readFileSync(join(w.state, 'events.jsonl'), 'utf8'), earlier, 'the run wrote a line, so this proves nothing');
 });
 
 // proves R-SAFE-3
@@ -343,9 +344,9 @@ test('recording handed no push, as the gate script calls it, with a config holdi
     return { text: 'done', code: 0 };
   });
   assert.deepEqual(answer, { text: 'done', code: 0 });
-  assert.equal(eventsOf(w).length, 1);
-  assert.equal(tipOf(w), undefined, 'origin holds the data ref');
   assert.deepEqual(pushEnds(w), []);
+  assert.equal(tipOf(w), undefined, 'origin holds the data ref');
+  assert.equal(eventsOf(w).length, 1);
 });
 
 test('the push module\'s writer, where its caller injects none, is writeWhole from standard-error.mjs', () => {
@@ -362,6 +363,7 @@ test('O1, O2: a doctor push that succeeds onto an absent data ref pushes the str
   const { off, on } = await offThenOn(w, key, 'doctor', watch);
   assert.deepEqual(on, off);
   assert.deepEqual(watch.lines, []);
+  assert.equal(watch.pushes.length, 1, 'the verb made no push, or more than one');
   const [{ stream, answered }] = watch.pushes;
   assert.equal(answered.outcome, 'pushed', answered.reason);
   assert.equal(tipOf(w), answered.commit);
@@ -383,6 +385,7 @@ test('O3: a doctor push origin\'s pre-receive hook refuses records push.end refu
   const watch = pushing();
   const { off, on } = await offThenOn(w, key, 'doctor', watch);
   assert.deepEqual(on, off);
+  assert.equal(watch.pushes.length, 1, 'the verb made no push, or more than one');
   const [{ answered }] = watch.pushes;
   assert.equal(answered.outcome, 'refused', answered.reason);
   assert.match(answered.reason, /the data ref is closed here/);
@@ -402,6 +405,7 @@ test('O4: a doctor push whose git push runs past its limit records push.end time
   const watch = pushing({ side });
   const { off, on } = await offThenOn(w, key, 'doctor', watch);
   assert.deepEqual(on, off);
+  assert.equal(watch.pushes.length, 1, 'the verb made no push, or more than one');
   const [{ answered }] = watch.pushes;
   assert.equal(answered.outcome, 'timed-out', answered.reason);
   assertPushEnd(pushEnds(w)[0], answered);
@@ -422,6 +426,7 @@ test('O5: a doctor push whose git never starts, or whose repository has no origi
     const watch = pushing({ side });
     const { off, on } = await offThenOn(w, key, 'doctor', watch);
     assert.deepEqual(on, off, host);
+    assert.equal(watch.pushes.length, 1, 'the verb made no push, or more than one');
     const [{ answered }] = watch.pushes;
     assert.equal(answered.outcome, 'failed', `${host}: ${answered.reason}`);
     assertPushEnd(pushEnds(w)[0], answered);
@@ -470,6 +475,7 @@ test('O7: an event appended while a doctor push is in flight is not in that push
   });
   const off = await offAnswer(w, key, watch);
   assert.deepEqual(await IN_PROCESS.doctor(w, watch.push), off);
+  assert.equal(watch.pushes.length, 1, 'the verb made no push, or more than one');
   const first = watch.pushes[0].answered;
   assert.equal(first.outcome, 'pushed', first.reason);
   assert.equal(pushedStream(w, first.commit).toString('utf8').includes('stand-in.late'), false);
@@ -494,6 +500,7 @@ test('O8: where origin holds a commit a push sent whose verb was killed before p
   const watch = pushing();
   assert.deepEqual(await IN_PROCESS.doctor(w, watch.push), off);
   assert.deepEqual(watch.lines, []);
+  assert.equal(watch.pushes.length, 1, 'the verb made no push, or more than one');
   const [{ answered, stream }] = watch.pushes;
   assert.equal(answered.outcome, 'pushed', answered.reason);
   assert.equal(answered.parent, killed.commit);
@@ -532,6 +539,7 @@ test('O10: where the sink refuses push.end, doctor exits 1 with its own text the
   };
   const watch = pushing({ side });
   const { off, on } = await offThenOn(w, key, 'doctor', watch);
+  assert.equal(watch.pushes.length, 1, 'the verb made no push, or more than one');
   assert.equal(watch.pushes[0].answered.outcome, 'pushed', watch.pushes[0].answered.reason);
   assert.equal(on.code, 1);
   assert.ok(on.text.startsWith(`${off.text}\n`), on.text);
