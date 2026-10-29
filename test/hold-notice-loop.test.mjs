@@ -694,7 +694,7 @@ test('a notice step the forge made whose record the sink refused, on a closer na
 });
 
 // proves R-SCHED-23
-test('a rename made on a closer naming an issue whose admission.rename event the sink refused keeps the closer under its new name, and L2 is handed the refusal, which names the change as made', async () => {
+test('a rename made on a closer naming an issue whose admission.rename event the sink refused keeps the closer under its new name, hands L2 the refusal, which names the change as made, and L3 reports the refusal itself', async () => {
   const { board } = stateBoard([], { 12: 'none' });
   const handed = handles({ cards: [], board });
   const handedBack = [];
@@ -712,11 +712,14 @@ test('a rename made on a closer naming an issue whose admission.rename event the
   };
   seed(handed.state, 'hold-a1-issue-12.json');
 
-  const pulled = await loop(handed).pull();
+  const failure = await loop(handed).pull().then(() => assert.fail('the refused rename record was absorbed'), (error) => error);
 
   assert.deepEqual(namesIn(handed.state), ['hold-a1-issue-13.json']);
   assert.equal(handedBack[0].status, 'rejected');
-  assert.deepEqual(pulled.notices, [{ id: 'a1', step: 'rename the closer', cause: 'admission changed at hold-a1-issue-13.json, and the sink refused its admission.rename event: the stream refused admission.rename' }]);
+  const said = 'admission renamed hold-a1-issue-12.json to hold-a1-issue-13.json, and its record was refused: admission changed at hold-a1-issue-13.json, and the sink refused its admission.rename event: the stream refused admission.rename';
+  assert.equal(handedBack[0].reason.message, said);
+  assert.ok(messagesOf(failure).includes(said), 'L3 did not report the refused record of the rename it made');
+  assert.ok(messagesOf(failure).includes(`the notice for hold a1 failed to rename the closer: ${said}`), 'L2\'s failed notice was lost');
 });
 
 /** Every message a pull's failure holds, through each AggregateError and cause. */
@@ -755,11 +758,11 @@ test('a closer rename made on the follow path whose admission.rename record was 
   handed.l2.notice = changesOver(world, handed.sink).notice;
   seed(handed.state, 'hold-a1-issue-12.json');
 
-  const pulled = await loop(handed).pull();
+  const failure = await loop(handed).pull().then(() => assert.fail('the refused rename record was absorbed'), (error) => error);
 
   assert.deepEqual(namesIn(handed.state), ['hold-a1-issue-20.json']);
   assert.deepEqual(refused.map(({ event }) => event), ['admission.rename', 'notice.failed']);
-  const reported = JSON.stringify(pulled.notices);
+  const reported = messagesOf(failure).join(' | ');
   assert.match(reported, /admission changed at hold-a1-issue-20\.json/);
   assert.match(reported, /EIO while recording admission\.rename/);
   assert.match(reported, /EIO while recording notice\.failed/);
@@ -1042,7 +1045,7 @@ for (const [what, value] of Object.entries(HOSTILE())) {
     assert.ok(readable(outcome.error), `${what}: a failure handed on cannot be read`);
   });
 
-  test(`a closer renamed on the follow path whose admission.rename record the sink refuses with ${what} stays named in the pull's notices`, async () => {
+  test(`a closer renamed on the follow path whose admission.rename record the sink refuses with ${what} stays named in what the pull rejects with`, async () => {
     const world = forge({ issues: [{ number: 20, title: 'Rigger closed admission', body: 'Hold: `z9`', author: 'rigger-bot', labels: ['rigger:status'], comments: [] }] });
     const { board } = stateBoard([], { 12: 'none' });
     const handed = handles({ cards: [], board });
@@ -1050,10 +1053,10 @@ for (const [what, value] of Object.entries(HOSTILE())) {
     handed.l2.notice = changesOver(world, handed.sink).notice;
     seed(handed.state, 'hold-a1-issue-12.json');
 
-    const pulled = await loop(handed).pull();
+    const failure = await loop(handed).pull().then(() => assert.fail('the refused rename record was absorbed'), (error) => error);
 
     assert.deepEqual(namesIn(handed.state), ['hold-a1-issue-20.json']);
-    assert.match(JSON.stringify(pulled.notices), /admission changed at hold-a1-issue-20\.json, and the sink refused its admission\.rename event/, what);
+    assert.match(safeMessages(failure).join(' | '), /admission renamed hold-a1-issue-12\.json to hold-a1-issue-20\.json, and its record was refused: admission changed at hold-a1-issue-20\.json, and the sink refused its admission\.rename event/, what);
   });
 
   test(`resume's removal whose admission.open record the sink refuses with ${what} names the closer it removed`, async () => {
@@ -1433,4 +1436,120 @@ test('a sink refusal of admission.open whose conversion changes is said as it fi
   assert.equal(reads.conversions, 1);
   assert.match(safeMessages(outcome.error).join(' | '), /EIO first refusal/);
   assert.doesNotMatch(safeMessages(outcome.error).join(' | '), /lost on reread/);
+});
+
+// The pre-judge attack of round 12 on #1079 (C1 to C5 and C8) and the one copy of each trigger's settle.
+
+/** A notice answering, for the issue-less closer it is handed, a failed step the forge made, its mark `made`. */
+const madeNotice = (made) => async function* notice() { return { failed: { step: 'comment on issue #12', cause: 'EIO record', made, unrecorded: [{ event: 'notice.comment' }] } }; };
+
+// proves R-SCHED-23
+test('a made notice mark of four keys each naming the mark itself is copied once, each key said as met again, and the pull settles at once', async () => {
+  const made = {};
+  for (let at = 0; at < 4; at += 1) made[`k${at}`] = made;
+  const handed = handles({ cards: [], notice: madeNotice(made) });
+  seed(handed.state, 'hold-c3.json');
+
+  const pulled = await loop(handed).pull();
+
+  assert.deepEqual(pulled.notices[0].made, { k0: 'a value met again within itself', k1: 'a value met again within itself', k2: 'a value met again within itself', k3: 'a value met again within itself' });
+  assert.match(noticeLine('once', pulled.notices[0].id, pulled.notices[0]), /notice\.comment/);
+});
+
+// proves R-SCHED-23
+test('a made notice mark holding a list that claims length -1 carries the line saying its entries could not be read', async () => {
+  const writes = new Proxy(['comment #12'], { get(target, key) { return key === 'length' ? -1 : target[key]; } });
+  const handed = handles({ cards: [], notice: madeNotice({ writes }) });
+  seed(handed.state, 'hold-c3.json');
+
+  const pulled = await loop(handed).pull();
+
+  assert.deepEqual(pulled.notices[0].made, { writes: ['entries L3 could not read, as the list claimed a length of -1'] });
+});
+
+// proves R-SCHED-23
+test('a rejected read whose failures, or whose unreadable admission entries, are a sparse list longer than L3 reads keeps the real entry at 0 and says how many it did not read', async () => {
+  const length = 10_005;
+  const errors = [new Error('EIO the real refusal')];
+  errors.length = length;
+  const unreadable = [{ path: '/x/hold-a1.json', cause: 'EACCES the real one' }];
+  unreadable.length = length;
+  for (const [what, thrown] of [
+    ['errors', Object.defineProperty(new AggregateError([], 'two reads failed'), 'errors', { value: errors })],
+    ['unreadable', Object.assign(new Error('admission cannot be read'), { unreadable })],
+  ]) {
+    const { board } = stateBoard([], {});
+    board.readColumns = async () => { throw thrown; };
+    const failure = await loop(handles({ cards: [], board })).pull().then(() => assert.fail('accepted'), (error) => error);
+    const said = onceReads(failure);
+    assert.match(said, what === 'errors' ? /EIO the real refusal/ : /EACCES the real one/, what);
+    assert.match(said, /and 5 more entries L3 did not read, past the first 10000 of the 10005 the list held/, what);
+  }
+});
+
+for (const [what, value] of Object.entries({
+  'an Error whose unreadable getter throws': () => Object.defineProperty(new Error('EIO claimed'), 'unreadable', { get() { throw new Error('unreadable getter'); } }),
+  'a Proxy over an Error whose getPrototypeOf throws': () => new Proxy(new Error('EIO claimed'), { getPrototypeOf() { throw new Error('proto trap'); } }),
+  'an Error whose message getter throws': () => Object.defineProperty(new Error('x'), 'message', { get() { throw new Error('message getter'); } }),
+})) {
+  test(`a refused opening record stays presented when a claimed card's l2.claimed then rejects with ${what}`, async () => {
+    const { board } = stateBoard([1], { 12: 'closed' });
+    const handed = handles({ cards: [1], board, notice: closedNotice() });
+    handed.l2.claimed = async () => { throw value(); };
+    refusingWith(handed, { 'admission.open': () => ({ value: new Error('EIO admission.open') }) });
+    seed(handed.state, 'hold-a1-issue-12.json');
+
+    const failure = await loop(handed).pull().then(() => assert.fail('accepted'), (error) => error);
+
+    assert.deepEqual(namesIn(handed.state), []);
+    assert.match(onceReads(failure), /EIO admission\.open/);
+  });
+}
+
+for (const [what, closer, states] of [['a closer naming an issue, on the follow path', 'hold-a1-issue-12.json', { 12: 'closed' }], ['an issue-less closer, at the trigger', 'hold-c3.json', {}]]) {
+  for (const [after, notice] of [
+    ['throws', async function* thrower() { yield { rename: 'issue', number: 13 }; throw new Error('L2 broke after the rename'); }],
+    ['ignores the outcome and answers its issue', async function* ignorer() { yield { rename: 'issue', number: 13 }; return { issue: 13 }; }],
+  ]) {
+    test(`a rename L3 made for ${what}, whose record the sink refused, stays reported by L3 when L2 then ${after}`, async () => {
+      const { board } = stateBoard([], states);
+      const handed = handles({ cards: [], board, notice });
+      refusingWith(handed, { 'admission.rename': () => ({ value: new Error('EIO admission.rename') }) });
+      seed(handed.state, closer);
+
+      const failure = await loop(handed).pull().then(() => assert.fail('the refused rename record was absorbed'), (error) => error);
+
+      assert.match(safeMessages(failure).join(' | '), /admission renamed .* to hold-[a-z0-9]+-issue-13\.json, and its record was refused: .*EIO admission\.rename/);
+    });
+  }
+}
+
+// proves R-SCHED-23
+test('a cycle of causes, and a chain of causes past the depth L3 follows, are said, never thrown', async () => {
+  const a = new Error('EIO a');
+  const b = new Error('EIO b', { cause: a });
+  a.cause = b;
+  let deep = new Error('EIO bottom');
+  for (let at = 0; at < 40; at += 1) deep = new Error(`EIO level ${at}`, { cause: deep });
+  for (const thrown of [a, deep]) {
+    const { board } = stateBoard([], {});
+    board.readColumns = async () => { throw thrown; };
+    const failure = await loop(handles({ cards: [], board })).pull().then(() => assert.fail('accepted'), (error) => error);
+    assert.ok(messagesOf(failure).some((message) => /met again among its own causes, or nested past 16 levels/.test(message)));
+  }
+});
+
+// proves R-SCHED-23
+test('a trigger\'s settle is one copy: a value two cards\' answers share is one copy, read once, and is not the value L2 answered', async () => {
+  let reads = 0;
+  const shared = { get detail() { reads += 1; return reads === 1 ? 'first reason' : 'reason lost on reread'; } };
+  const handed = handles({ cards: [1, 2], board: stateBoard([1, 2], {}).board, facts: async () => () => ({ action: 'escalate', reason: shared }) });
+
+  const reached = await loop(handed).pull();
+
+  assert.equal(reached.length, 2);
+  assert.equal(reached[0].reason, reached[1].reason);
+  assert.notEqual(reached[0].reason, shared);
+  assert.deepEqual(reached[0].reason, { detail: 'first reason' });
+  assert.equal(reads, 1);
 });

@@ -277,7 +277,12 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
       if (error.code === 'ENOENT') return { gone: true };
       throw new Error(`admission cannot rename ${join(dir, name)}: ${causeOf(error)}`, { cause: error });
     }
-    record('admission.rename', { kind: 'hold', id: named.id, from: name, to: renamed, name: renamed });
+    try {
+      record('admission.rename', { kind: 'hold', id: named.id, from: name, to: renamed, name: renamed });
+    } catch (refusal) {
+      // The rename was made: L3's own failure names where the closer now is, the refusal its cause.
+      throw Object.assign(new Error(`admission renamed ${name} to ${renamed}, and its record was refused: ${printable(refusal)}`, { cause: refusal }), { renamed });
+    }
     return { name: renamed };
   }
 
