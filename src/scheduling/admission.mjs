@@ -88,7 +88,9 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
     try {
       emitter.emit(event, fields);
     } catch (cause) {
-      throw new Error(`admission changed at ${fields.name}, and the sink refused its ${event} event: ${printable(cause)}`, { cause: new Error(printable(cause)) });
+      // The sink's refusal is converted once, so a refusal that answers differently a second time is said as it first was.
+      const why = printable(cause);
+      throw new Error(`admission changed at ${fields.name}, and the sink refused its ${event} event: ${why}`, { cause: new Error(why) });
     }
   }
 
@@ -356,15 +358,17 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
         } catch (refusal) {
           refused = refusal;
         }
-        const said = `resume left ${leftOf(closers.slice(index)).join(', ')}: ${printable(cause)}${refused === undefined ? '' : `; ${printable(refused)}`}`;
-        throw Object.assign(new Error(said, { cause: new Error(printable(cause)) }), { removed: done });
+        const why = printable(cause);
+        const said = `resume left ${leftOf(closers.slice(index)).join(', ')}: ${why}${refused === undefined ? '' : `; ${printable(refused)}`}`;
+        throw Object.assign(new Error(said, { cause: new Error(why) }), { removed: done });
       }
       try {
         recordEach(names);
       } catch (refusal) {
         // The closer was removed and its record refused: it and those before it stay named, and resume stops.
         const rest = leftOf(closers.slice(index + 1));
-        throw Object.assign(new Error(`${printable(refusal)}${rest.length === 0 ? '' : `; resume left ${rest.join(', ')}`}`, { cause: new Error(printable(refusal)) }), { removed: [...removed, closer] });
+        const why = printable(refusal);
+        throw Object.assign(new Error(`${why}${rest.length === 0 ? '' : `; resume left ${rest.join(', ')}`}`, { cause: new Error(why) }), { removed: [...removed, closer] });
       }
       if (names.length > 0 || unlinked.has(closer.name)) removed.push(closer);
       else gone.push(closer);

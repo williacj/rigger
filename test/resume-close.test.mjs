@@ -226,7 +226,6 @@ test('resume with nothing to remove removes no label, closes no issue, reads no 
   assert.deepEqual((await here.issue(7)).labels, [STATUS]);
 });
 
-// proves R-SCHED-24
 test('the README\'s resume line says the verb closes the status issue, and the verb\'s summary equals it', () => {
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
   const [, comment] = /^npx @williacj\/rigger resume\s+# (.*)$/m.exec(readme) ?? [];

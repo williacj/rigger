@@ -1362,3 +1362,75 @@ test('a notice answer whose failed holds one object as its step, its cause and t
   for (const [key, count] of Object.entries(reads)) assert.equal(count, 1, `${String(key)} was read ${count} times`);
   assert.doesNotMatch(noticeLine('once', pulled.notices[0].id, pulled.notices[0]), /lost on reread/);
 });
+
+// The judges' round-11 probes on #1079: a conversion of a foreign value, as well as a field read,
+// runs once in a snapshot, whichever path of the snapshot reaches it.
+
+/** An object whose string conversion is counted, answering `first` once and something else after. */
+function countedConversion(first = 'HTTP 502 first reason') {
+  const reads = { conversions: 0 };
+  const value = { [Symbol.toPrimitive]() { reads.conversions += 1; return reads.conversions === 1 ? first : 'original failure lost on reread'; } };
+  return { value, reads };
+}
+
+/** Lists, built over `shared`, whose `length` answers `shared`, a value no list can have as its length. */
+const sharedLength = (shared) => new Proxy([], { get(target, key) { return key === 'length' ? shared : Reflect.get(target, key); } });
+
+/** Trees in which the one changing value `shared` is reached by a conversion on more than one path. */
+const CONVERTED_TREES = {
+  'as the aggregate\'s message and its errors entry': (shared) => Object.defineProperty(new AggregateError([shared], 'outer'), 'message', { value: shared }),
+  'as two lists\' length': (shared) => Object.assign(Object.defineProperty(new AggregateError([], 'facts failed'), 'errors', { value: sharedLength(shared) }), { unreadable: sharedLength(shared) }),
+  'as an errors entry\'s message and its cause': (shared) => new AggregateError([Object.defineProperty(new Error('inner', { cause: shared }), 'message', { value: shared })], 'outer'),
+  'as an unreadable path and a thrown errors entry': (shared) => Object.assign(new AggregateError([shared], 'facts failed'), { unreadable: [{ path: shared, cause: 'EIO' }] }),
+};
+
+for (const [what, tree] of Object.entries(CONVERTED_TREES)) {
+  for (const [kind, make] of [['an Error whose message getter changes', () => { const { leaf, reads } = countedLeaf('HTTP 502 first reason'); return { shared: leaf, reads }; }], ['an object whose string conversion changes', () => { const { value, reads } = countedConversion(); return { shared: value, reads }; }]]) {
+    test(`a rejected read whose failure holds ${kind} ${what} reads it once, and once reads its first line`, async () => {
+      const { shared, reads } = make();
+      const { board } = stateBoard([], {});
+      board.readColumns = async () => { throw tree(shared); };
+      const handed = handles({ cards: [], board });
+
+      const failure = await loop(handed).pull().then(() => assert.fail('the rejection was accepted'), (error) => error);
+
+      for (const [key, count] of Object.entries(reads)) assert.ok(count <= 1, `${String(key)} was read ${count} times`);
+      assert.match(onceReads(failure), /HTTP 502 first reason/);
+      assert.doesNotMatch(onceReads(failure), /lost on reread/);
+    });
+  }
+}
+
+// proves R-SCHED-23
+test('a notice mark that cannot be cloned keeps the first answer it read, and its closer, step and unrecorded event stay', async () => {
+  let reads = 0;
+  const made = Object.defineProperties({}, {
+    answer: { enumerable: true, get() { reads += 1; return reads === 1 ? 'write-confirmed' : 'original answer lost on reread'; } },
+    extra: { enumerable: true, value: Symbol('not cloneable') },
+  });
+  const { board } = stateBoard([], { 12: 'open' });
+  const handed = handles({ cards: [], board, notice: followingNotice({ 12: { issue: 12, failed: { step: 'comment on issue #12', cause: 'call.end refused', made, unrecorded: [{ event: 'call.end' }] } } }) });
+  seed(handed.state, 'hold-a1-issue-12.json');
+
+  const pulled = await loop(handed).pull();
+
+  assert.equal(reads, 1);
+  assert.equal(pulled.notices[0].made.answer, 'write-confirmed');
+  assert.deepEqual(namesIn(handed.state), ['hold-a1-issue-12.json']);
+  assert.match(noticeLine('once', pulled.notices[0].id, pulled.notices[0]), /made its step to comment on issue #12.*call\.end/);
+});
+
+// proves R-SCHED-23
+test('a sink refusal of admission.open whose conversion changes is said as it first converted, in the failure and in its cause', async () => {
+  const { value, reads } = countedConversion('EIO first refusal');
+  const { board } = stateBoard([], { 12: 'closed' });
+  const handed = handles({ cards: [], board, notice: closedNotice() });
+  refusingWith(handed, { 'admission.open': () => ({ value }) });
+  seed(handed.state, 'hold-a1-issue-12.json');
+
+  const outcome = await loop(handed).pull().then((answer) => ({ answer }), (error) => ({ error }));
+
+  assert.equal(reads.conversions, 1);
+  assert.match(safeMessages(outcome.error).join(' | '), /EIO first refusal/);
+  assert.doesNotMatch(safeMessages(outcome.error).join(' | '), /lost on reread/);
+});

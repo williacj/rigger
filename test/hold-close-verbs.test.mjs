@@ -656,3 +656,42 @@ test('rigger run over a status issue whose close lies past the first page of its
   assert.equal(ran.code, 0, ran.said);
   assert.deepEqual(here.closers(), [], ran.said);
 });
+
+// The judges' round-11 probes on #1079: a value reached by two conversions, through the real verbs.
+for (const [verb, what, thrown] of [
+  ['once', 'the aggregate\'s message and its errors entry', "Object.defineProperty(new AggregateError([leaf], 'outer'), 'message', { value: leaf })"],
+  ['run', 'the aggregate\'s message and its errors entry', "Object.defineProperty(new AggregateError([leaf], 'outer'), 'message', { value: leaf })"],
+  ['once', 'the length of two lists', "(() => { const list = () => new Proxy([], { get(target, key) { return key === 'length' ? leaf : Reflect.get(target, key); } }); const failure = new AggregateError([], 'facts failed'); failure.unreadable = list(); failure.errors = list(); return failure; })()"],
+]) {
+  test(`rigger ${verb}, after a recorded closer opening, keeps the first line of one changing Error reached as ${what}`, async (t) => {
+    const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [statusIssue(7, 'a1')] });
+    assert.equal(here.gh('api', `repos/${REPO}/issues/7`, '-X', 'PATCH', '-f', 'state=closed').status, 0);
+    writeFileSync(join(here.target, 'rigger.config.mjs'), [
+      `const config = ${JSON.stringify(consumerConfig(3))};`,
+      'const board = config.board;',
+      'let thrown;',
+      "Object.defineProperty(config, 'board', { get() {",
+      "  if (new Error().stack.includes('/src/workflow/facts.mjs')) {",
+      '    let reads = 0;',
+      "    const leaf = Object.defineProperty(new Error('initial'), 'message', { get() { return ++reads === 1 ? 'HTTP 502 first reason' : 'original failure lost on reread'; } });",
+      `    throw ${thrown};`,
+      '  }',
+      '  return board;',
+      '} });',
+      'export default config;',
+    ].join('\n'));
+
+    const said = verb === 'once'
+      ? await onceVerb({ target: here.target, send: (command, args) => {
+        const done = spawnSync(here.fake.gh, args, { encoding: 'utf8', env: gitEnvironment() });
+        return { status: done.status, stdout: done.stdout, stderr: done.stderr, timedOut: false };
+      } }).then(({ code, text }) => ({ code, said: text }))
+      : here.verb('run');
+
+    assert.deepEqual(here.closers(), [], 'the closer really was removed');
+    assert.equal(here.events().filter(({ event }) => event === 'admission.open').length, 1, 'the opening was recorded');
+    assert.notEqual(said.code, 0);
+    assert.match(said.said, /HTTP 502 first reason/);
+    assert.doesNotMatch(said.said, /lost on reread/);
+  });
+}
