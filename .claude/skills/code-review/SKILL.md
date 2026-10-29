@@ -32,8 +32,10 @@ also read the delta since the prior round (`R-EVIDENCE-3`); the complete current
 your verdict (`R-GATE-7`).
 
 At first handoff, count added `// proves` declarations and named requirement claims from the
-diff; plan reviewer-owned behavior-deletion checks per claim before the final round. An early
-bounded source review is preliminary and head-bound; name outstanding proof. It implies no
+diff; plan reviewer-owned behavior-deletion checks per claim before the final round. Judge
+claimless diagnostics against the author's accepted behaviour and requirement-applicability
+reasoning; a missing declaration alone proves no classification.
+An early bounded source review is preliminary and head-bound; name outstanding proof. It implies no
 final verdict.
 
 **3. Find the documents that own what changed.** For every changed behaviour, name the document
@@ -102,8 +104,9 @@ Then the rules that bind every change in this repository, whatever it touches:
   delete as much as it adds, **or** carry a ratified budget change — either route is sound, and
   flagging one that took the second is a false finding (`ARCHITECTURE.md`, "Budgets").
 - **Test-first evidence.** Is there a test, does it assert the behaviour rather than the
-  implementation, does it declare the requirement it proves, does it sleep, and was a failing
-  test deleted or weakened (`AGENTS.md`; the `tdd` skill)?
+  implementation, does it truthfully declare each requirement it proves or meet the `tdd`
+  skill's diagnostic admission, does it sleep, and was a failing test deleted or weakened
+  (`AGENTS.md`; the `tdd` skill)? Independent oracles and meaningful red/green apply to both.
 - **Proof declarations.** For every `// proves R-GROUP-#` declaration in the work you read,
   remove the behaviour each named requirement describes in a disposable copy and run the
   declaring test. It must fail on an assertion about that behaviour. Show that the deletion
@@ -116,7 +119,8 @@ Then the rules that bind every change in this repository, whatever it touches:
   applied, that it did what it meant, and which tests failed on which assertion? An unguarded
   mutation reports either answer regardless of the truth, so a claim missing that is not evidence
   for the item it stands behind, and an item you cannot otherwise rule on is unmet
-  (`R-LOOP-5`).
+  (`R-LOOP-5`). Claimless diagnostics owe their accepted guarded semantic mutation too;
+  missing guards earn no credit.
 - **Smallest reasonable change.** Is it shaped like what is already there, or is it a parallel
   second way of doing something the repository already does? Is anything copy-pasted?
 - **File rules** (`AGENTS.md`, "Any role"). Does every new file meet the `ABOUTME:` rule,
