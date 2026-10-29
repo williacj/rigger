@@ -152,3 +152,54 @@ test('M8: a coerced maker shared with a judge earns only its string twin refusal
     assert.deepEqual(answer(config), expected, inspect(value));
   }
 });
+
+const SYMBOL_MAP_REFUSALS = [
+  "`kinds.change.judges[0].provider` holds no key for `claude`, a provider the kind's maker can run on",
+  "`kinds.change.judges[0].provider` holds no key for `codex`, a provider the kind's maker can run on",
+];
+
+/** A Symbol role with a judge map that exposes whether its providers were read. */
+function withSymbolMaker(key, value = key) {
+  const config = withMaker('change', value);
+  config.roles[key] = { ...config.roles.engineer };
+  config.kinds.change.judges[0].provider = {};
+  return config;
+}
+
+test('M6: a Symbol maker retains the merge-base answer when roles holds its Symbol key', () => {
+  const key = Symbol('maker');
+  const config = withSymbolMaker(key);
+  assert.throws(() => `${key}`, TypeError, 'the maker has no template string form');
+  assert.equal(Object.hasOwn(config.roles, key), true);
+  assert.deepEqual(answer(config), SYMBOL_MAP_REFUSALS);
+});
+
+test('M6: Symbol-valued object and function conversions retain their literal provider refusals', () => {
+  const key = Symbol('maker');
+  const values = [
+    Object(key),
+    { [Symbol.toPrimitive]() { return key; } },
+    { toString() { return key; } },
+    { toString() { return {}; }, valueOf() { return key; } },
+    Object.assign(function maker() {}, { [Symbol.toPrimitive]() { return key; } }),
+    Object.assign([], { toString() { return key; } }),
+    Object.assign(Object.create(null), { [Symbol.toPrimitive]() { return key; } }),
+  ];
+  for (const value of values) {
+    const config = withSymbolMaker(key, value);
+    assert.throws(() => `${value}`, TypeError, inspect(value));
+    assert.deepEqual(Reflect.ownKeys({ [value]: null }), [key], 'the runtime property key is the Symbol');
+    assert.deepEqual(answer(config), SYMBOL_MAP_REFUSALS, inspect(value));
+  }
+});
+
+test('M6: a shared Symbol maker and judge retain every literal merge-base refusal', () => {
+  const key = Symbol('maker');
+  const config = withSymbolMaker(key);
+  config.kinds.change.judges[0].role = key;
+  assert.deepEqual(answer(config), [
+    ...SYMBOL_MAP_REFUSALS,
+    '`kinds.change` names `Symbol(maker)` as both its maker and one of its judges, and no judge is the maker',
+    '`kinds.change.judges` names `Symbol(maker)`, which is no role the config declares',
+  ]);
+});

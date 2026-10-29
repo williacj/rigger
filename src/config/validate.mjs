@@ -361,8 +361,15 @@ function readKinds(config, refusals) {
     let coercedMaker = false;
     if (kind?.maker !== undefined) {
       const maker = kind.maker;
-      const declaredMaker = declaresRole(roles, maker);
-      coercedMaker = declaredMaker && typeof maker !== 'string';
+      // The property key's type distinguishes string-role coercion from Symbol lookup.
+      let makerKey;
+      try {
+        const keyed = { [maker]: null };
+        makerKey = Object.keys(keyed)[0] ?? Object.getOwnPropertySymbols(keyed)[0];
+      }
+      catch {}
+      const declaredMaker = makerKey !== undefined && declaresRole(roles, makerKey);
+      coercedMaker = declaredMaker && typeof maker !== 'string' && typeof makerKey === 'string';
       if (!declaredMaker || coercedMaker) {
         refusals.push(`\`${where}.maker\` names \`${coercedMaker ? inspect(kind.maker) : written(kind.maker)}\`, which is no role the config declares`);
       }
