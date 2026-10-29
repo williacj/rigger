@@ -21,6 +21,7 @@ unset NODE_TEST_CONTEXT
 # their cards convert and split tests. An entry must name the file that still exists.
 host_tests='
 test/build-test-matrix-host.test.mjs
+test/call-events.test.mjs
 test/claude-folder-live.test.mjs
 test/codex-judge-shell.test.mjs
 test/command-gate-hook.test.mjs

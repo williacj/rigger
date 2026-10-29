@@ -1111,3 +1111,21 @@ test('a write runner refuses a request whose operation it cannot name from the d
     await refuses(itemWriteRunner, args, names);
   }
 });
+
+// The installed gh owns whether repeated labels[] fields become one ordered JSON array.
+test('a three-label opening through the write side reaches installed gh as one ordered labels array', async (t) => {
+  const gh = installedGh();
+  if (!gh) return t.skip('no real gh on PATH; three-label opening probe not run');
+  const labels = ['type:change', 'tier:high', 'customer:\n"quoted" $(printf data)'];
+  const title = 'Clock card\n"quoted"';
+  const body = '## Acceptance\n\n- The widget turns blue.\n';
+  let observed;
+  const send = async (command, args) => {
+    observed = await methodGhSends(gh, args);
+    // Create-issue's documented answer holds the issue number and label objects.
+    return { status: 0, stdout: JSON.stringify({ number: 214, labels: labels.map((name) => ({ name })) }), stderr: '' };
+  };
+  assert.equal(await repositoryWriteSide({ repo: 'williacj/rigger' }, { send }).openIssue(title, body, ...labels), 214);
+  assert.equal(observed.method, 'POST');
+  assert.deepEqual(JSON.parse(observed.body), { title, body, labels });
+});
