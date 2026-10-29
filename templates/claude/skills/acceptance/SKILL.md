@@ -148,8 +148,9 @@ merge; `AGENTS.md`'s "Review and merge" still applies.
 Classify cited prior attempts as offered proof, context, or unresolved/noncredit; later
 results grant no retroactive credit.
 
-For required retained originals, predeclare finite offered results before maker work: each
-result’s originals, private-safe access route or receipt, exact ref and behavior scope.
+For required retained originals, predeclare finite offered results before maker work: originals,
+private-safe access, exact ref, behavior scope and retention event through final independent ruling or
+longer card requirement.
 
 **Name predictable test edits at filing.** An author may name bounded grant classes, each
 stating what it covers and the existing `test/` lines it can reach, checkable in `git diff`.

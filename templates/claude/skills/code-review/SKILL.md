@@ -45,10 +45,8 @@ That order is the argument, and taking it out of order costs you. While v0 is st
 `docs/v0-build-plan.md` carries the milestone this work belongs to and its exit conditions; read
 those too.
 
-**4. Verify yourself.** Run the command named by `AGENTS.md`, "Before you start", then
-relevant targeted, build, lint, type and generated checks (`npm run` lists scripts). Record exact
-commands/results. Maker reports are context, not evidence; a green suite never replaces reading
-acceptance or implementation.
+**4. Verify yourself.** Independently run required/relevant checks; apply [TDD](../tdd/SKILL.md)
+to exact commands/results. Maker reports are context, never proof; read acceptance/implementation.
 
 Record exact denials of required commands or mutations. Unrun work earns zero proof credit,
 even under an exception. Only an owner exception for this head and acceptance permits a verdict
