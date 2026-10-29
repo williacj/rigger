@@ -20,6 +20,10 @@ import { nextAction } from '../src/workflow/next-action.mjs';
 import { KINDS, readyCard } from './loop-world.mjs';
 import { EVENT_REFUSED } from '../src/substrate/process.mjs';
 import { pushStream } from '../src/substrate/data-ref.mjs';
+import { doctor } from '../src/cli/doctor.mjs';
+import template from '../templates/rigger.config.mjs';
+import { pushAtReturn } from '../src/observation/push.mjs';
+import { readEvents } from '../src/observation/sink.mjs';
 
 /** Every event an emitter was handed, in order, each as its name and its fields. */
 function recorder() {
@@ -859,4 +863,28 @@ test('the push side pushes the stream through L0\'s process adapter to a local b
   assert.equal(gitIn(origin, 'ls-tree', '--name-only', answer.commit), 'events.jsonl\n');
   assert.equal(gitIn(origin, 'cat-file', 'blob', `${answer.commit}:events.jsonl`), stream.toString('utf8'));
   assert.equal(gitIn(repository, 'for-each-ref', 'refs/remotes/origin/rigger/events'), '');
+});
+
+// L5's push of a verb's stream, its one host test (#1122): the push side's default spawn is L0's
+// process adapter, which the deterministic tier refuses, so only here does a verb's push run
+// through it.
+// proves R-RECORD-13
+test('doctor, telemetry.push true, pushes its stream at its return through the push side\'s default spawn and L0\'s process adapter, and origin\'s refs/rigger/events holds that stream', async (t) => {
+  const { origin, repository } = clonedFromOrigin(scratch(t));
+  writeFileSync(join(repository, 'rigger.config.mjs'), `export default ${JSON.stringify({ ...template, repo: 'acme/widgets', board: { ...template.board, project: 3 }, telemetry: { push: true } })};\n`);
+  const lines = [];
+  // A check that records one event of the run's own, as a check's forge call does.
+  const marking = ({ emitter }) => {
+    emitter.emit('stand-in.check', {});
+    return null;
+  };
+  const answer = await doctor({ target: repository, checks: [marking], push: pushAtReturn({ write: (line) => lines.push(line) }) });
+  assert.equal(answer.code, 0, answer.text);
+  assert.deepEqual(lines, []);
+  const events = readEvents(join(repository, '.rigger'));
+  const [end] = events.filter(({ event }) => event === 'push.end');
+  assert.equal(end?.outcome, 'pushed', JSON.stringify(events));
+  assert.equal(gitIn(origin, 'rev-parse', 'refs/rigger/events').trim(), end.commit);
+  const stream = events.slice(0, -1).map((event) => `${JSON.stringify(event)}\n`).join('');
+  assert.equal(gitIn(origin, 'cat-file', 'blob', `${end.commit}:events.jsonl`), stream);
 });

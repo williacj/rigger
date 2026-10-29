@@ -1835,7 +1835,7 @@ would change the config shape, and a later card carries it.
 | `bytes` | The byte length of the stream the commit holds | Where the push failed before it read the stream |
 | `parent` | The tip the push read | Where the ref was absent, or the read failed |
 | `commit` | The commit pushed | Unless `outcome` is `pushed` |
-| `reason` | The failure, in the words `git` or the process adapter gave it | Where `outcome` is `pushed` |
+| `reason` | The failure, in the words `git` or the process adapter gave it, or in the push side's own words where it found the failure itself | Where `outcome` is `pushed` |
 
 `refused` is a push `git push` reported as rejected. `timed-out` is a push stopped at
 `PUSH_TIMEOUT`. `failed` is every other push that did not succeed, a `git` that never started
