@@ -331,7 +331,8 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
    * whatever name its id then carries, and records one `admission.open` event raised by `resume`
    * for each name it unlinked, so two names carrying one hold's id are two events. A closer already
    * gone counts as removed, with no event. Where any closer is unreadable, it removes nothing and
-   * rejects naming each, carrying as `unreadable` the entries `read` answered, unescaped.
+   * rejects naming each, carrying as `unreadable` the entries `read` answered, unescaped. Where a
+   * removal fails partway, it rejects naming each closer left, carrying as `removed` those it removed.
    */
   async function resume() {
     const answer = read();
@@ -356,8 +357,16 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
       try {
         removeCloser(closer, names);
       } catch (cause) {
-        recordEach(names);
-        throw new Error(`resume left ${leftOf(closers.slice(index)).join(', ')}: ${printable(cause)}`, { cause: readableCause(cause) });
+        // The closers removed before this one, and this one where any of its names went, stay named.
+        const done = names.length > 0 ? [...removed, closer] : [...removed];
+        let refused;
+        try {
+          recordEach(names);
+        } catch (refusal) {
+          refused = refusal;
+        }
+        const said = `resume left ${leftOf(closers.slice(index)).join(', ')}: ${printable(cause)}${refused === undefined ? '' : `; ${printable(refused)}`}`;
+        throw Object.assign(new Error(said, { cause: readableCause(cause) }), { removed: done });
       }
       recordEach(names);
       if (names.length > 0 || unlinked.has(closer.name)) removed.push(closer);

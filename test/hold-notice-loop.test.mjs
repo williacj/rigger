@@ -1119,3 +1119,65 @@ test('two concurrent pulls over one closed notice make one opening and report no
   assert.equal(calls, 1);
   assert.ok(outcomes.every(({ status }) => status === 'fulfilled'));
 });
+
+// The pre-judge re-attack of round 9 on #1079.
+import { unreadableAdmission } from '../src/cli/doctor.mjs';
+
+/** What `once`'s catch reads of a pull's failure, as `src/cli/once.mjs` reads it: `reached`, then each failure's `unreadable`, `attemptFailures` and `message`. */
+const onceReads = (failure) => {
+  const failuresIn = (each) => (each instanceof AggregateError ? each.errors.flatMap(failuresIn) : [each]);
+  const reached = failure.reached ?? [];
+  const lines = failuresIn(failure).map((held) => {
+    if (Array.isArray(held.unreadable)) return unreadableAdmission(held.unreadable);
+    const attempts = held.attemptFailures;
+    if (!Array.isArray(attempts) || attempts.at(-1)?.maker === undefined) return `rigger once: ${held.message}`;
+    return 'held';
+  });
+  return [reached.length, ...lines].join('\n');
+};
+
+/** An Error carrying `props`, as `Object.defineProperties` defines them. */
+const errorWith = (props) => Object.defineProperties(new Error('EIO readable'), props);
+
+/** Errors that read as Errors with a string message, yet throw where a presenter reads further. */
+const READABLE_HOSTILE = {
+  'an AggregateError of undefined and null': () => new AggregateError([undefined, null], 'two bad'),
+  'an Error whose reached getter throws': () => errorWith({ reached: { get() { throw new Error('reached getter'); } } }),
+  'an Error whose unreadable getter throws': () => errorWith({ unreadable: { get() { throw new Error('unreadable getter'); } } }),
+  'an Error whose attemptFailures getter throws': () => errorWith({ attemptFailures: { get() { throw new Error('attemptFailures getter'); } } }),
+  'a Proxy over an Error answering message and throwing for everything else': () => new Proxy(new Error('m'), { get(target, key) { if (key === 'message') return 'm'; throw new Error(`trap ${String(key)}`); } }),
+  'an Error whose message reads once, then throws': () => { let reads = 0; return errorWith({ message: { get() { reads += 1; if (reads > 1) throw new Error('second read'); return 'first'; } } }); },
+  'an Error whose unreadable holds null': () => Object.assign(new Error('gh: HTTP 502'), { unreadable: [null] }),
+};
+
+for (const [what, value] of Object.entries(READABLE_HOSTILE)) {
+  test(`a later read rejecting with ${what} is handed on in a form once's catch reads without throwing`, async () => {
+    const { board } = stateBoard([], {});
+    board.readColumns = async () => { throw value(); };
+    const handed = handles({ cards: [], board });
+
+    const outcome = await loop(handed).pull().then((answer) => ({ answer }), (error) => ({ error }));
+
+    assert.doesNotThrow(() => onceReads(outcome.error), what);
+  });
+}
+
+/** A Proxy throwing on every read of it, as an L2 answer's `failed` can be. */
+const hostileFailed = () => new Proxy({}, { get() { throw new Error('failed trap'); }, ownKeys() { throw new Error('failed keys'); }, getOwnPropertyDescriptor() { throw new Error('failed descriptor'); } });
+
+// proves R-SCHED-23
+test('a refused opening record stays reported when another closer\'s notice answers a failed that cannot be read, on the follow path and on the trigger\'s', async () => {
+  for (const [what, other] of [['naming an issue', 'hold-b2-issue-13.json'], ['naming none', 'hold-c3.json']]) {
+    const { board } = stateBoard([], { 12: 'closed', 13: 'open' });
+    const handed = handles({ cards: [], board, notice: async function* answering({ closer }) { return closer.issue === '12' ? { issue: 12, closed: true } : { failed: hostileFailed() }; } });
+    refusingEvents(handed, ['admission.open']);
+    seed(handed.state, 'hold-a1-issue-12.json');
+    seed(handed.state, other);
+
+    const outcome = await loop(handed).pull().then((answer) => ({ answer }), (error) => ({ error }));
+
+    const said = outcome.error === undefined ? JSON.stringify(outcome.answer?.notices) : safeMessages(outcome.error).join(' | ');
+    assert.match(said, /EIO while recording admission\.open/, `${what}: ${said}`);
+    assert.doesNotThrow(() => onceReads(outcome.error ?? new Error('none')), what);
+  }
+});

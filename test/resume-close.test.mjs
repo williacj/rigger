@@ -332,3 +332,22 @@ test('resume, whose close of an issue is refused after its status label was remo
   assert.equal(here.issue(7).state, 'open');
   assert.match(text, /^rigger resume: the status issue #7 was left open, its status label already removed, so no later read by label finds it: .*HTTP 403/m, text);
 });
+
+// proves R-SCHED-24
+test('resume whose removal stops partway names each closer it already removed, the closer left and why, and that no status issue was closed', async () => {
+  // The pre-judge re-attack of round 9 on #1079: the second closer's unlink is refused.
+  const here = world({ closers: ['hold-a1-issue-7.json', 'hold-b2-issue-8.json'], issues: [status(7, 'a1'), status(8, 'b2')] });
+  const unlinkSync = (path) => {
+    if (String(path).endsWith('hold-b2-issue-8.json')) throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' });
+    return nodeFs.unlinkSync(path);
+  };
+
+  const { text, code } = await here.run({ fs: { ...nodeFs, unlinkSync } });
+
+  assert.equal(code, 1, text);
+  assert.deepEqual(left(here), ['hold-b2-issue-8.json']);
+  assert.match(text, /^rigger resume: removed the hold closer .*hold-a1-issue-7\.json/m, text);
+  assert.match(text, /left .*hold-b2-issue-8\.json.*EACCES/, text);
+  assert.match(text, /^rigger resume: no status issue was closed, because /m, text);
+  assert.deepEqual(here.sent, [], text);
+});

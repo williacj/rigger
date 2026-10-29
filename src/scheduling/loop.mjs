@@ -6,6 +6,7 @@
 // it hands the repo lane; the drain trigger; and L3's events.
 
 import { randomUUID } from 'node:crypto';
+import { types } from 'node:util';
 
 import { roleDispatch } from '../execution/role.mjs';
 import { SCRATCH_REFUSED } from '../execution/workspace.mjs';
@@ -31,7 +32,8 @@ const ISSUE_STATES = ['open', 'closed', 'none'];
 export function readableFailure(thrown) {
   const failure = new Error(causeOf(thrown));
   try {
-    if (Array.isArray(thrown?.unreadable)) failure.unreadable = thrown.unreadable;
+    const entries = Array.from(thrown?.unreadable ?? [], (entry) => ({ path: causeOf(entry?.path), cause: causeOf(entry?.cause) }));
+    if (Array.isArray(thrown?.unreadable)) failure.unreadable = entries;
   } catch {
     // A value that cannot be read carries nothing more.
   }
@@ -43,10 +45,41 @@ export function readableFailure(thrown) {
   return failure;
 }
 
-/** `thrown` itself where it is an Error whose message reads, and otherwise `readableFailure` of it. */
+/** The prototypes of the Errors JavaScript itself makes, the only ones whose reads hold no code a thrower supplied. */
+const NATIVE_ERRORS = [Error, AggregateError, EvalError, RangeError, ReferenceError, SyntaxError, TypeError, URIError].map(({ prototype }) => prototype);
+
+/** Whether own property `key` of `value` is absent, or a plain value `fits` accepts, read without running any code of the value's. */
+const plainOwn = (value, key, fits) => {
+  const held = Object.getOwnPropertyDescriptor(value, key);
+  return held === undefined || (Object.hasOwn(held, 'value') && fits(held.value));
+};
+
+/**
+ * Whether `thrown` is an Error each presenter of L3's failures can read as it stands: a native
+ * Error, no Proxy, every property a presenter reads a plain value of the shape it expects, a
+ * string message, a string code, admission's unreadable entries of strings, an AggregateError's
+ * errors each the same, and none of the properties only L3's own card failures carry.
+ */
+function plainError(thrown, seen = new Set()) {
+  try {
+    if (seen.has(thrown)) return false;
+    seen.add(thrown);
+    if (types.isProxy(thrown) || !NATIVE_ERRORS.includes(Object.getPrototypeOf(thrown))) return false;
+    const entry = (each) => each !== null && typeof each === 'object' && !types.isProxy(each)
+      && plainOwn(each, 'path', (path) => typeof path === 'string') && plainOwn(each, 'cause', (cause) => typeof cause === 'string');
+    return plainOwn(thrown, 'message', (message) => typeof message === 'string')
+      && plainOwn(thrown, 'code', (code) => typeof code === 'string')
+      && plainOwn(thrown, 'unreadable', (unreadable) => Array.isArray(unreadable) && !types.isProxy(unreadable) && unreadable.every(entry))
+      && plainOwn(thrown, 'errors', (errors) => Array.isArray(errors) && !types.isProxy(errors) && errors.every((each) => plainError(each, seen)))
+      && ['reached', 'attemptFailures', 'closer', 'card', 'decision'].every((key) => Object.getOwnPropertyDescriptor(thrown, key) === undefined);
+  } catch {
+    return false;
+  }
+}
+
+/** `thrown` itself where it is an Error a presenter reads as it stands (`plainError`), and otherwise `readableFailure` of it. */
 function readableOrFresh(thrown) {
-  const cause = readableCause(thrown);
-  return cause === thrown ? thrown : readableFailure(thrown);
+  return plainError(thrown) ? thrown : readableFailure(thrown);
 }
 
 /**
@@ -55,19 +88,40 @@ function readableOrFresh(thrown) {
  * that names them can always print them.
  */
 function noticeAnswer(answer) {
+  let failed;
   try {
-    const failed = answer?.failed;
-    if (failed === undefined || failed.made === undefined) return answer;
-    let events;
-    try {
-      events = Array.from(failed.unrecorded ?? [], (each) => ({ event: causeOf(each?.event) }));
-    } catch {
-      events = [{ event: 'events it could not name' }];
-    }
-    return { ...answer, failed: { ...failed, unrecorded: events } };
+    failed = answer?.failed;
   } catch {
-    return answer;
+    return { failed: { step: 'notice', cause: 'L2 answered a notice L3 could not read' } };
   }
+  if (failed === undefined) return answer;
+  return { ...readOr(() => ({ ...answer }), {}), failed: noticeFailed(failed) };
+}
+
+/** `read()`'s answer, or `otherwise` where reading throws. */
+function readOr(read, otherwise) {
+  try {
+    return read();
+  } catch {
+    return otherwise;
+  }
+}
+
+/**
+ * L2's `failed` as L3 hands it on, whatever L2 answered: its step and cause as printable strings,
+ * and, for a step the forge made, its mark and its unrecorded events, each named printably.
+ */
+function noticeFailed(failed) {
+  const field = (key) => readOr(() => failed[key], undefined);
+  const said = (key) => {
+    const held = field(key);
+    return typeof held === 'string' ? held : causeOf(held);
+  };
+  const made = field('made');
+  const plain = { step: said('step'), cause: said('cause') };
+  if (made === undefined) return plain;
+  const events = readOr(() => Array.from(field('unrecorded') ?? [], (each) => ({ event: causeOf(readOr(() => each?.event, undefined)) })), [{ event: 'events it could not name' }]);
+  return { ...plain, made, unrecorded: events };
 }
 
 /**
@@ -517,22 +571,16 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       if (outcome.status === 'fulfilled') ({ name } = outcome.value);
       step = await steps.next(outcome);
     }
-    if (step.value?.closed) {
-      const [opened] = await Promise.allSettled([admissionRecord.open(name, { issue: step.value.issue })]);
-      if (opened.status === 'rejected') return { ...step.value, unrecorded: readableFailure(opened.reason) };
+    if (readOr(() => step.value?.closed === true, false)) {
+      // The answer is read once, into values of L3's own, so nothing L2 handed it reruns later.
+      const issue = readOr(() => step.value.issue, undefined);
+      const [opened] = await Promise.allSettled([admissionRecord.open(name, Number.isSafeInteger(issue) ? { issue } : {})]);
+      if (opened.status === 'rejected') return { issue, closed: true, unrecorded: readableFailure(opened.reason) };
+      return { issue, closed: true };
     }
     return step.value;
   };
 
-  /**
-   * L3's act at a trigger on each hold's closer naming an issue, after it lists admission: it reads
-   * each issue those closers name by its number, once whatever number of closers name it, through
-   * `board.readIssueState`, and hands L2's notice function each closer's hold and that state, as
-   * `noticed` says. A read that fails or times out counts as unreadable: L3 hands L2 nothing for that
-   * closer, records `notice.failed` naming the issue, and the next trigger reads again. Answers
-   * `notices`, each failed notice as `{ id, step, cause }`, and `unrecorded`, the failure of each
-   * opening whose event the sink refused, which the trigger reports whether or not admission opened.
-   */
   /**
    * Issue `number`'s state as `board.readIssueState` answers it, tagged `ok` with the state where the
    * read fulfilled with a state it names, and otherwise not `ok`, with a printable `failure`: the
@@ -556,6 +604,15 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     return { ok: true, read: state };
   };
 
+  /**
+   * L3's act at a trigger on each hold's closer naming an issue, after it lists admission: it reads
+   * each issue those closers name by its number, once whatever number of closers name it, through
+   * `board.readIssueState`, and hands L2's notice function each closer's hold and that state, as
+   * `noticed` says. A read that fails or times out counts as unreadable: L3 hands L2 nothing for that
+   * closer, records `notice.failed` naming the issue, and the next trigger reads again. Answers
+   * `notices`, each failed notice as `{ id, step, cause }`, and `unrecorded`, the failure of each
+   * opening whose event the sink refused, which the trigger reports whether or not admission opened.
+   */
   const follow = async () => {
     const listed = admissionRecord.read();
     const notices = [];

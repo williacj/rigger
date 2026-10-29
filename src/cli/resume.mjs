@@ -37,12 +37,23 @@ async function resuming(opened, {
     answer = await admissionRecord.resume();
   } catch (failure) {
     let unreadable;
+    let removedSoFar;
     try {
-      ({ unreadable } = failure);
+      ({ unreadable, removed: removedSoFar } = failure);
     } catch {
       unreadable = undefined;
     }
-    return { text: `rigger resume: ${Array.isArray(unreadable) ? unreadableAdmission(unreadable) : causeOf(failure)}`, code: 1 };
+    if (Array.isArray(unreadable)) return { text: `rigger resume: ${unreadableAdmission(unreadable)}`, code: 1 };
+    // A removal that stopped partway still names each closer it removed, then why no issue was closed.
+    const done = Array.isArray(removedSoFar) ? removedSoFar : [];
+    return {
+      text: [
+        ...done.map((closer) => `rigger resume: ${removedCloserLine(closer)}`),
+        `rigger resume: ${causeOf(failure)}`,
+        ...(done.length === 0 ? [] : ['rigger resume: no status issue was closed, because the removal of the closers stopped before every closer was removed']),
+      ].join('\n'),
+      code: 1,
+    };
   }
   const { removed, gone } = answer;
   if (removed.length === 0 && gone.length === 0) return { text: 'rigger resume: admission was already open', code: 0 };
