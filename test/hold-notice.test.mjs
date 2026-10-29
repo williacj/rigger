@@ -610,3 +610,26 @@ test('a notice step that throws a value no template can print still ends the cal
     assert.deepEqual(ran.events, [{ layer: 'L2', event: 'notice.failed', hold: 'a1', step: 'read issue #12\'s timeline', cause }], cause);
   }
 });
+
+// proves R-SCHED-23
+test('a made write whose failure cannot hand over its unrecorded events is still answered as made, naming that its events could not be named', async () => {
+  const world = forge({ issues: [opened(12, 'z9', { timeline: [LABELLED] })] });
+  const comment = world.writes.postIssueComment;
+  world.writes.postIssueComment = async (...args) => {
+    await comment(...args);
+    throw Object.defineProperty(Object.assign(new Error('the sink refused 1 L0 event'), { code: 'EVENT_REFUSED', made: { answer: { id: 1 } } }), 'unrecorded', { get() { throw new Error('no events'); } });
+  };
+
+  const ran = await followed(world, 'a1', 12);
+
+  assert.deepEqual(ran.value, { failed: { step: 'comment on issue #12', cause: 'the sink refused 1 L0 event', made: { answer: { id: 1 } }, unrecorded: [{ event: 'events it could not name' }] } });
+});
+
+// proves R-SCHED-23
+test('causeOf answers a frozen object, an Error whose cause is itself, and an Error whose message is a Symbol, each in one printable line', () => {
+  const cyclic = new Error('cyclic');
+  cyclic.cause = cyclic;
+  assert.equal(causeOf(Object.freeze({ reason: 'frozen' })), '[object Object]');
+  assert.equal(causeOf(cyclic), 'cyclic');
+  assert.equal(causeOf(Object.defineProperty(new Error('x'), 'message', { value: Symbol('symbol message') })), 'Symbol(symbol message)');
+});

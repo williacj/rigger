@@ -177,7 +177,15 @@ export function statusNotice({ reads, writes, board, items, columns, sink }) {
       // on, with its mark and its unrecorded events, for the verb to say (the architect's placement
       // ruling on #1056).
       const made = madeOf(failure);
-      if (made !== undefined) return { failed: { step: at, cause: causeOf(failure), made, unrecorded: failure.unrecorded } };
+      if (made !== undefined) {
+        let unrecorded;
+        try {
+          ({ unrecorded } = failure);
+        } catch {
+          unrecorded = [{ event: 'events it could not name' }];
+        }
+        return { failed: { step: at, cause: causeOf(failure), made, unrecorded } };
+      }
       const failed = { step: at, cause: causeOf(failure) };
       try {
         sink.emitter({ layer: 'L2' }).emit('notice.failed', { hold: closer.id, ...failed });

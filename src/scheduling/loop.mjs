@@ -20,6 +20,24 @@ import { lane } from './lane.mjs';
 import { pullOrder } from './pull-order.mjs';
 import { DEFAULT_CONCURRENCY } from '../config/validate.mjs';
 
+/** The states an issue's state read answers. */
+const ISSUE_STATES = ['open', 'closed', 'none'];
+
+/**
+ * A fresh Error for `thrown`, whatever was thrown, whose message is `causeOf`'s printable line, so
+ * no caller or presenter is handed an original thrown value it may be unable to read. Where
+ * `thrown` is admission's unreadable read, its `unreadable` entries, admission's own, go with it.
+ */
+export function readableFailure(thrown) {
+  const failure = new Error(causeOf(thrown));
+  try {
+    if (Array.isArray(thrown?.unreadable)) failure.unreadable = thrown.unreadable;
+  } catch {
+    // A value that cannot be read carries nothing more.
+  }
+  return failure;
+}
+
 /**
  * The failure L3 reports for hold `id`'s notice, as its caller would otherwise answer it under a
  * closed admission's `notices`: a step L2's notice failed to take, and its cause, or a step the
@@ -28,7 +46,16 @@ import { DEFAULT_CONCURRENCY } from '../config/validate.mjs';
  */
 const noticeFailure = ({ id, step, cause, made, unrecorded }) => Object.assign(new Error(made === undefined
   ? `the notice for hold ${id} failed to ${step}: ${cause}`
-  : `the notice for hold ${id} made its step to ${step}, but the sink refused its record, so these events went unrecorded: ${(unrecorded ?? []).map(({ event }) => event).join(', ')}: ${cause}`), { notice: { id, step, cause, ...(made === undefined ? {} : { made, unrecorded }) } });
+  : `the notice for hold ${id} made its step to ${step}, but the sink refused its record, so these events went unrecorded: ${eventsOf(unrecorded)}: ${cause}`), { notice: { id, step, cause, ...(made === undefined ? {} : { made, unrecorded }) } });
+
+/** The names of the unrecorded events `unrecorded` holds, as one printable list, whatever it holds. */
+function eventsOf(unrecorded) {
+  try {
+    return (unrecorded ?? []).map((each) => causeOf(each?.event)).join(', ');
+  } catch {
+    return causeOf(unrecorded);
+  }
+}
 
 /**
  * What the loop holds over the board `config` names: N, the claims held
@@ -159,13 +186,8 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow,
       } catch (thrown) {
         // A later read that fails keeps what this trigger already did and could not record.
         const kept = [...failures, ...notices.map(noticeFailure)];
-        // The read's own failure goes in as an Error, so its caller's report can read it whatever was thrown.
-        let reason;
-        try {
-          reason = thrown instanceof Error ? thrown : new Error(causeOf(thrown));
-        } catch {
-          reason = new Error(causeOf(thrown));
-        }
+        // The read's own failure goes in fresh, so its caller's report can read it whatever was thrown.
+        const reason = readableFailure(thrown);
         throw kept.length === 0 ? thrown : Object.assign(new AggregateError([...kept, reason], `${causeOf(thrown)}, after ${kept.length} earlier failure${kept.length === 1 ? '' : 's'} of this trigger`), { cause: reason });
       }
     },
@@ -464,7 +486,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     }
     if (step.value?.closed) {
       const [opened] = await Promise.allSettled([admissionRecord.open(name, { issue: step.value.issue })]);
-      if (opened.status === 'rejected') return { ...step.value, unrecorded: opened.reason };
+      if (opened.status === 'rejected') return { ...step.value, unrecorded: readableFailure(opened.reason) };
     }
     return step.value;
   };
@@ -478,6 +500,29 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * `notices`, each failed notice as `{ id, step, cause }`, and `unrecorded`, the failure of each
    * opening whose event the sink refused, which the trigger reports whether or not admission opened.
    */
+  /**
+   * Issue `number`'s state as `board.readIssueState` answers it, tagged `ok` with the state where the
+   * read fulfilled with a state it names, and otherwise not `ok`, with a printable `failure`: the
+   * tag, never the rejected value, tells the two apart, since a read can reject with anything,
+   * undefined among it.
+   */
+  const stateOf = async (number) => {
+    let answer;
+    try {
+      answer = await board.readIssueState(number);
+    } catch (thrown) {
+      return { ok: false, failure: causeOf(thrown) };
+    }
+    let state;
+    try {
+      ({ state } = answer);
+    } catch {
+      state = undefined;
+    }
+    if (!ISSUE_STATES.includes(state)) return { ok: false, failure: `board.readIssueState answered no state: ${causeOf(answer)}` };
+    return { ok: true, read: state };
+  };
+
   const follow = async () => {
     const listed = admissionRecord.read();
     const notices = [];
@@ -486,10 +531,10 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     const states = new Map();
     for (const { kind, id, issue } of listed.closers) {
       if (kind !== 'hold' || issue === undefined) continue;
-      if (!states.has(issue)) states.set(issue, (async () => board.readIssueState(Number(issue)))().then(({ state: read }) => ({ read }), (failure) => ({ failure })));
-      const { read, failure } = await states.get(issue);
-      if (failure !== undefined) {
-        const failed = { step: `read issue #${issue}'s state`, cause: causeOf(failure) };
+      if (!states.has(issue)) states.set(issue, stateOf(Number(issue)));
+      const { ok, read, failure } = await states.get(issue);
+      if (!ok) {
+        const failed = { step: `read issue #${issue}'s state`, cause: failure };
         try {
           record('notice.failed', { hold: id, issue: Number(issue), ...failed });
           notices.push({ id, ...failed });

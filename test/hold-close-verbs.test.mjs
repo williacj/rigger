@@ -25,6 +25,7 @@ import { standInAgent } from './stub-claude.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { COLUMNS, FIELDS, PROJECT, REPO, card, consumerConfig } from './verb-consumer.mjs';
 import { judgeVerbWorld } from './judge-start-verb.mjs';
+import { once as onceVerb } from '../src/cli/once.mjs';
 
 // A bound on each run of the real bin, so one that never settles fails its test rather than the suite.
 const { 60_000: { timeout: SETTLES_WITHIN } } = BOUNDS;
@@ -484,5 +485,42 @@ test('rigger resume, wherever the config fails after the closers are removed and
     const issue = await here.reads.readIssue(7);
     assert.deepEqual([issue.state, issue.labels], ['open', ['rigger:status']], what);
     assert.deepEqual(here.fake.sent().filter((args) => ['DELETE', 'PATCH', 'POST'].includes(args[3])), [], `${what}: a forge write was made`);
+  }
+});
+
+// proves R-SCHED-23
+test('rigger once, after a made closer opening whose admission.open record was refused, then a board read throwing an Error it cannot print, still answers both and exits non-zero', async (t) => {
+  // The architect's round-7 B2 probe on #1079, through the real `once` in process, for each Error
+  // whose message no template can print, and a plain one as the control.
+  const errors = {
+    'a plain Error': () => new Error('the board read failed plainly'),
+    'an Error whose message is a Symbol': () => Object.defineProperty(new Error('x'), 'message', { value: Symbol('symbol message') }),
+    'an Error whose message getter throws': () => Object.defineProperty(new Error('x'), 'message', { get() { throw new Error('message getter refused'); } }),
+  };
+  for (const [what, hostile] of Object.entries(errors)) {
+    const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [statusIssue(7, 'a1')] });
+    assert.equal(here.gh('api', `repos/${REPO}/issues/7`, '-X', 'PATCH', '-f', 'state=closed').status, 0);
+    const stream = join(here.state, 'events.jsonl');
+    let refusing = false;
+    const send = (command, args) => {
+      const query = args[3] ?? '';
+      if (query.includes('fields(')) throw hostile();
+      const said = spawnSync(here.fake.gh, args, { encoding: 'utf8', env: gitEnvironment() });
+      if (query.includes('{ state repository { nameWithOwner } }')) {
+        // The sink refuses every append from here: the opening's record among them.
+        writeFileSync(stream, '', { flag: 'a' });
+        chmodSync(stream, 0o444);
+        refusing = true;
+      }
+      return { status: said.status, stdout: said.stdout, stderr: said.stderr, timedOut: false };
+    };
+    t.after(() => { if (refusing) chmodSync(stream, 0o644); });
+
+    const answered = await onceVerb({ target: here.target, send }).then((answer) => ({ answer }), (thrown) => ({ thrown }));
+
+    assert.equal(answered.thrown, undefined, `${what}: once threw while reporting`);
+    assert.deepEqual(here.closers(), [], `${what}: the closer was removed`);
+    assert.equal(answered.answer.code, 1, `${what}: ${answered.answer.text}`);
+    assert.match(answered.answer.text, /admission changed at hold-a1-issue-7\.json, and the sink refused its admission\.open event/, `${what}: ${answered.answer.text}`);
   }
 });

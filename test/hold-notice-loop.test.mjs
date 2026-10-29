@@ -903,3 +903,75 @@ test('a state read, or a later read of the trigger, that throws a value no templ
   assert.match(reported, /a thrown object/);
   assert.ok(outcome.error.errors.every((each) => each instanceof Error), 'every failure the caller is handed is an Error it can read');
 });
+
+/** Each hostile value a thrower or an answer can hand L3, by name (round 7 on #1079). */
+const HOSTILE = () => {
+  const cyclic = new Error('cyclic');
+  cyclic.cause = cyclic;
+  return {
+    undefined,
+    null: null,
+    'a Symbol': Symbol('hostile'),
+    'an Error': new Error('a plain failure'),
+    'an Error whose message getter throws': Object.defineProperty(new Error('x'), 'message', { get() { throw new Error('message getter refused'); } }),
+    'an Error whose message is a Symbol': Object.defineProperty(new Error('x'), 'message', { value: Symbol('symbol message') }),
+    'a Proxy throwing on every trap': new Proxy({}, Object.fromEntries(['get', 'set', 'has', 'ownKeys', 'getOwnPropertyDescriptor', 'getPrototypeOf', 'defineProperty', 'deleteProperty', 'isExtensible', 'preventExtensions', 'setPrototypeOf'].map((name) => [name, () => { throw new Error(`the proxy refused ${name}`); }]))),
+    'a frozen object': Object.freeze({ reason: 'frozen' }),
+    'an Error whose cause is itself': cyclic,
+  };
+};
+
+/** Whether every failure `error` holds, through its errors and causes, is an Error whose message reads as a string. */
+const readable = (error, seen = new Set()) => {
+  if (seen.has(error)) return true;
+  seen.add(error);
+  if (!(error instanceof Error) || typeof error.message !== 'string') return false;
+  return (error.errors ?? []).every((each) => readable(each, seen)) && (error.cause === undefined || readable(error.cause, seen));
+};
+
+// proves R-SCHED-23
+test('a state read that rejects with any value, undefined among them, or answers no state, is unreadable: the closer stays, L2 is handed nothing, and notice.failed names the issue', async () => {
+  // The reviewer's and the architect's round-7 B1 probe on #1079, over every hostile value.
+  const STATUS = 'rigger:status';
+  const rejections = Object.entries(HOSTILE()).map(([what, value]) => [`rejects with ${what}`, () => Promise.reject(value)]);
+  const answers = [['answers undefined', undefined], ['answers an empty object', {}], ['answers a state it does not name', { state: 'bogus' }], ['answers a Proxy', HOSTILE()['a Proxy throwing on every trap']]]
+    .map(([what, value]) => [what, async () => value]);
+  for (const [what, read] of [...rejections, ...answers]) {
+    const world = forge({ issues: [{ number: 12, title: 'Rigger closed admission', body: 'Hold: `a1`', author: 'rigger-bot', state: 'closed', labels: [STATUS], comments: [], timeline: [{ kind: 'labeled', createdAt: 'x', actor: 'rigger-bot', label: STATUS }, { kind: 'closed', createdAt: 'x', actor: 'williacj' }] }] });
+    const board = { ...handleOn(boardOf([])), readIssueState: read };
+    const handed = handles({ cards: [], board });
+    let calls = 0;
+    const notice = changesOver(world, handed.sink).notice;
+    handed.l2.notice = async function* counted(input) { calls += 1; return yield* notice(input); };
+    seed(handed.state, 'hold-a1-issue-12.json');
+
+    const pulled = await loop(handed).pull();
+
+    assert.deepEqual(namesIn(handed.state), ['hold-a1-issue-12.json'], what);
+    assert.equal(calls, 0, `${what}: L2 was handed a state that was never read`);
+    assert.equal(pulled.admission?.state, 'closed', what);
+    assert.equal(pulled.notices.length, 1, what);
+    assert.equal(pulled.notices[0].step, "read issue #12's state", what);
+    assert.equal(typeof pulled.notices[0].cause, 'string', what);
+    assert.ok(readEvents(handed.state).some(({ event, issue }) => event === 'notice.failed' && issue === 12), what);
+  }
+});
+
+// proves R-SCHED-23
+test('every failure the pull hands its caller after a made opening and a later read that throws any value is a fresh Error whose message reads, the opening\'s refused record among them', async () => {
+  // The reviewer's and the architect's round-7 B2 probe on #1079, over every hostile value.
+  for (const [what, value] of Object.entries(HOSTILE())) {
+    const { board } = stateBoard([], { 12: 'closed' });
+    board.readColumns = async () => { throw value; };
+    const handed = handles({ cards: [], board, notice: followingNotice({ 12: { issue: 12, closed: true } }) });
+    refusingEvents(handed, ['admission.open']);
+    seed(handed.state, 'hold-a1-issue-12.json');
+
+    const outcome = await loop(handed).pull().then((answer) => ({ answer }), (error) => ({ error }));
+
+    assert.deepEqual(namesIn(handed.state), [], what);
+    assert.ok(readable(outcome.error), `${what}: a failure handed on cannot be read`);
+    for (const each of outcome.error.errors) assert.notEqual(each, value, `${what}: the original thrown value was handed on`);
+    assert.match(messagesOf(outcome.error).join('; '), /EIO while recording admission\.open/, what);
+  }
+});
