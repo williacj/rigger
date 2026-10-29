@@ -410,15 +410,17 @@ test('rigger once and rigger run, where the state of the issue a hold\'s closer 
 
 /**
  * Each way the config can fail after `resume` has removed its closers and before it reaches L2,
- * as the text of `rigger.config.mjs`: its evaluation throws, it does not parse, its validation
- * throws rather than answering it invalid (the architect's round-5 probe on #1079, a BigInt
- * default, which validation cannot serialize), it answers invalid, and building L2's entry point
- * throws, a config that validates whose board getter throws only when `transitions.mjs` reads it.
+ * as the text of `rigger.config.mjs`: its evaluation throws, it does not parse, it is a BigInt
+ * (the architect's round-5 probe on #1079), its validation throws rather than answering it invalid,
+ * it answers invalid, and building L2's entry point throws, a config that validates whose board
+ * getter throws only when `transitions.mjs` reads it.
  */
 const FAILING_CONFIGS = {
   'its evaluation throws': [`throw new Error('the config threw as it was evaluated');\n`, /could not be read: .*the config threw as it was evaluated/],
   'it does not parse': ['export default {;\n', /could not be read: /],
-  'its validation throws': ['export default 1n;\n', /BigInt/],
+  // A BigInt default, the architect's round-5 probe, which validation now answers invalid.
+  'it is a BigInt': ['export default 1n;\n', /`rigger\.config\.mjs`: .*1n/],
+  'its validation throws': ["export default Object.defineProperty({}, 'repo', { enumerable: true, get() { throw new Error('the repo getter threw'); } });\n", /could not be used: the repo getter threw/],
   'it does not validate': ['export default { repo: 7 };\n', /`rigger\.config\.mjs`: /],
   'building L2 throws': [[
     `import settings from ${JSON.stringify(new URL('../templates/rigger.config.mjs', import.meta.url).href)};`,
