@@ -46,6 +46,7 @@ test/judge-head-live.test.mjs
 test/kill-recorded.test.mjs
 test/launchd-host.test.mjs
 test/listing-stand-in.test.mjs
+test/loop-host.test.mjs
 test/maker-dispatch.test.mjs
 test/mutation-receipt.test.mjs
 test/never-stop.test.mjs
