@@ -120,3 +120,24 @@ test('M8: makers naming an inherited role retain its provider-map refusal', () =
     ], inspect(value));
   }
 });
+
+test('M8: string maker getters retain the base provider-map answer', () => {
+  const config = structuredClone(rigger);
+  let reads = 0;
+  Object.defineProperty(config.kinds.change, 'maker', {
+    enumerable: true,
+    get() { return ++reads === 3 ? '1112-absent-role' : 'engineer'; },
+  });
+  config.kinds.change.judges[0].provider = { claude: 'codex' };
+  assert.deepEqual(answer(config), []);
+});
+
+test('M8: a coerced maker shared with a judge earns only its string twin refusals', () => {
+  for (const make of Object.values(COERCED)) {
+    const value = make('engineer');
+    const config = withMaker('change', value);
+    config.kinds.change.judges[0].role = value;
+    const expected = fromTwin(config, 'change', value);
+    assert.deepEqual(answer(config), expected, inspect(value));
+  }
+});

@@ -358,10 +358,14 @@ function readKinds(config, refusals) {
   }
   for (const [name, kind] of Object.entries(config.kinds)) {
     const where = `kinds.${name}`;
-    const declaredMaker = kind?.maker !== undefined && declaresRole(roles, kind.maker);
-    const coercedMaker = declaredMaker && typeof kind.maker !== 'string';
-    if (kind?.maker !== undefined && (!declaredMaker || coercedMaker)) {
-      refusals.push(`\`${where}.maker\` names \`${coercedMaker ? inspect(kind.maker) : written(kind.maker)}\`, which is no role the config declares`);
+    let coercedMaker = false;
+    if (kind?.maker !== undefined) {
+      const maker = kind.maker;
+      const declaredMaker = declaresRole(roles, maker);
+      coercedMaker = declaredMaker && typeof maker !== 'string';
+      if (!declaredMaker || coercedMaker) {
+        refusals.push(`\`${where}.maker\` names \`${coercedMaker ? inspect(kind.maker) : written(kind.maker)}\`, which is no role the config declares`);
+      }
     }
     readLabels(kind?.select, `${where}.select.labels`, refusals);
     if (Array.isArray(kind?.select?.labels)) {
@@ -380,7 +384,7 @@ function readKinds(config, refusals) {
     const named = kind.judges.map((entry, position) => (formed[position] ? judgeRole(entry) : undefined));
     // No judge is the maker, and no configuration removes that separation (`R-LOOP-3`). An engine
     // that could approve its own work would be a faster way to merge mistakes.
-    if (named.includes(kind.maker)) {
+    if (!coercedMaker && named.includes(kind.maker)) {
       refusals.push(`\`${where}\` names \`${written(kind.maker)}\` as both its maker and one of its judges, and no judge is the maker`);
     }
     // Each judge of a card runs in a directory named for its role, so a judge named twice would
