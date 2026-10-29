@@ -4,7 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
@@ -741,4 +741,56 @@ test('P27: where a url.<base>.pushInsteadOf in the pushing repository\'s own con
   assert.equal(tipOf(target), answer.commit);
   assert.equal(tipOf(w.origin), undefined);
   assert.equal(calls.find((call) => subcommandOf(call) === 'push').args[1], `remote.rigger-data-push.url=${target}`);
+});
+
+/** Sets the mode of the directory `root` and of every directory under it to `mode`. */
+function chmodTree(root, mode) {
+  chmodSync(root, mode);
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (entry.isDirectory()) chmodTree(join(root, entry.name), mode);
+  }
+}
+
+test('P9: where the parent is held and the first commit onto it fails on an object write, the push answers failed in git\'s words and runs no fetch and no git push', async (t) => {
+  const w = world(t);
+  const first = (await pushed(w, STREAM)).answer.commit;
+  assert.equal(gitIn(w.repository, 'cat-file', '-t', first).trim(), 'commit', 'the pushing repository lacks the parent, so this proves nothing');
+  const objects = join(w.repository, '.git', 'objects');
+  // Only the first commit onto the parent meets an object store it cannot write; every later call
+  // meets a writable one again, as where the failure clears between two calls.
+  let blocks = 0;
+  const before = (args) => {
+    chmodTree(objects, 0o755);
+    if (subcommandIn(args) === 'commit-tree' && args.includes('-p') && blocks === 0) {
+      chmodTree(objects, 0o555);
+      blocks += 1;
+    }
+  };
+  t.after(() => chmodTree(objects, 0o755));
+  let answer;
+  let calls;
+  try {
+    ({ answer, calls } = await pushed(w, Buffer.concat([STREAM, STREAM]), { before }));
+  } finally {
+    chmodTree(objects, 0o755);
+  }
+  const failing = calls.find((call) => subcommandOf(call) === 'commit-tree' && call.args.includes('-p'));
+  assert.equal(failing.result.exit, 1, `the blocked commit-tree did not fail on its write, so this proves nothing: ${failing.result.stderr}`);
+  assert.match(failing.result.stderr.toString(), /insufficient permission/);
+  assert.deepEqual(keysOf(answer), ['bytes', 'outcome', 'parent', 'reason']);
+  assert.equal(answer.outcome, 'failed', answer.reason);
+  assert.equal(answer.reason, `${failing.result.stderr}${failing.result.stdout}`.trim());
+  assert.deepEqual(subcommandsOf(calls).filter((name) => ['fetch', 'push'].includes(name)), []);
+  assert.equal(tipOf(w.origin), first);
+});
+
+test('P9: where the first commit onto a held parent fails on an object write and a commit with no parent then succeeds, the push answers failed in that commit-tree\'s words and runs no fetch and no git push', async (t) => {
+  // git 2.54.0's words and exit code where the object store refused a write (the maker's run, in
+  // the journal): an error, not a fatal, so the command exits 1.
+  const refused = 'error: insufficient permission for adding an object to repository database .git/objects\n';
+  let ontoTip = 0;
+  const steps = { 'commit-tree': (args) => (args.includes('-p') && ++ontoTip === 1 ? { exit: 1, stderr: refused } : { stdout: `${COMMIT}\n` }) };
+  const { answer, calls } = await controlled(t, { steps });
+  assert.deepEqual(answer, { outcome: 'failed', bytes: STREAM.length, parent: TIP, reason: refused.trim() });
+  assert.deepEqual(subcommandsOf(calls).filter((name) => ['fetch', 'push'].includes(name)), []);
 });

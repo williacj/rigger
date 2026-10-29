@@ -13,6 +13,12 @@ const DATA_REF = 'refs/rigger/events';
 /** The remote the push names, which exists only on the push's own command line. */
 const PUSH_REMOTE = 'rigger-data-push';
 
+/**
+ * The exit code of a `git` that died, as `commit-tree` does on a parent the store lacks, measured
+ * with git 2.54.0. A refused object write exits 1 instead.
+ */
+const MISSING_PARENT = 128;
+
 /** The message every stream commit carries. */
 const MESSAGE = 'rigger: the event stream';
 
@@ -74,10 +80,12 @@ export async function pushStream({ repository, stream, emitter, limit = PUSH_TIM
     const tree = (await needed(['mktree'], `100644 blob ${blob}\tevents.jsonl\n`)).trim();
     const committed = (onto) => git(['commit-tree', tree, ...(onto === undefined ? [] : ['-p', onto]), '-m', MESSAGE]);
     let built = await committed(parent);
-    if (built.exit !== 0 && parent !== undefined) {
+    if (built.exit === MISSING_PARENT && parent !== undefined) {
       // None of the allowed calls asks whether the store holds an object in words that do not
-      // depend on the locale, so the tip is taken as lacking where a commit with no parent can be
-      // built and one onto the tip cannot. Only then is it fetched.
+      // depend on the locale. `commit-tree` checks its parent before it writes anything and dies,
+      // exiting 128, where the store lacks it; a refused object write is an error, exiting 1. So
+      // the tip is taken as lacking only where the commit onto it died and a commit with no parent
+      // can then be built. Only then is it fetched.
       if ((await committed(undefined)).exit !== 0) throw new Ended('failed', printed(built));
       await needed(['fetch', '--no-write-fetch-head', url, parent]);
       built = await committed(parent);
