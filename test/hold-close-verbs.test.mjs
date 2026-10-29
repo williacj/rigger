@@ -328,7 +328,8 @@ test('rigger run, on a judge pair held after two compound-rule failures, opens o
  * real bin's verb there; `gh(...args)` runs the fake `gh` as a person on the forge would; and
  * `reads` are the repository reads, through the fake `gh`, of what it then holds. Where
  * `refuseState` is given, the `gh` the verb finds refuses every read of one issue's state, saying
- * what gh says of a server error, and answers every other request as the fake does.
+ * what gh says of a server error, or the `printf` format `refuseState` names, and answers every
+ * other request as the fake does.
  */
 function statusConsumer(t, { closers, issues, refuseState = false }) {
   const directory = scratch(t);
@@ -340,7 +341,8 @@ function statusConsumer(t, { closers, issues, refuseState = false }) {
   const ahead = join(directory, 'refusing');
   if (refuseState) {
     mkdirSync(ahead);
-    writeFileSync(join(ahead, 'gh'), `#!/bin/sh\ncase "$*" in *'{ state repository { nameWithOwner } }'*) printf '%s\\n' 'gh: HTTP 502: Bad Gateway (https://api.github.com/graphql)' >&2; exit 1;; esac\nexec ${JSON.stringify(fake.gh)} "$@"\n`);
+    const said = refuseState === true ? "'%s\\n' 'gh: HTTP 502: Bad Gateway (https://api.github.com/graphql)'" : `'${refuseState}\\n'`;
+    writeFileSync(join(ahead, 'gh'), `#!/bin/sh\ncase "$*" in *'{ state repository { nameWithOwner } }'*) printf ${said} >&2; exit 1;; esac\nexec ${JSON.stringify(fake.gh)} "$@"\n`);
     chmodSync(join(ahead, 'gh'), 0o755);
   }
   const state = join(realpathSync.native(target), '.rigger');
@@ -695,3 +697,18 @@ for (const [verb, what, thrown] of [
     assert.doesNotMatch(said.said, /lost on reread/);
   });
 }
+
+// proves R-SCHED-23
+test('rigger once and rigger run print a state read refused with terminal controls in what gh said with each control written as its escape', (t) => {
+  // Round 12 on #1079 (U109 rule 4): the verb that prints outside text makes it printable.
+  for (const name of ['once', 'run']) {
+    const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [statusIssue(7, 'a1')], refuseState: 'gh: HTTP 502\\033[31m forged terminal text\\302\\2332J' });
+
+    const ran = here.verb(name);
+
+    assert.equal(ran.code, 1, `${name}: ${ran.said}`);
+    assert.match(ran.err, new RegExp(`^rigger ${name}: the notice for hold a1 failed to read issue #7's state: .*HTTP 502`, 'm'), `${name}: ${ran.said}`);
+    assert.doesNotMatch(ran.err.replaceAll('\n', ''), /[\u0000-\u001f\u007f-\u009f]/, `${name}: ${ran.said}`);
+    assert.ok(ran.err.includes('\\u001b[31m forged terminal text\\u009b2J'), `${name}: ${ran.said}`);
+  }
+});

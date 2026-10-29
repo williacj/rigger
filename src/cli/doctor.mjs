@@ -672,6 +672,9 @@ const ESCAPES = { '\n': '\\n', '\r': '\\r', '\t': '\\t' };
 const printable = (text) => String(text).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g,
   (character) => ESCAPES[character] ?? `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`);
 
+/** `printable`, as `once`, `run` and `resume` print text from outside the process (U109 rule 4). */
+export { printable as outsideText };
+
 /** The words that name one closer in `doctor`'s and `plan`'s output: `closedBy`'s, its reason printable. */
 export const closerLine = (closer) => closedBy({ ...closer, reason: printable(closer.reason) });
 

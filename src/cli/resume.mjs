@@ -10,8 +10,10 @@ import { admission, admissions } from '../scheduling/admission.mjs';
 import { causeOf } from '../workflow/status-issue.mjs';
 import { columnChanges } from '../workflow/transitions.mjs';
 import { CONFIG } from './init.mjs';
-import { PACKAGE, consumerConfig, removedCloserLine, settled, unreadableAdmission } from './doctor.mjs';
+import { PACKAGE, consumerConfig, outsideText, removedCloserLine, settled, unreadableAdmission } from './doctor.mjs';
 import { STATE, recording } from './recording.mjs';
+
+
 
 /**
  * What `rigger resume` prints, and the status it exits with, in `ARCHITECTURE.md`'s order: it
@@ -44,7 +46,7 @@ async function resuming(opened, {
     return {
       text: [
         ...done.map((closer) => `rigger resume: ${removedCloserLine(closer)}`),
-        `rigger resume: ${causeOf(failure)}`,
+        `rigger resume: ${outsideText(causeOf(failure))}`,
         ...(done.length === 0 ? [] : ['rigger resume: no status issue was closed, because the removal of the closers stopped before every closer was removed']),
       ].join('\n'),
       code: 1,
@@ -59,7 +61,7 @@ async function resuming(opened, {
   // Every closer read was gone at its removal: another `resume` removed them, and closes the issue.
   if (removed.length === 0) return { text: lines.join('\n'), code: 0 };
   /** The answer where nothing after the removal reached L2: the removals made, and why no issue was closed. */
-  const unclosed = (why) => ({ text: [...lines, `rigger resume: no status issue was closed, because ${why}`].join('\n'), code: 1 });
+  const unclosed = (why) => ({ text: [...lines, `rigger resume: no status issue was closed, because ${outsideText(why)}`].join('\n'), code: 1 });
   // From the config's read to L2's entry point, any failure, an answer or a throw, is this case:
   // the closers are removed, so the answer must still name them.
   let notice;
@@ -84,14 +86,14 @@ async function resuming(opened, {
   /** The record a write the forge made for issue `number` and the sink refused, as `write` names it, or undefined. */
   const refused = (number, write) => unrecorded.find((each) => each.issue === number && each.write === write)?.why;
   /** `said`, then, where `why` names a refused record, that the sink refused it. */
-  const but = (said, why) => (why === undefined ? said : `${said}, but the sink refused its record: ${why}`);
+  const but = (said, why) => (why === undefined ? said : `${said}, but the sink refused its record: ${outsideText(why)}`);
   return {
     text: [
       ...lines,
       ...unrecorded.filter(({ write }) => write === 'label').map(({ issue, why }) => `rigger resume: ${but(`removed the status label from issue #${issue}`, why)}`),
       ...closed.map((number) => `rigger resume: ${but(`closed the status issue #${number}`, refused(number, 'close'))}`),
-      ...(unread === undefined ? [] : [`rigger resume: the read of the open issues labelled ${FIXED_LABELS.status} failed, so only the issues the closers named were closed: ${unread}`]),
-      ...left.map(({ issue, why: cause, unlabelled }) => `rigger resume: the status issue #${issue} was left open${unlabelled ? ', its status label already removed, so no later read by label finds it' : ''}: ${cause}`),
+      ...(unread === undefined ? [] : [`rigger resume: the read of the open issues labelled ${FIXED_LABELS.status} failed, so only the issues the closers named were closed: ${outsideText(unread)}`]),
+      ...left.map(({ issue, why: cause, unlabelled }) => `rigger resume: the status issue #${issue} was left open${unlabelled ? ', its status label already removed, so no later read by label finds it' : ''}: ${outsideText(cause)}`),
     ].join('\n'),
     code: left.length === 0 && unrecorded.length === 0 && unread === undefined ? 0 : 1,
   };

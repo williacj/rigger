@@ -392,3 +392,100 @@ test('resume whose admission rejects with a failure admission did not build, car
   assert.match(text, /EIO a foreign close/, text);
   assert.doesNotMatch(text, /\/forged|hold-zz/, text);
 });
+
+// Round 12 on #1079 (U109 rule 4): every line `resume` prints from text that came from outside Rigger
+// is printable, each control character written as its escape and none dropped.
+const ESCAPE = '\u001b[31m forged terminal text\u009b2J';
+
+/** `text` holds no raw control character, and holds `ESCAPE` written visibly. */
+const printed = (text) => {
+  assert.doesNotMatch(text.replaceAll('\n', ''), /[\u0000-\u001f\u007f-\u009f]/, text);
+  assert.ok(text.includes('\\u001b[31m forged terminal text\\u009b2J'), text);
+};
+
+// proves R-SCHED-24
+test('resume prints a refused read of the open issues carrying the label, whose gh answer holds terminal controls, with each control written as its escape', async () => {
+  // The reviewer's round-12 probe on #1079.
+  const here = world({
+    closers: ['hold-a1-issue-7.json'],
+    issues: [status(7, 'a1')],
+    refuse: (args) => (args[1] === 'graphql' && args[3].includes('issues(states: [OPEN]') ? refused(`HTTP 502${ESCAPE}`) : undefined),
+  });
+
+  const { text, code } = await here.run();
+
+  assert.equal(code, 1, text);
+  printed(text);
+});
+
+// proves R-SCHED-24
+test('resume prints an issue left open for a refused read whose gh answer holds terminal controls with each control written as its escape', async () => {
+  const here = world({
+    closers: ['hold-a1-issue-7.json'],
+    issues: [status(7, 'a1')],
+    refuse: (args) => (args[1] === 'graphql' && args[3].includes('issue(number: 7) { number') ? refused(`HTTP 502${ESCAPE}`) : undefined),
+  });
+
+  const { text, code } = await here.run();
+
+  assert.equal(code, 1, text);
+  assert.match(text, /the status issue #7 was left open/, text);
+  printed(text);
+});
+
+// proves R-SCHED-24
+test('resume prints a refused record of a write the forge made, whose refusal holds terminal controls, with each control written as its escape', async () => {
+  const here = world({ closers: ['hold-a1-issue-7.json'], issues: [status(7, 'a1')] });
+  const gh = statusGh({ issues: [status(7, 'a1')] });
+  const send = (command, args) => {
+    const result = gh(command, args);
+    if (rest(args, '/issues/7', 'PATCH') && result.status === 0) {
+      throw Object.assign(new Error(`the sink refused 1 L0 event: call.end went unrecorded${ESCAPE}`), { code: 'EVENT_REFUSED', result: { exit: 0, timedOut: false, stdout: result.stdout, stderr: result.stderr }, unrecorded: [{ event: 'call.end' }] });
+    }
+    return result;
+  };
+
+  const { text, code } = await here.run({ send });
+
+  assert.equal(code, 1, text);
+  assert.match(text, /closed the status issue #7, but the sink refused its record/, text);
+  printed(text);
+});
+
+// proves R-SCHED-23
+test('resume prints a config that throws text holding terminal controls with each control written as its escape, after naming the closers it removed', async () => {
+  const here = world({ closers: ['hold-a1-issue-7.json'], issues: [status(7, 'a1')], config: `throw new Error(${JSON.stringify(`the config refused${ESCAPE}`)});\n` });
+
+  const { text, code } = await here.run();
+
+  assert.equal(code, 1, text);
+  assert.match(text, /no status issue was closed, because/, text);
+  printed(text);
+});
+
+// proves R-SCHED-23
+test('resume prints a failure admission did not build, holding terminal controls, with each control written as its escape', async () => {
+  const here = world({ closers: ['hold-a1-issue-7.json'], issues: [status(7, 'a1')] });
+  const closeSync = () => { throw new Error(`EIO a foreign close${ESCAPE}`); };
+
+  const { text, code } = await here.run({ fs: { ...nodeFs, closeSync } });
+
+  assert.notEqual(code, 0, text);
+  printed(text);
+});
+
+// proves R-SCHED-24
+test('resume prints a forge refusal of an issue\'s label removal or its close, whose text holds terminal controls, with each control written as its escape', async () => {
+  for (const [what, refuse] of [
+    ['its label removal', (args) => rest(args, '/issues/7/labels/rigger%3Astatus', 'DELETE')],
+    ['its close', (args) => rest(args, '/issues/7', 'PATCH')],
+  ]) {
+    const here = world({ closers: ['hold-a1-issue-7.json'], issues: [status(7, 'a1')], refuse: (args) => (refuse(args) ? refused(`HTTP 403${ESCAPE}`) : undefined) });
+
+    const { text, code } = await here.run();
+
+    assert.equal(code, 1, `${what}: ${text}`);
+    assert.match(text, /the status issue #7 was left open/, `${what}: ${text}`);
+    printed(text);
+  }
+});
