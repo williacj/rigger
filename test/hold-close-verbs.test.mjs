@@ -586,3 +586,20 @@ test('rigger once, after a recorded closer opening, answers an AggregateError wh
   assert.equal(outcome.answer.code, 1);
   assert.match(outcome.answer.text, /HTTP 502/);
 });
+
+// proves R-SCHED-23
+test('rigger once, over an admission directory of 101 malformed entries, names every one of them and exits non-zero', async (t) => {
+  // The reviewer's round-9 probe on #1079, through the real `once`.
+  const here = statusConsumer(t, { closers: [], issues: [] });
+  const names = Array.from({ length: 101 }, (_, at) => `bad-${String(at).padStart(3, '0')}.json`);
+  for (const name of names) seedCloser(here.state, name, 'not json');
+  const send = (command, args) => {
+    const done = spawnSync(here.fake.gh, args, { encoding: 'utf8', env: gitEnvironment() });
+    return { status: done.status, stdout: done.stdout, stderr: done.stderr, timedOut: false };
+  };
+
+  const answered = await onceVerb({ target: here.target, send });
+
+  assert.equal(answered.code, 1, answered.text);
+  for (const name of names) assert.ok(answered.text.includes(name), `${name} is not named`);
+});

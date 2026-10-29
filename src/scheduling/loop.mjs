@@ -35,12 +35,16 @@ const once = (value, key) => {
   }
 };
 
+/** The longest list an array can be; a `length` past it, or no whole number, is one L3 cannot read. */
+const LONGEST = 2 ** 32 - 1;
+
 /**
- * The entries of `list`, a value L3 did not build, as a fresh array: its `length` and each index
- * read once, never through a method of its own, and at most `limit` of them. Undefined where
- * `list` is no array.
+ * The entries of `list`, a value L3 did not build, as `{ entries, missing }`: `entries` a fresh
+ * array of every entry, its `length` and each index read once, never through a method of its own;
+ * and `missing`, where `list` claims a length no array can have, a line saying its entries could
+ * not be read, so a caller says so rather than dropping them. Undefined where `list` is no array.
  */
-function entriesOf(list, limit = 100) {
+function entriesOf(list) {
   let array = false;
   try {
     array = Array.isArray(list);
@@ -49,21 +53,25 @@ function entriesOf(list, limit = 100) {
   }
   if (!array) return undefined;
   const length = once(list, 'length');
-  const count = Number.isSafeInteger(length) && length > 0 ? Math.min(length, limit) : 0;
+  if (!Number.isSafeInteger(length) || length < 0 || length > LONGEST) return { entries: [], missing: `entries L3 could not read, as the list claimed a length of ${causeOf(length)}` };
   const entries = [];
-  for (let at = 0; at < count; at += 1) entries.push(once(list, at));
-  return entries;
+  for (let at = 0; at < length; at += 1) entries.push(once(list, at));
+  return { entries };
 }
+
+/** How deep L3 follows a failure's causes and errors, which bounds a cycle of them and nothing else. */
+const DEEPEST = 16;
 
 /**
  * A snapshot of `thrown`, whatever was thrown, as a failure L3 built itself: each field a presenter
  * reads is read from `thrown` once, and the answer holds only fresh values made from those reads.
  * Its message is `causeOf`'s line; its `code` a string where `thrown`'s was; its `unreadable`
  * admission's entries as fresh `{ path, cause }` of strings; its `cause` the snapshot of
- * `thrown`'s; and, for an AggregateError, its errors the snapshots of `thrown`'s, to a bounded depth. No caller or presenter is ever handed `thrown`
+ * `thrown`'s; and, for an AggregateError, its errors the snapshots of `thrown`'s, every one, its
+ * causes and errors followed to a depth that bounds a cycle and says where it stopped. No caller or presenter is ever handed `thrown`
  * itself, or anything it holds.
  */
-export function readableFailure(thrown, depth = 0) {
+export function readableFailure(thrown, seen = new Set()) {
   let aggregate = false;
   try {
     aggregate = thrown instanceof AggregateError;
@@ -71,14 +79,28 @@ export function readableFailure(thrown, depth = 0) {
     aggregate = false;
   }
   const message = causeOf(thrown);
+  // A failure met again among its own causes or errors, or past the depth L3 follows, is said as
+  // such, so a cycle ends and nothing beneath it goes unsaid.
+  const object = thrown !== null && (typeof thrown === 'object' || typeof thrown === 'function');
+  if (object && (seen.has(thrown) || seen.size >= DEEPEST)) return new Error(`${message} (a failure met again, or nested past ${DEEPEST} levels; its causes are named above)`);
+  const within = object ? new Set([...seen, thrown]) : seen;
   const code = once(thrown, 'code');
   const unreadable = entriesOf(once(thrown, 'unreadable'));
-  const errors = aggregate && depth < 4 ? entriesOf(once(thrown, 'errors')) : undefined;
-  const cause = depth < 4 ? once(thrown, 'cause') : undefined;
-  const options = cause === undefined ? undefined : { cause: readableFailure(cause, depth + 1) };
-  const failure = errors === undefined ? new Error(message, options) : new AggregateError(errors.map((each) => readableFailure(each, depth + 1)), message, options);
+  const errors = aggregate ? entriesOf(once(thrown, 'errors')) : undefined;
+  const cause = once(thrown, 'cause');
+  const options = cause === undefined ? undefined : { cause: readableFailure(cause, within) };
+  const leaves = errors === undefined ? undefined : [
+    ...errors.entries.map((each) => readableFailure(each, within)),
+    ...(errors.missing === undefined ? [] : [new Error(`and failures it held that L3 could not read: ${errors.missing}`)]),
+  ];
+  const failure = leaves === undefined ? new Error(message, options) : new AggregateError(leaves, message, options);
   if (typeof code === 'string') failure.code = code;
-  if (unreadable !== undefined) failure.unreadable = unreadable.map((entry) => ({ path: causeOf(once(entry, 'path')), cause: causeOf(once(entry, 'cause')) }));
+  if (unreadable !== undefined) {
+    failure.unreadable = [
+      ...unreadable.entries.map((entry) => ({ path: causeOf(once(entry, 'path')), cause: causeOf(once(entry, 'cause')) })),
+      ...(unreadable.missing === undefined ? [] : [{ path: 'the rest of the admission directory', cause: unreadable.missing }]),
+    ];
+  }
   return failure;
 }
 
@@ -109,7 +131,10 @@ function noticeFailed(failed) {
   const made = once(failed, 'made');
   if (made === undefined) return { step, cause };
   const unrecorded = entriesOf(once(failed, 'unrecorded'));
-  const events = unrecorded === undefined ? [{ event: 'events it could not name' }] : unrecorded.map((each) => ({ event: causeOf(once(each, 'event')) }));
+  const events = unrecorded === undefined ? [{ event: 'events it could not name' }] : [
+    ...unrecorded.entries.map((each) => ({ event: causeOf(once(each, 'event')) })),
+    ...(unrecorded.missing === undefined ? [] : [{ event: unrecorded.missing }]),
+  ];
   let mark;
   try {
     mark = structuredClone(made);
@@ -131,8 +156,9 @@ const noticeFailure = ({ id, step, cause, made, unrecorded }) => Object.assign(n
 
 /** The names of the unrecorded events `unrecorded` holds, as one printable list, whatever it holds. */
 function eventsOf(unrecorded) {
-  const entries = entriesOf(unrecorded) ?? [];
-  return entries.map((each) => causeOf(once(each, 'event'))).join(', ');
+  const read = entriesOf(unrecorded);
+  if (read === undefined) return causeOf(unrecorded);
+  return [...read.entries.map((each) => causeOf(once(each, 'event'))), ...(read.missing === undefined ? [] : [read.missing])].join(', ');
 }
 
 /**

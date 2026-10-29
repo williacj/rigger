@@ -1229,3 +1229,80 @@ test('a refused opening record stays reported when a later notice\'s answer carr
     assert.match(safeMessages(outcome.error).join(' | '), /HTTP 502/);
   }
 });
+
+// The judges' round-9 probes on #1079: no reportable entry is ever dropped, however many there are.
+// proves R-SCHED-23
+test('a made notice comment with 101 refused records names every one of them, its final call.end among them', async () => {
+  const world = forge({ issues: [{ number: 12, title: 'Rigger closed admission', body: 'Hold: `z9`', author: 'rigger-bot', labels: ['rigger:status'], comments: [] }] });
+  const { board } = stateBoard([], { 12: 'open' });
+  const handed = handles({ cards: [], board });
+  handed.l2.notice = changesOver(world, handed.sink).notice;
+  const original = world.writes.postIssueComment;
+  const unrecorded = [...Array.from({ length: 100 }, () => ({ event: 'survivor.killed' })), { event: 'call.end' }];
+  world.writes.postIssueComment = async (...args) => {
+    await original(...args);
+    throw Object.assign(new Error('101 records refused'), { code: 'EVENT_REFUSED', made: { answer: { id: 1 } }, unrecorded });
+  };
+  seed(handed.state, 'hold-a1-issue-12.json');
+
+  const pulled = await loop(handed).pull();
+
+  assert.equal(world.issues[0].comments.length, 1);
+  assert.equal(pulled.notices[0].unrecorded.length, 101);
+  assert.match(noticeLine('once', pulled.notices[0].id, pulled.notices[0]), /call\.end/);
+});
+
+// proves R-SCHED-23
+test('an admission directory of 101 malformed entries is refused naming every one of them, the 101st among them, as once reads it', async () => {
+  const { board } = stateBoard([], {});
+  const handed = handles({ cards: [], board });
+  for (let at = 0; at < 101; at += 1) seed(handed.state, `bad-${String(at).padStart(3, '0')}.json`, 'not json');
+  const before = namesIn(handed.state);
+
+  const failure = await loop(handed).pull().then(() => assert.fail('an unreadable admission was accepted'), (error) => error);
+
+  assert.deepEqual(namesIn(handed.state), before);
+  const said = onceReads(failure);
+  for (const name of before) assert.ok(said.includes(name), `${name} is not named`);
+});
+
+// proves R-SCHED-23
+test('a rejected read whose AggregateError holds 101 failures is handed on with every leaf, the 101st among them', async () => {
+  const { board } = stateBoard([], {});
+  const errors = [...Array.from({ length: 100 }, () => new Error('earlier read failed')), new Error('last-read-failure')];
+  board.readColumns = async () => { throw new AggregateError(errors, 'all facts failed'); };
+  const handed = handles({ cards: [], board });
+
+  const failure = await loop(handed).pull().then(() => assert.fail('the rejection was accepted'), (error) => error);
+
+  assert.equal(failure.errors.length, 101);
+  assert.match(onceReads(failure), /last-read-failure/);
+});
+
+// proves R-SCHED-23
+test('a list that claims a length L3 cannot read is said so, never dropped silently: in unreadable entries, failures and refused records', async () => {
+  const lying = () => new Proxy([], { get(target, key) { return key === 'length' ? Number.MAX_SAFE_INTEGER + 2 : target[key]; } });
+  for (const [what, thrown] of [
+    ['unreadable entries', () => Object.assign(new Error('board refused'), { unreadable: lying() })],
+    ['an aggregate\'s failures', () => { const failure = new AggregateError([], 'board refused'); Object.defineProperty(failure, 'errors', { value: lying() }); return failure; }],
+  ]) {
+    const { board } = stateBoard([], {});
+    board.readColumns = async () => { throw thrown(); };
+    const handed = handles({ cards: [], board });
+    const failure = await loop(handed).pull().then(() => assert.fail('accepted'), (error) => error);
+    assert.match(onceReads(failure), /L3 could not read, as the list claimed a length of 900719925474099\d/, what);
+  }
+  const world = forge({ issues: [{ number: 12, title: 'Rigger closed admission', body: 'Hold: `z9`', author: 'rigger-bot', labels: ['rigger:status'], comments: [] }] });
+  const { board } = stateBoard([], { 12: 'open' });
+  const handed = handles({ cards: [], board });
+  handed.l2.notice = changesOver(world, handed.sink).notice;
+  const original = world.writes.postIssueComment;
+  world.writes.postIssueComment = async (...args) => {
+    await original(...args);
+    throw Object.assign(new Error('records refused'), { code: 'EVENT_REFUSED', made: { answer: { id: 1 } }, unrecorded: lying() });
+  };
+  seed(handed.state, 'hold-a1-issue-12.json');
+  const pulled = await loop(handed).pull();
+  assert.match(noticeLine('once', pulled.notices[0].id, pulled.notices[0]), /L3 could not read, as the list claimed a length of 900719925474099\d/);
+});
+
