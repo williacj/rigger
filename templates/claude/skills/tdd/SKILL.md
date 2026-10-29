@@ -153,12 +153,18 @@ broke.
 
 ## What a test declares
 
-Each test declares the requirement it proves. A tool builds `docs/derived/test-matrix.md` from
-those declarations, so the matrix is generated and never hand-edited (`D8`). A requirement the
-register gains needs a test that claims it (`D17` rule 1). A judge enforces that (`D17` rule 7),
-so expect no check to catch it for you. One
-the register already held is a counted gap, which the matrix counts and the build does not red
-on, and `D17` holds the difference and when each gap closes.
+Tests proving product requirements declare them. `docs/derived/test-matrix.md` is
+generated from declarations, never hand-edited (`D8`). New requirements need claiming tests
+(`D17` rule 1), enforced by judges (`D17` rule 7), not automated checks. Older requirements
+without claims are counted gaps, not build failures; `D17` governs when they close.
+
+A harness diagnostic may omit `// proves` only under author acceptance naming its infrastructure
+behaviour, why checked registered product requirements describe none of its assertions, and a
+bounded semantic mutation discriminating the defect. Neither its path, helper nor missing
+declaration establishes classification. Never borrow an unrelated requirement for a declaration.
+It still owes an independent oracle, meaningful red/green and guarded diagnostic mutation evidence
+under "A mutation claim"; declarations retain every proof obligation. Omission adds no
+matrix claim.
 
 A declaration is a `// proves R-GROUP-#` comment on the line directly above the test it speaks
 for, naming as many ids as that test proves, separated by commas. `npm run matrix` rebuilds the
@@ -212,8 +218,8 @@ measured with the runner and recorded in `docs/journal/2026-09-23-1638-119-matri
 
 So when you add a requirement, the test that claims it is part of the same work. Where your card
 is what makes an older requirement true, its test closes that requirement's counted gap in the
-same work (`D17` rule 6). And when you write a test, name the requirement it proves rather than
-leaving the matrix to guess.
+same work (`D17` rule 6). Name each requirement a test actually proves; the diagnostic admission
+above never reclassifies existing tests or waives those obligations.
 
 Tests do not count toward the package line budget (`ARCHITECTURE.md`, "Budgets"). That is not a
 licence to write more of them: every test costs execution time and maintenance, so each one
