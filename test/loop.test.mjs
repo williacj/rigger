@@ -1137,9 +1137,9 @@ test('from the recorded events of a concurrency 3 run over four cards, the most 
 const { 10_000: SETTLES_WITHIN } = BOUNDS;
 
 /** The first condition still missing from a timed single-pull world. */
-function targetBoundary(record, bodyStart) {
+function targetBoundary(record, bodyStart, now = () => performance.now()) {
   const { built, limit, begun } = record;
-  const elapsedMs = performance.now() - bodyStart;
+  const elapsedMs = now() - bodyStart;
   if (!built) return { phase: 'W', cell: `W-b-${limit ?? 'N'}`, world: limit ?? 'N', maker: 'not reached', elapsedMs, beforeBound: elapsedMs < SETTLES_WITHIN.timeout, lastBoundary: 'construction.start', firstMissingCondition: 'world construction end' };
   const phases = built.phaseTrace;
   const has = (name) => phases.some(({ phase }) => phase === name);
@@ -1173,6 +1173,29 @@ function targetBoundary(record, bodyStart) {
   if (pendingRelease) return answer('S4', `slot release and freed return for maker ${pendingRelease.card}`, identity(pendingRelease));
   if (!has('pull.settled')) return answer('S4', 'trigger worked-claims completion and pull settlement');
   return answer('E', has('directory.asserted') ? 'none; exact directory assertion completed' : 'exact directory assertion');
+}
+
+/** Keeps the loop target's result to fixed phase and timing fields. */
+function boundedPhaseResult(record, bodyStart, guardReport) {
+  const boundary = targetBoundary(record, bodyStart);
+  const readOperation = boundary.phase === 'Q'
+    ? ({ 'readColumns.start': 'readColumns', 'readPriority.start': 'readPriority' }[boundary.lastBoundary] ?? null)
+    : null;
+  const complete = boundary.phase === 'E' && boundary.lastBoundary === 'directory.asserted';
+  const guardBeforeInnerBound = complete ? 'not needed' : guardReport ? (guardReport.beforeBound ? 'before' : 'late') : 'absent';
+  const incompleteEvidence = complete ? 'none'
+    : !record.built ? 'world absent'
+      : guardBeforeInnerBound === 'absent' ? 'guard absent'
+        : guardBeforeInnerBound === 'late' ? 'guard late' : 'none';
+  return {
+    world: boundary.world,
+    phase: boundary.phase,
+    elapsedMs: Math.max(0, Math.min(20_000, Math.round(boundary.elapsedMs))),
+    lastBoundary: boundary.lastBoundary,
+    readOperation,
+    guardBeforeInnerBound,
+    incompleteEvidence,
+  };
 }
 
 /** A condition-based phase guard which reports only while the named progress condition is false. */
@@ -1482,17 +1505,22 @@ test('after `loop`\'s single pull returns, the state directory holds nothing but
   process.env.RIGGER_596_PHASE_ACTIVE = '1';
   t.rigger596Worlds = [];
   let finished = false;
+  let guardReport;
+  let guardRecord;
   let bodyEnd;
   const guard = diagnosticGuard({
     done: () => finished,
     snapshot: () => {
       const record = t.rigger596Worlds.find(({ built }) => !built || !built.phaseTrace.some(({ phase }) => phase === 'directory.asserted')) ?? t.rigger596Worlds.at(-1) ?? { limit: 1, begun: bodyStart };
+      guardRecord = record;
       return targetBoundary(record, bodyStart);
     },
     within: 8_000,
   }).then((report) => {
     if (!report) return;
+    guardReport = report;
     console.error(`RIGGER596_GUARD ${JSON.stringify(report)}`);
+    console.error(`RIGGER596_RESULT ${JSON.stringify(boundedPhaseResult(guardRecord, bodyStart, report))}`);
     t.rigger596ReleaseHold?.();
   });
   t.after(async () => {
@@ -1502,6 +1530,7 @@ test('after `loop`\'s single pull returns, the state directory holds nothing but
     await guard;
     for (const limit of LIMITS) {
       const record = t.rigger596Worlds.find((each) => each.limit === limit);
+      console.error(`RIGGER596_RESULT ${JSON.stringify(boundedPhaseResult(record ?? { limit, built: null }, bodyStart, guardReport))}`);
       if (!record) {
         console.error(`RIGGER596_TRACE ${JSON.stringify({ limit: limit ?? 'N', bodyStart, deadline, construction: 'not reached', pull: 'not reached', laterPhases: 'not reached' })}`);
         continue;
@@ -1530,6 +1559,78 @@ test('after `loop`\'s single pull returns, the state directory holds nothing but
     built.phaseTrace.push({ phase: 'directory.asserted', at: performance.now(), files: readdirSync(built.directory, { recursive: true }) });
   }
   bodyEnd = performance.now();
+});
+
+test('a target boundary uses its supplied clock on both sides of the single-pull deadline', () => {
+  const record = { built: null, limit: undefined };
+  const before = targetBoundary(record, 100, () => 10_099);
+  const atBound = targetBoundary(record, 100, () => 10_100);
+  const after = targetBoundary(record, 100, () => 10_101);
+
+  assert.equal(before.elapsedMs, 9_999);
+  assert.equal(before.beforeBound, true);
+  assert.equal(atBound.elapsedMs, 10_000);
+  assert.equal(atBound.beforeBound, false);
+  assert.equal(after.elapsedMs, 10_001);
+  assert.equal(after.beforeBound, false);
+});
+
+/** Reads terminal world results while preserving interim reports for the child diagnostic. */
+function completedWorldResults(output) {
+  const results = output.split('\n').filter((line) => line.includes('RIGGER596_RESULT '))
+    .map((line) => JSON.parse(line.slice(line.indexOf('RIGGER596_RESULT ') + 'RIGGER596_RESULT '.length)))
+    .filter(({ phase, lastBoundary }) => phase === 'E' && lastBoundary === 'directory.asserted');
+  assert.equal(results.length, 2, 'one bounded result per completed world');
+  assert.deepEqual(results.map(({ world }) => world), [1, 'N'], 'one completed result for each expected world');
+  return results;
+}
+
+test('a completed single-pull target reports bounded results for both worlds', { timeout: 20_000 }, () => {
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  const targetName = "after `loop`'s single pull returns, the state directory holds nothing but the event stream";
+  const target = spawnSync(process.execPath, [
+    '--test',
+    `--test-name-pattern=^${targetName}$`,
+    decodeURIComponent(new URL(import.meta.url).pathname),
+  ], { env, encoding: 'utf8', timeout: 18_000 });
+  const output = `${target.stdout ?? ''}\n${target.stderr ?? ''}`;
+  assert.equal(target.status, 0, `ordinary target exited ${target.status}; signal ${target.signal ?? 'none'}; error ${target.error?.code ?? 'none'}`);
+  const results = completedWorldResults(output);
+  assert.deepEqual(results.map(({ world, phase, lastBoundary, guardBeforeInnerBound, incompleteEvidence }) =>
+    ({ world, phase, lastBoundary, guardBeforeInnerBound, incompleteEvidence })), [
+    { world: 1, phase: 'E', lastBoundary: 'directory.asserted', guardBeforeInnerBound: 'not needed', incompleteEvidence: 'none' },
+    { world: 'N', phase: 'E', lastBoundary: 'directory.asserted', guardBeforeInnerBound: 'not needed', incompleteEvidence: 'none' },
+  ]);
+  for (const result of results) {
+    assert.deepEqual(Object.keys(result).sort(), ['elapsedMs', 'guardBeforeInnerBound', 'incompleteEvidence', 'lastBoundary', 'phase', 'readOperation', 'world'].sort());
+    assert.equal(result.readOperation, null);
+    assert.ok(Number.isFinite(result.elapsedMs) && result.elapsedMs >= 0 && result.elapsedMs < SETTLES_WITHIN.timeout);
+  }
+});
+
+test('completed-world evidence excludes an earlier interim guard result', () => {
+  // The literal schedule is an interim read report followed by both asserted directories.
+  const output = `# RIGGER596_RESULT {"world":"N","phase":"Q","elapsedMs":8001,"lastBoundary":"readColumns.start","readOperation":"readColumns","guardBeforeInnerBound":"before","incompleteEvidence":"none"}
+# RIGGER596_RESULT {"world":1,"phase":"E","elapsedMs":8500,"lastBoundary":"directory.asserted","readOperation":null,"guardBeforeInnerBound":"not needed","incompleteEvidence":"none"}
+# RIGGER596_RESULT {"world":"N","phase":"E","elapsedMs":9000,"lastBoundary":"directory.asserted","readOperation":null,"guardBeforeInnerBound":"not needed","incompleteEvidence":"none"}`;
+
+  assert.deepEqual(completedWorldResults(output), [
+    { world: 1, phase: 'E', elapsedMs: 8500, lastBoundary: 'directory.asserted', readOperation: null, guardBeforeInnerBound: 'not needed', incompleteEvidence: 'none' },
+    { world: 'N', phase: 'E', elapsedMs: 9000, lastBoundary: 'directory.asserted', readOperation: null, guardBeforeInnerBound: 'not needed', incompleteEvidence: 'none' },
+  ]);
+});
+
+test('completed-world evidence rejects missing, duplicate and unfinished worlds', () => {
+  // Independent terminal identities are the target's literal two limit cases, 1 and N.
+  const first = '# RIGGER596_RESULT {"world":1,"phase":"E","elapsedMs":8500,"lastBoundary":"directory.asserted","readOperation":null,"guardBeforeInnerBound":"not needed","incompleteEvidence":"none"}';
+  const second = '# RIGGER596_RESULT {"world":"N","phase":"E","elapsedMs":9000,"lastBoundary":"directory.asserted","readOperation":null,"guardBeforeInnerBound":"not needed","incompleteEvidence":"none"}';
+  const pending = '# RIGGER596_RESULT {"world":"N","phase":"Q","elapsedMs":8001,"lastBoundary":"readColumns.start","readOperation":"readColumns","guardBeforeInnerBound":"before","incompleteEvidence":"none"}';
+
+  assert.throws(() => completedWorldResults(first), /one bounded result per completed world/, 'missing terminal');
+  assert.throws(() => completedWorldResults(`${first}\n${first}`), /one completed result for each expected world/, 'duplicate first world cannot replace the second');
+  assert.throws(() => completedWorldResults(`${first}\n${second}\n${second}`), /one bounded result per completed world/, 'extra duplicate terminal');
+  assert.throws(() => completedWorldResults(`${first}\n${pending}`), /one bounded result per completed world/, 'a pending world is not completed');
 });
 
 test('a loop world records its stand-in warm before the pull can begin', () => {
@@ -1572,9 +1673,108 @@ test('a held pre-claim read reports the missing Q boundary before the single-pul
   }
 });
 
+/** Classifies a nested target from its process result and bounded phase records. */
+function childOutcome(child, output = '') {
+  const records = [];
+  for (const line of output.split('\n')) {
+    const at = line.indexOf('RIGGER596_RESULT ');
+    if (at < 0) continue;
+    try {
+      const record = JSON.parse(line.slice(at + 'RIGGER596_RESULT '.length));
+      if (['W', 'Q', 'D', 'H', 'P', 'S2', 'S4', 'E'].includes(record.phase)
+          && ['before', 'late', 'absent', 'not needed'].includes(record.guardBeforeInnerBound)
+          && ['none', 'world absent', 'guard absent', 'guard late'].includes(record.incompleteEvidence)) records.push(record);
+    } catch { /* An incomplete child record is absent evidence. */ }
+  }
+  const observed = records.findLast(({ phase, guardBeforeInnerBound }) => phase !== 'E' && guardBeforeInnerBound !== 'not needed')
+    ?? records.at(-1);
+  const errorCode = child.error?.code ?? null;
+  const kind = errorCode === 'ETIMEDOUT' ? 'parent timeout'
+    : errorCode ? 'launch error'
+      : child.signal ? 'signal'
+        : child.status !== 0 && output.includes('test timed out after 10000ms') ? 'inner target timeout'
+          : child.status !== 0 ? 'nonzero exit' : 'exited zero';
+  return {
+    kind,
+    status: child.status ?? null,
+    errorCode,
+    signal: child.signal ?? null,
+    phase: observed?.phase ?? null,
+    guardBeforeInnerBound: observed?.guardBeforeInnerBound ?? 'absent',
+    incompleteEvidence: observed?.incompleteEvidence ?? 'phase and guard absent',
+  };
+}
+
+/** Reads only the actual recorded stand-in identities from the target's two TRACE worlds. */
+function recordedStandInPids(output) {
+  const lines = output.split('\n').filter((line) => line.includes('RIGGER596_TRACE '));
+  assert.equal(lines.length, 2, 'recorded stand-in provenance needs both worlds exactly once');
+  let traces;
+  try {
+    traces = lines.map((line) => JSON.parse(line.slice(line.indexOf('RIGGER596_TRACE ') + 'RIGGER596_TRACE '.length)));
+  } catch {
+    assert.fail('recorded stand-in provenance contains malformed JSON');
+  }
+  assert.ok(traces.every((trace) => trace !== null && typeof trace === 'object' && !Array.isArray(trace)), 'recorded stand-in provenance needs trace objects');
+  assert.deepEqual(traces.map(({ limit }) => limit === undefined ? 'N' : limit), [1, 'N'], 'recorded stand-in provenance needs both distinct worlds');
+  const pids = [];
+  for (const trace of traces) {
+    assert.ok(Array.isArray(trace.runs) && trace.runs.length > 0, 'recorded stand-in provenance needs a nonempty run record per world');
+    for (const run of trace.runs) {
+      assert.ok(run !== null && typeof run === 'object' && Number.isSafeInteger(run.pid) && run.pid > 0, 'recorded stand-in provenance needs positive integer PIDs');
+      pids.push(run.pid);
+    }
+  }
+  assert.equal(new Set(pids).size, pids.length, 'recorded stand-in provenance contains duplicate PIDs');
+  return pids;
+}
+
+/** Observes each proven run identity without treating a live or refused probe as absence. */
+function recordedStandInAbsence(output, probe = (pid, signal) => process.kill(pid, signal)) {
+  return recordedStandInPids(output).map((pid) => {
+    try {
+      probe(pid, 0);
+      return { pid, state: 'present' };
+    } catch (error) {
+      return { pid, state: error?.code === 'ESRCH' ? 'absent' : 'unknown' };
+    }
+  });
+}
+
+/** Retains only this held child's separate returned bytes and private observation record. */
+function heldChildCustody(prefix, child) {
+  if (prefix === undefined) return () => {};
+  assert.ok(typeof prefix === 'string' && prefix.startsWith('/') && !prefix.includes('\0'), 'held-child custody prefix refused');
+  const privateCreate = { flag: 'wx', mode: 0o600 };
+  try {
+    for (const stream of ['stdout', 'stderr']) {
+      if (Buffer.isBuffer(child[stream])) fs.writeFileSync(`${prefix}.${stream}.original`, child[stream], privateCreate);
+    }
+  } catch (error) {
+    throw Object.assign(new Error('held-child custody refused'), { code: error.code });
+  }
+  return (observation) => {
+    const retained = {
+      child: { status: child.status ?? null, errorCode: child.error?.code ?? null, signal: child.signal ?? null },
+      streams: {
+        stdout: Buffer.isBuffer(child.stdout) ? 'buffer' : child.stdout == null ? 'missing' : 'non-buffer',
+        stderr: Buffer.isBuffer(child.stderr) ? 'buffer' : child.stderr == null ? 'missing' : 'non-buffer',
+      },
+      observation,
+    };
+    try {
+      fs.writeFileSync(`${prefix}.absence-observation.json`, JSON.stringify(retained), privateCreate);
+    } catch (error) {
+      throw Object.assign(new Error('held-child custody refused'), { code: error.code });
+    }
+  };
+}
+
 test('the target guard reports a held second-world board read before its shared bound', { timeout: 20_000 }, () => {
+  const custodyPrefix = process.env.RIGGER1099_PRIVATE_EVIDENCE_PREFIX;
   const env = { ...process.env, RIGGER_596_TARGET_HOLD: 'second' };
   delete env.NODE_TEST_CONTEXT;
+  delete env.RIGGER1099_PRIVATE_EVIDENCE_PREFIX;
   const targetName = "after `loop`'s single pull returns, the state directory holds nothing but the event stream";
   const target = spawnSync(process.execPath, [
     '--test',
@@ -1582,12 +1782,39 @@ test('the target guard reports a held second-world board read before its shared 
     decodeURIComponent(new URL(import.meta.url).pathname),
   ], {
     env,
-    encoding: 'utf8',
+    encoding: 'buffer',
     timeout: 18_000,
   });
+  const finishCustody = heldChildCustody(custodyPrefix, target);
   const output = `${target.stdout ?? ''}\n${target.stderr ?? ''}`;
+  const child = childOutcome(target, output);
+  console.error(`RIGGER596_CHILD ${JSON.stringify(child)}`);
+  const probes = [];
+  let observations;
+  try {
+    observations = recordedStandInAbsence(output, (pid, signal) => {
+      try {
+        const answer = process.kill(pid, signal);
+        probes.push({ pid, signal, result: 'returned', errorCode: null });
+        return answer;
+      } catch (error) {
+        probes.push({ pid, signal, result: 'threw', errorCode: typeof error?.code === 'string' ? error.code : null });
+        throw error;
+      }
+    });
+  } finally {
+    finishCustody({
+      provenance: observations === undefined ? null : { worlds: 2, runs: observations.length, pids: observations.map(({ pid }) => pid) },
+      observations: observations ?? null,
+      probes,
+    });
+  }
+  assert.ok(Buffer.isBuffer(target.stdout) && Buffer.isBuffer(target.stderr), 'held target capture needs both original Buffer streams');
+  assert.equal(target.error === undefined, true, 'held target must return without a launch or capture error');
+  assert.equal(target.signal, null, 'held target must return without a terminating signal');
+  assert.ok(observations.every(({ state }) => state === 'absent'), 'each recorded stand-in must be absent after child exit');
   const guardLine = output.split('\n').find((line) => line.includes('RIGGER596_GUARD '));
-  assert.ok(guardLine, `the target guard did not report its hold: ${output.slice(-2000)}`);
+  assert.ok(guardLine, JSON.stringify(child));
   const report = JSON.parse(guardLine.slice(guardLine.indexOf('RIGGER596_GUARD ') + 'RIGGER596_GUARD '.length));
   assert.equal(report.phase, 'Q');
   assert.equal(report.world, 'N');
@@ -1596,8 +1823,231 @@ test('the target guard reports a held second-world board read before its shared 
   assert.match(report.firstMissingCondition, /readColumns completion and first claim/);
   assert.ok(report.elapsedMs >= 8_000 && report.elapsedMs < SETTLES_WITHIN.timeout, `guard elapsed ${report.elapsedMs} ms`);
   assert.equal(report.beforeBound, true);
-  assert.equal(target.status, 0, output.slice(-4000));
+  const results = output.split('\n').filter((line) => line.includes('RIGGER596_RESULT '))
+    .map((line) => JSON.parse(line.slice(line.indexOf('RIGGER596_RESULT ') + 'RIGGER596_RESULT '.length)));
+  const heldWorld = results.find(({ world }) => world === 'N');
+  assert.deepEqual(heldWorld && {
+    world: heldWorld.world,
+    phase: heldWorld.phase,
+    lastBoundary: heldWorld.lastBoundary,
+    readOperation: heldWorld.readOperation,
+    guardBeforeInnerBound: heldWorld.guardBeforeInnerBound,
+    incompleteEvidence: heldWorld.incompleteEvidence,
+  }, {
+    world: 'N',
+    phase: 'Q',
+    lastBoundary: 'readColumns.start',
+    readOperation: 'readColumns',
+    guardBeforeInnerBound: 'before',
+    incompleteEvidence: 'none',
+  });
+  assert.equal(target.status, 0, JSON.stringify(child));
   console.error(`RIGGER596_TARGET_CONTROL ${JSON.stringify(report)}`);
+});
+
+test('recorded stand-in provenance requires two distinct nonempty worlds and unique valid PIDs', () => {
+  // TRACE uses limit:1 for the first world and omits its undefined limit for the second.
+  // stub-claude records process.pid in runs.jsonl; these controlled values are never probed.
+  const first = '# RIGGER596_TRACE {"limit":1,"runs":[{"card":1,"role":"engineer","pid":101}]}';
+  const second = '# RIGGER596_TRACE {"runs":[{"card":1,"role":"engineer","pid":202}]}';
+  assert.doesNotThrow(() => {
+    assert.deepEqual(recordedStandInPids(`${first}\n${second}`), [101, 202]);
+  }, 'complete two-world provenance is read before any absence probe');
+
+  const refused = [
+    '', first, `${first}\n${first}`, `${first}\n${second}\n${second}`,
+    `${first}\n# RIGGER596_TRACE {"runs":[]}`,
+    `${first}\n# RIGGER596_TRACE {}`,
+    `${first}\n# RIGGER596_TRACE {"runs":[{"pid":"202"}]}`,
+    `${first}\n# RIGGER596_TRACE {"runs":[{"pid":0}]}`,
+    `${first}\n# RIGGER596_TRACE {"runs":[{"pid":1.5}]}`,
+    `${first}\n# RIGGER596_TRACE {"runs":[{"pid":101}]}`,
+    `${first}\n# RIGGER596_TRACE {"limit":null,"runs":[{"pid":202}]}`,
+    `${first}\n# RIGGER596_TRACE {"runs":[{"pid":202},{"pid":202}]}`,
+    `${first}\n# RIGGER596_TRACE {`,
+  ];
+  for (const output of refused) assert.throws(() => recordedStandInPids(output), /recorded stand-in provenance/, 'missing, malformed or duplicate evidence earns no absence credit');
+});
+
+test('recorded stand-in absence credits only ESRCH and never probes refused provenance', () => {
+  // Node26 process.kill(pid, 0) observes existence without delivering a signal:
+  // https://raw.githubusercontent.com/nodejs/node/v26.0.0/doc/api/process.md#processkillpid-signal
+  const output = '# RIGGER596_TRACE {"limit":1,"runs":[{"pid":101}]}\n# RIGGER596_TRACE {"runs":[{"pid":202}]}';
+  const cases = [
+    [() => { throw Object.assign(new Error('absent'), { code: 'ESRCH' }); }, 'absent'],
+    [() => true, 'present'],
+    [() => { throw Object.assign(new Error('denied'), { code: 'EPERM' }); }, 'unknown'],
+    [() => { throw Object.assign(new Error('unclassified'), { code: 'EIO' }); }, 'unknown'],
+    [() => { throw new Error('no code'); }, 'unknown'],
+  ];
+  for (const [probe, expected] of cases) {
+    const calls = [];
+    assert.doesNotThrow(() => {
+      const observed = recordedStandInAbsence(output, (pid, signal) => { calls.push([pid, signal]); return probe(); });
+      assert.deepEqual(observed, [{ pid: 101, state: expected }, { pid: 202, state: expected }]);
+    }, 'a probe result retains the closed absence classification');
+    assert.deepEqual(calls, [[101, 0], [202, 0]], 'only signal zero observes each recorded PID');
+  }
+  let probed = false;
+  assert.throws(() => recordedStandInAbsence('', () => { probed = true; }), /recorded stand-in provenance/);
+  assert.equal(probed, false, 'invalid provenance must stop before the first OS observation');
+});
+
+test('held-child custody preserves separate original buffers before retaining private observations', () => {
+  const directory = temporaryDirectory('rigger-loop-custody-');
+  const prefix = `${directory}/held`;
+  const child = {
+    status: 0, error: undefined, signal: null,
+    stdout: Buffer.from([0, 255, 10]), stderr: Buffer.from([254, 13, 10]),
+  };
+  let finish;
+  assert.doesNotThrow(() => { finish = heldChildCustody(prefix, child); }, 'the held-child sink accepts a prepared exclusive fixture prefix');
+  assert.deepEqual([...fs.readFileSync(`${prefix}.stdout.original`)], [0, 255, 10]);
+  assert.deepEqual([...fs.readFileSync(`${prefix}.stderr.original`)], [254, 13, 10]);
+  assert.equal(fs.existsSync(`${prefix}.absence-observation.json`), false, 'stream originals precede observation publication');
+  assert.equal(fs.statSync(`${prefix}.stdout.original`).mode & 0o777, 0o600);
+  assert.equal(fs.statSync(`${prefix}.stderr.original`).mode & 0o777, 0o600);
+
+  finish({
+    provenance: { worlds: 2, pids: [101, 202] },
+    observations: [{ pid: 101, state: 'absent' }, { pid: 202, state: 'unknown' }],
+    probes: [{ pid: 101, signal: 0, result: 'threw', errorCode: 'ESRCH' }, { pid: 202, signal: 0, result: 'threw', errorCode: 'EPERM' }],
+  });
+  const retained = JSON.parse(fs.readFileSync(`${prefix}.absence-observation.json`, 'utf8'));
+  assert.deepEqual(retained, {
+    child: { status: 0, errorCode: null, signal: null },
+    streams: { stdout: 'buffer', stderr: 'buffer' },
+    observation: {
+      provenance: { worlds: 2, pids: [101, 202] },
+      observations: [{ pid: 101, state: 'absent' }, { pid: 202, state: 'unknown' }],
+      probes: [{ pid: 101, signal: 0, result: 'threw', errorCode: 'ESRCH' }, { pid: 202, signal: 0, result: 'threw', errorCode: 'EPERM' }],
+    },
+  });
+  assert.equal(fs.statSync(`${prefix}.absence-observation.json`).mode & 0o777, 0o600);
+});
+
+test('an unset held-child custody prefix performs no filesystem write', () => {
+  const originalWrite = fs.writeFileSync;
+  let writes = 0;
+  fs.writeFileSync = () => { writes += 1; throw new Error('unexpected custody write'); };
+  try {
+    let finish;
+    assert.doesNotThrow(() => {
+      finish = heldChildCustody(undefined, { status: 0, error: undefined, signal: null, stdout: Buffer.from([1]), stderr: Buffer.from([2]) });
+      finish({ provenance: null, observations: null, probes: [] });
+    }, 'an unset optional sink preserves ordinary held-control behavior');
+    assert.equal(writes, 0, 'unset custody never chooses an implicit destination');
+  } finally {
+    fs.writeFileSync = originalWrite;
+  }
+});
+
+test('held-child custody refuses malformed or unavailable destinations and preserves existing originals', () => {
+  const child = { status: 0, error: undefined, signal: null, stdout: Buffer.from([1, 255]), stderr: Buffer.from([2, 254]) };
+  const originalWrite = fs.writeFileSync;
+  let writes = 0;
+  fs.writeFileSync = () => { writes += 1; throw new Error('unexpected malformed-prefix write'); };
+  try {
+    for (const prefix of ['', 'relative', '/invalid\0prefix', null, 4]) {
+      assert.throws(() => heldChildCustody(prefix, child), /held-child custody prefix refused/);
+    }
+    assert.equal(writes, 0, 'malformed destination refuses before any filesystem write');
+  } finally {
+    fs.writeFileSync = originalWrite;
+  }
+
+  const directory = temporaryDirectory('rigger-loop-custody-refusal-');
+  const used = `${directory}/used`;
+  fs.writeFileSync(`${used}.stdout.original`, Buffer.from([9]));
+  assert.throws(() => heldChildCustody(used, child), { message: 'held-child custody refused', code: 'EEXIST' });
+  assert.deepEqual([...fs.readFileSync(`${used}.stdout.original`)], [9]);
+  assert.equal(fs.existsSync(`${used}.stderr.original`), false);
+  assert.equal(fs.existsSync(`${used}.absence-observation.json`), false);
+
+  const unavailable = `${directory}/missing/held`;
+  assert.throws(() => heldChildCustody(unavailable, child), { message: 'held-child custody refused', code: 'ENOENT' });
+  assert.equal(fs.existsSync(`${directory}/missing`), false, 'custody never creates the missing parent');
+
+  const later = `${directory}/later`;
+  fs.writeFileSync(`${later}.stderr.original`, Buffer.from([8]));
+  assert.throws(() => heldChildCustody(later, child), { message: 'held-child custody refused', code: 'EEXIST' });
+  assert.deepEqual([...fs.readFileSync(`${later}.stdout.original`)], [1, 255], 'earlier newly created original survives later write refusal');
+  assert.deepEqual([...fs.readFileSync(`${later}.stderr.original`)], [8], 'existing later original is untouched');
+  assert.equal(fs.existsSync(`${later}.absence-observation.json`), false);
+
+  const final = `${directory}/final`;
+  fs.writeFileSync(`${final}.absence-observation.json`, '{"prior":true}');
+  const finish = heldChildCustody(final, child);
+  assert.throws(() => finish({ provenance: null, observations: null, probes: [] }), { message: 'held-child custody refused', code: 'EEXIST' });
+  assert.deepEqual([...fs.readFileSync(`${final}.stdout.original`)], [1, 255]);
+  assert.deepEqual([...fs.readFileSync(`${final}.stderr.original`)], [2, 254]);
+  assert.equal(fs.readFileSync(`${final}.absence-observation.json`, 'utf8'), '{"prior":true}', 'a used final record is never replaced');
+});
+
+test('held-child custody marks partial or decoded capture without inventing stream originals', () => {
+  const directory = temporaryDirectory('rigger-loop-custody-partial-');
+  const prefix = `${directory}/partial`;
+  const finish = heldChildCustody(prefix, {
+    status: null, error: { code: 'ETIMEDOUT' }, signal: 'SIGTERM', stdout: Buffer.from([1, 255]), stderr: null,
+  });
+  finish({ provenance: null, observations: null, probes: [] });
+  assert.deepEqual([...fs.readFileSync(`${prefix}.stdout.original`)], [1, 255]);
+  assert.equal(fs.existsSync(`${prefix}.stderr.original`), false, 'missing stream is not relabelled as an empty original');
+  assert.deepEqual(JSON.parse(fs.readFileSync(`${prefix}.absence-observation.json`, 'utf8')), {
+    child: { status: null, errorCode: 'ETIMEDOUT', signal: 'SIGTERM' },
+    streams: { stdout: 'buffer', stderr: 'missing' },
+    observation: { provenance: null, observations: null, probes: [] },
+  });
+
+  const decoded = `${directory}/decoded`;
+  const finishDecoded = heldChildCustody(decoded, { status: 0, error: undefined, signal: null, stdout: 'previously decoded', stderr: Buffer.from([2]) });
+  finishDecoded({ provenance: null, observations: null, probes: [] });
+  assert.equal(fs.existsSync(`${decoded}.stdout.original`), false, 'decoded text cannot become a raw-byte original');
+  assert.deepEqual([...fs.readFileSync(`${decoded}.stderr.original`)], [2]);
+  const retained = JSON.parse(fs.readFileSync(`${decoded}.absence-observation.json`, 'utf8'));
+  assert.deepEqual(retained.streams, { stdout: 'non-buffer', stderr: 'buffer' });
+  assert.deepEqual(retained.observation, { provenance: null, observations: null, probes: [] });
+});
+
+test('a nested child outcome keeps launch, exit, signal and parent timeout separate from absent phase evidence', () => {
+  const cases = [
+    [{ status: null, error: { code: 'ENOENT' }, signal: null }, 'launch error', null, 'ENOENT', null],
+    [{ status: 3, error: undefined, signal: null }, 'nonzero exit', 3, null, null],
+    [{ status: null, error: undefined, signal: 'SIGKILL' }, 'signal', null, null, 'SIGKILL'],
+    [{ status: null, error: { code: 'ETIMEDOUT' }, signal: 'SIGTERM' }, 'parent timeout', null, 'ETIMEDOUT', 'SIGTERM'],
+  ];
+  for (const [child, kind, status, errorCode, signal] of cases) {
+    assert.deepEqual(childOutcome(child, ''), {
+      kind, status, errorCode, signal,
+      phase: null,
+      guardBeforeInnerBound: 'absent',
+      incompleteEvidence: 'phase and guard absent',
+    });
+  }
+});
+
+test('a child outcome uses a bounded observed Q record and distinguishes an inner target timeout', () => {
+  const record = '# RIGGER596_RESULT {"world":"N","phase":"Q","elapsedMs":8001,"lastBoundary":"readColumns.start","readOperation":"readColumns","guardBeforeInnerBound":"before","incompleteEvidence":"none"}';
+  const observed = childOutcome({ status: 0, error: undefined, signal: null }, record);
+  assert.equal(observed.kind, 'exited zero');
+  assert.equal(observed.phase, 'Q');
+  assert.equal(observed.guardBeforeInnerBound, 'before');
+  assert.equal(observed.incompleteEvidence, 'none');
+
+  const timedOut = childOutcome({ status: 1, error: undefined, signal: null }, `${record}\ntest timed out after 10000ms`);
+  assert.equal(timedOut.kind, 'inner target timeout');
+  assert.equal(timedOut.phase, 'Q');
+  const unrelatedExit = childOutcome({ status: 1, error: undefined, signal: null }, record);
+  assert.equal(unrelatedExit.kind, 'nonzero exit');
+});
+
+test('a child outcome ignores unrecognized phase payload fields rather than publishing them', () => {
+  const output = '# RIGGER596_RESULT {"world":"N","phase":"Q","elapsedMs":8001,"lastBoundary":"readColumns.start","readOperation":"readColumns","guardBeforeInnerBound":"before","incompleteEvidence":"private-payload"}';
+  const result = childOutcome({ status: null, error: { code: 'ETIMEDOUT' }, signal: 'SIGTERM' }, output);
+  assert.equal(result.kind, 'parent timeout');
+  assert.equal(result.phase, null);
+  assert.equal(result.guardBeforeInnerBound, 'absent');
+  assert.equal(result.incompleteEvidence, 'phase and guard absent');
 });
 
 test('given four pullable cards and every maker stand-in held, `loop`\'s single pull hands three cards to the maker stand-in, and no drain event exists while they are held', SETTLES_WITHIN, async (t) => {
