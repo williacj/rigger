@@ -1136,9 +1136,9 @@ test('from the recorded events of a concurrency 3 run over four cards, the most 
 const { 10_000: SETTLES_WITHIN } = BOUNDS;
 
 /** The first condition still missing from a timed single-pull world. */
-function targetBoundary(record, bodyStart) {
+function targetBoundary(record, bodyStart, now = () => performance.now()) {
   const { built, limit, begun } = record;
-  const elapsedMs = performance.now() - bodyStart;
+  const elapsedMs = now() - bodyStart;
   if (!built) return { phase: 'W', cell: `W-b-${limit ?? 'N'}`, world: limit ?? 'N', maker: 'not reached', elapsedMs, beforeBound: elapsedMs < SETTLES_WITHIN.timeout, lastBoundary: 'construction.start', firstMissingCondition: 'world construction end' };
   const phases = built.phaseTrace;
   const has = (name) => phases.some(({ phase }) => phase === name);
@@ -1172,6 +1172,29 @@ function targetBoundary(record, bodyStart) {
   if (pendingRelease) return answer('S4', `slot release and freed return for maker ${pendingRelease.card}`, identity(pendingRelease));
   if (!has('pull.settled')) return answer('S4', 'trigger worked-claims completion and pull settlement');
   return answer('E', has('directory.asserted') ? 'none; exact directory assertion completed' : 'exact directory assertion');
+}
+
+/** Keeps the loop target's result to fixed phase and timing fields. */
+function boundedPhaseResult(record, bodyStart, guardReport) {
+  const boundary = targetBoundary(record, bodyStart);
+  const readOperation = boundary.phase === 'Q'
+    ? ({ 'readColumns.start': 'readColumns', 'readPriority.start': 'readPriority' }[boundary.lastBoundary] ?? null)
+    : null;
+  const complete = boundary.phase === 'E' && boundary.lastBoundary === 'directory.asserted';
+  const guardBeforeInnerBound = complete ? 'not needed' : guardReport ? (guardReport.beforeBound ? 'before' : 'late') : 'absent';
+  const incompleteEvidence = complete ? 'none'
+    : !record.built ? 'world absent'
+      : guardBeforeInnerBound === 'absent' ? 'guard absent'
+        : guardBeforeInnerBound === 'late' ? 'guard late' : 'none';
+  return {
+    world: boundary.world,
+    phase: boundary.phase,
+    elapsedMs: Math.max(0, Math.min(20_000, Math.round(boundary.elapsedMs))),
+    lastBoundary: boundary.lastBoundary,
+    readOperation,
+    guardBeforeInnerBound,
+    incompleteEvidence,
+  };
 }
 
 /** A condition-based phase guard which reports only while the named progress condition is false. */
@@ -1481,17 +1504,22 @@ test('after `loop`\'s single pull returns, the state directory holds nothing but
   process.env.RIGGER_596_PHASE_ACTIVE = '1';
   t.rigger596Worlds = [];
   let finished = false;
+  let guardReport;
+  let guardRecord;
   let bodyEnd;
   const guard = diagnosticGuard({
     done: () => finished,
     snapshot: () => {
       const record = t.rigger596Worlds.find(({ built }) => !built || !built.phaseTrace.some(({ phase }) => phase === 'directory.asserted')) ?? t.rigger596Worlds.at(-1) ?? { limit: 1, begun: bodyStart };
+      guardRecord = record;
       return targetBoundary(record, bodyStart);
     },
     within: 8_000,
   }).then((report) => {
     if (!report) return;
+    guardReport = report;
     console.error(`RIGGER596_GUARD ${JSON.stringify(report)}`);
+    console.error(`RIGGER596_RESULT ${JSON.stringify(boundedPhaseResult(guardRecord, bodyStart, report))}`);
     t.rigger596ReleaseHold?.();
   });
   t.after(async () => {
@@ -1501,6 +1529,7 @@ test('after `loop`\'s single pull returns, the state directory holds nothing but
     await guard;
     for (const limit of LIMITS) {
       const record = t.rigger596Worlds.find((each) => each.limit === limit);
+      console.error(`RIGGER596_RESULT ${JSON.stringify(boundedPhaseResult(record ?? { limit, built: null }, bodyStart, guardReport))}`);
       if (!record) {
         console.error(`RIGGER596_TRACE ${JSON.stringify({ limit: limit ?? 'N', bodyStart, deadline, construction: 'not reached', pull: 'not reached', laterPhases: 'not reached' })}`);
         continue;
@@ -1529,6 +1558,45 @@ test('after `loop`\'s single pull returns, the state directory holds nothing but
     built.phaseTrace.push({ phase: 'directory.asserted', at: performance.now(), files: readdirSync(built.directory, { recursive: true }) });
   }
   bodyEnd = performance.now();
+});
+
+// proves R-WORK-24
+test('a target boundary uses its supplied clock on both sides of the single-pull deadline', () => {
+  const record = { built: null, limit: undefined };
+  const before = targetBoundary(record, 100, () => 10_099);
+  const atBound = targetBoundary(record, 100, () => 10_100);
+
+  assert.equal(before.elapsedMs, 9_999);
+  assert.equal(before.beforeBound, true);
+  assert.equal(atBound.elapsedMs, 10_000);
+  assert.equal(atBound.beforeBound, false);
+});
+
+// proves R-WORK-24
+test('a completed single-pull target reports bounded results for both worlds', { timeout: 20_000 }, () => {
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  const targetName = "after `loop`'s single pull returns, the state directory holds nothing but the event stream";
+  const target = spawnSync(process.execPath, [
+    '--test',
+    `--test-name-pattern=^${targetName}$`,
+    decodeURIComponent(new URL(import.meta.url).pathname),
+  ], { env, encoding: 'utf8', timeout: 18_000 });
+  const output = `${target.stdout ?? ''}\n${target.stderr ?? ''}`;
+  assert.equal(target.status, 0, `ordinary target exited ${target.status}; signal ${target.signal ?? 'none'}; error ${target.error?.code ?? 'none'}`);
+  const lines = output.split('\n').filter((line) => line.includes('RIGGER596_RESULT '));
+  assert.equal(lines.length, 2, 'one bounded result per completed world');
+  const results = lines.map((line) => JSON.parse(line.slice(line.indexOf('RIGGER596_RESULT ') + 'RIGGER596_RESULT '.length)));
+  assert.deepEqual(results.map(({ world, phase, lastBoundary, guardBeforeInnerBound, incompleteEvidence }) =>
+    ({ world, phase, lastBoundary, guardBeforeInnerBound, incompleteEvidence })), [
+    { world: 1, phase: 'E', lastBoundary: 'directory.asserted', guardBeforeInnerBound: 'not needed', incompleteEvidence: 'none' },
+    { world: 'N', phase: 'E', lastBoundary: 'directory.asserted', guardBeforeInnerBound: 'not needed', incompleteEvidence: 'none' },
+  ]);
+  for (const result of results) {
+    assert.deepEqual(Object.keys(result).sort(), ['elapsedMs', 'guardBeforeInnerBound', 'incompleteEvidence', 'lastBoundary', 'phase', 'readOperation', 'world'].sort());
+    assert.equal(result.readOperation, null);
+    assert.ok(Number.isFinite(result.elapsedMs) && result.elapsedMs >= 0 && result.elapsedMs < SETTLES_WITHIN.timeout);
+  }
 });
 
 test('a loop world records its stand-in warm before the pull can begin', () => {
@@ -1571,6 +1639,38 @@ test('a held pre-claim read reports the missing Q boundary before the single-pul
   }
 });
 
+/** Classifies a nested target from its process result and bounded phase records. */
+function childOutcome(child, output = '') {
+  const records = [];
+  for (const line of output.split('\n')) {
+    const at = line.indexOf('RIGGER596_RESULT ');
+    if (at < 0) continue;
+    try {
+      const record = JSON.parse(line.slice(at + 'RIGGER596_RESULT '.length));
+      if (['W', 'Q', 'D', 'H', 'P', 'S2', 'S4', 'E'].includes(record.phase)
+          && ['before', 'late', 'absent', 'not needed'].includes(record.guardBeforeInnerBound)
+          && ['none', 'world absent', 'guard absent', 'guard late'].includes(record.incompleteEvidence)) records.push(record);
+    } catch { /* An incomplete child record is absent evidence. */ }
+  }
+  const observed = records.findLast(({ phase, guardBeforeInnerBound }) => phase !== 'E' && guardBeforeInnerBound !== 'not needed')
+    ?? records.at(-1);
+  const errorCode = child.error?.code ?? null;
+  const kind = errorCode === 'ETIMEDOUT' ? 'parent timeout'
+    : errorCode ? 'launch error'
+      : child.signal ? 'signal'
+        : child.status !== 0 && output.includes('test timed out after 10000ms') ? 'inner target timeout'
+          : child.status !== 0 ? 'nonzero exit' : 'exited zero';
+  return {
+    kind,
+    status: child.status ?? null,
+    errorCode,
+    signal: child.signal ?? null,
+    phase: observed?.phase ?? null,
+    guardBeforeInnerBound: observed?.guardBeforeInnerBound ?? 'absent',
+    incompleteEvidence: observed?.incompleteEvidence ?? 'phase and guard absent',
+  };
+}
+
 test('the target guard reports a held second-world board read before its shared bound', { timeout: 20_000 }, () => {
   const env = { ...process.env, RIGGER_596_TARGET_HOLD: 'second' };
   delete env.NODE_TEST_CONTEXT;
@@ -1585,8 +1685,10 @@ test('the target guard reports a held second-world board read before its shared 
     timeout: 18_000,
   });
   const output = `${target.stdout ?? ''}\n${target.stderr ?? ''}`;
+  const child = childOutcome(target, output);
+  console.error(`RIGGER596_CHILD ${JSON.stringify(child)}`);
   const guardLine = output.split('\n').find((line) => line.includes('RIGGER596_GUARD '));
-  assert.ok(guardLine, `the target guard did not report its hold: ${output.slice(-2000)}`);
+  assert.ok(guardLine, JSON.stringify(child));
   const report = JSON.parse(guardLine.slice(guardLine.indexOf('RIGGER596_GUARD ') + 'RIGGER596_GUARD '.length));
   assert.equal(report.phase, 'Q');
   assert.equal(report.world, 'N');
@@ -1595,8 +1697,70 @@ test('the target guard reports a held second-world board read before its shared 
   assert.match(report.firstMissingCondition, /readColumns completion and first claim/);
   assert.ok(report.elapsedMs >= 8_000 && report.elapsedMs < SETTLES_WITHIN.timeout, `guard elapsed ${report.elapsedMs} ms`);
   assert.equal(report.beforeBound, true);
-  assert.equal(target.status, 0, output.slice(-4000));
+  const results = output.split('\n').filter((line) => line.includes('RIGGER596_RESULT '))
+    .map((line) => JSON.parse(line.slice(line.indexOf('RIGGER596_RESULT ') + 'RIGGER596_RESULT '.length)));
+  const heldWorld = results.find(({ world }) => world === 'N');
+  assert.deepEqual(heldWorld && {
+    world: heldWorld.world,
+    phase: heldWorld.phase,
+    lastBoundary: heldWorld.lastBoundary,
+    readOperation: heldWorld.readOperation,
+    guardBeforeInnerBound: heldWorld.guardBeforeInnerBound,
+    incompleteEvidence: heldWorld.incompleteEvidence,
+  }, {
+    world: 'N',
+    phase: 'Q',
+    lastBoundary: 'readColumns.start',
+    readOperation: 'readColumns',
+    guardBeforeInnerBound: 'before',
+    incompleteEvidence: 'none',
+  });
+  assert.equal(target.status, 0, JSON.stringify(child));
   console.error(`RIGGER596_TARGET_CONTROL ${JSON.stringify(report)}`);
+});
+
+// proves R-WORK-24
+test('a nested child outcome keeps launch, exit, signal and parent timeout separate from absent phase evidence', () => {
+  const cases = [
+    [{ status: null, error: { code: 'ENOENT' }, signal: null }, 'launch error', null, 'ENOENT', null],
+    [{ status: 3, error: undefined, signal: null }, 'nonzero exit', 3, null, null],
+    [{ status: null, error: undefined, signal: 'SIGKILL' }, 'signal', null, null, 'SIGKILL'],
+    [{ status: null, error: { code: 'ETIMEDOUT' }, signal: 'SIGTERM' }, 'parent timeout', null, 'ETIMEDOUT', 'SIGTERM'],
+  ];
+  for (const [child, kind, status, errorCode, signal] of cases) {
+    assert.deepEqual(childOutcome(child, ''), {
+      kind, status, errorCode, signal,
+      phase: null,
+      guardBeforeInnerBound: 'absent',
+      incompleteEvidence: 'phase and guard absent',
+    });
+  }
+});
+
+// proves R-WORK-24
+test('a child outcome uses a bounded observed Q record and distinguishes an inner target timeout', () => {
+  const record = '# RIGGER596_RESULT {"world":"N","phase":"Q","elapsedMs":8001,"lastBoundary":"readColumns.start","readOperation":"readColumns","guardBeforeInnerBound":"before","incompleteEvidence":"none"}';
+  const observed = childOutcome({ status: 0, error: undefined, signal: null }, record);
+  assert.equal(observed.kind, 'exited zero');
+  assert.equal(observed.phase, 'Q');
+  assert.equal(observed.guardBeforeInnerBound, 'before');
+  assert.equal(observed.incompleteEvidence, 'none');
+
+  const timedOut = childOutcome({ status: 1, error: undefined, signal: null }, `${record}\ntest timed out after 10000ms`);
+  assert.equal(timedOut.kind, 'inner target timeout');
+  assert.equal(timedOut.phase, 'Q');
+  const unrelatedExit = childOutcome({ status: 1, error: undefined, signal: null }, record);
+  assert.equal(unrelatedExit.kind, 'nonzero exit');
+});
+
+// proves R-WORK-24
+test('a child outcome ignores unrecognized phase payload fields rather than publishing them', () => {
+  const output = '# RIGGER596_RESULT {"world":"N","phase":"Q","elapsedMs":8001,"lastBoundary":"readColumns.start","readOperation":"readColumns","guardBeforeInnerBound":"before","incompleteEvidence":"private-payload"}';
+  const result = childOutcome({ status: null, error: { code: 'ETIMEDOUT' }, signal: 'SIGTERM' }, output);
+  assert.equal(result.kind, 'parent timeout');
+  assert.equal(result.phase, null);
+  assert.equal(result.guardBeforeInnerBound, 'absent');
+  assert.equal(result.incompleteEvidence, 'phase and guard absent');
 });
 
 test('given four pullable cards and every maker stand-in held, `loop`\'s single pull hands three cards to the maker stand-in, and no drain event exists while they are held', SETTLES_WITHIN, async (t) => {
