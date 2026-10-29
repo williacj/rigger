@@ -1181,3 +1181,51 @@ test('a refused opening record stays reported when another closer\'s notice answ
     assert.doesNotThrow(() => onceReads(outcome.error ?? new Error('none')), what);
   }
 });
+
+// proves R-SCHED-23
+test('a refused opening record stays reported when a later notice answers a failed that reads undefined once and throws the next time', async () => {
+  // The architect's round-8 B2 probe on #1079: no field of L2's answer is read twice.
+  const { board } = stateBoard([], { 12: 'closed', 13: 'open' });
+  let reads = 0;
+  const answer = Object.defineProperty({ issue: 13 }, 'failed', { get() {
+    reads += 1;
+    if (reads === 1) return undefined;
+    throw new Error('failed getter read twice');
+  } });
+  const handed = handles({ cards: [], board, notice: async function* answering({ closer }) { return closer.issue === '12' ? { issue: 12, closed: true } : answer; } });
+  refusingEvents(handed, ['admission.open']);
+  seed(handed.state, 'hold-a1-issue-12.json');
+  seed(handed.state, 'hold-b2-issue-13.json');
+
+  const outcome = await loop(handed).pull().then((answered) => ({ answered }), (error) => ({ error }));
+
+  assert.deepEqual(namesIn(handed.state), ['hold-b2-issue-13.json']);
+  assert.equal(reads, 1, 'a field of L2\'s answer was read twice');
+  assert.match(safeMessages(outcome.error).join(' | '), /EIO while recording admission\.open/);
+});
+
+// proves R-SCHED-23
+test('a refused opening record stays reported when a later notice\'s answer carries an unrecorded getter that throws, and when a later read throws an AggregateError with an accessor entry', async () => {
+  // The reviewer's two exploratory round-8 probes on #1079.
+  {
+    const { board } = stateBoard([], { 12: 'closed', 13: 'open' });
+    const answer = Object.defineProperty({ issue: 13 }, 'unrecorded', { get() { throw new Error('unrecorded getter refused'); } });
+    const handed = handles({ cards: [], board, notice: async function* answering({ closer }) { return closer.issue === '12' ? { issue: 12, closed: true } : answer; } });
+    refusingEvents(handed, ['admission.open']);
+    seed(handed.state, 'hold-a1-issue-12.json');
+    seed(handed.state, 'hold-b2-issue-13.json');
+    const outcome = await loop(handed).pull().then((answered) => ({ answered }), (error) => ({ error }));
+    assert.match(safeMessages(outcome.error).join(' | '), /EIO while recording admission\.open/);
+  }
+  {
+    const { board } = stateBoard([], { 12: 'closed' });
+    let reads = 0;
+    const errors = Object.defineProperty([], '0', { enumerable: true, configurable: true, get() { reads += 1; return reads === 1 ? new Error('HTTP 502') : undefined; } });
+    board.readColumns = async () => { const failure = new AggregateError([], 'facts could not be read'); failure.errors = errors; throw failure; };
+    const handed = handles({ cards: [], board, notice: closedNotice() });
+    seed(handed.state, 'hold-a1-issue-12.json');
+    const outcome = await loop(handed).pull().then((answered) => ({ answered }), (error) => ({ error }));
+    assert.doesNotThrow(() => onceReads(outcome.error));
+    assert.match(safeMessages(outcome.error).join(' | '), /HTTP 502/);
+  }
+});

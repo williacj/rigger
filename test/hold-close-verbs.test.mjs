@@ -524,3 +524,65 @@ test('rigger once, after a made closer opening whose admission.open record was r
     assert.match(answered.answer.text, /admission changed at hold-a1-issue-7\.json, and the sink refused its admission\.open event/, `${what}: ${answered.answer.text}`);
   }
 });
+
+// The judges' round-8 probes on #1079: what `once` is handed after a made opening is read all the
+// way through, its nested entries and its containers' methods among it, without running a thrower's code.
+// proves R-SCHED-23
+test('rigger once, after a recorded closer opening, answers a board failure whose unreadable entry inherits a throwing getter, or whose errors array replaces flatMap', async (t) => {
+  const cases = {
+    'an inherited throwing path getter': () => Object.assign(new Error('board refused'), { unreadable: [Object.create({ get path() { throw new Error('inherited path getter ran'); }, cause: 'EIO' })] }),
+    'an errors array whose flatMap throws': () => {
+      const failure = new AggregateError([new Error('inner')], 'board refused');
+      failure.errors.flatMap = () => { throw new Error('errors.flatMap ran'); };
+      return failure;
+    },
+  };
+  for (const [what, make] of Object.entries(cases)) {
+    const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [statusIssue(7, 'a1')] });
+    assert.equal(here.gh('api', `repos/${REPO}/issues/7`, '-X', 'PATCH', '-f', 'state=closed').status, 0);
+    const failure = make();
+    const send = (command, args) => {
+      if ((args[3] ?? '').includes('fields(')) throw failure;
+      const result = spawnSync(here.fake.gh, args, { encoding: 'utf8', env: gitEnvironment() });
+      return { status: result.status, stdout: result.stdout, stderr: result.stderr, timedOut: false };
+    };
+
+    const outcome = await onceVerb({ target: here.target, send }).then((answer) => ({ answer }), (thrown) => ({ thrown }));
+
+    assert.deepEqual(here.closers(), [], `${what}: admission really opened`);
+    assert.ok(here.events().some(({ event }) => event === 'admission.open'), `${what}: the opening was recorded`);
+    assert.equal(outcome.thrown, undefined, `${what}: once threw while reporting`);
+    assert.equal(outcome.answer.code, 1, what);
+  }
+});
+
+// proves R-SCHED-23
+test('rigger once, after a recorded closer opening, answers an AggregateError whose errors entry reads differently a second time', async (t) => {
+  const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [statusIssue(7, 'a1')] });
+  assert.equal(here.gh('api', `repos/${REPO}/issues/7`, '-X', 'PATCH', '-f', 'state=closed').status, 0);
+  writeFileSync(join(here.target, 'rigger.config.mjs'), [
+    `const config = ${JSON.stringify(consumerConfig(3))};`,
+    'const board = config.board;',
+    "Object.defineProperty(config, 'board', { get() {",
+    "  if (new Error().stack.includes('/src/workflow/facts.mjs')) {",
+    '    let reads = 0;',
+    "    const errors = Object.defineProperty([], '0', { enumerable: true, configurable: true, get() { reads += 1; return reads === 1 ? new Error('HTTP 502') : undefined; } });",
+    "    const failure = new AggregateError([], 'facts could not be read'); failure.errors = errors; throw failure;",
+    '  }',
+    '  return board;',
+    '} });',
+    'export default config;',
+  ].join('\n'));
+  const send = (command, args) => {
+    const done = spawnSync(here.fake.gh, args, { encoding: 'utf8', env: gitEnvironment() });
+    return { status: done.status, stdout: done.stdout, stderr: done.stderr, timedOut: false };
+  };
+
+  const outcome = await onceVerb({ target: here.target, send }).then((answer) => ({ answer }), (thrown) => ({ thrown }));
+
+  assert.deepEqual(here.closers(), [], 'the closer really was removed');
+  assert.equal(here.events().filter(({ event }) => event === 'admission.open').length, 1, 'the opening was recorded');
+  assert.equal(outcome.thrown, undefined, 'once must return its failure report without itself throwing');
+  assert.equal(outcome.answer.code, 1);
+  assert.match(outcome.answer.text, /HTTP 502/);
+});

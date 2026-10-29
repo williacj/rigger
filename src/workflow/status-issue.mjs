@@ -58,20 +58,6 @@ export function causeOf(thrown) {
   return `a thrown ${typeof thrown}`;
 }
 
-/**
- * `thrown` as a cause to chain under a failure: itself where it is an Error whose message reads as a
- * string, and otherwise a fresh Error carrying `causeOf`'s line, so no chain holds a value its
- * reader cannot print.
- */
-export function readableCause(thrown) {
-  try {
-    if (thrown instanceof Error && typeof thrown.message === 'string') return thrown;
-  } catch {
-    // Neither its kind nor its message can be read, so a fresh one stands in.
-  }
-  return new Error(causeOf(thrown));
-}
-
 /** `failure`'s `made` mark, or undefined where it has none or reading it throws. */
 const madeOf = (failure) => {
   try {

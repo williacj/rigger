@@ -778,7 +778,7 @@ test('when the board refuses a card\'s claim move, L3 does not hand that card to
   await next;
 });
 
-test('when the board read fails, L3 hands no card to the dispatch and passes the read\'s error on unchanged', async () => {
+test('when the board read fails, L3 hands no card to the dispatch and passes on the read\'s message, code and unreadable entries in an error it built', async () => {
   // #215's missing-column error: the read side's column read, through the fake gh, of a board whose
   // Status field lacks the declared `Owner`.
   const gh = installFakeGh(temporaryDirectory('rigger-loop-gh-'), {
@@ -800,7 +800,9 @@ test('when the board read fails, L3 hands no card to the dispatch and passes the
 
   await assert.rejects(built.loop.pull(), (error) => {
     assert.ok(thrown, 'the column read failed');
-    assert.equal(error, thrown);
+    assert.equal(error.message, thrown.message);
+    assert.equal(error.code, thrown.code);
+    assert.deepEqual(error.unreadable, thrown.unreadable);
     assert.ok(error.message.includes('owner (Owner)'), error.message);
     return true;
   });

@@ -59,16 +59,6 @@ const printable = (thrown) => {
   return `a thrown ${typeof thrown}`;
 };
 
-/** `thrown` to chain as a cause: itself where it is an Error whose message reads, otherwise a fresh Error saying it. */
-const readableCause = (thrown) => {
-  try {
-    if (thrown instanceof Error && typeof thrown.message === 'string') return thrown;
-  } catch {
-    // A fresh one stands in.
-  }
-  return new Error(printable(thrown));
-};
-
 /**
  * A failure's code where it has one, so an answer names the cause, and otherwise its printable
  * line, whatever was thrown.
@@ -98,7 +88,7 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
     try {
       emitter.emit(event, fields);
     } catch (cause) {
-      throw new Error(`admission changed at ${fields.name}, and the sink refused its ${event} event: ${printable(cause)}`, { cause: readableCause(cause) });
+      throw new Error(`admission changed at ${fields.name}, and the sink refused its ${event} event: ${printable(cause)}`, { cause: new Error(printable(cause)) });
     }
   }
 
@@ -332,7 +322,8 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
    * for each name it unlinked, so two names carrying one hold's id are two events. A closer already
    * gone counts as removed, with no event. Where any closer is unreadable, it removes nothing and
    * rejects naming each, carrying as `unreadable` the entries `read` answered, unescaped. Where a
-   * removal fails partway, it rejects naming each closer left, carrying as `removed` those it removed.
+   * removal fails partway, or a removal's record is refused, it rejects naming the failure and each
+   * closer left, carrying as `removed` every closer it removed, the one whose record was refused among them.
    */
   async function resume() {
     const answer = read();
@@ -366,9 +357,15 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
           refused = refusal;
         }
         const said = `resume left ${leftOf(closers.slice(index)).join(', ')}: ${printable(cause)}${refused === undefined ? '' : `; ${printable(refused)}`}`;
-        throw Object.assign(new Error(said, { cause: readableCause(cause) }), { removed: done });
+        throw Object.assign(new Error(said, { cause: new Error(printable(cause)) }), { removed: done });
       }
-      recordEach(names);
+      try {
+        recordEach(names);
+      } catch (refusal) {
+        // The closer was removed and its record refused: it and those before it stay named, and resume stops.
+        const rest = leftOf(closers.slice(index + 1));
+        throw Object.assign(new Error(`${printable(refusal)}${rest.length === 0 ? '' : `; resume left ${rest.join(', ')}`}`, { cause: new Error(printable(refusal)) }), { removed: [...removed, closer] });
+      }
       if (names.length > 0 || unlinked.has(closer.name)) removed.push(closer);
       else gone.push(closer);
     }

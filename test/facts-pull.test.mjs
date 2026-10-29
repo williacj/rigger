@@ -576,7 +576,7 @@ test('a failed branch or later closed-history pull read rejects the whole facts 
       return answer;
     };
     await assert.rejects(built.loop.pull(), (error) => {
-      assert.equal(error.cause, failure);
+      assert.equal(error.cause?.message, failure.message);
       assert.match(error.message, /card #/);
       assert.ok(error.message.includes(operation));
       assert.ok(error.message.includes(message));

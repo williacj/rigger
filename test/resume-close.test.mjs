@@ -351,3 +351,31 @@ test('resume whose removal stops partway names each closer it already removed, t
   assert.match(text, /^rigger resume: no status issue was closed, because /m, text);
   assert.deepEqual(here.sent, [], text);
 });
+
+// proves R-SCHED-24
+test('resume, whose admission.open record is refused after a later removal, still names every closer it removed, the refused record, and that no status issue was closed', async (t) => {
+  // Both judges' round-8 probe on #1079: the second removal's record is refused by a real
+  // read-only stream after the first removal and its record succeeded.
+  const here = world({ closers: ['hold-a1-issue-7.json', 'hold-b2-issue-8.json'], issues: [status(7, 'a1'), status(8, 'b2')] });
+  const stream = join(here.repository, '.rigger', 'events.jsonl');
+  let armed = false;
+  t.after(() => { if (armed) nodeFs.chmodSync(stream, 0o644); });
+  const unlinkSync = (path) => {
+    nodeFs.unlinkSync(path);
+    if (String(path).endsWith('hold-b2-issue-8.json')) {
+      nodeFs.chmodSync(stream, 0o444);
+      armed = true;
+    }
+  };
+
+  const { text, code } = await here.run({ fs: { ...nodeFs, unlinkSync } });
+
+  assert.equal(armed, true);
+  assert.deepEqual(left(here), [], 'both closers were removed');
+  assert.equal(code, 1, text);
+  assert.deepEqual(here.sent, []);
+  assert.match(text, /^rigger resume: removed the hold closer .*hold-a1-issue-7\.json/m, text);
+  assert.match(text, /^rigger resume: removed the hold closer .*hold-b2-issue-8\.json/m, text);
+  assert.match(text, /hold-b2-issue-8\.json, and the sink refused its admission\.open event/, text);
+  assert.match(text, /^rigger resume: no status issue was closed, because /m, text);
+});
