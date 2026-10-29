@@ -44,6 +44,13 @@ const IMPORTERS = [
  */
 const WORKSPACES = { rule: 'rule 10', file: 'src/substrate/worktrees.mjs', importer: 'src/execution/' };
 
+/**
+ * L0's push side, and the one directory that may import it, under rule 11: the push side admits the
+ * one write boundary rule 2 names, and only L5 reaches it (`ARCHITECTURE.md`, "Pushing the stream";
+ * the architect's attack on #1081, ruling 8). Read as rule 10 reads the workspace adapter.
+ */
+const PUSH_SIDE = { rule: 'rule 11', file: 'src/substrate/data-ref.mjs', importer: 'src/observation/' };
+
 /** The write sides a module may never hand on, whichever directory it is in. */
 const GUARDED = ['schema-write', 'item-write', 'repository-write'];
 
@@ -1463,6 +1470,18 @@ export function boundaryReport(tree) {
       for (const { line, name, definitions } of bindings) {
         if (definitions.some((definition) => definition.file === WORKSPACES.file)) {
           report(file, line, WORKSPACES.rule, `it imports \`${name}\`, which is the workspace adapter's, and only ${WORKSPACES.importer} imports ${WORKSPACES.file}`);
+        }
+      }
+    }
+    if (!file.startsWith(PUSH_SIDE.importer) && file !== PUSH_SIDE.file) {
+      for (const entry of module.imports.filter((each) => each.imported === null)) {
+        attempt(entry.line, () => {
+          if (target(file, entry.from) === PUSH_SIDE.file) report(file, entry.line, PUSH_SIDE.rule, `it imports ${PUSH_SIDE.file}, binding no name, and only ${PUSH_SIDE.importer} imports ${PUSH_SIDE.file}`);
+        });
+      }
+      for (const { line, name, definitions } of bindings) {
+        if (definitions.some((definition) => definition.file === PUSH_SIDE.file)) {
+          report(file, line, PUSH_SIDE.rule, `it imports \`${name}\`, which is the push side's, and only ${PUSH_SIDE.importer} imports ${PUSH_SIDE.file}`);
         }
       }
     }

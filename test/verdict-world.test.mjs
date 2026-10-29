@@ -9,6 +9,11 @@ import { delimiter, join } from 'node:path';
 
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { atTerminal, realGhOn, world } from './verdict-world.mjs';
+import { mkdirSync } from 'node:fs';
+import { configWith, moduleOf, PULL } from './verdict-world.mjs';
+import { gitIn, withOrigin } from './git-repository.mjs';
+import { readEvents } from '../src/observation/sink.mjs';
+import { assertPushEnd, held, pushTraced } from './push-fixtures.mjs';
 
 const WORLD = new URL('./verdict-world.mjs', import.meta.url).href;
 
@@ -102,3 +107,83 @@ for (const status of [0, 23]) {
     assert.equal(ran.asked, false, 'a command that asked no verdict question received an answer');
   });
 }
+
+/**
+ * Runs `rigger verdict <PULL> sound` at the pseudo-terminal, answering yes, through
+ * `src/cli/verbs.mjs` and so with L5's push as it ships, in a world whose consumer config is this
+ * repository's with `telemetry` as given (left out where undefined), the consumer repository given
+ * a local bare `origin`. Every git call is traced. `repository: false` runs it in a directory git
+ * names no repository for. Answers what the terminal showed and the exit status, the stream's
+ * events, origin's data ref and the traced lines naming the push.
+ */
+async function verdictPushing(telemetry, { repository = true } = {}) {
+  const { telemetry: _own, ...config } = configWith();
+  const where = world({ consumer: moduleOf(telemetry === undefined ? config : { ...config, telemetry }) });
+  const directory = temporaryDirectory('rigger-verdict-push-');
+  const origin = join(directory, 'origin.git');
+  const trace = join(directory, 'git-trace');
+  if (repository) {
+    withOrigin(where.cwd, origin);
+  } else {
+    where.cwd = join(directory, 'consumer');
+    mkdirSync(where.cwd);
+    writeFileSync(join(where.cwd, 'rigger.config.mjs'), moduleOf({ ...config, telemetry }));
+  }
+  where.env.GIT_TRACE = trace;
+  const ran = await atTerminal(where, [String(PULL), 'sound']);
+  const state = join(where.cwd, '.rigger');
+  const events = existsSync(join(state, 'events.jsonl')) ? readEvents(state) : [];
+  const tip = repository ? gitIn(origin, 'for-each-ref', '--format=%(objectname)', 'refs/rigger/events').trim() || undefined : undefined;
+  return { ran, events, tip, origin, state, traced: pushTraced(trace) };
+}
+
+// proves R-SAFE-3
+test('C1, C2, C3: verdict run as the command at a terminal, its config admitted with telemetry absent, telemetry.push absent, false, \'true\', 1 or {}, reaches no push side', { timeout: 600_000 }, async () => {
+  for (const telemetry of [undefined, {}, { push: false }, { push: 'true' }, { push: 1 }, { push: {} }]) {
+    const { ran, events, tip, traced } = await verdictPushing(telemetry);
+    const said = `telemetry ${JSON.stringify(telemetry)}: exited ${ran.status}: ${ran.shown}`;
+    assert.equal(ran.status, 0, said);
+    assert.ok(events.length > 0, `${said}: verdict recorded nothing, so this proves nothing`);
+    assert.deepEqual(events.filter(({ event }) => event === 'push.end'), [], said);
+    assert.equal(tip, undefined, said);
+    assert.deepEqual(traced, [], said);
+  }
+});
+
+// proves R-RECORD-13
+test('C6: verdict run as the command at a terminal, telemetry.push true, pushes the stream to origin\'s data ref once at its return, then records one push.end', { timeout: 120_000 }, async () => {
+  const { ran, events, tip, origin, traced } = await verdictPushing({ push: true });
+  const said = `exited ${ran.status}: ${ran.shown}`;
+  assert.equal(ran.status, 0, said);
+  assert.equal(ran.shown.includes('rigger: the push'), false, said);
+  assert.ok(tip, `${said}: origin holds no data ref`);
+  assert.ok(traced.length > 0, said);
+  const ends = events.filter(({ event }) => event === 'push.end');
+  assert.equal(ends.length, 1, said);
+  assert.equal(events.at(-1).event, 'push.end', said);
+  const pushed = Buffer.from(gitIn(origin, 'cat-file', 'blob', `${tip}:events.jsonl`));
+  const before = Buffer.from(events.slice(0, -1).map((event) => `${JSON.stringify(event)}\n`).join(''));
+  assert.deepEqual(pushed, held(before), said);
+  assertPushEnd(ends[0], { outcome: 'pushed', bytes: pushed.length, commit: tip });
+});
+
+// proves R-SAFE-3
+test('C7: verdict run as the command at a terminal in a directory git names no repository for, telemetry.push true, names no state directory and reaches no push side', { timeout: 120_000 }, async () => {
+  const { ran, state, traced } = await verdictPushing({ push: true }, { repository: false });
+  const said = `exited ${ran.status}: ${ran.shown}`;
+  assert.equal(ran.status, 1, said);
+  assert.match(ran.shown, /git names no repository/, said);
+  assert.equal(existsSync(state), false, said);
+  assert.deepEqual(traced, [], said);
+});
+
+// proves R-SAFE-3
+test('C5: verdict run as the command at a terminal, its config refused by the validator and holding telemetry.push true, reaches no push side', { timeout: 120_000 }, async () => {
+  const { ran, events, tip, traced } = await verdictPushing({ push: true, extra: true });
+  const said = `exited ${ran.status}: ${ran.shown}`;
+  assert.equal(ran.status, 1, said);
+  assert.match(ran.shown, /is refused: `telemetry\.extra`/, said);
+  assert.deepEqual(events.filter(({ event }) => event === 'push.end'), [], said);
+  assert.equal(tip, undefined, said);
+  assert.deepEqual(traced, [], said);
+});

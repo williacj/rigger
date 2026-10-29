@@ -565,7 +565,7 @@ test('src/cli/verdict.mjs takes no option but the words after the verb, and read
   const exported = nodes.find((node) => node.type === 'ExportNamedDeclaration' && node.declaration?.id?.name === 'verdict').declaration;
   const [parameter] = exported.params;
   assert.equal(exported.params.length, 1);
-  assert.deepEqual(parameter.left.properties.map((property) => property.key.name), ['args']);
+  assert.deepEqual(parameter.left.properties.map((property) => property.key.name), ['args', 'push']);
   // A config is read as `config` or as the default branch's `main.config`; only `repo` is read of
   // either here, and the topic rule through `worktreeTopic`, as the gate reads it.
   const keys = nodes.filter((node) => node.type === 'MemberExpression' && ((node.object.type === 'Identifier' && node.object.name === 'config')
