@@ -16,7 +16,7 @@ reports no gap of its own; the register carries the reason.
 |---|---|
 | R-CARD-1 | **gap** |
 | R-CARD-2 | **gap** |
-| R-CARD-41 | **gap** |
+| R-CARD-41 | `test/clock-card.test.mjs` a clock card names its configured author or owner and preserves the template form answer |
 | R-CARD-4 | nothing yet |
 | R-CARD-5 | **gap** |
 | R-CARD-6 | **gap** |

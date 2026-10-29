@@ -13,12 +13,14 @@ import { acceptanceItems } from './form-check.mjs';
 import { pullRequestsFrom } from './facts.mjs';
 import { statusNotice } from './status-issue.mjs';
 import { kindOf, providerOf, tierOf } from './next-action.mjs';
+import { composeClockMark } from './clock-mark.mjs';
 
 /**
  * Each change L2 makes to a card's column, by its cause, as the column keys it leaves and enters.
- * No change enters `ready`: moving a card there is the owner's, never code's.
+ * Only `created`, for a card L2 opens from a clock firing, enters `ready` in code.
  */
 const CHANGES = {
+  created: { to: 'ready' },
   claimed: { from: 'ready', to: 'coding' },
   redone: { from: 'review', to: 'coding' },
   returned: { from: 'coding', to: 'review' },
@@ -91,7 +93,7 @@ export function columnChanges({
       sink.emitter({ layer: 'L2', card: card.number, ...context }).emit('transition', transition);
     } catch (refusal) {
       const { from, to } = transition;
-      throw new Error(`card #${card.number} moved from ${from} to ${to}, and the event sink refused to record it: ${refusal.message}`, { cause: refusal });
+      throw new Error(`card #${card.number} moved ${from === undefined ? `to ${to} (${columns[to]})` : `from ${from} to ${to}`}, and the event sink refused to record it: ${refusal.message}`, { cause: refusal });
     }
   };
 
@@ -106,21 +108,22 @@ export function columnChanges({
   const change = async (card, cause, fields = {}, given = {}) => {
     const { from: declaredFrom, to } = CHANGES[cause];
     const from = cause === 'escalated' ? Object.keys(columns).find((key) => columns[key] === card.column) : declaredFrom;
-    const context = cause === 'escalated' ? { dispatch: null } : given;
+    const context = cause === 'escalated' || cause === 'created' ? { dispatch: null } : given;
+    const transitionFields = { ...(from === undefined ? {} : { from }), to, cause, ...fields };
     try {
       await items.moveItem(card.id, columns[to], sink.emitter({ layer: 'L0', card: card.number, ...context }));
     } catch (refusal) {
-      if (!refusal.made) throw new Error(`card #${card.number}'s move from ${from} to ${to} (${columns[to]}) was refused: ${refusal.message}`, { cause: refusal });
+      if (!refusal.made) throw new Error(`card #${card.number}'s move ${from === undefined ? '' : `from ${from} `}to ${to} (${columns[to]}) was refused: ${refusal.message}`, { cause: refusal });
       // The board took the move, so its transition is still recorded where the sink takes it (`R-RECORD-6`).
       let transition = '';
       try {
-        record(card, { from, to, cause, ...fields }, context);
+        record(card, transitionFields, context);
       } catch (unrecorded) {
         transition = `; its transition went unrecorded too: ${unrecorded.cause.message}`;
       }
-      throw madeUnrecorded(`card #${card.number} moved from ${from} to ${to}`, refusal, transition);
+      throw madeUnrecorded(`card #${card.number} moved ${from === undefined ? `to ${to} (${columns[to]})` : `from ${from} to ${to}`}`, refusal, transition);
     }
-    record(card, { from, to, cause, ...fields }, context);
+    record(card, transitionFields, context);
   };
 
   /**
@@ -173,6 +176,29 @@ export function columnChanges({
   };
 
   return {
+    /** Open the due firing's card, add it to the board and place it in Ready. */
+    openClockCard: async (name, occurrence, template) => {
+      const author = (template.author ?? 'owner').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+      const body = `${composeClockMark(name, occurrence)}\n\n**Author:** ${author}\n\n## Acceptance\n\n${template.acceptance}`;
+      const writes = repositoryWrites ?? repositoryWriteSide({ repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) });
+      let number;
+      try {
+        number = await writes.openIssue(template.title, body, ...template.labels);
+      } catch (refusal) {
+        if (refusal.made) throw madeUnrecorded(`clock trigger ${name} at ${new Date(occurrence).toISOString()} opened issue #${refusal.made.answer}`, refusal);
+        throw new Error(`clock trigger ${name} at ${new Date(occurrence).toISOString()} could not open its card: ${refusal.message}`, { cause: refusal });
+      }
+      let id;
+      try {
+        id = await items.addIssue(number, sink.emitter({ layer: 'L0', card: number }));
+      } catch (refusal) {
+        if (refusal.made) throw madeUnrecorded(`issue #${number} was added to the board`, refusal);
+        throw new Error(`opened issue #${number}'s board add was refused: ${refusal.message}`, { cause: refusal });
+      }
+      await change({ number, id }, 'created');
+      return number;
+    },
+
     /** L2's notice function for a hold's closer, as `statusNotice` says, its item writes recorded under `L0`. */
     notice: statusNotice({ reads: reads ?? repositoryReads({ ...config.board, repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) }), writes: repositoryWrites ?? repositoryWriteSide({ repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) }), board, items: { addIssue: (number) => items.addIssue(number, sink.emitter({ layer: 'L0' })), moveItem: (id, column) => items.moveItem(id, column, sink.emitter({ layer: 'L0' })) }, columns, sink }),
 
