@@ -67,9 +67,10 @@ worked example: a fixed answer documents today; asking the tool catches a change
 
 ## A test a change adds
 
-A test a change adds is a top-level test whose file and title the merge base of the head with
-`main` does not hold. Before handoff, check each one against these classes, and record in the
-pull request body the defect each one catches. A test in any class is unhealthy.
+A test a change adds is a top-level test whose file and title the head holds more times than
+the merge base of the head with `main` does, overall or in the host tier. Before handoff, check
+each one against these classes, and record in the pull request body the defect each one catches.
+A test in any class is unhealthy.
 
 1. **Implementation.** An assertion's result can change under a change that keeps every
    behaviour the card, a requirement or the test's title names. That change may be to the code,
