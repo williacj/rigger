@@ -41,19 +41,30 @@ const COERCED = {
   'M8: a boxed string': (role) => new String(role),
 };
 
-// A property-key conversion must not turn any of these values into a maker role name.
-// proves R-SCHED-10
-test('M1 M2 M8: coercible non-string makers earn their string twin refusals with inspect rendering', async (t) => {
-  for (const [what, make] of Object.entries(COERCED)) {
-    await t.test(what, () => {
-      for (const [kind, { maker }] of Object.entries(rigger.kinds)) {
-        const value = make(maker);
-        const config = withMaker(kind, value);
-        const expected = fromTwin(withMaker(kind, value), kind, value);
-        assert.deepEqual(answer(config), expected, `${what} at kinds.${kind}.maker`);
-      }
-    });
+/** A property-key conversion must not turn a non-string value into a maker role name. */
+function refusesCoerced(make) {
+  for (const [kind, { maker }] of Object.entries(rigger.kinds)) {
+    const value = make(maker);
+    const config = withMaker(kind, value);
+    const expected = fromTwin(withMaker(kind, value), kind, value);
+    assert.deepEqual(answer(config), expected, `${inspect(value)} at kinds.${kind}.maker`);
   }
+}
+
+// proves R-SCHED-10
+test('M1: a one-entry list maker earns its string twin refusals with inspect rendering', () => {
+  refusesCoerced(COERCED['M1: a one-entry list']);
+});
+
+// proves R-SCHED-10
+test('M2: an object maker earns its string twin refusals with inspect rendering', () => {
+  refusesCoerced(COERCED['M2: an object with toString']);
+});
+
+// proves R-SCHED-10
+test('M8: nested lists and boxed strings earn their string twin refusals with inspect rendering', () => {
+  refusesCoerced(COERCED['M8: a nested list']);
+  refusesCoerced(COERCED['M8: a boxed string']);
 });
 
 // Incomplete maps expose an unwanted read of the refused maker's coerced role.
