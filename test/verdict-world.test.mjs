@@ -176,3 +176,14 @@ test('C7: verdict run as the command at a terminal in a directory git names no r
   assert.equal(existsSync(state), false, said);
   assert.deepEqual(traced, [], said);
 });
+
+// proves R-SAFE-3
+test('C5: verdict run as the command at a terminal, its config refused by the validator and holding telemetry.push true, reaches no push side', { timeout: 120_000 }, async () => {
+  const { ran, events, tip, traced } = await verdictPushing({ push: true, extra: true });
+  const said = `exited ${ran.status}: ${ran.shown}`;
+  assert.equal(ran.status, 1, said);
+  assert.match(ran.shown, /is refused: `telemetry\.extra`/, said);
+  assert.deepEqual(events.filter(({ event }) => event === 'push.end'), [], said);
+  assert.equal(tip, undefined, said);
+  assert.deepEqual(traced, [], said);
+});

@@ -12,6 +12,7 @@ import { DATA_REF } from '../src/substrate/data-ref.mjs';
  * `data-ref.mjs` exports, and each field present exactly where the table holds it.
  */
 export function assertPushEnd(event, answered) {
+  assert.ok(event !== undefined && event !== null, `no push.end was recorded for a push that answered ${answered.outcome}`);
   assert.equal(event.event, 'push.end');
   assert.equal(event.layer, 'L5');
   assert.equal(event.dispatch, null);

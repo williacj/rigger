@@ -549,3 +549,16 @@ test('C7: setup-board run as the command in a directory git names no repository 
   assert.equal(existsSync(state), false, said);
   assert.deepEqual(traced, [], said);
 });
+
+// proves R-SAFE-3
+test('C5: setup-board run as the command, its config refused by the validator and holding telemetry.push true, reaches no push side', async () => {
+  const refused = { ...CONFIG, telemetry: { push: true, extra: true } };
+  assert.notDeepEqual(validate(refused), [], 'the validator admits the config, so this proves nothing');
+  const { ran, events, tip, traced } = await setUpPushing(refused);
+  const said = `exited ${ran.status}: ${ran.stdout}${ran.stderr}`;
+  assert.equal(ran.status, 1, said);
+  assert.match(ran.stderr, /earns refusals/, said);
+  assert.deepEqual(events.filter(({ event }) => event === 'push.end'), [], said);
+  assert.equal(tip, undefined, said);
+  assert.deepEqual(traced, [], said);
+});

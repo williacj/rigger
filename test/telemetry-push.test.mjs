@@ -9,6 +9,7 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, renameS
 import { join } from 'node:path';
 
 import template from '../templates/rigger.config.mjs';
+import { validate } from '../src/config/validate.mjs';
 import { doctor } from '../src/cli/doctor.mjs';
 import { init } from '../src/cli/init.mjs';
 import { once } from '../src/cli/once.mjs';
@@ -31,8 +32,13 @@ import { temporaryDirectory } from './temporary-directory.mjs';
 /** The consumer's repository and board: not this repository's, so no line here reads as board 6. */
 const REPO = 'acme/widgets';
 
-/** The template's config for the consumer's board, which the validator admits. */
-const ADMITTED = { ...template, repo: REPO, board: { ...template.board, project: 3 } };
+/**
+ * The template's config for the consumer's board, which the validator admits, with no `telemetry`
+ * key at all: the template's own `telemetry: { push: false }` is left out, so a test that gives none
+ * runs with telemetry absent.
+ */
+const { telemetry: _templateTelemetry, ...TEMPLATE } = template;
+const ADMITTED = { ...TEMPLATE, repo: REPO, board: { ...TEMPLATE.board, project: 3 } };
 
 /**
  * The clock every push here reads unless a test names another: one that never moves, so code under
@@ -224,6 +230,7 @@ test('C1, C2, C3: each config-reading verb run in process, its config admitted w
       const watch = pushing();
       const answer = await IN_PROCESS[verb](w, watch.push);
       const said = `${verb}, telemetry ${JSON.stringify(telemetry)}: ${answer.text}`;
+      assert.equal(Object.hasOwn(config, 'telemetry'), telemetry !== undefined, said);
       assert.ok(eventsOf(w).length > 0, `${said}: the verb named no state directory, so this proves nothing`);
       assertNoPush(w, watch, said);
     }
@@ -243,12 +250,16 @@ test('C4: init, report, pause and resume, each handed L5\'s push in a repository
 // proves R-SAFE-3
 test('C5: each config-reading verb run in process, its config refused by the validator and holding telemetry.push true, reaches no push side', async (t) => {
   const { board, ...unboarded } = ADMITTED;
-  for (const verb of Object.keys(IN_PROCESS)) {
-    const w = world(t, { ...unboarded, telemetry: { push: true } });
-    const watch = pushing();
-    const answer = await IN_PROCESS[verb](w, watch.push);
-    assert.ok(eventsOf(w).length > 0, `${verb}: the verb named no state directory, so this proves nothing`);
-    assertNoPush(w, watch, `${verb}: ${answer.text}`);
+  // Two refusals: a config missing its board, and one whose telemetry declares a key Rigger offers not.
+  for (const refused of [{ ...unboarded, telemetry: { push: true } }, { ...ADMITTED, telemetry: { push: true, extra: true } }]) {
+    assert.notDeepEqual(validate(refused), [], 'the validator admits the config, so this proves nothing');
+    for (const verb of Object.keys(IN_PROCESS)) {
+      const w = world(t, refused);
+      const watch = pushing();
+      const answer = await IN_PROCESS[verb](w, watch.push);
+      assert.ok(eventsOf(w).length > 0, `${verb}: the verb named no state directory, so this proves nothing`);
+      assertNoPush(w, watch, `${verb}: ${answer.text}`);
+    }
   }
 });
 
@@ -396,19 +407,40 @@ test('O3: a doctor push origin\'s pre-receive hook refuses records push.end refu
 });
 
 // proves R-RECORD-17, R-RECORD-15, R-RECORD-18
-test('O4: a doctor push whose git push runs past its limit records push.end timed-out, writes one line naming it, and leaves the answer as with the push off', async (t) => {
+test('O4: a doctor push whose earlier git calls spend its whole limit hands each call what is left of it, records push.end timed-out, writes one line naming it, and leaves the answer as with the push off', async (t) => {
   const { key, w } = switching(t);
+  // One clock for L5 and the push side. Each git call takes 5,000 ms on it, so the push's six calls
+  // before `git push` spend its whole 30,000 ms, and `git push` is never started.
+  let clock = 0;
   const calls = [];
   const real = realGit(calls);
-  // The process adapter answers `timedOut` for a call its timeout ended; this one ends `git push`.
-  const side = (given) => pushStream({ ...given, spawn: async (call) => (call.args.includes('push') ? { exit: null, timedOut: true, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) } : real(call)) });
-  const watch = pushing({ side });
+  const handed = [];
+  const timed = async (call) => {
+    handed.push({ subcommand: call.args[0] === '-c' ? call.args[2] : call.args[0], timeout: call.timeout });
+    const result = await real(call);
+    clock += 5_000;
+    return result;
+  };
+  const watch = pushing({ side: (given) => pushStream({ ...given, spawn: timed }), now: () => clock });
   const { off, on } = await offThenOn(w, key, 'doctor', watch);
   assert.deepEqual(on, off);
   assert.equal(watch.pushes.length, 1, 'the verb made no push, or more than one');
   const [{ answered }] = watch.pushes;
+  // Each call is handed `PUSH_TIMEOUT` less what the calls before it took, worked out by hand.
+  assert.deepEqual(handed, [
+    { subcommand: 'remote', timeout: 30_000 },
+    { subcommand: 'remote', timeout: 25_000 },
+    { subcommand: 'ls-remote', timeout: 20_000 },
+    { subcommand: 'hash-object', timeout: 15_000 },
+    { subcommand: 'mktree', timeout: 10_000 },
+    { subcommand: 'commit-tree', timeout: 5_000 },
+  ]);
   assert.equal(answered.outcome, 'timed-out', answered.reason);
-  assertPushEnd(pushEnds(w)[0], answered);
+  assert.match(answered.reason, /limit of 30000 ms was spent before git push started/);
+  assert.equal(tipOf(w), undefined, 'origin holds the data ref');
+  const [end] = pushEnds(w);
+  assertPushEnd(end, answered);
+  assert.equal(end.ms, 30_000);
   assertFailureLine(watch.lines, answered);
   assertOnePerRun(w);
 });
@@ -548,5 +580,55 @@ test('O10: where the sink refuses push.end, doctor exits 1 with its own text the
   assert.match(added, /push\.end/);
   assert.match(added, /went unrecorded/);
   assert.match(added, /EISDIR/);
+  assert.deepEqual(watch.lines, []);
+});
+
+test('C12: a doctor run, telemetry.push true, whose stream exists but cannot be read, makes no push and answers as with the push off', async (t) => {
+  const { key, w } = switching(t);
+  // The stream takes appends and refuses reads: the sink appends, and L5 cannot read it back.
+  mkdirSync(w.state);
+  const stream = join(w.state, 'events.jsonl');
+  writeFileSync(stream, '');
+  chmodSync(stream, 0o200);
+  t.after(() => chmodSync(stream, 0o600));
+  const watch = pushing();
+  const { off, on } = await offThenOn(w, key, 'doctor', watch);
+  assert.deepEqual(on, off);
+  assert.deepEqual(watch.lines, []);
+  chmodSync(stream, 0o600);
+  assert.ok(eventsOf(w).length > 0, 'the run appended nothing, so this proves nothing');
+  assertNoPush(w, watch, on.text);
+});
+
+// proves R-RECORD-14, R-RECORD-15, R-RECORD-18
+test('O12: a doctor push whose push side rejects with a failure other than EVENT_REFUSED records push.end failed naming it, writes one line naming it, and answers as with the push off', async (t) => {
+  const { key, w } = switching(t);
+  const watch = pushing({ side: async () => { throw new Error('the push side broke here'); } });
+  const { off, on } = await offThenOn(w, key, 'doctor', watch);
+  assert.deepEqual(on, off);
+  const ends = pushEnds(w);
+  assert.equal(ends.length, 1, 'no push.end, or more than one, was recorded');
+  const answered = { outcome: 'failed', reason: 'the push side broke here' };
+  assertPushEnd(ends[0], answered);
+  assertFailureLine(watch.lines, answered);
+  assertOnePerRun(w);
+});
+
+test('O12: a doctor run, telemetry.push true, that stops on a kill event its sink refused still returns normally and pushes once', async (t) => {
+  const w = world(t, { ...ADMITTED, telemetry: { push: true } });
+  // A check whose forge call's kill the sink refused, as L0 rejects one: doctor stops before its next check.
+  const refusing = ({ emitter }) => {
+    emitter.emit('stand-in.check', {});
+    throw Object.assign(new Error('the sink refused 1 L0 event(s), so they went unrecorded'), { code: EVENT_REFUSED });
+  };
+  const watch = pushing();
+  const answer = await doctor({ target: w.repository, ask: asking(), checks: [refusing], push: watch.push });
+  assert.equal(answer.code, 1, answer.text);
+  assert.match(answer.text, /^rigger doctor: the sink refused 1 L0 event/);
+  assert.equal(watch.pushes.length, 1, 'the verb made no push, or more than one');
+  assert.equal(watch.pushes[0].answered.outcome, 'pushed', watch.pushes[0].answered.reason);
+  const ends = pushEnds(w);
+  assert.equal(ends.length, 1, 'no push.end, or more than one, was recorded');
+  assertPushEnd(ends[0], watch.pushes[0].answered);
   assert.deepEqual(watch.lines, []);
 });
