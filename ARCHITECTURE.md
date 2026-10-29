@@ -1437,6 +1437,15 @@ Where a process that left its group holds the command's output open once the gro
 reading after a bound it sets and records that it did. A dispatch ends only once L0 has terminated
 the group's processes.
 
+L0's process adapter reaches the operating system through one host. No other module under `src/`
+starts a process, sends a signal, or reads the process table. The host also gives the process
+adapter the clock, in the shape L3's clock takes, and the identity of a path. Code outside the
+process adapter may read a path's identity, or the time, directly. The adapter decides
+everything else from the host's answers: what it reads, what it kills, in what order, what it
+records, and when it stops waiting. Rigger runs on the host the operating system gives it, and
+`D29` holds how Rigger's own tests stand in for it. The host is no extension point, because no
+consumer declares one.
+
 Where the adapter named a folder, L1 lists it before the command starts. Once L0 has settled, where
 the command ran, L1 removes each path under that folder that the listing did not hold, and follows
 no symbolic link. L1 removes nothing there in any of these cases:

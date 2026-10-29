@@ -270,7 +270,7 @@ function released(release, claim, failure) {
  * the card through that handle on its first `hold` answer, as `holding` says. Where a hold's close
  * rejects, no pull of this loop claims a card after it, and claims already held finish.
  */
-export function loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, environment, run, ps, readTimeout, clock }) {
+export function loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, environment, run, host, readTimeout, clock }) {
   let admissionRecord;
   const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, facts, l2, sink, kill, readAdmission: () => admissionRecord.read(), halted: () => unsaved !== undefined });
   const { merge } = lane({ board, facts, l2, record, refused, removeDirectories, clock });
@@ -307,7 +307,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     } catch (refusal) {
       throw refused(`card #${card.number}'s step \`${step.name}\` was not started, because the event sink refused to record its start`, refusal);
     }
-    const [outcome] = await Promise.allSettled([dispatchOnL1({ id, card: card.number, directory: state, sink, ps, readTimeout, ...stepDispatch(step, path, environment) })]);
+    const [outcome] = await Promise.allSettled([dispatchOnL1({ id, card: card.number, directory: state, sink, host, readTimeout, ...stepDispatch(step, path, environment) })]);
     return { ...outcome, dispatch: id };
   };
 
@@ -335,7 +335,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     }
     const run = async () => {
       const handed = await roleDispatch({ answer: stamp(answer, id), cwd, directory, scratch, repository, reach, env: environment, sink, id, card: card.number });
-      return dispatchOnL1({ id, card: card.number, directory: state, sink, ps, readTimeout, ...handed });
+      return dispatchOnL1({ id, card: card.number, directory: state, sink, host, readTimeout, ...handed });
     };
     const [outcome] = await Promise.allSettled([run()]);
     return { ...outcome, dispatch: id };

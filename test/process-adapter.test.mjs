@@ -12,6 +12,7 @@ import { basename, dirname, isAbsolute, join } from 'node:path';
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { EVENT_REFUSED, NOT_STARTED, PS, TIMER_MAX, runCommand, whenElapsed } from '../src/substrate/process.mjs';
 import * as processAdapter from '../src/substrate/process.mjs';
+import { realHost } from '../src/substrate/host.mjs';
 import { OUTLIVED, TAIL, alive, bytes, fixture, holding, leave, outliving, read, ready, running, scratch, shellQuote, startOf, warmed } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { sightingPs } from './census-sightings.mjs';
@@ -50,6 +51,216 @@ const UNREACHED = 15_000;
 function adapt(directory, options) {
   return runCommand({ args: [], cwd: directory, env: {}, emitter: l0(directory).emitter, timeout: UNREACHED, ...options });
 }
+
+// proves R-STATE-19
+test('a supplied host owns the synchronous group-presence answer', async () => {
+  const asked = [];
+  const host = {
+    ...realHost,
+    signal(target, name) {
+      asked.push([target, name]);
+      throw Object.assign(new Error('the scripted group is absent'), { code: 'ESRCH' });
+    },
+  };
+  assert.deepEqual(processAdapter.containNow(999999999, { host, readTimeout: 10 }), { kills: [] });
+  assert.deepEqual(asked, [[-999999999, 0]]);
+});
+
+// proves R-STATE-19
+test('recorded-group identity reads use the supplied host and clock', async () => {
+  const asked = [];
+  let ticks = 0;
+  const host = {
+    ...realHost,
+    ps: '/controlled/ps',
+    signal(target, name) {
+      asked.push(['signal', target, name]);
+      throw Object.assign(new Error('scripted absence'), { code: 'ESRCH' });
+    },
+    execFile(tool, args, options, done) {
+      asked.push(['read', tool, args]);
+      queueMicrotask(() => done(Object.assign(new Error('no match'), { code: 1 }), '', ''));
+      return { kill() {}, stdout: { destroy() {} }, stderr: { destroy() {} } };
+    },
+    clock: { ...realHost.clock, now: () => { ticks += 1; return 0; }, pause: async () => {} },
+  };
+  await processAdapter.killRecordedGroup({ group: 999999999, started: 0, emitter: { emit() {} }, host, readTimeout: 10 });
+  assert.deepEqual(asked[0], ['read', '/controlled/ps', ['-ww', '-g', '999999999', '-o', 'pid=,stat=,lstart=']]);
+  assert.ok(asked.some(([kind, target, name]) => kind === 'signal' && target === -999999999 && name === 0), 'the host did not answer group presence');
+  assert.ok(asked.slice(1).every(([kind]) => kind === 'signal'), 'an unprovided process-table read occurred');
+  assert.ok(ticks > 0, 'the controlled clock was not consulted for the identity-read deadline');
+});
+
+// proves R-STATE-19
+test('a supplied host clock cuts off a stalled start-identity read without wall time', async () => {
+  const scheduled = [];
+  const killed = [];
+  let complete;
+  const host = {
+    ...realHost,
+    ps: '/controlled/ps',
+    execFile(_tool, _args, _options, done) {
+      complete = done;
+      return { stdout: { destroy() {} }, stderr: { destroy() {} } };
+    },
+    killChild(_child, name) {
+      killed.push(name);
+      queueMicrotask(() => complete(Object.assign(new Error('scripted read ended'), { code: 'SIGKILL' }), '', ''));
+    },
+    clock: {
+      now: () => 0,
+      pause: async () => {},
+      schedule(done, delay) { scheduled.push(delay); queueMicrotask(done); return { unref() {} }; },
+      cancel() {},
+    },
+  };
+  await assert.rejects(
+    processAdapter.killRecordedGroup({ group: 999999999, started: 0, emitter: { emit() {} }, host, readTimeout: 7 }),
+    (failure) => failure.code === 'ETIMEDOUT',
+  );
+  assert.deepEqual(scheduled, [7]);
+  assert.deepEqual(killed, ['SIGKILL']);
+});
+
+// proves R-STATE-14
+test('a supplied host starts a controlled command without a real process', async () => {
+  const { EventEmitter } = await import('node:events');
+  const { PassThrough } = await import('node:stream');
+  const asked = [];
+  const host = {
+    ...realHost,
+    spawn(command, args, options) {
+      asked.push(['spawn', command, args, options.detached]);
+      const child = new EventEmitter();
+      child.pid = 999999999;
+      child.exitCode = null;
+      child.signalCode = null;
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      queueMicrotask(() => {
+        child.exitCode = 0;
+        child.emit('exit', 0, null);
+        child.stdout.end();
+        child.stderr.end();
+      });
+      return child;
+    },
+    signal(target, name) {
+      asked.push(['signal', target, name]);
+      throw Object.assign(new Error('scripted absence'), { code: 'ESRCH' });
+    },
+  };
+  const result = await processAdapter.runCommand({
+    command: '/controlled/command', args: [], cwd: '/', env: {}, timeout: 100,
+    emitter: { emit() {} }, host,
+  });
+  assert.deepEqual([result.exit, result.timedOut, result.stdout.length, result.stderr.length], [0, false, 0, 0]);
+  assert.deepEqual(asked[0], ['spawn', '/controlled/command', [], true]);
+  assert.ok(asked.some(([kind, target, name]) => kind === 'signal' && target === -999999999 && name === 0), 'the host did not answer containment');
+});
+
+// proves R-STATE-14
+test('a supplied host clock ends the output drain without wall time', async () => {
+  const { EventEmitter } = await import('node:events');
+  const { PassThrough } = await import('node:stream');
+  const scheduled = [];
+  const events = [];
+  const host = {
+    ...realHost,
+    spawn() {
+      const child = new EventEmitter();
+      child.pid = 999999999;
+      child.exitCode = null;
+      child.signalCode = null;
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      queueMicrotask(() => {
+        child.exitCode = 0;
+        child.emit('exit', 0, null);
+        child.stderr.end();
+      });
+      return child;
+    },
+    signal() { throw Object.assign(new Error('scripted absence'), { code: 'ESRCH' }); },
+    clock: {
+      now: () => 0,
+      pause: async () => {},
+      schedule(done, delay) {
+        scheduled.push(delay);
+        if (delay === 7) queueMicrotask(done);
+        return { unref() {} };
+      },
+      cancel() {},
+    },
+  };
+  const result = await processAdapter.runCommand({
+    command: '/controlled/holder', args: [], cwd: '/', env: {}, timeout: 100,
+    outputBound: 7, emitter: { emit: (name) => events.push(name) }, host,
+  });
+  assert.deepEqual(scheduled, [100, 7], 'the host did not schedule both command and output deadlines');
+  assert.equal(result.exit, 0);
+  assert.deepEqual(events, ['output.held']);
+});
+
+// proves R-STATE-14
+test('a supplied host clock ends a running command at its deadline without wall time', async () => {
+  const { EventEmitter } = await import('node:events');
+  const { PassThrough } = await import('node:stream');
+  const scheduled = [];
+  const cancelled = [];
+  let child;
+  const host = {
+    ...realHost,
+    spawn() {
+      child = new EventEmitter();
+      child.pid = 999999999;
+      child.exitCode = null;
+      child.signalCode = null;
+      child.stdout = new PassThrough();
+      child.stderr = new PassThrough();
+      return child;
+    },
+    signal() { throw Object.assign(new Error('scripted absence'), { code: 'ESRCH' }); },
+    clock: {
+      now: () => 0,
+      pause: async () => {},
+      schedule(done, delay) {
+        scheduled.push(delay);
+        if (delay === 5) queueMicrotask(() => {
+          done();
+          queueMicrotask(() => {
+            child.signalCode = 'SIGKILL';
+            child.emit('exit', null, 'SIGKILL');
+            child.stdout.end();
+            child.stderr.end();
+          });
+        });
+        return { unref() {}, delay };
+      },
+      cancel(timer) { cancelled.push(timer.delay); },
+    },
+  };
+  const result = await runCommand({
+    command: '/controlled/hung', args: [], cwd: '/', env: {}, timeout: 5,
+    emitter: { emit() {} }, host,
+  });
+  assert.equal(result.timedOut, true);
+  assert.notEqual(result.exit, 0);
+  assert.equal(scheduled[0], 5);
+  assert.deepEqual(cancelled, scheduled);
+});
+
+// proves R-STATE-14
+test('the default host starts a real command and returns its bytes', async (t) => {
+  const directory = scratch(t);
+  let group;
+  const result = await shell(directory, 'printf host-boundary', { onGroup: (pid) => { group = pid; } });
+  assert.ok(Number.isInteger(group) && group > 0, 'the real host did not start a process group');
+  assert.equal(result.exit, 0);
+  assert.equal(result.timedOut, false);
+  assert.equal(result.stdout.toString(), 'host-boundary');
+  assert.equal(result.stderr.length, 0);
+});
 
 test('a command that exits 0 has exit code 0 in the result', async (t) => {
   const directory = scratch(t);
@@ -256,7 +467,7 @@ test('B0 adapter wiring: an early named census member omitted later is recorded 
   const kills = [];
   let group;
   const kill = (target, name) => { kills.push([target, name]); return process.kill(target, name); };
-  const { events } = await recorded(directory, { command, ps: sightingPs(directory, { cell: 'B' }), kill, onGroup: (id) => { group = id; } });
+  const { events } = await recorded(directory, { command, host: { ...realHost, ps: sightingPs(directory, { cell: 'B' }), signal: kill }, onGroup: (id) => { group = id; } });
   const two = Number(read(directory, 'two.pid'));
   const trace = read(directory, 'sighted-ps.log');
   assert.ok(existsSync(join(directory, 'sighted-next-stat')), 'the later census round did not omit the member');
@@ -346,7 +557,7 @@ test('given an onGroup and a start-time read that fails, the call rejects naming
   const ps = fixture(directory, 'ps', 'exit 2');
   let called = false;
 
-  await assert.rejects(adapt(directory, { command, ps, onGroup: () => { called = true; } }), /could not read when the leader of group \d+ started, so it ended the group: .* ended with 2$/);
+  await assert.rejects(adapt(directory, { command, host: { ...realHost, ps }, onGroup: () => { called = true; } }), /could not read when the leader of group \d+ started, so it ended the group: .* ended with 2$/);
 
   assert.equal(called, false, 'onGroup was called');
   assert.deepEqual(running(join(directory, 'hold')), [], 'a process of the command is alive');
@@ -362,7 +573,7 @@ test('given an onGroup and a start-time read that prints the start time and a fa
   const ps = fixture(directory, 'ps', 'case "$*" in *lstart=*) ' + shellQuote(PS) + ' "$@"; echo "ps: failing on purpose" >&2; exit 0 ;; esac\nexec ' + shellQuote(PS) + ' "$@"');
   let called = false;
 
-  await assert.rejects(adapt(directory, { command, ps, onGroup: () => { called = true; } }), /could not read when the leader of group \d+ started, so it ended the group: .*ps: failing on purpose/);
+  await assert.rejects(adapt(directory, { command, host: { ...realHost, ps }, onGroup: () => { called = true; } }), /could not read when the leader of group \d+ started, so it ended the group: .*ps: failing on purpose/);
 
   assert.equal(called, false, 'onGroup was called');
   assert.deepEqual(running(join(directory, 'hold')), [], 'a process of the command is alive');
@@ -432,7 +643,7 @@ test('given a process-table read that never answers, the call settles with no pr
   const ps = fixture(directory, 'ps', 'exec /usr/bin/tail -f "$here/ps-hold"');
   const command = fixture(directory, 'command', `echo $$ > "$here/group"\n${leave(TAIL, 'survivor')}`);
 
-  const { events } = await recorded(directory, { command, ps, readTimeout: 200 });
+  const { events } = await recorded(directory, { command, host: { ...realHost, ps }, readTimeout: 200 });
 
   const group = Number(read(directory, 'group'));
   assert.equal(alive(-group), false, 'a process of the command\'s group is alive');
@@ -531,7 +742,7 @@ function reExecuting(directory) {
   ].join('\n'));
   // `/bin/bash` by name, because macOS's `/bin/sh` runs another executable.
   const command = fixture(directory, 'command', `/bin/bash "$here/first" &\necho $! > "$here/survivor.pid"\nwhile [ ! -f "$here/running" ]; do :; done`);
-  return { command, ps };
+  return { command, host: { ...realHost, ps } };
 }
 
 // proves R-STATE-12
@@ -601,7 +812,7 @@ test('a survivor whose state reads as ? is read again, not left unnamed', SETTLE
   ].join('\n'));
   const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
 
-  const { events } = await recorded(directory, { command, ps });
+  const { events } = await recorded(directory, { command, host: { ...realHost, ps } });
 
   assert.equal(existsSync(join(directory, 'called')), true, 'the census never read the table');
   assert.deepEqual(events.map(({ event, name, cmd }) => ({ event, name, cmd })), [
@@ -644,7 +855,7 @@ test('a survivor missing from one of the census\'s reads is read again, not left
   ].join('\n'));
   const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
 
-  const { events } = await recorded(directory, { command, ps });
+  const { events } = await recorded(directory, { command, host: { ...realHost, ps } });
 
   assert.equal(existsSync(join(directory, 'names-read')), true, 'the census never read the names');
   assert.deepEqual(events.map(({ event, name, cmd }) => ({ event, name, cmd })), [
@@ -1047,7 +1258,7 @@ test('while the call re-reads a census, it uses less than a tenth of those re-re
   const enteredAt = performance.now();
   const used = process.cpuUsage();
 
-  const { events } = await recorded(directory, { command, ps, readTimeout });
+  const { events } = await recorded(directory, { command, host: { ...realHost, ps }, readTimeout });
 
   const returnedAt = performance.now();
   const { user, system } = process.cpuUsage(used);
@@ -1080,7 +1291,7 @@ test('after a whole census round, a first state read reporting mid-exec skips re
   ].join('\n'));
   const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
 
-  const { events } = await recorded(directory, { command, ps, readTimeout: 600 });
+  const { events } = await recorded(directory, { command, host: { ...realHost, ps }, readTimeout: 600 });
 
   const calls = read(directory, 'calls').split('\n');
   const states = calls.filter((call) => call.startsWith('-ww ') && call.endsWith('pid=,stat='));
@@ -1323,7 +1534,7 @@ const syncCleanupStateScenarios = [
   { id: 'same-worker-unread-age-is-cumulative-across-groups', claims: ['failed reads retain first failure age across containNow calls, not one bound per group'], calls: [syncFailedCall(43001, syncToolB, 0, 3), syncFailedCall(43011, syncToolB, 1000, 1)], expectedTotalRawCalls: 6, expectedFinalClockMs: 1500 },
 ];
 
-const syncCleanupWorkerBody = "// ABOUTME: Exercises synchronous cleanup with scripted raw responses and an injected clock.\nimport assert from 'node:assert/strict';\nimport { readFileSync } from 'node:fs';\nconst { containNow } = await import(process.env.WP2_MODULE_URL);\nconst scenario = JSON.parse(readFileSync(process.argv[2], 'utf8'));\nlet clock = scenario.startMs ?? 0;\nconst failures = [];\nconst value = (entry) => entry.type === 'undefined' ? undefined : entry.value;\nlet totalRaw = 0;\nfor (const current of scenario.calls) {\n  assert.equal(clock, current.startMs);\n  let rawIndex = 0;\n  const kills = [];\n  const received = [];\n  const usedAlternates = new Set();\n  let clockCalls = 0;\n  const now = () => {\n    if (++clockCalls > 512) {\n      failures.push('finite script made no clock progress');\n      throw new Error('finite script made no clock progress');\n    }\n    return clock;\n  };\n  const kill = (target, signal) => {\n    kills.push([target, signal]);\n    // Pure spy: no OS signal and no dependence on the expected decision.\n  };\n  const rawSpawn = (tool, argv, settings) => {\n    totalRaw += 1;\n    const matches = (entry) => entry && entry.tool === tool && entry.beforeMs === clock && JSON.stringify(entry.argv) === JSON.stringify(argv);\n    let expected = current.rawScript[rawIndex];\n    if (matches(expected)) rawIndex += 1;\n    else {\n      const index = (current.optionalRawAlternates ?? []).findIndex((entry, index) => !usedAlternates.has(index) && matches(entry));\n      expected = current.optionalRawAlternates?.[index];\n      if (expected) usedAlternates.add(index);\n    }\n    try {\n      assert.ok(expected, 'unprovided raw-path request; no semantic fault credit');\n      assert.deepEqual({ ...settings, maxBuffer: settings.maxBuffer === Infinity ? 'Infinity' : settings.maxBuffer }, expected.settings);\n    } catch (error) {\n      failures.push(error.message);\n      clock += 1000;\n      return { error: Object.assign(new Error('unexpected raw read'), { code: 'WP2_UNEXPECTED' }), status: null, signal: null, stdout: '', stderr: '' };\n    }\n    received.push({ tool, argv, beforeMs: clock, settings, rawReturn: expected.rawReturn });\n    clock = expected.afterMs;\n    const tuple = expected.rawReturn;\n    return { ...tuple, error: tuple.error === null ? undefined : Object.assign(new Error(tuple.error.message), tuple.error) };\n  };\n  const actual = containNow(current.group, { ps: current.ps, readTimeout: current.readTimeout, kill, now, spawnSync: rawSpawn });\n  console.log(JSON.stringify({ id: scenario.id, group: current.group, actual, kills, received, clock }));\n  assert.deepEqual(failures, [], 'invalid script/escape profile; no semantic fault credit');\n  // A fault gets legitimate, bounded alternate answers. Its decision fails before\n  // strict normal-path counts, rather than because the callback threw.\n  assert.deepEqual(actual, { kills: current.expectedLiteral.kills, leader: value(current.expectedLiteral.leader), unread: value(current.expectedLiteral.unread) }, 'whole cleanup decision differs');\n  assert.deepEqual(Object.keys(actual).sort(), [...current.expectedLiteral.keys].sort());\n  assert.equal(rawIndex, current.rawScript.length, 'raw script was not consumed exactly');\n  assert.deepEqual(kills, current.expectedLiteral.killRequests);\n  assert.equal(clock, current.expectedLiteral.finalClockMs);\n}\nassert.equal(totalRaw, scenario.expectedTotalRawCalls);\nconsole.log(JSON.stringify({ scenario: scenario.id, totalRaw, clock, scope: 'controlled synchronous driver, not native OS proof' }));\n";
+const syncCleanupWorkerBody = "// ABOUTME: Exercises synchronous cleanup with scripted raw responses and an injected clock.\nimport assert from 'node:assert/strict';\nimport { readFileSync } from 'node:fs';\nconst { containNow } = await import(process.env.WP2_MODULE_URL);\nconst scenario = JSON.parse(readFileSync(process.argv[2], 'utf8'));\nlet clock = scenario.startMs ?? 0;\nconst failures = [];\nconst value = (entry) => entry.type === 'undefined' ? undefined : entry.value;\nlet totalRaw = 0;\nfor (const current of scenario.calls) {\n  assert.equal(clock, current.startMs);\n  let rawIndex = 0;\n  const kills = [];\n  const received = [];\n  const usedAlternates = new Set();\n  let clockCalls = 0;\n  const now = () => {\n    if (++clockCalls > 512) {\n      failures.push('finite script made no clock progress');\n      throw new Error('finite script made no clock progress');\n    }\n    return clock;\n  };\n  const kill = (target, signal) => {\n    kills.push([target, signal]);\n    // Pure spy: no OS signal and no dependence on the expected decision.\n  };\n  const rawSpawn = (tool, argv, settings) => {\n    totalRaw += 1;\n    const matches = (entry) => entry && entry.tool === tool && entry.beforeMs === clock && JSON.stringify(entry.argv) === JSON.stringify(argv);\n    let expected = current.rawScript[rawIndex];\n    if (matches(expected)) rawIndex += 1;\n    else {\n      const index = (current.optionalRawAlternates ?? []).findIndex((entry, index) => !usedAlternates.has(index) && matches(entry));\n      expected = current.optionalRawAlternates?.[index];\n      if (expected) usedAlternates.add(index);\n    }\n    try {\n      assert.ok(expected, 'unprovided raw-path request; no semantic fault credit');\n      assert.deepEqual({ ...settings, maxBuffer: settings.maxBuffer === Infinity ? 'Infinity' : settings.maxBuffer }, expected.settings);\n    } catch (error) {\n      failures.push(error.message);\n      clock += 1000;\n      return { error: Object.assign(new Error('unexpected raw read'), { code: 'WP2_UNEXPECTED' }), status: null, signal: null, stdout: '', stderr: '' };\n    }\n    received.push({ tool, argv, beforeMs: clock, settings, rawReturn: expected.rawReturn });\n    clock = expected.afterMs;\n    const tuple = expected.rawReturn;\n    return { ...tuple, error: tuple.error === null ? undefined : Object.assign(new Error(tuple.error.message), tuple.error) };\n  };\n  const actual = containNow(current.group, { host: { ps: current.ps, signal: kill, spawnSync: rawSpawn, clock: { now, pause: async () => {} } }, readTimeout: current.readTimeout });\n  console.log(JSON.stringify({ id: scenario.id, group: current.group, actual, kills, received, clock }));\n  assert.deepEqual(failures, [], 'invalid script/escape profile; no semantic fault credit');\n  // A fault gets legitimate, bounded alternate answers. Its decision fails before\n  // strict normal-path counts, rather than because the callback threw.\n  assert.deepEqual(actual, { kills: current.expectedLiteral.kills, leader: value(current.expectedLiteral.leader), unread: value(current.expectedLiteral.unread) }, 'whole cleanup decision differs');\n  assert.deepEqual(Object.keys(actual).sort(), [...current.expectedLiteral.keys].sort());\n  assert.equal(rawIndex, current.rawScript.length, 'raw script was not consumed exactly');\n  assert.deepEqual(kills, current.expectedLiteral.killRequests);\n  assert.equal(clock, current.expectedLiteral.finalClockMs);\n}\nassert.equal(totalRaw, scenario.expectedTotalRawCalls);\nconsole.log(JSON.stringify({ scenario: scenario.id, totalRaw, clock, scope: 'controlled synchronous driver, not native OS proof' }));\n";
 
 async function syncCleanupWorker(t, scenario) {
   const directory = scratch(t);
@@ -1408,7 +1619,7 @@ test('a survivor the census named that exits on its own before the kill is not r
   ].join('\n'));
   const command = fixture(directory, 'command', [leave(TAIL, 'tail'), leave('"$here/quitter"', 'quitter', 'bash')].join('\n'));
 
-  const { events } = await recorded(directory, { command, ps });
+  const { events } = await recorded(directory, { command, host: { ...realHost, ps } });
 
   assert.equal(existsSync(join(directory, 'told')), true, 'the quitter was never told to go, so the test proves nothing');
   assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })), [
@@ -1429,7 +1640,7 @@ for (const [what, body] of [['never answers', HUNG_PS], ['fails', FAILING_PS]]) 
     const command = unreaped(directory);
     const ps = fixture(directory, 'ps', body);
 
-    const { events } = await recorded(directory, { command, ps, readTimeout: 200 });
+    const { events } = await recorded(directory, { command, host: { ...realHost, ps }, readTimeout: 200 });
 
     const zombie = Number(read(directory, 'zombie.pid'));
     assert.equal(spawnSync('/bin/ps', ['-o', 'stat=', '-p', String(zombie)], { encoding: 'utf8' }).stdout[0], 'Z', 'the zombie was reaped, so the test proves nothing');
@@ -1515,7 +1726,7 @@ function quittingUnreaped(directory, { at = 'census', later = 'exec ' + shellQuo
     'echo $! > "$here/keeper.pid"',
     'while [ ! -f "$here/quitter.pid" ]; do :; done',
   ].join('\n'));
-  return { command, ps };
+  return { command, host: { ...realHost, ps } };
 }
 
 test('a survivor the census named that exits on its own before the kill, and is left unreaped, is not recorded as killed', SETTLES_WITHIN, async (t) => {
@@ -1589,7 +1800,7 @@ test('a survivor the census named that exits on its own before the kill, and who
     'until [ -f "$here/quitter.pid" ] && /bin/ps -o pgid= -p "$(/bin/cat "$here/quitter.pid")" | /usr/bin/grep -q "^ *$$\\$"; do :; done',
   ].join('\n'));
 
-  const { events } = await recorded(directory, { command, ps });
+  const { events } = await recorded(directory, { command, host: { ...realHost, ps } });
 
   assert.equal(existsSync(join(directory, 'told')), true, 'the quitter was never told to go, so the test proves nothing');
   assert.deepEqual(events.map(({ event, pid }) => ({ event, pid })), []);
@@ -1628,7 +1839,7 @@ test('a kill whose reads of the group after the kill never answer still records 
   const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
 
   // Long enough for the census to finish on a loaded host, where the whole suite runs at once.
-  const { events } = await recorded(directory, { command, ps, readTimeout: 2_000 });
+  const { events } = await recorded(directory, { command, host: { ...realHost, ps }, readTimeout: 2_000 });
 
   assert.equal(existsSync(join(directory, 'before')), true, 'the kill was never read before, so the test proves nothing');
   assert.equal(alive(Number(read(directory, 'survivor.pid'))), false);
@@ -1665,7 +1876,7 @@ async function recordsEveryProcess(t, failing, options = {}) {
   const command = chain(directory, 3);
   const ps = failingOnce(directory, failing);
 
-  const { events } = await recorded(directory, { command, ps, ...options });
+  const { events } = await recorded(directory, { command, host: { ...realHost, ps }, ...options });
 
   assert.equal(existsSync(join(directory, 'failed')), true, 'no read before the kill failed, so the test proves nothing');
   const chained = read(directory, 'chain.pids').split('\n').map(Number).sort((a, b) => a - b);
@@ -1702,7 +1913,7 @@ test('a census whose every read of the group exits 1 and prints nothing while th
   const ps = fixture(directory, 'ps', 'case "$*" in "-ww -g "*) : > "$here/failed"; exit 1 ;; esac\nexec ' + shellQuote(PS) + ' "$@"');
   const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
 
-  const { events } = await recorded(directory, { command, ps, readTimeout: 1_000 });
+  const { events } = await recorded(directory, { command, host: { ...realHost, ps }, readTimeout: 1_000 });
 
   assert.equal(existsSync(join(directory, 'failed')), true, 'no read of the census failed, so the test proves nothing');
   assert.equal(alive(Number(read(directory, 'survivor.pid'))), false);
@@ -1726,7 +1937,7 @@ test('a census whose every read of the group lists only one of two survivors sti
   ].join('\n'));
   const command = fixture(directory, 'command', [leave(TAIL, 'one'), leave(TAIL, 'two')].join('\n'));
 
-  const { events } = await recorded(directory, { command, ps, readTimeout: 1_000 });
+  const { events } = await recorded(directory, { command, host: { ...realHost, ps }, readTimeout: 1_000 });
 
   const survivors = ['one', 'two'].map((name) => Number(read(directory, `${name}.pid`)));
   assert.equal(existsSync(join(directory, 'cut')), true, 'no read of the census was cut, so the test proves nothing');
@@ -1752,7 +1963,7 @@ test('a census whose every read of the group lists only its zombie, while a surv
   ].join('\n'));
   const command = unreaped(directory);
 
-  const { events } = await recorded(directory, { command, ps, readTimeout: 1_000 });
+  const { events } = await recorded(directory, { command, host: { ...realHost, ps }, readTimeout: 1_000 });
 
   const survivor = Number(read(directory, 'tail.pid'));
   assert.equal(existsSync(join(directory, 'cut')), true, 'no read of the census was cut, so the test proves nothing');
@@ -1796,7 +2007,7 @@ test('a census, and the kill\'s every read after the read just before it, that l
   ].join('\n'));
   const command = fixture(directory, 'command', [leave(TAIL, 'one'), leave(TAIL, 'two')].join('\n'));
 
-  const { events } = await recorded(directory, { command, ps, readTimeout: 1_000 });
+  const { events } = await recorded(directory, { command, host: { ...realHost, ps }, readTimeout: 1_000 });
 
   const survivors = ['one', 'two'].map((name) => Number(read(directory, `${name}.pid`)));
   assert.equal(existsSync(join(directory, 'census.cut')), true, 'no read of the census was cut, so the test proves nothing');
@@ -1836,7 +2047,7 @@ test('a kill whose every read of the group lists only its zombie, while its lead
   // ready within `OUTLIVED` of its spawn.
   const command = unreaped(directory, ': > "$here/ready"\nexec /usr/bin/tail -f "$here/hold"', '');
 
-  const { events } = await recorded(directory, { command, ps, timeout: OUTLIVED, readTimeout: 1_000 });
+  const { events } = await recorded(directory, { command, host: { ...realHost, ps }, timeout: OUTLIVED, readTimeout: 1_000 });
 
   ready(directory);
   const group = Number(read(directory, 'group'));
@@ -1870,7 +2081,7 @@ test('a census whose every read of the group lists only its zombie, while its le
   // ready within `OUTLIVED` of its spawn.
   const command = unreaped(directory, ': > "$here/ready"\nexec /usr/bin/tail -f "$here/hold"', '');
 
-  const { events } = await recorded(directory, { command, ps, timeout: OUTLIVED, readTimeout: 1_000 });
+  const { events } = await recorded(directory, { command, host: { ...realHost, ps }, timeout: OUTLIVED, readTimeout: 1_000 });
 
   ready(directory);
   const group = Number(read(directory, 'group'));
@@ -1911,7 +2122,7 @@ async function lastReadFailing(t, failing) {
   ].join('\n'));
   const command = unreaped(directory);
 
-  const { events } = await recorded(directory, { command, ps, readTimeout: 1_000 });
+  const { events } = await recorded(directory, { command, host: { ...realHost, ps }, readTimeout: 1_000 });
 
   assert.equal(existsSync(join(directory, 'failed')), true, 'no read of the group\'s states failed, so the test proves nothing');
   return { survivor: Number(read(directory, 'tail.pid')), events };
@@ -2415,7 +2626,7 @@ test('a chain 250 deep is killed whole, its group empty when the call settles, a
     return process.kill(target, name);
   };
 
-  const { events } = await recorded(directory, { command: chain(directory, 250), kill, onGroup: (id) => { group = id; } });
+  const { events } = await recorded(directory, { command: chain(directory, 250), host: { ...realHost, signal: kill }, onGroup: (id) => { group = id; } });
 
   t.diagnostic(`the kill loop took ${rounds.length} rounds over ${(rounds.at(-1) - rounds[0]).toFixed(1)} ms`);
   const chained = read(directory, 'chain.pids').split('\n').map(Number);

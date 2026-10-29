@@ -176,7 +176,7 @@ export const claimVerb = (verb, limit, options) => recording((opened) => claimin
  * choose the wording shared by `once` and `run`.
  */
 async function claiming(verb, limit, opened, {
-  target = process.cwd(), packageRoot = PACKAGE, ask, send, ps, readTimeout,
+  target = process.cwd(), packageRoot = PACKAGE, ask, send, host, readTimeout,
 } = {}) {
   const { named, refusal } = await settled(verb, opened, { target, packageRoot, ask });
   if (refusal) return refusal;
@@ -265,7 +265,7 @@ async function claiming(verb, limit, opened, {
   };
   const facts = (cards) => factsCall({ config, reads: cards.length === 1 ? cardReads(cards[0].number) : reads, decide })(cards);
   const state = join(named, STATE);
-  const kill = () => killRecordedGroups({ directory: state, sink, ps, readTimeout });
+  const kill = () => killRecordedGroups({ directory: state, sink, host, readTimeout });
   const { project } = config.board;
   // One line for each card that reached its maker, or that was pulled for its judges alone, each
   // followed by a line for each of its judges, then one for each failure of L2's settle that was

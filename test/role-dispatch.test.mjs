@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { chmodSync, lstatSync, readlinkSync, statSync } from 'node:fs';
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
 import { renameSync, rmSync } from 'node:fs';
+import { realHost } from '../src/substrate/host.mjs';
 import { EVENT_REFUSED } from '../src/substrate/process.mjs';
 import { gitIn, repositoryAt, worktreeAt, worktreeList } from './git-repository.mjs';
 import { dirname } from 'node:path';
@@ -1633,7 +1634,7 @@ test('a role sweep runs after L0 records an unreadable process table', SETTLES_W
   const lsof = fixture(root, 'lsof-refuses', 'echo "unread on purpose" >&2\nexit 2');
   const handed = await roleDispatch({ answer: answerOf(), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach: [], env: { HOME: root, CLAUDE_CONFIG_DIR: home }, sink, id: 'd-role', card: 1412, adapters: { 'stand-in': namingFolder(adapter, { home, name }) } });
 
-  const result = await dispatch({ id: 'd-role', card: 1412, directory: state, sink, ...handed, lsof });
+  const result = await dispatch({ id: 'd-role', card: 1412, directory: state, sink, ...handed, host: { ...realHost, lsof } });
 
   assert.equal(result.exit, 0);
   assert.match(result.stdout.toString('utf8'), /HERON-unread-629/);

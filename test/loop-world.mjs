@@ -323,11 +323,12 @@ export function readingLater(fake) {
  * again; the sink itself is the real one throughout, and what the two switch is whether an
  * append reaches it.
  */
+/** A supplied host is handed unchanged to L3 for its L1 dispatches. */
 export function world({
   cards = [1, 2, 3, 4], columns = COLUMNS, priority, fake = boardOf(cards, columns), concurrency, fresh = true, answer = () => ({ exit: 0, output: '' }), run = 'r-test',
   items = fake.operations, board = handleOn(fake, { columns, priority }), directory = temporaryDirectory('rigger-loop-'),
   kill = async () => {}, kinds = KINDS, provisioning = {}, forge = {}, scratch,
-  workspace, workspaceTip, judgeDirectory, removeDirectories = async () => {}, clock,
+  workspace, workspaceTip, judgeDirectory, removeDirectories = async () => {}, clock, host,
 } = {}) {
   const phaseTrace = [{ phase: 'warm.start', at: performance.now() }];
   if (process.env.RIGGER_596_PHASE_ACTIVE) {
@@ -588,7 +589,7 @@ export function world({
     events: recorded,
     /** The events L3 recorded so far, in order. */
     l3Events: () => recorded().filter((event) => event.layer === 'L3'),
-    loop: loop({ config: settings, board, decide, facts, l2, sink: l3Sink, kill, workspace, workspaceTip: workspaceTip ?? (async ({ card }) => repository.held().pullRequests.find((pull) => pull.head === topicFor(worktreeTopic(settings), card) && !pull.merged)?.sha), judgeDirectory: judgeDirectory ?? makingJudgeDirectories(join(under, 'workspaces')), removeDirectories, state: directory, environment: { ...process.env, PATH: agent.first() }, run, clock }),
+    loop: loop({ config: settings, board, decide, facts, l2, sink: l3Sink, kill, workspace, workspaceTip: workspaceTip ?? (async ({ card }) => repository.held().pullRequests.find((pull) => pull.head === topicFor(worktreeTopic(settings), card) && !pull.merged)?.sha), judgeDirectory: judgeDirectory ?? makingJudgeDirectories(join(under, 'workspaces')), removeDirectories, state: directory, environment: { ...process.env, PATH: agent.first() }, run, clock, host }),
   };
 }
 

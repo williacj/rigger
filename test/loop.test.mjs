@@ -78,6 +78,8 @@ function startSynchronousTrace() {
 
 // The mkdtemp check cites the trace's exact line, so imports for later tests sit below it.
 import { admissionOf, closerText, moduleOver, picture, seed, stateOf, TIME } from './admission-world.mjs';
+import { fixture, shellQuote } from './process-fixtures.mjs';
+import { realHost } from '../src/substrate/host.mjs';
 
 /** Keep the first and last observed call at each site and every call crossing the shared deadline. */
 function synchronousSummary(bodyStart, deadline, worlds = [], bodyEnd = Infinity) {
@@ -3082,4 +3084,26 @@ test('a refused maker note escalation keeps the card out of later pulls in the i
   assert.deepEqual((await built.fake.operations.readItems())[0].labels, ['type:change']);
   assert.equal(built.agent.runs().filter(({ role }) => role === 'reviewer').length, 0);
   assert.equal(built.events().find(({ event }) => event === 'review.escalate').raiser, 'maker');
+});
+
+
+test('L3 hands the supplied host to a completed maker dispatch for its start-identity read', BOUNDS[60_000], async () => {
+  const directory = temporaryDirectory('rigger-loop-host-');
+  const ps = fixture(directory, 'ps', [
+    'printf "%s\n" "$*" >> "$here/reads"',
+    `exec ${shellQuote(realHost.ps)} "$@"`,
+  ].join('\n'));
+  const warmed = spawnSync(ps, [], { env: { ...process.env, RIGGER_FIXTURE_WARMING: '1' } });
+  assert.equal(warmed.status, 0, 'the process-table fixture is ready before dispatch');
+  assert.equal(fs.existsSync(join(directory, 'reads')), false, 'warming records no process-table call');
+  const built = world({ cards: [1], concurrency: 1, host: { ...realHost, ps } });
+
+  await drive(built);
+
+  const completed = built.events().filter((event) => event.layer === 'L1' && event.event === 'dispatch.end' && event.card === 1);
+  assert.equal(completed.length, 1, 'one ready-card maker dispatch completed');
+  assert.equal(completed[0].exit, 0, 'the maker dispatch completed successfully before the forwarding oracle');
+  const calls = fs.existsSync(join(directory, 'reads')) ? fs.readFileSync(join(directory, 'reads'), 'utf8').trim().split('\n') : [];
+  // L0 documents its start-identity request as -p <pid> -o lstart=; this literal is independent of its helpers.
+  assert.ok(calls.some((call) => /^-p [1-9][0-9]* -o lstart=$/.test(call)), 'missing L3-to-L1 host forwarding: the ready wrapper saw no start-identity request during the completed maker dispatch');
 });

@@ -11,6 +11,7 @@ import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { PS } from '../src/substrate/process.mjs';
+import { realHost } from '../src/substrate/host.mjs';
 import template from '../templates/rigger.config.mjs';
 import { once as onceVerb } from '../src/cli/once.mjs';
 import { readGroups, recordPath, writeGroups } from '../src/execution/groups.mjs';
@@ -567,7 +568,7 @@ async function onceWithPs(world, ps) {
     sent.push([command, ...args].join(' '));
     return { status: 1, stdout: '', stderr: 'this forge stand-in answers nothing' };
   };
-  const ran = await onceVerb({ target: world.repository, send, ps, readTimeout: 300 });
+  const ran = await onceVerb({ target: world.repository, send, host: { ...realHost, ps }, readTimeout: 300 });
   return { ...ran, sent };
 }
 
