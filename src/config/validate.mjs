@@ -7,6 +7,8 @@ import { inspect } from 'node:util';
 
 import { ADAPTERS } from '../substrate/providers/adapters.mjs';
 import { KILL_BOUND, READ_TIMEOUT } from '../substrate/process.mjs';
+import { kindOf } from '../workflow/next-action.mjs';
+import { checkAcceptanceForm } from '../workflow/form-check.mjs';
 
 /**
  * The value the starter config carries where only the consumer can answer, by the key it sits
@@ -57,6 +59,24 @@ export const SHAPES = {
     // owner (`ARCHITECTURE.md`, the Escalation destinations row).
     escalate: { type: 'object' },
     telemetry: { keys: 'telemetry' },
+    clock: { keys: 'clock' },
+  },
+  clock: {
+    poll: { required: true },
+    triggers: { entries: 'trigger' },
+  },
+  trigger: {
+    interval: { required: true },
+    anchor: { required: true },
+    catchUp: { required: true },
+    card: { keys: 'card' },
+    job: {},
+  },
+  card: {
+    title: { required: true },
+    labels: { required: true },
+    acceptance: { required: true },
+    author: {},
   },
   board: {
     // Optional: where it is absent the board's owner is the repository's owner, which only the
@@ -215,8 +235,12 @@ const holdsUnnamed = (list) => Array.from(list).some((entry) => !names(entry));
  * string read as a set of names yields one refusal per character, each naming an index the
  * author never wrote.
  */
-const holdsNothing = (path, value) =>
-  `\`${path || 'the config'}\` holds no declarations, and Rigger reads ${JSON.stringify(value) ?? String(value)} as none`;
+function holdsNothing(path, value) {
+  let shown;
+  try { shown = JSON.stringify(value) ?? String(value); }
+  catch { shown = inspect(value); }
+  return `\`${path || 'the config'}\` holds no declarations, and Rigger reads ${shown} as none`;
+}
 
 /** Reads one value's keys against its shape, and every shape nested under it. */
 function readShape(value, shape, path, refusals) {
@@ -705,6 +729,107 @@ function readEscalate(config, refusals) {
   }
 }
 
+/** A duration in milliseconds is a positive whole number, as readTimeout requires. */
+const milliseconds = (value) => Number.isInteger(value) && value >= 1;
+
+/** The shared refusal text for an invalid millisecond duration, preserving readTimeout's rendering. */
+const durationReason = (value) => `must be a positive whole number of milliseconds, and the config gives ${inspect(value)}`;
+
+/** The anchor's epoch milliseconds, or NaN for a spelling outside the accepted anchor grammar. */
+function anchorInstant(value) {
+  if (typeof value !== 'string') return NaN;
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d{1,3}))?)?(Z|([+-])(\d{2}):(\d{2}))$/.exec(value);
+  if (!match || match[0] !== value || match[8] === '-00:00') return NaN;
+  const [, year, month, day, hour, minute, second = '0', fraction = '0', , sign, offsetHour = '0', offsetMinute = '0'] = match;
+  if (+hour > 23 || +minute > 59 || +second > 59 || +offsetHour > 23 || +offsetMinute > 59) return NaN;
+  const local = new Date(0);
+  // setUTCFullYear preserves years 0000 to 0099, which Date.UTC maps to 1900 to 1999.
+  local.setUTCFullYear(+year, +month - 1, +day);
+  local.setUTCHours(+hour, +minute, +second, +fraction.padEnd(3, '0'));
+  if (local.getUTCFullYear() !== +year || local.getUTCMonth() !== +month - 1 || local.getUTCDate() !== +day) return NaN;
+  const offset = (+offsetHour * 60 + +offsetMinute) * 60000 * (sign === '-' ? -1 : 1);
+  return local.getTime() - offset;
+}
+
+/**
+ * Parse a trigger's schedule and answer its adjacent occurrences at instant (epoch milliseconds).
+ * Invalid schedules answer refusals as { key, reason }. Valid ones also answer newest and next,
+ * each in epoch milliseconds or null where no occurrence exists in ECMA-262's time range.
+ */
+export function schedule(trigger, instant) {
+  const refusals = [];
+  if (!milliseconds(trigger.interval)) refusals.push({ key: 'interval', reason: durationReason(trigger.interval) });
+  const anchor = anchorInstant(trigger.anchor);
+  if (!Number.isFinite(anchor)) refusals.push({ key: 'anchor', reason: `must name an existing date and time carrying its offset, and the config gives ${inspect(trigger.anchor)}` });
+  if (refusals.length) return { refusals };
+  if (instant < anchor) return { refusals, newest: null, next: anchor };
+  const newest = anchor + Math.floor((instant - anchor) / trigger.interval) * trigger.interval;
+  const following = newest + trigger.interval;
+  return { refusals, newest, next: following <= 8640000000000000 ? following : null };
+}
+
+/** A plain label list, read once by length and index as carried to the forge, without consumer traversal methods. */
+const plainLabels = (labels) => Array.isArray(labels) ? Array.from({ length: labels.length }, (_, index) => labels[index]) : labels;
+
+/** Card-template values; readShape already refused a malformed card and its missing keys. */
+function readClockCard(config, card, where, refusals, canSelect) {
+  if (!declares(card)) return;
+  const labels = Object.hasOwn(card, 'labels') ? plainLabels(card.labels) : undefined;
+  if (Object.hasOwn(card, 'title') && !names(card.title)) {
+    refusals.push(`\`${where}.title\` must be a string holding something other than whitespace`);
+  }
+  if (Object.hasOwn(card, 'labels') && (!Array.isArray(labels) || holdsUnnamed(labels))) refusals.push(`\`${where}.labels\` must be a list of label names`);
+  if (Object.hasOwn(card, 'acceptance') && typeof card.acceptance !== 'string') {
+    refusals.push(`\`${where}.acceptance\` must be one string`);
+  }
+  if (names(card.title) && typeof card.acceptance === 'string') {
+    const form = checkAcceptanceForm({ title: card.title, body: `## Acceptance\n\n${card.acceptance}` });
+    if (!form.admitted) refusals.push(`\`${where}.acceptance\` ${form.reason}`);
+  }
+  if (Object.hasOwn(card, 'author') && (typeof card.author !== 'string'
+      || (card.author !== OWNER && declares(config.roles) && !Object.hasOwn(config.roles, card.author)))) {
+    refusals.push(`\`${where}.author\` must name \`owner\` or a declared role, and the config gives ${inspect(card.author)}`);
+  }
+  if (Array.isArray(labels)) {
+    if (canSelect) {
+      const { answer } = kindOf({ labels }, config.kinds, config.epicLabel);
+      if (answer) refusals.push(`\`${where}.labels\` ${inspect(labels)}: ${answer.reason ?? 'selects no kind'}`);
+    }
+    if (labels.some((label) => sameLabel(label, FIXED_LABELS.status))) {
+      refusals.push(`\`${where}.labels\` ${inspect(labels)} holds the status label`);
+    }
+  }
+}
+
+/** The values of a clock's declarations; readShape already refused malformed containers. */
+function readClock(config, refusals) {
+  if (!Object.hasOwn(config, 'clock') || !declares(config.clock)) return;
+  // kindOf assumes valid selectors. An already-refused kind or epic label earns no second
+  // refusal from its template's selection (card 1077, C33 and C34).
+  const canSelect = !refusals.some((reason) => ['`kinds`', '`kinds.', '`epicLabel`'].some((path) => reason.startsWith(path)));
+  if (Object.hasOwn(config.clock, 'poll') && !milliseconds(config.clock.poll)) {
+    refusals.push(`\`clock.poll\` ${durationReason(config.clock.poll)}`);
+  }
+  if (!Object.hasOwn(config.clock, 'triggers') || !declares(config.clock.triggers)) return;
+  for (const [name, trigger] of Object.entries(config.clock.triggers)) {
+    if (!declares(trigger)) continue;
+    const where = `clock.triggers.${name}`;
+    for (const { key, reason } of schedule(trigger, 0).refusals) {
+      if (Object.hasOwn(trigger, key)) refusals.push(`\`${where}.${key}\` ${reason}`);
+    }
+    if (Object.hasOwn(trigger, 'card') === Object.hasOwn(trigger, 'job')) {
+      refusals.push(`\`${where}\` must declare exactly one of \`card\` and \`job\``);
+    }
+    if (Object.hasOwn(trigger, 'catchUp') && !['fire', 'skip'].includes(trigger.catchUp)) {
+      refusals.push(`\`${where}.catchUp\` must name \`fire\` or \`skip\`, and the config gives ${inspect(trigger.catchUp)}`);
+    }
+    if (Object.hasOwn(trigger, 'job') && trigger.job !== 'report') {
+      refusals.push(`\`${where}.job\` must name \`report\`, and the config gives ${inspect(trigger.job)}`);
+    }
+    if (Object.hasOwn(trigger, 'card')) readClockCard(config, trigger.card, `${where}.card`, refusals, canSelect);
+  }
+}
+
 /** Every refusal this config earns. An accepted config earns none, so the list is empty. */
 export function validate(config) {
   const refusals = [];
@@ -722,6 +847,7 @@ export function validate(config) {
   readBoardOwner(config.board, refusals);
   readPriority(config.board?.priority, refusals);
   readEscalate(config, refusals);
+  readClock(config, refusals);
   return refusals;
 }
 
@@ -778,8 +904,9 @@ export function selectedLabels(config) {
 /**
  * Every label an accepted config declares, each once: those its kinds and steps select, then its
  * epic label where it declares one, then those its roles' `labels` map to a tier, then those
- * its roles' `providerLabels` map to a provider, roles in the order declared, then Rigger's fixed
- * labels. These are the labels `setup-board` gives the repository. Two names GitHub holds
+ * its roles' `providerLabels` map to a provider, roles in the order declared, then the clock
+ * triggers' card-template labels, triggers in the order declared, then Rigger's fixed labels.
+ * These are the labels `setup-board` gives the repository. Two names GitHub holds
  * as one label are one label here, spelled as the first of them declared.
  */
 export function declaredLabels(config) {
@@ -788,6 +915,8 @@ export function declaredLabels(config) {
     ...(Object.hasOwn(config, 'epicLabel') ? [config.epicLabel] : []),
     ...Object.values(config.roles).flatMap((role) => Object.keys(role.labels ?? {})),
     ...Object.values(config.roles).flatMap((role) => Object.keys(role.providerLabels ?? {})),
+    ...(Object.hasOwn(config, 'clock') && Object.hasOwn(config.clock, 'triggers')
+      ? Object.values(config.clock.triggers).flatMap((trigger) => Object.hasOwn(trigger, 'card') ? plainLabels(trigger.card.labels) : []) : []),
     ...Object.values(FIXED_LABELS),
   ];
   return declared.filter((name, at) => !declared.slice(0, at).some((earlier) => sameLabel(earlier, name)));

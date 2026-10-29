@@ -38,6 +38,13 @@ export function commandOf(args) {
   if (subcommand === 'api' && endpoint?.startsWith('repos/')) {
     const path = pathShapeOf(endpoint);
     const valuePrefix = path.endsWith('/merge') ? 'sha=' : path.endsWith('/comments') ? 'body=' : path.endsWith('/labels') ? 'labels[]=' : null;
+    if (path === 'repos/_/_/issues' && args[2] === '-X' && args[3] === 'POST'
+      && args[4] === '-f' && args[5]?.startsWith('title=') && args[6] === '-f' && args[7]?.startsWith('body=')) {
+      const labels = args.slice(8);
+      if (labels.length >= 2 && labels.length % 2 === 0 && labels.every((word, index) => index % 2 === 0 ? word === '-f' : word.startsWith('labels[]='))) {
+        return spelled(['api', path, '-X', 'POST', '-f', 'title=_', '-f', 'body=_', '-f', 'labels[]=_']);
+      }
+    }
     const fields = args.slice(2).map((word) => {
       if (path === 'repos/_/_/issues') {
         for (const name of ['title=', 'body=', 'labels[]=']) if (word.startsWith(name)) return `${name}_`;
@@ -704,9 +711,9 @@ const COMMANDS = {
     const number = Math.max(0, ...numbers) + 1;
     const title = args[5].slice('title='.length);
     const body = args[7].slice('body='.length);
-    const label = args[9].slice('labels[]='.length);
-    state.repository.issues.push({ number, title, body, labels: [label] });
-    return JSON.stringify({ number, title, body, labels: [{ name: label }], node_id: `I_issue${number}` });
+    const labels = args.slice(8).filter((_, index) => index % 2 === 1).map((field) => field.slice('labels[]='.length));
+    state.repository.issues.push({ number, title, body, labels });
+    return JSON.stringify({ number, title, body, labels: labels.map((name) => ({ name })), node_id: `I_issue${number}` });
   },
   [commandOf(['api', 'repos/_/_/issues/_', '-X', 'PATCH', '-f', 'state=closed'])]: async (board, state, args) => {
     const number = Number(pathIn(state, args).split('/')[1]);

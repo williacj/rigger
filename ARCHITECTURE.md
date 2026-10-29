@@ -226,8 +226,17 @@ export default {
     'vhs':    { run: 'brew list vhs || brew install vhs', select: { labels: ['area:demo'] } },
   },
   escalate: { 'recorded-decision': 'owner', critical: 'owner', ambiguous: 'owner' },
-  // improvement and clock arrive with M9 and M7. A consumer that switches them
-  // off still has a complete scenario.
+  clock: {
+    poll: 60000,
+    triggers: {
+      audit: { interval: 86400000, anchor: '2026-10-28T08:00:00Z', catchUp: 'fire',
+               card: { title: 'Audit the dependencies', labels: ['type:change'],
+                       acceptance: '- The dependency audit records its findings.', author: 'engineer' } },
+      report: { interval: 3600000, anchor: '2026-10-28T08:00:00Z', catchUp: 'skip', job: 'report' },
+    },
+  },
+  // Improvement roles arrive with M9. A consumer that leaves them unconfigured
+  // still has a complete scenario.
   telemetry: { push: false },
 };
 ```
@@ -278,6 +287,9 @@ Each trigger under `triggers` declares these keys, and every key but `author` is
   names `report`.
 - `catchUp`, its catch-up policy: `fire` or `skip`.
 
+`acceptance` is one string, which L2 places under the opened card's `## Acceptance` heading.
+The validator reads it so (`R-SCHED-40`).
+
 One function in `src/config/` parses a trigger and computes its occurrences. The config validator
 refuses with it (`R-SCHED-10`), and L3 imports it, so one parser serves both. The function that
 computes the `ExitTimeOut` bound also lives there ("Supervising `run`").
@@ -291,8 +303,7 @@ with no source would be a judgment presented as a measurement. What would revers
 count of the forge calls one poll makes, giving a figure that stays inside the forge's rate limit
 at a stated board size.
 
-The fenced shape above holds no `clock` key. The key enters it in the change in which the
-validator offers it, so that the shape holds exactly what the validator offers at every commit.
+The fenced shape above holds exactly what the validator offers at every commit.
 
 A provider adapter is the one place Rigger holds a fact about its agent CLI. That covers how
 `doctor` asks whether the CLI is signed in and where `init` forks its templates. It also covers
