@@ -1306,3 +1306,59 @@ test('a list that claims a length L3 cannot read is said so, never dropped silen
   assert.match(noticeLine('once', pulled.notices[0].id, pulled.notices[0]), /L3 could not read, as the list claimed a length of 900719925474099\d/);
 });
 
+
+// The reviewer's round-10 probe on #1079: a value met on two paths of one snapshot is read once.
+
+/**
+ * An Error whose every field is counted as it is read, its message answering `first` on the first
+ * read and something else after, and `reads`, the count of reads of each field.
+ */
+function countedLeaf(first = 'HTTP 502') {
+  const reads = {};
+  const leaf = new Proxy(new Error(first), {
+    get(target, key, receiver) {
+      reads[key] = (reads[key] ?? 0) + 1;
+      if (key === 'message') return reads[key] === 1 ? first : 'original failure lost on reread';
+      return Reflect.get(target, key, receiver);
+    },
+  });
+  return { leaf, reads };
+}
+
+/** The trees, each built over `leaf`, in which `leaf` is met on more than one path. */
+const SHARED_TREES = {
+  'as the cause and an errors entry': (leaf) => new AggregateError([leaf], 'facts could not be read', { cause: leaf }),
+  'as two errors entries': (leaf) => new AggregateError([leaf, leaf], 'facts could not be read'),
+  'as a sibling and a sibling\'s cause': (leaf) => new AggregateError([new Error('wrapper', { cause: leaf }), leaf], 'facts could not be read'),
+  'nested in an aggregate within an aggregate, and as the outer cause': (leaf) => new AggregateError([new AggregateError([leaf], 'inner', { cause: leaf })], 'outer', { cause: new Error('wrapper', { cause: leaf }) }),
+  'as an unreadable entry\'s cause in two failures': (leaf) => new AggregateError([Object.assign(new Error('one'), { unreadable: [{ path: 'a.json', cause: leaf }] }), Object.assign(new Error('two'), { unreadable: [{ path: 'b.json', cause: leaf }] }), leaf], 'facts could not be read'),
+};
+
+for (const [what, tree] of Object.entries(SHARED_TREES)) {
+  test(`a rejected read whose failure holds one Error ${what} reads each of its fields once, and once reads its first message`, async () => {
+    const { leaf, reads } = countedLeaf();
+    const { board } = stateBoard([], {});
+    board.readColumns = async () => { throw tree(leaf); };
+    const handed = handles({ cards: [], board });
+
+    const failure = await loop(handed).pull().then(() => assert.fail('the rejection was accepted'), (error) => error);
+
+    for (const [key, count] of Object.entries(reads)) assert.equal(count, 1, `${String(key)} was read ${count} times`);
+    assert.match(onceReads(failure), /HTTP 502/);
+    assert.doesNotMatch(onceReads(failure), /lost on reread/);
+  });
+}
+
+// proves R-SCHED-23
+test('a notice answer whose failed holds one object as its step, its cause and two of its unrecorded events reads each of that object\'s fields once', async () => {
+  const { leaf, reads } = countedLeaf('EIO');
+  const shared = { event: leaf };
+  const { board } = stateBoard([], { 12: 'open' });
+  const handed = handles({ cards: [], board, notice: followingNotice({ 12: { issue: 12, failed: { step: leaf, cause: leaf, made: { answer: { id: 1 } }, unrecorded: [shared, shared, { event: leaf }] } } }) });
+  seed(handed.state, 'hold-a1-issue-12.json');
+
+  const pulled = await loop(handed).pull();
+
+  for (const [key, count] of Object.entries(reads)) assert.equal(count, 1, `${String(key)} was read ${count} times`);
+  assert.doesNotMatch(noticeLine('once', pulled.notices[0].id, pulled.notices[0]), /lost on reread/);
+});

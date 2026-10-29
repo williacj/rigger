@@ -1109,7 +1109,11 @@ test('every request a full repository read issues reaches the spawn through the 
     'default branch': { repository: { defaultBranchRef: { name: 'main', target: { oid: head } } } },
     'pull request': { repository: { pullRequest: pullNode({ number: 12 }) } },
     issue: { paged: { null: { repository: { issue: issueNode({ number: 214 }) } } } },
-    timeline: { paged: { null: { repository: { issue: { timelineItems: { pageInfo: { hasNextPage: false, endCursor: 'MQ' }, nodes: [{ __typename: 'ClosedEvent', createdAt: '2026-10-18T18:19:57Z', actor: { login: 'williacj' } }] } } } } } },
+    // Two pages, so the timeline's request for a page after the first is among those recorded.
+    timeline: { paged: {
+      null: { repository: { issue: { timelineItems: { pageInfo: { hasNextPage: true, endCursor: 'MQ' }, nodes: [] } } } },
+      MQ: { repository: { issue: { timelineItems: { pageInfo: { hasNextPage: false, endCursor: 'Mg' }, nodes: [{ __typename: 'ClosedEvent', createdAt: '2026-10-18T18:19:57Z', actor: { login: 'williacj' } }] } } } },
+    } },
     file: { repository: { object: { oid: 'a'.repeat(40), file: { mode: 0o100644, type: 'blob', object: { text: 'x', isBinary: false, isTruncated: false, byteSize: 1 } } } } },
   };
   const sent = [];

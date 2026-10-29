@@ -603,3 +603,56 @@ test('rigger once, over an admission directory of 101 malformed entries, names e
   assert.equal(answered.code, 1, answered.text);
   for (const name of names) assert.ok(answered.text.includes(name), `${name} is not named`);
 });
+
+// The reviewer's round-10 probe on #1079: one Error met on two paths of a failure, through the real once.
+for (const [what, thrown] of [
+  ['the cause and the sole errors entry', 'new AggregateError([leaf], \'facts could not be read\', { cause: leaf })'],
+  ['a sibling and a sibling\'s cause', 'new AggregateError([new Error(\'wrapper\', { cause: leaf }), leaf], \'facts could not be read\')'],
+]) {
+  test(`rigger once, after a recorded closer opening, answers an AggregateError holding one changing Error as ${what} with that Error's first message`, async (t) => {
+    const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [statusIssue(7, 'a1')] });
+    assert.equal(here.gh('api', `repos/${REPO}/issues/7`, '-X', 'PATCH', '-f', 'state=closed').status, 0);
+    writeFileSync(join(here.target, 'rigger.config.mjs'), [
+      `const config = ${JSON.stringify(consumerConfig(3))};`,
+      'const board = config.board;',
+      "Object.defineProperty(config, 'board', { get() {",
+      "  if (new Error().stack.includes('/src/workflow/facts.mjs')) {",
+      '    let reads = 0;',
+      "    const leaf = Object.defineProperty(new Error('initial'), 'message', { configurable: true, get() { return ++reads === 1 ? 'HTTP 502' : 'original failure lost on reread'; } });",
+      `    throw ${thrown};`,
+      '  }',
+      '  return board;',
+      '} });',
+      'export default config;',
+    ].join('\n'));
+    const send = (command, args) => {
+      const done = spawnSync(here.fake.gh, args, { encoding: 'utf8', env: gitEnvironment() });
+      return { status: done.status, stdout: done.stdout, stderr: done.stderr, timedOut: false };
+    };
+
+    const outcome = await onceVerb({ target: here.target, send }).then((answer) => ({ answer }), (thrown) => ({ thrown }));
+
+    assert.deepEqual(here.closers(), [], 'the closer really was removed');
+    assert.equal(here.events().filter(({ event }) => event === 'admission.open').length, 1, 'the opening was recorded');
+    assert.equal(outcome.thrown, undefined, 'once must return its failure report without itself throwing');
+    assert.equal(outcome.answer.code, 1);
+    assert.match(outcome.answer.text, /HTTP 502/);
+    assert.doesNotMatch(outcome.answer.text, /lost on reread/);
+  });
+}
+
+// proves R-SCHED-23
+test('rigger run over a status issue whose close lies past the first page of its timeline, after 100 comments, removes the closer, and the fake serves every entry', async (t) => {
+  // The architect's round-10 probe on #1079: the fake forge serves every page it says it has.
+  const issue = { ...statusIssue(7, 'a1'), comments: Array.from({ length: 100 }, (_, at) => ({ body: `Earlier notice ${at}`, createdAt: '2026-10-01T00:00:00Z' })) };
+  const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [issue] });
+  assert.equal(here.gh('api', `repos/${REPO}/issues/7`, '-X', 'PATCH', '-f', 'state=closed').status, 0);
+  const timeline = await here.reads.readIssueTimeline(7);
+  assert.equal(timeline.filter(({ kind }) => kind === 'comment').length, 100);
+  assert.equal(timeline.at(-1).kind, 'closed');
+
+  const ran = here.verb('run');
+
+  assert.equal(ran.code, 0, ran.said);
+  assert.deepEqual(here.closers(), [], ran.said);
+});

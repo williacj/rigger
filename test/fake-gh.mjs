@@ -592,6 +592,7 @@ const COMMANDS = {
   [graphql(repositoryShape(`issue(number: _) { ${ISSUE} labels(first: _) { ${LABELS} } }`))]: issue,
   [graphql(repositoryShape('issue(number: _) { state repository { nameWithOwner } }'))]: issueState,
   [graphql(repositoryShape(`issue(number: _) { timelineItems(itemTypes: [], first: _) { ${TIMELINE} } }`))]: timeline,
+  [graphql(repositoryShape(`issue(number: _) { timelineItems(itemTypes: [], first: _, after: _) { ${TIMELINE} } }`))]: timeline,
   [graphql(repositoryShape(`issue(number: _) { ${ISSUE} labels(first: _, after: _) { ${LABELS} } }`))]: issue,
   [graphql(repositoryShape(`issues(states: [], labels: [], first: _) { ${LABELS.replace('name', 'number')} }`))]: labelledIssues,
   [graphql(repositoryShape(`issues(states: [], labels: [], first: _, after: _) { ${LABELS.replace('name', 'number')} }`))]: labelledIssues,

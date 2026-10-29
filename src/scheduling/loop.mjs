@@ -38,82 +38,128 @@ const once = (value, key) => {
 /** The longest list an array can be; a `length` past it, or no whole number, is one L3 cannot read. */
 const LONGEST = 2 ** 32 - 1;
 
-/**
- * The entries of `list`, a value L3 did not build, as `{ entries, missing }`: `entries` a fresh
- * array of every entry, its `length` and each index read once, never through a method of its own;
- * and `missing`, where `list` claims a length no array can have, a line saying its entries could
- * not be read, so a caller says so rather than dropping them. Undefined where `list` is no array.
- */
-function entriesOf(list) {
-  let array = false;
-  try {
-    array = Array.isArray(list);
-  } catch {
-    array = false;
-  }
-  if (!array) return undefined;
-  const length = once(list, 'length');
-  if (!Number.isSafeInteger(length) || length < 0 || length > LONGEST) return { entries: [], missing: `entries L3 could not read, as the list claimed a length of ${causeOf(length)}` };
-  const entries = [];
-  for (let at = 0; at < length; at += 1) entries.push(once(list, at));
-  return { entries };
-}
-
-/** How deep L3 follows a failure's causes and errors, which bounds a cycle of them and nothing else. */
+/** How deep L3 follows a failure's causes and errors, which bounds their nesting and nothing else. */
 const DEEPEST = 16;
 
+const isObject = (value) => value !== null && (typeof value === 'object' || typeof value === 'function');
+
 /**
- * A snapshot of `thrown`, whatever was thrown, as a failure L3 built itself: each field a presenter
- * reads is read from `thrown` once, and the answer holds only fresh values made from those reads.
- * Its message is `causeOf`'s line; its `code` a string where `thrown`'s was; its `unreadable`
- * admission's entries as fresh `{ path, cause }` of strings; its `cause` the snapshot of
- * `thrown`'s; and, for an AggregateError, its errors the snapshots of `thrown`'s, every one, its
- * causes and errors followed to a depth that bounds a cycle and says where it stopped. No caller or presenter is ever handed `thrown`
- * itself, or anything it holds.
+ * One snapshot of values L3 did not build, as L3 hands them on. Every field of a foreign object is
+ * read once across the whole snapshot, however many paths reach the object, and each object's
+ * printable line, list entries and failure snapshot are made once and shared by every path that
+ * meets it again, so a value that answers differently a second time is never read a second time.
  */
-export function readableFailure(thrown, seen = new Set()) {
-  let aggregate = false;
-  try {
-    aggregate = thrown instanceof AggregateError;
-  } catch {
-    aggregate = false;
-  }
-  const message = causeOf(thrown);
-  // A failure met again among its own causes or errors, or past the depth L3 follows, is said as
-  // such, so a cycle ends and nothing beneath it goes unsaid.
-  const object = thrown !== null && (typeof thrown === 'object' || typeof thrown === 'function');
-  if (object && (seen.has(thrown) || seen.size >= DEEPEST)) return new Error(`${message} (a failure met again, or nested past ${DEEPEST} levels; its causes are named above)`);
-  const within = object ? new Set([...seen, thrown]) : seen;
-  const code = once(thrown, 'code');
-  const unreadable = entriesOf(once(thrown, 'unreadable'));
-  const errors = aggregate ? entriesOf(once(thrown, 'errors')) : undefined;
-  const cause = once(thrown, 'cause');
-  const options = cause === undefined ? undefined : { cause: readableFailure(cause, within) };
-  const leaves = errors === undefined ? undefined : [
-    ...errors.entries.map((each) => readableFailure(each, within)),
-    ...(errors.missing === undefined ? [] : [new Error(`and failures it held that L3 could not read: ${errors.missing}`)]),
-  ];
-  const failure = leaves === undefined ? new Error(message, options) : new AggregateError(leaves, message, options);
-  if (typeof code === 'string') failure.code = code;
-  if (unreadable !== undefined) {
-    failure.unreadable = [
-      ...unreadable.entries.map((entry) => ({ path: causeOf(once(entry, 'path')), cause: causeOf(once(entry, 'cause')) })),
-      ...(unreadable.missing === undefined ? [] : [{ path: 'the rest of the admission directory', cause: unreadable.missing }]),
+function snapshotting() {
+  const fields = new Map();
+  const texts = new Map();
+  const lists = new Map();
+  const failures = new Map();
+  const building = new Set();
+
+  /** `value[key]`, read once in this snapshot and never throwing. */
+  const read = (value, key) => {
+    if (!isObject(value)) return once(value, key);
+    let held = fields.get(value);
+    if (held === undefined) fields.set(value, (held = new Map()));
+    if (!held.has(key)) held.set(key, once(value, key));
+    return held.get(key);
+  };
+
+  /** `causeOf`'s printable line for `value`, made once in this snapshot. */
+  const text = (value) => {
+    if (!isObject(value)) return causeOf(value);
+    if (!texts.has(value)) texts.set(value, causeOf(value));
+    return texts.get(value);
+  };
+
+  /**
+   * The entries of `list` as `{ entries, missing }`: `entries` a fresh array of every entry, its
+   * `length` and each index read once, never through a method of its own; and `missing`, where
+   * `list` claims a length no array can have, a line saying its entries could not be read, so a
+   * caller says so rather than dropping them. Undefined where `list` is no array.
+   */
+  const entries = (list) => {
+    let array = false;
+    try {
+      array = Array.isArray(list);
+    } catch {
+      array = false;
+    }
+    if (!array) return undefined;
+    if (lists.has(list)) return lists.get(list);
+    const length = read(list, 'length');
+    const answer = { entries: [] };
+    if (!Number.isSafeInteger(length) || length < 0 || length > LONGEST) answer.missing = `entries L3 could not read, as the list claimed a length of ${causeOf(length)}`;
+    else for (let at = 0; at < length; at += 1) answer.entries.push(read(list, at));
+    lists.set(list, answer);
+    return answer;
+  };
+
+  /**
+   * A snapshot of `thrown`, whatever was thrown, as a failure L3 built itself, holding only fresh
+   * values made from this snapshot's reads: its message `causeOf`'s line; its `code` a string where
+   * `thrown`'s was; its `unreadable` admission's entries as fresh `{ path, cause }` of strings; its
+   * `cause` the snapshot of `thrown`'s; and, for an AggregateError, its errors the snapshots of
+   * every one of `thrown`'s. A failure met again among its own causes or errors, or nested past
+   * DEEPEST levels, is said as such, so a cycle ends and nothing beneath it goes unsaid.
+   */
+  const failure = (thrown, depth) => {
+    const message = text(thrown);
+    if (isObject(thrown)) {
+      if (failures.has(thrown)) return failures.get(thrown);
+      if (building.has(thrown) || depth >= DEEPEST) return new Error(`${message} (a failure met again among its own causes, or nested past ${DEEPEST} levels; its causes are named above)`);
+      building.add(thrown);
+    }
+    let aggregate = false;
+    try {
+      aggregate = thrown instanceof AggregateError;
+    } catch {
+      aggregate = false;
+    }
+    const code = read(thrown, 'code');
+    const unreadable = entries(read(thrown, 'unreadable'));
+    const errors = aggregate ? entries(read(thrown, 'errors')) : undefined;
+    const cause = read(thrown, 'cause');
+    const options = cause === undefined ? undefined : { cause: failure(cause, depth + 1) };
+    const leaves = errors === undefined ? undefined : [
+      ...errors.entries.map((each) => failure(each, depth + 1)),
+      ...(errors.missing === undefined ? [] : [new Error(`and failures it held that L3 could not read: ${errors.missing}`)]),
     ];
-  }
-  return failure;
+    const made = leaves === undefined ? new Error(message, options) : new AggregateError(leaves, message, options);
+    if (typeof code === 'string') made.code = code;
+    if (unreadable !== undefined) {
+      made.unreadable = [
+        ...unreadable.entries.map((entry) => ({ path: text(read(entry, 'path')), cause: text(read(entry, 'cause')) })),
+        ...(unreadable.missing === undefined ? [] : [{ path: 'the rest of the admission directory', cause: unreadable.missing }]),
+      ];
+    }
+    if (isObject(thrown)) {
+      building.delete(thrown);
+      failures.set(thrown, made);
+    }
+    return made;
+  };
+
+  return { read, text, entries, failure: (thrown) => failure(thrown, 0) };
 }
+
+/**
+ * A snapshot of `thrown`, whatever was thrown, as a failure L3 built itself, made by one
+ * `snapshotting`: no caller or presenter is ever handed `thrown` itself, or anything it holds.
+ */
+export const readableFailure = (thrown) => snapshotting().failure(thrown);
 
 /**
  * L2's notice answer `answer`, a value L3 did not build, as L3 hands it on: `failed`, `issue` and
  * `closed` each read once, into a fresh answer of L3's own.
  */
 function noticeAnswer(answer) {
-  const failed = once(answer, 'failed');
-  const issue = once(answer, 'issue');
-  const closed = once(answer, 'closed');
+  const snapshot = snapshotting();
+  const failed = snapshot.read(answer, 'failed');
+  const issue = snapshot.read(answer, 'issue');
+  const closed = snapshot.read(answer, 'closed');
   return {
-    ...(failed === undefined ? {} : { failed: noticeFailed(failed) }),
+    ...(failed === undefined ? {} : { failed: noticeFailed(failed, snapshot) }),
     ...(Number.isSafeInteger(issue) ? { issue } : {}),
     ...(closed === true ? { closed: true } : {}),
   };
@@ -124,22 +170,22 @@ function noticeAnswer(answer) {
  * strings, and, for a step the forge made, a fresh copy of its mark and its unrecorded events, each
  * named printably. Each field is read once.
  */
-function noticeFailed(failed) {
-  const said = (held) => (typeof held === 'string' ? held : causeOf(held));
-  const step = said(once(failed, 'step'));
-  const cause = said(once(failed, 'cause'));
-  const made = once(failed, 'made');
+function noticeFailed(failed, snapshot) {
+  const said = (held) => (typeof held === 'string' ? held : snapshot.text(held));
+  const step = said(snapshot.read(failed, 'step'));
+  const cause = said(snapshot.read(failed, 'cause'));
+  const made = snapshot.read(failed, 'made');
   if (made === undefined) return { step, cause };
-  const unrecorded = entriesOf(once(failed, 'unrecorded'));
+  const unrecorded = snapshot.entries(snapshot.read(failed, 'unrecorded'));
   const events = unrecorded === undefined ? [{ event: 'events it could not name' }] : [
-    ...unrecorded.entries.map((each) => ({ event: causeOf(once(each, 'event')) })),
+    ...unrecorded.entries.map((each) => ({ event: snapshot.text(snapshot.read(each, 'event')) })),
     ...(unrecorded.missing === undefined ? [] : [{ event: unrecorded.missing }]),
   ];
   let mark;
   try {
     mark = structuredClone(made);
   } catch {
-    mark = { answer: causeOf(once(made, 'answer')) };
+    mark = { answer: snapshot.text(snapshot.read(made, 'answer')) };
   }
   return { step, cause, made: mark, unrecorded: events };
 }
@@ -156,9 +202,10 @@ const noticeFailure = ({ id, step, cause, made, unrecorded }) => Object.assign(n
 
 /** The names of the unrecorded events `unrecorded` holds, as one printable list, whatever it holds. */
 function eventsOf(unrecorded) {
-  const read = entriesOf(unrecorded);
-  if (read === undefined) return causeOf(unrecorded);
-  return [...read.entries.map((each) => causeOf(once(each, 'event'))), ...(read.missing === undefined ? [] : [read.missing])].join(', ');
+  const snapshot = snapshotting();
+  const read = snapshot.entries(unrecorded);
+  if (read === undefined) return snapshot.text(unrecorded);
+  return [...read.entries.map((each) => snapshot.text(snapshot.read(each, 'event'))), ...(read.missing === undefined ? [] : [read.missing])].join(', ');
 }
 
 /**
@@ -198,7 +245,10 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow,
   const record = (event, fields, card) => sink.emitter({ layer: 'L3', card }).emit(event, fields);
 
   /** The failure L3 reports for an append the sink refused: `sentence`, then the sink's error, kept as the cause. */
-  const refused = (sentence, refusal) => new Error(`${sentence}: ${causeOf(refusal)}`, { cause: readableFailure(refusal) });
+  const refused = (sentence, refusal) => {
+    const cause = readableFailure(refusal);
+    return new Error(`${sentence}: ${cause.message}`, { cause });
+  };
 
   /**
    * The rest of a trigger's read once `take` has recorded the trigger and `follow` has acted:
@@ -292,7 +342,7 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow,
         const kept = [...failures, ...notices.map(noticeFailure)];
         // The read's own failure goes on as a snapshot L3 built, so its caller reads it whatever was thrown.
         const reason = readableFailure(thrown);
-        throw kept.length === 0 ? reason : Object.assign(new AggregateError([...kept, reason], `${causeOf(thrown)}, after ${kept.length} earlier failure${kept.length === 1 ? '' : 's'} of this trigger`), { cause: reason });
+        throw kept.length === 0 ? reason : Object.assign(new AggregateError([...kept, reason], `${reason.message}, after ${kept.length} earlier failure${kept.length === 1 ? '' : 's'} of this trigger`), { cause: reason });
       }
     },
 
