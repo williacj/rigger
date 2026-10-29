@@ -2095,13 +2095,13 @@ comment lines are outside it too: a comment cannot carry a bug.
 | Budget | Production lines |
 |---|---|
 | L0 | 3,000 |
-| L1 | 1,500 |
+| L1 | 1,200 |
 | L2 | 1,600 |
 | The gate | 300 |
-| L3 | 1,100 |
+| L3 | 1,200 |
 | L5 | 1,300 |
-| L6 | 1,200 |
-| CLI and config | 2,000 |
+| L6 | 1,100 |
+| CLI and config | 2,300 |
 | **Package** | **12,000** |
 
 CI runs one check, against the package total. A layer that grows past its own row is a review
