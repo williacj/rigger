@@ -45,12 +45,22 @@ async function resuming(opened, {
   ];
   // Every closer read was gone at its removal: another `resume` removed them, and closes the issue.
   if (removed.length === 0) return { text: lines.join('\n'), code: 0 };
-  const { config, problem } = await consumerConfig(named);
-  const invalid = problem === undefined ? validate(config) : [];
-  const why = problem ?? (invalid.length > 0 ? `\`${CONFIG}\`: ${invalid.join('; ')}` : undefined);
-  if (why !== undefined) return { text: [...lines, `rigger resume: no status issue was closed, because ${why}`].join('\n'), code: 1 };
+  /** The answer where nothing after the removal reached L2: the removals made, and why no issue was closed. */
+  const unclosed = (why) => ({ text: [...lines, `rigger resume: no status issue was closed, because ${why}`].join('\n'), code: 1 });
+  // From the config's read to L2's entry point, any failure, an answer or a throw, is this case:
+  // the closers are removed, so the answer must still name them.
+  let notice;
+  try {
+    const { config, problem } = await consumerConfig(named);
+    if (problem !== undefined) return unclosed(problem);
+    const invalid = validate(config);
+    if (invalid.length > 0) return unclosed(`\`${CONFIG}\`: ${invalid.join('; ')}`);
+    ({ notice } = columnChanges({ config, sink: opened.sink, send }));
+  } catch (failure) {
+    return unclosed(`\`${CONFIG}\` could not be used: ${failure?.message ?? failure}`);
+  }
   const issues = [...removed, ...gone].filter(({ issue }) => issue !== undefined).map(({ issue }) => Number(issue));
-  const { closed, left, unrecorded, unread } = await columnChanges({ config, sink: opened.sink, send }).notice.close(issues);
+  const { closed, left, unrecorded, unread } = await notice.close(issues);
   /** The record a write the forge made for issue `number` and the sink refused, as `write` names it, or undefined. */
   const refused = (number, write) => unrecorded.find((each) => each.issue === number && each.write === write)?.why;
   /** `said`, then, where `why` names a refused record, that the sink refused it. */

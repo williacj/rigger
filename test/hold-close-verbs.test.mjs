@@ -352,7 +352,7 @@ function statusConsumer(t, { closers, issues, refuseState = false }) {
   };
   const gh = (...args) => spawnSync(fake.gh, args, { encoding: 'utf8', env: gitEnvironment() });
   const reads = repositoryReads({ repo: REPO, project: PROJECT }, { send: (command, args) => spawnSync(fake.gh, args, { encoding: 'utf8', env: gitEnvironment() }) });
-  return { state, verb, gh, reads, events: () => readEvents(state), closers: () => moduleOver(state).read().closers ?? [] };
+  return { state, target, fake, verb, gh, reads, events: () => readEvents(state), closers: () => moduleOver(state).read().closers ?? [] };
 }
 
 /** A status issue the fake holds: carrying the label, its body naming hold `id`, as Rigger opens one. */
@@ -405,5 +405,46 @@ test('rigger once and rigger run, where the state of the issue a hold\'s closer 
     const failed = here.events().filter(({ event }) => event === 'notice.failed');
     assert.deepEqual(failed.map(({ layer, hold, issue }) => ({ layer, hold, issue })), [{ layer: 'L3', hold: 'a1', issue: 7 }], name);
     assert.deepEqual(here.events().filter(({ event }) => event === 'pull'), [], name);
+  }
+});
+
+/**
+ * Each way the config can fail after `resume` has removed its closers and before it reaches L2,
+ * as the text of `rigger.config.mjs`: its evaluation throws, it does not parse, its validation
+ * throws rather than answering it invalid (the architect's round-5 probe on #1079, a BigInt
+ * default, which validation cannot serialize), it answers invalid, and building L2's entry point
+ * throws, a config that validates whose board getter throws only when `transitions.mjs` reads it.
+ */
+const FAILING_CONFIGS = {
+  'its evaluation throws': [`throw new Error('the config threw as it was evaluated');\n`, /could not be read: .*the config threw as it was evaluated/],
+  'it does not parse': ['export default {;\n', /could not be read: /],
+  'its validation throws': ['export default 1n;\n', /BigInt/],
+  'it does not validate': ['export default { repo: 7 };\n', /`rigger\.config\.mjs`: /],
+  'building L2 throws': [[
+    `import settings from ${JSON.stringify(new URL('../templates/rigger.config.mjs', import.meta.url).href)};`,
+    `const config = { ...settings, repo: ${JSON.stringify(REPO)}, board: undefined };`,
+    `const board = { ...settings.board, project: ${PROJECT} };`,
+    "Object.defineProperty(config, 'board', { enumerable: true, get() { if (new Error().stack.includes('/src/workflow/transitions.mjs')) throw new Error('the board could not be handed to L2'); return board; } });",
+    'export default config;',
+  ].join('\n'), /the board could not be handed to L2/],
+};
+
+// proves R-SCHED-23
+test('rigger resume, wherever the config fails after the closers are removed and before L2 is reached, exits non-zero naming each closer removed, that no status issue was closed, and why, and makes no forge write', async (t) => {
+  for (const [what, [text, why]] of Object.entries(FAILING_CONFIGS)) {
+    const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json', 'owner-o4.json'], issues: [statusIssue(7, 'a1')] });
+    writeFileSync(join(here.target, 'rigger.config.mjs'), text);
+
+    const ran = here.verb('resume');
+
+    assert.equal(ran.code, 1, `${what}: ${ran.said}`);
+    assert.deepEqual(here.closers(), [], `${what}: both closers were removed`);
+    assert.match(ran.err, /^rigger resume: removed the hold closer .*hold-a1-issue-7\.json/m, `${what}: ${ran.said}`);
+    assert.match(ran.err, /^rigger resume: removed the owner closer .*owner-o4\.json/m, `${what}: ${ran.said}`);
+    assert.match(ran.err, new RegExp(`^rigger resume: no status issue was closed, because .*${why.source}`, 'm'), `${what}: ${ran.said}`);
+    assert.doesNotMatch(ran.said, /\n\s+at /, `${what}: a stack trace reached the output`);
+    const issue = await here.reads.readIssue(7);
+    assert.deepEqual([issue.state, issue.labels], ['open', ['rigger:status']], what);
+    assert.deepEqual(here.fake.sent().filter((args) => ['DELETE', 'PATCH', 'POST'].includes(args[3])), [], `${what}: a forge write was made`);
   }
 });
