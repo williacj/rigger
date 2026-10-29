@@ -244,10 +244,13 @@ function inheriting(config, parts) {
  * watch, so it fails rather than passing over it.
  */
 function instancesOf(site) {
-  const paths = site === '' ? [[]] : expand(rigger, site.split('.'));
+  const paths = site === '' ? [[]] : expand(clockConfig, site.split('.'));
   assert.ok(paths.length > 0, `this repository's config holds nothing at \`${site}\`, so the site went unchecked`);
   return paths;
 }
+
+// The live config with the published clock, so the generic shape tests exercise every offered site.
+const clockConfig = { ...rigger, clock: (await publishedShape()).clock };
 
 test("the validator accepts this repository's own config unchanged", () => {
   assert.deepEqual(validate(rigger), []);
@@ -293,7 +296,7 @@ test('a declaration that holds no declarations is refused wherever it sits, and 
     for (const parts of instancesOf(site)) {
       for (const nothing of [null, undefined, 'npm ci', ['npm ci'], 3]) {
         const named = parts.join('.');
-        const refusals = validate(holding(rigger, parts, nothing));
+        const refusals = validate(holding(clockConfig, parts, nothing));
         assert.equal(
           refusals.length,
           1,
@@ -356,7 +359,7 @@ test('a declaration Rigger does not offer is refused wherever it sits, and the r
   for (const parts of sites) {
     for (const key of UNOFFERED) {
       const named = at(parts.join('.'), key);
-      const refusals = validate(declaring(rigger, parts, key));
+      const refusals = validate(declaring(clockConfig, parts, key));
       assert.ok(
         refusals.some((refusal) => refusal.includes(`\`${named}\``)),
         `\`${named}\` earned no refusal naming it: ${refusals.join('; ') || 'none'}`,

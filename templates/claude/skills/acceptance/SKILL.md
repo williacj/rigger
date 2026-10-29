@@ -159,6 +159,11 @@ layer. A class cannot admit deletion of a test or weaken what it proves; those g
 With classes, word the test-line item as: `git diff` against the base changes no existing line under
 `test/` that the table does not list and no named class covers.
 
+**Admit harness diagnostics before work.** For a test without `// proves`, record the
+infrastructure behaviour, checked registered product requirements and why none applies, and
+bounded guarded semantic discrimination under the `tdd` skill. A path or missing declaration
+proves no classification. Never borrow an unrelated requirement or reclassify existing tests.
+
 ## Work outside the repository
 
 For a card acting on a system outside the repository where undo is not obvious, require the maker
@@ -259,3 +264,5 @@ You revise the acceptance before any maker starts. This review is part of filing
 21. Is every cited proposal, ruling and grant posted and linked from the card?
 22. Did you name bounded grant classes for predictable existing test-line changes?
 23. Did `npm run check:card` read the card body?
+24. Before admitting claimless diagnostics, did you record behaviour, requirement applicability
+    and bounded guarded discrimination?
