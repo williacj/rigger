@@ -52,7 +52,6 @@ function adapt(directory, options) {
   return runCommand({ args: [], cwd: directory, env: {}, emitter: l0(directory).emitter, timeout: UNREACHED, ...options });
 }
 
-// proves R-STATE-19
 test('a supplied host owns the synchronous group-presence answer', async () => {
   const asked = [];
   const host = {
@@ -66,7 +65,6 @@ test('a supplied host owns the synchronous group-presence answer', async () => {
   assert.deepEqual(asked, [[-999999999, 0]]);
 });
 
-// proves R-STATE-19
 test('recorded-group identity reads use the supplied host and clock', async () => {
   const asked = [];
   let ticks = 0;
@@ -91,7 +89,6 @@ test('recorded-group identity reads use the supplied host and clock', async () =
   assert.ok(ticks > 0, 'the controlled clock was not consulted for the identity-read deadline');
 });
 
-// proves R-STATE-19
 test('a supplied host clock cuts off a stalled start-identity read without wall time', async () => {
   const scheduled = [];
   const killed = [];
@@ -202,7 +199,7 @@ test('a supplied host clock ends the output drain without wall time', async () =
   assert.deepEqual(events, ['output.held']);
 });
 
-// proves R-STATE-14
+// proves R-STATE-16
 test('a supplied host clock ends a running command at its deadline without wall time', async () => {
   const { EventEmitter } = await import('node:events');
   const { PassThrough } = await import('node:stream');
