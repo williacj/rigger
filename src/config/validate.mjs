@@ -358,8 +358,10 @@ function readKinds(config, refusals) {
   }
   for (const [name, kind] of Object.entries(config.kinds)) {
     const where = `kinds.${name}`;
-    if (kind?.maker !== undefined && !declaresRole(roles, kind.maker)) {
-      refusals.push(`\`${where}.maker\` names \`${written(kind.maker)}\`, which is no role the config declares`);
+    const declaredMaker = kind?.maker !== undefined && declaresRole(roles, kind.maker);
+    const coercedMaker = declaredMaker && typeof kind.maker !== 'string';
+    if (kind?.maker !== undefined && (!declaredMaker || coercedMaker)) {
+      refusals.push(`\`${where}.maker\` names \`${coercedMaker ? inspect(kind.maker) : written(kind.maker)}\`, which is no role the config declares`);
     }
     readLabels(kind?.select, `${where}.select.labels`, refusals);
     if (Array.isArray(kind?.select?.labels)) {
@@ -374,7 +376,7 @@ function readKinds(config, refusals) {
     }
     // Every check below reads an entry's role through `judgeRole`, whichever form names it (`D24`
     // rule 1). An entry that is neither form earns its one refusal here, and names no role to check.
-    const formed = kind.judges.map((entry, position) => readJudgeEntry(entry, `${where}.judges[${position}]`, makerProviders(roleUnder(roles, kind.maker)), refusals));
+    const formed = kind.judges.map((entry, position) => readJudgeEntry(entry, `${where}.judges[${position}]`, coercedMaker ? [] : makerProviders(roleUnder(roles, kind.maker)), refusals));
     const named = kind.judges.map((entry, position) => (formed[position] ? judgeRole(entry) : undefined));
     // No judge is the maker, and no configuration removes that separation (`R-LOOP-3`). An engine
     // that could approve its own work would be a faster way to merge mistakes.
