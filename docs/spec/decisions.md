@@ -69,7 +69,7 @@ reused.
 | D26 | An escalation goes where the consumer sends it | Ratified |
 | D27 | An escalated card carries a label only the owner removes | Ratified. Amended in #868. |
 | D28 | A per-user LaunchAgent re-launches the engine on an interval | Ratified. Amended in #1043. |
-| D29 | Rigger's suite runs in two tiers, and the hooks run one | Ratified |
+| D29 | Rigger's suite runs in two tiers, and the hooks run one | Ratified. Amended in #1140. |
 | D30 | Until the conversion closes, two lists exempt files from D29's bounds | Ratified |
 
 ## D1 — Redo over resume
@@ -1093,7 +1093,7 @@ This decision adds no requirement row.
 
 ## D29 — Rigger's suite runs in two tiers, and the hooks run one
 
-**Status:** Ratified.
+**Status:** Ratified. Amended in #1140.
 
 ### Rule
 
@@ -1102,11 +1102,12 @@ This decision adds no requirement row.
    1. A test that starts no process, or starts only `git` or `tar`, is deterministic.
    2. A test whose claim is what Rigger decides from an answer is deterministic. Except as `D30` allows, it takes that answer from the fake host or from an in-process stand-in. What Rigger decides includes what it kills, in what order, what it records, what it refuses and what a verb prints.
    3. Every other test is a host test. Its claim is about what the operating system or a real program did, such as a process that ended, a signal that arrived, or a tool's printed form.
-3. Except as `D30` allows, a deterministic test keeps to these bounds. In the test file's own process, the deterministic runner fails a test, or a file while it loads, that breaks the first through `node:child_process` or the second through a signal. It names the test or file and what it started or signalled. It imposes the third and the fourth on every `git` and `tar` it admits.
+3. Except as `D30` allows, a deterministic test keeps to these bounds. In the test file's own process, the deterministic runner fails a test, or a file while it loads, that breaks the first through `node:child_process`, the second through a signal, or the fifth through a timer. It names the test or file and what it started, signalled or armed. It imposes the third and the fourth on every `git` and `tar` it admits.
    1. It starts no process but `git` or `tar`.
    2. It sends no signal to any process but its own.
    3. Its `git` and `tar` run with a `PATH` that holds only those two programs, so a hook, alias or helper that starts a program by name fails.
    4. Its `git` reads no global or system configuration.
+   5. It arms no timer with a delay above zero, whether the test arms it or Rigger's code under it does. A timer is what `setTimeout`, `setInterval`, `node:timers`, `node:timers/promises` or `AbortSignal.timeout` arms, and a delay the call omits counts as zero. A timer `node:test` arms for a test's own `timeout` option is not one, and nor is a call that `node:test`'s timer mock answers (`mock.timers.enable()`).
 4. Except as `D30` allows, Rigger's code under a deterministic test reads only the clock the test injects.
 5. A host test starts at least one real process. Except as `D30` allows, the host runner fails a host test that starts none, naming it.
 6. `npm test` runs the deterministic tier at `node --test`'s own concurrency, and the commit, merge and push hooks run `npm test`. It is the suite `AGENTS.md` means where a failing suite stops work. `npm run test:host` runs the host tier one file at a time, and no hook runs it.
@@ -1114,6 +1115,11 @@ This decision adds no requirement row.
 8. A host-tier failure at the default branch's head is a card of its own, and no other card's maker owns it. The owner files it, or has it filed, at the highest priority the board declares (`R-SCHED-1`).
 9. Wherever the fake host gives an answer for a state a host test can create, a host test ties that answer to the real operating system's, in its form and its value (`D16` rule 2). The fake's scripted faults and its timing are copies no test can tie. The fake host records beside each one where the real operating system can differ (`D16` rule 3).
 10. `docs/derived/test-matrix.md` marks each claim a host test makes. Its generator names every requirement that no deterministic test claims.
+11. A host test that a change adds to the host tier declares why it needs the host. The base is the merge base of the head with the commit the list-growth steps resolve for the event (`D30` rule 4). A change adds a test to the host tier when the head's host tier holds a test, by file and title, more times than the base's host tier does. The declaration names:
+    1. one reason, which is wiring, OS behaviour or a real deadline (`AGENTS.md`, "When you write code");
+    2. a deterministic test outside `D30`'s conversion list that proves the decision the host test's claim depends on, or that its claim depends on no decision Rigger makes.
+
+    The host-declaration steps in `fast` and `nightly` fail a change whose added host test lacks the declaration, names a reason other than one of the three, or names a test that is not such a deterministic test. They also fail a change that adds a top-level call in a host-tier file whose test they cannot identify. They name the file and the title, or the file and the line. The judges rule whether the reason is true and whether the named test proves the decision.
 
 ### Notes
 
@@ -1131,13 +1137,16 @@ Rule 7 follows the staged CI policy approved in #921 and ratified through #906. 
 
 Rule 9 promises only what a test can tie. A scripted fault, such as `EPERM` or a read that times out, cannot be asked of the real operating system on demand. Nor can an interleaving, such as a group still non-empty at the census after its kill. An in-process stand-in's answer is a copy rule 9 does not tie. It copies what the fake `gh` and the stand-in agent answered as processes before the split, and no rule tied those to the real programs either.
 
+Rule 3's fifth bound and rule 11 follow the owner's direction of 2026-10-29 on #740, to stop bad tests before they become debt. Rule 3's runner sees a timer only in the test file's own process, as it sees a process start. Rule 11 binds the tests a change adds, so an older host test carries no declaration until a change adds it again. Its check compares the head with its merge base with the commit the list-growth steps resolve, never with a ref that moves. A deterministic test tied to the default branch's moving tip turned the default branch red in #1113. The three reasons are the ones `AGENTS.md` keeps host proof for, and whether a declared reason is true stays a judgment.
+
 This entry is permanent. `D30` covers rule 2.2's answer source and rules 3, 4 and 5; it ends when its two lists are empty.
 
-Three observations would reverse it:
+Four observations would reverse it:
 
 1. Over the 100 CI runs after `D30` ends, a CI worker's step that runs `npm test` fails in 4 or more first attempts whose rerun at the same head passes. The base is 17 in 198 first attempts of that step, taken over the whole suite. About half the flakes would then remain in the deterministic tier, so the tier boundary would not be where they came from. Each step's actual executed attempts are read with `gh run view --json jobs`; skipped or deferred work is not a passing execution. The threshold is a judgment.
 2. A defect reaches the default branch that a host test would have caught, while every required check was green. The rule then put a claim on the fake that only the real host could prove.
 3. Over 100 pull requests, a CI worker's step that runs `npm run test:host` fails more first attempts that pass on rerun than it fails for a defect, counting only actual executed attempts in that sample and read the same way. Rule 7 alone is then reversed, and the host tier moves to a check that is not required.
+4. Over the first 30 host tests added under rule 11, the judges find in more than half that the named deterministic test does not prove the decision. The declaration then costs a line and carries no evidence, and rule 11 alone is reversed. The threshold is a judgment.
 
 
 ## D30 — Until the conversion closes, two lists exempt files from D29's bounds
