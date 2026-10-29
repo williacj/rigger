@@ -240,7 +240,7 @@ test('roleDispatch hands the adapter\'s invocation an L0 emitter under the dispa
   const handed = await roleDispatch({ answer: answerOf(), cwd, directory, scratch: scratchOf(directory), repository: repositoryOf(directory), reach: [], env: {}, sink, id: 'd-probe', card: 1412, adapters: { 'stand-in': adapter } });
 
   assert.equal(handed.command, '/usr/bin/true');
-  assert.deepEqual(readEvents(state).map(({ layer, event, dispatch: id, card, role, path }) => ({ layer, event, id, card, role, path })), [{ layer: 'L1', event: 'workspace.made', id: 'd-probe', card: 1412, role: 'engineer', path: join(scratchOf(directory), 'engineer') }, { layer: 'L0', event: 'probe.ran', id: 'd-probe', card: 1412, role: undefined, path: undefined }]);
+  assert.deepEqual(readEvents(state).map(({ layer, event, dispatch: id, card, role, path }) => ({ layer, event, id, card, role, path })), [{ layer: 'L0', event: 'call.end', id: 'd-probe', card: 1412, role: undefined, path: undefined }, { layer: 'L1', event: 'workspace.made', id: 'd-probe', card: 1412, role: 'engineer', path: join(scratchOf(directory), 'engineer') }, { layer: 'L0', event: 'probe.ran', id: 'd-probe', card: 1412, role: undefined, path: undefined }]);
 });
 
 test('given a role dispatch through L1, the stand-in agent reads on its standard input exactly the role answer\'s instruction followed by its evidence', SETTLES_WITHIN, async (t) => {

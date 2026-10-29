@@ -3,6 +3,7 @@
 // under its dispatch, and stop, naming why, where the record or a recorded group cannot be read.
 
 import { test } from 'node:test';
+import { withRefusedEvent } from './call-event-fixtures.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
@@ -212,7 +213,7 @@ function assertKillsFirst(world, pids) {
 function assertOneMakerOfItsOwn(world, verb, ran) {
   const { restarted } = restartRecord(world);
   const own = restarted.filter((event) => event.dispatch !== undefined && event.event !== 'recorded.killed');
-  assert.deepEqual(own.map(({ layer, event }) => `${layer} ${event}`), ['L3 dispatch', 'L1 workspace.made', 'L1 dispatch.start', 'L1 dispatch.end', 'L2 review.withheld'], JSON.stringify(own));
+  assert.deepEqual(own.map(({ layer, event }) => `${layer} ${event}`), ['L3 dispatch', 'L0 call.end', 'L1 workspace.made', 'L1 dispatch.start', 'L1 dispatch.end', 'L0 call.end', 'L0 call.end', 'L2 review.withheld'], JSON.stringify(own));
   assert.equal(new Set(own.map(({ dispatch }) => dispatch)).size, 1, JSON.stringify(own));
   assert.equal(ran.stdout, '');
   const workspace = join(realpathSync(world.directory), 'widgets-worktrees', 'rigger-10');
@@ -576,10 +577,9 @@ test('given a sink that refuses the start\'s kill events, rigger once exits non-
   const world = consumerIn(t, [card(10)]);
   const started = await startGroup(t, world.directory, 'group');
   writeGroups(world.state, [entryFor(started)]);
-  // A directory where the stream's file goes refuses every append.
-  mkdirSync(join(world.state, 'events.jsonl'));
+  // Startup's git reads can record; the recorded kills begin the stream's refusal.
 
-  const ran = await restart(world, 'once');
+  const ran = await withRefusedEvent(world.directory, join(world.state, 'events.jsonl'), 'recorded.killed', () => restart(world, 'once'));
 
   assert.notEqual(ran.status, 0, ran.stdout);
   for (const pid of [started.leader, started.member]) assert.match(ran.stderr, new RegExp(`d-dead, card #10: recorded\\.killed \\{"pid":${pid},`), ran.stderr);

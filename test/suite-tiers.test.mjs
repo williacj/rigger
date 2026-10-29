@@ -163,6 +163,7 @@ const expectedLists = {
   converting: originalConverting,
 };
 expectedLists.host.push('test/process-table.test.mjs');
+expectedLists.host.push('test/call-events.test.mjs');
 expectedLists.host.push('test/claude-folder-live.test.mjs');
 expectedLists.host.push('test/test-list-growth-host.test.mjs');
 expectedLists.host.push('test/build-test-matrix-host.test.mjs');

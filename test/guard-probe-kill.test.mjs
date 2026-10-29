@@ -20,6 +20,7 @@ import { alive, childrenIn, firstChildIn, fixture, gitHanging, gitLeavingChild, 
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { standInAgent } from './stub-claude.mjs';
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
+import { refuseAfterCommand } from './call-event-fixtures.mjs';
 
 /** The stand-in agent every maker in this file runs as, on the PATH each verb runs under. */
 const agent = standInAgent();
@@ -350,7 +351,7 @@ test('given a sink that refuses every append, and a stand-in for the agent CLI t
   claude(directory, true);
   const fake = fakeGh(directory);
   const { where, state } = consumer();
-  mkdirSync(join(state, 'events.jsonl'), { recursive: true });
+  refuseAfterCommand(directory, 'claude', join(state, 'events.jsonl'));
 
   const ran = runBin('doctor', where, directory);
 
@@ -392,7 +393,13 @@ test('a doctor, plan, setup-board or report run in which no process is killed by
 
     const ran = runBin(verb, where, directory);
 
-    assert.equal(existsSync(state), false, `${verb} exited ${ran.code}: ${ran.out}${ran.err}`);
+    if (verb === 'report') assert.equal(existsSync(state), false, `${verb} exited ${ran.code}: ${ran.out}${ran.err}`);
+    else {
+      assert.deepEqual(readdirSync(state), ['events.jsonl'], `${verb} exited ${ran.code}: ${ran.out}${ran.err}`);
+      const l0 = readEvents(state).filter(({ layer }) => layer === 'L0');
+      assert.ok(l0.length > 0, `${verb} recorded no forge call`);
+      assert.deepEqual(l0.filter(({ event }) => event !== 'call.end'), []);
+    }
   }
 });
 
@@ -403,7 +410,7 @@ test('given a sink that refuses every append, and a gh stand-in that leaves a ch
   const fake = fakeGh(directory);
   fixture(directory, 'gh', ['"$here/fake/gh" "$@"', 'status=$?', 'if [ "$1" = api ]; then', leave(TAIL, 'child-$$'), 'fi', 'exit $status'].join('\n'));
   const { where, state } = consumer();
-  mkdirSync(join(state, 'events.jsonl'), { recursive: true });
+  refuseAfterCommand(directory, 'gh', join(state, 'events.jsonl'), { apiOnly: true });
 
   const ran = runBin('doctor', where, directory);
 

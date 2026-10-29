@@ -40,7 +40,7 @@ export const refusalLine = ({ card, reason }) => `  refuse  #${card}  ${reason}`
  * What the command prints for a `plan` run, and the status it exits with. It writes nothing but
  * what L0 records of a process it kills, through the sink `recording` opens.
  */
-export const plan = (options) => recording((opened) => planning(opened, options));
+export const plan = (options) => recording((opened) => planning(opened, options), options?.push);
 
 /** `plan`'s work, recording through the sink `opened` holds once `settled` has named its state directory. */
 async function planning(opened, { target = process.cwd(), packageRoot = PACKAGE, ask, send } = {}) {
@@ -59,6 +59,7 @@ async function planning(opened, { target = process.cwd(), packageRoot = PACKAGE,
   if (problem) return failed(`rigger plan: ${problem}`);
   const refusals = validate(config);
   if (refusals.length > 0) return failed(`rigger plan: \`${CONFIG}\`: ${refusals.join('; ')}`);
+  opened.admitted(config);
 
   const { project } = config.board;
   const forge = { ...config.board, repo: config.repo };

@@ -7,8 +7,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { writeFileSync } from 'node:fs';
+import { mkdirSync, accessSync, constants } from 'node:fs';
 import { copyFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { delimiter } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 
@@ -16,6 +18,7 @@ import { scratch, sweep } from './process-fixtures.mjs';
 import { running } from './process-fixtures.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { fixture } from './process-fixtures.mjs';
+import { onPath } from './on-path.mjs';
 
 test('process fixtures execute the Bash file substitutions used by census controls', (t) => {
   const directory = scratch(t);
@@ -60,7 +63,7 @@ const processTableResult = (status, stdout, extra = {}) => ({ status, stdout, st
 
 test('warm runner resolves its module path when the checkout path contains a space', async (t) => {
   const directory = temporaryDirectory('rigger fixture space ', { context: t });
-  for (const name of ['process-fixtures.mjs', 'temporary-directory.mjs']) {
+  for (const name of ['process-fixtures.mjs', 'temporary-directory.mjs', 'on-path.mjs']) {
     copyFileSync(new URL(`./${name}`, import.meta.url), join(directory, name));
   }
   const fixtures = await import(pathToFileURL(join(directory, 'process-fixtures.mjs')).href);
@@ -196,4 +199,140 @@ test('control: sweep checks first, later and final reads after occupied lists de
     sweep('rigger-779-absent');
     assert.deepEqual(calls.map(({ command }) => command), ['/usr/bin/pgrep', '/usr/bin/pkill', '/usr/bin/pgrep']);
   });
+});
+
+test('PATH resolver skips an executable directory named like the command', (t) => {
+  const directory = temporaryDirectory('rigger git path ', { context: t });
+  const first = join(directory, 'first');
+  const second = join(directory, 'second');
+  mkdirSync(first);
+  mkdirSync(second);
+  mkdirSync(join(first, 'git'));
+  const executable = join(second, 'git');
+  writeFileSync(executable, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  assert.equal(onPath('git', [first, second].join(delimiter)), executable);
+});
+
+function importGitOnPath(path, cwd) {
+  const source = `import { GIT } from ${JSON.stringify(new URL('./process-fixtures.mjs', import.meta.url).href)}; console.log(GIT);`;
+  return spawnSync(process.execPath, ['--input-type=module', '-e', source], {
+    cwd, env: { ...process.env, PATH: path }, encoding: 'utf8',
+  });
+}
+
+test('fixture Git lookup treats an empty PATH entry as the current directory', (t) => {
+  const directory = temporaryDirectory('rigger git cwd ', { context: t });
+  const executable = join(directory, 'git');
+  writeFileSync(executable, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const imported = importGitOnPath('', directory);
+  assert.equal(imported.status, 0, imported.stderr);
+  assert.equal(imported.stdout.trim(), executable);
+});
+
+test('fixture Git lookup selects the first executable file and skips a preceding directory', (t) => {
+  const directory = temporaryDirectory('rigger git order ', { context: t });
+  const first = join(directory, 'first');
+  const second = join(directory, 'second');
+  mkdirSync(first);
+  mkdirSync(second);
+  const firstGit = join(first, 'git');
+  const secondGit = join(second, 'git');
+  writeFileSync(firstGit, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  writeFileSync(secondGit, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const order = [first, second].join(delimiter);
+  const imported = importGitOnPath(order, directory);
+  assert.equal(imported.status, 0, imported.stderr);
+  assert.equal(imported.stdout.trim(), firstGit);
+
+  const before = join(directory, 'before');
+  mkdirSync(before);
+  mkdirSync(join(before, 'git'));
+  const skipped = importGitOnPath([before, first].join(delimiter), directory);
+  assert.equal(skipped.status, 0, skipped.stderr);
+  assert.equal(skipped.stdout.trim(), firstGit);
+});
+
+test('fixture Git lookup skips a regular file without execute permission', (t) => {
+  const directory = temporaryDirectory('rigger git mode ', { context: t });
+  const first = join(directory, 'first');
+  const second = join(directory, 'second');
+  mkdirSync(first);
+  mkdirSync(second);
+  const noExec = join(first, 'git');
+  const executable = join(second, 'git');
+  writeFileSync(noExec, '#!/bin/sh\nexit 0\n', { mode: 0o644 });
+  writeFileSync(executable, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  try {
+    accessSync(noExec, constants.X_OK);
+    t.skip('this host does not distinguish X_OK on a non-executable regular file');
+    return;
+  } catch {
+    // This host distinguishes the two files, so the selection is observable.
+  }
+  const imported = importGitOnPath([first, second].join(delimiter), directory);
+  assert.equal(imported.status, 0, imported.stderr);
+  assert.equal(imported.stdout.trim(), executable);
+});
+
+test('fixture Git lookup names PATH when no executable Git exists', (t) => {
+  const directory = temporaryDirectory('rigger no git ', { context: t });
+  const imported = importGitOnPath(directory, directory);
+  assert.notEqual(imported.status, 0);
+  assert.match(imported.stderr, /git is not executable on PATH/);
+});
+
+test('importing process fixtures starts no child process', (t) => {
+  const directory = temporaryDirectory('rigger git import ', { context: t });
+  const executable = join(directory, 'git');
+  writeFileSync(executable, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  const source = [
+    "import childProcess from 'node:child_process';",
+    "import { syncBuiltinESMExports } from 'node:module';",
+    "for (const name of ['spawn', 'spawnSync', 'execFile', 'execFileSync', 'exec', 'execSync', 'fork']) childProcess[name] = () => { throw new Error(`import spawned via ${name}`); };",
+    'syncBuiltinESMExports();',
+    `await import(${JSON.stringify(new URL('./process-fixtures.mjs', import.meta.url).href)});`,
+    "console.log('imported');",
+  ].join('\n');
+  const imported = spawnSync(process.execPath, ['--input-type=module', '-e', source], {
+    cwd: directory, env: { ...process.env, PATH: directory }, encoding: 'utf8',
+  });
+  assert.equal(imported.status, 0, imported.stderr);
+  assert.equal(imported.stdout.trim(), 'imported');
+});
+
+test('Git stand-in hands a spaced selected path to the exact executable', (t) => {
+  const directory = temporaryDirectory('rigger git handoff ', { context: t });
+  const selected = join(directory, 'real git with spaces');
+  mkdirSync(selected);
+  const executable = join(selected, 'git');
+  writeFileSync(executable, '#!/bin/sh\nprintf "selected:%s\\n" "$1"\nexit 23\n', { mode: 0o755 });
+  const source = [
+    `import { GIT, gitRecording } from ${JSON.stringify(new URL('./process-fixtures.mjs', import.meta.url).href)};`,
+    "import { spawnSync } from 'node:child_process';",
+    `const standIn = gitRecording(${JSON.stringify(directory)});`,
+    "const ran = spawnSync(standIn, ['probe'], { encoding: 'utf8', env: process.env });",
+    "console.log(JSON.stringify({ selected: GIT, status: ran.status, stdout: ran.stdout }));",
+  ].join('\n');
+  const imported = spawnSync(process.execPath, ['--input-type=module', '-e', source], {
+    cwd: directory, env: { ...process.env, PATH: selected }, encoding: 'utf8',
+  });
+  assert.equal(imported.status, 0, imported.stderr);
+  assert.deepEqual(JSON.parse(imported.stdout.trim()), {
+    selected: executable,
+    status: 23,
+    stdout: 'selected:probe\n',
+  });
+});
+
+test('PATH resolver preserves skip-directory selection for existing callers', (t) => {
+  const directory = temporaryDirectory('rigger git skipping ', { context: t });
+  const first = join(directory, 'first');
+  const second = join(directory, 'second');
+  mkdirSync(first);
+  mkdirSync(second);
+  const firstGit = join(first, 'git');
+  const secondGit = join(second, 'git');
+  writeFileSync(firstGit, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  writeFileSync(secondGit, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+  assert.equal(onPath('git', [first, second].join(delimiter), first), secondGit);
 });

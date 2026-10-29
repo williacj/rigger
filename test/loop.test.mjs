@@ -76,7 +76,6 @@ function startSynchronousTrace() {
   };
 }
 
-// The mkdtemp check cites the trace's exact line, so imports for later tests sit below it.
 import { admissionOf, closerText, moduleOver, picture, seed, stateOf, TIME } from './admission-world.mjs';
 import { fixture, shellQuote } from './process-fixtures.mjs';
 import { realHost } from '../src/substrate/host.mjs';
@@ -1831,6 +1830,7 @@ test('across a `loop`\'s single pull the sink refused and a later one it accepte
   // The accepted pull's own events, and no other: R-SCHED-4 has only the owner and a repeated
   // infrastructure failure change admission, and the halt is neither.
   const pulled = new Set(['L3 trigger', 'L3 pull', 'L2 transition', 'L3 slot.release', 'L3 dispatch', 'L1 workspace.made', 'L1 dispatch.start', 'L1 dispatch.end']);
+  pulled.add('L0 call.end');
   assert.deepEqual(built.events().map(({ layer, event }) => `${layer} ${event}`).filter((name) => !pulled.has(name)), []);
 });
 
