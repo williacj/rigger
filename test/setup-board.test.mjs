@@ -13,6 +13,10 @@ import { parseDocument } from '../src/substrate/forge/graphql.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { validate } from '../src/config/validate.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { gitIn, repositoryAt, withOrigin } from './git-repository.mjs';
+import { readEvents } from '../src/observation/sink.mjs';
+import { assertPushEnd, held as heldStream, pushTraced } from './push-fixtures.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'src', 'cli', 'rigger.mjs');
@@ -472,4 +476,76 @@ test('setup-board creates the status label once when absent and preserves an alr
     assert.equal(repeated.ran.status, 0, repeated.ran.stderr);
     assert.deepEqual(repeated.writes, []);
   }
+});
+
+/**
+ * Runs `rigger setup-board` as the command, through `src/cli/verbs.mjs` and so with L5's push as it
+ * ships, in a repository holding `config` with a local bare `origin` beside it, against a fake board
+ * holding everything the config declares. Every git call is traced, to `trace`. Answers what the
+ * command printed and exited with, the stream's events, origin's data ref and the traced lines
+ * naming the push. `repository: false` runs it in a directory git names no repository for.
+ */
+async function setUpPushing(config, { repository = true } = {}) {
+  const directory = temporaryDirectory('rigger-setup-board-push-');
+  const target = join(directory, 'consumer');
+  const origin = join(directory, 'origin.git');
+  const trace = join(directory, 'git-trace');
+  const text = `export default ${JSON.stringify(config)};\n`;
+  if (repository) withOrigin(repositoryAt(target, { 'rigger.config.mjs': text }), origin);
+  else {
+    mkdirSync(target);
+    writeFileSync(join(target, 'rigger.config.mjs'), text);
+  }
+  const fake = installFakeGh(temporaryDirectory('rigger-setup-board-gh-'), { ...WHERE, board: COMPLETE });
+  const ran = spawnSync(process.execPath, [BIN, 'setup-board'], {
+    cwd: target,
+    encoding: 'utf8',
+    env: { ...gitEnvironment(), GIT_TRACE: trace, PATH: `${dirname(fake.gh)}${delimiter}${process.env.PATH}` },
+  });
+  const state = join(target, '.rigger');
+  const events = existsSync(join(state, 'events.jsonl')) ? readEvents(state) : [];
+  const tip = repository ? gitIn(origin, 'for-each-ref', '--format=%(objectname)', 'refs/rigger/events').trim() || undefined : undefined;
+  return { ran, events, tip, origin, state, traced: pushTraced(trace) };
+}
+
+// proves R-SAFE-3
+test('C1, C2, C3: setup-board run as the command, its config admitted with telemetry absent, telemetry.push absent, false, \'true\', 1 or {}, reaches no push side', async () => {
+  for (const telemetry of [undefined, {}, { push: false }, { push: 'true' }, { push: 1 }, { push: {} }]) {
+    const config = telemetry === undefined ? CONFIG : { ...CONFIG, telemetry };
+    assert.deepEqual(validate(config), []);
+    const { ran, events, tip, traced } = await setUpPushing(config);
+    const said = `telemetry ${JSON.stringify(telemetry)}: exited ${ran.status}: ${ran.stdout}${ran.stderr}`;
+    assert.equal(ran.status, 0, said);
+    assert.ok(events.length > 0, `${said}: setup-board recorded nothing, so this proves nothing`);
+    assert.deepEqual(events.filter(({ event }) => event === 'push.end'), [], said);
+    assert.equal(tip, undefined, said);
+    assert.deepEqual(traced, [], said);
+  }
+});
+
+// proves R-RECORD-13
+test('C6: setup-board run as the command, telemetry.push true, pushes the stream to origin\'s data ref once at its return, then records one push.end', async () => {
+  const { ran, events, tip, origin, traced } = await setUpPushing({ ...CONFIG, telemetry: { push: true } });
+  const said = `exited ${ran.status}: ${ran.stdout}${ran.stderr}`;
+  assert.equal(ran.status, 0, said);
+  assert.equal(ran.stderr.includes('rigger: the push'), false, said);
+  assert.ok(tip, `${said}: origin holds no data ref`);
+  assert.ok(traced.length > 0, said);
+  const ends = events.filter(({ event }) => event === 'push.end');
+  assert.equal(ends.length, 1, said);
+  assert.equal(events.at(-1).event, 'push.end', said);
+  const pushed = Buffer.from(gitIn(origin, 'cat-file', 'blob', `${tip}:events.jsonl`));
+  const before = Buffer.from(events.slice(0, -1).map((event) => `${JSON.stringify(event)}\n`).join(''));
+  assert.deepEqual(pushed, heldStream(before), said);
+  assertPushEnd(ends[0], { outcome: 'pushed', bytes: pushed.length, commit: tip });
+});
+
+// proves R-SAFE-3
+test('C7: setup-board run as the command in a directory git names no repository for, telemetry.push true, names no state directory and reaches no push side', async () => {
+  const { ran, state, traced } = await setUpPushing({ ...CONFIG, telemetry: { push: true } }, { repository: false });
+  const said = `exited ${ran.status}: ${ran.stdout}${ran.stderr}`;
+  assert.equal(ran.status, 1, said);
+  assert.match(ran.stderr, /git names no repository/, said);
+  assert.equal(existsSync(state), false, said);
+  assert.deepEqual(traced, [], said);
 });

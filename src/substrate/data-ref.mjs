@@ -8,7 +8,7 @@ import { EVENT_REFUSED, runCommand } from './process.mjs';
 export const PUSH_TIMEOUT = 30_000;
 
 /** The data ref on `origin`, the one ref the push side writes (boundary rule 2). */
-const DATA_REF = 'refs/rigger/events';
+export const DATA_REF = 'refs/rigger/events';
 
 /** The remote the push names, which exists only on the push's own command line. */
 const PUSH_REMOTE = 'rigger-data-push';

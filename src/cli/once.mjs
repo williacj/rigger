@@ -168,7 +168,7 @@ export const noticeLine = (verb, id, { step, cause, made, unrecorded }) => (made
   ? `rigger ${verb}: the notice for hold ${id} failed to ${step}: ${cause}`
   : `rigger ${verb}: the notice for hold ${id} made its step to ${step}, but the sink refused its record, so these events went unrecorded: ${unrecorded.map(({ event }) => event).join(', ')}`);
 
-export const claimVerb = (verb, limit, options) => recording((opened) => claiming(verb, limit, opened, options));
+export const claimVerb = (verb, limit, options) => recording((opened) => claiming(verb, limit, opened, options), options?.push);
 
 /**
  * `claimVerb`'s work, recording through the sink `opened` holds once `settled` has named its state
@@ -185,6 +185,7 @@ async function claiming(verb, limit, opened, {
   if (problem) return { text: `rigger ${verb}: ${problem}`, code: 1 };
   const invalid = validate(config);
   if (invalid.length > 0) return { text: `rigger ${verb}: \`${CONFIG}\`: ${invalid.join('; ')}`, code: 1 };
+  opened.admitted(config);
 
   const root = worktreeRoot(config, named);
   // The guard reads the resolved root before anything is claimed, as it read the target: a
