@@ -20,11 +20,16 @@ const cardTrigger = () => {
   return { ...trigger, card: template() };
 };
 
-/** Import the actual merge-base validator, preserving its value rendering and property reads. */
+/** Import the historical validator, preserving its value rendering and property reads. */
 async function baseValidator() {
-  // Git owns the merge base. Import its actual validator with only its relative import URLs
-  // resolved, so the oracle includes the base's JSON rendering, not a reimplementation of it.
-  const base = execFileSync('git', ['merge-base', 'HEAD', 'origin/main'], { encoding: 'utf8', env: gitEnvironment() }).trim();
+  // Pin the formatter fix's first parent so C30 retains its shared-formatter throw premise.
+  // Import its actual validator with only relative import URLs resolved, preserving rendering.
+  const base = 'f22c69452ff2b5979af24b745d6a3c4573ef9592';
+  try {
+    execFileSync('git', ['cat-file', '-e', `${base}^{commit}`], { env: gitEnvironment(), stdio: 'ignore' });
+  } catch {
+    assert.fail(`the pinned base ${base} is not in this clone; it needs full history`);
+  }
   const source = execFileSync('git', ['show', `${base}:src/config/validate.mjs`], { encoding: 'utf8', env: gitEnvironment() });
   const moduleURL = new URL('../src/config/validate.mjs', import.meta.url);
   const resolved = source.replace(/from '(\.[^']+)'/g, (_, path) => `from '${new URL(path, moduleURL).href}'`);
@@ -576,4 +581,15 @@ test('C38: inherited template labels with an own some match the forge labels', (
   assert.equal(calls, 0, 'validation and inventory ignore the consumer method');
   assert.equal(Object.hasOwn(labels, '0'), false, 'the inherited label remains inherited');
   assert.equal(Object.hasOwn(labels, '1'), false, 'inventory leaves the input unchanged');
+});
+
+// The historical oracle must retain the shared-formatter throw that C30 probes.
+test('the pinned validator predates the formatter fix and throws from holdsNothing for bigint roles', async () => {
+  const original = await baseValidator();
+  assert.throws(() => original.validate({ ...rigger, roles: 1n }),
+    (error) => error.stack.includes('at holdsNothing '), 'the pinned base must throw from holdsNothing');
+  assert.equal(original.base, 'f22c69452ff2b5979af24b745d6a3c4573ef9592');
+  const parent = execFileSync('git', ['rev-parse', 'fe715a47fed86a61aed9bf506eaef7a487b86176^1'],
+    { encoding: 'utf8', env: gitEnvironment() }).trim();
+  assert.equal(parent, original.base, 'the pinned base is the formatter fix merge\'s first parent');
 });
