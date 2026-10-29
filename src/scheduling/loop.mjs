@@ -14,7 +14,7 @@ import { stepDispatch } from '../execution/step.mjs';
 import { EVENT_REFUSED, NOT_STARTED, whenElapsed } from '../substrate/process.mjs';
 import { dispatched } from '../workflow/marker.mjs';
 import { dispatchedEscalation } from '../workflow/escalation.mjs';
-import { causeOf } from '../workflow/status-issue.mjs';
+import { causeOf, readableCause } from '../workflow/status-issue.mjs';
 import { admission, admissionPath } from './admission.mjs';
 import { lane } from './lane.mjs';
 import { pullOrder } from './pull-order.mjs';
@@ -35,7 +35,39 @@ export function readableFailure(thrown) {
   } catch {
     // A value that cannot be read carries nothing more.
   }
+  try {
+    if (typeof thrown?.code === 'string') failure.code = thrown.code;
+  } catch {
+    // Nor a code.
+  }
   return failure;
+}
+
+/** `thrown` itself where it is an Error whose message reads, and otherwise `readableFailure` of it. */
+function readableOrFresh(thrown) {
+  const cause = readableCause(thrown);
+  return cause === thrown ? thrown : readableFailure(thrown);
+}
+
+/**
+ * L2's notice answer `answer` as L3 hands it on: a failed step the forge made has its unrecorded
+ * events named as `{ event }` with a printable name each, whatever L2 was handed, so a presenter
+ * that names them can always print them.
+ */
+function noticeAnswer(answer) {
+  try {
+    const failed = answer?.failed;
+    if (failed === undefined || failed.made === undefined) return answer;
+    let events;
+    try {
+      events = Array.from(failed.unrecorded ?? [], (each) => ({ event: causeOf(each?.event) }));
+    } catch {
+      events = [{ event: 'events it could not name' }];
+    }
+    return { ...answer, failed: { ...failed, unrecorded: events } };
+  } catch {
+    return answer;
+  }
 }
 
 /**
@@ -94,7 +126,7 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow,
   const record = (event, fields, card) => sink.emitter({ layer: 'L3', card }).emit(event, fields);
 
   /** The failure L3 reports for an append the sink refused: `sentence`, then the sink's error, kept as the cause. */
-  const refused = (sentence, refusal) => new Error(`${sentence}: ${refusal.message}`, { cause: refusal });
+  const refused = (sentence, refusal) => new Error(`${sentence}: ${causeOf(refusal)}`, { cause: readableCause(refusal) });
 
   /**
    * The rest of a trigger's read once `take` has recorded the trigger and `follow` has acted:
@@ -188,7 +220,8 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow,
         const kept = [...failures, ...notices.map(noticeFailure)];
         // The read's own failure goes in fresh, so its caller's report can read it whatever was thrown.
         const reason = readableFailure(thrown);
-        throw kept.length === 0 ? thrown : Object.assign(new AggregateError([...kept, reason], `${causeOf(thrown)}, after ${kept.length} earlier failure${kept.length === 1 ? '' : 's'} of this trigger`), { cause: reason });
+        // Alone, a readable Error is the read's own and passes on unchanged; anything else goes fresh.
+        throw kept.length === 0 ? readableOrFresh(thrown) : Object.assign(new AggregateError([...kept, reason], `${causeOf(thrown)}, after ${kept.length} earlier failure${kept.length === 1 ? '' : 's'} of this trigger`), { cause: reason });
       }
     },
 
@@ -452,7 +485,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * L3 ended the call; otherwise what L2 answered, a call that threw answering as `failed`.
    */
   const notify = (id, hold, issueState) => {
-    noticing = noticing.then(() => noticed(id, hold, issueState)).catch((thrown) => ({ failed: { step: 'notice', cause: causeOf(thrown) } }));
+    noticing = noticing.then(() => noticed(id, hold, issueState)).then(noticeAnswer, (thrown) => ({ failed: { step: 'notice', cause: causeOf(thrown) } }));
     return noticing;
   };
 
@@ -850,7 +883,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     // A judge L2 held fails the card held, as one that handed back no outcome fails it.
     const ended = settled.map((each, at) => (each.status === 'fulfilled'
       ? (each.value.held === undefined ? each.value : { role: each.value.role, failure: each.value.held })
-      : { role: answer.judges[at].role, failure: new Error(`card #${card.number}'s judge \`${answer.judges[at].role}\` handed back no outcome: ${each.reason?.message}`, { cause: each.reason }) }));
+      : { role: answer.judges[at].role, failure: new Error(`card #${card.number}'s judge \`${answer.judges[at].role}\` handed back no outcome: ${causeOf(each.reason)}`, { cause: each.reason }) }));
     const failed = ended.filter((each) => each.failure !== undefined).flatMap((each) => [each.failure, ...(each.failure.unsaved === undefined ? [] : [each.failure.unsaved])]);
     const escalating = ended.filter((each) => each.escalation !== undefined);
     const carried = ended.map(({ escalation, decision, ...each }) => each);

@@ -975,3 +975,147 @@ test('every failure the pull hands its caller after a made opening and a later r
     assert.match(messagesOf(outcome.error).join('; '), /EIO while recording admission\.open/, what);
   }
 });
+
+// The pre-judge attack of round 8 on #1079: a made outside action stays reported, with its refused
+// record, whatever fails afterwards, and reporting never throws.
+import { noticeLine } from '../src/cli/once.mjs';
+
+/** A sink over `handed`'s that refuses the events `refuse` names, each with the value `refuse[event](fields)` answers; undefined answers accept it. */
+function refusingWith(handed, refuse) {
+  const original = handed.sink;
+  handed.sink = {
+    ...original,
+    emitter: (where) => {
+      const emitter = original.emitter(where);
+      return {
+        ...emitter,
+        emit: (event, fields) => {
+          if (event in refuse) {
+            const refusal = refuse[event](fields);
+            if (refusal !== undefined) throw refusal.value;
+          }
+          return emitter.emit(event, fields);
+        },
+      };
+    },
+  };
+}
+
+/** Every message `error` holds, read safely, through its errors and causes. */
+const safeMessages = (error, seen = new Set()) => {
+  if (error === undefined || error === null || seen.has(error)) return [];
+  seen.add(error);
+  let message;
+  try { message = String(error.message); } catch (failure) { message = `<unreadable: ${failure.message}>`; }
+  return [message, ...(Array.isArray(error.errors) ? error.errors.flatMap((each) => safeMessages(each, seen)) : []), ...(error.cause === undefined ? [] : safeMessages(error.cause, seen))];
+};
+
+/** L2's notice answering, for a closer naming an issue, that its notice closed. */
+const closedNotice = () => async function* closing({ closer }) { return { issue: Number(closer.issue), closed: true }; };
+
+for (const [what, value] of Object.entries(HOSTILE())) {
+  test(`a closer removed on the follow path whose admission.open record the sink refuses with ${what} stays named in what the pull rejects with`, async () => {
+    const { board } = stateBoard([], { 12: 'closed' });
+    const handed = handles({ cards: [], board, notice: closedNotice() });
+    refusingWith(handed, { 'admission.open': () => ({ value }) });
+    seed(handed.state, 'hold-a1-issue-12.json');
+
+    const outcome = await loop(handed).pull().then((answer) => ({ answer }), (error) => ({ error }));
+
+    assert.deepEqual(namesIn(handed.state), []);
+    assert.match(safeMessages(outcome.error).join(' | '), /admission changed at hold-a1-issue-12\.json, and the sink refused its admission\.open event/, what);
+    assert.ok(readable(outcome.error), `${what}: a failure handed on cannot be read`);
+  });
+
+  test(`a made opening whose record was refused stays reported when the drain trigger's record is refused with ${what}`, async () => {
+    const { board } = stateBoard([], { 12: 'closed' });
+    const handed = handles({ cards: [], board, notice: closedNotice() });
+    refusingWith(handed, { 'admission.open': () => ({ value: new Error('EIO admission.open') }), trigger: (fields) => (fields.trigger === 'drain' ? { value } : undefined) });
+    seed(handed.state, 'hold-a1-issue-12.json');
+
+    const outcome = await loop(handed).pull().then((answer) => ({ answer }), (error) => ({ error }));
+
+    assert.deepEqual(namesIn(handed.state), []);
+    const said = safeMessages(outcome.error).join(' | ');
+    assert.match(said, /EIO admission\.open/, what);
+    assert.match(said, /the event sink refused to record the drain trigger/, what);
+    assert.ok(readable(outcome.error), `${what}: a failure handed on cannot be read`);
+  });
+
+  test(`a closer renamed on the follow path whose admission.rename record the sink refuses with ${what} stays named in the pull's notices`, async () => {
+    const world = forge({ issues: [{ number: 20, title: 'Rigger closed admission', body: 'Hold: `z9`', author: 'rigger-bot', labels: ['rigger:status'], comments: [] }] });
+    const { board } = stateBoard([], { 12: 'none' });
+    const handed = handles({ cards: [], board });
+    refusingWith(handed, { 'admission.rename': () => ({ value }) });
+    handed.l2.notice = changesOver(world, handed.sink).notice;
+    seed(handed.state, 'hold-a1-issue-12.json');
+
+    const pulled = await loop(handed).pull();
+
+    assert.deepEqual(namesIn(handed.state), ['hold-a1-issue-20.json']);
+    assert.match(JSON.stringify(pulled.notices), /admission changed at hold-a1-issue-20\.json, and the sink refused its admission\.rename event/, what);
+  });
+
+  test(`resume's removal whose admission.open record the sink refuses with ${what} names the closer it removed`, async () => {
+    const state = join(temporaryDirectory('rigger-hold-notice-'), '.rigger');
+    seed(state, 'hold-a1-issue-12.json');
+    const sink = { emitter: () => ({ emit: () => { throw value; } }) };
+
+    const outcome = await moduleOver(state, { sink }).resume().then((answer) => ({ answer }), (error) => ({ error }));
+
+    assert.deepEqual(namesIn(state), []);
+    assert.match(safeMessages(outcome.error).join(' | '), /hold-a1-issue-12\.json/, what);
+    assert.ok(readable(outcome.error), `${what}: the failure cannot be read`);
+  });
+}
+
+for (const [what, unrecorded] of Object.entries({ 'no unrecorded events': undefined, 'a Symbol event': [{ event: Symbol('event') }], 'a string in place of a list': 'call.end' })) {
+  test(`a made comment on the follow path whose failure carries ${what} is answered in notices that once's notice line can print`, async () => {
+    const world = forge({ issues: [{ number: 12, title: 'Rigger closed admission', body: 'Hold: `z9`', author: 'rigger-bot', labels: ['rigger:status'], comments: [] }] });
+    const { board } = stateBoard([], { 12: 'open' });
+    const handed = handles({ cards: [], board });
+    handed.l2.notice = changesOver(world, handed.sink).notice;
+    const comment = world.writes.postIssueComment;
+    world.writes.postIssueComment = async (...args) => {
+      await comment(...args);
+      throw Object.assign(new Error('call.end went unrecorded'), { code: 'EVENT_REFUSED', made: { answer: { id: 1 } }, unrecorded });
+    };
+    seed(handed.state, 'hold-a1-issue-12.json');
+
+    const pulled = await loop(handed).pull();
+
+    assert.equal(pulled.admission.state, 'closed');
+    const lines = pulled.notices.map((failed) => noticeLine('once', failed.id, failed));
+    assert.equal(lines.length, 1, what);
+    assert.match(lines[0], /made its step to comment on issue #12/, what);
+  });
+}
+
+// proves R-SCHED-23
+test('after a made opening whose record was accepted, a later read rejecting with undefined has the pull reject with a readable Error', async () => {
+  const { board } = stateBoard([], { 12: 'closed' });
+  board.readColumns = async () => { throw undefined; };
+  const handed = handles({ cards: [], board, notice: closedNotice() });
+  seed(handed.state, 'hold-a1-issue-12.json');
+
+  const outcome = await loop(handed).pull().then((answer) => ({ answer }), (error) => ({ error }));
+
+  assert.deepEqual(namesIn(handed.state), []);
+  assert.ok(readable(outcome.error), `the pull rejected with ${String(outcome.error)}`);
+  assert.deepEqual(readEvents(handed.state).filter(({ event }) => event === 'admission.open').map(({ name, by }) => ({ name, by })), [{ name: 'hold-a1-issue-12.json', by: 'issue' }]);
+});
+
+// proves R-SCHED-23
+test('two concurrent pulls over one closed notice make one opening and report no failure', async () => {
+  let calls = 0;
+  const { board } = stateBoard([], { 12: 'closed' });
+  const handed = handles({ cards: [], board, notice: async function* counted({ closer }) { calls += 1; return { issue: Number(closer.issue), closed: true }; } });
+  seed(handed.state, 'hold-a1-issue-12.json');
+  const built = loop(handed);
+
+  const outcomes = await Promise.allSettled([built.pull(), built.pull()]);
+
+  assert.equal(readEvents(handed.state).filter(({ event }) => event === 'admission.open').length, 1);
+  assert.equal(calls, 1);
+  assert.ok(outcomes.every(({ status }) => status === 'fulfilled'));
+});

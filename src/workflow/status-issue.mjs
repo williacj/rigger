@@ -58,6 +58,20 @@ export function causeOf(thrown) {
   return `a thrown ${typeof thrown}`;
 }
 
+/**
+ * `thrown` as a cause to chain under a failure: itself where it is an Error whose message reads as a
+ * string, and otherwise a fresh Error carrying `causeOf`'s line, so no chain holds a value its
+ * reader cannot print.
+ */
+export function readableCause(thrown) {
+  try {
+    if (thrown instanceof Error && typeof thrown.message === 'string') return thrown;
+  } catch {
+    // Neither its kind nor its message can be read, so a fresh one stands in.
+  }
+  return new Error(causeOf(thrown));
+}
+
 /** `failure`'s `made` mark, or undefined where it has none or reading it throws. */
 const madeOf = (failure) => {
   try {
@@ -224,7 +238,8 @@ export function statusNotice({ reads, writes, board, items, columns, sink }) {
    * `named`, the numbers the closers' file names gave, and every other open issue carrying the
    * status label. For each, it removes the label where the issue carries it, then closes it. An
    * issue the repository no longer holds, or already closed, takes no write. A read or write refused
-   * for one issue leaves it open, and L2 goes on to the next. A write the forge made whose record
+   * for one issue leaves it open, and L2 goes on to the next; where its label was already removed,
+ * the issue left open says so, since no later read by label finds it. A write the forge made whose record
    * the sink refused, a failure the write side marks `made`, is a write made: L2 goes on as it
    * would had it been recorded, and keeps the failure. Answers `{ closed, left, unrecorded, unread }`:
    * the numbers it closed, each issue left open as `{ issue, why }`, each write made and left
@@ -252,14 +267,18 @@ export function statusNotice({ reads, writes, board, items, columns, sink }) {
       }
     };
     for (const number of [...new Set([...named, ...labelled])]) {
+      let unlabelled = false;
       try {
         const issue = await reads.readIssue(number);
         if (issue === null || issue.state === 'closed') continue;
-        if (issue.labels.includes(status)) await made(number, 'label', () => writes.removeIssueLabel(number, status));
+        if (issue.labels.includes(status)) {
+          await made(number, 'label', () => writes.removeIssueLabel(number, status));
+          unlabelled = true;
+        }
         await made(number, 'close', () => writes.closeIssue(number));
         closed.push(number);
       } catch (failure) {
-        left.push({ issue: number, why: causeOf(failure) });
+        left.push({ issue: number, why: causeOf(failure), ...(unlabelled && { unlabelled }) });
       }
     }
     return { closed, left, unrecorded, ...(unread === undefined ? {} : { unread }) };

@@ -157,7 +157,7 @@ test('a read or write refused for one issue, its own read, its label removal or 
     assert.notEqual(code, 0, `${what}: ${text}`);
     assert.deepEqual(left(here), [], what);
     for (const name of ['hold-a1-issue-7.json', 'hold-b2-issue-9.json']) assert.match(text, new RegExp(`removed the hold closer .*${name.replaceAll('.', '\\.')}`), `${what}: ${text}`);
-    assert.match(text, /the status issue #7 was left open: .*HTTP (502: Bad Gateway|403: Forbidden)/, `${what}: ${text}`);
+    assert.match(text, /the status issue #7 was left open(, its status label already removed, so no later read by label finds it)?: .*HTTP (502: Bad Gateway|403: Forbidden)/, `${what}: ${text}`);
     assert.equal((await here.issue(7)).state, 'open', what);
     assert.equal((await here.issue(9)).state, 'closed', what);
   }
@@ -318,4 +318,17 @@ test('resume reports a close the forge made truthfully when only its event was r
   assert.match(text, /call\.end: EIO/, text);
   assert.doesNotMatch(text, /the status issue #7 was left open/, text);
   assert.match(text, /^rigger resume: closed the status issue #9$/m, text);
+});
+
+// proves R-SCHED-24
+test('resume, whose close of an issue is refused after its status label was removed, names the issue left open and that its label is already gone', async () => {
+  // The pre-judge attack of round 8 on #1079: no later read by label finds such an issue.
+  const here = world({ closers: ['hold-a1-issue-7.json'], issues: [status(7, 'a1')], refuse: (args) => (rest(args, '/issues/7', 'PATCH') ? refused('HTTP 403: Forbidden') : undefined) });
+
+  const { text, code } = await here.run();
+
+  assert.equal(code, 1, text);
+  assert.deepEqual(here.issue(7).labels, []);
+  assert.equal(here.issue(7).state, 'open');
+  assert.match(text, /^rigger resume: the status issue #7 was left open, its status label already removed, so no later read by label finds it: .*HTTP 403/m, text);
 });

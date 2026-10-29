@@ -458,7 +458,8 @@ test('resume\'s close leaves an issue open whose read, label removal or close is
 
     const { answer } = await closedFor(world, [12]);
 
-    assert.deepEqual(answer, { closed: [], left: [{ issue: 12, why: `gh: ${refused} timed out` }], unrecorded: [] }, refused);
+    // A close refused after the label's removal says the label is gone.
+    assert.deepEqual(answer, { closed: [], left: [{ issue: 12, why: `gh: ${refused} timed out`, ...(refused === 'closeIssue' && { unlabelled: true }) }], unrecorded: [] }, refused);
   }
   // One refused issue does not stop the next.
   const world = forge({ issues: [opened(12, 'a1'), opened(14, 'b2')] });

@@ -42,8 +42,45 @@ const isContent = (content) => typeof content === 'object' && content !== null &
   && typeof content.time === 'number' && Number.isFinite(content.time)
   && typeof content.run === 'string' && content.run !== '';
 
-/** A failure's code where it has one, so an answer names the cause. */
-const causeOf = (error) => error.code ?? error.message;
+/**
+ * One printable line for `thrown`, whatever value was thrown, never itself a throw: an Error's
+ * message, a string, a Symbol's description, or the value's own string, and otherwise the kind of
+ * value thrown. It stands apart from `causeOf` in `src/workflow/status-issue.mjs` because this
+ * module is in the gate's import closure (`AGENTS.md`, "Self-hosting"), which that one is not.
+ */
+const printable = (thrown) => {
+  try {
+    const held = thrown instanceof Error ? thrown.message : thrown;
+    const said = typeof held === 'string' ? held : typeof held === 'symbol' ? held.toString() : String(held);
+    if (said !== '') return said;
+  } catch {
+    // The value refused to be read or converted; its kind is all that is left to say.
+  }
+  return `a thrown ${typeof thrown}`;
+};
+
+/** `thrown` to chain as a cause: itself where it is an Error whose message reads, otherwise a fresh Error saying it. */
+const readableCause = (thrown) => {
+  try {
+    if (thrown instanceof Error && typeof thrown.message === 'string') return thrown;
+  } catch {
+    // A fresh one stands in.
+  }
+  return new Error(printable(thrown));
+};
+
+/**
+ * A failure's code where it has one, so an answer names the cause, and otherwise its printable
+ * line, whatever was thrown.
+ */
+const causeOf = (error) => {
+  try {
+    if (typeof error?.code === 'string') return error.code;
+  } catch {
+    // A value whose code cannot be read is said as `printable` says it.
+  }
+  return printable(error);
+};
 
 /**
  * The admission module over state directory `directory`, as its caller resolved it. `fs` is the
@@ -61,7 +98,7 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
     try {
       emitter.emit(event, fields);
     } catch (cause) {
-      throw new Error(`admission changed at ${fields.name}, and the sink refused its ${event} event: ${cause.message}`, { cause });
+      throw new Error(`admission changed at ${fields.name}, and the sink refused its ${event} event: ${printable(cause)}`, { cause: readableCause(cause) });
     }
   }
 
@@ -320,7 +357,7 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
         removeCloser(closer, names);
       } catch (cause) {
         recordEach(names);
-        throw new Error(`resume left ${leftOf(closers.slice(index)).join(', ')}: ${cause.message}`, { cause });
+        throw new Error(`resume left ${leftOf(closers.slice(index)).join(', ')}: ${printable(cause)}`, { cause: readableCause(cause) });
       }
       recordEach(names);
       if (names.length > 0 || unlinked.has(closer.name)) removed.push(closer);

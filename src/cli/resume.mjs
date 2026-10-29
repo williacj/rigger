@@ -36,7 +36,13 @@ async function resuming(opened, {
   try {
     answer = await admissionRecord.resume();
   } catch (failure) {
-    return { text: `rigger resume: ${failure.unreadable ? unreadableAdmission(failure.unreadable) : failure.message}`, code: 1 };
+    let unreadable;
+    try {
+      ({ unreadable } = failure);
+    } catch {
+      unreadable = undefined;
+    }
+    return { text: `rigger resume: ${Array.isArray(unreadable) ? unreadableAdmission(unreadable) : causeOf(failure)}`, code: 1 };
   }
   const { removed, gone } = answer;
   if (removed.length === 0 && gone.length === 0) return { text: 'rigger resume: admission was already open', code: 0 };
@@ -79,7 +85,7 @@ async function resuming(opened, {
       ...unrecorded.filter(({ write }) => write === 'label').map(({ issue, why }) => `rigger resume: ${but(`removed the status label from issue #${issue}`, why)}`),
       ...closed.map((number) => `rigger resume: ${but(`closed the status issue #${number}`, refused(number, 'close'))}`),
       ...(unread === undefined ? [] : [`rigger resume: the read of the open issues labelled ${FIXED_LABELS.status} failed, so only the issues the closers named were closed: ${unread}`]),
-      ...left.map(({ issue, why: cause }) => `rigger resume: the status issue #${issue} was left open: ${cause}`),
+      ...left.map(({ issue, why: cause, unlabelled }) => `rigger resume: the status issue #${issue} was left open${unlabelled ? ', its status label already removed, so no later read by label finds it' : ''}: ${cause}`),
     ].join('\n'),
     code: left.length === 0 && unrecorded.length === 0 && unread === undefined ? 0 : 1,
   };
