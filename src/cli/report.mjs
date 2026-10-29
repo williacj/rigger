@@ -42,6 +42,20 @@ const rateLine = (name, part, whole, { counted, of, none }) => (of === 0
 const survivorLine = ({ killed, of }, where) => rateLine('survivor rate', 'dispatches with a survivor or group killed', 'dispatches that ended with a result',
   { counted: killed, of, none: `no dispatch in ${where} ended with a result` });
 
+/** A system's fault rate line, `where` naming the run or the stream it is over. */
+const faultLine = (system, { faults, calls }, where) => rateLine(`${system} fault rate`,
+  `${system} calls that failed or timed out`, `${system} calls`, { counted: faults, of: calls, none: `no ${system} call in ${where}` });
+
+/** The lines L0's section prints under its heading: each run's forge and git fault rates, then the stream's. */
+function l0Lines({ runs, stream }) {
+  return [
+    ...runs.flatMap(({ run, forge, git }) => [`  run ${run}`, faultLine('forge', forge, 'this run'), faultLine('git', git, 'this run')]),
+    '  across the stream',
+    faultLine('forge', stream.forge, 'the stream'),
+    faultLine('git', stream.git, 'the stream'),
+  ];
+}
+
 /** The lines L1's section prints under its heading: each run's durations and survivor rate, then the stream's. */
 function l1Lines({ runs, stream }) {
   return [
@@ -130,12 +144,14 @@ async function reporting(opened, { target = process.cwd(), packageRoot = PACKAGE
   } catch (refused) {
     return { text: `rigger report: ${refused.message}, so no signal is derived`, code: 1 };
   }
-  const { path, l1, l2, runs, l4, markers } = derived;
+  const { path, l0, l1, l2, runs, l4, markers } = derived;
   if (runs === null) return { text: `rigger report: no events are recorded; there is no stream at ${path}`, code: 0 };
   const markerLines = markers.map(({ card, role, head, dispatch, reason }) =>
     `  card #${card}, ${role}, head ${head}, dispatch ${dispatch}${reason === undefined ? '' : `: ${reason}`}`);
   return { text: [
     `rigger report: the events recorded at ${path}`,
+    'L0',
+    ...l0Lines(l0),
     'L1',
     ...l1Lines(l1),
     'L2',

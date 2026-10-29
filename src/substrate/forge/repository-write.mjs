@@ -3,6 +3,7 @@
 
 import { firstLine, readRunner, repositoryWriteRunner } from './runners.mjs';
 import { carried, written } from './write-made.mjs';
+import { sameLabel } from '../../config/validate.mjs';
 
 /** The HTTP status and message `gh api` printed for a refused write. */
 function refusal(said) {
@@ -121,15 +122,16 @@ export function repositoryWriteSide(board, { send, emitter, timeout } = {}) {
       if (typeof label !== 'string' || label.length === 0) throw new Error(`addIssueLabel on issue #${number} failed: requires one label name`);
       return postIssue(number, 'labels', `labels[]=${label}`, 'addIssueLabel');
     },
-    /** Open one issue with its label in the same request, and return its issue number. */
-    openIssue: async (title, body, label) => issueWrite('openIssue', 'repository', board.repo, async () => {
-      if (typeof title !== 'string' || !title || typeof body !== 'string' || !body || typeof label !== 'string' || !label) {
-        throw new Error('requires a title, body and one label name');
+    /** Open one issue with all its labels in the same request, and return its issue number. */
+    openIssue: async (title, body, ...labels) => issueWrite('openIssue', 'repository', board.repo, async () => {
+      if (typeof title !== 'string' || !title || typeof body !== 'string' || !body || labels.length === 0 || labels.some((label) => typeof label !== 'string' || !label)) {
+        throw new Error('requires a title, body and one or more label names');
       }
-      const args = ['api', `repos/${board.repo}/issues`, '-X', 'POST', '-f', `title=${title}`, '-f', `body=${body}`, '-f', `labels[]=${label}`];
+      const args = ['api', `repos/${board.repo}/issues`, '-X', 'POST', '-f', `title=${title}`, '-f', `body=${body}`, ...labels.flatMap((label) => ['-f', `labels[]=${label}`])];
       return sendIssue(args, (opened) => {
-        if (!opened.labels?.some((held) => held.name === label)) {
-          throw new Error(`openIssue created issue #${opened.number} without label ${label}`);
+        const missing = labels.filter((name) => !opened.labels?.some((held) => sameLabel(held.name, name)));
+        if (missing.length > 0) {
+          throw new Error(`openIssue created issue #${opened.number} without label ${missing.join(', ')}`);
         }
         return opened.number;
       });
