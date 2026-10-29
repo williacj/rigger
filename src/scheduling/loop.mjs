@@ -15,7 +15,7 @@ import { EVENT_REFUSED, NOT_STARTED, whenElapsed } from '../substrate/process.mj
 import { dispatched } from '../workflow/marker.mjs';
 import { dispatchedEscalation } from '../workflow/escalation.mjs';
 import { causeOf } from '../workflow/status-issue.mjs';
-import { admission, admissionPath } from './admission.mjs';
+import { admission, admissionPath, admissions } from './admission.mjs';
 import { lane } from './lane.mjs';
 import { pullOrder } from './pull-order.mjs';
 import { DEFAULT_CONCURRENCY } from '../config/validate.mjs';
@@ -40,6 +40,17 @@ const isObject = (value) => value !== null && (typeof value === 'object' || type
  */
 function snapshotting() {
   const memo = new Map();
+  // The entries L3 could not read, each an Error of L3's own naming it, and the values copied for the
+  // value this snapshot is copying, which it bounds so a value that makes a fresh value at each read ends.
+  const unread = new WeakSet();
+  // What this snapshot made, which it hands on as it is when it meets it again.
+  const produced = new WeakSet();
+  const kept = (value) => {
+    if (isObject(value)) produced.add(value);
+    return value;
+  };
+  let nodes = 0;
+  const past = `a value L3 did not copy, past the ${WIDEST} values it copies of one value it hands on`;
   /** What `make()` answers for `value` under `what`, made once in this snapshot and never throwing. */
   const held = (value, what, make, otherwise) => {
     const made = () => {
@@ -100,7 +111,9 @@ function snapshotting() {
         try {
           return list[at];
         } catch {
-          return undefined;
+          const failed = new Error(`entry ${at} of the list L3 could not read`);
+          unread.add(failed);
+          return failed;
         }
       }) };
       if (length > WIDEST) answer.missing = `and ${length - WIDEST} more entries L3 did not read, past the first ${WIDEST} of the ${length} the list held`;
@@ -108,6 +121,13 @@ function snapshotting() {
     }, { entries: [], missing: 'entries L3 could not read' }) : undefined;
   };
   const own = (value) => held(value, 'keys', () => Object.keys(value), []);
+
+  /** `view`'s bytes as a fresh Buffer, read through the language's own getters, never the view's. */
+  const bytes = (view) => {
+    const proto = chain(view).includes(DataView.prototype) ? DataView.prototype : Object.getPrototypeOf(Uint8Array.prototype);
+    const [buffer, offset, length] = ['buffer', 'byteOffset', 'byteLength'].map((key) => Reflect.apply(Object.getOwnPropertyDescriptor(proto, key).get, view, []));
+    return kept(Buffer.from(Buffer.from(buffer, offset, length)));
+  };
 
   /**
    * A fresh copy of `value`: its strings, numbers and booleans kept, a failure as `failure`
@@ -117,15 +137,18 @@ function snapshotting() {
    */
   const copy = (value, depth = 0) => {
     if (!isObject(value)) return typeof value === 'symbol' ? text(value) : value;
+    if (unread.has(value)) return value.message;
+    if (produced.has(value)) return value;
     if (chain(value).includes(Error.prototype)) return failure(value, depth);
     // Bytes, such as a dispatch's output, are copied as bytes.
-    if (ArrayBuffer.isView(value)) return held(value, 'copy', () => (Buffer.isBuffer(value) ? Buffer.from(value) : value.slice()), text(value));
+    if (ArrayBuffer.isView(value)) return held(value, 'copy', () => bytes(value), text(value));
     if (depth >= DEEPEST) return text(value);
-    return held(value, 'copy', () => {
+    return held(value, 'copy', () => kept((() => {
+      if ((nodes += 1) > WIDEST) return past;
       const list = entries(value);
       if (list !== undefined) return [...list.entries.map((each) => copy(each, depth + 1)), ...(list.missing === undefined ? [] : [list.missing])];
       return Object.fromEntries(own(value).map((key) => [key, copy(read(value, key), depth + 1)]));
-    }, 'a value met again within itself');
+    })()), 'a value met again within itself');
   };
 
   /**
@@ -137,10 +160,12 @@ function snapshotting() {
    * is said as such, so a cycle ends and nothing beneath it goes unsaid.
    */
   const failure = (thrown, depth) => {
+    if (produced.has(thrown)) return thrown;
     const message = text(thrown);
     const met = new Error(`${message} (a failure met again among its own causes, or nested past ${DEEPEST} levels; its causes are named above)`);
     if (depth >= DEEPEST) return met;
     return held(thrown, 'failure', () => {
+      if ((nodes += 1) > WIDEST) return new Error(past);
       const code = read(thrown, 'code');
       const unreadable = entries(read(thrown, 'unreadable'));
       const errors = chain(thrown).includes(AggregateError.prototype) ? entries(read(thrown, 'errors')) : undefined;
@@ -150,15 +175,24 @@ function snapshotting() {
       if (errors?.missing !== undefined) leaves.push(new Error(`and failures it held that L3 could not read: ${errors.missing}`));
       const made = leaves === undefined ? new Error(message, options) : new AggregateError(leaves, message, options);
       if (typeof code === 'string') made.code = code;
-      if (unreadable !== undefined) made.unreadable = unreadable.entries.map((entry) => ({ path: text(read(entry, 'path')), cause: text(read(entry, 'cause')) }));
+      if (unreadable !== undefined) made.unreadable = unreadable.entries.map((entry) => ({ path: field(entry, 'path'), cause: unread.has(entry) ? 'it could not be read' : field(entry, 'cause') }));
       if (unreadable?.missing !== undefined) made.unreadable.push({ path: 'the rest of the admission directory', cause: unreadable.missing });
+      kept(made);
       // Its other own fields, such as the card, closer and attempt failures L3 reports, are copies.
       for (const key of own(thrown)) if (!['message', 'code', 'unreadable', 'errors', 'cause', 'stack'].includes(key)) made[key] = copy(read(thrown, key), depth + 1);
       return made;
     }, met);
   };
 
-  return { read, text, entries, copy, failure: (thrown) => failure(thrown, 0) };
+  /** `entry`'s `key` as a printable line, or, for an entry L3 could not read, the line saying so. */
+  const field = (entry, key) => (unread.has(entry) ? entry.message : text(read(entry, key)));
+
+  // Each value handed on is copied within its own bound, so one that exhausts it leaves the others whole.
+  const root = (make) => (value) => {
+    nodes = 0;
+    return make(value, 0);
+  };
+  return { read, text, entries, copy: root(copy), field, kept, failure: root(failure) };
 }
 
 /**
@@ -181,16 +215,16 @@ const noOutcome = (sentence, reason) => {
  * L2's notice answer `answer`, a value L3 did not build, as L3 hands it on: `failed`, `issue` and
  * `closed` each read once, into a fresh answer of L3's own.
  */
-function noticeAnswer(answer) {
-  const snapshot = snapshotting();
+function noticeAnswer(answer, snapshot = snapshotting()) {
   const failed = snapshot.read(answer, 'failed');
   const issue = snapshot.read(answer, 'issue');
   const closed = snapshot.read(answer, 'closed');
-  return {
+  // What L3 made of the answer is its own, which the settle's copy hands on as it is.
+  return snapshot.kept({
     ...(failed === undefined ? {} : { failed: noticeFailed(failed, snapshot) }),
     ...(Number.isSafeInteger(issue) ? { issue } : {}),
     ...(closed === true ? { closed: true } : {}),
-  };
+  });
 }
 
 /**
@@ -205,7 +239,7 @@ function noticeFailed(failed, snapshot) {
   if (made === undefined) return { step, cause };
   const unrecorded = snapshot.entries(snapshot.read(failed, 'unrecorded'));
   const events = unrecorded === undefined ? [{ event: 'events it could not name' }] : [
-    ...unrecorded.entries.map((each) => ({ event: snapshot.text(snapshot.read(each, 'event')) })),
+    ...unrecorded.entries.map((each) => ({ event: snapshot.field(each, 'event') })),
     ...(unrecorded.missing === undefined ? [] : [{ event: unrecorded.missing }]),
   ];
   return { step, cause, made: snapshot.copy(made), unrecorded: events };
@@ -343,7 +377,7 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow,
      * as `killed` says. `excluded` omits cards stopped or withheld in this run, and is empty for a
      * single pull.
      */
-    take: async (limit, excluded = new Set()) => {
+    take: async (limit, excluded = new Set(), snapshot = snapshotting()) => {
       await killed();
       const failures = [];
       try {
@@ -351,7 +385,7 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow,
       } catch (refusal) {
         failures.push(refused('the event sink refused to record the pull trigger', refusal));
       }
-      const { notices, unrecorded } = await follow();
+      const { notices, unrecorded } = await follow(snapshot);
       failures.push(...unrecorded);
       try {
         return await claim(limit, excluded, failures, notices);
@@ -359,7 +393,7 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow,
         // A later read that fails keeps what this trigger already did and could not record.
         const kept = [...failures, ...notices.map(noticeFailure)];
         // The read's own failure goes on as a snapshot L3 built, so its caller reads it whatever was thrown.
-        const reason = readableFailure(thrown);
+        const reason = snapshot.failure(thrown);
         throw kept.length === 0 ? reason : Object.assign(new AggregateError([...kept, reason], `${reason.message}, after ${kept.length} earlier failure${kept.length === 1 ? '' : 's'} of this trigger`), { cause: reason });
       }
     },
@@ -505,7 +539,7 @@ function released(release, claim, failure) {
  */
 export function loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, environment, run, ps, readTimeout, clock }) {
   let admissionRecord;
-  const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, facts, l2, sink, kill, readAdmission: () => admissionRecord.read(), follow: () => follow(), halted: () => unsaved !== undefined });
+  const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, facts, l2, sink, kill, readAdmission: () => admissionRecord.read(), follow: (snapshot) => follow(snapshot), halted: () => unsaved !== undefined });
   const { merge } = lane({ board, facts, l2, record, refused, removeDirectories, clock });
   const now = clock?.now ?? Date.now;
   const pause = clock?.pause ?? ((delay) => new Promise((resolve) => { whenElapsed(delay, resolve, { hold: true }); }));
@@ -577,6 +611,9 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
   /** Each claimed card's close for its first `hold` answer under its claim, by card, until the claim is released. */
   const holds = new Map();
 
+  /** The snapshot of the trigger settle that claimed each card, by card, which its hold's notice is read by. */
+  const settles = new Map();
+
   /**
    * The failure of a hold's close, once one has rejected: from then on no pull of this loop claims
    * a card ("Failure model", "Where a hold's closer could not be saved").
@@ -610,7 +647,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       unsaved ??= thrown;
       return { failure: thrown };
     }
-    const notice = await notify(closer.id, { card, firstFailure, failure });
+    const notice = await notify(closer.id, { card, firstFailure, failure }, undefined, settles.get(card));
     return { closer: notice?.failed === undefined ? closer : { ...closer, notice: notice.failed }, unrecorded: notice?.unrecorded ?? [] };
   };
 
@@ -623,8 +660,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * carries the id or the closer names an issue; `{ gone }` where a rename found the closer gone and
    * L3 ended the call; otherwise what L2 answered, a call that threw answering as `failed`.
    */
-  const notify = (id, hold, issueState) => {
-    noticing = noticing.then(() => noticed(id, hold, issueState)).catch((thrown) => ({ failed: { step: 'notice', cause: said(thrown) } }));
+  const notify = (id, hold, issueState, snapshot = snapshotting()) => {
+    noticing = noticing.then(() => noticed(id, hold, issueState, snapshot)).catch((thrown) => ({ failed: { step: 'notice', cause: said(thrown) } }));
     return noticing;
   };
 
@@ -639,7 +676,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * hold, L3 removes its closer through `admission.mjs`, the event naming the issue's close as what
    * reopened admission. A removal whose event the sink refused answers as `unrecorded`, the refusal.
    */
-  const noticed = async (id, hold, issueState) => {
+  const noticed = async (id, hold, issueState, snapshot) => {
     const closers = admissionRecord.read().closers ?? [];
     const closer = closers.find((each) => each.id === id);
     if (closer === undefined || closer.issue !== issueState?.issue) return undefined;
@@ -650,10 +687,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     try {
       const steps = l2.notice({ closer, others, hold, admission: admissionPath(state), ...(issueState === undefined ? {} : { state: issueState.state }) });
       // Each step L2 hands back is read once, its `done` and its `value`, into locals of L3's own.
-      const read = (step) => {
-        const snapshot = snapshotting();
-        return { done: snapshot.read(step, 'done') !== false, value: snapshot.read(step, 'value') };
-      };
+      const read = (step) => ({ done: snapshot.read(step, 'done') !== false, value: snapshot.read(step, 'value') });
       let { done, value } = read(await steps.next());
       while (!done) {
         const asked = value;
@@ -664,14 +698,14 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         }
         if (outcome.status === 'fulfilled') ({ name } = outcome.value);
         // A rename made whose record the sink refused: the closer is at its new name, and the refusal is L3's to report.
-        else if (outcome.reason?.renamed !== undefined) {
+        else if (admissions(outcome.reason) && outcome.reason.renamed !== undefined) {
           name = outcome.reason.renamed;
           unrecorded.push(outcome.reason);
         }
         ({ done, value } = read(await steps.next(outcome)));
       }
       // L2's answer is read once, into a fresh answer of L3's own, which is all L3 hands on.
-      const answer = noticeAnswer(value);
+      const answer = noticeAnswer(value, snapshot);
       if (answer.closed) {
         const [opened] = await Promise.allSettled([admissionRecord.open(name, answer.issue === undefined ? {} : { issue: answer.issue })]);
         if (opened.status === 'rejected') unrecorded.push(readableFailure(opened.reason));
@@ -710,7 +744,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * `notices`, each failed notice as `{ id, step, cause }`, and `unrecorded`, the failure of each
    * opening whose event the sink refused, which the trigger reports whether or not admission opened.
    */
-  const follow = async () => {
+  const follow = async (snapshot) => {
     const listed = admissionRecord.read();
     const notices = [];
     const unrecorded = [];
@@ -730,7 +764,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         }
         continue;
       }
-      const ended = await notify(id, undefined, { issue, state: read });
+      const ended = await notify(id, undefined, { issue, state: read }, snapshot);
       if (ended?.failed !== undefined) notices.push({ id, ...ended.failed });
       unrecorded.push(...(ended?.unrecorded ?? []));
     }
@@ -1148,6 +1182,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     }
     failure = released(release, claim, failure);
     holds.delete(card.number);
+    settles.delete(card.number);
     if (claimed) await freed();
     return { reached, failure };
   };
@@ -1206,12 +1241,26 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * as `released` says.
    */
   const trigger = async (freed = () => {}, limit = undefined, excluded) => {
-    const { claims: claimed, failures, admission: closed, notices = [] } = await take(limit, excluded);
+    // The settle goes to the caller as one copy L3 made, by the one snapshot every notice of this
+    // trigger was read by, its failures and cards together, whether it fulfils or rejects, so a
+    // value met in both is one copy, and nothing another layer gave L3 reaches the caller unread.
+    const snapshot = snapshotting();
+    try {
+      return snapshot.copy(await settle(freed, limit, excluded, snapshot));
+    } catch (thrown) {
+      throw snapshot.failure(thrown);
+    }
+  };
+
+  /** The trigger's settle, as `trigger` says, before its copy: its answer, or the failure it throws. */
+  const settle = async (freed, limit, excluded, snapshot) => {
+    const { claims: claimed, failures, admission: closed, notices = [] } = await take(limit, excluded, snapshot);
+    for (const { card } of claimed) settles.set(card.number, snapshot);
     // Where admission is open, as after a concurrent `resume`, no closed admission carries the
     // notices, so each is a failure of this pull and reaches the caller there.
     if (closed === undefined) failures.push(...notices.map(noticeFailure));
     for (const { kind, id, issue } of closed?.closers ?? []) {
-      const ended = kind === 'hold' && issue === undefined ? await notify(id) : undefined;
+      const ended = kind === 'hold' && issue === undefined ? await notify(id, undefined, undefined, snapshot) : undefined;
       if (ended?.failed !== undefined) notices.push({ id, ...ended.failed });
       failures.push(...(ended?.unrecorded ?? []));
     }
@@ -1228,15 +1277,12 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     const ended = worked.map((result) => (result.status === 'fulfilled' ? result.value : { failure: result.reason }));
     failures.push(...ended.filter((each) => each.failure !== null).map((each) => each.failure));
     const reached = ended.map((each) => each.reached).filter((each) => each !== undefined);
-    // The settle goes to the caller as one copy L3 made, its failures and cards together, so a value
-    // met in both is one copy, and nothing another layer gave L3 reaches the caller unread.
-    const snapshot = snapshotting();
     if (failures.length > 0) {
       // A closed admission's notices would otherwise go only with the answer this throw replaces.
       if (closed !== undefined) failures.push(...notices.map(noticeFailure));
-      throw snapshot.failure(Object.assign(new AggregateError(failures, `${failures.length} failures across the ${claimed.length} cards this pull claimed`), { reached }));
+      throw Object.assign(new AggregateError(failures, `${failures.length} failures across the ${claimed.length} cards this pull claimed`), { reached });
     }
-    return snapshot.copy(closed === undefined ? reached : { admission: closed, reached, notices });
+    return closed === undefined ? reached : { admission: closed, reached, notices };
   };
 
   return {

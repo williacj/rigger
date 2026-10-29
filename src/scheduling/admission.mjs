@@ -21,6 +21,16 @@ const HOLD = /^hold-([0-9a-z]+)(?:-after-(0|[1-9][0-9]*)|-issue-([1-9][0-9]*))?\
 /** The admission directory inside state directory `directory`. */
 export const admissionPath = (directory) => join(directory, 'admission');
 
+/** The failures admission built itself, so a caller tells them from a value of the same shape another layer threw. */
+const built = new WeakSet();
+const own = (failure) => {
+  built.add(failure);
+  return failure;
+};
+
+/** Whether `value` is a failure admission built, read from admission's own record of them and never from `value`. */
+export const admissions = (value) => built.has(value);
+
 /** A fresh id, random enough that no other closer or temporary file has had it. */
 const randomId = () => randomBytes(16).toString('hex');
 
@@ -281,7 +291,7 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
       record('admission.rename', { kind: 'hold', id: named.id, from: name, to: renamed, name: renamed });
     } catch (refusal) {
       // The rename was made: L3's own failure names where the closer now is, the refusal its cause.
-      throw Object.assign(new Error(`admission renamed ${name} to ${renamed}, and its record was refused: ${printable(refusal)}`, { cause: refusal }), { renamed });
+      throw own(Object.assign(new Error(`admission renamed ${name} to ${renamed}, and its record was refused: ${printable(refusal)}`, { cause: refusal }), { renamed }));
     }
     return { name: renamed };
   }
@@ -336,7 +346,7 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
     const answer = read();
     if (answer.state === 'unreadable') {
       const { unreadable } = answer;
-      throw Object.assign(new Error(`admission cannot be read, so resume removes nothing: ${unreadable.map(({ path, cause }) => `${path} (${cause})`).join(', ')}`), { unreadable });
+      throw own(Object.assign(new Error(`admission cannot be read, so resume removes nothing: ${unreadable.map(({ path, cause }) => `${path} (${cause})`).join(', ')}`), { unreadable }));
     }
     const closers = answer.closers ?? [];
     const unlinked = new Set();
@@ -365,7 +375,7 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
         }
         const why = printable(cause);
         const said = `resume left ${leftOf(closers.slice(index)).join(', ')}: ${why}${refused === undefined ? '' : `; ${printable(refused)}`}`;
-        throw Object.assign(new Error(said, { cause: new Error(why) }), { removed: done });
+        throw own(Object.assign(new Error(said, { cause: new Error(why) }), { removed: done }));
       }
       try {
         recordEach(names);
@@ -373,7 +383,7 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
         // The closer was removed and its record refused: it and those before it stay named, and resume stops.
         const rest = leftOf(closers.slice(index + 1));
         const why = printable(refusal);
-        throw Object.assign(new Error(`${why}${rest.length === 0 ? '' : `; resume left ${rest.join(', ')}`}`, { cause: new Error(why) }), { removed: [...removed, closer] });
+        throw own(Object.assign(new Error(`${why}${rest.length === 0 ? '' : `; resume left ${rest.join(', ')}`}`, { cause: new Error(why) }), { removed: [...removed, closer] }));
       }
       if (names.length > 0 || unlinked.has(closer.name)) removed.push(closer);
       else gone.push(closer);

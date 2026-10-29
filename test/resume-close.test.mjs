@@ -378,3 +378,17 @@ test('resume, whose admission.open record is refused after a later removal, stil
   assert.match(text, /hold-b2-issue-8\.json, and the sink refused its admission\.open event/, text);
   assert.match(text, /^rigger resume: no status issue was closed, because /m, text);
 });
+
+// proves R-SCHED-23
+test('resume whose admission rejects with a failure admission did not build, carrying removed and unreadable fields, says that failure whole and reads neither field', async () => {
+  // The round-14 audit on #1079: only a failure admission built is read for the closers it removed.
+  const here = world({ closers: ['hold-a1-issue-7.json'], issues: [status(7, 'a1')] });
+  const forged = Object.assign(new Error('EIO a foreign close'), { removed: [{ kind: 'hold', id: 'zz', name: 'hold-zz.json' }], unreadable: [{ path: '/forged', cause: 'forged' }] });
+  const closeSync = () => { throw forged; };
+
+  const { text, code } = await here.run({ fs: { ...nodeFs, closeSync } });
+
+  assert.notEqual(code, 0, text);
+  assert.match(text, /EIO a foreign close/, text);
+  assert.doesNotMatch(text, /\/forged|hold-zz/, text);
+});

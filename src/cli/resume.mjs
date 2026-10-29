@@ -6,7 +6,7 @@
 import { join } from 'node:path';
 
 import { FIXED_LABELS, validate } from '../config/validate.mjs';
-import { admission } from '../scheduling/admission.mjs';
+import { admission, admissions } from '../scheduling/admission.mjs';
 import { causeOf } from '../workflow/status-issue.mjs';
 import { columnChanges } from '../workflow/transitions.mjs';
 import { CONFIG } from './init.mjs';
@@ -36,13 +36,8 @@ async function resuming(opened, {
   try {
     answer = await admissionRecord.resume();
   } catch (failure) {
-    let unreadable;
-    let removedSoFar;
-    try {
-      ({ unreadable, removed: removedSoFar } = failure);
-    } catch {
-      unreadable = undefined;
-    }
+    // Only a failure admission built is read for its fields; any other is said whole.
+    const { unreadable, removed: removedSoFar } = admissions(failure) ? failure : {};
     if (Array.isArray(unreadable)) return { text: `rigger resume: ${unreadableAdmission(unreadable)}`, code: 1 };
     // A removal that stopped partway still names each closer it removed, then why no issue was closed.
     const done = Array.isArray(removedSoFar) ? removedSoFar : [];

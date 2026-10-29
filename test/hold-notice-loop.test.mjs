@@ -1553,3 +1553,105 @@ test('a trigger\'s settle is one copy: a value two cards\' answers share is one 
   assert.deepEqual(reached[0].reason, { detail: 'first reason' });
   assert.equal(reads, 1);
 });
+
+// The pre-judge attack of round 14 on #1079 (D1, D2, D3, D5 and D6).
+
+// proves R-SCHED-23
+test('a rename ask whose read throws an Error carrying renamed, naming another hold\'s closer, is no refused rename of L3\'s: that closer stays and its hold stays closed', async () => {
+  const thrown = Object.assign(new Error('L2 broke reading its own ask'), { renamed: 'hold-b2-issue-30.json' });
+  const { board } = stateBoard([], { 12: 'closed', 30: 'open' });
+  const handed = handles({
+    cards: [],
+    board,
+    notice: async function* notice({ closer }) {
+      if (closer.id === 'a1') {
+        yield { get rename() { throw thrown; }, number: 13 };
+        return { issue: 12, closed: true };
+      }
+      return { issue: 30 };
+    },
+  });
+  seed(handed.state, 'hold-a1-issue-12.json');
+  seed(handed.state, 'hold-b2-issue-30.json');
+
+  await loop(handed).pull().then(() => {}, () => {});
+
+  assert.deepEqual(namesIn(handed.state), ['hold-b2-issue-30.json']);
+  assert.deepEqual(readEvents(handed.state).filter(({ event }) => event === 'admission.open').map(({ name }) => name), ['hold-a1-issue-12.json']);
+});
+
+// proves R-SCHED-23
+test('what take throws, a later read failing after L2 threw from its own ask, reaches the caller as L3\'s copy, never the value L2 threw', async () => {
+  const thrown = Object.assign(new Error('L2 broke reading its own ask'), { renamed: 'hold-a1-after-0.json' });
+  const { board } = stateBoard([], { 12: 'closed' });
+  board.readColumns = async () => { throw new Error('EIO columns'); };
+  const handed = handles({ cards: [], board, notice: async function* notice() { yield { get rename() { throw thrown; }, number: 13 }; return { issue: 12 }; } });
+  seed(handed.state, 'hold-a1-issue-12.json');
+
+  const failure = await loop(handed).pull().then(() => assert.fail('accepted'), (error) => error);
+
+  const leaves = (each) => [each, ...(Array.isArray(each.errors) ? each.errors.flatMap(leaves) : []), ...(each.cause === undefined ? [] : leaves(each.cause))];
+  assert.ok(!leaves(failure).includes(thrown));
+  assert.match(onceReads(failure), /EIO columns/);
+});
+
+// proves R-SCHED-23
+test('a made notice mark that makes a fresh value of four keys at each read is copied within one bound, the notice stays whole, and the copy says where it stopped', async () => {
+  let made = 0;
+  const fresh = () => {
+    made += 1;
+    const value = {};
+    for (let at = 0; at < 4; at += 1) Object.defineProperty(value, `k${at}`, { enumerable: true, get: fresh });
+    return value;
+  };
+  const handed = handles({ cards: [], notice: madeNotice(fresh()) });
+  seed(handed.state, 'hold-c3.json');
+
+  const pulled = await loop(handed).pull();
+
+  // Each of the 10,000 values the copy makes reads its four keys once, each read making one value.
+  assert.ok(made <= 4 * 10_000 + 1, `the copy made ${made} values`);
+  assert.match(JSON.stringify(pulled.notices[0].made), /a value L3 did not copy, past the 10000 values it copies of one value it hands on/);
+});
+
+// proves R-SCHED-23
+test('one object as the made mark of two notices of one trigger is read once, and both notices carry the same copy', async () => {
+  let reads = 0;
+  const shared = { get f() { reads += 1; return reads === 1 ? 'first' : 'second'; } };
+  const handed = handles({ cards: [], notice: madeNotice(shared) });
+  seed(handed.state, 'hold-c3.json');
+  seed(handed.state, 'hold-c4.json');
+
+  const pulled = await loop(handed).pull();
+
+  assert.equal(reads, 1);
+  assert.deepEqual(pulled.notices.map((each) => each.made.f), ['first', 'first']);
+});
+
+// proves R-SCHED-23
+test('a list entry L3 cannot read is said as such, in a made mark, an aggregate\'s failures and the unrecorded events', async () => {
+  const refusing = (list) => new Proxy(list, { get(target, key) { if (key === '0') throw new Error('entry refused'); return target[key]; } });
+  const handed = handles({ cards: [], notice: async function* notice() { return { failed: { step: 'comment on issue #12', cause: 'EIO record', made: { writes: refusing(['comment #12', 'label #12']) }, unrecorded: refusing([{ event: 'notice.comment' }, { event: 'call.end' }]) } }; } });
+  seed(handed.state, 'hold-c3.json');
+  const pulled = await loop(handed).pull();
+  assert.deepEqual(pulled.notices[0].made.writes, ['entry 0 of the list L3 could not read', 'label #12']);
+  assert.deepEqual(pulled.notices[0].unrecorded, [{ event: 'entry 0 of the list L3 could not read' }, { event: 'call.end' }]);
+
+  const { board } = stateBoard([], {});
+  board.readColumns = async () => { throw Object.defineProperty(new AggregateError([], 'reads failed'), 'errors', { value: refusing([new Error('EIO 0'), new Error('EIO 1')]) }); };
+  const failure = await loop(handles({ cards: [], board })).pull().then(() => assert.fail('accepted'), (error) => error);
+  assert.match(onceReads(failure), /entry 0 of the list L3 could not read[\s\S]*EIO 1/);
+});
+
+// proves R-SCHED-23
+test('a made notice mark holding bytes whose own slice answers another value is copied as the bytes, through the language\'s getters', async () => {
+  const foreign = { secret: 'raw' };
+  const bytes = Object.assign(new Uint8Array([1, 2]), { slice: () => foreign });
+  const handed = handles({ cards: [], notice: madeNotice({ bytes }) });
+  seed(handed.state, 'hold-c3.json');
+
+  const pulled = await loop(handed).pull();
+
+  assert.notEqual(pulled.notices[0].made.bytes, foreign);
+  assert.deepEqual([...pulled.notices[0].made.bytes], [1, 2]);
+});

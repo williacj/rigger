@@ -2468,7 +2468,7 @@ test('given a loop handle whose injected kill rejects, a pull reads nothing, rec
   const refusal = new Error('the sink refused 1 kill(s) of recorded groups');
   const built = world({ fake, board: counted.handle, kill: async () => { throw refusal; } });
 
-  await assert.rejects(built.loop.pull(), (failure) => failure === refusal);
+  await assert.rejects(built.loop.pull(), (failure) => failure.message === refusal.message && failure.code === refusal.code && failure.unreadable === refusal.unreadable);
 
   assert.equal(counted.reads, 0);
   assert.deepEqual(built.l3Events(), []);
