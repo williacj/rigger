@@ -76,7 +76,6 @@ function startSynchronousTrace() {
   };
 }
 
-// The mkdtemp check cites the trace's exact line, so imports for later tests sit below it.
 import { admissionOf, closerText, moduleOver, picture, seed, stateOf, TIME } from './admission-world.mjs';
 
 /** Keep the first and last observed call at each site and every call crossing the shared deadline. */
