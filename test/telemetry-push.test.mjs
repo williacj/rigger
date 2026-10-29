@@ -114,20 +114,26 @@ function switchable(key) {
   return `const config = ${JSON.stringify(config)};\nexport default { ...config, worktrees: { root: new URL('./worktrees', import.meta.url).pathname }, get telemetry() { return { push: globalThis[${JSON.stringify(key)}] }; } };\n`;
 }
 
+/**
+ * The verb's answer, failing on an assertion where it ends by a throw instead: no push, and no push
+ * that did not succeed, may end a verb that way.
+ */
+const answerOf = (verb, running) => running.then((answer) => answer, (thrown) => assert.fail(`${verb} threw: ${thrown?.message ?? thrown}`));
+
 /** The config-reading verbs that run in process, each run in `w` with `push` and the guard's `ask`. */
 const IN_PROCESS = {
-  doctor: (w, push, ask = asking()) => doctor({ target: w.repository, ask, checks: [], push }),
-  plan: (w, push, ask = asking()) => plan({ target: w.repository, ask, send: failingForge, push }),
-  once: (w, push, ask = asking()) => once({ target: w.repository, ask, send: failingForge, push }),
-  run: (w, push, ask = asking()) => runVerb({ target: w.repository, ask, send: failingForge, push }),
+  doctor: (w, push, ask = asking()) => answerOf('doctor', doctor({ target: w.repository, ask, checks: [], push })),
+  plan: (w, push, ask = asking()) => answerOf('plan', plan({ target: w.repository, ask, send: failingForge, push })),
+  once: (w, push, ask = asking()) => answerOf('once', once({ target: w.repository, ask, send: failingForge, push })),
+  run: (w, push, ask = asking()) => answerOf('run', runVerb({ target: w.repository, ask, send: failingForge, push })),
 };
 
 /** The verbs that read no config, each run in `w` with `push`. */
 const NO_CONFIG = {
-  init: (w, push) => init({ target: w.repository, ask: asking(), push }),
-  report: (w, push) => report({ target: w.repository, ask: asking(), push }),
-  pause: (w, push) => pause({ target: w.repository, ask: asking(), push }),
-  resume: (w, push) => resume({ target: w.repository, ask: asking(), push }),
+  init: (w, push) => answerOf('init', init({ target: w.repository, ask: asking(), push })),
+  report: (w, push) => answerOf('report', report({ target: w.repository, ask: asking(), push })),
+  pause: (w, push) => answerOf('pause', pause({ target: w.repository, ask: asking(), push })),
+  resume: (w, push) => answerOf('resume', resume({ target: w.repository, ask: asking(), push })),
 };
 
 /**
@@ -622,7 +628,7 @@ test('O12: a doctor run, telemetry.push true, that stops on a kill event its sin
     throw Object.assign(new Error('the sink refused 1 L0 event(s), so they went unrecorded'), { code: EVENT_REFUSED });
   };
   const watch = pushing();
-  const answer = await doctor({ target: w.repository, ask: asking(), checks: [refusing], push: watch.push });
+  const answer = await answerOf('doctor', doctor({ target: w.repository, ask: asking(), checks: [refusing], push: watch.push }));
   assert.equal(answer.code, 1, answer.text);
   assert.match(answer.text, /^rigger doctor: the sink refused 1 L0 event/);
   assert.equal(watch.pushes.length, 1, 'the verb made no push, or more than one');
