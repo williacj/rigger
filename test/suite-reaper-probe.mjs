@@ -131,3 +131,14 @@ export function traceEvidence(bytes, cell) {
   if (records.length === 0) incomplete = true;
   return { records, incomplete };
 }
+
+export function traceDiagnosticLines(bytes, cell) {
+  const evidence = traceEvidence(bytes, cell);
+  return [
+    ...evidence.records.map((record) => 'RIGGER_REAPER_READ ' + JSON.stringify(record)),
+    'RIGGER_REAPER_CASE ' + JSON.stringify({
+      cell, records: evidence.records.length,
+      evidence: evidence.incomplete ? 'incomplete' : 'complete',
+    }),
+  ];
+}

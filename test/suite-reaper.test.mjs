@@ -18,6 +18,7 @@ import { ended } from './process-fixtures.mjs';
 import { constants } from 'node:fs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { safeTargetReadRecord, targetReadRecord, traceEvidence } from './suite-reaper-probe.mjs';
+import * as reaperProbe from './suite-reaper-probe.mjs';
 import { proofRepository } from './proof-repository.mjs';
 import { gitIn } from './git-repository.mjs';
 
@@ -317,9 +318,7 @@ async function runEnding(t, ending, kind, { holdPidPublication = false, gateSetu
     tracePublished = true;
     let bytes;
     try { bytes = readFileSync(traceFile, 'utf8'); } catch { /* The probe did not retain a trace. */ }
-    const evidence = traceEvidence(bytes, probeCell);
-    for (const record of evidence.records) console.error('RIGGER_REAPER_READ ' + JSON.stringify(record));
-    console.error('RIGGER_REAPER_CASE ' + JSON.stringify({ cell: probeCell, records: evidence.records.length, evidence: evidence.incomplete ? 'incomplete' : 'complete' }));
+    for (const line of reaperProbe.traceDiagnosticLines(bytes, probeCell)) console.error(line);
   };
   const child = spawn('/bin/sh', [suite, '--host', ...(ending === 'E2' ? ['--test-reporter=tap'] : []), file], { cwd: resolve('.'), env: {
     ...env, TMPDIR: tmp,
@@ -490,6 +489,33 @@ test('targeted read projection retains framing but hides command text and paths'
   ]);
   assert.doesNotMatch(JSON.stringify(record), /SECRET_WALRUS|\/private\/branch/);
   assert.match(record.skeleton, /^[Aad0. |]*$/);
+});
+
+test('outer targeted-read diagnostic hides a synthetic secret and path while showing framing and parser result', () => {
+  const trace = {
+    cell: 'E5-F1', pid: 123, readSequence: 1, parserClass: 'framing', signalZero: 'not-checked',
+    status: 0, signal: 'none', errorCode: 'none', stdoutUnits: 10, stderrUnits: 0,
+    rowCount: 2, separatorCount: 2,
+    separators: [{ at: 3, kind: 'lf' }, { at: 8, kind: 'crlf' }],
+    separatorsTruncated: false, skeleton: '000|aaa|', skeletonTruncated: false,
+    command: 'SECRET_WALRUS=/private/branch', cwd: '/private/branch',
+    stdout: 'SECRET_WALRUS=/private/branch',
+  };
+  const diagnostics = reaperProbe.traceDiagnosticLines(JSON.stringify(trace) + '\n', 'E5-F1');
+  assert.equal(diagnostics.length, 2);
+  assert.doesNotMatch(diagnostics.join('\n'), /SECRET_WALRUS|\/private\/branch/);
+  assert.match(diagnostics[0], /^RIGGER_REAPER_READ /);
+  const read = JSON.parse(diagnostics[0].slice('RIGGER_REAPER_READ '.length));
+  assert.equal(read.parserClass, 'framing');
+  assert.equal(read.rowCount, 2);
+  assert.deepEqual(read.separators, [
+    { at: 3, kind: 'lf' },
+    { at: 8, kind: 'crlf' },
+  ]);
+  assert.match(diagnostics[1], /^RIGGER_REAPER_CASE /);
+  assert.deepEqual(JSON.parse(diagnostics[1].slice('RIGGER_REAPER_CASE '.length)), {
+    cell: 'E5-F1', records: 1, evidence: 'complete',
+  });
 });
 
 test('targeted read projection caps its public shape for large tool answers', () => {
