@@ -124,6 +124,11 @@ and on what evidence, and what would reverse the recommendation.
 becomes its own card rather than joining this one (`R-CARD-11`), and a follow-up may only cover
 work outside it — an item left undone means the card is not done (`R-CARD-10`).
 
+Ask for every cell to be proved, never for a test per cell: one table-driven or generated test
+may prove a dimension. A mutation is evidence that an existing test discriminates; never ask
+for a test per mutation. Ask for a probe a judge used to find a defect as a case in an existing
+test of the invariant it broke, where one exists, and otherwise as one test of that invariant.
+
 **Split work into cards.** Map every part of the larger work to a card's acceptance item, not
 merely its title or description.
 
