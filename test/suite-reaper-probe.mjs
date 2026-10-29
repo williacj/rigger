@@ -119,16 +119,28 @@ export function traceEvidence(bytes, cell) {
   lines.pop();
   const records = [];
   let incomplete = !complete;
+  let terminal;
+  let terminalCount = 0;
   for (const [at, line] of lines.entries()) {
     try {
-      const record = safeTargetReadRecord(JSON.parse(line), at + 1);
-      if (record.cell !== cell) { incomplete = true; continue; }
+      const parsed = JSON.parse(line);
+      if (parsed?.type === 'terminal') {
+        terminalCount += 1;
+        terminal = parsed;
+        if (at !== lines.length - 1) incomplete = true;
+        continue;
+      }
+      if (terminalCount > 0) incomplete = true;
+      const sequence = positive(parsed?.readSequence);
+      const record = safeTargetReadRecord(parsed, sequence ?? records.length + 1);
+      if (record.cell !== cell || sequence !== records.length + 1) incomplete = true;
       records.push(record);
     } catch {
       incomplete = true;
     }
   }
-  if (records.length === 0) incomplete = true;
+  if (records.length === 0 || terminalCount !== 1 || terminal?.cell !== cell
+      || positive(terminal?.completedReads) !== records.length || terminal?.lostWrite !== false) incomplete = true;
   return { records, incomplete };
 }
 

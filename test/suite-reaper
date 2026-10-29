@@ -24,6 +24,45 @@ function read(command, args) {
   return result.stdout;
 }
 
+let completedReads = 0;
+let lostWrite = false;
+
+function appendTrace(record) {
+  const destination = process.env.RIGGER_REAPER_TRACE_FILE;
+  if (!destination) return;
+  try {
+    const temporary = process.env.RIGGER_REAPER_TRACE_ROOT;
+    if (!temporary || !isAbsolute(temporary) || !isAbsolute(destination)) throw new Error('trace destination is not absolute');
+    const root = realpathSync.native(temporary);
+    const parent = realpathSync.native(dirname(destination));
+    const distance = relative(root, parent);
+    if (distance === '..' || distance.startsWith(`..${sep}`) || isAbsolute(distance)) throw new Error('trace destination is outside TMPDIR');
+    if (statSync(root).uid !== process.getuid() || statSync(parent).uid !== process.getuid()) throw new Error('trace destination is not owned');
+    for (let directory = parent; ; directory = dirname(directory)) {
+      if (existsSync(join(directory, '.git'))) throw new Error('trace destination is inside a checkout');
+      if (directory === dirname(directory)) break;
+    }
+    try {
+      if (lstatSync(destination).isSymbolicLink()) throw new Error('trace destination is a link');
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    const line = `${JSON.stringify(record)}\n`;
+    const descriptor = openSync(resolve(destination), files.O_CREAT | files.O_APPEND | files.O_WRONLY | files.O_NOFOLLOW, 0o600);
+    try {
+      if (writeSync(descriptor, line) !== Buffer.byteLength(line)) lostWrite = true;
+    } finally { closeSync(descriptor); }
+  } catch {
+    // Losing observation must never change the reaper's confirmed-ending decision.
+    lostWrite = true;
+  }
+}
+
+function finishTrace() {
+  const cell = process.env.RIGGER_REAPER_CELL;
+  appendTrace({ type: 'terminal', cell: /^E[56]-F[1-7]$/.test(cell) ? cell : 'other', completedReads, lostWrite });
+}
+
 function targetState(pid) {
   const result = spawnSync('/bin/ps', ['-ww', '-p', String(pid), '-o', 'pid=,stat=,lstart=,command='], {
     cwd: '/', env: { ...process.env, LC_ALL: 'C', TZ: 'UTC0' }, encoding: 'utf8', maxBuffer: Infinity,
@@ -64,35 +103,14 @@ function targetState(pid) {
     parserClass = row[2].startsWith('Z') ? 'zombie' : 'live';
     return { started: row[3], zombie: row[2].startsWith('Z') };
   } finally {
-    const destination = process.env.RIGGER_REAPER_TRACE_FILE;
-    if (destination) {
-      try {
-        const temporary = process.env.RIGGER_REAPER_TRACE_ROOT;
-        if (!temporary || !isAbsolute(temporary) || !isAbsolute(destination)) throw new Error('trace destination is not absolute');
-        const root = realpathSync.native(temporary);
-        const parent = realpathSync.native(dirname(destination));
-        const distance = relative(root, parent);
-        if (distance === '..' || distance.startsWith(`..${sep}`) || isAbsolute(distance)) throw new Error('trace destination is outside TMPDIR');
-        if (statSync(root).uid !== process.getuid() || statSync(parent).uid !== process.getuid()) throw new Error('trace destination is not owned');
-        for (let directory = parent; ; directory = dirname(directory)) {
-          if (existsSync(join(directory, '.git'))) throw new Error('trace destination is inside a checkout');
-          if (directory === dirname(directory)) break;
-        }
-        try {
-          if (lstatSync(destination).isSymbolicLink()) throw new Error('trace destination is a link');
-        } catch (error) {
-          if (error.code !== 'ENOENT') throw error;
-        }
-        const record = targetReadRecord({
-          cell: process.env.RIGGER_REAPER_CELL,
-          pid, parserClass, signalZero, result,
-        });
-        const descriptor = openSync(resolve(destination), files.O_CREAT | files.O_APPEND | files.O_WRONLY | files.O_NOFOLLOW, 0o600);
-        try { writeSync(descriptor, `${JSON.stringify(record)}\n`); }
-        finally { closeSync(descriptor); }
-      } catch {
-        // Losing observation must never change the reaper's confirmed-ending decision.
-      }
+    completedReads += 1;
+    try {
+      appendTrace(targetReadRecord({
+        cell: process.env.RIGGER_REAPER_CELL,
+        pid, readSequence: completedReads, parserClass, signalZero, result,
+      }));
+    } catch {
+      lostWrite = true;
     }
   }
 }
@@ -176,11 +194,13 @@ try {
     }
     if (left.length === 0 && observed.size === 0) {
       removeTemporaryDirectory(run);
+      finishTrace();
       process.exit(0);
     }
   }
   throw new Error(`${SWEEPS} sweeps left these observed targets unconfirmed: ${JSON.stringify([...observed.values()])}; fresh census: ${JSON.stringify(processes())}`);
 } catch (error) {
   console.error(`npm test reaper: ${error.stack ?? error}`);
+  finishTrace();
   process.exitCode = 1;
 }
