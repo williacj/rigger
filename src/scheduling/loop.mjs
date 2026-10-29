@@ -14,6 +14,7 @@ import { stepDispatch } from '../execution/step.mjs';
 import { EVENT_REFUSED, NOT_STARTED, whenElapsed } from '../substrate/process.mjs';
 import { dispatched } from '../workflow/marker.mjs';
 import { dispatchedEscalation } from '../workflow/escalation.mjs';
+import { causeOf } from '../workflow/status-issue.mjs';
 import { admission, admissionPath } from './admission.mjs';
 import { lane } from './lane.mjs';
 import { pullOrder } from './pull-order.mjs';
@@ -158,7 +159,14 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow,
       } catch (thrown) {
         // A later read that fails keeps what this trigger already did and could not record.
         const kept = [...failures, ...notices.map(noticeFailure)];
-        throw kept.length === 0 ? thrown : Object.assign(new AggregateError([...kept, thrown], `${thrown.message}, after ${kept.length} earlier failure${kept.length === 1 ? '' : 's'} of this trigger`), { cause: thrown });
+        // The read's own failure goes in as an Error, so its caller's report can read it whatever was thrown.
+        let reason;
+        try {
+          reason = thrown instanceof Error ? thrown : new Error(causeOf(thrown));
+        } catch {
+          reason = new Error(causeOf(thrown));
+        }
+        throw kept.length === 0 ? thrown : Object.assign(new AggregateError([...kept, reason], `${causeOf(thrown)}, after ${kept.length} earlier failure${kept.length === 1 ? '' : 's'} of this trigger`), { cause: reason });
       }
     },
 
@@ -422,7 +430,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * L3 ended the call; otherwise what L2 answered, a call that threw answering as `failed`.
    */
   const notify = (id, hold, issueState) => {
-    noticing = noticing.then(() => noticed(id, hold, issueState)).catch((thrown) => ({ failed: { step: 'notice', cause: thrown.message } }));
+    noticing = noticing.then(() => noticed(id, hold, issueState)).catch((thrown) => ({ failed: { step: 'notice', cause: causeOf(thrown) } }));
     return noticing;
   };
 
@@ -481,12 +489,12 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       if (!states.has(issue)) states.set(issue, (async () => board.readIssueState(Number(issue)))().then(({ state: read }) => ({ read }), (failure) => ({ failure })));
       const { read, failure } = await states.get(issue);
       if (failure !== undefined) {
-        const failed = { step: `read issue #${issue}'s state`, cause: failure.message };
+        const failed = { step: `read issue #${issue}'s state`, cause: causeOf(failure) };
         try {
           record('notice.failed', { hold: id, issue: Number(issue), ...failed });
           notices.push({ id, ...failed });
         } catch (refusal) {
-          notices.push({ id, ...failed, cause: `${failed.cause}; and the sink refused its notice.failed event: ${refusal.message}` });
+          notices.push({ id, ...failed, cause: `${failed.cause}; and the sink refused its notice.failed event: ${causeOf(refusal)}` });
         }
         continue;
       }

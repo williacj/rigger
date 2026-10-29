@@ -40,6 +40,33 @@ export function holdBody({ id, reason, run, hold, admission }) {
  */
 export const holdComment = ({ id, reason, card }) => `Rigger closed admission again: ${reason}\n\n${card === undefined ? '' : `- Card: #${card}\n\n`}${holdLine(id)}\n`;
 
+/**
+ * One printable line saying what `thrown` was, whatever value was thrown, and never itself a
+ * throw: an Error's message, a string, a Symbol's description, `null` or `undefined` as written,
+ * and otherwise the value's own string. Reading an Error's message, or converting the value, runs
+ * code its thrower supplied, which can throw in turn; then the line says only what kind of value
+ * was thrown.
+ */
+export function causeOf(thrown) {
+  try {
+    const held = thrown instanceof Error ? thrown.message : thrown;
+    const said = typeof held === 'string' ? held : typeof held === 'symbol' ? held.toString() : String(held);
+    if (said !== '') return said;
+  } catch {
+    // The value refused to be read or converted; its kind is all that is left to say.
+  }
+  return `a thrown ${typeof thrown}`;
+}
+
+/** `failure`'s `made` mark, or undefined where it has none or reading it throws. */
+const madeOf = (failure) => {
+  try {
+    return failure?.made;
+  } catch {
+    return undefined;
+  }
+};
+
 /** The hold's id the body or comment `text` names, or null where it names none. */
 export const holdOf = (text) => /^Hold: `([0-9a-z]+)`$/m.exec(String(text ?? ''))?.[1] ?? null;
 
@@ -149,14 +176,15 @@ export function statusNotice({ reads, writes, board, items, columns, sink }) {
       // notice.failed of it, since the sink is refusing, and returns it under the `failed` L3 passes
       // on, with its mark and its unrecorded events, for the verb to say (the architect's placement
       // ruling on #1056).
-      if (failure?.made !== undefined) return { failed: { step: at, cause: failure.message, made: failure.made, unrecorded: failure.unrecorded } };
-      const failed = { step: at, cause: failure.message };
+      const made = madeOf(failure);
+      if (made !== undefined) return { failed: { step: at, cause: causeOf(failure), made, unrecorded: failure.unrecorded } };
+      const failed = { step: at, cause: causeOf(failure) };
       try {
         sink.emitter({ layer: 'L2' }).emit('notice.failed', { hold: closer.id, ...failed });
       } catch (refusal) {
         // The failure stays the answer, whatever it says was made, and the refused record of it is
         // added to its cause, so neither is lost to the caller.
-        return { failed: { ...failed, cause: `${failed.cause}; and the sink refused its notice.failed event: ${refusal.message}` } };
+        return { failed: { ...failed, cause: `${failed.cause}; and the sink refused its notice.failed event: ${causeOf(refusal)}` } };
       }
       return { failed };
     }
@@ -201,7 +229,7 @@ export function statusNotice({ reads, writes, board, items, columns, sink }) {
     try {
       labelled = await reads.readLabelledIssues(status);
     } catch (failure) {
-      unread = failure.message;
+      unread = causeOf(failure);
     }
     const closed = [];
     const left = [];
@@ -211,8 +239,8 @@ export function statusNotice({ reads, writes, board, items, columns, sink }) {
       try {
         await write();
       } catch (failure) {
-        if (failure?.made === undefined) throw failure;
-        unrecorded.push({ issue: number, write: kind, why: failure.message });
+        if (madeOf(failure) === undefined) throw failure;
+        unrecorded.push({ issue: number, write: kind, why: causeOf(failure) });
       }
     };
     for (const number of [...new Set([...named, ...labelled])]) {
@@ -223,7 +251,7 @@ export function statusNotice({ reads, writes, board, items, columns, sink }) {
         await made(number, 'close', () => writes.closeIssue(number));
         closed.push(number);
       } catch (failure) {
-        left.push({ issue: number, why: failure.message });
+        left.push({ issue: number, why: causeOf(failure) });
       }
     }
     return { closed, left, unrecorded, ...(unread === undefined ? {} : { unread }) };

@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 
 import { FIXED_LABELS } from '../src/config/validate.mjs';
 import { statusNotice, holdOf } from '../src/workflow/status-issue.mjs';
+import { causeOf } from '../src/workflow/status-issue.mjs';
 import { recordingSink } from './admission-world.mjs';
 import { forge } from './notice-forge.mjs';
 
@@ -574,5 +575,38 @@ test('following a closer naming an issue, each write the forge made whose record
 
     assert.deepEqual(ran.value, { failed: { step, cause: `the sink refused 1 L0 event: call.end went unrecorded (${write})`, made: { answer: 'item-12' }, unrecorded: [{ event: 'call.end' }] } }, write);
     assert.deepEqual(ran.events, [], write);
+  }
+});
+
+/** A Proxy throwing on every trap, as a thrower can hand one. */
+const hostile = () => new Proxy({}, Object.fromEntries(['get', 'set', 'has', 'ownKeys', 'getOwnPropertyDescriptor', 'getPrototypeOf', 'defineProperty', 'deleteProperty', 'apply', 'construct', 'isExtensible', 'preventExtensions', 'setPrototypeOf'].map((name) => [name, () => { throw new Error(`the proxy refused ${name}`); }])));
+
+// proves R-SCHED-23
+test('causeOf answers one printable line for any thrown value and never throws itself', () => {
+  const cases = [
+    [new Error('plain'), 'plain'],
+    ['a string', 'a string'],
+    [Symbol('a symbol'), 'Symbol(a symbol)'],
+    [null, 'null'],
+    [undefined, 'undefined'],
+    [7, '7'],
+    [Object.create(null), 'a thrown object'],
+    [Object.create(Error.prototype, { message: { get() { throw new Error('no message'); } } }), 'a thrown object'],
+    [{ toString() { throw new Error('no string'); }, [Symbol.toPrimitive]() { throw new Error('no primitive'); } }, 'a thrown object'],
+    [hostile(), 'a thrown object'],
+  ];
+  for (const [thrown, said] of cases) assert.equal(causeOf(thrown), said);
+});
+
+// proves R-SCHED-23
+test('a notice step that throws a value no template can print still ends the call with notice.failed naming the step and a printable cause', async () => {
+  for (const [thrown, cause] of [[Symbol('gone'), 'Symbol(gone)'], [null, 'null'], [hostile(), 'a thrown object']]) {
+    const world = forge({ issues: [opened(12, 'a1', { timeline: [LABELLED] })] });
+    world.reads.readIssueTimeline = async () => { throw thrown; };
+
+    const ran = await followed(world, 'a1', 12);
+
+    assert.deepEqual(ran.value, { failed: { step: 'read issue #12\'s timeline', cause } }, cause);
+    assert.deepEqual(ran.events, [{ layer: 'L2', event: 'notice.failed', hold: 'a1', step: 'read issue #12\'s timeline', cause }], cause);
   }
 });

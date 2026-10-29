@@ -881,3 +881,25 @@ test('loop.run reports a made closer rename on the follow path whose admission.r
   assert.equal(refused.length, 1);
   assert.match([...messagesOf(outcome.error), JSON.stringify(outcome.value)].join('; '), /admission\.rename/, 'loop.run lost the made rename and its refused record');
 });
+
+// proves R-SCHED-23
+test('a state read, or a later read of the trigger, that throws a value no template can print is still reported with a printable cause, beside the trigger\'s earlier made opening', async () => {
+  const hostile = new Proxy({}, Object.fromEntries(['get', 'has', 'ownKeys', 'getOwnPropertyDescriptor', 'getPrototypeOf'].map((name) => [name, () => { throw new Error(`the proxy refused ${name}`); }])));
+  const { board } = stateBoard([], { 12: 'closed', 14: Symbol('unreadable') });
+  board.readIssueState = async (number) => {
+    if (number === 14) throw Symbol('unreadable');
+    return { state: 'closed' };
+  };
+  board.readColumns = async () => { throw hostile; };
+  const handed = handles({ cards: [], board, notice: followingNotice({ 12: { issue: 12, closed: true } }) });
+  refusingEvents(handed, ['admission.open']);
+  for (const name of ['hold-a1-issue-12.json', 'hold-b2-issue-14.json']) seed(handed.state, name);
+
+  const outcome = await loop(handed).pull().then((value) => ({ value }), (error) => ({ error }));
+
+  const reported = messagesOf(outcome.error).join('; ');
+  assert.match(reported, /EIO while recording admission\.open/);
+  assert.match(reported, /the notice for hold b2 failed to read issue #14's state: Symbol\(unreadable\)/);
+  assert.match(reported, /a thrown object/);
+  assert.ok(outcome.error.errors.every((each) => each instanceof Error), 'every failure the caller is handed is an Error it can read');
+});

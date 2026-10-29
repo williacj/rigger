@@ -7,6 +7,7 @@ import { join } from 'node:path';
 
 import { FIXED_LABELS, validate } from '../config/validate.mjs';
 import { admission } from '../scheduling/admission.mjs';
+import { causeOf } from '../workflow/status-issue.mjs';
 import { columnChanges } from '../workflow/transitions.mjs';
 import { CONFIG } from './init.mjs';
 import { PACKAGE, consumerConfig, removedCloserLine, settled, unreadableAdmission } from './doctor.mjs';
@@ -57,10 +58,17 @@ async function resuming(opened, {
     if (invalid.length > 0) return unclosed(`\`${CONFIG}\`: ${invalid.join('; ')}`);
     ({ notice } = columnChanges({ config, sink: opened.sink, send }));
   } catch (failure) {
-    return unclosed(`\`${CONFIG}\` could not be used: ${failure?.message ?? failure}`);
+    return unclosed(`\`${CONFIG}\` could not be used: ${causeOf(failure)}`);
   }
   const issues = [...removed, ...gone].filter(({ issue }) => issue !== undefined).map(({ issue }) => Number(issue));
-  const { closed, left, unrecorded, unread } = await notice.close(issues);
+  let closing;
+  try {
+    closing = await notice.close(issues);
+  } catch (failure) {
+    // L2 answers each issue's failure itself, so a throw here came before its first write.
+    return unclosed(`closing the status issues stopped: ${causeOf(failure)}`);
+  }
+  const { closed, left, unrecorded, unread } = closing;
   /** The record a write the forge made for issue `number` and the sink refused, as `write` names it, or undefined. */
   const refused = (number, write) => unrecorded.find((each) => each.issue === number && each.write === write)?.why;
   /** `said`, then, where `why` names a refused record, that the sink refused it. */

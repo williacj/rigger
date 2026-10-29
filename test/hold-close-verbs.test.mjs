@@ -429,7 +429,43 @@ const FAILING_CONFIGS = {
     "Object.defineProperty(config, 'board', { enumerable: true, get() { if (new Error().stack.includes('/src/workflow/transitions.mjs')) throw new Error('the board could not be handed to L2'); return board; } });",
     'export default config;',
   ].join('\n'), /the board could not be handed to L2/],
+  ...unprintable(),
 };
+
+/**
+ * The config texts for each thrown value no template can print, thrown where validation reads the
+ * config's `repo` and where L2's entry point reads its `board` (the reviewer's and the architect's
+ * round-6 probes on #1079): a Symbol, null, undefined, a null-prototype object, an Error whose
+ * `message` getter throws, an object whose `toString` and `Symbol.toPrimitive` throw, and a Proxy
+ * that throws on every trap, each with the reason `resume` gives for it. And the architect's
+ * control: a Symbol thrown as the config is evaluated.
+ */
+function unprintable() {
+  const trap = "new Proxy({}, Object.fromEntries(['get', 'set', 'has', 'ownKeys', 'getOwnPropertyDescriptor', 'getPrototypeOf', 'defineProperty', 'deleteProperty', 'apply', 'construct', 'isExtensible', 'preventExtensions', 'setPrototypeOf'].map((name) => [name, () => { throw new Error('the proxy refused ' + name); }])))";
+  const values = {
+    'a Symbol': ["Symbol('it threw a Symbol')", /could not be used: Symbol\(it threw a Symbol\)/],
+    null: ['null', /could not be used: null/],
+    undefined: ['undefined', /could not be used: undefined/],
+    'a null-prototype object': ['Object.create(null)', /could not be used: a thrown object/],
+    'an Error whose message getter throws': ["Object.create(Error.prototype, { message: { get() { throw new Error('no message'); } } })", /could not be used: a thrown object/],
+    'an object whose conversions throw': ["({ toString() { throw new Error('no string'); }, [Symbol.toPrimitive]() { throw new Error('no primitive'); } })", /could not be used: a thrown object/],
+    'a Proxy throwing on every trap': [trap, /could not be used: a thrown object/],
+  };
+  const settings = `import settings from ${JSON.stringify(new URL('../templates/rigger.config.mjs', import.meta.url).href)};`;
+  const rows = {};
+  for (const [what, [value, why]] of Object.entries(values)) {
+    rows[`validation throws ${what}`] = [`export default Object.defineProperty({}, 'repo', { enumerable: true, get() { throw ${value}; } });\n`, why];
+    rows[`building L2 throws ${what}`] = [[
+      settings,
+      `const config = { ...settings, repo: ${JSON.stringify(REPO)}, board: undefined };`,
+      `const board = { ...settings.board, project: ${PROJECT} };`,
+      `Object.defineProperty(config, 'board', { enumerable: true, get() { if (new Error().stack.includes('/src/workflow/transitions.mjs')) throw ${value}; return board; } });`,
+      'export default config;',
+    ].join('\n'), why];
+  }
+  rows['its evaluation throws a Symbol'] = ["throw Symbol('evaluation failed');\n", /could not be read: /];
+  return rows;
+}
 
 // proves R-SCHED-23
 test('rigger resume, wherever the config fails after the closers are removed and before L2 is reached, exits non-zero naming each closer removed, that no status issue was closed, and why, and makes no forge write', async (t) => {
