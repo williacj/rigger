@@ -94,6 +94,54 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
    and goes to the owner. A proposal against L4 goes to the owner. L6 changes no code itself, in
    any layer, and its proposals are themselves telemetry, so the report shows whether they
    helped.
+4. **Values are checked where they enter Rigger.** Rigger's trust boundary is the edge of its own
+   process. A value from outside it enters at an entry point, and that entry point is the one
+   place Rigger defends against it. The entry point checks the value and hands on plain data, or
+   refuses it with a failure it builds itself. Plain data is null, a boolean, a finite number, a
+   string, or a list or plain object of those, holding no accessor. The entry points, by layer:
+
+   - **L0.** The forge adapter, for every answer `gh` gives on any of its sides. The process
+     adapter, for each command's exit code and output, and for its reads of the process table.
+     The workspace adapter and the push side, for what git answers. `src/substrate/launchd.mjs`,
+     for the loaded job. Each provider adapter, for the agent file it reads and what its CLI
+     answers.
+   - **L1.** `src/execution/groups.mjs`, for the record of process groups.
+   - **L2.** Each module that parses text the forge holds: `marker.mjs`, `escalation.mjs`, the
+     module that parses a hold's notice, and the one that parses the mark line.
+   - **L3.** `src/scheduling/admission.mjs`, for the entries of `.rigger/admission/`.
+   - **L5.** The sink, for each line of the stream it reads back.
+   - **The config.** `consumerConfig`, the one import of the consumer's code. Its default export
+     can be any value, so `consumerConfig` hands on a plain-data copy, read once. The validator
+     and every layer read only that copy.
+   - **The CLI.** Each verb, for its arguments and, for `verdict`, its standard input. Each module
+     that reads the environment, for the variables it reads.
+
+   An agent Rigger dispatches is outside the process. Its output, its commits and its comments
+   reach Rigger only through these entry points.
+
+   Inside the boundary, a value one layer hands another conforms to the producing layer's
+   contract. That contract is this document's vocabulary for the boundary, and the shape the
+   producing function documents for what it returns, throws or rejects with. The consuming layer
+   relies on that contract, and never defends against a value it does not allow. Such values
+   include an accessor that throws, a proxy, and an object posing as another layer's failure. A
+   producer that can hand on a value outside its contract, from any input an entry point admits,
+   is defective, and the producer is where it is fixed.
+
+   A contract allows any string where it names text, so text from outside stays any string
+   inside. A verb that prints such text makes it printable where it prints it.
+
+   The Failure model and "Telemetry" bind for every value the contracts allow. That covers an
+   action made outside Rigger, a refused event, a failure after a write, and calls that interleave.
+   Reporting a failure never throws on a value the contracts allow.
+
+   A test of hostile input drives the entry point that admits it. A test of a consumer hands it
+   doubles drawn from its producer's contract, as `AGENTS.md`'s "Test behaviour at observable
+   boundaries" has them drawn.
+
+   Two things would reverse this rule. Rigger running code it does not own in its process, other
+   than the config, would put a producer inside the boundary that no contract binds. So would
+   Rigger being run as a library inside another program, whose values would then cross into a
+   layer through no entry point.
 
 ## The layer map
 
