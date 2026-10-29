@@ -51,7 +51,7 @@ literal, never the production algorithm or its helpers. Failing first cannot exp
 that later agrees with the implementation by construction.
 
 **Derive doubles independently too.** Use observed responses or documented collaborator
-contracts, never the assertion's expected value.
+contracts, never the assertion's expected value. Record that source where the double is defined.
 
 **Separate algorithm and host proof.** Inject clocks to force algorithmic timing decisions.
 Retain real-host checks for changed wiring, tool/OS contracts and real deadlines. A logical clock
