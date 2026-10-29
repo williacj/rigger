@@ -18,5 +18,6 @@ export const realHost = {
   uid: () => process.getuid(),
   pid: () => process.pid,
   signal: (target, name) => process.kill(target, name),
+  // ARCHITECTURE.md defines the four-method L0 clock; these are Node's native timers.
   clock: { get now() { return Date.now; }, pause, get schedule() { return setTimeout; }, get cancel() { return clearTimeout; } },
 };

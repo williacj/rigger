@@ -323,12 +323,12 @@ export function readingLater(fake) {
  * again; the sink itself is the real one throughout, and what the two switch is whether an
  * append reaches it.
  */
-/** A supplied host is handed unchanged to L3 for its L1 dispatches. */
+/** A supplied host reaches L3 unchanged; makerHold defaults to the held-maker fixture route. */
 export function world({
   cards = [1, 2, 3, 4], columns = COLUMNS, priority, fake = boardOf(cards, columns), concurrency, fresh = true, answer = () => ({ exit: 0, output: '' }), run = 'r-test',
   items = fake.operations, board = handleOn(fake, { columns, priority }), directory = temporaryDirectory('rigger-loop-'),
   kill = async () => {}, kinds = KINDS, provisioning = {}, forge = {}, scratch,
-  workspace, workspaceTip, judgeDirectory, removeDirectories = async () => {}, clock, host,
+  workspace, workspaceTip, judgeDirectory, removeDirectories = async () => {}, clock, host, makerHold = true,
 } = {}) {
   const phaseTrace = [{ phase: 'warm.start', at: performance.now() }];
   if (process.env.RIGGER_596_PHASE_ACTIVE) {
@@ -493,7 +493,7 @@ export function world({
       // in the same turn one that starts would.
       return (async () => ({ path: join(under, 'never-made', `rigger-${number}`) }))();
     }
-    agent.plan(number, role, { hold: true, exit: given.exit });
+    agent.plan(number, role, { hold: makerHold, exit: given.exit });
     return making(number);
   };
   /** What a maker's L3 `dispatch` attempt and L1 `dispatch.end` attempt record, whether or not the sink accepts them. */

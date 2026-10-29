@@ -12,6 +12,14 @@ import { inspect } from 'node:util';
 import { realHost } from './host.mjs';
 import { writeWhole } from './standard-error.mjs';
 
+/** Refuses an incomplete L0 clock before an adapter entry point performs host operations. */
+function requireClock(clock) {
+  if (clock === undefined || clock === null) throw new TypeError('the process adapter requires a host clock');
+  for (const method of ['now', 'pause', 'schedule', 'cancel']) {
+    if (typeof clock[method] !== 'function') throw new TypeError(`the host clock requires callable ${method}`);
+  }
+}
+
 /**
  * The process-table tool, by absolute path, so it is found whatever `PATH` the caller runs under:
  * the installed engine runs under one holding only node, git and `gh` (`test/package.test.mjs`).
@@ -1103,6 +1111,7 @@ function reachedUnread(named = [], stuck, { unlisted, unconfirmed }, kill) {
  * cannot read.
  */
 export function containNow(group, { readTimeout, host = realHost }) {
+  requireClock(host.clock);
   const { ps } = host;
   const { now } = host.clock;
   const spawn = host.spawnSync;
@@ -1728,6 +1737,7 @@ function refused(unrecorded, result, ending = '') {
  * call settle, on the command's result.
  */
 export async function runCommand({ command, args, cwd, env, input, timeout, emitter, onGroup, onExit, directory, scratch, host = realHost, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND, trace }) {
+  requireClock(host.clock);
   const { ps, lsof, signal: kill } = host;
   // The caller opens the emitter, so an `L0` event carries the card L0 never knows. There is no
   // default: a kill with nowhere to be recorded is refused before anything starts, and an emitter
@@ -1837,6 +1847,7 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
  * directory, as its `path`, `device` and `inode`, its census follows on the same terms (ruling 20).
  */
 export async function killRecordedGroup({ group, started, emitter, directory, identity, scratch, host = realHost, readTimeout = READ_TIMEOUT }) {
+  requireClock(host.clock);
   const { ps, lsof, signal: kill } = host;
   const starts = await startsIn(ps, group, readTimeout, host);
   const kills = recorded(group, started, starts) ? await contain(group, { ps, readTimeout, kill, host }, 'recorded.killed') : [];
@@ -2154,8 +2165,8 @@ export function whenElapsed(delay, done, { schedule = realHost.clock.schedule, c
 /** Whether `promise` is still unsettled once `bound` milliseconds have passed. */
 async function outlasts(promise, bound, host = realHost) {
   let stop;
-  const schedule = host.clock?.schedule ?? realHost.clock.schedule;
-  const cancel = host.clock?.cancel ?? realHost.clock.cancel;
+  const schedule = host.clock.schedule;
+  const cancel = host.clock.cancel;
   const passed = new Promise((resolve) => { stop = whenElapsed(bound, () => resolve(true), { schedule, cancel }); });
   const outlasted = await Promise.race([promise.then(() => false), passed]);
   stop();

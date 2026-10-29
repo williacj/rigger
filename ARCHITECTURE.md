@@ -1449,13 +1449,27 @@ reading after a bound it sets and records that it did. A dispatch ends only once
 the group's processes.
 
 L0's process adapter reaches the operating system through one host. No other module under `src/`
-starts a process, sends a signal, or reads the process table. The host also gives the process
-adapter the clock, in the shape L3's clock takes, and the identity of a path. Code outside the
-process adapter may read a path's identity, or the time, directly. The adapter decides
-everything else from the host's answers: what it reads, what it kills, in what order, what it
-records, and when it stops waiting. Rigger runs on the host the operating system gives it, and
-`D29` holds how Rigger's own tests stand in for it. The host is no extension point, because no
-consumer declares one.
+starts a process, sends a signal, or reads the process table. The host gives the adapter a clock
+and the identity of a path. Code outside the process adapter may read a path's identity, or the
+time, directly. The adapter decides everything else from the host's answers: what it reads,
+what it kills, in what order, what it records, and when it stops waiting. Rigger runs on the
+host the operating system gives it, and `D29` holds how Rigger's own tests stand in for it.
+The host is no extension point, because no consumer declares one.
+
+The host clock supplies four callable methods. L3 keeps its independent `{ now, pause }` clock.
+
+| Method | Contract |
+|---|---|
+| `now()` | Returns time in milliseconds for the adapter's elapsed-time decisions. |
+| `pause(delay, value, options)` | Resolves with `value` after `delay` milliseconds. It accepts Node's timer-promise options, including an abort signal and `ref`. |
+| `schedule(done, delay)` | Schedules `done` once after `delay` milliseconds and returns its cancellation handle. It never invokes `done` before returning. The handle may expose `unref()`. |
+| `cancel(handle)` | Prevents the handle's pending callback from running. Repeated cancellation, and cancellation after firing, have no effect. |
+
+The real host retains Node's timer behavior. The process adapter requires all four methods
+before `runCommand`, `killRecordedGroup` or `containNow` performs a host operation.
+It rejects an absent clock or a non-callable required method with a `TypeError` naming the clock
+or method. A supplied host's clock supplies every adapter deadline and cancellation.
+The adapter never substitutes the real host's clock for a supplied clock.
 
 Where the adapter named a folder, L1 lists it before the command starts. Once L0 has settled, where
 the command ran, L1 removes each path under that folder that the listing did not hold, and follows
@@ -2085,13 +2099,13 @@ comment lines are outside it too: a comment cannot carry a bug.
 | Budget | Production lines |
 |---|---|
 | L0 | 3,000 |
-| L1 | 1,500 |
+| L1 | 1,200 |
 | L2 | 1,600 |
 | The gate | 300 |
-| L3 | 1,100 |
+| L3 | 1,200 |
 | L5 | 1,300 |
-| L6 | 1,200 |
-| CLI and config | 2,000 |
+| L6 | 1,100 |
+| CLI and config | 2,300 |
 | **Package** | **12,000** |
 
 CI runs one check, against the package total. A layer that grows past its own row is a review
