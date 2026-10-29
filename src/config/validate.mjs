@@ -217,6 +217,15 @@ function declaresRole(roles, name) {
 }
 
 /**
+ * What `roles` holds under `name`, read as a property is, through its prototype. A name with no
+ * string form converts to no key, so it reads as nothing rather than throwing.
+ */
+function roleUnder(roles, name) {
+  try { return roles[name]; }
+  catch { return undefined; }
+}
+
+/**
  * Whether a value is a name: a string holding something other than whitespace. A label and a
  * priority option are each read by name, and a string of only whitespace names nothing either
  * could match.
@@ -365,8 +374,7 @@ function readKinds(config, refusals) {
     }
     // Every check below reads an entry's role through `judgeRole`, whichever form names it (`D24`
     // rule 1). An entry that is neither form earns its one refusal here, and names no role to check.
-    const providers = makerProviders(declaresRole(roles, kind.maker) ? roles[kind.maker] : undefined);
-    const formed = kind.judges.map((entry, position) => readJudgeEntry(entry, `${where}.judges[${position}]`, providers, refusals));
+    const formed = kind.judges.map((entry, position) => readJudgeEntry(entry, `${where}.judges[${position}]`, makerProviders(roleUnder(roles, kind.maker)), refusals));
     const named = kind.judges.map((entry, position) => (formed[position] ? judgeRole(entry) : undefined));
     // No judge is the maker, and no configuration removes that separation (`R-LOOP-3`). An engine
     // that could approve its own work would be a faster way to merge mistakes.

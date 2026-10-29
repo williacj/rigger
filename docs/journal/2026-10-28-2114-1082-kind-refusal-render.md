@@ -29,14 +29,15 @@ changed or is gone.
 | L643 | L643 | the steps are no list of names |
 | L649 | L649 | a step `provisioning` does not declare |
 
-At the head, the two helpers `written` and `declaresRole` sit above `names`, so each `readKinds`
-line moves 19 lines down, and L349 becomes two lines: the maker's providers are read once into
-`providers` before the judges are mapped.
+At the head, the three helpers `written`, `declaresRole` and `roleUnder` sit above `names`, so
+each `readKinds` line moves 28 lines down. No line is split or removed.
 
 ## The fix
 
 - `declaresRole(roles, name)` is `Object.hasOwn` with a conversion that throws read as "no role".
-  L333's guard uses it, and L349 reads `roles[kind.maker]` only where it holds.
+  L333's guard uses it.
+- `roleUnder(roles, name)` is `roles[name]`, read through the prototype as L349 read it, with a
+  conversion that throws read as nothing. L349 reads the maker's role through it.
 - `written(value)` is the template's own rendering, falling back to `inspect` where the template
   throws. L334, L354, L362 and L367 write their value through it. Every value whose string form
   does not throw keeps its merge-base text (option (a) of the attack, finding 3).
@@ -102,8 +103,7 @@ Each compared the merge base's `validate` with the head's on `rigger.config.mjs`
 path named, in process.
 
 - **The same answer at both:** a maker `'constructor'`, `'__proto__'` or `'toString'`, which
-  L349 read from `Object.prototype` at the base and the head reads as no role, both giving the
-  maker no providers; the same with `change`'s first judge's provider map lacking `claude`; a
+  L349 reads from `Object.prototype` at the base and the head alike, giving the maker no providers; the same with `change`'s first judge's provider map lacking `claude`; a
   maker `null` or `undefined`; a judge's role `['engineer']`; and K9's two values, `['engineer']`
   and an object whose `toString` returns `'engineer'`, which both accept.
 - **A throw at the base, a refusal at the head:** a maker whose `toString` returns a Symbol. The
@@ -112,3 +112,24 @@ path named, in process.
   declares".
 - `test/clock-config.test.mjs`'s parity test, which compares `validate` with `fe715a47^1` over
   every path, passes at the head.
+- **A case round 1 got wrong, now a test:** a maker naming a role `roles` inherits from a
+  prototype other than `Object.prototype`, `ghost: { provider: 'claude' }`, with `change`'s first
+  judge's provider map `{ codex: 'codex' }`. Both judges of round 1 found it. The merge base
+  answers "`kinds.change.maker` names `ghost`, which is no role the config declares" then
+  "`kinds.change.judges[0].provider` holds no key for `claude`, a provider the kind's maker can run
+  on", because L349 reads the inherited role's providers. Round 1's head read L349 only where
+  `declaresRole` held, so it dropped the second refusal. The test "a maker naming a role that roles
+  inherits rather than declares…" was red at that head
+  (`node --test --test-name-pattern="roles inherits" test/config-unrenderable.test.mjs` exited 1,
+  its diff showing the actual list without the `holds no key for` refusal), and passed with the merge base's `validate.mjs` in place. With
+  `roleUnder` it passes at the head.
+
+## Round 2: every new test checks its config is left unchanged
+
+`answer`, through which every new test calls `validate`, now snapshots the config with `inspect`
+(every key, hidden ones included, no value's `toString` called) before and after, and fails naming
+the config if they differ. It is the `snapshot` `test/config.test.mjs` uses for the same check,
+written again here: that file is a test file and exports nothing, and this is the second copy, so
+the Rule of Three does not yet ask for an extraction. Both the merge base and the head leave the
+config unchanged, so this check guards behaviour the merge base has, and its red is a killed
+`mutation:receipt` (M7-U15): a mutant setting `config.concurrency = -1` before `validate` returns.

@@ -21,13 +21,26 @@ const UNRENDERABLE = {
 /** This repository's own config, copied so a test can change one path of it. */
 const live = () => structuredClone(rigger);
 
-/** What `validate` answers, where a throw fails the test naming the config that earned it. */
+/**
+ * A config as `inspect` shows every own key, hidden ones and prototypes included, without calling
+ * any value's `toString`: what a test compares to see that `validate` left a config unchanged.
+ */
+const snapshot = (config) => inspect(config, { depth: Infinity, showHidden: true, sorted: false });
+
+/**
+ * What `validate` answers, where a throw fails the test naming the config that earned it, and so
+ * does a config `validate` changed while refusing it.
+ */
 function answer(config, what) {
+  const before = snapshot(config);
+  let refusals;
   try {
-    return validate(config);
+    refusals = validate(config);
   } catch (error) {
     return assert.fail(`validate threw for ${what}: ${error.message}`);
   }
+  assert.equal(snapshot(config), before, `validate changed the config it read for ${what}`);
+  return refusals;
 }
 
 /**
@@ -366,4 +379,18 @@ test('a maker or a judge\'s role that renders as a string naming no role earns t
       assert.deepEqual(answer(config, `${what} at ${where}`), expected, `${what} at ${where}`);
     }
   }
+});
+
+test('a maker naming a role that roles inherits rather than declares earns the refusals it earned before, its inherited providers read', () => {
+  // Row K12: a config on which the merge base returns keeps that answer, text included. The maker
+  // is no own role, so it is refused, and the merge base still read the inherited role's providers
+  // and refused a judge map with no key for one of them. The texts are the merge base's (journal).
+  const config = live();
+  Object.setPrototypeOf(config.roles, { ghost: { provider: 'claude' } });
+  config.kinds.change.maker = 'ghost';
+  config.kinds.change.judges[0].provider = { codex: 'codex' };
+  assert.deepEqual(answer(config, 'an inherited maker'), [
+    '`kinds.change.maker` names `ghost`, which is no role the config declares',
+    '`kinds.change.judges[0].provider` holds no key for `claude`, a provider the kind\'s maker can run on',
+  ]);
 });
