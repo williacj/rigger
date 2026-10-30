@@ -4,6 +4,7 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, dirname, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { types } from 'node:util';
 
 import { gitEnvironment } from '../substrate/git-environment.mjs';
 import { boardOf, readSide } from '../substrate/forge/read.mjs';
@@ -399,19 +400,79 @@ export async function configValidity({ target = process.cwd() } = {}) {
   };
 }
 
+/** The answer of each config file read in this process, by the real path of its directory. */
+const held = new Map();
+
 /**
  * The config the consumer holds in `target`, as `{ config }`, or `{ problem }` saying in one line
- * why there is none to read: the file is not there, or importing it threw. Every verb that reads
- * the config reads it here, so the one dynamic import of the consumer's code is this one.
+ * why there is none to read: the file is not there, importing it threw, or its default export is
+ * not plain data. Every verb that reads the config reads it here, so the one dynamic import of the
+ * consumer's code is this one, and it runs once per file and process: each later call answers a
+ * fresh copy of the first answer (boundary rule 4).
  */
 export async function consumerConfig(target) {
   const path = join(target, CONFIG);
-  if (!existsSync(path)) return { problem: `\`${CONFIG}\` is not in ${target}, and \`rigger init\` is what writes it` };
-  try {
-    return { config: (await import(pathToFileURL(path))).default };
-  } catch (threw) {
-    return { problem: `\`${CONFIG}\` could not be read: ${wentWrong(threw)}` };
+  const file = join(real(target), CONFIG);
+  if (!held.has(file)) {
+    let read;
+    try {
+      read = existsSync(path) ? copied((await import(pathToFileURL(path))).default)
+        : { problem: `\`${CONFIG}\` is not in ${target}, and \`rigger init\` is what writes it` };
+    } catch (threw) {
+      read = { problem: `\`${CONFIG}\` could not be read: ${wentWrong(threw)}` };
+    }
+    held.set(file, read);
   }
+  const { config, problem } = held.get(file);
+  return problem ? { problem } : copied(config);
+}
+
+/** How deep a config may nest: far past any extension point, and short of where a stack runs out. */
+const DEPTH = 100;
+
+/** `value` as `{ config }`, a plain-data copy, or `{ problem }` naming the part of it refused. */
+function copied(value) {
+  if (value === undefined) return { config: undefined };
+  try {
+    return { config: plain(value, 'default', []) };
+  } catch (refused) {
+    return { problem: refused };
+  }
+}
+
+/**
+ * `value`, found at `path` under the objects `within`, copied as plain data, or a throw of the line
+ * naming what is not. Only own enumerable string keys are read, each where its descriptor holds a
+ * value, and a Proxy is refused before any is read, so nothing the config holds runs here.
+ */
+function plain(value, path, within) {
+  const refuse = (what, at = path) => {
+    throw `\`${CONFIG}\` holds ${what} at \`${at}\`, which is not plain data`;
+  };
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : refuse(String(value));
+  if (typeof value !== 'object') return refuse(value === undefined ? 'undefined' : `a ${typeof value}`);
+  if (types.isProxy(value)) refuse('a Proxy');
+  if (within.includes(value)) refuse('an object that holds itself');
+  if (within.length > DEPTH) refuse(`an object or a list more than ${DEPTH} levels below the default export`);
+  const list = Array.isArray(value);
+  const prototype = Object.getPrototypeOf(value);
+  if (list ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) refuse('an object neither plain nor a list');
+  if (Object.getOwnPropertySymbols(value).length > 0) refuse('a Symbol key');
+  const keys = Object.keys(value);
+  const step = (key) => (list && /^(0|[1-9][0-9]*)$/.test(key) ? `[${key}]`
+    : `.${/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? key : printable(JSON.stringify(key))}`);
+  if (list) {
+    const hole = keys.findIndex((key, index) => key !== String(index));
+    if (hole !== -1 && hole < value.length || keys.length < value.length) refuse('a hole', `${path}[${hole === -1 ? keys.length : hole}]`);
+    if (keys.length > value.length) refuse('a property that is not an index', `${path}${step(keys[value.length])}`);
+  }
+  const entries = keys.map((key) => {
+    if (!('value' in Object.getOwnPropertyDescriptor(value, key))) refuse('an accessor', `${path}${step(key)}`);
+    return [key, plain(value[key], `${path}${step(key)}`, [...within, value])];
+  });
+  if (list) return entries.map(([, held]) => held);
+  return prototype === null ? Object.setPrototypeOf(Object.fromEntries(entries), null) : Object.fromEntries(entries);
 }
 
 /**
