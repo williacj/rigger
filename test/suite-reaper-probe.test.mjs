@@ -344,4 +344,3 @@ test('targeted read outcomes and trace failures retain the confirmed-ending deci
     else assert.equal(existsSync(destination), false, name + ' wrote outside its permitted trace');
   }
 });
-
