@@ -105,77 +105,614 @@ Each cell uses **B** for a breach and **C** for conformance. Behaviors are **U**
 
 ### JSON maps
 
-Columns are the JSON class's required missing field, wrong type, null, extra field, oversized value, deep nesting and non-JSON text. The found non-finite number is JSON text such as `1e999`, parsed by Node as Infinity and thus not plain data. F-R's readFields and readDefaultBranch refuse some missing shapes, while the shared answerOf still hands the parsed root on; these are distinct positions, not a single averaged verdict.
+The selected-position tables below separate the JSON root, each container and each selected field at the stage that consumes it. They distinguish a resolved write answer, the same answer carried by an EVENT_REFUSED failure, and the read before a write. They replace the earlier combined REST, write-answer and settings rows. The earlier probe receipts remain linked as historical measurements; a root case is not evidence for a different nested field.
+
+These independently callable helpers and remaining provider JSON sources retain their original maps:
 
 | Entry point and field | Missing | Wrong type | Null | Extra | Oversized | Deep | Not JSON | Non-finite (found) |
 |---|---|---|---|---|---|---|---|---|
 | F-R, answerOf root | U/B [F-read.answerOf.missing] | U/B [F-read.answerOf.wrong-type] | U/B [F-read.answerOf.null] | U/B [F-read.answerOf.extra] | U/B [F-read.answerOf.oversized] | U/B [F-read.answerOf.deep] | T/B [F-read.answerOf.not-json] | U/B [F-read.answerOf.non-finite] |
 | F-R, board ID also used by F-S/F-I | U/B [B-board.missing] | U/B [B-board.wrong-type] | U/B [B-board.null] | U/C [B-board.extra] | U/B [B-board.oversized] | U/B [B-board.deep] | T/B [B-board.not-json] | U/B [B-board.non-finite] |
 | F-R, repository ID also used by F-S | U/B [B-repository.missing] | U/B [B-repository.wrong-type] | U/B [B-repository.null] | U/C [B-repository.extra] | U/B [B-repository.oversized] | U/B [B-repository.deep] | T/B [B-repository.not-json] | U/B [B-repository.non-finite] |
-| F-R, default branch name/head | R/C [R-default.missing] | R/C [R-default.wrong-type] | R/C [R-default.null] | H/C [R-default.extra] | H/C [R-default.oversized] | R/C [R-default.deep] | R/C [R-default.not-json] | R/C [R-default.non-finite] |
-| F-R, board field option name | U/B [R-fields.missing] | U/B [R-fields.wrong-type] | U/B [R-fields.null] | U/C [R-fields.extra] | U/C [R-fields.oversized] | U/B [R-fields.deep] | T/B [R-fields.not-json] | U/B [R-fields.non-finite] |
-| F-R, missing board/repository root | R/C [F-read.readFields.missing; F-read.readDefaultBranch.missing] | R/C [F-read.readFields.wrong-type] | T/B [second R-fields.null record] | R/C [F-read.readFields.extra] | R/C [F-read.readFields.oversized] | R/C [F-read.readFields.deep] | T/B [F-read.readFields.not-json]; R/C [F-read.readDefaultBranch.not-json] | R/C [F-read.readFields.non-finite] |
-| F-S, mutation root | U/B [F-schema.createLabel.missing] | U/B [F-schema.createLabel.wrong-type] | U/B [F-schema.createLabel.null] | U/B [F-schema.createLabel.extra] | U/B [F-schema.createLabel.oversized] | U/B [F-schema.createLabel.deep] | T/B [F-schema.createLabel.not-json] | U/B [F-schema.createLabel.non-finite] |
-| F-S, runner's held-options read | R/C [schema.missing] | R/C [schema.wrong-type] | T/B [schema.null] | H/C [schema.extra] | R/C [schema.oversized] | R/C [schema.deep] | T/B [schema.not-json] | R/C [schema.non-finite] |
-| F-I, issue node ID | R/C [F-item.addIssue.missing] | R/C [F-item.addIssue.wrong-type] | R/C [F-item.addIssue.null] | H/C [F-I, lines 38–39] | H/C [F-I, lines 38–39] | R/C [F-I, lines 38–39] | R/C [F-item.addIssue.not-json] | R/C [F-item.addIssue.non-finite] |
-| F-I, mutation item ID | U/B [I-mutation.missing] | U/B [I-mutation.wrong-type; I-mutation.extra] | U/B [I-mutation.null] | U/C [item extra-field probe] | U/B [I-mutation.oversized] | U/B [I-mutation.deep] | R/C [I-mutation.not-json] | U/B [I-mutation.non-finite] |
-| F-I, runner's columns-field read | R/C [item.missing] | R/C [item.wrong-type] | T/B [item.null] | H/C [item.extra] | H/C [item.oversized] | R/C [item.deep] | T/B [item.not-json] | R/C [item.non-finite] |
-| F-W, issue comment body | U/B [F-repository.postIssueComment.missing] | U/B [F-repository.postIssueComment.wrong-type] | U/B [F-repository.postIssueComment.null] | U/B [F-repository.postIssueComment.extra] | U/B [F-repository.postIssueComment.oversized] | U/B [F-repository.postIssueComment.deep] | R/C [F-repository.postIssueComment.not-json] | U/B [F-repository.postIssueComment.non-finite] |
-| F-W, PR confirmation | R/C [F-W, lines 112–116] | R/C [F-W, line 115] | R/C [F-W, line 115] | H/C [F-W, lines 112–116] | H/C [F-W, lines 112–116] | R/C [F-W, line 115] | R/C [F-W, line 114] | R/C [F-W, line 115] |
-| F-W, merge reply SHA | U/B [W-merge.missing] | U/B [W-merge.wrong-type] | U/B [W-merge.null] | U/C [W-merge.extra] | U/C [W-merge.oversized] | U/B [W-merge.deep] | T/B [W-merge.not-json] | U/B [W-merge.non-finite] |
 | C-A, loggedIn | U/B [C-claude.auth.missing] | U/B [C-claude.auth.wrong-type] | U/B [C-claude.auth.null] | U/B [C-claude.auth.extra, missing loggedIn]; H/C [C-A, lines 71–78, valid loggedIn] | U/B [C-claude.auth.oversized, missing loggedIn]; H/C [C-A, lines 71–78, ignored extra] | U/B [C-claude.auth.deep, missing loggedIn]; H/C [C-A, lines 71–78, ignored extra] | U/B [C-claude.auth.not-json] | U/B [C-claude.auth.non-finite, missing loggedIn]; H/C [C-A, lines 71–78, ignored extra] |
-| C-F, settings root | H/C [C-claude.settings.missing] | R/C [C-claude.settings.wrong-type] | R/C [C-F, line 223] | H/C [C-claude.settings.extra] | H/C [C-F, lines 239–243] | H/C [C-F, lines 239–243] | R/C [C-claude.settings.not-json] | H/C [C-claude.settings.non-finite] |
-| C-F, settings nested fields | H/C [C-F, lines 239–243] | H/C [C-claude.settings.nested-wrong-type] | H/C [C-F, lines 239–243] | H/C [C-claude.settings.extra] | H/C [C-F, lines 239–243] | H/C [C-F, lines 239–243] | R/C [C-F, line 219] | H/C [C-F, lines 239–243] |
 | X-P, skill probe JSON | R/C [X-skills.missing] | R/C [X-skills.wrong-type] | R/C [X-skills.null] | H/C [X-skills.extra] | H/C [X-skills.oversized] | R/C [X-skills.deep] | R/C [X-skills.not-json] | R/C [X-skills.non-finite] |
 
-For a JSON cell marked H/C, the entry point does not pass the original object; it builds a selected plain result. A missing optional field is distinct from a required field. C-F's missing file becomes an empty settings object at line 216; a missing **field** in a present object is treated by lines 239–243. C-F's nested wrong type is ignored and the adapter constructs its own settings object. F-R's missing board and repository refusals are at lines 89–104 and 295–321. JSON extra data handed through F-W is a breach where it returns the unchecked parsed object, although extra fields by themselves are plain.
+#### Selected-field and stage method
 
-#### Forge read REST JSON positions
+The new probe's [source and exact commands](https://github.com/williacj/rigger/issues/1150#issuecomment-6523373449), [receipt index](https://github.com/williacj/rigger/issues/1150#issuecomment-6523390941) quote the entire source and unfiltered emitted output at the measured main commit. The run began at 2026-10-30T12:54:44Z with one-minute load 7.05, recorded its PID at start and exited 0. The source comparison against the measured substrate tree also exited 0. The probe's task manifests enumerate 538 field/stage positions, with a valid baseline and the eight JSON variants at each; seven separate file-byte records complete its 4,849 emitted result records. The table generator measures 4,304 ruled JSON cells. These are measurements of this fixture matrix, not a count of all possible JSON values.
 
-The [REST-position probe](https://github.com/williacj/rigger/issues/1150#issuecomment-6515255546) drives every REST JSON parser assigned to F-R with injected gh replies. Its identifiers in the cells below name the full output records. These are separate from `answerOf`'s GraphQL root: `repositoryReads` wraps a REST parse error into a named, Rigger-built failure at `src/substrate/forge/read.mjs` lines 430–438, so its non-JSON cells are R/C. The seven REST parse sites are environmentRead at line 318 (environment, policy list, variable and secret), commitPages at 352 (check runs and statuses), effectiveRules at 398 and 414 (rules and classic protection), permissionOf at 482, readMergeBase at 557, and readNewestNumber at 648. No other REST JSON parse appears in F-R; `notFoundAt` at line 453 parses a GraphQL error reply and belongs to the GraphQL root map above.
+Full output parts, in order: [1](https://github.com/williacj/rigger/issues/1150#issuecomment-6523373882); [2](https://github.com/williacj/rigger/issues/1150#issuecomment-6523374416); [3](https://github.com/williacj/rigger/issues/1150#issuecomment-6523374774); [4](https://github.com/williacj/rigger/issues/1150#issuecomment-6523375254); [5](https://github.com/williacj/rigger/issues/1150#issuecomment-6523375684); [6](https://github.com/williacj/rigger/issues/1150#issuecomment-6523376145); [7](https://github.com/williacj/rigger/issues/1150#issuecomment-6523376570); [8](https://github.com/williacj/rigger/issues/1150#issuecomment-6523377078); [9](https://github.com/williacj/rigger/issues/1150#issuecomment-6523377502); [10](https://github.com/williacj/rigger/issues/1150#issuecomment-6523377880); [11](https://github.com/williacj/rigger/issues/1150#issuecomment-6523378273); [12](https://github.com/williacj/rigger/issues/1150#issuecomment-6523378760); [13](https://github.com/williacj/rigger/issues/1150#issuecomment-6523379249); [14](https://github.com/williacj/rigger/issues/1150#issuecomment-6523379716); [15](https://github.com/williacj/rigger/issues/1150#issuecomment-6523380270); [16](https://github.com/williacj/rigger/issues/1150#issuecomment-6523380648); [17](https://github.com/williacj/rigger/issues/1150#issuecomment-6523381128); [18](https://github.com/williacj/rigger/issues/1150#issuecomment-6523381582); [19](https://github.com/williacj/rigger/issues/1150#issuecomment-6523381944); [20](https://github.com/williacj/rigger/issues/1150#issuecomment-6523382252); [21](https://github.com/williacj/rigger/issues/1150#issuecomment-6523382604); [22](https://github.com/williacj/rigger/issues/1150#issuecomment-6523382989); [23](https://github.com/williacj/rigger/issues/1150#issuecomment-6523383348); [24](https://github.com/williacj/rigger/issues/1150#issuecomment-6523383744); [25](https://github.com/williacj/rigger/issues/1150#issuecomment-6523384193); [26](https://github.com/williacj/rigger/issues/1150#issuecomment-6523384651); [27](https://github.com/williacj/rigger/issues/1150#issuecomment-6523385091); [28](https://github.com/williacj/rigger/issues/1150#issuecomment-6523385517); [29](https://github.com/williacj/rigger/issues/1150#issuecomment-6523385907); [30](https://github.com/williacj/rigger/issues/1150#issuecomment-6523386318); [31](https://github.com/williacj/rigger/issues/1150#issuecomment-6523386729); [32](https://github.com/williacj/rigger/issues/1150#issuecomment-6523387161); [33](https://github.com/williacj/rigger/issues/1150#issuecomment-6523387560); [34](https://github.com/williacj/rigger/issues/1150#issuecomment-6523387965); [35](https://github.com/williacj/rigger/issues/1150#issuecomment-6523388310); [36](https://github.com/williacj/rigger/issues/1150#issuecomment-6523388747); [37](https://github.com/williacj/rigger/issues/1150#issuecomment-6523389137); [38](https://github.com/williacj/rigger/issues/1150#issuecomment-6523389628); [39](https://github.com/williacj/rigger/issues/1150#issuecomment-6523390213); [40](https://github.com/williacj/rigger/issues/1150#issuecomment-6523390604).
 
-Each row is one field or position whose behavior differs. Columns retain the JSON class's eight required kinds; “wrong” means a wrong type at the named position. H/R/U/O have the meanings above. Here O/B is the distinct “other” behavior of silently replacing a malformed field with a default or derived result. A valid empty issue list returns 0 by newest-number.empty and is H/C. A *nonempty* issue list with its number missing or null also returns 0, so it is O/B. Oversized strings in a field whose contract names text are U/C under rule 4's “any string” clause; no size bound is inferred. permission-role.oversized is U/B because a role is a permission category, not free text.
+Each table row's probe prefix plus a dot and its column's kind is the exact output record ID: missing, wrong, null, extra, oversized, deep, nonjson or nonfinite. Each manifest carries the actual JSON path. The root missing variant is an empty object; a missing field is deleted; removing a selected array member produces a valid shorter list. Thus an empty valid list can conform while a present member missing a required field breaches. Extra fields are placed at the nearest containing object. Oversized strings contain 4,096 characters, numeric fields use finite 1e100, containers carry padded valid members or a padded extra field, and the found non-finite variant is parsed from 1e999. Deep means the nested object printed by the source, not an inferred recursion limit. Existing earlier probes also retain their larger and deeper fixtures.
 
-| F-R REST position | Missing | Wrong type | Null | Extra | Oversized | Deep | Not JSON | Non-finite (found) |
-|---|---|---|---|---|---|---|---|---|
-| issue-list number (648) | O/B [newest-number.missing] | U/B [newest-number.wrong] | O/B [newest-number.null] | H/C [newest-number.extra] | U/B [newest-number.oversized] | U/B [newest-number.deep] | R/C [newest-number.nonjson] | U/B [newest-number.nonfinite] |
-| compare merge SHA (557–559) | R/C [merge-base-sha.missing] | U/B [merge-base-sha.wrong] | R/C [merge-base-sha.null] | H/C [merge-base-sha.extra] | U/B [merge-base-sha.oversized] | U/B [merge-base-sha.deep] | R/C [merge-base-sha.nonjson] | U/B [merge-base-sha.nonfinite] |
-| collaborator role (482–484) | R/C [permission-role.missing] | R/C [permission-role.wrong] | R/C [permission-role.null] | H/C [permission-role.extra] | U/B [permission-role.oversized] | R/C [permission-role.deep] | R/C [permission-role.nonjson] | R/C [permission-role.nonfinite] |
-| environment variable value (752–755) | R/C [environment-variable-value.missing] | R/C [environment-variable-value.wrong] | R/C [environment-variable-value.null] | H/C [environment-variable-value.extra] | H/C [environment-variable-value.oversized] | R/C [environment-variable-value.deep] | R/C [environment-variable-value.nonjson] | R/C [environment-variable-value.nonfinite] |
-| environment secret name (762–765) | R/C [environment-secret-name.missing] | R/C [environment-secret-name.wrong] | R/C [environment-secret-name.null] | H/C [environment-secret-name.extra] | R/C [environment-secret-name.oversized] | R/C [environment-secret-name.deep] | R/C [environment-secret-name.nonjson] | R/C [environment-secret-name.nonfinite] |
-| environment root and bypass value (318, 324–326, 339) | R/C [environment-root.missing] | R/C [environment-root.wrong] | U/B [environment-root.null] | H/C [environment-root.extra] | U/B [environment-root.oversized] | U/B [environment-root.deep] | R/C [environment-root.nonjson] | U/B [environment-root.nonfinite] |
-| environment policy fields (337–344) | U/B [environment-policy-fields.missing] | U/B [environment-policy-fields.wrong] | H/C [environment-policy-fields.null] | H/C [environment-policy-fields.extra] | U/B [environment-policy-fields.oversized] | U/B [environment-policy-fields.deep] | R/C [environment-root.nonjson] | U/B [environment-policy-fields.nonfinite] |
-| environment policy list and name (330–334) | R/C [environment-policy-list.missing] | R/C [environment-policy-list.wrong] | R/C [environment-policy-list.null] | H/C [environment-policy-list.extra] | U/C [environment-policy-list.oversized] | U/B [environment-policy-list.deep] | R/C [environment-policy-list.nonjson] | U/B [environment-policy-list.nonfinite] |
-| commit check-runs array and records (352–370) | R/C [check-runs-array.missing] | R/C [check-runs-array.wrong] | R/C [check-runs-array.null] | H/C [check-runs-array.extra] | O/B [check-runs-array.oversized] | O/B [check-runs-array.deep] | R/C [check-runs-array.nonjson] | O/B [check-runs-array.nonfinite] |
-| commit statuses array and creator (352–378) | R/C [statuses-array.missing] | R/C [statuses-array.wrong] | R/C [statuses-array.null] | H/C [statuses-array.extra] | U/C [statuses-array.oversized] | U/B [statuses-array.deep] | R/C [statuses-array.nonjson] | U/B [statuses-array.nonfinite] |
-| effective rules array and required check (398–405) | R/C [effective-rules-array.missing] | R/C [effective-rules-array.wrong] | R/C [effective-rules-array.null] | H/C [effective-rules-array.extra] | U/C [effective-rules-array.oversized] | U/B [effective-rules-array.deep] | R/C [effective-rules-array.nonjson] | U/B [effective-rules-array.nonfinite] |
-| classic protection checks (414–420) | H/C [classic-checks.missing] | O/B [classic-checks.wrong] | H/C [classic-checks.null] | H/C [classic-checks.extra] | U/C [classic-checks.oversized] | U/B [classic-checks.deep] | R/C [classic-checks.nonjson] | U/B [classic-checks.nonfinite] |
+The selection-source names in the tables refer to these exact modules: read is `src/substrate/forge/read.mjs`; repository-write is `src/substrate/forge/repository-write.mjs`; schema-write is `src/substrate/forge/schema-write.mjs`; item-write is `src/substrate/forge/item-write.mjs`; runners is `src/substrate/forge/runners.mjs`; claude is `src/substrate/providers/claude.mjs`. Line numbers are at the measured commit. Read-side sibling rows cite everyPage at line 77; the inventory names their exported sides and the selected path names their distinct consumer. A final-page cursor is not consumed; the active-cursor row exercises its use in the next request. Query-only data discarded by a consumer is distinct from a field handed on.
 
-The probe's further **found** position cases are newest-number.wrongRoot R/C, newest-number.nullEntry O/B, environment-policy-list.nullEntry R/C, check-runs-array.nullEntry R/C, statuses-array.nullEntry R/C, effective-rules-array.nullEntry R/C and classic-checks.nullEntry R/C. The REST read's valid 404 response is handled before JSON parsing at lines 314–316 and 477–480; it is a different exit position, not a JSON null. environment-root.null shows that a literal JSON null is instead accepted as absence, unlike the documented HTTP 404 case. The REST probe records every row's valid value as well as these counterexamples, so an unhandled invalid field is distinguished from an intentional empty or absent reply.
+O/B on a read means the record's displayed derived state, absence, list or acknowledgment was produced from a malformed selected value; it is not a successful check of that value. U/B means the unchecked selected value or unchecked parsed reply crosses the boundary. R/C records a built refusal, including the wrapper around a parser's TypeError; T/B records an escaping TypeError or SyntaxError. O/C on an event-refused row is the documented EVENT_REFUSED rejection carrying an allowed made mark. O/B there means that mark carries an unchecked malformed answer, or that an invalid acknowledgment passed the success check. R/C on that stage rethrows the documented failure without a made mark when the answer fails the side's check. The receipt shows made, cause, call order and simulated writes separately; a built parse failure after one simulated write is never described as a pre-write refusal. No assertion here equates an attempted signal/timeout call with a proven real forge write.
 
-#### Nested REST field positions
+H/C on a discarded optional field relies on the source's explicit selection/default; H/C for an ignored extra field does not claim that arbitrary siblings were validated. Every U/C string cell uses rule 4's “A contract allows any string where it names text” clause. Structural enums, IDs and SHAs do not use that clause. An unused final-page cursor and a single-run ID not used by sorting have their own cells; the competing-run stage exercises the ID comparison.
 
-The [corrected nested-position probe](https://github.com/williacj/rigger/issues/1150#issuecomment-6515348948) tests the fields inside those REST objects and arrays. It quotes its command, source and full output on the card. The [first nested run](https://github.com/williacj/rigger/issues/1150#issuecomment-6515343465) is preserved there too; its numeric “wrong type” fixtures for numeric IDs were valid numbers, so the corrected run uses strings for those cases. Every cell below cites a record in the corrected run. The text-valued U/C cells use rule 4's “any string” clause; an ID, enum or boolean is structural and does not use it.
+The REST cases independently show a policy member's missing name becoming an own undefined property, a missing pinned app ID yielding absent with one run or selecting the older failed run with two, and a missing newer run ID selecting that older failed run. Required-check parameters, their list, each member and its fields have separate rows: missing parameters yield an empty result, an object list yields a wrapped TypeError, and classic contexts supplied as the string ci yield separate c and i requirements. A parameter/container failure cannot stand in for a field failure.
 
-| F-R nested REST field | Missing | Wrong type | Null | Extra | Oversized | Deep | Not JSON | Non-finite (found) |
-|---|---|---|---|---|---|---|---|---|
-| bypass field (339) | U/B [bypass.missing] | U/B [bypass.wrong] | U/B [bypass.null] | H/C [bypass.extra] | U/B [bypass.oversized] | U/B [bypass.deep] | R/C [bypass.nonjson] | U/B [bypass.nonfinite] |
-| custom-policy flag (328, 342) | U/B [policy-custom.missing] | U/B [policy-custom.wrong] | U/B [policy-custom.null] | H/C [policy-custom.extra] | U/B [policy-custom.oversized] | U/B [policy-custom.deep] | R/C [policy-custom.nonjson] | U/B [policy-custom.nonfinite] |
-| policy-list entry type (333) | U/B [policy-list-type.missing] | U/B [policy-list-type.wrong] | U/B [policy-list-type.null] | H/C [policy-list-type.extra] | U/B [policy-list-type.oversized] | U/B [policy-list-type.deep] | R/C [policy-list-type.nonjson] | U/B [policy-list-type.nonfinite] |
-| check-run name (366) | O/B [check-run-name.missing] | O/B [check-run-name.wrong] | O/B [check-run-name.null] | H/C [check-run-name.extra] | O/B [check-run-name.oversized] | O/B [check-run-name.deep] | R/C [check-run-name.nonjson] | O/B [check-run-name.nonfinite] |
-| check-run status (369) | O/B [check-run-status.missing] | O/B [check-run-status.wrong] | O/B [check-run-status.null] | H/C [check-run-status.extra] | O/B [check-run-status.oversized] | O/B [check-run-status.deep] | R/C [check-run-status.nonjson] | O/B [check-run-status.nonfinite] |
-| check-run conclusion (370) | O/B [check-run-conclusion.missing] | O/B [check-run-conclusion.wrong] | O/B [check-run-conclusion.null] | H/C [check-run-conclusion.extra] | O/B [check-run-conclusion.oversized] | O/B [check-run-conclusion.deep] | R/C [check-run-conclusion.nonjson] | O/B [check-run-conclusion.nonfinite] |
-| commit status context (368) | O/B [status-context.missing] | O/B [status-context.wrong] | O/B [status-context.null] | H/C [status-context.extra] | O/B [status-context.oversized] | O/B [status-context.deep] | R/C [status-context.nonjson] | O/B [status-context.nonfinite] |
-| commit status state (371) | O/B [status-state.missing] | O/B [status-state.wrong] | O/B [status-state.null] | H/C [status-state.extra] | O/B [status-state.oversized] | O/B [status-state.deep] | R/C [status-state.nonjson] | O/B [status-state.nonfinite] |
-| status creator login (378) | H/C [status-creator-login.missing] | U/B [status-creator-login.wrong] | H/C [status-creator-login.null] | H/C [status-creator-login.extra] | U/C [status-creator-login.oversized] | U/B [status-creator-login.deep] | R/C [status-creator-login.nonjson] | U/B [status-creator-login.nonfinite] |
-| status creator ID (378) | H/C [status-creator-id.missing] | U/B [status-creator-id.wrong] | H/C [status-creator-id.null] | H/C [status-creator-id.extra] | U/B [status-creator-id.oversized] | U/B [status-creator-id.deep] | R/C [status-creator-id.nonjson] | U/B [status-creator-id.nonfinite] |
-| rule type (401) | O/B [rule-type.missing] | O/B [rule-type.wrong] | O/B [rule-type.null] | H/C [rule-type.extra] | O/B [rule-type.oversized] | O/B [rule-type.deep] | R/C [rule-type.nonjson] | O/B [rule-type.nonfinite] |
-| required-check context (403) | U/B [rule-check-context.missing] | U/B [rule-check-context.wrong] | U/B [rule-check-context.null] | H/C [rule-check-context.extra] | U/C [rule-check-context.oversized] | U/B [rule-check-context.deep] | R/C [rule-check-context.nonjson] | U/B [rule-check-context.nonfinite] |
-| required-check integration (403) | H/C [rule-check-integration.missing] | U/B [rule-check-integration.wrong] | H/C [rule-check-integration.null] | H/C [rule-check-integration.extra] | U/B [rule-check-integration.oversized] | U/B [rule-check-integration.deep] | R/C [rule-check-integration.nonjson] | U/B [rule-check-integration.nonfinite] |
-| classic-check context (416) | U/B [classic-context.missing] | U/B [classic-context.wrong] | U/B [classic-context.null] | H/C [classic-context.extra] | U/C [classic-context.oversized] | U/B [classic-context.deep] | R/C [classic-context.nonjson] | U/B [classic-context.nonfinite] |
-| classic-check app ID (416) | H/C [classic-app.missing] | U/B [classic-app.wrong] | H/C [classic-app.null] | H/C [classic-app.extra] | U/B [classic-app.oversized] | U/B [classic-app.deep] | R/C [classic-app.nonjson] | U/B [classic-app.nonfinite] |
+The repository-write cases cover every endpoint's parsed reply. openIssue selects number only after checking labels: missing number returns undefined, a string number returns seven and a non-finite number returns Infinity after one simulated POST. closeIssue can return an object containing Infinity after one simulated PATCH. Comment, label-addition, label-removal and close replies are each mapped separately, including nested members. The same replies are driven through written's event-refusal result contract (`src/substrate/forge/write-made.mjs`, lines 19–29): an invalid answer can also be attached to a failure's made mark. Schema and item mutation roots and their selected children are mapped independently at both stages; children ignored by a void-returning operation are not mistaken for an unchecked returned ID. Each write exit family also has separate nonzero, signal, timeout and never-started rows.
 
-Missing, wrong, null, oversized, deep and non-finite check-run names silently produce `absent`; invalid status produces `pending`; invalid conclusion produces `failed`. Invalid commit-status context likewise produces `absent`, and invalid state produces `failed`. Those are O/B because the parser manufactures a plausible result from an unchecked invalid field. An invalid rule type silently removes the required rule, also O/B. Missing creator login or ID and missing integration/app pin are explicitly normalized to null at F-R lines 378, 387 and 416, so those H/C cells use the documented optional position; the wrong-type variants still pass through. FC1 alone owns every B cell in this nested matrix, including all field-specific O/B results. No other proposed fix card claims one.
+#### Selected REST read positions
+
+| Probe prefix and selected path | Stage | Selection source | Missing | Wrong | Null | Extra | Oversized | Deep | Not JSON | Non-finite | B owner |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| REST-newest-root; $ | read; 0 writes | read, line 648 | R/C | O/B | R/C | H/C | H/C | R/C | R/C | R/C | FC1 |
+| REST-newest-entry; $[0] | read; 0 writes | read, line 648 | H/C | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
+| REST-newest-number; $[0].number | read; 0 writes | read, line 648 | O/B | U/B | O/B | H/C | U/B | U/B | R/C | U/B | FC1 |
+| REST-permission-root; $ | read; 0 writes | read, line 482 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| REST-permission-role; $.role_name | read; 0 writes | read, line 482 | R/C | R/C | R/C | H/C | U/B | R/C | R/C | R/C | FC1 |
+| REST-compare-root; $ | read; 0 writes | read, line 557 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| REST-compare-commit; $.merge_base_commit | read; 0 writes | read, line 557 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| REST-compare-sha; $.merge_base_commit.sha | read; 0 writes | read, line 557 | R/C | U/B | R/C | H/C | U/B | U/B | R/C | U/B | FC1 |
+| REST-environment-root; $ | read; 0 writes | read, line 324 | R/C | R/C | O/B | H/C | H/C | R/C | R/C | R/C | FC1 |
+| REST-environment-bypass; $.can_admins_bypass | read; 0 writes | read, line 324 | U/B | U/B | U/B | H/C | U/B | U/B | R/C | U/B | FC1 |
+| REST-environment-policy; $.deployment_branch_policy | read; 0 writes | read, line 324 | R/C | U/B | H/C | H/C | H/C | U/B | R/C | U/B | FC1 |
+| REST-environment-protected; $.deployment_branch_policy.protected_branches | read; 0 writes | read, line 324 | U/B | U/B | U/B | H/C | U/B | U/B | R/C | U/B | FC1 |
+| REST-environment-custom; $.deployment_branch_policy.custom_branch_policies | read; 0 writes | read, line 324 | U/B | U/B | U/B | H/C | U/B | U/B | R/C | U/B | FC1 |
+| REST-policies-root; $ | read; 0 writes | read, line 330 | R/C | R/C | O/B | H/C | H/C | R/C | R/C | R/C | FC1 |
+| REST-policies-list; $.branch_policies | read; 0 writes | read, line 330 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| REST-policies-entry; $.branch_policies[0] | read; 0 writes | read, line 330 | H/C | U/B | R/C | H/C | H/C | U/B | R/C | U/B | FC1 |
+| REST-policies-name; $.branch_policies[0].name | read; 0 writes | read, line 330 | U/B | U/B | U/B | H/C | U/C | U/B | R/C | U/B | FC1 |
+| REST-policies-type; $.branch_policies[0].type | read; 0 writes | read, line 330 | U/B | U/B | U/B | H/C | U/B | U/B | R/C | U/B | FC1 |
+| REST-variable-root; $ | read; 0 writes | read, line 752 | R/C | R/C | O/B | H/C | H/C | R/C | R/C | R/C | FC1 |
+| REST-variable-value; $.value | read; 0 writes | read, line 752 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| REST-secret-root; $ | read; 0 writes | read, line 762 | R/C | R/C | O/B | H/C | H/C | R/C | R/C | R/C | FC1 |
+| REST-secret-name; $.name | read; 0 writes | read, line 762 | R/C | R/C | R/C | H/C | R/C | R/C | R/C | R/C | none |
+| REST-runs-root; $ | read; 0 writes | read, line 366 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| REST-runs-list; $.check_runs | read; 0 writes | read, line 366 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| REST-runs-entry; $.check_runs[1] | read; 0 writes | read, line 366 | H/C | O/B | R/C | H/C | H/C | O/B | R/C | O/B | FC1 |
+| REST-runs-name; $.check_runs[1].name | read; 0 writes | read, line 366 | O/B | O/B | O/B | H/C | U/B | O/B | R/C | O/B | FC1 |
+| REST-runs-id; $.check_runs[1].id | read; 0 writes | read, line 366 | O/B | O/B | O/B | H/C | O/B | O/B | R/C | O/B | FC1 |
+| REST-runs-status; $.check_runs[1].status | read; 0 writes | read, line 366 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
+| REST-runs-conclusion; $.check_runs[1].conclusion | read; 0 writes | read, line 366 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
+| REST-runs-app; $.check_runs[1].app | read; 0 writes | read, line 366 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
+| REST-runs-app-id; $.check_runs[1].app.id | read; 0 writes | read, line 366 | O/B | O/B | O/B | H/C | O/B | O/B | R/C | O/B | FC1 |
+| REST-run-only-id; $.check_runs[0].id | read; 0 writes | read, line 366 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| REST-run-only-app; $.check_runs[0].app | read; 0 writes | read, line 366 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
+| REST-run-only-app-id; $.check_runs[0].app.id | read; 0 writes | read, line 366 | O/B | O/B | O/B | H/C | O/B | O/B | R/C | O/B | FC1 |
+| REST-statuses-list; $ | read; 0 writes | read, line 368 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| REST-statuses-entry; $[0] | read; 0 writes | read, line 368 | H/C | O/B | R/C | H/C | H/C | O/B | R/C | O/B | FC1 |
+| REST-statuses-context; $[0].context | read; 0 writes | read, line 368 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
+| REST-statuses-state; $[0].state | read; 0 writes | read, line 368 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
+| REST-statuses-creator; $[0].creator | read; 0 writes | read, line 368 | H/C | O/B | H/C | H/C | H/C | O/B | R/C | O/B | FC1 |
+| REST-statuses-login; $[0].creator.login | read; 0 writes | read, line 368 | H/C | U/B | H/C | H/C | U/C | U/B | R/C | U/B | FC1 |
+| REST-statuses-id; $[0].creator.id | read; 0 writes | read, line 368 | H/C | U/B | H/C | H/C | U/B | U/B | R/C | U/B | FC1 |
+| REST-rules-list; $ | read; 0 writes | read, line 398 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| REST-rules-entry; $[0] | read; 0 writes | read, line 398 | H/C | O/B | R/C | H/C | H/C | O/B | R/C | O/B | FC1 |
+| REST-rules-type; $[0].type | read; 0 writes | read, line 398 | O/B | O/B | O/B | H/C | U/B | O/B | R/C | O/B | FC1 |
+| REST-rules-parameters; $[0].parameters | read; 0 writes | read, line 398 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
+| REST-rules-checks; $[0].parameters.required_status_checks | read; 0 writes | read, line 398 | O/B | R/C | O/B | H/C | H/C | R/C | R/C | R/C | FC1 |
+| REST-rules-check; $[0].parameters.required_status_checks[0] | read; 0 writes | read, line 398 | H/C | U/B | R/C | H/C | H/C | U/B | R/C | U/B | FC1 |
+| REST-rules-context; $[0].parameters.required_status_checks[0].context | read; 0 writes | read, line 398 | U/B | U/B | U/B | H/C | U/C | U/B | R/C | U/B | FC1 |
+| REST-rules-integration; $[0].parameters.required_status_checks[0].integration_id | read; 0 writes | read, line 398 | H/C | U/B | H/C | H/C | U/B | U/B | R/C | U/B | FC1 |
+| REST-classic-root; $ | read; 0 writes | read, line 414 | H/C | O/B | R/C | H/C | H/C | H/C | R/C | O/B | FC1 |
+| REST-classic-required; $.required_status_checks | read; 0 writes | read, line 414 | H/C | O/B | H/C | H/C | H/C | O/B | R/C | O/B | FC1 |
+| REST-classic-checks; $.required_status_checks.checks | read; 0 writes | read, line 414 | H/C | R/C | H/C | H/C | H/C | R/C | R/C | R/C | none |
+| REST-classic-check; $.required_status_checks.checks[0] | read; 0 writes | read, line 414 | H/C | U/B | R/C | H/C | H/C | U/B | R/C | U/B | FC1 |
+| REST-classic-context; $.required_status_checks.checks[0].context | read; 0 writes | read, line 414 | U/B | U/B | U/B | H/C | U/C | U/B | R/C | U/B | FC1 |
+| REST-classic-app; $.required_status_checks.checks[0].app_id | read; 0 writes | read, line 414 | H/C | U/B | H/C | H/C | U/B | U/B | R/C | U/B | FC1 |
+| REST-classic-contexts; $.required_status_checks.contexts | read; 0 writes | read, line 414 | H/C | O/B | H/C | H/C | H/C | R/C | R/C | R/C | FC1 |
+| REST-classic-context-entry; $.required_status_checks.contexts[0] | read; 0 writes | read, line 414 | H/C | U/B | U/B | H/C | U/C | U/B | R/C | U/B | FC1 |
+
+#### Selected GraphQL read positions
+
+| Probe prefix and selected path | Stage | Selection source | Missing | Wrong | Null | Extra | Oversized | Deep | Not JSON | Non-finite | B owner |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| GQL-fields-root; $ | read; 0 writes | read, line 221 | R/C | R/C | T/B | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-fields-data; $.data | read; 0 writes | read, line 221 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-fields-owner; $.data.repositoryOwner | read; 0 writes | read, line 221 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-fields-project; $.data.repositoryOwner.projectV2 | read; 0 writes | read, line 221 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-fields-connection; $.data.repositoryOwner.projectV2.fields | read; 0 writes | read, line 221 | R/C | T/B | R/C | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-fields-nodes; $.data.repositoryOwner.projectV2.fields.nodes | read; 0 writes | read, line 221 | T/B | T/B | T/B | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-fields-field; $.data.repositoryOwner.projectV2.fields.nodes[0] | read; 0 writes | read, line 221 | H/C | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-fields-name; $.data.repositoryOwner.projectV2.fields.nodes[0].name | read; 0 writes | read, line 221 | U/B | U/B | U/B | H/C | U/C | U/B | T/B | U/B | FC1 |
+| GQL-fields-options; $.data.repositoryOwner.projectV2.fields.nodes[0].options | read; 0 writes | read, line 221 | H/C | T/B | H/C | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-fields-option; $.data.repositoryOwner.projectV2.fields.nodes[0].options[0] | read; 0 writes | read, line 221 | H/C | U/B | T/B | H/C | H/C | U/B | T/B | U/B | FC1 |
+| GQL-fields-option-name; $.data.repositoryOwner.projectV2.fields.nodes[0].options[0].name | read; 0 writes | read, line 221 | U/B | U/B | U/B | H/C | U/C | U/B | T/B | U/B | FC1 |
+| GQL-fields-pageInfo; $.data.repositoryOwner.projectV2.fields.pageInfo | read; 0 writes | read, line 221 | T/B | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-fields-hasNextPage; $.data.repositoryOwner.projectV2.fields.pageInfo.hasNextPage | read; 0 writes | read, line 221 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-fields-endCursor; $.data.repositoryOwner.projectV2.fields.pageInfo.endCursor | read; 0 writes | read, line 221 | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| GQL-types-dataType; $.data.repositoryOwner.projectV2.fields.nodes[0].dataType | read; 0 writes | read, line 221 | U/B | U/B | U/B | H/C | U/B | U/B | T/B | U/B | FC1 |
+| GQL-cursor-active; $.data.repositoryOwner.projectV2.fields.pageInfo.endCursor | pagination cursor consumed; 0 writes | read, line 78 | O/B | O/B | O/B | H/C | U/C | O/B | T/B | O/B | FC1 |
+| GQL-default-root; $ | read; 0 writes | read, line 609 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-default-data; $.data | read; 0 writes | read, line 609 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-default-data-repository; $.data.repository | read; 0 writes | read, line 609 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-default-data-repository-defaultBranchRef; $.data.repository.defaultBranchRef | read; 0 writes | read, line 609 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-default-data-repository-defaultBranchRef-name; $.data.repository.defaultBranchRef.name | read; 0 writes | read, line 609 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-default-data-repository-defaultBranchRef-target; $.data.repository.defaultBranchRef.target | read; 0 writes | read, line 609 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-default-data-repository-defaultBranchRef-target-oid; $.data.repository.defaultBranchRef.target.oid | read; 0 writes | read, line 609 | R/C | R/C | R/C | H/C | R/C | R/C | R/C | R/C | none |
+| GQL-pull-root; $ | read; 0 writes | read, line 665 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-pull-data; $.data | read; 0 writes | read, line 665 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-pull-data-repository; $.data.repository | read; 0 writes | read, line 665 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-pull-data-repository-pullRequest; $.data.repository.pullRequest | read; 0 writes | read, line 665 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-pull-data-repository-pullRequest-number; $.data.repository.pullRequest.number | read; 0 writes | read, line 665 | U/B | U/B | U/B | H/C | H/C | U/B | R/C | U/B | FC1 |
+| GQL-pull-data-repository-pullRequest-state; $.data.repository.pullRequest.state | read; 0 writes | read, line 665 | R/C | R/C | R/C | H/C | R/C | R/C | R/C | R/C | none |
+| GQL-pull-data-repository-pullRequest-headRefOid; $.data.repository.pullRequest.headRefOid | read; 0 writes | read, line 665 | U/B | U/B | U/B | H/C | U/B | U/B | R/C | U/B | FC1 |
+| GQL-pull-data-repository-pullRequest-headRefName; $.data.repository.pullRequest.headRefName | read; 0 writes | read, line 665 | U/B | U/B | U/B | H/C | U/C | U/B | R/C | U/B | FC1 |
+| GQL-pull-data-repository-pullRequest-baseRefName; $.data.repository.pullRequest.baseRefName | read; 0 writes | read, line 665 | U/B | U/B | U/B | H/C | U/C | U/B | R/C | U/B | FC1 |
+| GQL-pull-data-repository-pullRequest-headRepository; $.data.repository.pullRequest.headRepository | read; 0 writes | read, line 665 | H/C | O/B | H/C | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-pull-data-repository-pullRequest-headRepository-nameWithOwner; $.data.repository.pullRequest.headRepository.nameWithOwner | read; 0 writes | read, line 665 | O/B | R/C | O/B | H/C | H/C | R/C | R/C | R/C | FC1 |
+| GQL-mergeable-root; $ | read; 0 writes | read, line 572 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-mergeable-data; $.data | read; 0 writes | read, line 572 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-mergeable-data-repository; $.data.repository | read; 0 writes | read, line 572 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-mergeable-data-repository-pullRequest; $.data.repository.pullRequest | read; 0 writes | read, line 572 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-mergeable-data-repository-pullRequest-mergeable; $.data.repository.pullRequest.mergeable | read; 0 writes | read, line 572 | R/C | R/C | R/C | H/C | R/C | R/C | R/C | R/C | none |
+| GQL-mergebase-pre-root; $ | read; 0 writes | read, line 556 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-mergebase-pre-data; $.data | read; 0 writes | read, line 556 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-mergebase-pre-data-repository; $.data.repository | read; 0 writes | read, line 556 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-mergebase-pre-data-repository-pullRequest; $.data.repository.pullRequest | read; 0 writes | read, line 556 | R/C | U/B | R/C | H/C | H/C | U/B | R/C | U/B | FC1 |
+| GQL-mergebase-pre-data-repository-pullRequest-baseRefName; $.data.repository.pullRequest.baseRefName | read; 0 writes | read, line 556 | U/B | U/B | U/B | H/C | U/C | U/B | R/C | U/B | FC1 |
+| GQL-mergebase-pre-data-repository-pullRequest-headRefOid; $.data.repository.pullRequest.headRefOid | read; 0 writes | read, line 556 | U/B | U/B | U/B | H/C | U/B | U/B | R/C | U/B | FC1 |
+| GQL-labels-node; $.data.repository.labels.nodes[0] | read; 0 writes | read, line 221 | H/C | U/B | T/B | H/C | H/C | U/B | T/B | U/B | FC1 |
+| GQL-labels-name; $.data.repository.labels.nodes[0].name | read; 0 writes | read, line 221 | U/B | U/B | U/B | H/C | U/C | U/B | T/B | U/B | FC1 |
+| GQL-branches-name; $.data.repository.refs.nodes[0].name | read; 0 writes | read, line 541 | O/B | O/B | O/B | H/C | U/B | O/B | R/C | O/B | FC1 |
+| GQL-labelled-number; $.data.repository.issues.nodes[0].number | read; 0 writes | read, line 637 | U/B | U/B | U/B | H/C | H/C | U/B | R/C | U/B | FC1 |
+| GQL-issue-root; $.data.repository.issue | read; 0 writes | read, line 625 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-issue-number; $.data.repository.issue.number | read; 0 writes | read, line 625 | U/B | U/B | U/B | H/C | H/C | U/B | R/C | U/B | FC1 |
+| GQL-issue-title; $.data.repository.issue.title | read; 0 writes | read, line 625 | U/B | U/B | U/B | H/C | U/C | U/B | R/C | U/B | FC1 |
+| GQL-issue-body; $.data.repository.issue.body | read; 0 writes | read, line 625 | U/B | U/B | U/B | H/C | U/C | U/B | R/C | U/B | FC1 |
+| GQL-issue-state; $.data.repository.issue.state | read; 0 writes | read, line 625 | R/C | R/C | R/C | H/C | R/C | R/C | R/C | R/C | none |
+| GQL-issue-author; $.data.repository.issue.author | read; 0 writes | read, line 625 | H/C | O/B | H/C | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-issue-author-login; $.data.repository.issue.author.login | read; 0 writes | read, line 625 | H/C | U/B | H/C | H/C | U/C | U/B | R/C | U/B | FC1 |
+| GQL-issue-repository; $.data.repository.issue.repository | read; 0 writes | read, line 625 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-issue-repository-nameWithOwner; $.data.repository.issue.repository.nameWithOwner | read; 0 writes | read, line 625 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-issue-labels; $.data.repository.issue.labels | read; 0 writes | read, line 625 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-issue-labels-nodes; $.data.repository.issue.labels.nodes | read; 0 writes | read, line 625 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-issue-labels-nodes-0; $.data.repository.issue.labels.nodes[0] | read; 0 writes | read, line 625 | H/C | U/B | R/C | H/C | H/C | U/B | R/C | U/B | FC1 |
+| GQL-issue-labels-nodes-0-name; $.data.repository.issue.labels.nodes[0].name | read; 0 writes | read, line 625 | U/B | U/B | U/B | H/C | U/C | U/B | R/C | U/B | FC1 |
+| GQL-issue-labels-pageInfo; $.data.repository.issue.labels.pageInfo | read; 0 writes | read, line 625 | R/C | O/B | R/C | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-issue-labels-pageInfo-hasNextPage; $.data.repository.issue.labels.pageInfo.hasNextPage | read; 0 writes | read, line 625 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-issue-labels-pageInfo-endCursor; $.data.repository.issue.labels.pageInfo.endCursor | read; 0 writes | read, line 625 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-readComments-node; $.data.repository.pullRequest.comments.nodes[0] | read; 0 writes | read, line 496 | H/C | U/B | R/C | H/C | H/C | U/B | R/C | U/B | FC1 |
+| GQL-readComments-body; $.data.repository.pullRequest.comments.nodes[0].body | read; 0 writes | read, line 496 | U/B | U/B | U/B | H/C | U/C | U/B | R/C | U/B | FC1 |
+| GQL-readComments-createdAt; $.data.repository.pullRequest.comments.nodes[0].createdAt | read; 0 writes | read, line 496 | U/B | U/B | O/B | H/C | H/C | U/B | R/C | U/B | FC1 |
+| GQL-readComments-id; $.data.repository.pullRequest.comments.nodes[0].id | read; 0 writes | read, line 496 | U/B | U/B | U/B | H/C | U/B | U/B | R/C | U/B | FC1 |
+| GQL-readComments-author; $.data.repository.pullRequest.comments.nodes[0].author | read; 0 writes | read, line 496 | H/C | O/B | H/C | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-readComments-author-login; $.data.repository.pullRequest.comments.nodes[0].author.login | read; 0 writes | read, line 496 | H/C | U/B | H/C | H/C | U/C | U/B | R/C | U/B | FC1 |
+| GQL-readComments-lastEditedAt; $.data.repository.pullRequest.comments.nodes[0].lastEditedAt | read; 0 writes | read, line 496 | H/C | O/B | H/C | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-readComments-includesCreatedEdit; $.data.repository.pullRequest.comments.nodes[0].includesCreatedEdit | read; 0 writes | read, line 496 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-readIssueComments-node; $.data.repository.issue.comments.nodes[0] | read; 0 writes | read, line 496 | H/C | U/B | R/C | H/C | H/C | U/B | R/C | U/B | FC1 |
+| GQL-readIssueComments-body; $.data.repository.issue.comments.nodes[0].body | read; 0 writes | read, line 496 | U/B | U/B | U/B | H/C | U/C | U/B | R/C | U/B | FC1 |
+| GQL-readIssueComments-createdAt; $.data.repository.issue.comments.nodes[0].createdAt | read; 0 writes | read, line 496 | U/B | U/B | O/B | H/C | H/C | U/B | R/C | U/B | FC1 |
+| GQL-readIssueComments-id; $.data.repository.issue.comments.nodes[0].id | read; 0 writes | read, line 496 | U/B | U/B | U/B | H/C | U/B | U/B | R/C | U/B | FC1 |
+| GQL-readIssueComments-author; $.data.repository.issue.comments.nodes[0].author | read; 0 writes | read, line 496 | H/C | O/B | H/C | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-readIssueComments-author-login; $.data.repository.issue.comments.nodes[0].author.login | read; 0 writes | read, line 496 | H/C | U/B | H/C | H/C | U/C | U/B | R/C | U/B | FC1 |
+| GQL-readIssueComments-lastEditedAt; $.data.repository.issue.comments.nodes[0].lastEditedAt | read; 0 writes | read, line 496 | H/C | O/B | H/C | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-readIssueComments-includesCreatedEdit; $.data.repository.issue.comments.nodes[0].includesCreatedEdit | read; 0 writes | read, line 496 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-items-node; $.data.repositoryOwner.projectV2.items.nodes[0] | read; 0 writes | read, line 132 | H/C | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-items-id; $.data.repositoryOwner.projectV2.items.nodes[0].id | read; 0 writes | read, line 132 | U/B | U/B | U/B | H/C | U/B | U/B | T/B | U/B | FC1 |
+| GQL-items-fieldValues; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues | read; 0 writes | read, line 132 | T/B | T/B | T/B | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-items-fieldValues-nodes; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.nodes | read; 0 writes | read, line 132 | T/B | T/B | T/B | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-items-fieldValues-nodes-0; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.nodes[0] | read; 0 writes | read, line 132 | H/C | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-items-fieldValues-nodes-0-name; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.nodes[0].name | read; 0 writes | read, line 132 | U/B | U/B | U/B | H/C | U/C | U/B | T/B | U/B | FC1 |
+| GQL-items-fieldValues-nodes-0-field; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.nodes[0].field | read; 0 writes | read, line 132 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-items-fieldValues-nodes-0-field-name; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.nodes[0].field.name | read; 0 writes | read, line 132 | U/B | U/B | U/B | H/C | U/C | U/B | T/B | U/B | FC1 |
+| GQL-items-fieldValues-pageInfo; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.pageInfo | read; 0 writes | read, line 132 | T/B | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-items-fieldValues-pageInfo-hasNextPage; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.pageInfo.hasNextPage | read; 0 writes | read, line 132 | O/B | R/C | O/B | H/C | R/C | R/C | T/B | R/C | FC1 |
+| GQL-items-content; $.data.repositoryOwner.projectV2.items.nodes[0].content | read; 0 writes | read, line 132 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-items-content-__typename; $.data.repositoryOwner.projectV2.items.nodes[0].content.__typename | read; 0 writes | read, line 132 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-items-content-number; $.data.repositoryOwner.projectV2.items.nodes[0].content.number | read; 0 writes | read, line 132 | U/B | U/B | U/B | H/C | H/C | U/B | T/B | U/B | FC1 |
+| GQL-items-content-title; $.data.repositoryOwner.projectV2.items.nodes[0].content.title | read; 0 writes | read, line 132 | U/B | U/B | U/B | H/C | U/C | U/B | T/B | U/B | FC1 |
+| GQL-items-content-body; $.data.repositoryOwner.projectV2.items.nodes[0].content.body | read; 0 writes | read, line 132 | U/B | U/B | U/B | H/C | U/C | U/B | T/B | U/B | FC1 |
+| GQL-items-content-repository; $.data.repositoryOwner.projectV2.items.nodes[0].content.repository | read; 0 writes | read, line 132 | T/B | T/B | T/B | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-items-content-repository-nameWithOwner; $.data.repositoryOwner.projectV2.items.nodes[0].content.repository.nameWithOwner | read; 0 writes | read, line 132 | T/B | T/B | T/B | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-items-content-labels; $.data.repositoryOwner.projectV2.items.nodes[0].content.labels | read; 0 writes | read, line 132 | T/B | T/B | T/B | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-items-content-labels-nodes; $.data.repositoryOwner.projectV2.items.nodes[0].content.labels.nodes | read; 0 writes | read, line 132 | T/B | T/B | T/B | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-items-content-labels-nodes-0; $.data.repositoryOwner.projectV2.items.nodes[0].content.labels.nodes[0] | read; 0 writes | read, line 132 | H/C | U/B | T/B | H/C | H/C | U/B | T/B | U/B | FC1 |
+| GQL-items-content-labels-nodes-0-name; $.data.repositoryOwner.projectV2.items.nodes[0].content.labels.nodes[0].name | read; 0 writes | read, line 132 | U/B | U/B | U/B | H/C | U/C | U/B | T/B | U/B | FC1 |
+| GQL-items-content-labels-pageInfo; $.data.repositoryOwner.projectV2.items.nodes[0].content.labels.pageInfo | read; 0 writes | read, line 132 | T/B | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-items-content-labels-pageInfo-hasNextPage; $.data.repositoryOwner.projectV2.items.nodes[0].content.labels.pageInfo.hasNextPage | read; 0 writes | read, line 132 | O/B | R/C | O/B | H/C | R/C | R/C | T/B | R/C | FC1 |
+| GQL-other-type; $.data.repositoryOwner.projectV2.items.nodes[0].type | read; 0 writes | read, line 170 | O/B | O/B | O/B | H/C | U/B | O/B | T/B | O/B | FC1 |
+| GQL-other-content; $.data.repositoryOwner.projectV2.items.nodes[0].content | read; 0 writes | read, line 170 | H/C | O/B | H/C | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-other-content-repository; $.data.repositoryOwner.projectV2.items.nodes[0].content.repository | read; 0 writes | read, line 170 | H/C | O/B | H/C | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-other-content-repository-nameWithOwner; $.data.repositoryOwner.projectV2.items.nodes[0].content.repository.nameWithOwner | read; 0 writes | read, line 170 | H/C | T/B | H/C | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-pulls-node; $.data.repository.pullRequests.nodes[0] | read; 0 writes | read, line 525 | H/C | O/B | R/C | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-pulls-number; $.data.repository.pullRequests.nodes[0].number | read; 0 writes | read, line 525 | U/B | U/B | U/B | H/C | H/C | U/B | R/C | U/B | FC1 |
+| GQL-pulls-state; $.data.repository.pullRequests.nodes[0].state | read; 0 writes | read, line 525 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-pulls-headRefOid; $.data.repository.pullRequests.nodes[0].headRefOid | read; 0 writes | read, line 525 | U/B | U/B | U/B | H/C | U/B | U/B | R/C | U/B | FC1 |
+| GQL-pulls-baseRefName; $.data.repository.pullRequests.nodes[0].baseRefName | read; 0 writes | read, line 525 | U/B | U/B | U/B | H/C | U/C | U/B | R/C | U/B | FC1 |
+| GQL-pulls-headRepository; $.data.repository.pullRequests.nodes[0].headRepository | read; 0 writes | read, line 525 | H/C | R/C | H/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-pulls-headRepository-nameWithOwner; $.data.repository.pullRequests.nodes[0].headRepository.nameWithOwner | read; 0 writes | read, line 525 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-file-root; $ | readFileAt success reply; 0 writes | read, line 699 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-file-data; $.data | readFileAt success reply; 0 writes | read, line 699 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-file-data-repository; $.data.repository | readFileAt success reply; 0 writes | read, line 699 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-file-data-repository-object; $.data.repository.object | readFileAt success reply; 0 writes | read, line 699 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-file-data-repository-object-oid; $.data.repository.object.oid | readFileAt success reply; 0 writes | read, line 699 | R/C | R/C | R/C | H/C | R/C | R/C | R/C | R/C | none |
+| GQL-file-data-repository-object-file; $.data.repository.object.file | readFileAt success reply; 0 writes | read, line 699 | R/C | R/C | H/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-file-data-repository-object-file-mode; $.data.repository.object.file.mode | readFileAt success reply; 0 writes | read, line 699 | R/C | R/C | R/C | H/C | R/C | R/C | R/C | R/C | none |
+| GQL-file-data-repository-object-file-type; $.data.repository.object.file.type | readFileAt success reply; 0 writes | read, line 699 | R/C | R/C | R/C | H/C | R/C | R/C | R/C | R/C | none |
+| GQL-file-data-repository-object-file-object; $.data.repository.object.file.object | readFileAt success reply; 0 writes | read, line 699 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-file-data-repository-object-file-object-text; $.data.repository.object.file.object.text | readFileAt success reply; 0 writes | read, line 699 | R/C | R/C | R/C | H/C | R/C | R/C | R/C | R/C | none |
+| GQL-file-data-repository-object-file-object-isBinary; $.data.repository.object.file.object.isBinary | readFileAt success reply; 0 writes | read, line 699 | R/C | R/C | R/C | H/C | R/C | R/C | R/C | R/C | none |
+| GQL-file-data-repository-object-file-object-isTruncated; $.data.repository.object.file.object.isTruncated | readFileAt success reply; 0 writes | read, line 699 | R/C | R/C | R/C | H/C | R/C | R/C | R/C | R/C | none |
+| GQL-file-data-repository-object-file-object-byteSize; $.data.repository.object.file.object.byteSize | readFileAt success reply; 0 writes | read, line 699 | R/C | R/C | R/C | H/C | R/C | R/C | R/C | R/C | none |
+| GQL-notfound-issue-root; $ | nonzero NOT_FOUND reply; 0 writes | read, line 453 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-notfound-issue-data; $.data | nonzero NOT_FOUND reply; 0 writes | read, line 453 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-notfound-issue-errors; $.errors | nonzero NOT_FOUND reply; 0 writes | read, line 453 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-notfound-issue-errors-0; $.errors[0] | nonzero NOT_FOUND reply; 0 writes | read, line 453 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-notfound-issue-errors-0-type; $.errors[0].type | nonzero NOT_FOUND reply; 0 writes | read, line 453 | R/C | R/C | R/C | H/C | R/C | R/C | R/C | R/C | none |
+| GQL-notfound-issue-errors-0-path; $.errors[0].path | nonzero NOT_FOUND reply; 0 writes | read, line 453 | R/C | R/C | R/C | H/C | R/C | R/C | R/C | R/C | none |
+| GQL-notfound-file-root; $ | nonzero NOT_FOUND reply; 0 writes | read, line 453 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-notfound-file-data; $.data | nonzero NOT_FOUND reply; 0 writes | read, line 453 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-notfound-file-errors; $.errors | nonzero NOT_FOUND reply; 0 writes | read, line 453 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-notfound-file-errors-0; $.errors[0] | nonzero NOT_FOUND reply; 0 writes | read, line 453 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-notfound-file-errors-0-type; $.errors[0].type | nonzero NOT_FOUND reply; 0 writes | read, line 453 | R/C | R/C | R/C | H/C | R/C | R/C | R/C | R/C | none |
+| GQL-notfound-file-errors-0-path; $.errors[0].path | nonzero NOT_FOUND reply; 0 writes | read, line 453 | R/C | R/C | R/C | H/C | R/C | R/C | R/C | R/C | none |
+| GQL-sibling-readColumns-root; $ | readColumns selected reply; 0 writes | read, line 77 | R/C | R/C | T/B | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-readColumns-data; $.data | readColumns selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-readColumns-data-repositoryOwner; $.data.repositoryOwner | readColumns selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-readColumns-data-repositoryOwner-projectV2; $.data.repositoryOwner.projectV2 | readColumns selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-readColumns-data-repositoryOwner-projectV2-fields; $.data.repositoryOwner.projectV2.fields | readColumns selected reply; 0 writes | read, line 77 | R/C | T/B | R/C | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-sibling-readColumns-data-repositoryOwner-projectV2-fields-nodes; $.data.repositoryOwner.projectV2.fields.nodes | readColumns selected reply; 0 writes | read, line 77 | T/B | T/B | T/B | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-sibling-readColumns-data-repositoryOwner-projectV2-fields-nodes-0; $.data.repositoryOwner.projectV2.fields.nodes[0] | readColumns selected reply; 0 writes | read, line 77 | R/C | R/C | T/B | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-readColumns-data-repositoryOwner-projectV2-fields-nodes-0-name; $.data.repositoryOwner.projectV2.fields.nodes[0].name | readColumns selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | R/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-readColumns-data-repositoryOwner-projectV2-fields-nodes-0-options; $.data.repositoryOwner.projectV2.fields.nodes[0].options | readColumns selected reply; 0 writes | read, line 77 | R/C | T/B | R/C | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-sibling-readColumns-data-repositoryOwner-projectV2-fields-nodes-0-options-0; $.data.repositoryOwner.projectV2.fields.nodes[0].options[0] | readColumns selected reply; 0 writes | read, line 77 | R/C | R/C | T/B | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-readColumns-data-repositoryOwner-projectV2-fields-nodes-0-options-0-name; $.data.repositoryOwner.projectV2.fields.nodes[0].options[0].name | readColumns selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | R/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-readColumns-data-repositoryOwner-projectV2-fields-pageInfo; $.data.repositoryOwner.projectV2.fields.pageInfo | readColumns selected reply; 0 writes | read, line 77 | T/B | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-readColumns-data-repositoryOwner-projectV2-fields-pageInfo-hasNextPage; $.data.repositoryOwner.projectV2.fields.pageInfo.hasNextPage | readColumns selected reply; 0 writes | read, line 77 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-readColumns-data-repositoryOwner-projectV2-fields-pageInfo-endCursor; $.data.repositoryOwner.projectV2.fields.pageInfo.endCursor | readColumns selected reply; 0 writes | read, line 77 | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| GQL-sibling-readFieldTypes-root; $ | readFieldTypes selected reply; 0 writes | read, line 77 | R/C | R/C | T/B | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-readFieldTypes-data; $.data | readFieldTypes selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-readFieldTypes-data-repositoryOwner; $.data.repositoryOwner | readFieldTypes selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-readFieldTypes-data-repositoryOwner-projectV2; $.data.repositoryOwner.projectV2 | readFieldTypes selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-readFieldTypes-data-repositoryOwner-projectV2-fields; $.data.repositoryOwner.projectV2.fields | readFieldTypes selected reply; 0 writes | read, line 77 | R/C | T/B | R/C | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-sibling-readFieldTypes-data-repositoryOwner-projectV2-fields-nodes; $.data.repositoryOwner.projectV2.fields.nodes | readFieldTypes selected reply; 0 writes | read, line 77 | T/B | T/B | T/B | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-sibling-readFieldTypes-data-repositoryOwner-projectV2-fields-nodes-0; $.data.repositoryOwner.projectV2.fields.nodes[0] | readFieldTypes selected reply; 0 writes | read, line 77 | H/C | U/B | T/B | H/C | H/C | U/B | T/B | U/B | FC1 |
+| GQL-sibling-readFieldTypes-data-repositoryOwner-projectV2-fields-nodes-0-name; $.data.repositoryOwner.projectV2.fields.nodes[0].name | readFieldTypes selected reply; 0 writes | read, line 77 | U/B | U/B | U/B | H/C | U/C | U/B | T/B | U/B | FC1 |
+| GQL-sibling-readFieldTypes-data-repositoryOwner-projectV2-fields-pageInfo; $.data.repositoryOwner.projectV2.fields.pageInfo | readFieldTypes selected reply; 0 writes | read, line 77 | T/B | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-readFieldTypes-data-repositoryOwner-projectV2-fields-pageInfo-hasNextPage; $.data.repositoryOwner.projectV2.fields.pageInfo.hasNextPage | readFieldTypes selected reply; 0 writes | read, line 77 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-readFieldTypes-data-repositoryOwner-projectV2-fields-pageInfo-endCursor; $.data.repositoryOwner.projectV2.fields.pageInfo.endCursor | readFieldTypes selected reply; 0 writes | read, line 77 | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| GQL-sibling-readLabels-root; $ | readLabels selected reply; 0 writes | read, line 77 | R/C | R/C | T/B | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-readLabels-data; $.data | readLabels selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-readLabels-data-repository; $.data.repository | readLabels selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-readLabels-data-repository-labels; $.data.repository.labels | readLabels selected reply; 0 writes | read, line 77 | R/C | T/B | R/C | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-sibling-readLabels-data-repository-labels-nodes; $.data.repository.labels.nodes | readLabels selected reply; 0 writes | read, line 77 | T/B | T/B | T/B | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-sibling-readLabels-data-repository-labels-pageInfo; $.data.repository.labels.pageInfo | readLabels selected reply; 0 writes | read, line 77 | T/B | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-readLabels-data-repository-labels-pageInfo-hasNextPage; $.data.repository.labels.pageInfo.hasNextPage | readLabels selected reply; 0 writes | read, line 77 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-readLabels-data-repository-labels-pageInfo-endCursor; $.data.repository.labels.pageInfo.endCursor | readLabels selected reply; 0 writes | read, line 77 | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| GQL-sibling-readBranches-root; $ | readBranches selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readBranches-data; $.data | readBranches selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readBranches-data-repository; $.data.repository | readBranches selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readBranches-data-repository-refs; $.data.repository.refs | readBranches selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readBranches-data-repository-refs-nodes; $.data.repository.refs.nodes | readBranches selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readBranches-data-repository-refs-nodes-0; $.data.repository.refs.nodes[0] | readBranches selected reply; 0 writes | read, line 77 | H/C | O/B | R/C | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-sibling-readBranches-data-repository-refs-pageInfo; $.data.repository.refs.pageInfo | readBranches selected reply; 0 writes | read, line 77 | R/C | O/B | R/C | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-sibling-readBranches-data-repository-refs-pageInfo-hasNextPage; $.data.repository.refs.pageInfo.hasNextPage | readBranches selected reply; 0 writes | read, line 77 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-sibling-readBranches-data-repository-refs-pageInfo-endCursor; $.data.repository.refs.pageInfo.endCursor | readBranches selected reply; 0 writes | read, line 77 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| GQL-sibling-readLabelledIssues-root; $ | readLabelledIssues selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readLabelledIssues-data; $.data | readLabelledIssues selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readLabelledIssues-data-repository; $.data.repository | readLabelledIssues selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readLabelledIssues-data-repository-issues; $.data.repository.issues | readLabelledIssues selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readLabelledIssues-data-repository-issues-nodes; $.data.repository.issues.nodes | readLabelledIssues selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readLabelledIssues-data-repository-issues-nodes-0; $.data.repository.issues.nodes[0] | readLabelledIssues selected reply; 0 writes | read, line 77 | H/C | U/B | R/C | H/C | H/C | U/B | R/C | U/B | FC1 |
+| GQL-sibling-readLabelledIssues-data-repository-issues-pageInfo; $.data.repository.issues.pageInfo | readLabelledIssues selected reply; 0 writes | read, line 77 | R/C | O/B | R/C | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-sibling-readLabelledIssues-data-repository-issues-pageInfo-hasNextPage; $.data.repository.issues.pageInfo.hasNextPage | readLabelledIssues selected reply; 0 writes | read, line 77 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-sibling-readLabelledIssues-data-repository-issues-pageInfo-endCursor; $.data.repository.issues.pageInfo.endCursor | readLabelledIssues selected reply; 0 writes | read, line 77 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| GQL-sibling-readOtherRepositories-root; $ | readOtherRepositories selected reply; 0 writes | read, line 77 | R/C | R/C | T/B | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-readOtherRepositories-data; $.data | readOtherRepositories selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-readOtherRepositories-data-repositoryOwner; $.data.repositoryOwner | readOtherRepositories selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-readOtherRepositories-data-repositoryOwner-projectV2; $.data.repositoryOwner.projectV2 | readOtherRepositories selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-readOtherRepositories-data-repositoryOwner-projectV2-items; $.data.repositoryOwner.projectV2.items | readOtherRepositories selected reply; 0 writes | read, line 77 | R/C | T/B | R/C | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-sibling-readOtherRepositories-data-repositoryOwner-projectV2-items-nodes; $.data.repositoryOwner.projectV2.items.nodes | readOtherRepositories selected reply; 0 writes | read, line 77 | T/B | T/B | T/B | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-sibling-readOtherRepositories-data-repositoryOwner-projectV2-items-nodes-0; $.data.repositoryOwner.projectV2.items.nodes[0] | readOtherRepositories selected reply; 0 writes | read, line 77 | H/C | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-readOtherRepositories-data-repositoryOwner-projectV2-items-nodes-0-id; $.data.repositoryOwner.projectV2.items.nodes[0].id | readOtherRepositories selected reply; 0 writes | read, line 77 | U/B | U/B | U/B | H/C | U/B | U/B | T/B | U/B | FC1 |
+| GQL-sibling-readOtherRepositories-data-repositoryOwner-projectV2-items-pageInfo; $.data.repositoryOwner.projectV2.items.pageInfo | readOtherRepositories selected reply; 0 writes | read, line 77 | T/B | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-readOtherRepositories-data-repositoryOwner-projectV2-items-pageInfo-hasNextPage; $.data.repositoryOwner.projectV2.items.pageInfo.hasNextPage | readOtherRepositories selected reply; 0 writes | read, line 77 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-readOtherRepositories-data-repositoryOwner-projectV2-items-pageInfo-endCursor; $.data.repositoryOwner.projectV2.items.pageInfo.endCursor | readOtherRepositories selected reply; 0 writes | read, line 77 | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| GQL-sibling-readItems-root; $ | readItems selected reply; 0 writes | read, line 77 | R/C | R/C | T/B | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-readItems-data; $.data | readItems selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-readItems-data-repositoryOwner; $.data.repositoryOwner | readItems selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-readItems-data-repositoryOwner-projectV2; $.data.repositoryOwner.projectV2 | readItems selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-readItems-data-repositoryOwner-projectV2-items; $.data.repositoryOwner.projectV2.items | readItems selected reply; 0 writes | read, line 77 | R/C | T/B | R/C | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-sibling-readItems-data-repositoryOwner-projectV2-items-nodes; $.data.repositoryOwner.projectV2.items.nodes | readItems selected reply; 0 writes | read, line 77 | T/B | T/B | T/B | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-sibling-readItems-data-repositoryOwner-projectV2-items-pageInfo; $.data.repositoryOwner.projectV2.items.pageInfo | readItems selected reply; 0 writes | read, line 77 | T/B | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-readItems-data-repositoryOwner-projectV2-items-pageInfo-hasNextPage; $.data.repositoryOwner.projectV2.items.pageInfo.hasNextPage | readItems selected reply; 0 writes | read, line 77 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-readItems-data-repositoryOwner-projectV2-items-pageInfo-endCursor; $.data.repositoryOwner.projectV2.items.pageInfo.endCursor | readItems selected reply; 0 writes | read, line 77 | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| GQL-sibling-readPullRequests-root; $ | readPullRequests selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readPullRequests-data; $.data | readPullRequests selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readPullRequests-data-repository; $.data.repository | readPullRequests selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readPullRequests-data-repository-pullRequests; $.data.repository.pullRequests | readPullRequests selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readPullRequests-data-repository-pullRequests-nodes; $.data.repository.pullRequests.nodes | readPullRequests selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readPullRequests-data-repository-pullRequests-pageInfo; $.data.repository.pullRequests.pageInfo | readPullRequests selected reply; 0 writes | read, line 77 | R/C | O/B | R/C | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-sibling-readPullRequests-data-repository-pullRequests-pageInfo-hasNextPage; $.data.repository.pullRequests.pageInfo.hasNextPage | readPullRequests selected reply; 0 writes | read, line 77 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-sibling-readPullRequests-data-repository-pullRequests-pageInfo-endCursor; $.data.repository.pullRequests.pageInfo.endCursor | readPullRequests selected reply; 0 writes | read, line 77 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| GQL-sibling-readIssue-root; $ | readIssue selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readIssue-data; $.data | readIssue selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readIssue-data-repository; $.data.repository | readIssue selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readComments-root; $ | readComments selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readComments-data; $.data | readComments selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readComments-data-repository; $.data.repository | readComments selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readComments-data-repository-pullRequest; $.data.repository.pullRequest | readComments selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readComments-data-repository-pullRequest-comments; $.data.repository.pullRequest.comments | readComments selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readComments-data-repository-pullRequest-comments-nodes; $.data.repository.pullRequest.comments.nodes | readComments selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readComments-data-repository-pullRequest-comments-pageInfo; $.data.repository.pullRequest.comments.pageInfo | readComments selected reply; 0 writes | read, line 77 | R/C | O/B | R/C | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-sibling-readComments-data-repository-pullRequest-comments-pageInfo-hasNextPage; $.data.repository.pullRequest.comments.pageInfo.hasNextPage | readComments selected reply; 0 writes | read, line 77 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-sibling-readComments-data-repository-pullRequest-comments-pageInfo-endCursor; $.data.repository.pullRequest.comments.pageInfo.endCursor | readComments selected reply; 0 writes | read, line 77 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| GQL-sibling-readIssueComments-root; $ | readIssueComments selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readIssueComments-data; $.data | readIssueComments selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readIssueComments-data-repository; $.data.repository | readIssueComments selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readIssueComments-data-repository-issue; $.data.repository.issue | readIssueComments selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readIssueComments-data-repository-issue-comments; $.data.repository.issue.comments | readIssueComments selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readIssueComments-data-repository-issue-comments-nodes; $.data.repository.issue.comments.nodes | readIssueComments selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| GQL-sibling-readIssueComments-data-repository-issue-comments-pageInfo; $.data.repository.issue.comments.pageInfo | readIssueComments selected reply; 0 writes | read, line 77 | R/C | O/B | R/C | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-sibling-readIssueComments-data-repository-issue-comments-pageInfo-hasNextPage; $.data.repository.issue.comments.pageInfo.hasNextPage | readIssueComments selected reply; 0 writes | read, line 77 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-sibling-readIssueComments-data-repository-issue-comments-pageInfo-endCursor; $.data.repository.issue.comments.pageInfo.endCursor | readIssueComments selected reply; 0 writes | read, line 77 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| GQL-sibling-priority-fields-root; $ | priority-fields selected reply; 0 writes | read, line 77 | R/C | R/C | T/B | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-priority-fields-data; $.data | priority-fields selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-priority-fields-data-repositoryOwner; $.data.repositoryOwner | priority-fields selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-priority-fields-data-repositoryOwner-projectV2; $.data.repositoryOwner.projectV2 | priority-fields selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-priority-fields-data-repositoryOwner-projectV2-fields; $.data.repositoryOwner.projectV2.fields | priority-fields selected reply; 0 writes | read, line 77 | R/C | T/B | R/C | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-sibling-priority-fields-data-repositoryOwner-projectV2-fields-nodes; $.data.repositoryOwner.projectV2.fields.nodes | priority-fields selected reply; 0 writes | read, line 77 | T/B | T/B | T/B | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-sibling-priority-fields-data-repositoryOwner-projectV2-fields-nodes-0; $.data.repositoryOwner.projectV2.fields.nodes[0] | priority-fields selected reply; 0 writes | read, line 77 | R/C | R/C | T/B | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-priority-fields-data-repositoryOwner-projectV2-fields-nodes-0-name; $.data.repositoryOwner.projectV2.fields.nodes[0].name | priority-fields selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | R/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-priority-fields-data-repositoryOwner-projectV2-fields-nodes-0-dataType; $.data.repositoryOwner.projectV2.fields.nodes[0].dataType | priority-fields selected reply; 0 writes | read, line 77 | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| GQL-sibling-priority-fields-data-repositoryOwner-projectV2-fields-nodes-0-options; $.data.repositoryOwner.projectV2.fields.nodes[0].options | priority-fields selected reply; 0 writes | read, line 77 | R/C | T/B | R/C | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-sibling-priority-fields-data-repositoryOwner-projectV2-fields-nodes-0-options-0; $.data.repositoryOwner.projectV2.fields.nodes[0].options[0] | priority-fields selected reply; 0 writes | read, line 77 | H/C | U/B | T/B | H/C | H/C | U/B | T/B | U/B | FC1 |
+| GQL-sibling-priority-fields-data-repositoryOwner-projectV2-fields-nodes-0-options-0-name; $.data.repositoryOwner.projectV2.fields.nodes[0].options[0].name | priority-fields selected reply; 0 writes | read, line 77 | U/B | U/B | U/B | H/C | U/C | U/B | T/B | U/B | FC1 |
+| GQL-sibling-priority-fields-data-repositoryOwner-projectV2-fields-pageInfo; $.data.repositoryOwner.projectV2.fields.pageInfo | priority-fields selected reply; 0 writes | read, line 77 | T/B | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-priority-fields-data-repositoryOwner-projectV2-fields-pageInfo-hasNextPage; $.data.repositoryOwner.projectV2.fields.pageInfo.hasNextPage | priority-fields selected reply; 0 writes | read, line 77 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-priority-fields-data-repositoryOwner-projectV2-fields-pageInfo-endCursor; $.data.repositoryOwner.projectV2.fields.pageInfo.endCursor | priority-fields selected reply; 0 writes | read, line 77 | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| GQL-sibling-priority-items-root; $ | priority-items selected reply; 0 writes | read, line 77 | R/C | R/C | T/B | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-priority-items-data; $.data | priority-items selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner; $.data.repositoryOwner | priority-items selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2; $.data.repositoryOwner.projectV2 | priority-items selected reply; 0 writes | read, line 77 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items; $.data.repositoryOwner.projectV2.items | priority-items selected reply; 0 writes | read, line 77 | R/C | T/B | R/C | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes; $.data.repositoryOwner.projectV2.items.nodes | priority-items selected reply; 0 writes | read, line 77 | T/B | T/B | T/B | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0; $.data.repositoryOwner.projectV2.items.nodes[0] | priority-items selected reply; 0 writes | read, line 77 | H/C | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-id; $.data.repositoryOwner.projectV2.items.nodes[0].id | priority-items selected reply; 0 writes | read, line 77 | U/B | U/B | U/B | H/C | U/B | U/B | T/B | U/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-fieldValues; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues | priority-items selected reply; 0 writes | read, line 77 | T/B | T/B | T/B | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-fieldValues-nodes; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.nodes | priority-items selected reply; 0 writes | read, line 77 | T/B | T/B | T/B | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-fieldValues-nodes-0; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.nodes[0] | priority-items selected reply; 0 writes | read, line 77 | H/C | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-fieldValues-nodes-0-name; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.nodes[0].name | priority-items selected reply; 0 writes | read, line 77 | U/B | U/B | U/B | H/C | U/C | U/B | T/B | U/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-fieldValues-nodes-0-field; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.nodes[0].field | priority-items selected reply; 0 writes | read, line 77 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-fieldValues-nodes-0-field-name; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.nodes[0].field.name | priority-items selected reply; 0 writes | read, line 77 | U/B | U/B | U/B | H/C | U/C | U/B | T/B | U/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-fieldValues-nodes-1; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.nodes[1] | priority-items selected reply; 0 writes | read, line 77 | H/C | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-fieldValues-nodes-1-name; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.nodes[1].name | priority-items selected reply; 0 writes | read, line 77 | U/B | U/B | U/B | H/C | U/C | U/B | T/B | U/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-fieldValues-nodes-1-field; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.nodes[1].field | priority-items selected reply; 0 writes | read, line 77 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-fieldValues-nodes-1-field-name; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.nodes[1].field.name | priority-items selected reply; 0 writes | read, line 77 | U/B | U/B | U/B | H/C | U/C | U/B | T/B | U/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-fieldValues-pageInfo; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.pageInfo | priority-items selected reply; 0 writes | read, line 77 | T/B | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-fieldValues-pageInfo-hasNextPage; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.pageInfo.hasNextPage | priority-items selected reply; 0 writes | read, line 77 | O/B | R/C | O/B | H/C | R/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-content; $.data.repositoryOwner.projectV2.items.nodes[0].content | priority-items selected reply; 0 writes | read, line 77 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-content-__typename; $.data.repositoryOwner.projectV2.items.nodes[0].content.__typename | priority-items selected reply; 0 writes | read, line 77 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-content-number; $.data.repositoryOwner.projectV2.items.nodes[0].content.number | priority-items selected reply; 0 writes | read, line 77 | U/B | U/B | U/B | H/C | H/C | U/B | T/B | U/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-content-title; $.data.repositoryOwner.projectV2.items.nodes[0].content.title | priority-items selected reply; 0 writes | read, line 77 | U/B | U/B | U/B | H/C | U/C | U/B | T/B | U/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-content-body; $.data.repositoryOwner.projectV2.items.nodes[0].content.body | priority-items selected reply; 0 writes | read, line 77 | U/B | U/B | U/B | H/C | U/C | U/B | T/B | U/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-content-repository; $.data.repositoryOwner.projectV2.items.nodes[0].content.repository | priority-items selected reply; 0 writes | read, line 77 | T/B | T/B | T/B | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-content-repository-nameWithOwner; $.data.repositoryOwner.projectV2.items.nodes[0].content.repository.nameWithOwner | priority-items selected reply; 0 writes | read, line 77 | T/B | T/B | T/B | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-content-labels; $.data.repositoryOwner.projectV2.items.nodes[0].content.labels | priority-items selected reply; 0 writes | read, line 77 | T/B | T/B | T/B | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-content-labels-nodes; $.data.repositoryOwner.projectV2.items.nodes[0].content.labels.nodes | priority-items selected reply; 0 writes | read, line 77 | T/B | T/B | T/B | H/C | H/C | T/B | T/B | T/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-content-labels-nodes-0; $.data.repositoryOwner.projectV2.items.nodes[0].content.labels.nodes[0] | priority-items selected reply; 0 writes | read, line 77 | H/C | U/B | T/B | H/C | H/C | U/B | T/B | U/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-content-labels-nodes-0-name; $.data.repositoryOwner.projectV2.items.nodes[0].content.labels.nodes[0].name | priority-items selected reply; 0 writes | read, line 77 | U/B | U/B | U/B | H/C | U/C | U/B | T/B | U/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-content-labels-pageInfo; $.data.repositoryOwner.projectV2.items.nodes[0].content.labels.pageInfo | priority-items selected reply; 0 writes | read, line 77 | T/B | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-content-labels-pageInfo-hasNextPage; $.data.repositoryOwner.projectV2.items.nodes[0].content.labels.pageInfo.hasNextPage | priority-items selected reply; 0 writes | read, line 77 | O/B | R/C | O/B | H/C | R/C | R/C | T/B | R/C | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-pageInfo; $.data.repositoryOwner.projectV2.items.pageInfo | priority-items selected reply; 0 writes | read, line 77 | T/B | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-pageInfo-hasNextPage; $.data.repositoryOwner.projectV2.items.pageInfo.hasNextPage | priority-items selected reply; 0 writes | read, line 77 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-pageInfo-endCursor; $.data.repositoryOwner.projectV2.items.pageInfo.endCursor | priority-items selected reply; 0 writes | read, line 77 | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+
+#### Repository write positions and stages
+
+| Probe prefix and selected path | Stage | Selection source | Missing | Wrong | Null | Extra | Oversized | Deep | Not JSON | Non-finite | B owner |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| WRITE-comment-root-resolved; $ | post-write resolved; 1 simulated write | repository-write, line 76 | U/B | U/B | U/B | U/B | U/B | U/B | R/C | U/B | FC1 |
+| WRITE-comment-id-resolved; $.id | post-write resolved; 1 simulated write | repository-write, line 76 | U/B | U/B | U/B | U/B | U/B | U/B | R/C | U/B | FC1 |
+| WRITE-comment-body-resolved; $.body | post-write resolved; 1 simulated write | repository-write, line 76 | U/B | U/B | U/B | U/B | U/B | U/B | R/C | U/B | FC1 |
+| WRITE-comment-root-event-refused; $ | post-write event-refused; 1 simulated write | repository-write, line 76 | O/B | O/B | O/B | O/B | O/B | O/B | R/C | O/B | FC1 |
+| WRITE-comment-id-event-refused; $.id | post-write event-refused; 1 simulated write | repository-write, line 76 | O/B | O/B | O/B | O/B | O/B | O/B | R/C | O/B | FC1 |
+| WRITE-comment-body-event-refused; $.body | post-write event-refused; 1 simulated write | repository-write, line 76 | O/B | O/B | O/B | O/B | O/B | O/B | R/C | O/B | FC1 |
+| WRITE-prcomment-root-resolved; $ | post-write resolved; 1 simulated write | repository-write, line 116 | U/B | U/B | U/B | U/B | U/B | U/B | R/C | U/B | FC1 |
+| WRITE-prcomment-id-resolved; $.id | post-write resolved; 1 simulated write | repository-write, line 116 | U/B | U/B | U/B | U/B | U/B | U/B | R/C | U/B | FC1 |
+| WRITE-prcomment-body-resolved; $.body | post-write resolved; 1 simulated write | repository-write, line 116 | U/B | U/B | U/B | U/B | U/B | U/B | R/C | U/B | FC1 |
+| WRITE-prcomment-root-event-refused; $ | post-write event-refused; 1 simulated write | repository-write, line 116 | O/B | O/B | O/B | O/B | O/B | O/B | R/C | O/B | FC1 |
+| WRITE-prcomment-id-event-refused; $.id | post-write event-refused; 1 simulated write | repository-write, line 116 | O/B | O/B | O/B | O/B | O/B | O/B | R/C | O/B | FC1 |
+| WRITE-prcomment-body-event-refused; $.body | post-write event-refused; 1 simulated write | repository-write, line 116 | O/B | O/B | O/B | O/B | O/B | O/B | R/C | O/B | FC1 |
+| WRITE-label-root-resolved; $ | post-write resolved; 1 simulated write | repository-write, line 122 | U/B | U/B | U/B | U/B | U/B | U/B | R/C | U/B | FC1 |
+| WRITE-label-0-resolved; $[0] | post-write resolved; 1 simulated write | repository-write, line 122 | U/B | U/B | U/B | U/B | U/B | U/B | R/C | U/B | FC1 |
+| WRITE-label-0-name-resolved; $[0].name | post-write resolved; 1 simulated write | repository-write, line 122 | U/B | U/B | U/B | U/B | U/B | U/B | R/C | U/B | FC1 |
+| WRITE-label-root-event-refused; $ | post-write event-refused; 1 simulated write | repository-write, line 122 | O/B | O/B | O/B | O/B | O/B | O/B | R/C | O/B | FC1 |
+| WRITE-label-0-event-refused; $[0] | post-write event-refused; 1 simulated write | repository-write, line 122 | O/B | O/B | O/B | O/B | O/B | O/B | R/C | O/B | FC1 |
+| WRITE-label-0-name-event-refused; $[0].name | post-write event-refused; 1 simulated write | repository-write, line 122 | O/B | O/B | O/B | O/B | O/B | O/B | R/C | O/B | FC1 |
+| WRITE-close-root-resolved; $ | post-write resolved; 1 simulated write | repository-write, line 142 | U/B | U/B | U/B | U/B | U/B | U/B | R/C | U/B | FC1 |
+| WRITE-close-number-resolved; $.number | post-write resolved; 1 simulated write | repository-write, line 142 | U/B | U/B | U/B | U/B | U/B | U/B | R/C | U/B | FC1 |
+| WRITE-close-state-resolved; $.state | post-write resolved; 1 simulated write | repository-write, line 142 | U/B | U/B | U/B | U/B | U/B | U/B | R/C | U/B | FC1 |
+| WRITE-close-root-event-refused; $ | post-write event-refused; 1 simulated write | repository-write, line 142 | O/B | O/B | O/B | O/B | O/B | O/B | R/C | O/B | FC1 |
+| WRITE-close-number-event-refused; $.number | post-write event-refused; 1 simulated write | repository-write, line 142 | O/B | O/B | O/B | O/B | O/B | O/B | R/C | O/B | FC1 |
+| WRITE-close-state-event-refused; $.state | post-write event-refused; 1 simulated write | repository-write, line 142 | O/B | O/B | O/B | O/B | O/B | O/B | R/C | O/B | FC1 |
+| WRITE-remove-root-resolved; $ | post-write resolved; 1 simulated write | repository-write, line 148 | U/B | U/B | U/B | U/B | U/B | U/B | R/C | U/B | FC1 |
+| WRITE-remove-0-resolved; $[0] | post-write resolved; 1 simulated write | repository-write, line 148 | U/B | U/B | U/B | U/B | U/B | U/B | R/C | U/B | FC1 |
+| WRITE-remove-0-name-resolved; $[0].name | post-write resolved; 1 simulated write | repository-write, line 148 | U/B | U/B | U/B | U/B | U/B | U/B | R/C | U/B | FC1 |
+| WRITE-remove-root-event-refused; $ | post-write event-refused; 1 simulated write | repository-write, line 148 | O/B | O/B | O/B | O/B | O/B | O/B | R/C | O/B | FC1 |
+| WRITE-remove-0-event-refused; $[0] | post-write event-refused; 1 simulated write | repository-write, line 148 | O/B | O/B | O/B | O/B | O/B | O/B | R/C | O/B | FC1 |
+| WRITE-remove-0-name-event-refused; $[0].name | post-write event-refused; 1 simulated write | repository-write, line 148 | O/B | O/B | O/B | O/B | O/B | O/B | R/C | O/B | FC1 |
+| WRITE-open-root-resolved; $ | post-write resolved; 1 simulated write | repository-write, line 131 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| WRITE-open-number-resolved; $.number | post-write resolved; 1 simulated write | repository-write, line 131 | U/B | U/B | U/B | H/C | U/B | U/B | R/C | U/B | FC1 |
+| WRITE-open-labels-resolved; $.labels | post-write resolved; 1 simulated write | repository-write, line 131 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| WRITE-open-labels-0-resolved; $.labels[0] | post-write resolved; 1 simulated write | repository-write, line 131 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| WRITE-open-labels-0-name-resolved; $.labels[0].name | post-write resolved; 1 simulated write | repository-write, line 131 | R/C | R/C | R/C | H/C | R/C | R/C | R/C | R/C | none |
+| WRITE-open-root-event-refused; $ | post-write event-refused; 1 simulated write | repository-write, line 131 | R/C | R/C | R/C | O/C | O/C | R/C | R/C | R/C | none |
+| WRITE-open-number-event-refused; $.number | post-write event-refused; 1 simulated write | repository-write, line 131 | O/B | O/B | O/B | O/C | O/B | O/B | R/C | O/B | FC1 |
+| WRITE-open-labels-event-refused; $.labels | post-write event-refused; 1 simulated write | repository-write, line 131 | R/C | R/C | R/C | O/C | O/C | R/C | R/C | R/C | none |
+| WRITE-open-labels-0-event-refused; $.labels[0] | post-write event-refused; 1 simulated write | repository-write, line 131 | R/C | R/C | R/C | O/C | O/C | R/C | R/C | R/C | none |
+| WRITE-open-labels-0-name-event-refused; $.labels[0].name | post-write event-refused; 1 simulated write | repository-write, line 131 | R/C | R/C | R/C | O/C | R/C | R/C | R/C | R/C | none |
+| WRITE-merge-root-resolved; $ | post-write resolved; 1 simulated write | repository-write, line 99 | R/C | R/C | T/B | H/C | H/C | R/C | T/B | R/C | FC1 |
+| WRITE-merge-merged-resolved; $.merged | post-write resolved; 1 simulated write | repository-write, line 99 | R/C | R/C | R/C | H/C | R/C | R/C | T/B | R/C | FC1 |
+| WRITE-merge-sha-resolved; $.sha | post-write resolved; 1 simulated write | repository-write, line 99 | U/B | U/B | U/B | H/C | U/B | U/B | T/B | U/B | FC1 |
+| WRITE-merge-root-event-refused; $ | post-write event-refused; 1 simulated write | repository-write, line 99 | R/C | R/C | R/C | O/C | O/C | R/C | R/C | R/C | none |
+| WRITE-merge-merged-event-refused; $.merged | post-write event-refused; 1 simulated write | repository-write, line 99 | R/C | R/C | R/C | O/C | R/C | R/C | R/C | R/C | none |
+| WRITE-merge-sha-event-refused; $.sha | post-write event-refused; 1 simulated write | repository-write, line 99 | O/B | O/B | O/B | O/C | O/B | O/B | R/C | O/B | FC1 |
+| WRITE-merge-pre-root; $ | pre-write; 0 or 1 simulated writes | repository-write, line 38 | R/C | R/C | T/B | H/C | H/C | R/C | T/B | R/C | FC1 |
+| WRITE-merge-pre-head; $.head | pre-write; 0 or 1 simulated writes | repository-write, line 38 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| WRITE-merge-pre-head-sha; $.head.sha | pre-write; 0 or 1 simulated writes | repository-write, line 38 | R/C | R/C | R/C | H/C | R/C | R/C | T/B | R/C | FC1 |
+| WRITE-merge-pre-merged; $.merged | pre-write; 0 or 1 simulated writes | repository-write, line 38 | O/B | O/B | O/B | H/C | O/B | O/B | T/B | O/B | FC1 |
+| WRITE-merge-pre-state; $.state | pre-write; 0 or 1 simulated writes | repository-write, line 38 | R/C | R/C | R/C | H/C | R/C | R/C | T/B | R/C | FC1 |
+| WRITE-merge-pre-mergeable; $.mergeable | pre-write; 0 or 1 simulated writes | repository-write, line 38 | O/B | O/B | R/C | H/C | O/B | O/B | T/B | O/B | FC1 |
+| WRITE-prcomment-pre-root; $ | pre-write; 0 or 1 simulated writes | repository-write, line 114 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| WRITE-prcomment-pre-head; $.head | pre-write; 0 or 1 simulated writes | repository-write, line 114 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| WRITE-prcomment-pre-head-sha; $.head.sha | pre-write; 0 or 1 simulated writes | repository-write, line 114 | R/C | R/C | R/C | H/C | R/C | R/C | R/C | R/C | none |
+| WRITE-merge-refusal-root; $ | post-write refusal; 1 simulated write | repository-write, line 11 | R/C | R/C | T/B | H/C | R/C | R/C | R/C | R/C | FC1 |
+| WRITE-merge-refusal-status; $.status | post-write refusal; 1 simulated write | repository-write, line 11 | R/C | R/C | R/C | H/C | R/C | R/C | R/C | R/C | none |
+| WRITE-merge-refusal-message; $.message | post-write refusal; 1 simulated write | repository-write, line 11 | R/C | R/C | R/C | H/C | R/C | R/C | R/C | R/C | none |
+
+#### Schema write answer stages
+
+| Probe prefix and selected path | Stage | Selection source | Missing | Wrong | Null | Extra | Oversized | Deep | Not JSON | Non-finite | B owner |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| SCHEMA-field-root-resolved; $ | post-write resolved; 1 simulated write | schema-write, line 35 | O/B | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| SCHEMA-field-data-resolved; $.data | post-write resolved; 1 simulated write | schema-write, line 35 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| SCHEMA-field-data-createProjectV2Field-resolved; $.data.createProjectV2Field | post-write resolved; 1 simulated write | schema-write, line 35 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| SCHEMA-field-data-createProjectV2Field-projectV2Field-resolved; $.data.createProjectV2Field.projectV2Field | post-write resolved; 1 simulated write | schema-write, line 35 | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| SCHEMA-field-data-createProjectV2Field-projectV2Field-id-resolved; $.data.createProjectV2Field.projectV2Field.id | post-write resolved; 1 simulated write | schema-write, line 35 | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| SCHEMA-field-root-event-refused; $ | post-write event-refused; 1 simulated write | schema-write, line 35 | R/C | R/C | R/C | O/C | O/C | R/C | R/C | R/C | none |
+| SCHEMA-field-data-event-refused; $.data | post-write event-refused; 1 simulated write | schema-write, line 35 | R/C | R/C | R/C | O/C | O/C | R/C | R/C | R/C | none |
+| SCHEMA-field-data-createProjectV2Field-event-refused; $.data.createProjectV2Field | post-write event-refused; 1 simulated write | schema-write, line 35 | R/C | O/B | R/C | O/C | O/C | O/B | R/C | O/B | FC1 |
+| SCHEMA-field-data-createProjectV2Field-projectV2Field-event-refused; $.data.createProjectV2Field.projectV2Field | post-write event-refused; 1 simulated write | schema-write, line 35 | O/C | O/C | O/C | O/C | O/C | O/C | R/C | O/C | none |
+| SCHEMA-field-data-createProjectV2Field-projectV2Field-id-event-refused; $.data.createProjectV2Field.projectV2Field.id | post-write event-refused; 1 simulated write | schema-write, line 35 | O/C | O/C | O/C | O/C | O/C | O/C | R/C | O/C | none |
+| SCHEMA-column-root-resolved; $ | post-write resolved; 1 simulated write | schema-write, line 35 | O/B | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| SCHEMA-column-data-resolved; $.data | post-write resolved; 1 simulated write | schema-write, line 35 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| SCHEMA-column-data-updateProjectV2Field-resolved; $.data.updateProjectV2Field | post-write resolved; 1 simulated write | schema-write, line 35 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| SCHEMA-column-data-updateProjectV2Field-projectV2Field-resolved; $.data.updateProjectV2Field.projectV2Field | post-write resolved; 1 simulated write | schema-write, line 35 | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| SCHEMA-column-data-updateProjectV2Field-projectV2Field-id-resolved; $.data.updateProjectV2Field.projectV2Field.id | post-write resolved; 1 simulated write | schema-write, line 35 | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| SCHEMA-column-root-event-refused; $ | post-write event-refused; 1 simulated write | schema-write, line 35 | R/C | R/C | R/C | O/C | O/C | R/C | R/C | R/C | none |
+| SCHEMA-column-data-event-refused; $.data | post-write event-refused; 1 simulated write | schema-write, line 35 | R/C | R/C | R/C | O/C | O/C | R/C | R/C | R/C | none |
+| SCHEMA-column-data-updateProjectV2Field-event-refused; $.data.updateProjectV2Field | post-write event-refused; 1 simulated write | schema-write, line 35 | R/C | O/B | R/C | O/C | O/C | O/B | R/C | O/B | FC1 |
+| SCHEMA-column-data-updateProjectV2Field-projectV2Field-event-refused; $.data.updateProjectV2Field.projectV2Field | post-write event-refused; 1 simulated write | schema-write, line 35 | O/C | O/C | O/C | O/C | O/C | O/C | R/C | O/C | none |
+| SCHEMA-column-data-updateProjectV2Field-projectV2Field-id-event-refused; $.data.updateProjectV2Field.projectV2Field.id | post-write event-refused; 1 simulated write | schema-write, line 35 | O/C | O/C | O/C | O/C | O/C | O/C | R/C | O/C | none |
+| SCHEMA-label-root-resolved; $ | post-write resolved; 1 simulated write | schema-write, line 35 | O/B | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| SCHEMA-label-data-resolved; $.data | post-write resolved; 1 simulated write | schema-write, line 35 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| SCHEMA-label-data-createLabel-resolved; $.data.createLabel | post-write resolved; 1 simulated write | schema-write, line 35 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| SCHEMA-label-data-createLabel-label-resolved; $.data.createLabel.label | post-write resolved; 1 simulated write | schema-write, line 35 | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| SCHEMA-label-data-createLabel-label-id-resolved; $.data.createLabel.label.id | post-write resolved; 1 simulated write | schema-write, line 35 | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| SCHEMA-label-root-event-refused; $ | post-write event-refused; 1 simulated write | schema-write, line 35 | R/C | R/C | R/C | O/C | O/C | R/C | R/C | R/C | none |
+| SCHEMA-label-data-event-refused; $.data | post-write event-refused; 1 simulated write | schema-write, line 35 | R/C | R/C | R/C | O/C | O/C | R/C | R/C | R/C | none |
+| SCHEMA-label-data-createLabel-event-refused; $.data.createLabel | post-write event-refused; 1 simulated write | schema-write, line 35 | R/C | O/B | R/C | O/C | O/C | O/B | R/C | O/B | FC1 |
+| SCHEMA-label-data-createLabel-label-event-refused; $.data.createLabel.label | post-write event-refused; 1 simulated write | schema-write, line 35 | O/C | O/C | O/C | O/C | O/C | O/C | R/C | O/C | none |
+| SCHEMA-label-data-createLabel-label-id-event-refused; $.data.createLabel.label.id | post-write event-refused; 1 simulated write | schema-write, line 35 | O/C | O/C | O/C | O/C | O/C | O/C | R/C | O/C | none |
+
+#### Item write answer stages
+
+| Probe prefix and selected path | Stage | Selection source | Missing | Wrong | Null | Extra | Oversized | Deep | Not JSON | Non-finite | B owner |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| ITEM-add-root-resolved; $ | post-write resolved; 1 simulated write | item-write, line 43 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| ITEM-add-data-resolved; $.data | post-write resolved; 1 simulated write | item-write, line 43 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| ITEM-add-data-addProjectV2ItemById-resolved; $.data.addProjectV2ItemById | post-write resolved; 1 simulated write | item-write, line 43 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| ITEM-add-data-addProjectV2ItemById-item-resolved; $.data.addProjectV2ItemById.item | post-write resolved; 1 simulated write | item-write, line 43 | R/C | U/B | R/C | H/C | H/C | U/B | R/C | U/B | FC1 |
+| ITEM-add-data-addProjectV2ItemById-item-id-resolved; $.data.addProjectV2ItemById.item.id | post-write resolved; 1 simulated write | item-write, line 43 | U/B | U/B | U/B | H/C | U/B | U/B | R/C | U/B | FC1 |
+| ITEM-add-root-event-refused; $ | post-write event-refused; 1 simulated write | item-write, line 43 | R/C | R/C | R/C | O/C | O/C | R/C | R/C | R/C | none |
+| ITEM-add-data-event-refused; $.data | post-write event-refused; 1 simulated write | item-write, line 43 | R/C | R/C | R/C | O/C | O/C | R/C | R/C | R/C | none |
+| ITEM-add-data-addProjectV2ItemById-event-refused; $.data.addProjectV2ItemById | post-write event-refused; 1 simulated write | item-write, line 43 | R/C | R/C | R/C | O/C | O/C | R/C | R/C | R/C | none |
+| ITEM-add-data-addProjectV2ItemById-item-event-refused; $.data.addProjectV2ItemById.item | post-write event-refused; 1 simulated write | item-write, line 43 | R/C | O/B | R/C | O/C | O/C | O/B | R/C | O/B | FC1 |
+| ITEM-add-data-addProjectV2ItemById-item-id-event-refused; $.data.addProjectV2ItemById.item.id | post-write event-refused; 1 simulated write | item-write, line 43 | O/B | O/B | O/B | O/C | O/B | O/B | R/C | O/B | FC1 |
+| ITEM-move-root-resolved; $ | post-write resolved; 1 simulated write | item-write, line 77 | O/B | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| ITEM-move-data-resolved; $.data | post-write resolved; 1 simulated write | item-write, line 77 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| ITEM-move-data-updateProjectV2ItemFieldValue-resolved; $.data.updateProjectV2ItemFieldValue | post-write resolved; 1 simulated write | item-write, line 77 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| ITEM-move-data-updateProjectV2ItemFieldValue-projectV2Item-resolved; $.data.updateProjectV2ItemFieldValue.projectV2Item | post-write resolved; 1 simulated write | item-write, line 77 | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| ITEM-move-data-updateProjectV2ItemFieldValue-projectV2Item-id-resolved; $.data.updateProjectV2ItemFieldValue.projectV2Item.id | post-write resolved; 1 simulated write | item-write, line 77 | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| ITEM-move-root-event-refused; $ | post-write event-refused; 1 simulated write | item-write, line 77 | R/C | R/C | R/C | O/C | O/C | R/C | R/C | R/C | none |
+| ITEM-move-data-event-refused; $.data | post-write event-refused; 1 simulated write | item-write, line 77 | R/C | R/C | R/C | O/C | O/C | R/C | R/C | R/C | none |
+| ITEM-move-data-updateProjectV2ItemFieldValue-event-refused; $.data.updateProjectV2ItemFieldValue | post-write event-refused; 1 simulated write | item-write, line 77 | R/C | O/B | R/C | O/C | O/C | O/B | R/C | O/B | FC1 |
+| ITEM-move-data-updateProjectV2ItemFieldValue-projectV2Item-event-refused; $.data.updateProjectV2ItemFieldValue.projectV2Item | post-write event-refused; 1 simulated write | item-write, line 77 | O/C | O/C | O/C | O/C | O/C | O/C | R/C | O/C | none |
+| ITEM-move-data-updateProjectV2ItemFieldValue-projectV2Item-id-event-refused; $.data.updateProjectV2ItemFieldValue.projectV2Item.id | post-write event-refused; 1 simulated write | item-write, line 77 | O/C | O/C | O/C | O/C | O/C | O/C | R/C | O/C | none |
+
+#### Write preflight positions
+
+| Probe prefix and selected path | Stage | Selection source | Missing | Wrong | Null | Extra | Oversized | Deep | Not JSON | Non-finite | B owner |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| PRE-schema-column-board-container; $.data.repositoryOwner.projectV2 | pre-write; observed count 0 or 1 | read, line 89 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| PRE-schema-column-board-id; $.data.repositoryOwner.projectV2.id | pre-write; observed count 0 or 1 | read, line 89 | O/B | O/B | O/B | H/C | O/B | O/B | T/B | O/B | FC1 |
+| PRE-schema-column-board-field; $.data.repositoryOwner.projectV2.field | pre-write; observed count 0 or 1 | read, line 89 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| PRE-schema-column-board-field-id; $.data.repositoryOwner.projectV2.field.id | pre-write; observed count 0 or 1 | read, line 89 | O/B | O/B | O/B | H/C | O/B | O/B | T/B | O/B | FC1 |
+| PRE-schema-column-board-field-options; $.data.repositoryOwner.projectV2.field.options | pre-write; observed count 0 or 1 | read, line 89 | R/C | T/B | R/C | H/C | R/C | T/B | T/B | T/B | FC1 |
+| PRE-schema-column-board-field-options-0-id; $.data.repositoryOwner.projectV2.field.options[0].id | pre-write; observed count 0 or 1 | read, line 89 | R/C | R/C | R/C | H/C | R/C | R/C | T/B | R/C | FC1 |
+| PRE-schema-column-board-field-options-0-name; $.data.repositoryOwner.projectV2.field.options[0].name | pre-write; observed count 0 or 1 | read, line 89 | R/C | R/C | R/C | H/C | R/C | R/C | T/B | R/C | FC1 |
+| PRE-schema-column-board-field-options-0-color; $.data.repositoryOwner.projectV2.field.options[0].color | pre-write; observed count 0 or 1 | read, line 89 | R/C | R/C | R/C | H/C | R/C | R/C | T/B | R/C | FC1 |
+| PRE-schema-column-board-field-options-0-description; $.data.repositoryOwner.projectV2.field.options[0].description | pre-write; observed count 0 or 1 | read, line 89 | R/C | R/C | R/C | H/C | R/C | R/C | T/B | R/C | FC1 |
+| PRE-schema-held-container; $.data.field | pre-write; observed count 0 or 1 | runners, line 306 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| PRE-schema-held-name; $.data.field.name | pre-write; observed count 0 or 1 | runners, line 306 | R/C | R/C | R/C | H/C | R/C | R/C | T/B | R/C | FC1 |
+| PRE-schema-held-options; $.data.field.options | pre-write; observed count 0 or 1 | runners, line 306 | R/C | T/B | R/C | H/C | H/C | T/B | T/B | T/B | FC1 |
+| PRE-schema-held-options-0; $.data.field.options[0] | pre-write; observed count 0 or 1 | runners, line 306 | R/C | R/C | T/B | H/C | H/C | R/C | T/B | R/C | FC1 |
+| PRE-schema-held-options-0-id; $.data.field.options[0].id | pre-write; observed count 0 or 1 | runners, line 306 | R/C | R/C | R/C | H/C | R/C | R/C | T/B | R/C | FC1 |
+| PRE-schema-held-options-0-name; $.data.field.options[0].name | pre-write; observed count 0 or 1 | runners, line 306 | R/C | R/C | R/C | H/C | R/C | R/C | T/B | R/C | FC1 |
+| PRE-schema-held-options-0-color; $.data.field.options[0].color | pre-write; observed count 0 or 1 | runners, line 306 | R/C | R/C | R/C | H/C | R/C | R/C | T/B | R/C | FC1 |
+| PRE-schema-held-options-0-description; $.data.field.options[0].description | pre-write; observed count 0 or 1 | runners, line 306 | R/C | R/C | R/C | H/C | R/C | R/C | T/B | R/C | FC1 |
+| PRE-item-move-board-id; $.data.repositoryOwner.projectV2.id | pre-write; observed count 0 or 1 | read, line 66 | O/B | O/B | O/B | H/C | O/B | O/B | T/B | O/B | FC1 |
+| PRE-item-move-board-field-id; $.data.repositoryOwner.projectV2.field.id | pre-write; observed count 0 or 1 | read, line 66 | R/C | R/C | R/C | H/C | R/C | R/C | T/B | R/C | FC1 |
+| PRE-item-move-board-field-options; $.data.repositoryOwner.projectV2.field.options | pre-write; observed count 0 or 1 | read, line 66 | R/C | T/B | R/C | H/C | H/C | T/B | T/B | T/B | FC1 |
+| PRE-item-move-board-field-options-0-id; $.data.repositoryOwner.projectV2.field.options[0].id | pre-write; observed count 0 or 1 | read, line 66 | O/B | O/B | O/B | H/C | O/B | O/B | T/B | O/B | FC1 |
+| PRE-item-move-board-field-options-0-name; $.data.repositoryOwner.projectV2.field.options[0].name | pre-write; observed count 0 or 1 | read, line 66 | R/C | R/C | R/C | H/C | R/C | R/C | T/B | R/C | FC1 |
+| PRE-item-columns-container; $.data | pre-write; observed count 0 or 1 | runners, line 455 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| PRE-item-columns-project; $.data.project | pre-write; observed count 0 or 1 | runners, line 455 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| PRE-item-columns-project-field; $.data.project.field | pre-write; observed count 0 or 1 | runners, line 455 | R/C | R/C | R/C | H/C | H/C | R/C | T/B | R/C | FC1 |
+| PRE-item-columns-project-field-id; $.data.project.field.id | pre-write; observed count 0 or 1 | runners, line 455 | R/C | R/C | R/C | H/C | R/C | R/C | T/B | R/C | FC1 |
+| PRE-item-columns-target; $.data.target | pre-write; observed count 0 or 1 | runners, line 455 | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| PRE-item-columns-target-name; $.data.target.name | pre-write; observed count 0 or 1 | runners, line 455 | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| PRE-item-issue-container; $ | pre-write; observed count 0 or 1 | item-write, line 38 | R/C | R/C | R/C | H/C | O/B | R/C | R/C | R/C | FC1 |
+| PRE-item-issue-node_id; $.node_id | pre-write; observed count 0 or 1 | item-write, line 38 | R/C | R/C | R/C | H/C | O/B | R/C | R/C | R/C | FC1 |
+
+#### Write exit failure positions
+
+| Probe prefix and selected path | Stage | Selection source | Missing | Wrong | Null | Extra | Oversized | Deep | Not JSON | Non-finite | B owner |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| EXIT-comment-nonzero; $ | post-call exit; see call/write counts | repository-write, line 76 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-comment-signal; $ | post-call exit; see call/write counts | repository-write, line 76 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-comment-timeout; $ | post-call exit; see call/write counts | repository-write, line 76 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-comment-not-started; $ | post-call exit; see call/write counts | repository-write, line 76 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-prcomment-nonzero; $ | post-call exit; see call/write counts | repository-write, line 116 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-prcomment-signal; $ | post-call exit; see call/write counts | repository-write, line 116 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-prcomment-timeout; $ | post-call exit; see call/write counts | repository-write, line 116 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-prcomment-not-started; $ | post-call exit; see call/write counts | repository-write, line 116 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-label-nonzero; $ | post-call exit; see call/write counts | repository-write, line 122 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-label-signal; $ | post-call exit; see call/write counts | repository-write, line 122 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-label-timeout; $ | post-call exit; see call/write counts | repository-write, line 122 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-label-not-started; $ | post-call exit; see call/write counts | repository-write, line 122 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-close-nonzero; $ | post-call exit; see call/write counts | repository-write, line 142 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-close-signal; $ | post-call exit; see call/write counts | repository-write, line 142 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-close-timeout; $ | post-call exit; see call/write counts | repository-write, line 142 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-close-not-started; $ | post-call exit; see call/write counts | repository-write, line 142 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-remove-nonzero; $ | post-call exit; see call/write counts | repository-write, line 148 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-remove-signal; $ | post-call exit; see call/write counts | repository-write, line 148 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-remove-timeout; $ | post-call exit; see call/write counts | repository-write, line 148 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-remove-not-started; $ | post-call exit; see call/write counts | repository-write, line 148 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-open-nonzero; $ | post-call exit; see call/write counts | repository-write, line 131 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-open-signal; $ | post-call exit; see call/write counts | repository-write, line 131 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-open-timeout; $ | post-call exit; see call/write counts | repository-write, line 131 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-open-not-started; $ | post-call exit; see call/write counts | repository-write, line 131 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-merge-nonzero; $ | post-call exit; see call/write counts | repository-write, line 99 | R/C | R/C | T/B | R/C | R/C | R/C | R/C | R/C | FC1 |
+| EXIT-merge-signal; $ | post-call exit; see call/write counts | repository-write, line 99 | R/C | R/C | T/B | R/C | R/C | R/C | R/C | R/C | FC1 |
+| EXIT-merge-timeout; $ | post-call exit; see call/write counts | repository-write, line 99 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| EXIT-merge-not-started; $ | post-call exit; see call/write counts | repository-write, line 99 | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+
+#### Settings selected positions
+
+| Probe prefix and selected path | Stage | Selection source | Missing | Wrong | Null | Extra | Oversized | Deep | Not JSON | Non-finite | B owner |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| SETTINGS-root-local; $ | settings without reach; 0 commands | claude, line 219 | H/C | R/C | R/C | H/C | H/C | H/C | R/C | R/C | none |
+| SETTINGS-root-reach; $ | settings with reach; 0 commands | claude, line 219 | H/C | R/C | R/C | H/C | H/C | H/C | R/C | R/C | none |
+| SETTINGS-permissions-local; $.permissions | settings without reach; 0 commands | claude, line 219 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| SETTINGS-permissions-reach; $.permissions | settings with reach; 0 commands | claude, line 219 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| SETTINGS-permissions-allow-local; $.permissions.allow | settings without reach; 0 commands | claude, line 219 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| SETTINGS-permissions-allow-reach; $.permissions.allow | settings with reach; 0 commands | claude, line 219 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| SETTINGS-permissions-allow-0-local; $.permissions.allow[0] | settings without reach; 0 commands | claude, line 219 | H/C | U/B | U/B | H/C | U/C | U/B | R/C | O/B | FC5 |
+| SETTINGS-permissions-allow-0-reach; $.permissions.allow[0] | settings with reach; 0 commands | claude, line 219 | H/C | U/B | U/B | H/C | U/C | U/B | R/C | O/B | FC5 |
+| SETTINGS-permissions-deny-local; $.permissions.deny | settings without reach; 0 commands | claude, line 219 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| SETTINGS-permissions-deny-reach; $.permissions.deny | settings with reach; 0 commands | claude, line 219 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| SETTINGS-permissions-deny-0-local; $.permissions.deny[0] | settings without reach; 0 commands | claude, line 219 | H/C | U/B | U/B | H/C | U/C | U/B | R/C | O/B | FC5 |
+| SETTINGS-permissions-deny-0-reach; $.permissions.deny[0] | settings with reach; 0 commands | claude, line 219 | H/C | U/B | U/B | H/C | U/C | U/B | R/C | O/B | FC5 |
+| SETTINGS-permissions-ask-local; $.permissions.ask | settings without reach; 0 commands | claude, line 219 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| SETTINGS-permissions-ask-reach; $.permissions.ask | settings with reach; 0 commands | claude, line 219 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| SETTINGS-permissions-ask-0-local; $.permissions.ask[0] | settings without reach; 0 commands | claude, line 219 | H/C | U/B | U/B | H/C | U/C | U/B | R/C | O/B | FC5 |
+| SETTINGS-permissions-ask-0-reach; $.permissions.ask[0] | settings with reach; 0 commands | claude, line 219 | H/C | U/B | U/B | H/C | U/C | U/B | R/C | O/B | FC5 |
+| SETTINGS-enabledPlugins-local; $.enabledPlugins | settings without reach; 0 commands | claude, line 219 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| SETTINGS-enabledPlugins-reach; $.enabledPlugins | settings with reach; 0 commands | claude, line 219 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| SETTINGS-enabledPlugins-cc-plugin-agents-md@builtin-local; $.enabledPlugins.cc-plugin-agents-md@builtin | settings without reach; 0 commands | claude, line 219 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| SETTINGS-enabledPlugins-cc-plugin-agents-md@builtin-reach; $.enabledPlugins.cc-plugin-agents-md@builtin | settings with reach; 0 commands | claude, line 219 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| SETTINGS-enabledPlugins-cc-plugin-telemetry@builtin-local; $.enabledPlugins.cc-plugin-telemetry@builtin | settings without reach; 0 commands | claude, line 219 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| SETTINGS-enabledPlugins-cc-plugin-telemetry@builtin-reach; $.enabledPlugins.cc-plugin-telemetry@builtin | settings with reach; 0 commands | claude, line 219 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| SETTINGS-enabledPlugins-cc-plugin-plugin-authoring@builtin-local; $.enabledPlugins.cc-plugin-plugin-authoring@builtin | settings without reach; 0 commands | claude, line 219 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| SETTINGS-enabledPlugins-cc-plugin-plugin-authoring@builtin-reach; $.enabledPlugins.cc-plugin-plugin-authoring@builtin | settings with reach; 0 commands | claude, line 219 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+
 
 ### Text maps
 
@@ -218,7 +755,7 @@ The file class's four columns are missing, empty, truncated and invalid UTF-8. �
 
 | Entry point and file | Missing | Empty | Truncated | Invalid UTF-8 |
 |---|---|---|---|---|
-| C-F, settings JSON | H/C [C-claude.settings.missing] | R/C [C-claude.settings.empty] | R/C [C-F, line 219] | R/C [C-F, line 219] |
+| C-F, settings JSON | H/C [C-claude.settings.missing] | R/C [C-claude.settings.empty] | R/C [SETTINGS-bytes.truncated-string] | U/C [SETTINGS-bytes.invalid-byte-string; deny-local; deny-reach; ask-local; ask-reach]; R/C [SETTINGS-bytes.invalid-byte-json] |
 | X-F, agent file | R/C [X-F, line 305] | H/C [X-codex.files.empty-agent] | U/B [X-codex.files.not-utf8-agent] | U/B [X-codex.files.not-utf8-agent] |
 | X-F, config file | H/C [X-F, line 274] | U/B [X-codex.files.empty-agent] | U/B [config truncated] | U/B [config invalid-utf8] |
 | W, `.git` pointer file | R/C [W, lines 361–378] | R/C [W, line 372] | R/C [W, line 372] | H/C [W, lines 372–378] |
@@ -226,6 +763,8 @@ The file class's four columns are missing, empty, truncated and invalid UTF-8. �
 | TOML at X-F | Invalid TOML | Missing key | Wrong type |
 |---|---|---|---|
 | Config copied into child home | U/B [X-codex.files.not-toml] | U/B [X-codex.files.empty-agent] | U/B [config wrong-type] |
+
+The settings-file invalid-byte cell has two parse paths. Byte ff inside the JSON string Read(…) is decoded to the replacement character by the UTF-8 read, then JSON.parse succeeds and invocation passes Read(�) in its CLI settings. That is U/C under rule 4's any-string text clause, not a refusal or a claim that UTF-8 was validated. The deny and ask lists are measured both with and without a reached directory. A bare ff byte outside a JSON string instead makes JSON.parse fail and is R/C; a truncated JSON string is also R/C. The selected-stage receipt quotes the exact input hex and resulting settings or failure. No provider command ran. The JSON list-member maps separately expose numbers, nulls and nested objects being passed as permission rules, and Infinity becoming null during JSON.stringify; those B cells belong to FC5.
 
 | Named directory path | Missing | Empty | Non-file entry | Symbolic link | Unreadable entry |
 |---|---|---|---|---|---|
@@ -254,16 +793,18 @@ Each proposed card is a proposal, not an issue filed. Cell sets below are disjoi
 
 | Proposed card | Breaching cells owned | Files to change; Self-hosting? | Added-line estimate and dependencies |
 |---|---|---|---|
-| FC1, forge JSON boundary | All B cells in F-R, F-S, F-I and F-W JSON maps, including both REST matrices | `src/substrate/forge/read.mjs`, `src/substrate/forge/schema-write.mjs`, `src/substrate/forge/item-write.mjs`, `src/substrate/forge/repository-write.mjs`, `src/substrate/forge/runners.mjs`; read.mjs and runners.mjs are Self-hosting paths | Estimate +140 L0; depends on owner handling of Self-hosting review and FC2's plain process result |
+| FC1, forge JSON boundary | All B cells in the direct F-R helper maps and the selected-field/stage tables whose B owner is FC1 | `src/substrate/forge/read.mjs`, `src/substrate/forge/schema-write.mjs`, `src/substrate/forge/item-write.mjs`, `src/substrate/forge/repository-write.mjs`, `src/substrate/forge/runners.mjs`; read.mjs and runners.mjs are Self-hosting paths | Estimate +220 L0; depends on owner handling of Self-hosting review and FC2's plain process result |
 | FC2, process answer and table failures | All B cells in P-C and P-T text and exit maps | `src/substrate/process.mjs`; Self-hosting | Estimate +25 L0; depends on none |
 | FC3, git structural answers | All B cells in W and D text, exit and file maps | `src/substrate/worktrees.mjs`, `src/substrate/data-ref.mjs`; worktrees.mjs is Self-hosting | Estimate +35 L0; depends on FC2 |
 | FC4, launchd loaded program | All B cells in L text and exit maps | `src/substrate/launchd.mjs`; Self-hosting | Estimate +12 L0; depends on FC2 |
-| FC5, provider files and answers | All B cells in C-A, C-F, X-A, X-P and X-F JSON, text, exit, file, TOML and directory maps | `src/substrate/providers/claude.mjs`, `src/substrate/providers/codex.mjs`; both Self-hosting | Estimate +45 L0; depends on FC2 |
+| FC5, provider files and answers | All B cells in C-A, C-F, X-A, X-P and X-F JSON, text, exit, file, TOML and directory maps | `src/substrate/providers/claude.mjs`, `src/substrate/providers/codex.mjs`; both Self-hosting | Estimate +55 L0; depends on FC2 |
 | FC6, environment values | E-C missing HOME B cell | `src/substrate/providers/claude.mjs`; Self-hosting | Estimate +3 L0; depends on FC5 |
 | FC7, human output | T1 and T2 | `src/substrate/process.mjs`; Self-hosting | Estimate +12 L0; depends on FC2 |
 
-The cell sets in that table expand as follows, using the map's column names. FC1 owns F-R answerOf: missing, wrong type, null, extra, oversized, deep, non-JSON, non-finite; F-R board ID and repository ID: missing, wrong type, null, oversized, deep, non-JSON, non-finite; F-R field option: missing, wrong type, null, deep, non-JSON, non-finite; F-R missing-root: null and non-JSON; F-S mutation: all eight JSON kinds; F-S held-options read: null and non-JSON; F-I mutation ID: missing, wrong type, null, oversized, deep, non-finite; F-I columns-field read: null and non-JSON; F-W issue comment: missing, wrong type, null, extra, oversized, deep, non-finite; and F-W merge SHA: missing, wrong type, null, deep, non-JSON, non-finite. FC2 owns P-C text: control, escape, invalid UTF-8, empty; P-C exit: nonzero, signal, timeout; P-T text: control, escape, invalid UTF-8, empty; and the found ordinary P-T Map shape. FC3 owns W structural worktree text: control, escape, invalid UTF-8, missing field; the found ordinary W undefined lock; D structural parent or commit: control, escape, invalid UTF-8, empty commit and malformed SHA. FC4 owns L loaded program: control, escape, invalid UTF-8. FC5 owns C-A all eight JSON kinds, X-A all four text kinds, X-F agent truncated and invalid UTF-8, X-F config empty, truncated, invalid UTF-8, and all three TOML kinds. FC6 owns E-C unset HOME. FC7 owns T1 and T2. No other row has a B cell.
+The table's cell sets are a partition. In the selected-field/stage matrices, each B cell belongs to the one owner in its row's B owner column: FC1 for every forge row and FC5 for every settings row; none belongs to another proposed card. The generator's explicit row-and-column ledger measured 1,488 B cells in that matrix: 1,464 assigned to FC1 and 24 to FC5, with no unowned B cell. The source and summary are in the linked receipt; these counts describe the fixture matrix at the named main commit.
 
-FC1 also owns these F-R REST B cells, by the probe IDs in the first supplemental map: newest-number.missing, newest-number.wrong, newest-number.null, newest-number.oversized, newest-number.deep, newest-number.nonfinite, newest-number.nullEntry; merge-base-sha.wrong, merge-base-sha.oversized, merge-base-sha.deep, merge-base-sha.nonfinite; permission-role.oversized; environment-root.null, environment-root.oversized, environment-root.deep, environment-root.nonfinite; environment-policy-fields.missing, environment-policy-fields.wrong, environment-policy-fields.oversized, environment-policy-fields.deep, environment-policy-fields.nonfinite; environment-policy-list.deep, environment-policy-list.nonfinite; check-runs-array.oversized, check-runs-array.deep, check-runs-array.nonfinite; statuses-array.deep, statuses-array.nonfinite; effective-rules-array.deep, effective-rules-array.nonfinite; and classic-checks.wrong, classic-checks.deep, classic-checks.nonfinite. FC1 also owns every B cell named by row and column in the nested REST matrix. No REST B cell is assigned to FC2–FC7. FC1's line estimate includes the REST parser checks and remains an estimate; its budget dependency remains the same.
+Outside that matrix, FC1 owns direct answerOf missing, wrong type, null, extra, oversized, deep, non-JSON and non-finite; and direct board ID and repository ID missing, wrong type, null, oversized, deep, non-JSON and non-finite. FC2 owns P-C text control, escape, invalid UTF-8 and empty; P-C exit nonzero, signal and timeout; P-T text control, escape, invalid UTF-8 and empty; and the found ordinary P-T Map shape. FC3 owns W structural worktree text control, escape, invalid UTF-8 and missing field; the found ordinary W undefined lock; and D structural parent or commit control, escape, invalid UTF-8, empty commit and malformed SHA. FC4 owns L loaded program control, escape and invalid UTF-8. FC5 also owns C-A all eight JSON kinds, X-A all four text kinds, X-F agent truncated and invalid UTF-8, X-F config empty, truncated and invalid UTF-8, and all three TOML kinds. FC6 owns E-C unset HOME. FC7 alone owns print sites T1 and T2. No other row has a B cell.
 
-The recommendation is to card the seven disjoint fixes, with FC2 first, then reconcile their combined estimated +272 lines against the 127-line headroom before implementation. The PM should not assume a parsed JSON value is plain data, a UTF-8 decoding validates bytes, a git commit string is a SHA, or a process adapter's Buffer is plain data. A new source path, an authoritative contract proving a field intentionally unrestricted, a change to boundary rule 4 by the owner, or a budget measurement after other work lands would change the affected recommendation. Nothing in this report changes the architecture or creates a fix card.
+FC1's estimate is a judgment based on shared checks at the seven REST parser sites, the GraphQL selectors, the write-answer selectors and their event-refusal checks. FC5's estimate includes permission-list members and their settings serialization. Both estimates are for L0 additions against the measured main row, not measured implementation sizes. Their dependencies in the table still apply; the expanded cells create no additional proposed fix card.
+
+The recommendation is to card the seven disjoint fixes, with FC2 first, then reconcile their combined estimated +362 lines against the 127-line headroom before implementation. The PM should not assume a parsed JSON value is plain data, a UTF-8 decoding validates bytes, a git commit string is a SHA, or a process adapter's Buffer is plain data. A new source path, an authoritative contract proving a field intentionally unrestricted, a change to boundary rule 4 by the owner, or a budget measurement after other work lands would change the affected recommendation. Nothing in this report changes the architecture or creates a fix card.
