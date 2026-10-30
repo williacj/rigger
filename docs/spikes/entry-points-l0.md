@@ -21,6 +21,8 @@ rg -n 'writeWhole\(' src/substrate
 rg -n 'function (rowsOf|occupied|answers|live)' src/substrate/process.mjs
 rg -n 'function (secondsOf|tipIn|printed)' src/substrate/process.mjs src/substrate/data-ref.mjs
 rg -n 'writeWhole|survivor|console|stderr|\.write' src/substrate/process.mjs | tail -70
+rg -n 'written\(|await (boardOf|repositoryOf|readRunner|heldOptions|columnsField)|return send\(FORGE' src/substrate/forge -g '*.mjs'
+rg -nH 'failure\.(result|made)|check\(' src/substrate/forge -g 'write-made.mjs'
 rg -n 'readdir|opendir|process\.argv|process\.stdin|JSON\.parse|readFile|lstat|statSync|realpath|process\.env' src/substrate -g '*.mjs' -g '*.sh' | wc -l
 ```
 
@@ -58,7 +60,7 @@ The [auxiliary search transcript](https://github.com/williacj/rigger/issues/1150
 | `src/substrate/forge/repository-write.mjs` | F-W: 56 | none |
 | `src/substrate/forge/runners.mjs` | F-R/F-S/F-I/F-W: 108, 155, 390, 411, 463, 479 | 17, 20, 38, 47, 85, 151, 404 |
 | `src/substrate/forge/schema-write.mjs` | F-S: 22, 26 | none |
-| `src/substrate/forge/write-made.mjs` | none | 14, 18, 31 |
+| `src/substrate/forge/write-made.mjs` | F-S/F-I/F-W: 14, 18 | 31 |
 | `src/substrate/git-environment.mjs` | none | 1, 14, 30 |
 | `src/substrate/host.mjs` | none | 8 |
 | `src/substrate/launchd.mjs` | L: 10 | none |
@@ -70,7 +72,22 @@ The [auxiliary search transcript](https://github.com/williacj/rigger/issues/1150
 | `src/substrate/standard-error.mjs` | T1/T2: 103, 115, 121 | 5, 18 |
 | `src/substrate/worktrees.mjs` | W: 91, 99, 109, 250, 258, 348, 363, 377, 432, 468, 469, 476 | 19, 28, 31, 32, 33, 60 |
 
-S8 consists of comments about measured survivor timing and later containment events; none reads a new outside value. P-C owns its command-result lines 351, 1788, 1790, 1811, 1813, 1822 and 1823. P-T owns the process-table parser and stderr lines 817, 902, 903, 945 and 987, and the survivor-sighting calls at 1170, 1646 and 1656. T1/T2 own the output writer import at line 13. The [all-search-hits comparison](https://github.com/williacj/rigger/issues/1150#issuecomment-6515255546) checks the union of every quoted source search against both ledgers: 338 distinct hits, all 338 assigned, none missing or surplus.
+S8 consists of comments about measured survivor timing and later containment events; none reads a new outside value. P-C owns its command-result lines 351, 1788, 1790, 1811, 1813, 1822 and 1823. P-T owns the process-table parser and stderr lines 817, 902, 903, 945 and 987, and the survivor-sighting calls at 1170, 1646 and 1656. T1/T2 own the output writer import at line 13. The [all-search-hits comparison](https://github.com/williacj/rigger/issues/1150#issuecomment-6515255546) checked the original command set against the first two ledgers: 338 distinct hits, all 338 assigned, none missing or surplus. The two guard searches above extend that command set; [their full outputs and new union check](https://github.com/williacj/rigger/issues/1150#issuecomment-6534588259) reconcile 370 distinct hits, all assigned.
+
+### Write-call and event-guard search ledger
+
+The new searches include the arguments that start internal reads before a runner sends its mutation. Each hit below is assigned to the same forge side that owns its answer. The shared written helper belongs to F-S, F-I and F-W: it inspects raw gh output carried by a refused event. Lines 14 and 18 are therefore reassigned from S7; carried at line 31 still copies an already produced failure and remains internal.
+
+| Path | Guard-call hits assigned to inventory | Guard-call hits set aside |
+|---|---|---|
+| `src/substrate/forge/item-write.mjs` | F-I: 36, 40, 43, 64, 71 | none |
+| `src/substrate/forge/read.mjs` | F-R: 40, 306, 313, 409, 477, 618, 703 | none |
+| `src/substrate/forge/repository-write.mjs` | F-W: 37, 69, 79, 97, 111 | none |
+| `src/substrate/forge/runners.mjs` | F-R/F-S/F-I/F-W: 169, 302, 361, 397, 451, 468, 471, 475, 499 | none |
+| `src/substrate/forge/schema-write.mjs` | F-S: 39, 44, 57, 65 | none |
+| `src/substrate/forge/write-made.mjs` | F-S/F-I/F-W: 14, 18, 19, 21 | none |
+
+The schema runner performs heldOptions at runners line 361 before its send at line 397, inside the promise supplied to written at schema-write line 39. The item runner performs columnsField at runners line 471 before its send at line 475, inside the promise supplied to written at item-write line 71. Board/repository/issue/PR reads before that promise are separate positions. Repository writes use written at lines 69, 79 and 97 after any confirming read; they have no internal runner read. This enumeration includes the runner arguments and the callback that converts a refused event result into made.
 
 ## Inventory
 
@@ -96,6 +113,8 @@ The quoted phrases are from `ARCHITECTURE.md`, boundary rule 4, lines 97–131. 
 | E-X | “Each module that reads the environment, for the variables it reads” | `src/substrate/providers/codex.mjs`, ownerHome 260 | CODEX_HOME; L1 |
 | E-G | “Each module that reads the environment, for the variables it reads” | `src/substrate/git-environment.mjs`, gitEnvironment 48 | all process environment keys and values, removing redirecting git keys; L0 child calls |
 | E-D | “Each module that reads the environment, for the variables it reads” | `src/substrate/data-ref.mjs`, pushStream 37 | process environment forwarded through E-G; git child |
+
+F-S, F-I and F-W also include the shared written function in `src/substrate/forge/write-made.mjs`, line 14, whose check call at line 21 admits the raw reply carried by a refused event. The preflight and mutation stages below distinguish where that result came from.
 
 Claude's adapter passes the agent **path** to the CLI at `src/substrate/providers/claude.mjs` line 401; it does not read the agent file's contents. Probe C-claude.agent-missing handed the nonexistent path through. Thus C-F's agent-file bytes have no map; the path and settings file do. The Codex adapter does read its agent file at line 305.
 
@@ -164,8 +183,8 @@ The repository-write cases cover every endpoint's parsed reply. openIssue select
 | REST-runs-entry; $.check_runs[1] | read; 0 writes | read, line 366 | H/C | O/B | R/C | H/C | H/C | O/B | R/C | O/B | FC1 |
 | REST-runs-name; $.check_runs[1].name | read; 0 writes | read, line 366 | O/B | O/B | O/B | H/C | U/B | O/B | R/C | O/B | FC1 |
 | REST-runs-id; $.check_runs[1].id | read; 0 writes | read, line 366 | O/B | O/B | O/B | H/C | O/B | O/B | R/C | O/B | FC1 |
-| REST-runs-status; $.check_runs[1].status | read; 0 writes | read, line 366 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
-| REST-runs-conclusion; $.check_runs[1].conclusion | read; 0 writes | read, line 366 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
+| REST-runs-status; $.check_runs[1].status | read; 0 writes | read, line 366 | O/B | O/B | O/B | H/C | O/B | O/B | R/C | O/B | FC1 |
+| REST-runs-conclusion; $.check_runs[1].conclusion | read; 0 writes | read, line 366 | O/B | O/B | O/B | H/C | O/B | O/B | R/C | O/B | FC1 |
 | REST-runs-app; $.check_runs[1].app | read; 0 writes | read, line 366 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
 | REST-runs-app-id; $.check_runs[1].app.id | read; 0 writes | read, line 366 | O/B | O/B | O/B | H/C | O/B | O/B | R/C | O/B | FC1 |
 | REST-run-only-id; $.check_runs[0].id | read; 0 writes | read, line 366 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
@@ -174,13 +193,13 @@ The repository-write cases cover every endpoint's parsed reply. openIssue select
 | REST-statuses-list; $ | read; 0 writes | read, line 368 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
 | REST-statuses-entry; $[0] | read; 0 writes | read, line 368 | H/C | O/B | R/C | H/C | H/C | O/B | R/C | O/B | FC1 |
 | REST-statuses-context; $[0].context | read; 0 writes | read, line 368 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
-| REST-statuses-state; $[0].state | read; 0 writes | read, line 368 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
+| REST-statuses-state; $[0].state | read; 0 writes | read, line 368 | O/B | O/B | O/B | H/C | O/B | O/B | R/C | O/B | FC1 |
 | REST-statuses-creator; $[0].creator | read; 0 writes | read, line 368 | H/C | O/B | H/C | H/C | H/C | O/B | R/C | O/B | FC1 |
 | REST-statuses-login; $[0].creator.login | read; 0 writes | read, line 368 | H/C | U/B | H/C | H/C | U/C | U/B | R/C | U/B | FC1 |
 | REST-statuses-id; $[0].creator.id | read; 0 writes | read, line 368 | H/C | U/B | H/C | H/C | U/B | U/B | R/C | U/B | FC1 |
 | REST-rules-list; $ | read; 0 writes | read, line 398 | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
 | REST-rules-entry; $[0] | read; 0 writes | read, line 398 | H/C | O/B | R/C | H/C | H/C | O/B | R/C | O/B | FC1 |
-| REST-rules-type; $[0].type | read; 0 writes | read, line 398 | O/B | O/B | O/B | H/C | U/B | O/B | R/C | O/B | FC1 |
+| REST-rules-type; $[0].type | read; 0 writes | read, line 398 | O/B | O/B | O/B | H/C | O/B | O/B | R/C | O/B | FC1 |
 | REST-rules-parameters; $[0].parameters | read; 0 writes | read, line 398 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
 | REST-rules-checks; $[0].parameters.required_status_checks | read; 0 writes | read, line 398 | O/B | R/C | O/B | H/C | H/C | R/C | R/C | R/C | FC1 |
 | REST-rules-check; $[0].parameters.required_status_checks[0] | read; 0 writes | read, line 398 | H/C | U/B | R/C | H/C | H/C | U/B | R/C | U/B | FC1 |
@@ -291,7 +310,7 @@ The repository-write cases cover every endpoint's parsed reply. openIssue select
 | GQL-items-fieldValues-pageInfo; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.pageInfo | read; 0 writes | read, line 132 | T/B | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
 | GQL-items-fieldValues-pageInfo-hasNextPage; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.pageInfo.hasNextPage | read; 0 writes | read, line 132 | O/B | R/C | O/B | H/C | R/C | R/C | T/B | R/C | FC1 |
 | GQL-items-content; $.data.repositoryOwner.projectV2.items.nodes[0].content | read; 0 writes | read, line 132 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
-| GQL-items-content-__typename; $.data.repositoryOwner.projectV2.items.nodes[0].content.__typename | read; 0 writes | read, line 132 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-items-content-__typename; $.data.repositoryOwner.projectV2.items.nodes[0].content.__typename | read; 0 writes | read, line 132 | O/B | O/B | O/B | H/C | O/B | O/B | T/B | O/B | FC1 |
 | GQL-items-content-number; $.data.repositoryOwner.projectV2.items.nodes[0].content.number | read; 0 writes | read, line 132 | U/B | U/B | U/B | H/C | H/C | U/B | T/B | U/B | FC1 |
 | GQL-items-content-title; $.data.repositoryOwner.projectV2.items.nodes[0].content.title | read; 0 writes | read, line 132 | U/B | U/B | U/B | H/C | U/C | U/B | T/B | U/B | FC1 |
 | GQL-items-content-body; $.data.repositoryOwner.projectV2.items.nodes[0].content.body | read; 0 writes | read, line 132 | U/B | U/B | U/B | H/C | U/C | U/B | T/B | U/B | FC1 |
@@ -303,13 +322,13 @@ The repository-write cases cover every endpoint's parsed reply. openIssue select
 | GQL-items-content-labels-nodes-0-name; $.data.repositoryOwner.projectV2.items.nodes[0].content.labels.nodes[0].name | read; 0 writes | read, line 132 | U/B | U/B | U/B | H/C | U/C | U/B | T/B | U/B | FC1 |
 | GQL-items-content-labels-pageInfo; $.data.repositoryOwner.projectV2.items.nodes[0].content.labels.pageInfo | read; 0 writes | read, line 132 | T/B | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
 | GQL-items-content-labels-pageInfo-hasNextPage; $.data.repositoryOwner.projectV2.items.nodes[0].content.labels.pageInfo.hasNextPage | read; 0 writes | read, line 132 | O/B | R/C | O/B | H/C | R/C | R/C | T/B | R/C | FC1 |
-| GQL-other-type; $.data.repositoryOwner.projectV2.items.nodes[0].type | read; 0 writes | read, line 170 | O/B | O/B | O/B | H/C | U/B | O/B | T/B | O/B | FC1 |
+| GQL-other-type; $.data.repositoryOwner.projectV2.items.nodes[0].type | read; 0 writes | read, line 170 | O/B | O/B | O/B | H/C | O/B | O/B | T/B | O/B | FC1 |
 | GQL-other-content; $.data.repositoryOwner.projectV2.items.nodes[0].content | read; 0 writes | read, line 170 | H/C | O/B | H/C | H/C | H/C | O/B | T/B | O/B | FC1 |
 | GQL-other-content-repository; $.data.repositoryOwner.projectV2.items.nodes[0].content.repository | read; 0 writes | read, line 170 | H/C | O/B | H/C | H/C | H/C | O/B | T/B | O/B | FC1 |
 | GQL-other-content-repository-nameWithOwner; $.data.repositoryOwner.projectV2.items.nodes[0].content.repository.nameWithOwner | read; 0 writes | read, line 170 | H/C | T/B | H/C | H/C | H/C | T/B | T/B | T/B | FC1 |
 | GQL-pulls-node; $.data.repository.pullRequests.nodes[0] | read; 0 writes | read, line 525 | H/C | O/B | R/C | H/C | H/C | O/B | R/C | O/B | FC1 |
 | GQL-pulls-number; $.data.repository.pullRequests.nodes[0].number | read; 0 writes | read, line 525 | U/B | U/B | U/B | H/C | H/C | U/B | R/C | U/B | FC1 |
-| GQL-pulls-state; $.data.repository.pullRequests.nodes[0].state | read; 0 writes | read, line 525 | O/B | O/B | O/B | H/C | H/C | O/B | R/C | O/B | FC1 |
+| GQL-pulls-state; $.data.repository.pullRequests.nodes[0].state | read; 0 writes | read, line 525 | O/B | O/B | O/B | H/C | O/B | O/B | R/C | O/B | FC1 |
 | GQL-pulls-headRefOid; $.data.repository.pullRequests.nodes[0].headRefOid | read; 0 writes | read, line 525 | U/B | U/B | U/B | H/C | U/B | U/B | R/C | U/B | FC1 |
 | GQL-pulls-baseRefName; $.data.repository.pullRequests.nodes[0].baseRefName | read; 0 writes | read, line 525 | U/B | U/B | U/B | H/C | U/C | U/B | R/C | U/B | FC1 |
 | GQL-pulls-headRepository; $.data.repository.pullRequests.nodes[0].headRepository | read; 0 writes | read, line 525 | H/C | R/C | H/C | H/C | H/C | R/C | R/C | R/C | none |
@@ -475,7 +494,7 @@ The repository-write cases cover every endpoint's parsed reply. openIssue select
 | GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-fieldValues-pageInfo; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.pageInfo | priority-items selected reply; 0 writes | read, line 77 | T/B | O/B | T/B | H/C | H/C | O/B | T/B | O/B | FC1 |
 | GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-fieldValues-pageInfo-hasNextPage; $.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.pageInfo.hasNextPage | priority-items selected reply; 0 writes | read, line 77 | O/B | R/C | O/B | H/C | R/C | R/C | T/B | R/C | FC1 |
 | GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-content; $.data.repositoryOwner.projectV2.items.nodes[0].content | priority-items selected reply; 0 writes | read, line 77 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
-| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-content-__typename; $.data.repositoryOwner.projectV2.items.nodes[0].content.__typename | priority-items selected reply; 0 writes | read, line 77 | O/B | O/B | O/B | H/C | H/C | O/B | T/B | O/B | FC1 |
+| GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-content-__typename; $.data.repositoryOwner.projectV2.items.nodes[0].content.__typename | priority-items selected reply; 0 writes | read, line 77 | O/B | O/B | O/B | H/C | O/B | O/B | T/B | O/B | FC1 |
 | GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-content-number; $.data.repositoryOwner.projectV2.items.nodes[0].content.number | priority-items selected reply; 0 writes | read, line 77 | U/B | U/B | U/B | H/C | H/C | U/B | T/B | U/B | FC1 |
 | GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-content-title; $.data.repositoryOwner.projectV2.items.nodes[0].content.title | priority-items selected reply; 0 writes | read, line 77 | U/B | U/B | U/B | H/C | U/C | U/B | T/B | U/B | FC1 |
 | GQL-sibling-priority-items-data-repositoryOwner-projectV2-items-nodes-0-content-body; $.data.repositoryOwner.projectV2.items.nodes[0].content.body | priority-items selected reply; 0 writes | read, line 77 | U/B | U/B | U/B | H/C | U/C | U/B | T/B | U/B | FC1 |
@@ -714,9 +733,9 @@ The repository-write cases cover every endpoint's parsed reply. openIssue select
 
 #### Provider JSON sibling positions
 
-The [provider sibling receipt](https://github.com/williacj/rigger/issues/1150#issuecomment-6523656015) quotes its full source, exact command and all 100 result records. It ran at the same measured main source, beginning 2026-10-30T13:11:01Z at one-minute load 7.37, and exited 0. C-A's source is signedIn at line 71 of `src/substrate/providers/claude.mjs`; X-P's sources are skillsIn at line 195 and probed at line 240 of `src/substrate/providers/codex.mjs`. The selected message, content container, part and text have separate cells, both alone and beside another valid skill block. There cannot be two JSON roots in one tool answer, so the companion-root position is excluded by JSON.parse at line 198; companion-message rows exercise the first member instead. A malformed selected member can be discarded when another block is valid, whereas an answer with no readable block is refused. Raw 1e999 text is preserved while adding that companion, so the non-finite cases are parsed as numbers, not null inserted by JSON.stringify.
+The earlier [provider sibling receipt](https://github.com/williacj/rigger/issues/1150#issuecomment-6523656015) quotes its full source, exact command and all 100 result records. It ran at the same measured main source, beginning 2026-10-30T13:11:01Z at one-minute load 7.37, and exited 0. C-A's source is signedIn at line 71 of `src/substrate/providers/claude.mjs`; X-P's sources are skillsIn at line 195 and probed at line 240 of `src/substrate/providers/codex.mjs`. The selected message, content container, part and text have separate cells. The four companion rows use the corrected R3 receipt below; the earlier missing-message composition was invalid JSON and is retained only as a syntax-failure measurement. There cannot be two JSON roots in one tool answer, so the companion-root position is excluded by JSON.parse at line 198; companion-message rows exercise the first member instead. A malformed selected member can be discarded when another block is valid, whereas an answer with no readable block is refused. Raw 1e999 text is preserved while adding that companion, so the non-finite cases are parsed as numbers, not null inserted by JSON.stringify.
 
-Each prefix plus its kind column names an exact output record. H/C here is the adapter's explicit array/string selection and construction; it does not mean it validates ignored fields. O/B for C-A is its documented unknown answer, undefined, which is neither plain data nor a built failure under rule 4. The probe's stdout representation of that return is the word undefined; the function does not return that string. FC5 alone owns the 13 O/B cells in these two auth rows. The last receipt record also demonstrates Read(�) passed through the allow list with reach, completing the settings-byte stage's local/reached comparison without executing Claude.
+Each prefix plus its kind column names an exact output record. H/C here is the adapter's explicit array/string selection and construction; it does not mean it validates ignored fields. O/B for C-A is its documented unknown answer, undefined, which is neither plain data nor a built failure under rule 4. The probe's stdout representation of that return is the word undefined; the function does not return that string. FC5 alone owns the 13 O/B cells in these two auth rows. The earlier receipt’s last record also demonstrates Read(�) passed through the allow list with reach, completing the settings-byte stage's local/reached comparison without executing Claude.
 
 | Selected provider prefix | Stage and position | Missing | Wrong | Null | Extra | Oversized | Deep | Not JSON | Non-finite | B owner |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -727,12 +746,96 @@ Each prefix plus its kind column names an exact output record. H/C here is the a
 | SKILL-single-content | only selected message; $[0].content | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
 | SKILL-single-part | only selected message; $[0].content[0] | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
 | SKILL-single-text | only selected message; $[0].content[0].text | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
-| SKILL-companion-message | with another valid skill block; $[0] | R/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
-| SKILL-companion-content | with another valid skill block; $[0].content | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
-| SKILL-companion-part | with another valid skill block; $[0].content[0] | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
-| SKILL-companion-text | with another valid skill block; $[0].content[0].text | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| R3-SKILL-companion-message | with another valid skill block; $[0] | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| R3-SKILL-companion-content | with another valid skill block; $[0].content | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| R3-SKILL-companion-part | with another valid skill block; $[0].content[0] | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| R3-SKILL-companion-text | with another valid skill block; $[0].content[0].text | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
 
 An [intermediate provider fixture run](https://github.com/williacj/rigger/issues/1150#issuecomment-6523656414) reused existing scratch homes and caught EEXIST before reaching Codex's parser. Its complete source and output are preserved, and it supplies no ruling. The corrected receipt uses a fresh retained directory and makes an unexpected setup failure exit nonzero.
+
+### R3 type and refused-event distinctions
+
+The independent R3 acceptance attack was an attack receipt, not a judge verdict. It exposed missing iterable-container cells, enum rulings inferred from a plain result, a false current-write mark on a refused internal read, and a malformed provider fixture. The acceptance and production source did not change.
+
+The [R3 receipt index](https://github.com/williacj/rigger/issues/1150#issuecomment-6534596649) links all full sources, exact commands and unfiltered outputs. The [container/enum source and corrected primary generator](https://github.com/williacj/rigger/issues/1150#issuecomment-6534588259) quote both new source searches and their full output. All 13 quoted source commands now reconcile against the three hit ledgers: 370 distinct source hits, all 370 assigned, no missing or surplus hit. The earlier 338-hit receipt remains the measurement of the original command set.
+
+The 45 TYPE records finish the container distinctions; their full output is [02-values-output-01](https://github.com/williacj/rigger/issues/1150#issuecomment-6534588715); [03-enum-output-01](https://github.com/williacj/rigger/issues/1150#issuecomment-6534589157); [03-enum-output-02](https://github.com/williacj/rigger/issues/1150#issuecomment-6534589476). The accompanying enum command first failed to start after its source-preparation anchor assertion; no enum ruling uses that setup failure. The completed enum-only public-producer run supplies 153 result records across 17 selected structural-vocabulary positions at the same measured main source. It began at 2026-10-30T21:59:05Z, one-minute load 2.80, and exited 0. An unrecognized status/conclusion string produces pending/failed, not a successful enum check. The same correction applies to commit-status state, the rule-type filter, item type filters and pull-request state filtering. All eight corrected oversized derived-enum cells are O/B and owned by FC1. Six had incorrectly been H/C; two were already breaches but described as handed on rather than derived. Raw policy type and field dataType still pass unchecked (U/B); the explicit PR-state, mergeability, file-type and NOT_FOUND checks refuse (R/C); priority field dataType is unused on the measured path (H/C). These rulings use each selected field's code contract, not merely a plain returned object.
+
+In the primary tables, Wrong names the probe's concrete wrong-type fixture. For rules-checks and classic-checks that fixture was an object, which is refused. The TYPE table below gives strings and malformed array members their own cells at those same container positions. Its string-valued checks lists produce an own undefined context (tagged in stdout and independently observed by ownUndefinedContext), and belong to FC1. A primary row with no B cell among its eight concrete fixtures does not erase a B cell in this type extension.
+
+The [actual-runner source and new table generator](https://github.com/williacj/rigger/issues/1150#issuecomment-6534589783) use only public schema/item/repository producers, their default runners, a local gh fixture executable and a refusing emitter. throughL0 constructs EVENT_REFUSED and its raw Buffer result; no internal failure object is injected. The 720 result records record the exact process arguments, PID, priorResult, priorWrites, currentWrites and totalWrites. The run began at 2026-10-30T21:55:38Z with one-minute load 5.95 and exited 0. Full output parts: [1](https://github.com/williacj/rigger/issues/1150#issuecomment-6534590152); [2](https://github.com/williacj/rigger/issues/1150#issuecomment-6534590503); [3](https://github.com/williacj/rigger/issues/1150#issuecomment-6534590867); [4](https://github.com/williacj/rigger/issues/1150#issuecomment-6534591280); [5](https://github.com/williacj/rigger/issues/1150#issuecomment-6534591637); [6](https://github.com/williacj/rigger/issues/1150#issuecomment-6534592006); [7](https://github.com/williacj/rigger/issues/1150#issuecomment-6534592416); [8](https://github.com/williacj/rigger/issues/1150#issuecomment-6534592768); [9](https://github.com/williacj/rigger/issues/1150#issuecomment-6534593061); [10](https://github.com/williacj/rigger/issues/1150#issuecomment-6534593415); [11](https://github.com/williacj/rigger/issues/1150#issuecomment-6534593727); [12](https://github.com/williacj/rigger/issues/1150#issuecomment-6534594114); [13](https://github.com/williacj/rigger/issues/1150#issuecomment-6534594440); [14](https://github.com/williacj/rigger/issues/1150#issuecomment-6534594753); [15](https://github.com/williacj/rigger/issues/1150#issuecomment-6534595275); [16](https://github.com/williacj/rigger/issues/1150#issuecomment-6534595761).
+
+The refused held-options and columns reads can carry the current mutation's root as an extra field. Every non-null variant—object, number, string, true, false, zero, empty string, array, oversized string, nested object and non-finite number—sets made while currentWrites is zero. Missing, null, unrelated-root and malformed JSON do not. This yields 44 false-mark cells: two internal read positions × two prior-write states × eleven non-null variants. A preceding comment is independently recorded as priorWrites one; it never becomes the current schema/item mutation. The same runs cover initial board/repository/issue/PR reads outside written and accepted-read controls. Mutation-stage controls demonstrate the same void answer mark after a mutation was actually sent. An undefined made.answer alone is therefore not the defect: the false claim of a current action with no current mutation is.
+
+The wrong mark is produced at the L0 boundary and stays in FC1. The shared written promise/check at `src/substrate/forge/write-made.mjs`, lines 14–21, and its side/runner call sites are in FC1's proposed file scope. The consequence is observable in the contracts of `src/cli/setup-board.mjs`, lines 101–104, and `src/workflow/transitions.mjs`, lines 116–125: each consumes made as the producer's claim that its current write happened. This report proposes fixing that producer claim rather than adding a hostile-value defense to those consumers.
+
+#### REST container type distinctions
+
+The prefix plus the column name identifies its exact TYPE record. Object, number, boolean and non-finite scalar are noniterable; string is iterable. The array-member columns exercise wrong members inside an actual list. Each B cell here belongs only to FC1.
+
+| Prefix | valid | missing | object | string | empty-string | number | boolean | null | primitive-members | null-member | extra | oversized-string | deep | not-json | nonfinite | B owner |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| TYPE-rules-checks | H/C | O/B | R/C | U/B | O/B | R/C | R/C | O/B | U/B | R/C | H/C | U/B | R/C | R/C | R/C | FC1 |
+| TYPE-classic-checks | H/C | H/C | R/C | U/B | O/B | R/C | R/C | H/C | U/B | R/C | H/C | U/B | R/C | R/C | R/C | FC1 |
+| TYPE-classic-contexts | H/C | H/C | R/C | O/B | O/B | R/C | R/C | H/C | U/B | U/B | H/C | O/B | R/C | R/C | R/C | FC1 |
+
+#### Actual-runner preflight event and value positions
+
+Each prefix plus the value column identifies an exact REAL record. The prefix includes the operation, read position, prior-write count and accepted/refused call.end event. Its record carries both priorWrites and currentWrites; totalWrites is their sum. On every refused read currentWrites is zero. The object/deep values are plain objects; false, zero, empty string and array are non-null values as well. Unrelated-root puts the object under a different mutation name. Not-json changes the entire selected read reply to malformed syntax. Each B cell here belongs only to FC1.
+
+| Prefix | missing | null | object | number | string | true | false | zero | empty-string | array | oversized | deep | nonfinite | not-json | unrelated-root | B owner |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| REAL-field-board.prior-0.accepted | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| REAL-field-board.prior-0.refused | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| REAL-field-board.prior-1.accepted | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| REAL-field-board.prior-1.refused | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| REAL-column-board.prior-0.accepted | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| REAL-column-board.prior-0.refused | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| REAL-column-board.prior-1.accepted | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| REAL-column-board.prior-1.refused | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| REAL-column-held-options.prior-0.accepted | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| REAL-column-held-options.prior-0.refused | R/C | R/C | O/B | O/B | O/B | O/B | O/B | O/B | O/B | O/B | O/B | O/B | O/B | R/C | R/C | FC1 |
+| REAL-column-held-options.prior-1.accepted | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| REAL-column-held-options.prior-1.refused | R/C | R/C | O/B | O/B | O/B | O/B | O/B | O/B | O/B | O/B | O/B | O/B | O/B | R/C | R/C | FC1 |
+| REAL-label-repository.prior-0.accepted | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| REAL-label-repository.prior-0.refused | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| REAL-label-repository.prior-1.accepted | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| REAL-label-repository.prior-1.refused | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| REAL-add-issue.prior-0.accepted | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| REAL-add-issue.prior-0.refused | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| REAL-add-issue.prior-1.accepted | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| REAL-add-issue.prior-1.refused | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| REAL-add-board.prior-0.accepted | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| REAL-add-board.prior-0.refused | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| REAL-add-board.prior-1.accepted | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| REAL-add-board.prior-1.refused | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| REAL-move-board.prior-0.accepted | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| REAL-move-board.prior-0.refused | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| REAL-move-board.prior-1.accepted | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| REAL-move-board.prior-1.refused | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| REAL-move-columns.prior-0.accepted | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| REAL-move-columns.prior-0.refused | R/C | R/C | O/B | O/B | O/B | O/B | O/B | O/B | O/B | O/B | O/B | O/B | O/B | R/C | R/C | FC1 |
+| REAL-move-columns.prior-1.accepted | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| REAL-move-columns.prior-1.refused | R/C | R/C | O/B | O/B | O/B | O/B | O/B | O/B | O/B | O/B | O/B | O/B | O/B | R/C | R/C | FC1 |
+| REAL-merge-pull.prior-0.accepted | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| REAL-merge-pull.prior-0.refused | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| REAL-merge-pull.prior-1.accepted | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | T/B | H/C | FC1 |
+| REAL-merge-pull.prior-1.refused | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| REAL-prcomment-confirmation.prior-0.accepted | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| REAL-prcomment-confirmation.prior-0.refused | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+| REAL-prcomment-confirmation.prior-1.accepted | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| REAL-prcomment-confirmation.prior-1.refused | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | R/C | none |
+
+The 120 REAL mutation-stage records are positive/negative provenance controls for the existing schema/item mutation maps. They put the same values in the current mutation reply after that mutation has actually been sent, with and without the prior comment. They are not used as evidence for a read-stage acknowledgment. Their currentWrites is one, unlike every refused preflight record. Existing mutation-shape rulings remain in the primary matrix; the new preflight cells above are separately owned.
+
+
+#### Corrected provider deletion fixture
+
+The [R3 provider source and all 40 outputs](https://github.com/williacj/rigger/issues/1150#issuecomment-6534596221) validate JSON and the surviving final companion before invoking the public adapter. This run began at 2026-10-30T21:59:56Z at one-minute load 2.07 and exited 0. It exercises every required JSON kind at message, content, part and text positions beside a valid companion, and keeps syntax failure separate. It calls only the local Codex fixture executable; no installed agent CLI runs. Its premise guards also preserve raw 1e999 text through composition.
+
+R3-SKILL-companion-message.missing is valid JSON with exactly one remaining message, returns skills.config empty and is H/C. R3-SKILL-deletion.empty-alone is also valid JSON but contains no skill block and is R/C. R3-SKILL-syntax.leading-comma reproduces the earlier invalid comma-prefixed array and is R/C for syntax. R3-SKILL-nonfinite.companion retains the raw non-finite member and is H/C because that non-message is discarded beside the valid block. The four companion rows above now refer to these R3 records; the old missing-message receipt is historical syntax evidence only. This correction adds no breach or fix owner. The original ignored fixture has also been corrected and now guards JSON validity; its prior source and all run directories remain preserved.
+
+
 
 ### Text maps
 
@@ -813,7 +916,7 @@ Each proposed card is a proposal, not an issue filed. Cell sets below are disjoi
 
 | Proposed card | Breaching cells owned | Files to change; Self-hosting? | Added-line estimate and dependencies |
 |---|---|---|---|
-| FC1, forge JSON boundary | All B cells in the direct F-R helper maps and the selected-field/stage tables whose B owner is FC1 | `src/substrate/forge/read.mjs`, `src/substrate/forge/schema-write.mjs`, `src/substrate/forge/item-write.mjs`, `src/substrate/forge/repository-write.mjs`, `src/substrate/forge/runners.mjs`; read.mjs and runners.mjs are Self-hosting paths | Estimate +220 L0; depends on owner handling of Self-hosting review and FC2's plain process result |
+| FC1, forge JSON boundary | All B cells in the direct F-R helper maps and the selected-field/stage tables whose B owner is FC1 | `src/substrate/forge/read.mjs`, `src/substrate/forge/schema-write.mjs`, `src/substrate/forge/item-write.mjs`, `src/substrate/forge/repository-write.mjs`, `src/substrate/forge/runners.mjs`, `src/substrate/forge/write-made.mjs`; read.mjs and runners.mjs are Self-hosting paths | Estimate +240 L0; depends on owner handling of Self-hosting review and FC2's plain process result |
 | FC2, process answer and table failures | All B cells in P-C and P-T text and exit maps | `src/substrate/process.mjs`; Self-hosting | Estimate +25 L0; depends on none |
 | FC3, git structural answers | All B cells in W and D text, exit and file maps | `src/substrate/worktrees.mjs`, `src/substrate/data-ref.mjs`; worktrees.mjs is Self-hosting | Estimate +35 L0; depends on FC2 |
 | FC4, launchd loaded program | All B cells in L text and exit maps | `src/substrate/launchd.mjs`; Self-hosting | Estimate +12 L0; depends on FC2 |
@@ -821,10 +924,10 @@ Each proposed card is a proposal, not an issue filed. Cell sets below are disjoi
 | FC6, environment values | E-C missing HOME B cell | `src/substrate/providers/claude.mjs`; Self-hosting | Estimate +3 L0; depends on FC5 |
 | FC7, human output | T1 and T2 | `src/substrate/process.mjs`; Self-hosting | Estimate +12 L0; depends on FC2 |
 
-The table's cell sets are a partition. In the selected-field/stage matrices, each B cell belongs to the one owner in its row's B owner column: FC1 for every forge row and FC5 for every settings row; none belongs to another proposed card. The generator's explicit row-and-column ledger measured 1,488 B cells in that matrix: 1,464 assigned to FC1 and 24 to FC5, with no unowned B cell. The source and summary are in the linked receipt; these counts describe the fixture matrix at the named main commit.
+The table's cell sets are a partition. In the selected-field/stage matrices, each B cell belongs to the one owner in its row's B owner column: FC1 for every forge row and FC5 for every settings row; none belongs to another proposed card. The generator's explicit row-and-column ledger measured 1,494 B cells in that matrix: 1,470 assigned to FC1 and 24 to FC5, with no unowned B cell. The corrected generator and summary are in the R3 receipt; these counts describe the primary fixture matrix at the named main commit. The separate R3 container/preflight matrix has 645 ruled cells, including 73 B cells, all owned only by FC1. Of those B cells, 44 are false made marks before any current mutation. Counts reconcile artifacts; the call/field inventory and observed contracts supply coverage, not the totals alone.
 
 Outside that matrix, FC1 owns direct answerOf missing, wrong type, null, extra, oversized, deep, non-JSON and non-finite; and direct board ID and repository ID missing, wrong type, null, oversized, deep, non-JSON and non-finite. FC2 owns P-C text control, escape, invalid UTF-8 and empty; P-C exit nonzero, signal and timeout; P-T text control, escape, invalid UTF-8 and empty; and the found ordinary P-T Map shape. FC3 owns W structural worktree text control, escape, invalid UTF-8 and missing field; the found ordinary W undefined lock; and D structural parent or commit control, escape, invalid UTF-8, empty commit and malformed SHA. FC4 owns L loaded program control, escape and invalid UTF-8. FC5 also owns the 13 B cells in the provider auth addendum, X-A all four text kinds, X-F agent truncated and invalid UTF-8, X-F config empty, truncated and invalid UTF-8, and all three TOML kinds. FC6 owns E-C unset HOME. FC7 alone owns print sites T1 and T2. No other row has a B cell.
 
-FC1's estimate is a judgment based on shared checks at the seven REST parser sites, the GraphQL selectors, the write-answer selectors and their event-refusal checks. FC5's estimate includes permission-list members and their settings serialization. Both estimates are for L0 additions against the measured main row, not measured implementation sizes. Their dependencies in the table still apply; the expanded cells create no additional proposed fix card.
+FC1's estimate is a judgment based on shared checks at the seven REST parser sites, the GraphQL selectors, the write-answer selectors and their event-refusal checks, including binding the made mark to the current mutation rather than an earlier runner read. The proposed file scope includes write-made alongside the side and runner paths because the shared mark and the promise handed to it participate in that boundary. FC5's estimate includes permission-list members and their settings serialization. Both estimates are for L0 additions against the measured main row, not measured implementation sizes. Their dependencies in the table still apply; the expanded cells create no additional proposed fix card.
 
-The recommendation is to card the seven disjoint fixes, with FC2 first, then reconcile their combined estimated +362 lines against the 127-line headroom before implementation. The PM should not assume a parsed JSON value is plain data, a UTF-8 decoding validates bytes, a git commit string is a SHA, or a process adapter's Buffer is plain data. A new source path, an authoritative contract proving a field intentionally unrestricted, a change to boundary rule 4 by the owner, or a budget measurement after other work lands would change the affected recommendation. Nothing in this report changes the architecture or creates a fix card.
+The recommendation is to card the seven disjoint fixes, with FC2 first, then reconcile their combined estimated +382 lines against the 127-line headroom before implementation. The PM should not assume a parsed JSON value is plain data, a UTF-8 decoding validates bytes, a git commit string is a SHA, or a process adapter's Buffer is plain data. A new source path, an authoritative contract proving a field intentionally unrestricted, a change to boundary rule 4 by the owner, or a budget measurement after other work lands would change the affected recommendation. Nothing in this report changes the architecture or creates a fix card.
