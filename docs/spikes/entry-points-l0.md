@@ -107,15 +107,13 @@ Each cell uses **B** for a breach and **C** for conformance. Behaviors are **U**
 
 The selected-position tables below separate the JSON root, each container and each selected field at the stage that consumes it. They distinguish a resolved write answer, the same answer carried by an EVENT_REFUSED failure, and the read before a write. They replace the earlier combined REST, write-answer and settings rows. The earlier probe receipts remain linked as historical measurements; a root case is not evidence for a different nested field.
 
-These independently callable helpers and remaining provider JSON sources retain their original maps:
+These independently callable forge helpers retain their original maps:
 
 | Entry point and field | Missing | Wrong type | Null | Extra | Oversized | Deep | Not JSON | Non-finite (found) |
 |---|---|---|---|---|---|---|---|---|
 | F-R, answerOf root | U/B [F-read.answerOf.missing] | U/B [F-read.answerOf.wrong-type] | U/B [F-read.answerOf.null] | U/B [F-read.answerOf.extra] | U/B [F-read.answerOf.oversized] | U/B [F-read.answerOf.deep] | T/B [F-read.answerOf.not-json] | U/B [F-read.answerOf.non-finite] |
 | F-R, board ID also used by F-S/F-I | U/B [B-board.missing] | U/B [B-board.wrong-type] | U/B [B-board.null] | U/C [B-board.extra] | U/B [B-board.oversized] | U/B [B-board.deep] | T/B [B-board.not-json] | U/B [B-board.non-finite] |
 | F-R, repository ID also used by F-S | U/B [B-repository.missing] | U/B [B-repository.wrong-type] | U/B [B-repository.null] | U/C [B-repository.extra] | U/B [B-repository.oversized] | U/B [B-repository.deep] | T/B [B-repository.not-json] | U/B [B-repository.non-finite] |
-| C-A, loggedIn | U/B [C-claude.auth.missing] | U/B [C-claude.auth.wrong-type] | U/B [C-claude.auth.null] | U/B [C-claude.auth.extra, missing loggedIn]; H/C [C-A, lines 71–78, valid loggedIn] | U/B [C-claude.auth.oversized, missing loggedIn]; H/C [C-A, lines 71–78, ignored extra] | U/B [C-claude.auth.deep, missing loggedIn]; H/C [C-A, lines 71–78, ignored extra] | U/B [C-claude.auth.not-json] | U/B [C-claude.auth.non-finite, missing loggedIn]; H/C [C-A, lines 71–78, ignored extra] |
-| X-P, skill probe JSON | R/C [X-skills.missing] | R/C [X-skills.wrong-type] | R/C [X-skills.null] | H/C [X-skills.extra] | H/C [X-skills.oversized] | R/C [X-skills.deep] | R/C [X-skills.not-json] | R/C [X-skills.non-finite] |
 
 #### Selected-field and stage method
 
@@ -714,6 +712,28 @@ The repository-write cases cover every endpoint's parsed reply. openIssue select
 | SETTINGS-enabledPlugins-cc-plugin-plugin-authoring@builtin-reach; $.enabledPlugins.cc-plugin-plugin-authoring@builtin | settings with reach; 0 commands | claude, line 219 | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
 
 
+#### Provider JSON sibling positions
+
+The [provider sibling receipt](https://github.com/williacj/rigger/issues/1150#issuecomment-6523656015) quotes its full source, exact command and all 100 result records. It ran at the same measured main source, beginning 2026-10-30T13:11:01Z at one-minute load 7.37, and exited 0. C-A's source is signedIn at line 71 of `src/substrate/providers/claude.mjs`; X-P's sources are skillsIn at line 195 and probed at line 240 of `src/substrate/providers/codex.mjs`. The selected message, content container, part and text have separate cells, both alone and beside another valid skill block. There cannot be two JSON roots in one tool answer, so the companion-root position is excluded by JSON.parse at line 198; companion-message rows exercise the first member instead. A malformed selected member can be discarded when another block is valid, whereas an answer with no readable block is refused. Raw 1e999 text is preserved while adding that companion, so the non-finite cases are parsed as numbers, not null inserted by JSON.stringify.
+
+Each prefix plus its kind column names an exact output record. H/C here is the adapter's explicit array/string selection and construction; it does not mean it validates ignored fields. O/B for C-A is its documented unknown answer, undefined, which is neither plain data nor a built failure under rule 4. The probe's stdout representation of that return is the word undefined; the function does not return that string. FC5 alone owns the 13 O/B cells in these two auth rows. The last receipt record also demonstrates Read(�) passed through the allow list with reach, completing the settings-byte stage's local/reached comparison without executing Claude.
+
+| Selected provider prefix | Stage and position | Missing | Wrong | Null | Extra | Oversized | Deep | Not JSON | Non-finite | B owner |
+|---|---|---|---|---|---|---|---|---|---|---|
+| AUTH-root | Claude auth answer; $ | O/B | O/B | O/B | H/C | H/C | O/B | O/B | O/B | FC5 |
+| AUTH-loggedIn | Claude auth answer; $.loggedIn | O/B | O/B | O/B | H/C | O/B | O/B | O/B | O/B | FC5 |
+| SKILL-single-root | only selected message; $ | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| SKILL-single-message | only selected message; $[0] | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| SKILL-single-content | only selected message; $[0].content | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| SKILL-single-part | only selected message; $[0].content[0] | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| SKILL-single-text | only selected message; $[0].content[0].text | R/C | R/C | R/C | H/C | H/C | R/C | R/C | R/C | none |
+| SKILL-companion-message | with another valid skill block; $[0] | R/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| SKILL-companion-content | with another valid skill block; $[0].content | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| SKILL-companion-part | with another valid skill block; $[0].content[0] | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+| SKILL-companion-text | with another valid skill block; $[0].content[0].text | H/C | H/C | H/C | H/C | H/C | H/C | R/C | H/C | none |
+
+An [intermediate provider fixture run](https://github.com/williacj/rigger/issues/1150#issuecomment-6523656414) reused existing scratch homes and caught EEXIST before reaching Codex's parser. Its complete source and output are preserved, and it supplies no ruling. The corrected receipt uses a fresh retained directory and makes an unexpected setup failure exit nonzero.
+
 ### Text maps
 
 The four columns are control characters, terminal escapes, invalid UTF-8 bytes and empty text. Text from a tool is decoded with replacement where a Buffer is converted to UTF-8. It stays a string in memory; U/C relies on rule 4's any-string clause. Paths and identifiers are structural fields, so they use checks or breach markings instead. A printable-output ruling appears separately below.
@@ -755,7 +775,7 @@ The file class's four columns are missing, empty, truncated and invalid UTF-8. �
 
 | Entry point and file | Missing | Empty | Truncated | Invalid UTF-8 |
 |---|---|---|---|---|
-| C-F, settings JSON | H/C [C-claude.settings.missing] | R/C [C-claude.settings.empty] | R/C [SETTINGS-bytes.truncated-string] | U/C [SETTINGS-bytes.invalid-byte-string; deny-local; deny-reach; ask-local; ask-reach]; R/C [SETTINGS-bytes.invalid-byte-json] |
+| C-F, settings JSON | H/C [C-claude.settings.missing] | R/C [C-claude.settings.empty] | R/C [SETTINGS-bytes.truncated-string] | U/C [SETTINGS-bytes.invalid-byte-string; SETTINGS-bytes.deny-local; SETTINGS-bytes.deny-reach; SETTINGS-bytes.ask-local; SETTINGS-bytes.ask-reach; SETTINGS-bytes.allow-reach]; R/C [SETTINGS-bytes.invalid-byte-json] |
 | X-F, agent file | R/C [X-F, line 305] | H/C [X-codex.files.empty-agent] | U/B [X-codex.files.not-utf8-agent] | U/B [X-codex.files.not-utf8-agent] |
 | X-F, config file | H/C [X-F, line 274] | U/B [X-codex.files.empty-agent] | U/B [config truncated] | U/B [config invalid-utf8] |
 | W, `.git` pointer file | R/C [W, lines 361–378] | R/C [W, line 372] | R/C [W, line 372] | H/C [W, lines 372–378] |
@@ -803,7 +823,7 @@ Each proposed card is a proposal, not an issue filed. Cell sets below are disjoi
 
 The table's cell sets are a partition. In the selected-field/stage matrices, each B cell belongs to the one owner in its row's B owner column: FC1 for every forge row and FC5 for every settings row; none belongs to another proposed card. The generator's explicit row-and-column ledger measured 1,488 B cells in that matrix: 1,464 assigned to FC1 and 24 to FC5, with no unowned B cell. The source and summary are in the linked receipt; these counts describe the fixture matrix at the named main commit.
 
-Outside that matrix, FC1 owns direct answerOf missing, wrong type, null, extra, oversized, deep, non-JSON and non-finite; and direct board ID and repository ID missing, wrong type, null, oversized, deep, non-JSON and non-finite. FC2 owns P-C text control, escape, invalid UTF-8 and empty; P-C exit nonzero, signal and timeout; P-T text control, escape, invalid UTF-8 and empty; and the found ordinary P-T Map shape. FC3 owns W structural worktree text control, escape, invalid UTF-8 and missing field; the found ordinary W undefined lock; and D structural parent or commit control, escape, invalid UTF-8, empty commit and malformed SHA. FC4 owns L loaded program control, escape and invalid UTF-8. FC5 also owns C-A all eight JSON kinds, X-A all four text kinds, X-F agent truncated and invalid UTF-8, X-F config empty, truncated and invalid UTF-8, and all three TOML kinds. FC6 owns E-C unset HOME. FC7 alone owns print sites T1 and T2. No other row has a B cell.
+Outside that matrix, FC1 owns direct answerOf missing, wrong type, null, extra, oversized, deep, non-JSON and non-finite; and direct board ID and repository ID missing, wrong type, null, oversized, deep, non-JSON and non-finite. FC2 owns P-C text control, escape, invalid UTF-8 and empty; P-C exit nonzero, signal and timeout; P-T text control, escape, invalid UTF-8 and empty; and the found ordinary P-T Map shape. FC3 owns W structural worktree text control, escape, invalid UTF-8 and missing field; the found ordinary W undefined lock; and D structural parent or commit control, escape, invalid UTF-8, empty commit and malformed SHA. FC4 owns L loaded program control, escape and invalid UTF-8. FC5 also owns the 13 B cells in the provider auth addendum, X-A all four text kinds, X-F agent truncated and invalid UTF-8, X-F config empty, truncated and invalid UTF-8, and all three TOML kinds. FC6 owns E-C unset HOME. FC7 alone owns print sites T1 and T2. No other row has a B cell.
 
 FC1's estimate is a judgment based on shared checks at the seven REST parser sites, the GraphQL selectors, the write-answer selectors and their event-refusal checks. FC5's estimate includes permission-list members and their settings serialization. Both estimates are for L0 additions against the measured main row, not measured implementation sizes. Their dependencies in the table still apply; the expanded cells create no additional proposed fix card.
 
