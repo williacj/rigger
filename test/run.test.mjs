@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { run as runVerb } from '../src/cli/run.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
-import { installFakeGh, installGhRefusingStreamAfterMove } from './fake-gh.mjs';
+import { installFakeGh, installGhRefusingStreamAfterMove, seedRepository } from './fake-gh.mjs';
 import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { gitIn } from './git-repository.mjs';
@@ -85,7 +85,7 @@ function run(board, { concurrency, record = 'accepting' }) {
   const env = { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), PATH: [...ahead, dir, process.env.PATH].join(delimiter) };
   // The board wrapper arms refusal; all reads finish before the pull start attempts its append.
   if (record === 'refusing-after-board-read') env.NODE_OPTIONS = refuseAfterBoardRead(temporaryDirectory('rigger-run-board-refusal-'), fake.gh, stream);
-  const shared = { consumer, model: fake.model, agentRuns: agent.runs };
+  const shared = { consumer, model: fake.model, agentRuns: agent.runs, fake };
   return { ...spawnRun(consumer, env), ...shared, again: () => ({ ...spawnRun(consumer, env), ...shared }) };
 }
 
@@ -200,15 +200,16 @@ test('run under a hold closer names its reason and time, keeps L2 refusals and e
   const writes = (await first.model()).writes();
   const agents = first.agentRuns().length;
   seed(join(first.consumer, '.rigger'), 'hold-c3-issue-7.json', closerText({ reason: 'environment hold' }));
+  seedRepository(first.fake, { issues: [{ number: 7, title: 'Rigger closed admission', body: 'Why.\n\nHold: `c3`\n', labels: ['rigger:status'] }] });
   const ran = first.again();
 
   assert.equal(ran.code, 0, ran.err);
   assert.match(ran.out, new RegExp(`admission is closed by hold: environment hold; time ${TIME}`), ran.out);
   assert.match(ran.out, /#11.*missing acceptance/, ran.out);
   assert.doesNotMatch(ran.out, /no card was pullable/, ran.out);
-  assert.deepEqual((await ran.model()).writes(), writes);
+  assert.deepEqual((await ran.model()).writes(), [...writes, { operation: 'addIssue', args: [7, REPO] }, { operation: 'moveItem', args: ['item-3', 'Owner'] }]);
   assert.equal(ran.agentRuns().length, agents);
-  assert.deepEqual(await columnsOf(ran), { 11: 'Ready', 12: 'Coding' });
+  assert.deepEqual(await columnsOf(ran), { 7: 'Owner', 11: 'Ready', 12: 'Coding' });
 });
 
 // proves R-SCHED-3, R-SCHED-16

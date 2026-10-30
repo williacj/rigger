@@ -784,7 +784,7 @@ test('when the board refuses a card\'s claim move, L3 does not hand that card to
   await next;
 });
 
-test('when the board read fails, L3 hands no card to the dispatch and passes the read\'s error on unchanged', async () => {
+test('when the board read fails, L3 hands no card to the dispatch and passes on the read\'s message, code and unreadable entries in an error it built', async () => {
   // #215's missing-column error: the read side's column read, through the fake gh, of a board whose
   // Status field lacks the declared `Owner`.
   const gh = installFakeGh(temporaryDirectory('rigger-loop-gh-'), {
@@ -806,7 +806,9 @@ test('when the board read fails, L3 hands no card to the dispatch and passes the
 
   await assert.rejects(built.loop.pull(), (error) => {
     assert.ok(thrown, 'the column read failed');
-    assert.equal(error, thrown);
+    assert.equal(error.message, thrown.message);
+    assert.equal(error.code, thrown.code);
+    assert.deepEqual(error.unreadable, thrown.unreadable);
     assert.ok(error.message.includes('owner (Owner)'), error.message);
     return true;
   });
@@ -2473,7 +2475,7 @@ test('given a loop handle whose injected kill rejects, a pull reads nothing, rec
   const refusal = new Error('the sink refused 1 kill(s) of recorded groups');
   const built = world({ fake, board: counted.handle, kill: async () => { throw refusal; } });
 
-  await assert.rejects(built.loop.pull(), (failure) => failure === refusal);
+  await assert.rejects(built.loop.pull(), (failure) => failure.message === refusal.message && failure.code === refusal.code && failure.unreadable === refusal.unreadable);
 
   assert.equal(counted.reads, 0);
   assert.deepEqual(built.l3Events(), []);
@@ -2940,7 +2942,7 @@ test('a closed removal failure retains every remaining path while the ordinary r
     built.dispatches.releaseAll();
     await assert.rejects(running, (failure) => {
       const leaves = leavesOf(failure);
-      for (const path of remaining) assert.ok(leaves.includes(path), `lost ${path.message}`);
+      for (const path of remaining) assert.ok(leaves.some((held) => held.message === path.message && held.code === path.code && held.unreadable === path.unreadable), `lost ${path.message}`);
       assert.equal(failure.reached.length, 1, 'the ordinary reached outcome survives cleanup failure');
       if (column === COLUMNS.review) assert.equal(failure.reached[0].outcome.value.exit, 1);
       else assert.equal(failure.reached[0].action, 'escalate');
@@ -3018,7 +3020,7 @@ test('a refused redo start after closed cleanup releases once without an immedia
       await assert.rejects(built.loop.run(), (failure) => {
         const leaves = leavesOf(failure);
         assert.ok(leaves.some(({ message }) => message.includes('the board refuses the following Coding start')));
-        assert.equal(leaves.includes(cleanup), cleanupFails, 'cleanup failure is retained exactly when it happened');
+        assert.equal(leaves.some((held) => held.message === cleanup.message && held.code === cleanup.code && held.unreadable === cleanup.unreadable), cleanupFails, 'cleanup failure is retained exactly when it happened');
         assert.deepEqual(failure.reached, []);
         return true;
       });
@@ -3066,8 +3068,8 @@ test('closed cleanup composes each Owner write rejection with actual cleanup fai
       const before = writes.length;
       await assert.rejects(built.loop.run(), (failure) => {
         const leaves = leavesOf(failure);
-        assert.equal(leaves.includes(cleanup), cleanupFails);
-        assert.ok(leaves.some((held) => held.cause === ordinary && held.message.includes(`Owner ${rejected} refused`)), `${column}/${cleanupFails}/${rejected}`);
+        assert.equal(leaves.some((held) => held.message === cleanup.message && held.code === cleanup.code && held.unreadable === cleanup.unreadable), cleanupFails);
+        assert.ok(leaves.some((held) => held.cause?.message === ordinary.message && held.cause?.code === ordinary.code && held.cause?.unreadable === ordinary.unreadable && held.message.includes(`Owner ${rejected} refused`)), `${column}/${cleanupFails}/${rejected}`);
         assert.deepEqual(failure.reached, []);
         return true;
       });
@@ -3429,7 +3431,7 @@ test('a failed closed cleanup followed by escalation stays withheld until the ow
   let removals = 0;
   const built = world({ fake, forge: { pullRequests: [{ ...pullFor(number), closed: true }] }, removeDirectories: async () => { removals += 1; throw remaining; } });
   await assert.rejects(built.loop.pull(1), (failure) => {
-    assert.ok(leavesOf(failure).includes(remaining));
+    assert.ok(leavesOf(failure).some((held) => held.message === remaining.message && held.code === remaining.code && held.unreadable === remaining.unreadable));
     assert.equal(failure.reached[0].action, 'escalate');
     return true;
   });
@@ -3526,7 +3528,7 @@ test('a refused maker note escalation keeps the card out of later pulls in the i
   ].join('\n'));
   built.dispatches.release(number);
   await assert.rejects(running, (failure) => {
-    assert.ok(leavesOf(failure).some((held) => held.cause === refusal && /escalation issue comment was refused/.test(held.message)));
+    assert.ok(leavesOf(failure).some((held) => held.cause?.message === refusal.message && held.cause?.code === refusal.code && held.cause?.unreadable === refusal.unreadable && /escalation issue comment was refused/.test(held.message)));
     return true;
   });
   assert.deepEqual(cardsOf(built, 'pull'), [number]);
@@ -3601,10 +3603,23 @@ test('J11: a refused clock start runs no report and leaves the occurrence due fo
   try {
     await positive(() => built.dispatches.held() === 1);
     built.refuseAppends('clock start refused', 1);
+    const readFile = fs.readFileSync;
+    let streamReads = 0;
+    fs.readFileSync = (path, ...args) => {
+      if (path === streamPath(built.directory)) streamReads += 1;
+      return readFile(path, ...args);
+    };
+    syncBuiltinESMExports();
     let wakeFailure;
-    try { await clock.advance(CLOCK_START + 1000); }
-    catch (failure) { wakeFailure = failure; }
+    try {
+      try { await clock.advance(CLOCK_START + 1000); }
+      catch (failure) { wakeFailure = failure; }
+    } finally {
+      fs.readFileSync = readFile;
+      syncBuiltinESMExports();
+    }
     assert.equal(wakeFailure, undefined, 'the timer hands a start refusal to run');
+    assert.equal(streamReads, 0, 'a refused start never calls L5 report to read the stream');
     assert.deepEqual(built.l3Events().filter(({ trigger, event }) => trigger === 'clock' || event === 'trigger.outcome'), []);
     built.acceptAppends();
     await clock.advance(CLOCK_START + 2000);
@@ -3776,7 +3791,6 @@ test('J2 J3: owner and Rigger admission closers do not stop a due report while a
       assert.deepEqual(built.l3Events().filter(({ event }) => event === 'trigger.outcome')
         .map(({ name, outcome }) => [name, outcome]), [['hourly', 'job']], kind);
       built.dispatches.releaseAll();
-      await running;
     } finally {
       built.dispatches.releaseAll();
       await running.catch(() => {});

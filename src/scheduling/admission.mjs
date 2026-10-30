@@ -21,6 +21,16 @@ const HOLD = /^hold-([0-9a-z]+)(?:-after-(0|[1-9][0-9]*)|-issue-([1-9][0-9]*))?\
 /** The admission directory inside state directory `directory`. */
 export const admissionPath = (directory) => join(directory, 'admission');
 
+/** The failures admission built itself, so a caller tells them from a value of the same shape another layer threw. */
+const built = new WeakSet();
+const own = (failure) => {
+  built.add(failure);
+  return failure;
+};
+
+/** Whether `value` is a failure admission built, read from admission's own record of them and never from `value`. */
+export const admissions = (value) => built.has(value);
+
 /** A fresh id, random enough that no other closer or temporary file has had it. */
 const randomId = () => randomBytes(16).toString('hex');
 
@@ -42,8 +52,35 @@ const isContent = (content) => typeof content === 'object' && content !== null &
   && typeof content.time === 'number' && Number.isFinite(content.time)
   && typeof content.run === 'string' && content.run !== '';
 
-/** A failure's code where it has one, so an answer names the cause. */
-const causeOf = (error) => error.code ?? error.message;
+/**
+ * One printable line for `thrown`, whatever value was thrown, never itself a throw: an Error's
+ * message, a string, a Symbol's description, or the value's own string, and otherwise the kind of
+ * value thrown. It stands apart from `causeOf` in `src/workflow/status-issue.mjs` because this
+ * module is in the gate's import closure (`AGENTS.md`, "Self-hosting"), which that one is not.
+ */
+const printable = (thrown) => {
+  try {
+    const held = thrown instanceof Error ? thrown.message : thrown;
+    const said = typeof held === 'string' ? held : typeof held === 'symbol' ? held.toString() : String(held);
+    if (said !== '') return said;
+  } catch {
+    // The value refused to be read or converted; its kind is all that is left to say.
+  }
+  return `a thrown ${typeof thrown}`;
+};
+
+/**
+ * A failure's code where it has one, so an answer names the cause, and otherwise its printable
+ * line, whatever was thrown.
+ */
+const causeOf = (error) => {
+  try {
+    if (typeof error?.code === 'string') return error.code;
+  } catch {
+    // A value whose code cannot be read is said as `printable` says it.
+  }
+  return printable(error);
+};
 
 /**
  * The admission module over state directory `directory`, as its caller resolved it. `fs` is the
@@ -61,7 +98,9 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
     try {
       emitter.emit(event, fields);
     } catch (cause) {
-      throw new Error(`admission changed at ${fields.name}, and the sink refused its ${event} event: ${cause.message}`, { cause });
+      // The sink's refusal is converted once, so a refusal that answers differently a second time is said as it first was.
+      const why = printable(cause);
+      throw new Error(`admission changed at ${fields.name}, and the sink refused its ${event} event: ${why}`, { cause: new Error(why) });
     }
   }
 
@@ -213,9 +252,10 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
    * `admission.open` event. A name that is no hold closer's is refused, so no opening lifts the
    * owner's `pause`. An entry under that name that is no readable closer, a directory, a link or a
    * file that does not parse, is refused and left in place, as `resume` leaves an unreadable
-   * admission. A closer already gone answers so, and records nothing, since nothing changed.
+   * admission. A closer already gone answers so, and records nothing, since nothing changed. Where
+   * the close of status issue `issue` reopened it, the event names that issue as what raised it.
    */
-  async function open(name) {
+  async function open(name, { issue } = {}) {
     const named = parseName(name);
     if (named?.kind !== 'hold') throw new Error(`admission opens only by a hold closer's name, not ${JSON.stringify(name)}`);
     const path = join(dir, name);
@@ -225,7 +265,7 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
       throw new Error(`admission opens only a readable closer, and ${path} is not one (${found.failed ?? 'no reason, time or run'}), so it removes nothing`);
     }
     if (!remove(name)) return { name, ...named, alreadyGone: true };
-    record('admission.open', { kind: named.kind, id: named.id, name, by: 'opening' });
+    record('admission.open', { kind: named.kind, id: named.id, name, ...(issue === undefined ? { by: 'opening' } : { by: 'issue', issue }) });
     return { name, ...named, alreadyGone: false };
   }
 
@@ -247,7 +287,12 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
       if (error.code === 'ENOENT') return { gone: true };
       throw new Error(`admission cannot rename ${join(dir, name)}: ${causeOf(error)}`, { cause: error });
     }
-    record('admission.rename', { kind: 'hold', id: named.id, from: name, to: renamed, name: renamed });
+    try {
+      record('admission.rename', { kind: 'hold', id: named.id, from: name, to: renamed, name: renamed });
+    } catch (refusal) {
+      // The rename was made: L3's own failure names where the closer now is, the refusal its cause.
+      throw own(Object.assign(new Error(`admission renamed ${name} to ${renamed}, and its record was refused: ${printable(refusal)}`, { cause: refusal }), { renamed }));
+    }
     return { name: renamed };
   }
 
@@ -293,13 +338,15 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
    * whatever name its id then carries, and records one `admission.open` event raised by `resume`
    * for each name it unlinked, so two names carrying one hold's id are two events. A closer already
    * gone counts as removed, with no event. Where any closer is unreadable, it removes nothing and
-   * rejects naming each, carrying as `unreadable` the entries `read` answered, unescaped.
+   * rejects naming each, carrying as `unreadable` the entries `read` answered, unescaped. Where a
+   * removal fails partway, or a removal's record is refused, it rejects naming the failure and each
+   * closer left, carrying as `removed` every closer it removed, the one whose record was refused among them.
    */
   async function resume() {
     const answer = read();
     if (answer.state === 'unreadable') {
       const { unreadable } = answer;
-      throw Object.assign(new Error(`admission cannot be read, so resume removes nothing: ${unreadable.map(({ path, cause }) => `${path} (${cause})`).join(', ')}`), { unreadable });
+      throw own(Object.assign(new Error(`admission cannot be read, so resume removes nothing: ${unreadable.map(({ path, cause }) => `${path} (${cause})`).join(', ')}`), { unreadable }));
     }
     const closers = answer.closers ?? [];
     const unlinked = new Set();
@@ -318,10 +365,26 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
       try {
         removeCloser(closer, names);
       } catch (cause) {
-        recordEach(names);
-        throw new Error(`resume left ${leftOf(closers.slice(index)).join(', ')}: ${cause.message}`, { cause });
+        // The closers removed before this one, and this one where any of its names went, stay named.
+        const done = names.length > 0 ? [...removed, closer] : [...removed];
+        let refused;
+        try {
+          recordEach(names);
+        } catch (refusal) {
+          refused = refusal;
+        }
+        const why = printable(cause);
+        const said = `resume left ${leftOf(closers.slice(index)).join(', ')}: ${why}${refused === undefined ? '' : `; ${printable(refused)}`}`;
+        throw own(Object.assign(new Error(said, { cause: new Error(why) }), { removed: done }));
       }
-      recordEach(names);
+      try {
+        recordEach(names);
+      } catch (refusal) {
+        // The closer was removed and its record refused: it and those before it stay named, and resume stops.
+        const rest = leftOf(closers.slice(index + 1));
+        const why = printable(refusal);
+        throw own(Object.assign(new Error(`${why}${rest.length === 0 ? '' : `; resume left ${rest.join(', ')}`}`, { cause: new Error(why) }), { removed: [...removed, closer] }));
+      }
       if (names.length > 0 || unlinked.has(closer.name)) removed.push(closer);
       else gone.push(closer);
     }

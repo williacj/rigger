@@ -9,6 +9,7 @@ import * as doctor from '../src/cli/doctor.mjs';
 import { resume } from '../src/cli/resume.mjs';
 import { TIME, admissionOf, closerText, moduleOver, seed } from './admission-world.mjs';
 import { gitIn, repositoryIn } from './git-repository.mjs';
+import { configure, statusGh } from './notice-forge.mjs';
 
 test('removedCloserLine preserves the removed closer wording for ordinary text', () => {
   // A standing closer's words, or a lost field, would misdescribe what resume removed.
@@ -22,6 +23,7 @@ async function resumed(entries) {
   const repository = realpathSync.native(repositoryIn('rigger-resume-removed-'));
   const state = join(repository, '.rigger');
   for (const [name, reason] of entries) seed(state, name, closerText({ reason }));
+  configure(repository);
   const { closers } = moduleOver(state).read();
   assert.equal(closers.length, entries.length, 'each seeded entry must be a readable closer');
   const ask = (command, args) => {
@@ -30,7 +32,7 @@ async function resumed(entries) {
     assert.deepEqual(args, ['-C', repository, 'rev-parse', '--show-toplevel']);
     return { status: 0, timedOut: false, stdout: gitIn(repository, 'rev-parse', '--show-toplevel'), stderr: '' };
   };
-  const answer = await resume({ target: repository, now: () => TIME, ask });
+  const answer = await resume({ target: repository, now: () => TIME, ask, send: statusGh() });
   assert.equal(answer.code, 0, answer.text);
   assert.deepEqual(readdirSync(admissionOf(state)), [], 'resume must actually remove the closers');
   return { ...answer, closers };

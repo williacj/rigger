@@ -218,7 +218,7 @@ npx @williacj/rigger plan          # show what the next run would pull, and what
 npx @williacj/rigger once          # pull and finish one card, then exit
 npx @williacj/rigger run           # run until the board drains
 npx @williacj/rigger pause         # stop admitting new cards; in-flight cards finish
-npx @williacj/rigger resume        # reopen admission
+npx @williacj/rigger resume        # reopen admission and close the status issue
 npx @williacj/rigger report        # derive the signals from the event stream
 npx @williacj/rigger verdict <pr> <verdict>  # post your verdict on a pull request, once you confirm it
 ```

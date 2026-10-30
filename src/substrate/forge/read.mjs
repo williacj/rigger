@@ -254,6 +254,18 @@ export function readSide(board, { send, emitter, timeout } = {}) {
     /** Every card on the board, in board order, each once. */
     readItems: async () => (await cardNodes('readItems', board, via)).map((node) => cardOf('readItems', board, node)),
     /**
+     * Issue `number`'s state, as `{ state }`: `open`, `closed`, or `none` where the repository
+     * holds no such issue, as `issueIn` reads it. No label is read or answered.
+     */
+    readIssueState: (number) => {
+      const addressed = reading(board, `issue #${number}'s state`);
+      return labelled('readIssueState', board, addressed, async () => {
+        const query = repositoryQuery(board, `issue(number: ${numbered('readIssueState', board, number)}) { state repository { nameWithOwner } }`);
+        const issue = issueIn('readIssueState', board, await readRunner(graphqlRequest(query), via), addressed);
+        return { state: issue === null ? 'none' : stateOf('readIssueState', board, issue, addressed) };
+      });
+    },
+    /**
      * What L0 hands L3 to rank the board's cards by, from the config's priority declaration, a
      * field and its options highest rank first. It returns `items`, every card as `readItems`
      * reads it with its `priority` as `{ value, declared }`: the option it holds in the declared
@@ -463,6 +475,24 @@ function notFoundAt(said, path) {
   return only && held === null ? data : null;
 }
 
+/**
+ * The issue gh answered in `said` to `operation`'s read of one issue, or null where the repository
+ * holds no such issue: gh's not-found answer for it, or an issue the forge answers in another
+ * repository, as it answers one transferred out. Any other failure throws naming what was `addressed`.
+ */
+function issueIn(operation, board, said, addressed) {
+  if (notFoundAt(said, ['repository', 'issue'])) return null;
+  const issue = heldIn(operation, board, answerOf(operation, board, said, addressed), 'issue', addressed);
+  return ofRepository(board, issue.repository.nameWithOwner) ? issue : null;
+}
+
+/** `issue`'s state as the reads answer it, `open` or `closed`, or `operation`'s failure for any other. */
+function stateOf(operation, board, issue, addressed) {
+  const state = { OPEN: 'open', CLOSED: 'closed' }[issue.state];
+  if (state === undefined) fail(operation, board, `${addressed}gh answered state ${issue.state}`);
+  return state;
+}
+
 /** A commit's full SHA, as the forge answers one and as a read at a commit is given one. */
 const FULL_SHA = /^[0-9a-f]{40}$/i;
 
@@ -484,6 +514,9 @@ async function permissionOf(operation, board, via, author, addressed) {
   return role;
 }
 
+/** What a read of comments selects of each, which `commentsOf` answers. */
+const COMMENT_FIELDS = 'body createdAt id author { login } lastEditedAt includesCreatedEdit';
+
 /** Comment nodes as L0 answers them, with each author's repository permission read once. */
 async function commentsOf(operation, board, via, nodes, addressed) {
   const permissions = new Map();
@@ -499,6 +532,23 @@ async function commentsOf(operation, board, via, nodes, addressed) {
   }
   return comments;
 }
+
+/**
+ * The kinds of entry the timeline read answers, by the item type it asks GitHub for: each entry's
+ * `kind`, and the `type` GitHub names its node by. A comment answers as `commentsOf` answers one,
+ * with its author's permission and whether it was edited; any other entry answers its time, its
+ * actor's login, or null where the account was deleted, and, for a label change, the label's name.
+ */
+const TIMELINE_ENTRIES = {
+  ISSUE_COMMENT: { kind: 'comment', type: 'IssueComment' },
+  LABELED_EVENT: { kind: 'labeled', type: 'LabeledEvent', label: true },
+  UNLABELED_EVENT: { kind: 'unlabeled', type: 'UnlabeledEvent', label: true },
+  CLOSED_EVENT: { kind: 'closed', type: 'ClosedEvent' },
+  REOPENED_EVENT: { kind: 'reopened', type: 'ReopenedEvent' },
+};
+
+/** What the timeline read selects of each kind of entry. */
+const TIMELINE_SELECTION = Object.values(TIMELINE_ENTRIES).map(({ type, kind, label }) => `... on ${type} { ${kind === 'comment' ? COMMENT_FIELDS : `createdAt actor { login }${label ? ' label { name }' : ''}`} }`).join(' ');
 
 /**
  * The reads of a card's facts held in the repository `board.repo` names: its line of work's
@@ -575,7 +625,7 @@ const REPOSITORY_READS = {
   readComments: {
     reading: (number) => `pull request #${number}'s comments`,
     read: async (board, via, number, addressed) => {
-      const query = (page) => repositoryQuery(board, `pullRequest(number: ${numbered('readComments', board, number)}) { comments(${page}) { pageInfo { hasNextPage endCursor } nodes { body createdAt id author { login } lastEditedAt includesCreatedEdit } } }`);
+      const query = (page) => repositoryQuery(board, `pullRequest(number: ${numbered('readComments', board, number)}) { comments(${page}) { pageInfo { hasNextPage endCursor } nodes { ${COMMENT_FIELDS} } } }`);
       const nodes = await everyPage('readComments', board, via, query, (data) => heldIn('readComments', board, data, 'pullRequest', addressed).comments, addressed);
       return commentsOf('readComments', board, via, nodes, addressed);
     },
@@ -584,7 +634,7 @@ const REPOSITORY_READS = {
   readIssueComments: {
     reading: (number) => `issue #${number}'s comments`,
     read: async (board, via, number, addressed) => {
-      const query = (page) => repositoryQuery(board, `issue(number: ${numbered('readIssueComments', board, number)}) { comments(${page}) { pageInfo { hasNextPage endCursor } nodes { body createdAt id author { login } lastEditedAt includesCreatedEdit } } }`);
+      const query = (page) => repositoryQuery(board, `issue(number: ${numbered('readIssueComments', board, number)}) { comments(${page}) { pageInfo { hasNextPage endCursor } nodes { ${COMMENT_FIELDS} } } }`);
       const nodes = await everyPage('readIssueComments', board, via, query, (data) => heldIn('readIssueComments', board, data, 'issue', addressed).comments, addressed);
       return commentsOf('readIssueComments', board, via, nodes, addressed);
     },
@@ -615,16 +665,33 @@ const REPOSITORY_READS = {
       const query = (page) => repositoryQuery(board, `issue(number: ${numbered('readIssue', board, number)}) { number title body state author { login } repository { nameWithOwner } labels(${page}) { pageInfo { hasNextPage endCursor } nodes { name } } }`);
       const labels = [];
       for (let after = '';;) {
-        const said = await readRunner(graphqlRequest(query(`first: ${PAGE}${after}`)), via);
-        if (after === '' && notFoundAt(said, ['repository', 'issue'])) return null;
-        const issue = heldIn('readIssue', board, answerOf('readIssue', board, said, addressed), 'issue', addressed);
-        if (!ofRepository(board, issue.repository.nameWithOwner)) return null;
+        const issue = issueIn('readIssue', board, await readRunner(graphqlRequest(query(`first: ${PAGE}${after}`)), via), addressed);
+        if (issue === null) return null;
         labels.push(...issue.labels.nodes.map((label) => label.name));
-        const state = { OPEN: 'open', CLOSED: 'closed' }[issue.state];
-        if (state === undefined) fail('readIssue', board, `${addressed}gh answered state ${issue.state}`);
+        const state = stateOf('readIssue', board, issue, addressed);
         if (!issue.labels.pageInfo.hasNextPage) return { number: issue.number, title: issue.title, body: issue.body, state, author: issue.author?.login ?? null, labels };
         after = `, after: ${literal(issue.labels.pageInfo.endCursor)}`;
       }
+    },
+  },
+  /**
+   * Issue `number`'s timeline of comments, label changes, closes and reopens, oldest first, across
+   * every page, as `TIMELINE_ENTRIES` answers each entry. A page that fails fails the whole read.
+   */
+  readIssueTimeline: {
+    reading: (number) => `issue #${number}'s timeline`,
+    read: async (board, via, number, addressed) => {
+      const query = (page) => repositoryQuery(board, `issue(number: ${numbered('readIssueTimeline', board, number)}) { timelineItems(itemTypes: [${Object.keys(TIMELINE_ENTRIES).join(', ')}], ${page}) { pageInfo { hasNextPage endCursor } nodes { __typename ${TIMELINE_SELECTION} } } }`);
+      const nodes = await everyPage('readIssueTimeline', board, via, query, (data) => heldIn('readIssueTimeline', board, data, 'issue', addressed).timelineItems, addressed);
+      const kinds = Object.values(TIMELINE_ENTRIES).map(({ type }) => type);
+      const unknown = nodes.find((node) => !kinds.includes(node.__typename));
+      if (unknown) fail('readIssueTimeline', board, `${addressed}gh answered an entry of type ${unknown.__typename}`);
+      const comments = await commentsOf('readIssueTimeline', board, via, nodes.filter((node) => node.__typename === 'IssueComment'), addressed);
+      return nodes.map((node) => {
+        const [, { kind, label }] = Object.entries(TIMELINE_ENTRIES).find(([, { type }]) => type === node.__typename);
+        if (kind === 'comment') return { kind, ...comments.shift() };
+        return { kind, createdAt: node.createdAt, actor: node.actor?.login ?? null, ...(label && { label: node.label.name }) };
+      });
     },
   },
   /**
