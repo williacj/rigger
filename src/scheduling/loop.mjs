@@ -18,6 +18,8 @@ import { admission, admissionPath } from './admission.mjs';
 import { lane } from './lane.mjs';
 import { pullOrder } from './pull-order.mjs';
 import { DEFAULT_CONCURRENCY } from '../config/validate.mjs';
+import { report as deriveReport } from '../observation/report.mjs';
+import { clockReports } from './clock.mjs';
 
 /**
  * What the loop holds over the board `config` names: N, the claims held
@@ -886,7 +888,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * in `errors`, inside an AggregateError beside the refusal where its release event was refused,
    * as `released` says.
    */
-  const trigger = async (freed = () => {}, limit = undefined, excluded) => {
+  const trigger = async (freed = () => {}, limit = undefined, excluded, settlePending = () => {}) => {
+    settlePending();
     const { claims: claimed, failures, admission: closed } = await take(limit, excluded);
     const notices = [];
     for (const { kind, id, issue } of closed?.closers ?? []) {
@@ -897,6 +900,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     if (claims.size === 0 && !idle) {
       idle = true;
       try {
+        settlePending();
         record('trigger', { trigger: 'drain' });
       } catch (refusal) {
         failures.push(refused('the event sink refused to record the drain trigger', refusal));
@@ -939,25 +943,70 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
      * what that read answered, so a run that ended on a hold answers its closer.
      * A start's kill that failed rejects the run with its failure, before `run.start`.
      */
-    run: async () => {
+    run: async ({ singlePull = false } = {}) => {
+      if (singlePull && !Object.values(config.clock?.triggers ?? {}).some((one) => one.job === 'report')) return trigger();
       await killed();
       record('run.start', { concurrency });
       idle = false;
       const failures = [];
+      const clockFailures = [];
       const reached = [];
+      const reports = [];
+      const handoffs = [];
       const excluded = new Set();
+      const pending = new Map();
       let closed;
-      const fire = () => trigger(fire, undefined, excluded).then((each) => {
+      const clockFailed = (failure) => { clockFailures.push(failure); handoffs.push({ failure }); };
+      const settlePending = () => {
+        for (const [name, at] of pending) {
+          try { record('trigger.outcome', { name, occurrence: at, outcome: 'abandoned' }); }
+          catch (refusal) {
+            clockFailed(refused(`clock trigger ${name} at ${at} stayed pending, because the event sink refused its abandoned outcome`, refusal));
+            continue;
+          }
+          pending.delete(name);
+        }
+      };
+      const stopClock = clockReports(config.clock?.triggers, clock, ({ name, occurrence }) => {
+        const at = new Date(occurrence).toISOString();
+        settlePending();
+        if (pending.has(name)) return false;
+        try { record('trigger', { trigger: 'clock', name, occurrence: at }); }
+        catch (refusal) {
+          clockFailed(refused(`clock trigger ${name} at ${at} did not start, because the event sink refused its firing start`, refusal));
+          return false;
+        }
+        let report;
+        let failure;
+        try { report = deriveReport(state); }
+        catch (thrown) { failure = thrown; }
+        try { record('trigger.outcome', { name, occurrence: at, outcome: failure ? 'failed' : 'job' }); }
+        catch (refusal) {
+          pending.set(name, at);
+          clockFailed(refused(`clock trigger ${name} at ${at} stayed pending, because the event sink refused its outcome`, refusal));
+          return true;
+        }
+        if (failure) clockFailed(new Error(`clock trigger ${name} at ${at}: ${failure.message}`, { cause: failure }));
+        else { reports.push(report); handoffs.push({ report }); }
+        return true;
+      });
+      const fire = () => trigger(singlePull ? () => {} : fire, undefined, excluded, settlePending).then((each) => {
         reached.push(...(Array.isArray(each) ? each : each.reached));
         if (!Array.isArray(each)) closed = each.admission;
       }, (failure) => {
         failures.push(failure);
       });
-      await fire();
-      if (failures.length > 0) {
-        throw Object.assign(new AggregateError(failures, `${failures.length} of the pulls this run fired failed`), { reached, ...(closed && { admission: closed }) });
+      try {
+        await fire();
+        if (failures.length + clockFailures.length > 0) {
+          const all = [...failures, ...clockFailures];
+          const message = clockFailures.length === 0 ? `${failures.length} of the pulls this run fired failed` : `${all.length} failures in this run`;
+          throw Object.assign(new AggregateError(all, message), { reached, reports, handoffs, ...(closed && { admission: closed }) });
+        }
+        return handoffs.length === 0 ? reached : Object.assign(reached, { reports, handoffs });
+      } finally {
+        stopClock();
       }
-      return reached;
     },
   };
 }

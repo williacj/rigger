@@ -33,6 +33,13 @@ import { temporaryDirectory } from './temporary-directory.mjs';
 import { heldCard } from './stop-failure.mjs';
 import { markerComment } from './fake-repository.mjs';
 import { PASSING } from './loop-world.mjs';
+import { START as CLOCK_START, manualClock, reportWorld } from './clock-report-world.mjs';
+import { report as deriveReport } from '../src/observation/report.mjs';
+import { streamPath } from '../src/observation/sink.mjs';
+import { run as runVerb } from '../src/cli/run.mjs';
+import { once as onceVerb } from '../src/cli/once.mjs';
+import { clockVerb } from './clock-report-verb-world.mjs';
+import { reportText } from '../src/cli/report.mjs';
 
 const synchronousCalls = [];
 let synchronousDeadline = Infinity;
@@ -3532,4 +3539,408 @@ test('a refused maker note escalation keeps the card out of later pulls in the i
   assert.deepEqual((await built.fake.operations.readItems())[0].labels, ['type:change']);
   assert.equal(built.agent.runs().filter(({ role }) => role === 'reviewer').length, 0);
   assert.equal(built.events().find(({ event }) => event === 'review.escalate').raiser, 'maker');
+});
+
+// proves R-SCHED-6
+test('J1: run fires a due report occurrence while a claim is held', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock);
+  const running = built.loop.run();
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    await clock.advance(CLOCK_START + 1000);
+    const firings = built.l3Events().filter((event) => event.trigger === 'clock' || event.event === 'trigger.outcome');
+    assert.deepEqual(firings.map(({ event, trigger, name, occurrence, outcome }) => ({ event, trigger, name, occurrence, outcome })), [
+      { event: 'trigger', trigger: 'clock', name: 'hourly', occurrence: new Date(CLOCK_START + 1000).toISOString(), outcome: undefined },
+      { event: 'trigger.outcome', trigger: undefined, name: 'hourly', occurrence: new Date(CLOCK_START + 1000).toISOString(), outcome: 'job' },
+    ]);
+    built.dispatches.releaseAll();
+    const answer = await running;
+    assert.equal(answer.reports.length, 1, 'L3 hands the derived report to the verb');
+    assert.ok(answer.reports[0].runs?.length > 0, 'the handed report has the run L5 derived');
+  } finally {
+    built.dispatches.releaseAll();
+    await running.catch(() => {});
+  }
+});
+
+test('J13: a failed report settles its occurrence and the next report still fires', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock);
+  const path = streamPath(built.directory);
+  const running = built.loop.run();
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    fs.appendFileSync(path, 'unreadable event line\n');
+    assert.throws(() => deriveReport(built.directory), /line \d+ is not a recorded event/, 'the stream premise makes L5 throw');
+    let wakeFailure;
+    try { await clock.advance(CLOCK_START + 1000); }
+    catch (failure) { wakeFailure = failure; }
+    fs.writeFileSync(path, fs.readFileSync(path, 'utf8').split('\n').filter((line) => line !== 'unreadable event line').join('\n'));
+    assert.equal(wakeFailure, undefined, 'L3 handles L5 failure without throwing from the timer');
+    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'trigger.outcome').map(({ outcome }) => outcome), ['failed']);
+    await clock.advance(CLOCK_START + 2000);
+    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'trigger.outcome').map(({ outcome }) => outcome), ['failed', 'job']);
+    built.dispatches.releaseAll();
+    await assert.rejects(running, (failure) => {
+      const messages = failure.errors.map((held) => held.message);
+      assert.ok(messages.some((message) => /hourly/.test(message) && /2026-10-29T12:00:01.000Z/.test(message)
+        && /line \d+ is not a recorded event/.test(message)), messages.join('\n'));
+      return true;
+    });
+  } finally {
+    built.dispatches.releaseAll();
+    await running.catch(() => {});
+  }
+});
+
+test('J11: a refused clock start runs no report and leaves the occurrence due for the next wake', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock);
+  const running = built.loop.run();
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    built.refuseAppends('clock start refused', 1);
+    let wakeFailure;
+    try { await clock.advance(CLOCK_START + 1000); }
+    catch (failure) { wakeFailure = failure; }
+    assert.equal(wakeFailure, undefined, 'the timer hands a start refusal to run');
+    assert.deepEqual(built.l3Events().filter(({ trigger, event }) => trigger === 'clock' || event === 'trigger.outcome'), []);
+    built.acceptAppends();
+    await clock.advance(CLOCK_START + 2000);
+    assert.deepEqual(built.l3Events().filter(({ trigger }) => trigger === 'clock').map(({ occurrence }) => occurrence), [
+      new Date(CLOCK_START + 2000).toISOString(),
+    ]);
+    built.dispatches.releaseAll();
+    await assert.rejects(running, (failure) => {
+      assert.ok(failure.errors.some((held) => /clock start refused/.test(held.message)), failure.message);
+      assert.equal(failure.reports.length, 1, 'only the second occurrence ran report');
+      return true;
+    });
+  } finally {
+    built.dispatches.releaseAll();
+    await running.catch(() => {});
+  }
+});
+
+test('J12: a refused report outcome is abandoned before the next occurrence fires', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock);
+  const originalEmitter = built.sink.emitter;
+  let refusedOnce = false;
+  built.sink.emitter = (context) => {
+    const emitter = originalEmitter(context);
+    return { emit(event, fields) {
+      if (event === 'trigger.outcome' && !refusedOnce) {
+        refusedOnce = true;
+        throw new Error('clock outcome refused');
+      }
+      return emitter.emit(event, fields);
+    } };
+  };
+  const running = built.loop.run();
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    let wakeFailure;
+    try { await clock.advance(CLOCK_START + 1000); }
+    catch (failure) { wakeFailure = failure; }
+    assert.equal(wakeFailure, undefined, 'the timer hands an outcome refusal to run');
+    assert.equal(refusedOnce, true, 'the sink refused the first report outcome');
+    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'trigger.outcome'), []);
+    await clock.advance(CLOCK_START + 2000);
+    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'trigger.outcome')
+      .map(({ occurrence, outcome }) => [occurrence, outcome]), [
+      [new Date(CLOCK_START + 1000).toISOString(), 'abandoned'],
+      [new Date(CLOCK_START + 2000).toISOString(), 'job'],
+    ]);
+    assert.deepEqual(built.l3Events().filter(({ trigger }) => trigger === 'clock').map(({ occurrence }) => occurrence), [
+      new Date(CLOCK_START + 1000).toISOString(), new Date(CLOCK_START + 2000).toISOString(),
+    ]);
+    built.dispatches.releaseAll();
+    await assert.rejects(running, (failure) => {
+      assert.ok(failure.errors.some((held) => /clock outcome refused/.test(held.message)), failure.message);
+      return true;
+    });
+  } finally {
+    built.dispatches.releaseAll();
+    await running.catch(() => {});
+  }
+});
+
+test('J12: a freed-slot pull settles a pending report before another clock wake', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock);
+  const originalEmitter = built.sink.emitter;
+  let refusedOnce = false;
+  built.sink.emitter = (context) => {
+    const emitter = originalEmitter(context);
+    return { emit(event, fields) {
+      if (event === 'trigger.outcome' && !refusedOnce) {
+        refusedOnce = true;
+        throw new Error('outcome pending until pull');
+      }
+      return emitter.emit(event, fields);
+    } };
+  };
+  const running = built.loop.run();
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    await clock.advance(CLOCK_START + 1000);
+    built.dispatches.releaseAll();
+    await assert.rejects(running, /failures in this run/);
+    const events = built.l3Events();
+    const abandoned = events.findIndex(({ event, outcome }) => event === 'trigger.outcome' && outcome === 'abandoned');
+    const nextPull = events.findIndex(({ event, trigger }, at) => at > abandoned && event === 'trigger' && trigger === 'pull');
+    assert.ok(abandoned >= 0 && nextPull > abandoned, 'the freed-slot pull settles the pending report first');
+    assert.equal(clock.pending(), 0, 'the run ended before a second clock wake');
+  } finally {
+    built.dispatches.releaseAll();
+    await running.catch(() => {});
+  }
+});
+
+test('J14: run hands its injected clock to L3 while a claim is held', async () => {
+  const clock = manualClock();
+  const { agent, consumer, running } = await clockVerb(runVerb, clock);
+  try {
+    assert.equal(clock.pending(), 1, 'run armed the report timer through L3');
+    await clock.advance(CLOCK_START + 1000);
+    const events = (await import('../src/observation/sink.mjs')).readEvents(`${consumer}/.rigger`);
+    assert.deepEqual(events.filter(({ trigger }) => trigger === 'clock').map(({ name, occurrence }) => [name, occurrence]), [
+      ['hourly', new Date(CLOCK_START + 1000).toISOString()],
+    ]);
+  } finally {
+    if (agent.held(10)) agent.release(10);
+    await running.catch(() => {});
+  }
+});
+
+test('J14: run prints the report hand-over after its card lines without changing the card status', async () => {
+  const clock = manualClock();
+  const { agent, consumer, running } = await clockVerb(runVerb, clock);
+  try {
+    await clock.advance(CLOCK_START + 1000);
+    const path = streamPath(`${consumer}/.rigger`);
+    const lines = fs.readFileSync(path, 'utf8').trimEnd().split('\n');
+    assert.equal(JSON.parse(lines.at(-1)).event, 'trigger.outcome', 'the firing completed before the snapshot');
+    const snapshot = temporaryDirectory('rigger-clock-report-snapshot-');
+    fs.writeFileSync(streamPath(snapshot), `${lines.slice(0, -1).join('\n')}\n`);
+    const expected = reportText({ ...deriveReport(snapshot), path });
+    agent.release(10);
+    const answer = await running;
+    const cardLine = answer.text.indexOf('rigger run: claimed #10');
+    const reportLine = answer.text.indexOf(`rigger report: the events recorded at ${path}`);
+    assert.ok(cardLine >= 0 && reportLine > cardLine, answer.text);
+    assert.equal(answer.text.slice(reportLine), expected, 'run prints exactly the report rendering of the event snapshot');
+    assert.equal(answer.code, 1, 'the card outcome alone decides this run status');
+  } finally {
+    if (agent.held(10)) agent.release(10);
+    await running.catch(() => {});
+  }
+});
+
+test('J13 J14: run prints a successful report before a later failed report and exits one', async () => {
+  const clock = manualClock();
+  const { agent, consumer, running } = await clockVerb(runVerb, clock);
+  const path = streamPath(`${consumer}/.rigger`);
+  try {
+    await clock.advance(CLOCK_START + 1000);
+    fs.appendFileSync(path, 'unreadable event line\n');
+    assert.throws(() => deriveReport(`${consumer}/.rigger`), /line \d+ is not a recorded event/);
+    await clock.advance(CLOCK_START + 2000);
+    fs.writeFileSync(path, fs.readFileSync(path, 'utf8').split('\n').filter((line) => line !== 'unreadable event line').join('\n'));
+    agent.release(10);
+    const answer = await running;
+    const reportAt = answer.text.indexOf(`rigger report: the events recorded at ${path}`);
+    const failureAt = answer.text.indexOf(`rigger run: clock trigger hourly at ${new Date(CLOCK_START + 2000).toISOString()}`);
+    assert.ok(reportAt >= 0 && failureAt > reportAt, answer.text);
+    assert.match(answer.text.slice(failureAt), /line \d+ is not a recorded event/);
+    assert.equal(answer.code, 1);
+  } finally {
+    if (agent.held(10)) agent.release(10);
+    await running.catch(() => {});
+  }
+});
+
+// proves R-SCHED-34
+test('J2 J3: owner and Rigger admission closers do not stop a due report while a claim is held', async () => {
+  for (const kind of ['owner', 'hold']) {
+    const clock = manualClock();
+    const built = reportWorld(clock);
+    const running = built.loop.run();
+    try {
+      await positive(() => built.dispatches.held() === 1);
+      if (kind === 'owner') seed(built.directory, 'owner-a1.json', closerText({ reason: 'owner paused claims' }));
+      else await moduleOver(built.directory).close({ kind: 'hold', reason: 'Rigger held claims' });
+      await clock.advance(CLOCK_START + 1000);
+      assert.deepEqual(built.l3Events().filter(({ event }) => event === 'trigger.outcome')
+        .map(({ name, outcome }) => [name, outcome]), [['hourly', 'job']], kind);
+      built.dispatches.releaseAll();
+      await running;
+    } finally {
+      built.dispatches.releaseAll();
+      await running.catch(() => {});
+    }
+  }
+});
+
+// proves R-SCHED-35
+test('J4: once never arms or fires a clock report while its claim is held', async () => {
+  const clock = manualClock();
+  const { agent, consumer, running } = await clockVerb(onceVerb, clock);
+  try {
+    assert.equal(clock.pending(), 0);
+    await clock.advance(CLOCK_START + 1000);
+    const events = (await import('../src/observation/sink.mjs')).readEvents(`${consumer}/.rigger`);
+    assert.deepEqual(events.filter(({ trigger, event }) => trigger === 'clock' || event === 'trigger.outcome'), []);
+    agent.release(10);
+    const answer = await running;
+    assert.doesNotMatch(answer.text, /rigger report:/);
+  } finally {
+    if (agent.held(10)) agent.release(10);
+    await running.catch(() => {});
+  }
+});
+
+// proves R-SCHED-5
+test('J5 J6: a due report with every slot held adds no dispatch or claim and leaves the slot held', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock);
+  const running = built.loop.run();
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    const before = built.events().length;
+    const started = [...built.dispatches.started];
+    await clock.advance(CLOCK_START + 1000);
+    const during = built.events().slice(before);
+    assert.deepEqual(during.filter(({ layer, event }) => (layer === 'L3' && event === 'dispatch') || (layer === 'L1' && event === 'dispatch.start')), []);
+    assert.deepEqual(during.filter(({ layer, event }) => layer === 'L3' && event === 'slot.release'), []);
+    assert.deepEqual(during.filter(({ layer, event }) => layer === 'L3' && event === 'trigger.outcome').map(({ outcome }) => outcome), ['job']);
+    assert.deepEqual(built.dispatches.started, started);
+    assert.deepEqual(built.dispatches.holding(), [1], 'the claim still holds the only slot');
+  } finally {
+    built.dispatches.releaseAll();
+    await running.catch(() => {});
+  }
+});
+
+test('J7: a late wake fires only the newest due occurrence', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock);
+  const running = built.loop.run();
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    await clock.advance(CLOCK_START + 3500);
+    assert.deepEqual(built.l3Events().filter(({ trigger }) => trigger === 'clock').map(({ occurrence }) => occurrence), [
+      new Date(CLOCK_START + 3000).toISOString(),
+    ]);
+    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'trigger.outcome').map(({ outcome }) => outcome), ['job']);
+  } finally {
+    built.dispatches.releaseAll();
+    await running.catch(() => {});
+  }
+});
+
+test('J8: an occurrence at the start with no arming record never fires in that run', async () => {
+  const clock = manualClock(CLOCK_START + 1000);
+  const built = reportWorld(clock);
+  const running = built.loop.run();
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    assert.deepEqual(built.events().filter(({ event }) => event === 'trigger.armed'), [], 'the state holds no arming');
+    await clock.advance(CLOCK_START + 1500);
+    assert.deepEqual(built.l3Events().filter(({ trigger }) => trigger === 'clock'), []);
+    await clock.advance(CLOCK_START + 2000);
+    assert.deepEqual(built.l3Events().filter(({ trigger }) => trigger === 'clock').map(({ occurrence }) => occurrence), [
+      new Date(CLOCK_START + 2000).toISOString(),
+    ]);
+  } finally {
+    built.dispatches.releaseAll();
+    await running.catch(() => {});
+  }
+});
+
+test('J9: different due occurrences fire serially with the earlier occurrence first', async () => {
+  const clock = manualClock();
+  const trigger = (interval) => ({ interval, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip', job: 'report' });
+  const built = reportWorld(clock, { triggers: { later: trigger(2000), earlier: trigger(1500) } });
+  const running = built.loop.run();
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    await clock.advance(CLOCK_START + 2500);
+    assert.deepEqual(built.l3Events().filter(({ trigger, event }) => trigger === 'clock' || event === 'trigger.outcome')
+      .map(({ event, name, occurrence }) => [event, name, occurrence]), [
+      ['trigger', 'earlier', new Date(CLOCK_START + 1500).toISOString()],
+      ['trigger.outcome', 'earlier', new Date(CLOCK_START + 1500).toISOString()],
+      ['trigger', 'later', new Date(CLOCK_START + 2000).toISOString()],
+      ['trigger.outcome', 'later', new Date(CLOCK_START + 2000).toISOString()],
+    ]);
+  } finally {
+    built.dispatches.releaseAll();
+    await running.catch(() => {});
+  }
+});
+
+test('J10: triggers due at one occurrence fire serially in code-unit name order', async () => {
+  const clock = manualClock();
+  const trigger = { interval: 1000, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip', job: 'report' };
+  const built = reportWorld(clock, { triggers: { zeta: trigger, Alpha: trigger } });
+  const running = built.loop.run();
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    await clock.advance(CLOCK_START + 1000);
+    assert.deepEqual(built.l3Events().filter(({ trigger, event }) => trigger === 'clock' || event === 'trigger.outcome')
+      .map(({ event, name }) => [event, name]), [
+      ['trigger', 'Alpha'], ['trigger.outcome', 'Alpha'], ['trigger', 'zeta'], ['trigger.outcome', 'zeta'],
+    ]);
+  } finally {
+    built.dispatches.releaseAll();
+    await running.catch(() => {});
+  }
+});
+
+test('J15: absent, empty, and card-only clocks retain the same run answer and event sequence', async () => {
+  const clock = manualClock();
+  const cardTrigger = { interval: 1000, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip',
+    card: { title: 'Audit', labels: ['type:change'], acceptance: '- The audit writes a result.' } };
+  const worlds = [
+    world({ cards: [1], concurrency: 1, clock }),
+    reportWorld(clock, { triggers: {} }),
+    reportWorld(clock, { triggers: { daily: cardTrigger } }),
+  ];
+  const observed = [];
+  for (const built of worlds) {
+    const answer = await drive(built);
+    assert.equal(clock.pending(), 0, 'no report timer is held');
+    assert.deepEqual(built.l3Events().filter(({ trigger }) => trigger === 'clock'), []);
+    observed.push({
+      events: built.events().map(({ layer, event, card, trigger }) => ({ layer, event, card, trigger })),
+      answer: answer.map(({ card, settled, judges }) => ({ card, settled: settled?.status, judges: judges?.length })),
+    });
+  }
+  assert.deepEqual(observed[1], observed[0]);
+  assert.deepEqual(observed[2], observed[0]);
+});
+
+test('J16: the default clock fires a report while a claim holds run open', async () => {
+  const built = reportWorld(undefined);
+  const running = built.loop.run();
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    await positive(() => built.l3Events().some(({ event, outcome }) => event === 'trigger.outcome' && outcome === 'job'));
+    assert.equal(built.l3Events().filter(({ trigger }) => trigger === 'clock').length, 1);
+  } finally {
+    built.dispatches.releaseAll();
+    await running.catch(() => {});
+  }
+});
+
+test('J17: run drains before an hour-away occurrence and cancels its timer', async () => {
+  const clock = manualClock();
+  const trigger = { interval: 3_600_000, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip', job: 'report' };
+  const built = reportWorld(clock, { cards: [], triggers: { hourly: trigger } });
+  const answer = await built.loop.run();
+  assert.deepEqual(answer, []);
+  assert.equal(clock.pending(), 0, 'the timer was canceled on return');
+  assert.deepEqual(built.l3Events().filter(({ trigger: kind }) => kind === 'clock'), []);
 });
