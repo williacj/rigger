@@ -11,6 +11,7 @@ import config from '../rigger.config.mjs';
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { loop } from '../src/scheduling/loop.mjs';
 import { NOT_STARTED } from '../src/substrate/process.mjs';
+import { realHost } from '../src/substrate/host.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { columnChanges } from '../src/workflow/transitions.mjs';
 import { createFakeBoard } from './fake-board.mjs';
@@ -420,7 +421,7 @@ function psWorld({ steps = [], provisioning = {}, ...handed } = {}) {
 
 test('given loop built with a `ps` stand-in, a role\'s dispatch reaches L1 with it: the stand-in records the process table reads L0 made for the maker', SETTLES_WITHIN, async () => {
   const ps = recordingPs();
-  const built = psWorld({ ps: ps.path, readTimeout: 5_000 });
+  const built = psWorld({ host: { ...realHost, ps: ps.path }, readTimeout: 5_000 });
 
   await built.loop.pull();
 
@@ -430,7 +431,7 @@ test('given loop built with a `ps` stand-in, a role\'s dispatch reaches L1 with 
 
 test('given loop built with a `ps` stand-in, a step\'s dispatch reaches L1 with it too', SETTLES_WITHIN, async () => {
   const ps = recordingPs();
-  const built = psWorld({ ps: ps.path, steps: ['a'], provisioning: { a: { run: 'true', required: true } } });
+  const built = psWorld({ host: { ...realHost, ps: ps.path }, steps: ['a'], provisioning: { a: { run: 'true', required: true } } });
   built.agent.plan(1, 'engineer', { exit: 1 });
 
   await built.loop.pull();
@@ -469,7 +470,7 @@ function hangingStartPs() {
 const READ_WITHIN = 300;
 
 test('given loop built with a read bound, a role\'s dispatch reaches L1 with it: L0 gives up on a start-time read that never answers within that bound, not its own', SETTLES_WITHIN, async () => {
-  const built = psWorld({ ps: hangingStartPs(), readTimeout: READ_WITHIN });
+  const built = psWorld({ host: { ...realHost, ps: hangingStartPs() }, readTimeout: READ_WITHIN });
   const began = performance.now();
 
   const [reached] = await built.loop.pull();

@@ -25,7 +25,7 @@ export const RECORD_REFUSED = 'RECORD_REFUSED';
  * it has one. `directory` is the state directory of the repository the dispatch serves, and `sink`
  * is L5's, through which L1 records the dispatch and L0 what it kills, under this dispatch and its
  * card. `clock` reads milliseconds for the dispatch's duration, and is the process's own unless a
- * test gives one. `ps` and `readTimeout` stand in for L0's own where the caller gives them.
+ * test gives one. `host` supplies L0's operating-system answers where a test gives one; `readTimeout` bounds its reads.
  *
  * `workspace`, where the caller gives one, is the card's workspace the dispatch runs in, and `cwd`
  * is then its working directory there. `dispatch.start` names the workspace, the command's
@@ -41,7 +41,7 @@ export const RECORD_REFUSED = 'RECORD_REFUSED';
  * and inode as `scratch` (the architect's ruling 20 on #467). One that cannot be read starts
  * nothing, as a command that never started. A workspace that is
  * an entry's directory, or lies under one, or holds one, starts nothing, as a command that never
- * started, naming the directory. `lsof` stands in for L0's census tool where the caller gives it.
+ * started, naming the directory. The same L0 host supplies the directory-census tool where a test gives one.
  *
  * For a role's dispatch, `roleDispatch` also hands `facts`, the facts L2 attached to identify the
  * work, and `digest`, a digest of the evidence L2 composed, and `dispatch.start` carries each it is
@@ -85,7 +85,7 @@ export const RECORD_REFUSED = 'RECORD_REFUSED';
  * call rejects with a `RECORD_REFUSED` failure carrying the result, and the record's failure as
  * `recordFailure`.
  */
-export async function dispatch({ id, card, directory, sink, provider, command, args, input, cwd, workspace, scratch, env, folder, timeout, facts, digest, ps, lsof, readTimeout, clock = () => performance.now() }) {
+export async function dispatch({ id, card, directory, sink, provider, command, args, input, cwd, workspace, scratch, env, folder, timeout, facts, digest, host, readTimeout, clock = () => performance.now() }) {
   // L3 allocates the id (the architect's ruling 1, P4 on #332), and an entry without one could
   // not be told from another dispatch's. Null and the empty string are no id either.
   if (id === undefined || id === null || id === '') throw startFailure(Object.assign(new Error(`L1 was given no dispatch id, so it did not start ${command}`), { code: NOT_STARTED }), 'dispatch-identity');
@@ -133,8 +133,7 @@ export async function dispatch({ id, card, directory, sink, provider, command, a
       // another repository, which is #151's fault (the architect's ruling 1, A7, on #423).
       env: workspace === undefined ? env : gitEnvironment(env),
       timeout,
-      ps,
-      lsof,
+      host,
       readTimeout,
       directory: place,
       scratch: held?.path,
@@ -357,7 +356,7 @@ function refused(id, card, unrecorded, result) {
  * Ends what a dead engine left: each process group the record in `directory` names, where L0
  * confirms the group is the one recorded, recording each kill through `sink` under the entry's
  * dispatch and card (`ARCHITECTURE.md`, "Failure model"), and where the entry names the dispatch's
- * directory, every process working there. `ps`, `lsof` and `readTimeout` stand in for L0's own
+ * directory, every process working there. `host` supplies L0's operating-system answers and `readTimeout` bounds its reads
  * where the caller gives them.
  *
  * A record that cannot be read as entries fails whole, naming its file, before anything is killed.
@@ -374,11 +373,11 @@ function refused(id, card, unrecorded, result) {
  * names ("Failure model"). Where it cannot be removed, the call appends an L1 `record.partial-kept`
  * event naming it and why, and fails on that alone only where the sink refuses the event.
  */
-export async function killRecordedGroups({ directory, sink, ps, lsof, readTimeout }) {
+export async function killRecordedGroups({ directory, sink, host, readTimeout }) {
   const entries = readGroups(directory);
   let failure;
   try {
-    await killEntries({ directory, sink, ps, lsof, readTimeout, entries });
+    await killEntries({ directory, sink, host, readTimeout, entries });
   } catch (thrown) {
     failure = thrown;
   }
@@ -401,7 +400,7 @@ export async function killRecordedGroups({ directory, sink, ps, lsof, readTimeou
 }
 
 /** Acts on each of the record's `entries`, as `killRecordedGroups` says. */
-async function killEntries({ directory, sink, ps, lsof, readTimeout, entries }) {
+async function killEntries({ directory, sink, host, readTimeout, entries }) {
   if (entries.length === 0) return;
   const kept = [];
   const unconfirmed = [];
@@ -410,7 +409,7 @@ async function killEntries({ directory, sink, ps, lsof, readTimeout, entries }) 
     const { group, started, dispatch, card, workspace, device, inode, scratch } = entry;
     const under = named(dispatch, card);
     try {
-      await killRecordedGroup({ group, started, directory: workspace, identity: { device, inode }, scratch, ps, lsof, readTimeout, emitter: sink.emitter({ layer: 'L0', card, dispatch }) });
+      await killRecordedGroup({ group, started, directory: workspace, identity: { device, inode }, scratch, host, readTimeout, emitter: sink.emitter({ layer: 'L0', card, dispatch }) });
     } catch (failure) {
       if (failure.code !== EVENT_REFUSED) {
         kept.push(entry);

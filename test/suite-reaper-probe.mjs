@@ -53,7 +53,7 @@ export function targetReadRecord({ cell, pid, readSequence, parserClass, signalZ
   const stdout = typeof result?.stdout === 'string' ? result.stdout : null;
   const stderr = typeof result?.stderr === 'string' ? result.stderr : null;
   return {
-    cell: /^E[56]-F[1-7]$/.test(cell) ? cell : 'other',
+    cell: /^(?:E[56]-F[1-7]|E4-F6)$/.test(cell) ? cell : 'other',
     pid: positive(pid),
     readSequence: readSequence === undefined ? undefined : positive(readSequence),
     parserClass: known(PARSER_CLASSES, parserClass),
@@ -77,7 +77,7 @@ export function safeTargetReadRecord(record, readSequence = record?.readSequence
   const validSeparators = Array.isArray(record?.separators) && record.separators.length <= 64
     && record.separators.every((entry) => nonnegative(entry?.at) !== null && SEPARATOR_KINDS.has(entry?.kind));
   if (!record || typeof record !== 'object'
-      || !/^E[56]-F[1-7]$/.test(record.cell)
+      || !/^(?:E[56]-F[1-7]|E4-F6)$/.test(record.cell)
       || positive(record.pid) === null || positive(readSequence) === null
       || !validEnum(PARSER_CLASSES, record.parserClass)
       || !SIGNAL_ZERO.has(record.signalZero)

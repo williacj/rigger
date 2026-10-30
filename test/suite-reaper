@@ -60,7 +60,7 @@ function appendTrace(record) {
 
 function finishTrace() {
   const cell = process.env.RIGGER_REAPER_CELL;
-  appendTrace({ type: 'terminal', cell: /^E[56]-F[1-7]$/.test(cell) ? cell : 'other', completedReads, lostWrite });
+  appendTrace({ type: 'terminal', cell: /^(?:E[56]-F[1-7]|E4-F6)$/.test(cell) ? cell : 'other', completedReads, lostWrite });
 }
 
 function targetState(pid) {

@@ -168,7 +168,7 @@ export const noticeLine = (verb, id, { step, cause, made, unrecorded }) => (made
   ? `rigger ${verb}: the notice for hold ${id} failed to ${step}: ${cause}`
   : `rigger ${verb}: the notice for hold ${id} made its step to ${step}, but the sink refused its record, so these events went unrecorded: ${unrecorded.map(({ event }) => event).join(', ')}`);
 
-export const claimVerb = (verb, limit, options) => recording((opened) => claiming(verb, limit, opened, options));
+export const claimVerb = (verb, limit, options) => recording((opened) => claiming(verb, limit, opened, options), options?.push);
 
 /**
  * `claimVerb`'s work, recording through the sink `opened` holds once `settled` has named its state
@@ -176,7 +176,7 @@ export const claimVerb = (verb, limit, options) => recording((opened) => claimin
  * choose the wording shared by `once` and `run`.
  */
 async function claiming(verb, limit, opened, {
-  target = process.cwd(), packageRoot = PACKAGE, ask, send, ps, readTimeout,
+  target = process.cwd(), packageRoot = PACKAGE, ask, send, host, readTimeout,
 } = {}) {
   const { named, refusal } = await settled(verb, opened, { target, packageRoot, ask });
   if (refusal) return refusal;
@@ -185,6 +185,7 @@ async function claiming(verb, limit, opened, {
   if (problem) return { text: `rigger ${verb}: ${problem}`, code: 1 };
   const invalid = validate(config);
   if (invalid.length > 0) return { text: `rigger ${verb}: \`${CONFIG}\`: ${invalid.join('; ')}`, code: 1 };
+  opened.admitted(config);
 
   const root = worktreeRoot(config, named);
   // The guard reads the resolved root before anything is claimed, as it read the target: a
@@ -265,7 +266,7 @@ async function claiming(verb, limit, opened, {
   };
   const facts = (cards) => factsCall({ config, reads: cards.length === 1 ? cardReads(cards[0].number) : reads, decide })(cards);
   const state = join(named, STATE);
-  const kill = () => killRecordedGroups({ directory: state, sink, ps, readTimeout });
+  const kill = () => killRecordedGroups({ directory: state, sink, host, readTimeout });
   const { project } = config.board;
   // One line for each card that reached its maker, or that was pulled for its judges alone, each
   // followed by a line for each of its judges, then one for each failure of L2's settle that was

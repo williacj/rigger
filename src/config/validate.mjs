@@ -198,6 +198,34 @@ const holds = (value, type) => {
 const declares = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 /**
+ * A value as a refusal names it: as a template writes it, or as `inspect` does where a template
+ * cannot. A Symbol, a null-prototype object and an object whose `toString` throws have no string
+ * form, and a refusal that throws while writing one names nothing (`R-SCHED-10`).
+ */
+function written(value) {
+  try { return `${value}`; }
+  catch { return inspect(value); }
+}
+
+/**
+ * Whether `roles` declares `name` as its own. A name with no string form converts to no key, so it
+ * names no role rather than throwing where it is read.
+ */
+function declaresRole(roles, name) {
+  try { return Object.hasOwn(roles, name); }
+  catch { return false; }
+}
+
+/**
+ * What `roles` holds under `name`, read as a property is, through its prototype. A name with no
+ * string form converts to no key, so it reads as nothing rather than throwing.
+ */
+function roleUnder(roles, name) {
+  try { return roles[name]; }
+  catch { return undefined; }
+}
+
+/**
  * Whether a value is a name: a string holding something other than whitespace. A label and a
  * priority option are each read by name, and a string of only whitespace names nothing either
  * could match.
@@ -330,8 +358,21 @@ function readKinds(config, refusals) {
   }
   for (const [name, kind] of Object.entries(config.kinds)) {
     const where = `kinds.${name}`;
-    if (kind?.maker !== undefined && !Object.hasOwn(roles, kind.maker)) {
-      refusals.push(`\`${where}.maker\` names \`${kind.maker}\`, which is no role the config declares`);
+    let coercedMaker = false;
+    if (kind?.maker !== undefined) {
+      const maker = kind.maker;
+      // The property key's type distinguishes string-role coercion from Symbol lookup.
+      let makerKey;
+      try {
+        const keyed = { [maker]: null };
+        makerKey = Object.keys(keyed)[0] ?? Object.getOwnPropertySymbols(keyed)[0];
+      }
+      catch {}
+      const declaredMaker = makerKey !== undefined && declaresRole(roles, makerKey);
+      coercedMaker = declaredMaker && typeof maker !== 'string' && typeof makerKey === 'string';
+      if (!declaredMaker || coercedMaker) {
+        refusals.push(`\`${where}.maker\` names \`${coercedMaker ? inspect(kind.maker) : written(kind.maker)}\`, which is no role the config declares`);
+      }
     }
     readLabels(kind?.select, `${where}.select.labels`, refusals);
     if (Array.isArray(kind?.select?.labels)) {
@@ -346,12 +387,12 @@ function readKinds(config, refusals) {
     }
     // Every check below reads an entry's role through `judgeRole`, whichever form names it (`D24`
     // rule 1). An entry that is neither form earns its one refusal here, and names no role to check.
-    const formed = kind.judges.map((entry, position) => readJudgeEntry(entry, `${where}.judges[${position}]`, makerProviders(roles[kind.maker]), refusals));
+    const formed = kind.judges.map((entry, position) => readJudgeEntry(entry, `${where}.judges[${position}]`, coercedMaker ? [] : makerProviders(roleUnder(roles, kind.maker)), refusals));
     const named = kind.judges.map((entry, position) => (formed[position] ? judgeRole(entry) : undefined));
     // No judge is the maker, and no configuration removes that separation (`R-LOOP-3`). An engine
     // that could approve its own work would be a faster way to merge mistakes.
-    if (named.includes(kind.maker)) {
-      refusals.push(`\`${where}\` names \`${kind.maker}\` as both its maker and one of its judges, and no judge is the maker`);
+    if (!coercedMaker && named.includes(kind.maker)) {
+      refusals.push(`\`${where}\` names \`${written(kind.maker)}\` as both its maker and one of its judges, and no judge is the maker`);
     }
     // Each judge of a card runs in a directory named for its role, so a judge named twice would
     // be two dispatches sharing one directory (ruling 1 Q3 on #467; `R-WORK-12`). The owner is
@@ -359,12 +400,12 @@ function readKinds(config, refusals) {
     // refuses.
     const repeated = named.filter((judge, position) => formed[position] && judge !== undefined && judge !== OWNER && named.indexOf(judge) !== position);
     for (const judge of new Set(repeated)) {
-      refusals.push(`\`${where}.judges\` names \`${judge}\` more than once, and each judge of a card has a directory of its own`);
+      refusals.push(`\`${where}.judges\` names \`${written(judge)}\` more than once, and each judge of a card has a directory of its own`);
     }
     named.forEach((judge, position) => {
       if (!formed[position]) return;
       if (judge !== OWNER && !(typeof judge === 'string' && Object.hasOwn(roles, judge))) {
-        refusals.push(`\`${where}.judges\` names \`${judge}\`, which is no role the config declares`);
+        refusals.push(`\`${where}.judges\` names \`${written(judge)}\`, which is no role the config declares`);
       }
       // The owner judges last if at all (`R-LOOP-11`), so the owner is asked once every agent
       // judge is satisfied rather than before one of them.
