@@ -30,7 +30,7 @@ export function proofRepository(t, { base = source(1), head = base, body = "test
       files[path] = '// ABOUTME: Satisfies the real suite list validation in a proof fixture.\n';
     }
   }
-  for (const path of ['test/suite.sh', 'test/suite-reaper', 'test/suite-guard.cjs', 'test/suite-path.cjs', 'test/temporary-directory.mjs', 'test/process-fixtures.mjs', 'test/on-path.mjs']) {
+  for (const path of ['test/suite.sh', 'test/suite-reaper', 'test/suite-reaper-probe.mjs', 'test/suite-guard.cjs', 'test/suite-path.cjs', 'test/temporary-directory.mjs', 'test/process-fixtures.mjs', 'test/on-path.mjs']) {
     files[path] = readFileSync(join(ROOT, path));
   }
   repositoryAt(root, files);
