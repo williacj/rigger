@@ -1163,18 +1163,35 @@ reaches the owner.
    label. For each, L2 removes the status label, then closes the issue. Where the label's removal is
    refused, L2 leaves that issue open, and `resume` exits non-zero naming it.
 
-Where `resume` changes nothing, it removes no label and closes no issue. The CLI never reaches a
-write side itself. An issue whose label `resume` removed is no longer the status issue
-(`R-SCHED-27`), so `resume`'s own close never clears a hold. A hold linked after `resume`'s read
-may still attach such an issue, and `resume` leaves its closer. At the next trigger that issue is no
-longer the closer's notice, so L2 finds or opens another. `resume` removes the closers it read
-before it removes any label, so no closer it read outlives the label's removal.
+Where `resume` changes nothing, it removes no label and closes no issue, and reads no config.
+Otherwise `resume` reads `rigger.config.mjs` only after step 2, so a missing config or the forge
+never keeps admission closed (`R-SCHED-23`). What step 3 then closes depends on what fails:
+
+- Where the config is missing or does not validate, `resume` reaches no forge and closes no
+  issue.
+- Where L2's read of the open issues carrying the status label is refused or times out, L2 still
+  removes the label from each issue a hold closer's file name gave, then closes it. Every other
+  issue carrying the label stays open.
+- Where a read or write for one issue is refused or times out, L2 leaves that issue open and goes
+  on to the next.
+
+In each case `resume` exits non-zero, naming the closers it removed, each issue it left open, and
+why. A `resume` run again changes nothing, so it closes none of them.
+
+`resume` reaches L2's notice function through L2's own entry point, built from the config, as
+`once` reaches L2. The CLI never reaches a write side itself. An issue whose label `resume` removed
+is no longer the status issue (`R-SCHED-27`), so `resume`'s own close never clears a hold. A hold
+linked after `resume`'s read may still attach such an issue, and `resume` leaves its closer. At the
+next trigger that issue is no longer the closer's notice, so L2 finds or opens another. `resume`
+removes the closers it read before it removes any label, so no closer it read outlives the label's
+removal.
 
 The closers in `.rigger/admission/` govern, and the status issue is a notice the owner can act on.
 While a hold's closer names an issue, L3 reads that issue's state by its number, once per trigger
-and never per claim. It reads through L0's read side, which gains an issue's state. L3 never reads
-a label. A read that fails or times out counts as unreadable: admission stays closed, and the next
-trigger reads again. At each trigger, after it lists the directory, L3 acts on each hold's closer:
+and never per claim. It reads through the board reads L0's read side hands L3, which gain a read of
+one issue's state. That read answers open, closed, or that the repository holds no such issue, and
+no label. L3 never reads a label. A read that fails or times out counts as unreadable: admission
+stays closed, and the next trigger reads again. At each trigger, after it lists the directory, L3 acts on each hold's closer:
 
 - For a hold's closer that names no issue, L3 calls L2's notice function for it. For
   `hold-<id>.json`, the hold's steps 2 to 6 run.
@@ -1228,6 +1245,8 @@ whose notices it followed. The closers and the issue can disagree:
 | a hold's closer naming the issue, then a second card's hold | open | closed | L2 comments on the open issue, naming the second card |
 | an unreadable closer, then `rigger resume` | open | closed | `resume` names the closer, changes nothing, and closes no issue |
 | no closer, after `resume` | `resume`'s close refused | open | `resume` removes every closer first, then closes the issue, and exits non-zero naming the issue left open |
+| no closer, after `resume` | open, with no `rigger.config.mjs`, or one that does not validate | open | `resume` removes every closer first, closes no issue, and exits non-zero naming the closers it removed and why no issue was closed |
+| no closer, after `resume` | open, and L2's read of the issues carrying the status label refused or timed out | open | `resume` removes every closer first, closes each issue a closer's file name gave, and exits non-zero naming the read and each issue left open |
 | no closer | open | open | absent means open, and the issue is stale; a later hold reuses it and comments naming the new card |
 | no closer | reopened by a person | open | a reopened issue changes nothing while admission is open |
 | any | the status label copied onto another issue by a person | unchanged | that issue is never worked, and `rigger resume` closes it too |

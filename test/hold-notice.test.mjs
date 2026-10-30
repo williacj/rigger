@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 
 import { FIXED_LABELS } from '../src/config/validate.mjs';
 import { statusNotice, holdOf } from '../src/workflow/status-issue.mjs';
+import { causeOf } from '../src/workflow/status-issue.mjs';
 import { recordingSink } from './admission-world.mjs';
 import { forge } from './notice-forge.mjs';
 
@@ -241,6 +242,246 @@ test('only the after scan reads a permission: a hold\'s first call, picking or o
   assert.deepEqual([...picked.calls, ...opened.calls].filter(([name]) => name === 'readPermission'), []);
 });
 
+/** An issue Rigger opened for hold `id`, numbered `number`, carrying the status label and on the board in Owner, with `timeline` where given. */
+const opened = (number, id, fields = {}) => ({ number, title: 'Rigger closed admission', body: `Why.\n\nHold: \`${id}\`\n`, author: 'rigger-bot', labels: [STATUS], comments: [], ...fields });
+
+/** A timeline entry of `kind` by `actor`, at the time every entry here carries: their order is what counts. */
+const entry = (kind, fields = {}) => ({ kind, createdAt: '2026-10-01T00:00:00Z', actor: 'rigger-bot', ...fields });
+
+/** A comment entry naming `body`, by `author` holding `permission`, edited where `edited` says. */
+const said = (body, { author = 'rigger-bot', permission = 'write', edited = false } = {}) => ({ kind: 'comment', body, createdAt: '2026-10-01T00:00:00Z', id: `IC_${body.length}`, author, permission, edited });
+
+/** The status label applied at the issue's opening, as the timeline answers it. */
+const LABELLED = entry('labeled', { label: STATUS });
+
+/**
+ * Follows hold `id`'s closer naming issue `number` on `world`, whose state L3 read as `state`, as
+ * L3 does at a trigger, and answers the call's run, its events and the forge's writes by name.
+ */
+async function followed(world, id, number, state = 'open', others = []) {
+  const { notice, events } = noticeOver(world);
+  const name = `hold-${id}-issue-${number}.json`;
+  const ran = await drive(notice({ closer: closerOf(id, name), others, state }), name);
+  return { ...ran, events, writes: world.calls.filter(([call]) => [...WRITES, 'removeIssueLabel', 'closeIssue'].includes(call)).map(([call, first]) => [call, first]) };
+}
+
+// proves R-SCHED-23
+test('a hold\'s closer naming an open issue its notice reached keeps admission closed: L2 answers the issue, still the notice, places it in Owner where it is not, and writes nothing else', async () => {
+  const world = forge({ issues: [opened(12, 'a1', { timeline: [LABELLED] })], items: [{ id: 'item-12', number: 12, column: 'Review' }] });
+
+  const ran = await followed(world, 'a1', 12);
+
+  assert.deepEqual(ran.value, { issue: 12 });
+  assert.deepEqual(ran.names, ['hold-a1-issue-12.json']);
+  assert.deepEqual(ran.writes, [['moveItem', 'item-12']]);
+});
+
+// proves R-SCHED-4, R-SCHED-23
+test('a close of the status issue after the hold\'s notice reached it, made while it carried the label, is the notice closed for that hold, whoever made it, even reopened since', async () => {
+  // The owner, another account with write or triage access, a bot, a deleted account, a closing
+  // keyword in a merged pull request (its merger's account), and a board workflow's automation.
+  const closers = ['williacj', 'triager', 'dependabot[bot]', null, 'merger', 'github-project-automation[bot]'];
+  for (const actor of closers) {
+    for (const reopened of [false, true]) {
+      const timeline = [LABELLED, entry('closed', { actor }), ...(reopened ? [entry('reopened', { actor })] : [])];
+      const world = forge({ issues: [opened(12, 'a1', { state: reopened ? 'open' : 'closed', timeline })] });
+
+      const ran = await followed(world, 'a1', 12, reopened ? 'open' : 'closed');
+
+      assert.deepEqual(ran.value, { issue: 12, closed: true }, `${actor}, reopened ${reopened}`);
+      assert.deepEqual(ran.writes, [], `${actor}, reopened ${reopened}`);
+      assert.deepEqual(ran.names, ['hold-a1-issue-12.json']);
+    }
+  }
+});
+
+// proves R-SCHED-23
+test('a close that came before the hold\'s notice reached the issue is not that hold\'s: open and labelled, it stays the notice; closed, L2 opens another and the closer is renamed to it', async () => {
+  const before = [LABELLED, entry('closed', { actor: 'williacj' }), entry('reopened', { actor: 'williacj' }), said('Rigger closed admission again: x\n\nHold: `a1`\n')];
+  const open = forge({ issues: [opened(12, 'z9', { timeline: before })], items: [{ id: 'item-12', number: 12, column: 'Owner' }] });
+  const closed = forge({ issues: [opened(12, 'z9', { state: 'closed', timeline: [...before, entry('unlabeled', { label: STATUS }), entry('closed')] })] });
+
+  const stays = await followed(open, 'a1', 12);
+  const moves = await followed(closed, 'a1', 12, 'closed');
+
+  assert.deepEqual(stays.value, { issue: 12 });
+  assert.deepEqual(stays.writes, []);
+  assert.deepEqual(moves.names, ['hold-a1-issue-12.json', 'hold-a1-after-12.json', 'hold-a1-issue-13.json']);
+  assert.deepEqual(moves.value, { issue: 13 });
+});
+
+// proves R-SCHED-23
+test('a close made while the issue carried the label, the label then removed, still counts for the hold', async () => {
+  const world = forge({ issues: [opened(12, 'a1', { state: 'closed', labels: [], timeline: [LABELLED, entry('closed', { actor: 'williacj' }), entry('unlabeled', { actor: 'williacj', label: STATUS })] })] });
+
+  const ran = await followed(world, 'a1', 12, 'closed');
+
+  assert.deepEqual(ran.value, { issue: 12, closed: true });
+  assert.deepEqual(ran.writes, []);
+});
+
+// proves R-SCHED-23, R-SCHED-27
+test('an issue whose status label was removed before it was closed, or that is still open without it, is no longer the notice: L2 finds or opens another and the closer is renamed to it; its close reopens nothing', async () => {
+  for (const [state, extra] of [['closed', [entry('closed', { actor: 'williacj' })]], ['open', []]]) {
+    const timeline = [LABELLED, entry('unlabeled', { actor: 'williacj', label: STATUS }), ...extra];
+    const world = forge({ issues: [opened(12, 'a1', { state, labels: [], timeline }), opened(20, 'z9')] });
+
+    const ran = await followed(world, 'a1', 12, state);
+
+    assert.deepEqual(ran.names, ['hold-a1-issue-12.json', 'hold-a1-issue-20.json'], state);
+    assert.deepEqual(ran.value, { issue: 20 }, state);
+    assert.deepEqual(ran.writes.map(([call]) => call), ['postIssueComment', 'addIssue', 'moveItem'], state);
+  }
+});
+
+// proves R-SCHED-23
+test('an issue `resume` removed the label from and then closed is no longer the notice of a closer `resume` did not read: L2 opens another, and the closer survives', async () => {
+  const world = forge({ issues: [opened(12, 'a1', { state: 'closed', labels: [], timeline: [LABELLED, entry('unlabeled', { label: STATUS }), entry('closed')] })] });
+
+  const ran = await followed(world, 'a1', 12, 'closed');
+
+  assert.deepEqual(ran.names, ['hold-a1-issue-12.json', 'hold-a1-after-12.json', 'hold-a1-issue-13.json']);
+  assert.notEqual(ran.value.closed, true);
+});
+
+// proves R-SCHED-23
+test('an issue deleted or transferred is no longer the notice: L2 opens another and the closer is renamed to it, and deleting never clears the hold', async () => {
+  // L3 read `none`; and, read again by L2 between the two, `readIssue` answering null.
+  for (const [state, issues] of [['none', []], ['open', []]]) {
+    const world = forge({ issues });
+
+    const ran = await followed(world, 'a1', 12, state);
+
+    assert.deepEqual(ran.names, ['hold-a1-issue-12.json', 'hold-a1-after-0.json', 'hold-a1-issue-1.json'], state);
+    assert.deepEqual(ran.value, { issue: 1 }, state);
+  }
+});
+
+// proves R-SCHED-23
+test('an open labelled issue the notice never reached, as after a crash in step 4, gets L2\'s comment naming the hold, then is placed in Owner', async () => {
+  const world = forge({ issues: [opened(12, 'z9', { timeline: [LABELLED] })] });
+
+  const ran = await followed(world, 'a1', 12);
+
+  assert.deepEqual(ran.value, { issue: 12 });
+  assert.deepEqual(ran.writes, [['postIssueComment', 12], ['addIssue', 12], ['moveItem', 'item-12']]);
+  assert.equal(holdOf(world.issues[0].comments[0]), 'a1');
+});
+
+// proves R-SCHED-23
+test('an open issue whose placing on the board was refused is placed in Owner at the next trigger', async () => {
+  const issue = opened(12, 'a1', { timeline: [LABELLED] });
+  const refused = forge({ issues: [structuredClone(issue)], refuse: { addIssue: 'gh: addProjectV2ItemById timed out' } });
+  const next = forge({ issues: [structuredClone(issue)] });
+
+  const first = await followed(refused, 'a1', 12);
+  const second = await followed(next, 'a1', 12);
+
+  assert.deepEqual(first.value, { failed: { step: 'add issue #12 to the board', cause: 'gh: addProjectV2ItemById timed out' } });
+  assert.deepEqual(second.value, { issue: 12 });
+  assert.deepEqual(next.onBoard, [{ id: 'item-12', number: 12, column: 'Owner' }]);
+});
+
+// proves R-SCHED-23
+test('an issue whose read or timeline read is refused, or a page of it, counts as unreadable: L2 claims no close, names the issue in notice.failed, and writes nothing', async () => {
+  for (const [refused, step] of [['readIssue', 'read issue #12'], ['readIssueTimeline', 'read issue #12\'s timeline']]) {
+    const world = forge({ issues: [opened(12, 'a1', { state: 'closed', timeline: [LABELLED, entry('closed')] })], refuse: { [refused]: 'gh: HTTP 502' } });
+
+    const ran = await followed(world, 'a1', 12, 'closed');
+
+    assert.deepEqual(ran.value, { failed: { step, cause: 'gh: HTTP 502' } }, refused);
+    assert.deepEqual(ran.events, [{ layer: 'L2', event: 'notice.failed', hold: 'a1', step, cause: 'gh: HTTP 502' }], refused);
+    assert.deepEqual(ran.writes, [], refused);
+  }
+});
+
+// proves R-SCHED-23
+test('a comment naming the hold\'s id by an account without write access, or one edited after it was posted, is not the notice reaching the issue, so a close after it is not the hold\'s', async () => {
+  for (const comment of [said('Hold: `a1`', { author: 'stranger', permission: 'read' }), said('Hold: `a1`', { edited: true }), said('Hold: `a1`', { author: null, permission: 'none' })]) {
+    const world = forge({ issues: [opened(12, 'z9', { timeline: [LABELLED, comment, entry('closed', { actor: 'williacj' }), entry('reopened', { actor: 'williacj' })] })] });
+
+    const ran = await followed(world, 'a1', 12);
+
+    assert.notEqual(ran.value.closed, true, JSON.stringify(comment));
+    // The notice never reached the open labelled issue, so L2 comments as step 4 says.
+    assert.equal(ran.writes[0][0], 'postIssueComment', JSON.stringify(comment));
+  }
+});
+
+// proves R-SCHED-23
+test('a label event for another label is not a status-label change: a close after another label\'s removal still counts', async () => {
+  const world = forge({ issues: [opened(12, 'a1', { state: 'closed', timeline: [LABELLED, entry('labeled', { label: 'type:change' }), entry('unlabeled', { label: 'type:change' }), entry('closed')] })] });
+
+  assert.deepEqual((await followed(world, 'a1', 12, 'closed')).value, { issue: 12, closed: true });
+});
+
+// proves R-SCHED-23
+test('the status label applied at the issue\'s opening is read as carried from the opening: a close with no later label event counts', async () => {
+  // The timeline the read answers for an issue opened carrying the label: its label event first.
+  const world = forge({ issues: [opened(12, 'a1', { state: 'closed', timeline: [LABELLED, entry('closed', { actor: 'github-project-automation[bot]' })] })] });
+
+  assert.deepEqual((await followed(world, 'a1', 12, 'closed')).value, { issue: 12, closed: true });
+});
+
+/** The status issue's close for `resume` over `world`: what L2's notice function's `close` answers for `named`, and the forge's writes by name and issue. */
+async function closedFor(world, named) {
+  const { notice } = noticeOver(world);
+  const answer = await notice.close(named);
+  return { answer, writes: world.calls.filter(([call]) => ['removeIssueLabel', 'closeIssue'].includes(call)).map(([call, number]) => [call, number]) };
+}
+
+// proves R-SCHED-24
+test('resume\'s close removes the status label from each issue a closer named and every other open labelled issue, then closes it, label first', async () => {
+  const world = forge({ issues: [opened(12, 'a1'), opened(20, 'z9'), { number: 30, title: 'Copied', body: '', labels: [STATUS, 'type:change'], comments: [] }] });
+
+  const { answer, writes } = await closedFor(world, [12]);
+
+  assert.deepEqual(answer, { closed: [12, 20, 30], left: [], unrecorded: [] });
+  assert.deepEqual(writes, [['removeIssueLabel', 12], ['closeIssue', 12], ['removeIssueLabel', 20], ['closeIssue', 20], ['removeIssueLabel', 30], ['closeIssue', 30]]);
+  assert.deepEqual(world.issues.map(({ state, labels }) => [state, labels]), [['closed', []], ['closed', []], ['closed', ['type:change']]]);
+});
+
+// proves R-SCHED-24
+test('resume\'s close closes a named issue that no longer carries the label with no label write, and writes nothing for one already closed, deleted or transferred', async () => {
+  const world = forge({ issues: [opened(12, 'a1', { labels: [] }), opened(14, 'b2', { state: 'closed' })] });
+
+  const { answer, writes } = await closedFor(world, [12, 14, 16]);
+
+  assert.deepEqual(answer, { closed: [12], left: [], unrecorded: [] });
+  assert.deepEqual(writes, [['closeIssue', 12]]);
+});
+
+// proves R-SCHED-24
+test('resume\'s close leaves an issue open whose read, label removal or close is refused, and goes on to the next', async () => {
+  for (const refused of ['readIssue', 'removeIssueLabel', 'closeIssue']) {
+    const world = forge({ issues: [opened(12, 'a1')], refuse: { [refused]: `gh: ${refused} timed out` } });
+
+    const { answer } = await closedFor(world, [12]);
+
+    // A close refused after the label's removal says the label is gone.
+    assert.deepEqual(answer, { closed: [], left: [{ issue: 12, why: `gh: ${refused} timed out`, ...(refused === 'closeIssue' && { unlabelled: true }) }], unrecorded: [] }, refused);
+  }
+  // One refused issue does not stop the next.
+  const world = forge({ issues: [opened(12, 'a1'), opened(14, 'b2')] });
+  const removeIssueLabel = world.writes.removeIssueLabel;
+  world.writes.removeIssueLabel = async (number, label) => {
+    if (number === 12) throw new Error('gh: HTTP 403');
+    return removeIssueLabel(number, label);
+  };
+  assert.deepEqual((await closedFor(world, [12, 14])).answer, { closed: [14], left: [{ issue: 12, why: 'gh: HTTP 403' }], unrecorded: [] });
+});
+
+// proves R-SCHED-24
+test('where the read of the labelled issues is refused, resume\'s close still closes each issue a closer named, and names the read', async () => {
+  const world = forge({ issues: [opened(12, 'a1'), opened(20, 'z9')], refuse: { readLabelledIssues: 'gh: HTTP 502' } });
+
+  const { answer, writes } = await closedFor(world, [12]);
+
+  assert.deepEqual(answer, { closed: [12], left: [], unrecorded: [], unread: 'gh: HTTP 502' });
+  assert.deepEqual(writes, [['removeIssueLabel', 12], ['closeIssue', 12]]);
+  assert.equal(world.issues[1].state ?? 'open', 'open');
+});
+
 /**
  * The failure a forge write side rejects with where the forge took the write and only an event of
  * it was refused: `refused` in `src/substrate/process.mjs` builds its message, `code`, `unrecorded`
@@ -316,4 +557,80 @@ test('a write step rejected with no made mark, a refused event whose result exit
     assert.deepEqual(events, [{ layer: 'L2', event: 'notice.failed', hold: 'a1', step, cause: failure.message }], name);
     assert.deepEqual(ran.names, names, name);
   }
+});
+
+// proves R-SCHED-23
+test('following a closer naming an issue, each write the forge made whose record the sink refused, the comment, the board add and the move, is answered as made with its unrecorded events, and no notice.failed is recorded', async () => {
+  const refusedRecord = (write, answer) => Object.assign(new Error(`the sink refused 1 L0 event: call.end went unrecorded (${write})`), { code: 'EVENT_REFUSED', made: { answer }, unrecorded: [{ event: 'call.end' }] });
+  for (const [write, step] of [['postIssueComment', 'comment on issue #12'], ['addIssue', 'add issue #12 to the board'], ['moveItem', 'move issue #12 to Owner']]) {
+    // The notice never reached #12, so L2 comments, then places it.
+    const world = forge({ issues: [opened(12, 'z9', { timeline: [LABELLED] })] });
+    const side = write === 'postIssueComment' ? world.writes : world.items;
+    const original = side[write];
+    side[write] = async (...args) => {
+      await original(...args);
+      throw refusedRecord(write, 'item-12');
+    };
+
+    const ran = await followed(world, 'a1', 12);
+
+    assert.deepEqual(ran.value, { failed: { step, cause: `the sink refused 1 L0 event: call.end went unrecorded (${write})`, made: { answer: 'item-12' }, unrecorded: [{ event: 'call.end' }] } }, write);
+    assert.deepEqual(ran.events, [], write);
+  }
+});
+
+/** A Proxy throwing on every trap, as a thrower can hand one. */
+const hostile = () => new Proxy({}, Object.fromEntries(['get', 'set', 'has', 'ownKeys', 'getOwnPropertyDescriptor', 'getPrototypeOf', 'defineProperty', 'deleteProperty', 'apply', 'construct', 'isExtensible', 'preventExtensions', 'setPrototypeOf'].map((name) => [name, () => { throw new Error(`the proxy refused ${name}`); }])));
+
+// proves R-SCHED-23
+test('causeOf answers one printable line for any thrown value and never throws itself', () => {
+  const cases = [
+    [new Error('plain'), 'plain'],
+    ['a string', 'a string'],
+    [Symbol('a symbol'), 'Symbol(a symbol)'],
+    [null, 'null'],
+    [undefined, 'undefined'],
+    [7, '7'],
+    [Object.create(null), 'a thrown object'],
+    [Object.create(Error.prototype, { message: { get() { throw new Error('no message'); } } }), 'a thrown object'],
+    [{ toString() { throw new Error('no string'); }, [Symbol.toPrimitive]() { throw new Error('no primitive'); } }, 'a thrown object'],
+    [hostile(), 'a thrown object'],
+  ];
+  for (const [thrown, said] of cases) assert.equal(causeOf(thrown), said);
+});
+
+// proves R-SCHED-23
+test('a notice step that throws a value no template can print still ends the call with notice.failed naming the step and a printable cause', async () => {
+  for (const [thrown, cause] of [[Symbol('gone'), 'Symbol(gone)'], [null, 'null'], [hostile(), 'a thrown object']]) {
+    const world = forge({ issues: [opened(12, 'a1', { timeline: [LABELLED] })] });
+    world.reads.readIssueTimeline = async () => { throw thrown; };
+
+    const ran = await followed(world, 'a1', 12);
+
+    assert.deepEqual(ran.value, { failed: { step: 'read issue #12\'s timeline', cause } }, cause);
+    assert.deepEqual(ran.events, [{ layer: 'L2', event: 'notice.failed', hold: 'a1', step: 'read issue #12\'s timeline', cause }], cause);
+  }
+});
+
+// proves R-SCHED-23
+test('a made write whose failure cannot hand over its unrecorded events is still answered as made, naming that its events could not be named', async () => {
+  const world = forge({ issues: [opened(12, 'z9', { timeline: [LABELLED] })] });
+  const comment = world.writes.postIssueComment;
+  world.writes.postIssueComment = async (...args) => {
+    await comment(...args);
+    throw Object.defineProperty(Object.assign(new Error('the sink refused 1 L0 event'), { code: 'EVENT_REFUSED', made: { answer: { id: 1 } } }), 'unrecorded', { get() { throw new Error('no events'); } });
+  };
+
+  const ran = await followed(world, 'a1', 12);
+
+  assert.deepEqual(ran.value, { failed: { step: 'comment on issue #12', cause: 'the sink refused 1 L0 event', made: { answer: { id: 1 } }, unrecorded: [{ event: 'events it could not name' }] } });
+});
+
+// proves R-SCHED-23
+test('causeOf answers a frozen object, an Error whose cause is itself, and an Error whose message is a Symbol, each in one printable line', () => {
+  const cyclic = new Error('cyclic');
+  cyclic.cause = cyclic;
+  assert.equal(causeOf(Object.freeze({ reason: 'frozen' })), '[object Object]');
+  assert.equal(causeOf(cyclic), 'cyclic');
+  assert.equal(causeOf(Object.defineProperty(new Error('x'), 'message', { value: Symbol('symbol message') })), 'Symbol(symbol message)');
 });

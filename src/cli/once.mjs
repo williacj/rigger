@@ -17,7 +17,7 @@ import { factsCall } from '../workflow/facts.mjs';
 import { failed, nextAction } from '../workflow/next-action.mjs';
 import { REVIEW_WITHHELD, columnChanges } from '../workflow/transitions.mjs';
 import { CONFIG } from './init.mjs';
-import { PACKAGE, closerLine, consumerConfig, gitAnswer, real, sameTree, settled, unreadableAdmission, within } from './doctor.mjs';
+import { PACKAGE, closerLine, outsideText, consumerConfig, gitAnswer, real, sameTree, settled, unreadableAdmission, within } from './doctor.mjs';
 import { refusalLine } from './plan.mjs';
 import { STATE, recording } from './recording.mjs';
 
@@ -165,8 +165,8 @@ async function rootInsideTree(verb, root, top, options) {
  * on #1056).
  */
 export const noticeLine = (verb, id, { step, cause, made, unrecorded }) => (made === undefined
-  ? `rigger ${verb}: the notice for hold ${id} failed to ${step}: ${cause}`
-  : `rigger ${verb}: the notice for hold ${id} made its step to ${step}, but the sink refused its record, so these events went unrecorded: ${unrecorded.map(({ event }) => event).join(', ')}`);
+  ? `rigger ${verb}: the notice for hold ${id} failed to ${outsideText(step)}: ${outsideText(cause)}`
+  : `rigger ${verb}: the notice for hold ${id} made its step to ${outsideText(step)}, but the sink refused its record, so these events went unrecorded: ${unrecorded.map(({ event }) => outsideText(event)).join(', ')}`);
 
 export const claimVerb = (verb, limit, options) => recording((opened) => claiming(verb, limit, opened, options), options?.push);
 
