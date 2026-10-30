@@ -3598,10 +3598,17 @@ test('J13: a failed report settles its occurrence and the next report still fire
 
 test('J11: a refused clock start runs no report and leaves the occurrence due for the next wake', async () => {
   const clock = manualClock();
+  const scheduled = [];
+  const schedule = clock.schedule;
+  clock.schedule = (call, delay) => {
+    scheduled.push(delay);
+    return schedule(call, delay);
+  };
   const built = reportWorld(clock);
   const running = built.loop.run();
   try {
     await positive(() => built.dispatches.held() === 1);
+    const armedBeforeRefusal = scheduled.length;
     built.refuseAppends('clock start refused', 1);
     const readFile = fs.readFileSync;
     let streamReads = 0;
@@ -3620,6 +3627,7 @@ test('J11: a refused clock start runs no report and leaves the occurrence due fo
     }
     assert.equal(wakeFailure, undefined, 'the timer hands a start refusal to run');
     assert.equal(streamReads, 0, 'a refused start never calls L5 report to read the stream');
+    assert.deepEqual(scheduled.slice(armedBeforeRefusal), [1000], 'a refused start schedules only the next occurrence, without an early retry');
     assert.deepEqual(built.l3Events().filter(({ trigger, event }) => trigger === 'clock' || event === 'trigger.outcome'), []);
     built.acceptAppends();
     await clock.advance(CLOCK_START + 2000);
