@@ -17,8 +17,10 @@ permissions:
 
 env:
   CI_POLICY: |
-    import { appendFileSync, readFileSync } from 'node:fs';
+    import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+    import { join } from 'node:path';
     import { execFileSync } from 'node:child_process';
+    import { crc32, inflateRaw } from 'node:zlib';
     const sha = (value) => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value);
     export function parseRaw(bytes) {
       const raw = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
@@ -72,21 +74,125 @@ env:
 
       return { mode: pr.baseRef !== 'main' || journalOnly ? 'FAST_ELIGIBLE' : 'BROAD_DEFERRED', demoNeeded: ownerRequest && f.label === 'ci:demo', sourceValid: true };
     }
-    export async function requestJson(path, { send = fetch, token = process.env.GH_TOKEN, base = process.env.GITHUB_API_URL ?? 'https://api.github.com' } = {}) {
+    export async function requestJson(path, { send = fetch, token = process.env.GH_TOKEN, base = process.env.GITHUB_API_URL ?? 'https://api.github.com', signal = AbortSignal.timeout(30_000) } = {}) {
       const url = new URL(path, base);
       if (url.origin !== new URL(base).origin || !token) throw new Error('API scope unavailable');
-      const response = await send(url.href, { method: 'GET', headers: { authorization: 'Bearer ' + token, accept: 'application/vnd.github+json' }, signal: AbortSignal.timeout(30_000) });
-      if (!response.ok || /rel="next"/.test(response.headers.get('link') ?? '')) throw new Error('API status or pagination is incomplete');
-      const bytes = new Uint8Array(await response.arrayBuffer());
+      const refused = () => { throw new Error('API read refused'); };
+      const response = await boundedOperation(signal, () => send(url.href, { method: 'GET', headers: { authorization: 'Bearer ' + token, accept: 'application/vnd.github+json' }, signal })).catch(refused);
+      if (!response.ok || response.headers.get('link')) throw new Error('API status or pagination is incomplete');
+      const reader = response.body?.getReader(), chunks = [];
+      let size = 0;
+      try {
+        if (!reader) refused();
+        for (;;) {
+          const { value, done } = await boundedOperation(signal, () => reader.read());
+          if (done) break;
+          size += value.byteLength;
+          if (size > 2 * 1024 * 1024) refused();
+          chunks.push(value);
+        }
+      } catch { refused(); }
+      finally { if (reader) void reader.cancel().catch(() => {}); }
+      const bytes = Buffer.concat(chunks, size);
       const length = response.headers.get('content-length');
       const encoding = response.headers.get('content-encoding');
-      if (bytes.length > 2 * 1024 * 1024 || (length !== null && (!encoding || encoding === 'identity') && Number(length) !== bytes.length)) throw new Error('API body is incomplete');
+      if (length !== null && (!encoding || encoding === 'identity') && Number(length) !== bytes.length) throw new Error('API body is incomplete');
       return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+    }
+    export async function readReceiptZip(bytes, { signal = AbortSignal.timeout(30_000) } = {}) {
+      try {
+        signal.throwIfAborted();
+        const limit = 2 * 1024 * 1024;
+        if (bytes.length > limit) throw new Error();
+        const end = bytes.length - 22;
+        if (end < 0 || bytes.readUInt32LE(end) !== 0x06054b50 || bytes.readUInt16LE(end + 20) !== 0 ||
+            bytes.readUInt16LE(end + 4) !== 0 || bytes.readUInt16LE(end + 6) !== 0 ||
+            bytes.readUInt16LE(end + 8) !== 1 || bytes.readUInt16LE(end + 10) !== 1) throw new Error();
+        const directory = bytes.readUInt32LE(end + 16), directorySize = bytes.readUInt32LE(end + 12);
+        if (directory + directorySize !== end || directory + 46 > end ||
+            bytes.readUInt32LE(directory) !== 0x02014b50 || bytes.readUInt16LE(directory + 34) !== 0 ||
+            directorySize !== 46 + bytes.readUInt16LE(directory + 28) + bytes.readUInt16LE(directory + 30) + bytes.readUInt16LE(directory + 32)) throw new Error();
+        const local = bytes.readUInt32LE(directory + 42);
+        if (local + 30 > directory || bytes.readUInt32LE(local) !== 0x04034b50) throw new Error();
+        const name = Buffer.from('ci-full-proof.json');
+        if (bytes.readUInt16LE(local + 26) !== name.length || bytes.readUInt16LE(directory + 28) !== name.length ||
+            !bytes.subarray(local + 30, local + 30 + name.length).equals(name) ||
+            !bytes.subarray(directory + 46, directory + 46 + name.length).equals(name)) throw new Error();
+        const attributes = bytes.readUInt32LE(directory + 38);
+        if (((attributes >>> 16) & 0xf000) !== 0x8000 || (attributes & 0x10) !== 0 ||
+            (bytes.readUInt16LE(local + 6) & 0x2041) !== 0 || (bytes.readUInt16LE(directory + 8) & 0x2041) !== 0) throw new Error();
+        if (bytes.readUInt16LE(local + 8) !== 8 || bytes.readUInt16LE(directory + 10) !== 8 ||
+            bytes.readUInt16LE(local + 6) !== bytes.readUInt16LE(directory + 8) ||
+            (bytes.readUInt16LE(local + 6) & 8) === 0 || (bytes.readUInt16LE(directory + 8) & 8) === 0 ||
+            bytes.readUInt32LE(local + 14) !== 0 || bytes.readUInt32LE(local + 18) !== 0 || bytes.readUInt32LE(local + 22) !== 0) throw new Error();
+        const start = local + 30 + bytes.readUInt16LE(local + 26) + bytes.readUInt16LE(local + 28);
+        const checksum = bytes.readUInt32LE(directory + 16), compressed = bytes.readUInt32LE(directory + 20), expanded = bytes.readUInt32LE(directory + 24);
+        if (expanded > limit) throw new Error();
+        const descriptor = start + compressed;
+        if (descriptor + 16 !== directory || bytes.readUInt32LE(descriptor) !== 0x08074b50 ||
+            bytes.readUInt32LE(descriptor + 4) !== checksum || bytes.readUInt32LE(descriptor + 8) !== compressed ||
+            bytes.readUInt32LE(descriptor + 12) !== expanded) throw new Error();
+        const decoded = await new Promise((resolve, reject) => {
+          const finish = (error, value) => {
+            signal.removeEventListener('abort', abort);
+            if (error) reject(error); else resolve(value);
+          };
+          const abort = () => finish(new Error('inflation deadline'));
+          if (signal.aborted) return abort();
+          signal.addEventListener('abort', abort, { once: true });
+          try { inflateRaw(bytes.subarray(start, descriptor), { info: true, maxOutputLength: limit, signal }, finish); }
+          catch (error) { finish(error); }
+        });
+        signal.throwIfAborted();
+        if (decoded.engine.bytesWritten !== compressed || decoded.buffer.length !== expanded || crc32(decoded.buffer) !== checksum) throw new Error();
+        return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(decoded.buffer));
+      } catch { throw new Error('artifact archive refused'); }
+    }
+    function boundedOperation(signal, operation) {
+      return new Promise((resolve, reject) => {
+        const abort = () => reject(new Error('read deadline'));
+        if (signal.aborted) return abort();
+        signal.addEventListener('abort', abort, { once: true });
+        Promise.resolve().then(operation).then(resolve, reject).finally(() => signal.removeEventListener('abort', abort));
+      });
+    }
+    export async function downloadArtifact(id, { send = fetch, token = process.env.GH_TOKEN, signal = AbortSignal.timeout(30_000) } = {}) {
+      if (!Number.isSafeInteger(id) || id <= 0 || !token) throw new Error('artifact scope unavailable');
+      let stage = 'transport';
+      try {
+        const response = await boundedOperation(signal, () => send('https://api.github.com/repos/williacj/rigger/actions/artifacts/' + id + '/zip', { method: 'GET', redirect: 'manual', headers: { authorization: 'Bearer ' + token, accept: 'application/vnd.github+json' }, signal }));
+        stage = 'redirect';
+        const location = response.headers.get('location');
+        if (response.status !== 302 || !location || /[\s,\\]/.test(location)) throw new Error();
+        const url = new URL(location);
+        const host = url.hostname;
+        const allowed = host === 'results-receiver.actions.githubusercontent.com' || /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+blob\.core\.windows\.net$/.test(host);
+        if (url.protocol !== 'https:' || (url.port && url.port !== '443') || url.username || url.password || url.hash || !allowed) throw new Error();
+        stage = 'transport';
+        const download = await boundedOperation(signal, () => send(url.href, { method: 'GET', redirect: 'manual', headers: {}, signal }));
+        stage = 'download';
+        if (download.status !== 200 || !download.body) throw new Error();
+        const limit = 2 * 1024 * 1024, length = download.headers.get('content-length');
+        if (length !== null && (!/^(0|[1-9][0-9]*)$/.test(length) || Number(length) > limit)) { stage = 'size'; throw new Error(); }
+        const reader = download.body.getReader(), chunks = [];
+        let size = 0;
+        try {
+          for (;;) {
+            const { value, done } = await boundedOperation(signal, () => reader.read());
+            if (done) break;
+            size += value.byteLength;
+            if (size > limit) { stage = 'size'; throw new Error(); }
+            chunks.push(value);
+          }
+          if (length !== null && Number(length) !== size) throw new Error();
+          return Buffer.concat(chunks, size);
+        } finally { void reader.cancel().catch(() => {}); }
+      } catch { throw new Error('artifact ' + stage + ' refused'); }
     }
     export async function collect(options = {}) {
       try {
         const event = options.event ?? JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
-        const context = options.context ?? { eventName: process.env.GITHUB_EVENT_NAME, ref: process.env.GITHUB_REF, sha: process.env.GITHUB_SHA, repository: process.env.GITHUB_REPOSITORY, owner: process.env.GITHUB_REPOSITORY_OWNER };
+        const context = options.context ?? { eventName: process.env.GITHUB_EVENT_NAME, ref: process.env.GITHUB_REF, sha: process.env.GITHUB_SHA, repository: process.env.GITHUB_REPOSITORY, owner: process.env.GITHUB_REPOSITORY_OWNER, ...(process.env.CI_POLICY_ACTION === 'aggregate' ? { runId: process.env.GITHUB_RUN_ID, runAttempt: process.env.GITHUB_RUN_ATTEMPT } : {}) };
         const run = options.run ?? ((args) => execFileSync('git', args, { timeout: 30_000, maxBuffer: 8 * 1024 * 1024 }));
         const request = options.request ?? requestJson;
         const text = (args) => new TextDecoder('utf-8', { fatal: true }).decode(run(args)).trim();
@@ -133,6 +239,17 @@ env:
           run(['merge-base', '--is-ancestor', facts.pr.base, facts.pr.testedBase]);
           facts.pr.eventBaseAncestor = true;
         }
+        if (context.runId !== undefined || context.runAttempt !== undefined) {
+          if (!/^[1-9][0-9]*$/.test(context.runId ?? '') || !/^[1-9][0-9]*$/.test(context.runAttempt ?? '') || !Number.isSafeInteger(Number(context.runId)) || !Number.isSafeInteger(Number(context.runAttempt)) || !Number.isSafeInteger(repository.id) || repository.id <= 0 || !Number.isSafeInteger(current.id) || current.id <= 0) throw new Error('current run identity unavailable');
+          const attempt = await request('/repos/' + context.repository + '/actions/runs/' + context.runId + '/attempts/' + context.runAttempt);
+          if (attempt.id !== Number(context.runId) || attempt.run_attempt !== Number(context.runAttempt) || !Number.isSafeInteger(attempt.workflow_id) || attempt.workflow_id <= 0 || attempt.path !== '.github/workflows/ci.yml' || attempt.event !== context.eventName || !attempt.actor?.login || attempt.repository?.id !== repository.id || attempt.repository?.full_name !== context.repository || attempt.head_sha !== facts.pr.head || !Array.isArray(attempt.pull_requests) || attempt.pull_requests.length !== 1 || attempt.pull_requests[0].id !== current.id || attempt.pull_requests[0].number !== current.number) throw new Error('current run identity mismatch');
+          const blob = text(['rev-parse', 'HEAD:.github/workflows/ci.yml']);
+          if (!sha(blob)) throw new Error('current workflow version unavailable');
+          facts.repository = { id: repository.id, fullName: repository.full_name };
+          facts.pr.id = current.id;
+          facts.workflow = { id: attempt.workflow_id, path: attempt.path, blob };
+          facts.run = { id: attempt.id, attempt: attempt.run_attempt, event: attempt.event, actor: attempt.actor.login };
+        }
         facts.live = { head: current.head.sha, base: current.base.sha, baseRef: current.base.ref, state: current.state, draft: current.draft, labels: labels.map((label) => label.name) };
         facts.changes = parseRaw(run(['diff', '--raw', '-z', '--no-renames', facts.pr.testedBase, checkout.sha]));
         facts.complete = true;
@@ -148,9 +265,94 @@ env:
       const results = proof.results ?? {};
       if (results.plan !== 'success' || results.fast !== 'success') return false;
       if (f.event === 'pull_request' && results.cancel_superseded !== 'success') return false;
+      if (fresh.mode === 'BROAD_DEFERRED') {
+        return results.full_ordinary === 'skipped' && results.full_host === 'skipped' && results.demo === (fresh.demoNeeded ? 'success' : 'skipped') && reusedFull(f, proof.reuse);
+      }
       if (!['FAST_ELIGIBLE', 'MAIN_SMOKE', 'BROAD_EXECUTED'].includes(fresh.mode)) return false;
       const required = fresh.mode === 'BROAD_EXECUTED' ? 'success' : 'skipped';
       return results.full_ordinary === required && results.full_host === required && results.demo === (fresh.demoNeeded ? 'success' : 'skipped');
+    }
+    function candidate(f, demo) {
+      const { repository, workflow } = f;
+      if (!repository || !workflow || !Number.isSafeInteger(repository.id) || repository.id <= 0 || repository.fullName !== 'williacj/rigger' || !Number.isSafeInteger(f.pr?.id) || f.pr.id <= 0 || !Number.isSafeInteger(workflow.id) || workflow.id <= 0 || workflow.path !== '.github/workflows/ci.yml' || !sha(workflow.blob)) return undefined;
+      return {
+        repositoryId: repository.id, repository: repository.fullName, prId: f.pr.id, prNumber: f.pr.number,
+        workflowId: workflow.id, workflowPath: workflow.path, workflowBlob: workflow.blob,
+        head: f.pr.head, base: f.pr.testedBase, baseRef: f.pr.baseRef, tree: f.checkout.tree,
+        parents: [...f.checkout.parents], profile: { ordinary: true, host: true, demo },
+      };
+    }
+    function fullReceipt(f, fresh) {
+      if (f.event !== 'pull_request' || f.action !== 'labeled' || f.label !== 'ci:full' || f.sender !== f.owner || fresh.mode !== 'BROAD_EXECUTED') return undefined;
+      const identity = candidate(f, fresh.demoNeeded), run = f.run;
+      if (!identity || !run || !Number.isSafeInteger(run.id) || run.id <= 0 || !Number.isSafeInteger(run.attempt) || run.attempt <= 0 || run.event !== f.event || run.actor !== f.owner) return undefined;
+      return {
+        schema: 1,
+        origin: { runId: run.id, attempt: run.attempt, event: run.event, actor: run.actor, action: f.action, label: f.label },
+        candidate: identity, checkout: { sha: f.checkout.sha, eventSha: f.eventSha },
+      };
+    }
+    function reusedFull(f, evidence) {
+      const { receipt, run, jobs } = evidence ?? {};
+      const full = policy({ ...f, action: 'labeled', label: 'ci:full', sender: f.owner, live: { ...f.live, labels: ['ci:full'] } });
+      const identity = full.sourceValid && full.mode === 'BROAD_EXECUTED' ? candidate(f, full.demoNeeded) : undefined;
+      if (!identity || !receipt || receipt.schema !== 1 || JSON.stringify(receipt.candidate) !== JSON.stringify(identity) || !sha(receipt.checkout?.sha) || receipt.checkout.sha !== receipt.checkout.eventSha) return false;
+      const origin = receipt.origin;
+      if (!origin || !Number.isSafeInteger(origin.runId) || origin.runId <= 0 || !Number.isSafeInteger(origin.attempt) || origin.attempt <= 0 || origin.event !== 'pull_request' || origin.actor !== f.owner || origin.action !== 'labeled' || origin.label !== 'ci:full') return false;
+      if (!run || run.id !== origin.runId || run.run_attempt !== origin.attempt || run.workflow_id !== identity.workflowId || run.path !== identity.workflowPath || run.event !== origin.event || run.actor?.login !== origin.actor || run.status !== 'completed' || run.conclusion !== 'success' || run.repository?.id !== identity.repositoryId || run.repository?.full_name !== identity.repository || run.head_sha !== identity.head || !Array.isArray(run.pull_requests) || run.pull_requests.length !== 1) return false;
+      const pr = run.pull_requests[0];
+      if (pr.id !== identity.prId || pr.number !== identity.prNumber || pr.head?.sha !== identity.head || pr.base?.sha !== identity.base || pr.base?.ref !== identity.baseRef) return false;
+      return fullJobs(identity, origin, jobs);
+    }
+    function fullJobs(identity, origin, jobs) {
+      if (!jobs || !Array.isArray(jobs.jobs) || jobs.total_count !== jobs.jobs.length || jobs.jobs.length > 100 || new Set(jobs.jobs.map((job) => job.id)).size !== jobs.jobs.length) return false;
+      const required = { plan: 'success', fast: 'success', full_ordinary: 'success', full_host: 'success', cancel_superseded: 'success', 'check (26)': 'success', demo: identity.profile.demo ? 'success' : 'skipped' };
+      return Object.entries(required).every(([name, conclusion]) => {
+        const found = jobs.jobs.filter((job) => job.name === name);
+        return found.length === 1 && found[0].run_id === origin.runId && found[0].run_attempt === origin.attempt && found[0].status === 'completed' && found[0].conclusion === conclusion;
+      });
+    }
+    export async function discoverFullProof(f, { request = requestJson, send = fetch, token = process.env.GH_TOKEN, signal: providedSignal } = {}) {
+      try {
+        if (policy(f).mode !== 'BROAD_DEFERRED') return { reason: 'reuse not eligible' };
+        const full = policy({ ...f, action: 'labeled', label: 'ci:full', sender: f.owner, live: { ...f.live, labels: ['ci:full'] } });
+        const identity = full.sourceValid && full.mode === 'BROAD_EXECUTED' ? candidate(f, full.demoNeeded) : undefined;
+        if (!identity) return { reason: 'candidate identity unavailable' };
+        const prefix = '/repos/' + identity.repository + '/actions';
+        const page = await request(prefix + '/workflows/' + identity.workflowId + '/runs?event=pull_request&head_sha=' + identity.head + '&status=success&per_page=100');
+        if (!Array.isArray(page.workflow_runs) || page.total_count !== page.workflow_runs.length || page.workflow_runs.length > 100) return { reason: 'discovery page incomplete' };
+        let reason = 'no verified full proof';
+        const seen = new Set();
+        for (const offered of page.workflow_runs) {
+          if (!Number.isSafeInteger(offered.id) || offered.id <= 0 || !Number.isSafeInteger(offered.run_attempt) || offered.run_attempt <= 0) continue;
+          const identityKey = offered.id + ':' + offered.run_attempt;
+          if (seen.has(identityKey)) continue;
+          seen.add(identityKey);
+          const run = await request(prefix + '/runs/' + offered.id + '/attempts/' + offered.run_attempt);
+          if (run.id !== offered.id || run.run_attempt !== offered.run_attempt) continue;
+          const origin = { runId: run.id, attempt: run.run_attempt };
+          const jobs = await request(prefix + '/runs/' + run.id + '/attempts/' + run.run_attempt + '/jobs?per_page=100');
+          if (!fullJobs(identity, origin, jobs)) continue;
+          const artifacts = await request(prefix + '/runs/' + run.id + '/artifacts?per_page=100');
+          if (!Array.isArray(artifacts.artifacts) || artifacts.total_count !== artifacts.artifacts.length || artifacts.artifacts.length > 100) return { reason: 'artifact page incomplete' };
+          const found = artifacts.artifacts.filter((artifact) => artifact.name === 'ci-full-proof-' + run.id + '-' + run.run_attempt);
+          if (found.length === 0) { reason = 'artifact receipt absent'; continue; }
+          if (found.length !== 1) { reason = 'artifact receipt ambiguous'; continue; }
+          const artifact = found[0], originMetadata = artifact.workflow_run;
+          if (artifact.expired === true) { reason = 'artifact expired'; continue; }
+          if (!Number.isSafeInteger(artifact.id) || artifact.id <= 0 || artifact.expired !== false ||
+              (originMetadata != null && (typeof originMetadata !== 'object' || Array.isArray(originMetadata) ||
+                (originMetadata.id !== undefined && originMetadata.id !== run.id) ||
+                (originMetadata.repository_id !== undefined && originMetadata.repository_id !== identity.repositoryId) ||
+                (originMetadata.head_sha !== undefined && originMetadata.head_sha !== identity.head)))) { reason = 'artifact metadata refused'; continue; }
+          if (!Number.isSafeInteger(artifact.size_in_bytes) || artifact.size_in_bytes < 0 || artifact.size_in_bytes > 2 * 1024 * 1024) { reason = 'artifact size refused'; continue; }
+          const signal = providedSignal ?? AbortSignal.timeout(30_000);
+          const receipt = await readReceiptZip(await downloadArtifact(artifact.id, { send, token, signal }), { signal });
+          const reuse = { receipt, run, jobs, artifact: { id: artifact.id, name: artifact.name } };
+          if (reusedFull(f, reuse)) return { reuse };
+        }
+        return { reason };
+      } catch { return { reason: 'full proof discovery refused' }; }
     }
     export function runPolicy({ action, facts, proof = {}, worker } = {}) {
       const fresh = policy(facts);
@@ -164,7 +366,7 @@ env:
           : false;
         return { ok: Boolean(verified && allowed && process.versions.node.split('.')[0] === '26'), source: fresh.sourceValid ? source(facts) : undefined, reason: 'worker source/mode verification failed' };
       }
-      if (action === 'aggregate') return { ok: verified && guard(facts, proof), source: fresh.sourceValid ? source(facts) : undefined, testedBase: fresh.sourceValid ? source(facts).base : undefined, ...(facts?.pr ? { eventBase: facts.pr.base } : {}), currentMain: facts?.main?.head, mainAdvanced: fresh.sourceValid && facts.pr?.baseRef === 'main' ? facts.main.head !== facts.pr.testedBase : null, reason: fresh.mode === 'BROAD_DEFERRED' ? 'missing-current-batch-proof: explicitly request full proof for the current head and base' : 'current source or required tier result did not verify' };
+      if (action === 'aggregate') return { ok: verified && guard(facts, proof), ...(verified && guard(facts, proof) && fullReceipt(facts, fresh) ? { receipt: fullReceipt(facts, fresh) } : {}), source: fresh.sourceValid ? source(facts) : undefined, testedBase: fresh.sourceValid ? source(facts).base : undefined, ...(facts?.pr ? { eventBase: facts.pr.base } : {}), currentMain: facts?.main?.head, mainAdvanced: fresh.sourceValid && facts.pr?.baseRef === 'main' ? facts.main.head !== facts.pr.testedBase : null, reason: fresh.mode === 'BROAD_DEFERRED' ? 'missing-current-batch-proof: explicitly request full proof for the current head and base' : 'current source or required tier result did not verify' };
       return { ok: false, reason: 'unknown policy action' };
     }
     if (process.env.CI_POLICY_ACTION) {
@@ -173,10 +375,20 @@ env:
       try { expected = JSON.parse(process.env.CI_EXPECTED_SOURCE ?? 'null'); } catch { expected = null; }
       let results = {};
       try { results = Object.fromEntries(Object.entries(JSON.parse(process.env.CI_RESULTS ?? '{}')).map(([name, job]) => [name, job.result])); } catch { results = {}; }
-      const result = runPolicy({ action: process.env.CI_POLICY_ACTION, facts, worker: process.env.CI_WORKER, proof: { mode: process.env.CI_EXPECTED_MODE, demoNeeded: process.env.CI_EXPECTED_DEMO === 'true' ? true : process.env.CI_EXPECTED_DEMO === 'false' ? false : undefined, sourceValid: expected !== null, source: expected, results } });
-      console.log(JSON.stringify({ job: process.env.GITHUB_JOB, mode: policy(facts).mode, source: result.source, testedBase: result.testedBase, eventBase: result.eventBase, currentMain: result.currentMain, mainAdvanced: result.mainAdvanced, node: process.version, platform: process.platform, runner: process.env.RUNNER_NAME, runnerOS: process.env.RUNNER_OS, runnerArch: process.env.RUNNER_ARCH }));
+      const discovered = process.env.CI_POLICY_ACTION === 'aggregate' && policy(facts).mode === 'BROAD_DEFERRED' &&
+        results.plan === 'success' && results.fast === 'success' && results.cancel_superseded === 'success' ? await discoverFullProof(facts) : undefined;
+      const result = runPolicy({ action: process.env.CI_POLICY_ACTION, facts, worker: process.env.CI_WORKER, proof: { mode: process.env.CI_EXPECTED_MODE, demoNeeded: process.env.CI_EXPECTED_DEMO === 'true' ? true : process.env.CI_EXPECTED_DEMO === 'false' ? false : undefined, sourceValid: expected !== null, source: expected, results, reuse: discovered?.reuse } });
+      console.log(JSON.stringify({ job: process.env.GITHUB_JOB, mode: policy(facts).mode, source: result.source, testedBase: result.testedBase, eventBase: result.eventBase, currentMain: result.currentMain, mainAdvanced: result.mainAdvanced, ...(result.ok && discovered?.reuse ? { reuse: { runId: discovered.reuse.run.id, attempt: discovered.reuse.run.run_attempt, artifactId: discovered.reuse.artifact.id } } : {}), node: process.version, platform: process.platform, runner: process.env.RUNNER_NAME, runnerOS: process.env.RUNNER_OS, runnerArch: process.env.RUNNER_ARCH }));
       if (result.output) for (const [key, value] of Object.entries(result.output)) appendFileSync(process.env.GITHUB_OUTPUT, key + '=' + String(value) + '\n');
       if (!result.ok) throw new Error(result.reason);
+      if (result.receipt) {
+        try {
+          const bytes = Buffer.from(JSON.stringify(result.receipt));
+          if (!process.env.RUNNER_TEMP || bytes.length > 2 * 1024 * 1024) throw new Error();
+          writeFileSync(join(process.env.RUNNER_TEMP, 'ci-full-proof.json'), bytes, { flag: 'wx', mode: 0o600 });
+        } catch { throw new Error('full proof receipt file refused'); }
+        appendFileSync(process.env.GITHUB_OUTPUT, 'fullReceipt=true\n');
+      }
     }
 
 jobs:
@@ -469,7 +681,11 @@ jobs:
           CI_CANCEL_ACTION: run
           CI_EXPECTED_SOURCE: ${{ needs.plan.outputs.snapshot }}
   check:
-    name: ${{ needs.plan.result == 'success' && needs.plan.outputs.mode == 'BROAD_DEFERRED' && 'broad deferred (26)' || 'check (26)' }}
+    name: check (26)
+    permissions:
+      contents: read
+      pull-requests: read
+      actions: read
     needs: [plan, fast, full_ordinary, full_host, demo, cancel_superseded]
     if: ${{ always() && !(needs.plan.result == 'success' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && needs.plan.outputs.mode == 'MAIN_FULL') }}
     runs-on: ubuntu-latest
@@ -486,6 +702,7 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - run: node --input-type=module -e "$CI_POLICY"
+        id: policy
         env:
           GH_TOKEN: ${{ github.token }}
           CI_POLICY_ACTION: aggregate
@@ -493,6 +710,14 @@ jobs:
           CI_EXPECTED_MODE: ${{ needs.plan.outputs.mode }}
           CI_EXPECTED_DEMO: ${{ needs.plan.outputs.demoNeeded }}
           CI_RESULTS: ${{ toJSON(needs) }}
+      - name: Keep verified full CI receipt
+        if: ${{ success() && steps.policy.outputs.fullReceipt == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-full-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/ci-full-proof.json
+          if-no-files-found: error
+
   demo:
     needs: [plan]
     if: ${{ needs.plan.outputs.demoNeeded == 'true' }}

@@ -3,7 +3,7 @@
 // job mints and posts in, and, run with stand-ins for node and curl, what its steps post.
 
 import { test } from 'node:test';
-import { ciFacts, ciProof, ciFullFixture, ciCollectorFixture, parseWorkflow } from './ci-policy-fixtures.mjs';
+import { ciFacts, ciProof, ciFullFixture, ciReuseFixture, ciCollectorFixture, ciRunCollectorFixture, ciDiscoveryFixture, parseWorkflow } from './ci-policy-fixtures.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -38,6 +38,28 @@ test('CI assigns portable, concurrent hosted candidate and protected-main regres
     assert.equal(setup.with['node-version'], name === 'check' ? '${{ matrix.node }}' : '26');
   }
 });
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 /** Runs the actual protected literal; fixture outcomes below are independent policy expectations. */
 function ciPolicy(operation, facts, extra = {}) {
@@ -511,27 +533,36 @@ test('actual inline collector uses the complete current issue-label read rather 
   assert.equal(ciPolicy('policy', ciPolicy('collect', fixture).answer).mode, 'INVALID');
 });
 
-test('actual inline CLI plans and verifies real Git source through a local read-only API contract and rejects a changed head', { timeout: 15_000 }, async (t) => {
-  const directory = repositoryAt(temporaryDirectory('rigger-ci-policy-', { context: t }), { 'docs/journal/base.md': 'base\n' });
+/** Executes the actual inline CI entry point against real Git and a bounded local read-only API. */
+async function executableCiFixture(t, { changePath = 'docs/journal/a.md', authenticated = false } = {}) {
+  const directory = repositoryAt(temporaryDirectory('rigger-ci-policy-', { context: t }), { 'docs/journal/base.md': 'base\n', ...(authenticated ? { '.github/workflows/ci.yml': readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8') } : {}) });
   gitIn(directory, 'branch', '-M', 'main');
   const base = gitIn(directory, 'rev-parse', 'HEAD').trim();
   gitIn(directory, 'checkout', '-qb', 'change');
-  writeFileSync(join(directory, 'docs/journal/a.md'), 'change\n');
+  mkdirSync(dirname(join(directory, changePath)), { recursive: true });
+  writeFileSync(join(directory, changePath), 'change\n');
   gitIn(directory, 'add', '-A'); gitIn(directory, 'commit', '-qm', 'change');
   const head = gitIn(directory, 'rev-parse', 'HEAD').trim();
   gitIn(directory, 'checkout', '-qb', 'synthetic', base);
   gitIn(directory, 'merge', '--no-ff', '-qm', 'synthetic', head);
   const sha = gitIn(directory, 'rev-parse', 'HEAD').trim(), tree = gitIn(directory, 'rev-parse', 'HEAD^{tree}').trim();
-  const fixture = ciCollectorFixture();
+  const fixture = authenticated ? ciRunCollectorFixture() : ciCollectorFixture();
   Object.assign(fixture.event.pull_request.head, { sha: head }); Object.assign(fixture.event.pull_request.base, { sha: base });
   Object.assign(fixture.api['/repos/williacj/rigger/pulls/7'].head, { sha: head });
   Object.assign(fixture.api['/repos/williacj/rigger/pulls/7'].base, { sha: base });
   fixture.api['/repos/williacj/rigger/git/ref/heads/main'].object.sha = base;
+  if (authenticated) fixture.api['/repos/williacj/rigger/actions/runs/4102/attempts/1'].head_sha = head;
   const requests = [];
   const server = createServer((request, response) => {
     requests.push({ method: request.method, path: request.url });
-    response.writeHead(Object.hasOwn(fixture.api, request.url) ? 200 : 404, { 'content-type': 'application/json' });
-    response.end(JSON.stringify(fixture.api[request.url] ?? {}));
+    if (request.url === '/fixture/redirect' && fixture.archive) {
+      response.writeHead(302, { location: 'https://account.blob.core.windows.net/receipt' }); response.end();
+    } else if (request.url === '/fixture/archive' && fixture.archive) {
+      response.writeHead(200, { 'content-type': 'application/zip' }); response.end(Buffer.from(fixture.archive, 'base64'));
+    } else {
+      response.writeHead(Object.hasOwn(fixture.api, request.url) ? 200 : 404, { 'content-type': 'application/json' });
+      response.end(JSON.stringify(fixture.api[request.url] ?? {}));
+    }
   });
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise((resolve) => server.close(resolve)));
@@ -539,10 +570,20 @@ test('actual inline CLI plans and verifies real Git source through a local read-
   writeFileSync(eventPath, JSON.stringify(fixture.event)); writeFileSync(outputPath, '');
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
   const { NODE_TEST_CONTEXT, ...env } = gitEnvironment();
+  // The documented artifact routes retain their exact URLs/options while the fixture serves their bytes locally.
+  const transport = `const nativeFetch = globalThis.fetch;
+    globalThis.fetch = (url, options) => {
+      const routes = { 'https://api.github.com/repos/williacj/rigger/actions/artifacts/6001/zip': '/fixture/redirect',
+        'https://account.blob.core.windows.net/receipt': '/fixture/archive' };
+      const local = process.env.GITHUB_API_URL;
+      if (Object.hasOwn(routes, url)) return nativeFetch(local + routes[url], options);
+      if (new URL(url).origin !== local) throw new Error('unexpected external fixture request');
+      return nativeFetch(url, options);
+    };`;
   const execute = (action, extra = {}) => new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['--input-type=module', '-e', ci.env.CI_POLICY], {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', transport + ci.env.CI_POLICY], {
       cwd: directory, signal: t.signal,
-      env: { ...env, GH_TOKEN: 'fixture-token', GITHUB_API_URL: 'http://127.0.0.1:' + server.address().port, GITHUB_EVENT_PATH: eventPath, GITHUB_EVENT_NAME: 'pull_request', GITHUB_REF: 'refs/pull/7/merge', GITHUB_SHA: sha, GITHUB_REPOSITORY: 'williacj/rigger', GITHUB_REPOSITORY_OWNER: 'williacj', GITHUB_OUTPUT: outputPath, CI_POLICY_ACTION: action, ...extra },
+      env: { ...env, GH_TOKEN: 'fixture-token', GITHUB_API_URL: 'http://127.0.0.1:' + server.address().port, GITHUB_EVENT_PATH: eventPath, GITHUB_EVENT_NAME: 'pull_request', GITHUB_REF: 'refs/pull/7/merge', GITHUB_SHA: sha, GITHUB_REPOSITORY: 'williacj/rigger', GITHUB_REPOSITORY_OWNER: 'williacj', GITHUB_OUTPUT: outputPath, CI_POLICY_ACTION: action, ...(authenticated ? { GITHUB_RUN_ID: '4102', GITHUB_RUN_ATTEMPT: '1' } : {}), ...extra },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     console.log(JSON.stringify({ ciPolicyChild: child.pid, action, sha, tree }));
@@ -550,6 +591,12 @@ test('actual inline CLI plans and verifies real Git source through a local read-
     child.stdout.on('data', (bytes) => { out += bytes; }); child.stderr.on('data', (bytes) => { err += bytes; });
     child.on('error', reject); child.on('close', (status, signal) => resolve({ status, signal, out, err }));
   });
+  return { directory, base, head, sha, tree, fixture, requests, eventPath, outputPath, execute };
+}
+
+// Host reason: wiring. Ordinary counterpart: test/ci-proof-source.test.mjs -- receipt collector authenticates current attempt repository PR and exact checked-out workflow identity.
+test('actual inline CLI plans and verifies real Git source through a local read-only API contract and rejects a changed head', { timeout: 15_000 }, async (t) => {
+  const { fixture, requests, outputPath, execute, sha, tree } = await executableCiFixture(t);
   const plan = await execute('plan'); assert.equal(plan.status, 0, plan.out + plan.err);
   const outputs = Object.fromEntries(readFileSync(outputPath, 'utf8').trim().split('\n').map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]));
   assert.equal(outputs.mode, 'FAST_ELIGIBLE'); assert.equal(outputs.sha, sha); assert.equal(outputs.tree, tree);
@@ -564,6 +611,100 @@ test('actual inline CLI plans and verifies real Git source through a local read-
   assert.match(changed.err, /current source or required tier result did not verify/);
   assert.ok(requests.length > 0); assert.ok(requests.every((request) => request.method === 'GET'));
 });
+
+
+// Host reason: wiring. Ordinary counterpart: test/ci-proof-source.test.mjs -- metadata aggregate reuses an equivalent full candidate only with completed actual owner run and required per-attempt jobs.
+test('actual inline metadata aggregate discovers prior full proof while requiring current fast and controller success', { timeout: 15_000 }, async (t) => {
+  // H2 requires the real executable route; C1/current fast/controller obligations cannot be replaced by prior results.
+  const runtime = await executableCiFixture(t, { changePath: 'test/package-budget.test.mjs', authenticated: true });
+  const { fixture, directory, base, head, sha, tree, eventPath, outputPath, execute, requests } = runtime;
+  fixture.event.action = 'edited';
+  writeFileSync(eventPath, JSON.stringify(fixture.event));
+  const supplied = ciReuseFixture(), candidate = supplied.proof.reuse.receipt.candidate;
+  Object.assign(candidate, { head, base, tree, parents: [base, head], workflowBlob: gitIn(directory, 'rev-parse', 'HEAD:.github/workflows/ci.yml').trim() });
+  supplied.proof.reuse.run.head_sha = head;
+  Object.assign(supplied.proof.reuse.run.pull_requests[0].head, { sha: head });
+  Object.assign(supplied.proof.reuse.run.pull_requests[0].base, { sha: base });
+  supplied.facts.pr.head = head;
+  const discovery = ciDiscoveryFixture('usable', supplied);
+  Object.assign(fixture.api, discovery.api); fixture.archive = discovery.archive;
+  const plan = await execute('plan'); assert.equal(plan.status, 0, plan.out + plan.err);
+  const outputs = Object.fromEntries(readFileSync(outputPath, 'utf8').trim().split('\n').map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]));
+  assert.equal(outputs.mode, 'BROAD_DEFERRED'); assert.equal(outputs.sha, sha); assert.equal(outputs.tree, tree);
+  const proof = { CI_EXPECTED_SOURCE: outputs.snapshot, CI_EXPECTED_MODE: outputs.mode, CI_EXPECTED_DEMO: outputs.demoNeeded };
+  const results = { plan: { result: 'success' }, fast: { result: 'success' }, full_ordinary: { result: 'skipped' }, full_host: { result: 'skipped' }, demo: { result: 'skipped' }, cancel_superseded: { result: 'success' } };
+  const aggregate = await execute('aggregate', { ...proof, CI_RESULTS: JSON.stringify(results) });
+  assert.equal(aggregate.status, 0, aggregate.out + aggregate.err);
+  assert.deepEqual(JSON.parse(aggregate.out.trim()).reuse, { runId: 4101, attempt: 2, artifactId: 6001 });
+  assert.ok(requests.some((request) => request.path === '/fixture/archive'), 'prior receipt traverses actual download and ZIP decoder');
+  for (const name of ['fast', 'cancel_superseded']) {
+    const invalid = structuredClone(results); invalid[name].result = 'failure';
+    const refused = await execute('aggregate', { ...proof, CI_RESULTS: JSON.stringify(invalid) });
+    assert.notEqual(refused.status, 0, name + ': ' + refused.out + refused.err);
+  }
+  assert.ok(requests.every((request) => request.method === 'GET'), 'proof discovery stays read-only');
+});
+
+
+// Host reason: wiring. Ordinary counterpart: test/ci-proof-source.test.mjs -- successful owner full aggregate produces an exact candidate-bound receipt with checkout provenance.
+test('actual owner full aggregate writes only a fresh bounded receipt file for its success-gated artifact upload', { timeout: 15_000 }, async (t) => {
+  // H1 publishes the actual authenticated candidate; failed/nonfull attempts and occupied paths cannot supply a receipt.
+  const { fixture, directory, base, head, sha, tree, eventPath, outputPath, execute } = await executableCiFixture(t, { authenticated: true });
+  Object.assign(fixture.event, { action: 'labeled', sender: { login: 'williacj' }, label: { name: 'ci:full' } });
+  fixture.api['/repos/williacj/rigger/issues/7/labels?per_page=100'] = [{ name: 'ci:full' }];
+  fixture.api['/repos/williacj/rigger/actions/runs/4102/attempts/1'].actor.login = 'williacj';
+  writeFileSync(eventPath, JSON.stringify(fixture.event));
+  const readOutputs = () => Object.fromEntries(readFileSync(outputPath, 'utf8').trim().split('\n').map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]));
+  const plan = await execute('plan'); assert.equal(plan.status, 0, plan.out + plan.err);
+  const outputs = readOutputs(); assert.equal(outputs.mode, 'BROAD_EXECUTED');
+  const proof = { CI_EXPECTED_SOURCE: outputs.snapshot, CI_EXPECTED_MODE: outputs.mode, CI_EXPECTED_DEMO: outputs.demoNeeded };
+  const results = { plan: { result: 'success' }, fast: { result: 'success' }, full_ordinary: { result: 'success' }, full_host: { result: 'success' }, demo: { result: 'skipped' }, cancel_superseded: { result: 'success' } };
+  const destination = (name) => { const path = join(directory, name); mkdirSync(path); return path; };
+  const runnerTemp = destination('receipt-success'), receiptPath = join(runnerTemp, 'ci-full-proof.json');
+  const full = await execute('aggregate', { ...proof, CI_RESULTS: JSON.stringify(results), RUNNER_TEMP: runnerTemp });
+  assert.equal(full.status, 0, full.out + full.err);
+  assert.equal(existsSync(receiptPath), true, 'successful executable full aggregate must materialize its receipt');
+  const bytes = readFileSync(receiptPath); assert.ok(bytes.length <= 2 * 1024 * 1024);
+  assert.deepEqual(JSON.parse(bytes.toString('utf8')), {
+    schema: 1, origin: { runId: 4102, attempt: 1, event: 'pull_request', actor: 'williacj', action: 'labeled', label: 'ci:full' },
+    candidate: { repositoryId: 42, repository: 'williacj/rigger', prId: 7001, prNumber: 7,
+      workflowId: 9130, workflowPath: '.github/workflows/ci.yml', workflowBlob: gitIn(directory, 'rev-parse', 'HEAD:.github/workflows/ci.yml').trim(),
+      head, base, baseRef: 'main', tree, parents: [base, head], profile: { ordinary: true, host: true, demo: false } },
+    checkout: { sha, eventSha: sha },
+  });
+  assert.equal(readOutputs().fullReceipt, 'true', 'only a written receipt authorizes upload');
+  const failedTemp = destination('receipt-failed'), failedResults = structuredClone(results); failedResults.full_host.result = 'failure';
+  const failed = await execute('aggregate', { ...proof, CI_RESULTS: JSON.stringify(failedResults), RUNNER_TEMP: failedTemp });
+  assert.notEqual(failed.status, 0, failed.out + failed.err); assert.equal(existsSync(join(failedTemp, 'ci-full-proof.json')), false);
+  for (const kind of ['regular', 'symlink']) {
+    const occupied = destination('receipt-' + kind), sentinel = join(occupied, 'sentinel.json'), target = join(occupied, 'ci-full-proof.json');
+    writeFileSync(sentinel, 'owner sentinel');
+    if (kind === 'symlink') symlinkSync(sentinel, target); else writeFileSync(target, 'owner sentinel');
+    const refused = await execute('aggregate', { ...proof, CI_RESULTS: JSON.stringify(results), RUNNER_TEMP: occupied });
+    assert.notEqual(refused.status, 0, kind + ': ' + refused.out + refused.err);
+    assert.equal(readFileSync(target, 'utf8'), 'owner sentinel'); assert.equal(readFileSync(sentinel, 'utf8'), 'owner sentinel');
+  }
+  fixture.event.action = 'synchronize'; delete fixture.event.label;
+  fixture.api['/repos/williacj/rigger/issues/7/labels?per_page=100'] = [];
+  writeFileSync(eventPath, JSON.stringify(fixture.event));
+  const nonfullPlan = await execute('plan'); assert.equal(nonfullPlan.status, 0, nonfullPlan.out + nonfullPlan.err);
+  const nonfullOutputs = readOutputs(); assert.equal(nonfullOutputs.mode, 'FAST_ELIGIBLE');
+  const nonfullTemp = destination('receipt-nonfull'), nonfullResults = structuredClone(results); nonfullResults.full_ordinary.result = nonfullResults.full_host.result = 'skipped';
+  const nonfull = await execute('aggregate', { CI_EXPECTED_SOURCE: nonfullOutputs.snapshot, CI_EXPECTED_MODE: nonfullOutputs.mode, CI_EXPECTED_DEMO: nonfullOutputs.demoNeeded, CI_RESULTS: JSON.stringify(nonfullResults), RUNNER_TEMP: nonfullTemp });
+  assert.equal(nonfull.status, 0, nonfull.out + nonfull.err); assert.equal(existsSync(join(nonfullTemp, 'ci-full-proof.json')), false);
+  const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
+  const aggregateAt = ci.jobs.check.steps.findIndex((step) => step.env?.CI_POLICY_ACTION === 'aggregate');
+  const uploads = ci.jobs.check.steps.filter((step) => step.uses === 'actions/upload-artifact@v7');
+  assert.equal(uploads.length, 1, 'full proof upload is wired once at its aggregate');
+  const upload = uploads[0]; assert.ok(ci.jobs.check.steps.indexOf(upload) > aggregateAt);
+  assert.equal(ci.jobs.check.steps[aggregateAt].id, 'policy');
+  assert.equal(upload.if, "${{ success() && steps.policy.outputs.fullReceipt == 'true' }}");
+  assert.equal(upload.with.name, 'ci-full-proof-${{ github.run_id }}-${{ github.run_attempt }}');
+  assert.equal(upload.with.path, '${{ runner.temp }}/ci-full-proof.json');
+  assert.equal(upload.with['if-no-files-found'], 'error');
+});
+
+
 
 
 const live = parseWorkflow(readFileSync(LIVE, 'utf8'));
