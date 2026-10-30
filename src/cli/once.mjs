@@ -20,6 +20,7 @@ import { CONFIG } from './init.mjs';
 import { PACKAGE, closerLine, outsideText, consumerConfig, gitAnswer, real, sameTree, settled, unreadableAdmission, within } from './doctor.mjs';
 import { refusalLine } from './plan.mjs';
 import { STATE, recording } from './recording.mjs';
+import { reportText } from './report.mjs';
 
 /**
  * Every failure `failure` holds, an AggregateError opened to the failures inside it, however
@@ -176,7 +177,7 @@ export const claimVerb = (verb, limit, options) => recording((opened) => claimin
  * choose the wording shared by `once` and `run`.
  */
 async function claiming(verb, limit, opened, {
-  target = process.cwd(), packageRoot = PACKAGE, ask, send, host, readTimeout,
+  target = process.cwd(), packageRoot = PACKAGE, ask, send, host, readTimeout, clock,
 } = {}) {
   const { named, refusal } = await settled(verb, opened, { target, packageRoot, ask });
   if (refusal) return refusal;
@@ -346,6 +347,7 @@ async function claiming(verb, limit, opened, {
     const heading = `rigger ${verb}: claimed #${held.card} from board ${project}; its maker did not start: ${attempts.at(-1).reason}, and the card was ${held.decision === 'hold' ? 'held' : 'stopped'} after ${attempts.length} attempts:`;
     return [heading, ...attempts.map((each, at) => `attempt ${at + 1}: ${JSON.stringify(each)}`)].join('\n');
   };
+  const handoffLines = (handoffs = []) => handoffs.map(({ report, failure }) => report === undefined ? failureLine(failure) : reportText(report));
   /**
    * The lines naming each closer a held card's failure among `held` carries, once each however many
    * of its judges held: admission closed by it, in `closerLine`'s words, its notice where that
@@ -361,7 +363,8 @@ async function claiming(verb, limit, opened, {
   try {
     // The verb hands L3 the process's own environment, which L3 hands every dispatch it makes
     // (the architect's ruling 2, P7, on #467), and no maker: L3 dispatches it through L1.
-    reached = await loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, environment: process.env, run: opened.run }).pull(limit);
+    const l3 = loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, environment: process.env, run: opened.run, clock });
+    reached = await (verb === 'run' ? l3.run({ singlePull: true }) : l3.pull(limit));
   } catch (failure) {
     // What L3 reports is said whole, one line per failure it holds, and the exit is non-zero:
     // an event the record refused names an action Rigger took and could not record, or a start
@@ -377,26 +380,28 @@ async function claiming(verb, limit, opened, {
     // said among its card's judge lines, where L3 carried it, and not again after them.
     const reachedCards = failure.reached ?? [];
     const carried = new Set(reachedCards.flatMap(({ judges = [] }) => judges.flatMap(({ failure: held }) => (held === undefined ? [] : [held]))));
+    const handed = new Set((failure.handoffs ?? []).flatMap(({ failure: held }) => held === undefined ? [] : [held]));
     return {
-      text: [...said(outcomes(reachedCards)), ...failuresIn(failure).filter((held) => !carried.has(held)).map(failureLine), ...holdLines([...failuresIn(failure), ...carried]), ...refusals.map(refusalLine)].join('\n'),
+      text: [...said(outcomes(reachedCards)), ...failuresIn(failure).filter((held) => !carried.has(held) && !handed.has(held)).map(failureLine), ...holdLines([...failuresIn(failure), ...carried]), ...refusals.map(refusalLine), ...handoffLines(failure.handoffs)].join('\n'),
       code: 1,
     };
   }
   const refused = refusals.map(refusalLine);
+  const reports = handoffLines(reached.handoffs);
   if (reached.admission?.state === 'closed') {
     const notices = (reached.notices ?? []).map((failed) => noticeLine(verb, failed.id, failed));
     return {
-      text: [...reached.admission.closers.map((closer) => `rigger ${verb}: ${closerLine(closer)}`), ...notices, ...refused].join('\n'),
+      text: [...reached.admission.closers.map((closer) => `rigger ${verb}: ${closerLine(closer)}`), ...notices, ...refused, ...reports].join('\n'),
       code: notices.length === 0 ? 0 : 1,
     };
   }
   // Nothing to pull is the one outcome this verb meets in full, so it alone exits zero (U29).
-  if (reached.length === 0) return { text: [`rigger ${verb}: from board ${project}, no card was pullable`, ...refused].join('\n'), code: 0 };
+  if (reached.length === 0) return { text: [`rigger ${verb}: from board ${project}, no card was pullable`, ...refused, ...reports].join('\n'), code: 0 };
   // Zero only where every card's maker delivered, its card in review; any other outcome is short
   // of what the README promises of this verb, and a zero exit would read to whoever called it as
   // work that was done (the owner's O8 on #423).
   const worked = outcomes(reached);
-  return { text: [...said(worked), ...refused].join('\n'), code: worked.every(({ review, failure, judgesPassed }) => review && failure === undefined && judgesPassed) ? 0 : 1 };
+  return { text: [...said(worked), ...refused, ...reports].join('\n'), code: worked.every(({ review, failure, judgesPassed }) => review && failure === undefined && judgesPassed) ? 0 : 1 };
 }
 
 /**

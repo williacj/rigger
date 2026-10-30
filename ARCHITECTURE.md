@@ -634,6 +634,11 @@ report in-process, with no L1 dispatch, no agent, no group and no slot. L3 recor
 unread, as one hand-over, and writes nothing to standard output itself. The verb prints the report
 as it prints each hand-over, and the LaunchAgent's log under `~/Library/Logs/rigger/` keeps it.
 
+Where L5's `report` throws, as on a line of the stream that does not parse, L3 records the outcome
+as `trigger.outcome` `{ name, occurrence, outcome: 'failed' }`. It hands the verb the failure in
+place of the report, as one hand-over. The firing is settled, so the job does not run again for
+that occurrence, and the trigger's next occurrence fires as any other.
+
 **Admission.** A firing is no pull, so admission does not govern it. Under a closed admission, a
 trigger whose work is a card still creates its card, and no pull claims that card until admission
 reopens (`R-SCHED-3`). The `report` job runs whatever admission says (M7-U2 Q4 on #1009).
@@ -658,6 +663,7 @@ its row says otherwise.
 | a card-shaped occurrence comes due, admission open | steps 1 to 4; the card enters Ready |
 | a card-shaped occurrence comes due, admission closed | steps 1 to 4; the card enters Ready, and no pull claims it until admission reopens |
 | an occurrence of `report` comes due, whatever admission says | L3 records the start, runs `report` in-process and records the outcome; no dispatch, no slot |
+| `report` throws while a firing runs | L3 records the outcome `failed` and hands the verb the failure in place of the report; the occurrence is settled, and the next one fires as any other |
 | an occurrence comes due while the card of the trigger's previous firing is open | another card (M7-U2 Q3 on #1009) |
 | occurrences missed while Rigger was down | one firing carrying the newest missed occurrence under `fire`, and none under `skip`; never one per missed occurrence |
 | a card-shaped firing pending at a start | settled as "Settling a pending firing" says |
@@ -695,6 +701,8 @@ gate cannot tell apart").
 - **The interval-and-anchor schedule:** a consumer needing a calendar schedule, such as weekdays
   only.
 - **The in-process job:** a job that must spawn a command, which only L1 runs.
+- **A failed `report` settled as `failed`:** the record showing `report` failures that clear on a
+  retry within the same run, which would argue for leaving the firing pending.
 - **The record as the last firing's source:** a start's whole read of the record becoming
   measurably slow, or a requirement that a firing survive the loss of the local record.
 - **The duplicate guard:** the event record showing two cards for one occurrence.
