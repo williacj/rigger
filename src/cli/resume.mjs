@@ -62,18 +62,11 @@ async function resuming(opened, {
   if (removed.length === 0) return { text: lines.join('\n'), code: 0 };
   /** The answer where nothing after the removal reached L2: the removals made, and why no issue was closed. */
   const unclosed = (why) => ({ text: [...lines, `rigger resume: no status issue was closed, because ${outsideText(why)}`].join('\n'), code: 1 });
-  // From the config's read to L2's entry point, any failure, an answer or a throw, is this case:
-  // the closers are removed, so the answer must still name them.
-  let notice;
-  try {
-    const { config, problem } = await consumerConfig(named);
-    if (problem !== undefined) return unclosed(problem);
-    const invalid = validate(config);
-    if (invalid.length > 0) return unclosed(`\`${CONFIG}\`: ${invalid.join('; ')}`);
-    ({ notice } = columnChanges({ config, sink: opened.sink, send }));
-  } catch (failure) {
-    return unclosed(`\`${CONFIG}\` could not be used: ${causeOf(failure)}`);
-  }
+  const { config, problem } = await consumerConfig(named);
+  if (problem !== undefined) return unclosed(problem);
+  const invalid = validate(config);
+  if (invalid.length > 0) return unclosed(`\`${CONFIG}\`: ${invalid.join('; ')}`);
+  const { notice } = columnChanges({ config, sink: opened.sink, send });
   const issues = [...removed, ...gone].filter(({ issue }) => issue !== undefined).map(({ issue }) => Number(issue));
   let closing;
   try {

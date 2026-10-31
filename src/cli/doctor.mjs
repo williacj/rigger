@@ -307,12 +307,7 @@ const folded = (verdicts) => {
 async function adaptersAsked(target) {
   if (target === undefined) return ADAPTERS;
   const { config } = await consumerConfig(target);
-  let refusals;
-  try {
-    refusals = config === undefined ? undefined : validate(config);
-  } catch {
-    refusals = undefined;
-  }
+  const refusals = config === undefined ? undefined : validate(config);
   if (refusals === undefined || refusals.length > 0) return ADAPTERS;
   const rules = Object.values(config.kinds).flatMap((kind) => kind.judges.flatMap((entry) => {
     if (typeof entry === 'string') return [];
@@ -376,8 +371,8 @@ export async function agentAuth({ ask = asked, adapters, target, emitter, timeou
  * here word for word: a second reading of the config living in this file would be a second answer
  * to a question already answered, drifting from the first the day the validator gains a rule.
  *
- * The config is a module the consumer wrote, so importing and validating it can run their code
- * and throw. What the report carries is the first line of what went wrong, never the error: a
+ * The entry point refuses an import failure or a value that is not plain data before validation.
+ * What the report carries is the first line of what went wrong, never the error: a
  * stack of Node's own frames tells a consumer nothing about the file they have to fix, and the
  * card asks for a line per check without one.
  */
@@ -385,12 +380,7 @@ export async function configValidity({ target = process.cwd() } = {}) {
   const name = 'config validity';
   const { config, problem } = await consumerConfig(target);
   if (problem) return { name, ok: false, detail: problem };
-  let refusals;
-  try {
-    refusals = validate(config);
-  } catch (threw) {
-    return { name, ok: false, detail: `\`${CONFIG}\` could not be validated: ${wentWrong(threw)}` };
-  }
+  const refusals = validate(config);
   return {
     name,
     ok: refusals.length === 0,
@@ -522,11 +512,7 @@ export async function boardSharing({ target = process.cwd(), ask, emitter } = {}
   const name = 'board sharing';
   const { config, problem } = await consumerConfig(target);
   if (problem) return null;
-  try {
-    if (validate(config).length > 0) return null;
-  } catch {
-    return null;
-  }
+  if (validate(config).length > 0) return null;
   let held;
   try {
     held = await readsOf(config, { send: ask, emitter }).readOtherRepositories();
@@ -618,19 +604,13 @@ async function priority(config, via) {
 /**
  * The lines about the board the config names: whether it can be read, whether it holds each
  * declared column, and whether it holds the declared priority field. A config Rigger refuses,
- * cannot read, or throws during validation names no board worth reading, so it earns one line
+ * cannot read or the validator refuses names no board worth reading, so it earns one line
  * saying the board was not checked, and nothing is sent.
  */
 export async function boardChecks({ target = process.cwd(), ask, emitter } = {}) {
   const { config, problem } = await consumerConfig(target);
   let why = problem ? 'the config could not be read' : null;
-  if (!why) {
-    try {
-      if (validate(config).length > 0) why = 'the config was refused';
-    } catch {
-      why = 'the config could not be validated';
-    }
-  }
+  if (!why && validate(config).length > 0) why = 'the config was refused';
   if (why) return { name: 'board checks', ok: null, detail: `the board was not checked, because ${why}` };
   const via = { send: ask, emitter };
   return [await reachability(config, via), ...await columns(config, via), await priority(config, via)];
@@ -891,17 +871,13 @@ export const doctor = (options) => recording((opened) => checking(opened, option
 
 /**
  * Names to `opened` the config `named` holds, where the validator admits it, so L5 reads
- * `telemetry.push` from it. A config refused, unreadable or throwing in validation is named to
- * none: the config validity check reports each.
+ * `telemetry.push` from it. A config refused or unreadable is named to none: the config validity
+ * check reports each.
  */
 async function admitting(named, opened) {
   const { config } = await consumerConfig(named);
   if (config === undefined) return;
-  try {
-    if (validate(config).length === 0) opened.admitted(config);
-  } catch {
-    // The config validity check reports what validation threw.
-  }
+  if (validate(config).length === 0) opened.admitted(config);
 }
 
 /** `doctor`'s work, recording through the sink `opened` holds once `settled` has named its state directory. */
