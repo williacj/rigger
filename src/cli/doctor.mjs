@@ -4,6 +4,7 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { basename, isAbsolute, join, relative, resolve, dirname, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { types } from 'node:util';
 
 import { gitEnvironment } from '../substrate/git-environment.mjs';
 import { boardOf, readSide } from '../substrate/forge/read.mjs';
@@ -306,12 +307,7 @@ const folded = (verdicts) => {
 async function adaptersAsked(target) {
   if (target === undefined) return ADAPTERS;
   const { config } = await consumerConfig(target);
-  let refusals;
-  try {
-    refusals = config === undefined ? undefined : validate(config);
-  } catch {
-    refusals = undefined;
-  }
+  const refusals = config === undefined ? undefined : validate(config);
   if (refusals === undefined || refusals.length > 0) return ADAPTERS;
   const rules = Object.values(config.kinds).flatMap((kind) => kind.judges.flatMap((entry) => {
     if (typeof entry === 'string') return [];
@@ -375,8 +371,8 @@ export async function agentAuth({ ask = asked, adapters, target, emitter, timeou
  * here word for word: a second reading of the config living in this file would be a second answer
  * to a question already answered, drifting from the first the day the validator gains a rule.
  *
- * The config is a module the consumer wrote, so importing and validating it can run their code
- * and throw. What the report carries is the first line of what went wrong, never the error: a
+ * The entry point refuses an import failure or a value that is not plain data before validation.
+ * What the report carries is the first line of what went wrong, never the error: a
  * stack of Node's own frames tells a consumer nothing about the file they have to fix, and the
  * card asks for a line per check without one.
  */
@@ -384,12 +380,7 @@ export async function configValidity({ target = process.cwd() } = {}) {
   const name = 'config validity';
   const { config, problem } = await consumerConfig(target);
   if (problem) return { name, ok: false, detail: problem };
-  let refusals;
-  try {
-    refusals = validate(config);
-  } catch (threw) {
-    return { name, ok: false, detail: `\`${CONFIG}\` could not be validated: ${wentWrong(threw)}` };
-  }
+  const refusals = validate(config);
   return {
     name,
     ok: refusals.length === 0,
@@ -399,19 +390,79 @@ export async function configValidity({ target = process.cwd() } = {}) {
   };
 }
 
+/** The answer of each config file read in this process, by the real path of its directory. */
+const held = new Map();
+
 /**
  * The config the consumer holds in `target`, as `{ config }`, or `{ problem }` saying in one line
- * why there is none to read: the file is not there, or importing it threw. Every verb that reads
- * the config reads it here, so the one dynamic import of the consumer's code is this one.
+ * why there is none to read: the file is not there, importing it threw, or its default export is
+ * not plain data. Every verb that reads the config reads it here, so the one dynamic import of the
+ * consumer's code is this one, and it runs once per file and process: each later call answers a
+ * fresh copy of the first answer (boundary rule 4).
  */
 export async function consumerConfig(target) {
   const path = join(target, CONFIG);
-  if (!existsSync(path)) return { problem: `\`${CONFIG}\` is not in ${target}, and \`rigger init\` is what writes it` };
-  try {
-    return { config: (await import(pathToFileURL(path))).default };
-  } catch (threw) {
-    return { problem: `\`${CONFIG}\` could not be read: ${wentWrong(threw)}` };
+  const file = join(real(target), CONFIG);
+  if (!held.has(file)) {
+    let read;
+    try {
+      read = existsSync(path) ? copied((await import(pathToFileURL(path))).default)
+        : { problem: `\`${CONFIG}\` is not in ${target}, and \`rigger init\` is what writes it` };
+    } catch (threw) {
+      read = { problem: `\`${CONFIG}\` could not be read: ${wentWrong(threw)}` };
+    }
+    held.set(file, read);
   }
+  const { config, problem } = held.get(file);
+  return problem ? { problem } : copied(config);
+}
+
+/** How deep a config may nest: far past any extension point, and short of where a stack runs out. */
+const DEPTH = 100;
+
+/** `value` as `{ config }`, a plain-data copy, or `{ problem }` naming the part of it refused. */
+function copied(value) {
+  if (value === undefined) return { config: undefined };
+  try {
+    return { config: plain(value, 'default', []) };
+  } catch (refused) {
+    return { problem: refused };
+  }
+}
+
+/**
+ * `value`, found at `path` under the objects `within`, copied as plain data, or a throw of the line
+ * naming what is not. Only own enumerable string keys are read, each where its descriptor holds a
+ * value, and a Proxy is refused before any is read, so nothing the config holds runs here.
+ */
+function plain(value, path, within) {
+  const refuse = (what, at = path) => {
+    throw `\`${CONFIG}\` holds ${what} at \`${at}\`, which is not plain data`;
+  };
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : refuse(String(value));
+  if (typeof value !== 'object') return refuse(value === undefined ? 'undefined' : `a ${typeof value}`);
+  if (types.isProxy(value)) refuse('a Proxy');
+  if (within.includes(value)) refuse('an object that holds itself');
+  if (within.length > DEPTH) refuse(`an object or a list more than ${DEPTH} levels below the default export`);
+  const list = Array.isArray(value);
+  const prototype = Object.getPrototypeOf(value);
+  if (list ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) refuse('an object neither plain nor a list');
+  if (Object.getOwnPropertySymbols(value).length > 0) refuse('a Symbol key');
+  const keys = Object.keys(value);
+  const step = (key) => (list && /^(0|[1-9][0-9]*)$/.test(key) ? `[${key}]`
+    : `.${/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? key : printable(JSON.stringify(key))}`);
+  if (list) {
+    const hole = keys.findIndex((key, index) => key !== String(index));
+    if (hole !== -1 && hole < value.length || keys.length < value.length) refuse('a hole', `${path}[${hole === -1 ? keys.length : hole}]`);
+    if (keys.length > value.length) refuse('a property that is not an index', `${path}${step(keys[value.length])}`);
+  }
+  const entries = keys.map((key) => {
+    if (!('value' in Object.getOwnPropertyDescriptor(value, key))) refuse('an accessor', `${path}${step(key)}`);
+    return [key, plain(value[key], `${path}${step(key)}`, [...within, value])];
+  });
+  if (list) return entries.map(([, held]) => held);
+  return prototype === null ? Object.setPrototypeOf(Object.fromEntries(entries), null) : Object.fromEntries(entries);
 }
 
 /**
@@ -461,11 +512,7 @@ export async function boardSharing({ target = process.cwd(), ask, emitter } = {}
   const name = 'board sharing';
   const { config, problem } = await consumerConfig(target);
   if (problem) return null;
-  try {
-    if (validate(config).length > 0) return null;
-  } catch {
-    return null;
-  }
+  if (validate(config).length > 0) return null;
   let held;
   try {
     held = await readsOf(config, { send: ask, emitter }).readOtherRepositories();
@@ -557,19 +604,13 @@ async function priority(config, via) {
 /**
  * The lines about the board the config names: whether it can be read, whether it holds each
  * declared column, and whether it holds the declared priority field. A config Rigger refuses,
- * cannot read, or throws during validation names no board worth reading, so it earns one line
+ * cannot read or the validator refuses names no board worth reading, so it earns one line
  * saying the board was not checked, and nothing is sent.
  */
 export async function boardChecks({ target = process.cwd(), ask, emitter } = {}) {
   const { config, problem } = await consumerConfig(target);
   let why = problem ? 'the config could not be read' : null;
-  if (!why) {
-    try {
-      if (validate(config).length > 0) why = 'the config was refused';
-    } catch {
-      why = 'the config could not be validated';
-    }
-  }
+  if (!why && validate(config).length > 0) why = 'the config was refused';
   if (why) return { name: 'board checks', ok: null, detail: `the board was not checked, because ${why}` };
   const via = { send: ask, emitter };
   return [await reachability(config, via), ...await columns(config, via), await priority(config, via)];
@@ -830,17 +871,13 @@ export const doctor = (options) => recording((opened) => checking(opened, option
 
 /**
  * Names to `opened` the config `named` holds, where the validator admits it, so L5 reads
- * `telemetry.push` from it. A config refused, unreadable or throwing in validation is named to
- * none: the config validity check reports each.
+ * `telemetry.push` from it. A config refused or unreadable is named to none: the config validity
+ * check reports each.
  */
 async function admitting(named, opened) {
   const { config } = await consumerConfig(named);
   if (config === undefined) return;
-  try {
-    if (validate(config).length === 0) opened.admitted(config);
-  } catch {
-    // The config validity check reports what validation threw.
-  }
+  if (validate(config).length === 0) opened.admitted(config);
 }
 
 /** `doctor`'s work, recording through the sink `opened` holds once `settled` has named its state directory. */

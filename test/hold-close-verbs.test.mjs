@@ -412,59 +412,53 @@ test('rigger once and rigger run, where the state of the issue a hold\'s closer 
 });
 
 /**
- * Each way the config can fail after `resume` has removed its closers and before it reaches L2,
- * as the text of `rigger.config.mjs`: its evaluation throws, it does not parse, it is a BigInt
- * (the architect's round-5 probe on #1079), its validation throws rather than answering it invalid,
- * it answers invalid, and building L2's entry point throws, a config that validates whose board
- * getter throws only when `transitions.mjs` reads it.
+ * Config failures after `resume` removes its closers: import failures, a BigInt or enumerable
+ * accessor the entry point refuses, and plain data the validator refuses.
  */
 const FAILING_CONFIGS = {
   'its evaluation throws': [`throw new Error('the config threw as it was evaluated');\n`, /could not be read: .*the config threw as it was evaluated/],
   'it does not parse': ['export default {;\n', /could not be read: /],
-  // A BigInt default, the architect's round-5 probe, which validation now answers invalid.
-  'it is a BigInt': ['export default 1n;\n', /`rigger\.config\.mjs`: .*1n/],
-  'its validation throws': ["export default Object.defineProperty({}, 'repo', { enumerable: true, get() { throw new Error('the repo getter threw'); } });\n", /could not be used: the repo getter threw/],
+  // A BigInt default is refused at the config entry point.
+  'it is a BigInt': ['export default 1n;\n', /holds a bigint at `default`/],
+  'it holds a repo getter': ["export default Object.defineProperty({}, 'repo', { enumerable: true, get() { throw new Error('the repo getter threw'); } });\n", /holds an accessor at `default\.repo`/],
   'it does not validate': ['export default { repo: 7 };\n', /`rigger\.config\.mjs`: /],
-  'building L2 throws': [[
+  'it holds a board getter': [[
     `import settings from ${JSON.stringify(new URL('../templates/rigger.config.mjs', import.meta.url).href)};`,
     `const config = { ...settings, repo: ${JSON.stringify(REPO)}, board: undefined };`,
     `const board = { ...settings.board, project: ${PROJECT} };`,
     "Object.defineProperty(config, 'board', { enumerable: true, get() { if (new Error().stack.includes('/src/workflow/transitions.mjs')) throw new Error('the board could not be handed to L2'); return board; } });",
     'export default config;',
-  ].join('\n'), /the board could not be handed to L2/],
+  ].join('\n'), /holds an accessor at `default\.board`/],
   ...unprintable(),
 };
 
 /**
- * The config texts for each thrown value no template can print, thrown where validation reads the
- * config's `repo` and where L2's entry point reads its `board` (the reviewer's and the architect's
- * round-6 probes on #1079): a Symbol, null, undefined, a null-prototype object, an Error whose
- * `message` getter throws, an object whose `toString` and `Symbol.toPrimitive` throw, and a Proxy
- * that throws on every trap, each with the reason `resume` gives for it. And the architect's
- * control: a Symbol thrown as the config is evaluated.
+ * Configs holding repo and board getters whose bodies would throw values no template can print.
+ * The entry point refuses each accessor by its path, without running its body. A Symbol thrown
+ * during module evaluation remains the import-failure control.
  */
 function unprintable() {
   const trap = "new Proxy({}, Object.fromEntries(['get', 'set', 'has', 'ownKeys', 'getOwnPropertyDescriptor', 'getPrototypeOf', 'defineProperty', 'deleteProperty', 'apply', 'construct', 'isExtensible', 'preventExtensions', 'setPrototypeOf'].map((name) => [name, () => { throw new Error('the proxy refused ' + name); }])))";
   const values = {
-    'a Symbol': ["Symbol('it threw a Symbol')", /could not be used: Symbol\(it threw a Symbol\)/],
-    null: ['null', /could not be used: null/],
-    undefined: ['undefined', /could not be used: undefined/],
-    'a null-prototype object': ['Object.create(null)', /could not be used: a thrown object/],
-    'an Error whose message getter throws': ["Object.create(Error.prototype, { message: { get() { throw new Error('no message'); } } })", /could not be used: a thrown object/],
-    'an object whose conversions throw': ["({ toString() { throw new Error('no string'); }, [Symbol.toPrimitive]() { throw new Error('no primitive'); } })", /could not be used: a thrown object/],
-    'a Proxy throwing on every trap': [trap, /could not be used: a thrown object/],
+    'a Symbol': "Symbol('it threw a Symbol')",
+    null: 'null',
+    undefined: 'undefined',
+    'a null-prototype object': 'Object.create(null)',
+    'an Error whose message getter throws': "Object.create(Error.prototype, { message: { get() { throw new Error('no message'); } } })",
+    'an object whose conversions throw': "({ toString() { throw new Error('no string'); }, [Symbol.toPrimitive]() { throw new Error('no primitive'); } })",
+    'a Proxy throwing on every trap': trap,
   };
   const settings = `import settings from ${JSON.stringify(new URL('../templates/rigger.config.mjs', import.meta.url).href)};`;
   const rows = {};
-  for (const [what, [value, why]] of Object.entries(values)) {
-    rows[`validation throws ${what}`] = [`export default Object.defineProperty({}, 'repo', { enumerable: true, get() { throw ${value}; } });\n`, why];
-    rows[`building L2 throws ${what}`] = [[
+  for (const [what, value] of Object.entries(values)) {
+    rows[`a repo getter holding ${what}`] = [`export default Object.defineProperty({}, 'repo', { enumerable: true, get() { throw ${value}; } });\n`, /holds an accessor at `default\.repo`/];
+    rows[`a board getter holding ${what}`] = [[
       settings,
       `const config = { ...settings, repo: ${JSON.stringify(REPO)}, board: undefined };`,
       `const board = { ...settings.board, project: ${PROJECT} };`,
       `Object.defineProperty(config, 'board', { enumerable: true, get() { if (new Error().stack.includes('/src/workflow/transitions.mjs')) throw ${value}; return board; } });`,
       'export default config;',
-    ].join('\n'), why];
+    ].join('\n'), /holds an accessor at `default\.board`/];
   }
   rows['its evaluation throws a Symbol'] = ["throw Symbol('evaluation failed');\n", /could not be read: /];
   return rows;
@@ -558,8 +552,8 @@ test('rigger once, after a recorded closer opening, answers a board failure whos
   }
 });
 
-// proves R-SCHED-23
-test('rigger once, after a recorded closer opening, answers an AggregateError whose errors entry reads differently a second time', async (t) => {
+// proves R-SCHED-10
+test('rigger once refuses a config board accessor before closer work, whose body holds an AggregateError with a changing errors entry', async (t) => {
   const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [statusIssue(7, 'a1')] });
   assert.equal(here.gh('api', `repos/${REPO}/issues/7`, '-X', 'PATCH', '-f', 'state=closed').status, 0);
   writeFileSync(join(here.target, 'rigger.config.mjs'), [
@@ -582,11 +576,11 @@ test('rigger once, after a recorded closer opening, answers an AggregateError wh
 
   const outcome = await onceVerb({ target: here.target, send }).then((answer) => ({ answer }), (thrown) => ({ thrown }));
 
-  assert.deepEqual(here.closers(), [], 'the closer really was removed');
-  assert.equal(here.events().filter(({ event }) => event === 'admission.open').length, 1, 'the opening was recorded');
+  assert.deepEqual(here.closers().map(({ name }) => name), ['hold-a1-issue-7.json'], 'the hold closer remains');
+  assert.throws(here.events, { code: 'ENOENT' }, 'no admission.open event or other event was written');
   assert.equal(outcome.thrown, undefined, 'once must return its failure report without itself throwing');
   assert.equal(outcome.answer.code, 1);
-  assert.match(outcome.answer.text, /HTTP 502/);
+  assert.match(outcome.answer.text, /holds an accessor at `default\.board`/);
 });
 
 // proves R-SCHED-23
@@ -606,12 +600,12 @@ test('rigger once, over an admission directory of 101 malformed entries, names e
   for (const name of names) assert.ok(answered.text.includes(name), `${name} is not named`);
 });
 
-// The reviewer's round-10 probe on #1079: one Error met on two paths of a failure, through the real once.
+// Config refusal at default.board precedes closer work for each shared Error body.
 for (const [what, thrown] of [
   ['the cause and the sole errors entry', 'new AggregateError([leaf], \'facts could not be read\', { cause: leaf })'],
   ['a sibling and a sibling\'s cause', 'new AggregateError([new Error(\'wrapper\', { cause: leaf }), leaf], \'facts could not be read\')'],
 ]) {
-  test(`rigger once, after a recorded closer opening, answers an AggregateError holding one changing Error as ${what} with that Error's first message`, async (t) => {
+  test(`rigger once refuses a config board accessor before closer work, whose body holds one changing Error as ${what}`, async (t) => {
     const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [statusIssue(7, 'a1')] });
     assert.equal(here.gh('api', `repos/${REPO}/issues/7`, '-X', 'PATCH', '-f', 'state=closed').status, 0);
     writeFileSync(join(here.target, 'rigger.config.mjs'), [
@@ -634,11 +628,11 @@ for (const [what, thrown] of [
 
     const outcome = await onceVerb({ target: here.target, send }).then((answer) => ({ answer }), (thrown) => ({ thrown }));
 
-    assert.deepEqual(here.closers(), [], 'the closer really was removed');
-    assert.equal(here.events().filter(({ event }) => event === 'admission.open').length, 1, 'the opening was recorded');
+    assert.deepEqual(here.closers().map(({ name }) => name), ['hold-a1-issue-7.json'], 'the hold closer remains');
+    assert.throws(here.events, { code: 'ENOENT' }, 'no admission.open event or other event was written');
     assert.equal(outcome.thrown, undefined, 'once must return its failure report without itself throwing');
     assert.equal(outcome.answer.code, 1);
-    assert.match(outcome.answer.text, /HTTP 502/);
+    assert.match(outcome.answer.text, /holds an accessor at `default\.board`/);
     assert.doesNotMatch(outcome.answer.text, /lost on reread/);
   });
 }
@@ -659,13 +653,13 @@ test('rigger run over a status issue whose close lies past the first page of its
   assert.deepEqual(here.closers(), [], ran.said);
 });
 
-// The judges' round-11 probes on #1079: a value reached by two conversions, through the real verbs.
+// Each verb refuses the config at default.board before closer work, for each conversion body.
 for (const [verb, what, thrown] of [
   ['once', 'the aggregate\'s message and its errors entry', "Object.defineProperty(new AggregateError([leaf], 'outer'), 'message', { value: leaf })"],
   ['run', 'the aggregate\'s message and its errors entry', "Object.defineProperty(new AggregateError([leaf], 'outer'), 'message', { value: leaf })"],
   ['once', 'the length of two lists', "(() => { const list = () => new Proxy([], { get(target, key) { return key === 'length' ? leaf : Reflect.get(target, key); } }); const failure = new AggregateError([], 'facts failed'); failure.unreadable = list(); failure.errors = list(); return failure; })()"],
 ]) {
-  test(`rigger ${verb}, after a recorded closer opening, keeps the first line of one changing Error reached as ${what}`, async (t) => {
+  test(`rigger ${verb} refuses a config board accessor before closer work, whose body reaches one changing Error as ${what}`, async (t) => {
     const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [statusIssue(7, 'a1')] });
     assert.equal(here.gh('api', `repos/${REPO}/issues/7`, '-X', 'PATCH', '-f', 'state=closed').status, 0);
     writeFileSync(join(here.target, 'rigger.config.mjs'), [
@@ -690,10 +684,10 @@ for (const [verb, what, thrown] of [
       } }).then(({ code, text }) => ({ code, said: text }))
       : here.verb('run');
 
-    assert.deepEqual(here.closers(), [], 'the closer really was removed');
-    assert.equal(here.events().filter(({ event }) => event === 'admission.open').length, 1, 'the opening was recorded');
+    assert.deepEqual(here.closers().map(({ name }) => name), ['hold-a1-issue-7.json'], 'the hold closer remains');
+    assert.throws(here.events, { code: 'ENOENT' }, 'no admission.open event or other event was written');
     assert.notEqual(said.code, 0);
-    assert.match(said.said, /HTTP 502 first reason/);
+    assert.match(said.said, /holds an accessor at `default\.board`/);
     assert.doesNotMatch(said.said, /lost on reread/);
   });
 }
