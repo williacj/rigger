@@ -15,6 +15,7 @@ import { spawnSync } from 'node:child_process';
 import { realpathSync } from 'node:fs';
 
 import { KILL_BOUND, LSOF, PS, UNREAPED_BOUND, identityOf, killRecordedGroup, runCommand } from '../src/substrate/process.mjs';
+import { realHost } from '../src/substrate/host.mjs';
 import { TAIL, alive, fixture, holding, leave, processState, read, shellQuote, startGroup, tailIn, until } from './process-fixtures.mjs';
 import { heldOutput } from './process-fixtures.mjs';
 import { ended } from './process-fixtures.mjs';
@@ -132,10 +133,18 @@ function standIn(directory, { refused, unkept, flickers, outlasts, pairs = [] } 
 /** When `pairs`, the signals a caller sent, as `[target, signal, time]`, first sent the kill to `target`. */
 const killedIn = (pairs, target) => pairs.find(([to, name]) => to === target && name === 'SIGKILL')?.[2];
 
+/** Gives each fixture-selected process answer to L0 through its single host input. */
+function hostOptions({ ps, lsof, kill, host = realHost, ...options }) {
+  return {
+    ...options,
+    host: { ...host, ...(ps === undefined ? {} : { ps }), ...(lsof === undefined ? {} : { lsof }), ...(kill === undefined ? {} : { signal: kill }) },
+  };
+}
+
 /** Runs `command` through L0's adapter in `directory`, and hands back its events and when it settled. */
 async function called(directory, { command, ...options }) {
   const events = [];
-  await runCommand({ command, args: [], cwd: directory, env: {}, timeout: UNREACHED, emitter: { emit: (event, fields) => events.push({ event, ...fields }) }, ...options });
+  await runCommand({ command, args: [], cwd: directory, env: {}, timeout: UNREACHED, emitter: { emit: (event, fields) => events.push({ event, ...fields }) }, ...hostOptions(options) });
   return { events, settled: Date.now() };
 }
 
@@ -145,7 +154,7 @@ async function called(directory, { command, ...options }) {
  */
 async function startKilled(started, options) {
   const events = [];
-  await killRecordedGroup({ group: started.group, started: started.started, emitter: { emit: (event, fields) => events.push({ event, ...fields }) }, ...options });
+  await killRecordedGroup({ group: started.group, started: started.started, emitter: { emit: (event, fields) => events.push({ event, ...fields }) }, ...hostOptions(options) });
   return { events, settled: Date.now() };
 }
 
@@ -164,6 +173,7 @@ async function startKilled(started, options) {
  */
 const CALLER = [
   `import { runCommand } from ${JSON.stringify(new URL('../src/substrate/process.mjs', import.meta.url).href)};`,
+  `import { realHost } from ${JSON.stringify(new URL('../src/substrate/host.mjs', import.meta.url).href)};`,
   `import { signalStandIn } from ${JSON.stringify(new URL('./signal-stand-in.mjs', import.meta.url).href)};`,
   `import { prepareSighting } from ${JSON.stringify(new URL('./census-sightings.mjs', import.meta.url).href)};`,
   "import { appendFileSync, existsSync, readFileSync } from 'node:fs';",
@@ -272,7 +282,7 @@ const CALLER = [
   "    } catch (error) { exitNote({ kind: 'signal', target, name, ok: false, code: error.code ?? null, message: error.message, forced: Boolean(fault) }); throw error; }",
   "  };",
   "}",
-  "runCommand({ command: join(here, 'command'), args: [], cwd: here, env: {}, timeout: 600_000, emitter, kill, onExit, readTimeout: options.readTimeout, directory: options.directory, ps: options.ps && join(here, options.ps), lsof: options.lsof && join(here, options.lsof) });",
+  "runCommand({ command: join(here, 'command'), args: [], cwd: here, env: {}, timeout: 600_000, emitter, host: { ...realHost, signal: kill, ps: options.ps ? join(here, options.ps) : realHost.ps, lsof: options.lsof ? join(here, options.lsof) : realHost.lsof }, onExit, readTimeout: options.readTimeout, directory: options.directory });",
   "while (!existsSync(join(here, 'up'))) await new Promise((resolve) => setImmediate(resolve));",
   "prepareSighting(here);",
   "appendFileSync(join(here, 'exiting'), String(Date.now()));",
@@ -5701,11 +5711,12 @@ test('C615 Mac group full tool exit census', SETTLES_WITHIN, async (t) => {
     ...MAC_RETURNED_OBSERVER,
     'syncBuiltinESMExports();',
     `const { runCommand } = await import(${JSON.stringify(new URL('../src/substrate/process.mjs', import.meta.url).href)});`,
+    `const { realHost } = await import(${JSON.stringify(new URL('../src/substrate/host.mjs', import.meta.url).href)});`,
     "const emitter = { emit: (event, fields) => { trace('event', { event, ...fields }); appendFileSync(join(here, 'events'), JSON.stringify({ event, ...fields }) + '\\n'); } };",
     "const kill = (target, name) => { trace('signal-start', { target, name }); try { const answer = process.kill(target, name); trace('signal-answer', { target, name, answer }); return answer; } catch (error) { trace('signal-answer', { target, name, error: error.code ?? null }); throw error; } };",
     "const onGroup = (group, started) => writeFileSync(join(here, 'group-birth.json'), JSON.stringify({ group, started, nonce }));",
     "const onExit = (group, ending) => writeFileSync(join(here, 'ending'), JSON.stringify({ group, ending }));",
-    "void runCommand({ command: process.execPath, args: [join(here, 'fixture.mjs'), here, nonce], cwd: here, env: process.env, timeout: 600_000, readTimeout: 1_000, emitter, kill, onGroup, onExit });",
+    "void runCommand({ command: process.execPath, args: [join(here, 'fixture.mjs'), here, nonce], cwd: here, env: process.env, timeout: 600_000, readTimeout: 1_000, emitter, host: { ...realHost, signal: kill }, onGroup, onExit });",
     "while (!existsSync(join(here, 'up'))) await new Promise((resolve) => setImmediate(resolve));",
     "while (!existsSync(join(here, 'begin-exit'))) await new Promise((resolve) => setImmediate(resolve));",
     "trace('caller-end');",

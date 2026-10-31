@@ -13,6 +13,7 @@ import { openSink, readEvents } from '../src/observation/sink.mjs';
 import { readGroups, writeGroups } from '../src/execution/groups.mjs';
 import { dispatch, killRecordedGroups } from '../src/execution/run.mjs';
 import { EVENT_REFUSED, LSOF, NOT_STARTED, runCommand } from '../src/substrate/process.mjs';
+import { realHost } from '../src/substrate/host.mjs';
 import { TAIL, alive, assertUntouched, fixture, gone, holding, leave, leaveWorking, processState, read, tailIn, until } from './process-fixtures.mjs';
 import { heldOutput } from './process-fixtures.mjs';
 import { shellQuote } from './process-fixtures.mjs';
@@ -205,7 +206,7 @@ test('given a census read that never answers, the dispatch\'s call still settles
   const lsof = fixture(directory, 'lsof', ': > "$here/lsof-asked"\nexec /usr/bin/tail -f "$here/lsof-hold"');
   const command = fixture(directory, 'command', `${leave(TAIL, 'child')}\nexit 0`);
 
-  const result = await dispatchIn(directory, { id: 'd-census', card: 1412, command, lsof, readTimeout: 2_000 });
+  const result = await dispatchIn(directory, { id: 'd-census', card: 1412, command, host: { ...realHost, lsof }, readTimeout: 2_000 });
 
   assert.equal(result.exit, 0);
   assert.ok(existsSync(join(directory, 'lsof-asked')), 'the census never asked the stand-in, so the test proves nothing');
@@ -225,7 +226,7 @@ test('a directory listing cut before its path at the read deadline records the d
   const cut = heldOutput(t, directory, `printf 'p${outside}\\nu${process.getuid()}\\n'`);
   const lsof = fixture(directory, 'lsof', cut.body);
 
-  const settled = dispatchIn(workspace, { id: 'd-cut', card: 1412, command: '/usr/bin/true', lsof, readTimeout });
+  const settled = dispatchIn(workspace, { id: 'd-cut', card: 1412, command: '/usr/bin/true', host: { ...realHost, lsof }, readTimeout });
   await cut.started();
   await settled;
 
@@ -252,7 +253,7 @@ test('a cut state read during the directory sweep records the directory as unrea
     'esac',
   ].join('\n'));
 
-  const settled = dispatchIn(workspace, { id: 'd-cut', card: 1412, command: '/usr/bin/true', ps, lsof, readTimeout });
+  const settled = dispatchIn(workspace, { id: 'd-cut', card: 1412, command: '/usr/bin/true', host: { ...realHost, ps, lsof }, readTimeout });
   await cut.started();
   await settled;
 
@@ -282,7 +283,7 @@ test('given a census tool that lists every process as another user\'s, the censu
   // `lsof` itself, asked as the census asks it, with every user id it prints made root's.
   const lsof = fixture(directory, 'lsof', `: > "$here/lsof-asked"\n${shellQuote(LSOF)} "$@" | /usr/bin/sed 's/^u[0-9]*$/u0/'`);
 
-  await dispatchIn(directory, { id: 'd-census', card: 1412, command: leavingInSub(directory), lsof });
+  await dispatchIn(directory, { id: 'd-census', card: 1412, command: leavingInSub(directory), host: { ...realHost, lsof } });
 
   assert.ok(existsSync(join(directory, 'lsof-asked')), 'the census never asked the stand-in, so the test proves nothing');
   assertUntouched(Number(read(directory, 'left.pid')), 'the process listed as another user\'s');
@@ -315,13 +316,14 @@ const moduleAt = (path) => JSON.stringify(new URL(path, import.meta.url).href);
 const CALLER = [
   `import { openSink } from ${moduleAt('../src/observation/sink.mjs')};`,
   `import { dispatch } from ${moduleAt('../src/execution/run.mjs')};`,
+  `import { realHost } from ${moduleAt('../src/substrate/host.mjs')};`,
   `import { atExit } from ${moduleAt('../src/substrate/process.mjs')};`,
   "import { join } from 'node:path';",
   'const [directory, command, lsof] = process.argv.slice(2);',
   "const state = join(directory, '.rigger');",
   "const sink = openSink({ directory: state, run: 'r-test', now: () => 0 });",
   'atExit(sink.end);',
-  "dispatch({ id: 'd-term', card: 7, directory: state, sink, command, args: [], cwd: directory, workspace: directory, env: {}, timeout: 600_000, lsof: lsof || undefined }).catch(() => {});",
+  "dispatch({ id: 'd-term', card: 7, directory: state, sink, command, args: [], cwd: directory, workspace: directory, env: {}, timeout: 600_000, host: { ...realHost, lsof: lsof || realHost.lsof } }).catch(() => {});",
   'setInterval(() => {}, 1_000);',
 ].join('\n');
 
@@ -411,7 +413,7 @@ test('given a dispatch exiting 0 whose process outside its group, once the censu
   const directory = holding(t);
   const command = fixture(directory, 'command', `${hopping}\nexit 0`);
 
-  await dispatchIn(directory, { id: 'd-census', card: 1412, command, lsof: listingOnce(directory) });
+  await dispatchIn(directory, { id: 'd-census', card: 1412, command, host: { ...realHost, lsof: listingOnce(directory) } });
 
   await assertSuccessorEnded(directory, stateOf(directory), 'survivor.killed');
 });
@@ -421,7 +423,7 @@ test('given a dispatch outliving its timeout whose process outside its group, on
   const directory = holding(t);
   const command = fixture(directory, 'command', `${hopping}\n: > "$here/ready"\nexec /usr/bin/tail -f "$here/hold"`);
 
-  const result = await dispatchIn(directory, { id: 'd-census', card: 1412, command, lsof: listingOnce(directory), timeout: 3_000 });
+  const result = await dispatchIn(directory, { id: 'd-census', card: 1412, command, host: { ...realHost, lsof: listingOnce(directory) }, timeout: 3_000 });
 
   assert.ok(existsSync(join(directory, 'ready')), 'the timeout ended the command before it had started P, so the test proves nothing');
   assert.equal(result.timedOut, true);
@@ -450,7 +452,7 @@ test('given a recorded dispatch whose process, once a start\'s census has listed
   spawnSync('/bin/sh', [fixture(directory, 'hop', `${hopping}\nexit 0`)], { stdio: 'ignore' });
   const sink = openSink({ directory: state, run: 'r-test', now: () => 0 });
 
-  await killRecordedGroups({ directory: state, sink, lsof: listingOnce(directory) });
+  await killRecordedGroups({ directory: state, sink, host: { ...realHost, lsof: listingOnce(directory) } });
 
   await assertSuccessorEnded(directory, state, 'recorded.killed');
 });
@@ -474,7 +476,7 @@ test('given a census whose read fails after it has stopped a process it listed i
   // The first list names `under`, working in `sub`, as `lsof` lists it, and every later read never answers.
   const lsof = fixture(directory, 'lsof', `if [ -f "$here/listed" ]; then exec /usr/bin/tail -f "$here/lsof-hold"; fi\n: > "$here/listed"\n${listingOf('under', realpathSync.native(join(directory, 'sub')))}`);
 
-  await dispatchIn(directory, { id: 'd-census', card: 1412, command: '/usr/bin/true', lsof, readTimeout: 2_000 });
+  await dispatchIn(directory, { id: 'd-census', card: 1412, command: '/usr/bin/true', host: { ...realHost, lsof }, readTimeout: 2_000 });
 
   assert.ok(existsSync(join(directory, 'listed')), 'the census never listed the directory, so the test proves nothing');
   assertUntouched(under, 'the process the census listed before its read failed');
