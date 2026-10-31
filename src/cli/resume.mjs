@@ -23,40 +23,43 @@ import { STATE, recording } from './recording.mjs';
  * the config, as `once` reaches L2, to close each issue a removed closer's name gave and every other
  * open issue carrying the status label (`R-SCHED-24`). Where it removed nothing, it reads no config
  * and closes no issue. `now` is the module's clock, `fs` the `node:fs` calls the module makes and
- * `send` the runners' spawn, each a test's to replace.
+ * `send` the runners' spawn, each a test's to replace. `sink` replaces only admission's sink for tests.
  */
 export const resume = (options) => recording((opened) => resuming(opened, options));
 
 /** `resume`'s work, recording through the sink `opened` holds once `settled` has named its state directory. */
 async function resuming(opened, {
-  target = process.cwd(), packageRoot = PACKAGE, ask, now = Date.now, fs, send,
+  target = process.cwd(), packageRoot = PACKAGE, ask, now = Date.now, fs, send, sink,
 } = {}) {
   const { named, refusal } = await settled('resume', opened, { target, packageRoot, ask });
   if (refusal) return refusal;
-  const admissionRecord = admission({ directory: join(named, STATE), run: opened.run, now, sink: opened.sink, ...(fs && { fs }) });
+  const admissionRecord = admission({ directory: join(named, STATE), run: opened.run, now, sink: sink ?? opened.sink, ...(fs && { fs }) });
+  const refusalLines = (events = []) => events.map(({ name, why }) => `rigger resume: the sink refused the admission.open event for ${outsideText(name)}: ${outsideText(why)}`);
   let answer;
   try {
     answer = await admissionRecord.resume();
   } catch (failure) {
     // Only a failure admission built is read for its fields; any other is said whole.
-    const { unreadable, removed: removedSoFar } = admissions(failure) ? failure : {};
+    const { unreadable, removed: removedSoFar, unrecorded } = admissions(failure) ? failure : {};
     if (Array.isArray(unreadable)) return { text: `rigger resume: ${unreadableAdmission(unreadable)}`, code: 1 };
     // A removal that stopped partway still names each closer it removed, then why no issue was closed.
     const done = Array.isArray(removedSoFar) ? removedSoFar : [];
     return {
       text: [
         ...done.map((closer) => `rigger resume: ${removedCloserLine(closer)}`),
+        ...refusalLines(unrecorded),
         `rigger resume: ${outsideText(causeOf(failure))}`,
         ...(done.length === 0 ? [] : ['rigger resume: no status issue was closed, because the removal of the closers stopped before every closer was removed']),
       ].join('\n'),
       code: 1,
     };
   }
-  const { removed, gone } = answer;
+  const { removed, gone, unrecorded: admissionRefusals } = answer;
   if (removed.length === 0 && gone.length === 0) return { text: 'rigger resume: admission was already open', code: 0 };
   const lines = [
     ...removed.map((closer) => `rigger resume: ${removedCloserLine(closer)}`),
     ...gone.map(({ kind, path }) => `rigger resume: the ${kind} closer ${path} was already gone`),
+    ...refusalLines(admissionRefusals),
   ];
   // Every closer read was gone at its removal: another `resume` removed them, and closes the issue.
   if (removed.length === 0) return { text: lines.join('\n'), code: 0 };
@@ -95,6 +98,6 @@ async function resuming(opened, {
       ...(unread === undefined ? [] : [`rigger resume: the read of the open issues labelled ${FIXED_LABELS.status} failed, so only the issues the closers named were closed: ${outsideText(unread)}`]),
       ...left.map(({ issue, why: cause, unlabelled }) => `rigger resume: the status issue #${issue} was left open${unlabelled ? ', its status label already removed, so no later read by label finds it' : ''}: ${outsideText(cause)}`),
     ].join('\n'),
-    code: left.length === 0 && unrecorded.length === 0 && unread === undefined ? 0 : 1,
+    code: left.length === 0 && unrecorded.length === 0 && unread === undefined && admissionRefusals.length === 0 ? 0 : 1,
   };
 }
