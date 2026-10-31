@@ -179,6 +179,7 @@ expectedLists.host.push('test/escalation-once-host.test.mjs');
 expectedLists.host.push('test/launchd-host.test.mjs');
 expectedLists.host.push('test/hold-close-verbs.test.mjs');
 expectedLists.host.push('test/loop-host.test.mjs');
+expectedLists.host.push('test/in-process-fixtures-host.test.mjs');
 expectedLists.host.sort();
 expectedLists.awaiting.push('test/claude-folder-live.test.mjs');
 expectedLists.awaiting.sort();

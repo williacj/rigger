@@ -5,6 +5,11 @@ import { basename, delimiter, join } from 'node:path';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 
+/** The output and status installed executable and in-process fixed commands share. */
+export function fixedAnswer({ status = 0, stdout = '', stderr = '' } = {}) {
+  return { status: Number.isInteger(status) ? status : 1, stdout, stderr };
+}
+
 /**
  * A directory holding an executable named `gh` that records every call it receives and answers
  * `answer`: its `stdout`, its `stderr` and its exit `status`.
@@ -18,7 +23,8 @@ import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
  * It is run once before this returns (`warmed`), exiting before it records anything, so the
  * system's hold on its first exec is paid here, outside any bound of the test that runs it.
  */
-export function stubGh({ status = 0, stdout = '', stderr = '' } = {}) {
+export function stubGh(options) {
+  const { status, stdout, stderr } = fixedAnswer(options);
   const dir = temporaryDirectory('rigger-stub-gh-');
   const record = join(dir, 'calls');
   const [out, err] = [join(dir, 'stdout'), join(dir, 'stderr')];
@@ -32,7 +38,7 @@ export function stubGh({ status = 0, stdout = '', stderr = '' } = {}) {
     `printf '%s\\n' "$*" >> "\${0%/*}/${basename(record)}"`,
     `/bin/cat "\${0%/*}/${basename(out)}"`,
     `/bin/cat "\${0%/*}/${basename(err)}" >&2`,
-    `exit ${Number.isInteger(status) ? status : 1}`,
+    `exit ${status}`,
     '',
   ].join('\n');
   writeFileSync(join(dir, 'gh'), script);

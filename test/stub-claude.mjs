@@ -426,17 +426,40 @@ export const TRACE = Symbol.for('rigger.stand-in.trace');
 /** This run's trace, where its act asks for one; `standInMain` sets it. */
 let tracing;
 
+/** The existing stand-in run record from explicit request values, without ambient process reads. */
+export function standInRecord({ executable, args, input, cwd, env, pid }) {
+  const agent = following(args, '--append-system-prompt-file');
+  const role = agent === undefined ? undefined : basename(agent, '.md');
+  const card = Number(/card #(\d+)/i.exec(input)?.[1]);
+  const recordedEnv = Object.fromEntries(Object.entries(env).filter(([key]) => key.startsWith(RECORDED)));
+  return { name: basename(executable), args, cwd, card, role, input, env: recordedEnv, pid };
+}
+
+/** The existing per-card/per-role lookup; an absent act is the existing empty act. */
+export const standInAct = (plan, { card, role }) => plan[card]?.[role] ?? {};
+
+/** Existing print/exit decisions, invoked at their original positions through explicit ports. */
+export function standInReply(act, { output, exit, keepAlive }) {
+  return {
+    print: () => { if (act.print !== undefined) output(act.print); },
+    finish: () => act.forever ? keepAlive() : exit(act.exit ?? 0),
+  };
+}
+
 /** The stand-in agent's run, as `standInAgent` describes it, in the process its executable started. */
 export async function standInMain() {
   const dir = dirname(process.argv[1]);
   const args = process.argv.slice(2);
   const input = readFileSync(0, 'utf8');
-  const agent = following(args, '--append-system-prompt-file');
-  const role = agent === undefined ? undefined : basename(agent, '.md');
-  const card = Number(/card #(\d+)/i.exec(input)?.[1]);
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith(RECORDED)));
-  appendFileSync(join(dir, RUNS), `${JSON.stringify({ name: basename(process.argv[1]), args, cwd: process.cwd(), card, role, input, env, pid: process.pid })}\n`);
-  const act = JSON.parse(readFileSync(join(dir, PLAN), 'utf8'))[card]?.[role] ?? {};
+  const run = standInRecord({ executable: process.argv[1], args, input, cwd: process.cwd(), env: process.env, pid: process.pid });
+  const { card, role } = run;
+  appendFileSync(join(dir, RUNS), `${JSON.stringify(run)}\n`);
+  const act = standInAct(JSON.parse(readFileSync(join(dir, PLAN), 'utf8')), run);
+  const reply = standInReply(act, {
+    output: (text) => process.stdout.write(text),
+    exit: (code) => { process.exitCode = code; },
+    keepAlive: () => setInterval(() => {}, 2 ** 30),
+  });
   if (act.trace !== undefined) {
     tracing = traceTo(act.trace, `${role}-${process.pid}`);
     globalThis[TRACE] = tracing;
@@ -446,7 +469,7 @@ export async function standInMain() {
   if (act.hold) {
     await holding(marker(dir, 'held', card, role));
   }
-  if (act.print !== undefined) process.stdout.write(act.print);
+  reply.print();
   if (act.write) recorded(tracing, 'the file write', () => writeFileSync(marker(dir, 'wrote', card, role), ''), { path: marker(dir, 'wrote', card, role) });
   if (act.write) announce(marker(dir, 'wrote', card, role));
   if (act.await !== undefined) await recorded(tracing, 'the wait', () => written(marker(dir, 'wrote', card, act.await)));
@@ -467,8 +490,7 @@ export async function standInMain() {
   }
   if (act.leaveIn !== undefined) leaveTail(dir, card, role, act.leaveIn, { detached: true, stdio: ['ignore', 'inherit', 'inherit'] });
   if (act.leaveInGroup !== undefined) leaveTail(dir, card, role, act.leaveInGroup, { detached: false, stdio: 'ignore' });
-  if (act.forever) setInterval(() => {}, 2 ** 30);
-  else process.exitCode = act.exit ?? 0;
+  reply.finish();
 }
 
 /**

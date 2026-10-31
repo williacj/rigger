@@ -1,0 +1,332 @@
+// ABOUTME: Proves fixture stdin, installed plan, and matrix entry wiring through real child boundaries.
+
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { constants, copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
+import { installFromTarball } from './installed-rigger.mjs';
+import { installFakeGh } from './fake-gh.mjs';
+import { installStandInAgent } from './stub-claude.mjs';
+import { CONSUMER, COLUMNS, FIELDS, card, matrixRepository } from './in-process-entry.mjs';
+import { repositoryIn } from './git-repository.mjs';
+import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+import { admissionOf, closerText, seed } from './admission-world.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
+
+// Host reason: wiring.
+// Ordinary decision counterpart: test/in-process-fixtures.test.mjs :: an in-process forge reads comment body sources from supplied request context.
+test('supplied input overrides fd0 EOF for fake gh comments', async (t) => {
+  const directory = temporaryDirectory('rigger-forge-input-host-', { context: t });
+  const statePath = join(directory, 'board.json');
+  writeFileSync(statePath, JSON.stringify({
+    repo: 'example/widgets', owner: 'example', project: 23, model: {}, writes: [], sent: [],
+    repository: { pullRequests: [{ number: 301, head: 'topic', sha: 'a'.repeat(40), comments: [] }] },
+  }));
+  assert.deepEqual(JSON.parse(readFileSync(statePath, 'utf8')).sent, [], 'the owned state starts before any request');
+  const helper = new URL('./fake-gh.mjs', import.meta.url).href;
+  const payload = `import { readFileSync } from 'node:fs';
+import { answerFakeGh } from ${JSON.stringify(helper)};
+const emptyInput = readFileSync(0, 'utf8');
+const answer = await answerFakeGh(process.argv[1], ['pr', 'comment', '301', '--body-file', '-'],
+  { now: () => '2000-04-05T06:07:08Z', input: () => 'Host supplied input.\\n' });
+process.stdout.write(JSON.stringify({ pid: process.pid, emptyInput, answer }) + '\\n');
+`;
+  const argv = ['--input-type=module', '-e', payload, statePath];
+  const environment = { HOME: directory, LANG: 'C.UTF-8', PATH: process.env.PATH };
+  const child = spawn(process.execPath, argv, {
+    cwd: directory, env: environment, stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  const started = { pid: child.pid ?? null, command: process.execPath, argv, cwd: directory, environment };
+  writeFileSync(join(directory, 'child-start.json'), JSON.stringify(started));
+  t.diagnostic(`child-start ${JSON.stringify(started)}`);
+  let stdout = '';
+  let stderr = '';
+  let startFailure;
+  let inputFailure;
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  child.once('error', (error) => { startFailure = error; });
+  child.stdin.once('error', (error) => { inputFailure = error; });
+  const closed = new Promise((resolve) => child.once('close', (code, signal) => resolve({ code, signal })));
+  child.stdin.end();
+  const ended = await closed;
+  const completed = { pid: child.pid ?? null, ...ended, stdinFinished: child.stdin.writableFinished, stdout, stderr };
+  writeFileSync(join(directory, 'child-end.json'), JSON.stringify(completed));
+  t.diagnostic(`child-end ${JSON.stringify(completed)}`);
+  assert.ifError(startFailure);
+  assert.ifError(inputFailure);
+  assert.ok(Number.isSafeInteger(started.pid) && started.pid > 0, 'the actual child PID was recorded at start');
+  assert.deepEqual(ended, { code: 0, signal: null }, stderr);
+  assert.equal(child.stdin.writableFinished, true, 'the parent explicitly ended the empty child input');
+  assert.equal(stderr, '', 'the plain child has no setup or import stderr');
+  assert.deepEqual(JSON.parse(stdout), {
+    pid: started.pid, emptyInput: '',
+    answer: { status: 0, stdout: 'https://github.com/example/widgets/pull/301#issuecomment-1\n', stderr: '' },
+  }, 'the child loaded, observed actual finite empty fd0, and completed the modeled comment');
+  const held = JSON.parse(readFileSync(statePath, 'utf8'));
+  assert.deepEqual(held.sent, [['pr', 'comment', '301', '--body-file', '-']], 'the actual request is recorded exactly once');
+  assert.deepEqual(held.writes, [], 'the comment invents no board write');
+  assert.equal(held.repository.pullRequests.length, 1);
+  assert.equal(held.repository.pullRequests[0].number, 301);
+  assert.equal(held.repository.pullRequests[0].comments.length, 1);
+  assert.equal(held.repository.pullRequests[0].comments[0].createdAt, '2000-04-05T06:07:08Z');
+  assert.equal(held.repository.pullRequests[0].comments[0].body, 'Host supplied input.\n',
+    'supplied callback bytes override actual empty fd0');
+});
+
+const SOURCE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+
+/** Exact package code scopes; npm remains the authority on what the archive carries. */
+function packageCode(root) {
+  const files = {};
+  const walk = (relative) => {
+    for (const entry of readdirSync(join(root, relative), { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+      const named = `${relative}/${entry.name}`;
+      if (named === 'src/package-commit.json') continue;
+      if (entry.isDirectory()) walk(named);
+      else {
+        assert.equal(entry.isFile(), true, `package input ${named} is a regular file`);
+        const bytes = readFileSync(join(root, named));
+        files[named] = { bytes: bytes.length, sha256: digest(bytes) };
+      }
+    }
+  };
+  for (const directory of ['src', 'templates', 'scripts']) walk(directory);
+  return files;
+}
+
+/** Stage and install only this test's current package; retention never selects its runtime. */
+function installedPackage(t) {
+  let directory;
+  let retained = false;
+  let qualification = { sourceRoot: SOURCE_ROOT, state: 'preparing' };
+  const retain = () => {
+    const destination = process.env.RIGGER_T7_BOUNDARY_EVIDENCE;
+    if (retained || destination === undefined) return;
+    retained = true;
+    assert.equal(isAbsolute(destination), true, 'boundary evidence destination is absolute');
+    assert.equal(resolve(destination).startsWith(`${realpathSync(SOURCE_ROOT)}${sep}`), false);
+    assert.equal(existsSync(destination), false, 'boundary evidence never overwrites an earlier attempt');
+    mkdirSync(destination);
+    writeFileSync(join(destination, 'qualification.json'), JSON.stringify(qualification, null, 2) + '\n', { flag: 'wx' });
+    const packs = join(directory, 'installed', 'packs');
+    if (existsSync(packs)) {
+      for (const name of readdirSync(packs).filter((name) => name.endsWith('.tgz'))) {
+        copyFileSync(join(packs, name), join(destination, name), constants.COPYFILE_EXCL);
+      }
+    }
+  };
+  directory = temporaryDirectory('rigger-entry-package-', { context: t, beforeRemoval: retain });
+  try {
+    assert.equal(realpathSync(directory).startsWith(`${realpathSync(SOURCE_ROOT)}${sep}`), false);
+    const stage = join(directory, 'package-source');
+    mkdirSync(stage);
+    const manifest = JSON.parse(readFileSync(join(SOURCE_ROOT, 'package.json'), 'utf8'));
+    assert.deepEqual(manifest.files, ['src/', 'templates/', 'scripts/']);
+    assert.deepEqual(manifest.dependencies ?? {}, {}, 'the canonical offline install needs no runtime network dependency');
+    const before = packageCode(SOURCE_ROOT);
+    const record = join(SOURCE_ROOT, 'src', 'package-commit.json');
+    const sourceRecord = existsSync(record) ? readFileSync(record) : null;
+    const copiedInputs = {};
+    for (const path of ['src', 'templates', 'scripts', 'package.json', 'package-lock.json', 'README.md', 'LICENSE', '.npmrc']) {
+      cpSync(join(SOURCE_ROOT, path), join(stage, path), { recursive: true });
+      if (!['src', 'templates', 'scripts'].includes(path)) copiedInputs[path] = digest(readFileSync(join(SOURCE_ROOT, path)));
+    }
+    qualification = { sourceRoot: SOURCE_ROOT, stage, sourceCode: before, stageBeforePack: packageCode(stage), copiedInputs, state: 'staged' };
+    assert.deepEqual(qualification.stageBeforePack, before);
+    const installed = installFromTarball(stage, join(directory, 'installed'));
+    const installedRoot = join(installed.consumer, 'node_modules', ...manifest.name.split('/'));
+    const archives = readdirSync(join(directory, 'installed', 'packs')).filter((name) => name.endsWith('.tgz')).map((name) => {
+      const path = join(directory, 'installed', 'packs', name);
+      const bytes = readFileSync(path);
+      return { path, bytes: bytes.length, sha256: digest(bytes) };
+    });
+    qualification = {
+      ...qualification, state: 'measured-before-parity-assertions', stageAfterPack: packageCode(stage),
+      sourceAfterPack: packageCode(SOURCE_ROOT), installedCode: packageCode(installedRoot), archives,
+      installedRoot: realpathSync(installedRoot), bin: realpathSync(installed.rigger),
+      node: { path: realpathSync(join(installed.path, 'node')), sha256: digest(readFileSync(join(installed.path, 'node'))) },
+      git: { path: realpathSync(join(installed.path, 'git')), sha256: digest(readFileSync(join(installed.path, 'git'))) },
+    };
+    retain();
+    assert.equal(archives.length, 1, 'the actual canonical pack produced one retained tarball');
+    assert.deepEqual(qualification.stageAfterPack, before);
+    assert.deepEqual(qualification.sourceAfterPack, before, 'prepack did not touch source code');
+    assert.deepEqual(existsSync(record) ? readFileSync(record) : null, sourceRecord, 'prepack commit-record activity stayed outside source');
+    assert.deepEqual(qualification.installedCode, before, 'installed code matches the exact admitted source package scopes');
+    assert.equal(existsSync(join(installedRoot, 'src', 'package-commit.json')), false, 'the outside-Git stage made no false source commit claim');
+    assert.equal(qualification.bin, realpathSync(join(installedRoot, manifest.bin.rigger)));
+    assert.equal(qualification.installedRoot.startsWith(`${realpathSync(SOURCE_ROOT)}${sep}`), false);
+    assert.equal(qualification.node.path, realpathSync(process.execPath));
+    assert.deepEqual(readdirSync(installed.path).sort(), ['git', 'node']);
+    const actualManifest = JSON.parse(readFileSync(join(installedRoot, 'package.json'), 'utf8'));
+    for (const key of ['name', 'version', 'type', 'bin', 'engines', 'files']) assert.deepEqual(actualManifest[key], manifest[key]);
+    t.diagnostic(`package-qualified ${JSON.stringify({ archives, installedRoot: qualification.installedRoot, bin: qualification.bin, sourceCodeSHA256: digest(Buffer.from(JSON.stringify(before))), parity: true })}`);
+    return installed;
+  } catch (error) {
+    qualification = { ...qualification, setupError: error.message };
+    retain();
+    throw error;
+  }
+}
+
+/** A real recorded child used by the five entry witnesses, with finite explicitly ended input. */
+async function entryChild(t, command, argv, cwd, environment, input = '') {
+  const child = spawn(command, argv, { cwd, env: environment, stdio: ['pipe', 'pipe', 'pipe'] });
+  const started = { pid: child.pid ?? null, command, argv, cwd, environment };
+  t.diagnostic(`entry-child-start ${JSON.stringify(started)}`);
+  let stdout = '';
+  let stderr = '';
+  let failure;
+  let inputFailure;
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => { stdout += chunk; });
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  child.once('error', (error) => { failure = error; });
+  child.stdin.once('error', (error) => { inputFailure = error; });
+  const closed = new Promise((resolve) => child.once('close', (code, signal) => resolve({ code, signal })));
+  child.stdin.end(input);
+  const ended = await closed;
+  const completed = { pid: child.pid ?? null, ...ended, stdinFinished: child.stdin.writableFinished, stdout, stderr };
+  t.diagnostic(`entry-child-end ${JSON.stringify(completed)}`);
+  assert.ifError(failure);
+  assert.ifError(inputFailure);
+  assert.ok(Number.isSafeInteger(started.pid) && started.pid > 0, 'the witness recorded its actual child PID at start');
+  assert.equal(completed.pid, started.pid);
+  assert.equal(completed.signal, null);
+  assert.equal(completed.stdinFinished, true);
+  return completed;
+}
+
+/** A distinct consumer whose only gh is the executable fake under a path holding node and git. */
+function installedPlanWorld(t, board) {
+  const installed = installedPackage(t);
+  const consumer = repositoryIn('rigger-entry-consumer-', { 'rigger.config.mjs': `export default ${JSON.stringify(CONSUMER)};\n` });
+  assert.notEqual(realpathSync(consumer), realpathSync(installed.consumer));
+  assert.equal(CONSUMER.telemetry.push, false);
+  const fake = installFakeGh(temporaryDirectory('rigger-entry-gh-', { context: t }), {
+    repo: 'acme/widgets', project: 3, board: { columns: COLUMNS, fields: FIELDS, ...board },
+  });
+  const environment = { ...gitEnvironment(), PATH: `${dirname(fake.gh)}${delimiter}${installed.path}` };
+  assert.deepEqual(environment.PATH.split(delimiter), [dirname(fake.gh), installed.path]);
+  assert.deepEqual(readdirSync(installed.path).sort(), ['git', 'node']);
+  return { consumer, installed, environment };
+}
+
+const PLAN_SUCCESS_BYTES = "rigger plan: from board 3, the next run would pull 1 card, first pulled first, and refuses 2 cards\n  pull    #12  change\n  refuse  #11  missing acceptance\n  refuse  #13  restated title\n";
+
+const MATRIX_SUMMARY_BYTES = "1 of 2 requirements have no test.\n";
+
+const MATRIX_STALE_BYTES = "docs/derived/test-matrix.md is not what the tests and the register say. Run `npm run matrix` and commit the result.\n";
+
+const MATRIX_STRAY_BYTES = "docs/derived/notes.md is under docs/derived/ and no tool writes it. Everything there is generated (D8).\n";
+
+const MATRIX_DOCUMENT_BYTES = "ABOUTME: Which tests prove which requirement, built from the declarations the tests carry.\nGenerated by `scripts/build-test-matrix.mjs`; never hand-edited (D8).\n\n# Test matrix\n\nOne row per requirement in `docs/spec/requirements.md`, naming the tests that prove it. A test\ndeclares what it proves in a `// proves R-GROUP-#` comment on the line above it, and this file\nis built from those declarations, so what it says cannot drift from what the suite asserts.\nRegenerate it with `npm run matrix`; editing it by hand fails the build (D8).\n\n**gap** marks a requirement no test claims. `nothing yet` and `nothing could` mark one whose\n`checked by` in the register already records that nothing catches a violation, so the matrix\nreports no gap of its own; the register carries the reason.\n\n| requirement | proved by |\n|---|---|\n| R-ONE-1 | `test/first.test.mjs` the first thing holds |\n| R-ONE-2 | **gap** |\n";
+
+// Host reason: wiring.
+// Ordinary decision counterpart: test/in-process-entry.test.mjs :: plan prints a card with no acceptance with missing acceptance as the reason, and does not pull it.
+test('installed plan serializes admitted and refused cards to stdout', async (t) => {
+  const world = installedPlanWorld(t, { items: [
+    card(11, 'Ready', { body: 'Why this matters, and nothing more.' }), card(12, 'Ready'),
+    card(13, 'Ready', { title: 'Paint the widget', body: '## Acceptance\n\n- Paint the widget.\n' }),
+  ] });
+  const result = await entryChild(t, world.installed.rigger, ['plan'], world.consumer, world.environment);
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.stdout, PLAN_SUCCESS_BYTES);
+  assert.equal(result.stderr, '');
+});
+
+// Host reason: wiring.
+// Ordinary decision counterpart: test/in-process-entry.test.mjs :: plan under an unreadable admission shows no pull line, names each path and cause, and exits non-zero.
+test('installed plan serializes unreadable admission to stderr', async (t) => {
+  const world = installedPlanWorld(t, { items: [card(31, 'Ready')] });
+  const state = join(world.consumer, '.rigger');
+  seed(state, 'stray.json', closerText());
+  const path = join(realpathSync(world.consumer), '.rigger', 'admission', 'stray.json');
+  assert.equal(readFileSync(join(admissionOf(state), 'stray.json'), 'utf8'), closerText());
+  const result = await entryChild(t, world.installed.rigger, ['plan'], world.consumer, world.environment);
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, `rigger plan: from board 3, nothing would be pulled\nrigger plan: admission cannot be read: ${path} (no closer form)\n`);
+});
+
+// Host reason: wiring.
+// Ordinary decision counterpart: test/in-process-entry.test.mjs :: a written matrix regenerates byte for byte, and the check admits it.
+test('matrix entry writes literal generated bytes and summary', async (t) => {
+  const root = matrixRepository();
+  const matrix = join(root, 'docs', 'derived', 'test-matrix.md');
+  assert.equal(existsSync(matrix), false, 'the native write starts before a matrix exists');
+  const result = await entryChild(t, process.execPath, [join(SOURCE_ROOT, 'scripts', 'build-test-matrix.mjs'), '--write', root], SOURCE_ROOT, gitEnvironment());
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.stdout, MATRIX_SUMMARY_BYTES);
+  assert.equal(result.stderr, '');
+  assert.equal(readFileSync(matrix, 'utf8'), MATRIX_DOCUMENT_BYTES);
+  const checked = await entryChild(t, process.execPath, [join(SOURCE_ROOT, 'scripts', 'build-test-matrix.mjs'), root], SOURCE_ROOT, gitEnvironment());
+  assert.equal(checked.code, 0, checked.stderr);
+  assert.equal(checked.stdout, MATRIX_SUMMARY_BYTES);
+  assert.equal(checked.stderr, '');
+});
+
+// Host reason: wiring.
+// Ordinary decision counterpart: test/in-process-entry.test.mjs :: a matrix edited by hand fails the check, naming the file.
+test('matrix entry reports a hand-edited matrix on stderr', async (t) => {
+  const root = matrixRepository();
+  const matrix = join(root, 'docs', 'derived', 'test-matrix.md');
+  mkdirSync(dirname(matrix), { recursive: true });
+  writeFileSync(matrix, MATRIX_DOCUMENT_BYTES + '| R-ONE-2 | by hand |\n');
+  assert.equal(readFileSync(matrix, 'utf8'), MATRIX_DOCUMENT_BYTES + '| R-ONE-2 | by hand |\n');
+  const result = await entryChild(t, process.execPath, [join(SOURCE_ROOT, 'scripts', 'build-test-matrix.mjs'), root], SOURCE_ROOT, gitEnvironment());
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, MATRIX_SUMMARY_BYTES);
+  assert.equal(result.stderr, MATRIX_STALE_BYTES);
+});
+
+// Host reason: wiring.
+// Ordinary decision counterpart: test/in-process-entry.test.mjs :: a file under docs/derived that no tool writes fails the check, naming it.
+test('matrix entry reports an unowned derived file on stderr', async (t) => {
+  const root = matrixRepository();
+  const matrix = join(root, 'docs', 'derived', 'test-matrix.md');
+  const stray = join(root, 'docs', 'derived', 'notes.md');
+  mkdirSync(dirname(matrix), { recursive: true });
+  writeFileSync(matrix, MATRIX_DOCUMENT_BYTES);
+  writeFileSync(stray, 'typed by hand\n');
+  assert.equal(readFileSync(matrix, 'utf8'), MATRIX_DOCUMENT_BYTES);
+  assert.equal(readFileSync(stray, 'utf8'), 'typed by hand\n');
+  const result = await entryChild(t, process.execPath, [join(SOURCE_ROOT, 'scripts', 'build-test-matrix.mjs'), root], SOURCE_ROOT, gitEnvironment());
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, MATRIX_SUMMARY_BYTES);
+  assert.equal(result.stderr, MATRIX_STRAY_BYTES);
+  assert.equal(readFileSync(stray, 'utf8'), 'typed by hand\n');
+});
+
+// Host reason: wiring.
+// Ordinary decision counterpart: test/in-process-fixtures.test.mjs :: the shared stand-in reply preserves no-act, literal print and configured exit.
+test('the native stand-in preserves no-act, literal print and configured exit', async (t) => {
+  const cases = [
+    { plan: {}, stdout: '', code: 0 },
+    { plan: { 31: { engineer: { print: 'Literal agent output.\n' } } }, stdout: 'Literal agent output.\n', code: 0 },
+    { plan: { 31: { engineer: { print: 'Literal before seven.\n', exit: 7 } } }, stdout: 'Literal before seven.\n', code: 7 },
+  ];
+  for (const given of cases) {
+    const directory = temporaryDirectory('rigger-agent-oracle-', { context: t });
+    const cwd = temporaryDirectory('rigger-agent-oracle-cwd-', { context: t });
+    const agent = installStandInAgent(directory, given.plan);
+    const args = ['--append-system-prompt-file', '/fixture/.claude/agents/engineer.md', 'two words', ''];
+    const input = 'Rigger sends CaRd #31, then card #999.\n';
+    const environment = { HOME: cwd, LANG: 'C.UTF-8', PATH: process.env.PATH, RIGGER_STAND_IN_VALUE: 'literal', UNRELATED: 'not recorded' };
+    const result = await entryChild(t, join(agent.dir, 'claude'), args, cwd, environment, input);
+    assert.equal(result.code, given.code);
+    assert.equal(result.stdout, given.stdout);
+    assert.equal(result.stderr, '');
+    assert.deepEqual(agent.runs(), [{ name: 'claude', args, cwd, card: 31, role: 'engineer', input, env: { RIGGER_STAND_IN_VALUE: 'literal' }, pid: result.pid }]);
+    assert.deepEqual(readdirSync(agent.dir).sort(), ['claude', 'plan.json', 'runs.jsonl']);
+    assert.deepEqual(readdirSync(cwd), [], 'these configured replies create no marker/worktree or PR action');
+  }
+});

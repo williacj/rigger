@@ -3,7 +3,7 @@
 // commands from the fake repository. Test-only, and never named from src/.
 
 import { chmodSync, closeSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 
 import { createFakeBoard } from './fake-board.mjs';
 import { parseDocument } from '../src/substrate/forge/graphql.mjs';
@@ -748,7 +748,7 @@ const COMMANDS = {
     state.repository.mainSha = 'm'.repeat(40);
     return JSON.stringify({ sha: state.repository.mainSha, merged: true, message: 'Pull Request successfully merged' });
   },
-  [commandOf(['api', 'repos/_/_/issues/_/comments', '-X', 'POST', '-f', 'body=_'])]: async (board, state, args) => {
+  [commandOf(['api', 'repos/_/_/issues/_/comments', '-X', 'POST', '-f', 'body=_'])]: async (board, state, args, now) => {
     const number = Number(pathIn(state, args).split('/')[1]);
     const target = state.repository?.pullRequests?.find((candidate) => candidate.number === number)
       ?? state.repository?.issues?.find((candidate) => candidate.number === number && (candidate.repository == null || candidate.repository.toLowerCase() === state.repo.toLowerCase()));
@@ -821,7 +821,7 @@ function agentArgs(state, args) {
 }
 
 /** The body a `--body` or `--body-file` gives, reading standard input for a file named `-`. */
-const bodyOf = (flags) => flags.body ?? (flags.bodyFile === undefined ? undefined : readFileSync(flags.bodyFile === '-' ? 0 : flags.bodyFile, 'utf8'));
+const bodyOf = (flags, cwd, input) => flags.body ?? (flags.bodyFile === undefined ? undefined : (flags.bodyFile === '-' ? input() : readFileSync(isAbsolute(flags.bodyFile) ? flags.bodyFile : resolve(cwd, flags.bodyFile), 'utf8')));
 
 /** The time `gh` is answered at, to the second, as GitHub writes one. */
 const now = () => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -831,8 +831,8 @@ const now = () => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
  * whose open pull request it names before a merged one. With none, the branch checked out where
  * the command runs is the selector.
  */
-function selected(state, repository, selector) {
-  const named = selector ?? checkedOut(process.cwd());
+function selected(state, repository, selector, cwd) {
+  const named = selector ?? checkedOut(cwd);
   if (named === null) throw new GhFailure('could not determine current branch: not on any branch');
   const number = /^\d+$/.test(named) ? Number(named) : Number(new RegExp(`^${pullUrl(state, '(\\d+)').replace(/[./]/g, '\\$&')}$`, 'i').exec(named)?.[1]);
   if (Number.isInteger(number)) {
@@ -881,12 +881,12 @@ function changedLines(diff) {
 const AGENT_COMMANDS = {
   // A pull request from a branch the test's `origin` holds, at that branch's head, with the diff
   // and merge base git computes there, as the forge computes them.
-  create: async (board, state, args) => {
+  create: async (board, state, args, _now, cwd, input) => {
     const { flags } = agentArgs(state, args);
     if (!state.origin) throw new NotModelled(args);
-    const head = flags.head ?? checkedOut(process.cwd());
+    const head = flags.head ?? checkedOut(cwd);
     const base = flags.base ?? 'main';
-    const body = bodyOf(flags);
+    const body = bodyOf(flags, cwd, input);
     if (flags.title === undefined && !flags.fill) throw new GhFailure('must provide `--title` and `--body` (or `--fill` or `fill-first` or `--fillverbose`) when not running interactively');
     const sha = head && headIn(state.origin, head);
     if (!sha) throw new GhFailure('aborted: you must first push the current branch to a remote, or use the --head flag');
@@ -901,23 +901,23 @@ const AGENT_COMMANDS = {
     return `${pullUrl(state, number)}\n`;
   },
   // A comment on the pull request named, made now, and held with it.
-  comment: async (board, state, args) => {
+  comment: async (board, state, args, now, cwd, input) => {
     const { flags, words } = agentArgs(state, args);
-    const body = bodyOf(flags);
+    const body = bodyOf(flags, cwd, input);
     if (body === undefined) throw new NotModelled(args);
     const repository = repositoryOf(state);
-    const { number } = selected(state, repository, words[0]);
+    const { number } = selected(state, repository, words[0], cwd);
     repository.comment(number, body, now());
     state.repository = repository.held();
     return `${pullUrl(state, number)}#issuecomment-${repository.pull(number).comments.length}\n`;
   },
   // The pull request named, as `gh` prints it to a reader that is not a terminal, or the fields
   // `--json` names, in the order `gh` prints them.
-  view: async (board, state, args) => {
+  view: async (board, state, args, _now, cwd) => {
     const { flags, words } = agentArgs(state, args);
     const fields = flags.json?.split(',').sort();
     if (fields?.some((field) => !Object.hasOwn(VIEW_FIELDS, field))) throw new NotModelled(args);
-    const pull = selected(state, repositoryOf(state), words[0]);
+    const pull = selected(state, repositoryOf(state), words[0], cwd);
     if (fields) {
       return `${JSON.stringify(Object.fromEntries(fields.map((field) => [field, VIEW_FIELDS[field](state, pull)])))}\n`;
     }
@@ -926,9 +926,9 @@ const AGENT_COMMANDS = {
     return `${lines.map(([name, value]) => `${name}:\t${value}`).join('\n')}\n--\n${pull.body}\n`;
   },
   // The pull request's diff as the forge serves it, which `gh pr diff` prints byte for byte.
-  diff: async (board, state, args) => {
+  diff: async (board, state, args, _now, cwd) => {
     const { words } = agentArgs(state, args);
-    const pull = selected(state, repositoryOf(state), words[0]);
+    const pull = selected(state, repositoryOf(state), words[0], cwd);
     if (pull.declined) throw new GhFailure(`could not find pull request diff: HTTP 406: ${pull.declined} (https://api.github.com/repos/${state.repo}/pulls/${pull.number})`);
     return pull.diff;
   },
@@ -975,15 +975,20 @@ export async function main(statePath) {
 
 /** `main`'s answer, given while it holds the board's lock. */
 async function answering(statePath) {
-  const args = process.argv.slice(2);
+  const answer = await answerFakeGh(statePath, process.argv.slice(2), { now, cwd: process.cwd(), input: () => readFileSync(0, 'utf8') });
+  if (answer.stdout !== '') process.stdout.write(answer.stdout);
+  if (answer.stderr !== '') process.stderr.write(answer.stderr);
+  if (answer.status !== 0) process.exitCode = answer.status;
+}
+
+/** Answers one explicit request from the existing fixture state file; executable locking stays in main. */
+export async function answerFakeGh(statePath, args, { now, cwd, input } = {}) {
   const state = JSON.parse(readFileSync(statePath, 'utf8'));
   state.sent.push(args);
   writeFileSync(statePath, JSON.stringify(state));
   const answer = COMMANDS[commandOf(args)] ?? (args[0] === 'pr' && Object.hasOwn(AGENT_COMMANDS, args[1]) ? AGENT_COMMANDS[args[1]] : undefined);
   if (!answer) {
-    process.stderr.write(`the fake gh does not model \`${spelled(args)}\`\n`);
-    process.exitCode = 1;
-    return;
+    return { status: 1, stdout: '', stderr: `the fake gh does not model \`${spelled(args)}\`\n` };
   }
   const board = await boardOf(state);
   let data;
@@ -991,21 +996,17 @@ async function answering(statePath) {
     // A REST read and an agent command are answered with what `gh` prints for each, and a GraphQL
     // request with its data, which `gh` prints as one line.
     if (args[1] !== 'graphql') {
-      const printed = await answer(board, state, args);
+      const printed = await answer(board, state, args, now, cwd, input);
       writeFileSync(statePath, JSON.stringify({ ...state, writes: board.writes() }));
-      process.stdout.write(printed);
-      return;
+      return { status: 0, stdout: printed, stderr: '' };
     }
     data = await answer(board, state, parseDocument(args[3].slice('query='.length)).operations[0]);
   } catch (error) {
     if (!(error instanceof GhFailure)) throw error;
-    process.stdout.write(error.printed ?? '');
-    process.stderr.write(`${error.message}\n`);
-    process.exitCode = 1;
-    return;
+    return { status: 1, stdout: error.printed ?? '', stderr: `${error.message}\n` };
   }
   writeFileSync(statePath, JSON.stringify({ ...state, writes: board.writes() }));
-  process.stdout.write(`${JSON.stringify({ data })}\n`);
+  return { status: 0, stdout: `${JSON.stringify({ data })}\n`, stderr: '' };
 }
 
 /** The one argument the warming run of the fake `gh` is given, which no `gh` command is. */
@@ -1047,7 +1048,11 @@ export function installFakeGh(dir, { repo, owner, project, board = {}, origin })
  * a diff and comments. Made before the fake `gh` is first run, it replaces what the repository held.
  */
 export function seedRepository(fake, seed) {
-  const statePath = join(dirname(fake.gh), 'board.json');
+  seedRepositoryAt(join(dirname(fake.gh), 'board.json'), seed);
+}
+
+/** Seeds the existing fake repository model at an explicit fixture state file. */
+export function seedRepositoryAt(statePath, seed) {
   const state = JSON.parse(readFileSync(statePath, 'utf8'));
   seed = { issues: createFakeBoard(state.model).issues(), ...seed };
   createFakeRepository(seed);
