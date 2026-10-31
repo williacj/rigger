@@ -10,8 +10,10 @@ import { join } from 'node:path';
 
 import { resume } from '../src/cli/resume.mjs';
 import { VERBS } from '../src/cli/verbs.mjs';
+import { readEvents } from '../src/observation/sink.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { TIME, admissionOf, closerText, seed } from './admission-world.mjs';
+import { moduleOver, recordingSink, stateOf } from './admission-world.mjs';
 import { repositoryIn } from './git-repository.mjs';
 import { configure, statusGh } from './notice-forge.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
@@ -352,7 +354,7 @@ test('resume whose removal stops partway names each closer it already removed, t
 });
 
 // proves R-SCHED-24
-test('resume, whose admission.open record is refused after a later removal, still names every closer it removed, the refused record, and that no status issue was closed', async (t) => {
+test('resume, whose admission.open record is refused after a later removal, names every closer and the refusal and closes every status issue', async (t) => {
   // Both judges' round-8 probe on #1079: the second removal's record is refused by a real
   // read-only stream after the first removal and its record succeeded.
   const here = world({ closers: ['hold-a1-issue-7.json', 'hold-b2-issue-8.json'], issues: [status(7, 'a1'), status(8, 'b2')] });
@@ -372,11 +374,12 @@ test('resume, whose admission.open record is refused after a later removal, stil
   assert.equal(armed, true);
   assert.deepEqual(left(here), [], 'both closers were removed');
   assert.equal(code, 1, text);
-  assert.deepEqual(here.sent, []);
+  assert.deepEqual([here.issue(7).state, here.issue(8).state], ['closed', 'closed']);
   assert.match(text, /^rigger resume: removed the hold closer .*hold-a1-issue-7\.json/m, text);
   assert.match(text, /^rigger resume: removed the hold closer .*hold-b2-issue-8\.json/m, text);
   assert.match(text, /hold-b2-issue-8\.json, and the sink refused its admission\.open event/, text);
-  assert.match(text, /^rigger resume: no status issue was closed, because /m, text);
+  assert.match(text, /^rigger resume: closed the status issue #7$/m, text);
+  assert.match(text, /^rigger resume: closed the status issue #8$/m, text);
 });
 
 // proves R-SCHED-23
@@ -488,4 +491,198 @@ test('resume prints a forge refusal of an issue\'s label removal or its close, w
     assert.match(text, /the status issue #7 was left open/, `${what}: ${text}`);
     printed(text);
   }
+});
+
+// proves R-SCHED-23, R-SCHED-24
+test('resume closes every status issue after the only closer removal event is refused, then a second resume finds admission open', async () => {
+  const here = world({ closers: ['hold-a1-issue-7.json'], issues: [status(7, 'a1'), status(9, 'z9')] });
+  const first = await withRemovalRecords(here, ['hold-a1-issue-7.json']);
+
+  assert.deepEqual(left(here), []);
+  assert.deepEqual([here.issue(7).state, here.issue(9).state], ['closed', 'closed']);
+  assert.equal(first.code, 1, first.text);
+  assert.match(first.text, /removed the hold closer .*hold-a1-issue-7\.json/, first.text);
+  assert.match(first.text, /hold-a1-issue-7\.json.*admission\.open event/, first.text);
+  for (const number of [7, 9]) assert.match(first.text, new RegExp(`closed the status issue #${number}`), first.text);
+
+  const second = await here.run();
+  assert.equal(second.code, 0, second.text);
+  assert.equal(second.text, 'rigger resume: admission was already open');
+  assert.deepEqual([here.issue(7).state, here.issue(9).state], ['closed', 'closed']);
+});
+
+/** A real L5 append refusal for each named unlink; restores permissions even when the verb fails. */
+async function withRemovalRecords(here, refusedNames) {
+  const stream = join(here.repository, '.rigger', 'events.jsonl');
+  writeFileSync(stream, '', { mode: 0o644 });
+  const unlinkSync = (path) => {
+    nodeFs.unlinkSync(path);
+    nodeFs.chmodSync(stream, refusedNames.some((name) => String(path).endsWith(`/${name}`)) ? 0o444 : 0o644);
+  };
+  try {
+    return await here.run({ fs: { ...nodeFs, unlinkSync } });
+  } finally {
+    if (nodeFs.existsSync(stream)) nodeFs.chmodSync(stream, 0o644);
+  }
+}
+
+/** L3's answer for a cell, after it reads and removes each closer. */
+async function l3Removal(closers, refusedNames) {
+  const state = stateOf();
+  for (const name of closers) seed(state, name);
+  const { sink } = recordingSink((event, fields) => {
+    if (event === 'admission.open' && refusedNames.includes(fields.name)) throw new Error(`EIO on ${fields.name}`);
+  });
+  const answer = await moduleOver(state, { sink }).resume();
+  assert.deepEqual(readdirSync(admissionOf(state)), []);
+  assert.deepEqual(answer.removed.map(({ name }) => name), closers);
+  assert.deepEqual(answer.unrecorded.map(({ name }) => name), refusedNames);
+}
+
+/** One refused-removal cell: the sink records accepted opens and names refused ones. */
+async function removalCell(closers, numbers, refusedNames) {
+  const here = world({ closers, issues: [...numbers.map((number, index) => status(number, ['a1', 'b2', 'c3'][index])), status(10, 'extra')] });
+  const { text, code } = await withRemovalRecords(here, refusedNames);
+
+  assert.deepEqual(left(here), []);
+  assert.equal(code, refusedNames.length ? 1 : 0, text);
+  for (const name of closers) assert.match(text, new RegExp(`removed the hold closer .*${name.replaceAll('.', '\\.')}`), text);
+  for (const number of [...numbers, 10]) {
+    assert.equal(here.issue(number).state, 'closed', `#${number}: ${text}`);
+    assert.match(text, new RegExp(`closed the status issue #${number}`), text);
+  }
+  for (const name of refusedNames) assert.match(text, new RegExp(`sink refused the admission\\.open event for ${name.replaceAll('.', '\\.')}`), text);
+  const accepted = readEvents(join(here.repository, '.rigger')).filter(({ event, by }) => event === 'admission.open' && by === 'resume');
+  assert.deepEqual(accepted.map(({ name }) => name), closers.filter((name) => !refusedNames.includes(name)));
+  await l3Removal(closers, refusedNames);
+}
+
+const THREE = ['hold-a1-issue-7.json', 'hold-b2-issue-8.json', 'hold-c3-issue-9.json'];
+
+// proves R-SCHED-23, R-SCHED-24
+test('resume continues after the first of three removal records is refused', () => removalCell(THREE, [7, 8, 9], [THREE[0]]));
+
+// proves R-SCHED-23, R-SCHED-24
+test('resume continues after the middle of three removal records is refused', () => removalCell(THREE, [7, 8, 9], [THREE[1]]));
+
+// proves R-SCHED-23, R-SCHED-24
+test('resume reports the last of three removal records refused after closing all issues', () => removalCell(THREE, [7, 8, 9], [THREE[2]]));
+
+// proves R-SCHED-23, R-SCHED-24
+test('resume reports both removal records refused and closes all issues', () => removalCell(THREE.slice(0, 2), [7, 8], THREE.slice(0, 2)));
+
+// proves R-SCHED-23, R-SCHED-24
+test('resume reports all three removal records refused and closes all issues', () => removalCell(THREE, [7, 8, 9], THREE));
+
+// proves R-SCHED-23, R-SCHED-24
+test('resume with one or three closers and no refused record closes all issues and exits zero', async () => {
+  await removalCell(THREE.slice(0, 1), [7], []);
+  await removalCell(THREE, [7, 8, 9], []);
+});
+
+// proves R-SCHED-23, R-SCHED-24
+test('resume names a first refused record and a later unlink failure, leaves the second closer and closes no issue', async () => {
+  const here = world({ closers: THREE.slice(0, 2), issues: [status(7, 'a1'), status(8, 'b2'), status(10, 'extra')] });
+  const { sink } = recordingSink((event, fields) => {
+    if (event === 'admission.open' && fields.name === THREE[0]) throw new Error('EIO');
+  });
+  const unlinkSync = (path) => {
+    if (String(path).endsWith(THREE[1])) throw Object.assign(new Error('EACCES'), { code: 'EACCES' });
+    return nodeFs.unlinkSync(path);
+  };
+
+  const { text, code } = await here.run({ sink, fs: { ...nodeFs, unlinkSync } });
+
+  assert.equal(code, 1, text);
+  assert.deepEqual(left(here), [THREE[1]]);
+  assert.deepEqual([7, 8, 10].map((number) => here.issue(number).state), ['open', 'open', 'open']);
+  assert.match(text, /removed the hold closer .*hold-a1-issue-7\.json/, text);
+  assert.match(text, /sink refused the admission\.open event for hold-a1-issue-7\.json/, text);
+  assert.match(text, /resume left hold-b2-issue-8\.json: EACCES/, text);
+  assert.match(text, /no status issue was closed/, text);
+});
+
+// proves R-SCHED-23, R-SCHED-24
+test('resume names a refused removal and missing config after unlinking, leaving every issue open', async () => {
+  await l3Removal([THREE[0]], [THREE[0]]);
+  const here = world({ closers: [THREE[0]], issues: [status(7, 'a1'), status(10, 'extra')], config: false });
+  const { sink } = recordingSink((event) => { if (event === 'admission.open') throw new Error('EIO'); });
+
+  const { text, code } = await here.run({ sink });
+
+  assert.equal(code, 1, text);
+  assert.deepEqual(left(here), []);
+  assert.deepEqual(here.sent, []);
+  assert.deepEqual([here.issue(7).state, here.issue(10).state], ['open', 'open']);
+  assert.match(text, /removed the hold closer .*hold-a1-issue-7\.json/, text);
+  assert.match(text, /sink refused the admission\.open event for hold-a1-issue-7\.json/, text);
+  assert.match(text, /no status issue was closed, because `rigger\.config\.mjs` is not in /, text);
+});
+
+/** A forge write whose record is refused after the write: every closer and issue still completes. */
+async function forgeRecordCell(count, write) {
+  const closers = THREE.slice(0, count);
+  await l3Removal(closers, []);
+  const numbers = [7, 8].slice(0, count);
+  const issues = [...numbers.map((number, index) => status(number, ['a1', 'b2'][index])), status(10, 'extra')];
+  const here = world({ closers, issues });
+  const gh = statusGh({ issues });
+  const matcher = write === 'label'
+    ? (args) => rest(args, '/issues/7/labels/rigger%3Astatus', 'DELETE')
+    : (args) => rest(args, '/issues/7', 'PATCH');
+  const { send, made } = recordRefused(gh, matcher);
+
+  const { text, code } = await here.run({ send });
+
+  assert.equal(code, 1, text);
+  assert.deepEqual(left(here), []);
+  assert.equal(made.length, 1, text);
+  for (const name of closers) assert.match(text, new RegExp(`removed the hold closer .*${name.replaceAll('.', '\\.')}`), text);
+  for (const number of [...numbers, 10]) {
+    assert.equal(gh.issues.find((issue) => issue.number === number).state, 'closed', `#${number}: ${text}`);
+    assert.match(text, new RegExp(`closed the status issue #${number}`), text);
+  }
+  assert.match(text, new RegExp(`(?:removed the status label from issue|closed the status issue) #7, but the sink refused its record: .*call\\.end went unrecorded`), text);
+}
+
+// proves R-SCHED-23, R-SCHED-24
+test('resume with one closer completes after a label-removal event is refused', () => forgeRecordCell(1, 'label'));
+
+// proves R-SCHED-23, R-SCHED-24
+test('resume with two closers completes after a label-removal event is refused', () => forgeRecordCell(2, 'label'));
+
+// proves R-SCHED-23, R-SCHED-24
+test('resume with one closer completes after a close event is refused', () => forgeRecordCell(1, 'close'));
+
+// proves R-SCHED-23, R-SCHED-24
+test('resume with two closers completes after a close event is refused', () => forgeRecordCell(2, 'close'));
+
+// proves R-SCHED-23, R-SCHED-24
+test('resume prints a middle removal refusal with line break, tab and control character as escapes on one line', async () => {
+  const here = world({ closers: THREE, issues: [status(7, 'a1'), status(8, 'b2'), status(9, 'c3'), status(10, 'extra')] });
+  const { sink } = recordingSink((event, fields) => {
+    if (event === 'admission.open' && fields.name === THREE[1]) throw new Error('one\ntwo\tthree\u0001');
+  });
+
+  const { text, code } = await here.run({ sink });
+
+  assert.equal(code, 1, text);
+  assert.deepEqual(left(here), []);
+  assert.deepEqual([7, 8, 9, 10].map((number) => here.issue(number).state), ['closed', 'closed', 'closed', 'closed']);
+  const line = text.split('\n').find((entry) => entry.includes('sink refused the admission.open event'));
+  assert.match(line, /hold-b2-issue-8\.json.*one\\ntwo\\tthree\\u0001/);
+  assert.doesNotMatch(line, /[\u0000-\u001f\u007f-\u009f]/);
+});
+
+// proves R-SCHED-23, R-SCHED-24
+test('resume records each accepted closer removal around a refused middle event in the real stream', async () => {
+  const here = world({ closers: THREE, issues: [status(7, 'a1'), status(8, 'b2'), status(9, 'c3'), status(10, 'extra')] });
+  const { text, code } = await withRemovalRecords(here, [THREE[1]]);
+
+  assert.equal(code, 1, text);
+  assert.deepEqual(left(here), []);
+  assert.deepEqual([7, 8, 9, 10].map((number) => here.issue(number).state), ['closed', 'closed', 'closed', 'closed']);
+  const recorded = readEvents(join(here.repository, '.rigger')).filter(({ event, by }) => event === 'admission.open' && by === 'resume');
+  assert.deepEqual(recorded.map(({ name }) => name), [THREE[0], THREE[2]]);
+  assert.match(text, /sink refused the admission\.open event for hold-b2-issue-8\.json/, text);
 });

@@ -95,7 +95,7 @@ test('a close whose event the sink refuses rejects naming the refused event, and
   assert.equal(moduleOver(state).read().state, 'closed');
 });
 
-test('an opening or a resume removal whose event the sink refuses rejects naming the refused event, and each closer it removed is still gone', async () => {
+test('an opening whose event the sink refuses rejects; a resume removal answers the refusal, and both leave the closer gone', async () => {
   const opened = stateOf();
   seed(opened, 'hold-b1.json');
   await assert.rejects(moduleOver(opened, { sink: refusingSink().sink }).open('hold-b1.json'), (error) => error.message.includes('admission.open') && error.message.includes('hold-b1.json'));
@@ -103,6 +103,67 @@ test('an opening or a resume removal whose event the sink refuses rejects naming
 
   const resumed = stateOf();
   seed(resumed, 'owner-a1.json');
-  await assert.rejects(moduleOver(resumed, { sink: refusingSink().sink }).resume(), (error) => error.message.includes('admission.open') && error.message.includes('owner-a1.json'));
+  const answer = await moduleOver(resumed, { sink: refusingSink().sink }).resume();
+  assert.match(answer.unrecorded[0].why, /owner-a1\.json.*admission\.open/);
   assert.deepEqual(namesIn(resumed), []);
+});
+
+// proves R-SCHED-23
+test('resume returns a refused removal event after unlinking its only closer', async () => {
+  const state = stateOf();
+  seed(state, 'hold-a1-issue-7.json');
+  const { sink } = recordingSink((event) => { if (event === 'admission.open') throw new Error('EIO'); });
+
+  const answer = await moduleOver(state, { sink }).resume();
+
+  assert.deepEqual(namesIn(state), []);
+  assert.deepEqual(answer.removed.map(({ name }) => name), ['hold-a1-issue-7.json']);
+  assert.match(answer.unrecorded[0].why, /hold-a1-issue-7\.json.*admission\.open.*EIO/);
+});
+
+// proves R-SCHED-23
+test('resume returns a middle removal refusal with controls escaped on one line', async () => {
+  const state = stateOf();
+  for (const name of ['hold-a1-issue-7.json', 'hold-b2-issue-8.json', 'hold-c3-issue-9.json']) seed(state, name);
+  const { sink } = recordingSink((event, fields) => {
+    if (event === 'admission.open' && fields.name === 'hold-b2-issue-8.json') throw new Error('one\ntwo\tthree\u0001');
+  });
+
+  const answer = await moduleOver(state, { sink }).resume();
+
+  assert.deepEqual(namesIn(state), []);
+  assert.equal(answer.unrecorded.length, 1);
+  assert.ok(answer.unrecorded[0].why.includes('one\\ntwo\\tthree\\u0001'), answer.unrecorded[0].why);
+  assert.doesNotMatch(answer.unrecorded[0].why, /[\u0000-\u001f\u007f-\u009f]/);
+});
+
+/** The refusal of the middle closer in a three-closer admission, as L3 hands it back. */
+async function middleRefusal(value) {
+  const state = stateOf();
+  for (const name of ['hold-a1-issue-7.json', 'hold-b2-issue-8.json', 'hold-c3-issue-9.json']) seed(state, name);
+  const { sink, events } = recordingSink((event, fields) => {
+    if (event === 'admission.open' && fields.name === 'hold-b2-issue-8.json') throw value;
+  });
+
+  const answer = await moduleOver(state, { sink }).resume();
+
+  assert.deepEqual(namesIn(state), []);
+  assert.deepEqual(events.map(({ name }) => name), ['hold-a1-issue-7.json', 'hold-c3-issue-9.json']);
+  assert.deepEqual(answer.removed.map(({ name }) => name), ['hold-a1-issue-7.json', 'hold-b2-issue-8.json', 'hold-c3-issue-9.json']);
+  assert.equal(answer.unrecorded.length, 1);
+  return answer.unrecorded[0].why;
+}
+
+// proves R-SCHED-23
+test('resume returns the one-line Error message for a middle removal refusal', async () => {
+  assert.match(await middleRefusal(new Error('one-line EIO')), /admission\.open event: one-line EIO$/);
+});
+
+// proves R-SCHED-23
+test('resume names the middle refused event for a string, null, undefined and an object without message', async () => {
+  for (const value of ['string EIO', null, undefined, {}]) {
+    const why = await middleRefusal(value);
+    assert.match(why, /hold-b2-issue-8\.json.*admission\.open event:/);
+    assert.doesNotMatch(why, /[\u0000-\u001f\u007f-\u009f]/);
+  }
 });
