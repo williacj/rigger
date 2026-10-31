@@ -569,7 +569,7 @@ async function executableCiFixture(t, { changePath = 'docs/journal/a.md', authen
   const eventPath = join(directory, 'event.json'), outputPath = join(directory, 'outputs');
   writeFileSync(eventPath, JSON.stringify(fixture.event)); writeFileSync(outputPath, '');
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
-  const { NODE_TEST_CONTEXT, ...env } = gitEnvironment();
+  const { NODE_TEST_CONTEXT, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, ...env } = gitEnvironment();
   // The documented artifact routes retain their exact URLs/options while the fixture serves their bytes locally.
   const transport = `const nativeFetch = globalThis.fetch;
     globalThis.fetch = (url, options) => {
