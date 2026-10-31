@@ -69,8 +69,8 @@ reused.
 | D26 | An escalation goes where the consumer sends it | Ratified |
 | D27 | An escalated card carries a label only the owner removes | Ratified. Amended in #868. |
 | D28 | A per-user LaunchAgent re-launches the engine on an interval | Ratified. Amended in #1043. |
-| D29 | Rigger's suite runs in two tiers, and the hooks run one | Ratified |
-| D30 | Until the conversion closes, two lists exempt files from D29's bounds | Ratified |
+| D29 | Rigger's suite runs in two tiers, and the hooks run one | Ratified. Amended in #1140. |
+| D30 | Until the conversion closes, two lists exempt files from D29's bounds | Ratified. Amended in #1140. |
 
 ## D1 — Redo over resume
 
@@ -1093,7 +1093,7 @@ This decision adds no requirement row.
 
 ## D29 — Rigger's suite runs in two tiers, and the hooks run one
 
-**Status:** Ratified.
+**Status:** Ratified. Amended in #1140.
 
 ### Rule
 
@@ -1102,11 +1102,20 @@ This decision adds no requirement row.
    1. A test that starts no process, or starts only `git` or `tar`, is deterministic.
    2. A test whose claim is what Rigger decides from an answer is deterministic. Except as `D30` allows, it takes that answer from the fake host or from an in-process stand-in. What Rigger decides includes what it kills, in what order, what it records, what it refuses and what a verb prints.
    3. Every other test is a host test. Its claim is about what the operating system or a real program did, such as a process that ended, a signal that arrived, or a tool's printed form.
-3. Except as `D30` allows, a deterministic test keeps to these bounds. In the test file's own process, the deterministic runner fails a test, or a file while it loads, that breaks the first through `node:child_process` or the second through a signal. It names the test or file and what it started or signalled. It imposes the third and the fourth on every `git` and `tar` it admits.
+3. Except as `D30` allows, a deterministic test keeps to these bounds.
    1. It starts no process but `git` or `tar`.
    2. It sends no signal to any process but its own.
    3. Its `git` and `tar` run with a `PATH` that holds only those two programs, so a hook, alias or helper that starts a program by name fails.
    4. Its `git` reads no global or system configuration.
+   5. It arms no timer with a delay above zero, whether the test arms it or Rigger's code under it does. A timer is what `setTimeout`, `setInterval`, `node:timers`, `node:timers/promises` or `AbortSignal.timeout` arms, and a delay the call omits counts as zero. A timer `node:test` arms for a test's own `timeout` option is not one, and nor is a call that `node:test`'s timer mock answers (`mock.timers.enable()`).
+
+   In the test file's own process, the deterministic runner fails a test, or a file while it loads, that breaks a bound by one of these routes. It names the test or file and what the route lists:
+
+   - the first, through `node:child_process`: what it started;
+   - the second, through a signal: what it signalled;
+   - the fifth, through a timer: what it armed.
+
+   It imposes the third and the fourth on every `git` and `tar` it admits.
 4. Except as `D30` allows, Rigger's code under a deterministic test reads only the clock the test injects.
 5. A host test starts at least one real process. Except as `D30` allows, the host runner fails a host test that starts none, naming it.
 6. `npm test` runs the deterministic tier at `node --test`'s own concurrency, and the commit, merge and push hooks run `npm test`. It is the suite `AGENTS.md` means where a failing suite stops work. `npm run test:host` runs the host tier one file at a time, and no hook runs it.
@@ -1114,6 +1123,18 @@ This decision adds no requirement row.
 8. A host-tier failure at the default branch's head is a card of its own, and no other card's maker owns it. The owner files it, or has it filed, at the highest priority the board declares (`R-SCHED-1`).
 9. Wherever the fake host gives an answer for a state a host test can create, a host test ties that answer to the real operating system's, in its form and its value (`D16` rule 2). The fake's scripted faults and its timing are copies no test can tie. The fake host records beside each one where the real operating system can differ (`D16` rule 3).
 10. `docs/derived/test-matrix.md` marks each claim a host test makes. Its generator names every requirement that no deterministic test claims.
+11. A host test that a change adds to the host tier declares why it needs the host. The base is the merge base of the head with the commit the list-growth steps resolve for the event (`D30` rule 4). A change adds a test to the host tier when the head's host tier holds a test, by file and title, more times than the base's host tier does. The declaration names:
+    1. one reason, which is wiring, OS behaviour or a real deadline (`AGENTS.md`, "When you write code");
+    2. a deterministic test outside `D30`'s conversion list that proves the decision the host test's claim depends on, or that its claim depends on no decision Rigger makes.
+
+    The host-declaration steps in `fast` and `nightly` fail a change in each case below. A case concerns either an added host test or a top-level call whose test the steps cannot identify. They name the file and what the case lists:
+
+    - an added host test that lacks the declaration: the title;
+    - an added host test whose declaration names a reason other than one of the three: the title;
+    - an added host test whose declaration names a test that is not such a deterministic test: the title;
+    - a top-level call that the change adds in a host-tier file, whose test the steps cannot identify: the line.
+
+    A host test that a change adds names a real deadline as its reason where the test itself, not Rigger's code under it, arms a timer with a delay above zero, as rule 3.5 defines one. The judges rule whether the reason is true and whether the named test proves the decision.
 
 ### Notes
 
@@ -1131,26 +1152,34 @@ Rule 7 follows the staged CI policy approved in #921 and ratified through #906. 
 
 Rule 9 promises only what a test can tie. A scripted fault, such as `EPERM` or a read that times out, cannot be asked of the real operating system on demand. Nor can an interleaving, such as a group still non-empty at the census after its kill. An in-process stand-in's answer is a copy rule 9 does not tie. It copies what the fake `gh` and the stand-in agent answered as processes before the split, and no rule tied those to the real programs either.
 
+Rule 3's fifth bound and rule 11 follow the owner's direction of 2026-10-29 on #740, to stop bad tests before they become debt. Rule 11's sentence on a real deadline follows the owner's ruling U103 of the same day, on #740, as `D30` rule 6 does. It binds the timers a host test arms itself, because Rigger's code under a wiring test arms timers the test never chose. Rule 3's runner sees a timer only in the test file's own process, as it sees a process start. Rule 11 binds the tests a change adds, so an older host test carries no declaration until a change adds it again. Its check compares the head with its merge base with the commit the list-growth steps resolve, never with a ref that moves. A deterministic test tied to the default branch's moving tip turned the default branch red in #1113. The three reasons are the ones `AGENTS.md` keeps host proof for, and whether a declared reason is true stays a judgment.
+
 This entry is permanent. `D30` covers rule 2.2's answer source and rules 3, 4 and 5; it ends when its two lists are empty.
 
-Three observations would reverse it:
+Four observations would reverse it:
 
 1. Over the 100 CI runs after `D30` ends, a CI worker's step that runs `npm test` fails in 4 or more first attempts whose rerun at the same head passes. The base is 17 in 198 first attempts of that step, taken over the whole suite. About half the flakes would then remain in the deterministic tier, so the tier boundary would not be where they came from. Each step's actual executed attempts are read with `gh run view --json jobs`; skipped or deferred work is not a passing execution. The threshold is a judgment.
 2. A defect reaches the default branch that a host test would have caught, while every required check was green. The rule then put a claim on the fake that only the real host could prove.
 3. Over 100 pull requests, a CI worker's step that runs `npm run test:host` fails more first attempts that pass on rerun than it fails for a defect, counting only actual executed attempts in that sample and read the same way. Rule 7 alone is then reversed, and the host tier moves to a check that is not required.
+4. Over the first 30 host tests added under rule 11, the judges find in more than half that the named deterministic test does not prove the decision. The declaration then costs a line and carries no evidence, and rule 11 alone is reversed. The threshold is a judgment.
 
 
 ## D30 — Until the conversion closes, two lists exempt files from D29's bounds
 
-**Status:** Ratified.
+**Status:** Ratified. Amended in #1140.
 
 ### Rule
 
 1. Beside its host list, `test/suite.sh` holds two lists: the conversion list and the awaiting-split list.
-2. A file on the conversion list is exempt from `D29` rules 3 and 4, and from rule 2.2's requirement that the answer come from the fake host or an in-process stand-in. It is a deterministic-tier file that still starts processes and may read the real clock, and the hooks still run it.
+2. A file on the conversion list is exempt from `D29` rules 3 and 4, and from rule 2.2's requirement that the answer come from the fake host or an in-process stand-in. It is a deterministic-tier file that still starts processes and may read the real clock, and the hooks still run it. The exemption does not cover `D29` rule 3.5 for a test that a change adds to the file. A change adds a test to the file when the file at the head holds a test, by title, more times than the file at `D29` rule 11's base does. Where it does, the exemption covers no test with that title in the file.
 3. A file on the awaiting-split list is exempt from `D29` rule 5. Its tests that rule 2 places in the deterministic tier may stay in the file until it is split. It is a host-tier file that still holds tests that start no process.
 4. Neither list gains an entry. Where the head's base holds the lists, the list-growth steps in `fast` and `nightly` fail when either list at the head names a file that the same list at the base does not.
 5. A deterministic test fails when any list in `test/suite.sh` names a file that does not exist.
+6. For the added-timer steps, the deterministic runner records each conversion-list file it runs. It also records each timer with a delay above zero, as `D29` rule 3.5 defines one, that the file arms, and it refuses none of them. It records an arm under the top-level test whose run started the work that armed it, even after that test ends. It records an arm made while the file loads under no test. The added-timer steps in `fast` and `nightly` follow the job's `npm test`, and read its record against `D29` rule 11's base. They fail a change in each case below, naming the file and what the case lists:
+
+   - a test in a conversion-list file that rule 2 does not exempt from `D29` rule 3.5, whose run armed a timer: the title and what it armed;
+   - a top-level call that the change adds in a conversion-list file, whose test the steps cannot identify: the line;
+   - a conversion-list file that the change adds a test to, and that the record does not show ran: the file.
 
 ### Deferred, and what returns it
 
@@ -1164,6 +1193,14 @@ Three observations would reverse it:
 `D29` binds every test from the start. The original #816 proposal records which files could not meet its bounds when the runners landed. Keeping conversion-list files in the hooks retains their claims inside the commit gate during conversion. The awaiting-split exemption lets the host runner run those files whole until they are split.
 
 The exemption is a decision of its own, not a consequence of `D29`. A **Deferred, and what returns it** table records consequences only (this register's preamble), so the exemption could not be a row in `D29`. A boundary that expires also never shares an entry with a permanent principle, so the exemption is this entry and not a rule of `D29`.
+
+Rule 2's last three sentences and rule 6 follow the owner's ruling U103 of 2026-10-29 on #740. A test a change adds then arms no real timer, even in a conversion-list file, and the file's older tests keep their exemption until they are converted. `D29` rule 3.5 is ratified with them, so they narrow no exemption that was ratified before.
+
+The deterministic runner decides from the head alone, so it records each arm and the steps decide. Only a step reads a base, after `npm test` and never inside it. A test that read a moving base turned the default branch red in #1113. The steps take `D29` rule 11's base, so a test a change adds means the same under both rules.
+
+The record cannot tell apart two tests that share a title in one file. Where a change adds a second, rule 2 therefore exempts neither, and renaming the added test restores the older one's exemption. An arm made while the file loads belongs to no test, so the steps refuse none. An arm in a child process is outside the record. The judges read for both.
+
+Rule 6 alone is reversed if a step refuses an added test for an arm that an older test with another title made. The exemption would then name the older tests in a frozen list read from the head alone, and the list-growth steps would refuse that list's growth.
 
 This decision holds one lifespan. It begins with the two lists, and it ends when both are empty. Rule 4 holds that only cards emptying the lists change them, and #816 names those cards.
 

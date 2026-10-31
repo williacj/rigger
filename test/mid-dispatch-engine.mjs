@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { killRecordedGroups } from '../src/execution/run.mjs';
+import { realHost } from '../src/substrate/host.mjs';
 import { openSink } from '../src/observation/sink.mjs';
 import { loop } from '../src/scheduling/loop.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
@@ -51,5 +52,5 @@ export async function engine({ directory, repository, command, ps, workspace }) 
     return { path, scratch: join(directory, 'workspaces', 'scratch', `rigger-${number}`), repository };
   };
   const kill = () => killRecordedGroups({ directory: state, sink });
-  await loop({ config, board, decide, facts: factsCall({ config, reads, decide }), l2, sink, kill, workspace: handle, judgeDirectory: judgeDirectoryHandle({ root: directory, topic: worktreeTopic(config), repository, sink }), removeDirectories: async () => {}, state, environment: { ...process.env, PATH: agent.first() }, ps, run: 'r-mid-dispatch' }).pull();
+  await loop({ config, board, decide, facts: factsCall({ config, reads, decide }), l2, sink, kill, workspace: handle, judgeDirectory: judgeDirectoryHandle({ root: directory, topic: worktreeTopic(config), repository, sink }), removeDirectories: async () => {}, state, environment: { ...process.env, PATH: agent.first() }, host: { ...realHost, ...(ps === undefined ? {} : { ps }) }, run: 'r-mid-dispatch' }).pull();
 }

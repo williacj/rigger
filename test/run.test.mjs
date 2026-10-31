@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url';
 import { run as runVerb } from '../src/cli/run.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
-import { installFakeGh, installGhRefusingStreamAfterMove } from './fake-gh.mjs';
+import { installFakeGh, installGhRefusingStreamAfterMove, seedRepository } from './fake-gh.mjs';
 import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { gitIn } from './git-repository.mjs';
@@ -22,6 +22,7 @@ import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 import { admissionOf, closerText, seed, TIME } from './admission-world.mjs';
 import { COLUMNS, FIELDS, KINDS, PROJECT, REFUSED, REPO, card, consumerConfig } from './verb-consumer.mjs';
+import { assertPushEnd, held as heldStream } from './push-fixtures.mjs';
 
 // A bound on a test that waits on the real bin and its maker, so one that never settles fails here.
 const { 60_000: SETTLES_WITHIN } = BOUNDS;
@@ -84,7 +85,7 @@ function run(board, { concurrency, record = 'accepting' }) {
   const env = { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), PATH: [...ahead, dir, process.env.PATH].join(delimiter) };
   // The board wrapper arms refusal; all reads finish before the pull start attempts its append.
   if (record === 'refusing-after-board-read') env.NODE_OPTIONS = refuseAfterBoardRead(temporaryDirectory('rigger-run-board-refusal-'), fake.gh, stream);
-  const shared = { consumer, model: fake.model, agentRuns: agent.runs };
+  const shared = { consumer, model: fake.model, agentRuns: agent.runs, fake };
   return { ...spawnRun(consumer, env), ...shared, again: () => ({ ...spawnRun(consumer, env), ...shared }) };
 }
 
@@ -199,15 +200,16 @@ test('run under a hold closer names its reason and time, keeps L2 refusals and e
   const writes = (await first.model()).writes();
   const agents = first.agentRuns().length;
   seed(join(first.consumer, '.rigger'), 'hold-c3-issue-7.json', closerText({ reason: 'environment hold' }));
+  seedRepository(first.fake, { issues: [{ number: 7, title: 'Rigger closed admission', body: 'Why.\n\nHold: `c3`\n', labels: ['rigger:status'] }] });
   const ran = first.again();
 
   assert.equal(ran.code, 0, ran.err);
   assert.match(ran.out, new RegExp(`admission is closed by hold: environment hold; time ${TIME}`), ran.out);
   assert.match(ran.out, /#11.*missing acceptance/, ran.out);
   assert.doesNotMatch(ran.out, /no card was pullable/, ran.out);
-  assert.deepEqual((await ran.model()).writes(), writes);
+  assert.deepEqual((await ran.model()).writes(), [...writes, { operation: 'addIssue', args: [7, REPO] }, { operation: 'moveItem', args: ['item-3', 'Owner'] }]);
   assert.equal(ran.agentRuns().length, agents);
-  assert.deepEqual(await columnsOf(ran), { 11: 'Ready', 12: 'Coding' });
+  assert.deepEqual(await columnsOf(ran), { 7: 'Owner', 11: 'Ready', 12: 'Coding' });
 });
 
 // proves R-SCHED-3, R-SCHED-16
@@ -613,4 +615,38 @@ test('the agent CLI stand-in, once installed, has recorded no run, and its direc
 
   assert.deepEqual(agent.runs(), []);
   assert.deepEqual(readdirSync(dir).sort(), ['claude']);
+});
+
+/**
+ * Runs the real bin's `run` with N 1 over `board`, in a consumer repository whose config sets
+ * `telemetry.push` true, with a local bare `origin` beside it, through `src/cli/verbs.mjs` and so
+ * with L5's push as it ships (#1122).
+ */
+function runPushing(board) {
+  const directory = temporaryDirectory('rigger-run-push-');
+  const origin = join(directory, 'origin.git');
+  const text = `export default ${JSON.stringify({ ...config(1), telemetry: { push: true } })};\n`;
+  const consumer = withOrigin(repositoryAt(join(directory, 'consumer'), { 'rigger.config.mjs': text }), origin);
+  const dir = temporaryDirectory('rigger-run-gh-');
+  installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, ...board } });
+  installAgentCli(dir);
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), PATH: [dir, process.env.PATH].join(delimiter) };
+  return { ...spawnRun(consumer, env), consumer, origin };
+}
+
+// proves R-RECORD-13
+test('C9: run with telemetry.push true, whose board drains so run ends, pushes exactly once, at its return, and not at the drain', () => {
+  const ran = runPushing({ items: [card(10, 'Ready')] });
+  const said = `exited ${ran.code}: ${ran.out}${ran.err}`;
+  const events = eventsOf(ran);
+  assert.ok(events.some(({ event }) => event === 'pull'), `${said}: run pulled nothing, so its board never drained`);
+  const ends = events.filter(({ event }) => event === 'push.end');
+  assert.equal(ends.length, 1, said);
+  assert.equal(events.at(-1).event, 'push.end', said);
+  assert.doesNotMatch(ran.err, /rigger: the push/, said);
+  const tip = gitIn(ran.origin, 'rev-parse', 'refs/rigger/events').trim();
+  const pushed = Buffer.from(gitIn(ran.origin, 'cat-file', 'blob', `${tip}:events.jsonl`));
+  const before = Buffer.from(events.slice(0, -1).map((event) => `${JSON.stringify(event)}\n`).join(''));
+  assert.deepEqual(pushed, heldStream(before), said);
+  assertPushEnd(ends[0], { outcome: 'pushed', bytes: pushed.length, commit: tip });
 });

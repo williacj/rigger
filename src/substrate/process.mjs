@@ -5,21 +5,26 @@
 // group a dead engine recorded, once it has confirmed that group is the one recorded, and what works
 // in its dispatch's directory. On the process's own exit it kills every group it holds.
 
-import { execFile, spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { accessSync, constants as files, realpathSync, statSync } from 'node:fs';
 import { constants } from 'node:os';
-import { setTimeout as pause } from 'node:timers/promises';
 import { inspect } from 'node:util';
-import { fileURLToPath } from 'node:url';
 
+import { realHost } from './host.mjs';
 import { writeWhole } from './standard-error.mjs';
+
+/** Refuses an incomplete L0 clock before an adapter entry point performs host operations. */
+function requireClock(clock) {
+  if (clock === undefined || clock === null) throw new TypeError('the process adapter requires a host clock');
+  for (const method of ['now', 'pause', 'schedule', 'cancel']) {
+    if (typeof clock[method] !== 'function') throw new TypeError(`the host clock requires callable ${method}`);
+  }
+}
 
 /**
  * The process-table tool, by absolute path, so it is found whatever `PATH` the caller runs under:
  * the installed engine runs under one holding only node, git and `gh` (`test/package.test.mjs`).
  */
-export const PS = process.platform === 'linux' ? fileURLToPath(new URL('./process-table.sh', import.meta.url)) : '/bin/ps';
+export const PS = realHost.ps;
 
 /**
  * The whole environment `ps` runs under: a UTF-8 locale, so text outside ASCII reads unchanged,
@@ -150,7 +155,7 @@ export const LEFT_OUT = {
 const calls = new Map();
 
 /** Every read of the process table a census has in flight, so the exit cleanup can end it. */
-const reads = new Set();
+const reads = new Map();
 
 /**
  * Each `ps` a read of which the exit cleanup gave up on as it ran, by the timeout it waited out.
@@ -226,7 +231,7 @@ function ahead(name) {
 function onSignal(name) {
   cleanup();
   process.removeListener(name, onSignal);
-  if (process.listenerCount(name) === 0) process.kill(process.pid, name);
+  if (process.listenerCount(name) === 0) realHost.signal(process.pid, name);
   else setImmediate(() => process.listeners(name).includes(onSignal) || process.prependListener(name, onSignal));
 }
 
@@ -248,7 +253,7 @@ function onSignal(name) {
  * (`unanswered`).
  */
 function cleanup() {
-  for (const read of reads) read.kill('SIGKILL');
+  for (const [read, host] of reads) host.killChild(read, 'SIGKILL');
   unanswered.clear();
   unreadSince = undefined;
   const ended = [];
@@ -337,10 +342,10 @@ async function drained(stream) {
 const occupied = (group, kill = SIGNAL) => answers(-group, kill);
 
 /**
- * L0's signal call, `process.kill`, which a caller can stand in for, as it can for `ps`: it takes a
+ * The host's signal call takes a
  * pid, or a group's id negated, and a signal, and throws as `process.kill` throws.
  */
-const SIGNAL = (target, name) => process.kill(target, name);
+const SIGNAL = realHost.signal;
 
 /** Whether signal 0 reaches `target`, a pid or a group's id negated, through `kill`, `EPERM` counting as reached. */
 function answers(target, kill = SIGNAL) {
@@ -385,8 +390,8 @@ function answers(target, kill = SIGNAL) {
  * O66 on #539), and that case is a known gap. `bound` is what ends the wait there, with each member
  * still alive recorded as not ended.
  */
-async function ended(group, { ps, readTimeout, kill }, bound, listed) {
-  const since = Date.now();
+async function ended(group, { ps, readTimeout, kill, host }, bound, listed) {
+  const since = host.clock.now();
   const refused = new Set();
   let unreapedSince;
   let joined = false;
@@ -398,14 +403,14 @@ async function ended(group, { ps, readTimeout, kill }, bound, listed) {
   let lastFailure;
   const settled = (stuck) => ({ stuck, joined, unread, unlisted: read ? undefined : unread, unconfirmed: read && lastFailure !== undefined ? { alive: new Set(shown), why: lastFailure } : undefined });
   for (let wait = 0; ; wait = longer(wait)) {
-    if (wait > 0) await pause(wait);
+    if (wait > 0) await host.clock.pause(wait);
     signal(group, 'SIGKILL', kill);
     if (!occupied(group, kill)) return settled([]);
     if (wait === 0) continue;
-    const looked = Date.now();
+    const looked = host.clock.now();
     let rows;
     try {
-      rows = rowsOf(await run(ps, ['-g', String(group), '-o', 'pid=,stat='], readTimeout, readTimeout));
+      rows = rowsOf(await run(ps, ['-g', String(group), '-o', 'pid=,stat='], readTimeout, readTimeout, host));
       read = true;
       lastFailure = undefined;
     } catch (error) {
@@ -418,11 +423,11 @@ async function ended(group, { ps, readTimeout, kill }, bound, listed) {
     if (lastFailure === undefined) shown = living;
     if (living.length > 0) {
       unreapedSince = undefined;
-      const stuck = unended(living, kill, Date.now() - since >= bound, bound, refused);
+      const stuck = unended(living, kill, host.clock.now() - since >= bound, bound, refused);
       if (stuck !== undefined) return settled(stuck);
     } else {
       unreapedSince ??= looked;
-      if (Date.now() - unreapedSince >= UNREAPED_BOUND) return settled([]);
+      if (host.clock.now() - unreapedSince >= UNREAPED_BOUND) return settled([]);
     }
   }
 }
@@ -526,7 +531,7 @@ function forbidden(pid, kill) {
  * Recording the group's kill whenever signal 0 reaches the group would record the kill of every
  * group left holding only zombies, which L0 did not end.
  */
-function* beforeKill(group, members, sightings, kill, timeout, deadline, now = Date.now) {
+function* beforeKill(group, members, sightings, kill, timeout, deadline, now = realHost.clock.now) {
   // A settled last round does not erase identities an earlier read obtained.
   const known = [...new Map([...sightings.values()].filter(Boolean).concat(members).map((member) => [member.pid, member])).values()];
   let why;
@@ -705,7 +710,7 @@ function signal(group, name, kill = SIGNAL) {
  * - `ps` exits 1, printing nothing, when no process matches, and writes to standard error when a
  *   read fails (`run`).
  */
-export function* census(group, kill, deadline, now = Date.now, trace) {
+export function* census(group, kill, deadline, now = realHost.clock.now, trace) {
   // Why the census's last reads that agreed were not kept: they left out what signal 0 reached.
   let unseen;
   // What the last round held, kept where `deadline` passes before a round agrees.
@@ -827,27 +832,28 @@ function rowsOf(printed) {
  * pause it yields, and hands back what `looks` returns. The reads are given up at `deadline`,
  * which is `timeout` milliseconds after the first starts where the caller gives none.
  */
-async function reading(looks, ps, timeout, deadline = Date.now() + timeout, trace) {
+async function reading(looks, ps, timeout, deadline, trace, host = realHost) {
+  deadline ??= host.clock.now() + timeout;
   let look = looks.next();
   while (!look.done) {
     if (typeof look.value === 'number') {
-      trace?.({ phase: 'pause.start', clock: Date.now(), requested: look.value, cpu: process.cpuUsage() });
-      await pause(look.value);
-      trace?.({ phase: 'pause.end', clock: Date.now(), cpu: process.cpuUsage() });
+      trace?.({ phase: 'pause.start', clock: host.clock.now(), requested: look.value, cpu: process.cpuUsage() });
+      await host.clock.pause(look.value);
+      trace?.({ phase: 'pause.end', clock: host.clock.now(), cpu: process.cpuUsage() });
       look = looks.next();
     } else {
       let printed;
       const args = look.value;
-      const started = Date.now();
+      const started = host.clock.now();
       trace?.({ phase: 'read.start', clock: started, deadline, remaining: deadline - started, args, cpu: process.cpuUsage() });
       try {
-        printed = await run(...toolOf(look.value, ps), deadline - Date.now(), timeout);
+        printed = await run(...toolOf(look.value, ps), deadline - host.clock.now(), timeout, host);
       } catch (error) {
-        trace?.({ phase: 'read.failure', clock: Date.now(), args, code: error.code, message: error.message, cpu: process.cpuUsage() });
+        trace?.({ phase: 'read.failure', clock: host.clock.now(), args, code: error.code, message: error.message, cpu: process.cpuUsage() });
         look = looks.throw(error);
         continue;
       }
-      trace?.({ phase: 'read.answer', clock: Date.now(), args, length: printed.length, prefix: printed.slice(0, 100), suffix: printed.slice(-100), cpu: process.cpuUsage() });
+      trace?.({ phase: 'read.answer', clock: host.clock.now(), args, length: printed.length, prefix: printed.slice(0, 100), suffix: printed.slice(-100), cpu: process.cpuUsage() });
       look = looks.next(printed);
     }
   }
@@ -858,7 +864,7 @@ async function reading(looks, ps, timeout, deadline = Date.now() + timeout, trac
 const toolOf = (read, ps) => (Array.isArray(read) ? [ps, read] : [read.tool, read.args]);
 
 /** `reading`, synchronously, for the exit cleanup, which passes over each pause. */
-function readingNow(looks, ps, timeout, deadline, now = Date.now, spawn = spawnSync) {
+function readingNow(looks, ps, timeout, deadline, now = realHost.clock.now, spawn = realHost.spawnSync) {
   if (deadline === undefined) deadline = now() + timeout;
   let look = looks.next();
   while (!look.done) {
@@ -928,26 +934,26 @@ const exited = (tool, args, status) => new Error(`${tool} ${args.join(' ')} ende
  * nor the kill takes a process as gone because a read left it out (`census`, `beforeKill`), and the
  * start-time read takes neither an empty read nor a missing leader as the group's (`startsIn`).
  */
-function run(ps, args, remaining, timeout) {
+function run(ps, args, remaining, timeout, host = realHost) {
   return new Promise((resolve, reject) => {
     if (remaining <= 0) return reject(late(timeout));
     let expired = false;
-    const read = execFile(ps, args, { env: PS_ENV, ...reader(remaining), timeout: 0 }, (error, stdout, stderr) => {
-      clearTimeout(deadline);
+    const read = host.execFile(ps, args, { env: PS_ENV, ...reader(remaining), timeout: 0 }, (error, stdout, stderr) => {
+      host.clock.cancel(deadline);
       reads.delete(read);
       if (expired) return reject(timedOut(timeout));
       if (stderr !== '') return reject(failed(stderr));
       if (error && !(error.code === 1 && stdout === '')) return reject(typeof error.code === 'number' || error.signal ? exited(ps, args, error.code ?? error.signal) : error);
       resolve(stdout);
     });
-    const deadline = setTimeout(() => {
+    const deadline = host.clock.schedule(() => {
       expired = true;
-      read.kill('SIGKILL');
+      host.killChild(read, 'SIGKILL');
       read.stdout?.destroy();
       read.stderr?.destroy();
       reject(timedOut(timeout));
     }, Math.min(remaining, TIMER_MAX));
-    reads.add(read);
+    reads.set(read, host);
   });
 }
 
@@ -956,7 +962,7 @@ function run(ps, args, remaining, timeout) {
  * its pipe has closed it, and `ps` starts nothing that outlives it, so its own kill at `remaining`
  * milliseconds ends the wait.
  */
-function runNow(ps, args, remaining, timeout, now = Date.now, spawn = spawnSync) {
+function runNow(ps, args, remaining, timeout, now = realHost.clock.now, spawn = realHost.spawnSync) {
   const began = now();
   try {
     const printed = runOnce(ps, args, remaining, timeout, spawn);
@@ -969,7 +975,7 @@ function runNow(ps, args, remaining, timeout, now = Date.now, spawn = spawnSync)
 }
 
 /** `runNow`'s one run, each failure as it arose. */
-function runOnce(ps, args, remaining, timeout, spawn = spawnSync) {
+function runOnce(ps, args, remaining, timeout, spawn = realHost.spawnSync) {
   if (remaining <= 0) throw late(timeout);
   if (unanswered.has(ps)) throw new Error(`${timedOut(unanswered.get(ps)).message} earlier in the exit cleanup, which does not wait on it again`);
   const { error, status, signal: ending, stdout, stderr } = spawn(ps, args, { env: PS_ENV, ...reader(remaining) });
@@ -1021,28 +1027,28 @@ function runOnce(ps, args, remaining, timeout, spawn = spawnSync) {
  *   kill ended; and where the last read after the kill fails, so is each the last read that
  *   succeeded found alive, though a later kill may have ended it (`reachedUnread`).
  */
-async function contain(group, { ps, readTimeout, kill = SIGNAL, trace }, killed) {
+async function contain(group, { ps, readTimeout, kill = SIGNAL, trace, host = realHost }, killed) {
   if (!occupied(group, kill)) return [];
   // Each step ends `readTimeout` after it begins, and its reads are given up `spare` after that.
   const within = (step, spare = 0) => {
-    const deadline = Date.now() + readTimeout;
-    return reading(step(deadline), ps, readTimeout, deadline + spare, trace);
+    const deadline = host.clock.now() + readTimeout;
+    return reading(step(deadline), ps, readTimeout, deadline + spare, trace, host);
   };
   let named;
   let left;
   let listed;
   let unnamed;
   try {
-    const { members, sightings } = await within((deadline) => census(group, kill, deadline, Date.now, trace));
-    ({ named, left, listed } = await within((deadline) => beforeKill(group, members, sightings, kill, readTimeout, deadline), readTimeout));
+    const { members, sightings } = await within((deadline) => census(group, kill, deadline, host.clock.now, trace));
+    ({ named, left, listed } = await within((deadline) => beforeKill(group, members, sightings, kill, readTimeout, deadline, host.clock.now), readTimeout));
   } catch (error) {
     unnamed = error.message;
   }
-  const { stuck, joined, unread, unlisted, unconfirmed } = await ended(group, { ps, readTimeout, kill }, KILL_BOUND, listed);
+  const { stuck, joined, unread, unlisted, unconfirmed } = await ended(group, { ps, readTimeout, kill, host }, KILL_BOUND, listed);
   if (joined && unnamed === undefined) left ??= 'a read after the kill found a process in the group, alive or exited, that the read just before the kill had not listed: the kill of the group was sent while it may have been a member, though it may have exited on its own';
   if (unread !== undefined && unnamed === undefined) left ??= `the reads of the group after its kill failed, so the kill of the group may have ended a process no read before it had listed: ${unread}`;
   const unshown = [...stuck, ...reachedUnread(named, stuck, { unlisted, unconfirmed }, kill)];
-  const unended = await reading(described(unshown, named), ps, readTimeout).catch(() => unshown);
+  const unended = await reading(described(unshown, named), ps, readTimeout, undefined, undefined, host).catch(() => unshown);
   return killsOf(group, { named, unnamed, left, unended }, killed);
 }
 
@@ -1104,7 +1110,12 @@ function reachedUnread(named = [], stuck, { unlisted, unconfirmed }, kill) {
  * `UNREAPED_BOUND` has passed, and the cleanup goes on: it cannot wait longer on a process table it
  * cannot read.
  */
-export function containNow(group, { ps, readTimeout, kill = SIGNAL, now = Date.now, spawnSync: spawn = spawnSync }) {
+export function containNow(group, { readTimeout, host = realHost }) {
+  requireClock(host.clock);
+  const { ps } = host;
+  const { now } = host.clock;
+  const spawn = host.spawnSync;
+  const kill = host.signal;
   if (!occupied(group, kill)) return { kills: [] };
   // Each step ends `readTimeout` after it begins, and its reads are given up `spare` after that.
   const within = (step, spare = 0) => {
@@ -1188,7 +1199,7 @@ export function containNow(group, { ps, readTimeout, kill = SIGNAL, now = Date.n
  * each live process a read after a kill finds that no read before it listed (`namedNow`), and keeps
  * in `seen.asked` each it has tried to name.
  */
-function* emptied(group, seen, kill, bound, now = Date.now) {
+function* emptied(group, seen, kill, bound, now = realHost.clock.now) {
   // What the last read after a kill found: the leader's wait status, and each member alive.
   let last;
   const refused = new Set();
@@ -1266,8 +1277,8 @@ function killsOf(group, { named, unnamed, left, unended }, killed) {
  * `316037792` on the last), on the same device. That APFS gives inodes out from a counter that
  * only grows is the architect's judgment (ruling 7), not a measurement.
  */
-export function identityOf(path) {
-  const { dev, ino } = statSync(path, { bigint: true });
+export function identityOf(path, host = realHost) {
+  const { dev, ino } = host.stat(path, { bigint: true });
   return { device: String(dev), inode: String(ino) };
 }
 
@@ -1276,11 +1287,11 @@ export function identityOf(path) {
  * is: the record carries no identity for it, its identity cannot be read at the path, as where it
  * no longer exists, or the path now names another directory.
  */
-function unconfirmed(directory, identity) {
+function unconfirmed(directory, identity, host = realHost) {
   if (identity?.device === undefined || identity?.inode === undefined) return 'the record carries no device and inode for it, so the start cannot tell it is the directory recorded';
   let now;
   try {
-    now = identityOf(directory);
+    now = identityOf(directory, host);
   } catch (error) {
     return `its device and inode cannot be read: ${error.message}`;
   }
@@ -1292,17 +1303,17 @@ function unconfirmed(directory, identity) {
  * The census of working directories' tool, by absolute path, for the same reason as `PS`. It runs
  * under `PS_ENV` too, whose UTF-8 locale it needs to print `ü` as itself (`listing`).
  */
-export const LSOF = process.platform === 'linux' ? '/usr/bin/lsof' : '/usr/sbin/lsof';
+export const LSOF = realHost.lsof;
 
 /**
  * The real path of `directory`, which the census of working directories compares with, or why it
  * cannot be one. A path that cannot be resolved is refused, never taken as holding no process, and
  * so is one `illegible` refuses.
  */
-function placed(directory) {
+function placed(directory, host = realHost) {
   let real;
   try {
-    real = realpathSync.native(directory);
+    real = host.realpath(directory);
   } catch (error) {
     return { why: `its directory ${directory} cannot be resolved: ${error.message}` };
   }
@@ -1342,14 +1353,14 @@ const illegible = (real) => (/^\/[\x20-\x5b\x5d\x5f-\x7e]+$/.test(real) ? undefi
  * One call listing every process of the user took 164 to 186 ms over 20 calls, with Node 26.5.0,
  * at a load average of about 11.5 on 12 cores, with 658 processes of the user's.
  */
-const listing = (pids) => ['-w', '-n', '-P', '-a', '-d', 'cwd', '-u', String(process.getuid()), ...(pids ? ['-p', pids.join(',')] : []), '-F', 'pun'];
+const listing = (pids, host = realHost) => ['-w', '-n', '-P', '-a', '-d', 'cwd', '-u', String(host.uid()), ...(pids ? ['-p', pids.join(',')] : []), '-F', 'pun'];
 
 /**
  * The pid of each process `lsof`'s `printed` lists working in `directory`, a real path: its
  * working directory is that directory or lies under it. A process of another user is left out
  * whatever `lsof` was asked, and so is this one. A line it cannot read fails the census.
  */
-function workingIn(printed, directory) {
+function workingIn(printed, directory, host = realHost) {
   const pids = [];
   let listed;
   for (const line of printed.split('\n').filter(Boolean)) {
@@ -1360,7 +1371,7 @@ function workingIn(printed, directory) {
     if (field === 'p') listed = { pid: Number(value) };
     if (field === 'u') listed.uid = Number(value);
     const there = value === directory || value.startsWith(`${directory}/`);
-    if (field === 'n' && there && listed.uid === process.getuid() && listed.pid !== process.pid) pids.push(listed.pid);
+    if (field === 'n' && there && listed.uid === host.uid() && listed.pid !== host.pid()) pids.push(listed.pid);
   }
   return pids;
 }
@@ -1402,7 +1413,7 @@ function sent(pid, name, kill) {
  * those, so a process it may not signal is not one this host has shown it (`D16` rule 3): the
  * branch is proven through a stand-in for the signal call alone (#545's engineer judge, N2).
  */
-function* settled(found, kill, bound) {
+function* settled(found, kill, bound, now = realHost.clock.now) {
   // Each process killed unnamed is read by name and command line at once, while one the kill does
   // not end is still stopped, so its name is that of the process the census listed.
   let unnamed = (found.unnamed ?? []).map((pid) => ({ pid }));
@@ -1411,7 +1422,7 @@ function* settled(found, kill, bound) {
   } catch {
     // The process table cannot be read, so each is recorded by its pid alone.
   }
-  const why = new Map(yield* reaped([...found.kills.map(({ pid }) => pid), ...(found.unnamed ?? [])], kill, bound, found.observed));
+  const why = new Map(yield* reaped([...found.kills.map(({ pid }) => pid), ...(found.unnamed ?? [])], kill, bound, found.observed, now));
   const stuck = new Set(why.keys());
   for (const pid of stuck) sent(pid, 'SIGCONT', kill);
   let refused = (found.refused ?? []).map((pid) => ({ pid, reason: 'EPERM' }));
@@ -1441,8 +1452,8 @@ function* settled(found, kill, bound) {
  * `LATE`, uses the last answer where one showed a process alive, including a synchronous sweep's
  * answer immediately after the kill. Where none answered, the table could not show it ended.
  */
-function* reaped(pids, kill, bound, observed = new Map()) {
-  const since = Date.now();
+function* reaped(pids, kill, bound, observed = new Map(), now = realHost.clock.now) {
+  const since = now();
   let last;
   for (let wait = 1; ; wait = longer(wait)) {
     const left = pids.filter((pid) => observed.get(pid) !== 'ended' && answers(pid, kill));
@@ -1463,8 +1474,8 @@ function* reaped(pids, kill, bound, observed = new Map()) {
       living = undefined;
     }
     if (living?.length === 0) return [];
-    if (living !== undefined && Date.now() - since >= bound) return living.map((pid) => [pid, `still alive ${bound} ms after L0's kill`]);
-    if (living === undefined && Date.now() - since >= UNREAPED_BOUND) return left.map((pid) => [pid, `not shown to have ended ${UNREAPED_BOUND} ms after L0's kill: the process table could not be read`]);
+    if (living !== undefined && now() - since >= bound) return living.map((pid) => [pid, `still alive ${bound} ms after L0's kill`]);
+    if (living === undefined && now() - since >= UNREAPED_BOUND) return left.map((pid) => [pid, `not shown to have ended ${UNREAPED_BOUND} ms after L0's kill: the process table could not be read`]);
     yield wait;
   }
 }
@@ -1504,7 +1515,7 @@ function* reaped(pids, kill, bound, observed = new Map()) {
  * stopped in the directory. A process the call's had stopped and not yet listed again, which can
  * only be a pid handed on to a process outside it between a list and the stop, stays stopped.
  */
-function* sweeping(directory, lsof, kill, observeAfterKill = false) {
+function* sweeping(directory, lsof, kill, observeAfterKill = false, host = realHost) {
   const kills = [];
   const observed = new Map();
   // Stopped and not yet listed again; and listed again, stopped, and not yet killed.
@@ -1516,7 +1527,7 @@ function* sweeping(directory, lsof, kill, observeAfterKill = false) {
   // When it first sent a process the kill.
   let killedAt;
   const list = function* (pids) {
-    return workingIn(yield { tool: lsof, args: listing(pids) }, directory);
+    return workingIn(yield { tool: lsof, args: listing(pids, host) }, directory, host);
   };
   const resume = (pids) => {
     for (const pid of pids) {
@@ -1560,7 +1571,7 @@ function* sweeping(directory, lsof, kill, observeAfterKill = false) {
         if (!sent(pid, 'SIGKILL', kill)) continue;
         killed.add(pid);
         killedNow.push(pid);
-        killedAt ??= Date.now();
+        killedAt ??= host.clock.now();
         kills.push({ pid, name: names.get(pid), cmd: commands.get(pid) });
       }
       if (observeAfterKill && killedNow.length > 0) {
@@ -1574,7 +1585,7 @@ function* sweeping(directory, lsof, kill, observeAfterKill = false) {
     }
   } catch (error) {
     const unnamed = [...ours].filter((pid) => sent(pid, 'SIGKILL', kill));
-    if (unnamed.length > 0) killedAt ??= Date.now();
+    if (unnamed.length > 0) killedAt ??= host.clock.now();
     return { kills, unread: error.message, unnamed, killedAt, observed };
   } finally {
     resume([...held]);
@@ -1588,11 +1599,11 @@ function* sweeping(directory, lsof, kill, observeAfterKill = false) {
  * be read, a `directory.unread` event naming the directory and why, and each process it then
  * killed unnamed. Of a directory `illegible` refuses, that event says why, and nothing is killed.
  */
-async function swept(directory, { ps, lsof, readTimeout, kill = SIGNAL }, killed) {
+async function swept(directory, { ps, lsof, readTimeout, kill = SIGNAL, host = realHost }, killed) {
   const why = illegible(directory);
   if (why !== undefined) return sweptEvents(directory, { kills: [], unread: why, unnamed: [], unended: [] }, killed);
-  const found = await reading(sweeping(directory, lsof, kill), ps, readTimeout);
-  return sweptEvents(directory, await reading(settled(found, kill, KILL_BOUND), ps, readTimeout, Date.now() + KILL_BOUND + readTimeout), killed);
+  const found = await reading(sweeping(directory, lsof, kill, false, host), ps, readTimeout, undefined, undefined, host);
+  return sweptEvents(directory, await reading(settled(found, kill, KILL_BOUND, host.clock.now), ps, readTimeout, host.clock.now() + KILL_BOUND + readTimeout, undefined, host), killed);
 }
 
 /**
@@ -1603,17 +1614,17 @@ async function swept(directory, { ps, lsof, readTimeout, kill = SIGNAL }, killed
  * the kill left, and a process the kill does not end is read alive after it rather than recorded as
  * one the table could not be read for. Where it killed nothing, it waits within the first bound.
  */
-function sweptNow(directory, { ps, lsof, readTimeout, kill = SIGNAL }, killed) {
+function sweptNow(directory, { ps, lsof, readTimeout, kill = SIGNAL, host = realHost }, killed) {
   const why = illegible(directory);
   if (why !== undefined) return sweptEvents(directory, { kills: [], unread: why, unnamed: [], unended: [] }, killed);
-  const began = Date.now();
+  const began = host.clock.now();
   const answered = !unanswered.has(ps);
-  const found = readingNow(sweeping(directory, lsof, kill, true), ps, readTimeout, began + readTimeout);
+  const found = readingNow(sweeping(directory, lsof, kill, true, host), ps, readTimeout, began + readTimeout, host.clock.now, host.spawnSync);
   // A read of `ps` this census gave up on at its own bound, before its kill, is made again in the
   // wait on what it killed, which has a bound of its own; a table that does not answer that either
   // is given up on again.
   if (answered && found.killedAt !== undefined) unanswered.delete(ps);
-  return sweptEvents(directory, readingNow(settled(found, kill, readTimeout), ps, readTimeout, (found.killedAt ?? began) + readTimeout), killed);
+  return sweptEvents(directory, readingNow(settled(found, kill, readTimeout, host.clock.now), ps, readTimeout, (found.killedAt ?? began) + readTimeout, host.clock.now, host.spawnSync), killed);
 }
 
 /** The events `swept` hands back, from what `sweeping` found in `directory`: each process it could not end among them, as such. */
@@ -1701,12 +1712,12 @@ function refused(unrecorded, result, ending = '') {
  * records each as a survivor (`swept`). A directory that cannot be resolved, or whose real path the
  * census cannot read back (`illegible`), starts nothing, as a command that never started. `scratch`,
  * where the caller gives one, is the dispatch's scratch directory, which the census sweeps after
- * the dispatch's directory, on the same terms (the architect's ruling 20 on #467). `lsof`
- * stands in for `LSOF` where the caller gives one. A call given no directory has its group as its
+ * the dispatch's directory, on the same terms (the architect's ruling 20 on #467). A call
+ * given no directory has its group as its
  * whole containment.
  *
- * `kill` stands in for L0's signal call, `process.kill`, where the caller gives one, for every
- * signal L0's containment sends, as `ps` stands in for `PS`. A process L0 may not signal, or that
+ * `host`, where the caller gives one, supplies L0's process starts, process-table reads,
+ * directory listings, signals, paths, user identity and clock. A process L0 may not signal, or that
  * outlives its kill for `KILL_BOUND`, is recorded as one it could not end, with why, and the call
  * settles (`R-STATE-19`).
  *
@@ -1725,7 +1736,9 @@ function refused(unrecorded, result, ending = '') {
  * nothing for a call its caller has finished. A process kept running past its ending still has the
  * call settle, on the command's result.
  */
-export async function runCommand({ command, args, cwd, env, input, timeout, emitter, onGroup, onExit, directory, scratch, ps = PS, lsof = LSOF, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND, kill = SIGNAL, trace }) {
+export async function runCommand({ command, args, cwd, env, input, timeout, emitter, onGroup, onExit, directory, scratch, host = realHost, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND, trace }) {
+  requireClock(host.clock);
+  const { ps, lsof, signal: kill } = host;
   // The caller opens the emitter, so an `L0` event carries the card L0 never knows. There is no
   // default: a kill with nowhere to be recorded is refused before anything starts, and an emitter
   // is only one that has an `emit` to call.
@@ -1735,21 +1748,21 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
     const type = timeout === null ? 'null' : typeof timeout;
     throw startFailure(Object.assign(new Error(`the process adapter was given the timeout ${shown(timeout)} (of type ${type}), which is not a positive finite number of milliseconds, so it did not start ${command}`), { code: NOT_STARTED }), 'dispatch-timeout');
   }
-  const unfit = unusable(cwd);
+  const unfit = unusable(cwd, host);
   if (unfit !== undefined) throw startFailure(notStarted(command, unfit), 'directory-unusable');
   // A dispatch's directory the census could not read would leave every process working there
   // alive, so a command given one runs only where the census can read it.
-  const { real, why } = directory === undefined ? {} : placed(directory);
+  const { real, why } = directory === undefined ? {} : placed(directory, host);
   if (why !== undefined) throw startFailure(notStarted(command, why), real === undefined ? 'directory-unusable' : 'directory-illegible', real === undefined ? {} : { path: real });
-  const { real: scratchReal, why: scratchWhy } = scratch === undefined ? {} : placed(scratch);
+  const { real: scratchReal, why: scratchWhy } = scratch === undefined ? {} : placed(scratch, host);
   if (scratchWhy !== undefined) throw startFailure(notStarted(command, scratchWhy), scratchReal === undefined ? 'directory-unusable' : 'scratch-illegible', scratchReal === undefined ? {} : { path: scratchReal });
   install();
   const stdin = input === undefined ? 'ignore' : 'pipe';
-  const child = spawned(command, () => spawn(command, args, { cwd, env, detached: true, stdio: [stdin, 'pipe', 'pipe'] }), cwd);
+  const child = spawned(command, () => host.spawn(command, args, { cwd, env, detached: true, stdio: [stdin, 'pipe', 'pipe'] }), cwd, host);
   // Where the spawn failed after it returned, Node gives the child no pid and emits why after.
   if (child.pid === undefined) {
     const [error] = await once(child, 'error');
-    throw spawnFailure(command, error, cwd);
+    throw spawnFailure(command, error, cwd, host);
   }
   if (input !== undefined) {
     // A command that exits without reading all of its input closes the pipe under the write,
@@ -1759,7 +1772,7 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
     child.stdin.end(input);
   }
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
-  const call = { emitter, ps, lsof, readTimeout, kill, onExit, trace, directory: real, scratch: scratchReal, child, events: [], contained: false };
+  const call = { emitter, host, ps, lsof, readTimeout, kill, onExit, trace, directory: real, scratch: scratchReal, child, events: [], contained: false };
   calls.set(child.pid, call);
   // A call the exit cleanup took is one it has ended and recorded, so the call records nothing
   // more of it.
@@ -1769,7 +1782,7 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
   // step, which must then do nothing for a call it has finished.
   const release = () => setImmediate(() => calls.get(child.pid) === call && calls.delete(child.pid)).unref();
   try {
-    if (onGroup) onGroup(child.pid, startOf(ps, child.pid, readTimeout));
+    if (onGroup) onGroup(child.pid, startOf(ps, child.pid, readTimeout, host));
   } catch (refusal) {
     // A group the caller could not take runs no further: it is ended, and recorded, as a
     // survivor would be, before the caller hears why.
@@ -1785,7 +1798,7 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
   }
   const { events } = call;
   const exited = once(child, 'exit');
-  const expired = await outlasts(exited, timeout);
+  const expired = await outlasts(exited, timeout, host);
   // The kills at the timeout wait among the call's unrecorded kills, so an exit meanwhile records
   // them.
   if (expired) events.push(...(await contain(child.pid, call, 'timeout.killed')));
@@ -1800,7 +1813,7 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
   events.push(...(await contain(child.pid, call, 'survivor.killed')));
   events.push(...(await censused(call)));
   call.contained = true;
-  if (await outlasts(output, outputBound)) {
+  if (await outlasts(output, outputBound, host)) {
     // Closing the pipes lets go of their handles, which would otherwise hold this process open.
     child.stdout.destroy();
     child.stderr.destroy();
@@ -1820,7 +1833,7 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
  * leaves a group it finds is not, and does nothing where the group has no live process. A kill
  * runs as `runCommand`'s does, census first, and records each process it killed as
  * `recorded.killed` through `emitter`, and each it could not end as `recorded.unended`, signalling
- * through `kill` where the caller gives one. Where the sink refused any of those, it rejects with an
+ * through the host's signal call. Where the sink refused any of those, it rejects with an
  * `EVENT_REFUSED` failure, once the group is empty. Where the start times cannot be read, it
  * rejects having killed nothing.
  *
@@ -1833,15 +1846,17 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
  * stands as it is (the architect's ruling 7 on #467). Where L1 recorded the dispatch's `scratch`
  * directory, as its `path`, `device` and `inode`, its census follows on the same terms (ruling 20).
  */
-export async function killRecordedGroup({ group, started, emitter, directory, identity, scratch, ps = PS, lsof = LSOF, readTimeout = READ_TIMEOUT, kill = SIGNAL }) {
-  const starts = await startsIn(ps, group, readTimeout);
-  const kills = recorded(group, started, starts) ? await contain(group, { ps, readTimeout, kill }, 'recorded.killed') : [];
+export async function killRecordedGroup({ group, started, emitter, directory, identity, scratch, host = realHost, readTimeout = READ_TIMEOUT }) {
+  requireClock(host.clock);
+  const { ps, lsof, signal: kill } = host;
+  const starts = await startsIn(ps, group, readTimeout, host);
+  const kills = recorded(group, started, starts) ? await contain(group, { ps, readTimeout, kill, host }, 'recorded.killed') : [];
   const recordedDirectories = [[directory, identity], ...(scratch === undefined ? [] : [[scratch.path, scratch]])];
   for (const [each, held] of recordedDirectories) {
     if (each === undefined) continue;
-    const replaced = unconfirmed(each, held);
+    const replaced = unconfirmed(each, held, host);
     if (replaced !== undefined) kills.push(['directory.skipped', { directory: each, reason: replaced }]);
-    else kills.push(...(await swept(each, { ps, lsof, readTimeout, kill }, 'recorded.killed')));
+    else kills.push(...(await swept(each, { ps, lsof, readTimeout, kill, host }, 'recorded.killed')));
   }
   const unrecorded = record(emitter, kills);
   if (unrecorded.length > 0) throw refused(unrecorded);
@@ -1908,8 +1923,8 @@ function recorded(group, started, starts) {
  * - It is read from the wall clock at the fork. How a change to the host's clock after the fork
  *   moves it is not measured here.
  */
-function startOf(ps, pid, timeout) {
-  const read = spawnSync(ps, ['-p', String(pid), '-o', 'lstart='], { env: PS_ENV, timeout, killSignal: 'SIGKILL', encoding: 'utf8' });
+function startOf(ps, pid, timeout, host = realHost) {
+  const read = host.spawnSync(ps, ['-p', String(pid), '-o', 'lstart='], { env: PS_ENV, timeout, killSignal: 'SIGKILL', encoding: 'utf8' });
   // A read that wrote to standard error has failed whatever its exit code, as `run` holds.
   const failure = read.error?.message ?? (read.stderr !== '' ? read.stderr.trim() : undefined) ?? (read.status !== 0 ? `${ps} ended with ${read.status ?? read.signal}` : undefined);
   if (failure !== undefined) throw new Error(`L0 could not read when the leader of group ${pid} started, so it ended the group: ${failure}`);
@@ -1966,25 +1981,25 @@ function startOf(ps, pid, timeout) {
  * and wrote nothing, as the stand-in for `ps` in `test/kill-recorded.test.mjs` does, gives the
  * same answer as an empty group, and only signal 0 tells the two apart.
  */
-async function startsIn(ps, group, timeout) {
-  const deadline = Date.now() + timeout;
+async function startsIn(ps, group, timeout, host = realHost) {
+  const deadline = host.clock.now() + timeout;
   // What the last read that answered left out, while signal 0 still reached it.
   let short;
   const failure = () => new Error(`the reads of the group's start times ${short}, for ${timeout} ms`);
   for (let wait = 0; ; wait = longer(wait)) {
-    if (wait > 0) await pause(wait);
-    const remaining = deadline - Date.now();
+    if (wait > 0) await host.clock.pause(wait);
+    const remaining = deadline - host.clock.now();
     if (remaining <= 0) throw short === undefined ? late(timeout) : failure();
     let rows;
     try {
-      rows = rowsOf(await run(ps, ['-ww', '-g', String(group), '-o', 'pid=,stat=,lstart='], remaining, timeout));
+      rows = rowsOf(await run(ps, ['-ww', '-g', String(group), '-o', 'pid=,stat=,lstart='], remaining, timeout, host));
     } catch (error) {
       // A read given up at the deadline, after reads that answered short, ends the reads for why they did.
       if (short === undefined || error.code !== 'ETIMEDOUT') throw error;
       throw new Error(`${failure().message}, and the read running at that point was given up: ${error.message}`);
     }
-    if (rows.size === 0 && occupied(group)) short = 'listed no process of the group while signal 0 still reached it';
-    else if (!rows.has(group) && answers(group)) short = `left out its leader, pid ${group}, while signal 0 still reached that pid`;
+    if (rows.size === 0 && occupied(group, host.signal)) short = 'listed no process of the group while signal 0 still reached it';
+    else if (!rows.has(group) && answers(group, host.signal)) short = `left out its leader, pid ${group}, while signal 0 still reached that pid`;
     else short = undefined;
     if (short !== undefined) continue;
     const live = [...rows].map(([pid, row]) => [pid, /^(\S+)\s+(.*)$/.exec(row)]).filter(([, row]) => !row?.[1].startsWith('Z'));
@@ -2029,11 +2044,11 @@ function lstartOf(seconds) {
  * The child `spawning` makes to run `command`. Where the spawn throws, which Node does for some
  * of the causes of a command that never starts, a `NOT_STARTED` failure naming the command and why.
  */
-function spawned(command, spawning, cwd) {
+function spawned(command, spawning, cwd, host = realHost) {
   try {
     return spawning();
   } catch (error) {
-    throw spawnFailure(command, error, cwd);
+    throw spawnFailure(command, error, cwd, host);
   }
 }
 
@@ -2050,11 +2065,11 @@ const SPAWN_CAUSES = {
 };
 
 /** A failed spawn: recheck cwd for every errno, since OS and filesystem errors are not a closed list. */
-function spawnFailure(command, error, cwd) {
+function spawnFailure(command, error, cwd, host = realHost) {
   const failure = notStarted(command, error.message);
   const classified = SPAWN_CAUSES[error.code] ?? ['host-error'];
   const [kind, executable] = classified;
-  failure.startCause = unusable(cwd) !== undefined
+  failure.startCause = unusable(cwd, host) !== undefined
     ? { kind: 'directory-unusable' } : { kind, ...(executable ? { command } : {}) };
   return failure;
 }
@@ -2082,10 +2097,10 @@ function spawnFailure(command, error, cwd) {
  *   (not a directory here, `ENOTDIR` from the spawn), a link loop (`ELOOP` from both), a
  *   directory of mode 000 or 444 (`EACCES` from both), and one of mode 111, which both accept.
  */
-function unusable(cwd) {
+function unusable(cwd, host = realHost) {
   try {
-    if (!statSync(cwd).isDirectory()) return `its working directory ${cwd} is not a directory`;
-    accessSync(cwd, files.X_OK);
+    if (!host.stat(cwd).isDirectory()) return `its working directory ${cwd} is not a directory`;
+    host.access(cwd);
     return undefined;
   } catch (error) {
     return `its working directory ${cwd} cannot be used: ${error.message}`;
@@ -2136,7 +2151,7 @@ export function atStart(kind, operation, identity = {}) {
  * By default no timer holds the process open: what a delay races must do that itself. A caller
  * waiting for a forge read passes `hold`, since no child process need remain open during its wait.
  */
-export function whenElapsed(delay, done, { schedule = setTimeout, cancel = clearTimeout, hold = false } = {}) {
+export function whenElapsed(delay, done, { schedule = realHost.clock.schedule, cancel = realHost.clock.cancel, hold = false } = {}) {
   let timer;
   const arm = (left) => {
     const step = Math.min(left, TIMER_MAX);
@@ -2148,9 +2163,11 @@ export function whenElapsed(delay, done, { schedule = setTimeout, cancel = clear
 }
 
 /** Whether `promise` is still unsettled once `bound` milliseconds have passed. */
-async function outlasts(promise, bound) {
+async function outlasts(promise, bound, host = realHost) {
   let stop;
-  const passed = new Promise((resolve) => { stop = whenElapsed(bound, () => resolve(true)); });
+  const schedule = host.clock.schedule;
+  const cancel = host.clock.cancel;
+  const passed = new Promise((resolve) => { stop = whenElapsed(bound, () => resolve(true), { schedule, cancel }); });
   const outlasted = await Promise.race([promise.then(() => false), passed]);
   stop();
   return outlasted;

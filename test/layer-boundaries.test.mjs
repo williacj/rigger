@@ -231,9 +231,9 @@ test('rule 7: a module other than the process adapter importing cluster fails, s
   }
 });
 
-test('rule 7: the process adapter alone imports node:child_process', () => {
-  assert.deepEqual(messages({ 'src/substrate/process.mjs': 'import { spawnSync } from "node:child_process";' }), []);
-  assert.deepEqual(messages({ 'src/substrate/process.mjs': "import { spawnSync } from 'child_process';" }), []);
+test('rule 7: the real host alone imports node:child_process', () => {
+  assert.deepEqual(messages({ 'src/substrate/host.mjs': 'import { spawnSync } from "node:child_process";' }), []);
+  assert.deepEqual(messages({ 'src/substrate/host.mjs': "import { spawnSync } from 'child_process';" }), []);
 });
 
 /**
@@ -283,17 +283,17 @@ test('rule 7: a module other than the process adapter calling process.execve fai
   }
 });
 
-test('rule 7: the process adapter alone may call process.execve, however it spells the call', () => {
-  for (const source of EXECVE_SPELLINGS) assert.deepEqual(messages({ 'src/substrate/process.mjs': source }), [], source);
+test('rule 7: the real host alone may call process.execve, however it spells the call', () => {
+  for (const source of EXECVE_SPELLINGS) assert.deepEqual(messages({ 'src/substrate/host.mjs': source }), [], source);
 });
 
-test('rule 7: the process adapter alone may import cluster and call process.binding or process._linkedBinding, however it spells the call', () => {
+test('rule 7: the real host alone may import cluster and call process.binding or process._linkedBinding, however it spells the call', () => {
   const sources = [
     "import cluster from 'node:cluster';\nexport const go = () => cluster.fork();",
     "import cluster from 'cluster';\nexport const go = () => cluster.fork();",
     ...['binding', '_linkedBinding'].flatMap((method) => BINDING_SPELLINGS.map((template) => template.replaceAll('METHOD', method))),
   ];
-  for (const source of sources) assert.deepEqual(messages({ 'src/substrate/process.mjs': source }), []);
+  for (const source of sources) assert.deepEqual(messages({ 'src/substrate/host.mjs': source }), []);
 });
 
 /** The import forms of a module that bind nothing by name, or bind it whole, with SPEC for its specifier. */
@@ -1648,4 +1648,25 @@ test('the parsed set holds the gate check script, which reads through L0\'s read
     const found = boundaryReport(mutated).violations.map((violation) => violation.message);
     assert.ok(found.some((message) => message.startsWith('scripts/gate-check.mjs ') && message.includes(`breaks ${rule}:`)), `${line}\n${found.join('\n') || '(nothing)'}`);
   }
+});
+
+/** L0's push side as the fixture holds it: one function, standing for whatever the side exports. */
+const PUSH_SIDE = { 'src/substrate/data-ref.mjs': 'export async function pushStream(given) { return given; }' };
+
+// Boundary rule 2 admits the push side's one write, and only L5 reaches it (the architect's
+// attack on #1081, ruling 8).
+test('rule 11: a module outside src/observation/ importing src/substrate/data-ref.mjs is reported, naming that module and that only src/observation/ imports it', () => {
+  for (const file of ['src/cli/peek.mjs', 'src/scheduling/peek.mjs', 'src/workflow/peek.mjs', 'src/execution/peek.mjs', 'src/substrate/peek.mjs']) {
+    const up = file.startsWith('src/substrate/') ? './' : '../substrate/';
+    const found = messages({ ...PUSH_SIDE, [file]: `import { pushStream } from '${up}data-ref.mjs';\nexport const peek = pushStream;` });
+    const named = found.filter((message) => message.startsWith(`${file} `) && message.includes('breaks rule 11:'));
+    assert.equal(named.length, 1, `${file}:\n${found.join('\n') || '(nothing)'}`);
+    assert.ok(named[0].includes('only src/observation/ imports src/substrate/data-ref.mjs'), named[0]);
+  }
+  const bare = messages({ ...PUSH_SIDE, 'src/cli/peek.mjs': "import '../substrate/data-ref.mjs';" });
+  assert.ok(bare.some((message) => message.startsWith('src/cli/peek.mjs ') && message.includes('breaks rule 11:') && message.includes('only src/observation/ imports src/substrate/data-ref.mjs')), bare.join('\n') || '(nothing)');
+});
+
+test('rule 11: a module under src/observation/ importing src/substrate/data-ref.mjs is not reported', () => {
+  assert.deepEqual(messages({ ...PUSH_SIDE, 'src/observation/push.mjs': "import { pushStream } from '../substrate/data-ref.mjs';\nexport const push = pushStream;" }), []);
 });

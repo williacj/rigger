@@ -25,6 +25,7 @@ import { readEvents } from '../src/observation/sink.mjs';
 import { STATE } from '../src/cli/recording.mjs';
 import { NOT_STARTED } from '../src/substrate/process.mjs';
 import { runCommand } from '../src/substrate/process.mjs';
+import { realHost } from '../src/substrate/host.mjs';
 import riggerConfig from '../rigger.config.mjs';
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
@@ -1449,7 +1450,7 @@ async function cellOrigin(t, cell, { exitBeforeKill } = {}) {
   };
   const status = async (commandName, args, options) => {
     if (ps === undefined) return asked(commandName, args, options);
-    const result = await runCommand({ command: commandName, args, cwd: process.cwd(), env: gitEnvironment(), timeout: options.timeout, emitter: options.emitter, ps });
+    const result = await runCommand({ command: commandName, args, cwd: process.cwd(), env: gitEnvironment(), timeout: options.timeout, emitter: options.emitter, host: { ...realHost, ps } });
     if (exitBeforeKill !== undefined) note('origin.raw', { exit: result.exit, timedOut: result.timedOut, stdoutBase64: result.stdout.toString('base64'), stderrBase64: result.stderr.toString('base64') });
     return { status: result.exit, timedOut: result.timedOut, stdout: result.stdout.toString('utf8'), stderr: result.stderr.toString('utf8') };
   };

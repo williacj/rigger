@@ -19,6 +19,7 @@ import { readEvents } from '../src/observation/sink.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { TIME, admissionOf, asRoot, closerText, fsWith, picture, seed } from './admission-world.mjs';
 import { repositoryIn } from './git-repository.mjs';
+import { configure, statusGh } from './notice-forge.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -53,7 +54,7 @@ const stateIn = (repository) => join(repository, '.rigger');
 const closersIn = (repository) => readdirSync(admissionOf(stateIn(repository))).sort();
 
 /** The verb `verb` run in `repository`, its clock at `TIME`, git asked through `git`, with `options` beside. */
-const ran = (verb, repository, options = {}) => verb({ target: repository, now: () => TIME, ask: git, ...options });
+const ran = (verb, repository, options = {}) => verb({ target: repository, now: () => TIME, ask: git, send: statusGh(), ...options });
 
 // proves R-SCHED-4
 test('recording hands its work the run id the sink stamps on every event the work records', async () => {
@@ -248,6 +249,7 @@ const seedClosers = (repository) => {
 test('resume over owner and hold closers removes every one, prints each and exits 0', async () => {
   const repository = scratch();
   seedClosers(repository);
+  configure(repository);
   const { text, code } = await ran(resume, repository);
 
   assert.equal(code, 0, text);
@@ -311,6 +313,7 @@ test('resume whose removal fails partway names each closer left and exits non-ze
   // of a directory the process can write.
   const repository = scratch();
   seedClosers(repository);
+  configure(repository);
   let unlinks = 0;
   const unlinkSync = (path) => {
     unlinks += 1;
@@ -384,7 +387,8 @@ test('resume, in a scratch repository with no rigger.config.mjs, removes the clo
   seedClosers(repository);
 
   const resumed = await ran(resume, repository);
-  assert.equal(resumed.code, 0, resumed.text);
+  assert.equal(resumed.code, 1, resumed.text);
+  assert.match(resumed.text, /no status issue was closed, because `rigger\.config\.mjs` is not in /, resumed.text);
   assert.doesNotMatch(resumed.text, /not yet implemented/);
   assert.deepEqual(closersIn(repository), []);
   for (const name of Object.keys(SEEDED)) assert.ok(resumed.text.includes(entryIn(repository, name)), resumed.text);
@@ -396,6 +400,7 @@ test('the stream holds exactly the module\'s admission events for each pause and
   // module's, or none at all, so the stream says admission changed twice, or not at all.
   const repository = scratch();
   seed(stateIn(repository), 'hold-b2.json', closerText({ reason: 'an environment hold' }));
+  configure(repository);
   assert.equal((await ran(pause, repository)).code, 0);
   const [owner] = closersIn(repository).filter((name) => name.startsWith('owner-'));
   assert.equal((await ran(resume, repository)).code, 0);
@@ -439,19 +444,22 @@ async function startsDuring(work) {
 }
 
 // proves R-SCHED-4
-test('resume makes no forge call', async () => {
+test('resume makes no forge call but through the spawn the forge adapter is handed', async () => {
   // Every process started while `resume` runs is recorded, and every command it asks. The defect
-  // this catches is a `resume` reaching for the status issue through `gh`, which is M6-11c's and
-  // not yet this verb's.
+  // this catches is a `resume` reaching for the status issue through `gh` by any path but the
+  // forge adapter's runners, whose spawn is the stand-in here.
   const repository = scratch();
   seedClosers(repository);
+  configure(repository);
   asks.length = 0;
-  const { answer, started } = await startsDuring(() => ran(resume, repository));
+  const send = statusGh();
+  const { answer, started } = await startsDuring(() => ran(resume, repository, { send }));
 
   assert.equal(answer.code, 0, answer.text);
   assert.deepEqual(closersIn(repository), []);
   assert.deepEqual([...new Set(asks)], ['git']);
   assert.deepEqual([...new Set(started)], ['git']);
+  assert.deepEqual(send.sent.map(([command, , , , query]) => [command, /issues\(states: \[OPEN\], labels: \["rigger:status"\]/.test(query)]), [['gh', true]]);
 });
 
 /** The `node:fs` calls `canonical` makes, held before any test replaces them. */
@@ -551,7 +559,7 @@ const throughTheModule = (verb, prepare) => async () => {
 test('pause reaches .rigger/admission/ only through src/scheduling/admission.mjs', throughTheModule(pause, seedClosers));
 
 // proves R-SCHED-4
-test('resume reaches .rigger/admission/ only through src/scheduling/admission.mjs', throughTheModule(resume, seedClosers));
+test('resume reaches .rigger/admission/ only through src/scheduling/admission.mjs', throughTheModule(resume, (repository) => { seedClosers(repository); configure(repository); }));
 
 /**
  * What `work` answers while `node:crypto` draws known values: `randomBytes` answers `BYTES`, and
@@ -598,6 +606,7 @@ test('pause draws no id of its own: its closer carries the module\'s id and the 
 test('resume draws no id of its own: its events carry the run recording drew, and nothing else is drawn', async () => {
   const repository = scratch();
   seedClosers(repository);
+  configure(repository);
   const { answer, counts } = await knownDraws(() => ran(resume, repository));
 
   assert.equal(answer.code, 0, answer.text);

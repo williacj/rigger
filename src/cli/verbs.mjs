@@ -1,6 +1,7 @@
 // ABOUTME: The CLI surface: the verbs Rigger accepts, which of them have landed, what `--help`
 // lists for them, and how a word that is no verb is refused.
 
+import { pushAtReturn } from '../observation/push.mjs';
 import { doctor } from './doctor.mjs';
 import { init } from './init.mjs';
 import { once } from './once.mjs';
@@ -32,7 +33,7 @@ export const VERBS = [
   ['once', 'claim one card, provision its workspace and dispatch its maker, then exit'],
   ['run', 'claim cards until the slots are full, provision their workspaces and dispatch their makers, then exit'],
   ['pause', 'stop admitting new cards; in-flight cards finish'],
-  ['resume', 'reopen admission'],
+  ['resume', 'reopen admission and close the status issue'],
   ['report', 'derive the signals from the event stream'],
   ['verdict', 'post your verdict on a pull request, once you confirm it'],
 ];
@@ -71,6 +72,8 @@ export async function run(argv) {
     const said = first === undefined ? 'rigger: a verb is required' : `rigger ${first}: no such verb`;
     return { text: `${said}\n\n${help()}`, code: 1 };
   }
-  // A verb is handed the words after it; those that take none read nothing from them.
-  if (Object.hasOwn(LANDED, first)) return LANDED[first]({ args: argv.slice(1) });
+  // A verb is handed the words after it; those that take none read nothing from them. It is
+  // handed L5's push too, which a verb that reads a config hands `recording` (the architect's
+  // attack on #1122, placement A).
+  if (Object.hasOwn(LANDED, first)) return LANDED[first]({ args: argv.slice(1), push: pushAtReturn() });
 }

@@ -68,7 +68,7 @@ function writesFor(config, held) {
  * What the command prints for a `setup-board` run, and the status it exits with. Every read and
  * write goes through L0 with an `L0` emitter on the sink `recording` opens.
  */
-export const setupBoard = (options) => recording((opened) => settingUp(opened, options));
+export const setupBoard = (options) => recording((opened) => settingUp(opened, options), options?.push);
 
 /** `setupBoard`'s work, recording through the sink `opened` holds once `settled` has named its state directory. */
 async function settingUp(opened, { target = process.cwd() } = {}) {
@@ -79,6 +79,7 @@ async function settingUp(opened, { target = process.cwd() } = {}) {
   if (problem) return { text: `rigger setup-board: ${problem}`, code: 1 };
   const refusals = validate(config);
   if (refusals.length > 0) return { text: `rigger setup-board: \`${named}\`'s config earns refusals, so nothing was written: ${refusals.join('; ')}`, code: 1 };
+  opened.admitted(config);
 
   const board = { repo: config.repo, ...config.board };
   const where = `board ${board.project}`;
