@@ -1284,7 +1284,7 @@ All B cells in the following forge tables belong only to FC1; all PROVIDER B cel
 
 ### Text maps
 
-The four columns are control characters, terminal escapes, invalid UTF-8 bytes and empty text. Text from a tool is decoded with replacement where a Buffer is converted to UTF-8. It stays a string in memory; U/C relies on rule 4's any-string clause. Paths and identifiers are structural fields, so they use checks or breach markings instead. A printable-output ruling appears separately below.
+The four columns are control characters, terminal escapes, invalid UTF-8 bytes and empty text. Text from a tool is decoded with replacement where a Buffer is converted to UTF-8. It stays a string in memory; U/C relies on rule 4's any-string clause. Structural fields are ruled against their declared producer contract. A checked absolute path does not breach that contract merely because it contains a control or escape character. A printable-output ruling appears separately below.
 
 | Entry point and text field | Control | Escape | Invalid UTF-8 | Empty |
 |---|---|---|---|---|
@@ -1293,11 +1293,125 @@ The four columns are control characters, terminal escapes, invalid UTF-8 bytes a
 | P-T, process names and command lines | U/B [P-table-name.control] | U/B [P-table-name.escape] | U/B [P-table-name.not-utf8] | U/B [P-table-name.empty] |
 | W, git free text; structural worktree path | U/C [W-listing.control]; U/B [W-listing.control] | U/C [W-listing.control]; U/B [W-listing.control] | U/C [W-listing.not-utf8]; U/B [W-listing.not-utf8] | H/C [W-listing.empty]; U/B [W-listing.missing-field] |
 | D, git diagnostic text; structural SHA | H/C [D, lines 60–61]; U/B [control-parent; control-commit] | H/C [control-stderr]; U/B [escape-parent; escape-commit] | H/C [D, line 55]; U/B [invalid-utf8-parent; invalid-utf8-commit] | H/C [empty-parent]; R/C [D, lines 66–69]; U/B [empty-commit] |
-| L, loaded program path | U/B [L-loaded.escape] | U/B [L-loaded.escape] | U/B [launchd byte probe] | R/C [L-loaded.empty] |
+| L, loaded program path | H/C [L-PATH-control.single] | H/C [L-PATH-ansi.single] | H/C [L-PATH-invalid-byte-absolute.single; L-PATH-truncated-byte-absolute.single] | R/C [L-PATH-empty.single] |
 | X-A, auth message | U/B [X-codex.auth.control, unmatched]; H/C [X-A, lines 102–108, valid login line] | U/B [X-codex.auth.escape, unmatched]; H/C [X-A, lines 102–108, valid login line] | U/B [X-codex.auth.not-utf8, unmatched]; H/C [X-A, lines 102–108, valid login line] | U/B [X-codex.auth.empty] |
 | X-P, skill-probe diagnostic text | R/C [X-P, lines 245–251] | R/C [X-P, lines 245–251] | R/C [X-P, lines 245–251] | R/C [X-P, lines 246–251] |
 
 P-C's output remains Buffer, which is not plain data even when it contains text. P-T's names are strings, but census returns a Map in its sightings field even for an empty table, as the [shape probe](https://github.com/williacj/rigger/issues/1150#issuecomment-6513679404) shows. That makes every P-T text cell a breach independent of the name. W has an additional **found** kind: an ordinary valid worktree record with no lock carries an own `locked` property whose value is undefined; [W-listing-detail.valid](https://github.com/williacj/rigger/issues/1150#issuecomment-6513665824) shows it. That is U/B and belongs to FC3. For the F runner, the adapter hands strings to its side and the side's JSON parser may then reject them; the text map is about the runner's admission. The `firstLine` formatter at `src/substrate/forge/runners.mjs` lines 411–416 trims and selects a line, but it does not remove control or escape bytes before a later print.
+
+#### Loaded-job admission and path values
+
+The [loaded-job contract receipt](https://github.com/williacj/rigger/issues/1150#issuecomment-6538689914) corrects the interpretation of the earlier L text receipts; their source and output remain preserved. It measures the same main source and contains 221 individually identified cells: 180 path/layout cells, 30 additional timeout/framing/transport cells and 11 actual producer-to-consumer cases. Its table summary is 74 H/C, 147 R/C and zero B. No launchd job or real launchctl command was changed or called. Every fixture directory and raw reply file remains retained.
+
+The contract in `src/substrate/launchd.mjs`, lines 9–22, returns null for a not-loaded label or the parsed program and exitTimeout. It does not promise that the program exists, is executable, belongs to an installed package or has a printable spelling. The returned-object branch checks for one matching program field and one matching timeout field, an absolute string via isAbsolute, and a safe-integer number. The decimal-digit timeout capture also makes that integer nonnegative. Its literal object contains only those two data properties. Every input that reaches this branch therefore receives those checks before plain data is returned; an unprintable character does not turn that H/C result into U/B.
+
+The first 15 path kinds create real executable fixture files, including the control, ESC/ANSI, tab, DEL, C1, Unicode, quote, space, backslash and line-separator variants. The programs are never executed. The other path kinds distinguish root and nonexistent paths, dot components, double slash, lexical absolute text containing NUL, oversized/deep spellings, relative/dot-relative/tilde/empty/null-like text, and absolute/relative invalid UTF-8 bytes. Each record separates the requested bytes from the value actually selected by the reader. The path checker proves lexical absoluteness, not filesystem usability. Root, missing, overlong and NUL-bearing values receive no claim of being executable or usable filenames; the doctor consumer owns the filesystem and installation checks, at `src/cli/doctor.mjs`, lines 731–746.
+
+UTF-8 decoding at launchd line 16 replaces invalid or truncated bytes. An absolute decoded program string, including the replacement character, then passes the same field/path/timeout checks and is H/C. A replacement-prefixed relative spelling is refused. This is not evidence of UTF-8 validation or byte-preserving filename transport. Empty/relative paths, missing or duplicate matching fields and unsafe timeout numbers are refused with Errors built at launchd lines 13–20. Unrelated fields are ignored. The separate not-loaded status returns null; timedOut takes precedence even when exit is 113.
+
+Literal LF, CR, U+2028 and U+2029 in the synthetic wire text end the regex's selected program line. Those records show the checked absolute prefix that actually returns, rather than claiming an intact multi-line filename. Extra program/timeout lines can instead produce the duplicate-field refusal. These are probes of the reader's line-framed input, not a measurement of how a real launchctl serializes such filenames. No byte-round-trip or real-formatter claim is made. A claim of a program-identity breach on that framing would need the actual formatter contract and evidence; the present cells establish the returned parsed contract and do not propose a launchd fix from a character alone.
+
+The consumer cases construct scoped fixture installations and hand the actual public loadedJob result to public launchdCheck. All 11 return ok=true, preserve the checked program internally and produce a detail with no C0, DEL or C1 control character. The print-site preparation is the printable call at `src/cli/doctor.mjs`, line 720. The existing named test “a program path carrying quotes unicode and a newline stays on one doctor line” separately covers the consumer's newline spelling through its declared producer double. No launchd admission character is reassigned to FC7: the doctor already makes that text printable, and L itself writes no human output.
+
+Every cell below conforms to the applicable admission, refusal or consumer contract. There is no remaining demonstrated L contract violation. A stronger authoritative producer contract or real-formatter evidence could change an affected ruling; rejecting or sanitizing otherwise allowed path text is not the recommendation.
+
+#### Loaded-program path dimensions
+
+The prefix plus layout suffix identifies each exact L-PATH record. Every cell has no B owner. Single, duplicate-program, missing-timeout and overflow-timeout use exit 0; absent uses exit 113; timed-out-absent sets timedOut as well, proving that timeout refusal precedes not-loaded handling.
+
+| Path kind (L-PATH prefix) | single | duplicate-program | missing-timeout | overflow-timeout | absent | timed-out-absent |
+|---|---|---|---|---|---|---|
+| plain | H/C | R/C | R/C | R/C | H/C | R/C |
+| control | H/C | R/C | R/C | R/C | H/C | R/C |
+| escape | H/C | R/C | R/C | R/C | H/C | R/C |
+| ansi | H/C | R/C | R/C | R/C | H/C | R/C |
+| tab | H/C | R/C | R/C | R/C | H/C | R/C |
+| del | H/C | R/C | R/C | R/C | H/C | R/C |
+| c1 | H/C | R/C | R/C | R/C | H/C | R/C |
+| unicode | H/C | R/C | R/C | R/C | H/C | R/C |
+| quotes | H/C | R/C | R/C | R/C | H/C | R/C |
+| spaces | H/C | R/C | R/C | R/C | H/C | R/C |
+| backslash | H/C | R/C | R/C | R/C | H/C | R/C |
+| newline | H/C | R/C | R/C | R/C | H/C | R/C |
+| carriage | H/C | R/C | R/C | R/C | H/C | R/C |
+| line-separator | H/C | R/C | R/C | R/C | H/C | R/C |
+| paragraph-separator | H/C | R/C | R/C | R/C | H/C | R/C |
+| root | H/C | R/C | R/C | R/C | H/C | R/C |
+| missing-file | H/C | R/C | R/C | R/C | H/C | R/C |
+| dot-components | H/C | R/C | R/C | R/C | H/C | R/C |
+| double-slash | H/C | R/C | R/C | R/C | H/C | R/C |
+| nul | H/C | R/C | R/C | R/C | H/C | R/C |
+| oversized | H/C | R/C | R/C | R/C | H/C | R/C |
+| deep | H/C | R/C | R/C | R/C | H/C | R/C |
+| relative | R/C | R/C | R/C | R/C | H/C | R/C |
+| dot-relative | R/C | R/C | R/C | R/C | H/C | R/C |
+| tilde | R/C | R/C | R/C | R/C | H/C | R/C |
+| empty | R/C | H/C | R/C | R/C | H/C | R/C |
+| null-spelling | R/C | R/C | R/C | R/C | H/C | R/C |
+| invalid-byte-absolute | H/C | R/C | R/C | R/C | H/C | R/C |
+| truncated-byte-absolute | H/C | R/C | R/C | R/C | H/C | R/C |
+| invalid-byte-relative | R/C | R/C | R/C | R/C | H/C | R/C |
+
+#### Timeout spellings
+
+| Record | Behavior/ruling | Observed contract outcome | B owner |
+|---|---|---|---|
+| L-TIMEOUT.zero | H/C | checked plain program and safe integer timeout; input "0" | none |
+| L-TIMEOUT.small | H/C | checked plain program and safe integer timeout; input "5" | none |
+| L-TIMEOUT.normal | H/C | checked plain program and safe integer timeout; input "180" | none |
+| L-TIMEOUT.leading-zero | H/C | checked plain program and safe integer timeout; input "000180" | none |
+| L-TIMEOUT.max-safe | H/C | checked plain program and safe integer timeout; input "9007199254740991" | none |
+| L-TIMEOUT.unsafe | R/C | built Error: launchctl print cannot read one absolute program and one whole exit timeout; input "9007199254740992" | none |
+| L-TIMEOUT.negative | R/C | built Error: launchctl print cannot read one absolute program and one whole exit timeout; input "-1" | none |
+| L-TIMEOUT.fraction | R/C | built Error: launchctl print cannot read one absolute program and one whole exit timeout; input "1.5" | none |
+| L-TIMEOUT.exponent | R/C | built Error: launchctl print cannot read one absolute program and one whole exit timeout; input "1e3" | none |
+| L-TIMEOUT.infinity | R/C | built Error: launchctl print cannot read one absolute program and one whole exit timeout; input "Infinity" | none |
+| L-TIMEOUT.nan | R/C | built Error: launchctl print cannot read one absolute program and one whole exit timeout; input "NaN" | none |
+| L-TIMEOUT.empty | R/C | built Error: launchctl print cannot read one absolute program and one whole exit timeout; input "" | none |
+| L-TIMEOUT.extra-text | R/C | built Error: launchctl print cannot read one absolute program and one whole exit timeout; input "180x" | none |
+| L-TIMEOUT.space | R/C | built Error: launchctl print cannot read one absolute program and one whole exit timeout; input "180 " | none |
+| L-TIMEOUT.cr | H/C | checked plain program and safe integer timeout; input "180\r" | none |
+| L-TIMEOUT.line-separator | H/C | checked plain program and safe integer timeout; input "180\u2028" | none |
+| L-TIMEOUT.duplicate | R/C | built Error: launchctl print cannot read one absolute program and one whole exit timeout; input "180\n\texit timeout = 180" | none |
+
+#### Field framing
+
+| Record | Behavior/ruling | Observed contract outcome | B owner |
+|---|---|---|---|
+| L-FRAME.empty | R/C | built Error: launchctl print cannot read one absolute program and one whole exit timeout | none |
+| L-FRAME.unrelated | R/C | built Error: launchctl print cannot read one absolute program and one whole exit timeout | none |
+| L-FRAME.program-missing | R/C | built Error: launchctl print cannot read one absolute program and one whole exit timeout | none |
+| L-FRAME.nested-program | R/C | built Error: launchctl print cannot read one absolute program and one whole exit timeout | none |
+| L-FRAME.nested-timeout | R/C | built Error: launchctl print cannot read one absolute program and one whole exit timeout | none |
+| L-FRAME.extra | H/C | checked plain program and safe integer timeout | none |
+| L-FRAME.second-timeout-in-path | R/C | built Error: launchctl print cannot read one absolute program and one whole exit timeout | none |
+| L-FRAME.second-program-in-path | R/C | built Error: launchctl print cannot read one absolute program and one whole exit timeout | none |
+
+#### Exit and timeout precedence
+
+| Record | Behavior/ruling | Observed contract outcome | B owner |
+|---|---|---|---|
+| L-EXIT.7-false | R/C | built Error: launchctl print exited 7 | none |
+| L-EXIT.143-false | R/C | built Error: launchctl print exited 143 | none |
+| L-EXIT.0-true | R/C | built Error: launchctl print reached its timeout of 1234 ms | none |
+| L-EXIT.113-true | R/C | built Error: launchctl print reached its timeout of 1234 ms | none |
+| L-EXIT.7-true | R/C | built Error: launchctl print reached its timeout of 1234 ms | none |
+
+#### Actual consumer formatting
+
+| Record | Behavior/ruling | Observed contract outcome | B owner |
+|---|---|---|---|
+| L-CONSUMER.plain | H/C | actual loadedJob result; printable doctor detail | none |
+| L-CONSUMER.control | H/C | actual loadedJob result; printable doctor detail | none |
+| L-CONSUMER.escape | H/C | actual loadedJob result; printable doctor detail | none |
+| L-CONSUMER.ansi | H/C | actual loadedJob result; printable doctor detail | none |
+| L-CONSUMER.tab | H/C | actual loadedJob result; printable doctor detail | none |
+| L-CONSUMER.del | H/C | actual loadedJob result; printable doctor detail | none |
+| L-CONSUMER.c1 | H/C | actual loadedJob result; printable doctor detail | none |
+| L-CONSUMER.unicode | H/C | actual loadedJob result; printable doctor detail | none |
+| L-CONSUMER.quotes | H/C | actual loadedJob result; printable doctor detail | none |
+| L-CONSUMER.spaces | H/C | actual loadedJob result; printable doctor detail | none |
+| L-CONSUMER.backslash | H/C | actual loadedJob result; printable doctor detail | none |
 
 ### Exit maps
 
@@ -1364,15 +1478,16 @@ Each proposed card is a proposal, not an issue filed. Cell sets below are disjoi
 | FC1, forge JSON boundary | All B cells in the direct F-R helper maps and the selected-field/stage tables whose B owner is FC1 | `src/substrate/forge/read.mjs`, `src/substrate/forge/schema-write.mjs`, `src/substrate/forge/item-write.mjs`, `src/substrate/forge/repository-write.mjs`, `src/substrate/forge/runners.mjs`, `src/substrate/forge/write-made.mjs`; read.mjs and runners.mjs are Self-hosting paths | Estimate +260 L0; depends on owner handling of Self-hosting review and FC2's plain process result |
 | FC2, process answer and table failures | All B cells in P-C and P-T text and exit maps | `src/substrate/process.mjs`; Self-hosting | Estimate +25 L0; depends on none |
 | FC3, git structural answers | All B cells in W and D text, exit and file maps | `src/substrate/worktrees.mjs`, `src/substrate/data-ref.mjs`; worktrees.mjs is Self-hosting | Estimate +35 L0; depends on FC2 |
-| FC4, launchd loaded program | All B cells in L text and exit maps | `src/substrate/launchd.mjs`; Self-hosting | Estimate +12 L0; depends on FC2 |
 | FC5, provider files and answers | All B cells in C-A, C-F, X-A, X-P and X-F JSON, text, exit, file, TOML and directory maps | `src/substrate/providers/claude.mjs`, `src/substrate/providers/codex.mjs`; both Self-hosting | Estimate +55 L0; depends on FC2 |
 | FC6, environment values | E-C missing HOME B cell | `src/substrate/providers/claude.mjs`; Self-hosting | Estimate +3 L0; depends on FC5 |
 | FC7, human output | T1 and T2 | `src/substrate/process.mjs`; Self-hosting | Estimate +12 L0; depends on FC2 |
 
-The table's cell sets are a partition. In the selected-field/stage matrices, each B cell belongs to the one owner in its row's B owner column: FC1 for every forge row and FC5 for every settings row; none belongs to another proposed card. The generator's explicit row-and-column ledger measured 1,494 B cells in that matrix: 1,470 assigned to FC1 and 24 to FC5, with no unowned B cell. The corrected generator and summary are in the R3 receipt; these counts describe the primary fixture matrix at the named main commit. The separate R3 container/preflight matrix has 645 ruled cells, including 73 B cells, all owned only by FC1. Of those B cells, 44 are false made marks before any current mutation. The separate coercion/key matrix adds 4,705 cells, with 1,608 B cells assigned only to FC1 and 228 only to FC5. Counts reconcile artifacts; the call/field inventory and observed contracts supply coverage, not the totals alone.
+FC4 is withdrawn rather than renumbered: its three text cells pass the existing loadedJob checks, its exit cells already conform, and no remaining launchd breach is demonstrated. This removes the former estimated +12 L0 from the proposed work. The six retained estimates sum to +390, against the same measured 127-line headroom; no production line count changed.
 
-Outside that matrix, FC1 owns direct answerOf missing, wrong type, null, extra, oversized, deep, non-JSON and non-finite; and direct board ID and repository ID missing, wrong type, null, oversized, deep, non-JSON and non-finite. FC2 owns P-C text control, escape, invalid UTF-8 and empty; P-C exit nonzero, signal and timeout; P-T text control, escape, invalid UTF-8 and empty; and the found ordinary P-T Map shape. FC3 owns W structural worktree text control, escape, invalid UTF-8 and missing field; the found ordinary W undefined lock; and D structural parent or commit control, escape, invalid UTF-8, empty commit and malformed SHA. FC4 owns L loaded program control, escape and invalid UTF-8. FC5 also owns the 13 B cells in the provider auth addendum, X-A all four text kinds, X-F agent truncated and invalid UTF-8, X-F config empty, truncated and invalid UTF-8, and all three TOML kinds. FC6 owns E-C unset HOME. FC7 alone owns print sites T1 and T2. No other row has a B cell.
+The table's cell sets are a partition. In the selected-field/stage matrices, each B cell belongs to the one owner in its row's B owner column: FC1 for every forge row and FC5 for every settings row; none belongs to another proposed card. The generator's explicit row-and-column ledger measured 1,494 B cells in that matrix: 1,470 assigned to FC1 and 24 to FC5, with no unowned B cell. The corrected generator and summary are in the R3 receipt; these counts describe the primary fixture matrix at the named main commit. The separate R3 container/preflight matrix has 645 ruled cells, including 73 B cells, all owned only by FC1. Of those B cells, 44 are false made marks before any current mutation. The separate coercion/key matrix adds 4,705 cells, with 1,608 B cells assigned only to FC1 and 228 only to FC5. The separate loaded-job extension contains 221 C cells and zero B; correcting its three historical text rulings does not alter those primary, R3 or coercion/key matrix totals. Counts reconcile artifacts; the call/field inventory and observed contracts supply coverage, not the totals alone.
+
+Outside that matrix, FC1 owns direct answerOf missing, wrong type, null, extra, oversized, deep, non-JSON and non-finite; and direct board ID and repository ID missing, wrong type, null, oversized, deep, non-JSON and non-finite. FC2 owns P-C text control, escape, invalid UTF-8 and empty; P-C exit nonzero, signal and timeout; P-T text control, escape, invalid UTF-8 and empty; and the found ordinary P-T Map shape. FC3 owns W structural worktree text control, escape, invalid UTF-8 and missing field; the found ordinary W undefined lock; and D structural parent or commit control, escape, invalid UTF-8, empty commit and malformed SHA. The three historical L loaded-program B cells (control, escape and invalid UTF-8) are corrected to H/C; L has no remaining B cell and FC4 is withdrawn. FC5 also owns the 13 B cells in the provider auth addendum, X-A all four text kinds, X-F agent truncated and invalid UTF-8, X-F config empty, truncated and invalid UTF-8, and all three TOML kinds. FC6 owns E-C unset HOME. FC7 alone owns print sites T1 and T2. No other row has a B cell.
 
 FC1's estimate is a judgment based on shared checks at the seven REST parser sites, the GraphQL selectors, the write-answer selectors and their event-refusal checks, including binding the made mark to the current mutation rather than an earlier runner read, checking enum types before key/regex coercion, and constructing foreign-key maps without prototype setters. The additional +20-line estimate is a judgment for those shared checks and refusal formatting, not a measured implementation. The proposed file scope includes write-made alongside the side and runner paths because the shared mark and the promise handed to it participate in that boundary. FC5's estimate includes permission-list members and their settings serialization. Both estimates are for L0 additions against the measured main row, not measured implementation sizes. Their dependencies in the table still apply; the expanded cells create no additional proposed fix card.
 
-The recommendation is to card the seven disjoint fixes, with FC2 first, then reconcile their combined estimated +402 lines against the 127-line headroom before implementation. The PM should not assume a parsed JSON value is plain data, a UTF-8 decoding validates bytes, a git commit string is a SHA, or a process adapter's Buffer is plain data. A new source path, an authoritative contract proving a field intentionally unrestricted, a change to boundary rule 4 by the owner, or a budget measurement after other work lands would change the affected recommendation. Nothing in this report changes the architecture or creates a fix card.
+The recommendation is to card the six disjoint fixes (FC1, FC2, FC3, FC5, FC6 and FC7), with FC2 first, then reconcile their combined estimated +390 lines against the 127-line headroom before implementation. The PM should not assume a parsed JSON value is plain data, a UTF-8 decoding validates bytes, a git commit string is a SHA, or a process adapter's Buffer is plain data. A new source path, an authoritative contract proving a field intentionally unrestricted, a change to boundary rule 4 by the owner, or a budget measurement after other work lands would change the affected recommendation. Nothing in this report changes the architecture or creates a fix card.
