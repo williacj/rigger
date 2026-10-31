@@ -4,6 +4,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFileSync } from 'node:fs';
 import { parse } from 'acorn';
@@ -422,10 +423,19 @@ test('each judge\'s instruction asks for one pull request comment holding a mark
 });
 
 test('each judge\'s instruction names the evidence digest its role answer carries, which is SHA-256 of its evidence', () => {
-  for (const { instruction, evidence, digest } of answer(card()).judges) {
-    assert.match(digest, /^[0-9a-f]{64}$/);
-    assert.ok(instruction.split('\n').includes(`evidence: ${digest}`), instruction);
-    assert.ok(!instruction.includes(evidence), 'the instruction holds the evidence it digests');
+  const diffs = [DIFF, 'diff --git a/src/greeting.mjs b/src/greeting.mjs\n+export const greeting = "caf\u00e9";\n'];
+  const answers = diffs.map((diff) => answer(card({ diff: read(diff) })).judges);
+  for (const [fixture, judges] of answers.entries()) {
+    assert.equal(judges.length, 3);
+    for (const [index, { instruction, evidence, digest }] of judges.entries()) {
+      assert.notEqual(evidence, '');
+      assert.ok(evidence.includes(diffs[fixture]));
+      if (fixture > 0) assert.notEqual(evidence, answers[0][index].evidence);
+      assert.match(digest, /^[0-9a-f]{64}$/);
+      assert.equal(digest, createHash('sha256').update(evidence, 'utf8').digest('hex'), `${judges[index].role}: digest must hash actual evidence UTF-8 bytes`);
+      assert.ok(instruction.split('\n').includes(`evidence: ${digest}`), instruction);
+      assert.ok(!instruction.includes(evidence), 'the instruction holds the evidence it digests');
+    }
   }
 });
 
