@@ -170,3 +170,29 @@ Both commits retain required deterministic hooks. Final direct qualification and
 guarded cohort use their own retained command receipts; future results are not guessed here.
 The journal will retain this timestamped historical scope rather than invent a circular
 self-hash or require another source-head edit to transcribe future proof.
+
+## Normal integration observed on 2026-10-31
+
+The normal M1 commit is `998c2781d8d91e40d0ed4e3f46472f6b8d1e84e2`, tree
+`004aa4112037d96086ecf9bf7d650852ffed027c`, with parents
+`7fa6a79fa4a7e4816ca986e78ab214de148a62c4` and
+`f94446e02ce8482b3cbd779db9198a7e9c2c6072`. Native Git493 exited0. Its real
+pre-commit hook child498 exited0, as independently retained Git trace2 records.
+The unchanged hook's deterministic output reports4062 tests:4053 passed, none failed
+or cancelled and nine skipped. These are hook-output measurements, not a claim to have
+captured the nested npm PID or its direct process status separately.
+
+The private recorder initially parsed only Git stdout, but Git delivered the hook's complete
+output to stderr. Its bookkeeping wrapper therefore exited1 after the successful commit.
+A completed-original readback recovered the actual counts and hook child status without
+rerunning the commit, tests or source change. The original result and both streams remain
+retained; this is an administrative capture correction, not a test failure or passing replay.
+
+The normal `git merge --no-commit --no-ff` of
+`fe4782a370e96ebc3bfbadb8b1bd468cb79bd5b1` exited0 at native Git501. Its actual
+automatic result had no unmerged entries and exactly the recorded38 upstream changed paths
+staged. Every one of the six maker source/test hashes and the unchanged guard hash remained
+identical. No conflict resolution, upstream source edit, hook bypass or cache injection was
+needed. This continuation is the only maker journal change before the final integration
+commit. The integrated H hash is not guessed, and its forthcoming hook, final direct checks
+and nine immutable-driver claims remain future evidence at this timestamp.

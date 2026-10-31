@@ -12,6 +12,9 @@ import { fileURLToPath } from 'node:url';
 import { closerLine } from '../src/cli/doctor.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 import { moduleOver } from './admission-world.mjs';
+import { closerText, seed as seedCloser } from './admission-world.mjs';
+import { repositoryReads } from '../src/substrate/forge/read.mjs';
+import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { seedRepository } from './fake-gh.mjs';
 import { createFakeBoard } from './fake-board.mjs';
@@ -22,6 +25,7 @@ import { standInAgent } from './stub-claude.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { COLUMNS, FIELDS, PROJECT, REPO, card, consumerConfig } from './verb-consumer.mjs';
 import { judgeVerbWorld } from './judge-start-verb.mjs';
+import { once as onceVerb } from '../src/cli/once.mjs';
 
 // A bound on each run of the real bin, so one that never settles fails its test rather than the suite.
 const { 60_000: { timeout: SETTLES_WITHIN } } = BOUNDS;
@@ -316,4 +320,395 @@ test('rigger run, on a judge pair held after two compound-rule failures, opens o
   assert.equal(notices.length, 1, JSON.stringify(ran.events.filter(({ event }) => event === 'notice.failed')));
   for (const id of ids) assert.ok(notices[0].body.includes(id), `the body omits the recorded judge dispatch ${id}; recorded: ${ids.join(', ')}:\n${notices[0].body}`);
   assert.ok(notices[0].body.includes('Attempt 1: environment, judge `reviewer`') && notices[0].body.includes('Attempt 2: environment, judge `reviewer`'), notices[0].body);
+});
+
+/**
+ * A consumer for the test `t` whose admission holds `closers`, each a closer's file name, beside a
+ * fake `gh` whose board holds no card and whose repository holds `issues`. `verb(name)` runs the
+ * real bin's verb there; `gh(...args)` runs the fake `gh` as a person on the forge would; and
+ * `reads` are the repository reads, through the fake `gh`, of what it then holds. Where
+ * `refuseState` is given, the `gh` the verb finds refuses every read of one issue's state, saying
+ * what gh says of a server error, or the `printf` format `refuseState` names, and answers every
+ * other request as the fake does.
+ */
+function statusConsumer(t, { closers, issues, refuseState = false }) {
+  const directory = scratch(t);
+  const target = withOrigin(repositoryAt(join(directory, 'consumer'), { 'rigger.config.mjs': `export default ${JSON.stringify(consumerConfig(3))};\n` }), join(directory, 'origin.git'));
+  const dir = join(directory, 'gh');
+  mkdirSync(dir);
+  const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, items: [] } });
+  seedRepository(fake, { issues });
+  const ahead = join(directory, 'refusing');
+  if (refuseState) {
+    mkdirSync(ahead);
+    const said = refuseState === true ? "'%s\\n' 'gh: HTTP 502: Bad Gateway (https://api.github.com/graphql)'" : `'${refuseState}\\n'`;
+    writeFileSync(join(ahead, 'gh'), `#!/bin/sh\ncase "$*" in *'{ state repository { nameWithOwner } }'*) printf ${said} >&2; exit 1;; esac\nexec ${JSON.stringify(fake.gh)} "$@"\n`);
+    chmodSync(join(ahead, 'gh'), 0o755);
+  }
+  const state = join(realpathSync.native(target), '.rigger');
+  for (const name of closers) seedCloser(state, name, closerText({ reason: `reason of ${name}` }));
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), PATH: [...(refuseState ? [ahead] : []), dir, process.env.PATH].join(delimiter) };
+  const verb = (name) => {
+    const ran = spawnSync(process.execPath, [bin, name], { cwd: target, encoding: 'utf8', env, timeout: SETTLES_WITHIN, killSignal: 'SIGKILL' });
+    assert.equal(ran.error, undefined);
+    return { out: ran.stdout, err: ran.stderr, code: ran.status, said: `exited ${ran.status}: ${ran.stdout}${ran.stderr}` };
+  };
+  const gh = (...args) => spawnSync(fake.gh, args, { encoding: 'utf8', env: gitEnvironment() });
+  const reads = repositoryReads({ repo: REPO, project: PROJECT }, { send: (command, args) => spawnSync(fake.gh, args, { encoding: 'utf8', env: gitEnvironment() }) });
+  return { state, target, fake, verb, gh, reads, events: () => readEvents(state), closers: () => moduleOver(state).read().closers ?? [] };
+}
+
+/** A status issue the fake holds: carrying the label, its body naming hold `id`, as Rigger opens one. */
+const statusIssue = (number, id) => ({ number, title: 'Rigger closed admission', body: `Why.\n\nHold: \`${id}\`\n`, labels: ['rigger:status'] });
+
+// proves R-SCHED-4, R-SCHED-23
+test('rigger run, once the status issue a hold\'s closer names is closed by a person, removes that closer, records the issue\'s close as what reopened admission, and claims again', (t) => {
+  const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [statusIssue(7, 'a1')] });
+  const closed = here.gh('api', `repos/${REPO}/issues/7`, '-X', 'PATCH', '-f', 'state=closed');
+  assert.equal(closed.status, 0, closed.stderr);
+
+  const ran = here.verb('run');
+
+  assert.equal(ran.code, 0, ran.said);
+  assert.deepEqual(here.closers(), [], ran.said);
+  const opened = here.events().filter(({ event }) => event === 'admission.open');
+  assert.deepEqual(opened.map(({ layer, name, by, issue }) => ({ layer, name, by, issue })), [{ layer: 'L3', name: 'hold-a1-issue-7.json', by: 'issue', issue: 7 }], ran.said);
+  // Admission opened, so the same trigger read the board and found nothing to pull.
+  assert.match(ran.out, /no card was pullable/, ran.said);
+});
+
+// proves R-SCHED-24
+test('rigger resume over hold closers naming issues, beside another open issue carrying the label, removes every closer, then removes the label from each issue before closing it, and exits 0', async (t) => {
+  const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json', 'owner-o4.json'], issues: [statusIssue(7, 'a1'), { number: 9, title: 'Copied', body: '', labels: ['rigger:status', 'type:change'] }] });
+
+  const ran = here.verb('resume');
+
+  assert.equal(ran.code, 0, ran.said);
+  assert.deepEqual(here.closers(), [], ran.said);
+  for (const number of [7, 9]) {
+    const issue = await here.reads.readIssue(number);
+    assert.equal(issue.state, 'closed', `#${number}: ${ran.said}`);
+    assert.ok(!issue.labels.includes('rigger:status'), `#${number}`);
+    assert.match(ran.out, new RegExp(`^rigger resume: closed the status issue #${number}$`, 'm'), ran.said);
+    const changes = (await here.reads.readIssueTimeline(number)).filter(({ kind, label }) => kind === 'closed' || label === 'rigger:status');
+    assert.deepEqual(changes.map(({ kind }) => kind), ['labeled', 'unlabeled', 'closed'], `#${number}`);
+  }
+});
+
+// proves R-SCHED-23
+test('rigger once and rigger run, where the state of the issue a hold\'s closer names cannot be read, claim nothing, name the issue in their output and the event, and exit non-zero', (t) => {
+  for (const name of ['once', 'run']) {
+    const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [statusIssue(7, 'a1')], refuseState: true });
+
+    const ran = here.verb(name);
+
+    assert.equal(ran.code, 1, `${name}: ${ran.said}`);
+    assert.match(ran.err, new RegExp(`^rigger ${name}: the notice for hold a1 failed to read issue #7's state: .*HTTP 502`, 'm'), `${name}: ${ran.said}`);
+    assert.deepEqual(here.closers().map(({ name: closer }) => closer), ['hold-a1-issue-7.json'], name);
+    const failed = here.events().filter(({ event }) => event === 'notice.failed');
+    assert.deepEqual(failed.map(({ layer, hold, issue }) => ({ layer, hold, issue })), [{ layer: 'L3', hold: 'a1', issue: 7 }], name);
+    assert.deepEqual(here.events().filter(({ event }) => event === 'pull'), [], name);
+  }
+});
+
+/**
+ * Each way the config can fail after `resume` has removed its closers and before it reaches L2,
+ * as the text of `rigger.config.mjs`: its evaluation throws, it does not parse, it is a BigInt
+ * (the architect's round-5 probe on #1079), its validation throws rather than answering it invalid,
+ * it answers invalid, and building L2's entry point throws, a config that validates whose board
+ * getter throws only when `transitions.mjs` reads it.
+ */
+const FAILING_CONFIGS = {
+  'its evaluation throws': [`throw new Error('the config threw as it was evaluated');\n`, /could not be read: .*the config threw as it was evaluated/],
+  'it does not parse': ['export default {;\n', /could not be read: /],
+  // A BigInt default, the architect's round-5 probe, which validation now answers invalid.
+  'it is a BigInt': ['export default 1n;\n', /`rigger\.config\.mjs`: .*1n/],
+  'its validation throws': ["export default Object.defineProperty({}, 'repo', { enumerable: true, get() { throw new Error('the repo getter threw'); } });\n", /could not be used: the repo getter threw/],
+  'it does not validate': ['export default { repo: 7 };\n', /`rigger\.config\.mjs`: /],
+  'building L2 throws': [[
+    `import settings from ${JSON.stringify(new URL('../templates/rigger.config.mjs', import.meta.url).href)};`,
+    `const config = { ...settings, repo: ${JSON.stringify(REPO)}, board: undefined };`,
+    `const board = { ...settings.board, project: ${PROJECT} };`,
+    "Object.defineProperty(config, 'board', { enumerable: true, get() { if (new Error().stack.includes('/src/workflow/transitions.mjs')) throw new Error('the board could not be handed to L2'); return board; } });",
+    'export default config;',
+  ].join('\n'), /the board could not be handed to L2/],
+  ...unprintable(),
+};
+
+/**
+ * The config texts for each thrown value no template can print, thrown where validation reads the
+ * config's `repo` and where L2's entry point reads its `board` (the reviewer's and the architect's
+ * round-6 probes on #1079): a Symbol, null, undefined, a null-prototype object, an Error whose
+ * `message` getter throws, an object whose `toString` and `Symbol.toPrimitive` throw, and a Proxy
+ * that throws on every trap, each with the reason `resume` gives for it. And the architect's
+ * control: a Symbol thrown as the config is evaluated.
+ */
+function unprintable() {
+  const trap = "new Proxy({}, Object.fromEntries(['get', 'set', 'has', 'ownKeys', 'getOwnPropertyDescriptor', 'getPrototypeOf', 'defineProperty', 'deleteProperty', 'apply', 'construct', 'isExtensible', 'preventExtensions', 'setPrototypeOf'].map((name) => [name, () => { throw new Error('the proxy refused ' + name); }])))";
+  const values = {
+    'a Symbol': ["Symbol('it threw a Symbol')", /could not be used: Symbol\(it threw a Symbol\)/],
+    null: ['null', /could not be used: null/],
+    undefined: ['undefined', /could not be used: undefined/],
+    'a null-prototype object': ['Object.create(null)', /could not be used: a thrown object/],
+    'an Error whose message getter throws': ["Object.create(Error.prototype, { message: { get() { throw new Error('no message'); } } })", /could not be used: a thrown object/],
+    'an object whose conversions throw': ["({ toString() { throw new Error('no string'); }, [Symbol.toPrimitive]() { throw new Error('no primitive'); } })", /could not be used: a thrown object/],
+    'a Proxy throwing on every trap': [trap, /could not be used: a thrown object/],
+  };
+  const settings = `import settings from ${JSON.stringify(new URL('../templates/rigger.config.mjs', import.meta.url).href)};`;
+  const rows = {};
+  for (const [what, [value, why]] of Object.entries(values)) {
+    rows[`validation throws ${what}`] = [`export default Object.defineProperty({}, 'repo', { enumerable: true, get() { throw ${value}; } });\n`, why];
+    rows[`building L2 throws ${what}`] = [[
+      settings,
+      `const config = { ...settings, repo: ${JSON.stringify(REPO)}, board: undefined };`,
+      `const board = { ...settings.board, project: ${PROJECT} };`,
+      `Object.defineProperty(config, 'board', { enumerable: true, get() { if (new Error().stack.includes('/src/workflow/transitions.mjs')) throw ${value}; return board; } });`,
+      'export default config;',
+    ].join('\n'), why];
+  }
+  rows['its evaluation throws a Symbol'] = ["throw Symbol('evaluation failed');\n", /could not be read: /];
+  return rows;
+}
+
+// proves R-SCHED-23
+test('rigger resume, wherever the config fails after the closers are removed and before L2 is reached, exits non-zero naming each closer removed, that no status issue was closed, and why, and makes no forge write', async (t) => {
+  for (const [what, [text, why]] of Object.entries(FAILING_CONFIGS)) {
+    const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json', 'owner-o4.json'], issues: [statusIssue(7, 'a1')] });
+    writeFileSync(join(here.target, 'rigger.config.mjs'), text);
+
+    const ran = here.verb('resume');
+
+    assert.equal(ran.code, 1, `${what}: ${ran.said}`);
+    assert.deepEqual(here.closers(), [], `${what}: both closers were removed`);
+    assert.match(ran.err, /^rigger resume: removed the hold closer .*hold-a1-issue-7\.json/m, `${what}: ${ran.said}`);
+    assert.match(ran.err, /^rigger resume: removed the owner closer .*owner-o4\.json/m, `${what}: ${ran.said}`);
+    assert.match(ran.err, new RegExp(`^rigger resume: no status issue was closed, because .*${why.source}`, 'm'), `${what}: ${ran.said}`);
+    assert.doesNotMatch(ran.said, /\n\s+at /, `${what}: a stack trace reached the output`);
+    const issue = await here.reads.readIssue(7);
+    assert.deepEqual([issue.state, issue.labels], ['open', ['rigger:status']], what);
+    assert.deepEqual(here.fake.sent().filter((args) => ['DELETE', 'PATCH', 'POST'].includes(args[3])), [], `${what}: a forge write was made`);
+  }
+});
+
+// proves R-SCHED-23
+test('rigger once, after a made closer opening whose admission.open record was refused, then a board read throwing an Error it cannot print, still answers both and exits non-zero', async (t) => {
+  // The architect's round-7 B2 probe on #1079, through the real `once` in process, for each Error
+  // whose message no template can print, and a plain one as the control.
+  const errors = {
+    'a plain Error': () => new Error('the board read failed plainly'),
+    'an Error whose message is a Symbol': () => Object.defineProperty(new Error('x'), 'message', { value: Symbol('symbol message') }),
+    'an Error whose message getter throws': () => Object.defineProperty(new Error('x'), 'message', { get() { throw new Error('message getter refused'); } }),
+  };
+  for (const [what, hostile] of Object.entries(errors)) {
+    const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [statusIssue(7, 'a1')] });
+    assert.equal(here.gh('api', `repos/${REPO}/issues/7`, '-X', 'PATCH', '-f', 'state=closed').status, 0);
+    const stream = join(here.state, 'events.jsonl');
+    let refusing = false;
+    const send = (command, args) => {
+      const query = args[3] ?? '';
+      if (query.includes('fields(')) throw hostile();
+      const said = spawnSync(here.fake.gh, args, { encoding: 'utf8', env: gitEnvironment() });
+      if (query.includes('{ state repository { nameWithOwner } }')) {
+        // The sink refuses every append from here: the opening's record among them.
+        writeFileSync(stream, '', { flag: 'a' });
+        chmodSync(stream, 0o444);
+        refusing = true;
+      }
+      return { status: said.status, stdout: said.stdout, stderr: said.stderr, timedOut: false };
+    };
+    t.after(() => { if (refusing) chmodSync(stream, 0o644); });
+
+    const answered = await onceVerb({ target: here.target, send }).then((answer) => ({ answer }), (thrown) => ({ thrown }));
+
+    assert.equal(answered.thrown, undefined, `${what}: once threw while reporting`);
+    assert.deepEqual(here.closers(), [], `${what}: the closer was removed`);
+    assert.equal(answered.answer.code, 1, `${what}: ${answered.answer.text}`);
+    assert.match(answered.answer.text, /admission changed at hold-a1-issue-7\.json, and the sink refused its admission\.open event/, `${what}: ${answered.answer.text}`);
+  }
+});
+
+// The judges' round-8 probes on #1079: what `once` is handed after a made opening is read all the
+// way through, its nested entries and its containers' methods among it, without running a thrower's code.
+// proves R-SCHED-23
+test('rigger once, after a recorded closer opening, answers a board failure whose unreadable entry inherits a throwing getter, or whose errors array replaces flatMap', async (t) => {
+  const cases = {
+    'an inherited throwing path getter': () => Object.assign(new Error('board refused'), { unreadable: [Object.create({ get path() { throw new Error('inherited path getter ran'); }, cause: 'EIO' })] }),
+    'an errors array whose flatMap throws': () => {
+      const failure = new AggregateError([new Error('inner')], 'board refused');
+      failure.errors.flatMap = () => { throw new Error('errors.flatMap ran'); };
+      return failure;
+    },
+  };
+  for (const [what, make] of Object.entries(cases)) {
+    const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [statusIssue(7, 'a1')] });
+    assert.equal(here.gh('api', `repos/${REPO}/issues/7`, '-X', 'PATCH', '-f', 'state=closed').status, 0);
+    const failure = make();
+    const send = (command, args) => {
+      if ((args[3] ?? '').includes('fields(')) throw failure;
+      const result = spawnSync(here.fake.gh, args, { encoding: 'utf8', env: gitEnvironment() });
+      return { status: result.status, stdout: result.stdout, stderr: result.stderr, timedOut: false };
+    };
+
+    const outcome = await onceVerb({ target: here.target, send }).then((answer) => ({ answer }), (thrown) => ({ thrown }));
+
+    assert.deepEqual(here.closers(), [], `${what}: admission really opened`);
+    assert.ok(here.events().some(({ event }) => event === 'admission.open'), `${what}: the opening was recorded`);
+    assert.equal(outcome.thrown, undefined, `${what}: once threw while reporting`);
+    assert.equal(outcome.answer.code, 1, what);
+  }
+});
+
+// proves R-SCHED-23
+test('rigger once, after a recorded closer opening, answers an AggregateError whose errors entry reads differently a second time', async (t) => {
+  const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [statusIssue(7, 'a1')] });
+  assert.equal(here.gh('api', `repos/${REPO}/issues/7`, '-X', 'PATCH', '-f', 'state=closed').status, 0);
+  writeFileSync(join(here.target, 'rigger.config.mjs'), [
+    `const config = ${JSON.stringify(consumerConfig(3))};`,
+    'const board = config.board;',
+    "Object.defineProperty(config, 'board', { get() {",
+    "  if (new Error().stack.includes('/src/workflow/facts.mjs')) {",
+    '    let reads = 0;',
+    "    const errors = Object.defineProperty([], '0', { enumerable: true, configurable: true, get() { reads += 1; return reads === 1 ? new Error('HTTP 502') : undefined; } });",
+    "    const failure = new AggregateError([], 'facts could not be read'); failure.errors = errors; throw failure;",
+    '  }',
+    '  return board;',
+    '} });',
+    'export default config;',
+  ].join('\n'));
+  const send = (command, args) => {
+    const done = spawnSync(here.fake.gh, args, { encoding: 'utf8', env: gitEnvironment() });
+    return { status: done.status, stdout: done.stdout, stderr: done.stderr, timedOut: false };
+  };
+
+  const outcome = await onceVerb({ target: here.target, send }).then((answer) => ({ answer }), (thrown) => ({ thrown }));
+
+  assert.deepEqual(here.closers(), [], 'the closer really was removed');
+  assert.equal(here.events().filter(({ event }) => event === 'admission.open').length, 1, 'the opening was recorded');
+  assert.equal(outcome.thrown, undefined, 'once must return its failure report without itself throwing');
+  assert.equal(outcome.answer.code, 1);
+  assert.match(outcome.answer.text, /HTTP 502/);
+});
+
+// proves R-SCHED-23
+test('rigger once, over an admission directory of 101 malformed entries, names every one of them and exits non-zero', async (t) => {
+  // The reviewer's round-9 probe on #1079, through the real `once`.
+  const here = statusConsumer(t, { closers: [], issues: [] });
+  const names = Array.from({ length: 101 }, (_, at) => `bad-${String(at).padStart(3, '0')}.json`);
+  for (const name of names) seedCloser(here.state, name, 'not json');
+  const send = (command, args) => {
+    const done = spawnSync(here.fake.gh, args, { encoding: 'utf8', env: gitEnvironment() });
+    return { status: done.status, stdout: done.stdout, stderr: done.stderr, timedOut: false };
+  };
+
+  const answered = await onceVerb({ target: here.target, send });
+
+  assert.equal(answered.code, 1, answered.text);
+  for (const name of names) assert.ok(answered.text.includes(name), `${name} is not named`);
+});
+
+// The reviewer's round-10 probe on #1079: one Error met on two paths of a failure, through the real once.
+for (const [what, thrown] of [
+  ['the cause and the sole errors entry', 'new AggregateError([leaf], \'facts could not be read\', { cause: leaf })'],
+  ['a sibling and a sibling\'s cause', 'new AggregateError([new Error(\'wrapper\', { cause: leaf }), leaf], \'facts could not be read\')'],
+]) {
+  test(`rigger once, after a recorded closer opening, answers an AggregateError holding one changing Error as ${what} with that Error's first message`, async (t) => {
+    const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [statusIssue(7, 'a1')] });
+    assert.equal(here.gh('api', `repos/${REPO}/issues/7`, '-X', 'PATCH', '-f', 'state=closed').status, 0);
+    writeFileSync(join(here.target, 'rigger.config.mjs'), [
+      `const config = ${JSON.stringify(consumerConfig(3))};`,
+      'const board = config.board;',
+      "Object.defineProperty(config, 'board', { get() {",
+      "  if (new Error().stack.includes('/src/workflow/facts.mjs')) {",
+      '    let reads = 0;',
+      "    const leaf = Object.defineProperty(new Error('initial'), 'message', { configurable: true, get() { return ++reads === 1 ? 'HTTP 502' : 'original failure lost on reread'; } });",
+      `    throw ${thrown};`,
+      '  }',
+      '  return board;',
+      '} });',
+      'export default config;',
+    ].join('\n'));
+    const send = (command, args) => {
+      const done = spawnSync(here.fake.gh, args, { encoding: 'utf8', env: gitEnvironment() });
+      return { status: done.status, stdout: done.stdout, stderr: done.stderr, timedOut: false };
+    };
+
+    const outcome = await onceVerb({ target: here.target, send }).then((answer) => ({ answer }), (thrown) => ({ thrown }));
+
+    assert.deepEqual(here.closers(), [], 'the closer really was removed');
+    assert.equal(here.events().filter(({ event }) => event === 'admission.open').length, 1, 'the opening was recorded');
+    assert.equal(outcome.thrown, undefined, 'once must return its failure report without itself throwing');
+    assert.equal(outcome.answer.code, 1);
+    assert.match(outcome.answer.text, /HTTP 502/);
+    assert.doesNotMatch(outcome.answer.text, /lost on reread/);
+  });
+}
+
+// proves R-SCHED-23
+test('rigger run over a status issue whose close lies past the first page of its timeline, after 100 comments, removes the closer, and the fake serves every entry', async (t) => {
+  // The architect's round-10 probe on #1079: the fake forge serves every page it says it has.
+  const issue = { ...statusIssue(7, 'a1'), comments: Array.from({ length: 100 }, (_, at) => ({ body: `Earlier notice ${at}`, createdAt: '2026-10-01T00:00:00Z' })) };
+  const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [issue] });
+  assert.equal(here.gh('api', `repos/${REPO}/issues/7`, '-X', 'PATCH', '-f', 'state=closed').status, 0);
+  const timeline = await here.reads.readIssueTimeline(7);
+  assert.equal(timeline.filter(({ kind }) => kind === 'comment').length, 100);
+  assert.equal(timeline.at(-1).kind, 'closed');
+
+  const ran = here.verb('run');
+
+  assert.equal(ran.code, 0, ran.said);
+  assert.deepEqual(here.closers(), [], ran.said);
+});
+
+// The judges' round-11 probes on #1079: a value reached by two conversions, through the real verbs.
+for (const [verb, what, thrown] of [
+  ['once', 'the aggregate\'s message and its errors entry', "Object.defineProperty(new AggregateError([leaf], 'outer'), 'message', { value: leaf })"],
+  ['run', 'the aggregate\'s message and its errors entry', "Object.defineProperty(new AggregateError([leaf], 'outer'), 'message', { value: leaf })"],
+  ['once', 'the length of two lists', "(() => { const list = () => new Proxy([], { get(target, key) { return key === 'length' ? leaf : Reflect.get(target, key); } }); const failure = new AggregateError([], 'facts failed'); failure.unreadable = list(); failure.errors = list(); return failure; })()"],
+]) {
+  test(`rigger ${verb}, after a recorded closer opening, keeps the first line of one changing Error reached as ${what}`, async (t) => {
+    const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [statusIssue(7, 'a1')] });
+    assert.equal(here.gh('api', `repos/${REPO}/issues/7`, '-X', 'PATCH', '-f', 'state=closed').status, 0);
+    writeFileSync(join(here.target, 'rigger.config.mjs'), [
+      `const config = ${JSON.stringify(consumerConfig(3))};`,
+      'const board = config.board;',
+      'let thrown;',
+      "Object.defineProperty(config, 'board', { get() {",
+      "  if (new Error().stack.includes('/src/workflow/facts.mjs')) {",
+      '    let reads = 0;',
+      "    const leaf = Object.defineProperty(new Error('initial'), 'message', { get() { return ++reads === 1 ? 'HTTP 502 first reason' : 'original failure lost on reread'; } });",
+      `    throw ${thrown};`,
+      '  }',
+      '  return board;',
+      '} });',
+      'export default config;',
+    ].join('\n'));
+
+    const said = verb === 'once'
+      ? await onceVerb({ target: here.target, send: (command, args) => {
+        const done = spawnSync(here.fake.gh, args, { encoding: 'utf8', env: gitEnvironment() });
+        return { status: done.status, stdout: done.stdout, stderr: done.stderr, timedOut: false };
+      } }).then(({ code, text }) => ({ code, said: text }))
+      : here.verb('run');
+
+    assert.deepEqual(here.closers(), [], 'the closer really was removed');
+    assert.equal(here.events().filter(({ event }) => event === 'admission.open').length, 1, 'the opening was recorded');
+    assert.notEqual(said.code, 0);
+    assert.match(said.said, /HTTP 502 first reason/);
+    assert.doesNotMatch(said.said, /lost on reread/);
+  });
+}
+
+// proves R-SCHED-23
+test('rigger once and rigger run print a state read refused with terminal controls in what gh said with each control written as its escape', (t) => {
+  // Round 12 on #1079 (U109 rule 4): the verb that prints outside text makes it printable.
+  for (const name of ['once', 'run']) {
+    const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [statusIssue(7, 'a1')], refuseState: 'gh: HTTP 502\\033[31m forged terminal text\\302\\2332J' });
+
+    const ran = here.verb(name);
+
+    assert.equal(ran.code, 1, `${name}: ${ran.said}`);
+    assert.match(ran.err, new RegExp(`^rigger ${name}: the notice for hold a1 failed to read issue #7's state: .*HTTP 502`, 'm'), `${name}: ${ran.said}`);
+    assert.doesNotMatch(ran.err.replaceAll('\n', ''), /[\u0000-\u001f\u007f-\u009f]/, `${name}: ${ran.said}`);
+    assert.ok(ran.err.includes('\\u001b[31m forged terminal text\\u009b2J'), `${name}: ${ran.said}`);
+  }
 });

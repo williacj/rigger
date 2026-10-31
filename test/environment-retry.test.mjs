@@ -191,7 +191,7 @@ test('L3 hands a maker outcome to L2 after settle without reading its contents',
   const [reached] = await loop({ ...built.handed, decide }).pull(1);
 
   assert.equal(handed.length, 1);
-  assert.equal(handed[0], reached.outcome);
+  assert.deepEqual(handed[0], reached.outcome);
   assert.equal(reached.outcome.status, 'fulfilled');
 });
 
@@ -309,7 +309,7 @@ test('a rejected maker settle does not record an attempt retry that L3 will not 
   assert.equal(reached.outcome.status, 'rejected');
   assert.equal(reached.outcome.reason.code, NOT_STARTED);
   assert.equal(reached.settled.status, 'rejected');
-  assert.equal(reached.settled.reason, refusal);
+  assert.deepEqual([reached.settled.reason.message, reached.settled.reason.code, reached.settled.reason.unreadable], [refusal.message, refusal.code, refusal.unreadable]);
   assert.equal(built.made.length, 2);
   assert.deepEqual(recorded(built, 'L2', 'attempt.failed').map(({ attempt }) => attempt), [1]);
   assert.deepEqual(recorded(built, 'L2', 'attempt.decided').map(({ attempt, decision }) => [attempt, decision]), [[1, 'again']]);
