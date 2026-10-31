@@ -316,3 +316,46 @@ test('the shared stand-in forever branch selects keep-alive without natural exit
   reply.finish();
   assert.deepEqual(seen, [['keep-alive']], 'forever selects its existing keep-alive branch rather than natural exit');
 });
+
+
+test('the shared stand-in forever resource remains pending until its registered cleanup', () => {
+  for (const order of [[0, 1], [1, 0]]) {
+    const models = ['first', 'second'].map((label) => {
+      let ownership = 'absent';
+      let registrations = 0;
+      let releases = 0;
+      let cleanup;
+      const exits = [];
+      const output = [];
+      const dispose = () => { ownership = 'released'; releases += 1; };
+      const reply = standInReply({ forever: true, exit: 7 }, {
+        output: (value) => output.push(value),
+        exit: (code) => exits.push(code),
+        keepAlive: () => { ownership = 'owned'; return dispose; },
+        registerCleanup: (value) => { registrations += 1; cleanup = value; },
+      });
+      return {
+        label, start: () => reply.finish(), cleanup: () => cleanup(),
+        snapshot: () => ({ ownership, registrations, releases, exits: [...exits], output: [...output] }),
+        registered: () => cleanup, dispose,
+      };
+    });
+    const pending = { ownership: 'owned', registrations: 1, releases: 0, exits: [], output: [] };
+    const cleaned = { ownership: 'released', registrations: 1, releases: 1, exits: [], output: [] };
+    models[0].start();
+    assert.equal(models[0].snapshot().ownership, 'owned', 'the resource was acquired before checking cleanup registration');
+    assert.equal(models[0].snapshot().registrations, 1, 'the acquired forever resource registers its cleanup exactly once');
+    assert.strictEqual(models[0].registered(), models[0].dispose, 'the registration carries this instance disposal capability');
+    assert.deepEqual(models[0].snapshot(), pending, 'returning from finish is not natural logical exit');
+    models[1].start();
+    assert.deepEqual(models[0].snapshot(), pending, 'starting another instance does not end the first resource');
+    assert.deepEqual(models[1].snapshot(), pending, 'the second resource is independently pending');
+    assert.strictEqual(models[1].registered(), models[1].dispose);
+    models[order[0]].cleanup();
+    assert.deepEqual(models[order[0]].snapshot(), cleaned, 'registered cleanup releases its own resource without natural exit');
+    assert.deepEqual(models[order[1]].snapshot(), pending, 'cleanup does not release the other instance resource');
+    models[order[1]].cleanup();
+    assert.deepEqual(models[order[1]].snapshot(), cleaned, 'the remaining registered cleanup releases its resource');
+    assert.deepEqual(models[order[0]].snapshot(), cleaned, 'the earlier cleanup stays released without another release or exit');
+  }
+});

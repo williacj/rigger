@@ -439,10 +439,15 @@ export function standInRecord({ executable, args, input, cwd, env, pid }) {
 export const standInAct = (plan, { card, role }) => plan[card]?.[role] ?? {};
 
 /** Existing print/exit decisions, invoked at their original positions through explicit ports. */
-export function standInReply(act, { output, exit, keepAlive }) {
+export function standInReply(act, { output, exit, keepAlive, registerCleanup }) {
   return {
     print: () => { if (act.print !== undefined) output(act.print); },
-    finish: () => act.forever ? keepAlive() : exit(act.exit ?? 0),
+    finish: () => {
+      if (!act.forever) return exit(act.exit ?? 0);
+      const resource = keepAlive();
+      if (registerCleanup !== undefined) registerCleanup(resource);
+      return resource;
+    },
   };
 }
 
