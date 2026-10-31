@@ -44,3 +44,16 @@ The first portable candidate passed the deterministic and static checks before a
 correction made the maker-report context distinction explicit. Its receipts remain prior-candidate
 evidence. The normal commit hook and a fresh final-head run verify the corrected bytes.
 No runtime, test body, requirement, architecture, decision or CI workflow changed.
+
+
+## Continuation of 2026-10-31
+
+Inspected baseline: `fe4782a370e96ebc3bfbadb8b1bd468cb79bd5b1`. Ordinary integration commit: `b99443445a4feea6f7380357e8e6a462dd259ef7`. This continuation preserves the historical entry above and the existing eight instruction and journal paths. The adopted twenty-two-item acceptance and G1-G4 remain the boundary.
+
+The current-main instruction text outside the admitted receipt paragraphs is preserved. Live and template acceptance, TDD and code-review skills remain byte-identical. The measured candidate live instruction pool is 15,300 words using the instruction-budget whitespace definition on the actual candidate bytes; this measurement gives no credit to unmerged work.
+
+Verification uses `npm ci --offline`, `npm test`, `npm run matrix:check`, `npm run budget:instructions`, `npm run check:references`, `npm run check:headers`, `npm run check:words`, `npm run preflight -- --body-file <retained adopted body>`, `git diff --check`, and `npm run test:host -- test/init.test.mjs test/package.test.mjs`. The standalone pre-integration-commit deterministic command exited zero. Final-head outcomes belong to retained receipts at their actual source, not this entry.
+
+Actual artifact inspection uses default `npm pack --json --pack-destination <private retained artifact directory>`, including the package prepack procedure. The proof checks the recorded package commit, changed template bytes, complete mandatory procedure and sibling-reference closure within the packed provider-skill tree without repository-only documents. The tarball and complete command/ref/status originals remain in private custody through final independent ruling and are reopened after producing commands and disposable inspection teardown.
+
+Historical receipt-loss causes and Mac failures remain unresolved historical context; this continuation supplies no repair or retroactive pass credit. Local unsupported-host limits remain explicit until current supported-host CI supplies proof. No runtime, test body, requirement, architecture, decision or CI workflow changes.
