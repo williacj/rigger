@@ -4,6 +4,7 @@
 
 import { test } from 'node:test';
 import { ciFacts, ciProof, ciFullFixture, ciCollectorFixture, parseWorkflow } from './ci-policy-fixtures.mjs';
+import { ciNodeVersionPrefix } from './ci-policy-fixtures.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -44,7 +45,7 @@ function ciPolicy(operation, facts, extra = {}) {
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
   const source = ci.env.CI_POLICY;
   assert.equal(typeof source, 'string', 'the protected workflow has no inline CI_POLICY');
-  const runner = `const input = JSON.parse(process.env.CI_CONTROL);
+  const runner = ciNodeVersionPrefix() + `const input = JSON.parse(process.env.CI_CONTROL);
     const policy = await import('data:text/javascript;base64,' + Buffer.from(process.env.CI_SOURCE).toString('base64'));
     if (input.operation === 'requestJson') {
       const calls = [];
@@ -540,7 +541,7 @@ test('actual inline CLI plans and verifies real Git source through a local read-
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
   const { NODE_TEST_CONTEXT, ...env } = gitEnvironment();
   const execute = (action, extra = {}) => new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['--input-type=module', '-e', ci.env.CI_POLICY], {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', ciNodeVersionPrefix() + ci.env.CI_POLICY], {
       cwd: directory, signal: t.signal,
       env: { ...env, GH_TOKEN: 'fixture-token', GITHUB_API_URL: 'http://127.0.0.1:' + server.address().port, GITHUB_EVENT_PATH: eventPath, GITHUB_EVENT_NAME: 'pull_request', GITHUB_REF: 'refs/pull/7/merge', GITHUB_SHA: sha, GITHUB_REPOSITORY: 'williacj/rigger', GITHUB_REPOSITORY_OWNER: 'williacj', GITHUB_OUTPUT: outputPath, CI_POLICY_ACTION: action, ...extra },
       stdio: ['ignore', 'pipe', 'pipe'],
