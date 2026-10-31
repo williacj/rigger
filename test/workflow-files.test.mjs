@@ -405,6 +405,12 @@ test('actual inline runtime routes plan worker and aggregate through the same so
   assert.equal(ciPolicy('runPolicy', { action: 'unknown', facts, proof }).ok, false);
 });
 
+/** Builds an inline CI fixture environment without enclosing Actions run identity. */
+function ciFixtureEnvironment() {
+  const { NODE_TEST_CONTEXT, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, ...env } = gitEnvironment();
+  return env;
+}
+
 test('actual CI aggregate JSON exposes recorded base and current main without changing its source', (t) => {
   const directory = temporaryDirectory('ci-runtime-', { context: t }), bin = join(directory, 'bin'); mkdirSync(bin);
   const eventPath = join(directory, 'event.json'), gitRecord = join(directory, 'git-calls'), apiRecord = join(directory, 'api-calls');
@@ -439,7 +445,7 @@ test('actual CI aggregate JSON exposes recorded base and current main without ch
     };`;
     const result = spawnSync(process.execPath, ['--input-type=module', '-e', prefix + ci.env.CI_POLICY], {
       encoding: 'utf8', cwd: directory,
-      env: { ...process.env, PATH: bin + delimiter + process.env.PATH, GH_TOKEN: 'fixture-token', GITHUB_API_URL: 'https://api.github.test',
+      env: { ...ciFixtureEnvironment(), PATH: bin + delimiter + process.env.PATH, GH_TOKEN: 'fixture-token', GITHUB_API_URL: 'https://api.github.test',
         GITHUB_EVENT_PATH: eventPath, GITHUB_EVENT_NAME: 'pull_request', GITHUB_REF: 'refs/pull/7/merge', GITHUB_SHA: facts.eventSha,
         GITHUB_REPOSITORY: 'williacj/rigger', GITHUB_REPOSITORY_OWNER: 'williacj', CI_POLICY_ACTION: 'aggregate',
         CI_EXPECTED_SOURCE: JSON.stringify(proof.source), CI_EXPECTED_MODE: proof.mode, CI_EXPECTED_DEMO: 'false',
@@ -569,7 +575,7 @@ async function executableCiFixture(t, { changePath = 'docs/journal/a.md', authen
   const eventPath = join(directory, 'event.json'), outputPath = join(directory, 'outputs');
   writeFileSync(eventPath, JSON.stringify(fixture.event)); writeFileSync(outputPath, '');
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
-  const { NODE_TEST_CONTEXT, GITHUB_RUN_ID, GITHUB_RUN_ATTEMPT, ...env } = gitEnvironment();
+  const env = ciFixtureEnvironment();
   // The documented artifact routes retain their exact URLs/options while the fixture serves their bytes locally.
   const transport = `const nativeFetch = globalThis.fetch;
     globalThis.fetch = (url, options) => {
