@@ -1067,8 +1067,10 @@ for (const [what, value] of Object.entries(HOSTILE())) {
     const outcome = await moduleOver(state, { sink }).resume().then((answer) => ({ answer }), (error) => ({ error }));
 
     assert.deepEqual(namesIn(state), []);
-    assert.match(safeMessages(outcome.error).join(' | '), /hold-a1-issue-12\.json/, what);
-    assert.ok(readable(outcome.error), `${what}: the failure cannot be read`);
+    assert.equal(outcome.error, undefined, what);
+    assert.deepEqual(outcome.answer?.unrecorded.map(({ name }) => name), ['hold-a1-issue-12.json'], what);
+    assert.ok(outcome.answer.unrecorded.every(({ name, why }) => typeof name === 'string' && typeof why === 'string'
+      && /hold-a1-issue-12\.json.*sink refused its admission\.open event/.test(why)), `${what}: the refused record's string fields must name the closer and event`);
   });
 }
 

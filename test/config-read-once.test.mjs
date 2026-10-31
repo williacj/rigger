@@ -16,6 +16,40 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 /** The file the entry point reads in each target. */
 const CONFIG = 'rigger.config.mjs';
 
+/** The array's placement and the independently written path to it. */
+const ARRAY_NESTING = [
+  { name: 'whole list', expression: 'list', path: 'default', wrap: (list) => list, read: (value) => value },
+  { name: 'object field', expression: '{ list }', path: 'default.list', wrap: (list) => ({ list }), read: (value) => value.list },
+  { name: 'list element', expression: '[list]', path: 'default[0]', wrap: (list) => [list], read: (value) => value[0] },
+];
+
+/** Creatable cells: an absent index has no enumerability or descriptor kind. */
+const ARRAY_ENTRIES = ARRAY_NESTING.flatMap((nesting) => [
+  ...[0, 1, 2].flatMap((index) => [
+    { nesting, key: String(index), part: `[${index}]`, index: true, kind: 'hole', copied: false },
+    ...[false, true].flatMap((enumerable) => [
+      ...['primitive', 'nested'].map((value) => ({ nesting, key: String(index), part: `[${index}]`, index: true, kind: 'data', value, enumerable, copied: true })),
+      { nesting, key: String(index), part: `[${index}]`, index: true, kind: 'accessor', enumerable, copied: false },
+    ]),
+  ]),
+  ...[{ key: 'extra', part: '.extra' }, { key: '01', part: '."01"' }, { key: '4294967295', part: '."4294967295"' }].flatMap(({ key, part }) =>
+    ['data', 'accessor'].flatMap((kind) => [false, true].map((enumerable) => ({ nesting, key, part, index: false, kind, value: 'nested', enumerable, copied: !enumerable })))),
+]);
+ARRAY_ENTRIES.push({ nesting: ARRAY_NESTING[1], key: '0', part: '[0]', index: true, kind: 'data', value: 'nested', enumerable: false, copied: true, frozen: true });
+
+/** A stable cell label, used by both boundary assertions and the copied-row stability loops. */
+const arrayEntryName = (cell) => `${cell.kind} ${cell.index ? 'index' : 'field'} ${cell.key}, ${cell.kind === 'hole' ? 'absent' : cell.enumerable ? 'enumerable' : 'non-enumerable'}, ${cell.value ?? 'no value'}, ${cell.nesting.name}${cell.frozen ? ', frozen list' : ''}`;
+
+/** The fixture's data value, written independently from the production copy. */
+const arrayEntryValue = (cell) => cell.value === 'nested' ? { leaf: [1] } : 1;
+
+/** A module with exactly the selected array property, and a counter no getter may increment. */
+function arrayEntrySource(cell, counter = JSON.stringify('rigger-config-array-reads')) {
+  const property = cell.kind === 'hole' ? `delete list[${JSON.stringify(cell.key)}];` :
+    `Object.defineProperty(list, ${JSON.stringify(cell.key)}, { enumerable: ${cell.enumerable}, configurable: true, ${cell.kind === 'data' ? `writable: true, value: ${JSON.stringify(arrayEntryValue(cell))}` : `get() { globalThis[${counter}] += 1; throw new Error('array getter ran'); }`} });`;
+  return `globalThis[${counter}] = 0;\nconst list = [1, 2, 3];\n${property}\n${cell.frozen ? 'Object.freeze(list);\n' : ''}export default ${cell.nesting.expression};\n`;
+}
+
 /**
  * The copied rows of the card's "The entry point's cells", each a module whose default export is
  * the row's value. E1 is this repository's own config, plain data the extension points offer.
@@ -39,6 +73,8 @@ const COPIED = {
     "Object.defineProperty(list, 'hidden', { get() { globalThis['rigger-config-read-hidden'] += 1; return 4; }, enumerable: false });",
     'export default { object, list };',
   ].join('\n'),
+  ...Object.fromEntries(ARRAY_ENTRIES.filter((cell) => cell.index && cell.kind === 'data' && !cell.enumerable)
+    .map((cell) => [`E17 ${arrayEntryName(cell)}`, arrayEntrySource(cell)])),
   // 101 objects and lists, alternating, the outermost the default export and the innermost 100
   // levels below it, holding a string one level further down.
   E24: "let value = 'deepest';\nfor (let level = 100; level >= 0; level -= 1) value = level % 2 ? [value] : { a: value };\nexport default value;\n",
@@ -89,7 +125,8 @@ function assertCopied(answer, value, said) {
   const walk = (copy, original, at) => {
     if (typeof original !== 'object' || original === null) return;
     assert.notEqual(copy, original, `${said}: ${at} is the export's own object`);
-    for (const key of Object.keys(original)) walk(copy[key], original[key], `${at}.${key}`);
+    const keys = Array.isArray(original) ? Array.from({ length: original.length }, (_, index) => String(index)) : Object.keys(original);
+    for (const key of keys) walk(copy[key], original[key], `${at}.${key}`);
   };
   walk(answer.config, value, 'default');
   FURTHER[said]?.(answer.config, said);
@@ -157,11 +194,11 @@ test('R3: the test changing the module\'s live export through its own reference,
     const link = join(temporaryDirectory('rigger-config-link-', { context: t }), 'linked');
     symlinkSync(directory, link);
     const value = await exported(join(directory, CONFIG));
-    const before = structuredClone(value);
+    const before = Object.entries(value);
     const first = await consumerConfig(directory);
     assertCopied(first, value, row);
     spoil(value);
-    assert.notDeepStrictEqual(await exported(join(link, CONFIG)), before, `${row}: the export read through the link is unchanged, so this proves nothing`);
+    assert.notDeepStrictEqual(Object.entries(await exported(join(link, CONFIG))), before, `${row}: the export read through the link is unchanged, so this proves nothing`);
     assert.deepStrictEqual(await consumerConfig(link), first, row);
   }
 });
@@ -183,6 +220,51 @@ async function assertRefused(t, cases) {
     assert.ok(answer.problem.includes(`\`${path}\``), `${said}: names no \`${path}\``);
   }
 }
+
+// proves R-SCHED-10
+test('array entries: own index occupancy is independent of enumerability, with data, accessors, extra fields and nesting', async (t) => {
+  for (const cell of ARRAY_ENTRIES) {
+    const key = counter(t);
+    const source = arrayEntrySource(cell, JSON.stringify(key));
+    const directory = target(t, source);
+    const value = await exported(join(directory, CONFIG));
+    const list = cell.nesting.read(value);
+    const descriptor = Object.getOwnPropertyDescriptor(list, cell.key);
+    const said = arrayEntryName(cell);
+    assert.equal(list.length, 3, `${said}: the fixture's length`);
+    if (cell.frozen) assert.ok(Object.isFrozen(list), `${said}: frozen fixture premise`);
+    assert.equal(Object.hasOwn(list, cell.key), cell.kind !== 'hole', `${said}: own occupancy premise`);
+    if (cell.kind === 'hole') assert.equal(descriptor, undefined, said);
+    else {
+      assert.equal(descriptor.enumerable, cell.enumerable, `${said}: enumerability premise`);
+      assert.equal(Object.hasOwn(descriptor, 'value'), cell.kind === 'data', `${said}: descriptor kind premise`);
+      assert.equal(Object.keys(list).includes(cell.key), cell.enumerable, `${said}: enumerable-key premise`);
+      if (cell.kind === 'data') assert.deepStrictEqual(descriptor.value, arrayEntryValue(cell), said);
+    }
+    const answer = await consumerConfig(directory);
+    if (cell.copied) {
+      const expected = [1, 2, 3];
+      if (cell.index) expected[Number(cell.key)] = arrayEntryValue(cell);
+      assert.deepEqual(Object.keys(answer), ['config'], `${said}: copied, not refused`);
+      assert.deepStrictEqual(answer.config, cell.nesting.wrap(expected), said);
+      assertCopied(answer, value, said);
+      const copiedList = cell.nesting.read(answer.config);
+      assert.deepEqual(Object.getOwnPropertyNames(copiedList), ['0', '1', '2', 'length'], said);
+      for (const index of ['0', '1', '2']) {
+        const copiedDescriptor = Object.getOwnPropertyDescriptor(copiedList, index);
+        assert.equal(copiedDescriptor.enumerable, true, `${said}: copied index ${index} is enumerable`);
+        assert.ok(Object.hasOwn(copiedDescriptor, 'value'), `${said}: copied index ${index} holds data`);
+      }
+    } else {
+      assert.deepEqual(Object.keys(answer), ['problem'], `${said}: refused, not copied`);
+      assert.equal(typeof answer.problem, 'string', said);
+      assert.doesNotMatch(answer.problem, UNPRINTABLE, said);
+      assert.ok(answer.problem.includes(`\`${cell.nesting.path}${cell.part}\``), `${said}: ${answer.problem}`);
+    }
+    assert.equal(globalThis[key], 0, `${said}: no getter ran`);
+    assert.deepStrictEqual(Object.getOwnPropertyDescriptor(list, cell.key), descriptor, `${said}: the source descriptor stays unchanged`);
+  }
+});
 
 /** A key on `globalThis` a config's source can name, removed when `t` ends. */
 const named = (t) => JSON.stringify(counter(t));

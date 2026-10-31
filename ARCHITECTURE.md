@@ -1178,6 +1178,12 @@ never keeps admission closed (`R-SCHED-23`). What step 3 then closes depends on 
 In each case `resume` exits non-zero, naming the closers it removed, each issue it left open, and
 why. A `resume` run again changes nothing, so it closes none of them.
 
+A refused event never stops `resume`. Where the sink refuses an event `resume` records, of a
+closer's removal, a label's removal or a close, `resume` still makes every other removal step 2
+names, and then step 3. It then exits non-zero, naming each event the sink refused, the closers it
+removed and each issue it left open. None of `resume`'s writes is a start, so the halt does not
+bind them.
+
 `resume` reaches L2's notice function through L2's own entry point, built from the config, as
 `once` reaches L2. The CLI never reaches a write side itself. An issue whose label `resume` removed
 is no longer the status issue (`R-SCHED-27`), so `resume`'s own close never clears a hold. A hold
@@ -1247,6 +1253,7 @@ whose notices it followed. The closers and the issue can disagree:
 | no closer, after `resume` | `resume`'s close refused | open | `resume` removes every closer first, then closes the issue, and exits non-zero naming the issue left open |
 | no closer, after `resume` | open, with no `rigger.config.mjs`, or one that does not validate | open | `resume` removes every closer first, closes no issue, and exits non-zero naming the closers it removed and why no issue was closed |
 | no closer, after `resume` | open, and L2's read of the issues carrying the status label refused or timed out | open | `resume` removes every closer first, closes each issue a closer's file name gave, and exits non-zero naming the read and each issue left open |
+| no closer, after `resume` | closed, after the sink refused the event of a closer's removal | open | `resume` removes every closer it read, closes the issue, and exits non-zero naming each event the sink refused |
 | no closer | open | open | absent means open, and the issue is stale; a later hold reuses it and comments naming the new card |
 | no closer | reopened by a person | open | a reopened issue changes nothing while admission is open |
 | any | the status label copied onto another issue by a person | unchanged | that issue is never worked, and `rigger resume` closes it too |

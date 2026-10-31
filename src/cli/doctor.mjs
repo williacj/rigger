@@ -432,8 +432,8 @@ function copied(value) {
 
 /**
  * `value`, found at `path` under the objects `within`, copied as plain data, or a throw of the line
- * naming what is not. Only own enumerable string keys are read, each where its descriptor holds a
- * value, and a Proxy is refused before any is read, so nothing the config holds runs here.
+ * naming what is not. Own list indices and enumerable object fields are read only where their
+ * descriptors hold values. A Proxy is refused before any read, so no config code runs here.
  */
 function plain(value, path, within) {
   const refuse = (what, at = path) => {
@@ -450,18 +450,23 @@ function plain(value, path, within) {
   if (list ? prototype !== Array.prototype : prototype !== Object.prototype && prototype !== null) refuse('an object neither plain nor a list');
   if (Object.getOwnPropertySymbols(value).length > 0) refuse('a Symbol key');
   const keys = Object.keys(value);
-  const step = (key) => (list && /^(0|[1-9][0-9]*)$/.test(key) ? `[${key}]`
+  const index = (key) => /^(0|[1-9][0-9]*)$/.test(key) && Number(key) < value.length;
+  const step = (key) => (list && index(key) ? `[${key}]`
     : `.${/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? key : printable(JSON.stringify(key))}`);
+  const copy = (key) => {
+    const at = `${path}${step(key)}`;
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (descriptor === undefined) refuse('a hole', at);
+    if (!('value' in descriptor)) refuse('an accessor', at);
+    return plain(descriptor.value, at, [...within, value]);
+  };
   if (list) {
-    const hole = keys.findIndex((key, index) => key !== String(index));
-    if (hole !== -1 && hole < value.length || keys.length < value.length) refuse('a hole', `${path}[${hole === -1 ? keys.length : hole}]`);
-    if (keys.length > value.length) refuse('a property that is not an index', `${path}${step(keys[value.length])}`);
+    for (const key of keys) if (!index(key)) refuse('a property that is not an index', `${path}${step(key)}`);
+    const answer = [];
+    for (let key = 0; key < value.length; key += 1) answer.push(copy(String(key)));
+    return answer;
   }
-  const entries = keys.map((key) => {
-    if (!('value' in Object.getOwnPropertyDescriptor(value, key))) refuse('an accessor', `${path}${step(key)}`);
-    return [key, plain(value[key], `${path}${step(key)}`, [...within, value])];
-  });
-  if (list) return entries.map(([, held]) => held);
+  const entries = keys.map((key) => [key, copy(key)]);
   return prototype === null ? Object.setPrototypeOf(Object.fromEntries(entries), null) : Object.fromEntries(entries);
 }
 

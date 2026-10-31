@@ -339,8 +339,8 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
    * for each name it unlinked, so two names carrying one hold's id are two events. A closer already
    * gone counts as removed, with no event. Where any closer is unreadable, it removes nothing and
    * rejects naming each, carrying as `unreadable` the entries `read` answered, unescaped. Where a
-   * removal fails partway, or a removal's record is refused, it rejects naming the failure and each
-   * closer left, carrying as `removed` every closer it removed, the one whose record was refused among them.
+   * removal fails partway, it rejects naming the failure and each closer left, carrying as `removed`
+   * every closer it removed. A refused removal record is returned as `unrecorded` after the removals.
    */
   async function resume() {
     const answer = read();
@@ -352,12 +352,19 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
     const unlinked = new Set();
     const removed = [];
     const gone = [];
+    const unrecorded = [];
     /** One event for each name in `names`, the kind and id its name carries, after its unlink. */
     const recordEach = (names) => {
       for (const name of names) {
         unlinked.add(name);
         const { kind, id } = parseName(name);
-        record('admission.open', { kind, id, name, by: 'resume' });
+        try {
+          record('admission.open', { kind, id, name, by: 'resume' });
+        } catch (refusal) {
+          const why = printable(refusal).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, (character) =>
+            ({ '\n': '\\n', '\r': '\\r', '\t': '\\t' })[character] ?? `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`);
+          unrecorded.push({ name, why });
+        }
       }
     };
     for (const [index, closer] of closers.entries()) {
@@ -367,28 +374,16 @@ export function admission({ directory, run, now, sink, ids = randomId, fs = node
       } catch (cause) {
         // The closers removed before this one, and this one where any of its names went, stay named.
         const done = names.length > 0 ? [...removed, closer] : [...removed];
-        let refused;
-        try {
-          recordEach(names);
-        } catch (refusal) {
-          refused = refusal;
-        }
-        const why = printable(cause);
-        const said = `resume left ${leftOf(closers.slice(index)).join(', ')}: ${why}${refused === undefined ? '' : `; ${printable(refused)}`}`;
-        throw own(Object.assign(new Error(said, { cause: new Error(why) }), { removed: done }));
-      }
-      try {
         recordEach(names);
-      } catch (refusal) {
-        // The closer was removed and its record refused: it and those before it stay named, and resume stops.
-        const rest = leftOf(closers.slice(index + 1));
-        const why = printable(refusal);
-        throw own(Object.assign(new Error(`${why}${rest.length === 0 ? '' : `; resume left ${rest.join(', ')}`}`, { cause: new Error(why) }), { removed: [...removed, closer] }));
+        const why = printable(cause);
+        const said = `resume left ${leftOf(closers.slice(index)).join(', ')}: ${why}`;
+        throw own(Object.assign(new Error(said, { cause: new Error(why) }), { removed: done, unrecorded }));
       }
+      recordEach(names);
       if (names.length > 0 || unlinked.has(closer.name)) removed.push(closer);
       else gone.push(closer);
     }
-    return { removed, gone };
+    return { removed, gone, unrecorded };
   }
 
   return { read, close, open, resume, rename };
