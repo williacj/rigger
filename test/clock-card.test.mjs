@@ -26,7 +26,8 @@ function assertBody(title, body, { template, name, occurrence, authorLine }) {
 
 /**
  * Stub transport answers the documented create-issue shape; item sides answer their public
- * number-to-item and move contracts. call.end emissions observe the supplied L0 envelopes.
+ * number-to-item and move contracts. Opening call.end follows the supplied result and projects
+ * its status/timedOut envelope as ARCHITECTURE.md, L0's call events, and forge/runners.mjs specify.
  */
 function world({ template = TEMPLATE, name = NAME, occurrence = OCCURRENCE, authorLine = '**Author:** owner',
   opening, adding, moving, refuseTransition = false, settings = config } = {}) {
@@ -36,12 +37,14 @@ function world({ template = TEMPLATE, name = NAME, occurrence = OCCURRENCE, auth
     if (refuseTransition && context.layer === 'L2' && event === 'transition') throw new Error('transition disk full');
     events.push({ ...context, event, ...fields });
   } }) };
-  const recordCall = (emitter, side) => emitter.emit('call.end', { system: 'forge', side, ms: 0, outcome: 'ok' });
+  const recordCall = (emitter, side, result = { status: 0 }) => emitter.emit('call.end', { system: 'forge', side, ms: 0,
+    outcome: result.timedOut ? 'timed-out' : result.status === 0 ? 'ok' : 'failed' });
   const send = async (command, args, { emitter }) => {
     writes.push(['open', command, ...args]);
     assertBody(args[5].slice('title='.length), args[7].slice('body='.length), { template, name, occurrence, authorLine });
-    recordCall(emitter, 'repository-write');
-    return opening ? opening() : ok({ number: 214, labels: template.labels.map((name) => ({ name })) });
+    const result = opening ? await opening() : ok({ number: 214, labels: template.labels.map((name) => ({ name })) });
+    recordCall(emitter, 'repository-write', result);
+    return result;
   };
   const items = {
     addIssue: async (number, emitter) => {
@@ -108,18 +111,29 @@ test('a declared author with CR and LF stays on one line without changing accept
 
 // O3: a transport-only error loses the firing's identity; a refused opening must stop board writes.
 test('a refused opening names its trigger, occurrence and forge reason and makes no board write', async () => {
-  for (const [opening, reason] of [
-    [() => ({ status: 1, stdout: '', stderr: 'gh: forbidden 403' }), 'forbidden 403'],
-    [() => ({ status: 0, stdout: '', timedOut: true, timeout: 42 }), 'timeout of 42 ms'],
+  for (const [opening, reason, outcome] of [
+    [() => ({ status: 1, stdout: '', stderr: 'gh: forbidden 403' }), 'forbidden 403', 'failed'],
+    [() => ({ status: 0, stdout: '', timedOut: true, timeout: 42 }), 'timeout of 42 ms', 'timed-out'],
     [() => { throw new Error('spawn gh ENOENT'); }, 'spawn gh ENOENT'],
   ]) {
-    const run = world({ opening });
+    let endsAtEvaluation;
+    const openingEnds = () => run.events.filter(({ layer, event, system, side }) =>
+      layer === 'L0' && event === 'call.end' && system === 'forge' && side === 'repository-write');
+    const run = world({ opening: () => {
+      const result = opening();
+      endsAtEvaluation = openingEnds().length;
+      return result;
+    } });
     await assert.rejects(run.open(), (error) => {
       for (const expected of [NAME, new Date(OCCURRENCE).toISOString(), reason]) assert.ok(error.message.includes(expected), error.message);
       return true;
     });
     assert.equal(run.writes.length, 1);
     assert.deepEqual(transitions(run), []);
+    if (outcome) {
+      assert.deepEqual(openingEnds().map(({ outcome }) => outcome), [outcome], 'EVENT-OUTCOME: returned opening result');
+      assert.equal(endsAtEvaluation, 0, 'call.end follows evaluation of the supplied opening result');
+    }
   }
 });
 
