@@ -154,7 +154,15 @@ export function parseWorkflow(text) {
   return parsed;
 }
 
-const source = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8')).env.CI_POLICY;
+const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
+export const ciNodeMajor = ci.jobs.plan.steps.find((step) => step.uses === 'actions/setup-node@v5').with['node-version'];
+
+/** States CI's installed Node major before a child's unaltered inline policy text. */
+export function ciNodeVersionPrefix(major = ciNodeMajor) {
+  return `Object.defineProperty(process.versions, 'node', { value: ${JSON.stringify(`${major}.0.0`)} });\n`;
+}
+
+const source = ci.env.CI_POLICY;
 assert.equal(typeof source, 'string', 'the protected workflow has no inline CI_POLICY');
 const hadAction = Object.hasOwn(process.env, 'CI_POLICY_ACTION');
 const savedAction = process.env.CI_POLICY_ACTION;
@@ -168,16 +176,22 @@ try {
 }
 
 /** Calls actual inline exports; collector collaborators accept only literal recorded answers. */
-export async function evaluateCiPolicy(operation, facts, extra = {}) {
-  if (operation === 'collect') {
-    const calls = [];
-    const answer = await policy.collect({
-      event: facts.event, context: facts.context,
-      run: (args) => { const key = JSON.stringify(args); calls.push(args); if (!Object.hasOwn(facts.git, key)) throw new Error('unexpected Git command ' + key); return Buffer.from(facts.git[key], 'base64'); },
-      request: async (path) => { if (!Object.hasOwn(facts.api, path)) throw new Error('unavailable API page'); return facts.api[path]; },
-    });
-    return { answer, calls };
+export async function evaluateCiPolicy(operation, facts, extra = {}, major = ciNodeMajor) {
+  const original = Object.getOwnPropertyDescriptor(process.versions, 'node');
+  try {
+    Object.defineProperty(process.versions, 'node', { value: `${major}.0.0` });
+    if (operation === 'collect') {
+      const calls = [];
+      const answer = await policy.collect({
+        event: facts.event, context: facts.context,
+        run: (args) => { const key = JSON.stringify(args); calls.push(args); if (!Object.hasOwn(facts.git, key)) throw new Error('unexpected Git command ' + key); return Buffer.from(facts.git[key], 'base64'); },
+        request: async (path) => { if (!Object.hasOwn(facts.api, path)) throw new Error('unavailable API page'); return facts.api[path]; },
+      });
+      return { answer, calls };
+    }
+    if (['policy', 'guard', 'runPolicy'].includes(operation)) return await policy[operation](facts, extra);
+    throw new Error('unsupported in-process CI operation ' + operation);
+  } finally {
+    Object.defineProperty(process.versions, 'node', original);
   }
-  if (['policy', 'guard', 'runPolicy'].includes(operation)) return policy[operation](facts, extra);
-  throw new Error('unsupported in-process CI operation ' + operation);
 }
