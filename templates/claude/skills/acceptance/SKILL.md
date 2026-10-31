@@ -120,9 +120,9 @@ and on what evidence, and what would reverse the recommendation.
 
 ## Scope, and what a change costs
 
-**Bound the card.** Everything you are asking for goes in the acceptance. Work found outside it
-becomes its own card rather than joining this one (`R-CARD-11`), and a follow-up may only cover
-work outside it — an item left undone means the card is not done (`R-CARD-10`).
+**Bound the card.** Put all requested work in acceptance. Found work outside it gets its own
+card (`R-CARD-11`); follow-ups cover only outside work. An undone item leaves this card unfinished
+(`R-CARD-10`).
 
 **Split work into cards.** Map every part of the larger work to a card's acceptance item, not
 merely its title or description.
@@ -130,10 +130,8 @@ merely its title or description.
 **Name dependencies.** In the dependent card, name the prerequisite card and its required result.
 Its acceptance covers its own work.
 
-**Exhausting one axis is not covering the card.** An item can hold along every value of the axis
-it names and still miss a defect on an axis it never named. Every command exits zero; every one
-of them writes to the wrong path. Where the card varies on more than one axis, name each of
-them, an item apiece (`R-CARD-2`).
+**Cover every axis.** Satisfying one axis leaves others unchecked: commands can exit zero yet
+write to the wrong path. Give each axis the card varies on its own item (`R-CARD-2`).
 
 **Changing it after admission is expensive, and it stays yours.** Only its author changes an
 acceptance after admission, never the maker it is judged against (`R-CARD-5`), and every change
@@ -220,9 +218,10 @@ unbounded absolutes. Choose that agent from the card's body:
   Paths under `test/`, `docs/journal/` and `docs/derived/` do not count toward this condition.
 - Otherwise the second agent is the `reviewer`.
 
-That agent checks that "Lands in" names every file an item requires or a cited placement ruling
-names. It also checks that every cited proposal, ruling or grant is posted as a comment, issue
-or pull request and linked from the card.
+Use a `- **Lands in:**` bullet with backticked paths; indent continuation lines.
+That agent checks that scope names every file an item or cited placement ruling requires.
+It also checks that every cited proposal, ruling or grant is posted as a comment, issue
+or pull request and linked from the card. Preflight checks readable scope, not coverage adequacy.
 
 Pinned binding-document text, and nothing else, opens its fence with `markdown`; an example takes
 another info string or none. That agent checks these defects:
@@ -233,7 +232,7 @@ another info string or none. That agent checks these defects:
 4. A request no item covers.
 5. Contradicting sibling cards.
 
-`check:card` checks defect 1, and spec-style rules 1 and 2.
+`check:card` checks defect 1 and spec-style rules 1 and 2, not scope.
 
 You revise the acceptance before any maker starts. This review is part of filing.
 
@@ -260,9 +259,11 @@ You revise the acceptance before any maker starts. This review is part of filing
 18. Does every absolute stay within that map and its stated scope edge?
 19. Did the second agent chosen under "Have it attacked before dispatch" review for missing cells
     and unbounded absolutes, and did you revise before dispatch?
-20. Does "Lands in" name every file an item or cited placement ruling requires to change?
+20. Does the scope bullet cover every file an item or cited placement ruling requires?
 21. Is every cited proposal, ruling and grant posted and linked from the card?
 22. Did you name bounded grant classes for predictable existing test-line changes?
-23. Did `npm run check:card` read the card body?
+23. Before maker edits, did `npm run check:card` read the draft body, and did
+    `npm run preflight -- --body-file <body-file>` run in a clean repository with origin/main
+    and a merge base available? Resolve or report failures before maker admission.
 24. Before admitting claimless diagnostics, did you record behaviour, requirement applicability
     and bounded guarded discrimination?
