@@ -65,6 +65,38 @@ itself is the contract. A readiness failure is not a failure of behaviour never 
 answer and the code's, rather than pinning today's answer. `test/package-budget.test.mjs` is a
 worked example: a fixed answer documents today; asking the tool catches a changed authority.
 
+## A test a change adds
+
+A test a change adds is a top-level test whose file and title the merge base of the head with
+`main` does not hold. Before handoff, check each one against these classes, and record in the
+pull request body the defect each one catches. A test in any class is unhealthy.
+
+1. **Implementation.** An assertion's result can change under a change that keeps every
+   behaviour the card, a requirement or the test's title names. That change may be to the code,
+   to its layout or line positions, or to state the head does not fix, such as another ref.
+2. **Redundancy.** The pull request records no defect for it, or each defect it records is
+   also caught by another test the change adds, or by another test in its file. A test the
+   change adds may be removed before merge.
+3. **A fake not shared.** It adds a double for a boundary that a module under `test/`, usable
+   from the test's tier at the head, already doubles, instead of extending that module.
+4. **A fake without its source.** An answer the change adds to or changes in a double records
+   no source where the double is defined: a recaptured unedited answer naming its command, or
+   a cited documented contract.
+5. **A fake leaving its source.** A double the change adds or changes answers a request its
+   recorded source admits differently, in form or value, or refuses a continuation, cursor or
+   state it has itself advertised.
+6. **A host claim untrue.** Its `D29` rule 11 declaration fails in any of these ways:
+   - its reason is not what its assertions claim (`D29` rule 2);
+   - the test arms a timer with a delay above zero itself, without naming a real deadline
+     (`D29` rule 11);
+   - the deterministic test it names stays green with that decision removed;
+   - its claim to depend on no decision is untrue.
+7. **Real time.** In the deterministic tier, its outcome depends on real elapsed time,
+   scheduling or load where an injected clock or a seam could carry it (`AGENTS.md`, "When you
+   write code"). The class covers a route the deterministic runner and the added-timer steps at
+   the head do not refuse. A test added to a file on `D30`'s conversion list may still read the real
+   clock (`D30` rule 2), so this class does not bind its clock reads.
+
 ## A mutation claim
 
 Deleting a line, flipping a condition or breaking a value and watching a test red is how you
@@ -173,48 +205,9 @@ work adds are regenerated and committed with it. A declaration naming an id
 `docs/spec/requirements.md` does not hold is refused by name, and so is one standing above no
 test — a call that is commented out is not a test.
 
-The scan reads the source as the syntax it is, so a fixture in a test claims nothing whatever
-shape it takes, and no shape needs working around:
-
-| A fixture written as | What the scan makes of it |
-|---|---|
-| a single-line string, with `\n` escapes | one string token; claims nothing |
-| a template literal spanning lines | one token, lines and all; claims nothing |
-| a string continued with a trailing backslash | one token; claims nothing |
-| the text inside a block comment | a comment; claims nothing |
-| a run of line comments | a comment — except that a `// proves` line among them is still a declaration, and is refused for standing above a comment rather than above a call |
-
-Shapes it refuses rather than claims, each naming the file and the line:
-
-| Shape | Why it is refused |
-|---|---|
-| a declaration above a call the file nests, a `describe` block included | whether the runner reaches an enclosed call is not a question about tokens |
-| a call to a `test` or `it` the file binds itself, or never binds at all | `node --test` installs no global, so only a name imported from `node:test` reaches the runner |
-| a title the call builds from more than one quoted run — a `+`, a `${}` | the title is then not that string, and half a title names no test |
-| a title carrying an escape the scan does not decode | the string the runner registers is not known |
-| a title carrying a line ending | a matrix row is one line, so it cannot carry the title |
-| a title carrying a `\|` | the pipe divides the two cells of a matrix row |
-| a title carrying `U+2028` or `U+2029` | each is a JavaScript line separator, so a matrix row cannot carry it |
-| a runner import through a re-export chain | the local import names the bridge, so proving its identity would require tracing another file |
-| `test(...args)` | the title is in the spread value, not in a quoted argument the reader can see |
-| `(test)('x', …)` | the callee is an expression rather than the directly bound name the reader checks |
-| a dynamic `import('node:test')` binding | the reader does not establish which name the awaited import binds |
-| `require('node:test')` in a .cjs file | `require` can be rebound, so its call alone does not establish the runner binding |
-| a namespace member call | the reader does not establish both the namespace binding and member identity |
-| `?.()` on a runner binding | an optional call can be skipped, so the direct-call rule cannot prove it ran |
-| a `String.raw` title | the tag determines the registered string, which the plain-title decoder does not read |
-| a `/` directly after a `}` | a division after an object literal and a regular expression after a block are one token apart, and the grammar above them decides which |
-| a quoted run or a comment the source leaves open | it is not source that parses |
-
-What it gets wrong: a declaration above a top-level call the module never finishes reaching is
-claimed all the same. A `throw`, a `process.exit`, a rejected top-level `await` and a hang all land
-there, because in each the source is complete and it is the run that stops. That is a question
-about running the module rather than reading it. A wrong claim is a defect; a source-decidable
-refusal in the table is a visible cost of keeping the reader bounded.
-`scripts/build-test-matrix.mjs` states the same set beside the code, in the block comment above
-`declarationsIn`. That copy governs where the two disagree, because it is the reader that refuses.
-The existing parser cases live in `test/build-test-matrix.test.mjs`; the added call shapes were
-measured with the runner and recorded in `docs/journal/2026-09-23-1638-119-matrix-refusals.md`.
+The block comment above `declarationsIn` in `scripts/build-test-matrix.mjs` lists the source
+shapes the scan claims nothing for, the ones it refuses by file and line, and the one it wrongly
+claims. `test/build-test-matrix.test.mjs` holds the parser cases.
 
 So when you add a requirement, the test that claims it is part of the same work. Where your card
 is what makes an older requirement true, its test closes that requirement's counted gap in the
