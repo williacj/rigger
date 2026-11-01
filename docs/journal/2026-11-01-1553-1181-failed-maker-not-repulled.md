@@ -161,3 +161,15 @@ zero fail/cancel/skip/todo, with loads 7.46/24.09 and 456 user processes at star
 (`1181-round2-host-head.log`). Every run retained complete output before any
 summary. Matrix and package checks exited 0; L3 remains 1323, package 9075/12000.
 The committed-head receipts, fresh clone and CI are delivered in the PR body.
+
+The first round-2 m17 reversion receipt correctly refused a verdict: its mutant
+reached three named F1c assertion failures but exceeded the 30-second runner bound
+in the record cell, versus 16 verdicts normally/restored. Complete output remains
+in `1181-round2-proofs/m17-rejected-result-2.log`; its guarded restoration hashes
+matched and source status was clean. This is invalid mutation evidence, not a
+product red or a known flake. The new fixture's directory restoration ran again
+on a later end, threw ENOENT, and allowed repeated preparation failures to starve
+the observation. That restoration is now one-shot by checking the owned path's
+presence. No assertion is removed or weakened. All before/after-code statuses
+and the original F1c red remain unchanged. The final head's receipts are refreshed
+separately; the invalid attempt is retained in the PR ledger.

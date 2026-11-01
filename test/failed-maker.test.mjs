@@ -198,7 +198,7 @@ test('F1c: a refused maker end reports its nonzero result without dispatching th
       here.sink.emitter = (context) => {
         const opened = emitter(context);
         return { emit(event, fields) {
-          if (cell.startsWith('record') && context.layer === 'L1' && event === 'dispatch.end') rmdirSync(partial);
+          if (cell.startsWith('record') && context.layer === 'L1' && event === 'dispatch.end' && existsSync(partial)) rmdirSync(partial);
           const selected = cell === 'L0' ? context.layer === 'L0' && event === 'timeout.killed'
             : context.layer === 'L1' && event === (cell === 'timeout' ? 'dispatch.timeout' : 'dispatch.end');
           if (cell !== 'record' && !refused && selected) {
