@@ -1339,6 +1339,7 @@ pulls for these reasons, and no others:
 | a merge, whatever it answered | a merge the lane refused, because the head moved, checks were pending or mergeability was unknown, would be pulled again at once and poll the forge |
 | a continuing attempt that did not settle | L2 moved nothing, so the next pull would read the same head and markers, answer `continue` again, and dispatch the maker again at once |
 | a closed-card removal followed by a refusal | the refusal leaves the removal conditions unchanged, so the next pull would remove the same directories again at once |
+| a maker that ran and exited non-zero, the card not escalated, where L2's settle finds the forge holding no branch and no pull request from the card's line of work | L2's settle answers `set-aside`; without the memory the next pull dispatches the maker again at once, which `R-LOOP-18` rules out |
 
 Where a hold's closer could not be saved, L3 pulls no card for the rest of the invocation, and
 claims it already holds finish. The command exits non-zero, naming the failure. Without a lock, only

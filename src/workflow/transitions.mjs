@@ -343,7 +343,10 @@ export function columnChanges({
      * note under the maker's dispatch answers an escalation without a move, with any one open pull
      * request and its head read from the line of work. Otherwise the exit code and the forge alone
      * decide, never the output (the owner's ruling on #220, refined by O5 on #467). Anything but
-     * zero leaves the card in coding. Zero has L2 read the pull requests from the card's line of work
+     * zero leaves the card in coding. A plain nonzero exit reads the branch and pull requests in
+     * every state, without review facts. Where none exists, it answers `set-aside`, with a reason
+     * naming the card, exit code and line of work; otherwise it answers nothing. A failed read
+     * rejects naming the card and the read. Zero has L2 read the pull requests from the card's line of work
      * and, where exactly one is open, what L2's judge answer reads of it, as
      * `pullRequestsFrom` reads them. For a continuing attempt, a head other than `expectedHead`
      * answers `waiting` until L3's last read, when L2 withholds review and names both heads.
@@ -383,7 +386,25 @@ export function columnChanges({
         const answer = makerEscalation(escalation, facts);
         return { ...answer, destination: escalationDestination({ ...answer, escalate: config.escalate, maker: kinds[kind]?.maker, judges: kinds[kind]?.judges, comments }) };
       }
-      if (exit !== 0) return undefined;
+      if (exit !== 0) {
+        const line = topicFor(topic, card.number);
+        let branches;
+        try {
+          branches = await reading.readBranches([line]);
+        } catch (failure) {
+          throw new Error(`card #${card.number}'s branch could not be read: ${failure.message}`, { cause: failure });
+        }
+        let facts;
+        try {
+          facts = await pullRequestsFrom(card.number, line, reading, false);
+        } catch (failure) {
+          throw new Error(`card #${card.number}'s pull requests could not be read after its maker exited ${exit}: ${failure.message}`, { cause: failure });
+        }
+        if (!branches[line] && facts.open.length === 0 && facts.merged.length === 0 && facts.closed.length === 0) {
+          return { action: 'set-aside', reason: `card #${card.number}'s maker exited ${exit}, and the forge holds no branch or pull request from its line of work ${line}` };
+        }
+        return undefined;
+      }
       if (tipFailure !== undefined) withheld(card, `card #${card.number}'s maker exited 0, but L1 could not read the tip of its line of work in the workspace: ${tipFailure.message}`, undefined, {}, { dispatch });
       let facts;
       try {

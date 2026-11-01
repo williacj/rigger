@@ -833,7 +833,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * A hold first closes admission, and its failure carries the closer as `closer`, or, where the
    * close rejected, fails as an AggregateError holding it beside the close's failure.
    * A held or stopped card is absent from `reached`. Any other answer stops the attempts, naming the card
-   * and what L2 answered. `remember` marks a card whose judges L2 withheld for this run.
+   * and what L2 answered. `remember` marks a card whose judges L2 withheld, or whose failed maker
+   * L2 answered `set-aside`, for this run. A set-aside settle answers `reached` without asking judges.
    */
   const attempt = async (card, next, kept, remember, excluded) => {
     const continuing = next.action === 'continue' ? next : undefined;
@@ -968,6 +969,10 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       }
       const reached = { card: card.number, workspace: path, outcome, settled, ...(continuing === undefined ? {} : { action: 'continue', pull: continuing.pull, head: continuing.head }) };
       kept(reached);
+      if (settled.status === 'fulfilled' && settled.value?.action === 'set-aside') {
+        remember(settled.value);
+        return reached;
+      }
       if (settled.status !== 'fulfilled' || settled.value === undefined) return reached;
       // The facts L2's settle answered go back to L2 unread, so one read decides both the move and
       // the judges (the architect's ruling 3, AQ4, on #467).
@@ -1128,9 +1133,9 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
   const work = async (claim, freed, excluded) => {
     const { card, decide: atPull } = claim;
     let next = claim.next;
-    /** Keeps L2's withheld or escalating card out of later pulls, including a refused escalation write. */
+    /** Keeps L2's withheld, set-aside or escalating card out of later pulls, including a refused escalation write. */
     const remember = (answer) => {
-      if (answer.action === 'escalate' || answer.action === 'stop' || answer.withheld?.length > 0) excluded?.add(card.number);
+      if (answer.action === 'escalate' || answer.action === 'stop' || answer.action === 'set-aside' || answer.withheld?.length > 0) excluded?.add(card.number);
       return answer;
     };
     // Whether the start was made: for a redo as for a Ready card, only once `start` returns.

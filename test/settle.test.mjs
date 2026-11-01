@@ -212,14 +212,14 @@ test('given a maker outcome of exit 0 and a read of the forge that fails, L2 lea
 });
 
 // proves R-WORK-18
-test('given a maker outcome of non-zero exit, L2 leaves the card in coding, and the read side is not asked', async () => {
+test('given a maker outcome of non-zero exit, L2 leaves the card in coding, and the line of work is read', async () => {
   const w = await world({ seed: { pullRequests: [pullFrom(12, 120)] } });
 
   await w.l2.settled(w.card, exited(1));
 
   assert.equal(await columnOf(w.fake), columns.coding);
   assert.deepEqual(w.fake.writes(), []);
-  assert.deepEqual(w.reads, []);
+  assert.deepEqual(w.reads, ['rigger-12']);
 });
 
 // proves R-WORK-18
