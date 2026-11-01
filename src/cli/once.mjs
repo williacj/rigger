@@ -381,10 +381,14 @@ async function claiming(verb, limit, opened, {
   // Each refusal line a hand-over has written: a clock-held run's idle polls ask L2 again about a
   // card it refuses, and a refusal already written is no news.
   const handedRefusals = new Set();
-  /** The refusal lines met since the last render; once a hand-over has been written, only those not yet written, once each. */
+  /**
+   * The refusal lines met since the last render that no hand-over has written, once each. A pull
+   * asks L2 once about each card, so a run with no clock trigger, which fires one pull, renders
+   * each line it met.
+   */
   const freshRefusals = () => {
     const lines = refusals.splice(0).map(refusalLine);
-    const fresh = handedCode === undefined ? lines : [...new Set(lines)].filter((line) => !handedRefusals.has(line));
+    const fresh = [...new Set(lines)].filter((line) => !handedRefusals.has(line));
     for (const line of fresh) handedRefusals.add(line);
     return fresh;
   };

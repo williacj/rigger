@@ -4575,3 +4575,18 @@ test('hand-over ways: a card L2 refuses is written at the drain, and an idle pol
     await running.catch(() => {});
   }
 });
+
+test('hand-over ways: a refusal met at each of several pulls before the first hand-over is written once in it', BOUNDS[60_000], async (t) => {
+  const clock = manualClock();
+  const { written, running, stop } = keptUpRunVerb({ items: [verbCard(10, 'Ready'), REFUSED_CARD], plan: DELIVERED, clock });
+  try {
+    await positive(() => written.length === 1, BOUNDS[60_000].timeout / 4);
+    t.diagnostic(JSON.stringify(written));
+    assert.match(written[0], IN_REVIEW, 'card #10 delivered, its slot released before the first hand-over');
+    assert.equal(written[0].match(/#11\b/g)?.length, 1, 'the refusal is written once in the first hand-over');
+    assert.deepEqual(await stop(), { text: '', code: 0 });
+  } finally {
+    await stop();
+    await running.catch(() => {});
+  }
+});
