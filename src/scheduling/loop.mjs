@@ -20,6 +20,7 @@ import { lane } from './lane.mjs';
 import { pullOrder } from './pull-order.mjs';
 import { DEFAULT_CONCURRENCY } from '../config/validate.mjs';
 import { report as deriveReport } from '../observation/report.mjs';
+import { readEvents } from '../observation/sink.mjs';
 import { clockWakes } from './clock.mjs';
 
 /** The states an issue's state read answers. */
@@ -461,6 +462,34 @@ function released(release, claim, failure) {
   } catch (refusal) {
     return failure === null ? refusal : new AggregateError([failure, refusal], `card #${claim.card.number} failed, and its release went unrecorded`);
   }
+}
+
+/**
+ * What the record `events` holds of each clock trigger, by name ("How a clock trigger fires"): the
+ * instant of its newest arming, its event's `ts`, with that arming's `interval` and `anchor`; as
+ * `fired`, its last firing's occurrence, the newest by occurrence of any outcome, or of a `report`
+ * firing found pending; and that pending firing's occurrence as `pending`. A start carrying `after`
+ * is a card's, which M7-22b settles.
+ */
+function triggerRecord(events) {
+  const held = new Map();
+  const of = (name) => held.get(name) ?? held.set(name, { fired: -Infinity, starts: new Map() }).get(name);
+  for (const event of events) {
+    if (event.event === 'trigger.armed') Object.assign(of(event.name), { armed: Date.parse(event.ts), interval: event.interval, anchor: event.anchor });
+    if (event.event === 'trigger' && event.trigger === 'clock') of(event.name).starts.set(event.occurrence, event.after === undefined);
+    if (event.event !== 'trigger.outcome') continue;
+    const trigger = of(event.name);
+    trigger.fired = Math.max(trigger.fired, Date.parse(event.occurrence));
+    trigger.starts.delete(event.occurrence);
+  }
+  for (const trigger of held.values()) {
+    for (const [occurrence, report] of trigger.starts) {
+      if (!report) continue;
+      trigger.pending = occurrence;
+      trigger.fired = Math.max(trigger.fired, Date.parse(occurrence));
+    }
+  }
+  return held;
 }
 
 /**
@@ -1436,6 +1465,33 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         await fire();
         return ended();
       }
+      // The start reads the record, arms each declared trigger, and settles each `report` firing
+      // found pending, before the clock's first wake and the first pull ("How a clock trigger fires").
+      const armings = new Map();
+      let events;
+      try { events = readEvents(state); }
+      catch (failure) {
+        if (failure.code === 'ENOENT') events = [];
+        else clockFailed(new Error(`no clock trigger arms or fires in this run, because the event record could not be read: ${failure.message}${failure.cause ? `: ${failure.cause.message}` : ''}`, { cause: failure }));
+      }
+      if (events !== undefined) {
+        const held = triggerRecord(events);
+        for (const [name, { interval, anchor }] of Object.entries(config.clock.triggers)) {
+          const was = held.get(name) ?? { fired: -Infinity };
+          let armed = was.armed;
+          if (armed === undefined || was.interval !== interval || was.anchor !== anchor) {
+            try { record('trigger.armed', { name, interval, anchor }); }
+            catch (refusal) {
+              clockFailed(refused(`clock trigger ${name} fires nothing in this run, because the event sink refused its arming`, refusal));
+              continue;
+            }
+            armed = now();
+          }
+          armings.set(name, { armed, fired: was.fired });
+        }
+        for (const [name, { pending: at }] of held) if (at !== undefined) pending.set(name, at);
+        settlePending();
+      }
       let finish;
       const finished = new Promise((resolve) => { finish = resolve; });
       // The pulls in flight that no slot release fired: the first, and each poll's.
@@ -1470,7 +1526,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
           else if (going) wakes.poll();
         });
       });
-      const wakes = clockWakes(config.clock, clock, { fire: fireOccurrence, polled });
+      const wakes = clockWakes(config.clock, clock, { fire: fireOccurrence, polled }, armings);
       const stopped = () => {
         wakes.stop();
         if (flying === 0) finish();
@@ -1478,6 +1534,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       try {
         stop?.addEventListener('abort', stopped, { once: true });
         if (stop?.aborted) stopped();
+        await wakes.started;
         pulled().then((going) => { if (going) wakes.poll(); });
         await finished;
         return ended();
