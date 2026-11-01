@@ -378,6 +378,10 @@ async function claiming(verb, limit, opened, {
    */
   const rendered = (settled) => {
     const refused = refusals.splice(0).map(refusalLine);
+    // Zero only where every card's maker delivered, its card in review; any other outcome is short
+    // of what the README promises of this verb, and a zero exit would read to whoever called it as
+    // work that was done (the owner's O8 on #423).
+    const delivered = (worked) => worked.every(({ review, failure, judgesPassed }) => review && failure === undefined && judgesPassed);
     if (settled.status === 'rejected') {
       const failure = settled.reason;
       // What L3 reports is said whole, one line per failure it holds, and the exit is non-zero:
@@ -394,26 +398,31 @@ async function claiming(verb, limit, opened, {
       // said among its card's judge lines, where L3 carried it, and not again after them.
       const reachedCards = failure.reached ?? [];
       const carried = new Set(reachedCards.flatMap(({ judges = [] }) => judges.flatMap(({ failure: held }) => (held === undefined ? [] : [held]))));
+      // A clock-held run's hand-over can carry a closed admission beside its failures; each closer
+      // the held cards' lines have not already named is said after them.
+      const holding = [...failuresIn(failure), ...carried];
+      const named = new Set(holding.flatMap(({ closer }) => (closer === undefined ? [] : [closer.name])));
+      const closers = failure.admission?.state === 'closed' ? failure.admission.closers.filter(({ name }) => !named.has(name)) : [];
       return {
-        text: [...said(outcomes(reachedCards)), ...failuresIn(failure).filter((held) => !carried.has(held)).map(failureLine), ...holdLines([...failuresIn(failure), ...carried]), ...refused].join('\n'),
+        text: [...said(outcomes(reachedCards)), ...failuresIn(failure).filter((held) => !carried.has(held)).map(failureLine), ...holdLines(holding), ...closers.map((closer) => `rigger ${verb}: ${closerLine(closer)}`), ...refused].join('\n'),
         code: 1,
       };
     }
     const reached = settled.value;
     if (reached.admission?.state === 'closed') {
       const notices = (reached.notices ?? []).map((failed) => noticeLine(verb, failed.id, failed));
+      // A clock-held run's drain can read admission closed after cards settled; each is said, and
+      // counts toward the status, as it would without the closer.
+      const worked = outcomes(reached.reached ?? []);
       return {
-        text: [...reached.admission.closers.map((closer) => `rigger ${verb}: ${closerLine(closer)}`), ...notices, ...refused].join('\n'),
-        code: notices.length === 0 ? 0 : 1,
+        text: [...reached.admission.closers.map((closer) => `rigger ${verb}: ${closerLine(closer)}`), ...notices, ...said(worked), ...refused].join('\n'),
+        code: notices.length === 0 && delivered(worked) ? 0 : 1,
       };
     }
     // Nothing to pull is the one outcome this verb meets in full, so it alone exits zero (U29).
     if (reached.length === 0) return { text: [`rigger ${verb}: from board ${project}, no card was pullable`, ...refused].join('\n'), code: 0 };
-    // Zero only where every card's maker delivered, its card in review; any other outcome is short
-    // of what the README promises of this verb, and a zero exit would read to whoever called it as
-    // work that was done (the owner's O8 on #423).
     const worked = outcomes(reached);
-    return { text: [...said(worked), ...refused].join('\n'), code: worked.every(({ review, failure, judgesPassed }) => review && failure === undefined && judgesPassed) ? 0 : 1 };
+    return { text: [...said(worked), ...refused].join('\n'), code: delivered(worked) ? 0 : 1 };
   };
   // The status over every hand-over written, and whether any was.
   let handedCode;

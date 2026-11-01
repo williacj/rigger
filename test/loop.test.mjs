@@ -3742,7 +3742,7 @@ test('J14: run hands its injected clock to L3 while a claim is held', async () =
   }
 });
 
-test('J14: run prints the report hand-over after its card lines without changing the card status', async () => {
+test('J14: run prints the report hand-over before its card lines without changing the card status', async () => {
   const clock = manualClock();
   const { agent, consumer, written, stop } = await keptUpVerb(clockVerb, runVerb, clock);
   try {
@@ -4390,4 +4390,81 @@ test('L16: one idle poll with admission open makes the forge calls the journal m
   // once each; readBranches once where any card is in Ready, Coding, Review or Owner; one pull
   // request read per such card; and six reads for each card holding one open pull request.
   assert.deepEqual(counted.map(({ calls }) => calls), [2, 2 + 1 + 2 + 2 * 6]);
+});
+
+// proves R-SCHED-28
+test('L14: a drain that reads admission closed writes each card that settled beside the closers, and a stop answers their status', async () => {
+  const clock = manualClock();
+  const triggers = { hourly: { interval: 1000, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip', job: 'report' } };
+  const { agent, consumer, written, running, stop } = keptUpRunVerb({ items: [verbCard(10, 'Ready')], plan: { 10: { engineer: { hold: true, exit: 1 } } }, clock, triggers });
+  try {
+    await positive(() => agent.held(10));
+    seed(`${consumer}/.rigger`, 'owner-a1.json', closerText({ reason: 'owner paused claims' }));
+    agent.release(10);
+    await positive(() => written.length === 1);
+    assert.match(written[0], /^rigger run: claimed #10 from board \d+; its maker exited 1/m, 'the card that settled is written at the drain');
+    assert.match(written[0], /^rigger run: admission is closed by owner: owner paused claims/m, 'beside the closer');
+    await clock.advance(CLOCK_START + 1000);
+    assert.ok(written.some((text) => text.startsWith('rigger report:')), 'a later report was written');
+    const answer = await stop();
+    assert.equal(answer.code, 1, 'the card that fell short of review decides the stopped status, whatever was written after it');
+  } finally {
+    const ending = stop();
+    if (agent.held(10)) agent.release(10);
+    await ending.catch(() => {});
+    await running.catch(() => {});
+  }
+});
+
+// proves R-SCHED-29
+test('L12: a poll whose trigger event the sink refuses claims no Ready card, and the next poll claims it', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { cards: [cardIn(5, COLUMNS.done)], triggers: HOUR_AWAY });
+  const { handed, stop } = keptUp(built);
+  try {
+    await positive(() => count(built, 'drain') === 1);
+    await built.fake.operations.moveItem('item-1', COLUMNS.ready);
+    built.refuseAppends('the poll trigger was refused', 1);
+    await clock.advance(CLOCK_START + 1000);
+    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card), [], 'the refused poll claimed nothing');
+    assert.equal(settledIn(handed).length, 2, 'the refusal was handed over as the poll settled');
+    await clock.advance(CLOCK_START + 2000);
+    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card), [5], 'the next poll, on schedule, claimed it');
+    await positive(() => built.dispatches.held() === 1);
+  } finally {
+    const ending = stop();
+    if (built.l3Events().some(({ event }) => event === 'pull')) await positive(() => built.dispatches.held() === 1);
+    built.dispatches.releaseAll();
+    await ending.catch(() => {});
+  }
+});
+
+// proves R-SCHED-28
+test('L2: with no clock declared, a run that fails answers the merge base\'s failure fields', async () => {
+  const fake = createFakeBoard({ columns: Object.values(COLUMNS), items: [readyCard(1)], refuseMoves: true });
+  const built = world({ fake, concurrency: 1 });
+  await assert.rejects(built.loop.run(), (failure) => {
+    assert.equal(failure.message, '1 of the pulls this run fired failed');
+    assert.deepEqual(Object.keys(failure).filter((key) => key !== 'errors').sort(), ['handoffs', 'reached', 'reports']);
+    assert.deepEqual({ reports: failure.reports, handoffs: failure.handoffs }, { reports: [], handoffs: [] });
+    return true;
+  });
+});
+
+// proves R-SCHED-28
+test('L14: at a drain the run verb writes each card that settled since the previous drain, and does not exit', BOUNDS[60_000], async () => {
+  const clock = manualClock();
+  const { written, running, stop } = keptUpRunVerb({ items: [verbCard(10, 'Ready')], plan: { 10: { engineer: { pr: true }, reviewer: { findings: true } } }, clock });
+  const ended = settledOf(running);
+  try {
+    await positive(() => written.length === 1, BOUNDS[60_000].timeout / 2);
+    const lines = written[0].split('\n');
+    assert.match(lines[0], /^rigger run: claimed #10 from board \d+; its maker exited 0 and pull request #\d+ is open from rigger-10, so the card is in review/);
+    assert.equal(lines[1], 'rigger run: card #10\'s judge `reviewer` exited 0');
+    await clock.advance(CLOCK_START + 1000);
+    assert.equal(ended(), false, 'the verb did not exit at the drain');
+  } finally {
+    const answer = await stop();
+    assert.deepEqual(answer, { text: '', code: 0 }, 'every card delivered, and nothing was left to answer');
+  }
 });

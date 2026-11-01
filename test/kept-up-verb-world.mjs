@@ -27,7 +27,7 @@ export function keptUpRunVerb({ items = [], plan = {}, clock, triggers = HOURLY_
     'rigger.config.mjs': `export default ${JSON.stringify(settings)};\n`,
   }), join(root, 'origin.git'));
   const fake = installFakeGh(temporaryDirectory('rigger-kept-up-gh-'), {
-    repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, items },
+    repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, items }, origin: join(root, 'origin.git'),
   });
   const agent = standInAgent(plan);
   const written = [];
