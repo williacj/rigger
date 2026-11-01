@@ -31,7 +31,7 @@ export const VERBS = [
   ['setup-board', 'create the board columns, fields, and labels'],
   ['plan', 'show what the next run would pull, and what it refuses'],
   ['once', 'claim one card, provision its workspace and dispatch its maker, then exit'],
-  ['run', 'claim cards until the slots are full, provision their workspaces and dispatch their makers, then exit'],
+  ['run', 'claim cards and dispatch their makers until the board drains, or, while a clock trigger is declared, until stopped'],
   ['pause', 'stop admitting new cards; in-flight cards finish'],
   ['resume', 'reopen admission and close the status issue'],
   ['report', 'derive the signals from the event stream'],

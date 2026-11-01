@@ -40,6 +40,10 @@ import { run as runVerb } from '../src/cli/run.mjs';
 import { once as onceVerb } from '../src/cli/once.mjs';
 import { clockVerb } from './clock-report-verb-world.mjs';
 import { reportText } from '../src/cli/report.mjs';
+import { failuresIn, keptUp, keptUpVerb, reportsIn, settledIn } from './kept-up-run.mjs';
+import { keptUpRunVerb } from './kept-up-verb-world.mjs';
+import { card as verbCard } from './verb-consumer.mjs';
+import { readEvents as readEventsAt } from '../src/observation/sink.mjs';
 
 const synchronousCalls = [];
 let synchronousDeadline = Infinity;
@@ -3547,7 +3551,7 @@ test('a refused maker note escalation keeps the card out of later pulls in the i
 test('J1: run fires a due report occurrence while a claim is held', async () => {
   const clock = manualClock();
   const built = reportWorld(clock);
-  const running = built.loop.run();
+  const { handed, stop } = keptUp(built);
   try {
     await positive(() => built.dispatches.held() === 1);
     await clock.advance(CLOCK_START + 1000);
@@ -3557,12 +3561,13 @@ test('J1: run fires a due report occurrence while a claim is held', async () => 
       { event: 'trigger.outcome', trigger: undefined, name: 'hourly', occurrence: new Date(CLOCK_START + 1000).toISOString(), outcome: 'job' },
     ]);
     built.dispatches.releaseAll();
-    const answer = await running;
+    await stop();
+    const answer = { reports: reportsIn(handed) };
     assert.equal(answer.reports.length, 1, 'L3 hands the derived report to the verb');
     assert.ok(answer.reports[0].runs?.length > 0, 'the handed report has the run L5 derived');
   } finally {
     built.dispatches.releaseAll();
-    await running.catch(() => {});
+    await stop();
   }
 });
 
@@ -3570,7 +3575,7 @@ test('J13: a failed report settles its occurrence and the next report still fire
   const clock = manualClock();
   const built = reportWorld(clock);
   const path = streamPath(built.directory);
-  const running = built.loop.run();
+  const { handed, stop } = keptUp(built);
   try {
     await positive(() => built.dispatches.held() === 1);
     fs.appendFileSync(path, 'unreadable event line\n');
@@ -3584,15 +3589,14 @@ test('J13: a failed report settles its occurrence and the next report still fire
     await clock.advance(CLOCK_START + 2000);
     assert.deepEqual(built.l3Events().filter(({ event }) => event === 'trigger.outcome').map(({ outcome }) => outcome), ['failed', 'job']);
     built.dispatches.releaseAll();
-    await assert.rejects(running, (failure) => {
-      const messages = failure.errors.map((held) => held.message);
-      assert.ok(messages.some((message) => /hourly/.test(message) && /2026-10-29T12:00:01.000Z/.test(message)
-        && /line \d+ is not a recorded event/.test(message)), messages.join('\n'));
-      return true;
-    });
+    await stop();
+    const failure = { errors: failuresIn(handed) };
+    const messages = failure.errors.map((held) => held.message);
+    assert.ok(messages.some((message) => /hourly/.test(message) && /2026-10-29T12:00:01.000Z/.test(message)
+      && /line \d+ is not a recorded event/.test(message)), messages.join('\n'));
   } finally {
     built.dispatches.releaseAll();
-    await running.catch(() => {});
+    await stop();
   }
 });
 
@@ -3605,7 +3609,7 @@ test('J11: a refused clock start runs no report and leaves the occurrence due fo
     return schedule(call, delay);
   };
   const built = reportWorld(clock);
-  const running = built.loop.run();
+  const { handed, stop } = keptUp(built);
   try {
     await positive(() => built.dispatches.held() === 1);
     const armedBeforeRefusal = scheduled.length;
@@ -3635,14 +3639,13 @@ test('J11: a refused clock start runs no report and leaves the occurrence due fo
       new Date(CLOCK_START + 2000).toISOString(),
     ]);
     built.dispatches.releaseAll();
-    await assert.rejects(running, (failure) => {
-      assert.ok(failure.errors.some((held) => /clock start refused/.test(held.message)), failure.message);
-      assert.equal(failure.reports.length, 1, 'only the second occurrence ran report');
-      return true;
-    });
+    await stop();
+    const failure = { errors: failuresIn(handed), reports: reportsIn(handed), message: JSON.stringify(handed) };
+    assert.ok(failure.errors.some((held) => /clock start refused/.test(held.message)), failure.message);
+    assert.equal(failure.reports.length, 1, 'only the second occurrence ran report');
   } finally {
     built.dispatches.releaseAll();
-    await running.catch(() => {});
+    await stop();
   }
 });
 
@@ -3661,7 +3664,7 @@ test('J12: a refused report outcome is abandoned before the next occurrence fire
       return emitter.emit(event, fields);
     } };
   };
-  const running = built.loop.run();
+  const { handed, stop } = keptUp(built);
   try {
     await positive(() => built.dispatches.held() === 1);
     let wakeFailure;
@@ -3680,13 +3683,12 @@ test('J12: a refused report outcome is abandoned before the next occurrence fire
       new Date(CLOCK_START + 1000).toISOString(), new Date(CLOCK_START + 2000).toISOString(),
     ]);
     built.dispatches.releaseAll();
-    await assert.rejects(running, (failure) => {
-      assert.ok(failure.errors.some((held) => /clock outcome refused/.test(held.message)), failure.message);
-      return true;
-    });
+    await stop();
+    const failure = { errors: failuresIn(handed), message: JSON.stringify(handed) };
+    assert.ok(failure.errors.some((held) => /clock outcome refused/.test(held.message)), failure.message);
   } finally {
     built.dispatches.releaseAll();
-    await running.catch(() => {});
+    await stop();
   }
 });
 
@@ -3705,12 +3707,14 @@ test('J12: a freed-slot pull settles a pending report before another clock wake'
       return emitter.emit(event, fields);
     } };
   };
-  const running = built.loop.run();
+  const { handed, stop } = keptUp(built);
   try {
     await positive(() => built.dispatches.held() === 1);
     await clock.advance(CLOCK_START + 1000);
     built.dispatches.releaseAll();
-    await assert.rejects(running, /failures in this run/);
+    await positive(() => settledIn(handed).length === 1);
+    await stop();
+    assert.ok(failuresIn(handed).some(({ message }) => /outcome pending until pull/.test(message)), JSON.stringify(handed));
     const events = built.l3Events();
     const abandoned = events.findIndex(({ event, outcome }) => event === 'trigger.outcome' && outcome === 'abandoned');
     const nextPull = events.findIndex(({ event, trigger }, at) => at > abandoned && event === 'trigger' && trigger === 'pull');
@@ -3718,13 +3722,13 @@ test('J12: a freed-slot pull settles a pending report before another clock wake'
     assert.equal(clock.pending(), 0, 'the run ended before a second clock wake');
   } finally {
     built.dispatches.releaseAll();
-    await running.catch(() => {});
+    await stop();
   }
 });
 
 test('J14: run hands its injected clock to L3 while a claim is held', async () => {
   const clock = manualClock();
-  const { agent, consumer, running } = await clockVerb(runVerb, clock);
+  const { agent, consumer, stop } = await keptUpVerb(clockVerb, runVerb, clock);
   try {
     assert.equal(clock.pending(), 1, 'run armed the report timer through L3');
     await clock.advance(CLOCK_START + 1000);
@@ -3734,13 +3738,13 @@ test('J14: run hands its injected clock to L3 while a claim is held', async () =
     ]);
   } finally {
     if (agent.held(10)) agent.release(10);
-    await running.catch(() => {});
+    await stop().catch(() => {});
   }
 });
 
 test('J14: run prints the report hand-over after its card lines without changing the card status', async () => {
   const clock = manualClock();
-  const { agent, consumer, running } = await clockVerb(runVerb, clock);
+  const { agent, consumer, written, stop } = await keptUpVerb(clockVerb, runVerb, clock);
   try {
     await clock.advance(CLOCK_START + 1000);
     const path = streamPath(`${consumer}/.rigger`);
@@ -3750,21 +3754,22 @@ test('J14: run prints the report hand-over after its card lines without changing
     fs.writeFileSync(streamPath(snapshot), `${lines.slice(0, -1).join('\n')}\n`);
     const expected = reportText({ ...deriveReport(snapshot), path });
     agent.release(10);
-    const answer = await running;
+    const stopped = await stop();
+    const answer = { ...stopped, text: [...written, stopped.text].join('\n') };
     const cardLine = answer.text.indexOf('rigger run: claimed #10');
     const reportLine = answer.text.indexOf(`rigger report: the events recorded at ${path}`);
-    assert.ok(cardLine >= 0 && reportLine > cardLine, answer.text);
-    assert.equal(answer.text.slice(reportLine), expected, 'run prints exactly the report rendering of the event snapshot');
+    assert.ok(reportLine >= 0 && cardLine > reportLine, answer.text);
+    assert.equal(answer.text.slice(reportLine, reportLine + expected.length + 1), `${expected}\n`, 'run writes exactly the report rendering of the event snapshot, whole');
     assert.equal(answer.code, 1, 'the card outcome alone decides this run status');
   } finally {
     if (agent.held(10)) agent.release(10);
-    await running.catch(() => {});
+    await stop().catch(() => {});
   }
 });
 
 test('J13 J14: run prints a successful report before a later failed report and exits one', async () => {
   const clock = manualClock();
-  const { agent, consumer, running } = await clockVerb(runVerb, clock);
+  const { agent, consumer, written, stop } = await keptUpVerb(clockVerb, runVerb, clock);
   const path = streamPath(`${consumer}/.rigger`);
   try {
     await clock.advance(CLOCK_START + 1000);
@@ -3773,7 +3778,7 @@ test('J13 J14: run prints a successful report before a later failed report and e
     await clock.advance(CLOCK_START + 2000);
     fs.writeFileSync(path, fs.readFileSync(path, 'utf8').split('\n').filter((line) => line !== 'unreadable event line').join('\n'));
     agent.release(10);
-    const answer = await running;
+    const answer = { ...(await stop()), text: written.join('\n') };
     const reportAt = answer.text.indexOf(`rigger report: the events recorded at ${path}`);
     const failureAt = answer.text.indexOf(`rigger run: clock trigger hourly at ${new Date(CLOCK_START + 2000).toISOString()}`);
     assert.ok(reportAt >= 0 && failureAt > reportAt, answer.text);
@@ -3781,7 +3786,7 @@ test('J13 J14: run prints a successful report before a later failed report and e
     assert.equal(answer.code, 1);
   } finally {
     if (agent.held(10)) agent.release(10);
-    await running.catch(() => {});
+    await stop().catch(() => {});
   }
 });
 
@@ -3790,7 +3795,7 @@ test('J2 J3: owner and Rigger admission closers do not stop a due report while a
   for (const kind of ['owner', 'hold']) {
     const clock = manualClock();
     const built = reportWorld(clock);
-    const running = built.loop.run();
+    const { stop } = keptUp(built);
     try {
       await positive(() => built.dispatches.held() === 1);
       if (kind === 'owner') seed(built.directory, 'owner-a1.json', closerText({ reason: 'owner paused claims' }));
@@ -3801,7 +3806,7 @@ test('J2 J3: owner and Rigger admission closers do not stop a due report while a
       built.dispatches.releaseAll();
     } finally {
       built.dispatches.releaseAll();
-      await running.catch(() => {});
+      await stop();
     }
   }
 });
@@ -3828,7 +3833,7 @@ test('J4: once never arms or fires a clock report while its claim is held', asyn
 test('J5 J6: a due report with every slot held adds no dispatch or claim and leaves the slot held', async () => {
   const clock = manualClock();
   const built = reportWorld(clock);
-  const running = built.loop.run();
+  const { stop } = keptUp(built);
   try {
     await positive(() => built.dispatches.held() === 1);
     const before = built.events().length;
@@ -3842,14 +3847,14 @@ test('J5 J6: a due report with every slot held adds no dispatch or claim and lea
     assert.deepEqual(built.dispatches.holding(), [1], 'the claim still holds the only slot');
   } finally {
     built.dispatches.releaseAll();
-    await running.catch(() => {});
+    await stop();
   }
 });
 
 test('J7: a late wake fires only the newest due occurrence', async () => {
   const clock = manualClock();
   const built = reportWorld(clock);
-  const running = built.loop.run();
+  const { stop } = keptUp(built);
   try {
     await positive(() => built.dispatches.held() === 1);
     await clock.advance(CLOCK_START + 3500);
@@ -3859,14 +3864,14 @@ test('J7: a late wake fires only the newest due occurrence', async () => {
     assert.deepEqual(built.l3Events().filter(({ event }) => event === 'trigger.outcome').map(({ outcome }) => outcome), ['job']);
   } finally {
     built.dispatches.releaseAll();
-    await running.catch(() => {});
+    await stop();
   }
 });
 
 test('J8: an occurrence at the start with no arming record never fires in that run', async () => {
   const clock = manualClock(CLOCK_START + 1000);
   const built = reportWorld(clock);
-  const running = built.loop.run();
+  const { stop } = keptUp(built);
   try {
     await positive(() => built.dispatches.held() === 1);
     assert.deepEqual(built.events().filter(({ event }) => event === 'trigger.armed'), [], 'the state holds no arming');
@@ -3878,7 +3883,7 @@ test('J8: an occurrence at the start with no arming record never fires in that r
     ]);
   } finally {
     built.dispatches.releaseAll();
-    await running.catch(() => {});
+    await stop();
   }
 });
 
@@ -3886,7 +3891,7 @@ test('J9: different due occurrences fire serially with the earlier occurrence fi
   const clock = manualClock();
   const trigger = (interval) => ({ interval, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip', job: 'report' });
   const built = reportWorld(clock, { triggers: { later: trigger(2000), earlier: trigger(1500) } });
-  const running = built.loop.run();
+  const { stop } = keptUp(built);
   try {
     await positive(() => built.dispatches.held() === 1);
     await clock.advance(CLOCK_START + 2500);
@@ -3899,7 +3904,7 @@ test('J9: different due occurrences fire serially with the earlier occurrence fi
     ]);
   } finally {
     built.dispatches.releaseAll();
-    await running.catch(() => {});
+    await stop();
   }
 });
 
@@ -3907,7 +3912,7 @@ test('J10: triggers due at one occurrence fire serially in code-unit name order'
   const clock = manualClock();
   const trigger = { interval: 1000, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip', job: 'report' };
   const built = reportWorld(clock, { triggers: { zeta: trigger, Alpha: trigger } });
-  const running = built.loop.run();
+  const { stop } = keptUp(built);
   try {
     await positive(() => built.dispatches.held() === 1);
     await clock.advance(CLOCK_START + 1000);
@@ -3917,18 +3922,15 @@ test('J10: triggers due at one occurrence fire serially in code-unit name order'
     ]);
   } finally {
     built.dispatches.releaseAll();
-    await running.catch(() => {});
+    await stop();
   }
 });
 
-test('J15: absent, empty, and card-only clocks retain the same run answer and event sequence', async () => {
+test('J15: absent and empty clocks retain the same run answer and event sequence', async () => {
   const clock = manualClock();
-  const cardTrigger = { interval: 1000, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip',
-    card: { title: 'Audit', labels: ['type:change'], acceptance: '- The audit writes a result.' } };
   const worlds = [
     world({ cards: [1], concurrency: 1, clock }),
     reportWorld(clock, { triggers: {} }),
-    reportWorld(clock, { triggers: { daily: cardTrigger } }),
   ];
   const observed = [];
   for (const built of worlds) {
@@ -3941,28 +3943,446 @@ test('J15: absent, empty, and card-only clocks retain the same run answer and ev
     });
   }
   assert.deepEqual(observed[1], observed[0]);
-  assert.deepEqual(observed[2], observed[0]);
 });
 
 test('J16: the default clock fires a report while a claim holds run open', async () => {
   const built = reportWorld(undefined);
-  const running = built.loop.run();
+  const { stop } = keptUp(built);
   try {
     await positive(() => built.dispatches.held() === 1);
     await positive(() => built.l3Events().some(({ event, outcome }) => event === 'trigger.outcome' && outcome === 'job'));
     assert.equal(built.l3Events().filter(({ trigger }) => trigger === 'clock').length, 1);
   } finally {
     built.dispatches.releaseAll();
+    await stop();
+  }
+});
+
+/** How many `trigger` events of kind `kind` L3 has recorded in `built`. */
+const count = (built, kind) => triggersOf(built).filter((trigger) => trigger === kind).length;
+
+/** A report trigger whose first occurrence is an hour after the clock's start, so no firing falls in a poll test. */
+const HOUR_AWAY = { hourly: { interval: 3_600_000, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip', job: 'report' } };
+
+/** A card-shaped trigger, which this card's head arms and fires nothing for. */
+const CARD_SHAPED = { daily: { interval: 1000, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip',
+  card: { title: 'Audit', labels: ['type:change'], acceptance: '- The audit writes a result.' } } };
+
+// proves R-SCHED-28
+test('L1: run stays up past the drain while a report trigger is declared, recording one drain for the idle period', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { cards: [], triggers: HOUR_AWAY });
+  const { running, handed, stop } = keptUp(built);
+  const ended = settledOf(running);
+  try {
+    await positive(() => count(built, 'drain') === 1);
+    await clock.advance(CLOCK_START + 5_000);
+    assert.equal(ended(), false, 'run did not end at the drain');
+    assert.equal(count(built, 'drain'), 1, 'one drain for the idle period');
+    assert.deepEqual(settledIn(handed), [{ status: 'fulfilled', value: [] }], 'the drain handed the verb what settled');
+  } finally {
+    await stop();
+  }
+});
+
+// proves R-SCHED-28
+test('L2a: a clock declaring only card-shaped triggers keeps run up, and fires nothing', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { cards: [], triggers: CARD_SHAPED });
+  const { running, stop } = keptUp(built);
+  const ended = settledOf(running);
+  try {
+    await positive(() => count(built, 'drain') === 1);
+    await clock.advance(CLOCK_START + 3_500);
+    assert.equal(ended(), false, 'run did not end at the drain');
+    assert.deepEqual(built.l3Events().filter(({ trigger, event }) => trigger === 'clock' || event === 'trigger.outcome'), []);
+  } finally {
+    await stop();
+  }
+});
+
+test('L5: an idle poll that claims nothing fires no second drain in that idle period', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { cards: [], triggers: HOUR_AWAY });
+  const { stop } = keptUp(built);
+  try {
+    await positive(() => count(built, 'drain') === 1);
+    const pullsAtDrain = count(built, 'pull');
+    for (const at of [1000, 2000, 3000]) await clock.advance(CLOCK_START + at);
+    assert.equal(count(built, 'pull'), pullsAtDrain + 3, 'three polls fired, one each second');
+    assert.equal(count(built, 'drain'), 1);
+  } finally {
+    await stop();
+  }
+});
+
+// proves R-SCHED-29
+test('L4: an idle poll claims a card that entered Ready no later than the poll interval after it did', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { cards: [cardIn(5, COLUMNS.done)], triggers: HOUR_AWAY });
+  const { stop } = keptUp(built);
+  try {
+    await positive(() => count(built, 'drain') === 1);
+    await clock.advance(CLOCK_START + 300);
+    await built.fake.operations.moveItem('item-1', COLUMNS.ready);
+    const entered = clock.now();
+    await clock.advance(entered + 1000);
+    const claimed = built.l3Events().find(({ event, card }) => event === 'pull' && card === 5);
+    assert.ok(claimed, 'a poll within the bound claimed card #5');
+    assert.equal(built.l3Events().filter(({ event }) => event === 'pull').length, 1);
+    await positive(() => built.dispatches.held() === 1);
+  } finally {
+    built.dispatches.releaseAll();
+    await stop();
+  }
+});
+
+test('L6: an idle poll that claims a card ends the idle period, and the next idle period records one drain', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { cards: [cardIn(5, COLUMNS.done)], triggers: HOUR_AWAY });
+  const { handed, stop } = keptUp(built);
+  try {
+    await positive(() => count(built, 'drain') === 1);
+    await built.fake.operations.moveItem('item-1', COLUMNS.ready);
+    await clock.advance(CLOCK_START + 1000);
+    await positive(() => built.dispatches.held() === 1);
+    built.dispatches.releaseAll();
+    await positive(() => count(built, 'drain') === 2);
+    await positive(() => settledIn(handed).length === 2);
+    assert.deepEqual([...new Set(settledIn(handed)[1].value.map(({ card }) => card))], [5], 'the second drain handed card #5\'s outcomes');
+  } finally {
+    built.dispatches.releaseAll();
+    await stop();
+  }
+});
+
+test('L13a: a stop while idle cancels the timer and ends run with nothing more handed and no failure', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { cards: [], triggers: HOUR_AWAY });
+  const { stop } = keptUp(built);
+  await positive(() => count(built, 'drain') === 1);
+  assert.equal(clock.pending(), 1, 'the poll timer is pending while idle');
+  const answer = await stop();
+  assert.deepEqual(answer, []);
+  assert.equal(clock.pending(), 0, 'the timer was cancelled');
+  const events = built.l3Events().length;
+  await clock.advance(CLOCK_START + 10_000);
+  assert.equal(built.l3Events().length, events, 'no poll or firing after the stop');
+});
+
+test('L13a: a stop with a claim held polls and fires no more and ends once the claim finishes, with what settled since the drain', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { triggers: { hourly: { ...HOUR_AWAY.hourly, interval: 1000 } } });
+  const { running, handed, stop } = keptUp(built);
+  const ended = settledOf(running);
+  await positive(() => built.dispatches.held() === 1);
+  const stopped = stop();
+  assert.equal(clock.pending(), 0, 'the timer was cancelled');
+  await clock.advance(CLOCK_START + 5_000);
+  assert.deepEqual(built.l3Events().filter(({ trigger, event }) => trigger === 'clock' || event === 'trigger.outcome'), [], 'no firing after the stop');
+  await turnWait(() => true);
+  assert.equal(ended(), false, 'run waits for its claim');
+  const pulls = count(built, 'pull');
+  built.dispatches.releaseAll();
+  const answer = await stopped;
+  assert.deepEqual(answer.map(({ card }) => card), [1], 'what settled since the previous drain');
+  assert.equal(count(built, 'pull'), pulls, 'no poll after the stop');
+  assert.deepEqual(handed, [], 'nothing was handed before the stop');
+});
+
+test('L2: with no clock key, or a clock holding a poll and no trigger, run ends at the drain with the same events and answer', async () => {
+  const observed = [];
+  for (const triggers of [undefined, {}]) {
+    const clock = manualClock();
+    const built = triggers === undefined ? world({ cards: [1], concurrency: 1, clock }) : reportWorld(clock, { triggers });
+    const answer = await drive(built);
+    assert.equal(clock.pending(), 0, 'no timer is held');
+    observed.push({
+      events: built.events().map(({ layer, event, card, trigger }) => ({ layer, event, card, trigger })),
+      answer: answer.map(({ card, settled }) => ({ card, settled: settled?.status })),
+    });
+  }
+  assert.deepEqual(observed[1], observed[0]);
+  assert.equal(observed[0].events.filter(({ event, trigger }) => event === 'trigger' && trigger === 'drain').length, 1);
+});
+
+// proves R-SCHED-35
+test('L3: once with a clock trigger declared fires one pull, arms nothing and polls nothing', async () => {
+  const clock = manualClock();
+  const { agent, consumer, running } = await clockVerb(onceVerb, clock);
+  try {
+    assert.equal(clock.pending(), 0, 'once armed no timer');
+    agent.release(10);
+    await running;
+    await clock.advance(CLOCK_START + 10_000);
+    const events = (await import('../src/observation/sink.mjs')).readEvents(`${consumer}/.rigger`);
+    assert.deepEqual(events.filter(({ event }) => event === 'trigger').map(({ trigger }) => trigger), ['pull'], 'one pull, and no poll or firing');
+  } finally {
+    if (agent.held(10)) agent.release(10);
     await running.catch(() => {});
   }
 });
 
-test('J17: run drains before an hour-away occurrence and cancels its timer', async () => {
+test('L7: while a claim is held a clock-held run does not poll, and a slot release fires a pull', async () => {
   const clock = manualClock();
-  const trigger = { interval: 3_600_000, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip', job: 'report' };
-  const built = reportWorld(clock, { cards: [], triggers: { hourly: trigger } });
-  const answer = await built.loop.run();
-  assert.deepEqual(answer, []);
-  assert.equal(clock.pending(), 0, 'the timer was canceled on return');
-  assert.deepEqual(built.l3Events().filter(({ trigger: kind }) => kind === 'clock'), []);
+  const built = reportWorld(clock, { cards: [1, 2], triggers: HOUR_AWAY });
+  const { stop } = keptUp(built);
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    const pulls = count(built, 'pull');
+    for (const at of [1000, 2000, 3000]) await clock.advance(CLOCK_START + at);
+    assert.equal(count(built, 'pull'), pulls, 'no poll while the claim is held');
+    built.dispatches.release(built.dispatches.holding()[0]);
+    await positive(() => count(built, 'pull') > pulls);
+    assert.equal(clock.now(), CLOCK_START + 3000, 'the pull fired at the release, with no clock advance');
+    await positive(() => built.dispatches.held() === 1);
+  } finally {
+    built.dispatches.releaseAll();
+    await stop();
+  }
+});
+
+test('L8: a poll whose reads outlast the poll interval delays the next, which fires the interval after it settles', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { cards: [], triggers: HOUR_AWAY });
+  const { stop } = keptUp(built);
+  try {
+    await positive(() => count(built, 'drain') === 1);
+    const release = built.fake.holdNextRead();
+    const advancing = clock.advance(CLOCK_START + 1000);
+    await positive(() => count(built, 'pull') === 2);
+    await clock.advance(CLOCK_START + 2500);
+    assert.equal(count(built, 'pull'), 2, 'no second poll while the first is reading');
+    release();
+    await advancing;
+    await clock.advance(CLOCK_START + 3499);
+    assert.equal(count(built, 'pull'), 2, 'no poll before the interval after the slow one settled');
+    await clock.advance(CLOCK_START + 3500);
+    assert.equal(count(built, 'pull'), 3, 'the next poll fired the interval after the slow one settled');
+  } finally {
+    await stop();
+  }
+});
+
+test('L9: after a claim whose move the board refused, the first poll that finds nothing to pull records the drain', async () => {
+  const clock = manualClock();
+  const fake = boardOf([1]);
+  const built = reportWorld(clock, { fake, items: { ...fake.operations, moveItem: async () => { throw new Error('the board refused the move'); } }, triggers: HOUR_AWAY });
+  const { handed, stop } = keptUp(built);
+  try {
+    await positive(() => settledIn(handed).length === 1);
+    assert.equal(count(built, 'drain'), 0, 'no drain fired since the claim ended');
+    await fake.operations.moveItem('item-1', COLUMNS.done);
+    await clock.advance(CLOCK_START + 1000);
+    assert.equal(count(built, 'drain'), 1, 'the first poll finding nothing records the drain');
+    await clock.advance(CLOCK_START + 2000);
+    assert.equal(count(built, 'drain'), 1);
+  } finally {
+    await stop();
+  }
+});
+
+test('L10: an idle poll with admission closed claims nothing and hands over each closer', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { cards: [cardIn(5, COLUMNS.done)], triggers: HOUR_AWAY });
+  const { handed, stop } = keptUp(built);
+  try {
+    await positive(() => settledIn(handed).length === 1);
+    seed(built.directory, 'owner-a1.json', closerText({ reason: 'owner paused claims' }));
+    await built.fake.operations.moveItem('item-1', COLUMNS.ready);
+    await clock.advance(CLOCK_START + 1000);
+    assert.equal(built.l3Events().filter(({ event }) => event === 'pull').length, 0, 'the poll claimed nothing');
+    const [, closed] = settledIn(handed);
+    assert.equal(closed.value.admission.state, 'closed');
+    assert.deepEqual(closed.value.admission.closers.map(({ reason }) => reason), ['owner paused claims']);
+  } finally {
+    await stop();
+  }
+});
+
+// proves R-SCHED-29
+test('L11: a poll whose read fails claims nothing, hands its failure over once, and the next poll on schedule claims the card', async () => {
+  const clock = manualClock();
+  const fake = boardOf([cardIn(5, COLUMNS.done)]);
+  let failing = false;
+  const handle = handleOn(fake);
+  const board = { ...handle, readPriority: async (...args) => {
+    if (failing) { failing = false; throw new Error('the priority read failed'); }
+    return handle.readPriority(...args);
+  } };
+  const built = reportWorld(clock, { fake, board, triggers: HOUR_AWAY });
+  const { handed, stop } = keptUp(built);
+  try {
+    await positive(() => settledIn(handed).length === 1);
+    await fake.operations.moveItem('item-1', COLUMNS.ready);
+    failing = true;
+    await clock.advance(CLOCK_START + 1000);
+    assert.equal(built.l3Events().filter(({ event }) => event === 'pull').length, 0, 'the failed poll claimed nothing');
+    assert.equal(settledIn(handed).length, 2, 'the failure was handed over as the poll settled');
+    assert.match(leavesOf(settledIn(handed)[1].reason).map(({ message }) => message).join('\n'), /the priority read failed/);
+    await clock.advance(CLOCK_START + 2000);
+    assert.ok(built.l3Events().some(({ event, card }) => event === 'pull' && card === 5), 'the next poll, on schedule, claimed card #5');
+    await positive(() => built.dispatches.held() === 1);
+    built.dispatches.releaseAll();
+    await positive(() => settledIn(handed).length === 3);
+    assert.equal(settledIn(handed)[2].status, 'fulfilled', 'the next drain does not hand the failure again');
+  } finally {
+    built.dispatches.releaseAll();
+    await stop();
+  }
+});
+
+test('L12: a poll whose trigger event the sink refuses claims nothing, hands the refusal over, and the next poll fires on schedule', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { cards: [], triggers: HOUR_AWAY });
+  const { handed, stop } = keptUp(built);
+  try {
+    await positive(() => settledIn(handed).length === 1);
+    built.refuseAppends('the poll trigger was refused', 1);
+    await clock.advance(CLOCK_START + 1000);
+    assert.equal(settledIn(handed).length, 2);
+    assert.match(leavesOf(settledIn(handed)[1].reason).map(({ message }) => message).join('\n'), /refused to record the pull trigger/);
+    const tried = () => built.attempts.filter(({ layer, event, fields }) => layer === 'L3' && event === 'trigger' && fields.trigger === 'pull').length;
+    const before = tried();
+    await clock.advance(CLOCK_START + 2000);
+    assert.equal(tried(), before + 1, 'the next poll fired on schedule');
+    assert.equal(settledIn(handed).length, 2, 'the accepted poll hands nothing over');
+  } finally {
+    await stop();
+  }
+});
+
+test('L13: a hold whose closer could not be saved ends a clock-held run once its claims finish, naming the failure, and polls no more', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { triggers: HOUR_AWAY, answer: () => new Error('the dispatch could not start') });
+  const admissionDirectory = join(built.directory, 'admission');
+  fs.mkdirSync(admissionDirectory, { recursive: true });
+  fs.chmodSync(admissionDirectory, 0o555);
+  try {
+    const { running, handed } = keptUp(built);
+    await assert.rejects(running, (failure) => {
+      assert.match(leavesOf(failure).map(({ message }) => message).join('\n'), /card #1 was held/);
+      return true;
+    });
+    assert.deepEqual(handed, [], 'what settled since the previous drain came with the ending');
+    assert.equal(clock.pending(), 0, 'the timer was cancelled');
+    const pulls = count(built, 'pull');
+    await clock.advance(CLOCK_START + 5000);
+    assert.equal(count(built, 'pull'), pulls, 'no poll after the ending');
+  } finally {
+    fs.chmodSync(admissionDirectory, 0o755);
+  }
+});
+
+test('each hand-over of a clock-held run is handed before the next poll fires', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { cards: [], triggers: HOUR_AWAY });
+  const tried = () => built.attempts.filter(({ layer, event, fields }) => layer === 'L3' && event === 'trigger' && fields.trigger === 'pull').length;
+  const order = [];
+  const controller = new AbortController();
+  const running = built.loop.run({ handOver: () => order.push(tried()), stop: controller.signal });
+  try {
+    await positive(() => order.length === 1);
+    built.refuseAppends('the poll trigger was refused', 1);
+    await clock.advance(CLOCK_START + 1000);
+    await clock.advance(CLOCK_START + 2000);
+    assert.equal(tried(), 3, 'the first pull and two polls');
+    assert.deepEqual(order, [1, 2], 'each hand-over came after its own pull and before the next poll');
+  } finally {
+    controller.abort();
+    await running;
+  }
+});
+
+test('L7: through the run verb, a clock-held run fires a pull at its slot release', async () => {
+  const clock = manualClock();
+  const { agent, consumer, running, stop } = keptUpRunVerb({ items: [verbCard(10, 'Ready')], plan: { 10: { engineer: { hold: true } } }, clock });
+  const pulls = () => (fs.existsSync(streamPath(`${consumer}/.rigger`)) ? readEventsAt(`${consumer}/.rigger`) : []).filter(({ event, trigger }) => event === 'trigger' && trigger === 'pull').length;
+  try {
+    await positive(() => agent.held(10));
+    assert.equal(pulls(), 1);
+    agent.release(10);
+    await positive(() => pulls() === 2 && agent.held(10));
+    assert.equal(clock.now(), CLOCK_START, 'the second pull was the slot release\'s, not a poll');
+  } finally {
+    const stopped = stop();
+    if (agent.held(10)) agent.release(10);
+    await stopped.catch(() => {});
+    await running.catch(() => {});
+  }
+});
+
+test('L14: at each drain the run verb writes what settled since the previous drain, and does not exit', async () => {
+  const clock = manualClock();
+  const { consumer, written, running, stop } = keptUpRunVerb({ clock });
+  const ended = settledOf(running);
+  seed(`${consumer}/.rigger`, 'owner-a1.json', closerText({ reason: 'owner paused claims' }));
+  try {
+    await positive(() => written.length === 1);
+    assert.match(written[0], /^rigger run: admission is closed/m);
+    assert.match(written[0], /owner paused claims/);
+    await clock.advance(CLOCK_START + 1000);
+    assert.equal(ended(), false, 'the verb did not exit at the drain');
+  } finally {
+    const answer = await stop();
+    assert.deepEqual(answer, { text: '', code: 0 }, 'a stopped verb answers nothing it already wrote');
+  }
+});
+
+test('L15: the run verb writes a report firing\'s hand-over as it settles, rendered as report renders it, and does not exit', async () => {
+  const clock = manualClock();
+  const triggers = { hourly: { interval: 1000, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip', job: 'report' } };
+  const { consumer, written, running, stop } = keptUpRunVerb({ clock, triggers });
+  const ended = settledOf(running);
+  try {
+    await positive(() => written.length === 1);
+    const path = streamPath(`${consumer}/.rigger`);
+    const snapshot = temporaryDirectory('rigger-kept-up-report-snapshot-');
+    fs.copyFileSync(path, streamPath(snapshot));
+    await clock.advance(CLOCK_START + 1000);
+    assert.equal(written.length, 2, 'the firing was written as it settled');
+    assert.equal(written[1], reportText({ ...deriveReport(snapshot), path }));
+    assert.equal(ended(), false, 'the verb did not exit at the firing');
+  } finally {
+    await stop();
+  }
+});
+
+test('L16: one idle poll with admission open makes the forge calls the journal measures, for two board states', async (t) => {
+  const states = [
+    { name: 'one card in Done', a: 0, r: 0, cards: [cardIn(20, COLUMNS.done)], pullRequests: [] },
+    { name: 'two cards in Owner, each holding one open pull request', a: 2, r: 2, cards: [cardIn(20, COLUMNS.owner), cardIn(21, COLUMNS.owner)],
+      pullRequests: [20, 21].map((number) => ({ number: 1000 + number, head: `rigger-${number}`, sha: String(number).padStart(40, '0') })) },
+  ];
+  const counted = [];
+  for (const { name, a, r, cards, pullRequests } of states) {
+    const clock = manualClock();
+    const fake = boardOf(cards);
+    const calls = [];
+    const handle = handleOn(fake);
+    const board = Object.fromEntries(Object.entries(handle).map(([read, call]) => [read, (...args) => { calls.push(read); return call(...args); }]));
+    const built = reportWorld(clock, { fake, board, triggers: HOUR_AWAY, forge: { pullRequests } });
+    for (const [read, call] of Object.entries(built.repository.operations)) {
+      built.repository.operations[read] = (...args) => { calls.push(read); return call(...args); };
+    }
+    const { stop } = keptUp(built);
+    try {
+      await positive(() => count(built, 'drain') === 1);
+      const before = calls.length;
+      const pulls = count(built, 'pull');
+      const claims = built.l3Events().filter(({ event }) => event === 'pull').length;
+      await clock.advance(CLOCK_START + 1000);
+      assert.equal(count(built, 'pull'), pulls + 1, 'one idle poll');
+      assert.equal(built.l3Events().filter(({ event }) => event === 'pull').length, claims, 'the poll claimed nothing');
+      const poll = calls.slice(before);
+      counted.push({ name, a, r, calls: poll.length, judged: 3 + a + 6 * r });
+      t.diagnostic(`${name}: ${poll.length} forge calls (${poll.join(', ')}); judged 3 + a + 6r = ${3 + a + 6 * r}`);
+    } finally {
+      await stop();
+    }
+  }
+  // Derived from "What a poll costs"'s premise list, not from the code: readColumns and readPriority
+  // once each; readBranches once where any card is in Ready, Coding, Review or Owner; one pull
+  // request read per such card; and six reads for each card holding one open pull request.
+  assert.deepEqual(counted.map(({ calls }) => calls), [2, 2 + 1 + 2 + 2 * 6]);
 });
