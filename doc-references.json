@@ -37,6 +37,7 @@
     "docs/spikes/launchd-lost-cells.md": "strict",
     "docs/spikes/telemetry-push.md": "strict",
     "docs/spikes/entry-points-l1-l5-cli.md": "strict",
+    "docs/spikes/sweep-lsof-observation.md": "strict",
     "docs/guide.md": "strict",
     "docs/reference.md": "strict"
   },
