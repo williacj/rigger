@@ -63,7 +63,7 @@ test('L2 settles a maker note under its dispatch id as an escalation even when t
 // proves R-LOOP-2
 test('no issue note leaves a nonzero maker outcome in Coding', async () => {
   const { card, fake, l2 } = await world([]);
-  assert.equal(await l2.settled(card, outcome(), { dispatch: DISPATCH }), undefined);
+  assert.equal((await l2.settled(card, outcome(), { dispatch: DISPATCH })).action, 'set-aside');
   assert.deepEqual(fake.writes(), []);
 });
 
@@ -96,7 +96,7 @@ const ignored = [
 for (const [why, comment] of ignored) {
   test(`L2 ignores ${why} and answers the maker outcome`, async () => {
     const { card, fake, l2 } = await world([comment]);
-    assert.equal(await l2.settled(card, outcome(), { dispatch: DISPATCH }), undefined);
+    assert.equal((await l2.settled(card, outcome(), { dispatch: DISPATCH })).action, 'set-aside');
     assert.deepEqual(fake.writes(), []);
   });
 }
