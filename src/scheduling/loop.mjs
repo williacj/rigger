@@ -20,7 +20,7 @@ import { lane } from './lane.mjs';
 import { pullOrder } from './pull-order.mjs';
 import { DEFAULT_CONCURRENCY } from '../config/validate.mjs';
 import { report as deriveReport } from '../observation/report.mjs';
-import { clockReports } from './clock.mjs';
+import { clockWakes } from './clock.mjs';
 
 /** The states an issue's state read answers. */
 const ISSUE_STATES = ['open', 'closed', 'none'];
@@ -374,21 +374,26 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow,
      * `failures`, holding the trigger
      * event's refusal where the sink refused it. A trigger is no start, so its refusal stops
      * nothing: each start still tries its own event, which is what names the cards not started,
-     * and the refusal is reported beside theirs. A read that fails, the facts call's included,
+     * and the refusal is reported beside theirs. A `poll`, a clock-held run's idle pull, is the
+     * exception: where its trigger event is refused it claims nothing. A read that fails, the facts call's included,
      * rejects with the read's own error, and no card is claimed. It first awaits the start's kill,
      * as `killed` says. `excluded` omits cards stopped or withheld in this run, and is empty for a
      * single pull.
      */
-    take: async (limit, excluded = new Set(), snapshot = snapshotting()) => {
+    take: async (limit, excluded = new Set(), snapshot = snapshotting(), poll = false) => {
       await killed();
       const failures = [];
+      let unrecorded = false;
       try {
         record('trigger', { trigger: 'pull' });
       } catch (refusal) {
+        unrecorded = true;
         failures.push(refused('the event sink refused to record the pull trigger', refusal));
       }
-      const { notices, unrecorded } = await follow(snapshot);
-      failures.push(...unrecorded);
+      const { notices, unrecorded: unwritten } = await follow(snapshot);
+      failures.push(...unwritten);
+      // A poll whose trigger the sink refused claims nothing ("A poll in each idle state").
+      if (poll && unrecorded) return { claims: [], failures, notices };
       try {
         return await claim(limit, excluded, failures, notices);
       } catch (thrown) {
@@ -559,6 +564,9 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * idle period, and so does a run's start, since drain fires at a start that finds nothing.
    */
   let idle = false;
+
+  /** How many drain triggers this loop has fired, so a kept-up `run` knows a drain fell in a pull. */
+  let drains = 0;
 
   /**
    * Dispatches `step`, as L2's next action names it, for `card`, in the directory at `path`, and
@@ -1242,22 +1250,23 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * in `errors`, inside an AggregateError beside the refusal where its release event was refused,
    * as `released` says.
    */
-  const trigger = async (freed = () => {}, limit = undefined, excluded, settlePending = () => {}) => {
+  const trigger = async (freed = () => {}, limit = undefined, excluded, settlePending = () => {}, { taken = () => {}, poll = false, carry = false } = {}) => {
     // The settle goes to the caller as one copy L3 made, by the one snapshot every notice of this
     // trigger was read by, its failures and cards together, whether it fulfils or rejects, so a
     // value met in both is one copy, and nothing another layer gave L3 reaches the caller unread.
     const snapshot = snapshotting();
     try {
-      return snapshot.copy(await settle(freed, limit, excluded, snapshot, settlePending));
+      return snapshot.copy(await settle(freed, limit, excluded, snapshot, settlePending, { taken, poll, carry }));
     } catch (thrown) {
       throw snapshot.failure(thrown);
     }
   };
 
   /** The trigger's settle, as `trigger` says, before its copy: its answer, or the failure it throws. */
-  const settle = async (freed, limit, excluded, snapshot, settlePending) => {
+  const settle = async (freed, limit, excluded, snapshot, settlePending, { taken, poll, carry }) => {
     settlePending();
-    const { claims: claimed, failures, admission: closed, notices = [] } = await take(limit, excluded, snapshot);
+    const { claims: claimed, failures, admission: closed, notices = [] } = await take(limit, excluded, snapshot, poll);
+    taken(claimed.length);
     for (const { card } of claimed) settles.set(card.number, snapshot);
     // Where admission is open, as after a concurrent `resume`, no closed admission carries the
     // notices, so each is a failure of this pull and reaches the caller there.
@@ -1272,6 +1281,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       idle = true;
       try {
         settlePending();
+        drains += 1;
         record('trigger', { trigger: 'drain' });
       } catch (refusal) {
         failures.push(refused('the event sink refused to record the drain trigger', refusal));
@@ -1284,7 +1294,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     if (failures.length > 0) {
       // A closed admission's notices would otherwise go only with the answer this throw replaces.
       if (closed !== undefined) failures.push(...notices.map(noticeFailure));
-      throw Object.assign(new AggregateError(failures, `${failures.length} failures across the ${claimed.length} cards this pull claimed`), { reached });
+      // A clock-held run hands its closers over beside the failures, so `carry` keeps them here.
+      throw Object.assign(new AggregateError(failures, `${failures.length} failures across the ${claimed.length} cards this pull claimed`), { reached, ...(carry && closed !== undefined && { admission: closed }) });
     }
     return closed === undefined ? reached : { admission: closed, reached, notices };
   };
@@ -1303,34 +1314,53 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     /**
      * Fires the pull trigger, and fires it again each time a slot this run filled is released, so
      * a card freeing its slot lets the next pullable card start while the others still run. A slot
-     * freed by a claim move the board refused fires nothing, as `work` says. Ends
-     * once every pull it fired has settled, which is once a pull fired on a freed slot claims
-     * nothing and no card it claimed is still being worked. A stopped card or one whose judges L2
-     * withheld stays out of later pulls in this run; the next invocation starts without that memory.
+     * freed by a claim move the board refused fires nothing, as `work` says. A stopped card or one
+     * whose judges L2 withheld stays out of later pulls in this run; the next invocation starts
+     * without that memory.
      *
-     * Settles on what every card its pulls answered, in the shapes `trigger` says. A pull that
-     * fails stops no other, and its cards are carried in its own failure's `reached`. Once the run has ended, every failed pull is reported in
-     * one AggregateError naming how many failed, each pull's own failure unchanged in its `errors`,
-     * and carrying as `reached` what every pull that settled answered, so no card's outcome is
-     * dropped for another pull's failure, and, where a pull read admission closed, as `admission`
-     * what that read answered, so a run that ended on a hold answers its closer.
-     * A closed pull's notices, which `pull` answers beside its admission, are failures of the run.
+     * With no clock trigger declared it ends once every pull it fired has settled, which is once a
+     * pull fired on a freed slot claims nothing and no card it claimed is still being worked; and
+     * `singlePull` has it fire the pull trigger once, as `pull` does with no limit. It settles on
+     * what every card its pulls answered, in the shapes `trigger` says. A pull that fails stops no
+     * other, and its cards are carried in its own failure's `reached`. Once the run has ended,
+     * every failed pull is reported in one AggregateError naming how many failed, each pull's own
+     * failure unchanged in its `errors`, and carrying as `reached` what every pull that settled
+     * answered, so no card's outcome is dropped for another pull's failure, and, where a pull read
+     * admission closed, as `admission` what that read answered, so a run that ended on a hold
+     * answers its closer. A closed pull's notices are failures of the run.
+     *
+     * While a clock trigger is declared, whatever its shape, it does not end at the drain, and
+     * `singlePull` changes nothing ("While a clock trigger keeps `run` up"). It arms the clock
+     * after `run.start`, fires each report occurrence as `fireOccurrence` says, and, while it holds
+     * no claim, polls the board every `clock.poll` milliseconds: each poll fires the pull trigger,
+     * and the next fires that long after it settles, unless it claimed a card, which ends the idle
+     * period. Each settled hand-over goes to `handOver` as it settles: a report as `{ report }`, a
+     * firing's failure as `{ failure }`, and, once its pulls have settled, at each drain or where
+     * a pull failed or read admission closed, what settled since the previous hand-over as
+     * `{ settled }`, `{ status, value }` or `{ status, reason }` in the shapes this run ends on
+     * with no clock trigger, a closed admission's value as `pull` answers it; a failure carries as
+     * `reached` every card that settled, its failed pulls' cards among them, and as `admission`
+     * the closers a pull read. It ends only where a
+     * hold's closer could not be saved, or once `stop`, an `AbortSignal`, fires: it then polls and
+     * fires no more, cancels its timer, pulls at no further slot release, and ends once its claims
+     * finish, on what settled since the previous hand-over, in those shapes.
+     *
      * A start's kill that failed rejects the run with its failure, before `run.start`.
      */
-    run: async ({ singlePull = false } = {}) => {
-      if (singlePull && !Object.values(config.clock?.triggers ?? {}).some((one) => one.job === 'report')) return trigger();
+    run: async ({ singlePull = false, handOver = () => {}, stop } = {}) => {
+      // A trigger of any shape keeps `run` up; this is the one place that decides it.
+      const kept = Object.keys(config.clock?.triggers ?? {}).length > 0;
+      if (singlePull && !kept) return trigger();
       await killed();
       record('run.start', { concurrency });
       idle = false;
       const failures = [];
-      const clockFailures = [];
       const reached = [];
-      const reports = [];
-      const handoffs = [];
+      const notices = [];
       const excluded = new Set();
       const pending = new Map();
       let closed;
-      const clockFailed = (failure) => { clockFailures.push(failure); handoffs.push({ failure }); };
+      const clockFailed = (failure) => handOver({ failure });
       const settlePending = () => {
         for (const [name, at] of pending) {
           try { record('trigger.outcome', { name, occurrence: at, outcome: 'abandoned' }); }
@@ -1341,7 +1371,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
           pending.delete(name);
         }
       };
-      const stopClock = clockReports(config.clock?.triggers, clock, ({ name, occurrence }) => {
+      /** One report occurrence's firing, answering whether it settled the occurrence. */
+      const fireOccurrence = ({ name, occurrence }) => {
         const at = new Date(occurrence).toISOString();
         settlePending();
         if (pending.has(name)) return false;
@@ -1361,28 +1392,98 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
           return true;
         }
         if (failure) clockFailed(new Error(`clock trigger ${name} at ${at}: ${failure.message}`, { cause: failure }));
-        else { reports.push(report); handoffs.push({ report }); }
+        else handOver({ report });
         return true;
-      });
-      const fire = () => trigger(singlePull ? () => {} : fire, undefined, excluded, settlePending).then((each) => {
+      };
+      const ending = () => unsaved !== undefined || stop?.aborted === true;
+      const fire = (polling) => trigger(() => (kept && ending() ? undefined : fire()), undefined, excluded, settlePending, { ...polling, carry: kept }).then((each) => {
         reached.push(...(Array.isArray(each) ? each : each.reached));
-        if (!Array.isArray(each)) closed = each.admission;
+        if (Array.isArray(each)) return;
+        closed = each.admission;
         // A closed pull's notices are its failures to report, a made write's refused record among
         // them, so the run passes each on to its caller rather than ending with `reached` alone.
-        if (!Array.isArray(each)) failures.push(...(each.notices ?? []).map(noticeFailure));
+        if (kept) notices.push(...(each.notices ?? []));
+        else failures.push(...(each.notices ?? []).map(noticeFailure));
       }, (failure) => {
         failures.push(failure);
+        // A clock-held run hands over every card a failed pull settled, and the closers it read,
+        // beside its failure; with no clock trigger the run answers as it always has.
+        if (!kept) return;
+        reached.push(...(failure.reached ?? []));
+        if (failure.admission !== undefined) closed = failure.admission;
       });
-      try {
-        await fire();
-        if (failures.length + clockFailures.length > 0) {
-          const all = [...failures, ...clockFailures];
-          const message = clockFailures.length === 0 ? `${failures.length} of the pulls this run fired failed` : `${all.length} failures in this run`;
-          throw Object.assign(new AggregateError(all, message), { reached, reports, handoffs, ...(closed && { admission: closed }) });
+      /** What settled since the previous hand-over, which it takes, in the shapes the run ends on. */
+      // Every accumulator is taken whatever the answer, so nothing waits for a later hand-over.
+      const since = () => {
+        const failed = failures.splice(0);
+        const cards = reached.splice(0);
+        const told = notices.splice(0);
+        const admitted = closed;
+        closed = undefined;
+        if (failed.length > 0) {
+          return { status: 'rejected', reason: Object.assign(new AggregateError(failed, `${failed.length} of the pulls this run fired failed`), { reached: cards, ...(admitted && { admission: admitted }), ...(told.length > 0 && { notices: told }) }) };
         }
-        return handoffs.length === 0 ? reached : Object.assign(reached, { reports, handoffs });
+        return { status: 'fulfilled', value: kept && admitted ? { admission: admitted, reached: cards, notices: told } : cards };
+      };
+      const ended = () => {
+        const { status, value, reason } = since();
+        // With no clock trigger, the failure keeps the empty `reports` and `handoffs` the run has
+        // always answered beside `reached`.
+        if (status === 'rejected') throw kept ? reason : Object.assign(reason, { reports: [], handoffs: [] });
+        return value;
+      };
+      if (!kept) {
+        await fire();
+        return ended();
+      }
+      let finish;
+      const finished = new Promise((resolve) => { finish = resolve; });
+      // The pulls in flight that no slot release fired: the first, and each poll's.
+      let flying = 0;
+      let handed = drains;
+      /** A first or polled pull's end, with all it claimed: hands over, or ends the run. Answers whether `run` goes on. */
+      const settled = () => {
+        flying -= 1;
+        if (ending()) {
+          finish();
+          return false;
+        }
+        if (drains > handed || failures.length > 0 || closed !== undefined || notices.length > 0) {
+          handed = drains;
+          handOver({ settled: since() });
+        }
+        return true;
+      };
+      const pulled = (polling) => {
+        flying += 1;
+        return fire(polling).then(settled);
+      };
+      /** One poll: settles once it has claimed a card, or once it has settled claiming none, answering whether to poll again. */
+      const polled = () => new Promise((resolve) => {
+        let claimed = false;
+        pulled({ poll: true, taken: (count) => {
+          if (count === 0) return;
+          claimed = true;
+          resolve(false);
+        } }).then((going) => {
+          if (!claimed) resolve(going);
+          else if (going) wakes.poll();
+        });
+      });
+      const wakes = clockWakes(config.clock, clock, { fire: fireOccurrence, polled });
+      const stopped = () => {
+        wakes.stop();
+        if (flying === 0) finish();
+      };
+      try {
+        stop?.addEventListener('abort', stopped, { once: true });
+        if (stop?.aborted) stopped();
+        pulled().then((going) => { if (going) wakes.poll(); });
+        await finished;
+        return ended();
       } finally {
-        stopClock();
+        stop?.removeEventListener('abort', stopped);
+        wakes.stop();
       }
     },
   };

@@ -424,13 +424,13 @@ test('given the board takes a claim move and the sink then refuses its transitio
   assert.match(line, /EISDIR/, 'the sink\'s own error is named');
 });
 
-test('--help\'s line for run says it claims cards, provisions their workspaces and dispatches their makers', () => {
+test('--help\'s line for run says it claims cards and dispatches their makers until the board drains, or, while a clock trigger is declared, until stopped', () => {
   const shown = spawnSync(process.execPath, [bin, '--help'], { encoding: 'utf8' });
 
   assert.equal(shown.status, 0, shown.stderr);
   const line = shown.stdout.split('\n').find((held) => /^\s*run\b/.test(held));
   assert.ok(line, shown.stdout);
-  assert.match(line, /claim cards until the slots are full, provision their workspaces and dispatch their makers, then exit/, line);
+  assert.match(line, /claim cards and dispatch their makers until the board drains, or, while a clock trigger is declared, until stopped/, line);
   assert.doesNotMatch(line, /before M4/, line);
 });
 
