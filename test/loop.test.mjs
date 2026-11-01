@@ -4439,10 +4439,10 @@ test('L12: a poll whose trigger event the sink refuses claims no Ready card, and
   }
 });
 
-// proves R-SCHED-28
 test('L2: with no clock declared, a run that fails answers the merge base\'s failure fields', async () => {
+  const clock = manualClock();
   const fake = createFakeBoard({ columns: Object.values(COLUMNS), items: [readyCard(1)], refuseMoves: true });
-  const built = world({ fake, concurrency: 1 });
+  const built = world({ fake, concurrency: 1, clock });
   await assert.rejects(built.loop.run(), (failure) => {
     assert.equal(failure.message, '1 of the pulls this run fired failed');
     assert.deepEqual(Object.keys(failure).filter((key) => key !== 'errors').sort(), ['handoffs', 'reached', 'reports']);
@@ -4468,3 +4468,79 @@ test('L14: at a drain the run verb writes each card that settled since the previ
     assert.deepEqual(answer, { text: '', code: 0 }, 'every card delivered, and nothing was left to answer');
   }
 });
+
+/**
+ * Each way a clock-held run's hand-over can end, as the verb writes it: one row each. `plan` is the
+ * stand-in agent's, `held` the role whose dispatch is held while the owner's pause closer is
+ * written (none where the row reads admission open), and `refuse` the one L3 event append the
+ * event stream refuses, by a refusal of `node:fs`'s `appendFileSync`, the sink's own write, as
+ * `test/run.test.mjs`'s `refusingJudgeStart` refuses one. Each row names the card line, the other
+ * lines and the status the verb's whole hand-over must carry.
+ */
+const DELIVERED = { 10: { engineer: { pr: true }, reviewer: { findings: true } } };
+const MAKER_FAILS = { 10: { engineer: { hold: true, exit: 1 } } };
+const IN_REVIEW = /^rigger run: claimed #10 from board \d+; its maker exited 0 and pull request #\d+ is open from rigger-10, so the card is in review/m;
+const MAKER_EXITED_1 = /^rigger run: claimed #10 from board \d+; its maker exited 1/m;
+const CLOSER = /^rigger run: admission is closed by owner: owner paused claims/m;
+const releaseOf10 = ({ layer, event, card }) => layer === 'L3' && event === 'slot.release' && card === 10;
+const HAND_OVER_WAYS = [
+  { way: 'success', plan: DELIVERED, card: IN_REVIEW, lines: [/^rigger run: card #10's judge `reviewer` exited 0$/m], code: 0 },
+  { way: 'maker failure', plan: MAKER_FAILS, held: 'engineer', card: MAKER_EXITED_1, lines: [CLOSER], code: 1 },
+  { way: 'judge failure', plan: { 10: { engineer: { pr: true }, reviewer: { hold: true, exit: 1 } } }, held: 'reviewer', card: IN_REVIEW,
+    lines: [/^rigger run: card #10's judge `reviewer` exited 1$/m, CLOSER], code: 1 },
+  { way: 'admission closed', plan: { 10: { engineer: { pr: true }, reviewer: { hold: true, findings: true } } }, held: 'reviewer', card: IN_REVIEW,
+    lines: [CLOSER], code: 0 },
+  { way: 'the sink refuses a release', plan: DELIVERED, refuse: releaseOf10, card: IN_REVIEW,
+    lines: [/^rigger run: card #10's slot was released, and the event sink refused to record it: EIO: the test refuses this append/m], code: 1 },
+  { way: 'the sink refuses a release, admission closed', plan: MAKER_FAILS, held: 'engineer', refuse: releaseOf10, card: MAKER_EXITED_1,
+    lines: [/event sink refused to record it: EIO: the test refuses this append/m, CLOSER], code: 1 },
+  { way: 'the sink refuses the release pull\'s trigger, admission closed', plan: MAKER_FAILS, held: 'engineer',
+    refuse: (event, pulls) => event.layer === 'L3' && event.event === 'trigger' && event.trigger === 'pull' && pulls === 2, card: MAKER_EXITED_1,
+    lines: [/refused to record the pull trigger: EIO: the test refuses this append/m, CLOSER], code: 1 },
+];
+
+for (const { way, plan, held, refuse, card, lines, code } of HAND_OVER_WAYS) {
+  test(`hand-over ways: ${way}: the verb writes each card that settled, each line beside it, and the status`, BOUNDS[60_000], async (t) => {
+    const clock = manualClock();
+    const append = fs.appendFileSync;
+    let refused = 0;
+    let pulls = 0;
+    const { agent, consumer, written, running, stop } = keptUpRunVerb({ items: [verbCard(10, 'Ready')], plan, clock });
+    fs.appendFileSync = (path, data, ...rest) => {
+      if (String(path) === streamPath(`${consumer}/.rigger`)) {
+        const event = JSON.parse(String(data));
+        if (event.layer === 'L3' && event.event === 'trigger' && event.trigger === 'pull') pulls += 1;
+        if (refuse?.(event, pulls) && refused === 0) {
+          refused += 1;
+          throw Object.assign(new Error('EIO: the test refuses this append'), { code: 'EIO' });
+        }
+      }
+      return append(path, data, ...rest);
+    };
+    syncBuiltinESMExports();
+    try {
+      if (held !== undefined) {
+        await positive(() => agent.held(10, held), BOUNDS[60_000].timeout / 4);
+        seed(`${consumer}/.rigger`, 'owner-a1.json', closerText({ reason: 'owner paused claims' }));
+        agent.release(10, held);
+      }
+      await positive(() => written.length > 0, BOUNDS[60_000].timeout / 4);
+      const answer = await stop();
+      t.diagnostic(JSON.stringify({ written, answer }));
+      assert.equal(refused, refuse === undefined ? 0 : 1, 'the refusal the row names applied, once');
+      assert.equal(written.length, 1, 'one hand-over, written whole');
+      assert.match(written[0], card, 'the card that settled is written');
+      assert.equal(written[0].match(/^rigger run: claimed #10 /gm).length, 1, 'the card is written once');
+      assert.equal((written[0].match(/^rigger run: admission is closed/gm) ?? []).length, held === undefined ? 0 : 1, 'each closer is written once');
+      for (const line of lines) assert.match(written[0], line);
+      assert.equal(answer.code, code, 'the status counts every outcome the run handed over');
+    } finally {
+      fs.appendFileSync = append;
+      syncBuiltinESMExports();
+      const ending = stop();
+      for (const role of ['engineer', 'reviewer']) if (agent.held(10, role)) agent.release(10, role);
+      await ending.catch(() => {});
+      await running.catch(() => {});
+    }
+  });
+}

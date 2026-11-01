@@ -3,7 +3,7 @@
 
 import { dirname, join } from 'node:path';
 import { installFakeGh } from './fake-gh.mjs';
-import { repositoryAt, withOrigin } from './git-repository.mjs';
+import { gitIn, repositoryAt, withOrigin } from './git-repository.mjs';
 import { withFirstOnPath } from './process-fixtures.mjs';
 import { standInAgent } from './stub-claude.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
@@ -23,9 +23,13 @@ export const HOURLY_REPORT = { hourly: { interval: 3_600_000, anchor: new Date(S
 export function keptUpRunVerb({ items = [], plan = {}, clock, triggers = HOURLY_REPORT, concurrency = 1 }) {
   const root = temporaryDirectory('rigger-kept-up-verb-');
   const settings = { ...consumerConfig(concurrency), clock: { poll: 1000, triggers } };
-  const consumer = withOrigin(repositoryAt(join(root, 'consumer'), {
+  const repository = repositoryAt(join(root, 'consumer'), {
     'rigger.config.mjs': `export default ${JSON.stringify(settings)};\n`,
-  }), join(root, 'origin.git'));
+  });
+  // The fake forge opens a pull request against `main`, so the consumer's line is `main`, whatever
+  // the host's `init.defaultBranch` names.
+  gitIn(repository, 'branch', '-M', 'main');
+  const consumer = withOrigin(repository, join(root, 'origin.git'));
   const fake = installFakeGh(temporaryDirectory('rigger-kept-up-gh-'), {
     repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, items }, origin: join(root, 'origin.git'),
   });

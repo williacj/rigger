@@ -1250,20 +1250,20 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * in `errors`, inside an AggregateError beside the refusal where its release event was refused,
    * as `released` says.
    */
-  const trigger = async (freed = () => {}, limit = undefined, excluded, settlePending = () => {}, { taken = () => {}, poll = false } = {}) => {
+  const trigger = async (freed = () => {}, limit = undefined, excluded, settlePending = () => {}, { taken = () => {}, poll = false, carry = false } = {}) => {
     // The settle goes to the caller as one copy L3 made, by the one snapshot every notice of this
     // trigger was read by, its failures and cards together, whether it fulfils or rejects, so a
     // value met in both is one copy, and nothing another layer gave L3 reaches the caller unread.
     const snapshot = snapshotting();
     try {
-      return snapshot.copy(await settle(freed, limit, excluded, snapshot, settlePending, { taken, poll }));
+      return snapshot.copy(await settle(freed, limit, excluded, snapshot, settlePending, { taken, poll, carry }));
     } catch (thrown) {
       throw snapshot.failure(thrown);
     }
   };
 
   /** The trigger's settle, as `trigger` says, before its copy: its answer, or the failure it throws. */
-  const settle = async (freed, limit, excluded, snapshot, settlePending, { taken, poll }) => {
+  const settle = async (freed, limit, excluded, snapshot, settlePending, { taken, poll, carry }) => {
     settlePending();
     const { claims: claimed, failures, admission: closed, notices = [] } = await take(limit, excluded, snapshot, poll);
     taken(claimed.length);
@@ -1294,7 +1294,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     if (failures.length > 0) {
       // A closed admission's notices would otherwise go only with the answer this throw replaces.
       if (closed !== undefined) failures.push(...notices.map(noticeFailure));
-      throw Object.assign(new AggregateError(failures, `${failures.length} failures across the ${claimed.length} cards this pull claimed`), { reached });
+      // A clock-held run hands its closers over beside the failures, so `carry` keeps them here.
+      throw Object.assign(new AggregateError(failures, `${failures.length} failures across the ${claimed.length} cards this pull claimed`), { reached, ...(carry && closed !== undefined && { admission: closed }) });
     }
     return closed === undefined ? reached : { admission: closed, reached, notices };
   };
@@ -1337,7 +1338,9 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
      * firing's failure as `{ failure }`, and, once its pulls have settled, at each drain or where
      * a pull failed or read admission closed, what settled since the previous hand-over as
      * `{ settled }`, `{ status, value }` or `{ status, reason }` in the shapes this run ends on
-     * with no clock trigger, a closed admission's value as `pull` answers it. It ends only where a
+     * with no clock trigger, a closed admission's value as `pull` answers it; a failure carries as
+     * `reached` every card that settled, its failed pulls' cards among them, and as `admission`
+     * the closers a pull read. It ends only where a
      * hold's closer could not be saved, or once `stop`, an `AbortSignal`, fires: it then polls and
      * fires no more, cancels its timer, pulls at no further slot release, and ends once its claims
      * finish, on what settled since the previous hand-over, in those shapes.
@@ -1393,7 +1396,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         return true;
       };
       const ending = () => unsaved !== undefined || stop?.aborted === true;
-      const fire = (polling) => trigger(() => (kept && ending() ? undefined : fire()), undefined, excluded, settlePending, polling).then((each) => {
+      const fire = (polling) => trigger(() => (kept && ending() ? undefined : fire()), undefined, excluded, settlePending, { ...polling, carry: kept }).then((each) => {
         reached.push(...(Array.isArray(each) ? each : each.reached));
         if (Array.isArray(each)) return;
         closed = each.admission;
@@ -1403,6 +1406,11 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         else failures.push(...(each.notices ?? []).map(noticeFailure));
       }, (failure) => {
         failures.push(failure);
+        // A clock-held run hands over every card a failed pull settled, and the closers it read,
+        // beside its failure; with no clock trigger the run answers as it always has.
+        if (!kept) return;
+        reached.push(...(failure.reached ?? []));
+        if (failure.admission !== undefined) closed = failure.admission;
       });
       /** What settled since the previous hand-over, which it takes, in the shapes the run ends on. */
       const since = () => {
