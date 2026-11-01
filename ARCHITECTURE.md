@@ -2177,8 +2177,8 @@ comment lines are outside it too: a comment cannot carry a bug.
 | L1 | 1,200 |
 | L2 | 1,600 |
 | The gate | 300 |
-| L3 | 1,200 |
-| L5 | 1,300 |
+| L3 | 1,700 |
+| L5 | 800 |
 | L6 | 1,100 |
 | CLI and config | 2,300 |
 | **Package** | **12,000** |
