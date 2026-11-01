@@ -42,7 +42,7 @@ import { clockVerb } from './clock-report-verb-world.mjs';
 import { reportText } from '../src/cli/report.mjs';
 import { failuresIn, keptUp, keptUpVerb, reportsIn, settledIn } from './kept-up-run.mjs';
 import { keptUpRunVerb } from './kept-up-verb-world.mjs';
-import { card as verbCard } from './verb-consumer.mjs';
+import { REFUSED as REFUSED_CARD, card as verbCard } from './verb-consumer.mjs';
 import { readEvents as readEventsAt } from '../src/observation/sink.mjs';
 
 const synchronousCalls = [];
@@ -4497,15 +4497,21 @@ const HAND_OVER_WAYS = [
   { way: 'the sink refuses the release pull\'s trigger, admission closed', plan: MAKER_FAILS, held: 'engineer',
     refuse: (event, pulls) => event.layer === 'L3' && event.event === 'trigger' && event.trigger === 'pull' && pulls === 2, card: MAKER_EXITED_1,
     lines: [/refused to record the pull trigger: EIO: the test refuses this append/m, CLOSER], code: 1 },
+  { way: 'the sink refuses a release, admission closed by a hold whose notice fails', plan: MAKER_FAILS, held: 'engineer',
+    closer: ['hold-a1-issue-77.json', closerText({ reason: 'Rigger held claims' })], items: [verbCard(77, 'Owner', { labels: ['rigger:status'] })],
+    failingRead: 'issue(number: 77)', refuse: releaseOf10, card: MAKER_EXITED_1, notices: 1, poll: true,
+    lines: [/event sink refused to record it: EIO: the test refuses this append/m, /^rigger run: admission is closed by hold: Rigger held claims/m,
+      /^rigger run: the notice for hold a1 failed to read issue #77's state: .*the test fails this forge read once/m], code: 1 },
 ];
 
-for (const { way, plan, held, refuse, card, lines, code } of HAND_OVER_WAYS) {
+const NOTICE = /^rigger run: the notice for hold /gm;
+for (const { way, plan, held, refuse, card, lines, code, closer = ['owner-a1.json', closerText({ reason: 'owner paused claims' })], items = [], failingRead, notices = 0, poll = false } of HAND_OVER_WAYS) {
   test(`hand-over ways: ${way}: the verb writes each card that settled, each line beside it, and the status`, BOUNDS[60_000], async (t) => {
     const clock = manualClock();
     const append = fs.appendFileSync;
     let refused = 0;
     let pulls = 0;
-    const { agent, consumer, written, running, stop } = keptUpRunVerb({ items: [verbCard(10, 'Ready')], plan, clock });
+    const { agent, consumer, written, running, stop } = keptUpRunVerb({ items: [verbCard(10, 'Ready'), ...items], plan, clock, failingRead });
     fs.appendFileSync = (path, data, ...rest) => {
       if (String(path) === streamPath(`${consumer}/.rigger`)) {
         const event = JSON.parse(String(data));
@@ -4521,14 +4527,23 @@ for (const { way, plan, held, refuse, card, lines, code } of HAND_OVER_WAYS) {
     try {
       if (held !== undefined) {
         await positive(() => agent.held(10, held), BOUNDS[60_000].timeout / 4);
-        seed(`${consumer}/.rigger`, 'owner-a1.json', closerText({ reason: 'owner paused claims' }));
+        seed(`${consumer}/.rigger`, ...closer);
         agent.release(10, held);
       }
       await positive(() => written.length > 0, BOUNDS[60_000].timeout / 4);
+      if (poll) {
+        // An idle poll after the hand-over hands over only what it read: under a closed
+        // admission, its closers (L10), and nothing the previous hand-over already carried.
+        await clock.advance(CLOCK_START + 1000);
+        assert.equal(written.length, 2, 'the idle poll under a closed admission named its closers');
+        assert.match(written[1], /^rigger run: admission is closed by /m);
+        assert.doesNotMatch(written[1], /claimed #10|no card was pullable|the notice for hold|refused/, 'the idle poll repeats nothing');
+      }
       const answer = await stop();
       t.diagnostic(JSON.stringify({ written, answer }));
       assert.equal(refused, refuse === undefined ? 0 : 1, 'the refusal the row names applied, once');
-      assert.equal(written.length, 1, 'one hand-over, written whole');
+      assert.equal(written.length, poll ? 2 : 1, 'one hand-over, written whole, and one more for the idle poll where the row has one');
+      assert.equal([...written, answer.text].join('\n').match(NOTICE)?.length ?? 0, notices, 'each failed notice is named once');
       assert.match(written[0], card, 'the card that settled is written');
       assert.equal(written[0].match(/^rigger run: claimed #10 /gm).length, 1, 'the card is written once');
       assert.equal((written[0].match(/^rigger run: admission is closed/gm) ?? []).length, held === undefined ? 0 : 1, 'each closer is written once');
@@ -4544,3 +4559,19 @@ for (const { way, plan, held, refuse, card, lines, code } of HAND_OVER_WAYS) {
     }
   });
 }
+
+test('hand-over ways: a card L2 refuses is written at the drain, and an idle poll that refuses it again hands nothing more over', BOUNDS[60_000], async () => {
+  const clock = manualClock();
+  const { written, running, stop } = keptUpRunVerb({ items: [REFUSED_CARD], clock });
+  try {
+    await positive(() => written.length === 1, BOUNDS[60_000].timeout / 4);
+    assert.match(written[0], /^rigger run: from board \d+, no card was pullable$/m);
+    assert.equal(written[0].match(/#11\b/g)?.length, 1, 'the refusal is written once, at the drain');
+    for (const at of [1000, 2000, 3000]) await clock.advance(CLOCK_START + at);
+    assert.equal(written.length, 1, 'the idle polls hand nothing over');
+    assert.deepEqual(await stop(), { text: '', code: 0 }, 'the stop repeats no refusal the drain already wrote');
+  } finally {
+    await stop();
+    await running.catch(() => {});
+  }
+});

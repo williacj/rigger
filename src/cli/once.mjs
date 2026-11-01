@@ -376,8 +376,19 @@ async function claiming(verb, limit, opened, {
    * The text and status of a whole run whose settle `settled` records, as `Promise.allSettled`
    * records it, naming the refusals met since the last one rendered.
    */
-  const rendered = (settled) => {
-    const refused = refusals.splice(0).map(refusalLine);
+  // The status over every hand-over written, and whether any was.
+  let handedCode;
+  // Each refusal line a hand-over has written: a clock-held run's idle polls ask L2 again about a
+  // card it refuses, and a refusal already written is no news.
+  const handedRefusals = new Set();
+  /** The refusal lines met since the last render; once a hand-over has been written, only those not yet written, once each. */
+  const freshRefusals = () => {
+    const lines = refusals.splice(0).map(refusalLine);
+    const fresh = handedCode === undefined ? lines : [...new Set(lines)].filter((line) => !handedRefusals.has(line));
+    for (const line of fresh) handedRefusals.add(line);
+    return fresh;
+  };
+  const rendered = (settled, refused = freshRefusals()) => {
     // Zero only where every card's maker delivered, its card in review; any other outcome is short
     // of what the README promises of this verb, and a zero exit would read to whoever called it as
     // work that was done (the owner's O8 on #423).
@@ -404,7 +415,7 @@ async function claiming(verb, limit, opened, {
       const named = new Set(holding.flatMap(({ closer }) => (closer === undefined ? [] : [closer.name])));
       const closers = failure.admission?.state === 'closed' ? failure.admission.closers.filter(({ name }) => !named.has(name)) : [];
       return {
-        text: [...said(outcomes(reachedCards)), ...failuresIn(failure).filter((held) => !carried.has(held)).map(failureLine), ...holdLines(holding), ...closers.map((closer) => `rigger ${verb}: ${closerLine(closer)}`), ...refused].join('\n'),
+        text: [...said(outcomes(reachedCards)), ...failuresIn(failure).filter((held) => !carried.has(held)).map(failureLine), ...holdLines(holding), ...closers.map((closer) => `rigger ${verb}: ${closerLine(closer)}`), ...(failure.notices ?? []).map((failed) => noticeLine(verb, failed.id, failed)), ...refused].join('\n'),
         code: 1,
       };
     }
@@ -424,8 +435,6 @@ async function claiming(verb, limit, opened, {
     const worked = outcomes(reached);
     return { text: [...said(worked), ...refused].join('\n'), code: delivered(worked) ? 0 : 1 };
   };
-  // The status over every hand-over written, and whether any was.
-  let handedCode;
   /** Writes one hand-over of a kept-up `run` as it settles: a report, a firing's failure, or what settled since the last. */
   const handOver = ({ report, failure, settled: each }) => {
     const { text, code } = report !== undefined ? { text: reportText(report), code: 0 }
@@ -441,8 +450,9 @@ async function claiming(verb, limit, opened, {
   })()]);
   if (handedCode === undefined) return rendered(settledRun);
   // A kept-up run that ended answers only what it had not yet handed over (the architect's ruling 1175#6560236393, (b)).
-  const nothing = settledRun.status === 'fulfilled' && Array.isArray(settledRun.value) && settledRun.value.length === 0 && refusals.length === 0;
-  const { text, code } = nothing ? { text: '', code: 0 } : rendered(settledRun);
+  const refused = freshRefusals();
+  const nothing = settledRun.status === 'fulfilled' && Array.isArray(settledRun.value) && settledRun.value.length === 0 && refused.length === 0;
+  const { text, code } = nothing ? { text: '', code: 0 } : rendered(settledRun, refused);
   return { text, code: Math.max(code, handedCode) };
 }
 

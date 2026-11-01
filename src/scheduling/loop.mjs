@@ -1413,15 +1413,17 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         if (failure.admission !== undefined) closed = failure.admission;
       });
       /** What settled since the previous hand-over, which it takes, in the shapes the run ends on. */
+      // Every accumulator is taken whatever the answer, so nothing waits for a later hand-over.
       const since = () => {
         const failed = failures.splice(0);
         const cards = reached.splice(0);
+        const told = notices.splice(0);
         const admitted = closed;
         closed = undefined;
         if (failed.length > 0) {
-          return { status: 'rejected', reason: Object.assign(new AggregateError(failed, `${failed.length} of the pulls this run fired failed`), { reached: cards, ...(admitted && { admission: admitted }) }) };
+          return { status: 'rejected', reason: Object.assign(new AggregateError(failed, `${failed.length} of the pulls this run fired failed`), { reached: cards, ...(admitted && { admission: admitted }), ...(told.length > 0 && { notices: told }) }) };
         }
-        return { status: 'fulfilled', value: kept && admitted ? { admission: admitted, reached: cards, notices: notices.splice(0) } : cards };
+        return { status: 'fulfilled', value: kept && admitted ? { admission: admitted, reached: cards, notices: told } : cards };
       };
       const ended = () => {
         const { status, value, reason } = since();
