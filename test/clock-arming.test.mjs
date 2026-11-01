@@ -421,7 +421,9 @@ test('A11: a start under run with no trigger declared that cannot read the recor
 
 // proves R-SCHED-38
 test('A11: a line that parses to something other than one event makes the record unreadable', async () => {
-  for (const value of ['null', '7', '"text"', '[]', 'true', '{}', '{"event":"trigger.armed","name":"hourly","interval":1000,"anchor":"x"}']) {
+  for (const value of ['null', '7', '"text"', '[]', 'true', '{}', '{"event":"trigger.armed","name":"hourly","interval":1000,"anchor":"x"}',
+    `{"ts":${START},"run":"r-earlier","layer":"L3","event":"run.start"}`,
+    `{"ts":"${at(START)}","run":"r-earlier","layer":"L3","event":"trigger","trigger":"clock","name":"hourly","occurrence":${START + SECOND}}`]) {
     const clock = manualClock(START + 5 * SECOND + 500);
     const record = opening + `${value}\n` + armed(START, 'hourly');
     const built = armingWorld(clock, { triggers: { hourly: report('fire'), fresh: report('fire') }, record });
@@ -436,5 +438,81 @@ test('A11: a line that parses to something other than one event makes the record
     } finally {
       await stop();
     }
+  }
+});
+
+/** One stream line holding `fields` as written, with no envelope added. */
+const raw = (fields) => `${JSON.stringify(fields)}\n`;
+const envelope = { ts: at(START), run: 'r-earlier', layer: 'L3' };
+const armingFields = { ...envelope, event: 'trigger.armed', name: 'hourly', interval: SECOND, anchor: ANCHOR };
+const startFields = { ...envelope, event: 'trigger', trigger: 'clock', name: 'hourly', occurrence: at(START + SECOND) };
+const outcomeFields = { ...envelope, event: 'trigger.outcome', name: 'hourly', occurrence: at(START + SECOND), outcome: 'job' };
+const without = (fields, key) => Object.fromEntries(Object.entries(fields).filter(([name]) => name !== key));
+/** An object no conversion turns into a primitive, which JSON can carry. */
+const unconvertible = { toString: null, valueOf: null };
+
+/**
+ * Each malformation class of a recorded line the start reads, as `[class, line]`: an envelope field
+ * missing or of the wrong type or shape, and each field of an arming, a firing's start and an
+ * outcome missing, of the wrong type, or naming no instant, schedule or outcome Rigger records.
+ */
+const MALFORMED = [
+  ['envelope: ts an unconvertible object', raw({ ...envelope, ts: unconvertible, event: 'run.start' })],
+  ['envelope: ts a date with no time', raw({ ...envelope, ts: '2026-10-29', event: 'run.start' })],
+  ['envelope: ts carrying an offset, not UTC', raw({ ...envelope, ts: '2026-10-29T13:00:00.000+01:00', event: 'run.start' })],
+  ['envelope: ts in another spelling', raw({ ...envelope, ts: 'Thu, 29 Oct 2026 12:00:00 GMT', event: 'run.start' })],
+  ['envelope: ts naming no calendar day', raw({ ...envelope, ts: '2026-02-30T12:00:00.000Z', event: 'run.start' })],
+  ['envelope: run missing', raw(without({ ...envelope, event: 'run.start' }, 'run'))],
+  ['envelope: run empty', raw({ ...envelope, run: '', event: 'run.start' })],
+  ['envelope: run a number', raw({ ...envelope, run: 7, event: 'run.start' })],
+  ['envelope: layer missing', raw(without({ ...envelope, event: 'run.start' }, 'layer'))],
+  ['envelope: layer naming no layer', raw({ ...envelope, layer: 'L9', event: 'run.start' })],
+  ['envelope: event empty', raw({ ...envelope, event: '' })],
+  ['trigger: its trigger a number', raw({ ...envelope, event: 'trigger', trigger: 7 })],
+  ['trigger: its trigger missing', raw({ ...envelope, event: 'trigger' })],
+  ['envelope: an event named for an object property, from no layer', raw(without({ ...envelope, event: 'constructor' }, 'layer'))],
+  ['arming: from a layer other than L3', raw({ ...armingFields, layer: 'L0' })],
+  ['arming: name empty', raw({ ...armingFields, name: '' })],
+  ['arming: interval missing', raw(without(armingFields, 'interval'))],
+  ['arming: interval a string', raw({ ...armingFields, interval: '1000' })],
+  ['arming: interval zero', raw({ ...armingFields, interval: 0 })],
+  ['arming: interval fractional', raw({ ...armingFields, interval: 1.5 })],
+  ['arming: anchor missing', raw(without(armingFields, 'anchor'))],
+  ['arming: anchor a number', raw({ ...armingFields, anchor: START })],
+  ['arming: anchor naming no instant', raw({ ...armingFields, anchor: 'noon' })],
+  ['start: occurrence an unconvertible object', raw({ ...startFields, occurrence: unconvertible })],
+  ['start: occurrence in another spelling', raw({ ...startFields, occurrence: '2026-10-29 12:00:01' })],
+  ['start: after a string', raw({ ...startFields, after: '5' })],
+  ['start: after negative', raw({ ...startFields, after: -1 })],
+  ['start: from a layer other than L3', raw({ ...startFields, layer: 'L2' })],
+  ['outcome: occurrence an unconvertible object', raw({ ...outcomeFields, occurrence: unconvertible })],
+  ['outcome: occurrence in another spelling', raw({ ...outcomeFields, occurrence: '29 October 2026 12:00:01 UTC' })],
+  ['outcome: outcome missing', raw(without(outcomeFields, 'outcome'))],
+  ['outcome: outcome unknown', raw({ ...outcomeFields, outcome: 'done' })],
+  ['outcome: outcome a number', raw({ ...outcomeFields, outcome: 1 })],
+  ['outcome: a card outcome naming no issue', raw({ ...outcomeFields, outcome: 'card' })],
+  ['outcome: a card outcome whose issue is a string', raw({ ...outcomeFields, outcome: 'card', issue: '12' })],
+  ['outcome: from a layer other than L3', raw({ ...outcomeFields, layer: 'L5' })],
+];
+
+// proves R-SCHED-38
+test('A11: each malformed recorded line makes the record unreadable, named by stream and line, and nothing arms or fires', async (t) => {
+  for (const [malformation, malformed] of MALFORMED) {
+    await t.test(malformation, async () => {
+      const clock = manualClock(START + 5 * SECOND + 500);
+      const record = opening + malformed + armed(START, 'hourly');
+      const built = armingWorld(clock, { triggers: { hourly: report('fire'), fresh: report('fire') }, record });
+      const { handed, stop, rejected } = await started(built);
+      try {
+        assert.equal(rejected, undefined, `the start threw ${rejected?.message}`);
+        const failures = failuresIn(handed).map(({ message }) => message);
+        assert.equal(failures.length, 1, `the unreadable record is handed over once: ${failures.join('\n')}`);
+        assert.ok(failures[0].includes(`${streamPath(built.directory)} line 2 is not a recorded event`), `the stream and line are named: ${failures[0]}`);
+        await clock.advance(START + 9 * SECOND);
+        assert.deepEqual(built.emitted.filter(({ event, trigger }) => event === 'trigger.armed' || trigger === 'clock'), [], 'nothing arms or fires');
+      } finally {
+        await stop().catch(() => {});
+      }
+    });
   }
 });

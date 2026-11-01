@@ -464,17 +464,39 @@ function released(release, claim, failure) {
   }
 }
 
+/** An instant as the sink writes one: ISO 8601 in UTC, as `toISOString` spells it ("The envelope"). */
+const instant = (value) => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) && new Date(value).toISOString() === value;
+const named = (value) => typeof value === 'string' && value !== '';
+const whole = (least) => (value) => Number.isSafeInteger(value) && value >= least;
+
+/**
+ * The fields each kind of clock event the start reads must hold, each with its check: an arming,
+ * a firing's start, whose `after` only a card's carries, and an outcome ("How a clock trigger fires").
+ */
+const CLOCK_EVENTS = {
+  'trigger.armed': { name: named, interval: whole(1), anchor: (value) => typeof value === 'string' && Number.isFinite(Date.parse(value)) },
+  clock: { name: named, occurrence: instant, after: (value) => value === undefined || whole(0)(value) },
+  'trigger.outcome': { name: named, occurrence: instant, outcome: (value) => ['job', 'failed', 'abandoned', 'card'].includes(value) },
+};
+
 /**
  * Why `event`, read from the record, is not one event as this start reads it, or undefined where
- * it is one: an object naming its event and an instant, and, for a clock trigger's arming, start or
- * outcome, naming the trigger, and for a start or outcome, an instant as its occurrence.
+ * it is one. Every event holds the envelope: an instant as `ts`, a `run`, a layer and an `event`,
+ * and a `trigger` names its trigger. A clock event is L3's, and holds its kind's fields, a card
+ * outcome naming its issue. This is the one place the start decides what a recorded event is.
  */
 function unlikeEvent(event) {
   if (event === null || typeof event !== 'object' || Array.isArray(event)) return `it parses to ${JSON.stringify(event)}, not to an object`;
-  if (typeof event.event !== 'string' || !Number.isFinite(Date.parse(event.ts))) return 'it names no event and no instant';
-  const clocked = event.event === 'trigger.armed' || event.event === 'trigger.outcome' || (event.event === 'trigger' && event.trigger === 'clock');
-  if (clocked && typeof event.name !== 'string') return 'it names no trigger';
-  if (clocked && event.event !== 'trigger.armed' && !Number.isFinite(Date.parse(event.occurrence))) return 'its occurrence is no instant';
+  if (!instant(event.ts)) return `its \`ts\` is ${JSON.stringify(event.ts) ?? 'missing'}, not an instant in UTC`;
+  if (!named(event.run) || typeof event.layer !== 'string' || !/^L[0-5]$/.test(event.layer) || !named(event.event)) return 'its envelope names no run, layer or event';
+  if (event.event === 'trigger' && !named(event.trigger)) return 'it is a trigger naming no trigger';
+  const kind = event.event === 'trigger' ? (event.trigger === 'clock' ? 'clock' : undefined)
+    : (event.event === 'trigger.armed' || event.event === 'trigger.outcome' ? event.event : undefined);
+  if (kind === undefined) return undefined;
+  const fields = CLOCK_EVENTS[kind];
+  if (event.layer !== 'L3') return `it is a clock event, which only L3 records, from ${event.layer}`;
+  for (const [field, holds] of Object.entries(fields)) if (!holds(event[field])) return `its \`${field}\` is ${JSON.stringify(event[field]) ?? 'missing'}`;
+  if (event.outcome === 'card' && !whole(1)(event.issue)) return 'it is a card outcome naming no issue';
   return undefined;
 }
 

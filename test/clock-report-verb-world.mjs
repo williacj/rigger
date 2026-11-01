@@ -11,23 +11,19 @@ import { COLUMNS, FIELDS, PROJECT, REPO, card, consumerConfig } from './verb-con
 import { START } from './clock-report-world.mjs';
 
 /**
- * Answers `call()`, a verb's run, with `Date.now` reading `clock.now` until that answer settles, so
- * the verb's sink, which `recording.mjs` opens on `Date.now`, stamps each `ts` on the time base the
- * test injects into L3 ("The envelope"). Nothing else on the verb's path in this process reads
- * `Date.now`: its durations and deadlines read `performance.now` or timers. Where `clock` has no
- * `now`, `call()` is answered as it is.
+ * Answers `call()`, a verb's run, with its event sink stamping each `ts` on `clock.now`, the time
+ * base the test injects into L3 ("The envelope"). `recording.mjs` opens the sink on `Date.now`,
+ * taking the function itself, within the verb's first synchronous turn, before its first await. So
+ * `Date.now` reads `clock.now` for that turn alone and is restored as `call()` returns: the sink
+ * keeps `clock.now`, and everything that reads `Date.now` afterwards, L0's deadlines among them,
+ * reads real time. Where `clock` has no `now`, `call()` is answered as it is.
  */
 export function onClock(clock, call) {
   if (clock?.now === undefined) return call();
   const real = Date.now;
   Date.now = clock.now;
-  let answer;
-  try { answer = call(); }
-  catch (failure) {
-    Date.now = real;
-    throw failure;
-  }
-  return Promise.resolve(answer).finally(() => { Date.now = real; });
+  try { return call(); }
+  finally { Date.now = real; }
 }
 
 /** A real verb invocation held mid-card, so the injected clock can advance before drain. */
