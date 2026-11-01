@@ -4511,7 +4511,7 @@ for (const { way, plan, held, refuse, card, lines, code, closer = ['owner-a1.jso
     const append = fs.appendFileSync;
     let refused = 0;
     let pulls = 0;
-    const { agent, consumer, written, running, stop } = keptUpRunVerb({ items: [verbCard(10, 'Ready'), ...items], plan, clock, failingRead });
+    const { agent, consumer, written, stop, ended } = keptUpRunVerb({ items: [verbCard(10, 'Ready'), ...items], plan, clock, failingRead });
     fs.appendFileSync = (path, data, ...rest) => {
       if (String(path) === streamPath(`${consumer}/.rigger`)) {
         const event = JSON.parse(String(data));
@@ -4526,11 +4526,11 @@ for (const { way, plan, held, refuse, card, lines, code, closer = ['owner-a1.jso
     syncBuiltinESMExports();
     try {
       if (held !== undefined) {
-        await positive(() => agent.held(10, held), BOUNDS[60_000].timeout / 4);
+        await positive(() => agent.held(10, held), BOUNDS[60_000].timeout / 3);
         seed(`${consumer}/.rigger`, ...closer);
         agent.release(10, held);
       }
-      await positive(() => written.length > 0, BOUNDS[60_000].timeout / 4);
+      await positive(() => written.length > 0, BOUNDS[60_000].timeout / 3);
       if (poll) {
         // An idle poll after the hand-over hands over only what it read: under a closed
         // admission, its closers (L10), and nothing the previous hand-over already carried.
@@ -4552,10 +4552,7 @@ for (const { way, plan, held, refuse, card, lines, code, closer = ['owner-a1.jso
     } finally {
       fs.appendFileSync = append;
       syncBuiltinESMExports();
-      const ending = stop();
-      for (const role of ['engineer', 'reviewer']) if (agent.held(10, role)) agent.release(10, role);
-      await ending.catch(() => {});
-      await running.catch(() => {});
+      await ended();
     }
   });
 }

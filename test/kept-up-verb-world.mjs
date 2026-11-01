@@ -5,6 +5,7 @@ import { dirname, join } from 'node:path';
 import { installFakeGh } from './fake-gh.mjs';
 import { gitIn, repositoryAt, withOrigin } from './git-repository.mjs';
 import { fixture, shellQuote, withFirstOnPath } from './process-fixtures.mjs';
+import { waitFor } from './loop-world.mjs';
 import { standInAgent } from './stub-claude.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { COLUMNS, FIELDS, PROJECT, REPO, consumerConfig } from './verb-consumer.mjs';
@@ -18,7 +19,9 @@ export const HOURLY_REPORT = { hourly: { interval: 3_600_000, anchor: new Date(S
  * Starts the `run` verb in a consumer declaring `triggers` and a poll of 1000 ms, over a board
  * holding `items` and stand-in agents planned by `plan`, on `clock`. Answers the consumer, the
  * agent, `written`, each text the verb wrote through its writer, `running`, the verb's answer,
- * `fake`, the forge, and `stop()`, which fires the verb's stop and answers its answer. Where
+ * `fake`, the forge, `stop()`, which fires the verb's stop and answers its answer, and `ended()`,
+ * a test's teardown: it fires the stop and releases each held stand-in as it is seen, however late
+ * its maker or judge started, until the verb has answered. Where
  * `failingRead` is given, the first forge command whose arguments hold that text fails, as a `gh`
  * that exits 1 does, and every other command reaches the fake forge.
  */
@@ -46,11 +49,20 @@ export function keptUpRunVerb({ items = [], plan = {}, clock, triggers = HOURLY_
     target: consumer, clock, write: (text) => written.push(text), stop: controller.signal,
   }))));
   running.catch(() => {});
+  let answered = false;
+  running.then(() => { answered = true; }, () => { answered = true; });
+  const stop = () => {
+    controller.abort();
+    return running;
+  };
   return {
-    consumer, agent, written, running, fake,
-    stop: () => {
-      controller.abort();
-      return running;
+    consumer, agent, written, running, fake, stop,
+    ended: async () => {
+      stop();
+      await waitFor(() => {
+        for (const [card, roles] of Object.entries(plan)) for (const role of Object.keys(roles)) if (agent.held(Number(card), role)) agent.release(Number(card), role);
+        return answered;
+      }, 30_000);
     },
   };
 }
