@@ -5,9 +5,10 @@ import { schedule } from '../config/validate.mjs';
 import { whenElapsed } from '../substrate/process.mjs';
 
 /**
- * Arms the report occurrences of each of `triggers` that `record` names, each `{ armed, fired }`:
+ * Arms the report occurrences of each of `triggers` that `armings` names, each `{ armed, fired }`:
  * the instant of its newest arming and the occurrence of its last firing. An occurrence is due
- * after both, and, under `catchUp: 'skip'`, after this run's start too, so a missed one fires once
+ * after both, and, under `catchUp: 'skip'`, after `started`, the instant the run's start read the
+ * record, too, so a missed one fires once
  * at the start's wake under `fire` and never under `skip`. A wake keeps only the newest due
  * occurrence per trigger, and, from each `poll()` on, a poll `interval` milliseconds later. One timer
  * serves both, and it holds the process open. A wake awaits each callback it makes, so no two
@@ -17,12 +18,11 @@ import { whenElapsed } from '../substrate/process.mjs';
  * Answers `{ poll, stop, started }`: `poll` starts polling, `stop` cancels the timer for good, and
  * `started` settles once the start's wake has fired what was missed.
  */
-export function clockWakes({ triggers, poll: interval } = {}, clock = {}, { fire, polled }, record = new Map()) {
-  const entries = Object.entries(triggers ?? {}).filter(([name, trigger]) => trigger.job === 'report' && record.has(name));
+export function clockWakes({ triggers, poll: interval } = {}, clock = {}, { fire, polled }, { armings = new Map(), started } = {}) {
+  const entries = Object.entries(triggers ?? {}).filter(([name, trigger]) => trigger.job === 'report' && armings.has(name));
   const now = clock.now ?? Date.now;
-  const started = now();
   const last = new Map(entries.map(([name, trigger]) => {
-    const { armed, fired } = record.get(name);
+    const { armed, fired } = armings.get(name);
     return [name, Math.max(armed, fired, trigger.catchUp === 'skip' ? started : -Infinity)];
   }));
   let cancel = () => {};

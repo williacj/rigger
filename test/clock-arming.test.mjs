@@ -23,10 +23,16 @@ const armings = (built) => ofRun(built, 'trigger.armed').map(({ ts, name, interv
 const firings = (built) => ofRun(built, 'trigger').filter(({ trigger }) => trigger === 'clock').map(({ name, occurrence }) => ({ name, occurrence }));
 const outcomes = (built) => ofRun(built, 'trigger.outcome').map(({ name, occurrence, outcome }) => ({ name, occurrence, outcome }));
 
-/** Starts `built`'s run kept up, waits for its start to finish its first pull, and answers its handle. */
+/**
+ * Starts `built`'s run kept up, waits for its start to finish its first pull, or for the run to
+ * end, so a start that throws fails the test's assertions rather than its wait, and answers its
+ * handle with the run's rejection, where it rejected, as `rejected`.
+ */
 async function started(built) {
   const run = keptUp(built);
-  await waitFor(() => built.emitted.some(({ event, trigger }) => event === 'trigger' && trigger === 'drain'));
+  let ended = false;
+  run.running.then(() => { ended = true; }, (reason) => { ended = true; run.rejected = reason; });
+  await waitFor(() => ended || built.emitted.some(({ event, trigger }) => event === 'trigger' && trigger === 'drain'));
   return run;
 }
 
@@ -245,15 +251,19 @@ test('A11: an unreadable record arms and fires no trigger for the run, and the s
 test('A12: a start that cannot read the record still pulls cards', async () => {
   const clock = manualClock(START + 5 * SECOND + 500);
   const built = armingWorld(clock, { triggers: { hourly: report('fire') }, record: unreadable, cards: [1] });
-  const { handed, stop } = keptUp(built);
+  const { handed, running, stop } = keptUp(built);
+  let ended = false;
+  running.then(() => { ended = true; }, () => { ended = true; });
+  const pulled = () => built.emitted.some(({ event, card }) => event === 'pull' && card === 1);
   try {
-    await waitFor(() => built.emitted.some(({ event, card }) => event === 'pull' && card === 1));
+    await waitFor(() => pulled() || ended);
+    assert.ok(pulled(), 'the run pulled card 1 at the start that could not read the record');
     assert.match(failuresIn(handed)[0].message, /could not be read/, 'the record was unreadable at this start');
   } finally {
-    const ended = stop();
+    const stopping = stop();
     built.releaseWorkspaces();
     // The card's refused workspace fails its pull, which this row does not read.
-    await ended.catch(() => {});
+    await stopping.catch(() => {});
   }
 });
 
@@ -359,5 +369,72 @@ test('A17: after the start, a wake fires each trigger due once, carrying the new
     assert.deepEqual(firings(built), [{ name: 'hourly', occurrence: at(START + 3000) }]);
   } finally {
     await stop();
+  }
+});
+
+/** A clock that stands at `start` and moves to `then` once the sink has written `event`. */
+function movedAfter(start, then, event) {
+  const clock = manualClock(start);
+  return { clock, afterEmit: (written) => { if (written === event) void clock.advance(then); } };
+}
+
+// proves R-SCHED-36
+test('A1: time passing while the sink writes the arming leaves the arming at its event\'s ts', async () => {
+  for (const catchUp of ['fire', 'skip']) {
+    const { clock, afterEmit } = movedAfter(START + 6 * SECOND - 1, START + 6 * SECOND, 'trigger.armed');
+    const built = armingWorld(clock, { triggers: { hourly: report(catchUp) }, record: opening, afterEmit });
+    const { stop } = await started(built);
+    try {
+      assert.deepEqual(armings(built).map(({ ts }) => ts), [at(START + 5999)], catchUp);
+      assert.deepEqual(firings(built), [{ name: 'hourly', occurrence: at(START + 6000) }], `${catchUp}: the occurrence after the arming's ts is due`);
+    } finally {
+      await stop();
+    }
+  }
+});
+
+test('A14: a report firing found pending at a start under run with no trigger declared is recorded abandoned', async () => {
+  const record = opening + armed(START, 'hourly') + fired(START + 3 * SECOND, 'hourly', START + 3 * SECOND);
+  for (const [declared, triggers] of [['an empty trigger set', {}], ['no clock declaration', undefined]]) {
+    for (const singlePull of [false, true]) {
+      const built = armingWorld(manualClock(START + 3 * SECOND + 500), { triggers, record });
+      const handed = [];
+      await built.loop.run({ singlePull, handOver: (each) => handed.push(each) });
+      built.name();
+      assert.deepEqual(outcomes(built), [{ name: 'hourly', occurrence: at(START + 3000), outcome: 'abandoned' }], `${declared}, singlePull ${singlePull}`);
+      assert.deepEqual(handed, [], `${declared}, singlePull ${singlePull}`);
+    }
+  }
+});
+
+// proves R-SCHED-38
+test('A11: a start under run with no trigger declared that cannot read the record names it', async () => {
+  for (const singlePull of [false, true]) {
+    const built = armingWorld(manualClock(START + 3 * SECOND + 500), { triggers: {}, record: unreadable });
+    const handed = [];
+    await built.loop.run({ singlePull, handOver: (each) => handed.push(each) });
+    const failures = failuresIn(handed).map(({ message }) => message);
+    assert.equal(failures.length, 1, `singlePull ${singlePull}: ${failures.join('\n')}`);
+    assert.ok(failures[0].includes(`${streamPath(built.directory)} line 2 is not a recorded event`), failures[0]);
+  }
+});
+
+// proves R-SCHED-38
+test('A11: a line that parses to something other than one event makes the record unreadable', async () => {
+  for (const value of ['null', '7', '"text"', '[]', 'true', '{}', '{"event":"trigger.armed","name":"hourly","interval":1000,"anchor":"x"}']) {
+    const clock = manualClock(START + 5 * SECOND + 500);
+    const record = opening + `${value}\n` + armed(START, 'hourly');
+    const built = armingWorld(clock, { triggers: { hourly: report('fire'), fresh: report('fire') }, record });
+    const { handed, stop, rejected } = await started(built);
+    try {
+      assert.equal(rejected, undefined, `${value}: the start threw ${rejected?.message}`);
+      const failures = failuresIn(handed).map(({ message }) => message);
+      assert.equal(failures.length, 1, `${value}: ${failures.join('\n')}`);
+      assert.ok(failures[0].includes(`${streamPath(built.directory)} line 2 is not a recorded event`), `${value}: ${failures[0]}`);
+      await clock.advance(START + 9 * SECOND);
+      assert.deepEqual(built.emitted.filter(({ event, trigger }) => event === 'trigger.armed' || trigger === 'clock'), [], value);
+    } finally {
+      await stop();
+    }
   }
 });

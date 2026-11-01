@@ -10,6 +10,7 @@ import { standInAgent } from './stub-claude.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { COLUMNS, FIELDS, PROJECT, REPO, consumerConfig } from './verb-consumer.mjs';
 import { START } from './clock-report-world.mjs';
+import { onClock } from './clock-report-verb-world.mjs';
 import { run as runVerb } from '../src/cli/run.mjs';
 
 /** A report trigger whose first occurrence is an hour after `START`. */
@@ -45,9 +46,9 @@ export function keptUpRunVerb({ items = [], plan = {}, clock, triggers = HOURLY_
   const agent = standInAgent(plan);
   const written = [];
   const controller = new AbortController();
-  const running = withFirstOnPath(dirname(fake.gh), () => withFirstOnPath(dirname(gh), () => withFirstOnPath(agent.dir, () => runVerb({
+  const running = onClock(clock, () => withFirstOnPath(dirname(fake.gh), () => withFirstOnPath(dirname(gh), () => withFirstOnPath(agent.dir, () => runVerb({
     target: consumer, clock, write: (text) => written.push(text), stop: controller.signal,
-  }))));
+  })))));
   running.catch(() => {});
   let answered = false;
   running.then(() => { answered = true; }, () => { answered = true; });

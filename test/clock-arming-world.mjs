@@ -32,13 +32,16 @@ export const line = (at, event, fields = {}) => `${JSON.stringify({ ts: new Date
  * once `releaseWorkspaces()` is called, so a pulled card starts no process. `emitted` holds each event the sink accepted, named or not, and
  * `events()` reads the stream back.
  */
-export function armingWorld(clock, { triggers, cards = [], record, named = true } = {}) {
+export function armingWorld(clock, { triggers, cards = [], record, named = true, afterEmit = () => {} } = {}) {
   const directory = temporaryDirectory('rigger-arming-');
   if (record !== undefined) {
     mkdirSync(dirname(streamPath(directory)), { recursive: true });
     writeFileSync(streamPath(directory), record);
   }
-  const settings = { ...config, kinds: KINDS, concurrency: 1, clock: { poll: 1000, triggers } };
+  // `triggers` left out declares no clock at all.
+  const settings = { ...config, kinds: KINDS, concurrency: 1 };
+  delete settings.clock;
+  if (triggers !== undefined) settings.clock = { poll: 1000, triggers };
   const real = openSink({ ...(named && { directory }), run: RUN, now: clock.now });
   let refusing;
   const emitted = [];
@@ -53,6 +56,7 @@ export function armingWorld(clock, { triggers, cards = [], record, named = true 
           }
           emitter.emit(event, fields);
           emitted.push({ event, card: context.card, ...fields });
+          afterEmit(event, fields ?? {});
         },
       };
     },
