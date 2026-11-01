@@ -144,11 +144,15 @@ async function reporting(opened, { target = process.cwd(), packageRoot = PACKAGE
   } catch (refused) {
     return { text: `rigger report: ${refused.message}, so no signal is derived`, code: 1 };
   }
-  const { path, l0, l1, l2, runs, l4, markers } = derived;
-  if (runs === null) return { text: `rigger report: no events are recorded; there is no stream at ${path}`, code: 0 };
+  return { text: reportText(derived), code: 0 };
+}
+
+/** The report lines shared by the report verb and a clock firing handed to run. */
+export function reportText({ path, l0, l1, l2, runs, l4, markers }) {
+  if (runs === null) return `rigger report: no events are recorded; there is no stream at ${path}`;
   const markerLines = markers.map(({ card, role, head, dispatch, reason }) =>
     `  card #${card}, ${role}, head ${head}, dispatch ${dispatch}${reason === undefined ? '' : `: ${reason}`}`);
-  return { text: [
+  return [
     `rigger report: the events recorded at ${path}`,
     'L0',
     ...l0Lines(l0),
@@ -164,5 +168,5 @@ async function reporting(opened, { target = process.cwd(), packageRoot = PACKAGE
     ...markerLines,
     '  only markers L2 recorded in this state directory are named',
     '  markers of role owner are never checked',
-  ].join('\n'), code: 0 };
+  ].join('\n');
 }
