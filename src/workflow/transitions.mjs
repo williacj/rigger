@@ -339,7 +339,8 @@ export function columnChanges({
      * `maker.failed` event under the card, classed as the environment's, as it classes a step
      * that never started (the architect's ruling 5 on #467).
      *
-     * For a fulfilled outcome, the forge's issue comments are read before the exit code. A valid
+     * For a fulfilled outcome or a rejected one carrying a nonzero result, the forge's issue
+     * comments are read before classifying the exit. A valid
      * note under the maker's dispatch answers an escalation without a move, with any one open pull
      * request and its head read from the line of work. Otherwise the exit code and the forge alone
      * decide, never the output (the owner's ruling on #220, refined by O5 on #467). Anything but
@@ -358,11 +359,12 @@ export function columnChanges({
      * caller is told the card and the read.
      */
     settled: async (card, outcome, { dispatch, expectedHead, tipFailure, lastForgeHead, last = false, reads: readCount, elapsedMs } = {}) => {
-      if (outcome?.status === 'rejected') {
+      const exit = outcome?.status === 'fulfilled' ? outcome.value?.exit : outcome?.status === 'rejected' ? outcome.reason?.result?.exit : undefined;
+      // A refused recording retains the result of a command that ran; its failure still reaches L3.
+      if (outcome?.status === 'rejected' && (!Number.isInteger(exit) || exit === 0)) {
         if (outcome.reason?.code === NOT_STARTED) note(card, 'maker.failed', { class: 'environment', reason: outcome.reason.message }, { dispatch });
         return undefined;
       }
-      const exit = outcome?.status === 'fulfilled' ? outcome.value?.exit : undefined;
       if (!Number.isInteger(exit)) {
         throw new Error(`card #${card.number}'s dispatch outcome is neither a dispatch that ran with an exit code nor one that threw: ${JSON.stringify(outcome)}`);
       }

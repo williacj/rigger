@@ -7,6 +7,7 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { rmdirSync } from 'node:fs';
 
 import config from '../rigger.config.mjs';
 import { loop } from '../src/scheduling/loop.mjs';
@@ -184,6 +185,82 @@ function world(t, { cards = [12], clock = manualClock(), afterMaker = () => {}, 
 
 /** The observable start has reached a live scripted command, before a test releases or times it. */
 const makerReady = (here) => positive(() => here.makerStarts().length > 0 && [...here.processes.children.values()].some((child) => child.cwd.includes('workspaces') && child.exitCode === null && child.signalCode === null));
+
+// F1c: refusing the end must retain both the completed result and the refusal report.
+// proves R-LOOP-18
+test('F1c: a refused maker end reports its nonzero result without dispatching the maker again', async (t) => {
+  for (const cell of ['end', 'timeout', 'L0', 'record', 'record-and-end']) {
+    await t.test(cell, async (t) => {
+      const here = world(t);
+      const emitter = here.sink.emitter.bind(here.sink);
+      const partial = join(here.directory, 'groups.json.partial');
+      let refused = false;
+      here.sink.emitter = (context) => {
+        const opened = emitter(context);
+        return { emit(event, fields) {
+          if (cell.startsWith('record') && context.layer === 'L1' && event === 'dispatch.end') rmdirSync(partial);
+          const selected = cell === 'L0' ? context.layer === 'L0' && event === 'timeout.killed'
+            : context.layer === 'L1' && event === (cell === 'timeout' ? 'dispatch.timeout' : 'dispatch.end');
+          if (cell !== 'record' && !refused && selected) {
+            refused = true;
+            throw new Error(`scripted sink unavailable at ${event}`);
+          }
+          opened.emit(event, fields);
+        } };
+      };
+      const run = here.start();
+      await makerReady(here);
+      if (cell.startsWith('record')) mkdirSync(partial); // A directory cannot be rewritten as the record's partial file.
+      if (cell === 'timeout' || cell === 'L0') await here.clock.advance(START + 10_000);
+      else here.finish();
+      await positive(() => here.makerStarts().length > 1 || run.handed.length > 0);
+      assert.equal(here.makerStarts().length, 1, 'a refused end must not redispatch a maker that ran and left the forge empty');
+      assert.equal(here.settles[0].value.action, 'set-aside');
+      assert.deepEqual(here.repository.held().branches, []);
+      assert.deepEqual(here.repository.held().pullRequests, []);
+      const reported = run.handed.flatMap(({ settled }) => settled?.value ?? settled?.reason?.reached ?? []);
+      assert.equal(reported[0].outcome.status, 'rejected', 'the refusal still reaches the caller');
+      const failure = reported[0].outcome.reason;
+      assert.equal(failure.code, cell === 'record' ? 'RECORD_REFUSED' : 'EVENT_REFUSED');
+      assert.notEqual(failure.result.exit, 0, 'the refused recording retains the completed nonzero result');
+      if (cell === 'record') assert.ok(failure.recordFailure);
+      else assert.match(failure.message, /scripted sink unavailable at/);
+      if (cell === 'record-and-end') assert.equal(failure.cause.code, 'RECORD_REFUSED');
+      assert.equal(here.clock.now(), START + (cell === 'timeout' || cell === 'L0' ? 10_000 : 0));
+      await run.stop();
+    });
+  }
+});
+
+// F1c's retained result must take the same note-first and forge classification as a fulfilled result.
+// proves R-LOOP-18
+test('F1c classification: rejected nonzero results retain escalation, forge and failed-read handling', async (t) => {
+  for (const cell of ['note', 'branch', 'open', 'merged', 'closed', 'readBranches', 'readPullRequests', 'no-result', 'zero']) {
+    await t.test(cell, async (t) => {
+      const here = world(t);
+      const dispatch = 'd-11111111-2222-3333-4444-555555555555';
+      const [card] = await here.fake.operations.readItems();
+      const reason = Object.assign(new Error('record refused'), { code: 'EVENT_REFUSED',
+        ...(cell === 'no-result' ? {} : { result: { exit: cell === 'zero' ? 0 : 7 } }),
+      });
+      if (cell === 'note') {
+        here.repository.postIssueComment(12, postedNote(dispatch).body.replace('item: 2', 'item: 1'));
+        here.repository.operations.readBranches = async () => { throw new Error('an escalation must precede the empty-work branch read'); };
+      } else if (cell === 'branch') here.repository.operations.readBranches = async () => ({ 'rigger-12': true });
+      else if (['open', 'merged', 'closed'].includes(cell)) here.repository.open({ number: 77, head: 'rigger-12', sha: 'a'.repeat(40), merged: cell === 'merged', closed: cell === 'closed' });
+      else if (cell.startsWith('read')) here.repository.operations[cell] = async () => { throw new Error(`scripted ${cell} unavailable`); };
+      else here.repository.operations.readIssueComments = async () => { throw new Error('an unstarted or zero-result rejection must not read notes'); };
+      const settling = here.l2.settled(card, { status: 'rejected', reason }, { dispatch });
+      if (cell.startsWith('read')) await assert.rejects(settling, new RegExp(`card #12.*${cell === 'readBranches' ? 'branch' : 'pull requests'}.*scripted ${cell} unavailable`));
+      else {
+        const answer = await settling;
+        if (cell === 'note') assert.equal(answer?.action, 'escalate', 'a valid note takes precedence over an empty forge');
+        else assert.equal(answer, undefined, `${cell}: preserve the ordinary settle handling`);
+      }
+      assert.deepEqual(here.fake.writes(), [], 'classification alone must not move or escalate the card');
+    });
+  }
+});
 
 // F1: a release that immediately reclaims the failed card must produce a second L1 maker start.
 // proves R-LOOP-18

@@ -111,3 +111,53 @@ This entry owns the implementation rationale, the initial red and the
 compatibility/retarget evidence. The pull request holds final-head verification,
 guarded receipts, fresh-clone evidence, CI and preflight. The clone and its
 temporary directory remain for the coordinator to remove.
+
+## Round 2 — retained nonzero results and the pinned case
+
+The round-1 architect's B1 found an additional F11 instance: L1's rejected
+`EVENT_REFUSED` can carry the completed maker's `result`. Acceptance revision
+eb16be39d8a6 names it F1c. At reviewed head bdc2012f73f83789763bef0fb3217384615d0539,
+before changing production, the new F1c test failed with
+`a refused end must not redispatch a maker that ran and left the forge empty`,
+`2 !== 1`. The command was
+`TMPDIR=/Users/cjwilliams/GitHub/rigger-worktrees/codex-1181-tmp caffeinate -i npm test -- --test-name-pattern='^F1c:' test/failed-maker.test.mjs`.
+Full output is `1181-F1c-red.log` in that TMPDIR; one-minute loads were
+11.49 at start and end, with 470 user processes at start. This red came before
+its fix; the same test then passed (`1181-F1c-green.log`, loads 10.97/10.97).
+
+L2 now reads a rejected outcome's retained nonzero integer exit through the same
+note-first classification as a fulfilled result. A rejection without a result,
+or with a zero exit, retains the prior handling. L3 still reports the original
+rejected outcome, including its refusal code and result; no L1 or Self-hosting
+path changes. Producer coverage added after the fix exercises L1's refused end,
+refused timeout, L0's refused timeout kill, record-removal refusal, and a combined
+record/end refusal. The boundary cells protect escalation precedence, retained
+branch/open/merged/closed work, failed reads and no-result/zero compatibility.
+These extensions owe the guarded reversion receipt with their before/after-code
+status stated separately in the PR.
+
+The full outcome-producer inventory is retained as `1181-result-inventory.log`:
+L0's completed `runCommand` refusal carries `result`; L1 preserves it after the
+catch, adds its own refused timeout/end, preserves an L0 refusal when combining
+events, constructs `RECORD_REFUSED` after a failed removal, or wraps that record
+failure as an L1 refusal's cause while retaining `result`. Refused start,
+pre-result group-record failure, scratch/adapter preparation, and exit-cleanup
+callbacks carry no completed maker result. Their existing handling remains.
+F1c is the additional F11 instance met in this revision.
+
+For B2, the architect authored a lead row and four continuation rows with the
+same meaning as the earlier case. ARCHITECTURE.md copies the revised card's
+fenced text byte for byte. This binding-document proposal remains the owner's
+to ratify at the marker. The four K30 retargets remain the only existing test
+lines changed against main. Main remained at 5c7d911b after fetching before this
+revision; no merge was needed. The earlier pre-code transitions L75/L225 proof
+still applies, and all unchanged transitions tests pass in the round-2 named
+run (111 total/pass, zero fail; loads 12.93/12.93).
+
+Round-2 working-tree verification passed before commit: full deterministic
+4363/4363, zero fail/cancel/skip/todo, through the slot at one-minute loads
+7.71/9.22 (`1181-round2-full.log`). The 13 affected host files passed 206/206,
+zero fail/cancel/skip/todo, with loads 7.46/24.09 and 456 user processes at start
+(`1181-round2-host-head.log`). Every run retained complete output before any
+summary. Matrix and package checks exited 0; L3 remains 1323, package 9075/12000.
+The committed-head receipts, fresh clone and CI are delivered in the PR body.
