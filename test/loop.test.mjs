@@ -4260,6 +4260,8 @@ test('L13: a hold whose closer could not be saved ends a clock-held run once its
   fs.chmodSync(admissionDirectory, 0o555);
   try {
     const { running, handed } = keptUp(built);
+    const ended = settledOf(running);
+    await positive(() => ended());
     await assert.rejects(running, (failure) => {
       assert.match(leavesOf(failure).map(({ message }) => message).join('\n'), /card #1 was held/);
       return true;
@@ -4337,10 +4339,13 @@ test('L15: the run verb writes a report firing\'s hand-over as it settles, rende
   try {
     await positive(() => written.length === 1);
     const path = streamPath(`${consumer}/.rigger`);
-    const snapshot = temporaryDirectory('rigger-kept-up-report-snapshot-');
-    fs.copyFileSync(path, streamPath(snapshot));
     await clock.advance(CLOCK_START + 1000);
     assert.equal(written.length, 2, 'the firing was written as it settled');
+    // The report read the stream as it stood before the firing recorded its outcome.
+    const lines = fs.readFileSync(path, 'utf8').trimEnd().split('\n');
+    const outcome = lines.findIndex((line) => JSON.parse(line).event === 'trigger.outcome');
+    const snapshot = temporaryDirectory('rigger-kept-up-report-snapshot-');
+    fs.writeFileSync(streamPath(snapshot), `${lines.slice(0, outcome).join('\n')}\n`);
     assert.equal(written[1], reportText({ ...deriveReport(snapshot), path }));
     assert.equal(ended(), false, 'the verb did not exit at the firing');
   } finally {
