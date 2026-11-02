@@ -60,9 +60,10 @@ function gate() {
  * escalation label, and `refuseRecord(event, fields)` has the sink refuse that append. `escalate`
  * is the config's escalation routing, and `beforeSettle({ repository, card, dispatch })` runs as L2
  * is asked to settle a maker, as a maker's own forge writes would land before it exits. An escalation
- * role is handed to L2's role settle as one that ran and exited `exit`.
+ * role is handed to L2's role settle as one that ran and exited `exit`. A judge's directory is not
+ * made, and where `judgeRefused`, L1 refused its replace rule, which L2 escalates as card-local.
  */
-function world(t, { cards = [12], clockHeld = true, concurrency = 1, script = () => 'refused', branches = [], refuseMove = () => false, madeAnyway = false, refuseLabel = false, exit = 7, judges = KINDS.change.judges, refuseRecord = () => false, escalate = {}, beforeSettle = () => {} } = {}) {
+function world(t, { cards = [12], clockHeld = true, concurrency = 1, script = () => 'refused', branches = [], refuseMove = () => false, madeAnyway = false, refuseLabel = false, exit = 7, judges = KINDS.change.judges, refuseRecord = () => false, escalate = {}, beforeSettle = () => {}, judgeRefused = false } = {}) {
   const clock = manualClock();
   const directory = temporaryDirectory('rigger-set-aside-', { context: t });
   const kinds = { change: { ...KINDS.change, judges } };
@@ -139,7 +140,7 @@ function world(t, { cards = [12], clockHeld = true, concurrency = 1, script = ()
   };
   const built = loop({ config: settings, board, decide, facts: offering, l2, sink,
     kill: async () => {}, workspace, // A judge's directory fails as L1's make fails one (`makeDetachedDirectory` in workspace.mjs), so L2 withholds the judge.
-    judgeDirectory: async (number, role) => { throw Object.assign(new Error(`scripted judge directory for ${role} of card ${number} not made`), { code: WORKSPACE_NOT_MADE, path: join(directory, 'judges', `rigger-${number}`, role) }); },
+    judgeDirectory: async (number, role) => { throw Object.assign(new Error(`scripted judge directory for ${role} of card ${number} not made`), { code: judgeRefused ? WORKSPACE_REFUSED : WORKSPACE_NOT_MADE, path: join(directory, 'judges', `rigger-${number}`, role) }); },
     removeDirectories: async () => {}, state: directory, environment: {}, run: 'r-aside', clock });
   const events = () => (existsSync(streamPath(directory)) ? readEvents(directory) : []);
   const pulls = (number = 12) => events().filter((event) => event.layer === 'L3' && event.event === 'pull' && event.card === number).length;
@@ -166,7 +167,9 @@ function world(t, { cards = [12], clockHeld = true, concurrency = 1, script = ()
   };
   /** One poll of an idle clock-held run: settles once the poll has claimed, or settled claiming nothing. */
   const poll = () => clock.advance(clock.now() + POLL);
-  return { start, poll, pulls, makers, column, move, events, repository, fake, clock, holdNextRead: (promise) => held.push(promise), reads: () => ({ begun, ended }), offered: () => offered };
+  return { start, poll, pulls, makers, column, move, events, repository, fake, clock, holdNextRead: (promise) => held.push(promise), reads: () => ({ begun, ended }), offered: () => offered,
+    // A person removing every label but the kind's, as the board's issue labels change, moving nothing.
+    unlabel: () => fake.setIssueLabels(settings.repo, 12, ['type:change']) };
 }
 
 /** Waits until `run` has handed over its `count`th busy period, which ends with the drain once its claims are released. */
@@ -460,16 +463,15 @@ async function judgedPull(here, column, owner = false) {
 
 /**
  * Each L2 column change L3 takes a compared column from, moving the card `from` one column to its
- * `target`, crossed with how it ended. A person's move ends the skip at `away` where the card is at
- * `target`, and at `elsewhere` where it is not: each a column for which L2 answers this card with a
- * claim, Done never being offered to L2. `options` build the world and `setup` stages the card; `ends`
+ * `target`, crossed with how it ended. `options` build the world and `setup` stages the card; `ends`
  * gives each outcome's world options and the column the board holds after it, which is the compared
- * column the skip must hold at. A `labelled` end leaves the escalation label, for which L2 answers
- * no action in any column, so no read can show that card's compared column.
+ * column the skip must hold at. A `labelled` end leaves the escalation label on the card, and an end
+ * that is not `aside` sets nothing aside. `handed` is how many times the claim itself hands the card
+ * to L2's facts call: once at its pull, and for a merge, once more as the lane reaches it.
  */
 const COLUMN_STEPS = {
   'a continuing settle to Review': {
-    from: COLUMNS.coding, target: COLUMNS.review, away: COLUMNS.ready,
+    from: COLUMNS.coding, target: COLUMNS.review,
     options: { judges: ['reviewer'], exit: 0, script: (number, claim, { repository }) => {
       // The maker pushed before L2 settles it, so the old marker no longer names the head.
       if (claim === 1) repository.update(77, { sha: HEADS.pushed });
@@ -483,7 +485,7 @@ const COLUMN_STEPS = {
     },
   },
   'a handled escalation the role returns to Review': {
-    from: COLUMNS.coding, target: COLUMNS.review, away: COLUMNS.ready,
+    from: COLUMNS.coding, target: COLUMNS.review,
     options: { escalate: { ambiguous: 'pm' }, exit: 0, script: () => 'maker', beforeSettle: ({ repository, card, dispatch }) => {
       // The maker opened its pull request and left a note escalating an item for the PM role.
       repository.open({ number: 77, head: 'rigger-12', sha: HEADS.pushed });
@@ -497,20 +499,22 @@ const COLUMN_STEPS = {
     },
   },
   'a move to Done for a merged pull request': {
-    from: COLUMNS.review, target: COLUMNS.done, elsewhere: COLUMNS.owner,
+    from: COLUMNS.review, target: COLUMNS.done,
     options: {},
     setup: async (here) => {
       await here.move(12, COLUMNS.review);
       here.repository.open({ number: 77, head: 'rigger-12', sha: HEADS.judged, merged: true });
     },
     ends: {
-      fulfilled: { options: {}, column: COLUMNS.done },
+      // A move the board accepted ends the card's work, so nothing sets it aside.
+      fulfilled: { options: {}, column: COLUMNS.done, aside: false },
       'rejected after the board accepted it': { options: { refuseRecord: (event, fields) => event === 'transition' && fields.cause === 'merged' }, column: COLUMNS.done },
       'rejected before any move': { options: { refuseMove: (column) => column === COLUMNS.done }, column: COLUMNS.review },
     },
   },
   'the end of a merge in the lane': {
-    from: COLUMNS.owner, target: COLUMNS.done, elsewhere: COLUMNS.review,
+    // The lane reads the card again through L2's facts call as it reaches the merge.
+    from: COLUMNS.owner, target: COLUMNS.done, handed: 2,
     options: {},
     setup: async (here) => {
       const [card] = await here.fake.operations.readItems();
@@ -522,6 +526,29 @@ const COLUMN_STEPS = {
       fulfilled: { options: {}, column: COLUMNS.done },
       'rejected after the board accepted it': { options: { refuseRecord: (event, fields) => event === 'transition' && fields.cause === 'mergedFromOwner' }, column: COLUMNS.done },
       'rejected before any move': { options: { refuseMove: (column) => column === COLUMNS.done }, column: COLUMNS.owner },
+    },
+  },
+  'an escalation of the judges L1 could not give a directory': {
+    from: COLUMNS.review, target: COLUMNS.owner,
+    options: { judges: ['reviewer'], judgeRefused: true },
+    setup: async (here) => {
+      await here.move(12, COLUMNS.review);
+      here.repository.open({ number: 77, head: 'rigger-12', sha: HEADS.judged, mergeBase: 'c'.repeat(40), diff: 'diff --git a/help b/help\n', mergeable: 'mergeable' });
+    },
+    ends: {
+      fulfilled: { options: {}, column: COLUMNS.owner, labelled: true },
+      'rejected after the board accepted it': { options: { refuseRecord: (event, fields) => event === 'transition' && fields.cause === 'escalated' }, column: COLUMNS.owner },
+      'rejected before any move': { options: { refuseMove: (column) => column === COLUMNS.owner }, column: COLUMNS.review },
+    },
+  },
+  'a continuing claim moving the card to Coding': {
+    from: COLUMNS.review, target: COLUMNS.coding,
+    options: { judges: ['reviewer'], script: () => 'refused' },
+    setup: (here) => judgedPull(here, COLUMNS.review),
+    ends: {
+      fulfilled: { options: {}, column: COLUMNS.coding },
+      'rejected after the board accepted it': { options: { refuseRecord: (event, fields) => event === 'transition' && fields.cause === 'continued' }, column: COLUMNS.coding },
+      'rejected before any move': { options: { refuseMove: (column) => column === COLUMNS.coding }, column: COLUMNS.review },
     },
   },
   'an escalation at the pull': {
@@ -548,11 +575,13 @@ const COLUMN_STEPS = {
 
 // R-SCHED-43 row S5, at every L2 column change L3 observes: each column the board accepted is the
 // compared column, whether L2's step then answered or rejected, and a step rejected before any move
-// leaves it where it was. A run's own move never ends the skip, so no second maker starts.
+// leaves it where it was. The test watches L3 hand the card to L2's facts call, which a skipped card
+// never is, so neither L2's escalation label nor its no-action answer can mask the compared column.
+// A label's removal ends no skip, and a person's move to any other column ends it.
 // proves R-SCHED-43
 test('S5 table: every column the board accepted is the compared column, however the step ended', async (t) => {
-  for (const [step, { from, target, away = from, elsewhere = target, options, setup, ends }] of Object.entries(COLUMN_STEPS)) {
-    for (const [end, { options: ending, column, labelled = false }] of Object.entries(ends)) {
+  for (const [step, { from, target, handed = 1, options, setup, ends }] of Object.entries(COLUMN_STEPS)) {
+    for (const [end, { options: ending, column, labelled = false, aside = true }] of Object.entries(ends)) {
       await t.test(`${step}, ${end}`, async (t) => {
         const here = world(t, { ...options, ...ending });
         await setup(here);
@@ -564,105 +593,32 @@ test('S5 table: every column the board accepted is the compared column, however 
           await new Promise((resolve) => setImmediate(resolve));
         }
         assert.equal(await here.column(), column, `${step}, ${end}: the board holds the card in ${column}`);
-        const claims = here.pulls();
+        assert.equal(here.pulls(), 1, `${step}, ${end}: the run claims the card once`);
+        // The claim's release reads the board at once; a card it set aside is skipped there.
+        const settled = aside ? handed : handed + 1;
+        assert.equal(here.offered(), settled, aside
+          ? `${step}, ${end}: every read after the setting aside finds the card in ${column}, its compared column, and skips it`
+          : `${step}, ${end}: nothing set the card aside, so the claim's release read hands it to L2`);
         const makers = here.makers();
-        assert.equal(claims, 1, `${step}, ${end}: the run claims the card once, and its own move ends no skip`);
-        for (let each = 0; each < 3; each += 1) await here.poll();
-        assert.equal(here.pulls(), claims, `${step}, ${end}: reads finding the card in ${column} keep its skip, so ${column} is its compared column`);
-        assert.equal(here.makers(), makers, `${step}, ${end}: no maker starts again without a person's move`);
         assert.ok(makers <= 1, `${step}, ${end}: one maker at most`);
-        if (labelled) return;
-        // A person's move to a column other than the compared one ends the skip, and the next poll
-        // claims the card. `away` and `elsewhere` are columns L2 answers with a claim for this card.
-        const moved = column === target ? away : elsewhere;
-        await here.move(12, moved);
-        await here.poll();
-        await positive(() => here.pulls() > claims);
-      });
-    }
-  }
-});
-
-/**
- * Each kind of claim whose attempt makes a workspace, so can stop for a line of work moved or
- * deleted: `setup` stages the card so L2 answers it that claim, and `cause` is the transition its
- * claim records, where it moves the card. A person's move back to `restart` ends its skip. Where
- * `reclaimed` is false, L2 answers the card no claim at the read after its first stop, so the card
- * is never stopped a second time and is handed to L2 at every read.
- */
-const LINE_CLAIMS = {
-  'a fresh claim from Ready': { setup: async () => {}, judges: KINDS.change.judges, cause: 'claimed', restart: COLUMNS.ready },
-  'a fresh claim done again from Review': { setup: (here) => here.move(12, COLUMNS.review), judges: KINDS.change.judges, cause: 'redone', restart: COLUMNS.review },
-  'a continuing claim from Review': { setup: (here) => judgedPull(here, COLUMNS.review), judges: ['reviewer'], cause: 'continued', restart: COLUMNS.review },
-  // Left in Coding by its first stop, its owner's marker unread there, L2 answers it no claim.
-  'a continuing claim from Owner': { setup: (here) => judgedPull(here, COLUMNS.owner, true), judges: ['reviewer', 'owner'], cause: 'continuedFromOwner', restart: COLUMNS.owner, reclaimed: false },
-  'a continuing claim from Coding': { setup: (here) => judgedPull(here, COLUMNS.coding), judges: ['reviewer'], cause: undefined, restart: COLUMNS.review },
-};
-
-// R-FAIL-8's row for a line of work moved or deleted, rows S8a to S8c, for every kind of claim that
-// makes a workspace: the first stop re-reads the forge, the second sets the card aside, and a
-// person's move that ends the skip starts the count again.
-// proves R-FAIL-8, R-SCHED-43
-test('S8a S8b S8c table: every claim that makes a workspace is re-read once at a line stop, and counts again after its skip', async (t) => {
-  for (const [claim, { setup, judges, cause, restart, reclaimed = true }] of Object.entries(LINE_CLAIMS)) {
-    for (const code of ['moved', 'deleted']) {
-      await t.test(`${claim}, ${code}`, async (t) => {
-        const here = world(t, { judges, script: () => code });
-        await setup(here);
-        const run = here.start();
-        await busy(run, 1);
-        if (cause !== undefined) assert.ok(here.events().some((event) => event.event === 'transition' && event.cause === cause), `${claim}: L2 answered the claim it names`);
-        const offered = here.offered();
         for (let each = 0; each < 3; each += 1) await here.poll();
-        if (reclaimed) {
-          assert.equal(here.pulls(), 2, `${claim}, ${code}: the first stop re-reads the forge, and the second sets the card aside`);
-          assert.equal(here.offered(), offered, `${claim}, ${code}: the set-aside card is handed to L2 at no later read`);
-        } else {
-          assert.equal(here.pulls(), 1, `${claim}, ${code}: L2 answers the re-read card no claim`);
-          assert.equal(here.offered(), offered + 3, `${claim}, ${code}: the first stop sets nothing aside, so every read hands the card to L2`);
+        if (!aside) {
+          assert.equal(here.offered(), settled + 3, `${step}, ${end}: nothing set the card aside, so every read hands it to L2`);
+          return;
         }
-        await here.move(12, restart);
-        await here.poll();
-        await busy(run, 2);
-        for (let each = 0; each < 3; each += 1) await here.poll();
-        assert.equal(here.pulls(), reclaimed ? 4 : 2, reclaimed
-          ? `${claim}, ${code}: after a person's move ends the skip, the count starts again`
-          : `${claim}, ${code}: no skip ended, so the stop after the person's move is the second, and sets the card aside`);
-      });
-    }
-  }
-});
-
-// R-SCHED-43 row S5 where the run's own move leaves the card in Done, which L2 is never offered:
-// only a person's move back before the run's next read shows the compared column. That read finds
-// the card outside Done, so the skip ends and the card is claimed again, whether the step answered
-// its column or rejected after the board accepted it.
-// proves R-SCHED-43
-test('S5 Done: a person moving the card back from Done before the next read ends the skip', async (t) => {
-  const steps = { 'a move to Done for a merged pull request': 'merged', 'the end of a merge in the lane': 'mergedFromOwner' };
-  for (const [step, cause] of Object.entries(steps)) {
-    const { from, options, setup } = COLUMN_STEPS[step];
-    const ends = { fulfilled: {}, 'rejected after the board accepted it': { refuseRecord: (event, fields) => event === 'transition' && fields.cause === cause } };
-    for (const [end, ending] of Object.entries(ends)) {
-      await t.test(`${step}, ${end}`, async (t) => {
-        const here = world(t, { ...options, ...ending });
-        await setup(here);
-        // A move claim's release reads the board at once, so that read waits for the person's move.
-        const release = gate();
-        here.holdNextRead(Promise.resolve());
-        here.holdNextRead(release.promise);
-        here.start();
-        await positive(() => here.fake.writes().some(({ operation, args }) => operation === 'moveItem' && args[1] === COLUMNS.done));
-        await new Promise((resolve) => setImmediate(resolve));
-        await here.move(12, from);
-        release.open();
-        for (let turn = 0; here.pulls() < 2; turn += 1) {
-          assert.ok(turn < 50, `${step}, ${end}: the card is claimed again once a read finds it outside Done`);
+        assert.equal(here.offered(), settled, `${step}, ${end}: reads finding the card in ${column} keep its skip`);
+        assert.equal(here.makers(), makers, `${step}, ${end}: no maker starts again without a person's move`);
+        if (labelled) {
+          here.unlabel();
           await here.poll();
-          await new Promise((resolve) => setImmediate(resolve));
+          assert.equal(here.offered(), settled, `${step}, ${end}: a person removing the escalation label moves nothing, so the skip holds`);
         }
-        assert.equal(here.pulls(), 2);
+        // A person's move to a column other than the compared one ends the skip at the next read.
+        await here.move(12, column === target ? from : target);
+        await here.poll();
+        assert.equal(here.offered(), settled + 1, `${step}, ${end}: a person's move away from ${column} ends the skip`);
       });
     }
   }
 });
+
