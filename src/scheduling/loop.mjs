@@ -2,13 +2,13 @@
 // before any await, has L2 carry each claimed answer, and drives its attempts: L1 makes the workspace,
 // L3 dispatches each step L2 names one at a time, then the maker through L1, or attempts the card again as L2
 // says, and then the judges or escalation role L2 names, under the one claim and slot; the run that fires that trigger
-// again each time a slot frees, excluding stopped cards and withheld judges for that run; the merge claims
+// again each time a slot frees, setting aside stopped cards and withheld judges for that run; the merge claims
 // it hands the repo lane; the drain trigger; and L3's events.
 
 import { randomUUID } from 'node:crypto';
 
 import { roleDispatch } from '../execution/role.mjs';
-import { SCRATCH_REFUSED } from '../execution/workspace.mjs';
+import { LINE_DELETED, LINE_MOVED, SCRATCH_REFUSED } from '../execution/workspace.mjs';
 import { dispatch as dispatchOnL1 } from '../execution/run.mjs';
 import { stepDispatch } from '../execution/step.mjs';
 import { EVENT_REFUSED, NOT_STARTED, whenElapsed } from '../substrate/process.mjs';
@@ -267,6 +267,46 @@ function eventsOf(unrecorded) {
 }
 
 /**
+ * A `run`'s memory of the cards it set aside ("Cards this run set aside"): each card's number, its
+ * compared column, and how many reads of the board had begun when the run set it aside. Beside it,
+ * how many times L2 stopped each card because its line of work moved or was deleted since L2 read
+ * it, counted from the invocation's start or the end of the card's last skip ("Failure model").
+ * Where no clock trigger keeps the run up, `clockHeld` is false and no skip ends.
+ */
+function setAside(clockHeld) {
+  const cards = new Map();
+  const lineStops = new Map();
+  let reads = 0;
+  return {
+    /** Counts a read of the board as it begins, answering its number. */
+    read: () => {
+      reads += 1;
+      return reads;
+    },
+    /** Sets card `number` aside, with `column` as its compared column. */
+    add: (number, column) => cards.set(number, { column, reads }),
+    /**
+     * Whether the read numbered `read` skips `item`. A read begun after the setting aside that
+     * finds the card outside its compared column ends the skip, and restarts its line-stop count.
+     */
+    skips: (item, read) => {
+      const entry = cards.get(item.number);
+      if (entry === undefined) return false;
+      if (!clockHeld || read <= entry.reads || item.column === entry.column) return true;
+      cards.delete(item.number);
+      lineStops.delete(item.number);
+      return false;
+    },
+    /** Counts a stop of card `number` for its line of work moved or deleted, answering whether it is a second. */
+    lineStopped: (number) => {
+      const count = (lineStops.get(number) ?? 0) + 1;
+      lineStops.set(number, count);
+      return count > 1;
+    },
+  };
+}
+
+/**
  * What the loop holds over the board `config` names: N, the claims held
  * in memory, L3's events, the start's kill, and the steps that take a claim, start it and release
  * it. The arguments are `loop`'s, less those only a dispatch reads.
@@ -310,11 +350,12 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow,
    * reads the board, awaits L2's facts call, reads admission and takes the claims, answering as
    * `take` does with `failures` and `notices` beside them.
    */
-  const claim = async (limit, excluded, failures, notices) => {
+  const claim = async (limit, memory, failures, notices) => {
+    const read = memory?.read();
     const columns = await board.readColumns();
     const { items, declared } = await board.readPriority();
-    /** A board item neither claimed nor withheld from another pull in this run. */
-    const available = (item) => !claims.has(item.number) && !excluded.has(item.number);
+    /** A board item neither claimed nor skipped by this run's memory of the cards it set aside. */
+    const available = (item) => !claims.has(item.number) && !memory?.skips(item, read);
     const decide = await facts(items.filter(available));
     // Another trigger may have claimed a card while the facts were read, so the cards no claim
     // holds are read again here, in the synchronous step that takes the claims.
@@ -378,10 +419,10 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow,
      * and the refusal is reported beside theirs. A `poll`, a clock-held run's idle pull, is the
      * exception: where its trigger event is refused it claims nothing. A read that fails, the facts call's included,
      * rejects with the read's own error, and no card is claimed. It first awaits the start's kill,
-     * as `killed` says. `excluded` omits cards stopped or withheld in this run, and is empty for a
-     * single pull.
+     * as `killed` says. `memory`, a run's memory of the cards it set aside, omits each card it
+     * skips, as `setAside` says, and a single pull has none.
      */
-    take: async (limit, excluded = new Set(), snapshot = snapshotting(), poll = false) => {
+    take: async (limit, memory, snapshot = snapshotting(), poll = false) => {
       await killed();
       const failures = [];
       let unrecorded = false;
@@ -396,7 +437,7 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow,
       // A poll whose trigger the sink refused claims nothing ("A poll in each idle state").
       if (poll && unrecorded) return { claims: [], failures, notices };
       try {
-        return await claim(limit, excluded, failures, notices);
+        return await claim(limit, memory, failures, notices);
       } catch (thrown) {
         // A later read that fails keeps what this trigger already did and could not record.
         const kept = [...failures, ...notices.map(noticeFailure)];
@@ -422,7 +463,8 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow,
         slots.delete(card.number);
         throw refused(`card #${card.number} was not started, because the event sink refused to record its pull`, refusal);
       }
-      if (['dispatch', 'judge', 'continue'].includes(next.action)) await l2.claimed(card, next);
+      // L2's claim move answers the column it left the card in, which the run's memory takes.
+      return ['dispatch', 'judge', 'continue'].includes(next.action) ? l2.claimed(card, next) : undefined;
     },
 
     /**
@@ -627,7 +669,21 @@ function triggerRecord(readRecord) {
 export function loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, readRecord = () => [], environment, run, host, readTimeout, clock }) {
   let admissionRecord;
   const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, facts, l2, sink, kill, readAdmission: () => admissionRecord.read(), follow: (snapshot) => follow(snapshot), halted: () => unsaved !== undefined });
-  const { merge } = lane({ board, facts, l2, record, refused, removeDirectories, clock });
+  // The column each merge's end left its card in, by card, which `merged` takes for the run's memory.
+  const mergeEnds = new Map();
+  const endedAt = (card, column) => {
+    if (typeof column === 'string') mergeEnds.set(card.number, column);
+    return column;
+  };
+  const laneL2 = Object.create(l2, { mergeEnded: { value: async (card, ...rest) => {
+    try {
+      return endedAt(card, await l2.mergeEnded(card, ...rest));
+    } catch (failure) {
+      endedAt(card, failure?.column);
+      throw failure;
+    }
+  } } });
+  const { merge } = lane({ board, facts, l2: laneL2, record, refused, removeDirectories, clock });
   const now = clock?.now ?? Date.now;
   const pause = clock?.pause ?? ((delay) => new Promise((resolve) => { whenElapsed(delay, resolve, { hold: true }); }));
   if (typeof workspace !== 'function') throw new Error(`L3 was handed no workspace handle of L1's, so it cannot make an attempt's workspace: the workspace handle is ${typeof workspace}`);
@@ -915,14 +971,15 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * A held or stopped card is absent from `reached`. Any other answer stops the attempts, naming the card
    * and what L2 answered. `remember` marks a card whose judges L2 withheld, or whose failed maker
    * L2 answered `set-aside`, for this run. A set-aside settle answers `reached` without asking judges.
+   * `placed` takes each column an L2 column change answered, as `work` says.
    */
-  const attempt = async (card, next, kept, remember, excluded) => {
+  const attempt = async (card, next, kept, remember, placed) => {
     const continuing = next.action === 'continue' ? next : undefined;
     const failures = [];
     const askAttempt = (outcomes, options) => decide(card, outcomes, { ...options, firstFailure: failures[0], continuing });
     const escalated = async (answer) => {
       remember(answer);
-      await l2.escalated(card, answer);
+      placed(await l2.escalated(card, answer));
       return { card: card.number, ...answer };
     };
     /** The failure naming the card as held or stopped after its attempts, each attempt's failure in order. */
@@ -1009,12 +1066,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         kept(reached);
         if (escalation.destination !== 'owner') {
           let routed;
-          try {
-            routed = await l2.routed(card, escalation);
-          } catch (failure) {
-            excluded?.add(card.number);
-            throw failure;
-          }
+          // A refused routing write leaves the card set aside, as `remember` marked the escalation.
+          routed = await l2.routed(card, escalation);
           if (routed.action === 'escalate') return { ...reached, ...await escalated(routed) };
           let firstFailure;
           for (;;) {
@@ -1028,6 +1081,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
               }, {}, (given, id) => { roleId = id; return dispatchedEscalation(given, id); });
             }
             const ended = await l2.roleSettled(card, escalation, roleOutcome, { dispatch: roleId, firstFailure });
+            placed(ended?.column);
             if (ended?.action === 'again') {
               firstFailure = roleOutcome;
               continue;
@@ -1042,6 +1096,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         kept(ended);
         return ended;
       }
+      // L2's settle answers its facts only for a card it moved to Review (`settled` in transitions.mjs).
+      if (settled.status === 'fulfilled' && settled.value !== undefined && settled.value.action === undefined) placed(config.board.columns.review);
       if (settled.status === 'fulfilled') {
         answer = askAttempt([], { attempt: number, maker: outcome });
         if (await advance(answer, number)) continue;
@@ -1059,7 +1115,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       const ask = (options) => decide(card, [], { ...options, forge: settled.value });
       const judging = ask({});
       if (judging.action !== 'judge') return reached;
-      return { ...reached, judges: await judges(card, judging, ask, (ended) => kept({ ...reached, judges: ended }), remember) };
+      return { ...reached, judges: await judges(card, judging, ask, (ended) => kept({ ...reached, judges: ended }), remember, placed) };
     }
   };
 
@@ -1148,7 +1204,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * Then it rejects with an AggregateError naming the card and each judge that failed, and why, in
    * its `errors`, so no judge's outcome is dropped for another's failure.
    */
-  const judges = async (card, answer, ask, keep, remember) => {
+  const judges = async (card, answer, ask, keep, remember, placed) => {
     const settled = await Promise.allSettled(answer.judges.map((judge) => judged(card, judge, ask)));
     let interrupted = settled.some((each) => each.status === 'rejected' || each.value.escalation !== undefined || each.value.halt);
     for (const [at, each] of settled.entries()) {
@@ -1176,8 +1232,9 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       keep(carried);
       const answer = ask({ directories: Object.fromEntries(escalating.map(({ role, outcome }) => [role, outcome])) });
       try {
-        await l2.escalated(card, answer);
+        placed(await l2.escalated(card, answer));
       } catch (failure) {
+        placed(failure?.column);
         failed.push(failure);
       }
       if (failed.length === 0) return carried;
@@ -1203,19 +1260,28 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * every judge L2 named beside its number, as `judges` hands them to its `keep`, whichever way it
    * was claimed, and whether or not its release event was refused. L2's report of a refused
    * transition event passes through unchanged as the work's failure where it comes from the claim;
-   * from the maker's settle it comes back in the card's `settled`, as `attempt` says. `excluded`
-   * receives a stopped card, a card whose judges L2 withheld, or a removal's following refusal
-   * or ignore before `freed` fires another trigger, and lives for this run alone.
+   * from the maker's settle it comes back in the card's `settled`, as `attempt` says. `memory`,
+   * the run's memory as `setAside` says, sets aside a stopped card, a card whose judges L2
+   * withheld, or a removal's following refusal or ignore before `freed` fires another trigger. Its
+   * compared column is the column the claim read, as each of L2's column changes under the claim
+   * answered it. A stop for a line of work moved or deleted sets the card aside only at its second.
    * A removal keeps this claim through guarded cleanup and its following ordinary action.
    * Cleanup failure is retained beside that action's failure and never replaces the action;
    * a following Coding move is attempted only after cleanup.
    */
-  const work = async (claim, freed, excluded) => {
+  const work = async (claim, freed, memory) => {
     const { card, decide: atPull } = claim;
     let next = claim.next;
+    // The card's compared column, and whether the run sets the card aside once its work ends.
+    let column = card.column;
+    let aside = false;
+    /** Takes `answered` as the card's column, where it names one. */
+    const placed = (answered) => {
+      if (typeof answered === 'string') column = answered;
+    };
     /** Keeps L2's withheld, set-aside or escalating card out of later pulls, including a refused escalation write. */
     const remember = (answer) => {
-      if (answer.action === 'escalate' || answer.action === 'stop' || answer.action === 'set-aside' || answer.withheld?.length > 0) excluded?.add(card.number);
+      if (answer.action === 'escalate' || answer.action === 'stop' || answer.action === 'set-aside' || answer.withheld?.length > 0) aside = true;
       return answer;
     };
     // Whether the start was made: for a redo as for a Ready card, only once `start` returns.
@@ -1227,7 +1293,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     // closed admission; removing the closer is what lets a later pull claim it again.
     let held = false;
     try {
-      await start(claim);
+      placed(await start(claim));
       claimed = true;
       if (next.action === 'remove') {
         try {
@@ -1238,43 +1304,49 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         next = next.following;
         if (['dispatch', 'judge', 'continue'].includes(next.action)) {
           claimed = false;
-          await l2.claimed(card, next);
+          placed(await l2.claimed(card, next));
           claimed = true;
         }
       }
       const kept = (made) => { reached = made; };
       if (next.action === 'move') {
         if (next.to === 'done') await removeDirectories(card.number);
-        await l2.moved(card, next);
+        placed(await l2.moved(card, next));
         reached = { card: card.number, ...next };
       } else if (next.action === 'return') {
         await l2.returned(card, next);
         reached = { card: card.number, action: 'return', pull: next.pull };
       } else if (next.action === 'escalate') {
-        await l2.escalated(card, next);
-        excluded?.add(card.number);
+        placed(await l2.escalated(card, next));
+        aside = true;
         reached = { card: card.number, ...next };
       } else if (['refuse', 'ignore'].includes(next.action)) {
-        excluded?.add(card.number);
+        aside = true;
         reached = { card: card.number, ...next };
       } else {
         reached = next.action === 'judge'
-          ? { card: card.number, judges: await judges(card, next, (options) => atPull(card, [], options), (ended) => kept({ card: card.number, judges: ended }), remember) }
-          : await attempt(card, next, kept, remember, excluded);
+          ? { card: card.number, judges: await judges(card, next, (options) => atPull(card, [], options), (ended) => kept({ card: card.number, judges: ended }), remember, placed) }
+          : await attempt(card, next, kept, remember, placed);
       }
     } catch (thrown) {
       failure = thrown;
       held = thrown.card === card.number && thrown.decision === 'hold';
-      if (['move', 'return', 'escalate'].includes(next.action)) excluded?.add(card.number);
-      // A stopped card is remembered; a held one is not.
-      if (thrown.card === card.number && Array.isArray(thrown.attemptFailures) && !held) excluded?.add(card.number);
+      // A change the board accepted before a later write failed still moved the card.
+      placed(thrown?.column);
+      if (['move', 'return', 'escalate'].includes(next.action)) aside = true;
+      // A stopped card is remembered, a line moved or deleted only at its second stop; a held one is not.
+      if (thrown.card === card.number && Array.isArray(thrown.attemptFailures) && !held) {
+        const line = [LINE_MOVED, LINE_DELETED].includes(thrown.attemptFailures.at(-1)?.code);
+        if (!line || memory?.lineStopped(card.number)) aside = true;
+      }
     }
     if (removalFailure !== null) {
       failure = failure === null ? removalFailure : new AggregateError([removalFailure, failure], `card #${card.number}'s directory removal and following action failed`);
     }
     if (next.action === 'continue' && !held && !(reached?.settled?.status === 'fulfilled' && reached.settled.value !== undefined)) {
-      excluded?.add(card.number);
+      aside = true;
     }
+    if (aside) memory?.add(card.number, column);
     failure = released(release, claim, failure);
     holds.delete(card.number);
     settles.delete(card.number);
@@ -1286,9 +1358,10 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * One merge claim's work: its start, which records its pull, then its merge in the lane, as the
    * lane's `merge` says. Its claim is released however it ends, with no `slot.release`, since it
    * holds no slot, and fires no trigger, since it frees none. Settles on `{ reached, failure }` as
-   * `work` does.
+   * `work` does. The run's `memory` sets the card aside, its compared column the one the claim read
+   * or the one the merge's end answered.
    */
-  const merged = async (claim, excluded) => {
+  const merged = async (claim, memory) => {
     let ended;
     try {
       await start(claim);
@@ -1296,17 +1369,19 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     } catch (failure) {
       ended = { failure };
     }
-    claims.delete(claim.card.number);
     // Whatever its merge answered, the card waits for the next invocation rather than this run's next pull.
-    excluded?.add(claim.card.number);
+    const { number, column } = claim.card;
+    memory?.add(number, mergeEnds.get(number) ?? column);
+    mergeEnds.delete(number);
+    claims.delete(number);
     return { reached: ended.reached, failure: ended.failure };
   };
 
   /**
    * Fires the pull trigger once: claims as many cards as there are free slots, as `take` says, and
    * works each. `freed` runs as each claimed card's slot is released, as `work` says, and that
-   * card's work is not over until it settles. `excluded` is this run's cards omitted from later
-   * pulls; without it, a single pull keeps no admission memory.
+   * card's work is not over until it settles. `memory` is this run's memory of the cards it set
+   * aside, as `setAside` says; without it, a single pull keeps no admission memory.
    *
    * It claims no more than `limit` cards where one is given, merges among them, and otherwise as
    * many as there are free slots, beside every card L2 answered `merge`. Settles once every card it
@@ -1335,22 +1410,22 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * in `errors`, inside an AggregateError beside the refusal where its release event was refused,
    * as `released` says.
    */
-  const trigger = async (freed = () => {}, limit = undefined, excluded, settlePending = () => {}, { taken = () => {}, poll = false, carry = false } = {}) => {
+  const trigger = async (freed = () => {}, limit = undefined, memory, settlePending = () => {}, { taken = () => {}, poll = false, carry = false } = {}) => {
     // The settle goes to the caller as one copy L3 made, by the one snapshot every notice of this
     // trigger was read by, its failures and cards together, whether it fulfils or rejects, so a
     // value met in both is one copy, and nothing another layer gave L3 reaches the caller unread.
     const snapshot = snapshotting();
     try {
-      return snapshot.copy(await settle(freed, limit, excluded, snapshot, settlePending, { taken, poll, carry }));
+      return snapshot.copy(await settle(freed, limit, memory, snapshot, settlePending, { taken, poll, carry }));
     } catch (thrown) {
       throw snapshot.failure(thrown);
     }
   };
 
   /** The trigger's settle, as `trigger` says, before its copy: its answer, or the failure it throws. */
-  const settle = async (freed, limit, excluded, snapshot, settlePending, { taken, poll, carry }) => {
+  const settle = async (freed, limit, memory, snapshot, settlePending, { taken, poll, carry }) => {
     settlePending();
-    const { claims: claimed, failures, admission: closed, notices = [] } = await take(limit, excluded, snapshot, poll);
+    const { claims: claimed, failures, admission: closed, notices = [] } = await take(limit, memory, snapshot, poll);
     taken(claimed.length);
     for (const { card } of claimed) settles.set(card.number, snapshot);
     // Where admission is open, as after a concurrent `resume`, no closed admission carries the
@@ -1372,7 +1447,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         failures.push(refused('the event sink refused to record the drain trigger', refusal));
       }
     }
-    const worked = await Promise.allSettled(claimed.map((claim) => (claim.next.action === 'merge' ? merged(claim, excluded) : work(claim, freed, excluded))));
+    const worked = await Promise.allSettled(claimed.map((claim) => (claim.next.action === 'merge' ? merged(claim, memory) : work(claim, freed, memory))));
     const ended = worked.map((result) => (result.status === 'fulfilled' ? result.value : { failure: result.reason }));
     failures.push(...ended.filter((each) => each.failure !== null).map((each) => each.failure));
     const reached = ended.map((each) => each.reached).filter((each) => each !== undefined);
@@ -1495,7 +1570,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       const failures = [];
       const reached = [];
       const notices = [];
-      const excluded = new Set();
+      const memory = setAside(kept);
       let closed;
       const atStart = starting();
       /** One report occurrence's firing, answering whether it settled the occurrence. */
@@ -1523,7 +1598,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         return true;
       };
       const ending = () => unsaved !== undefined || stop?.aborted === true;
-      const fire = (polling) => trigger(() => (kept && ending() ? undefined : fire()), undefined, excluded, settlePending, { ...polling, carry: kept }).then((each) => {
+      const fire = (polling) => trigger(() => (kept && ending() ? undefined : fire()), undefined, memory, settlePending, { ...polling, carry: kept }).then((each) => {
         reached.push(...(Array.isArray(each) ? each : each.reached));
         if (Array.isArray(each)) return;
         closed = each.admission;

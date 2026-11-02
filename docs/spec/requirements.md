@@ -440,7 +440,7 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | R-LOOP-15 | A role's dispatch runs no longer than the consumer allows that role, four hours unless the consumer says otherwise. A dispatch that runs past its time has failed. | the engine | the test suite | |
 | R-LOOP-16 | A role runs on the provider the consumer declares for it, unless a card label the consumer declares selects another provider for that role. Rigger refuses a card carrying two labels that select different providers for one role, naming the role and each label. | the engine | the test suite | D24 |
 | R-LOOP-17 | An agent judge whose entry carries a provider rule runs on the provider that rule gives: the fixed provider, or the one the rule names for the provider its maker runs on. | the engine | the test suite | D24 |
-| R-LOOP-18 | Rigger dispatches no maker again, in the invocation that ran it, for a card whose maker ran, exited non-zero, and left the forge holding nothing of the card's line of work. The next invocation dispatches the card as it would any other. | the engine | the test suite | |
+| R-LOOP-19 | Rigger dispatches no maker again, in the invocation that ran it, for a card whose maker exited non-zero and left the forge holding nothing of the card's line of work. The forge holds nothing of it where it holds no branch of it and no open or merged pull request from it. A card whose skip `R-SCHED-43` ends is the exception, and Rigger then dispatches it as it would any other. The next invocation dispatches the card as it would any other. | the engine | the test suite | |
 
 ## R-EVIDENCE — what a judge is given
 

@@ -294,11 +294,11 @@ test('a role whose outcome rejects with EVENT_REFUSED leaves its open pull in Co
 });
 
 // A freed slot must not pull a maker whose ambiguity the role just handled in this invocation.
-// proves R-LOOP-18
+// proves R-LOOP-19
 test('run leaves a handled card with nothing on the forge for a later maker invocation', { timeout: 20000 }, async () => {
   const here = await world();
   await here.runAll();
-  assert.deepEqual(here.agent.runs().map((run) => run.role), ['engineer', 'pm'], 'R-LOOP-18: the next maker belongs to a later invocation');
+  assert.deepEqual(here.agent.runs().map((run) => run.role), ['engineer', 'pm'], 'R-LOOP-19: the next maker belongs to a later invocation');
   assert.equal(here.workspaces.made.length, 1);
   assert.equal((await here.fake.operations.readItems())[0].column, here.settings.board.columns.coding);
   assert.deepEqual(here.repository.held().branches, []);

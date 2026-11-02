@@ -1339,11 +1339,12 @@ pulls for these reasons, and no others:
 | a merge, whatever it answered | a merge the lane refused, because the head moved, checks were pending or mergeability was unknown, would be pulled again at once and poll the forge |
 | a continuing attempt that did not settle | L2 moved nothing, so the next pull would read the same head and markers, answer `continue` again, and dispatch the maker again at once |
 | a closed-card removal followed by a refusal | the refusal leaves the removal conditions unchanged, so the next pull would remove the same directories again at once |
-| a maker whose dispatch L2's settle reads, where all of these hold: | L2's settle answers `set-aside`; without the memory the next pull dispatches the maker again at once, which `R-LOOP-18` rules out |
+| a maker whose dispatch L2's settle reads, where all of these hold: | L2's settle answers `set-aside`; without the memory the next pull dispatches the maker again at once, which `R-LOOP-19` rules out |
 | — the maker ran; | |
 | — it exited non-zero; | |
 | — the card is not escalated; | |
-| — the forge holds nothing of the card's line of work, no branch and no pull request from it. | |
+| — the forge holds nothing of the card's line of work: no branch of it, and no open or merged pull request from it. | |
+| stopped a second time because its line of work moved or was deleted since L2 read it, counting from the invocation's start or from the end of the card's last skip | the forge's answer and `git`'s still disagree, so without the memory each pull reads and stops it again at once |
 
 Where a hold's closer could not be saved, L3 pulls no card for the rest of the invocation, and
 claims it already holds finish. The command exits non-zero, naming the failure. Without a lock, only
@@ -1351,8 +1352,10 @@ a file-system error leaves a hold unsaved.
 
 A card stopped after two attempts that failed the same way needs no memory, because the hold closes
 admission. An escalated card needs none either, because L2 answers no action for a card carrying the
-escalation label. A card stopped because its line of work moved or was deleted since L2 read it
-needs no memory either, because `R-FAIL-8` has the next pull read the forge again. A card sent to
+escalation label. A card's first stop because its line of work moved or was deleted since L2 read
+it needs no memory either, because `R-FAIL-8` has the next pull read the forge again. The count
+starts with the invocation and again when the card's skip ends, and a second such stop is
+remembered, as the table above says. A card sent to
 a role needs no case of its own. Each outcome of the role's dispatch either escalates the card, or
 leaves it for the next pull to answer, and a refused routing comment is the case of a refused
 escalation write.
