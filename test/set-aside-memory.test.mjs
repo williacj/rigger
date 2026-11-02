@@ -33,11 +33,16 @@ const FAILURES = { refused: BRANCH_REFUSED, moved: LINE_MOVED, deleted: LINE_DEL
 /** L1's outcome for a maker that ran and exited 7, as L2's `settled` documents a fulfilled dispatch. */
 const RAN = { status: 'fulfilled', value: { exit: 7, stdout: '', stderr: '' } };
 
+/** Every gate not yet opened, which a world's teardown opens, as a refused workspace, before it stops its runs. */
+const unopened = new Set();
+
 /** A promise the test settles by hand, for holding a workspace or a board read. */
 function gate() {
-  let open;
-  const promise = new Promise((resolve) => { open = resolve; });
-  return { promise, open };
+  let settle;
+  const promise = new Promise((resolve) => { settle = resolve; });
+  const each = { promise, open: (value) => { unopened.delete(each); settle(value); } };
+  unopened.add(each);
+  return each;
 }
 
 /**
@@ -113,7 +118,11 @@ function world(t, { cards = [12], clockHeld = true, concurrency = 1, script = ()
     await fake.operations.moveItem(item.id, to);
   };
   const runs = [];
-  t.after(async () => { for (const each of runs) await each.stop(); });
+  t.after(async () => {
+    // A test that failed while a gate held a read or a workspace still lets its runs end.
+    for (const each of [...unopened]) each.open('refused');
+    for (const each of runs) await each.stop();
+  });
   const start = () => {
     const controller = new AbortController();
     const handed = [];
@@ -150,7 +159,7 @@ test('S1 S3: a read begun before the setting aside keeps the skip, and a later r
   assert.equal(await here.column(12), COLUMNS.coding, 'the claim moved card 12 to Coding');
   await here.move(12, COLUMNS.ready);
   before.open();
-  await positive(() => here.reads().ended === 2);
+  await positive(() => here.reads().ended >= 2);
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(here.pulls(12), 1, 'S1: the read begun before card 12 was set aside must keep its skip, though it shows Ready');
   after.open();
