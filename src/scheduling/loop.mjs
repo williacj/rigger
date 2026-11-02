@@ -793,7 +793,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       if (scope !== undefined && (outcome.status === 'fulfilled' || outcome.reason?.result !== undefined)) {
         scope.memory.actions.add(`${card.number}:${actionIdentity(next)}`);
       }
-      if (outcome.status === 'rejected' && recordingRefusal(outcome.reason)) defer(scope, card, actionIdentity(next));
+      const terminal = scope !== undefined && outcome.status === 'rejected' && recordingRefusal(outcome.reason);
+      if (terminal) defer(scope, card, actionIdentity(next));
       let settled;
       if (continuing !== undefined && outcome.status === 'fulfilled' && outcome.value.exit === 0) {
         let expectedHead;
@@ -865,7 +866,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         kept(ended);
         return ended;
       }
-      if (settled.status === 'fulfilled') {
+      if (settled.status === 'fulfilled' && !terminal) {
         answer = askAttempt([], { attempt: number, maker: outcome });
         if (await advance(answer, number)) continue;
         if (answer.action === 'escalate') return escalated(answer);

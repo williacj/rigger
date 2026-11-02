@@ -32,6 +32,7 @@ import { readSide } from '../src/substrate/forge/read.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { EVENT_REFUSED } from '../src/substrate/process.mjs';
 import { makeJudgeDirectory } from '../src/execution/workspace.mjs';
+import { standInCodex } from './stub-claude.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { heldCard } from './stop-failure.mjs';
@@ -1966,6 +1967,55 @@ test('changed maker and judge identities remain eligible after a terminal record
     assert.equal(built.agent.runs().filter(({ card }) => card === 42).length, 1, 'the changed identity starts once');
     assert.equal(failure.reached.filter(({ card }) => card === 42).length >= 1, true);
   });
+});
+
+// An actual adapter recording refusal must not become an under-claim host-failure attempt.
+// proves R-RECORD-9
+test('a no-clock maker whose adapter wraps a refused probe kill as NOT_STARTED defers without charging a host attempt', SETTLES_WITHIN, async (t) => {
+  const stand = standInCodex({ hang: true });
+  const formerPath = process.env.PATH;
+  process.env.PATH = stand.first();
+  t.after(() => { process.env.PATH = formerPath; });
+  const making = makingWorkspaces(temporaryDirectory('rigger-adapter-refusal-'));
+  const built = onManualHost(t, { cards: [{ ...readyCard(42), labels: ['type:change', 'maker:codex'] }, 95], concurrency: 1, makerHold: false,
+    workspace: async (number) => {
+      const made = await making(number);
+      fs.mkdirSync(join(made.path, '.claude', 'agents'), { recursive: true });
+      fs.writeFileSync(join(made.path, '.claude', 'agents', 'engineer.md'), '---\nname: engineer\n---\n# Engineer\n');
+      return made;
+    },
+  });
+  const clock = realHost.clock;
+  const emitter = built.sink.emitter.bind(built.sink);
+  let refused = 0;
+  built.sink.emitter = (context) => {
+    const actual = emitter(context);
+    return { emit: (event, fields) => {
+      if (context.card === 42 && context.layer === 'L0' && event.endsWith('.killed')) { refused += 1; throw new Error('probe kill record remains refused'); }
+      return actual.emit(event, fields);
+    } };
+  };
+  const running = built.loop.run();
+  running.catch(() => {});
+  const ended = settledOf(running);
+  // The stand-in's recorded probe is readiness; advancing the injected clock expires its bound.
+  for (let probe = 1; probe <= 2; probe += 1) {
+    await positive(() => ended() || stand.probes().length >= probe);
+    if (ended()) break;
+    await clock.advance(clock.now() + 60_000);
+  }
+  await positive(() => ended());
+  const result = await running.then((value) => ({ value }), (failure) => ({ failure, value: failure.reached }));
+  assert.equal(stand.probes().length, 1, 'terminal adapter recording refusal must not retry the probe');
+  assert.ok(refused > 0, 'the actual probe kill reached the refusing sink');
+  assert.deepEqual(built.events().filter(({ card, event }) => card === 42 && (event === 'attempt.failed' || event === 'attempt.decided')), [], 'the terminal refusal spends no host-failure attempt');
+  const first = result.value.find(({ card }) => card === 42);
+  assert.equal(first.outcome.reason.code, 'NOT_STARTED');
+  assert.deepEqual(first.outcome.reason.startCause, { kind: 'event-unrecorded' });
+  assert.equal(first.outcome.reason.cause.code, EVENT_REFUSED, 'L1 retains the actual recording provenance');
+  assert.deepEqual(stand.sessions(), []);
+  assert.deepEqual(built.agent.runs().map(({ card }) => card), [95], 'the freed slot still reaches the peer maker');
+  assert.equal(built.events().some(({ event }) => event === 'admission.close'), false);
 });
 
 /** The first condition still missing from a timed single-pull world. */
