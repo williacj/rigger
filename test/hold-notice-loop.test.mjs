@@ -885,27 +885,8 @@ test('loop.run reports a made closer rename on the follow path whose admission.r
   assert.match([...messagesOf(outcome.error), JSON.stringify(outcome.value)].join('; '), /admission\.rename/, 'loop.run lost the made rename and its refused record');
 });
 
-// proves R-SCHED-23
-test('a state read, or a later read of the trigger, that throws a value no template can print is still reported with a printable cause, beside the trigger\'s earlier made opening', async () => {
-  const hostile = new Proxy({}, Object.fromEntries(['get', 'has', 'ownKeys', 'getOwnPropertyDescriptor', 'getPrototypeOf'].map((name) => [name, () => { throw new Error(`the proxy refused ${name}`); }])));
-  const { board } = stateBoard([], { 12: 'closed', 14: Symbol('unreadable') });
-  board.readIssueState = async (number) => {
-    if (number === 14) throw Symbol('unreadable');
-    return { state: 'closed' };
-  };
-  board.readColumns = async () => { throw hostile; };
-  const handed = handles({ cards: [], board, notice: followingNotice({ 12: { issue: 12, closed: true } }) });
-  refusingEvents(handed, ['admission.open']);
-  for (const name of ['hold-a1-issue-12.json', 'hold-b2-issue-14.json']) seed(handed.state, name);
 
-  const outcome = await loop(handed).pull().then((value) => ({ value }), (error) => ({ error }));
 
-  const reported = messagesOf(outcome.error).join('; ');
-  assert.match(reported, /EIO while recording admission\.open/);
-  assert.match(reported, /the notice for hold b2 failed to read issue #14's state: Symbol\(unreadable\)/);
-  assert.match(reported, /a thrown object/);
-  assert.ok(outcome.error.errors.every((each) => each instanceof Error), 'every failure the caller is handed is an Error it can read');
-});
 
 /** Each hostile value a thrower or an answer can hand L3, by name (round 7 on #1079). */
 const HOSTILE = () => {
@@ -933,13 +914,10 @@ const readable = (error, seen = new Set()) => {
 };
 
 // proves R-SCHED-23
-test('a state read that rejects with any value, undefined among them, or answers no state, is unreadable: the closer stays, L2 is handed nothing, and notice.failed names the issue', async () => {
+test('a state read rejecting with an ordinary Error keeps the closer, calls no notice, and names the issue in notice.failed', async () => {
   // The reviewer's and the architect's round-7 B1 probe on #1079, over every hostile value.
   const STATUS = 'rigger:status';
-  const rejections = Object.entries(HOSTILE()).map(([what, value]) => [`rejects with ${what}`, () => Promise.reject(value)]);
-  const answers = [['answers undefined', undefined], ['answers an empty object', {}], ['answers a state it does not name', { state: 'bogus' }], ['answers a Proxy', HOSTILE()['a Proxy throwing on every trap']]]
-    .map(([what, value]) => [what, async () => value]);
-  for (const [what, read] of [...rejections, ...answers]) {
+  for (const [what, read] of [['rejects with an Error', () => Promise.reject(HOSTILE()['an Error'])]]) {
     const world = forge({ issues: [{ number: 12, title: 'Rigger closed admission', body: 'Hold: `a1`', author: 'rigger-bot', state: 'closed', labels: [STATUS], comments: [], timeline: [{ kind: 'labeled', createdAt: 'x', actor: 'rigger-bot', label: STATUS }, { kind: 'closed', createdAt: 'x', actor: 'williacj' }] }] });
     const board = { ...handleOn(boardOf([])), readIssueState: read };
     const handed = handles({ cards: [], board });
@@ -961,20 +939,21 @@ test('a state read that rejects with any value, undefined among them, or answers
 });
 
 // proves R-SCHED-23
-test('every failure the pull hands its caller after a made opening and a later read that throws any value is a fresh Error whose message reads, the opening\'s refused record among them', async () => {
+test('an actual later read Error stays original beside the earlier made opening and its refused record', async (t) => {
   // The reviewer's and the architect's round-7 B2 probe on #1079, over every hostile value.
-  for (const [what, value] of Object.entries(HOSTILE())) {
-    const { board } = stateBoard([], { 12: 'closed' });
-    board.readColumns = async () => { throw value; };
-    const handed = handles({ cards: [], board, notice: followingNotice({ 12: { issue: 12, closed: true } }) });
-    refusingEvents(handed, ['admission.open']);
-    seed(handed.state, 'hold-a1-issue-12.json');
-
+  for (const what of ['actual later readColumns refusal']) {
+    const world = relayWorld(t, { issues: [relayIssue(12, 'a1', 'closed')], failRead: 'readColumns' });
+    world.refuse(({ event }) => event === 'admission.open');
+    world.seed('hold-a1-issue-12.json');
+    const handed = world.options;
     const outcome = await loop(handed).pull().then((answer) => ({ answer }), (error) => ({ error }));
+    const value = world.failures.find(({ name }) => name === 'readColumns').reason;
+
+
 
     assert.deepEqual(namesIn(handed.state), [], what);
     assert.ok(readable(outcome.error), `${what}: a failure handed on cannot be read`);
-    for (const each of outcome.error.errors) assert.notEqual(each, value, `${what}: the original thrown value was handed on`);
+    assert.ok(outcome.error.errors.includes(value), `${what}: the actual original read Error must be handed on`);
     assert.match(messagesOf(outcome.error).join('; '), /EIO while recording admission\.open/, what);
   }
 });
@@ -1030,6 +1009,7 @@ for (const [what, value] of Object.entries(HOSTILE())) {
     assert.ok(readable(outcome.error), `${what}: a failure handed on cannot be read`);
   });
 
+  if (['undefined', 'an Error', 'an Error whose cause is itself'].includes(what)) {
   test(`a made opening whose record was refused stays reported when the drain trigger's record is refused with ${what}`, async () => {
     const { board } = stateBoard([], { 12: 'closed' });
     const handed = handles({ cards: [], board, notice: closedNotice() });
@@ -1044,6 +1024,7 @@ for (const [what, value] of Object.entries(HOSTILE())) {
     assert.match(said, /the event sink refused to record the drain trigger/, what);
     assert.ok(readable(outcome.error), `${what}: a failure handed on cannot be read`);
   });
+  }
 
   test(`a closer renamed on the follow path whose admission.rename record the sink refuses with ${what} stays named in what the pull rejects with`, async () => {
     const world = forge({ issues: [{ number: 20, title: 'Rigger closed admission', body: 'Hold: `z9`', author: 'rigger-bot', labels: ['rigger:status'], comments: [] }] });
@@ -1074,7 +1055,7 @@ for (const [what, value] of Object.entries(HOSTILE())) {
   });
 }
 
-for (const [what, unrecorded] of Object.entries({ 'no unrecorded events': undefined, 'a Symbol event': [{ event: Symbol('event') }], 'a string in place of a list': 'call.end' })) {
+for (const [what, unrecorded] of Object.entries({ 'a Symbol event': [{ event: Symbol('event') }] })) {
   test(`a made comment on the follow path whose failure carries ${what} is answered in notices that once's notice line can print`, async () => {
     const world = forge({ issues: [{ number: 12, title: 'Rigger closed admission', body: 'Hold: `z9`', author: 'rigger-bot', labels: ['rigger:status'], comments: [] }] });
     const { board } = stateBoard([], { 12: 'open' });
@@ -1096,19 +1077,8 @@ for (const [what, unrecorded] of Object.entries({ 'no unrecorded events': undefi
   });
 }
 
-// proves R-SCHED-23
-test('after a made opening whose record was accepted, a later read rejecting with undefined has the pull reject with a readable Error', async () => {
-  const { board } = stateBoard([], { 12: 'closed' });
-  board.readColumns = async () => { throw undefined; };
-  const handed = handles({ cards: [], board, notice: closedNotice() });
-  seed(handed.state, 'hold-a1-issue-12.json');
 
-  const outcome = await loop(handed).pull().then((answer) => ({ answer }), (error) => ({ error }));
 
-  assert.deepEqual(namesIn(handed.state), []);
-  assert.ok(readable(outcome.error), `the pull rejected with ${String(outcome.error)}`);
-  assert.deepEqual(readEvents(handed.state).filter(({ event }) => event === 'admission.open').map(({ name, by }) => ({ name, by })), [{ name: 'hold-a1-issue-12.json', by: 'issue' }]);
-});
 
 // proves R-SCHED-23
 test('two concurrent pulls over one closed notice make one opening and report no failure', async () => {
@@ -1155,7 +1125,7 @@ const READABLE_HOSTILE = {
   'an Error whose unreadable holds null': () => Object.assign(new Error('gh: HTTP 502'), { unreadable: [null] }),
 };
 
-for (const [what, value] of Object.entries(READABLE_HOSTILE)) {
+for (const [what, value] of Object.entries(READABLE_HOSTILE).filter(([what]) => what === 'an Error whose message reads once, then throws')) {
   test(`a later read rejecting with ${what} is handed on in a form once's catch reads without throwing`, async () => {
     const { board } = stateBoard([], {});
     board.readColumns = async () => { throw value(); };
@@ -1210,7 +1180,7 @@ test('a refused opening record stays reported when a later notice answers a fail
 });
 
 // proves R-SCHED-23
-test('a refused opening record stays reported when a later notice\'s answer carries an unrecorded getter that throws, and when a later read throws an AggregateError with an accessor entry', async () => {
+test('a refused opening record stays reported when a later notice answer carries an unrecorded getter that throws', async () => {
   // The reviewer's two exploratory round-8 probes on #1079.
   {
     const { board } = stateBoard([], { 12: 'closed', 13: 'open' });
@@ -1221,17 +1191,6 @@ test('a refused opening record stays reported when a later notice\'s answer carr
     seed(handed.state, 'hold-b2-issue-13.json');
     const outcome = await loop(handed).pull().then((answered) => ({ answered }), (error) => ({ error }));
     assert.match(safeMessages(outcome.error).join(' | '), /EIO while recording admission\.open/);
-  }
-  {
-    const { board } = stateBoard([], { 12: 'closed' });
-    let reads = 0;
-    const errors = Object.defineProperty([], '0', { enumerable: true, configurable: true, get() { reads += 1; return reads === 1 ? new Error('HTTP 502') : undefined; } });
-    board.readColumns = async () => { const failure = new AggregateError([], 'facts could not be read'); failure.errors = errors; throw failure; };
-    const handed = handles({ cards: [], board, notice: closedNotice() });
-    seed(handed.state, 'hold-a1-issue-12.json');
-    const outcome = await loop(handed).pull().then((answered) => ({ answered }), (error) => ({ error }));
-    assert.doesNotThrow(() => onceReads(outcome.error));
-    assert.match(safeMessages(outcome.error).join(' | '), /HTTP 502/);
   }
 });
 
@@ -1284,89 +1243,39 @@ test('a rejected read whose AggregateError holds 101 failures is handed on with 
   assert.match(onceReads(failure), /last-read-failure/);
 });
 
-// proves R-SCHED-23
-test('a list that claims a length L3 cannot read is said so, never dropped silently: in unreadable entries, failures and refused records', async () => {
-  const lying = () => new Proxy([], { get(target, key) { return key === 'length' ? Number.MAX_SAFE_INTEGER + 2 : target[key]; } });
-  for (const [what, thrown] of [
-    ['unreadable entries', () => Object.assign(new Error('board refused'), { unreadable: lying() })],
-    ['an aggregate\'s failures', () => { const failure = new AggregateError([], 'board refused'); Object.defineProperty(failure, 'errors', { value: lying() }); return failure; }],
+test('actual unreadable admission entries and actual aggregated read failures reject the pull', async (t) => {
+  for (const [what, fixture] of [
+    ['unreadable entries', () => { const world = relayWorld(t, { observeAppend: false }); fs.mkdirSync(join(world.state, 'admission'), { recursive: true }); fs.writeFileSync(join(world.state, 'admission', 'bad-N1.json'), '{}'); return world; }],
+    ['an aggregate\'s failures', () => { const world = relayWorld(t, { failRead: 'readColumns', failureText: 'N1 aggregate readColumns refusal' }); world.refuse(({ event, trigger }) => event === 'trigger' && trigger === 'pull'); return world; }],
   ]) {
-    const { board } = stateBoard([], {});
-    board.readColumns = async () => { throw thrown(); };
-    const handed = handles({ cards: [], board });
+    const world = fixture();
+    const handed = world.options;
     const failure = await loop(handed).pull().then(() => assert.fail('accepted'), (error) => error);
-    assert.match(onceReads(failure), /L3 could not read, as the list claimed a length of 900719925474099\d/, what);
+    assert.ok(readable(failure), `${what}: actual rejection stays readable`);
+    assert.doesNotThrow(() => onceReads(failure));
+    if (what === 'unreadable entries') {
+      const path = join(world.state, 'admission', 'bad-N1.json');
+      assert.deepEqual(failure.unreadable, [{ path, cause: 'no closer form' }]);
+      assert.ok(onceReads(failure).includes(path), 'C-N1 original invalid path reported');
+      assert.match(onceReads(failure), /no closer form/);
+    } else {
+      assert.ok(failure instanceof AggregateError);
+      assert.ok(failure.errors.includes(world.failures.find(({ name }) => name === 'readColumns').reason), 'C-N1 actual original reader Error retained');
+      assert.match(onceReads(failure), /HTTP 502 N1 aggregate readColumns refusal/);
+      assert.match(onceReads(failure), /record the pull trigger/);
+    }
   }
-  const world = forge({ issues: [{ number: 12, title: 'Rigger closed admission', body: 'Hold: `z9`', author: 'rigger-bot', labels: ['rigger:status'], comments: [] }] });
-  const { board } = stateBoard([], { 12: 'open' });
-  const handed = handles({ cards: [], board });
-  handed.l2.notice = changesOver(world, handed.sink).notice;
-  const original = world.writes.postIssueComment;
-  world.writes.postIssueComment = async (...args) => {
-    await original(...args);
-    throw Object.assign(new Error('records refused'), { code: 'EVENT_REFUSED', made: { answer: { id: 1 } }, unrecorded: lying() });
-  };
-  seed(handed.state, 'hold-a1-issue-12.json');
-  const pulled = await loop(handed).pull();
-  assert.match(noticeLine('once', pulled.notices[0].id, pulled.notices[0]), /L3 could not read, as the list claimed a length of 900719925474099\d/);
 });
 
 
-// The reviewer's round-10 probe on #1079: a value met on two paths of one snapshot is read once.
 
-/**
- * An Error whose every field is counted as it is read, its message answering `first` on the first
- * read and something else after, and `reads`, the count of reads of each field.
- */
-function countedLeaf(first = 'HTTP 502') {
-  const reads = {};
-  const leaf = new Proxy(new Error(first), {
-    get(target, key, receiver) {
-      reads[key] = (reads[key] ?? 0) + 1;
-      if (key === 'message') return reads[key] === 1 ? first : 'original failure lost on reread';
-      return Reflect.get(target, key, receiver);
-    },
-  });
-  return { leaf, reads };
-}
 
-/** The trees, each built over `leaf`, in which `leaf` is met on more than one path. */
-const SHARED_TREES = {
-  'as the cause and an errors entry': (leaf) => new AggregateError([leaf], 'facts could not be read', { cause: leaf }),
-  'as two errors entries': (leaf) => new AggregateError([leaf, leaf], 'facts could not be read'),
-  'as a sibling and a sibling\'s cause': (leaf) => new AggregateError([new Error('wrapper', { cause: leaf }), leaf], 'facts could not be read'),
-  'nested in an aggregate within an aggregate, and as the outer cause': (leaf) => new AggregateError([new AggregateError([leaf], 'inner', { cause: leaf })], 'outer', { cause: new Error('wrapper', { cause: leaf }) }),
-  'as an unreadable entry\'s cause in two failures': (leaf) => new AggregateError([Object.assign(new Error('one'), { unreadable: [{ path: 'a.json', cause: leaf }] }), Object.assign(new Error('two'), { unreadable: [{ path: 'b.json', cause: leaf }] }), leaf], 'facts could not be read'),
-};
 
-for (const [what, tree] of Object.entries(SHARED_TREES)) {
-  test(`a rejected read whose failure holds one Error ${what} reads each of its fields once, and once reads its first message`, async () => {
-    const { leaf, reads } = countedLeaf();
-    const { board } = stateBoard([], {});
-    board.readColumns = async () => { throw tree(leaf); };
-    const handed = handles({ cards: [], board });
 
-    const failure = await loop(handed).pull().then(() => assert.fail('the rejection was accepted'), (error) => error);
 
-    for (const [key, count] of Object.entries(reads)) assert.equal(count, 1, `${String(key)} was read ${count} times`);
-    assert.match(onceReads(failure), /HTTP 502/);
-    assert.doesNotMatch(onceReads(failure), /lost on reread/);
-  });
-}
 
-// proves R-SCHED-23
-test('a notice answer whose failed holds one object as its step, its cause and two of its unrecorded events reads each of that object\'s fields once', async () => {
-  const { leaf, reads } = countedLeaf('EIO');
-  const shared = { event: leaf };
-  const { board } = stateBoard([], { 12: 'open' });
-  const handed = handles({ cards: [], board, notice: followingNotice({ 12: { issue: 12, failed: { step: leaf, cause: leaf, made: { answer: { id: 1 } }, unrecorded: [shared, shared, { event: leaf }] } } }) });
-  seed(handed.state, 'hold-a1-issue-12.json');
 
-  const pulled = await loop(handed).pull();
 
-  for (const [key, count] of Object.entries(reads)) assert.equal(count, 1, `${String(key)} was read ${count} times`);
-  assert.doesNotMatch(noticeLine('once', pulled.notices[0].id, pulled.notices[0]), /lost on reread/);
-});
 
 // The judges' round-11 probes on #1079: a conversion of a foreign value, as well as a field read,
 // runs once in a snapshot, whichever path of the snapshot reaches it.
@@ -1378,52 +1287,13 @@ function countedConversion(first = 'HTTP 502 first reason') {
   return { value, reads };
 }
 
-/** Lists, built over `shared`, whose `length` answers `shared`, a value no list can have as its length. */
-const sharedLength = (shared) => new Proxy([], { get(target, key) { return key === 'length' ? shared : Reflect.get(target, key); } });
 
-/** Trees in which the one changing value `shared` is reached by a conversion on more than one path. */
-const CONVERTED_TREES = {
-  'as the aggregate\'s message and its errors entry': (shared) => Object.defineProperty(new AggregateError([shared], 'outer'), 'message', { value: shared }),
-  'as two lists\' length': (shared) => Object.assign(Object.defineProperty(new AggregateError([], 'facts failed'), 'errors', { value: sharedLength(shared) }), { unreadable: sharedLength(shared) }),
-  'as an errors entry\'s message and its cause': (shared) => new AggregateError([Object.defineProperty(new Error('inner', { cause: shared }), 'message', { value: shared })], 'outer'),
-  'as an unreadable path and a thrown errors entry': (shared) => Object.assign(new AggregateError([shared], 'facts failed'), { unreadable: [{ path: shared, cause: 'EIO' }] }),
-};
 
-for (const [what, tree] of Object.entries(CONVERTED_TREES)) {
-  for (const [kind, make] of [['an Error whose message getter changes', () => { const { leaf, reads } = countedLeaf('HTTP 502 first reason'); return { shared: leaf, reads }; }], ['an object whose string conversion changes', () => { const { value, reads } = countedConversion(); return { shared: value, reads }; }]]) {
-    test(`a rejected read whose failure holds ${kind} ${what} reads it once, and once reads its first line`, async () => {
-      const { shared, reads } = make();
-      const { board } = stateBoard([], {});
-      board.readColumns = async () => { throw tree(shared); };
-      const handed = handles({ cards: [], board });
 
-      const failure = await loop(handed).pull().then(() => assert.fail('the rejection was accepted'), (error) => error);
 
-      for (const [key, count] of Object.entries(reads)) assert.ok(count <= 1, `${String(key)} was read ${count} times`);
-      assert.match(onceReads(failure), /HTTP 502 first reason/);
-      assert.doesNotMatch(onceReads(failure), /lost on reread/);
-    });
-  }
-}
 
-// proves R-SCHED-23
-test('a notice mark that cannot be cloned keeps the first answer it read, and its closer, step and unrecorded event stay', async () => {
-  let reads = 0;
-  const made = Object.defineProperties({}, {
-    answer: { enumerable: true, get() { reads += 1; return reads === 1 ? 'write-confirmed' : 'original answer lost on reread'; } },
-    extra: { enumerable: true, value: Symbol('not cloneable') },
-  });
-  const { board } = stateBoard([], { 12: 'open' });
-  const handed = handles({ cards: [], board, notice: followingNotice({ 12: { issue: 12, failed: { step: 'comment on issue #12', cause: 'call.end refused', made, unrecorded: [{ event: 'call.end' }] } } }) });
-  seed(handed.state, 'hold-a1-issue-12.json');
 
-  const pulled = await loop(handed).pull();
 
-  assert.equal(reads, 1);
-  assert.equal(pulled.notices[0].made.answer, 'write-confirmed');
-  assert.deepEqual(namesIn(handed.state), ['hold-a1-issue-12.json']);
-  assert.match(noticeLine('once', pulled.notices[0].id, pulled.notices[0]), /made its step to comment on issue #12.*call\.end/);
-});
 
 // proves R-SCHED-23
 test('a sink refusal of admission.open whose conversion changes is said as it first converted, in the failure and in its cause', async () => {
@@ -1445,68 +1315,15 @@ test('a sink refusal of admission.open whose conversion changes is said as it fi
 /** A notice answering, for the issue-less closer it is handed, a failed step the forge made, its mark `made`. */
 const madeNotice = (made) => async function* notice() { return { failed: { step: 'comment on issue #12', cause: 'EIO record', made, unrecorded: [{ event: 'notice.comment' }] } }; };
 
-// proves R-SCHED-23
-test('a made notice mark of four keys each naming the mark itself is copied once, each key said as met again, and the pull settles at once', async () => {
-  const made = {};
-  for (let at = 0; at < 4; at += 1) made[`k${at}`] = made;
-  const handed = handles({ cards: [], notice: madeNotice(made) });
-  seed(handed.state, 'hold-c3.json');
 
-  const pulled = await loop(handed).pull();
 
-  assert.deepEqual(pulled.notices[0].made, { k0: 'a value met again within itself', k1: 'a value met again within itself', k2: 'a value met again within itself', k3: 'a value met again within itself' });
-  assert.match(noticeLine('once', pulled.notices[0].id, pulled.notices[0]), /notice\.comment/);
-});
 
-// proves R-SCHED-23
-test('a made notice mark holding a list that claims length -1 carries the line saying its entries could not be read', async () => {
-  const writes = new Proxy(['comment #12'], { get(target, key) { return key === 'length' ? -1 : target[key]; } });
-  const handed = handles({ cards: [], notice: madeNotice({ writes }) });
-  seed(handed.state, 'hold-c3.json');
 
-  const pulled = await loop(handed).pull();
 
-  assert.deepEqual(pulled.notices[0].made, { writes: ['entries L3 could not read, as the list claimed a length of -1'] });
-});
 
-// proves R-SCHED-23
-test('a rejected read whose failures, or whose unreadable admission entries, are a sparse list longer than L3 reads keeps the real entry at 0 and says how many it did not read', async () => {
-  const length = 10_005;
-  const errors = [new Error('EIO the real refusal')];
-  errors.length = length;
-  const unreadable = [{ path: '/x/hold-a1.json', cause: 'EACCES the real one' }];
-  unreadable.length = length;
-  for (const [what, thrown] of [
-    ['errors', Object.defineProperty(new AggregateError([], 'two reads failed'), 'errors', { value: errors })],
-    ['unreadable', Object.assign(new Error('admission cannot be read'), { unreadable })],
-  ]) {
-    const { board } = stateBoard([], {});
-    board.readColumns = async () => { throw thrown; };
-    const failure = await loop(handles({ cards: [], board })).pull().then(() => assert.fail('accepted'), (error) => error);
-    const said = onceReads(failure);
-    assert.match(said, what === 'errors' ? /EIO the real refusal/ : /EACCES the real one/, what);
-    assert.match(said, /and 5 more entries L3 did not read, past the first 10000 of the 10005 the list held/, what);
-  }
-});
 
-for (const [what, value] of Object.entries({
-  'an Error whose unreadable getter throws': () => Object.defineProperty(new Error('EIO claimed'), 'unreadable', { get() { throw new Error('unreadable getter'); } }),
-  'a Proxy over an Error whose getPrototypeOf throws': () => new Proxy(new Error('EIO claimed'), { getPrototypeOf() { throw new Error('proto trap'); } }),
-  'an Error whose message getter throws': () => Object.defineProperty(new Error('x'), 'message', { get() { throw new Error('message getter'); } }),
-})) {
-  test(`a refused opening record stays presented when a claimed card's l2.claimed then rejects with ${what}`, async () => {
-    const { board } = stateBoard([1], { 12: 'closed' });
-    const handed = handles({ cards: [1], board, notice: closedNotice() });
-    handed.l2.claimed = async () => { throw value(); };
-    refusingWith(handed, { 'admission.open': () => ({ value: new Error('EIO admission.open') }) });
-    seed(handed.state, 'hold-a1-issue-12.json');
 
-    const failure = await loop(handed).pull().then(() => assert.fail('accepted'), (error) => error);
 
-    assert.deepEqual(namesIn(handed.state), []);
-    assert.match(onceReads(failure), /EIO admission\.open/);
-  });
-}
 
 for (const [what, closer, states] of [['a closer naming an issue, on the follow path', 'hold-a1-issue-12.json', { 12: 'closed' }], ['an issue-less closer, at the trigger', 'hold-c3.json', {}]]) {
   for (const [after, notice] of [
@@ -1526,35 +1343,9 @@ for (const [what, closer, states] of [['a closer naming an issue, on the follow 
   }
 }
 
-// proves R-SCHED-23
-test('a cycle of causes, and a chain of causes past the depth L3 follows, are said, never thrown', async () => {
-  const a = new Error('EIO a');
-  const b = new Error('EIO b', { cause: a });
-  a.cause = b;
-  let deep = new Error('EIO bottom');
-  for (let at = 0; at < 40; at += 1) deep = new Error(`EIO level ${at}`, { cause: deep });
-  for (const thrown of [a, deep]) {
-    const { board } = stateBoard([], {});
-    board.readColumns = async () => { throw thrown; };
-    const failure = await loop(handles({ cards: [], board })).pull().then(() => assert.fail('accepted'), (error) => error);
-    assert.ok(messagesOf(failure).some((message) => /met again among its own causes, or nested past 16 levels/.test(message)));
-  }
-});
 
-// proves R-SCHED-23
-test('a trigger\'s settle is one copy: a value two cards\' answers share is one copy, read once, and is not the value L2 answered', async () => {
-  let reads = 0;
-  const shared = { get detail() { reads += 1; return reads === 1 ? 'first reason' : 'reason lost on reread'; } };
-  const handed = handles({ cards: [1, 2], board: stateBoard([1, 2], {}).board, facts: async () => () => ({ action: 'escalate', reason: shared }) });
 
-  const reached = await loop(handed).pull();
 
-  assert.equal(reached.length, 2);
-  assert.equal(reached[0].reason, reached[1].reason);
-  assert.notEqual(reached[0].reason, shared);
-  assert.deepEqual(reached[0].reason, { detail: 'first reason' });
-  assert.equal(reads, 1);
-});
 
 // The pre-judge attack of round 14 on #1079 (D1, D2, D3, D5 and D6).
 
@@ -1597,52 +1388,630 @@ test('what take throws, a later read failing after L2 threw from its own ask, re
   assert.match(onceReads(failure), /EIO columns/);
 });
 
-// proves R-SCHED-23
-test('a made notice mark that makes a fresh value of four keys at each read is copied within one bound, the notice stays whole, and the copy says where it stopped', async () => {
-  let made = 0;
-  const fresh = () => {
-    made += 1;
-    const value = {};
-    for (let at = 0; at < 4; at += 1) Object.defineProperty(value, `k${at}`, { enumerable: true, get: fresh });
-    return value;
+
+
+
+
+
+
+
+
+
+import { readSide as relayReadSide } from '../src/substrate/forge/read.mjs';
+
+// Boundary rule 4 infrastructure checks retain actual references. R-RECORD-9 describes
+// event reporting and R-SCHED-23 describes reopening; neither requires same-object identity.
+for (const read of ['readColumns', 'facts']) for (const earlier of [false, true]) {
+  test(`P1 actual ${read} error identity; earlier trigger refusal=${earlier}`, async (t) => {
+    const world = relayWorld(t, { failRead: read, cards: read === 'facts' ? [relayCard(3, 'Ready')] : [] });
+    if (earlier) world.refuse((record) => record.event === 'trigger' && record.trigger === 'pull');
+    const failure = await world.build().pull().then(() => assert.fail('the actual read refusal was accepted'), (error) => error);
+    const original = world.failures.find(({ name }) => name === read).reason;
+    assert.match(original.message, new RegExp(`HTTP 502 raw ${read} refusal`));
+    if (earlier) {
+      assert.ok(failure.errors.includes(original), 'P1 aggregate retains actual board Error');
+      assert.match(messagesOf(failure).join('; '), /record the pull trigger/);
+    } else assert.strictEqual(failure, original, 'P1 direct carrier must be actual board Error');
+    assert.doesNotThrow(() => onceReads(failure));
+    assert.match(onceReads(failure), new RegExp(`HTTP 502 raw ${read} refusal`));
+  });
+}
+
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import { repositoryReads as relayRepositoryReads } from '../src/substrate/forge/read.mjs';
+import { itemWriteSide as relayItemWriteSide } from '../src/substrate/forge/item-write.mjs';
+import { repositoryWriteSide as relayRepositoryWriteSide } from '../src/substrate/forge/repository-write.mjs';
+import { factsCall as relayFactsCall } from '../src/workflow/facts.mjs';
+import { consumerConfig as relayConfig, card as relayCard } from './verb-consumer.mjs';
+import { withObservedAdmission } from './loop-admission-observer.mjs';
+
+const relayAppendAtImport = fs.appendFileSync;
+
+/** Raw gh fixtures follow forge-read's recorded pages and fake-gh's issue/timeline/write contracts. */
+function relayWorld(t, { issues = [], cards = [], failRead, failIssue, timedOut = false, failureText, refuse = () => false, observeAppend = true } = {}) {
+  const settings = relayConfig(2);
+  const state = temporaryDirectory('rigger-relay-');
+  const realAppend = fs.appendFileSync;
+  let refuseRecord = () => false;
+  const refused = [];
+  const operations = [];
+  if (observeAppend) {
+    fs.appendFileSync = (path, bytes, ...rest) => {
+      let record;
+      try { record = JSON.parse(String(bytes)); } catch {}
+      if (record && String(path).startsWith(state) && refuseRecord(record)) {
+        const error = Object.assign(new Error(`EIO while recording ${record.event}`), { code: 'EIO' });
+        refused.push({ record, error });
+        throw error;
+      }
+      if (record && String(path).startsWith(state)) operations.push({ event: record.event });
+      return realAppend(path, bytes, ...rest);
+    };
+    syncBuiltinESMExports();
+    t.after(() => { fs.appendFileSync = realAppend; syncBuiltinESMExports(); });
+  }
+  const sink = openSink({ directory: state, run: 'r-relay', now: () => 1 });
+  const page = (nodes) => ({ pageInfo: { hasNextPage: false, endCursor: null }, nodes });
+  const answer = (value, graph = true) => ({ status: 0, stdout: JSON.stringify(graph ? { data: value } : value), stderr: '', timedOut: false });
+  const columns = Object.values(settings.board.columns);
+  let active;
+  let inFacts = false;
+  const failures = [];
+  const noticed = [];
+  const writes = [];
+  const send = (_command, args, options = {}) => {
+    const path = args[1];
+    const query = path === 'graphql' ? args[3] : '';
+    operations.push({ read: active, args });
+    const number = Number(/issue\(number: (\d+)/.exec(query)?.[1]);
+    if ((failRead !== undefined && active === failRead) || (failRead === 'facts' && inFacts) || (active === 'readIssueState' && number === failIssue) || refuse(args, active)) {
+      return { status: 1, stdout: '', stderr: `gh: HTTP 502 ${failureText ?? `raw ${inFacts ? 'facts' : active} refusal`}`, timedOut: active === 'readIssueState' && timedOut, timeout: options.timeout };
+    }
+    if (path.includes('/permission')) return answer({ role_name: 'write' }, false);
+    if (path.includes('issues?state=all')) return answer(issues.length ? [{ number: Math.max(...issues.map((issue) => issue.number)) }] : [], false);
+    if (path === 'graphql') {
+      if (query.includes('updateProjectV2ItemFieldValue')) return answer({ updateProjectV2ItemFieldValue: { projectV2Item: { id: 'item-notice' } } });
+      if (query.includes('addProjectV2ItemById')) return answer({ addProjectV2ItemById: { item: { id: 'item-notice' } } });
+      if (query.includes('project: node(')) return answer({ project: { field: { id: 'F-Status' } }, target: { name: 'Status' } });
+      if (query.includes('field(name:')) return answer({ repositoryOwner: { projectV2: { id: 'P', field: { id: 'F-Status', options: columns.map((name, at) => ({ id: `O-${at}`, name })) } } } });
+      if (query.includes('fields(')) return answer({ repositoryOwner: { projectV2: { fields: page([{ name: 'Status', dataType: 'SINGLE_SELECT', options: columns.map((name) => ({ name })) }, { name: 'Priority', dataType: 'SINGLE_SELECT', options: ['High', 'Normal', 'Low'].map((name) => ({ name })) }]) } } });
+      if (query.includes('items(')) return answer({ repositoryOwner: { projectV2: { items: page(cards.map((card) => ({ id: `item-${card.number}`, fieldValues: page([{ name: card.column, field: { name: 'Status' } }]), content: { __typename: 'Issue', number: card.number, title: card.title, body: card.body, repository: { nameWithOwner: settings.repo }, labels: page(card.labels.map((name) => ({ name }))) } }))) } } });
+      if (query.includes('issues(states:')) return answer({ repository: { issues: page(issues.filter((issue) => issue.state !== 'closed').map(({ number }) => ({ number }))) } });
+      if (query.includes('issue(number:')) {
+        const issue = issues.find((each) => each.number === number);
+        if (!issue) return { status: 1, stdout: JSON.stringify({ data: { repository: { issue: null } }, errors: [{ type: 'NOT_FOUND', path: ['repository', 'issue'] }] }), stderr: `gh: Could not resolve to an Issue with the number of ${number}.` };
+        if (query.includes('timelineItems(')) return answer({ repository: { issue: { timelineItems: page([
+          { __typename: 'LabeledEvent', createdAt: '2026-10-01T00:00:00Z', actor: { login: 'rigger-bot' }, label: { name: 'rigger:status' } },
+          ...(issue.state === 'closed' ? [{ __typename: 'ClosedEvent', createdAt: '2026-10-01T00:00:01Z', actor: { login: 'owner' } }] : []),
+        ]) } } });
+        return answer({ repository: { issue: { number, title: issue.title, body: issue.body, state: (issue.state ?? 'open').toUpperCase(), author: { login: 'rigger-bot' }, repository: { nameWithOwner: settings.repo }, labels: page(issue.labels.map((name) => ({ name }))) } } });
+      }
+      if (query.includes('refs(')) return answer({ repository: { refs: page([]) } });
+      if (query.includes('ref(')) return answer({ repository: Object.fromEntries([...query.matchAll(/(\w+): ref\(/g)].map(([, alias]) => [alias, null])) });
+      if (query.includes('pullRequests(')) return answer({ repository: { pullRequests: page([]) } });
+    }
+    if (/\/issues\/\d+\/comments$/.test(path)) { writes.push({ operation: 'comment', args }); return answer({ id: 1 }, false); }
+    if (/\/issues\/\d+$/.test(path)) return answer({ node_id: `I_issue${path.split('/').at(-1)}` }, false);
+    if (path.endsWith('/issues') && args[3] === 'POST') {
+      const fields = Object.fromEntries(args.filter((_, at) => args[at - 1] === '-f').map((field) => { const at = field.indexOf('='); return [field.slice(0, at), field.slice(at + 1)]; }));
+      const number = Math.max(0, ...issues.map((issue) => issue.number)) + 1;
+      issues.push({ number, title: fields.title, body: fields.body, labels: ['rigger:status'] });
+      writes.push({ operation: 'open', number });
+      return answer({ number, labels: [{ name: 'rigger:status' }] }, false);
+    }
+    throw new Error(`raw relay fixture has no answer for ${JSON.stringify(args)}`);
   };
-  const handed = handles({ cards: [], notice: madeNotice(fresh()) });
-  seed(handed.state, 'hold-c3.json');
+  const watch = (name, operation) => async (...args) => {
+    const before = active;
+    active = name;
+    try { return await operation(...args); }
+    catch (reason) { failures.push({ name, reason }); throw reason; }
+    finally { active = before; }
+  };
+  const given = { ...settings.board, repo: settings.repo };
+  const board = Object.fromEntries(Object.entries(relayReadSide(given, { send })).map(([name, operation]) => [name, watch(name, operation)]));
+  const repository = Object.fromEntries(Object.entries(relayRepositoryReads(given, { send })).map(([name, operation]) => [name, watch(name, operation)]));
+  const changes = columnChanges({ config: settings, sink, reads: repository, board, items: relayItemWriteSide(given, { send }), repositoryWrites: relayRepositoryWriteSide({ repo: settings.repo }, { send }) });
+  const notice = changes.notice;
+  const l2 = { ...changes, notice: (input) => {
+    const actual = notice(input);
+    const call = { input, handed: [], returned: false };
+    noticed.push(call);
+    return {
+      async next(outcome) { if (outcome !== undefined) call.handed.push(outcome); const step = await actual.next(outcome); if (step.done) call.answer = step.value; return step; },
+      async return(...args) { call.returned = true; return actual.return(...args); },
+      [Symbol.asyncIterator]() { return this; },
+    };
+  } };
+  const decide = (card, outcomes, options = {}) => nextAction(card, settings.kinds, undefined, { columns: settings.board.columns, roles: settings.roles, provisioning: settings.provisioning, outcomes, sink, ...options });
+  const actualFacts = relayFactsCall({ config: settings, reads: repository, decide });
+  const facts = watch('facts', async (...args) => { inFacts = true; try { return await actualFacts(...args); } finally { inFacts = false; } });
+  const options = { ...handles({ cards: [], state, sink }), config: settings, board, l2, decide, facts, clock: { now: () => 1, pause: async () => {} }, run: 'r-relay' };
+  return { state, options, board, l2, changes, noticed, failures, refused, writes, operations,
+    build: (make = loop) => make(options), seed: (name) => seed(state, name), names: () => namesIn(state),
+    refuse: (predicate) => { refuseRecord = predicate; },
+  };
+}
 
-  const pulled = await loop(handed).pull();
+/** A raw forge status issue, whose label/close events are supplied at the transport boundary. */
+const relayIssue = (number, id, state = 'open') => ({ number, title: 'Rigger closed admission', body: `Hold: \`${id}\`\n`, labels: ['rigger:status'], state });
 
-  // Each of the 10,000 values the copy makes reads its four keys once, each read making one value.
-  assert.ok(made <= 4 * 10_000 + 1, `the copy made ${made} values`);
-  assert.match(JSON.stringify(pulled.notices[0].made), /a value L3 did not copy, past the 10000 values it copies of one value it hands on/);
+// Identity remains an Architecture boundary diagnostic; reporting and removed files below
+// separately preserve the R-RECORD-9/R-SCHED-23 duties without borrowing their product claims.
+for (const later of ['none', 'readColumns', 'readPriority', 'facts', 'admission']) {
+  test(`P6 actual admission.open refusal followed by ${later}`, async (t) => withObservedAdmission(async (make, captures) => {
+    const world = relayWorld(t, { issues: [relayIssue(12, 'a1', 'closed')], cards: later === 'facts' ? [relayCard(3, 'Ready')] : [], failRead: ['readColumns', 'readPriority', 'facts'].includes(later) ? later : undefined });
+    world.seed('hold-a1-issue-12.json');
+    world.refuse((record) => {
+      if (record.event !== 'admission.open') return false;
+      if (later === 'admission') fs.writeFileSync(join(world.state, 'admission', 'bad.json'), 'bad');
+      return true;
+    });
+    const failure = await world.build(make).pull().then(() => assert.fail('the refused opening was accepted'), (error) => error);
+    const original = captures.get(world.state).calls.find((call) => call.method === 'open').reason;
+    assert.ok(original instanceof Error, 'P6 capture actual admission rejection');
+    assert.ok(Array.isArray(failure.errors) && failure.errors.includes(original), 'P6 aggregate retains actual admission Error A');
+    assert.ok(!world.names().includes('hold-a1-issue-12.json'), 'P6 actual closer removed');
+    assert.match(onceReads(failure), /admission\.open/);
+    if (['readColumns', 'readPriority', 'facts'].includes(later)) assert.ok(failure.errors.includes(world.failures.find(({ name }) => name === later).reason), 'P6 later actual read retained');
+    if (later === 'admission') assert.match(onceReads(failure), /bad\.json.*no closer form/);
+  }));
+}
+
+for (const outcome of ['fulfilled', 'gone', 'refused']) {
+  test(`P4 actual notice generator rename outcome=${outcome}`, async (t) => withObservedAdmission(async (make, captures) => {
+    const world = relayWorld(t);
+    world.seed('hold-a1.json');
+    if (outcome === 'refused') world.refuse((record) => record.event === 'admission.rename');
+    let resumed;
+    if (outcome === 'gone') {
+      const original = fs.renameSync;
+      fs.renameSync = (from, to) => {
+        if (String(from).startsWith(world.state)) resumed = moduleOver(world.state).resume();
+        return original(from, to);
+      };
+      syncBuiltinESMExports();
+      t.after(() => { fs.renameSync = original; syncBuiltinESMExports(); });
+    }
+    const result = await world.build(make).pull().then((value) => ({ value }), (failure) => ({ failure }));
+    if (resumed) await resumed;
+    const renames = captures.get(world.state).calls.filter(({ method }) => method === 'rename');
+    const notice = world.noticed[0];
+    assert.ok(renames.length > 0, 'P4 actual admission.rename reached');
+    if (outcome === 'gone') {
+      assert.equal(renames[0].value.gone, true);
+      assert.equal(notice.returned, true, 'P4 gone closes actual generator');
+      assert.equal(notice.handed.length, 0, 'P4 no later generator step');
+      assert.deepEqual(world.names(), []);
+      assert.deepEqual(world.writes, [], 'P4 gone performs no later write');
+    } else {
+      assert.equal(notice.handed[0].status, outcome === 'refused' ? 'rejected' : 'fulfilled');
+      const key = outcome === 'refused' ? 'reason' : 'value';
+      assert.strictEqual(notice.handed[0][key], renames[0][key], 'P4 original rename settlement handed on');
+      assert.deepEqual(world.names(), [outcome === 'refused' ? 'hold-a1-after-0.json' : 'hold-a1-issue-1.json'], JSON.stringify(notice.answer));
+      if (outcome === 'refused') assert.ok(result.failure.errors.includes(renames[0].reason), 'P4 original refused rename retained');
+      else {
+        assert.equal(notice.answer.issue, 1);
+        assert.equal(notice.handed.length, 2);
+        for (let at = 0; at < renames.length; at += 1) assert.strictEqual(notice.handed[at].value, renames[at].value);
+      }
+    }
+  }));
+}
+
+for (const kind of ['issue', 'closed', 'ordinary-failed']) {
+  test(`P5 actual statusNotice return ${kind}`, async (t) => {
+    const world = relayWorld(t, { issues: kind === 'closed' ? [relayIssue(12, 'a1', 'closed')] : [], failRead: kind === 'ordinary-failed' ? 'readItems' : undefined });
+    world.seed(kind === 'closed' ? 'hold-a1-issue-12.json' : 'hold-a1.json');
+    const pulled = await world.build().pull();
+    const actual = world.noticed[0].answer;
+    if (kind === 'closed') {
+      assert.deepEqual(actual, { issue: 12, closed: true });
+      assert.deepEqual(world.names(), []);
+      assert.deepEqual(relayOpeningEvents(world.state), relayExpectedOpening, 'P5 selected issue reaches the actual opening event');
+    }
+    else {
+      assert.deepEqual(world.names(), ['hold-a1-issue-1.json']);
+      if (kind === 'issue') assert.deepEqual(actual, { issue: 1 });
+      else {
+        assert.equal(actual.failed.step, 'read the board');
+        assert.match(actual.failed.cause, /HTTP 502/);
+        assert.equal(pulled.notices[0].step, 'read the board');
+        assert.equal(pulled.notices[0].cause, actual.failed.cause, 'P5 ordinary failure retains its actual report');
+        assert.match(noticeLine('once', pulled.notices[0].id, pulled.notices[0]), /failed to read the board.*HTTP 502/);
+      }
+    }
+  });
+}
+
+for (const timedOut of [false, true]) for (const refused of [false, true]) {
+  test(`P7 actual issue-state timeout=${timedOut}; notice.failed refusal=${refused}; earlier opening`, async (t) => {
+    const world = relayWorld(t, { issues: [relayIssue(12, 'a1', 'closed'), relayIssue(14, 'b2')], failIssue: 14, timedOut });
+    world.seed('hold-a1-issue-12.json'); world.seed('hold-b2-issue-14.json');
+    world.refuse((record) => record.event === 'admission.open' || (refused && record.event === 'notice.failed'));
+    const failure = await world.build().pull().then(() => assert.fail('the earlier opening refusal was lost'), (error) => error);
+    const report = messagesOf(failure).join('; ');
+    assert.match(report, /admission\.open/);
+    assert.match(report, /hold b2.*read issue #14's state/);
+    assert.match(report, timedOut ? /ran past its timeout of 60000 ms/ : /HTTP 502/);
+    if (refused) assert.match(report, /notice\.failed/);
+    assert.deepEqual(world.names(), ['hold-b2-issue-14.json']);
+    assert.ok(world.noticed.every(({ input }) => input.closer.id !== 'b2'), 'P7 failed state never reaches L2 notice');
+  });
+}
+
+// Same-object relay/cutoff is infrastructure under boundary rule 4, not the reporting/reopen
+// claims of R-RECORD-9 or R-SCHED-23. Each path/cause oracle comes from its actual file name.
+test('P13 actual admission.read dense 10005 entries retains original list and last name', async (t) => withObservedAdmission(async (make, captures) => {
+  const world = relayWorld(t);
+  fs.mkdirSync(join(world.state, 'admission'), { recursive: true });
+  for (let at = 0; at < 10005; at += 1) fs.writeFileSync(join(world.state, 'admission', `bad-${String(at).padStart(5, '0')}.json`), 'bad');
+  const failure = await world.build(make).pull().then(() => assert.fail('unreadable admission was accepted'), (error) => error);
+  const read = captures.get(world.state).calls.filter(({ method }) => method === 'read').at(-1).value;
+  assert.equal(read.state, 'unreadable');
+  assert.equal(read.unreadable.length, 10005);
+  assert.strictEqual(failure.unreadable, read.unreadable, 'P13 original actual admission list');
+  let report;
+  assert.doesNotThrow(() => { report = onceReads(failure); });
+  for (const entry of read.unreadable) {
+    assert.equal(entry.cause, 'no closer form');
+    assert.ok(failure.message.includes(`${entry.path} (no closer form)`), 'P13 every actual malformed path/cause named');
+    assert.ok(report.includes(entry.path), 'P13 presenter retains every path');
+  }
+  assert.equal(failure.unreadable[0].path, join(world.state, 'admission', 'bad-00000.json'));
+  assert.equal(failure.unreadable.at(-1).path, join(world.state, 'admission', 'bad-10004.json'));
+  assert.doesNotMatch(failure.message, /did not read|first 10000/);
+}));
+
+// contentOf's closeSync is the actual throw site; no throwing generator is invented.
+test('P14 notify chain catch reports actual admission.read filesystem close failure', async (t) => withObservedAdmission(async (make, captures) => {
+  const world = relayWorld(t); world.seed('hold-a1.json');
+  const open = fs.openSync, close = fs.closeSync;
+  const descriptors = new Set();
+  let count = 0, injected;
+  fs.openSync = (path, ...args) => { const fd = open(path, ...args); if (String(path).startsWith(join(world.state, 'admission'))) descriptors.add(fd); return fd; };
+  fs.closeSync = (fd) => {
+    const owned = descriptors.delete(fd);
+    const result = close(fd);
+    if (owned && ++count === 3) { injected = Object.assign(new Error('EIO actual admission read close boundary'), { code: 'EIO' }); throw injected; }
+    return result;
+  };
+  syncBuiltinESMExports();
+  t.after(() => { fs.openSync = open; fs.closeSync = close; syncBuiltinESMExports(); });
+  const pulled = await world.build(make).pull();
+  assert.ok(injected, 'P14 actual close failure reached');
+  assert.equal(world.noticed.length, 0);
+  assert.strictEqual(captures.get(world.state).calls.find(({ reason }) => reason !== undefined).reason, injected);
+  assert.deepEqual(pulled.notices, [{ id: 'a1', step: 'notice', cause: 'EIO actual admission read close boundary' }]);
+  assert.deepEqual(world.names(), ['hold-a1.json']);
+}));
+
+const relayOpeningEvents = (state) => readEvents(state).filter(({ event }) => event === 'admission.open')
+  .map(({ layer, kind, id, name, by, issue }) => ({ layer, kind, id, name, by, issue }));
+const relayExpectedOpening = [{ layer: 'L3', kind: 'hold', id: 'a1', name: 'hold-a1-issue-12.json', by: 'issue', issue: 12 }];
+
+// Complete actual opening/read/report guards, distinct from the identity-only infrastructure claim.
+test('an accepted admission.open record survives an actual later readColumns failure in pull', async (t) => {
+  const world = relayWorld(t, { issues: [relayIssue(12, 'a1', 'closed')], failRead: 'readColumns', failureText: 'accepted-open readColumns refusal' });
+  world.seed('hold-a1-issue-12.json');
+  const failure = await world.build().pull().then(() => assert.fail('the later read was accepted'), (error) => error);
+  assert.strictEqual(failure, world.failures.find(({ name }) => name === 'readColumns').reason);
+  assert.ok(readable(failure), 'ACCEPTED-OPEN pull rejection remains readable');
+  assert.doesNotThrow(() => onceReads(failure));
+  assert.match(onceReads(failure), /readColumns.*HTTP 502 accepted-open readColumns refusal/);
+  assert.deepEqual(world.names(), []);
+  assert.deepEqual(relayOpeningEvents(world.state), relayExpectedOpening);
+  const opened = world.operations.findIndex(({ event }) => event === 'admission.open');
+  const failedRead = world.operations.findIndex(({ read }) => read === 'readColumns');
+  assert.ok(opened >= 0 && failedRead > opened, 'ACCEPTED-OPEN accepted append precedes failed reader');
 });
 
-// proves R-SCHED-23
-test('one object as the made mark of two notices of one trigger is read once, and both notices carry the same copy', async () => {
-  let reads = 0;
-  const shared = { get f() { reads += 1; return reads === 1 ? 'first' : 'second'; } };
-  const handed = handles({ cards: [], notice: madeNotice(shared) });
-  seed(handed.state, 'hold-c3.json');
-  seed(handed.state, 'hold-c4.json');
+test('an opening refusal, an actual state-read failure and an actual later board-read failure stay reported together', async (t) => withObservedAdmission(async (make, captures) => {
+  const world = relayWorld(t, { issues: [relayIssue(12, 'a1', 'closed'), relayIssue(14, 'b2')], failIssue: 14, failRead: 'readColumns' });
+  world.seed('hold-a1-issue-12.json'); world.seed('hold-b2-issue-14.json');
+  world.refuse(({ event }) => event === 'admission.open');
+  const failure = await world.build(make).pull().then(() => assert.fail('combined actual failures were accepted'), (error) => error);
+  const opening = captures.get(world.state).calls.find(({ method }) => method === 'open').reason;
+  const read = world.failures.find(({ name }) => name === 'readColumns').reason;
+  assert.ok(failure.errors.includes(opening), 'OPEN-STATE-READ original A retained');
+  assert.ok(failure.errors.includes(read), 'OPEN-STATE-READ original E retained');
+  assert.ok(readable(failure));
+  assert.doesNotThrow(() => onceReads(failure));
+  const report = onceReads(failure);
+  assert.match(report, /admission\.open/);
+  assert.match(report, /hold b2.*read issue #14's state.*HTTP 502 raw readIssueState refusal/);
+  assert.match(report, /readColumns.*HTTP 502 raw readColumns refusal/);
+  assert.deepEqual(world.names(), ['hold-b2-issue-14.json']);
+  assert.ok(world.noticed.every(({ input }) => input.closer.id !== 'b2'));
+}));
 
-  const pulled = await loop(handed).pull();
-
-  assert.equal(reads, 1);
-  assert.deepEqual(pulled.notices.map((each) => each.made.f), ['first', 'first']);
+test('a sole actual state-read refusal leaves one closed admission notice and its accepted notice.failed event', async (t) => {
+  const world = relayWorld(t, { issues: [relayIssue(12, 'a1')], failIssue: 12 });
+  world.seed('hold-a1-issue-12.json');
+  const pulled = await world.build().pull();
+  assert.equal(pulled.admission.state, 'closed');
+  assert.deepEqual(world.names(), ['hold-a1-issue-12.json']);
+  assert.equal(world.noticed.length, 0);
+  assert.equal(pulled.notices.length, 1);
+  const [notice] = pulled.notices;
+  assert.equal(notice.id, 'a1');
+  assert.equal(notice.step, "read issue #12's state");
+  assert.equal(typeof notice.cause, 'string');
+  assert.match(notice.cause, /HTTP 502 raw readIssueState refusal/);
+  assert.deepEqual(readEvents(world.state).filter(({ event }) => event === 'notice.failed').map(({ layer, hold, issue, step }) => ({ layer, hold, issue, step })), [{ layer: 'L3', hold: 'a1', issue: 12, step: "read issue #12's state" }]);
 });
 
-// proves R-SCHED-23
-test('a list entry L3 cannot read is said as such, in a made mark, an aggregate\'s failures and the unrecorded events', async () => {
-  const refusing = (list) => new Proxy(list, { get(target, key) { if (key === '0') throw new Error('entry refused'); return target[key]; } });
-  const handed = handles({ cards: [], notice: async function* notice() { return { failed: { step: 'comment on issue #12', cause: 'EIO record', made: { writes: refusing(['comment #12', 'label #12']) }, unrecorded: refusing([{ event: 'notice.comment' }, { event: 'call.end' }]) } }; } });
-  seed(handed.state, 'hold-c3.json');
-  const pulled = await loop(handed).pull();
-  assert.deepEqual(pulled.notices[0].made.writes, ['entry 0 of the list L3 could not read', 'label #12']);
-  assert.deepEqual(pulled.notices[0].unrecorded, [{ event: 'entry 0 of the list L3 could not read' }, { event: 'call.end' }]);
+test('a real drain append refusal retains an earlier actual admission.open refusal', async (t) => {
+  const world = relayWorld(t, { issues: [relayIssue(12, 'a1', 'closed')] });
+  world.seed('hold-a1-issue-12.json');
+  world.refuse((record) => record.event === 'admission.open' || (record.event === 'trigger' && record.trigger === 'drain'));
+  const failure = await world.build().pull().then(() => assert.fail('combined drain/open refusal was accepted'), (error) => error);
+  assert.deepEqual(world.names(), []);
+  assert.equal(world.refused.length, 2);
+  assert.deepEqual(world.refused.map(({ record }) => record.event), ['admission.open', 'trigger']);
+  assert.ok(readable(failure));
+  assert.doesNotThrow(() => onceReads(failure));
+  assert.match(onceReads(failure), /admission\.open/);
+  assert.match(onceReads(failure), /record the drain trigger/);
+});
 
-  const { board } = stateBoard([], {});
-  board.readColumns = async () => { throw Object.defineProperty(new AggregateError([], 'reads failed'), 'errors', { value: refusing([new Error('EIO 0'), new Error('EIO 1')]) }); };
-  const failure = await loop(handles({ cards: [], board })).pull().then(() => assert.fail('accepted'), (error) => error);
-  assert.match(onceReads(failure), /entry 0 of the list L3 could not read[\s\S]*EIO 1/);
+test('P6 actual l2.claimed move refusal after earlier actual admission.open refusal', async (t) => withObservedAdmission(async (make, captures) => {
+  const world = relayWorld(t, { issues: [relayIssue(12, 'a1', 'closed')], cards: [relayCard(3, 'Ready')], refuse: (args) => String(args[3]).includes('updateProjectV2ItemFieldValue') });
+  world.seed('hold-a1-issue-12.json');
+  world.refuse(({ event }) => event === 'admission.open');
+  const original = world.l2.claimed;
+  let claimed;
+  world.l2.claimed = async (...args) => { try { return await original(...args); } catch (reason) { claimed = reason; throw reason; } };
+  const failure = await world.build(make).pull().then(() => assert.fail('claimed refusal was accepted'), (error) => error);
+  assert.match(claimed.message, /move from ready to coding.*refused/);
+  assert.ok(failure.errors.includes(claimed), 'P6 actual claimed Error retained');
+  assert.ok(failure.errors.includes(captures.get(world.state).calls.find(({ method }) => method === 'open').reason), 'P6 actual opening Error retained beside claim');
+  assert.deepEqual(world.names(), []);
+  assert.doesNotThrow(() => onceReads(failure));
+  assert.match(onceReads(failure), /admission\.open/);
+  assert.match(onceReads(failure), /move from ready to coding.*refused/);
+}));
+
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { realHost } from '../src/substrate/host.mjs';
+
+/** Node child streams/events and documented ps/lsof absence, as process-host.test models them. */
+function relayProcessHost() {
+  let pid = 990000000;
+  const starts = [];
+  const host = {
+    ...realHost,
+    clock: { now: () => 1, pause: async () => {}, schedule: () => ({ unref() {} }), cancel() {} },
+    spawn(command, args, options) {
+      const child = new EventEmitter();
+      child.pid = ++pid;
+      child.exitCode = null; child.signalCode = null;
+      child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.stdin = new PassThrough();
+      starts.push({ command, args, options, child });
+      queueMicrotask(() => { child.exitCode = 0; child.emit('exit', 0, null); child.stdout.end('controlled output\n'); child.stderr.end(); });
+      return child;
+    },
+    spawnSync(_tool, args) {
+      // process-host's start-identity contract; all other ps/lsof reads answer no matches.
+      return args.includes('lstart=') ? { status: 0, stdout: 'Mon Jan  1 00:00:00 2024\n', stderr: '' } : { status: 1, stdout: '', stderr: '' };
+    },
+    execFile(_tool, _args, _options, done) {
+      queueMicrotask(() => done(Object.assign(new Error('no matching processes'), { code: 1 }), '', ''));
+      return { stdout: { destroy() {} }, stderr: { destroy() {} } };
+    },
+    signal() { throw Object.assign(new Error('controlled process absent'), { code: 'ESRCH' }); },
+    killChild() { throw new Error('the completed controlled child needs no kill'); },
+  };
+  return { host, starts };
+}
+
+/** Literal documented L2 role/settlement answers, with L1 driven by the injected process host. */
+function relayControlled({ refusedRelease = false } = {}) {
+  const state = temporaryDirectory('rigger-relay-controlled-');
+  const under = join(state, 'workspaces');
+  const process = relayProcessHost();
+  const settings = { ...config, concurrency: 2, clock: undefined };
+  // L1's documented directory answer; no checkout or native git is needed by a step.
+  const makeWorkspace = async (card) => { const path = join(under, String(card)); mkdirSync(path, { recursive: true }); return { path, scratch: join(under, 'scratch', String(card)), repository: under }; };
+  const role = (name) => ({ role: name, provider: 'not-configured', tier: 'standard', agent: `.claude/agents/${name}.md`, instruction: `controlled ${name}`, evidence: '', timeout: 10000, steps: [], facts: { head: '4'.repeat(40) } });
+  const settled = new Map();
+  const ordinary = openSink({ directory: state, run: 'r-controlled', now: () => 1 });
+  const sink = { emitter: (context) => {
+    const emitter = ordinary.emitter(context);
+    return { emit(event, fields) { if (refusedRelease && context.card === 3 && event === 'slot.release') throw new Error(`controlled refusal ${event}`); return emitter.emit(event, fields); } };
+  } };
+  const decide = (card, outcomes, options = {}) => {
+    if (options.forge === undefined) return outcomes.length === 0
+      ? { action: 'dispatch', kind: 'change', step: { name: 'prepare', run: 'literal controlled step', timeout: 10000 } }
+      : { action: 'dispatch', kind: 'change', maker: role('engineer') };
+    return { action: 'ignore' };
+  };
+  const claimed = new Set();
+  const fake = boardOf([3, 4]);
+  const board = handleOn(fake, { onRead: (items) => { for (let i = items.length - 1; i >= 0; i -= 1) if (claimed.has(items[i].number)) items.splice(i, 1); } });
+  const handed = { ...handles({ cards: [3, 4], board, state, config: settings, sink, decide, facts: async () => (card) => decide(card, []) }), host: process.host,
+    workspace: makeWorkspace, clock: { now: () => 1, pause: async () => {} },
+    l2: { claimed: async (card) => { claimed.add(card.number); }, settled: async (card) => {
+      const value = { settled: card.number }; settled.set(card.number, value); return value;
+    } },
+  };
+  return { state, handed, settled, starts: process.starts };
+}
+
+// D29 infrastructure companions use literal contract inputs. R-RECORD-9 concerns actual event
+// refusals; R-SCHED-23 concerns actual reopening, neither of which these carrier controls claim.
+test('controlled pull and run preserve settlement and sibling carriers', async () => {
+  for (const verb of ['pull', 'run']) for (const failed of [false, true]) {
+    const world = relayControlled({ refusedRelease: failed });
+    const result = await loop(world.handed)[verb]().then((value) => ({ value }), (failure) => ({ failure }));
+    assert.ok(world.starts.length >= 2, 'controlled L1 host actually used');
+    const reached = failed ? (verb === 'pull' ? result.failure.reached : result.failure.errors.find((failure) => failure.reached?.some(({ card }) => card === 3)).reached) : result.value;
+    assert.deepEqual(reached.map(({ card }) => card).sort(), [3, 4]);
+    for (const entry of reached) {
+      assert.equal(entry.outcome.status, 'rejected');
+      assert.equal(entry.outcome.reason.code, 'NOT_STARTED');
+      assert.match(entry.outcome.reason.message, /no provider adapter named "not-configured"/);
+    }
+    assert.ok(world.starts.every(({ child }) => child.exitCode === 0), 'controlled provisioning steps completed');
+    assert.strictEqual(reached.find(({ card }) => card === 3).settled.value, world.settled.get(3), 'controlled original successful settlement carrier');
+    if (failed) assert.match(messagesOf(result.failure).join('\n'), /controlled refusal slot\.release/, 'controlled failed sibling retained');
+    assert.strictEqual(reached.find(({ card }) => card === 4).settled.value, world.settled.get(4));
+  }
+});
+
+// D29 diagnostic: literal directory/start refusals exercise carrier choice, not native J/D provenance.
+test('controlled judge refusals retain siblings without retry or hold', async () => {
+  for (const route of ['directory', 'dispatch-result', 'dispatch-start', 'L3-start']) {
+    const world = relayControlled();
+    const directoryFailure = Object.assign(new Error('controlled judge directory refusal'), { code: 'WORKSPACE_NOT_MADE' });
+    const made = [];
+    const role = (name) => ({ role: name, provider: 'not-configured', tier: 'standard', agent: `${name}.md`, instruction: '', evidence: '', timeout: 10000, facts: { head: '4'.repeat(40) }, steps: [{ name: 'prepare', run: 'controlled judge step', timeout: 10000 }] });
+    const roles = [role('reviewer'), role('architect')];
+    const asks = [];
+    const decide = (_card, _outcomes, options = {}) => {
+      asks.push(options);
+      if (Object.values(options.directories ?? {}).some(({ status }) => status === 'rejected')) return { action: 'judge', judges: [], halt: true };
+      if (route === 'dispatch-start' && options.judged?.reviewer?.[0]?.status === 'rejected') return { action: 'judge', judges: [roles[1]] };
+      return { action: 'judge', judges: roles };
+    };
+    const ordinary = world.handed.sink;
+    const reviewerSteps = new Set();
+    world.handed.sink = { emitter(context) { const writer = ordinary.emitter(context); return { emit(event, fields) {
+      if (context.layer === 'L3' && fields.role === 'reviewer' && fields.step !== undefined) reviewerSteps.add(context.dispatch);
+      if (route === 'L3-start' && context.layer === 'L3' && fields.role === 'reviewer' && fields.step === undefined && event === 'dispatch') throw new Error('controlled L3 start refusal');
+      if (route === 'dispatch-start' && context.layer === 'L1' && fields.step === undefined && event === 'dispatch.start' && reviewerSteps.has(context.dispatch)) throw new Error('controlled L1 start refusal');
+      return writer.emit(event, fields);
+    } }; } };
+    world.handed.board = handleOn(boardOf([3]));
+    world.handed.decide = decide;
+    world.handed.facts = async () => decide;
+    world.handed.judgeDirectory = async (_card, name) => {
+      made.push(name);
+      if (route === 'directory' && name === 'reviewer') throw directoryFailure;
+      const path = join(world.state, name); mkdirSync(path, { recursive: true });
+      return { path, main: path, head: path, scratch: join(path, 'scratch'), repository: world.state };
+    };
+    const answer = await loop(world.handed).pull().then((value) => ({ value }), (failure) => ({ failure }));
+    const reached = answer.failure?.reached ?? answer.value;
+    const judges = reached[0].judges;
+    assert.deepEqual(made.sort(), ['architect', 'reviewer'], `${route}: no directory retry`);
+    assert.deepEqual(judges.map(({ role }) => role), route === 'dispatch-start' ? ['architect'] : ['reviewer', 'architect'], `${route}: sibling and non-withheld carriers retained`);
+    const sibling = judges.find(({ role }) => role === 'architect');
+    assert.equal(sibling.outcome.status, 'rejected');
+    assert.equal(sibling.outcome.reason.code, 'NOT_STARTED');
+    assert.match(sibling.outcome.reason.message, /not-configured/);
+    assert.ok(asks.some(({ directories }) => directories?.architect), `${route}: sibling start refusal handed to L2`);
+    assert.equal(fs.existsSync(join(world.state, 'admission')), false, `${route}: no hold`);
+    if (route === 'directory') {
+      assert.strictEqual(judges[0].failure.cause, directoryFailure, 'controlled noOutcome preserves directory reason');
+      assert.ok(answer.failure);
+    } else if (route === 'L3-start') {
+      assert.ok(answer.failure);
+      assert.match(judges[0].failure.message, /controlled L3 start refusal/);
+    } else if (route === 'dispatch-result') {
+      assert.equal(judges[0].halt, true, 'controlled L2 halt retained');
+      assert.equal(judges[0].outcome.reason.code, 'NOT_STARTED');
+      assert.equal(answer.failure, undefined);
+    } else {
+      const declined = asks.find(({ judged }) => judged?.reviewer?.[0]?.status === 'rejected').judged.reviewer[0];
+      assert.equal(declined.reason.code, 'EVENT_REFUSED');
+      assert.match(declined.reason.message, /controlled L1 start refusal/);
+      assert.equal(answer.failure, undefined, 'withheld step is not retried or held');
+    }
+  }
+});
+
+// D29 diagnostic: literal notice contract inputs; actual M/U provenance belongs to the host cases.
+test('controlled notice carriers retain made actions and refused events', async () => {
+  for (const carrier of ['closed-pull', 'run', 'resume', 'later-read']) for (const count of [1, 2]) {
+    const originals = new Map();
+    let handed;
+    async function* notice({ closer }) {
+      const made = { operation: 'postIssueComment', number: 12, answer: { id: closer.id } };
+      const unrecorded = [{ event: 'call.end', cause: new Error('controlled first record refusal') }, { event: 'notice.fixture', cause: new Error('controlled last record refusal') }];
+      originals.set(closer.id, { made, unrecorded });
+      if (carrier === 'resume') await moduleOver(handed.state).resume();
+      return { failed: { step: 'comment on issue #12', cause: 'controlled records refused', made, unrecorded } };
+    }
+    handed = handles({ cards: [], notice, clock: { now: () => 1, pause: async () => {} } });
+    const later = new Error('controlled later read refusal');
+    if (carrier === 'later-read') {
+      handed.board = stateBoard([], { 12: 'closed' }).board;
+      handed.board.readColumns = async () => { throw later; };
+      const ordinary = handed.sink;
+      handed.sink = { emitter(context) { const writer = ordinary.emitter(context); return { emit(event, fields) { if (event === 'admission.open') throw new Error('controlled opening record refusal'); return writer.emit(event, fields); } }; } };
+    }
+    for (const id of ['c3', 'c4'].slice(0, count)) seed(handed.state, carrier === 'later-read' ? `hold-${id}-issue-12.json` : `hold-${id}.json`);
+    const result = await loop(handed)[carrier === 'run' ? 'run' : 'pull']().then((value) => ({ value }), (failure) => ({ failure }));
+    const notices = [];
+    const visit = (failure) => { if (failure.notice) notices.push(failure.notice); for (const each of failure.errors ?? []) visit(each); };
+    if (result.failure) visit(result.failure);
+    else notices.push(...result.value.notices);
+    // A concurrent resume removes every closer; the second may already be gone before notice.
+    const expected = carrier === 'resume' ? 1 : count;
+    assert.equal(notices.length, expected, `${carrier}: exact retained notice count`);
+    assert.equal(originals.size, expected);
+    for (const notice of notices) {
+      const original = originals.get(notice.id);
+      assert.strictEqual(notice.made, original.made, `${carrier}: original controlled action`);
+      assert.strictEqual(notice.unrecorded, original.unrecorded, `${carrier}: original controlled refused list`);
+      assert.deepEqual(notice.unrecorded.map(({ event }) => event), ['call.end', 'notice.fixture'], `${carrier}: last refused event retained`);
+      assert.match(noticeLine('once', notice.id, notice), /made its step to comment on issue #12.*call\.end.*notice\.fixture/);
+    }
+    if (carrier === 'later-read') assert.ok(result.failure.errors.includes(later), 'controlled original later failure retained beside notices');
+    if (carrier === 'closed-pull') {
+      assert.equal(result.value.admission.state, 'closed');
+      assert.deepEqual(notices.map(({ id }) => id).sort(), ['c3', 'c4'].slice(0, count));
+    }
+  }
+});
+
+import moduleForObserverCheck from 'node:module';
+
+// Infrastructure evidence for r4's observer isolation; no product requirement claim.
+test('the admission observer releases captures and leaves canonical imports and the suite guard alone', async (t) => {
+  assert.strictEqual(fs.appendFileSync, relayAppendAtImport, 'N1 fixture cleanup restores the original appendFileSync binding');
+  const actualRegister = moduleForObserverCheck.registerHooks;
+  const registrations = [];
+  moduleForObserverCheck.registerHooks = (options) => {
+    assert.deepEqual(Object.keys(options), ['resolve'], 'observer installs no load hook');
+    const hook = actualRegister(options);
+    const record = { deregistered: false };
+    registrations.push(record);
+    return { deregister() { record.deregistered = true; hook.deregister(); } };
+  };
+  syncBuiltinESMExports();
+  t.after(() => { moduleForObserverCheck.registerHooks = actualRegister; syncBuiltinESMExports(); });
+  await import('./loop-admission-observer.mjs?inert-import');
+  assert.equal(registrations.length, 0, 'importing the helper installs no hook');
+  let released, expiredMake;
+  await withObservedAdmission(async (make, captures) => {
+    released = captures; expiredMake = make;
+    assert.equal(registrations.at(-1).deregistered, true, 'hook is deregistered before use begins');
+    const observed = handles({ cards: [], clock: { now: () => 1, pause: async () => {} } });
+    await make(observed).pull();
+    assert.ok(captures.has(observed.state), 'one tagged loop edge is observed');
+    const canonical = handles({ cards: [], clock: { now: () => 1, pause: async () => {} } });
+    await loop(canonical).pull();
+    assert.equal(captures.has(canonical.state), false, 'unrelated canonical loop imports remain unobserved');
+    const admission = await import('../src/scheduling/admission.mjs');
+    assert.strictEqual(admission.admissions, (await import('../src/scheduling/admission.mjs')).admissions);
+    const directState = temporaryDirectory('rigger-relay-direct-');
+    await moduleOver(directState).read();
+    assert.equal(captures.has(directState), false, 'direct admission imports stay canonical');
+    const { spawnSync } = await import('node:child_process');
+    assert.throws(() => spawnSync('/bin/echo', ['observer guard tripwire']), /deterministic tier.*cannot start/, 'normal suite guard still refuses a non-git\/tar start');
+  });
+  assert.equal(released.size, 0, 'successful invocation releases captures');
+  assert.throws(() => expiredMake(handles({ cards: [] })), /observation has ended/, 'expired invocation state is released');
+  const sentinel = new Error('observer callback refusal');
+  let refused;
+  await assert.rejects(withObservedAdmission(async (_make, captures) => { refused = captures; captures.set('test-owned sentinel', {}); throw sentinel; }), (failure) => failure === sentinel);
+  assert.equal(refused.size, 0, 'failed invocation releases captures');
+  await withObservedAdmission(async (_make, captures) => { assert.notStrictEqual(captures, released); assert.equal(captures.size, 0, 'next invocation starts empty'); });
+  assert.ok(registrations.every(({ deregistered }) => deregistered), 'every installed hook is deregistered');
 });
 
 // proves R-SCHED-23

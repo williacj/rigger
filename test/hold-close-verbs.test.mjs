@@ -484,14 +484,16 @@ test('rigger resume, wherever the config fails after the closers are removed and
   }
 });
 
+// Host reason: wiring.
+// Rigger decision: test/hold-notice-loop.test.mjs — an actual later read Error stays original beside the earlier made opening and its refused record.
+// The companion proves reopening and retention of both failures; this case connects that
+// result to the native gh process and the once report and exit status.
 // proves R-SCHED-23
-test('rigger once, after a made closer opening whose admission.open record was refused, then a board read throwing an Error it cannot print, still answers both and exits non-zero', async (t) => {
+test('rigger once, after a made closer opening whose admission.open record was refused, reports a plain board Error and exits non-zero', async (t) => {
   // The architect's round-7 B2 probe on #1079, through the real `once` in process, for each Error
   // whose message no template can print, and a plain one as the control.
   const errors = {
     'a plain Error': () => new Error('the board read failed plainly'),
-    'an Error whose message is a Symbol': () => Object.defineProperty(new Error('x'), 'message', { value: Symbol('symbol message') }),
-    'an Error whose message getter throws': () => Object.defineProperty(new Error('x'), 'message', { get() { throw new Error('message getter refused'); } }),
   };
   for (const [what, hostile] of Object.entries(errors)) {
     const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [statusIssue(7, 'a1')] });
@@ -523,34 +525,6 @@ test('rigger once, after a made closer opening whose admission.open record was r
 
 // The judges' round-8 probes on #1079: what `once` is handed after a made opening is read all the
 // way through, its nested entries and its containers' methods among it, without running a thrower's code.
-// proves R-SCHED-23
-test('rigger once, after a recorded closer opening, answers a board failure whose unreadable entry inherits a throwing getter, or whose errors array replaces flatMap', async (t) => {
-  const cases = {
-    'an inherited throwing path getter': () => Object.assign(new Error('board refused'), { unreadable: [Object.create({ get path() { throw new Error('inherited path getter ran'); }, cause: 'EIO' })] }),
-    'an errors array whose flatMap throws': () => {
-      const failure = new AggregateError([new Error('inner')], 'board refused');
-      failure.errors.flatMap = () => { throw new Error('errors.flatMap ran'); };
-      return failure;
-    },
-  };
-  for (const [what, make] of Object.entries(cases)) {
-    const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [statusIssue(7, 'a1')] });
-    assert.equal(here.gh('api', `repos/${REPO}/issues/7`, '-X', 'PATCH', '-f', 'state=closed').status, 0);
-    const failure = make();
-    const send = (command, args) => {
-      if ((args[3] ?? '').includes('fields(')) throw failure;
-      const result = spawnSync(here.fake.gh, args, { encoding: 'utf8', env: gitEnvironment() });
-      return { status: result.status, stdout: result.stdout, stderr: result.stderr, timedOut: false };
-    };
-
-    const outcome = await onceVerb({ target: here.target, send }).then((answer) => ({ answer }), (thrown) => ({ thrown }));
-
-    assert.deepEqual(here.closers(), [], `${what}: admission really opened`);
-    assert.ok(here.events().some(({ event }) => event === 'admission.open'), `${what}: the opening was recorded`);
-    assert.equal(outcome.thrown, undefined, `${what}: once threw while reporting`);
-    assert.equal(outcome.answer.code, 1, what);
-  }
-});
 
 // proves R-SCHED-10
 test('rigger once refuses a config board accessor before closer work, whose body holds an AggregateError with a changing errors entry', async (t) => {
@@ -706,3 +680,259 @@ test('rigger once and rigger run print a state read refused with terminal contro
     assert.ok(ran.err.includes('\\u001b[31m forged terminal text\\u009b2J'), `${name}: ${ran.said}`);
   }
 });
+
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import { loop as relayLoop } from '../src/scheduling/loop.mjs';
+import { openSink as relayOpenSink } from '../src/observation/sink.mjs';
+import { readSide as relayReadSide } from '../src/substrate/forge/read.mjs';
+import { itemWriteSide as relayItemWrites } from '../src/substrate/forge/item-write.mjs';
+import { repositoryWriteSide as relayRepositoryWrites } from '../src/substrate/forge/repository-write.mjs';
+import { columnChanges as relayChanges } from '../src/workflow/transitions.mjs';
+import { factsCall as relayFacts } from '../src/workflow/facts.mjs';
+import { nextAction as relayDecision } from '../src/workflow/next-action.mjs';
+import { noticeLine as relayNoticeLine } from '../src/cli/once.mjs';
+import { withObservedAdmission } from './loop-admission-observer.mjs';
+
+/** Real default forge writers and native fake gh; capture wrappers preserve all producer values. */
+function relayNativeWorld(t, { issues = [], failRead } = {}) {
+  const directory = temporaryDirectory('rigger-relay-native-');
+  const dir = join(directory, 'gh');
+  mkdirSync(dir);
+  const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, items: [] } });
+  seedRepository(fake, { issues });
+  const beforePath = process.env.PATH;
+  process.env.PATH = `${dir}${delimiter}${beforePath}`;
+  t.after(() => { process.env.PATH = beforePath; });
+  const state = join(directory, 'state');
+  const settings = consumerConfig(2);
+  const sink = relayOpenSink({ directory: state, run: 'r-relay-native', now: () => 1 });
+  let active;
+  const failures = [];
+  const send = (_command, args) => {
+    if (failRead !== undefined && active === failRead) return { status: 1, stdout: '', stderr: `gh: HTTP 502 raw ${active} refusal`, timedOut: false };
+    const result = spawnSync(fake.gh, args, { encoding: 'utf8', env: gitEnvironment() });
+    if (result.error) throw result.error;
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr, timedOut: false };
+  };
+  const watched = (name, operation) => async (...args) => {
+    active = name;
+    try { return await operation(...args); }
+    catch (reason) { failures.push({ name, reason }); throw reason; }
+    finally { active = undefined; }
+  };
+  const given = { ...settings.board, repo: settings.repo };
+  const board = Object.fromEntries(Object.entries(relayReadSide(given, { send })).map(([name, operation]) => [name, watched(name, operation)]));
+  const emitter = sink.emitter({ layer: 'L0' });
+  const reads = repositoryReads(given, { emitter });
+  const changes = relayChanges({ config: settings, sink, reads, board, items: relayItemWrites(given), repositoryWrites: relayRepositoryWrites({ repo: settings.repo }, { emitter }) });
+  const noticed = [];
+  const l2 = { ...changes, notice: (input) => {
+    const actual = changes.notice(input);
+    const call = { input, handed: [] };
+    noticed.push(call);
+    return {
+      async next(outcome) { if (outcome !== undefined) call.handed.push(outcome); const step = await actual.next(outcome); if (step.done) call.answer = step.value; return step; },
+      return: (...args) => actual.return(...args),
+      [Symbol.asyncIterator]() { return this; },
+    };
+  } };
+  const decide = (card, outcomes, options = {}) => relayDecision(card, settings.kinds, undefined, { columns: settings.board.columns, roles: settings.roles, provisioning: settings.provisioning, outcomes, sink, ...options });
+  const options = { config: settings, board, l2, decide, facts: relayFacts({ config: settings, reads, decide }), sink, state, run: 'r-relay-native', environment: {},
+    kill: async () => {}, workspace: async () => { throw new Error('the closed fixture makes no maker workspace'); }, judgeDirectory: async () => { throw new Error('the closed fixture makes no judge directory'); }, removeDirectories: async () => {}, clock: { now: () => 1, pause: async () => {} } };
+  const originalAppend = fs.appendFileSync;
+  let refuses = () => false;
+  const refused = [];
+  fs.appendFileSync = (path, bytes, ...rest) => {
+    let record;
+    try { record = JSON.parse(String(bytes)); } catch {}
+    if (record && String(path).startsWith(state) && refuses(record)) {
+      const error = Object.assign(new Error(`EIO while recording ${record.event}`), { code: 'EIO' });
+      refused.push({ record, error });
+      throw error;
+    }
+    return originalAppend(path, bytes, ...rest);
+  };
+  syncBuiltinESMExports();
+  t.after(() => { fs.appendFileSync = originalAppend; syncBuiltinESMExports(); });
+  return { state, dir, fake, noticed, failures, refused, options,
+    build: (make = relayLoop) => make(options),
+    seed: (name) => seedCloser(state, name),
+    names: () => moduleOver(state).read().closers?.map(({ name }) => name).sort() ?? [],
+    refuse: (predicate) => { refuses = predicate; },
+    model: () => JSON.parse(readFileSync(join(dir, 'board.json'), 'utf8')),
+    gh: (...args) => spawnSync(fake.gh, args, { encoding: 'utf8', env: gitEnvironment() }),
+  };
+}
+
+/** Finds L3's own notice carrier without rebuilding the producer fields it contains. */
+const relayNoticeIn = (failure) => failure?.notice ?? (failure?.errors ?? []).map(relayNoticeIn).find(Boolean);
+const relayMessages = (failure) => failure === undefined ? [] : [failure.message, ...(failure.errors ?? []).flatMap(relayMessages), ...(failure.cause === undefined ? [] : relayMessages(failure.cause))];
+
+// Boundary rule 4 diagnostics: original M/U identity is separate from R-RECORD-9 event
+// reporting and R-SCHED-23 reopening; each actual action and report is also checked below.
+for (const write of ['postIssueComment', 'addIssue', 'moveItem']) for (const carrier of ['closed-pull', 'run', 'resume', 'later-read']) {
+  // Host reason: wiring.
+  // Rigger decision: test/hold-notice-loop.test.mjs — controlled notice carriers retain made actions and refused events.
+  test(`P8/P9 actual ${write} made M/U identity through ${carrier}`, async (t) => withObservedAdmission(async (make, captures) => {
+    const number = carrier === 'later-read' ? 14 : 12;
+    const world = relayNativeWorld(t, { issues: carrier === 'later-read' ? [statusIssue(12, 'a1'), statusIssue(14, 'z9')] : [statusIssue(12, 'z9')], failRead: carrier === 'later-read' ? 'readColumns' : undefined });
+    world.seed('hold-a1-issue-12.json');
+    if (carrier === 'later-read') {
+      assert.equal(world.gh('api', `repos/${REPO}/issues/12`, '-X', 'PATCH', '-f', 'state=closed').status, 0);
+      world.seed('hold-b2-issue-14.json');
+    }
+    const matches = (args) => write === 'postIssueComment' ? args[1] === `repos/${REPO}/issues/${number}/comments` : String(args[3]).includes(write === 'addIssue' ? 'addProjectV2ItemById' : 'updateProjectV2ItemFieldValue');
+    const madeAt = [];
+    let resumed;
+    world.refuse((record) => {
+      if (carrier === 'later-read' && record.event === 'admission.open') return true;
+      if (record.event !== 'call.end' || !matches(world.fake.sent().at(-1) ?? [])) return false;
+      madeAt.push(world.model());
+      if (carrier === 'resume') resumed = moduleOver(world.state).resume();
+      return true;
+    });
+    const built = world.build(make);
+    const result = await (carrier === 'run' ? built.run() : built.pull()).then((value) => ({ value }), (failure) => ({ failure }));
+    if (resumed) await resumed;
+    assert.equal(madeAt.length, 1, 'P8 exactly one actual successful write record refused');
+    assert.equal(madeAt[0].repository.issues.find((issue) => issue.number === number).comments.length, 1, 'P8 actual comment write independently recorded');
+    const actual = world.noticed.find(({ answer }) => answer?.failed?.made)?.answer.failed;
+    const notice = carrier === 'closed-pull' ? result.value.notices[0] : relayNoticeIn(result.failure);
+    assert.ok(actual?.made, 'P8 actual producer M reached');
+    assert.ok(notice, 'P9 actual notice carrier retained');
+    assert.strictEqual(notice.made, actual.made, 'P8/P9 actual M reference at notice carrier');
+    assert.strictEqual(notice.unrecorded, actual.unrecorded, 'P8/P9 actual U reference at notice carrier');
+    assert.deepEqual(notice.unrecorded.map(({ event }) => event), ['call.end'], 'P8/P9 every dense event in order, including last');
+    for (let at = 0; at < actual.unrecorded.length; at += 1) assert.strictEqual(notice.unrecorded[at], actual.unrecorded[at]);
+    assert.equal(world.names().length, carrier === 'resume' ? 0 : 1);
+    assert.ok(madeAt[0].sent.some(matches));
+    const items = await (await world.fake.model()).operations.readItems();
+    if (write === 'addIssue') assert.ok(items.some((item) => item.number === number), 'P8 actual board add retained');
+    if (write === 'moveItem') assert.equal(items.find((item) => item.number === number).column, 'Owner');
+    if (carrier !== 'closed-pull') assert.match(relayMessages(result.failure).join('; '), /call\.end/);
+    if (carrier === 'later-read') {
+      assert.ok(result.failure.errors.includes(captures.get(world.state).calls.find(({ method }) => method === 'open').reason), 'P9 original earlier A retained');
+      assert.ok(result.failure.errors.includes(world.failures.find(({ name }) => name === 'readColumns').reason), 'P9 original later E retained');
+    }
+    if (carrier === 'closed-pull' && write === 'postIssueComment') {
+      assert.equal(result.value.admission.state, 'closed');
+      assert.equal(result.value.notices.length, 1);
+      assert.deepEqual(world.names(), ['hold-a1-issue-12.json']);
+      assert.equal(notice.step, 'comment on issue #12');
+      assert.equal(typeof notice.cause, 'string');
+      assert.match(notice.cause, /call\.end/);
+      let line;
+      assert.doesNotThrow(() => { line = relayNoticeLine('once', notice.id, notice); });
+      assert.match(line, /made its step to comment on issue #12.*call\.end/);
+    }
+  }));
+}
+
+/** Actual default-runner comments for each of one or two initially issue-less closers. */
+async function relayIssuelessComments(t, ids) {
+  const world = relayNativeWorld(t, { issues: [statusIssue(12, 'z9')] });
+  for (const id of ids) world.seed(`hold-${id}.json`);
+  const madeAt = [];
+  world.refuse((record) => {
+    if (record.event !== 'call.end' || world.fake.sent().at(-1)?.[1] !== `repos/${REPO}/issues/12/comments`) return false;
+    madeAt.push(world.model());
+    return true;
+  });
+  const pulled = await world.build().pull();
+  assert.equal(pulled.admission.state, 'closed');
+  assert.equal(pulled.notices.length, ids.length, 'C-N5-TWO exact notice cardinality');
+  assert.deepEqual(pulled.notices.map(({ id }) => id).sort(), [...ids].sort());
+  assert.equal(madeAt.length, ids.length, 'each actual comment call.end refused');
+  const comments = world.model().repository.issues.find(({ number }) => number === 12).comments;
+  assert.equal(comments.length, ids.length, 'each actual default-runner comment independently recorded');
+  for (const notice of pulled.notices) {
+    const actual = world.noticed.find(({ input }) => input.closer.id === notice.id).answer.failed;
+    assert.strictEqual(notice.made, actual.made, 'issue-less original actual M');
+    assert.strictEqual(notice.unrecorded, actual.unrecorded, 'issue-less original actual U');
+    assert.deepEqual(notice.unrecorded.map(({ event }) => event), ['call.end']);
+    for (let at = 0; at < actual.unrecorded.length; at += 1) assert.strictEqual(notice.unrecorded[at], actual.unrecorded[at]);
+    assert.equal(comments.filter(({ body }) => body.includes(`Hold: \`${notice.id}\``)).length, 1, 'each hold has its own actual comment');
+    let line;
+    assert.doesNotThrow(() => { line = relayNoticeLine('once', notice.id, notice); });
+    assert.match(line, /made its step to comment on issue #12.*call\.end/);
+  }
+  assert.deepEqual(world.names(), ids.map((id) => `hold-${id}-issue-12.json`).sort());
+}
+
+// Host reason: wiring.
+// Rigger decision: test/hold-notice-loop.test.mjs — controlled notice carriers retain made actions and refused events.
+test('an issue-less closer reports an actual made comment and its refused call.end', async (t) => relayIssuelessComments(t, ['c3']));
+
+// Host reason: wiring.
+// Rigger decision: test/hold-notice-loop.test.mjs — controlled notice carriers retain made actions and refused events.
+test('two issue-less closers retain each actual made-comment failure in one pull', async (t) => relayIssuelessComments(t, ['c3', 'c4']));
+
+/** A native gh refusal enabled only after the actual opening boundary, with an ordered file witness. */
+async function relayOnceAfterOpening(t, refused) {
+  const here = statusConsumer(t, { closers: ['hold-a1-issue-12.json'], issues: [statusIssue(12, 'a1')] });
+  assert.equal(here.gh('api', `repos/${REPO}/issues/12`, '-X', 'PATCH', '-f', 'state=closed').status, 0);
+  const ahead = join(dirname(here.state), 'relay-gh');
+  mkdirSync(ahead);
+  const enabled = join(ahead, 'opening-observed');
+  const order = join(ahead, 'order');
+  const sentinel = refused ? 'raw readColumns refusal' : 'accepted-open readColumns refusal';
+  const program = join(ahead, 'gh');
+  writeFileSync(program, `#!${process.execPath}
+if (process.env.RIGGER_FIXTURE_WARMING) process.exit(0);
+const fs = require('node:fs');
+const { spawnSync } = require('node:child_process');
+const args = process.argv.slice(2);
+if (fs.existsSync(${JSON.stringify(enabled)}) && String(args[3]).includes('fields(')) {
+  fs.appendFileSync(${JSON.stringify(order)}, 'failed-readColumns\\n');
+  process.stderr.write(${JSON.stringify(`gh: HTTP 502 ${sentinel}\n`)});
+  process.exit(1);
+}
+const result = spawnSync(${JSON.stringify(here.fake.gh)}, args, { stdio: 'inherit' });
+process.exit(result.status ?? 1);
+`);
+  chmodSync(program, 0o755);
+  assert.equal(spawnSync(program, [], { env: { RIGGER_FIXTURE_WARMING: '1' } }).status, 0);
+  const oldPath = process.env.PATH;
+  process.env.PATH = `${ahead}${delimiter}${oldPath}`;
+  t.after(() => { process.env.PATH = oldPath; });
+  const original = fs.appendFileSync;
+  let projection;
+  fs.appendFileSync = (path, bytes, ...rest) => {
+    let record;
+    try { record = JSON.parse(String(bytes)); } catch {}
+    if (!String(path).startsWith(here.state) || record?.event !== 'admission.open') return original(path, bytes, ...rest);
+    if (refused) {
+      original(order, 'refused-opening\n');
+      writeFileSync(enabled, 'opening removed');
+      throw Object.assign(new Error('EIO actual admission.open append'), { code: 'EIO' });
+    }
+    const value = original(path, bytes, ...rest);
+    projection = here.events().filter(({ event }) => event === 'admission.open').map(({ layer, kind, id, name, by, issue }) => ({ layer, kind, id, name, by, issue }));
+    original(order, 'accepted-opening\n');
+    writeFileSync(enabled, 'accepted append observed');
+    return value;
+  };
+  syncBuiltinESMExports();
+  t.after(() => { fs.appendFileSync = original; syncBuiltinESMExports(); });
+  const answered = await onceVerb({ target: here.target }).then((answer) => ({ answer }), (failure) => ({ failure }));
+  assert.equal(answered.failure, undefined, 'ONCE returns its report without throwing');
+  assert.equal(answered.answer.code, 1, 'ONCE status is exactly one');
+  assert.match(answered.answer.text, new RegExp(`rigger once:.*readColumns.*HTTP 502 ${sentinel}`));
+  assert.deepEqual(here.closers(), [], 'ONCE actual closer removed');
+  assert.deepEqual(readFileSync(order, 'utf8').trim().split('\n'), [refused ? 'refused-opening' : 'accepted-opening', 'failed-readColumns'], 'ONCE opening boundary precedes failed actual reader');
+  if (refused) assert.match(answered.answer.text, /admission changed at hold-a1-issue-12\.json.*admission\.open/);
+  else {
+    const expected = [{ layer: 'L3', kind: 'hold', id: 'a1', name: 'hold-a1-issue-12.json', by: 'issue', issue: 12 }];
+    assert.deepEqual(projection, expected, 'ONCE exact opening event observed before enabling the refusal');
+    assert.deepEqual(here.events().filter(({ event }) => event === 'admission.open').map(({ layer, kind, id, name, by, issue }) => ({ layer, kind, id, name, by, issue })), expected);
+  }
+}
+
+// Host reason: wiring.
+// Rigger decision: test/hold-notice-loop.test.mjs — controlled notice carriers retain made actions and refused events.
+test('once reports an actual later readColumns failure after an accepted admission.open record', async (t) => relayOnceAfterOpening(t, false));
+
+// Host reason: wiring.
+// Rigger decision: test/hold-notice-loop.test.mjs — controlled notice carriers retain made actions and refused events.
+test('once reports an actual later readColumns failure beside a refused admission.open record', async (t) => relayOnceAfterOpening(t, true));

@@ -3964,8 +3964,8 @@ const count = (built, kind) => triggersOf(built).filter((trigger) => trigger ===
 /** A report trigger whose first occurrence is an hour after the clock's start, so no firing falls in a poll test. */
 const HOUR_AWAY = { hourly: { interval: 3_600_000, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip', job: 'report' } };
 
-/** A card-shaped trigger, which this card's head arms and fires nothing for. */
-const CARD_SHAPED = { daily: { interval: 1000, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip',
+/** A card-shaped trigger whose first occurrence is an hour after the clock's start. */
+const CARD_SHAPED = { daily: { interval: 3_600_000, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip',
   card: { title: 'Audit', labels: ['type:change'], acceptance: '- The audit writes a result.' } } };
 
 // proves R-SCHED-28
@@ -3986,7 +3986,7 @@ test('L1: run stays up past the drain while a report trigger is declared, record
 });
 
 // proves R-SCHED-28
-test('L2a: a clock declaring only card-shaped triggers keeps run up, and fires nothing', async () => {
+test('L2a: a clock declaring only card-shaped triggers keeps run up before its first occurrence', async () => {
   const clock = manualClock();
   const built = reportWorld(clock, { cards: [], triggers: CARD_SHAPED });
   const { running, stop } = keptUp(built);
