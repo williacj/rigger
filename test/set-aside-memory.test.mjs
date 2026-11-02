@@ -21,6 +21,12 @@ import { COLUMNS, KINDS, boardOf, handleOn, positive } from './loop-world.mjs';
 /** The poll interval each clock-held world declares, in milliseconds. */
 const POLL = 100;
 
+/**
+ * The most reads of the board a world answers. Each test reads far fewer, so a run that pulls a
+ * skipped card again at every release fails its next read, and its pulls show, rather than spinning.
+ */
+const READ_CAP = 40;
+
 /** The workspace failure codes a script names, each as L1 hands L2 a failed make (`unmade` in next-action.mjs). */
 const FAILURES = { refused: BRANCH_REFUSED, moved: LINE_MOVED, deleted: LINE_DELETED, local: WORKSPACE_REFUSED };
 
@@ -89,6 +95,7 @@ function world(t, { cards = [12], clockHeld = true, concurrency = 1, script = ()
     readColumns: base.readColumns,
     readPriority: async () => {
       begun += 1;
+      if (begun > READ_CAP) throw new Error(`the world answers at most ${READ_CAP} reads of the board`);
       const hold = held.shift();
       if (hold !== undefined) await hold;
       try { return await base.readPriority(); } finally { ended += 1; }
