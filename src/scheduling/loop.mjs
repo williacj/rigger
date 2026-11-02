@@ -1048,7 +1048,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         for (;;) {
           const elapsedMs = now() - first;
           reads += 1;
-          [settled] = await Promise.allSettled([l2.settled(card, outcome, { dispatch, continuing: true, expectedHead, tipFailure, lastForgeHead, last: elapsedMs >= 60_000, reads, elapsedMs })]);
+          [settled] = await Promise.allSettled([l2.settled(card, outcome, { dispatch, continuing: true, expectedHead, tipFailure, lastForgeHead, last: elapsedMs >= 60_000, reads, elapsedMs, placed })]);
           if (settled.status !== 'fulfilled' || !settled.value?.waiting) break;
           lastForgeHead = settled.value.forgeHead;
           // D16 rule 3: the forge can still show the old head after a push. #664's journal/P58
@@ -1057,7 +1057,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
           await pause(5_000);
         }
       } else {
-        [settled] = await Promise.allSettled([l2.settled(card, outcome, { dispatch, continuing: continuing !== undefined })]);
+        [settled] = await Promise.allSettled([l2.settled(card, outcome, { dispatch, continuing: continuing !== undefined, placed })]);
       }
       if (settled.status === 'fulfilled' && settled.value?.action === 'escalate') {
         const escalation = settled.value;
@@ -1096,8 +1096,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         kept(ended);
         return ended;
       }
-      // L2's settle answers its facts only for a card it moved to Review (`settled` in transitions.mjs).
-      if (settled.status === 'fulfilled' && settled.value !== undefined && settled.value.action === undefined) placed(config.board.columns.review);
+      // A settle that rejects after the board accepted its move carries that column (`change` in transitions.mjs).
+      if (settled.status === 'rejected') placed(settled.reason?.column);
       if (settled.status === 'fulfilled') {
         answer = askAttempt([], { attempt: number, maker: outcome });
         if (await advance(answer, number)) continue;
@@ -1272,9 +1272,11 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
   const work = async (claim, freed, memory) => {
     const { card, decide: atPull } = claim;
     let next = claim.next;
-    // The card's compared column, and whether the run sets the card aside once its work ends.
+    // The card's compared column, whether the run sets the card aside once its work ends, and
+    // whether its claim ended at a stop for its line of work, which counts in place of every other rule.
     let column = card.column;
     let aside = false;
+    let lineStop = false;
     /** Takes `answered` as the card's column, where it names one. */
     const placed = (answered) => {
       if (typeof answered === 'string') column = answered;
@@ -1336,14 +1338,14 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       if (['move', 'return', 'escalate'].includes(next.action)) aside = true;
       // A stopped card is remembered, a line moved or deleted only at its second stop; a held one is not.
       if (thrown.card === card.number && Array.isArray(thrown.attemptFailures) && !held) {
-        const line = [LINE_MOVED, LINE_DELETED].includes(thrown.attemptFailures.at(-1)?.code);
-        if (!line || memory?.lineStopped(card.number)) aside = true;
+        lineStop = [LINE_MOVED, LINE_DELETED].includes(thrown.attemptFailures.at(-1)?.code);
+        if (!lineStop || memory?.lineStopped(card.number)) aside = true;
       }
     }
     if (removalFailure !== null) {
       failure = failure === null ? removalFailure : new AggregateError([removalFailure, failure], `card #${card.number}'s directory removal and following action failed`);
     }
-    if (next.action === 'continue' && !held && !(reached?.settled?.status === 'fulfilled' && reached.settled.value !== undefined)) {
+    if (next.action === 'continue' && !held && !lineStop && !(reached?.settled?.status === 'fulfilled' && reached.settled.value !== undefined)) {
       aside = true;
     }
     if (aside) memory?.add(card.number, column);
