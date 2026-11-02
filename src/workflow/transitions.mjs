@@ -344,7 +344,8 @@ export function columnChanges({
      * note under the maker's dispatch answers an escalation without a move, with any one open pull
      * request and its head read from the line of work. Otherwise the exit code and the forge alone
      * decide, never the output (the owner's ruling on #220, refined by O5 on #467). Anything but
-     * zero leaves the card in coding. A plain nonzero exit reads the branch and pull requests in
+     * zero leaves the card in coding. A continuing maker's plain nonzero exit answers nothing,
+     * without reading forge work. A fresh maker's plain nonzero exit reads the branch and pull requests in
      * every state, without review facts. Where none exists, it answers `set-aside`, with a reason
      * naming the card, exit code and line of work; otherwise it answers nothing. A failed read
      * rejects naming the card and the read. Zero has L2 read the pull requests from the card's line of work
@@ -358,7 +359,7 @@ export function columnChanges({
      * tells its caller the card and why, as `withheld` says. A read that fails leaves it in coding too, and its
      * caller is told the card and the read.
      */
-    settled: async (card, outcome, { dispatch, expectedHead, tipFailure, lastForgeHead, last = false, reads: readCount, elapsedMs } = {}) => {
+    settled: async (card, outcome, { dispatch, continuing = false, expectedHead, tipFailure, lastForgeHead, last = false, reads: readCount, elapsedMs } = {}) => {
       const exit = outcome?.status === 'fulfilled' ? outcome.value?.exit : outcome?.status === 'rejected' ? outcome.reason?.result?.exit : undefined;
       // A refused recording retains the result of a command that ran; its failure still reaches L3.
       if (outcome?.status === 'rejected' && (!Number.isInteger(exit) || exit === 0)) {
@@ -389,6 +390,7 @@ export function columnChanges({
         return { ...answer, destination: escalationDestination({ ...answer, escalate: config.escalate, maker: kinds[kind]?.maker, judges: kinds[kind]?.judges, comments }) };
       }
       if (exit !== 0) {
+        if (continuing) return undefined;
         const line = topicFor(topic, card.number);
         let branches;
         try {

@@ -173,3 +173,80 @@ the observation. That restoration is now one-shot by checking the owned path's
 presence. No assertion is removed or weakened. All before/after-code statuses
 and the original F1c red remain unchanged. The final head's receipts are refreshed
 separately; the invalid attempt is retained in the PR ledger.
+
+## Round 3 — distinguish a continuing maker from a fresh dispatch
+
+The round-2 architect's B1 found another F4/F11 compatibility instance:
+`R-WORK-34` excludes new forge-work reads after a continuing maker fails.
+At reviewed head 2c1d21d8196d738207ab68b7defbda8d7e8a1b9c, before this correction,
+the new genuine-needs-revision regression had a passing fresh cell and a failing
+continuing cell. Its assertion was `R-WORK-34: only a fresh failed maker reads
+forge work`, actual `['readBranches']`, expected `[]`. It ran with
+`TMPDIR=/Users/cjwilliams/GitHub/rigger-worktrees/codex-1181-tmp caffeinate -i npm test -- --test-name-pattern='^F4 continuing:' test/failed-maker.test.mjs`.
+`1181-r3-continuing-red.log` retains all output: total/pass/fail 3/1/2, no
+cancel/skip/todo, loads 12.62/12.81, 429 user processes at start. The identical
+named target passed 3/3 after correction (`1181-r3-continuing-green.log`,
+loads 10.94/10.94).
+
+L3 now hands the dispatch kind to both settle call sites as `continuing`.
+L2 leaves existing note handling first, then returns without classifying forge
+work after a continuing nonzero exit. Fresh completed nonzero results, fulfilled
+or carried by a refusal, still take the branch/PR reads and set-aside answer.
+Rejected outcomes without a completed nonzero result retain their earlier path.
+Successful continuing makers still read their workspace tip and use the same
+bounded forge-head settlement loop. The existing per-invocation continuing
+exclusion remains unchanged. No Self-hosting path changes.
+
+The dispatch inventory traces both `settled` calls in `loop.mjs`, every `continue`
+producer in `judges.mjs`, `next-action`'s dispatch/step selection and `work`'s
+cleanup-following actions. Ready/Coding makers, Review redoes, and their retries
+are fresh; needs-revision, sound-with-unmet, owner-revision and conflict-repair
+answers are continuing. Cleanup passes its following action through unchanged.
+Provisioning steps, judge roles/steps, escalation roles and workspace failures
+have other consumers and never call the maker settle. Both once and run use the
+same attempt kind. The PR quotes the searches, hits and classification list.
+
+The integration test's continuing cell is an invariant guard relative to the PR
+merge base, with its regression red observed before the round-3 correction. Its
+fresh contrast cell retains the new R-LOOP-18 classification and fails at that
+base; the two declarations take separate behavior mutations. The added boundary
+cells for continuing EVENT_REFUSED/RECORD_REFUSED nonzero results were written
+after that correction; their no-result NOT_STARTED cell is an invariant guard.
+Their killed receipts and base/head proof report are delivered in the PR. The
+affected deterministic run passed 151/151 (`1181-r3-named.log`, loads 9.09/9.30).
+Only the four existing K30 test-line retargets still differ from main; all new
+coverage is in this card's added test file. Main remained 5c7d911b after fetching,
+so no merge was needed at this boundary.
+
+Round-3 verification stopped before publication because the shared suite slot
+remained held by 1176-maker's full run. The slot log records that command's start
+at 2026-11-02T00:09:45Z; at 00:44:31Z its remaining restart.test.mjs child was still
+present. This maker's wrapper, PID 903, had queued at 00:18:37Z and had started no
+suite. I ended only that owned, recorded queued wrapper with SIGTERM; it exited
+143. The existing queue output remains in `1181-r3-full.log`; no full-suite result
+is claimed. No external process was signalled. The coordinator must have the
+1176 maker resolve its run before this verification can resume.
+
+After cancelling the queued wrapper, the complete current local change passed
+all five affected named files, 151/151, zero failures/cancellations/skips/todos,
+loads 1.47/2.10 and 498 user processes at start (`1181-r3-local-final-named.log`).
+The package check exits 0 at 9076/12000, with L3 1323; matrix and whitespace checks
+pass. Full verification, affected host checks, current-head guarded receipts,
+commit, fresh clone, push, CI and PR-body-check for this correction remain
+unproved. The published PR head remains the reviewed 2c1d21d8; all correction
+files and the journal remain local and uncommitted pending the slot. The
+ambiguous escalation on #1181 names acceptance 15 and these publication steps.
+
+The coordinator answered the slot escalation and resumed this maker. The earlier
+1176 run ended; this maker requeued the full suite at 2026-11-02T00:55:52Z through
+the same slot wrapper, preserving the aborted queue log separately. The resumed
+full output is `1181-r3-resumed-full.log`. No external process was ended by this
+maker, and no slot exception was requested or used. The remaining verification
+and publication evidence is recorded in the final PR body.
+
+The resumed round-3 full suite passed 4370/4370 with zero failures,
+cancellations, skips or todos (`1181-r3-resumed-full.log`), exit 0. The slot
+measured one-minute load 7.41 at admission and 10.66 at completion. Fetching main
+again still returned 5c7d911b. This resolves the full-suite slot blocker; the
+remaining head-specific host, receipt, fresh-clone and CI evidence follows in
+the PR body. The original cancelled queue attempt remains disclosed separately.

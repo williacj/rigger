@@ -19,6 +19,7 @@ import { realHost } from '../src/substrate/host.mjs';
 import { admission } from '../src/scheduling/admission.mjs';
 import { createFakeBoard } from './fake-board.mjs';
 import { createFakeRepository } from './fake-repository.mjs';
+import { markerComment } from './fake-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { repositoryAt, worktreeList } from './git-repository.mjs';
 import { manualClock, START } from './clock-report-world.mjs';
@@ -185,6 +186,76 @@ function world(t, { cards = [12], clock = manualClock(), afterMaker = () => {}, 
 
 /** The observable start has reached a live scripted command, before a test releases or times it. */
 const makerReady = (here) => positive(() => here.makerStarts().length > 0 && [...here.processes.children.values()].some((child) => child.cwd.includes('workspaces') && child.exitCode === null && child.signalCode === null));
+
+// F4: a continuing maker already has its release exclusion and must not enter fresh-work classification.
+// proves R-WORK-34, R-LOOP-18
+test('F4 continuing: failed fresh and continuing makers take distinct forge-read paths', async (t) => {
+  for (const kind of ['fresh', 'continuing']) {
+    await t.test(kind, async (t) => {
+      const here = world(t);
+      if (kind === 'continuing') {
+        here.settings.kinds.change.judges = ['reviewer'];
+        const [card] = await here.fake.operations.readItems();
+        await here.fake.operations.moveItem(card.id, here.settings.board.columns.review);
+        const head = 'a'.repeat(40);
+        here.repository.open({ number: 77, head: 'rigger-12', sha: head, mergeBase: 'c'.repeat(40),
+          diff: 'diff --git a/help b/help\n', mergeable: 'mergeable', comments: [
+            markerComment({ card: 12, pull: 77, head, body: card.body, role: 'reviewer', verdict: 'needs revision', items: ['unmet'], toSound: 'Fix the help line.' }),
+          ] });
+      }
+      const pending = here.loop.pull(1);
+      await makerReady(here);
+      assert.equal(here.events().some(({ event, cause }) => event === 'transition' && cause === 'continued'), kind === 'continuing', 'the actual forge facts select the dispatch kind');
+      const reads = [];
+      for (const name of ['readBranches', 'readPullRequests']) {
+        const original = here.repository.operations[name];
+        here.repository.operations[name] = async (...args) => {
+          reads.push(name);
+          if (kind === 'continuing') throw new Error('forge unavailable after the continuing maker failed');
+          return original(...args);
+        };
+      }
+      here.finish(12, 7);
+      const [result] = await pending;
+      assert.deepEqual(reads, kind === 'continuing' ? [] : ['readBranches', 'readPullRequests'], 'R-WORK-34: only a fresh failed maker reads forge work');
+      assert.equal(result.settled.status, 'fulfilled');
+      assert.equal(result.settled.value?.action, kind === 'continuing' ? undefined : 'set-aside');
+      assert.equal(result.action, kind === 'continuing' ? 'continue' : undefined);
+      assert.equal((await here.fake.operations.readItems())[0].column, 'Coding');
+      assert.equal(here.clock.now(), START);
+    });
+  }
+});
+
+// F4: rejected continuing outcomes retain the merge-base no-work-read boundary.
+// proves R-WORK-34
+test('F4 continuing outcomes: refused nonzero results and never-started makers read no forge work', async (t) => {
+  // L1's completed refusals carry result; NOT_STARTED carries no completed command result.
+  for (const code of ['EVENT_REFUSED', 'RECORD_REFUSED', 'NOT_STARTED']) {
+    await t.test(code, async (t) => {
+      const here = world(t);
+      const [ready] = await here.fake.operations.readItems();
+      await here.fake.operations.moveItem(ready.id, here.settings.board.columns.coding);
+      const [card] = await here.fake.operations.readItems();
+      const before = here.fake.writes();
+      const reads = [];
+      for (const name of ['readBranches', 'readPullRequests']) here.repository.operations[name] = async () => {
+        reads.push(name);
+        throw new Error('forge work must not be read after a failed continuing maker');
+      };
+      const reason = Object.assign(new Error('scripted L1 refusal'), { code,
+        ...(code === 'NOT_STARTED' ? {} : { result: { exit: 7, timedOut: false, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) } }),
+      });
+      let answer;
+      await assert.doesNotReject(async () => { answer = await here.l2.settled(card, { status: 'rejected', reason }, { continuing: true }); });
+      assert.deepEqual(reads, [], 'a continuing failure never enters fresh-work classification');
+      assert.equal(answer, undefined);
+      assert.deepEqual(here.fake.writes(), before, 'the settle makes no move or escalation write');
+      assert.equal((await here.fake.operations.readItems())[0].column, 'Coding');
+      assert.equal(here.events().filter(({ event }) => event === 'maker.failed').length, code === 'NOT_STARTED' ? 1 : 0);
+    });
+  }
+});
 
 // F1c: refusing the end must retain both the completed result and the refusal report.
 // proves R-LOOP-18
