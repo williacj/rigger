@@ -339,7 +339,7 @@ export function columnChanges({
      * `maker.failed` event under the card, classed as the environment's, as it classes a step
      * that never started (the architect's ruling 5 on #467).
      *
-     * For a fulfilled outcome or a rejected one carrying a nonzero result, the forge's issue
+     * For a fulfilled outcome or a fresh rejected one carrying a nonzero result, the forge's issue
      * comments are read before classifying the exit. A valid
      * note under the maker's dispatch answers an escalation without a move, with any one open pull
      * request and its head read from the line of work. Otherwise the exit code and the forge alone
@@ -362,7 +362,7 @@ export function columnChanges({
     settled: async (card, outcome, { dispatch, continuing = false, expectedHead, tipFailure, lastForgeHead, last = false, reads: readCount, elapsedMs } = {}) => {
       const exit = outcome?.status === 'fulfilled' ? outcome.value?.exit : outcome?.status === 'rejected' ? outcome.reason?.result?.exit : undefined;
       // A refused recording retains the result of a command that ran; its failure still reaches L3.
-      if (outcome?.status === 'rejected' && (!Number.isInteger(exit) || exit === 0)) {
+      if (outcome?.status === 'rejected' && (continuing || !Number.isInteger(exit) || exit === 0)) {
         if (outcome.reason?.code === NOT_STARTED) note(card, 'maker.failed', { class: 'environment', reason: outcome.reason.message }, { dispatch });
         return undefined;
       }

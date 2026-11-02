@@ -239,7 +239,7 @@ test('F4 continuing outcomes: refused nonzero results and never-started makers r
       const [card] = await here.fake.operations.readItems();
       const before = here.fake.writes();
       const reads = [];
-      for (const name of ['readBranches', 'readPullRequests']) here.repository.operations[name] = async () => {
+      for (const name of ['readIssueComments', 'readBranches', 'readPullRequests']) here.repository.operations[name] = async () => {
         reads.push(name);
         throw new Error('forge work must not be read after a failed continuing maker');
       };

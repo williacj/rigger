@@ -250,3 +250,31 @@ measured one-minute load 7.41 at admission and 10.66 at completion. Fetching mai
 again still returned 5c7d911b. This resolves the full-suite slot blocker; the
 remaining head-specific host, receipt, fresh-clone and CI evidence follows in
 the PR body. The original cancelled queue attempt remains disclosed separately.
+
+The final dispatch audit found one more instance within B1 before the queued
+push started. At intermediate head 39f7b222906c844a6182565f7b04a9d179090b8a,
+a rejected continuing outcome carrying a result still entered round 2's new
+issue-comment read. The merge base returned before that read for every rejected
+continuation. I strengthened the continuing-outcome tripwire to include
+readIssueComments. Before the correction, EVENT_REFUSED and RECORD_REFUSED each
+failed assert.doesNotReject with `card #12's issue comments could not be read:
+forge work must not be read after a failed continuing maker`; NOT_STARTED passed.
+The named command used `--test-name-pattern='^F4 continuing outcomes:'` with
+`test/failed-maker.test.mjs`. Full output `1181-r3-rejected-continuing-red.log`
+records total/pass/fail 4/1/3, exit 1, loads 15.71/15.71 and 511 user processes.
+
+The rejected-outcome early return now also includes continuing outcomes, before
+notes, exactly as at the merge base. Fulfilled continuations retain their earlier
+note/escalation handling and skip only the new plain-failure work classification.
+Fresh result-bearing refusals still read notes first and classify forge work.
+The five affected named files pass 151/151 after this correction, zero failures,
+cancellations/skips/todos (`1181-r3-rejected-continuing-green.log`, loads
+12.08/12.59, 505 user processes). This strengthens the same B1 boundary rather
+than changing a policy or a Self-hosting path.
+
+I ended only the owned queued push wrapper PID 48682, after verifying its recorded
+start time and command; it exited 143 before running git push. No external process
+was signalled and the forge still held the earlier reviewed head. Its admission
+output remains `1181-r3-push.log`. Intermediate head 39f7b222's full, host,
+receipt and fresh-clone artifacts remain retained with their original names;
+final-head evidence is regenerated separately before publication.
