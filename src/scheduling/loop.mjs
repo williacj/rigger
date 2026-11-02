@@ -19,6 +19,7 @@ import { admission, admissionPath, admissions } from './admission.mjs';
 import { lane } from './lane.mjs';
 import { pullOrder } from './pull-order.mjs';
 import { DEFAULT_CONCURRENCY } from '../config/validate.mjs';
+import { schedule } from '../config/validate.mjs';
 import { report as deriveReport } from '../observation/report.mjs';
 import { readEvents, streamPath } from '../observation/sink.mjs';
 import { clockWakes } from './clock.mjs';
@@ -464,19 +465,27 @@ function released(release, claim, failure) {
   }
 }
 
-/** An instant as the sink writes one: ISO 8601 in UTC, as `toISOString` spells it ("The envelope"). */
-const instant = (value) => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) && new Date(value).toISOString() === value;
+/**
+ * An instant as the sink writes one: ISO 8601 in UTC, exactly as `toISOString` spells it, the
+ * six-digit years past 9999 included ("The envelope").
+ */
+const instant = (value) => typeof value === 'string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
 const named = (value) => typeof value === 'string' && value !== '';
 const whole = (least) => (value) => Number.isSafeInteger(value) && value >= least;
+/** Whether the arming `event` holds a schedule whose `key` the config's validator admits, as L3 records it from that config. */
+const admits = (key) => (value, event) => !schedule(event, 0).refusals.some((refusal) => refusal.key === key);
 
 /**
- * The fields each kind of clock event the start reads must hold, each with its check: an arming,
- * a firing's start, whose `after` only a card's carries, and an outcome ("How a clock trigger fires").
+ * The fields each kind of clock event the start reads must hold, each with its check, given the
+ * field and the event: exactly what L3 records from any config the validator admits. A trigger's
+ * name is any key of the config, the empty string included; an arming's schedule is one `schedule`
+ * admits; a firing's start, whose `after` only a card's carries, and an outcome name an occurrence
+ * ("How a clock trigger fires").
  */
 const CLOCK_EVENTS = {
-  'trigger.armed': { name: named, interval: whole(1), anchor: (value) => typeof value === 'string' && Number.isFinite(Date.parse(value)) },
-  clock: { name: named, occurrence: instant, after: (value) => value === undefined || whole(0)(value) },
-  'trigger.outcome': { name: named, occurrence: instant, outcome: (value) => ['job', 'failed', 'abandoned', 'card'].includes(value) },
+  'trigger.armed': { name: (value) => typeof value === 'string', interval: admits('interval'), anchor: admits('anchor') },
+  clock: { name: (value) => typeof value === 'string', occurrence: instant, after: (value) => value === undefined || whole(0)(value) },
+  'trigger.outcome': { name: (value) => typeof value === 'string', occurrence: instant, outcome: (value) => ['job', 'failed', 'abandoned', 'card'].includes(value) },
 };
 
 /**
@@ -495,7 +504,7 @@ function unlikeEvent(event) {
   if (kind === undefined) return undefined;
   const fields = CLOCK_EVENTS[kind];
   if (event.layer !== 'L3') return `it is a clock event, which only L3 records, from ${event.layer}`;
-  for (const [field, holds] of Object.entries(fields)) if (!holds(event[field])) return `its \`${field}\` is ${JSON.stringify(event[field]) ?? 'missing'}`;
+  for (const [field, holds] of Object.entries(fields)) if (!holds(event[field], event)) return `its \`${field}\` is ${JSON.stringify(event[field]) ?? 'missing'}`;
   if (event.outcome === 'card' && !whole(1)(event.issue)) return 'it is a card outcome naming no issue';
   return undefined;
 }

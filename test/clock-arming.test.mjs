@@ -7,7 +7,10 @@ import { START, manualClock } from './clock-report-world.mjs';
 import { RUN, armingWorld, line } from './clock-arming-world.mjs';
 import { failuresIn, keptUp } from './kept-up-run.mjs';
 import { waitFor } from './loop-world.mjs';
+import { readFileSync } from 'node:fs';
 import { streamPath } from '../src/observation/sink.mjs';
+import { validate } from '../src/config/validate.mjs';
+import config from '../rigger.config.mjs';
 
 const SECOND = 1000;
 const ANCHOR = new Date(START).toISOString();
@@ -472,7 +475,6 @@ const MALFORMED = [
   ['trigger: its trigger missing', raw({ ...envelope, event: 'trigger' })],
   ['envelope: an event named for an object property, from no layer', raw(without({ ...envelope, event: 'constructor' }, 'layer'))],
   ['arming: from a layer other than L3', raw({ ...armingFields, layer: 'L0' })],
-  ['arming: name empty', raw({ ...armingFields, name: '' })],
   ['arming: interval missing', raw(without(armingFields, 'interval'))],
   ['arming: interval a string', raw({ ...armingFields, interval: '1000' })],
   ['arming: interval zero', raw({ ...armingFields, interval: 0 })],
@@ -514,5 +516,68 @@ test('A11: each malformed recorded line makes the record unreadable, named by st
         await stop().catch(() => {});
       }
     });
+  }
+});
+
+/**
+ * Two starts over one record. The first runs on a fresh record from `firstAt` until `firstUntil`,
+ * so each trigger arms and fires; the second starts at `secondAt` over the stream the first one's
+ * own sink wrote. Answers the second run's handle, and the armings and clock firings it recorded.
+ */
+async function secondStart(triggers, { firstAt, firstUntil, secondAt }) {
+  const firstClock = manualClock(firstAt);
+  const first = armingWorld(firstClock, { triggers, record: opening });
+  const one = await started(first);
+  await firstClock.advance(firstUntil);
+  await one.stop();
+  assert.deepEqual(failuresIn(one.handed).map(({ message }) => message), [], 'the first start hands nothing over');
+  const second = armingWorld(manualClock(secondAt), { triggers, record: readFileSync(streamPath(first.directory), 'utf8') });
+  const run = await started(second);
+  // Both worlds record under one run id, so the second start's own events are those at or after it.
+  const own = (each) => each.filter(({ ts }) => Date.parse(ts) >= secondAt);
+  return { run, armed: () => own(armings(second)), fired: () => own(ofRun(second, 'trigger').filter(({ trigger }) => trigger === 'clock')).map(({ name, occurrence }) => ({ name, occurrence })) };
+}
+
+/** Each boundary value the validator admits for a trigger declared beside `hourly`, by what it is. */
+const BOUNDARIES = [
+  ['an interval beyond Number.MAX_SAFE_INTEGER', { edge: report('fire', { interval: 1e16 }) }],
+  ['the largest integer interval', { edge: report('fire', { interval: Number.MAX_VALUE }) }],
+  ['a trigger named by the empty string', { '': report('fire') }],
+  ['a trigger named __proto__', JSON.parse(`{"__proto__":${JSON.stringify(report('fire'))}}`)],
+  ['an anchor with no seconds, in year 0000', { edge: report('fire', { anchor: '0000-01-01T00:00Z' }) }],
+  ['an anchor with a one-digit fraction and an offset', { edge: report('fire', { anchor: '2026-10-29T13:00:00.5+01:00' }) }],
+];
+
+// proves R-SCHED-8, R-SCHED-37
+test('A4 A7 A16: an arming Rigger writes from any config the validator admits leaves the record readable at the next start', async (t) => {
+  for (const [boundary, edge] of BOUNDARIES) {
+    await t.test(boundary, async () => {
+      const triggers = { hourly: report('fire') };
+      for (const [name, trigger] of Object.entries(edge)) Object.defineProperty(triggers, name, { value: trigger, enumerable: true });
+      assert.deepEqual(validate({ ...config, clock: { poll: 1000, triggers } }).filter((reason) => reason.startsWith('`clock')), [], 'the validator admits the clock');
+      const { run, armed, fired } = await secondStart(triggers, { firstAt: START + 500, firstUntil: START + SECOND, secondAt: START + 5 * SECOND + 500 });
+      try {
+        assert.equal(run.rejected, undefined, `the second start threw ${run.rejected?.message}`);
+        assert.deepEqual(failuresIn(run.handed).map(({ message }) => message), [], 'the record Rigger wrote is readable at the next start');
+        assert.deepEqual(armed(), [], 'no trigger is re-armed, since none changed its schedule');
+        assert.ok(fired().some(({ name, occurrence }) => name === 'hourly' && occurrence === at(START + 5000)), 'hourly catches up once');
+      } finally {
+        await run.stop();
+      }
+    });
+  }
+});
+
+// proves R-SCHED-8
+test('A7: occurrences and times past year 9999, as toISOString spells them, leave the record readable at the next start', async () => {
+  const year10000 = Date.parse('+010000-01-01T00:00:00.000Z');
+  const triggers = { edge: report('fire', { anchor: '9999-12-31T23:59:59Z' }) };
+  const { run, fired } = await secondStart(triggers, { firstAt: year10000 - 500, firstUntil: year10000 + SECOND, secondAt: year10000 + 5 * SECOND + 500 });
+  try {
+    assert.equal(run.rejected, undefined, `the second start threw ${run.rejected?.message}`);
+    assert.deepEqual(failuresIn(run.handed).map(({ message }) => message), [], 'the record Rigger wrote is readable at the next start');
+    assert.deepEqual(fired(), [{ name: 'edge', occurrence: '+010000-01-01T00:00:05.000Z' }], 'edge catches up once, past its firings in year 10000');
+  } finally {
+    await run.stop();
   }
 });
