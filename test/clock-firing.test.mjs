@@ -868,3 +868,81 @@ test('B24 shutdown: stop and abort join clock work without starting another scan
     } finally { release(); await advanced; await stopping; await second?.stop(); await run?.stop(); }
   });
 });
+
+const runTriggers = (world, run) => world.events().filter((each) => each.run === run && each.event === 'trigger').map(({ trigger, name }) => trigger === 'clock' ? `clock:${name}` : trigger);
+const REPORT = { interval: 1000, anchor: at(START), catchUp: 'fire', job: 'report' };
+test('attack: P1 report-only catch-up still precedes the first pull when the record holds a pending card start of a removed trigger', async (t) => {
+  for (const withPending of [false, true]) await t.test(String(withPending), async () => {
+    const record = line(START, 'trigger.armed', { name: 'daily', interval: 1000, anchor: at(START) })
+      + line(START + 1000, 'trigger.outcome', { name: 'daily', occurrence: at(START + 1000), outcome: 'job' })
+      + (withPending ? line(START + 1500, 'trigger', { trigger: 'clock', name: 'gone', occurrence: at(START + 1500), after: 0 }) : '');
+    const world = firingWorld({ clock: manualClock(START + 5500), triggers: { daily: REPORT }, record });
+    const run = await world.start();
+    try {
+      await until(() => firings(world).some(({ name, run }) => name === 'daily' && run === 'r-clock-1'));
+      const order = runTriggers(world, 'r-clock-1');
+      t.diagnostic(JSON.stringify({ order, outcomes: outcomes(world).map(({ name, outcome }) => [name, outcome]) }));
+      assert.deepEqual(order.slice(0, 2), ['clock:daily', 'pull'], 'the report catch-up precedes the first pull, as at the merge base');
+    } finally { await run.stop(); }
+  });
+});
+
+// B20 B24: unrelated pending recovery cannot reorder report catch-ups or hold their first pull.
+test('B20 B24: every report catch-up precedes the first pull while unrelated card recovery is held', async (t) => {
+  for (const retained of [false, true]) await t.test(String(retained), async () => {
+    const sleeping = cardTrigger({ interval: 3_600_000 });
+    const name = retained ? 'sleeping' : 'gone';
+    const record = line(START, 'trigger.armed', { name: 'daily', interval: 1000, anchor: at(START) })
+      + line(START, 'trigger.armed', { name: 'dawn', interval: 1500, anchor: at(START) })
+      + line(START, 'trigger.armed', { name, interval: sleeping.interval, anchor: sleeping.anchor })
+      + line(START + 500, 'trigger', { trigger: 'clock', name, occurrence: at(START + 500), after: 0 });
+    const world = firingWorld({ clock: manualClock(START + 5500), record,
+      triggers: { daily: REPORT, dawn: { ...REPORT, interval: 1500 }, ...(retained && { sleeping }) } });
+    let release;
+    let entered = false;
+    let released = false;
+    const gate = new Promise(resolve => { release = () => { released = true; resolve(); }; });
+    const newest = world.reads.readNewestNumber;
+    world.reads.readNewestNumber = async (...args) => { entered = true; await gate; return newest(...args); };
+    let run;
+    try {
+      run = await world.start();
+      await until(() => entered);
+      assert.equal(released, false, 'recovery is still held at the checkpoint');
+      assert.deepEqual(runTriggers(world, 'r-clock-1').slice(0, 3), ['clock:dawn', 'clock:daily', 'pull'],
+        'all report catch-ups precede the first pull, even with a declared card whose occurrence is not due');
+      assert.ok(runTriggers(world, 'r-clock-1').includes('drain'), 'the first pull drains without waiting for pending card recovery');
+    } finally { release(); await run?.stop(); }
+  });
+});
+
+// K43: its own pending card blocks the report, while the first pull remains independent.
+// https://github.com/williacj/rigger/issues/1009#issuecomment-6579208376
+test('B20 B21 K43: a report blocked by its own pending card start fires after recovery, without holding the first pull', async (t) => {
+  const record = line(START, 'trigger.armed', { name: 'daily', interval: 1000, anchor: at(START) })
+    + line(START + 1500, 'trigger', { trigger: 'clock', name: 'daily', occurrence: at(START + 1500), after: 0 });
+  const world = firingWorld({ clock: manualClock(START + 5500), triggers: { daily: REPORT }, record });
+  let release;
+  let entered = false;
+  const gate = new Promise(resolve => { release = resolve; });
+  const newest = world.reads.readNewestNumber;
+  world.reads.readNewestNumber = async (...args) => { entered = true; await gate; return newest(...args); };
+  const starting = world.start();
+  let run;
+  try {
+    await until(() => entered);
+    await new Promise(resolve => setImmediate(resolve));
+    const heldOrder = runTriggers(world, 'r-clock-1');
+    t.diagnostic(JSON.stringify({ whileRecoveryHeld: heldOrder }));
+    assert.deepEqual(heldOrder, ['pull', 'drain'], 'the first pull drains without waiting for its report trigger’s pending card recovery');
+    assert.deepEqual(outcomes(world), [], 'the report cannot fire before its own pending card settles');
+    release();
+    run = await starting;
+    await until(() => firings(world).some(({ name, run }) => name === 'daily' && run === 'r-clock-1'));
+    const order = runTriggers(world, 'r-clock-1');
+    t.diagnostic(JSON.stringify({ order, outcomes: outcomes(world).map(({ name, outcome }) => [name, outcome]) }));
+    assert.deepEqual(order, ['pull', 'drain', 'clock:daily'], 'the blocked report follows recovery without holding the first pull');
+    assert.deepEqual(outcomes(world).map(({ name, outcome }) => [name, outcome]), [['daily', 'abandoned'], ['daily', 'job']]);
+    assert.equal(world.fake.issues.length, 0, 'the changed report declaration opens no missing card');
+  } finally { release(); run ??= await starting; await run.stop(); }
+});
