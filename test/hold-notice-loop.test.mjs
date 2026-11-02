@@ -1245,7 +1245,7 @@ test('a rejected read whose AggregateError holds 101 failures is handed on with 
 
 test('actual unreadable admission entries and actual aggregated read failures reject the pull', async (t) => {
   for (const [what, fixture] of [
-    ['unreadable entries', () => { const world = relayWorld(t); fs.mkdirSync(join(world.state, 'admission'), { recursive: true }); fs.writeFileSync(join(world.state, 'admission', 'bad-N1.json'), '{}'); return world; }],
+    ['unreadable entries', () => { const world = relayWorld(t, { observeAppend: false }); fs.mkdirSync(join(world.state, 'admission'), { recursive: true }); fs.writeFileSync(join(world.state, 'admission', 'bad-N1.json'), '{}'); return world; }],
     ['an aggregate\'s failures', () => { const world = relayWorld(t, { failRead: 'readColumns', failureText: 'N1 aggregate readColumns refusal' }); world.refuse(({ event, trigger }) => event === 'trigger' && trigger === 'pull'); return world; }],
   ]) {
     const world = fixture();
@@ -1426,27 +1426,31 @@ import { factsCall as relayFactsCall } from '../src/workflow/facts.mjs';
 import { consumerConfig as relayConfig, card as relayCard } from './verb-consumer.mjs';
 import { withObservedAdmission } from './loop-admission-observer.mjs';
 
+const relayAppendAtImport = fs.appendFileSync;
+
 /** Raw gh fixtures follow forge-read's recorded pages and fake-gh's issue/timeline/write contracts. */
-function relayWorld(t, { issues = [], cards = [], failRead, failIssue, timedOut = false, failureText, refuse = () => false } = {}) {
+function relayWorld(t, { issues = [], cards = [], failRead, failIssue, timedOut = false, failureText, refuse = () => false, observeAppend = true } = {}) {
   const settings = relayConfig(2);
   const state = temporaryDirectory('rigger-relay-');
   const realAppend = fs.appendFileSync;
   let refuseRecord = () => false;
   const refused = [];
   const operations = [];
-  fs.appendFileSync = (path, bytes, ...rest) => {
-    let record;
-    try { record = JSON.parse(String(bytes)); } catch {}
-    if (record && String(path).startsWith(state) && refuseRecord(record)) {
-      const error = Object.assign(new Error(`EIO while recording ${record.event}`), { code: 'EIO' });
-      refused.push({ record, error });
-      throw error;
-    }
-    if (record && String(path).startsWith(state)) operations.push({ event: record.event });
-    return realAppend(path, bytes, ...rest);
-  };
-  syncBuiltinESMExports();
-  t.after(() => { fs.appendFileSync = realAppend; syncBuiltinESMExports(); });
+  if (observeAppend) {
+    fs.appendFileSync = (path, bytes, ...rest) => {
+      let record;
+      try { record = JSON.parse(String(bytes)); } catch {}
+      if (record && String(path).startsWith(state) && refuseRecord(record)) {
+        const error = Object.assign(new Error(`EIO while recording ${record.event}`), { code: 'EIO' });
+        refused.push({ record, error });
+        throw error;
+      }
+      if (record && String(path).startsWith(state)) operations.push({ event: record.event });
+      return realAppend(path, bytes, ...rest);
+    };
+    syncBuiltinESMExports();
+    t.after(() => { fs.appendFileSync = realAppend; syncBuiltinESMExports(); });
+  }
   const sink = openSink({ directory: state, run: 'r-relay', now: () => 1 });
   const page = (nodes) => ({ pageInfo: { hasNextPage: false, endCursor: null }, nodes });
   const answer = (value, graph = true) => ({ status: 0, stdout: JSON.stringify(graph ? { data: value } : value), stderr: '', timedOut: false });
@@ -1968,6 +1972,7 @@ import moduleForObserverCheck from 'node:module';
 
 // Infrastructure evidence for r4's observer isolation; no product requirement claim.
 test('the admission observer releases captures and leaves canonical imports and the suite guard alone', async (t) => {
+  assert.strictEqual(fs.appendFileSync, relayAppendAtImport, 'N1 fixture cleanup restores the original appendFileSync binding');
   const actualRegister = moduleForObserverCheck.registerHooks;
   const registrations = [];
   moduleForObserverCheck.registerHooks = (options) => {
