@@ -1247,3 +1247,331 @@ test("R6 standalone reaper times out and reaps its actual owned target-read stan
 test("R7 standalone reaper rejects clean empty targeted output while native signal zero reaches the live target", { timeout: 30_000 }, (t) => directReaperSelection(t, 'empty-live'));
 test("R7 standalone reaper treats controlled owned-target signal-zero EPERM as unknown", { timeout: 30_000 }, (t) => directReaperSelection(t, 'eperm'));
 test("R8 standalone reaper rejects a controlled changed start field without remembered signal authority", { timeout: 30_000 }, (t) => directReaperSelection(t, 'changed-start'));
+
+// Controls replies in an owned child while parent observations retain the native lifecycle premise.
+function boundaryReaperPreload() {
+  const fs = require('node:fs');
+  const cp = require('node:child_process');
+  const { syncBuiltinESMExports } = require('node:module');
+  const config = JSON.parse(fs.readFileSync(process.env.RIGGER_1075_CONTROL, 'utf8'));
+  if (process.argv[1] !== config.cli) return;
+  const nativeSpawn = cp.spawnSync;
+  const nativeKill = process.kill.bind(process);
+  const events = [];
+  let census = 0;
+  let reads = 0;
+  const pack = (result) => ({ status: result.status, signal: result.signal, stdout: result.stdout, stderr: result.stderr,
+    error: result.error && { code: result.error.code, message: result.error.message } });
+  const finish = () => fs.writeFileSync(config.evidence, JSON.stringify(events));
+  process.once('exit', finish);
+  process.kill = (pid, signal) => {
+    events.push({ event: 'signal', pid, signal });
+    if (pid !== config.pid) throw new Error('control refused a foreign signal');
+    if (signal === 'SIGKILL') return true;
+    if (signal !== 0) throw new Error('control received an unexpected signal');
+    if (config.zero) throw Object.assign(new Error('controlled signal-zero failure'), { code: config.zero });
+    return nativeKill(pid, signal);
+  };
+  cp.spawnSync = (command, args, options) => {
+    if (command === '/bin/ps' && JSON.stringify(args) === JSON.stringify(config.discoveryArgs)) {
+      return { status: 0, signal: null, stdout: census++ === 0 ? config.discovery : '', stderr: '' };
+    }
+    if (command === config.lsof) return { status: 0, signal: null, stdout: census === 1 ? config.selectedCwd : '', stderr: '' };
+    if (command !== '/bin/ps' || JSON.stringify(args) !== JSON.stringify(config.targetedArgs)) {
+      throw new Error('control refused an unexpected command');
+    }
+    const native = nativeSpawn(command, args, options);
+    let supplied = { ...native };
+    if (options.encoding === 'latin1' && typeof supplied.stdout === 'string') supplied.stdout = Buffer.from(supplied.stdout, 'latin1').toString('utf8');
+    const response = config.responses[Math.min(reads++, config.responses.length - 1)];
+    if (response.empty) supplied.stdout = '';
+    if (response.status !== undefined) supplied.status = response.status;
+    if (response.signal !== undefined) supplied.signal = response.signal;
+    if (response.nonString) supplied.stdout = null;
+    if (response.unsafe) supplied.stdout = supplied.stdout.replace(/^[ \t]*[0-9]+/, '9007199254740992');
+    if (response.separator) supplied.stdout = supplied.stdout.replace(/^[ \t]*[0-9]+[ \t]+/, `${config.pid}${response.separator}`);
+    if (response.changedStart) supplied.stdout = supplied.stdout.replace(config.start, 'Thu Jan  1 00:00:00 1970');
+    if (response.questionMark) supplied.stdout = supplied.stdout.replace(/^([ \t]*[0-9]+[ \t]+)\S+/, '$1?E');
+    if (options.encoding === 'latin1' && typeof supplied.stdout === 'string') supplied.stdout = Buffer.from(supplied.stdout, 'utf8').toString('latin1');
+    events.push({ event: 'targeted', ordinal: reads, encoding: options.encoding, native: pack(native), supplied: pack(supplied) });
+    return supplied;
+  };
+  syncBuiltinESMExports();
+}
+
+async function boundaryReaperControl(t, { responses, zero, absent = false, heldZombie = false, diagnostic, expectedReads }) {
+  let target; let holder; let targetPid; let cli; let reader; let writer;
+  let holderClosed = false; let holderOutput = ''; let holderError; let heldTargetAbsent = !heldZombie;
+  let targetClosed = false; let cliClosed = false;
+  let targetError; let cliError;
+  let output = Buffer.alloc(0); let errors = Buffer.alloc(0);
+  const observations = [];
+  const directory = realpathSync.native(temporaryDirectory('rigger-1075-boundary-', {
+    context: t, beforeRemoval() {
+      if ((target && !targetClosed) || (holder && !holderClosed) || !heldTargetAbsent || (cli && !cliClosed)) throw new Error('owned boundary child remains unresolved; preserve evidence');
+    },
+  }));
+  const run = join(directory, 'run');
+  const pipe = join(directory, 'ended');
+  const evidence = join(directory, 'answers.json');
+  const configFile = join(directory, 'control.json');
+  const preload = join(directory, 'control.cjs');
+  const cliFile = resolve('test/suite-reaper');
+  const packed = (r) => ({ pid: r.pid, status: r.status, signal: r.signal, stdout: r.stdout, stderr: r.stderr,
+    error: r.error ? { code: r.error.code, message: r.error.message } : null });
+  const native = (command, args) => {
+    const answer = spawnSync(command, args, { encoding: 'utf8', timeout: 1_000, killSignal: 'SIGKILL',
+      env: { ...process.env, LC_ALL: 'C', TZ: 'UTC0' } });
+    observations.push({ command, args, answer: packed(answer) });
+    assert.equal(answer.error, undefined); assert.equal(answer.signal, null); assert.equal(answer.stderr, '');
+    return answer;
+  };
+  let outcome;
+  try {
+    mkdirSync(run); writeFileSync(join(run, 'hold'), '');
+    const made = native('/usr/bin/mkfifo', [pipe]); assert.equal(made.status, 0);
+    reader = openSync(pipe, constants.O_RDONLY | constants.O_NONBLOCK);
+    writer = openSync(pipe, constants.O_WRONLY | constants.O_NONBLOCK);
+    if (heldZombie) {
+      const program = join(directory, 'holder.pl'); writeFileSync(program, directReaperZombieSource);
+      holder = spawn('/usr/bin/perl', [program], { stdio: ['pipe', 'pipe', 'pipe'] });
+      assert.ok(Number.isSafeInteger(holder.pid) && holder.pid > 0);
+      observations.push({ event: 'started', role: 'holder', pid: holder.pid });
+      holder.once('error', (error) => { holderError = error; });
+      holder.once('close', (code, signal) => { holderClosed = true; observations.push({ event: 'close', pid: holder.pid, code, signal }); });
+      holder.stdout.on('data', (bytes) => { holderOutput += bytes; });
+      holder.stderr.on('data', (bytes) => { observations.push({ event: 'holder-stderr', text: String(bytes) }); });
+      holder.stdin.on('error', (error) => { holderError = error; });
+      holder.stdin.write(run + '\n');
+      assert.equal(await until(() => {
+        if (holderError) throw holderError;
+        const published = /^holder ([0-9]+) target ([0-9]+)\n/.exec(holderOutput);
+        if (!published) return false;
+        assert.equal(Number(published[1]), holder.pid); targetPid = Number(published[2]);
+        assert.ok(Number.isSafeInteger(targetPid) && targetPid > 0);
+        observations.push({ event: 'owned-child-publication', parent: holder.pid, pid: targetPid }); return true;
+      }, 10_000, t), true, 'holder never published its owned child');
+    } else {
+      target = spawn('/usr/bin/tail', ['-f', join(run, 'hold')], { cwd: run, stdio: 'ignore' });
+      assert.ok(Number.isSafeInteger(target.pid) && target.pid > 0); targetPid = target.pid;
+      observations.push({ event: 'started', role: 'target', pid: targetPid });
+      target.once('error', (error) => { targetError = error; });
+      target.once('close', (code, signal) => { targetClosed = true; observations.push({ event: 'close', pid: targetPid, code, signal }); });
+    }
+    const targetedArgs = ['-ww', '-p', String(targetPid), '-o', 'pid=,stat=,lstart=,command='];
+    let ready; let readyCwd;
+    assert.equal(await until(() => {
+      if (targetError || holderError) throw targetError ?? holderError;
+      const answer = native('/bin/ps', targetedArgs);
+      if (answer.status !== 0) return false;
+      const fields = answer.stdout.trim().split(/[ \t]+/);
+      if (Number(fields[0]) !== targetPid || /^[ZTt]/.test(fields[1])) return false;
+      const parent = native('/bin/ps', ['-p', String(targetPid), '-o', 'ppid=']);
+      if (parent.status !== 0 || Number(parent.stdout.trim()) !== (holder?.pid ?? process.pid)) return false;
+      const cwd = native(LSOF, ['-nP', '-a', '-p', String(targetPid), '-d', 'cwd', '-Fpn']);
+      if (cwd.status !== 0 || !cwd.stdout.split('\n').includes(`n${run}`)) return false;
+      ready = answer.stdout; readyCwd = cwd.stdout; return true;
+    }, 10_000, t), true, 'owned live boundary fixture never became ready');
+    const selected = native('/bin/ps', ['-p', String(targetPid), '-o', 'pid=,ppid=,stat=,command=']);
+    assert.equal(selected.status, 0);
+    const birth = native('/bin/ps', ['-p', String(targetPid), '-o', 'lstart=']);
+    assert.equal(birth.status, 0); assert.equal(birth.stdout.trim().length, 24);
+    if (heldZombie) {
+      holder.stdin.write('K');
+      assert.equal(await until(() => {
+        if (holderError || holderClosed) throw holderError ?? new Error('holder ended before zombie premise');
+        const state = native('/bin/ps', targetedArgs);
+        const fields = state.stdout.trim().split(/[ \t]+/);
+        return state.status === 0 && Number(fields[0]) === targetPid && fields[1].startsWith('Z')
+          && holderOutput.includes(`kill ${targetPid} 1\n`);
+      }, 10_000, t), true, 'actual owned zombie never became ready');
+      process.kill(targetPid, 0); process.kill(holder.pid, 0);
+      const parent = native('/bin/ps', ['-p', String(targetPid), '-o', 'ppid=']);
+      assert.equal(parent.status, 0); assert.equal(Number(parent.stdout.trim()), holder.pid);
+      const owner = native('/bin/ps', ['-p', String(holder.pid), '-o', 'stat=']);
+      assert.equal(owner.status, 0); assert.doesNotMatch(owner.stdout.trim(), /^Z/);
+      const zombieBirth = native('/bin/ps', ['-p', String(targetPid), '-o', 'lstart=']);
+      assert.equal(zombieBirth.status, 0); assert.equal(zombieBirth.stdout.trim(), birth.stdout.trim());
+      observations.push({ event: 'independent-ending', pid: targetPid, parent: holder.pid, heldZombie: true, ownerUnreaped: true });
+    }
+    if (absent) {
+      target.kill('SIGKILL');
+      assert.equal(await until(() => targetClosed, 10_000, t), true, 'owned ended fixture did not close');
+      assert.throws(() => process.kill(targetPid, 0), { code: 'ESRCH' });
+      const absence = native('/bin/ps', targetedArgs);
+      assert.ok(absence.status === 0 || absence.status === 1); assert.equal(absence.stdout, '');
+      observations.push({ event: 'independent-ending', pid: targetPid, close: true, signalZero: 'ESRCH', actualNativeStatus: absence.status });
+    }
+    writeFileSync(configFile, JSON.stringify({ cli: cliFile, pid: targetPid, lsof: LSOF, evidence,
+      discoveryArgs: ['-U', String(process.getuid()), '-o', 'pid=,ppid=,stat=,command='], discovery: selected.stdout,
+      targetedArgs, responses, zero, selectedCwd: readyCwd, start: birth.stdout.trim() }));
+    writeFileSync(preload, `(${boundaryReaperPreload.toString()})();`);
+    const { NODE_TEST_CONTEXT, ...env } = process.env;
+    cli = spawn(process.execPath, ['--require', preload, cliFile, run, pipe], {
+      env: { ...env, RIGGER_1075_CONTROL: configFile }, stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    assert.ok(Number.isSafeInteger(cli.pid) && cli.pid > 0);
+    observations.push({ event: 'started', role: 'reaper', pid: cli.pid });
+    cli.once('error', (error) => { cliError = error; });
+    cli.once('close', (code, signal) => { cliClosed = true; observations.push({ event: 'close', pid: cli.pid, code, signal }); });
+    cli.stdout.on('data', (chunk) => { output = Buffer.concat([output, chunk]); });
+    cli.stderr.on('data', (chunk) => { errors = Buffer.concat([errors, chunk]); });
+    assert.equal(await until(() => {
+      if (cliError) throw cliError;
+      assert.equal(cliClosed, false, errors.toString());
+      const opened = native(LSOF, ['-nP', '-a', '-p', String(cli.pid), '-Ffn']);
+      return opened.status === 0 && opened.stdout.split('\n').includes(`n${pipe}`);
+    }, 10_000, t), true, 'standalone reader never opened its actual FIFO');
+    closeSync(writer); writer = undefined; closeSync(reader); reader = undefined;
+    assert.equal(await until(() => cliClosed, 10_000, t), true, 'standalone boundary reaper did not settle');
+    assert.equal(cliError, undefined);
+    const answers = JSON.parse(readFileSync(evidence, 'utf8'));
+    assert.ok(answers.some(({ event }) => event === 'targeted'), 'controlled boundary was not reached');
+    outcome = { status: cli.exitCode, outputBase64: output.toString('base64'), stderrBase64: errors.toString('base64'), runPresent: existsSync(run), answers };
+    assert.equal(output.length, 0, 'the standalone reaper added a standard-output diagnostic');
+    if (responses[0].questionMark) assert.equal(answers.find(({ event }) => event === 'targeted').supplied.stdout.trim().split(/[ \t]+/)[1], '?E', 'native structural-class substitution was not applied');
+    assert.deepEqual(answers.filter(({ event, signal }) => event === 'signal' && signal === 'SIGKILL').map(({ pid }) => pid), [targetPid]);
+    if (diagnostic) {
+      assert.notEqual(cli.exitCode, 0, 'uncertain boundary answer was credited as ending');
+      assert.match(errors.toString('utf8'), diagnostic);
+      assert.equal(existsSync(run), true, 'refused boundary answer removed the run');
+    } else {
+      assert.equal(cli.exitCode, 0, errors.toString('utf8'));
+      assert.equal(errors.length, 0); assert.equal(existsSync(run), false);
+    }
+    if (expectedReads !== undefined) assert.equal(answers.filter(({ event }) => event === 'targeted').length, expectedReads);
+    if (heldZombie) {
+      assert.equal(holderClosed, false); process.kill(holder.pid, 0);
+      const actual = native('/bin/ps', targetedArgs); assert.equal(actual.status, 0);
+      assert.match(actual.stdout.trim().split(/[ \t]+/)[1], /^Z/);
+    } else if (!absent) {
+      assert.equal(targetClosed, false, 'negative control lost its live premise');
+      const after = native('/bin/ps', targetedArgs); assert.equal(after.status, 0);
+      const fields = after.stdout.trim().split(/[ \t]+/);
+      assert.equal(Number(fields[0]), targetPid); assert.doesNotMatch(fields[1], /^Z/);
+      assert.deepEqual(fields.slice(2), ready.trim().split(/[ \t]+/).slice(2), 'negative fixture identity changed');
+    }
+    outcome = { status: cli.exitCode, outputBase64: output.toString('base64'), stderrBase64: errors.toString('base64'), runPresent: existsSync(run), answers };
+  } finally {
+    for (const fd of [writer, reader]) if (fd !== undefined) closeSync(fd);
+    for (const child of [cli, target]) {
+      if (!child) continue;
+      if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      const closed = () => child === cli ? cliClosed : targetClosed;
+      assert.equal(await until(closed, 10_000, { signal: { aborted: false } }), true, 'owned boundary child cleanup did not close');
+    }
+    if (holder) {
+      if (!holderClosed) holder.stdin.end('KR');
+      assert.equal(await until(() => holderClosed, 10_000, { signal: { aborted: false } }), true, 'actual owner did not reap and close');
+      assert.ok(holderOutput.includes(`reaped ${targetPid}\n`), 'actual owner did not acknowledge its own waitpid');
+      assert.throws(() => process.kill(targetPid, 0), { code: 'ESRCH' }); heldTargetAbsent = true;
+    }
+    t.diagnostic(JSON.stringify({ outcome, observations, holderOutput, outputBase64: output.toString('base64'), stderrBase64: errors.toString('base64') }));
+  }
+  return outcome;
+}
+
+// D29 reason: OS behaviour. Ordinary counterpart: native question-mark exiting state stays pending until a matching positive ending.
+test('standalone reaper confirms its held zombie after a native question-mark exiting observation', { timeout: 30_000 }, (t) => boundaryReaperControl(t, {
+  heldZombie: true, responses: [{ questionMark: true }, {}], expectedReads: 2,
+}));
+
+// D29 reason: OS behaviour. Ordinary counterpart: native question-mark exiting state cannot confirm a still-live target.
+test('standalone reaper retains a live target observed in the native question-mark exiting class', { timeout: 30_000 }, (t) => boundaryReaperControl(t, {
+  responses: [{ questionMark: true }], diagnostic: /observed targets unconfirmed/, expectedReads: 10,
+}));
+
+// D29 reason: wiring. Ordinary counterpart: targeted answers follow the finite ending-read and remembered-target maps.
+test('standalone reaper accepts controlled status zero absence after owned-child close', { timeout: 30_000 }, (t) => boundaryReaperControl(t, {
+  absent: true, responses: [{ empty: true, status: 0 }],
+}));
+
+// D29 reason: wiring. Ordinary counterpart: targeted answers follow the finite ending-read and remembered-target maps.
+test('standalone reaper accepts controlled status one absence after owned-child close', { timeout: 30_000 }, (t) => boundaryReaperControl(t, {
+  absent: true, responses: [{ empty: true, status: 1 }],
+}));
+
+// D29 reason: wiring. Ordinary counterpart: targeted answers follow the finite ending-read and remembered-target maps.
+test('standalone reaper refuses status zero omission of an independently live target', { timeout: 30_000 }, (t) => boundaryReaperControl(t, {
+  responses: [{ empty: true, status: 0 }], diagnostic: /was omitted while signal zero still reaches it/,
+}));
+
+// D29 reason: wiring. Ordinary counterpart: targeted answers follow the finite ending-read and remembered-target maps.
+test('standalone reaper refuses status zero omission of an actual held zombie', { timeout: 30_000 }, (t) => boundaryReaperControl(t, {
+  heldZombie: true, responses: [{ empty: true, status: 0 }], diagnostic: /was omitted while signal zero still reaches it/,
+}));
+
+// D29 reason: wiring. Ordinary counterpart: targeted answers follow the finite ending-read and remembered-target maps.
+test('standalone reaper refuses status one omission of an actual held zombie', { timeout: 30_000 }, (t) => boundaryReaperControl(t, {
+  heldZombie: true, responses: [{ empty: true, status: 1 }], diagnostic: /was omitted while signal zero still reaches it/,
+}));
+
+// D29 reason: wiring. Ordinary counterpart: targeted answers follow the finite ending-read and remembered-target maps.
+test('standalone reaper refuses status zero absence with controlled EPERM', { timeout: 30_000 }, (t) => boundaryReaperControl(t, {
+  zero: 'EPERM', responses: [{ empty: true, status: 0 }], diagnostic: /absence is unconfirmed: EPERM/,
+}));
+
+// D29 reason: wiring. Ordinary counterpart: targeted answers follow the finite ending-read and remembered-target maps.
+test('standalone reaper refuses status zero absence with controlled EIO', { timeout: 30_000 }, (t) => boundaryReaperControl(t, {
+  zero: 'EIO', responses: [{ empty: true, status: 0 }], diagnostic: /absence is unconfirmed: EIO/,
+}));
+
+// D29 reason: wiring. Ordinary counterpart: targeted answers follow the finite ending-read and remembered-target maps.
+test('standalone reaper refuses status one absence with controlled EIO', { timeout: 30_000 }, (t) => boundaryReaperControl(t, {
+  zero: 'EIO', responses: [{ empty: true, status: 1 }], diagnostic: /absence is unconfirmed: EIO/,
+}));
+
+// D29 reason: wiring. Ordinary counterpart: targeted answers follow the finite ending-read and remembered-target maps.
+test('standalone reaper checks remembered identity before accepting an actual held zombie', { timeout: 30_000 }, (t) => boundaryReaperControl(t, {
+  heldZombie: true, responses: [{ questionMark: true }, { changedStart: true }], expectedReads: 2, diagnostic: /changed its coarse start identity; original ending remains unconfirmed/,
+}));
+
+// D29 reason: wiring. Ordinary counterpart: targeted answers follow the finite ending-read and remembered-target maps.
+test('standalone reaper refuses a controlled unsafe numeric PID', { timeout: 30_000 }, (t) => boundaryReaperControl(t, {
+  responses: [{ unsafe: true }], diagnostic: /ending read was malformed or ambiguous/,
+}));
+
+// D29 reason: wiring. Ordinary counterpart: targeted answers follow the finite ending-read and remembered-target maps.
+test('standalone reaper refuses controlled CR row framing', { timeout: 30_000 }, (t) => boundaryReaperControl(t, {
+  responses: [{ separator: '\r' }], diagnostic: /ending read has invalid row framing/,
+}));
+
+// D29 reason: wiring. Ordinary counterpart: targeted answers follow the finite ending-read and remembered-target maps.
+test('standalone reaper refuses controlled FF row framing', { timeout: 30_000 }, (t) => boundaryReaperControl(t, {
+  responses: [{ separator: '\f' }], diagnostic: /ending read has invalid row framing/,
+}));
+
+// D29 reason: wiring. Ordinary counterpart: targeted answers follow the finite ending-read and remembered-target maps.
+test('standalone reaper refuses controlled NEL row framing', { timeout: 30_000 }, (t) => boundaryReaperControl(t, {
+  responses: [{ separator: '\u0085' }], diagnostic: /ending read has invalid row framing/,
+}));
+
+// D29 reason: wiring. Ordinary counterpart: targeted answers follow the finite ending-read and remembered-target maps.
+test('standalone reaper refuses controlled LS row framing', { timeout: 30_000 }, (t) => boundaryReaperControl(t, {
+  responses: [{ separator: '\u2028' }], diagnostic: /ending read has invalid row framing/,
+}));
+
+// D29 reason: wiring. Ordinary counterpart: targeted answers follow the finite ending-read and remembered-target maps.
+test('standalone reaper refuses controlled PS row framing', { timeout: 30_000 }, (t) => boundaryReaperControl(t, {
+  responses: [{ separator: '\u2029' }], diagnostic: /ending read has invalid row framing/,
+}));
+
+// D29 reason: wiring. Ordinary counterpart: targeted answers follow the finite ending-read and remembered-target maps.
+test('standalone reaper refuses a controlled child signal without a spawn error', { timeout: 30_000 }, (t) => boundaryReaperControl(t, {
+  responses: [{ signal: 'SIGTERM' }], diagnostic: /ending read failed:.*signal=SIGTERM/,
+}));
+
+// D29 reason: wiring. Ordinary counterpart: targeted answers follow the finite ending-read and remembered-target maps.
+test('standalone reaper refuses controlled non-string stdout', { timeout: 30_000 }, (t) => boundaryReaperControl(t, {
+  responses: [{ nonString: true }], diagnostic: /ending read failed/,
+}));
+
+// D29 reason: wiring. Ordinary counterpart: targeted answers follow the finite ending-read and remembered-target maps.
+test('standalone reaper refuses controlled null status without signal or error', { timeout: 30_000 }, (t) => boundaryReaperControl(t, {
+  responses: [{ empty: true, status: null }], diagnostic: /ending read failed: status=null/,
+}));
+
+// D29 reason: wiring. Ordinary counterpart: targeted answers follow the finite ending-read and remembered-target maps.
+test('standalone reaper refuses controlled status one with a nonempty row', { timeout: 30_000 }, (t) => boundaryReaperControl(t, {
+  responses: [{ status: 1 }], diagnostic: /ending read failed: status=1/,
+}));
