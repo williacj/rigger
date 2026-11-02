@@ -632,3 +632,37 @@ test('S8a S8b S8c table: every claim that makes a workspace is re-read once at a
     }
   }
 });
+
+// R-SCHED-43 row S5 where the run's own move leaves the card in Done, which L2 is never offered:
+// only a person's move back before the run's next read shows the compared column. That read finds
+// the card outside Done, so the skip ends and the card is claimed again, whether the step answered
+// its column or rejected after the board accepted it.
+// proves R-SCHED-43
+test('S5 Done: a person moving the card back from Done before the next read ends the skip', async (t) => {
+  const steps = { 'a move to Done for a merged pull request': 'merged', 'the end of a merge in the lane': 'mergedFromOwner' };
+  for (const [step, cause] of Object.entries(steps)) {
+    const { from, options, setup } = COLUMN_STEPS[step];
+    const ends = { fulfilled: {}, 'rejected after the board accepted it': { refuseRecord: (event, fields) => event === 'transition' && fields.cause === cause } };
+    for (const [end, ending] of Object.entries(ends)) {
+      await t.test(`${step}, ${end}`, async (t) => {
+        const here = world(t, { ...options, ...ending });
+        await setup(here);
+        // A move claim's release reads the board at once, so that read waits for the person's move.
+        const release = gate();
+        here.holdNextRead(Promise.resolve());
+        here.holdNextRead(release.promise);
+        here.start();
+        await positive(() => here.fake.writes().some(({ operation, args }) => operation === 'moveItem' && args[1] === COLUMNS.done));
+        await new Promise((resolve) => setImmediate(resolve));
+        await here.move(12, from);
+        release.open();
+        for (let turn = 0; here.pulls() < 2; turn += 1) {
+          assert.ok(turn < 50, `${step}, ${end}: the card is claimed again once a read finds it outside Done`);
+          await here.poll();
+          await new Promise((resolve) => setImmediate(resolve));
+        }
+        assert.equal(here.pulls(), 2);
+      });
+    }
+  }
+});
