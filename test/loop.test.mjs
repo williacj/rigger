@@ -3874,7 +3874,7 @@ test('J8: an occurrence at the start with no arming record never fires in that r
   const { stop } = keptUp(built);
   try {
     await positive(() => built.dispatches.held() === 1);
-    assert.deepEqual(built.events().filter(({ event }) => event === 'trigger.armed'), [], 'the state holds no arming');
+    assert.deepEqual(built.events().filter(({ event }) => event === 'trigger.armed').map(({ name }) => name), ['hourly'], 'the start armed the trigger, which no earlier arming named');
     await clock.advance(CLOCK_START + 1500);
     assert.deepEqual(built.l3Events().filter(({ trigger }) => trigger === 'clock'), []);
     await clock.advance(CLOCK_START + 2000);

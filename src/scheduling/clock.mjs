@@ -5,19 +5,26 @@ import { schedule } from '../config/validate.mjs';
 import { whenElapsed } from '../substrate/process.mjs';
 
 /**
- * Arms `triggers`' report occurrences after this run's start, keeping only the newest due
- * occurrence per wake, and, from each `poll()` on, a poll `interval` milliseconds later. One timer
+ * Arms the report occurrences of each of `triggers` that `armings` names, each `{ armed, fired }`:
+ * the instant of its newest arming and the occurrence of its last firing. An occurrence is due
+ * after both, and, under `catchUp: 'skip'`, after `started`, the instant the run's start read the
+ * record, too, so a missed one fires once
+ * at the start's wake under `fire` and never under `skip`. A wake keeps only the newest due
+ * occurrence per trigger, and, from each `poll()` on, a poll `interval` milliseconds later. One timer
  * serves both, and it holds the process open. A wake awaits each callback it makes, so no two
  * firings and no two polls run at once: it fires the due occurrences first, earlier first and then
  * by name, each through `fire`, which answers whether it settled the occurrence. Then a due poll
  * calls `polled`, which answers whether to poll again, `interval` milliseconds after it settled.
- * Answers `{ poll, stop }`: `poll` starts polling, and `stop` cancels the timer for good.
+ * Answers `{ poll, stop, started }`: `poll` starts polling, `stop` cancels the timer for good, and
+ * `started` settles once the start's wake has fired what was missed.
  */
-export function clockWakes({ triggers, poll: interval } = {}, clock = {}, { fire, polled }) {
-  const entries = Object.entries(triggers ?? {}).filter(([, trigger]) => trigger.job === 'report');
+export function clockWakes({ triggers, poll: interval } = {}, clock = {}, { fire, polled }, { armings = new Map(), started } = {}) {
+  const entries = Object.entries(triggers ?? {}).filter(([name, trigger]) => trigger.job === 'report' && armings.has(name));
   const now = clock.now ?? Date.now;
-  const started = now();
-  const last = new Map();
+  const last = new Map(entries.map(([name, trigger]) => {
+    const { armed, fired } = armings.get(name);
+    return [name, Math.max(armed, fired, trigger.catchUp === 'skip' ? started : -Infinity)];
+  }));
   let cancel = () => {};
   let active = true;
   let waking = false;
@@ -37,7 +44,7 @@ export function clockWakes({ triggers, poll: interval } = {}, clock = {}, { fire
       const current = now();
       const due = entries.flatMap(([name, trigger]) => {
         const occurrence = schedule(trigger, current).newest;
-        return occurrence !== null && occurrence > (last.get(name) ?? started) ? [{ name, occurrence }] : [];
+        return occurrence !== null && occurrence > last.get(name) ? [{ name, occurrence }] : [];
       }).sort((a, b) => a.occurrence - b.occurrence || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
       for (const entry of due) if (active && await fire(entry)) last.set(entry.name, entry.occurrence);
       if (active && pollAt !== undefined && pollAt <= now()) {
@@ -49,8 +56,8 @@ export function clockWakes({ triggers, poll: interval } = {}, clock = {}, { fire
       arm();
     }
   };
-  arm();
   return {
+    started: wake(),
     poll: () => {
       pollAt = now() + interval;
       arm();
