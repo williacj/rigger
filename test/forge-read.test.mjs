@@ -888,9 +888,9 @@ test('the CLOSED PR reader rejects every invalid external number and head on eve
 // Card #1191's valid external-domain and repository-filter diagnostic guard.
 test('the CLOSED PR reader preserves valid boundary values and ignores malformed identities from other repositories', async () => {
   const valid = [
-    { number: 1, head: '0123456789abcdef0123456789abcdef01234567', base: 'main' },
     { number: 733, head: 'ABCDEF0123456789ABCDEF0123456789ABCDEF01', base: 'release' },
     { number: 9007199254740991, head: 'aBcDeF0123456789aBcDeF0123456789aBcDeF01', base: 'stable' },
+    { number: 1, head: '0123456789abcdef0123456789abcdef01234567', base: 'main' },
   ];
   const foreign = [null, 'someone/rigger'].map((from) => pullNode({ number: null, state: 'CLOSED', head: null, from }));
   for (const closed of [[], valid]) {

@@ -1923,7 +1923,7 @@ test('a deferred judge A is omitted while newly owed B and C run in L2 order', S
   const failure = await built.loop.run().then(() => assert.fail('A’s original refusal must survive'), (failure) => failure);
   assert.equal(refused, 1, 'the later mixed answer omits only deferred A');
   assert.deepEqual(failure.reached.filter(({ judges }) => judges !== undefined).map(({ judges }) => judges.map(({ role }) => role)), [['reviewer'], ['engineer', 'architect']]);
-  assert.deepEqual(built.agent.runs().map(({ role }) => role), ['engineer', 'architect']);
+  assert.deepEqual(built.agent.runs().map(({ role }) => role).sort(), ['architect', 'engineer'], 'both unmatched roles actually start once; OS process-start order is unconstrained');
 });
 
 // Invocation-local deferral binds the original identity rather than every later action of its card.
