@@ -1,7 +1,7 @@
 // ABOUTME: Builds an L3 loop whose sink and clock share one injected time base, over a state
 // directory whose event record a test writes as a stream file, for clock-trigger arming tests.
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import config from '../rigger.config.mjs';
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
@@ -24,7 +24,8 @@ export const line = (at, event, fields = {}) => `${JSON.stringify({ ts: new Date
 /**
  * A loop over the board `cards` makes, with `triggers` declared under `clock`, whose state
  * directory holds `record` as its stream where one is given, and holds no stream where it is not.
- * The sink and L3 read `clock.now`, so every `ts` and every occurrence share one time base. Where
+ * The sink and L3 read `clock.now`, so every `ts` and every occurrence share one time base, and L3
+ * reads the record through a `readRecord` over the state directory, as the verb hands it one. Where
  * `named` is false the sink holds its events until `name()`, so the start finds no stream.
  *
  * `refuse(when, count)` has the sink refuse the next `count` appends, or every one from then on,
@@ -61,6 +62,8 @@ export function armingWorld(clock, { triggers, cards = [], record, named = true,
       };
     },
   };
+  // L3's read of the record over this world's state directory, built as the verb builds it.
+  const readRecord = Object.assign(() => (existsSync(streamPath(directory)) ? readEvents(directory) : []), { stream: streamPath(directory) });
   const fake = boardOf(cards);
   const decide = (card, outcomes, options = {}) => nextAction(card, KINDS, undefined, { roles: settings.roles, provisioning: {}, outcomes, sink, ...options });
   const l2 = columnChanges({ config: settings, sink, items: fake.operations, reads: createFakeRepository().operations });
@@ -76,7 +79,7 @@ export function armingWorld(clock, { triggers, cards = [], record, named = true,
   return {
     directory,
     emitted,
-    loop: loop({ config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2, sink, kill: async () => {}, workspace, judgeDirectory: makingJudgeDirectories(join(scratch, 'judges')), removeDirectories: async () => {}, state: directory, environment: process.env, run: RUN, clock }),
+    loop: loop({ config: settings, board: handleOn(fake), decide, facts: factsOverNothing(settings, decide), l2, sink, kill: async () => {}, workspace, judgeDirectory: makingJudgeDirectories(join(scratch, 'judges')), removeDirectories: async () => {}, state: directory, readRecord, environment: process.env, run: RUN, clock }),
     releaseWorkspaces,
     refuse: (when, count = Infinity) => { refusing = { when, count }; },
     accept: () => { refusing = undefined; },

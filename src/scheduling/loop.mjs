@@ -21,7 +21,6 @@ import { pullOrder } from './pull-order.mjs';
 import { DEFAULT_CONCURRENCY } from '../config/validate.mjs';
 import { schedule } from '../config/validate.mjs';
 import { report as deriveReport } from '../observation/report.mjs';
-import { readEvents, streamPath } from '../observation/sink.mjs';
 import { clockWakes } from './clock.mjs';
 
 /** The states an issue's state read answers. */
@@ -510,25 +509,20 @@ function unlikeEvent(event) {
 }
 
 /**
- * What the record in state directory `state` holds of each clock trigger, by name ("How a clock
- * trigger fires"): the instant of its newest arming, its event's `ts`, with that arming's `interval`
- * and `anchor`; as `fired`, its last firing's occurrence, the newest by occurrence of any outcome,
- * or of a `report` firing found pending; and that pending firing's occurrence as `pending`. A start
- * carrying `after` is a card's, which M7-22b settles. No stream is a record holding no event. A
- * record holding a line that is not one event throws, naming the stream, the line and why.
+ * What the event record holds of each clock trigger, by name ("How a clock trigger fires"), read
+ * through `readRecord`, the verb's read of it: the instant of its newest arming, its event's `ts`,
+ * with that arming's `interval` and `anchor`; as `fired`, its last firing's occurrence, the newest by
+ * occurrence of any outcome, or of a `report` firing found pending; and that pending firing's
+ * occurrence as `pending`. A start carrying `after` is a card's, which M7-22b settles. A record
+ * holding a line that is not one event throws, naming the stream `readRecord.stream`, the line and why.
  */
-function triggerRecord(state) {
-  let events;
-  try { events = readEvents(state); }
-  catch (failure) {
-    if (failure.code !== 'ENOENT') throw failure;
-    events = [];
-  }
+function triggerRecord(readRecord) {
+  const events = readRecord();
   const held = new Map();
   const of = (name) => held.get(name) ?? held.set(name, { fired: -Infinity, starts: new Map() }).get(name);
   for (const [index, event] of events.entries()) {
     const why = unlikeEvent(event);
-    if (why !== undefined) throw new Error(`${streamPath(state)} line ${index + 1} is not a recorded event`, { cause: new Error(why) });
+    if (why !== undefined) throw new Error(`${readRecord.stream ?? 'the event record'} line ${index + 1} is not a recorded event`, { cause: new Error(why) });
     if (event.event === 'trigger.armed') Object.assign(of(event.name), { armed: Date.parse(event.ts), interval: event.interval, anchor: event.anchor });
     if (event.event === 'trigger' && event.trigger === 'clock') of(event.name).starts.set(event.occurrence, event.after === undefined);
     if (event.event !== 'trigger.outcome') continue;
@@ -591,6 +585,9 @@ function triggerRecord(state) {
  * function, `state` not a non-empty string, `environment` not an object, or `run` not a non-empty
  * string. `run` is the invocation's run id, which `recording` drew, and L3 builds its one admission
  * handle over `state` with it and the clock's `now`, so a hold's closer names the run that linked it.
+ * `readRecord` is the verb's read of the event record, handed down as the sink is: it answers the
+ * record's events in order, and its `stream` names the stream. A start under `run` reads it once;
+ * a loop handed none reads the record as holding no event.
  * `sink` is L5's, and L3 writes its own events through it under layer `L3`:
  *
  * - `run.start`, with `concurrency`, the run's N, as a run starts.
@@ -627,7 +624,7 @@ function triggerRecord(state) {
  * the card through that handle on its first `hold` answer, as `holding` says. Where a hold's close
  * rejects, no pull of this loop claims a card after it, and claims already held finish.
  */
-export function loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, environment, run, host, readTimeout, clock }) {
+export function loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, readRecord = () => [], environment, run, host, readTimeout, clock }) {
   let admissionRecord;
   const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, facts, l2, sink, kill, readAdmission: () => admissionRecord.read(), follow: (snapshot) => follow(snapshot), halted: () => unsaved !== undefined });
   const { merge } = lane({ board, facts, l2, record, refused, removeDirectories, clock });
@@ -1455,7 +1452,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         const armings = new Map();
         const started = now();
         let held;
-        try { held = triggerRecord(state); }
+        try { held = triggerRecord(readRecord); }
         catch (failure) {
           clockFailed(new Error(`no clock trigger arms or fires in this run, because the event record could not be read: ${failure.message}${failure.cause ? `: ${failure.cause.message}` : ''}`, { cause: failure }));
           return { armings, started };
@@ -1476,7 +1473,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         // An arming's instant is its event's `ts`, which the record holds once the sink has written it.
         if (fresh.length > 0) {
           let armed;
-          try { armed = triggerRecord(state); } catch { armed = new Map(); }
+          try { armed = triggerRecord(readRecord); } catch { armed = new Map(); }
           const fallback = now();
           for (const name of fresh) armings.get(name).armed = armed.get(name)?.armed ?? fallback;
         }
