@@ -622,3 +622,52 @@ test('S5 table: every column the board accepted is the compared column, however 
   }
 });
 
+/**
+ * Each kind of claim whose attempt makes a workspace, so can stop for a line of work moved or
+ * deleted: `setup` stages the card so L2 answers it that claim, and `cause` is the transition its
+ * claim records, where it moves the card. A person's move back to `restart` ends its skip. Where
+ * `reclaimed` is false, L2 answers the card no claim at the read after its first stop, so the card
+ * is never stopped a second time and is handed to L2 at every read.
+ */
+const LINE_CLAIMS = {
+  'a fresh claim from Ready': { setup: async () => {}, judges: KINDS.change.judges, cause: 'claimed', restart: COLUMNS.ready },
+  'a fresh claim done again from Review': { setup: (here) => here.move(12, COLUMNS.review), judges: KINDS.change.judges, cause: 'redone', restart: COLUMNS.review },
+  'a continuing claim from Review': { setup: (here) => judgedPull(here, COLUMNS.review), judges: ['reviewer'], cause: 'continued', restart: COLUMNS.review },
+  // Left in Coding by its first stop, its owner's marker unread there, L2 answers it no claim.
+  'a continuing claim from Owner': { setup: (here) => judgedPull(here, COLUMNS.owner, true), judges: ['reviewer', 'owner'], cause: 'continuedFromOwner', restart: COLUMNS.owner, reclaimed: false },
+  'a continuing claim from Coding': { setup: (here) => judgedPull(here, COLUMNS.coding), judges: ['reviewer'], cause: undefined, restart: COLUMNS.review },
+};
+
+// R-FAIL-8's row for a line of work moved or deleted, rows S8a to S8c, for every kind of claim that
+// makes a workspace: the first stop re-reads the forge, the second sets the card aside, and a
+// person's move that ends the skip starts the count again.
+// proves R-FAIL-8, R-SCHED-43
+test('S8a S8b S8c table: every claim that makes a workspace is re-read once at a line stop, and counts again after its skip', async (t) => {
+  for (const [claim, { setup, judges, cause, restart, reclaimed = true }] of Object.entries(LINE_CLAIMS)) {
+    for (const code of ['moved', 'deleted']) {
+      await t.test(`${claim}, ${code}`, async (t) => {
+        const here = world(t, { judges, script: () => code });
+        await setup(here);
+        const run = here.start();
+        await busy(run, 1);
+        if (cause !== undefined) assert.ok(here.events().some((event) => event.event === 'transition' && event.cause === cause), `${claim}: L2 answered the claim it names`);
+        const offered = here.offered();
+        for (let each = 0; each < 3; each += 1) await here.poll();
+        if (reclaimed) {
+          assert.equal(here.pulls(), 2, `${claim}, ${code}: the first stop re-reads the forge, and the second sets the card aside`);
+          assert.equal(here.offered(), offered, `${claim}, ${code}: the set-aside card is handed to L2 at no later read`);
+        } else {
+          assert.equal(here.pulls(), 1, `${claim}, ${code}: L2 answers the re-read card no claim`);
+          assert.equal(here.offered(), offered + 3, `${claim}, ${code}: the first stop sets nothing aside, so every read hands the card to L2`);
+        }
+        await here.move(12, restart);
+        await here.poll();
+        await busy(run, 2);
+        for (let each = 0; each < 3; each += 1) await here.poll();
+        assert.equal(here.pulls(), reclaimed ? 4 : 2, reclaimed
+          ? `${claim}, ${code}: after a person's move ends the skip, the count starts again`
+          : `${claim}, ${code}: no skip ended, so the stop after the person's move is the second, and sets the card aside`);
+      });
+    }
+  }
+});
