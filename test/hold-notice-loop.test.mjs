@@ -1551,7 +1551,7 @@ for (const later of ['none', 'readColumns', 'readPriority', 'facts', 'admission'
     const failure = await world.build(make).pull().then(() => assert.fail('the refused opening was accepted'), (error) => error);
     const original = captures.get(world.state).calls.find((call) => call.method === 'open').reason;
     assert.ok(original instanceof Error, 'P6 capture actual admission rejection');
-    assert.ok(failure.errors.includes(original), 'P6 aggregate retains actual admission Error A');
+    assert.ok(Array.isArray(failure.errors) && failure.errors.includes(original), 'P6 aggregate retains actual admission Error A');
     assert.ok(!world.names().includes('hold-a1-issue-12.json'), 'P6 actual closer removed');
     assert.match(onceReads(failure), /admission\.open/);
     if (['readColumns', 'readPriority', 'facts'].includes(later)) assert.ok(failure.errors.includes(world.failures.find(({ name }) => name === later).reason), 'P6 later actual read retained');
