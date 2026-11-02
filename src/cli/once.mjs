@@ -4,13 +4,14 @@
 // board through L0, moves the card through L2, and records through L5. `run` is the same verb with
 // no claim limit, so what the two share is one function here.
 
-import { lstatSync, realpathSync, writeSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync, writeSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 
 import { OWNER, validate, worktreeTopic } from '../config/validate.mjs';
 import { killRecordedGroups } from '../execution/run.mjs';
 import { escalationDirectoryHandle, judgeDirectoryHandle, removeCardDirectories, workspaceHandle } from '../execution/workspace.mjs';
 import { loop } from '../scheduling/loop.mjs';
+import { readEvents, streamPath } from '../observation/sink.mjs';
 import { readSide, repositoryReads } from '../substrate/forge/read.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
 import { factsCall } from '../workflow/facts.mjs';
@@ -282,6 +283,10 @@ async function claiming(verb, limit, opened, {
   const facts = (cards) => factsCall({ config, reads: cards.length === 1 ? cardReads(cards[0].number) : reads, decide })(cards);
   const state = join(named, STATE);
   const kill = () => killRecordedGroups({ directory: state, sink, host, readTimeout });
+  // L3's read of the event record, handed down as the sink is: its events in order, none where no
+  // stream exists yet, as `report` reads it, and otherwise what `readEvents` throws. `stream`
+  // names the stream, so L3 can name the line it refuses.
+  const readRecord = Object.assign(() => (existsSync(streamPath(state)) ? readEvents(state) : []), { stream: streamPath(state) });
   const { project } = config.board;
   // One line for each card that reached its maker, or that was pulled for its judges alone, each
   // followed by a line for each of its judges, then one for each failure of L2's settle that was
@@ -449,7 +454,7 @@ async function claiming(verb, limit, opened, {
   // The verb hands L3 the process's own environment, which L3 hands every dispatch it makes
   // (the architect's ruling 2, P7, on #467), and no maker: L3 dispatches it through L1.
   const [settledRun] = await Promise.allSettled([(async () => {
-    const l3 = loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, environment: process.env, run: opened.run, clock });
+    const l3 = loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, readRecord, environment: process.env, run: opened.run, clock });
     return verb === 'run' ? l3.run({ singlePull: true, handOver, stop }) : l3.pull(limit);
   })()]);
   if (handedCode === undefined) return rendered(settledRun);
