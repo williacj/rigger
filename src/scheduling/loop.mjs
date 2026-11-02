@@ -19,6 +19,7 @@ import { admission, admissionPath, admissions } from './admission.mjs';
 import { lane } from './lane.mjs';
 import { pullOrder } from './pull-order.mjs';
 import { DEFAULT_CONCURRENCY } from '../config/validate.mjs';
+import { schedule } from '../config/validate.mjs';
 import { report as deriveReport } from '../observation/report.mjs';
 import { clockWakes } from './clock.mjs';
 
@@ -464,6 +465,82 @@ function released(release, claim, failure) {
 }
 
 /**
+ * An instant as the sink writes one: ISO 8601 in UTC, exactly as `toISOString` spells it, the
+ * six-digit years past 9999 included ("The envelope").
+ */
+const instant = (value) => typeof value === 'string' && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value;
+const named = (value) => typeof value === 'string' && value !== '';
+const whole = (least) => (value) => Number.isSafeInteger(value) && value >= least;
+/** Whether the arming `event` holds a schedule whose `key` the config's validator admits, as L3 records it from that config. */
+const admits = (key) => (value, event) => !schedule(event, 0).refusals.some((refusal) => refusal.key === key);
+
+/**
+ * The fields each kind of clock event the start reads must hold, each with its check, given the
+ * field and the event: exactly what L3 records from any config the validator admits. A trigger's
+ * name is any key of the config, the empty string included; an arming's schedule is one `schedule`
+ * admits; a firing's start, whose `after` only a card's carries, and an outcome name an occurrence
+ * ("How a clock trigger fires").
+ */
+const CLOCK_EVENTS = {
+  'trigger.armed': { name: (value) => typeof value === 'string', interval: admits('interval'), anchor: admits('anchor') },
+  clock: { name: (value) => typeof value === 'string', occurrence: instant, after: (value) => value === undefined || whole(0)(value) },
+  'trigger.outcome': { name: (value) => typeof value === 'string', occurrence: instant, outcome: (value) => ['job', 'failed', 'abandoned', 'card'].includes(value) },
+};
+
+/**
+ * Why `event`, read from the record, is not one event as this start reads it, or undefined where
+ * it is one. Every event holds the envelope: an instant as `ts`, a `run`, a layer and an `event`,
+ * and a `trigger` names its trigger. A clock event is L3's, and holds its kind's fields, a card
+ * outcome naming its issue. This is the one place the start decides what a recorded event is.
+ */
+function unlikeEvent(event) {
+  if (event === null || typeof event !== 'object' || Array.isArray(event)) return `it parses to ${JSON.stringify(event)}, not to an object`;
+  if (!instant(event.ts)) return `its \`ts\` is ${JSON.stringify(event.ts) ?? 'missing'}, not an instant in UTC`;
+  if (!named(event.run) || typeof event.layer !== 'string' || !/^L[0-5]$/.test(event.layer) || !named(event.event)) return 'its envelope names no run, layer or event';
+  if (event.event === 'trigger' && !named(event.trigger)) return 'it is a trigger naming no trigger';
+  const kind = event.event === 'trigger' ? (event.trigger === 'clock' ? 'clock' : undefined)
+    : (event.event === 'trigger.armed' || event.event === 'trigger.outcome' ? event.event : undefined);
+  if (kind === undefined) return undefined;
+  const fields = CLOCK_EVENTS[kind];
+  if (event.layer !== 'L3') return `it is a clock event, which only L3 records, from ${event.layer}`;
+  for (const [field, holds] of Object.entries(fields)) if (!holds(event[field], event)) return `its \`${field}\` is ${JSON.stringify(event[field]) ?? 'missing'}`;
+  if (event.outcome === 'card' && !whole(1)(event.issue)) return 'it is a card outcome naming no issue';
+  return undefined;
+}
+
+/**
+ * What the event record holds of each clock trigger, by name ("How a clock trigger fires"), read
+ * through `readRecord`, the verb's read of it: the instant of its newest arming, its event's `ts`,
+ * with that arming's `interval` and `anchor`; as `fired`, its last firing's occurrence, the newest by
+ * occurrence of any outcome, or of a `report` firing found pending; and that pending firing's
+ * occurrence as `pending`. A start carrying `after` is a card's, which M7-22b settles. A record
+ * holding a line that is not one event throws, naming the stream `readRecord.stream`, the line and why.
+ */
+function triggerRecord(readRecord) {
+  const events = readRecord();
+  const held = new Map();
+  const of = (name) => held.get(name) ?? held.set(name, { fired: -Infinity, starts: new Map() }).get(name);
+  for (const [index, event] of events.entries()) {
+    const why = unlikeEvent(event);
+    if (why !== undefined) throw new Error(`${readRecord.stream ?? 'the event record'} line ${index + 1} is not a recorded event`, { cause: new Error(why) });
+    if (event.event === 'trigger.armed') Object.assign(of(event.name), { armed: Date.parse(event.ts), interval: event.interval, anchor: event.anchor });
+    if (event.event === 'trigger' && event.trigger === 'clock') of(event.name).starts.set(event.occurrence, event.after === undefined);
+    if (event.event !== 'trigger.outcome') continue;
+    const trigger = of(event.name);
+    trigger.fired = Math.max(trigger.fired, Date.parse(event.occurrence));
+    trigger.starts.delete(event.occurrence);
+  }
+  for (const trigger of held.values()) {
+    for (const [occurrence, report] of trigger.starts) {
+      if (!report) continue;
+      trigger.pending = occurrence;
+      trigger.fired = Math.max(trigger.fired, Date.parse(occurrence));
+    }
+  }
+  return held;
+}
+
+/**
  * L3's dispatching entry point, over the board `config` names.
  *
  * `board` is L0's handle on it, the forge adapter's read side: `readColumns()` answers the
@@ -508,6 +585,9 @@ function released(release, claim, failure) {
  * function, `state` not a non-empty string, `environment` not an object, or `run` not a non-empty
  * string. `run` is the invocation's run id, which `recording` drew, and L3 builds its one admission
  * handle over `state` with it and the clock's `now`, so a hold's closer names the run that linked it.
+ * `readRecord` is the verb's read of the event record, handed down as the sink is: it answers the
+ * record's events in order, and its `stream` names the stream. A start under `run` reads it once;
+ * a loop handed none reads the record as holding no event.
  * `sink` is L5's, and L3 writes its own events through it under layer `L3`:
  *
  * - `run.start`, with `concurrency`, the run's N, as a run starts.
@@ -544,7 +624,7 @@ function released(release, claim, failure) {
  * the card through that handle on its first `hold` answer, as `holding` says. Where a hold's close
  * rejects, no pull of this loop claims a card after it, and claims already held finish.
  */
-export function loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, environment, run, host, readTimeout, clock }) {
+export function loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, readRecord = () => [], environment, run, host, readTimeout, clock }) {
   let admissionRecord;
   const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, facts, l2, sink, kill, readAdmission: () => admissionRecord.read(), follow: (snapshot) => follow(snapshot), halted: () => unsaved !== undefined });
   const { merge } = lane({ board, facts, l2, record, refused, removeDirectories, clock });
@@ -1350,16 +1430,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     run: async ({ singlePull = false, handOver = () => {}, stop } = {}) => {
       // A trigger of any shape keeps `run` up; this is the one place that decides it.
       const kept = Object.keys(config.clock?.triggers ?? {}).length > 0;
-      if (singlePull && !kept) return trigger();
       await killed();
-      record('run.start', { concurrency });
-      idle = false;
-      const failures = [];
-      const reached = [];
-      const notices = [];
-      const excluded = new Set();
       const pending = new Map();
-      let closed;
       const clockFailed = (failure) => handOver({ failure });
       const settlePending = () => {
         for (const [name, at] of pending) {
@@ -1371,6 +1443,56 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
           pending.delete(name);
         }
       };
+      /**
+       * The start's read of the record, whatever the clock declares: it arms each declared trigger
+       * and settles each `report` firing found pending, answering each armed trigger's `{ armed,
+       * fired }` for the clock, and the instant the start read the record as `started`.
+       */
+      const starting = () => {
+        const armings = new Map();
+        const started = now();
+        let held;
+        try { held = triggerRecord(readRecord); }
+        catch (failure) {
+          clockFailed(new Error(`no clock trigger arms or fires in this run, because the event record could not be read: ${failure.message}${failure.cause ? `: ${failure.cause.message}` : ''}`, { cause: failure }));
+          return { armings, started };
+        }
+        const fresh = [];
+        for (const [name, { interval, anchor }] of Object.entries(config.clock?.triggers ?? {})) {
+          const was = held.get(name) ?? { fired: -Infinity };
+          if (was.armed === undefined || was.interval !== interval || was.anchor !== anchor) {
+            try { record('trigger.armed', { name, interval, anchor }); }
+            catch (refusal) {
+              clockFailed(refused(`clock trigger ${name} fires nothing in this run, because the event sink refused its arming`, refusal));
+              continue;
+            }
+            fresh.push(name);
+          }
+          armings.set(name, { armed: was.armed, fired: was.fired });
+        }
+        // An arming's instant is its event's `ts`, which the record holds once the sink has written it.
+        if (fresh.length > 0) {
+          let armed;
+          try { armed = triggerRecord(readRecord); } catch { armed = new Map(); }
+          const fallback = now();
+          for (const name of fresh) armings.get(name).armed = armed.get(name)?.armed ?? fallback;
+        }
+        for (const [name, { pending: at }] of held) if (at !== undefined) pending.set(name, at);
+        settlePending();
+        return { armings, started };
+      };
+      if (singlePull && !kept) {
+        starting();
+        return trigger(() => {}, undefined, undefined, settlePending);
+      }
+      record('run.start', { concurrency });
+      idle = false;
+      const failures = [];
+      const reached = [];
+      const notices = [];
+      const excluded = new Set();
+      let closed;
+      const atStart = starting();
       /** One report occurrence's firing, answering whether it settled the occurrence. */
       const fireOccurrence = ({ name, occurrence }) => {
         const at = new Date(occurrence).toISOString();
@@ -1470,7 +1592,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
           else if (going) wakes.poll();
         });
       });
-      const wakes = clockWakes(config.clock, clock, { fire: fireOccurrence, polled });
+      const wakes = clockWakes(config.clock, clock, { fire: fireOccurrence, polled }, atStart);
       const stopped = () => {
         wakes.stop();
         if (flying === 0) finish();
@@ -1478,6 +1600,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       try {
         stop?.addEventListener('abort', stopped, { once: true });
         if (stop?.aborted) stopped();
+        await wakes.started;
         pulled().then((going) => { if (going) wakes.poll(); });
         await finished;
         return ended();
