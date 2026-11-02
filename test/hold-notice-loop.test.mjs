@@ -1964,11 +1964,27 @@ test('controlled notice carriers retain made actions and refused events', async 
   }
 });
 
+import moduleForObserverCheck from 'node:module';
+
 // Infrastructure evidence for r4's observer isolation; no product requirement claim.
-test('the admission observer releases captures and leaves canonical imports and the suite guard alone', async () => {
-  let released;
+test('the admission observer releases captures and leaves canonical imports and the suite guard alone', async (t) => {
+  const actualRegister = moduleForObserverCheck.registerHooks;
+  const registrations = [];
+  moduleForObserverCheck.registerHooks = (options) => {
+    assert.deepEqual(Object.keys(options), ['resolve'], 'observer installs no load hook');
+    const hook = actualRegister(options);
+    const record = { deregistered: false };
+    registrations.push(record);
+    return { deregister() { record.deregistered = true; hook.deregister(); } };
+  };
+  syncBuiltinESMExports();
+  t.after(() => { moduleForObserverCheck.registerHooks = actualRegister; syncBuiltinESMExports(); });
+  await import('./loop-admission-observer.mjs?inert-import');
+  assert.equal(registrations.length, 0, 'importing the helper installs no hook');
+  let released, expiredMake;
   await withObservedAdmission(async (make, captures) => {
-    released = captures;
+    released = captures; expiredMake = make;
+    assert.equal(registrations.at(-1).deregistered, true, 'hook is deregistered before use begins');
     const observed = handles({ cards: [], clock: { now: () => 1, pause: async () => {} } });
     await make(observed).pull();
     assert.ok(captures.has(observed.state), 'one tagged loop edge is observed');
@@ -1984,11 +2000,13 @@ test('the admission observer releases captures and leaves canonical imports and 
     assert.throws(() => spawnSync('/bin/echo', ['observer guard tripwire']), /deterministic tier.*cannot start/, 'normal suite guard still refuses a non-git\/tar start');
   });
   assert.equal(released.size, 0, 'successful invocation releases captures');
+  assert.throws(() => expiredMake(handles({ cards: [] })), /observation has ended/, 'expired invocation state is released');
   const sentinel = new Error('observer callback refusal');
   let refused;
   await assert.rejects(withObservedAdmission(async (_make, captures) => { refused = captures; captures.set('test-owned sentinel', {}); throw sentinel; }), (failure) => failure === sentinel);
   assert.equal(refused.size, 0, 'failed invocation releases captures');
   await withObservedAdmission(async (_make, captures) => { assert.notStrictEqual(captures, released); assert.equal(captures.size, 0, 'next invocation starts empty'); });
+  assert.ok(registrations.every(({ deregistered }) => deregistered), 'every installed hook is deregistered');
 });
 
 // proves R-SCHED-23
