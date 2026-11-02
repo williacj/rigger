@@ -214,12 +214,16 @@ export function columnChanges({
       const issue = await firstAbove(after, { ...supplied, readNewestNumber: async () => Math.max(floor, await supplied.readNewestNumber()) },
         (candidate) => carriesClockMark(candidate.body, name, occurrence));
       if (issue === undefined) return template === undefined ? undefined : openClockCard(name, occurrence, template);
-      if (issue.state === 'open') {
-        const item = (await board.readItems()).find((each) => each.number === issue.number);
-        if (item?.column == null) {
-          const id = item?.id ?? await items.addIssue(issue.number, sink.emitter({ layer: 'L0', card: issue.number }));
-          await change({ number: issue.number, id }, 'created');
+      try {
+        if (issue.state === 'open') {
+          const item = (await board.readItems()).find((each) => each.number === issue.number);
+          if (item?.column == null) {
+            const id = item?.id ?? await items.addIssue(issue.number, sink.emitter({ layer: 'L0', card: issue.number }));
+            await change({ number: issue.number, id }, 'created');
+          }
         }
+      } catch (failure) {
+        throw Object.assign(failure, { issue: issue.number });
       }
       return issue.number;
     },

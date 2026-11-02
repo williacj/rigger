@@ -1436,6 +1436,9 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       await killed();
       const pending = new Map();
       const clockFailed = (failure) => handOver({ failure });
+      const rememberIssue = (firing, issue) => {
+        if (issue !== undefined) firing.issue = Math.max(firing.issue ?? 0, issue);
+      };
       const clockOutcome = (name, firing, outcome, issue) => {
         record('trigger.outcome', { name, occurrence: firing.occurrence, outcome, ...(issue === undefined ? {} : { issue }) });
         pending.delete(name);
@@ -1455,21 +1458,36 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
             const template = firing.rearmed ? undefined : config.clock?.triggers?.[name]?.card;
             const issue = firing.after === undefined ? undefined
               : await l2.clockCardAfter(name, Date.parse(firing.occurrence), firing.after, template, firing.issue);
+            rememberIssue(firing, issue);
             clockOutcome(name, firing, issue === undefined ? 'abandoned' : 'card', issue);
           } catch (failure) {
-            firing.issue ??= failure.issue;
+            rememberIssue(firing, failure.issue);
             clockFailed(new Error(`clock trigger ${name} at ${firing.occurrence} stayed pending: ${failure.message}`, { cause: failure }));
           }
         }
       };
       // Pulls can arrive while a firing awaits the forge. Neither scans nor firings may overlap it.
-      let clockWork = Promise.resolve();
+      let clockWork;
       const serialized = (act) => {
-        const next = clockWork.then(act);
-        clockWork = next.catch(() => {});
+        const next = clockWork === undefined ? act() : clockWork.then(act);
+        const done = next.catch(() => {});
+        clockWork = done;
+        done.then(() => { if (clockWork === done) clockWork = undefined; });
         return next;
       };
-      const settlePending = () => serialized(settleFirings);
+      let settlementQueued = false;
+      let settlement;
+      const settlePending = () => {
+        if (pending.size === 0) return;
+        if (!settlementQueued) {
+          settlementQueued = true;
+          settlement = serialized(async () => {
+            settlementQueued = false;
+            await settleFirings();
+          });
+        }
+        return kept ? undefined : settlement;
+      };
       /**
        * The start's read of the record, whatever the clock declares: it arms each declared trigger
        * and settles each `report` firing found pending, answering each armed trigger's `{ armed,
@@ -1523,7 +1541,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       /** One occurrence's firing, answering whether it settled the occurrence. */
       const fireOccurrence = ({ name, occurrence }) => serialized(async () => {
         const at = new Date(occurrence).toISOString();
-        await settleFirings();
+        if (pending.size > 0) await settleFirings();
         if (pending.has(name)) return false;
         const template = config.clock.triggers[name].card;
         let after;
@@ -1542,10 +1560,10 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
           pending.set(name, firing);
           try {
             const issue = await l2.openClockCard(name, occurrence, template);
-            firing.issue = issue;
+            rememberIssue(firing, issue);
             clockOutcome(name, firing, 'card', issue);
           } catch (failure) {
-            firing.issue ??= failure.issue;
+            rememberIssue(firing, failure.issue);
             clockFailed(new Error(`clock trigger ${name} at ${at} stayed pending: ${failure.message}`, { cause: failure }));
           }
           return true;
@@ -1648,8 +1666,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       try {
         stop?.addEventListener('abort', stopped, { once: true });
         if (stop?.aborted) stopped();
-        await wakes.started;
         pulled().then((going) => { if (going) wakes.poll(); });
+        await wakes.started;
         await finished;
         return ended();
       } finally {

@@ -525,3 +525,182 @@ test('B8a: opening and board-add failures block the next occurrence until the pe
     } finally { await run.stop(); }
   });
 });
+
+// Judge probe: recovery must retain the issue it just opened when its outcome is refused.
+test('architect probe: a recovery opening retains its issue floor after outcome refusal', async () => {
+  const world = recovering();
+  const open = world.writes.openIssue;
+  world.writes.openIssue = async (...args) => { const number = await open(...args); world.reads.readNewestNumber = async () => 0; return number; };
+  let refuseOnce = true;
+  world.refuseEvents(({ event }) => {
+    if (event !== 'trigger.outcome' || !refuseOnce) return false;
+    refuseOnce = false;
+    return true;
+  });
+  const run = await world.start();
+  try {
+    assert.equal(world.fake.issues.filter(({ body }) => body.startsWith(MARK + '\n')).length, 1,
+      'an outcome refusal after recovery opened issue #1 must not produce issue #2 at the next same-run scan');
+  } finally { await run.stop(); }
+});
+
+// A known occurrence issue must survive every later failure before the outcome is recorded.
+test('F1: every known issue remains the scan floor through refused and successful later steps', async (t) => {
+  for (const origin of ['fresh', 'recovery']) for (const discovery of ['opened', 'found', 'placed', 'closed']) {
+    const steps = discovery === 'opened' ? ['addIssue', 'made addIssue', 'moveItem', 'made moveItem', 'transition', 'outcome']
+      : discovery === 'found' ? ['readItems', 'addIssue', 'made addIssue', 'moveItem', 'made moveItem', 'transition', 'outcome'] : ['outcome'];
+    for (const step of steps) await t.test(`${origin} ${discovery} ${step}`, async () => {
+      const trigger = RECOVERY;
+      const found = discovery !== 'opened';
+      const issue = marked(1, discovery === 'closed' ? { state: 'closed' } : {});
+      const items = discovery === 'placed' ? [{ id: 'item-1', number: 1, column: 'Coding' }] : [];
+      const world = origin === 'recovery' ? recovering({ issues: found ? [issue] : [], items })
+        : firingWorld({ triggers: { hourly: trigger } });
+      let blocked = true;
+      let refused = 0;
+      let zeroReads = 0;
+      let known = false;
+      const lagging = () => { world.reads.readNewestNumber = async () => { zeroReads += 1; return 0; }; };
+      const read = world.reads.readIssue;
+      world.reads.readIssue = async (...args) => { const answer = await read(...args); if (answer !== null) { known = true; lagging(); } return answer; };
+      const open = world.writes.openIssue;
+      let opening = true;
+      world.writes.openIssue = async (...args) => {
+        const number = await open(...args);
+        known = true;
+        lagging();
+        if (origin === 'fresh' && found && opening) {
+          opening = false;
+          if (discovery === 'placed') world.fake.onBoard.push({ id: 'item-1', number, column: 'Coding' });
+          Object.assign(world.fake.issues.find(each => each.number === number), discovery === 'closed' ? { state: 'closed' } : {});
+          throw madeFailure('the fresh opening was made', number);
+        }
+        return number;
+      };
+      if (step === 'readItems') {
+        const readItems = world.fake.board.readItems;
+        world.fake.board.readItems = async (...args) => { if (blocked && known) { refused += 1; throw new Error('refused known issue readItems'); } return readItems(...args); };
+      } else if (['addIssue', 'made addIssue', 'moveItem', 'made moveItem'].includes(step)) {
+        const operation = step.split(' ').at(-1);
+        const write = world.fake.items[operation];
+        world.fake.items[operation] = async (...args) => {
+          if (!blocked || !known) return write(...args);
+          refused += 1;
+          if (step.startsWith('made ')) throw madeFailure('refused known issue ' + step, await write(...args));
+          throw new Error('refused known issue ' + step);
+        };
+      }
+      world.refuseEvents(({ event }) => {
+        if (event === 'transition' && step === 'transition' && blocked) { refused += 1; return true; }
+        if (event === 'trigger.outcome') { if (step === 'outcome') refused += 1; return true; }
+        return false;
+      });
+      let run;
+      const count = () => world.fake.issues.filter(({ body }) => body.startsWith(MARK + '\n')).length;
+      try {
+        run = await world.start();
+        if (origin === 'fresh') await world.clock.advance(START + 123);
+        await world.clock.advance(START + 1500);
+        assert.ok(refused > 0, 'the post-success step reached its refused phase');
+        assert.equal(count(), 1, 'a refused step after knowing the issue must not create another marked card');
+        blocked = false;
+        await world.clock.advance(START + 2500);
+        assert.equal(count(), 1, 'successful placement followed by a refused outcome keeps the same issue');
+        assert.deepEqual(outcomes(world), [], 'the outcome remains refused after its earlier steps succeed');
+        assert.ok(zeroReads > 0, 'later scans actually receive a lagging newest-number answer of zero');
+        world.accept();
+        await world.clock.advance(START + 3500);
+        assert.equal(count(), 1, 'the succeeding outcome still names the only marked card');
+        assert.deepEqual(outcomes(world).map(({ issue }) => issue), [1]);
+      } finally { await run?.stop(); }
+    });
+  }
+});
+
+// Judge probe: a firing must not hold up the next freed-slot pull.
+test('architect probe: an asynchronous card firing does not hold back a freed-slot pull', async (t) => {
+  const world = firingWorld({ context: t, admitted: true, hold: [10, 20],
+    issues: [{ number: 10, title: 'Existing work', body: '## Acceptance\n\n- The widget turns blue.\n', labels: ['type:change'] },
+      { number: 20, title: 'Waiting work', body: '## Acceptance\n\n- The widget turns green.\n', labels: ['type:change'] }],
+    items: [{ number: 10, id: 'item-10', column: 'Ready' }] });
+  const run = await world.start();
+  await until(() => world.held.has(10));
+  const open = world.writes.openIssue;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let entered = false;
+  world.writes.openIssue = async (...args) => { entered = true; await gate; return open(...args); };
+  const advanced = world.clock.advance(START + 1000);
+  try {
+    await until(() => entered);
+    world.fake.onBoard.push({ number: 20, id: 'item-20', column: 'Ready' });
+    const before = world.events().filter(e => e.event === 'trigger' && e.trigger === 'pull').length;
+    world.held.get(10)();
+    world.held.delete(10);
+    await until(() => world.events().some(e => e.event === 'slot.release' && e.card === 10));
+    await new Promise(resolve => setImmediate(resolve));
+    const claimedBeforeRelease = world.events().some(e => e.event === 'pull' && e.card === 20);
+    t.diagnostic(JSON.stringify({ openingStillHeld: true, pulls: world.events().filter(e => e.event === 'pull').map(e => e.card),
+      triggerPulls: world.events().filter(e => e.event === 'trigger' && e.trigger === 'pull').length,
+      waitingColumn: world.fake.onBoard.find(e => e.number === 20).column }));
+    release();
+    await advanced;
+    await until(() => world.held.has(20));
+    t.diagnostic('after releasing the clock opening, the same freed-slot pull claims card #20');
+    assert.ok(claimedBeforeRelease, 'the freed-slot pull must claim existing Ready card #20 before the unrelated clock opening completes');
+  } finally { release(); await advanced; await run.stop(); }
+});
+
+
+// A forge opening may wait; a pull, poll and drain must make progress before that wait ends.
+test('F2: a gated clock opening holds back neither a freed-slot pull, a poll nor a drain', async (t) => {
+  for (const occasion of ['freed-slot pull', 'poll', 'drain']) await t.test(occasion, async (t) => {
+    const existing = number => ({ number, title: 'Existing work', body: '## Acceptance\n\n- The widget turns blue.\n', labels: ['type:change'] });
+    const world = occasion === 'freed-slot pull' ? firingWorld({ context: t, admitted: true, hold: [10, 20],
+      issues: [existing(10), existing(20)], items: [{ number: 10, id: 'item-10', column: 'Ready' }] })
+      : occasion === 'drain' ? firingWorld({ clock: manualClock(START + 500), triggers: { hourly: { ...RECOVERY, catchUp: 'fire' } },
+        record: line(START, 'trigger.armed', { name: 'hourly', interval: RECOVERY.interval, anchor: RECOVERY.anchor }) }) : firingWorld();
+    const open = world.writes.openIssue;
+    let release;
+    let entered = false;
+    let released = false;
+    const gate = new Promise(resolve => { release = () => { released = true; resolve(); }; });
+    world.writes.openIssue = async (...args) => { entered = true; await gate; return open(...args); };
+    let run;
+    let starting;
+    let advanced;
+    try {
+      if (occasion === 'drain') starting = world.start();
+      else {
+        run = await world.start();
+        if (occasion === 'freed-slot pull') await until(() => world.held.has(10));
+        advanced = world.clock.advance(START + 1000);
+      }
+      await until(() => entered);
+      if (occasion === 'freed-slot pull') {
+        world.fake.onBoard.push({ number: 20, id: 'item-20', column: 'Ready' });
+        world.held.get(10)();
+        world.held.delete(10);
+        await until(() => world.events().some(({ event, card }) => event === 'slot.release' && card === 10));
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(released, false, 'the checkpoint precedes releasing the opening');
+        assert.ok(world.events().some(({ event, card }) => event === 'pull' && card === 20), 'the freed slot claims existing Ready work while the opening is held');
+      } else if (occasion === 'poll') {
+        const before = world.events().filter(({ event, trigger }) => event === 'trigger' && trigger === 'pull').length;
+        await world.clock.advance(START + 2000);
+        assert.equal(released, false, 'the checkpoint precedes releasing the opening');
+        assert.ok(world.events().filter(({ event, trigger }) => event === 'trigger' && trigger === 'pull').length > before, 'the next poll completes while the opening is held');
+      } else {
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(released, false, 'the checkpoint precedes releasing the opening');
+        assert.ok(world.events().some(({ event, trigger }) => event === 'trigger' && trigger === 'drain'), 'the initial drain is recorded while the catch-up opening is held');
+      }
+      assert.deepEqual(outcomes(world), [], 'the firing has not completed at the checkpoint');
+    } finally {
+      release();
+      await advanced;
+      run ??= await starting;
+      await run?.stop();
+    }
+  });
+});
