@@ -894,10 +894,11 @@ test('B20 B24: every report catch-up precedes the first pull while unrelated car
     const name = retained ? 'sleeping' : 'gone';
     const record = line(START, 'trigger.armed', { name: 'daily', interval: 1000, anchor: at(START) })
       + line(START, 'trigger.armed', { name: 'dawn', interval: 1500, anchor: at(START) })
+      + line(START, 'trigger.armed', { name: 'noon', interval: 2000, anchor: at(START) })
       + line(START, 'trigger.armed', { name, interval: sleeping.interval, anchor: sleeping.anchor })
       + line(START + 500, 'trigger', { trigger: 'clock', name, occurrence: at(START + 500), after: 0 });
     const world = firingWorld({ clock: manualClock(START + 5500), record,
-      triggers: { daily: REPORT, dawn: { ...REPORT, interval: 1500 }, ...(retained && { sleeping }) } });
+      triggers: { daily: REPORT, dawn: { ...REPORT, interval: 1500 }, noon: { ...REPORT, interval: 2000 }, ...(retained && { sleeping }) } });
     let release;
     let entered = false;
     let released = false;
@@ -909,7 +910,7 @@ test('B20 B24: every report catch-up precedes the first pull while unrelated car
       run = await world.start();
       await until(() => entered);
       assert.equal(released, false, 'recovery is still held at the checkpoint');
-      assert.deepEqual(runTriggers(world, 'r-clock-1').slice(0, 3), ['clock:dawn', 'clock:daily', 'pull'],
+      assert.deepEqual(runTriggers(world, 'r-clock-1').slice(0, 4), ['clock:noon', 'clock:dawn', 'clock:daily', 'pull'],
         'all report catch-ups precede the first pull, even with a declared card whose occurrence is not due');
       assert.ok(runTriggers(world, 'r-clock-1').includes('drain'), 'the first pull drains without waiting for pending card recovery');
     } finally { release(); await run?.stop(); }
