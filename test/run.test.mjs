@@ -793,3 +793,22 @@ test('a no-clock real-bin run retains nested failed and successful pull outcomes
   assert.equal(outcomes[3], 'rigger run: card #20 moved to owner', ran.err);
   assert.equal(lines.filter((line) => line.includes('nested release record refused')).length, 1, ran.err);
 });
+
+// Once keeps its literal single-card boundary even when run would drain the four-card board.
+// proves R-SCHED-2, R-SCHED-6
+test('real-bin once at N three with four Ready cards fires one pull claims one card and records no run.start', SETTLES_WITHIN, async () => {
+  const consumer = consumerRepository(3);
+  const dir = temporaryDirectory('rigger-once-four-gh-');
+  const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, ...FOUR_READY } });
+  const agent = installAgentCli(dir);
+  const ran = spawnSync(process.execPath, [bin, 'once'], { cwd: consumer, encoding: 'utf8', timeout: SETTLES_WITHIN.timeout,
+    env: { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), PATH: [dir, process.env.PATH].join(delimiter) },
+  });
+  assert.equal(ran.error, undefined);
+  const events = readEvents(join(consumer, '.rigger')).filter(({ layer }) => layer === 'L3');
+  assert.deepEqual(events.filter(({ event }) => event === 'trigger').map(({ trigger }) => trigger), ['pull']);
+  assert.deepEqual(events.filter(({ event }) => event === 'pull').map(({ card }) => card), [10]);
+  assert.equal(events.filter(({ event }) => event === 'run.start').length, 0);
+  assert.equal(agent.runs().length, 1);
+  assert.deepEqual((await (await fake.model()).operations.readItems()).map(({ number, column }) => [number, column]).sort((a, b) => a[0] - b[0]), [[10, 'Coding'], [20, 'Ready'], [30, 'Ready'], [40, 'Ready']]);
+});
