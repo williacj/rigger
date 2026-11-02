@@ -781,7 +781,7 @@ function recoveryWorld(t, { madeMove = () => false, refuseMove = () => false, re
 // R-SCHED-43 row S5 at a move no claim makes: recovery's `created` move of a pending firing's card
 // that this run already set aside. The column the board accepted is the compared column, whether
 // the move answered or rejected after the board took it, and the pull stays independent of the
-// firing. A move the board refused leaves the card off every column, so L2 is offered nothing.
+// firing. A move the board refused leaves the compared column where the claim left it.
 // proves R-SCHED-43
 test('S5 recovery: a card this run set aside keeps the column recovery placed it in as its compared column', async (t) => {
   const created = (event, fields) => event === 'transition' && fields.cause === 'created';
@@ -803,10 +803,13 @@ test('S5 recovery: a card this run set aside keeps the column recovery placed it
       here.recovery.open();
       await positive(() => here.events().some((event) => event.event === 'trigger.outcome' && event.name === 'gone') || here.handed.some((answer) => answer.failure));
       assert.equal(here.fake.onBoard[0]?.column ?? null, placed ? here.columns.ready : null, `${end}: the board holds the card ${placed ? 'in Ready' : 'in no column'}`);
+      // Where the board refused the move, a person puts the card back in Coding before any read,
+      // so every read finds it in the column its claim left it in, its compared column still.
+      if (!placed) here.fake.onBoard[0].column = here.columns.coding;
+      const compared = placed ? 'Ready, the column recovery placed it in' : 'Coding, the column the refused move left its compared column at';
       for (let each = 0; each < 3; each += 1) await here.clock.advance(here.clock.now() + POLL);
       assert.equal(here.pulls(), 1, `${end}: reads after recovery claim the card no second time`);
-      if (!placed) return;
-      assert.equal(here.offered(), offered, `${end}: reads finding the card in Ready, the column recovery placed it in, keep its skip`);
+      assert.equal(here.offered(), offered, `${end}: reads finding the card in ${compared} keep its skip`);
       // A person's move to Review ends the skip at the next read.
       here.fake.onBoard[0].column = here.columns.review;
       await here.clock.advance(here.clock.now() + POLL);
