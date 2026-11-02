@@ -1434,6 +1434,10 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       // A trigger of any shape keeps `run` up; this is the one place that decides it.
       const kept = Object.keys(config.clock?.triggers ?? {}).length > 0;
       await killed();
+      if (stop?.aborted) return [];
+      let clockStopped = false;
+      const ending = () => clockStopped || unsaved !== undefined || stop?.aborted === true;
+      const active = () => !ending();
       const pending = new Map();
       const clockFailed = (failure) => handOver({ failure });
       const rememberIssue = (firing, issue) => {
@@ -1454,11 +1458,13 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       };
       const settleFirings = async () => {
         for (const [name, firing] of pending) {
+          if (ending()) return;
           try {
             const template = firing.rearmed ? undefined : config.clock?.triggers?.[name]?.card;
             const issue = firing.after === undefined ? undefined
-              : await l2.clockCardAfter(name, Date.parse(firing.occurrence), firing.after, template, firing.issue);
+              : await l2.clockCardAfter(name, Date.parse(firing.occurrence), firing.after, template, firing.issue, active);
             rememberIssue(firing, issue);
+            if (ending()) return;
             clockOutcome(name, firing, issue === undefined ? 'abandoned' : 'card', issue);
           } catch (failure) {
             rememberIssue(firing, failure.issue);
@@ -1469,7 +1475,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       // Pulls can arrive while a firing awaits the forge. Neither scans nor firings may overlap it.
       let clockWork;
       const serialized = (act) => {
-        const next = clockWork === undefined ? act() : clockWork.then(act);
+        const guarded = () => ending() ? undefined : act();
+        const next = clockWork === undefined ? Promise.resolve(guarded()) : clockWork.then(guarded);
         const done = next.catch(() => {});
         clockWork = done;
         done.then(() => { if (clockWork === done) clockWork = undefined; });
@@ -1478,7 +1485,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       let settlementQueued = false;
       let settlement;
       const settlePending = () => {
-        if (pending.size === 0) return;
+        if (ending() || pending.size === 0) return;
         if (!settlementQueued) {
           settlementQueued = true;
           settlement = serialized(async () => {
@@ -1542,7 +1549,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       const fireOccurrence = ({ name, occurrence }) => serialized(async () => {
         const at = new Date(occurrence).toISOString();
         if (pending.size > 0) await settleFirings();
-        if (pending.has(name)) return false;
+        if (ending() || pending.has(name)) return false;
         const template = config.clock.triggers[name].card;
         let after;
         try { if (template !== undefined) after = await l2.clockCardNumber(); }
@@ -1550,17 +1557,20 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
           clockFailed(new Error(`clock trigger ${name} at ${at} could not read its newest number: ${failure.message}`, { cause: failure }));
           return false;
         }
+        if (ending()) return false;
         try { record('trigger', { trigger: 'clock', name, occurrence: at, ...(after === undefined ? {} : { after }) }); }
         catch (refusal) {
           clockFailed(refused(`clock trigger ${name} at ${at} did not start, because the event sink refused its firing start`, refusal));
           return false;
         }
+        if (ending()) return false;
         if (template !== undefined) {
           const firing = { occurrence: at, after };
           pending.set(name, firing);
           try {
-            const issue = await l2.openClockCard(name, occurrence, template);
+            const issue = await l2.openClockCard(name, occurrence, template, active);
             rememberIssue(firing, issue);
+            if (ending()) return;
             clockOutcome(name, firing, 'card', issue);
           } catch (failure) {
             rememberIssue(firing, failure.issue);
@@ -1582,7 +1592,6 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         else handOver({ report });
         return true;
       });
-      const ending = () => unsaved !== undefined || stop?.aborted === true;
       const fire = (polling) => trigger(() => (kept && ending() ? undefined : fire()), undefined, excluded, settlePending, { ...polling, carry: kept }).then((each) => {
         reached.push(...(Array.isArray(each) ? each : each.reached));
         if (Array.isArray(each)) return;
@@ -1660,6 +1669,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       await settlePending();
       const wakes = clockWakes(config.clock, clock, { fire: fireOccurrence, polled }, atStart);
       const stopped = () => {
+        clockStopped = true;
         wakes.stop();
         if (flying === 0) finish();
       };
@@ -1669,11 +1679,14 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         pulled().then((going) => { if (going) wakes.poll(); });
         await wakes.started;
         await finished;
-        return ended();
       } finally {
+        clockStopped = true;
         stop?.removeEventListener('abort', stopped);
-        wakes.stop();
+        const stopping = wakes.stop();
+        await clockWork;
+        await stopping;
       }
+      return ended();
     },
   };
 }

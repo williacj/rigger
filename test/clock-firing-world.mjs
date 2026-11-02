@@ -37,7 +37,7 @@ export async function until(condition) {
 }
 
 /** The read-side issue shape and write-side number answers are notice-forge's documented contract. */
-export function firingWorld({ clock = manualClock(), triggers = { hourly: cardTrigger() }, record, issues = [], pulls = [], items = [], permissions = {}, admitted = false, hold = [], context } = {}) {
+export function firingWorld({ clock = manualClock(), triggers = { hourly: cardTrigger() }, record, issues = [], pulls = [], items = [], permissions = {}, admitted = false, hold = [], context, afterEmit = () => {} } = {}) {
   if (context) context.mock.method(performance, 'now', clock.now);
   const directory = temporaryDirectory('rigger-clock-firing-');
   if (record !== undefined) {
@@ -73,6 +73,7 @@ export function firingWorld({ clock = manualClock(), triggers = { hourly: cardTr
     readColumns: async () => ({ ...settings.board.columns }),
     readPriority: async () => ({ items: (await board.readItems()).map((item) => ({ ...item, priority: null })), declared: null, options: null }),
   };
+  const clockBoard = { ...board };
   let refusal = () => false;
   let sequence = 0;
   const scratch = temporaryDirectory('rigger-clock-dispatch-');
@@ -142,11 +143,13 @@ export function firingWorld({ clock = manualClock(), triggers = { hourly: cardTr
       const emitter = real.emitter(context);
       return { emit(event, fields = {}) {
         if (refusal({ ...context, event, ...fields })) throw new Error(`the sink refuses ${event}`);
-        return emitter.emit(event, fields);
+        const answer = emitter.emit(event, fields);
+        afterEmit({ ...context, event, ...fields });
+        return answer;
       } };
     } };
     const decide = (card, outcomes, options = {}) => nextAction(card, settings.kinds, undefined, { roles: settings.roles, provisioning: {}, outcomes, sink, ...options });
-    const l2 = columnChanges({ config: settings, sink, reads, repositoryWrites: writes, items: fake.items, board });
+    const l2 = columnChanges({ config: settings, sink, reads, repositoryWrites: writes, items: fake.items, board: clockBoard });
     const readRecord = Object.assign(events, { stream: streamPath(directory) });
     return loop({ config: settings, board, decide, facts: factsCall({ config: settings, reads, decide }), l2, sink,
       state: directory, readRecord, run, clock, host, environment: { ...process.env, CLAUDE_CONFIG_DIR: join(scratch, 'cli') }, kill: async () => {},
@@ -156,12 +159,14 @@ export function firingWorld({ clock = manualClock(), triggers = { hourly: cardTr
       removeDirectories: async () => {},
     });
   };
-  return { clock, directory, fake, repository, reads, writes, settings, refuse, events, agents, held,
+  return { clock, directory, clockBoard, fake, repository, reads, writes, settings, refuse, events, agents, held,
     accept: () => { refusal = () => false; },
     refuseEvents: (when) => { refusal = when; },
     reopen: () => removeClosers(directory),
-    start: async () => {
-      const running = keptUp({ loop: build() });
+    start: async ({ signal } = {}) => {
+      const built = build();
+      const running = keptUp({ loop: { run: (options) => built.run({ ...options,
+        ...(signal && { stop: AbortSignal.any([options.stop, signal]) }) }) } });
       let ended = false;
       running.running.then(() => { ended = true; }, () => { ended = true; });
       const stop = running.stop;

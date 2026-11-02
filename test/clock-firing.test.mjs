@@ -704,3 +704,167 @@ test('F2: a gated clock opening holds back neither a freed-slot pull, a poll nor
     }
   });
 });
+
+
+// Judge probe: stopping during startup recovery must prevent a queued new occurrence from firing.
+test('architect r2: stop cancels a catch-up firing queued behind startup recovery', async (t) => {
+  const world = recovering({ clock: manualClock(START + 35_000), triggers: { hourly: { ...RECOVERY, catchUp: 'fire' } } });
+  const newest = world.reads.readNewestNumber;
+  let entered = false;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  world.reads.readNewestNumber = async (...args) => {
+    if (!entered) { entered = true; await gate; }
+    return newest(...args);
+  };
+  const run = await world.start();
+  try {
+    assert.equal(entered, true, 'startup recovery is held before a forge read completes');
+    assert.equal(firings(world).length, 1, 'only the recorded pending start exists before stop');
+    const stopped = run.stop();
+    release();
+    await stopped;
+    t.diagnostic(JSON.stringify({ firings: firings(world).map(({ occurrence }) => occurrence), issues: world.fake.issues.map(({ number, body }) => [number, body.split('\n')[0]]) }));
+    assert.equal(firings(world).length, 1, 'a queued catch-up must not record a new firing after stop');
+  } finally { release(); await run.stop(); }
+});
+
+// Judge probe: a queued recovery must not begin a new forge opening after run has stopped.
+test('architect r2: stop cancels recovery queued behind a refused opening', async (t) => {
+  const world = firingWorld({ triggers: { hourly: cardTrigger({ interval: 10_000 }) } });
+  let release;
+  let entered = false;
+  let calls = 0;
+  const gate = new Promise(resolve => { release = resolve; });
+  const open = world.writes.openIssue;
+  world.writes.openIssue = async (...args) => {
+    calls += 1;
+    if (!entered) { entered = true; await gate; throw new Error('opening refused'); }
+    return open(...args);
+  };
+  const run = await world.start();
+  const advanced = world.clock.advance(START + 10_000);
+  try {
+    await until(() => entered);
+    await world.clock.advance(START + 11_000);
+    const before = calls;
+    let ended = false;
+    const stopping = run.stop().then(() => { ended = true; });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(ended, false, 'stop waits for the held opening');
+    release();
+    await Promise.all([stopping, advanced]);
+    await new Promise(resolve => setImmediate(resolve));
+    t.diagnostic(JSON.stringify({ callsAtStop: before, callsAfterStop: calls, issuesAfterStop: world.fake.issues.length }));
+    assert.equal(calls, before, 'no queued recovery starts another opening after run has ended');
+  } finally { release(); await advanced; await run.stop(); }
+});
+
+
+// Shutdown must join issued clock work and discard every queued continuation before the next run.
+test('B24 shutdown: stop and abort join clock work without starting another scan, firing or opening', async (t) => {
+  const states = ['startup recovery with catch-up queued', 'fresh opening success with recovery queued', 'fresh opening refusal with recovery queued',
+    'recovery opening success', 'recovery opening refusal', 'detached recovery newest read', 'recovery newest read', 'fresh newest read',
+    'recovery issue read', 'recovery permission read', 'recovery board read', 'recovery board add', 'recovery board move', 'firing start append'];
+  for (const method of ['stop', 'abort']) for (const state of states) await t.test(`${method}: ${state}`, async () => {
+    const controller = new AbortController();
+    const startup = state.startsWith('startup');
+    const recovery = startup || state.startsWith('recovery') || state.startsWith('detached');
+    let entered = false;
+    let released = false;
+    let release;
+    const gate = new Promise(resolve => { release = () => { released = true; resolve(); }; });
+    let run;
+    let stopping;
+    let ended = false;
+    let atStop;
+    const calls = { newest: 0, open: 0, issue: 0, permission: 0, board: 0, add: 0, move: 0 };
+    const checkpoint = () => ({ ...calls, starts: firings(world).length });
+    const requestStop = () => {
+      atStop = checkpoint();
+      const done = method === 'stop' ? run.stop() : (controller.abort(), run.running);
+      stopping = done.then(() => { ended = true; });
+    };
+    const trigger = { ...RECOVERY, ...(startup && { catchUp: 'fire' }) };
+    const world = firingWorld({ clock: manualClock(START + (startup ? 35_000 : recovery ? 500 : 0)),
+      triggers: { hourly: trigger }, ...(recovery && { record: pendingRecord() }),
+      ...(state.startsWith('recovery') && !state.includes('opening') ? { issues: [marked()] } : {}),
+      afterEmit: ({ event, trigger }) => {
+        if (state !== 'firing start append' || event !== 'trigger' || trigger !== 'clock' || stopping) return;
+        entered = true;
+        requestStop();
+        assert.equal(ended, false, 'stop cannot settle while the start append is still on the stack');
+        release();
+      } });
+    const newest = world.reads.readNewestNumber;
+    const open = world.writes.openIssue;
+    let holdRead = startup || state.includes('newest read');
+    let holdOpen = state.includes('opening');
+    world.reads.readNewestNumber = async (...args) => {
+      calls.newest += 1;
+      const answer = await newest(...args);
+      if (holdRead) { holdRead = false; entered = true; await gate; }
+      return answer;
+    };
+    world.writes.openIssue = async (...args) => {
+      calls.open += 1;
+      if (holdOpen) {
+        holdOpen = false;
+        entered = true;
+        await gate;
+        if (state.includes('refusal')) throw new Error('the issued opening was refused');
+      }
+      return open(...args);
+    };
+    for (const [reader, operation, key] of [[world.reads, 'readIssue', 'issue'], [world.reads, 'readPermission', 'permission'],
+      [world.clockBoard, 'readItems', 'board'], [world.fake.items, 'addIssue', 'add'], [world.fake.items, 'moveItem', 'move']]) {
+      const call = reader[operation];
+      reader[operation] = (...args) => { calls[key] += 1; return call(...args); };
+    }
+    for (const [stage, reader, operation] of [['recovery issue read', world.reads, 'readIssue'],
+      ['recovery permission read', world.reads, 'readPermission'], ['recovery board read', world.clockBoard, 'readItems'],
+      ['recovery board add', world.fake.items, 'addIssue'], ['recovery board move', world.fake.items, 'moveItem']]) {
+      if (state !== stage) continue;
+      const read = reader[operation];
+      let first = true;
+      reader[operation] = async (...args) => {
+        const answer = await read(...args);
+        if (first) { first = false; entered = true; await gate; }
+        return answer;
+      };
+    }
+    let advanced;
+    let second;
+    try {
+      run = await world.start({ signal: controller.signal });
+      if (!recovery) advanced = world.clock.advance(START + 10_123);
+      await until(() => entered);
+      if (state.startsWith('fresh')) await world.clock.advance(START + 11_123);
+      if (state !== 'firing start append') {
+        requestStop();
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(released, false, 'the issued request is still held at the checkpoint');
+        assert.equal(ended, false, 'stop waits until the held clock request settles');
+        release();
+      }
+      await Promise.all([advanced, stopping]);
+      assert.deepEqual(checkpoint(), atStop, 'no new clock read, start, issue open or board write begins after stop');
+      const issueCount = world.fake.issues.length;
+      await world.clock.advance(world.clock.now() + 1000);
+      assert.equal(world.fake.issues.length, issueCount, 'returned clock work has no later effects');
+      assert.deepEqual(checkpoint(), atStop, 'a later timer advance begins no clock work after return');
+      world.accept();
+      second = await world.start();
+      if (state === 'fresh newest read') {
+        assert.equal(world.fake.issues.length, 0, 'the stopped fence read never started a firing');
+        await world.clock.advance(START + 20_123);
+      }
+      const occurrence = state === 'fresh newest read' ? START + 20_123 : recovery ? START + 123 : START + 10_123;
+      const mark = `Rigger clock: ["hourly",${occurrence}]`;
+      assert.equal(world.fake.issues.filter(({ body }) => body.startsWith(mark + '\n')).length, 1,
+        'the following run reuses the occurrence touched before stop');
+      const marks = world.fake.issues.map(({ body }) => body.split('\n')[0]);
+      assert.equal(new Set(marks).size, marks.length, 'every occurrence has exactly one card across the restart');
+    } finally { release(); await advanced; await stopping; await second?.stop(); await run?.stop(); }
+  });
+});

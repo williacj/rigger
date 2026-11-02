@@ -177,7 +177,8 @@ export function columnChanges({
   };
 
   /** Open the due firing's card, add it to the board and place it in Ready. */
-  const openClockCard = async (name, occurrence, template) => {
+  const openClockCard = async (name, occurrence, template, active = () => true) => {
+    if (!active()) return undefined;
     const author = (template.author ?? 'owner').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
     const body = `${composeClockMark(name, occurrence)}\n\n**Author:** ${author}\n\n## Acceptance\n\n${template.acceptance}`;
     const writes = repositoryWrites ?? repositoryWriteSide({ repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) });
@@ -189,6 +190,7 @@ export function columnChanges({
       throw new Error(`clock trigger ${name} at ${new Date(occurrence).toISOString()} could not open its card: ${refusal.message}`, { cause: refusal });
     }
     try {
+      if (!active()) return number;
       let id;
       try {
         id = await items.addIssue(number, sink.emitter({ layer: 'L0', card: number }));
@@ -196,6 +198,7 @@ export function columnChanges({
         if (refusal.made) throw madeUnrecorded(`issue #${number} was added to the board`, refusal);
         throw new Error(`opened issue #${number}'s board add was refused: ${refusal.message}`, { cause: refusal });
       }
+      if (!active()) return number;
       await change({ number, id }, 'created');
     } catch (failure) {
       throw Object.assign(failure, { issue: number });
@@ -209,16 +212,19 @@ export function columnChanges({
     openClockCard,
 
     /** Finds the pending firing's card, places an unplaced open one, or opens from its eligible template. */
-    clockCardAfter: async (name, occurrence, after, template, floor = 0) => {
+    clockCardAfter: async (name, occurrence, after, template, floor = 0, active = () => true) => {
       const supplied = reads ?? cardReads();
       const issue = await firstAbove(after, { ...supplied, readNewestNumber: async () => Math.max(floor, await supplied.readNewestNumber()) },
-        (candidate) => carriesClockMark(candidate.body, name, occurrence));
-      if (issue === undefined) return template === undefined ? undefined : openClockCard(name, occurrence, template);
+        (candidate) => carriesClockMark(candidate.body, name, occurrence), active);
+      if (!active()) return issue?.number;
+      if (issue === undefined) return template === undefined ? undefined : openClockCard(name, occurrence, template, active);
       try {
         if (issue.state === 'open') {
           const item = (await board.readItems()).find((each) => each.number === issue.number);
+          if (!active()) return issue.number;
           if (item?.column == null) {
             const id = item?.id ?? await items.addIssue(issue.number, sink.emitter({ layer: 'L0', card: issue.number }));
+            if (!active()) return issue.number;
             await change({ number: issue.number, id }, 'created');
           }
         }

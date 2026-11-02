@@ -16,7 +16,8 @@ import { whenElapsed } from '../substrate/process.mjs';
  * at a time independently of firings, so an opening cannot hold back the board. A due poll
  * calls `polled`, which answers whether to poll again, `interval` milliseconds after it settled.
  * Answers `{ poll, stop, started }`: `poll` starts polling, `stop` cancels the timer for good, and
- * `started` settles once the start's wake has fired what was missed.
+ * `started` settles once the start's wake has fired what was missed. `stop` also answers the
+ * settling of callbacks already in flight.
  */
 export function clockWakes({ triggers, poll: interval } = {}, clock = {}, { fire, polled }, { armings = new Map(), started } = {}) {
   const entries = Object.entries(triggers ?? {}).filter(([name]) => armings.has(name));
@@ -27,6 +28,7 @@ export function clockWakes({ triggers, poll: interval } = {}, clock = {}, { fire
   }));
   let cancel = () => {};
   let active = true;
+  const callbacks = new Set();
   let waking = false;
   let polling = false;
   let pollAt;
@@ -39,7 +41,7 @@ export function clockWakes({ triggers, poll: interval } = {}, clock = {}, { fire
     const next = Math.min(occurrence, polling ? Infinity : pollAt ?? Infinity, waking ? Infinity : retryAt ?? Infinity);
     if (next !== Infinity) cancel = whenElapsed(Math.max(0, next - now()), wake, { schedule: clock.schedule, cancel: clock.cancel, hold: true });
   };
-  const wake = async () => {
+  const tick = async () => {
     if (!active) return;
     const firing = !waking;
     if (firing) waking = true;
@@ -75,6 +77,12 @@ export function clockWakes({ triggers, poll: interval } = {}, clock = {}, { fire
       arm();
     }
   };
+  const wake = () => {
+    const pending = tick();
+    callbacks.add(pending);
+    pending.then(() => callbacks.delete(pending), () => callbacks.delete(pending));
+    return pending;
+  };
   return {
     started: wake(),
     poll: () => {
@@ -84,6 +92,7 @@ export function clockWakes({ triggers, poll: interval } = {}, clock = {}, { fire
     stop: () => {
       active = false;
       cancel();
+      return Promise.allSettled([...callbacks]);
     },
   };
 }
