@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import config from '../rigger.config.mjs';
 import { loop } from '../src/scheduling/loop.mjs';
@@ -12,8 +12,12 @@ import { factsCall } from '../src/workflow/facts.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { BRANCH_REFUSED, LINE_DELETED, LINE_MOVED, WORKSPACE_NOT_MADE, WORKSPACE_REFUSED } from '../src/execution/workspace.mjs';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { createFakeRepository, markerComment } from './fake-repository.mjs';
+import { forge } from './notice-forge.mjs';
+import { line } from './clock-arming-world.mjs';
+import { composeClockMark } from '../src/workflow/clock-mark.mjs';
+import { validate } from '../src/config/validate.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { manualClock, START } from './clock-report-world.mjs';
 import { postedNote } from './escalation-world.mjs';
@@ -707,5 +711,106 @@ test('S8a S8b S8c table: every claim that makes a workspace is re-read once at a
           : `${claim}, ${code}: no skip ended, so the stop after the person's move is the second, and sets the card aside`);
       });
     }
+  }
+});
+
+/**
+ * The architect's round-4 interleaving (1192#6591402707), as a world: the record holds a card
+ * firing of trigger `gone` pending from an earlier start, and its marked issue 12 stands in Ready.
+ * Recovery waits at its newest-number read while the first pull claims issue 12, moves it to Coding,
+ * and sets it aside on L1's BRANCH_REFUSED for the admitted topic `bad {number}`. A person then
+ * removes the card from the board, and recovery adds it back and makes its `created` move to Ready.
+ * `ending` gives the world options for how that move ends, as `OUTCOMES` names them.
+ */
+function recoveryWorld(t, { madeMove = () => false, refuseMove = () => false, refuseRecord = () => false } = {}) {
+  const clock = manualClock(START + 500);
+  const directory = temporaryDirectory('rigger-set-aside-recovery-', { context: t });
+  const settings = { ...config, kinds: KINDS, concurrency: 1, worktrees: { ...config.worktrees, topic: 'bad {number}' },
+    clock: { poll: POLL, triggers: { later: { interval: 3_600_000, anchor: new Date(START).toISOString(), catchUp: 'skip', job: 'report' } } } };
+  assert.deepEqual(validate(settings), [], 'the config validator admits the topic rule');
+  const columns = settings.board.columns;
+  const issues = [{ number: 12, title: 'Clock work', labels: ['type:change'], state: 'open', author: 'rigger-bot',
+    body: `${composeClockMark('gone', START + 123)}\n\n## Acceptance\n\n- Do the work.\n` }];
+  const fake = forge({ issues, items: [{ id: 'item-12', number: 12, column: columns.ready }] });
+  const repository = createFakeRepository({ repo: settings.repo, issues: issues.map(({ number, title, body, labels }) => ({ number, title, body, labels })) });
+  const recovery = gate();
+  let waiting = false;
+  const reads = { ...repository.operations, ...fake.reads, readNewestNumber: async () => { waiting = true; await recovery.promise; return 12; } };
+  let offered = 0;
+  const board = { ...fake.board, readColumns: async () => columns,
+    readPriority: async () => ({ declared: null, options: null, items: (await fake.board.readItems()).map((item) => ({ ...issues[0], ...item, type: 'issue', repository: settings.repo, priority: null })) }) };
+  const items = {
+    ...fake.items,
+    moveItem: async (id, column) => {
+      if (madeMove(column)) {
+        await fake.items.moveItem(id, column);
+        throw made('the move', {}, '{}');
+      }
+      if (refuseMove(column)) throw new Error(`the board refuses the move of ${id} to ${column}`);
+      return fake.items.moveItem(id, column);
+    },
+  };
+  mkdirSync(dirname(streamPath(directory)), { recursive: true });
+  writeFileSync(streamPath(directory), line(START + 123, 'trigger', { trigger: 'clock', name: 'gone', occurrence: new Date(START + 123).toISOString(), after: 0 }));
+  const opened = openSink({ directory, run: 'r-recovery', now: clock.now });
+  const sink = { emitter: (context) => {
+    const emitter = opened.emitter(context);
+    return { emit: (event, fields) => {
+      if (refuseRecord(event, fields ?? {})) throw new Error(`the sink refuses ${event}`);
+      return emitter.emit(event, fields);
+    } };
+  } };
+  const l2 = columnChanges({ config: settings, sink, reads, items, board, repositoryWrites: fake.writes });
+  const decide = (card, outcomes, options = {}) => nextAction(card, settings.kinds, undefined, { roles: settings.roles, provisioning: {}, outcomes, sink, ...options });
+  const facts = factsCall({ config: settings, reads, decide });
+  const events = () => readEvents(directory);
+  const built = loop({ config: settings, board, decide, l2, sink, state: directory, readRecord: events, clock, run: 'r-recovery', environment: {}, kill: async () => {},
+    facts: (cards) => { if (cards.some((card) => card.number === 12)) offered += 1; return facts(cards); },
+    // makeWorkspace rejects BRANCH_REFUSED where git refuses the admitted topic's derived name `bad 12` (workspace.mjs).
+    workspace: async () => { throw Object.assign(new Error('git refuses bad 12 as a branch name'), { code: BRANCH_REFUSED }); },
+    judgeDirectory: async () => { throw new Error('no judge is dispatched'); }, removeDirectories: async () => {} });
+  const stop = new AbortController();
+  const handed = [];
+  const running = built.run({ stop: stop.signal, handOver: (answer) => handed.push(answer) });
+  running.catch(() => {});
+  t.after(async () => { recovery.open(); stop.abort(); await running.catch(() => {}); });
+  const pulls = () => events().filter((event) => event.event === 'pull' && event.card === 12).length;
+  return { clock, columns, fake, recovery, handed, events, pulls, offered: () => offered, waiting: () => waiting };
+}
+
+// R-SCHED-43 row S5 at a move no claim makes: recovery's `created` move of a pending firing's card
+// that this run already set aside. The column the board accepted is the compared column, whether
+// the move answered or rejected after the board took it, and the pull stays independent of the
+// firing. A move the board refused leaves the card off every column, so L2 is offered nothing.
+// proves R-SCHED-43
+test('S5 recovery: a card this run set aside keeps the column recovery placed it in as its compared column', async (t) => {
+  const created = (event, fields) => event === 'transition' && fields.cause === 'created';
+  const ends = {
+    fulfilled: { options: {}, placed: true },
+    'made, its event refused': { options: { madeMove: (column) => column === COLUMNS.ready }, placed: true },
+    'recorded nothing': { options: { refuseRecord: created }, placed: true },
+    'refused before any move': { options: { refuseMove: (column) => column === COLUMNS.ready }, placed: false },
+  };
+  for (const [end, { options, placed }] of Object.entries(ends)) {
+    await t.test(end, async (t) => {
+      const here = recoveryWorld(t, options);
+      // The first pull is independent of the firing still waiting on the forge.
+      await positive(() => here.waiting() && here.handed.some((answer) => answer.settled));
+      assert.equal(here.pulls(), 1, `${end}: the first pull claimed the card and set it aside`);
+      assert.equal(here.fake.onBoard[0].column, here.columns.coding, `${end}: its claim's accepted Coding is its compared column`);
+      const offered = here.offered();
+      here.fake.onBoard.splice(0, 1);
+      here.recovery.open();
+      await positive(() => here.events().some((event) => event.event === 'trigger.outcome' && event.name === 'gone') || here.handed.some((answer) => answer.failure));
+      assert.equal(here.fake.onBoard[0]?.column ?? null, placed ? here.columns.ready : null, `${end}: the board holds the card ${placed ? 'in Ready' : 'in no column'}`);
+      for (let each = 0; each < 3; each += 1) await here.clock.advance(here.clock.now() + POLL);
+      assert.equal(here.pulls(), 1, `${end}: reads after recovery claim the card no second time`);
+      if (!placed) return;
+      assert.equal(here.offered(), offered, `${end}: reads finding the card in Ready, the column recovery placed it in, keep its skip`);
+      // A person's move to Review ends the skip at the next read.
+      here.fake.onBoard[0].column = here.columns.review;
+      await here.clock.advance(here.clock.now() + POLL);
+      assert.equal(here.offered(), offered + 1, `${end}: a person's move away from Ready ends the skip`);
+    });
   }
 });

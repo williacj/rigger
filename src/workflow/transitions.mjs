@@ -220,8 +220,12 @@ export function columnChanges({
     clockCardNumber: () => (reads ?? cardReads()).readNewestNumber(),
     openClockCard,
 
-    /** Finds the pending firing's card, places an unplaced open one, or opens from its eligible template. */
-    clockCardAfter: async (name, occurrence, after, template, floor = 0, active = () => true) => {
+    /**
+     * Finds the pending firing's card, places an unplaced open one, or opens from its eligible
+     * template. Placing one hands `placed` its number and the column the board accepted, and a
+     * placing rejected after the board accepted it carries that column as `column`.
+     */
+    clockCardAfter: async (name, occurrence, after, template, floor = 0, active = () => true, placed = () => {}) => {
       const supplied = reads ?? cardReads();
       const issue = await firstAbove(after, { ...supplied, readNewestNumber: async () => Math.max(floor, await supplied.readNewestNumber()) },
         (candidate) => carriesClockMark(candidate.body, name, occurrence), active);
@@ -234,7 +238,7 @@ export function columnChanges({
           if (item?.column == null) {
             const id = item?.id ?? await items.addIssue(issue.number, sink.emitter({ layer: 'L0', card: issue.number }));
             if (!active()) return issue.number;
-            await change({ number: issue.number, id }, 'created');
+            placed(issue.number, await change({ number: issue.number, id }, 'created'));
           }
         }
       } catch (failure) {

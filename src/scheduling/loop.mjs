@@ -80,6 +80,11 @@ function setAside(clockHeld) {
     },
     /** Sets card `number` aside, with `column` as its compared column. */
     add: (number, column) => cards.set(number, { column, reads }),
+    /** Takes `column`, where it names one, as the compared column of card `number`, where this run set it aside. */
+    placed: (number, column) => {
+      const entry = cards.get(number);
+      if (entry !== undefined && typeof column === 'string') entry.column = column;
+    },
     /**
      * Whether the read numbered `read` skips `item`. A read begun after the setting aside that
      * finds the card outside its compared column ends the skip, and restarts its line-stop count.
@@ -1291,6 +1296,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     run: async ({ singlePull = false, handOver = () => {}, stop } = {}) => {
       // A trigger of any shape keeps `run` up; this is the one place that decides it.
       const kept = Object.keys(config.clock?.triggers ?? {}).length > 0;
+      // The run's memory of the cards it set aside, which a firing's recovery moves update too.
+      const memory = setAside(kept);
       await killed();
       if (stop?.aborted) return [];
       let clockStopped = false;
@@ -1320,12 +1327,14 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
           try {
             const template = firing.rearmed ? undefined : config.clock?.triggers?.[name]?.card;
             const issue = firing.after === undefined ? undefined
-              : await l2.clockCardAfter(name, Date.parse(firing.occurrence), firing.after, template, firing.issue, active);
+              : await l2.clockCardAfter(name, Date.parse(firing.occurrence), firing.after, template, firing.issue, active, memory.placed);
             rememberIssue(firing, issue);
             if (ending()) return;
             clockOutcome(name, firing, issue === undefined ? 'abandoned' : 'card', issue);
           } catch (failure) {
             rememberIssue(firing, failure.issue);
+            // A move the board accepted before its record failed still placed the card.
+            memory.placed(failure.issue, failure.column);
             clockFailed(new Error(`clock trigger ${name} at ${firing.occurrence} stayed pending: ${failure.message}`, { cause: failure }));
           }
         }
@@ -1400,7 +1409,6 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       const failures = [];
       const reached = [];
       const notices = [];
-      const memory = setAside(kept);
       let closed;
       const atStart = starting();
       // Report catch-ups precede the first pull; a card's I/O releases it to proceed independently.
