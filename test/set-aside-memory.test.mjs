@@ -40,6 +40,18 @@ const RAN = ran(7);
 /** Every gate not yet opened, which a world's teardown opens, as a refused workspace, before it stops its runs. */
 const unopened = new Set();
 
+/**
+ * The failure an L0 write side throws where the forge made the write and the sink refused its
+ * event: `refused` in process.mjs carries `code`, `unrecorded` and `result`, and `written` in
+ * write-made.mjs marks it `made`, holding the write's `answer`.
+ */
+const made = (what, answer, stdout) => Object.assign(new Error(`the sink refused ${what}'s event`), {
+  code: 'EVENT_REFUSED',
+  unrecorded: [{ event: 'command.end', cause: new Error('the sink refuses command.end') }],
+  result: { exit: 0, timedOut: false, stdout, stderr: '' },
+  made: { answer },
+});
+
 /** A promise the test settles by hand, for holding a workspace or a board read. */
 function gate() {
   let settle;
@@ -62,8 +74,11 @@ function gate() {
  * is asked to settle a maker, as a maker's own forge writes would land before it exits. An escalation
  * role is handed to L2's role settle as one that ran and exited `exit`. A judge's directory is not
  * made, and where `judgeRefused`, L1 refused its replace rule, which L2 escalates as card-local.
+ * `madeMove(column)` and `madeLabel` have the forge make that move, or add the escalation label,
+ * and refuse only its event, as `made` below shapes the failure. `merge`, where given, answers the
+ * lane's next merge call in place of the fake repository's merge.
  */
-function world(t, { cards = [12], clockHeld = true, concurrency = 1, script = () => 'refused', branches = [], refuseMove = () => false, madeAnyway = false, refuseLabel = false, exit = 7, judges = KINDS.change.judges, refuseRecord = () => false, escalate = {}, beforeSettle = () => {}, judgeRefused = false } = {}) {
+function world(t, { cards = [12], clockHeld = true, concurrency = 1, script = () => 'refused', branches = [], refuseMove = () => false, madeAnyway = false, refuseLabel = false, exit = 7, judges = KINDS.change.judges, refuseRecord = () => false, escalate = {}, beforeSettle = () => {}, judgeRefused = false, madeMove = () => false, madeLabel = false, merge } = {}) {
   const clock = manualClock();
   const directory = temporaryDirectory('rigger-set-aside-', { context: t });
   const kinds = { change: { ...KINDS.change, judges } };
@@ -83,6 +98,10 @@ function world(t, { cards = [12], clockHeld = true, concurrency = 1, script = ()
   const items = {
     ...fake.operations,
     moveItem: async (id, column) => {
+      if (madeMove(column)) {
+        await fake.operations.moveItem(id, column);
+        throw made('the move', {}, '{}');
+      }
       if (!refuseMove(column)) return fake.operations.moveItem(id, column);
       if (madeAnyway) await fake.operations.moveItem(id, column);
       throw new Error(`the board refuses the move of ${id} to ${column}`);
@@ -94,6 +113,7 @@ function world(t, { cards = [12], clockHeld = true, concurrency = 1, script = ()
     addIssueLabel: async (number, label) => {
       if (refuseLabel) throw new Error(`the forge refuses label ${label}`);
       const labels = await repository.addIssueLabel(number, label);
+      if (madeLabel) throw made('the label', labels, '[]');
       fake.setIssueLabels(settings.repo, number, labels.map(({ name }) => name));
       return labels;
     },
@@ -103,6 +123,7 @@ function world(t, { cards = [12], clockHeld = true, concurrency = 1, script = ()
     await beforeSettle({ repository, card: card.number, dispatch: options.dispatch });
     return settle(card, ran(exit), options);
   };
+  if (merge !== undefined) repository.answerMerge(merge(repository));
   const roleSettle = l2.roleSettled;
   l2.roleSettled = (card, next, outcome, options) => roleSettle(card, next, ran(exit), options);
   const decide = (card, outcomes, options = {}) => nextAction(card, kinds, undefined, { roles: settings.roles, provisioning: {}, outcomes, sink, ...options, ...(options.maker === undefined ? {} : { maker: ran(exit) }) });
@@ -462,116 +483,127 @@ async function judgedPull(here, column, owner = false) {
 }
 
 /**
- * Each L2 column change L3 takes a compared column from, moving the card `from` one column to its
- * `target`, crossed with how it ended. `options` build the world and `setup` stages the card; `ends`
- * gives each outcome's world options and the column the board holds after it, which is the compared
- * column the skip must hold at. A `labelled` end leaves the escalation label on the card, and an end
- * that is not `aside` sets nothing aside. `handed` is how many times the claim itself hands the card
- * to L2's facts call: once at its pull, and for a merge, once more as the lane reaches it.
+ * How an L2 column change can end, each as the world options that end it and the column the board
+ * then holds, given the change's `from` and `target` columns and its transition's `cause`:
+ * - `fulfilled`: the change answered its column;
+ * - `made, its event refused`: the board made the move and only its L0 event was refused;
+ * - `recorded nothing`: the board took the move and the sink refused its transition;
+ * - `refused before any move`: the board refused the move;
+ * - `label refused` and `label made, its event refused`: the move to Owner was taken, and the
+ *   escalation label then refused, or added with only its event refused.
+ */
+const OUTCOMES = {
+  fulfilled: ({ target }) => ({ options: {}, column: target }),
+  'made, its event refused': ({ target }) => ({ options: { madeMove: (column) => column === target }, column: target }),
+  'recorded nothing': ({ target, cause }) => ({ options: { refuseRecord: (event, fields) => event === 'transition' && fields.cause === cause }, column: target }),
+  'refused before any move': ({ from, target }) => ({ options: { refuseMove: (column) => column === target }, column: from }),
+  'label refused': ({ target }) => ({ options: { refuseLabel: true }, column: target }),
+  'label made, its event refused': ({ target }) => ({ options: { madeLabel: true }, column: target }),
+};
+
+/** Every outcome but the escalation label's, for a change that adds no label. */
+const MOVES_ONLY = ['fulfilled', 'made, its event refused', 'recorded nothing', 'refused before any move'];
+
+/** Every outcome, for an escalation, whose move to Owner the label follows. */
+const ESCALATION = [...MOVES_ONLY, 'label refused', 'label made, its event refused'];
+
+/**
+ * Each site at which an L2 column change reaches L3's compared column, as the S5 table drives it:
+ * the change moves the card `from` one column to its `target`, recording `cause`, through each of
+ * `outcomes`. `options` build the world and `setup` stages the card. A fulfilled escalation leaves
+ * the escalation label on the card (`labelled`). Where `kept` is false, a fulfilled change sets
+ * nothing aside. `handed` is how many times the claim itself hands the card to L2's facts call:
+ * once at its pull, and for a merge, once more as the lane reaches it. `sites` names the `src/`
+ * lines whose column handoff the row exercises, as the PR body classifies them.
  */
 const COLUMN_STEPS = {
+  'a fresh claim moving the card to Coding': {
+    from: COLUMNS.ready, target: COLUMNS.coding, cause: 'claimed', outcomes: ['fulfilled'],
+    options: { script: () => 'refused' },
+    setup: async () => {},
+  },
+  'a removal whose following claim moves the card to Coding': {
+    from: COLUMNS.review, target: COLUMNS.coding, cause: 'redone', outcomes: ['fulfilled'],
+    options: { script: () => 'refused' },
+    setup: async (here) => {
+      await here.move(12, COLUMNS.review);
+      here.repository.open({ number: 77, head: 'rigger-12', sha: HEADS.judged, closed: true });
+      // The closed pull request's branch was deleted, as GitHub's delete-on-close leaves it.
+      here.repository.operations.readBranches = async (names) => Object.fromEntries(names.map((name) => [name, false]));
+    },
+  },
+  'a continuing claim moving the card to Coding': {
+    from: COLUMNS.review, target: COLUMNS.coding, cause: 'continued', outcomes: MOVES_ONLY,
+    options: { judges: ['reviewer'], script: () => 'refused' },
+    setup: (here) => judgedPull(here, COLUMNS.review),
+  },
   'a continuing settle to Review': {
-    from: COLUMNS.coding, target: COLUMNS.review,
+    from: COLUMNS.coding, target: COLUMNS.review, cause: 'returned', outcomes: MOVES_ONLY,
     options: { judges: ['reviewer'], exit: 0, script: (number, claim, { repository }) => {
       // The maker pushed before L2 settles it, so the old marker no longer names the head.
       if (claim === 1) repository.update(77, { sha: HEADS.pushed });
       return 'maker';
     } },
     setup: (here) => judgedPull(here, COLUMNS.review),
-    ends: {
-      fulfilled: { options: {}, column: COLUMNS.review },
-      'rejected after the board accepted it': { options: { refuseRecord: (event, fields) => event === 'transition' && fields.cause === 'returned' }, column: COLUMNS.review },
-      'rejected before any move': { options: { refuseMove: (column) => column === COLUMNS.review }, column: COLUMNS.coding },
-    },
   },
   'a handled escalation the role returns to Review': {
-    from: COLUMNS.coding, target: COLUMNS.review,
+    from: COLUMNS.coding, target: COLUMNS.review, cause: 'returned', outcomes: MOVES_ONLY,
     options: { escalate: { ambiguous: 'pm' }, exit: 0, script: () => 'maker', beforeSettle: ({ repository, card, dispatch }) => {
       // The maker opened its pull request and left a note escalating an item for the PM role.
       repository.open({ number: 77, head: 'rigger-12', sha: HEADS.pushed });
       repository.postIssueComment(card, postedNote(dispatch).body.replace('item: 2', 'item: 1'));
     } },
     setup: async () => {},
-    ends: {
-      fulfilled: { options: {}, column: COLUMNS.review },
-      'rejected after the board accepted it': { options: { refuseRecord: (event, fields) => event === 'transition' && fields.cause === 'returned' }, column: COLUMNS.review },
-      'rejected before any move': { options: { refuseMove: (column) => column === COLUMNS.review }, column: COLUMNS.coding },
-    },
   },
   'a move to Done for a merged pull request': {
-    from: COLUMNS.review, target: COLUMNS.done,
+    from: COLUMNS.review, target: COLUMNS.done, cause: 'merged', outcomes: MOVES_ONLY, kept: false,
     options: {},
     setup: async (here) => {
       await here.move(12, COLUMNS.review);
       here.repository.open({ number: 77, head: 'rigger-12', sha: HEADS.judged, merged: true });
     },
-    ends: {
-      // A move the board accepted ends the card's work, so nothing sets it aside.
-      fulfilled: { options: {}, column: COLUMNS.done, aside: false },
-      'rejected after the board accepted it': { options: { refuseRecord: (event, fields) => event === 'transition' && fields.cause === 'merged' }, column: COLUMNS.done },
-      'rejected before any move': { options: { refuseMove: (column) => column === COLUMNS.done }, column: COLUMNS.review },
-    },
   },
   'the end of a merge in the lane': {
-    // The lane reads the card again through L2's facts call as it reaches the merge.
-    from: COLUMNS.owner, target: COLUMNS.done, handed: 2,
+    from: COLUMNS.owner, target: COLUMNS.done, cause: 'mergedFromOwner', outcomes: MOVES_ONLY, handed: 2,
     options: {},
-    setup: async (here) => {
-      const [card] = await here.fake.operations.readItems();
-      await here.move(12, COLUMNS.owner);
-      here.repository.open({ number: 77, head: 'rigger-12', sha: HEADS.judged, mergeBase: 'c'.repeat(40), mergeable: 'mergeable',
-        comments: [markerComment({ card: 12, pull: 77, head: HEADS.judged, body: card.body, role: 'owner' })] });
-    },
-    ends: {
-      fulfilled: { options: {}, column: COLUMNS.done },
-      'rejected after the board accepted it': { options: { refuseRecord: (event, fields) => event === 'transition' && fields.cause === 'mergedFromOwner' }, column: COLUMNS.done },
-      'rejected before any move': { options: { refuseMove: (column) => column === COLUMNS.done }, column: COLUMNS.owner },
-    },
+    setup: (here) => ownerSound(here),
+  },
+  'a merge the lane found conflicting': {
+    from: COLUMNS.owner, target: COLUMNS.coding, cause: 'conflictedFromOwner', outcomes: MOVES_ONLY, handed: 2,
+    // Another merge landed between L2's read and the merge call, so the forge refuses it as conflicting.
+    options: { merge: (repository) => () => {
+      repository.update(77, { mergeable: 'conflicting' });
+      return { outcome: 'refused', reason: 'conflict' };
+    } },
+    setup: (here) => ownerSound(here),
   },
   'an escalation of the judges L1 could not give a directory': {
-    from: COLUMNS.review, target: COLUMNS.owner,
+    from: COLUMNS.review, target: COLUMNS.owner, cause: 'escalated', outcomes: ESCALATION, labelled: true,
     options: { judges: ['reviewer'], judgeRefused: true },
     setup: async (here) => {
       await here.move(12, COLUMNS.review);
       here.repository.open({ number: 77, head: 'rigger-12', sha: HEADS.judged, mergeBase: 'c'.repeat(40), diff: 'diff --git a/help b/help\n', mergeable: 'mergeable' });
     },
-    ends: {
-      fulfilled: { options: {}, column: COLUMNS.owner, labelled: true },
-      'rejected after the board accepted it': { options: { refuseRecord: (event, fields) => event === 'transition' && fields.cause === 'escalated' }, column: COLUMNS.owner },
-      'rejected before any move': { options: { refuseMove: (column) => column === COLUMNS.owner }, column: COLUMNS.review },
-    },
-  },
-  'a continuing claim moving the card to Coding': {
-    from: COLUMNS.review, target: COLUMNS.coding,
-    options: { judges: ['reviewer'], script: () => 'refused' },
-    setup: (here) => judgedPull(here, COLUMNS.review),
-    ends: {
-      fulfilled: { options: {}, column: COLUMNS.coding },
-      'rejected after the board accepted it': { options: { refuseRecord: (event, fields) => event === 'transition' && fields.cause === 'continued' }, column: COLUMNS.coding },
-      'rejected before any move': { options: { refuseMove: (column) => column === COLUMNS.coding }, column: COLUMNS.review },
-    },
   },
   'an escalation at the pull': {
-    from: COLUMNS.ready, target: COLUMNS.owner,
+    from: COLUMNS.ready, target: COLUMNS.owner, cause: 'escalated', outcomes: ESCALATION, labelled: true,
     options: { branches: ['rigger-12'] },
     setup: async () => {},
-    ends: {
-      fulfilled: { options: {}, column: COLUMNS.owner, labelled: true },
-      'rejected after the board accepted it': { options: { refuseRecord: (event, fields) => event === 'transition' && fields.cause === 'escalated' }, column: COLUMNS.owner },
-      'rejected before any move': { options: { refuseMove: (column) => column === COLUMNS.owner }, column: COLUMNS.ready },
-    },
   },
   'an escalation within an attempt': {
-    from: COLUMNS.coding, target: COLUMNS.owner,
+    from: COLUMNS.coding, target: COLUMNS.owner, cause: 'escalated', outcomes: ESCALATION, labelled: true,
     options: { script: () => 'local' },
     setup: async () => {},
-    ends: {
-      fulfilled: { options: {}, column: COLUMNS.owner, labelled: true },
-      'rejected after the board accepted it': { options: { refuseRecord: (event, fields) => event === 'transition' && fields.cause === 'escalated' }, column: COLUMNS.owner },
-      'rejected before any move': { options: { refuseMove: (column) => column === COLUMNS.owner }, column: COLUMNS.coding },
-    },
   },
 };
+
+/** Puts card 12 in Owner with pull request 77 open from its line of work, the owner's sound marker at its head, so L2 answers it a merge. */
+async function ownerSound(here) {
+  const [card] = await here.fake.operations.readItems();
+  await here.move(12, COLUMNS.owner);
+  here.repository.open({ number: 77, head: 'rigger-12', sha: HEADS.judged, mergeBase: 'c'.repeat(40), mergeable: 'mergeable',
+    comments: [markerComment({ card: 12, pull: 77, head: HEADS.judged, body: card.body, role: 'owner' })] });
+}
 
 // R-SCHED-43 row S5, at every L2 column change L3 observes: each column the board accepted is the
 // compared column, whether L2's step then answered or rejected, and a step rejected before any move
@@ -580,8 +612,12 @@ const COLUMN_STEPS = {
 // A label's removal ends no skip, and a person's move to any other column ends it.
 // proves R-SCHED-43
 test('S5 table: every column the board accepted is the compared column, however the step ended', async (t) => {
-  for (const [step, { from, target, handed = 1, options, setup, ends }] of Object.entries(COLUMN_STEPS)) {
-    for (const [end, { options: ending, column, labelled = false, aside = true }] of Object.entries(ends)) {
+  for (const [step, { from, target, cause, outcomes, labelled: escalation = false, kept = true, handed = 1, options, setup }] of Object.entries(COLUMN_STEPS)) {
+    for (const end of outcomes) {
+      const { options: ending, column } = OUTCOMES[end]({ from, target, cause });
+      const fulfilled = end === 'fulfilled';
+      const labelled = escalation && fulfilled;
+      const aside = kept || !fulfilled;
       await t.test(`${step}, ${end}`, async (t) => {
         const here = world(t, { ...options, ...ending });
         await setup(here);
@@ -593,6 +629,8 @@ test('S5 table: every column the board accepted is the compared column, however 
           await new Promise((resolve) => setImmediate(resolve));
         }
         assert.equal(await here.column(), column, `${step}, ${end}: the board holds the card in ${column}`);
+        const recorded = here.events().some((event) => event.event === 'transition' && event.cause === cause);
+        assert.equal(recorded, fulfilled || end === 'made, its event refused' || end.startsWith('label'), `${step}, ${end}: L2 recorded its ${cause} transition only where the board took the move and the sink took the record`);
         assert.equal(here.pulls(), 1, `${step}, ${end}: the run claims the card once`);
         // The claim's release reads the board at once; a card it set aside is skipped there.
         const settled = aside ? handed : handed + 1;

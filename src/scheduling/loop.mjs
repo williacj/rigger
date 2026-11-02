@@ -1031,6 +1031,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         return dispatchedEscalation(given, id);
       });
       let settled;
+      // Every settle of this maker hands L2 `placed`, so the column its move left the card in reaches the memory.
+      const settling = (options) => Promise.allSettled([l2.settled(card, outcome, { dispatch, placed, ...options })]);
       if (continuing !== undefined && outcome.status === 'fulfilled' && outcome.value.exit === 0) {
         let expectedHead;
         let tipFailure;
@@ -1048,7 +1050,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         for (;;) {
           const elapsedMs = now() - first;
           reads += 1;
-          [settled] = await Promise.allSettled([l2.settled(card, outcome, { dispatch, continuing: true, expectedHead, tipFailure, lastForgeHead, last: elapsedMs >= 60_000, reads, elapsedMs, placed })]);
+          [settled] = await settling({ continuing: true, expectedHead, tipFailure, lastForgeHead, last: elapsedMs >= 60_000, reads, elapsedMs });
           if (settled.status !== 'fulfilled' || !settled.value?.waiting) break;
           lastForgeHead = settled.value.forgeHead;
           // D16 rule 3: the forge can still show the old head after a push. #664's journal/P58
@@ -1057,7 +1059,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
           await pause(5_000);
         }
       } else {
-        [settled] = await Promise.allSettled([l2.settled(card, outcome, { dispatch, continuing: continuing !== undefined, placed })]);
+        [settled] = await settling({ continuing: continuing !== undefined });
       }
       if (settled.status === 'fulfilled' && settled.value?.action === 'escalate') {
         const escalation = settled.value;
@@ -1313,7 +1315,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       const kept = (made) => { reached = made; };
       if (next.action === 'move') {
         if (next.to === 'done') await removeDirectories(card.number);
-        placed(await l2.moved(card, next));
+        // A move the board accepted ends the card's work and sets nothing aside, so its column is unused.
+        await l2.moved(card, next);
         reached = { card: card.number, ...next };
       } else if (next.action === 'return') {
         await l2.returned(card, next);
