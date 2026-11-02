@@ -43,6 +43,7 @@ if (traceRoot) process.once('exit', () => {
 const [directory, pipe] = process.argv.slice(2);
 const run = realpathSync.native(directory);
 const marker = join(run, 'runner.cjs');
+trace({ event: 'writer-start' });
 
 function read(command, args) {
   const result = spawnSync(command, args, { cwd: '/', env: process.env, encoding: 'utf8', maxBuffer: Infinity });
@@ -54,6 +55,10 @@ function read(command, args) {
 
 function targetState(pid, round) {
   const args = ['-ww', '-p', String(pid), '-o', 'pid=,stat=,lstart=,command='];
+  if (traceRoot) {
+    traceRead = `${traceWriter}:${++traceOrdinal}`;
+    trace({ event: 'target-read-start', readId: traceRead, targetPid: pid, ordinal: traceOrdinal, sweep: round });
+  }
   const result = spawnSync('/bin/ps', args, {
     cwd: '/', env: { ...process.env, LC_ALL: 'C', TZ: 'UTC0' }, encoding: traceRoot ? 'latin1' : 'utf8', maxBuffer: Infinity,
     timeout: 1_000, killSignal: 'SIGKILL',
@@ -63,7 +68,6 @@ function targetState(pid, round) {
     // Latin-1 transports octets through the existing string-based collaborator controls.
     if (typeof stdout === 'string') result.stdout = Buffer.from(stdout, 'latin1').toString('utf8');
     if (typeof stderr === 'string') result.stderr = Buffer.from(stderr, 'latin1').toString('utf8');
-    traceRead = `${traceWriter}:${++traceOrdinal}`;
     trace({ event: 'target-read', readId: traceRead, targetPid: pid, ordinal: traceOrdinal, sweep: round,
       command: '/bin/ps', args, locale: { LC_ALL: 'C', TZ: 'UTC0' }, result: {
         status: traceValue(result.status), signal: traceValue(result.signal),
