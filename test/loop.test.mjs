@@ -1972,7 +1972,22 @@ test('changed maker and judge identities remain eligible after a terminal record
 // An actual adapter recording refusal must not become an under-claim host-failure attempt.
 // proves R-RECORD-9
 test('a no-clock maker whose adapter wraps a refused probe kill as NOT_STARTED defers without charging a host attempt', SETTLES_WITHIN, async (t) => {
-  const stand = standInCodex({ hang: true });
+  const stand = standInCodex();
+  const probePids = join(stand.dir, 'probe-pids');
+  const sessions = join(stand.dir, 'sessions');
+  // The documented debug prompt-input probe records readiness before awaiting filesystem events.
+  fs.writeFileSync(join(stand.dir, 'codex'), [
+    `#!${process.execPath}`,
+    '// ABOUTME: Records probe readiness and waits for filesystem events without arming a timer.',
+    "import { appendFileSync, watch } from 'node:fs';",
+    "if (process.argv.includes('debug') && process.argv.includes('prompt-input')) {",
+    `watch(${JSON.stringify(stand.dir)}, () => {});`,
+    `appendFileSync(${JSON.stringify(probePids)}, String(process.pid) + '\\n');`,
+    '} else {',
+    `appendFileSync(${JSON.stringify(sessions)}, 'session\\n');`,
+    '}',
+  ].join('\n'));
+  const probes = () => fs.existsSync(probePids) ? fs.readFileSync(probePids, 'utf8').trim().split('\n').map(Number) : [];
   const formerPath = process.env.PATH;
   process.env.PATH = stand.first();
   t.after(() => { process.env.PATH = formerPath; });
@@ -2000,20 +2015,21 @@ test('a no-clock maker whose adapter wraps a refused probe kill as NOT_STARTED d
   const ended = settledOf(running);
   // The stand-in's recorded probe is readiness; advancing the injected clock expires its bound.
   for (let probe = 1; probe <= 2; probe += 1) {
-    await positive(() => ended() || stand.probes().length >= probe);
+    await positive(() => ended() || probes().length >= probe);
     if (ended()) break;
+    assert.ok(probes().every((pid) => Number.isSafeInteger(pid) && pid > 0), 'probe readiness records actual positive process IDs');
     await clock.advance(clock.now() + 60_000);
   }
   await positive(() => ended());
   const result = await running.then((value) => ({ value }), (failure) => ({ failure, value: failure.reached }));
-  assert.equal(stand.probes().length, 1, 'terminal adapter recording refusal must not retry the probe');
+  assert.equal(probes().length, 1, 'terminal adapter recording refusal must not retry the probe');
   assert.ok(refused > 0, 'the actual probe kill reached the refusing sink');
   assert.deepEqual(built.events().filter(({ card, event }) => card === 42 && (event === 'attempt.failed' || event === 'attempt.decided')), [], 'the terminal refusal spends no host-failure attempt');
   const first = result.value.find(({ card }) => card === 42);
   assert.equal(first.outcome.reason.code, 'NOT_STARTED');
   assert.deepEqual(first.outcome.reason.startCause, { kind: 'event-unrecorded' });
   assert.equal(first.outcome.reason.cause.code, EVENT_REFUSED, 'L1 retains the actual recording provenance');
-  assert.deepEqual(stand.sessions(), []);
+  assert.equal(fs.existsSync(sessions), false, 'no Codex agent session starts');
   assert.deepEqual(built.agent.runs().map(({ card }) => card), [95], 'the freed slot still reaches the peer maker');
   assert.equal(built.events().some(({ event }) => event === 'admission.close'), false);
 });
