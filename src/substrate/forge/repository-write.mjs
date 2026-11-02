@@ -62,7 +62,7 @@ export function repositoryWriteSide(board, { send, emitter, timeout } = {}) {
   };
   /**
    * Sends the issue write `args` and answers what `accept` makes of its parsed answer. A refused
-   * event on the call is marked made where that same check passes on the call's result.
+   * event on the call is marked made where that check passes or marks its own refusal made.
    */
   const sendIssue = async (args, accept = (answer) => answer) => {
     const check = (said) => accept(issueAnswer(said));
@@ -129,9 +129,10 @@ export function repositoryWriteSide(board, { send, emitter, timeout } = {}) {
       }
       const args = ['api', `repos/${board.repo}/issues`, '-X', 'POST', '-f', `title=${title}`, '-f', `body=${body}`, ...labels.flatMap((label) => ['-f', `labels[]=${label}`])];
       return sendIssue(args, (opened) => {
-        const missing = labels.filter((name) => !opened.labels?.some((held) => sameLabel(held.name, name)));
+        if (!Number.isSafeInteger(opened?.number) || opened.number < 1) throw new Error('openIssue answered no issue number');
+        const missing = labels.filter((name) => !Array.isArray(opened.labels) || !opened.labels.some((held) => sameLabel(held?.name, name)));
         if (missing.length > 0) {
-          throw new Error(`openIssue created issue #${opened.number} without label ${missing.join(', ')}`);
+          throw Object.assign(new Error(`openIssue created issue #${opened.number} without label ${missing.join(', ')}`), { made: { answer: opened.number } });
         }
         return opened.number;
       });
