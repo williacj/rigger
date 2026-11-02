@@ -13,7 +13,8 @@ import { acceptanceItems } from './form-check.mjs';
 import { pullRequestsFrom } from './facts.mjs';
 import { statusNotice } from './status-issue.mjs';
 import { kindOf, providerOf, tierOf } from './next-action.mjs';
-import { composeClockMark } from './clock-mark.mjs';
+import { composeClockMark, carriesClockMark } from './clock-mark.mjs';
+import { firstAbove } from './first-above.mjs';
 
 /**
  * Each change L2 makes to a card's column, by its cause, as the column keys it leaves and enters.
@@ -175,19 +176,19 @@ export function columnChanges({
     return evidence;
   };
 
-  return {
-    /** Open the due firing's card, add it to the board and place it in Ready. */
-    openClockCard: async (name, occurrence, template) => {
-      const author = (template.author ?? 'owner').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
-      const body = `${composeClockMark(name, occurrence)}\n\n**Author:** ${author}\n\n## Acceptance\n\n${template.acceptance}`;
-      const writes = repositoryWrites ?? repositoryWriteSide({ repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) });
-      let number;
-      try {
-        number = await writes.openIssue(template.title, body, ...template.labels);
-      } catch (refusal) {
-        if (refusal.made) throw madeUnrecorded(`clock trigger ${name} at ${new Date(occurrence).toISOString()} opened issue #${refusal.made.answer}`, refusal);
-        throw new Error(`clock trigger ${name} at ${new Date(occurrence).toISOString()} could not open its card: ${refusal.message}`, { cause: refusal });
-      }
+  /** Open the due firing's card, add it to the board and place it in Ready. */
+  const openClockCard = async (name, occurrence, template) => {
+    const author = (template.author ?? 'owner').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+    const body = `${composeClockMark(name, occurrence)}\n\n**Author:** ${author}\n\n## Acceptance\n\n${template.acceptance}`;
+    const writes = repositoryWrites ?? repositoryWriteSide({ repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) });
+    let number;
+    try {
+      number = await writes.openIssue(template.title, body, ...template.labels);
+    } catch (refusal) {
+      if (refusal.made) throw Object.assign(madeUnrecorded(`clock trigger ${name} at ${new Date(occurrence).toISOString()} opened issue #${refusal.made.answer}`, refusal), { issue: refusal.made.answer });
+      throw new Error(`clock trigger ${name} at ${new Date(occurrence).toISOString()} could not open its card: ${refusal.message}`, { cause: refusal });
+    }
+    try {
       let id;
       try {
         id = await items.addIssue(number, sink.emitter({ layer: 'L0', card: number }));
@@ -196,7 +197,31 @@ export function columnChanges({
         throw new Error(`opened issue #${number}'s board add was refused: ${refusal.message}`, { cause: refusal });
       }
       await change({ number, id }, 'created');
-      return number;
+    } catch (failure) {
+      throw Object.assign(failure, { issue: number });
+    }
+    return number;
+  };
+
+  return {
+    /** The fence the firing records before it opens its card. */
+    clockCardNumber: () => (reads ?? cardReads()).readNewestNumber(),
+    openClockCard,
+
+    /** Finds the pending firing's card, places an unplaced open one, or opens from its eligible template. */
+    clockCardAfter: async (name, occurrence, after, template, floor = 0) => {
+      const supplied = reads ?? cardReads();
+      const issue = await firstAbove(after, { ...supplied, readNewestNumber: async () => Math.max(floor, await supplied.readNewestNumber()) },
+        (candidate) => carriesClockMark(candidate.body, name, occurrence));
+      if (issue === undefined) return template === undefined ? undefined : openClockCard(name, occurrence, template);
+      if (issue.state === 'open') {
+        const item = (await board.readItems()).find((each) => each.number === issue.number);
+        if (item?.column == null) {
+          const id = item?.id ?? await items.addIssue(issue.number, sink.emitter({ layer: 'L0', card: issue.number }));
+          await change({ number: issue.number, id }, 'created');
+        }
+      }
+      return issue.number;
     },
 
     /** L2's notice function for a hold's closer, as `statusNotice` says, its item writes recorded under `L0`. */

@@ -512,8 +512,8 @@ function unlikeEvent(event) {
  * What the event record holds of each clock trigger, by name ("How a clock trigger fires"), read
  * through `readRecord`, the verb's read of it: the instant of its newest arming, its event's `ts`,
  * with that arming's `interval` and `anchor`; as `fired`, its last firing's occurrence, the newest by
- * occurrence of any outcome, or of a `report` firing found pending; and that pending firing's
- * occurrence as `pending`. A start carrying `after` is a card's, which M7-22b settles. A record
+ * occurrence of any outcome or firing found pending; and that pending start as `pending`, keeping
+ * a card's `after` and whether an arming followed it. A record
  * holding a line that is not one event throws, naming the stream `readRecord.stream`, the line and why.
  */
 function triggerRecord(readRecord) {
@@ -523,17 +523,20 @@ function triggerRecord(readRecord) {
   for (const [index, event] of events.entries()) {
     const why = unlikeEvent(event);
     if (why !== undefined) throw new Error(`${readRecord.stream ?? 'the event record'} line ${index + 1} is not a recorded event`, { cause: new Error(why) });
-    if (event.event === 'trigger.armed') Object.assign(of(event.name), { armed: Date.parse(event.ts), interval: event.interval, anchor: event.anchor });
-    if (event.event === 'trigger' && event.trigger === 'clock') of(event.name).starts.set(event.occurrence, event.after === undefined);
+    if (event.event === 'trigger.armed') {
+      for (const firing of of(event.name).starts.values()) firing.rearmed = true;
+      Object.assign(of(event.name), { armed: Date.parse(event.ts), interval: event.interval, anchor: event.anchor });
+    }
+    if (event.event === 'trigger' && event.trigger === 'clock') of(event.name).starts.set(event.occurrence,
+      { occurrence: event.occurrence, ...(event.after === undefined ? {} : { after: event.after }) });
     if (event.event !== 'trigger.outcome') continue;
     const trigger = of(event.name);
     trigger.fired = Math.max(trigger.fired, Date.parse(event.occurrence));
     trigger.starts.delete(event.occurrence);
   }
   for (const trigger of held.values()) {
-    for (const [occurrence, report] of trigger.starts) {
-      if (!report) continue;
-      trigger.pending = occurrence;
+    for (const [occurrence, firing] of trigger.starts) {
+      trigger.pending = firing;
       trigger.fired = Math.max(trigger.fired, Date.parse(occurrence));
     }
   }
@@ -1344,7 +1347,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
 
   /** The trigger's settle, as `trigger` says, before its copy: its answer, or the failure it throws. */
   const settle = async (freed, limit, excluded, snapshot, settlePending, { taken, poll, carry }) => {
-    settlePending();
+    await settlePending();
     const { claims: claimed, failures, admission: closed, notices = [] } = await take(limit, excluded, snapshot, poll);
     taken(claimed.length);
     for (const { card } of claimed) settles.set(card.number, snapshot);
@@ -1360,7 +1363,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     if (claims.size === 0 && !idle) {
       idle = true;
       try {
-        settlePending();
+        await settlePending();
         drains += 1;
         record('trigger', { trigger: 'drain' });
       } catch (refusal) {
@@ -1411,7 +1414,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
      *
      * While a clock trigger is declared, whatever its shape, it does not end at the drain, and
      * `singlePull` changes nothing ("While a clock trigger keeps `run` up"). It arms the clock
-     * after `run.start`, fires each report occurrence as `fireOccurrence` says, and, while it holds
+     * after `run.start`, fires each occurrence as `fireOccurrence` says, and, while it holds
      * no claim, polls the board every `clock.poll` milliseconds: each poll fires the pull trigger,
      * and the next fires that long after it settles, unless it claimed a card, which ends the idle
      * period. Each settled hand-over goes to `handOver` as it settles: a report as `{ report }`, a
@@ -1433,16 +1436,40 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       await killed();
       const pending = new Map();
       const clockFailed = (failure) => handOver({ failure });
-      const settlePending = () => {
-        for (const [name, at] of pending) {
-          try { record('trigger.outcome', { name, occurrence: at, outcome: 'abandoned' }); }
+      const clockOutcome = (name, firing, outcome, issue) => {
+        record('trigger.outcome', { name, occurrence: firing.occurrence, outcome, ...(issue === undefined ? {} : { issue }) });
+        pending.delete(name);
+      };
+      const settleReports = () => {
+        for (const [name, firing] of pending) {
+          if (firing.after !== undefined) continue;
+          try { clockOutcome(name, firing, 'abandoned'); }
           catch (refusal) {
-            clockFailed(refused(`clock trigger ${name} at ${at} stayed pending, because the event sink refused its abandoned outcome`, refusal));
-            continue;
+            clockFailed(refused(`clock trigger ${name} at ${firing.occurrence} stayed pending, because the event sink refused its abandoned outcome`, refusal));
           }
-          pending.delete(name);
         }
       };
+      const settleFirings = async () => {
+        for (const [name, firing] of pending) {
+          try {
+            const template = firing.rearmed ? undefined : config.clock?.triggers?.[name]?.card;
+            const issue = firing.after === undefined ? undefined
+              : await l2.clockCardAfter(name, Date.parse(firing.occurrence), firing.after, template, firing.issue);
+            clockOutcome(name, firing, issue === undefined ? 'abandoned' : 'card', issue);
+          } catch (failure) {
+            firing.issue ??= failure.issue;
+            clockFailed(new Error(`clock trigger ${name} at ${firing.occurrence} stayed pending: ${failure.message}`, { cause: failure }));
+          }
+        }
+      };
+      // Pulls can arrive while a firing awaits the forge. Neither scans nor firings may overlap it.
+      let clockWork = Promise.resolve();
+      const serialized = (act) => {
+        const next = clockWork.then(act);
+        clockWork = next.catch(() => {});
+        return next;
+      };
+      const settlePending = () => serialized(settleFirings);
       /**
        * The start's read of the record, whatever the clock declares: it arms each declared trigger
        * and settles each `report` firing found pending, answering each armed trigger's `{ armed,
@@ -1477,8 +1504,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
           const fallback = now();
           for (const name of fresh) armings.get(name).armed = armed.get(name)?.armed ?? fallback;
         }
-        for (const [name, { pending: at }] of held) if (at !== undefined) pending.set(name, at);
-        settlePending();
+        for (const [name, { pending: firing }] of held) if (firing !== undefined) pending.set(name, { ...firing, rearmed: firing.rearmed || fresh.includes(name) });
+        settleReports();
         return { armings, started };
       };
       if (singlePull && !kept) {
@@ -1493,15 +1520,35 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       const excluded = new Set();
       let closed;
       const atStart = starting();
-      /** One report occurrence's firing, answering whether it settled the occurrence. */
-      const fireOccurrence = ({ name, occurrence }) => {
+      /** One occurrence's firing, answering whether it settled the occurrence. */
+      const fireOccurrence = ({ name, occurrence }) => serialized(async () => {
         const at = new Date(occurrence).toISOString();
-        settlePending();
+        await settleFirings();
         if (pending.has(name)) return false;
-        try { record('trigger', { trigger: 'clock', name, occurrence: at }); }
+        const template = config.clock.triggers[name].card;
+        let after;
+        try { if (template !== undefined) after = await l2.clockCardNumber(); }
+        catch (failure) {
+          clockFailed(new Error(`clock trigger ${name} at ${at} could not read its newest number: ${failure.message}`, { cause: failure }));
+          return false;
+        }
+        try { record('trigger', { trigger: 'clock', name, occurrence: at, ...(after === undefined ? {} : { after }) }); }
         catch (refusal) {
           clockFailed(refused(`clock trigger ${name} at ${at} did not start, because the event sink refused its firing start`, refusal));
           return false;
+        }
+        if (template !== undefined) {
+          const firing = { occurrence: at, after };
+          pending.set(name, firing);
+          try {
+            const issue = await l2.openClockCard(name, occurrence, template);
+            firing.issue = issue;
+            clockOutcome(name, firing, 'card', issue);
+          } catch (failure) {
+            firing.issue ??= failure.issue;
+            clockFailed(new Error(`clock trigger ${name} at ${at} stayed pending: ${failure.message}`, { cause: failure }));
+          }
+          return true;
         }
         let report;
         let failure;
@@ -1509,14 +1556,14 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         catch (thrown) { failure = thrown; }
         try { record('trigger.outcome', { name, occurrence: at, outcome: failure ? 'failed' : 'job' }); }
         catch (refusal) {
-          pending.set(name, at);
+          pending.set(name, { occurrence: at });
           clockFailed(refused(`clock trigger ${name} at ${at} stayed pending, because the event sink refused its outcome`, refusal));
           return true;
         }
         if (failure) clockFailed(new Error(`clock trigger ${name} at ${at}: ${failure.message}`, { cause: failure }));
         else handOver({ report });
         return true;
-      };
+      });
       const ending = () => unsaved !== undefined || stop?.aborted === true;
       const fire = (polling) => trigger(() => (kept && ending() ? undefined : fire()), undefined, excluded, settlePending, { ...polling, carry: kept }).then((each) => {
         reached.push(...(Array.isArray(each) ? each : each.reached));
@@ -1592,6 +1639,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
           else if (going) wakes.poll();
         });
       });
+      await settlePending();
       const wakes = clockWakes(config.clock, clock, { fire: fireOccurrence, polled }, atStart);
       const stopped = () => {
         wakes.stop();

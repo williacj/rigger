@@ -1,11 +1,11 @@
-// ABOUTME: Wakes L3 through one timer on an injectable clock: at each report occurrence, and, while
+// ABOUTME: Wakes L3 through one timer on an injectable clock: at each clock occurrence, and, while
 // L3 polls, at each poll of the board.
 
 import { schedule } from '../config/validate.mjs';
 import { whenElapsed } from '../substrate/process.mjs';
 
 /**
- * Arms the report occurrences of each of `triggers` that `armings` names, each `{ armed, fired }`:
+ * Arms the occurrences of each of `triggers` that `armings` names, each `{ armed, fired }`:
  * the instant of its newest arming and the occurrence of its last firing. An occurrence is due
  * after both, and, under `catchUp: 'skip'`, after `started`, the instant the run's start read the
  * record, too, so a missed one fires once
@@ -19,7 +19,7 @@ import { whenElapsed } from '../substrate/process.mjs';
  * `started` settles once the start's wake has fired what was missed.
  */
 export function clockWakes({ triggers, poll: interval } = {}, clock = {}, { fire, polled }, { armings = new Map(), started } = {}) {
-  const entries = Object.entries(triggers ?? {}).filter(([name, trigger]) => trigger.job === 'report' && armings.has(name));
+  const entries = Object.entries(triggers ?? {}).filter(([name]) => armings.has(name));
   const now = clock.now ?? Date.now;
   const last = new Map(entries.map(([name, trigger]) => {
     const { armed, fired } = armings.get(name);
@@ -29,12 +29,13 @@ export function clockWakes({ triggers, poll: interval } = {}, clock = {}, { fire
   let active = true;
   let waking = false;
   let pollAt;
+  let retryAt;
   const arm = () => {
     cancel();
     cancel = () => {};
     if (!active || waking) return;
     const occurrence = Math.min(...entries.map(([, trigger]) => schedule(trigger, now()).next ?? Infinity));
-    const next = Math.min(occurrence, pollAt ?? Infinity);
+    const next = Math.min(occurrence, pollAt ?? Infinity, retryAt ?? Infinity);
     if (next !== Infinity) cancel = whenElapsed(Math.max(0, next - now()), wake, { schedule: clock.schedule, cancel: clock.cancel, hold: true });
   };
   const wake = async () => {
@@ -42,11 +43,15 @@ export function clockWakes({ triggers, poll: interval } = {}, clock = {}, { fire
     waking = true;
     try {
       const current = now();
+      retryAt = undefined;
       const due = entries.flatMap(([name, trigger]) => {
         const occurrence = schedule(trigger, current).newest;
         return occurrence !== null && occurrence > last.get(name) ? [{ name, occurrence }] : [];
       }).sort((a, b) => a.occurrence - b.occurrence || (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
-      for (const entry of due) if (active && await fire(entry)) last.set(entry.name, entry.occurrence);
+      for (const entry of due) if (active) {
+        if (await fire(entry)) last.set(entry.name, entry.occurrence);
+        else retryAt = now() + interval;
+      }
       if (active && pollAt !== undefined && pollAt <= now()) {
         pollAt = undefined;
         if (await polled()) pollAt = now() + interval;

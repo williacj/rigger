@@ -5,6 +5,7 @@
 import { FIXED_LABELS } from '../config/validate.mjs';
 
 import { WRITERS } from './marker.mjs';
+import { firstAbove } from './first-above.mjs';
 
 /** The status issue's title (`R-SCHED-20`). */
 export const TITLE = 'Rigger closed admission';
@@ -130,15 +131,11 @@ export function statusNotice({ reads, writes, board, items, columns, sink }) {
      * The number of the issue above the after-name's `k` and up to the newest whose body names the
      * hold's id, written by an account with write access, or undefined where none is.
      */
-    const scanned = async () => {
-      const newest = await step('read the newest number', () => reads.readNewestNumber());
-      for (let candidate = Number(closer.after) + 1; candidate <= newest; candidate += 1) {
-        const issue = await step(`read issue #${candidate}`, () => reads.readIssue(candidate));
-        if (issue === null || holdOf(issue.body) !== closer.id || issue.author === null) continue;
-        if (WRITERS.includes(await step(`read ${issue.author}'s permission`, () => reads.readPermission(issue.author)))) return candidate;
-      }
-      return undefined;
-    };
+    const scanned = async () => (await firstAbove(Number(closer.after), {
+      readNewestNumber: () => step('read the newest number', () => reads.readNewestNumber()),
+      readIssue: (number) => step(`read issue #${number}`, () => reads.readIssue(number)),
+      readPermission: (author) => step(`read ${author}'s permission`, () => reads.readPermission(author)),
+    }, (issue) => holdOf(issue.body) === closer.id))?.number;
     /**
      * How the notice stands on the issue the closer names: `closed`, `notice` once L2 has commented
      * where the notice never reached the open labelled issue, or `gone` where it is no longer the

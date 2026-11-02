@@ -151,14 +151,14 @@ test('A6: a renamed trigger is armed under its new name, and nothing fires for t
 });
 
 // proves R-SCHED-36
-test('A1a: a card-shaped trigger is armed and re-armed as a report trigger is, and nothing fires for it', async () => {
+test('A1a: a card-shaped trigger is armed and re-armed as a report trigger is, and nothing fires before its first occurrence', async () => {
   for (const [record, why] of [[opening, 'no arming names it'], [opening + armed(START, 'daily', { interval: 2 * SECOND }), 'its newest arming holds another interval']]) {
     const clock = manualClock(START + 5 * SECOND + 500);
     const built = armingWorld(clock, { triggers: { daily: cardShaped() }, record });
     const { stop } = await started(built);
     try {
       assert.deepEqual(armings(built), [{ ts: at(START + 5500), name: 'daily', interval: SECOND, anchor: ANCHOR }], why);
-      await clock.advance(START + 8 * SECOND);
+      await clock.advance(START + 6 * SECOND - 1);
       assert.deepEqual(firings(built), [], why);
     } finally {
       await stop();
