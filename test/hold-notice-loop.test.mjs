@@ -1180,7 +1180,7 @@ test('a refused opening record stays reported when a later notice answers a fail
 });
 
 // proves R-SCHED-23
-test('a refused opening record stays reported when a later notice\'s answer carries an unrecorded getter that throws', async () => {
+test('a refused opening record stays reported when a later notice answer carries an unrecorded getter that throws', async () => {
   // The reviewer's two exploratory round-8 probes on #1079.
   {
     const { board } = stateBoard([], { 12: 'closed', 13: 'open' });
