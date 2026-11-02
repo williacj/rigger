@@ -570,6 +570,10 @@ const REPOSITORY_READS = {
       const query = (page) => repositoryQuery(board, `pullRequests(headRefName: ${literal(branch)}, states: [OPEN, MERGED, CLOSED], ${page}) { pageInfo { hasNextPage endCursor } nodes { number state headRefOid baseRefName headRepository { nameWithOwner } } }`);
       const nodes = (await everyPage('readPullRequests', board, via, query, (data) => heldIn('readPullRequests', board, data, 'pullRequests', addressed), addressed))
         .filter((node) => node.headRepository && ofRepository(board, node.headRepository.nameWithOwner));
+      for (const node of nodes.filter((node) => node.state === 'CLOSED')) {
+        if (!Number.isSafeInteger(node.number) || node.number <= 0) fail('readPullRequests', board, `${addressed}gh answered an invalid CLOSED pull request number`);
+        if (typeof node.headRefOid !== 'string' || node.headRefOid.length !== 40 || !FULL_SHA.test(node.headRefOid)) fail('readPullRequests', board, `${addressed}gh answered an invalid CLOSED pull request headRefOid`);
+      }
       const inState = (state) => nodes.filter((node) => node.state === state).map(pullRequestOf);
       return { open: inState('OPEN'), merged: inState('MERGED'), closed: inState('CLOSED') };
     },

@@ -47,6 +47,33 @@ Ids allocated here still count as allocated. The duplicate-id check reads both f
 | R-FAIL-6 | Rigger closes admission, and records why, when a card's second attempt fails in its environment the same way its first did. The ways are in `### R-FAIL-6 — Environment failures and the hold`. | D12 | 2026-10-24 | R-FAIL-7 |
 | R-FAIL-7 | Rigger closes admission, and records why, when a card's second attempt fails in its environment the same way its first did. The ways are in `### R-FAIL-7 — Environment failures and the hold`. | D12 | 2026-10-26 | R-FAIL-8 |
 | R-RECORD-8 | A copy of the record placed anywhere else holds every event the original holds. | | 2026-10-27 | R-RECORD-13 |
+| R-WORK-36 | Before Rigger acts on a card it reads where all of these hold, it removes the card's directories, as `R-WORK-35` names them. It removes each only where `R-WORK-35` lets it remove that directory, and otherwise names the path and leaves it. Where a removal fails, Rigger names each path that remains, and acts on the card as it otherwise would. The states it covers are in `### R-WORK-36 — When a closed card's directories are removed`: | | 2026-10-30 | R-WORK-41 |
+
+### R-WORK-36 — When a closed card's directories are removed
+
+Each row is a card the forge holds a pull request for, from its line of work, closed without merging.
+
+| Situation | Scope |
+|---|---|
+| a card in review, its line of work still on the forge | in: removed; Rigger then refuses the card and escalates it under `R-ESCALATE-12`, as it would otherwise |
+| a card in review, its line of work deleted | in: removed; Rigger then does the card again from the beginning under `R-WORK-24` |
+| a card in the owner's column | in: removed; Rigger then refuses the card and escalates it under `R-ESCALATE-12`, as it would otherwise |
+| a card carrying the escalation label | out: `R-ESCALATE-10`; its directories stay until the owner removes the label, and a later pull that finds every condition removes them |
+| two or more pull requests closed, none open or merged | in: removed |
+| a pull request from the line of work open beside the closed one | in: nothing removed |
+| a pull request from the line of work merged beside the closed one | out: `R-WORK-35` answers it |
+| the pull request reopened before Rigger reads it | in: nothing removed |
+| the pull request reopened after Rigger read it closed | in: nothing restored; each later dispatch's directory is made as `R-WORK-20`, `R-WORK-25`, `R-WORK-26` or `R-WORK-32` requires |
+| an attempt from the beginning, started after the removal | in: nothing of the attempt's removed under this row while the card is in coding |
+| a card that is Ready or in coding | out: its next attempt replaces its directories under `R-WORK-10` or `R-WORK-25`, or `R-WORK-19` refuses it |
+| a dispatch of the card running when Rigger reads the pull request closed | in: removed at the first pull that finds every condition once no dispatch of the card runs |
+| a person moved the card to Done | out: Rigger reads no Done card, and its directories stay |
+| the card's issue closed while the card stays in review or in the owner's column | in: as the rows above answer it; the issue's state is no condition |
+| a removal that fails, wholly or partway through one directory | in: each remaining path named; Rigger acts on the card as it otherwise would; a later pull that finds every condition removes again |
+| Rigger cannot record an event of the removal | in: Rigger says what went unrecorded, and acts on the card as it otherwise would |
+| a second removal pass over a card already removed, or none of its directories exists | in: nothing changes, and nothing fails |
+| a check, a lock, a symbolic link, a process in a directory, a workspace's contents, or a topic directory once empty | in or out as `### R-WORK-35`'s table answers that situation |
+| the card's local branch | out: kept |
 
 ### R-WORK-30 — When a merged card's directories are removed
 

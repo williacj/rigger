@@ -1,8 +1,8 @@
 // ABOUTME: The `once` verb: fires one pull through L3's dispatching entry point, which claims one card,
 // has L1 make and provision its workspace and dispatches its maker and then the judges L2 names, and says
 // what the maker and each judge did. It reads the
-// board through L0, moves the card through L2, and records through L5. `run` is the same verb with
-// no claim limit, so what the two share is one function here.
+// board through L0, moves the card through L2, and records through L5. `run` shares the setup and
+// presenter, handing L3 its run instead of one pull.
 
 import { existsSync, lstatSync, realpathSync, writeSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
@@ -153,14 +153,11 @@ async function rootInsideTree(verb, root, top, options) {
 }
 
 /**
- * What a verb named `verb` that fires one pull through L3's dispatching entry point prints, and the
- * status it exits with. `limit` is the claim limit handed to the pull, or undefined for none, in
- * which case the pull claims until the slots are full: L3 reads N from the config it is handed.
- * The pull fires once, and nothing fires another as a slot frees, so a card whose second attempt
- * fails is not pulled a third time (the owner's O5 on #423). That holds of `run` with no clock
- * trigger declared; with one, L3's `run` keeps it up, and it writes each hand-over L3 makes, as it
- * settles, through `write`, rendered as it renders a whole run, and a report as `report` renders
- * one. `stop`, which the `rigger run` command never passes, is handed to L3's `run`; once that run
+ * The claiming verbs' shared setup and presenter. `once` fires one L3 pull with `limit`;
+ * `run` hands L3 its run, which refills freed slots. L3 reads N and the clock declaration from
+ * the config. Each hand-over L3 makes is written through `write`, rendered as a whole run,
+ * and a report as `report` renders one. `stop`, which the `rigger run` command never passes,
+ * is handed to L3's `run`; once that run
  * ends, the verb answers what settled since the last hand-over, with the status picked over every
  * outcome it handed.
  *
@@ -360,6 +357,7 @@ async function claiming(verb, limit, opened, {
    * failure.
    */
   const failureLine = (held) => {
+    if (held.notice !== undefined) return noticeLine(verb, held.notice.id, held.notice);
     if (Array.isArray(held.unreadable)) return `rigger ${verb}: ${unreadableAdmission(held.unreadable)}`;
     const attempts = held.attemptFailures;
     if (!Array.isArray(attempts) || attempts.at(-1)?.maker === undefined) return `rigger ${verb}: ${held.message}`;
@@ -388,8 +386,7 @@ async function claiming(verb, limit, opened, {
   const handedRefusals = new Set();
   /**
    * The refusal lines met since the last render that no hand-over has written, once each. A pull
-   * asks L2 once about each card, so a run with no clock trigger, which fires one pull, renders
-   * each line it met.
+   * can ask L2 about an unchanged refusal on several pulls, and renders each distinct line once.
    */
   const freshRefusals = () => {
     const lines = refusals.splice(0).map(refusalLine);
@@ -421,8 +418,8 @@ async function claiming(verb, limit, opened, {
       // A clock-held run's hand-over can carry a closed admission beside its failures; each closer
       // the held cards' lines have not already named is said after them.
       const holding = [...failuresIn(failure), ...carried];
-      const named = new Set(holding.flatMap(({ closer }) => (closer === undefined ? [] : [closer.name])));
-      const closers = failure.admission?.state === 'closed' ? failure.admission.closers.filter(({ name }) => !named.has(name)) : [];
+      const named = new Set(holding.flatMap(({ closer }) => (closer === undefined ? [] : [closer.id])));
+      const closers = failure.admission?.state === 'closed' ? failure.admission.closers.filter(({ id }) => !named.has(id)) : [];
       return {
         text: [...said(outcomes(reachedCards)), ...failuresIn(failure).filter((held) => !carried.has(held)).map(failureLine), ...holdLines(holding), ...closers.map((closer) => `rigger ${verb}: ${closerLine(closer)}`), ...(failure.notices ?? []).map((failed) => noticeLine(verb, failed.id, failed)), ...refused].join('\n'),
         code: 1,
@@ -455,7 +452,7 @@ async function claiming(verb, limit, opened, {
   // (the architect's ruling 2, P7, on #467), and no maker: L3 dispatches it through L1.
   const [settledRun] = await Promise.allSettled([(async () => {
     const l3 = loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, readRecord, environment: process.env, run: opened.run, clock });
-    return verb === 'run' ? l3.run({ singlePull: true, handOver, stop }) : l3.pull(limit);
+    return verb === 'run' ? l3.run({ handOver, stop }) : l3.pull(limit);
   })()]);
   if (handedCode === undefined) return rendered(settledRun);
   // A kept-up run that ended answers only what it had not yet handed over (the architect's ruling 1175#6560236393, (b)).

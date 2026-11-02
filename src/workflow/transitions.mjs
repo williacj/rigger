@@ -175,6 +175,23 @@ export function columnChanges({
     return evidence;
   };
 
+  /** Both exit-time reads of a no-clock maker, with presence surviving the other read's failure. */
+  const failedMakerWork = async (card, exit, reading, earlier = [], pullFailure) => {
+    const line = topicFor(topic, card.number);
+    const [branch, pulls] = await Promise.allSettled([
+      Promise.resolve().then(() => reading.readBranches([line])),
+      pullFailure === undefined ? pullRequestsFrom(card.number, line, reading, false) : Promise.reject(pullFailure),
+    ]);
+    const present = (branch.status === 'fulfilled' && branch.value[line] === true)
+      || (pulls.status === 'fulfilled' && ['open', 'merged', 'closed'].some((state) => pulls.value[state].length > 0));
+    const failures = [...earlier, ...[branch, pulls].flatMap((outcome, at) => outcome.status === 'fulfilled' ? []
+      : [new Error(`card #${card.number}'s ${at === 0 ? 'branch' : 'pull requests'} could not be read after its maker exited ${exit}: ${outcome.reason.message}`, { cause: outcome.reason })])];
+    const makerWork = present ? 'present' : [branch, pulls].every(({ status }) => status === 'fulfilled') ? 'absent' : 'unreadable';
+    if (failures.length > 0) throw Object.assign(new AggregateError(failures, failures.map(({ message }) => message).join('; ')), { makerWork });
+    if (present) return { makerWork: 'present' };
+    return { action: 'set-aside', makerWork: 'absent', reason: `card #${card.number}'s maker exited ${exit}, and the forge holds no branch or pull request from its line of work ${line}` };
+  };
+
   return {
     /** Open the due firing's card, add it to the board and place it in Ready. */
     openClockCard: async (name, occurrence, template) => {
@@ -359,10 +376,10 @@ export function columnChanges({
      * tells its caller the card and why, as `withheld` says. A read that fails leaves it in coding too, and its
      * caller is told the card and the read.
      */
-    settled: async (card, outcome, { dispatch, continuing = false, expectedHead, tipFailure, lastForgeHead, last = false, reads: readCount, elapsedMs } = {}) => {
+    settled: async (card, outcome, { dispatch, continuing = false, noClock = false, expectedHead, tipFailure, lastForgeHead, last = false, reads: readCount, elapsedMs } = {}) => {
       const exit = outcome?.status === 'fulfilled' ? outcome.value?.exit : outcome?.status === 'rejected' ? outcome.reason?.result?.exit : undefined;
       // A refused recording retains the result of a command that ran; its failure still reaches L3.
-      if (outcome?.status === 'rejected' && (continuing || !Number.isInteger(exit) || exit === 0)) {
+      if (outcome?.status === 'rejected' && ((continuing && !noClock) || !Number.isInteger(exit) || exit === 0)) {
         if (outcome.reason?.code === NOT_STARTED) note(card, 'maker.failed', { class: 'environment', reason: outcome.reason.message }, { dispatch });
         return undefined;
       }
@@ -374,7 +391,9 @@ export function columnChanges({
       try {
         comments = await reading.readIssueComments(card.number);
       } catch (failure) {
-        throw new Error(`card #${card.number}'s issue comments could not be read: ${failure.message}`, { cause: failure });
+        const unread = new Error(`card #${card.number}'s issue comments could not be read: ${failure.message}`, { cause: failure });
+        if (noClock && exit !== 0) return failedMakerWork(card, exit, reading, [unread]);
+        throw unread;
       }
       const escalation = makerNote(comments, dispatch, acceptanceItems(card.body ?? '').length);
       if (escalation !== null) {
@@ -382,7 +401,9 @@ export function columnChanges({
         try {
           facts = await pullRequestsFrom(card.number, topicFor(topic, card.number), reading);
         } catch (failure) {
-          throw new Error(`card #${card.number}'s pull requests could not be read for its escalation: ${failure.message}`, { cause: failure });
+          const unread = new Error(`card #${card.number}'s pull requests could not be read for its escalation: ${failure.message}`, { cause: failure });
+          if (noClock && exit !== 0) return failedMakerWork(card, exit, reading, [], unread);
+          throw unread;
         }
         const kinds = config.kinds ?? {};
         const { kind } = kindOf({ ...card, labels: card.labels ?? [] }, kinds, config.epicLabel);
@@ -390,6 +411,7 @@ export function columnChanges({
         return { ...answer, destination: escalationDestination({ ...answer, escalate: config.escalate, maker: kinds[kind]?.maker, judges: kinds[kind]?.judges, comments }) };
       }
       if (exit !== 0) {
+        if (noClock) return failedMakerWork(card, exit, reading);
         if (continuing) return undefined;
         const line = topicFor(topic, card.number);
         let branches;

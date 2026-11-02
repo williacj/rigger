@@ -13,6 +13,7 @@ import { readSide } from '../src/substrate/forge/read.mjs';
 import { itemWriteRunner, readRunner, schemaWriteRunner } from '../src/substrate/forge/runners.mjs';
 import rigger from '../rigger.config.mjs';
 import { repositoryReads } from '../src/substrate/forge/read.mjs';
+import { loop } from '../src/scheduling/loop.mjs';
 import { installFakeGh, seedRepository } from './fake-gh.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { spawnSync } from 'node:child_process';
@@ -843,6 +844,139 @@ const issueNode = ({ number, title = `Card ${number}`, body = '', state = 'OPEN'
 
 /** The pull requests a read answers, one page of them. */
 const pulls = (...nodes) => ({ paged: { null: pullPage(nodes.map(pullNode)) } });
+
+/** Invalid external identity tokens admitted by #1191; undefined means an omitted JSON property. */
+function invalidClosedFields() {
+  const common = [undefined, 'null', 'true', 'false', '[]', '{}'];
+  return [
+    ...[...common, '0', '-1', '1.5', '9007199254740992', '1e400', '-1e400', ...['733', '', ' ', '7x', 'NaN', 'Infinity'].map(JSON.stringify)]
+      .map((token) => ({ field: 'number', token })),
+    ...[...common, '733', ...['', 'a'.repeat(39), 'a'.repeat(41), 'g'.repeat(40), ` ${'a'.repeat(40)}`, `${'a'.repeat(40)} `, `${'a'.repeat(39)}\n`, `${'a'.repeat(39)}\u001b`, `${'a'.repeat(40)}\n`, `${'a'.repeat(40)}\r`, `${'a'.repeat(40)}\u001b`].map(JSON.stringify)]
+      .map((token) => ({ field: 'headRefOid', token })),
+  ];
+}
+
+/** Three raw gh pages, with valid nodes on each side of the one external field under test. */
+function closedFieldPages(field, token, invalidPage) {
+  return Object.fromEntries([0, 1, 2].map((page) => {
+    const node = pullNode({ number: 733, state: 'CLOSED', head: 'a'.repeat(40) });
+    delete node[field];
+    const invalid = JSON.stringify(node).replace(/}$/, token === undefined ? '}' : `,${JSON.stringify(field)}:${token}}`);
+    const nodes = [pullNode({ number: 100 + page, state: 'CLOSED' }), 'INVALID_NODE', pullNode({ number: 200 + page, state: 'CLOSED' })];
+    const stdout = JSON.stringify({ data: pullPage(nodes, page === 2 ? null : `page-${page + 1}`) })
+      .replace('"INVALID_NODE"', page === invalidPage ? invalid : JSON.stringify(pullNode({ number: 300 + page, state: 'CLOSED' })));
+    return [page === 0 ? 'null' : `page-${page}`, { status: 0, stdout, stderr: '' }];
+  }));
+}
+
+// Card #1191 admits raw reader diagnostics without borrowing a product requirement declaration.
+test('the CLOSED PR reader rejects every invalid external number and head on every page without returning partial lists', async () => {
+  for (const { field, token } of invalidClosedFields()) {
+    for (const page of [0, 1, 2]) {
+      const named = `${field}=${token ?? 'omitted'} on page ${page + 1}`;
+      const send = repositoryForge({ 'pull requests': { paged: closedFieldPages(field, token, page) } });
+      await assert.rejects(repositoryReads(BOARD, { send }).readPullRequests('rigger-214'), (failure) => {
+        assert.match(failure.message, /^readPullRequests on board 6 failed:/, named);
+        assert.ok(failure.message.includes('rigger-214') && failure.message.includes(BOARD.repo), `${named}: ${failure.message}`);
+        assert.ok(failure.message.includes(field), `${named}: ${failure.message}`);
+        return true;
+      }, named);
+    }
+  }
+});
+
+// Card #1191's valid external-domain and repository-filter diagnostic guard.
+test('the CLOSED PR reader preserves valid boundary values and ignores malformed identities from other repositories', async () => {
+  const valid = [
+    { number: 1, head: '0123456789abcdef0123456789abcdef01234567', base: 'main' },
+    { number: 733, head: 'ABCDEF0123456789ABCDEF0123456789ABCDEF01', base: 'release' },
+    { number: 9007199254740991, head: 'aBcDeF0123456789aBcDeF0123456789aBcDeF01', base: 'stable' },
+  ];
+  const foreign = [null, 'someone/rigger'].map((from) => pullNode({ number: null, state: 'CLOSED', head: null, from }));
+  for (const closed of [[], valid]) {
+    const send = repositoryForge({ 'pull requests': { paged: { null: {
+      status: 0, stderr: '', stdout: JSON.stringify({ data: pullPage([
+        ...closed.map((held) => pullNode({ ...held, state: 'CLOSED' })),
+        pullNode({ number: 811, state: 'OPEN', head: 'b'.repeat(40) }),
+        ...foreign,
+        pullNode({ number: 812, state: 'MERGED', head: 'c'.repeat(40) }),
+      ]) }),
+    } } } });
+    let result;
+    await assert.doesNotReject(async () => { result = await repositoryReads(BOARD, { send }).readPullRequests('rigger-214'); }, 'valid CLOSED numbers and heads must remain readable');
+    assert.deepEqual(result, {
+      open: [{ number: 811, head: 'b'.repeat(40), base: 'main' }],
+      merged: [{ number: 812, head: 'c'.repeat(40), base: 'main' }],
+      closed,
+    });
+  }
+});
+
+// Card #1191 diagnostic guard: invalid JSON tokens remain transport failures, never field values.
+test('the CLOSED PR reader rejects literal NaN and Infinity JSON syntax without returning a prefix', async () => {
+  for (const field of ['number', 'headRefOid']) for (const token of ['NaN', 'Infinity', '-Infinity']) for (const page of [0, 1, 2]) {
+    const send = repositoryForge({ 'pull requests': { paged: closedFieldPages(field, token, page) } });
+    await assert.rejects(repositoryReads(BOARD, { send }).readPullRequests('rigger-214'), /readPullRequests.*JSON/, `${field}=${token}, page ${page + 1}`);
+  }
+});
+
+// Card #1191 diagnostic: invalid stdout must stop a whole snapshot before L2 or L3 can act.
+// The counterexamples reuse an earlier card, page prefix or completed read after a fresh failure.
+test('invalid CLOSED fields cannot reach decisions or removal claims after earlier successful reads', async () => {
+  for (const { field, token } of invalidClosedFields()) for (const page of [0, 1, 2]) for (const ordering of ['same snapshot', 'completed pull']) {
+    const named = `${ordering}: ${field}=${token ?? 'omitted'}, page ${page + 1}`;
+    const cards = [214, 215].map((number) => ({ number, title: 'Add a verb', body: '## Acceptance\n\n- The verb prints its help.\n', labels: ['type:change'], column: COLUMNS.owner }));
+    const settings = { ...rigger, board: { ...rigger.board, columns: COLUMNS } };
+    const good = repositoryForge({ branches: branchPage([]), 'pull requests': pulls({ number: 733, state: 'CLOSED', head: 'a'.repeat(40) }) });
+    const bad = repositoryForge({ 'pull requests': { paged: closedFieldPages(field, token, page) } });
+    let invalid = false;
+    let earlier = false;
+    const send = (command, args) => {
+      const document = documentOf(args);
+      if (document.includes('headRefName: "rigger-215"')) {
+        if (invalid) {
+          assert.ok(earlier, `${named}: earlier card and branch read completed first`);
+          return bad(command, args);
+        }
+      } else if (document.includes('headRefName: "rigger-214"')) earlier = true;
+      return good(command, args);
+    };
+    let decisions = 0;
+    let removals = 0;
+    let escalations = 0;
+    const events = [];
+    const built = loop({ config: settings,
+      board: { readColumns: async () => COLUMNS, readPriority: async () => ({ items: cards, declared: null }) },
+      facts: factsCall({ config: settings, reads: repositoryReads(BOARD, { send }), decide: (card) => {
+        decisions += 1;
+        return nextAction(card, settings.kinds, settings.epicLabel, { roles: settings.roles });
+      } }),
+      l2: { escalated: async () => { escalations += 1; } },
+      sink: { emitter: ({ layer, card }) => ({ emit: (event, fields) => events.push({ layer, card, event, ...fields }) }) },
+      kill: async () => {}, removeDirectories: async () => { removals += 1; },
+      workspace: async () => { assert.fail(`${named}: no maker workspace may be made`); },
+      judgeDirectory: async () => { assert.fail(`${named}: no judge directory may be made`); },
+      state: temporaryDirectory('rigger-closed-read-completion-'), run: 'r-read-completion',
+      clock: { now: () => 1, pause: async () => {} }, environment: {},
+    });
+    if (ordering === 'completed pull') {
+      const reached = await built.pull();
+      assert.deepEqual(reached.map(({ card }) => card), [214, 215], named);
+      assert.equal(removals, 2, `${named}: valid prior read really removed both cards`);
+      assert.equal(escalations, 2, `${named}: both admitted following actions completed`);
+    }
+    const before = { decisions, removals, escalations, claims: events.filter(({ event }) => event === 'pull').length };
+    earlier = false;
+    invalid = true;
+    await assert.rejects(built.pull(), (failure) => {
+      assert.match(failure.message, /card #215/, named);
+      assert.match(failure.message, /readPullRequests/, named);
+      assert.ok(failure.message.includes('rigger-215') && failure.message.includes(BOARD.repo) && failure.message.includes(field), `${named}: ${failure.message}`);
+      return true;
+    }, named);
+    assert.deepEqual({ decisions, removals, escalations, claims: events.filter(({ event }) => event === 'pull').length }, before, `${named}: failed snapshot contributes no decision or action`);
+  }
+});
 
 test('given a branch, the repository read answers the open pull request from it in the configured repository, with its number, head SHA and base', async () => {
   // A pull request from a fork's branch of the same name is not this repository's line of work.
@@ -1783,7 +1917,7 @@ import { factsCall } from '../src/workflow/facts.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { createFakeRepository } from './fake-repository.mjs';
 
-// proves R-WORK-36, R-WORK-37
+// proves R-WORK-41, R-WORK-37
 test('the actual board reader carries a captured CLOSED issue and an open issue through identical Review and Owner cleanup eligibility', async () => {
   // gh2.99.0 captured board6 at 2026-09-25T13:35Z. GitHub issue/events reads on 2026-10-22
   // show issue214 closed at05:25:20Z (event05:25:21Z), with no reopen; issue271 was created
@@ -1824,7 +1958,7 @@ test('the actual board reader carries a captured CLOSED issue and an open issue 
 });
 
 
-// proves R-WORK-36
+// proves R-WORK-41
 test('a later closed-result page failure or timeout cannot become partial cleanup facts', async () => {
   for (const position of ['null', 'middle', 'last']) for (const timeout of [false, true]) {
     const pages = {

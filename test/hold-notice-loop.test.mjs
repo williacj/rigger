@@ -97,6 +97,38 @@ function recordingNotice(answer = { issue: 1 }) {
   return Object.assign(notice, { calls });
 }
 
+// The counterexample drops closed admission when its pull also has an unrecorded trigger.
+// proves R-SCHED-3, R-SCHED-7
+test('a no-clock failed closed pull keeps both closers and their failed notices beside the original trigger refusal', async () => {
+  const notice = recordingNotice({ failed: { step: 'open the status issue', cause: 'forge refused the notice' } });
+  const handed = handles({ notice, clock: { now: () => 1, pause: async () => {} } });
+  seed(handed.state, 'hold-a1.json');
+  seed(handed.state, 'hold-b2.json');
+  const refusal = new Error('the pull trigger could not be recorded');
+  const emitter = handed.sink.emitter.bind(handed.sink);
+  const pulls = [];
+  handed.sink.emitter = (context) => {
+    const actual = emitter(context);
+    return { emit: (event, fields) => {
+      if (context.layer === 'L3' && event === 'trigger' && fields.trigger === 'pull') throw refusal;
+      if (context.layer === 'L3' && event === 'pull') pulls.push(context.card);
+      return actual.emit(event, fields);
+    } };
+  };
+  await assert.rejects(loop(handed).run(), (failure) => {
+    assert.equal(failure.admission?.state, 'closed', 'failed no-clock pull retains the actual closed read');
+    assert.deepEqual(failure.admission.closers.map(({ id }) => id).sort(), ['a1', 'b2']);
+    const leaves = (error) => error instanceof AggregateError ? error.errors.flatMap(leaves) : [error];
+    const held = leaves(failure);
+    assert.ok(held.some(({ cause }) => cause === refusal), 'the original refused event is retained');
+    assert.deepEqual(held.filter(({ notice }) => notice !== undefined).map(({ notice }) => notice.id).sort(), ['a1', 'b2']);
+    assert.deepEqual(failure.reached, []);
+    return true;
+  });
+  assert.deepEqual(pulls, [], 'closed admission takes no new claim despite the refused trigger record');
+  assert.deepEqual(notice.calls.map(({ name }) => name).sort(), ['hold-a1.json', 'hold-b2.json']);
+});
+
 // proves R-SCHED-20
 test('at a trigger, L3 calls L2\'s notice for each hold closer naming no issue, after or not, handing it the numbers other hold closers name, and for no other closer', async () => {
   const notice = recordingNotice();

@@ -26,6 +26,7 @@ import { temporaryDirectory } from './temporary-directory.mjs';
 import { COLUMNS, FIELDS, PROJECT, REPO, card, consumerConfig } from './verb-consumer.mjs';
 import { judgeVerbWorld } from './judge-start-verb.mjs';
 import { once as onceVerb } from '../src/cli/once.mjs';
+import { run as runVerb } from '../src/cli/run.mjs';
 
 // A bound on each run of the real bin, so one that never settles fails its test rather than the suite.
 const { 60_000: { timeout: SETTLES_WITHIN } } = BOUNDS;
@@ -360,6 +361,41 @@ function statusConsumer(t, { closers, issues, refuseState = false }) {
 
 /** A status issue the fake holds: carrying the label, its body naming hold `id`, as Rigger opens one. */
 const statusIssue = (number, id) => ({ number, title: 'Rigger closed admission', body: `Why.\n\nHold: \`${id}\`\n`, labels: ['rigger:status'] });
+
+// The counterexample drops either closer when a no-clock pull reports two failed notices.
+// proves R-SCHED-23
+test('no-clock run prints each closed-admission closer and its failed notice exactly once', (t) => {
+  const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json', 'hold-b2-issue-9.json'], issues: [statusIssue(7, 'a1'), statusIssue(9, 'b2')], refuseState: true });
+  const ran = here.verb('run');
+  assert.equal(ran.code, 1, ran.said);
+  const lines = (ran.out + ran.err).trimEnd().split('\n');
+  assert.equal(lines.length, 4, ran.said);
+  for (const closer of here.closers()) {
+    assert.equal(lines.filter((line) => line === `rigger run: ${closerLine(closer)}`).length, 1, ran.said);
+    const failed = here.events().find(({ event, hold }) => event === 'notice.failed' && hold === closer.id);
+    assert.ok(failed, `missing actual notice failure for ${closer.id}`);
+    assert.equal(lines.filter((line) => line === relayNoticeLine('run', closer.id, failed)).length, 1, ran.said);
+  }
+  assert.deepEqual(here.events().filter(({ event }) => event === 'pull'), []);
+});
+
+// The counterexample renders the raw nested error and emits terminal controls or extra lines.
+// proves R-SCHED-23
+test('no-clock run renders a failed notice containing line feed and terminal control through noticeLine', async (t) => {
+  const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [statusIssue(7, 'a1')] });
+  const ran = await runVerb({ target: here.target, send: (_command, args) => {
+    if (args.some((arg) => String(arg).includes('{ state repository { nameWithOwner } }'))) throw new Error('read refused\nnext\u001b[31m');
+    const done = here.gh(...args);
+    return { status: done.status, stdout: done.stdout, stderr: done.stderr, timedOut: false };
+  } });
+  assert.equal(ran.code, 1, ran.text);
+  const [failed] = here.events().filter(({ event }) => event === 'notice.failed');
+  assert.ok(failed.cause.includes('\n') && failed.cause.includes('\u001b'), `raw gh failure establishes both control premises: ${JSON.stringify(failed.cause)}`);
+  const lines = ran.text.split('\n');
+  assert.equal(lines.length, 2, ran.text);
+  assert.equal(lines.filter((line) => line === relayNoticeLine('run', 'a1', failed)).length, 1, ran.text);
+  assert.doesNotMatch(ran.text, /[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+});
 
 // proves R-SCHED-4, R-SCHED-23
 test('rigger run, once the status issue a hold\'s closer names is closed by a person, removes that closer, records the issue\'s close as what reopened admission, and claims again', (t) => {

@@ -1,5 +1,5 @@
 // ABOUTME: Tests `rigger once` and `rigger run` making and provisioning each claimed card's
-// workspace through L3's single pull, over a fixture repository with a local `origin` and a fake
+// workspace through L3's pull and no-clock drain, over a fixture repository with a local `origin` and a fake
 // board, and then dispatching its maker through L1 to a stand-in.
 
 import { test } from 'node:test';
@@ -61,7 +61,7 @@ const ONE_STEP = { steps: { ready: { run: 'true', required: true } }, listed: ['
  * given, with this file's stand-in agent first on PATH, the maker every claimed card runs as, and
  * the fake `gh` after it.
  */
-function world(t, { items, concurrency = 3, steps = ONE_STEP.steps, listed = ONE_STEP.listed, worktrees = template.worktrees, gitDirectory }, directory = scratch(t)) {
+function world(t, { items, concurrency = 3, steps = ONE_STEP.steps, listed = ONE_STEP.listed, worktrees = template.worktrees, gitDirectory, waitForClose = false }, directory = scratch(t)) {
   const kinds = Object.fromEntries(Object.entries(template.kinds).map(([name, kind]) => [name, { ...kind, provisioning: name === 'change' ? listed : [] }]));
   const config = { ...template, repo: REPO, board: { ...template.board, project: PROJECT }, concurrency, worktrees, kinds, provisioning: steps };
   const target = withOrigin(repositoryAt(join(directory, 'target'), { 'rigger.config.mjs': `export default ${JSON.stringify(config)};\n` }), join(directory, 'origin.git'));
@@ -69,7 +69,8 @@ function world(t, { items, concurrency = 3, steps = ONE_STEP.steps, listed = ONE
   const fake = installFakeGh(join(directory, 'fake'), {
     repo: REPO, project: PROJECT, board: { columns: Object.values(template.board.columns), fields: [{ name: template.board.priority.field, options: template.board.priority.options }], items },
   });
-  const env = { ...process.env, PATH: [agent.dir, join(directory, 'fake'), gitDirectory, process.env.PATH].filter(Boolean).join(delimiter) };
+  const maker = waitForClose ? afterAdmissionClose(target) : agent;
+  const env = { ...process.env, PATH: [maker.dir, join(directory, 'fake'), gitDirectory, process.env.PATH].filter(Boolean).join(delimiter) };
   const verb = (name, cwd = target) => {
     const ran = spawnSync(process.execPath, [bin, name], { cwd, encoding: 'utf8', env, timeout: SETTLES_WITHIN, killSignal: 'SIGKILL' });
     assert.equal(ran.error, undefined);
@@ -77,6 +78,18 @@ function world(t, { items, concurrency = 3, steps = ONE_STEP.steps, listed = ONE
   };
   const events = () => readEvents(join(target, '.rigger'));
   return { directory, target, fake, verb, events, worktrees: join(directory, 'widgets-worktrees') };
+}
+
+/** A successful maker held by the actual recorded admission.close, so no fast sibling races it. */
+function afterAdmissionClose(target) {
+  const stream = join(target, '.rigger', 'events.jsonl');
+  const script = [
+    "const fs = require('node:fs');",
+    `const stream = ${JSON.stringify(stream)};`,
+    "const closed = () => fs.readFileSync(stream, 'utf8').trimEnd().split('\\n').some((line) => JSON.parse(line).event === 'admission.close');",
+    'function untilClosed() { if (!closed()) setImmediate(untilClosed); } untilClosed();',
+  ].join('\n');
+  return standInAgent({ '*': { engineer: { exec: [process.execPath, '-e', script] } } });
 }
 
 /** The directories under `path`, sorted, or none where nothing is there. */
@@ -179,12 +192,12 @@ test('given a required step that exits non-zero on both attempts, rigger once pr
 });
 
 /** A world where git gives no answer while L1 adds card 10's workspace twice. */
-function unansweredWorkspaceWorld(t, items) {
+function unansweredWorkspaceWorld(t, items, waitForClose = false) {
   const directory = scratch(t);
   const stand = join(directory, 'unanswered-git');
   mkdirSync(stand);
   gitUnansweredAdd(stand, 'rigger-10', 2);
-  return world(t, { items, gitDirectory: stand }, directory);
+  return world(t, { items, gitDirectory: stand, waitForClose }, directory);
 }
 
 test('given a workspace that cannot be made on either attempt, rigger once prints both attempts\' failures, each naming the workspace path, and exits non-zero', (t) => {
@@ -423,14 +436,14 @@ test('given a worktree root inside the running package\'s source tree, rigger ru
 /** Four pullable cards of kind `change`, oldest first #10, #20, #30, #40. */
 const FOUR = [card(30), card(10), card(40), card(20)];
 
-test('given four pullable cards, N 3, and a change kind listing one step whose run is true, rigger run leaves three workspaces at three different real paths, and claims no fourth card', async (t) => {
+test('given four pullable cards, N 3, and a change kind listing one true step, rigger run drains all four into distinct real workspaces', async (t) => {
   const here = world(t, { items: FOUR });
 
   const ran = here.verb('run');
 
   const made = under(here.worktrees).filter((name) => name !== 'scratch').map((name) => realpathSync(join(here.worktrees, name)));
-  assert.equal(new Set(made).size, 3, `${ran.said}\n${made.join('\n')}`);
-  assert.deepEqual(await columnsOf(here), { 10: 'Coding', 20: 'Coding', 30: 'Coding', 40: 'Ready' }, ran.said);
+  assert.equal(new Set(made).size, 4, `${ran.said}\n${made.join('\n')}`);
+  assert.deepEqual(await columnsOf(here), { 10: 'Coding', 20: 'Coding', 30: 'Coding', 40: 'Coding' }, ran.said);
 });
 
 test('given that world, the event stream shows the step dispatched for each card rigger run claimed, exiting 0, with its dispatch.start naming that card\'s own workspace', (t) => {
@@ -439,7 +452,7 @@ test('given that world, the event stream shows the step dispatched for each card
   const ran = here.verb('run');
 
   const events = here.events();
-  for (const number of [10, 20, 30]) {
+  for (const number of [10, 20, 30, 40]) {
     const dispatched = events.filter((event) => event.layer === 'L3' && event.event === 'dispatch' && event.card === number);
     assert.deepEqual(dispatched.map(({ step }) => step), ['ready', undefined], ran.said);
     const [{ dispatch: id }] = dispatched;
@@ -455,7 +468,7 @@ test('given that world, rigger run prints a line for each claimed card naming th
 
   const ran = here.verb('run');
 
-  for (const number of [10, 20, 30]) {
+  for (const number of [10, 20, 30, 40]) {
     const line = ran.err.split('\n').find((held) => new RegExp(`^rigger run: claimed #${number} from board 3\\b`).test(held));
     assert.ok(line, ran.said);
     assert.ok(line.includes(derived(here, number)), line);
@@ -473,7 +486,7 @@ test('given that world, rigger run exits non-zero', (t) => {
 const pulls = (events) => events.filter((event) => event.layer === 'L3' && event.event === 'trigger' && event.trigger === 'pull').length;
 
 test('given four pullable cards and N 3, where one claimed card\'s required step exits non-zero on both attempts, rigger run prints both attempts\' failures for that card, each naming the step and its exit code', (t) => {
-  const here = world(t, { items: [card(30), card(10, { labels: ['area:fails'] }), card(40), card(20)], ...FAILING });
+  const here = world(t, { items: [card(30), card(10, { labels: ['area:fails'] }), card(40), card(20)], ...FAILING, waitForClose: true });
 
   const ran = here.verb('run');
 
@@ -487,18 +500,19 @@ test('given four pullable cards and N 3, where one claimed card\'s required step
   }
 });
 
-test('in that case, rigger run fires no second pull after that card\'s slot is released, as the event stream\'s pull trigger events show', (t) => {
-  const here = world(t, { items: [card(30), card(10, { labels: ['area:fails'] }), card(40), card(20)], ...FAILING });
+test('in that case, freed-slot pulls read the hold closed and claim no fourth card', (t) => {
+  const here = world(t, { items: [card(30), card(10, { labels: ['area:fails'] }), card(40), card(20)], ...FAILING, waitForClose: true });
 
   const ran = here.verb('run');
 
   const events = here.events();
   assert.ok(events.some((event) => event.event === 'slot.release' && event.card === 10), ran.said);
-  assert.equal(pulls(events), 1, ran.said);
+  assert.equal(pulls(events), 4, ran.said);
+  assertClosedBeforeRefill(events, ran.said);
 });
 
-test('given a workspace that cannot be made on either attempt of a card rigger run claimed, rigger run prints both failures for that card and fires no second pull after its slot is released', async (t) => {
-  const here = unansweredWorkspaceWorld(t, FOUR);
+test('given a workspace not made on either attempt, run prints both failures and its freed-slot pulls claim no fourth card after the hold', async (t) => {
+  const here = unansweredWorkspaceWorld(t, FOUR, true);
   const path = derived(here, 10);
 
   const ran = here.verb('run');
@@ -511,9 +525,18 @@ test('given a workspace that cannot be made on either attempt of a card rigger r
   }
   const events = here.events();
   assert.ok(events.some((event) => event.event === 'slot.release' && event.card === 10), ran.said);
-  assert.equal(pulls(events), 1, ran.said);
+  assert.equal(pulls(events), 4, ran.said);
+  assertClosedBeforeRefill(events, ran.said);
   assert.equal((await columnsOf(here))[40], 'Ready', ran.said);
 });
+
+/** Every sibling maker releases only after the actual close, and every subsequent claim is barred. */
+function assertClosedBeforeRefill(events, said) {
+  const closed = events.findIndex(({ event }) => event === 'admission.close');
+  assert.ok(closed >= 0, said);
+  assert.deepEqual(events.slice(closed + 1).filter(({ event }) => event === 'pull'), [], said);
+  for (const number of [20, 30]) assert.ok(events.findIndex(({ event, card }) => event === 'slot.release' && card === number) > closed, said);
+}
 
 /** #10, #20 and #30, oldest first, where #20 alone carries `area:fails`, so under `FAILING` its required step exits non-zero on both attempts. */
 const ONE_FAILING = [card(30), card(10), card(20, { labels: ['area:fails'] })];
