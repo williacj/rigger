@@ -363,6 +363,9 @@ function statusConsumer(t, { closers, issues, refuseState = false }) {
 const statusIssue = (number, id) => ({ number, title: 'Rigger closed admission', body: `Why.\n\nHold: \`${id}\`\n`, labels: ['rigger:status'] });
 
 // The counterexample drops either closer when a no-clock pull reports two failed notices.
+// Host reason: wiring; real-bin output joins actual filesystem closers with native gh read failures.
+// Rigger decision: test/hold-notice-loop.test.mjs — a no-clock failed closed pull keeps both closers and their failed notices beside the original trigger refusal.
+// Notice wording is covered by test/hold-notice-verb.test.mjs; this test arms no timer.
 // proves R-SCHED-23
 test('no-clock run prints each closed-admission closer and its failed notice exactly once', (t) => {
   const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json', 'hold-b2-issue-9.json'], issues: [statusIssue(7, 'a1'), statusIssue(9, 'b2')], refuseState: true });
@@ -380,6 +383,9 @@ test('no-clock run prints each closed-admission closer and its failed notice exa
 });
 
 // The counterexample renders the raw nested error and emits terminal controls or extra lines.
+// Host reason: wiring; the in-process verb reads an actual consumer repository and filesystem closer.
+// Rigger decision: test/hold-notice-verb.test.mjs — for a step that failed, the notice line of rigger once and of rigger run says the notice failed to take it, and why.
+// Shared printable escaping is covered by test/resume-removed-printable.test.mjs; this test arms no timer.
 // proves R-SCHED-23
 test('no-clock run renders a failed notice containing line feed and terminal control through noticeLine', async (t) => {
   const here = statusConsumer(t, { closers: ['hold-a1-issue-7.json'], issues: [statusIssue(7, 'a1')] });
