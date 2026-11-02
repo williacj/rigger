@@ -484,6 +484,10 @@ test('rigger resume, wherever the config fails after the closers are removed and
   }
 });
 
+// Host reason: wiring.
+// Rigger decision: test/hold-notice-loop.test.mjs — an actual later read Error stays original beside the earlier made opening and its refused record.
+// The companion proves reopening and retention of both failures; this case connects that
+// result to the native gh process and the once report and exit status.
 // proves R-SCHED-23
 test('rigger once, after a made closer opening whose admission.open record was refused, reports a plain board Error and exits non-zero', async (t) => {
   // The architect's round-7 B2 probe on #1079, through the real `once` in process, for each Error
