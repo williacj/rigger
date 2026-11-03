@@ -23,6 +23,8 @@ import {
   COLUMNS, DRIVEN_ROUNDS, KINDS, boardOf, cardIn, columnsOf, drive, handleOn, waitFor, readyCard, world,
 } from './loop-world.mjs';
 import { makingWorkspaces } from './loop-world.mjs';
+import { makingJudgeDirectories } from './loop-world.mjs';
+import { removeClosers } from './admission-world.mjs';
 import { readingLater, settledOf } from './loop-world.mjs';
 import { positive, settling, turnWait } from './loop-world.mjs';
 import { loop } from '../src/scheduling/loop.mjs';
@@ -1316,19 +1318,80 @@ function onManualHost(t, options) {
   return built;
 }
 
+/** One warmed native world for independent refusal cases, with a fresh active pair per case. */
+function refusalWorld(t, cases, stepRun, fresh) {
+  const root = temporaryDirectory('rigger-refusal-matrix-');
+  const making = makingWorkspaces(join(root, 'workspaces'));
+  const directories = makingJudgeDirectories(join(root, 'judges'));
+  const rows = cases.map((given, at) => ({ ...given, number: 42 + at, peer: 95 + at, kind: `case${at}` }));
+  const byCard = new Map(rows.map((row) => [row.number, row]));
+  let selected = rows[0];
+  let reads = 0;
+  let built;
+  const workspace = async (number) => {
+    const row = byCard.get(number);
+    if (row && !row.judging && ['workspace', 'preparation'].includes(row.stage)) return makeWorkspace({ root, topic: 'rigger-{number}', repository: join(root, 'missing-repository'), card: number, sink: built.sink });
+    const made = await making(number);
+    if (row?.stage === 'maker') fs.rmSync(made.path, { recursive: true });
+    return made;
+  };
+  const kinds = Object.fromEntries(rows.map(({ kind, judging, stage }) => [kind, { ...KINDS.change,
+    select: { labels: [`type:${kind}`] }, judges: judging ? ['reviewer'] : ['owner'],
+    provisioning: stage === 'optional' ? ['optional'] : stage.includes('step') ? ['prepare'] : [],
+  }]));
+  kinds.handoff = { ...KINDS.change, select: { labels: ['type:handoff'] } };
+  built = onManualHost(t, { cards: rows.flatMap(({ number, peer, kind, judging }) => [
+    { ...cardIn(number, judging ? COLUMNS.review : COLUMNS.ready), labels: [`type:${kind}`] },
+    { ...readyCard(peer), labels: ['type:handoff'] },
+  ]), concurrency: 1, makerHold: false, fresh, workspace, kinds,
+    provisioning: { prepare: { run: stepRun, required: true }, optional: { run: stepRun, required: false } },
+    judgeDirectory: (number, role, head) => ['workspace', 'preparation'].includes(byCard.get(number)?.stage)
+      ? makeJudgeDirectory({ root, topic: 'rigger-{number}', repository: join(root, 'missing-repository'), card: number, role, head, sink: built.sink })
+      : directories(number, role, head),
+    forge: { pullRequests: rows.flatMap(({ number, judging }, at) => judging ? [{ number: 733 + at, head: `rigger-${number}`, sha: 'a'.repeat(40), mergeBase: 'b'.repeat(40), diff: 'diff --git a/help b/help\n' }] : []) },
+  });
+  for (const { number, judging } of rows) if (judging) built.agent.plan(number, 'reviewer', {});
+  const emitter = built.sink.emitter.bind(built.sink);
+  const priority = built.fake.operations.readPriority;
+  built.fake.operations.readPriority = async (...args) => {
+    const answer = await priority(...args);
+    return { ...answer, items: ++reads > 4 ? [] : answer.items.filter(({ number }) => number === selected.number || number === selected.peer) };
+  };
+  return { built, resetReads: () => { reads = 0; }, select: (at) => {
+    // Independent rows start with open admission, as their former separate worlds did.
+    if (fs.existsSync(admissionOf(built.directory))) removeClosers(built.directory);
+    built.sink.emitter = emitter;
+    selected = rows[at];
+    reads = 0;
+    const eventsAt = built.events().length;
+    const runsAt = built.agent.runs().length;
+    return { number: selected.number, peer: selected.peer,
+      events: () => built.events().slice(eventsAt), runs: () => built.agent.runs().slice(runsAt),
+      l3: () => built.events().slice(eventsAt).filter(({ layer }) => layer === 'L3'),
+    };
+  } };
+}
+
 /** A failed stand-in's exit-time reads, followed by a newly closed PR and a controlled line read. */
-function closedAfterFailedMaker(t, { exitBranch = 'unreadable', exitPull = 'absent', closedBranch = false, kinds = KINDS, earlyRead } = {}) {
+function closedAfterFailedMaker(t, { exitBranch = 'unreadable', exitPull = 'absent', closedBranch = false, kinds = KINDS, earlyRead, cases } = {}) {
   const removals = [];
-  const built = onManualHost(t, { cards: [42], concurrency: 1, fresh: false, answer: () => ({ exit: 7, output: '' }), kinds,
+  const choices = cases ?? [{ number: 42, exitBranch, exitPull, closedBranch, earlyRead }];
+  let selected = choices[0];
+  const built = onManualHost(t, { cards: choices.map(({ number }) => number), concurrency: 1, fresh: false, answer: () => ({ exit: 7, output: '' }), kinds,
     removeDirectories: async (number) => { removals.push(number); },
   });
+  const priority = built.fake.operations.readPriority;
+  built.fake.operations.readPriority = async (...args) => {
+    const answer = await priority(...args);
+    return { ...answer, items: answer.items.filter(({ number }) => number === selected.number) };
+  };
   let exitReading = false;
   let afterExit = false;
   const exitReads = [];
   const comments = built.repository.operations.readIssueComments;
   built.repository.operations.readIssueComments = async (...args) => {
-    if (!exitReading || earlyRead === undefined) return comments(...args);
-    if (earlyRead === 'comments') throw new Error('exit-time issue comments unavailable');
+    if (!exitReading || selected.earlyRead === undefined) return comments(...args);
+    if (selected.earlyRead === 'comments') throw new Error('exit-time issue comments unavailable');
     const dispatch = built.l3Events().findLast(({ event, role }) => event === 'dispatch' && role === 'engineer').dispatch;
     return [{ permission: 'write', edited: false, body: ['```rigger-escalation', 'category: ambiguous', 'item: 1', 'reason: maker cannot finish', `dispatch: ${dispatch}`, '```'].join('\n') }];
   };
@@ -1336,15 +1399,15 @@ function closedAfterFailedMaker(t, { exitBranch = 'unreadable', exitPull = 'abse
   // closed-no-branch fixture does; opening the fake PR itself also retains its branch.
   built.repository.operations.readBranches = async (names) => {
     if (exitReading) exitReads.push('branch');
-    if (exitReading && exitBranch === 'unreadable') throw new Error('exit-time branch unavailable');
-    return Object.fromEntries(names.map((name) => [name, exitReading ? exitBranch === 'present' : afterExit && closedBranch]));
+    if (exitReading && selected.exitBranch === 'unreadable') throw new Error('exit-time branch unavailable');
+    return Object.fromEntries(names.map((name) => [name, exitReading ? selected.exitBranch === 'present' : afterExit && (selected.closedBranch ?? false)]));
   };
   const pulls = built.repository.operations.readPullRequests;
   built.repository.operations.readPullRequests = async (...args) => {
     if (exitReading) exitReads.push('PR');
-    if (exitReading && earlyRead === 'escalation') throw new Error('exit-time escalation PR unavailable');
-    if (exitReading && exitPull === 'unreadable') throw new Error('exit-time PR unavailable');
-    if (exitReading && exitPull === 'closed') return { open: [], merged: [], closed: [{ number: 733, head: 'a'.repeat(40), base: 'main' }] };
+    if (exitReading && selected.earlyRead === 'escalation') throw new Error('exit-time escalation PR unavailable');
+    if (exitReading && selected.exitPull === 'unreadable') throw new Error('exit-time PR unavailable');
+    if (exitReading && selected.exitPull === 'closed') return { open: [], merged: [], closed: [{ number: 733 + selected.number - 42, head: 'a'.repeat(40), base: 'main' }] };
     return pulls(...args);
   };
   let first = true;
@@ -1356,15 +1419,15 @@ function closedAfterFailedMaker(t, { exitBranch = 'unreadable', exitPull = 'abse
     try { return await settle(...args); }
     finally {
       exitReading = false;
-      const [card] = await built.fake.operations.readItems();
+      const card = (await built.fake.operations.readItems()).find(({ number }) => number === selected.number);
       if (initial) {
         afterExit = true;
-        built.repository.open({ number: 733, head: 'rigger-42', sha: 'a'.repeat(40), closed: true });
+        built.repository.open({ number: 733 + selected.number - 42, head: `rigger-${selected.number}`, sha: 'a'.repeat(40), closed: true });
         await built.fake.operations.moveItem(card.id, COLUMNS.review);
       } else await built.fake.operations.moveItem(card.id, COLUMNS.done);
     }
   };
-  return { built, removals, exitReads };
+  return { built, removals, exitReads, select: (at) => { selected = choices[at]; first = true; afterExit = false; exitReads.length = 0; } };
 }
 
 // An unreadable failed-maker snapshot must not admit a later closed-card redo in the same run.
@@ -1455,15 +1518,22 @@ test('early failed-maker reads preserve presence and defer absent or unreadable 
     ['escalation', 'unreadable', 'unreadable', 'unreadable'],
     ['escalation', 'present', 'unreadable', 'present'],
   ];
-  for (const [earlyRead, exitBranch, exitPull, expected] of cases) await t.test(`${earlyRead}/${exitBranch}/${exitPull}`, async (t) => {
-    const { built, removals, exitReads } = closedAfterFailedMaker(t, { earlyRead, exitBranch, exitPull });
+  // One warmed native stand-in serves independent cards; no cell pays another cold world setup.
+  const { built, removals, exitReads, select } = closedAfterFailedMaker(t, {
+    cases: cases.map(([earlyRead, exitBranch, exitPull], at) => ({ number: 42 + at, earlyRead, exitBranch, exitPull })),
+  });
+  for (const [at, [earlyRead, exitBranch, exitPull, expected]] of cases.entries()) await t.test(`${earlyRead}/${exitBranch}/${exitPull}`, async (t) => {
+    const number = 42 + at;
+    select(at);
+    assert.equal((await built.fake.operations.readItems()).find((card) => card.number === number).column, COLUMNS.ready, 'each cell starts from its own untouched Ready card');
+    assert.deepEqual(await built.repository.operations.readPullRequests(`rigger-${number}`), { open: [], merged: [], closed: [] }, "each cell starts without another cell's pull request");
     const reached = await drive(built);
     assert.equal(reached[0].settled.status, 'rejected', 'the original early read failure remains reported');
     assert.equal(reached[0].settled.reason.makerWork, expected, 'classification reaches L3 despite the earlier catch');
     assert.deepEqual(exitReads.sort(), ['PR', 'branch'], 'both exit-time work sources are attempted once');
     assert.match(reached[0].settled.reason.message, earlyRead === 'comments' ? /exit-time issue comments unavailable/ : /exit-time escalation PR unavailable/);
-    assert.equal(built.agent.runs().length, expected === 'present' ? 2 : 1, 'only established presence permits the later maker');
-    assert.deepEqual(removals, expected === 'present' ? [42] : [], 'absence or unreadable facts defer removal with its maker');
+    assert.equal(built.agent.runs().filter(({ card }) => card === number).length, expected === 'present' ? 2 : 1, 'only established presence permits the later maker');
+    assert.deepEqual(removals.filter((card) => card === number), expected === 'present' ? [number] : [], 'absence or unreadable facts defer removal with its maker');
   });
 });
 
@@ -1821,21 +1891,10 @@ test('persistent refused judge starts defer only that identity and retain both R
 // Each real recording boundary must defer A while a normal freed pull still reaches B.
 // proves R-RECORD-9, R-SCHED-6
 test('terminal preparation provisioning and start refusals defer their selected identity while the freed slot admits another card', SETTLES_WITHIN, async (t) => {
-  for (const judging of [false, true]) for (const stage of ['preparation', 'L3 step', 'L1 step', 'L3 role', 'L1 role']) await t.test(`${judging ? 'judge' : 'maker'}/${stage}`, async (t) => {
-    let built;
-    const root = temporaryDirectory('rigger-refused-preparation-');
-    const making = makingWorkspaces(join(root, 'workspaces'));
-    const options = { cards: [judging ? cardIn(42, COLUMNS.review) : 42, { ...readyCard(95), labels: ['type:handoff'] }], concurrency: 1, makerHold: false,
-      kinds: { change: { ...KINDS.change, judges: judging ? ['reviewer'] : ['owner'], provisioning: stage.includes('step') ? ['prepare'] : [] }, handoff: { ...KINDS.change, select: { labels: ['type:handoff'] } } },
-      provisioning: { prepare: { run: 'true', required: true } },
-      forge: { pullRequests: judging ? [{ number: 733, head: 'rigger-42', sha: 'a'.repeat(40), mergeBase: 'b'.repeat(40), diff: 'diff --git a/help b/help\n' }] : [] },
-    };
-    if (stage === 'preparation') {
-      if (judging) options.judgeDirectory = (card, role, head) => makeJudgeDirectory({ root, topic: 'rigger-{number}', repository: join(root, 'missing-repository'), card, role, head, sink: built.sink });
-      else options.workspace = (card) => card === 42 ? makeWorkspace({ root, topic: 'rigger-{number}', repository: join(root, 'missing-repository'), card, sink: built.sink }) : making(card);
-    }
-    built = onManualHost(t, options);
-    if (judging) built.agent.plan(42, 'reviewer', {});
+  const cases = [false, true].flatMap((judging) => ['preparation', 'L3 step', 'L1 step', 'L3 role', 'L1 role'].map((stage) => ({ judging, stage })));
+  const { built, select } = refusalWorld(t, cases, 'true', true);
+  for (const [at, { judging, stage }] of cases.entries()) await t.test(`${judging ? 'judge' : 'maker'}/${stage}`, async () => {
+    const { number, peer, events, runs, l3 } = select(at);
     const emitter = built.sink.emitter.bind(built.sink);
     let refused = 0;
     built.sink.emitter = (context) => {
@@ -1844,24 +1903,19 @@ test('terminal preparation provisioning and start refusals defer their selected 
         const boundary = stage === 'preparation' ? context.layer === 'L1' && event === 'workspace.failed'
           : stage.startsWith('L3') ? context.layer === 'L3' && event === 'dispatch' && (stage.endsWith('step') ? fields.step === 'prepare' : fields.role === (judging ? 'reviewer' : 'engineer'))
             : context.layer === 'L1' && event === 'dispatch.start';
-        if (context.card === 42 && boundary) { refused += 1; throw new Error(`persistent ${stage} recording refusal`); }
+        if (context.card === number && boundary) { refused += 1; throw new Error(`persistent ${stage} recording refusal`); }
         return actual.emit(event, fields);
       } };
     };
-    const priority = built.fake.operations.readPriority;
-    let reads = 0;
-    built.fake.operations.readPriority = async (...args) => {
-      const actual = await priority(...args);
-      return ++reads > 4 ? { ...actual, items: [] } : actual;
-    };
     const result = await built.loop.run().then((value) => ({ value }), (failure) => ({ failure, value: failure.reached }));
     assert.equal(refused, 1, 'fixed selecting facts admit one terminal refusal');
-    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card), [42, 95, 95], 'A releases normally, B runs and later moves to Owner');
-    assert.deepEqual(built.agent.runs().map(({ card }) => card), [95], 'no role of A started');
-    assert.deepEqual(built.l3Events().filter(({ event, card }) => event === 'pull' && card === 95).map(({ queueDepth }) => queueDepth), [0, 0], 'the deferred identity occupies no queue position');
-    assert.equal(built.events().some(({ event }) => event === 'admission.close' || event === 'attempt.failed'), false, 'recording refusal neither consumes a host attempt nor closes admission');
-    assert.deepEqual(await columnsOf(built.fake), { 42: judging ? COLUMNS.review : COLUMNS.coding, 95: COLUMNS.owner });
-    assert.ok(result.value.some(({ card }) => card === 95));
+    assert.deepEqual(l3().filter(({ event }) => event === 'pull').map(({ card }) => card), [number, peer, peer], 'A releases normally, B runs and later moves to Owner');
+    assert.deepEqual(runs().map(({ card }) => card), [peer], 'no role of A started');
+    assert.deepEqual(l3().filter(({ event, card }) => event === 'pull' && card === peer).map(({ queueDepth }) => queueDepth), [0, 0], 'the deferred identity occupies no queue position');
+    assert.equal(events().some(({ event }) => event === 'admission.close' || event === 'attempt.failed'), false, 'recording refusal neither consumes a host attempt nor closes admission');
+    const columns = await columnsOf(built.fake);
+    assert.deepEqual({ [number]: columns[number], [peer]: columns[peer] }, { [number]: judging ? COLUMNS.review : COLUMNS.coding, [peer]: COLUMNS.owner });
+    assert.ok(result.value.some(({ card }) => card === peer));
   });
 });
 
@@ -1870,36 +1924,16 @@ test('terminal preparation provisioning and start refusals defer their selected 
 test('L2 recording halts defer the selected maker or judge while another card refills its slot', SETTLES_WITHIN, async (t) => {
   const cases = ['workspace', 'step', 'maker'].flatMap((stage) => ['attempt.failed', 'attempt.decided'].map((record) => ({ stage, record, judging: false })));
   cases.push({ stage: 'optional', record: 'step.failed', judging: false }, { stage: 'workspace', record: 'judge.withheld', judging: true }, { stage: 'step', record: 'judge.withheld', judging: true });
-  for (const { stage, record, judging } of cases) await t.test(`${judging ? 'judge' : 'maker'}/${stage}/${record}`, async (t) => {
-    const root = temporaryDirectory('rigger-refused-attempt-');
-    const making = makingWorkspaces(join(root, 'workspaces'));
-    let built;
-    const workspace = async (card) => {
-      if (card === 42 && stage === 'workspace') return makeWorkspace({ root, topic: 'rigger-{number}', repository: join(root, 'missing-repository'), card, sink: built.sink });
-      const made = await making(card);
-      // A missing working directory is L1's actual NOT_STARTED boundary, as in environment-retry.
-      if (card === 42 && stage === 'maker') fs.rmSync(made.path, { recursive: true });
-      return made;
-    };
-    built = onManualHost(t, { cards: [judging ? cardIn(42, COLUMNS.review) : 42, { ...readyCard(95), labels: ['type:handoff'] }], concurrency: 1, makerHold: false, fresh: false, workspace,
-      kinds: { change: { ...KINDS.change, judges: judging ? ['reviewer'] : ['owner'], provisioning: ['step', 'optional'].includes(stage) ? ['prepare'] : [] }, handoff: { ...KINDS.change, select: { labels: ['type:handoff'] } } },
-      provisioning: { prepare: { run: 'false', required: stage !== 'optional' } },
-      ...(judging && stage === 'workspace' ? { judgeDirectory: (card, role, head) => makeJudgeDirectory({ root, topic: 'rigger-{number}', repository: join(root, 'missing-repository'), card, role, head, sink: built.sink }) } : {}),
-      forge: { pullRequests: judging ? [{ number: 733, head: 'rigger-42', sha: 'a'.repeat(40), mergeBase: 'b'.repeat(40), diff: 'diff --git a/help b/help\n' }] : [] },
-    });
-    const priority = built.fake.operations.readPriority;
-    let reads = 0;
-    built.fake.operations.readPriority = async (...args) => {
-      const actual = await priority(...args);
-      return ++reads > 4 ? { ...actual, items: [] } : actual;
-    };
+  const { built, select, resetReads } = refusalWorld(t, cases, 'false', false);
+  for (const [at, { stage, record, judging }] of cases.entries()) await t.test(`${judging ? 'judge' : 'maker'}/${stage}/${record}`, async () => {
+    const { number, peer, events, runs, l3 } = select(at);
     const append = fs.appendFileSync;
     const refusal = new Error(`the disk refuses L2 ${record}`);
     let refused = 0;
     fs.appendFileSync = (path, data, ...rest) => {
       if (String(path) === streamPath(built.directory)) {
         const event = JSON.parse(String(data));
-        if (event.layer === 'L2' && event.card === 42 && event.event === record) {
+        if (event.layer === 'L2' && event.card === number && event.event === record) {
           refused += 1;
           throw refusal;
         }
@@ -1919,16 +1953,16 @@ test('L2 recording halts defer the selected maker or judge while another card re
       for (let cause = each; cause != null; cause = cause.cause) if (cause === refusal) return true;
       return false;
     }), 'L2 retains the original sink refusal through L3’s judge wrapper');
-    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card), [42, 95, 95], 'normal refill reaches B and its subsequent move to Owner');
-    assert.deepEqual(built.agent.runs().map(({ card }) => card), [95], 'A never starts a maker');
-    assert.deepEqual(built.l3Events().filter(({ event, card }) => event === 'pull' && card === 95).map(({ queueDepth }) => queueDepth), [0, 0], 'deferred A occupies no queue position');
-    assert.equal(built.events().some(({ event }) => event === 'admission.close'), false, 'the recording refusal does not close admission');
-    assert.deepEqual(built.events().filter(({ event, card }) => card === 42 && event === 'attempt.decided'), [], 'no host retry was recorded');
-    assert.equal(built.events().filter(({ event, card }) => card === 42 && event === 'attempt.failed').length, record === 'attempt.decided' ? 1 : 0, 'a previously accepted failure record is retained');
-    reads = 0;
+    assert.deepEqual(l3().filter(({ event }) => event === 'pull').map(({ card }) => card), [number, peer, peer], 'normal refill reaches B and its subsequent move to Owner');
+    assert.deepEqual(runs().map(({ card }) => card), [peer], 'A never starts a maker');
+    assert.deepEqual(l3().filter(({ event, card }) => event === 'pull' && card === peer).map(({ queueDepth }) => queueDepth), [0, 0], 'deferred A occupies no queue position');
+    assert.equal(events().some(({ event }) => event === 'admission.close'), false, 'the recording refusal does not close admission');
+    assert.deepEqual(events().filter(({ event, card }) => card === number && event === 'attempt.decided'), [], 'no host retry was recorded');
+    assert.equal(events().filter(({ event, card }) => card === number && event === 'attempt.failed').length, record === 'attempt.decided' ? 1 : 0, 'a previously accepted failure record is retained');
+    resetReads();
     await built.loop.run().catch(() => {});
-    assert.equal(built.l3Events().filter(({ event, card }) => event === 'pull' && card === 42).length, stage === 'optional' ? 3 : 2, 'a new invocation admits A again; its successful optional-step maker also reaches the ordinary Owner move');
-    assert.equal(built.agent.runs().filter(({ card }) => card === 42).length, stage === 'optional' ? 1 : 0, 'only the restored optional-step path actually starts A');
+    assert.equal(l3().filter(({ event, card }) => event === 'pull' && card === number).length, stage === 'optional' ? 3 : 2, 'a new invocation admits A again; its successful optional-step maker also reaches the ordinary Owner move');
+    assert.equal(runs().filter(({ card }) => card === number).length, stage === 'optional' ? 1 : 0, 'only the restored optional-step path actually starts A');
     assert.equal(refused, 1, 'the recording refusal belonged only to the first invocation');
   });
 });
