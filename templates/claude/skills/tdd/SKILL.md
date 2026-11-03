@@ -118,9 +118,12 @@ Those mechanics do not decide whether a mutation represents the right semantic f
 the claim. The judge still evaluates that scope. `test/mutation-claim.test.mjs` checks the stated
 bar, not its use.
 
-Preserve byte-complete originals with command, executed ref and provenance. Concatenated stdout
-and stderr are aggregate output, not evidence of cross-stream causal order. Use an ordered
-observer or synchronization where the claim depends on that order.
+Preserve byte-complete private command/ref/provenance originals outside
+test/suite/mutation/scratch/temp roots through retention event; reopen after command/fixture
+teardown before citation. Unreadable originals mean missing evidence despite paths/digests.
+Record actual child exits separately from shell/transport/tool status; missing/ambiguous exits
+earn no credit. Preserve child expressions: direct argv/literal scripts. Cross-stream causal order
+needs synchronization or ordered observation, never concatenation.
 
 ## A bug fix
 
