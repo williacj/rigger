@@ -36,6 +36,7 @@ import { unlinkSync } from 'node:fs';
 import { symlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { running } from './process-fixtures.mjs';
+import { appendFileSync } from 'node:fs';
 
 // Bounds on the tests alone, so that a call which never settles fails here rather than holding
 // the suite: nothing waits on them when the call settles. The longer is for a call that waits out
@@ -9512,7 +9513,24 @@ async function realOwnershipRun(t, entry, descendant, ending = 'abort', finalToo
   let ready;
   let resolveRecorded;
   const descendantRecord = new Promise((resolve) => { resolveRecorded = resolve; });
-  const record = (event, fields = {}) => t.diagnostic(JSON.stringify({ ownership: entry, descendant, event, ...fields }));
+  const capturePath = process.env.RIGGER_1194_CAPTURE;
+  let captureSequence = 0;
+  let captureReadId = 0;
+  const capture = (event, fields = {}) => {
+    if (!capturePath) return;
+    appendFileSync(capturePath, JSON.stringify({
+      result: process.env.RIGGER_1194_RESULT, caseName: t.name, writer: process.pid,
+      sequence: ++captureSequence, event, payload: fields,
+    }) + '\n', { mode: 0o600 });
+  };
+  const captureRead = (observation) => capture('ps.returned', {
+    readId: ++captureReadId,
+    observation: { ...observation, error: observation.error ? { name: observation.error.name, message: observation.error.message, code: observation.error.code } : null },
+  });
+  const record = (event, fields = {}) => {
+    capture(event, fields);
+    t.diagnostic(JSON.stringify({ ownership: entry, descendant, event, ...fields }));
+  };
   const diagnosticCase = descendant && ending === 'close';
   let diagnosticSequence = 0;
   let expectedCleanupReads = 0;
@@ -9523,6 +9541,7 @@ async function realOwnershipRun(t, entry, descendant, ending = 'abort', finalToo
   let diagnosticSignalResult = null;
   const diagnosticLines = [];
   const diagnosticRead = (read) => {
+    capture('identity', { readId: captureReadId, ...read });
     if (!diagnosticCase) return;
     const { sequence: cleanupSequence, ...fields } = read;
     if (cleanupSequence !== undefined) {
@@ -9536,6 +9555,7 @@ async function realOwnershipRun(t, entry, descendant, ending = 'abort', finalToo
     t.diagnostic(line);
   };
   const diagnosticSignal = (signal) => {
+    capture('descendant.signal', { signal });
     if (diagnosticCase) {
       diagnosticSignalResult = signal.result;
       t.diagnostic(JSON.stringify({ event: 'nested.signal', caseName: t.name, ...signal }));
@@ -9559,7 +9579,7 @@ async function realOwnershipRun(t, entry, descendant, ending = 'abort', finalToo
             if (descendant) {
               assert.ok(Number.isInteger(report.descendant) && report.descendant > 0);
               let psResult;
-              recorded = await nestedProcessIdentity(report.descendant, t.signal, { onIdentity: (result) => { psResult = result; } });
+              recorded = await nestedProcessIdentity(report.descendant, t.signal, { onClose: captureRead, onIdentity: (result) => { psResult = result; } });
               assert.equal(recorded.state, 'live');
               diagnosticRead({ phase: 'recorded', requestedPid: recorded.pid, pidSource: 'requested', readOutcome: 'answered', state: 'live-matching', birthMatch: 'match', commandMatch: 'match', ...psResult });
               record('descendant.recorded', recorded);
@@ -9580,7 +9600,7 @@ async function realOwnershipRun(t, entry, descendant, ending = 'abort', finalToo
           await closed;
         }
         if (recorded) {
-          const current = await nestedProcessIdentity(recorded.pid, t.signal);
+          const current = await nestedProcessIdentity(recorded.pid, t.signal, { onClose: captureRead });
           if (current.state === 'live' && current.birth === recorded.birth && current.command === recorded.command) process.kill(recorded.pid, 'SIGKILL');
         }
       });
@@ -9588,6 +9608,7 @@ async function realOwnershipRun(t, entry, descendant, ending = 'abort', finalToo
     },
     descendant: () => descendantRecord,
     observationSignal: t.signal,
+    psTool: () => ({ onClose: captureRead }),
     onObservation: diagnosticRead,
     onSignal: diagnosticSignal,
     onObservationEnd: ({ expectedReads }) => { expectedCleanupReads = expectedReads; },
@@ -9609,7 +9630,7 @@ async function realOwnershipRun(t, entry, descendant, ending = 'abort', finalToo
   if (recorded) {
     let psResult;
     let current;
-    try { current = await nestedProcessIdentity(recorded.pid, t.signal, { ...finalTool, onIdentity: (result) => { psResult = result; } }); }
+    try { current = await nestedProcessIdentity(recorded.pid, t.signal, { onClose: captureRead, ...finalTool, onIdentity: (result) => { psResult = result; } }); }
     catch (error) {
       finalRefused = true;
       diagnosticRead({
