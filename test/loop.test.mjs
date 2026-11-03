@@ -5842,28 +5842,36 @@ test('settlement recording refusals retain original causes and omit the selected
 
 // Every fresh admission consults invocation memory; asks progressing an admitted judge retain its retry.
 // proves R-SCHED-6, R-RECORD-9, R-WORK-41
-test('judge selection memory covers pull fresh-maker continuing-maker and removal-redo entries in every identity state', BOUNDS[60_000], async (t) => {
+test('judge selection memory covers pull fresh-maker continuing-maker and removal-redo entries in every identity state', { timeout: 120_000 }, async (t) => {
   const { columnChanges } = await import('../src/workflow/transitions.mjs');
   const { makingJudgeDirectories } = await import('./loop-world.mjs');
   for (const entry of ['pull', 'fresh-maker', 'continuing-maker', 'removal-redo']) {
-    for (const state of ['started', 'deferred', 'eligible', 'changed']) await t.test(`${entry}/${state}`, async (t) => {
+    for (const state of ['started', 'deferred', 'eligible', 'changed']) for (const shape of ['single', 'mixed']) await t.test(`${entry}/${state}/${shape}`, async (t) => {
       const seeded = state !== 'eligible';
       const oldHead = 'a'.repeat(40);
       const newHead = state === 'changed' ? 'c'.repeat(40) : oldHead;
       const card = cardIn(42, !seeded && entry === 'fresh-maker' ? COLUMNS.ready : COLUMNS.review);
-      const marker = (role, verdict = 'sound') => ({ ...markerComment({ card: 42, pull: 733, head: oldHead, body: card.body, role,
+      const marker = (role, verdict = 'sound', head = oldHead) => ({ ...markerComment({ card: 42, pull: 733, head, body: card.body, role,
         ...(verdict === 'sound' ? {} : { verdict, items: ['unmet'], toSound: 'Correct the help line.' }),
       }), id: `IC_${role}` });
       const covered = [marker('architect'), marker('pm')];
-      const edited = covered.map((comment) => ({ ...comment, id: `${comment.id}_after`, includesCreatedEdit: true }));
-      const continuation = () => [marker('reviewer'), marker('architect', 'needs revision'), marker('pm')];
+      const edited = covered.map((comment) => ({ ...comment, id: `${comment.id}_after`, createdAt: '2026-10-01T11:00:03Z', includesCreatedEdit: true }));
+      const targetComments = shape === 'mixed' ? edited : ['architect', 'pm'].map((role) => ({
+        ...marker(role, 'sound', newHead), id: `IC_${role}_target`, createdAt: '2026-10-01T11:00:03Z',
+      }));
+      // Fresh comments cover A and request B's revision. Removing A's covering comment after
+      // that maker returns restores A's original unmarked identity without rewriting a comment.
+      const continuation = () => [marker('pm'),
+        { ...marker('reviewer'), id: 'IC_reviewer_covered', createdAt: '2026-10-01T11:00:01Z' },
+        { ...marker('architect', 'needs revision'), id: 'IC_architect_revision', createdAt: '2026-10-01T11:00:02Z' },
+      ];
       const kinds = { change: { ...KINDS.change, judges: ['reviewer', 'architect', 'pm'] } };
       // These are fake-repository's documented PR/comment shapes, as in the reviewer's real-L2 probe.
       // Ready with a deleted line selects a fresh maker; Review with closed history selects removal.
       const built = onManualHost(t, { cards: [card], kinds, concurrency: 1, fresh: false, makerHold: false,
         forge: { pullRequests: [{ number: 733, head: 'rigger-42', sha: oldHead, mergeBase: 'b'.repeat(40),
           diff: 'diff --git a/help b/help\n', closed: !seeded && ['fresh-maker', 'removal-redo'].includes(entry),
-          comments: seeded ? covered : entry === 'continuing-maker' ? continuation() : edited,
+          comments: seeded ? covered : entry === 'continuing-maker' ? continuation() : targetComments,
         }] },
       });
       const root = temporaryDirectory('rigger-selection-entries-');
@@ -5892,7 +5900,7 @@ test('judge selection memory covers pull fresh-maker continuing-maker and remova
         if (seedEnded && !transitioned) {
           transitioned = true;
           phase = entry === 'pull' ? 'target' : 'prepare';
-          if (entry === 'pull') built.repository.update(733, { sha: newHead, comments: edited });
+          if (entry === 'pull') built.repository.update(733, { sha: newHead, comments: targetComments });
           else if (entry === 'continuing-maker') built.repository.update(733, { comments: continuation() });
           else {
             branch = false;
@@ -5920,7 +5928,7 @@ test('judge selection memory covers pull fresh-maker continuing-maker and remova
           if (context.layer === 'L1' && event === 'dispatch.end' && roles.get(context.dispatch) === 'engineer') {
             phase = 'target';
             branch = true;
-            built.repository.update(733, { closed: false, sha: newHead, comments: edited });
+            built.repository.update(733, { closed: false, sha: newHead, comments: targetComments });
           }
           actual.emit(event, fields);
           if (context.layer === 'L1' && event === 'dispatch.start' && roles.get(context.dispatch) !== 'engineer') {
@@ -5953,20 +5961,24 @@ test('judge selection memory covers pull fresh-maker continuing-maker and remova
       const result = await handle.run().then((value) => ({ value }), (failure) => ({ failure }));
       const reached = result.value ?? result.failure?.reached ?? [];
       const panels = reached.filter(({ judges }) => judges !== undefined).map(({ judges }) => judges.map(({ role }) => role));
-      if (seeded) assert.deepEqual(panels[0], ['reviewer'], `${entry}/${state}: only A was initially owed`);
-      const expected = ['started', 'deferred'].includes(state) ? ['architect', 'pm'] : ['reviewer', 'architect', 'pm'];
-      assert.deepEqual(panels[seeded ? 1 : 0] ?? [], expected, `${entry}/${state}: new admission omits only remembered identities and preserves unmatched L2 order`);
-      assert.equal(removals, entry === 'removal-redo' ? 1 : 0, `${entry}/${state}: the selected removal entry was exercised`);
-      assert.equal(makers, entry === 'pull' ? 0 : 1, `${entry}/${state}: the selected maker entry was exercised`);
-      const expectedOffers = state === 'eligible' || state === 'changed' ? 2 : 1;
-      assert.equal(attempts.filter(({ role }) => role === 'reviewer').length, expectedOffers, `${entry}/${state}: A is offered only for an eligible identity or its under-claim retry`);
-      assert.equal(starts.filter(({ role }) => role === 'reviewer').length, state === 'deferred' ? 0 : state === 'changed' ? 2 : 1,
-        `${entry}/${state}: actual L1 starts distinguish remembered deferred and retryable identities`);
-      assert.deepEqual(starts.filter(({ phase, role }) => phase === 'target' && role !== 'reviewer').map(({ role }) => role).sort(), ['architect', 'pm']);
+      if (seeded) assert.deepEqual(panels[0], ['reviewer'], `${entry}/${state}/${shape}: only A was initially owed`);
       const target = identities.find(({ phase }) => phase === 'target');
-      assert.ok(target, `${entry}/${state}: real L2 supplied the target reviewer identity`);
+      assert.ok(target, `${entry}/${state}/${shape}: real L2 supplied the target reviewer identity`);
       assert.equal(target.head, newHead);
       if (seeded) assert.deepEqual({ ...target, phase: 'seed', head: oldHead }, identities.find(({ phase }) => phase === 'seed'), 'only the explicitly changed head differs from the original selecting facts');
+      const expected = ['started', 'deferred'].includes(state)
+        ? (shape === 'mixed' ? ['architect', 'pm'] : [])
+        : (shape === 'mixed' ? ['reviewer', 'architect', 'pm'] : ['reviewer']);
+      assert.deepEqual(panels[seeded ? 1 : 0] ?? [], expected, `${entry}/${state}/${shape}: new admission omits only remembered identities and preserves unmatched L2 order`);
+      assert.equal(removals, entry === 'removal-redo' ? 1 : 0, `${entry}/${state}/${shape}: the selected removal entry was exercised`);
+      assert.equal(makers, entry === 'pull' ? 0 : 1, `${entry}/${state}/${shape}: the selected maker entry was exercised`);
+      assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card), seeded && (entry !== 'pull' || shape === 'mixed' || state === 'changed') ? [42, 42] : [42],
+        `${entry}/${state}/${shape}: an under-claim retry creates no new claim and remembered identities create no later claim`);
+      const expectedOffers = state === 'eligible' || state === 'changed' ? 2 : 1;
+      assert.equal(attempts.filter(({ role }) => role === 'reviewer').length, expectedOffers, `${entry}/${state}/${shape}: A is offered only for an eligible identity or its under-claim retry`);
+      assert.equal(starts.filter(({ role }) => role === 'reviewer').length, state === 'deferred' ? 0 : state === 'changed' ? 2 : 1,
+        `${entry}/${state}/${shape}: actual L1 starts distinguish remembered deferred and retryable identities`);
+      assert.deepEqual(starts.filter(({ phase, role }) => phase === 'target' && role !== 'reviewer').map(({ role }) => role).sort(), shape === 'mixed' ? ['architect', 'pm'] : []);
       assert.equal(built.events().some(({ event }) => event === 'admission.close'), false, 'recording refusal and one ordinary retry close no admission');
       assert.equal(built.events().filter(({ event }) => event === 'attempt.failed').length, state === 'eligible' ? 1 : 0, 'only the genuine unstarted host failure consumes an attempt');
       if (state === 'deferred') assert.ok(leavesOf(result.failure).some((failure) => {
