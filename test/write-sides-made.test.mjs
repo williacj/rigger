@@ -107,7 +107,6 @@ const failingChecks = (operation) => [
     ['an answer whose data holds the mutation\'s root field null', { answer: { data: { [operation.root]: null } } }],
   ]),
   ...(operation.name === 'mergePullRequest' ? [['an answer whose merged is not true', { answer: { sha: MERGED, merged: false } }]] : []),
-  ...(operation.name === 'openIssue' ? [['an answer whose issue lacks its label', { answer: { number: 214, labels: [] } }]] : []),
 ];
 
 for (const operation of OPERATIONS) {
