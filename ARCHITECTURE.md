@@ -1339,6 +1339,11 @@ pulls for these reasons, and no others:
 | a merge, whatever it answered | a merge the lane refused, because the head moved, checks were pending or mergeability was unknown, would be pulled again at once and poll the forge |
 | a continuing attempt that did not settle | L2 moved nothing, so the next pull would read the same head and markers, answer `continue` again, and dispatch the maker again at once |
 | a closed-card removal followed by a refusal | the refusal leaves the removal conditions unchanged, so the next pull would remove the same directories again at once |
+| a maker whose dispatch L2's settle reads, where all of these hold: | L2's settle answers `set-aside`; without the memory the next pull dispatches the maker again at once, which `R-LOOP-18` rules out |
+| — the maker ran; | |
+| — it exited non-zero; | |
+| — the card is not escalated; | |
+| — the forge holds nothing of the card's line of work, no branch and no pull request from it. | |
 
 Where a hold's closer could not be saved, L3 pulls no card for the rest of the invocation, and
 claims it already holds finish. The command exits non-zero, naming the failure. Without a lock, only
@@ -1697,8 +1702,7 @@ How a call ends decides what L0 records and what the call's caller is handed:
 | L0's exit cleanup ended it, and the process ends | Nothing | Nothing: the process ends before the call settles |
 | L0's exit cleanup ended it, and a signal listener of the caller keeps the process running | One `call.end`, with the outcome the call's result gives. The cleanup's kill gives a non-zero exit, so a call it killed records `failed` | The call's result, as the process adapter gives it |
 
-A forge write side marks an `EVENT_REFUSED` failure from its write call as `made`, with its parsed
-answer, where the call's result passes the side's success check. A refusal on any read before the
+A forge write side marks a failure from its write call as `made`, with its parsed answer, where the call's result shows the forge made the write. That failure is an `EVENT_REFUSED` one, carrying its unrecorded events, or the side's own refusal of an answer the forge made, such as an opened issue lacking a requested label. A caller names unrecorded events only where the failure carries them. A refusal on any read before the
 write is never marked, and a GraphQL write's check also requires the mutation's root field in
 `data`, non-null.
 

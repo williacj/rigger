@@ -5,6 +5,7 @@
 import { FIXED_LABELS } from '../config/validate.mjs';
 
 import { WRITERS } from './marker.mjs';
+import { firstAbove } from './first-above.mjs';
 
 /** The status issue's title (`R-SCHED-20`). */
 export const TITLE = 'Rigger closed admission';
@@ -99,7 +100,7 @@ function noticeIn(id, status, opened, timeline) {
  * L2 writes again. L2 holds no admission handle and no callback. Where a rename found its closer
  * gone, L3 ends the call, and L2 writes nothing more. It returns `{ issue }`, the status issue, or
  * `{ failed }`, naming the step it stopped at and the cause, and, where the forge made that step's
- * write and the sink refused its events, its `made` mark and those `unrecorded` events.
+ * write, its `made` mark, and any `unrecorded` events where the sink refused them.
  *
  * For a closer naming an issue, L3 hands over `state`, the issue's state as it read it, and L2
  * follows the notice there, as `ARCHITECTURE.md`, "Failure model", says: it answers `{ issue,
@@ -130,15 +131,11 @@ export function statusNotice({ reads, writes, board, items, columns, sink }) {
      * The number of the issue above the after-name's `k` and up to the newest whose body names the
      * hold's id, written by an account with write access, or undefined where none is.
      */
-    const scanned = async () => {
-      const newest = await step('read the newest number', () => reads.readNewestNumber());
-      for (let candidate = Number(closer.after) + 1; candidate <= newest; candidate += 1) {
-        const issue = await step(`read issue #${candidate}`, () => reads.readIssue(candidate));
-        if (issue === null || holdOf(issue.body) !== closer.id || issue.author === null) continue;
-        if (WRITERS.includes(await step(`read ${issue.author}'s permission`, () => reads.readPermission(issue.author)))) return candidate;
-      }
-      return undefined;
-    };
+    const scanned = async () => (await firstAbove(Number(closer.after), {
+      readNewestNumber: () => step('read the newest number', () => reads.readNewestNumber()),
+      readIssue: (number) => step(`read issue #${number}`, () => reads.readIssue(number)),
+      readPermission: (author) => step(`read ${author}'s permission`, () => reads.readPermission(author)),
+    }, (issue) => holdOf(issue.body) === closer.id))?.number;
     /**
      * How the notice stands on the issue the closer names: `closed`, `notice` once L2 has commented
      * where the notice never reached the open labelled issue, or `gone` where it is no longer the
@@ -172,10 +169,8 @@ export function statusNotice({ reads, writes, board, items, columns, sink }) {
       }
       return { issue: number };
     } catch (failure) {
-      // A write the forge made, whose event the sink refused, failed nowhere: L2 records no
-      // notice.failed of it, since the sink is refusing, and returns it under the `failed` L3 passes
-      // on, with its mark and its unrecorded events, for the verb to say (the architect's placement
-      // ruling on #1056).
+      // L2 returns a made write with its mark and any refused events rather than recording it
+      // as an undone step. The verb names the side's refusal and only events actually refused.
       const made = madeOf(failure);
       if (made !== undefined) {
         let unrecorded;
@@ -184,7 +179,7 @@ export function statusNotice({ reads, writes, board, items, columns, sink }) {
         } catch {
           unrecorded = [{ event: 'events it could not name' }];
         }
-        return { failed: { step: at, cause: causeOf(failure), made, unrecorded } };
+        return { failed: { step: at, cause: causeOf(failure), made, ...(unrecorded === undefined ? {} : { unrecorded }) } };
       }
       const failed = { step: at, cause: causeOf(failure) };
       try {

@@ -3874,7 +3874,7 @@ test('J8: an occurrence at the start with no arming record never fires in that r
   const { stop } = keptUp(built);
   try {
     await positive(() => built.dispatches.held() === 1);
-    assert.deepEqual(built.events().filter(({ event }) => event === 'trigger.armed'), [], 'the state holds no arming');
+    assert.deepEqual(built.events().filter(({ event }) => event === 'trigger.armed').map(({ name }) => name), ['hourly'], 'the start armed the trigger, which no earlier arming named');
     await clock.advance(CLOCK_START + 1500);
     assert.deepEqual(built.l3Events().filter(({ trigger }) => trigger === 'clock'), []);
     await clock.advance(CLOCK_START + 2000);
@@ -3964,8 +3964,8 @@ const count = (built, kind) => triggersOf(built).filter((trigger) => trigger ===
 /** A report trigger whose first occurrence is an hour after the clock's start, so no firing falls in a poll test. */
 const HOUR_AWAY = { hourly: { interval: 3_600_000, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip', job: 'report' } };
 
-/** A card-shaped trigger, which this card's head arms and fires nothing for. */
-const CARD_SHAPED = { daily: { interval: 1000, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip',
+/** A card-shaped trigger whose first occurrence is an hour after the clock's start. */
+const CARD_SHAPED = { daily: { interval: 3_600_000, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip',
   card: { title: 'Audit', labels: ['type:change'], acceptance: '- The audit writes a result.' } } };
 
 // proves R-SCHED-28
@@ -3986,7 +3986,7 @@ test('L1: run stays up past the drain while a report trigger is declared, record
 });
 
 // proves R-SCHED-28
-test('L2a: a clock declaring only card-shaped triggers keeps run up, and fires nothing', async () => {
+test('L2a: a clock declaring only card-shaped triggers keeps run up before its first occurrence', async () => {
   const clock = manualClock();
   const built = reportWorld(clock, { cards: [], triggers: CARD_SHAPED });
   const { running, stop } = keptUp(built);
@@ -4584,6 +4584,48 @@ test('hand-over ways: a refusal met at each of several pulls before the first ha
     assert.deepEqual(await stop(), { text: '', code: 0 });
   } finally {
     await stop();
+    await running.catch(() => {});
+  }
+});
+
+// proves R-SCHED-37
+test('A5: the run verb hands L3 its record, so a trigger the stream already arms at its schedule is not armed again, and one it does not name is', async () => {
+  const { gitIn, repositoryAt, withOrigin } = await import('./git-repository.mjs');
+  const { COLUMNS: VERB_COLUMNS, FIELDS, PROJECT, REPO, consumerConfig } = await import('./verb-consumer.mjs');
+  const { onClock } = await import('./clock-report-verb-world.mjs');
+  const { withFirstOnPath } = await import('./process-fixtures.mjs');
+  const { dirname } = await import('node:path');
+  const anchor = new Date(CLOCK_START).toISOString();
+  const hourly = { interval: 3_600_000, anchor, catchUp: 'skip', job: 'report' };
+  const root = temporaryDirectory('rigger-verb-record-');
+  const repository = repositoryAt(`${root}/consumer`, {
+    'rigger.config.mjs': `export default ${JSON.stringify({ ...consumerConfig(1), clock: { poll: 1000, triggers: { armed: hourly, fresh: hourly } } })};\n`,
+  });
+  gitIn(repository, 'branch', '-M', 'main');
+  const consumer = withOrigin(repository, `${root}/origin.git`);
+  // The consumer's record, as an earlier run under the same schedule left it: `armed` armed.
+  fs.mkdirSync(`${consumer}/.rigger`, { recursive: true });
+  fs.writeFileSync(streamPath(`${consumer}/.rigger`), [
+    { ts: anchor, run: 'r-earlier', layer: 'L3', event: 'run.start', concurrency: 1 },
+    { ts: anchor, run: 'r-earlier', layer: 'L3', event: 'trigger.armed', name: 'armed', interval: hourly.interval, anchor },
+  ].map((event) => `${JSON.stringify(event)}\n`).join(''));
+  const fake = installFakeGh(temporaryDirectory('rigger-verb-record-gh-'), {
+    repo: REPO, project: PROJECT, board: { columns: VERB_COLUMNS, fields: FIELDS, items: [] }, origin: `${root}/origin.git`,
+  });
+  const clock = manualClock(CLOCK_START + 1000);
+  const written = [];
+  const controller = new AbortController();
+  const running = onClock(clock, () => withFirstOnPath(dirname(fake.gh), () => runVerb({ target: consumer, clock, write: (text) => written.push(text), stop: controller.signal })));
+  running.catch(() => {});
+  const ofThisRun = () => readEventsAt(`${consumer}/.rigger`).filter(({ run }) => run !== 'r-earlier');
+  try {
+    await positive(() => ofThisRun().some(({ event, trigger }) => event === 'trigger' && trigger === 'drain'));
+    assert.deepEqual(ofThisRun().filter(({ event }) => event === 'trigger.armed').map(({ name }) => name), ['fresh'],
+      'L3 read the stream: `armed` keeps its arming, and `fresh`, which no arming names, is armed');
+    assert.deepEqual(written.filter((text) => /could not be read/.test(text)), [], 'the record was readable');
+    assert.ok(ofThisRun().every(({ ts }) => ts === new Date(CLOCK_START + 1000).toISOString()), 'the verb\'s sink stamps on the injected clock');
+  } finally {
+    controller.abort();
     await running.catch(() => {});
   }
 });

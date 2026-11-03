@@ -13,7 +13,8 @@ import { acceptanceItems } from './form-check.mjs';
 import { pullRequestsFrom } from './facts.mjs';
 import { statusNotice } from './status-issue.mjs';
 import { kindOf, providerOf, tierOf } from './next-action.mjs';
-import { composeClockMark } from './clock-mark.mjs';
+import { composeClockMark, carriesClockMark } from './clock-mark.mjs';
+import { firstAbove } from './first-above.mjs';
 
 /**
  * Each change L2 makes to a card's column, by its cause, as the column keys it leaves and enters.
@@ -175,19 +176,24 @@ export function columnChanges({
     return evidence;
   };
 
-  return {
-    /** Open the due firing's card, add it to the board and place it in Ready. */
-    openClockCard: async (name, occurrence, template) => {
-      const author = (template.author ?? 'owner').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
-      const body = `${composeClockMark(name, occurrence)}\n\n**Author:** ${author}\n\n## Acceptance\n\n${template.acceptance}`;
-      const writes = repositoryWrites ?? repositoryWriteSide({ repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) });
-      let number;
-      try {
-        number = await writes.openIssue(template.title, body, ...template.labels);
-      } catch (refusal) {
-        if (refusal.made) throw madeUnrecorded(`clock trigger ${name} at ${new Date(occurrence).toISOString()} opened issue #${refusal.made.answer}`, refusal);
-        throw new Error(`clock trigger ${name} at ${new Date(occurrence).toISOString()} could not open its card: ${refusal.message}`, { cause: refusal });
+  /** Open the due firing's card, add it to the board and place it in Ready. */
+  const openClockCard = async (name, occurrence, template, active = () => true) => {
+    if (!active()) return undefined;
+    const author = (template.author ?? 'owner').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
+    const body = `${composeClockMark(name, occurrence)}\n\n**Author:** ${author}\n\n## Acceptance\n\n${template.acceptance}`;
+    const writes = repositoryWrites ?? repositoryWriteSide({ repo: config.repo }, { send, emitter: sink.emitter({ layer: 'L0' }) });
+    let number;
+    try {
+      number = await writes.openIssue(template.title, body, ...template.labels);
+    } catch (refusal) {
+      if (refusal.made) {
+        const what = `clock trigger ${name} at ${new Date(occurrence).toISOString()} opened issue #${refusal.made.answer}: ${refusal.message}`;
+        throw Object.assign(refusal.unrecorded === undefined ? new Error(what, { cause: refusal }) : madeUnrecorded(what, refusal), { issue: refusal.made.answer });
       }
+      throw new Error(`clock trigger ${name} at ${new Date(occurrence).toISOString()} could not open its card: ${refusal.message}`, { cause: refusal });
+    }
+    try {
+      if (!active()) return number;
       let id;
       try {
         id = await items.addIssue(number, sink.emitter({ layer: 'L0', card: number }));
@@ -195,8 +201,40 @@ export function columnChanges({
         if (refusal.made) throw madeUnrecorded(`issue #${number} was added to the board`, refusal);
         throw new Error(`opened issue #${number}'s board add was refused: ${refusal.message}`, { cause: refusal });
       }
+      if (!active()) return number;
       await change({ number, id }, 'created');
-      return number;
+    } catch (failure) {
+      throw Object.assign(failure, { issue: number });
+    }
+    return number;
+  };
+
+  return {
+    /** The fence the firing records before it opens its card. */
+    clockCardNumber: () => (reads ?? cardReads()).readNewestNumber(),
+    openClockCard,
+
+    /** Finds the pending firing's card, places an unplaced open one, or opens from its eligible template. */
+    clockCardAfter: async (name, occurrence, after, template, floor = 0, active = () => true) => {
+      const supplied = reads ?? cardReads();
+      const issue = await firstAbove(after, { ...supplied, readNewestNumber: async () => Math.max(floor, await supplied.readNewestNumber()) },
+        (candidate) => carriesClockMark(candidate.body, name, occurrence), active);
+      if (!active()) return issue?.number;
+      if (issue === undefined) return template === undefined ? undefined : openClockCard(name, occurrence, template, active);
+      try {
+        if (issue.state === 'open') {
+          const item = (await board.readItems()).find((each) => each.number === issue.number);
+          if (!active()) return issue.number;
+          if (item?.column == null) {
+            const id = item?.id ?? await items.addIssue(issue.number, sink.emitter({ layer: 'L0', card: issue.number }));
+            if (!active()) return issue.number;
+            await change({ number: issue.number, id }, 'created');
+          }
+        }
+      } catch (failure) {
+        throw Object.assign(failure, { issue: issue.number });
+      }
+      return issue.number;
     },
 
     /** L2's notice function for a hold's closer, as `statusNotice` says, its item writes recorded under `L0`. */
@@ -339,11 +377,16 @@ export function columnChanges({
      * `maker.failed` event under the card, classed as the environment's, as it classes a step
      * that never started (the architect's ruling 5 on #467).
      *
-     * For a fulfilled outcome, the forge's issue comments are read before the exit code. A valid
+     * For a fulfilled outcome or a fresh rejected one carrying a nonzero result, the forge's issue
+     * comments are read before classifying the exit. A valid
      * note under the maker's dispatch answers an escalation without a move, with any one open pull
      * request and its head read from the line of work. Otherwise the exit code and the forge alone
      * decide, never the output (the owner's ruling on #220, refined by O5 on #467). Anything but
-     * zero leaves the card in coding. Zero has L2 read the pull requests from the card's line of work
+     * zero leaves the card in coding. A continuing maker's plain nonzero exit answers nothing,
+     * without reading forge work. A fresh maker's plain nonzero exit reads the branch and pull requests in
+     * every state, without review facts. Where none exists, it answers `set-aside`, with a reason
+     * naming the card, exit code and line of work; otherwise it answers nothing. A failed read
+     * rejects naming the card and the read. Zero has L2 read the pull requests from the card's line of work
      * and, where exactly one is open, what L2's judge answer reads of it, as
      * `pullRequestsFrom` reads them. For a continuing attempt, a head other than `expectedHead`
      * answers `waiting` until L3's last read, when L2 withholds review and names both heads.
@@ -354,12 +397,13 @@ export function columnChanges({
      * tells its caller the card and why, as `withheld` says. A read that fails leaves it in coding too, and its
      * caller is told the card and the read.
      */
-    settled: async (card, outcome, { dispatch, expectedHead, tipFailure, lastForgeHead, last = false, reads: readCount, elapsedMs } = {}) => {
-      if (outcome?.status === 'rejected') {
+    settled: async (card, outcome, { dispatch, continuing = false, expectedHead, tipFailure, lastForgeHead, last = false, reads: readCount, elapsedMs } = {}) => {
+      const exit = outcome?.status === 'fulfilled' ? outcome.value?.exit : outcome?.status === 'rejected' ? outcome.reason?.result?.exit : undefined;
+      // A refused recording retains the result of a command that ran; its failure still reaches L3.
+      if (outcome?.status === 'rejected' && (continuing || !Number.isInteger(exit) || exit === 0)) {
         if (outcome.reason?.code === NOT_STARTED) note(card, 'maker.failed', { class: 'environment', reason: outcome.reason.message }, { dispatch });
         return undefined;
       }
-      const exit = outcome?.status === 'fulfilled' ? outcome.value?.exit : undefined;
       if (!Number.isInteger(exit)) {
         throw new Error(`card #${card.number}'s dispatch outcome is neither a dispatch that ran with an exit code nor one that threw: ${JSON.stringify(outcome)}`);
       }
@@ -383,7 +427,26 @@ export function columnChanges({
         const answer = makerEscalation(escalation, facts);
         return { ...answer, destination: escalationDestination({ ...answer, escalate: config.escalate, maker: kinds[kind]?.maker, judges: kinds[kind]?.judges, comments }) };
       }
-      if (exit !== 0) return undefined;
+      if (exit !== 0) {
+        if (continuing) return undefined;
+        const line = topicFor(topic, card.number);
+        let branches;
+        try {
+          branches = await reading.readBranches([line]);
+        } catch (failure) {
+          throw new Error(`card #${card.number}'s branch could not be read: ${failure.message}`, { cause: failure });
+        }
+        let facts;
+        try {
+          facts = await pullRequestsFrom(card.number, line, reading, false);
+        } catch (failure) {
+          throw new Error(`card #${card.number}'s pull requests could not be read after its maker exited ${exit}: ${failure.message}`, { cause: failure });
+        }
+        if (!branches[line] && facts.open.length === 0 && facts.merged.length === 0 && facts.closed.length === 0) {
+          return { action: 'set-aside', reason: `card #${card.number}'s maker exited ${exit}, and the forge holds no branch or pull request from its line of work ${line}` };
+        }
+        return undefined;
+      }
       if (tipFailure !== undefined) withheld(card, `card #${card.number}'s maker exited 0, but L1 could not read the tip of its line of work in the workspace: ${tipFailure.message}`, undefined, {}, { dispatch });
       let facts;
       try {
