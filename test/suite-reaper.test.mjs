@@ -1291,6 +1291,9 @@ function boundaryReaperPreload() {
     if (response.unsafe) supplied.stdout = supplied.stdout.replace(/^[ \t]*[0-9]+/, '9007199254740992');
     if (response.separator) supplied.stdout = supplied.stdout.replace(/^[ \t]*[0-9]+[ \t]+/, `${config.pid}${response.separator}`);
     if (response.changedStart) supplied.stdout = supplied.stdout.replace(config.start, 'Thu Jan  1 00:00:00 1970');
+    // Native shape source: 1075-r4-T-native-001 at 8d9b881c4c592ffb951ca5e35aa5a45ab9a0ab4a, read acb64e55-b9e2-4813-bf2e-d55e4ed4c860:1.
+    // Original targeted stdout (47 bytes), base64: MTAwMzQgP0UgICBUdWUgTm92ICAzIDIyOjU1OjM0IDIwMjYgICAgIChub2RlKQo=
+    // Substitute only stat; independent native PID/start/command and owned lifecycle remain the fixture premise.
     if (response.questionMark) supplied.stdout = supplied.stdout.replace(/^([ \t]*[0-9]+[ \t]+)\S+/, '$1?E');
     if (options.encoding === 'latin1' && typeof supplied.stdout === 'string') supplied.stdout = Buffer.from(supplied.stdout, 'utf8').toString('latin1');
     events.push({ event: 'targeted', ordinal: reads, encoding: options.encoding, native: pack(native), supplied: pack(supplied) });
