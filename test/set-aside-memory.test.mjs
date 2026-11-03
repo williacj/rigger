@@ -304,38 +304,41 @@ test('S5 S8: an accepted move sets the compared column, and a refused move made 
   }
 });
 
-// R-SCHED-43 row S8′ (the architect's ruling 1178#6605091082): a move the board refused but made,
-// a read begun before the setting aside that answers after it showing the move's target, and a
-// read begun after the setting aside. The first read keeps the skip under S1 and changes no
-// compared column, so the second, finding the card in the refused move's target, ends the skip.
+// R-SCHED-43 row S8′ (the architect's ruling 1178#6605091082): the lane's move to Done at a merge's
+// end, which the board refused but made; a read begun before that card was set aside that answers
+// after it showing Done; and a poll begun after that. The first read keeps the skip under S1 and
+// changes no compared column, so the poll, finding the card in Done, the refused move's target,
+// ends the skip. A merge claim's end begins no read of its own, so card 13's stop begins the first.
 // proves R-SCHED-43
 test('S8′: a read begun before the setting aside changes no compared column, so the next read ends the skip at a refused move made anyway', async (t) => {
+  const done = gate();
   const workspace = gate();
-  const owner = gate();
-  const here = world(t, { cards: [12, 13], concurrency: 2, branches: ['rigger-12'], refuseMove: (column) => column === COLUMNS.owner, madeAnyway: true,
-    beforeMove: (column) => (column === COLUMNS.owner ? owner.promise : undefined),
+  let moving = false;
+  const here = world(t, { cards: [12, 13], concurrency: 2, refuseMove: (column) => column === COLUMNS.done, madeAnyway: true,
+    beforeMove: (column) => { if (column !== COLUMNS.done) return undefined; moving = true; return done.promise; },
     script: async (number, claim) => (number === 13 && claim === 1 ? workspace.promise : 'refused') });
+  await ownerSound(here);
   const run = here.start();
-  await positive(() => here.pulls(12) === 1 && here.pulls(13) === 1);
+  await positive(() => moving && here.pulls(13) === 1);
+  assert.equal(here.pulls(), 1, 'the run claimed card 12 for its merge, whose move to Done waits');
   const before = gate();
-  const after = gate();
   here.holdNextRead(before.promise);
-  here.holdNextRead(after.promise);
-  // Card 13's stop begins a read while card 12's escalation move waits.
+  const begun = here.reads().begun;
   workspace.open('refused');
-  await positive(() => here.reads().begun === 2);
-  owner.open();
-  // The board makes the move it refuses, card 12 is set aside, and its release begins the next read.
-  await positive(() => here.reads().begun === 3);
-  assert.equal(await here.column(12), COLUMNS.owner, 'the board made the escalation move it refused');
-  before.open();
-  await positive(() => here.reads().ended >= 2);
+  await positive(() => here.reads().begun === begun + 1);
+  done.open();
+  // The lane ends the merge, and card 12 is set aside, while card 13's release read waits.
+  await positive(() => here.events().some((event) => event.event === 'merge.end' && event.card === 12));
   await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(here.pulls(12), 1, 'S1: the read begun before the setting aside keeps the skip, though it shows Owner');
-  after.open();
-  await positive(() => here.pulls(12) === 2);
-  assert.equal(here.pulls(12), 2, 'the read begun after the setting aside finds Owner, the refused move\'s target, and ends the skip');
+  assert.equal(await here.column(), COLUMNS.done, 'the board made the move to Done it refused');
+  const offered = here.offered();
+  before.open();
+  await positive(() => here.reads().ended === begun + 1);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(here.offered(), offered, 'S1: the read begun before the setting aside keeps the skip, though it shows Done');
   await busy(run, 1);
+  await here.poll();
+  assert.equal(here.offered(), offered + 1, 'the poll begun after the setting aside finds Done, the refused move\'s target, and ends the skip');
 });
 
 // R-LOOP-19 row S6a: a failed maker's card the board shows moved to Ready has its maker dispatched again.
