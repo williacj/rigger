@@ -11,7 +11,7 @@ import { acceptanceItems, checkAcceptanceForm } from './form-check.mjs';
 import { GATE_CONTEXT, gateAnswer } from './gate.mjs';
 import { acceptanceDigest, evidenceDigest, markerInstruction, readMarkers, WRITERS } from './marker.mjs';
 import { failed, kindOf, panelOf, selectedSteps, stepAnswer, tierOf } from './next-action.mjs';
-import { failedAttempt } from './next-action.mjs';
+import { failedAttempt, recordingHalt } from './next-action.mjs';
 
 /** What each read of a Review card's facts the judge answer uses reads, as its failure names it. */
 const READS = {
@@ -48,7 +48,7 @@ function record(sink, card, name, fields, what, dispatch) {
   try {
     sink.emitter({ layer: 'L2', card: card.number, ...(dispatch === undefined ? {} : { dispatch }) }).emit(name, fields);
   } catch (refusal) {
-    throw new Error(`card #${card.number}'s ${what}, and the event sink refused to record it, so L2 answers no action: ${refusal.message}`, { cause: refusal });
+    throw recordingHalt(`card #${card.number}'s ${what}, and the event sink refused to record it, so L2 answers no action: ${refusal.message}`, refusal);
   }
 }
 

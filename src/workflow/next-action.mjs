@@ -29,6 +29,9 @@ export const actionIdentity = (answer) => JSON.stringify(answer);
 /** Whether the selected action, including removal's following action, starts a maker. */
 export const makerAction = (answer) => ['dispatch', 'continue'].includes((answer.action === 'remove' ? answer.following : answer).action);
 
+/** L2's recording refusal halts the selected action, retaining the sink's original failure. */
+export const recordingHalt = (message, cause) => Object.assign(new Error(message, { cause }), { halt: true });
+
 /**
  * The names of the kinds that select a card, in the config's order: each kind any one of whose
  * `select.labels` the card carries (the owner's 1-A ruling). A kind whose labels are not a list of
@@ -219,7 +222,7 @@ function within(card, kind, declared, { roles, tier, topic, provisioning, outcom
       try {
         sink.emitter({ layer: 'L2', card: card.number }).emit('step.failed', { step: name, ...failure, optional: true });
       } catch (refusal) {
-        throw new Error(`card #${card.number}'s optional step \`${name}\` failed, and the event sink refused to record it, so L2 answers no action: ${refusal.message}`, { cause: refusal });
+        throw recordingHalt(`card #${card.number}'s optional step \`${name}\` failed, and the event sink refused to record it, so L2 answers no action: ${refusal.message}`, refusal);
       }
     }
   }
@@ -279,7 +282,7 @@ export function failedAttempt(card, attempt, firstFailure, what, sink) {
     events.emit('attempt.failed', { attempt, ...recorded });
     events.emit('attempt.decided', { attempt, decision: refusals.length > 0 ? 'escalate' : again ? 'again' : hold ? 'hold' : 'stop', ...(hold ? { failures: [firstFailure, failure] } : {}) });
   } catch (refusal) {
-    throw new Error(`card #${card.number}'s attempt ${attempt} failed, and the event sink refused to record it, so L2 answers no action: ${refusal.message}`, { cause: refusal });
+    throw recordingHalt(`card #${card.number}'s attempt ${attempt} failed, and the event sink refused to record it, so L2 answers no action: ${refusal.message}`, refusal);
   }
   if (refusals.length > 0) return routed({ action: 'escalate', category: 'ambiguous', raiser: 'loop', reason: refusals.map((each) => each.reason).join('\n'), card: card.number, failure, from: 'coding' });
   return again ? { action: 'again', card: card.number, attempt: attempt + 1, failure }

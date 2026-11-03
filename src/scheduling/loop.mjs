@@ -459,14 +459,22 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
   // Reached objects keep their producer fields; claim order lives beside them for a no-clock run.
   const reachedOrder = new WeakMap();
 
-  // Only these owned start refusals and L1's recording provenance defer an unstarted identity.
+  // Owned start refusals, L2 recording halts and L1 provenance defer an unstarted identity.
   const refusedStarts = new WeakSet();
+  const refusedAnswers = new WeakSet();
+  const answerFrom = (answer, ...args) => {
+    try { return answer(...args); }
+    catch (failure) {
+      if (failure?.halt === true) refusedAnswers.add(failure);
+      throw failure;
+    }
+  };
   const refusedStart = (message, cause) => {
     const failure = Object.assign(refused(message, cause), { halt: true });
     refusedStarts.add(failure);
     return failure;
   };
-  const recordingRefusal = (failure) => failure != null && (refusedStarts.has(failure)
+  const recordingRefusal = (failure) => failure != null && (refusedStarts.has(failure) || refusedAnswers.has(failure)
     || failure.code === EVENT_REFUSED || failure.startCause?.kind === 'event-unrecorded'
     || recordingRefusal(failure.cause));
   const defer = (scope, card, identity) => scope?.memory.deferred.add(`${card.number}:${identity}`);
@@ -700,7 +708,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
   const made = async (card, number, continuing, firstFailure) => {
     const [outcome] = await Promise.allSettled([new Promise((resolve) => resolve(workspace(card.number, continuing?.head)))]);
     if (outcome.status === 'fulfilled') return { path: outcome.value.path, branch: outcome.value.branch, scratch: outcome.value.scratch, repository: outcome.value.repository };
-    return { answer: decide(card, [], { attempt: number, firstFailure, workspace: outcome, continuing }) };
+    return { answer: answerFrom(decide, card, [], { attempt: number, firstFailure, workspace: outcome, continuing }) };
   };
 
   /**
@@ -736,7 +744,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
   const attempt = async (card, next, kept, remember, excluded, scope) => {
     const continuing = next.action === 'continue' ? next : undefined;
     const failures = [];
-    const askAttempt = (outcomes, options) => decide(card, outcomes, { ...options, firstFailure: failures[0], continuing });
+    const askAttempt = (outcomes, options) => answerFrom(decide, card, outcomes, { ...options, firstFailure: failures[0], continuing });
     const escalated = async (answer) => {
       remember(answer);
       await l2.escalated(card, answer);
@@ -884,7 +892,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       if (settled.status !== 'fulfilled' || settled.value === undefined) return reached;
       // The facts L2's settle answered go back to L2 unread, so one read decides both the move and
       // the judges (the architect's ruling 3, AQ4, on #467).
-      const ask = (options) => decide(card, [], { ...options, forge: settled.value });
+      const ask = (options) => answerFrom(decide, card, [], { ...options, forge: settled.value });
       const judging = ask({});
       if (judging.action !== 'judge') return reached;
       return { ...reached, judges: await judges(card, judging, ask, (ended) => kept({ ...reached, judges: ended }), remember, scope) };
@@ -1106,7 +1114,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         reached = { card: card.number, ...next };
       } else {
         reached = next.action === 'judge'
-          ? { card: card.number, judges: await judges(card, next, (options) => atPull(card, [], options), (ended) => kept({ card: card.number, judges: ended }), remember, scope) }
+          ? { card: card.number, judges: await judges(card, next, (options) => answerFrom(atPull, card, [], options), (ended) => kept({ card: card.number, judges: ended }), remember, scope) }
           : await attempt(card, next, kept, remember, excluded, scope);
       }
     } catch (thrown) {

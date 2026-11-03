@@ -1865,12 +1865,80 @@ test('terminal preparation provisioning and start refusals defer their selected 
   });
 });
 
+// L2's refused attempt record halts A before its selected maker, while the freed slot reaches B.
+// proves R-RECORD-9, R-SCHED-6
+test('L2 recording halts defer the selected maker or judge while another card refills its slot', SETTLES_WITHIN, async (t) => {
+  const cases = ['workspace', 'step', 'maker'].flatMap((stage) => ['attempt.failed', 'attempt.decided'].map((record) => ({ stage, record, judging: false })));
+  cases.push({ stage: 'optional', record: 'step.failed', judging: false }, { stage: 'workspace', record: 'judge.withheld', judging: true }, { stage: 'step', record: 'judge.withheld', judging: true });
+  for (const { stage, record, judging } of cases) await t.test(`${judging ? 'judge' : 'maker'}/${stage}/${record}`, async (t) => {
+    const root = temporaryDirectory('rigger-refused-attempt-');
+    const making = makingWorkspaces(join(root, 'workspaces'));
+    let built;
+    const workspace = async (card) => {
+      if (card === 42 && stage === 'workspace') return makeWorkspace({ root, topic: 'rigger-{number}', repository: join(root, 'missing-repository'), card, sink: built.sink });
+      const made = await making(card);
+      // A missing working directory is L1's actual NOT_STARTED boundary, as in environment-retry.
+      if (card === 42 && stage === 'maker') fs.rmSync(made.path, { recursive: true });
+      return made;
+    };
+    built = onManualHost(t, { cards: [judging ? cardIn(42, COLUMNS.review) : 42, { ...readyCard(95), labels: ['type:handoff'] }], concurrency: 1, makerHold: false, fresh: false, workspace,
+      kinds: { change: { ...KINDS.change, judges: judging ? ['reviewer'] : ['owner'], provisioning: ['step', 'optional'].includes(stage) ? ['prepare'] : [] }, handoff: { ...KINDS.change, select: { labels: ['type:handoff'] } } },
+      provisioning: { prepare: { run: 'false', required: stage !== 'optional' } },
+      ...(judging && stage === 'workspace' ? { judgeDirectory: (card, role, head) => makeJudgeDirectory({ root, topic: 'rigger-{number}', repository: join(root, 'missing-repository'), card, role, head, sink: built.sink }) } : {}),
+      forge: { pullRequests: judging ? [{ number: 733, head: 'rigger-42', sha: 'a'.repeat(40), mergeBase: 'b'.repeat(40), diff: 'diff --git a/help b/help\n' }] : [] },
+    });
+    const priority = built.fake.operations.readPriority;
+    let reads = 0;
+    built.fake.operations.readPriority = async (...args) => {
+      const actual = await priority(...args);
+      return ++reads > 4 ? { ...actual, items: [] } : actual;
+    };
+    const append = fs.appendFileSync;
+    const refusal = new Error(`the disk refuses L2 ${record}`);
+    let refused = 0;
+    fs.appendFileSync = (path, data, ...rest) => {
+      if (String(path) === streamPath(built.directory)) {
+        const event = JSON.parse(String(data));
+        if (event.layer === 'L2' && event.card === 42 && event.event === record) {
+          refused += 1;
+          throw refusal;
+        }
+      }
+      return append(path, data, ...rest);
+    };
+    syncBuiltinESMExports();
+    let failure;
+    try {
+      failure = await built.loop.run().then(() => assert.fail('L2 recording refusal must be reported'), (failure) => failure);
+    } finally {
+      fs.appendFileSync = append;
+      syncBuiltinESMExports();
+    }
+    assert.equal(refused, 1, 'one terminal L2 record refusal must defer the unchanged selected identity');
+    assert.ok(leavesOf(failure).some((each) => {
+      for (let cause = each; cause != null; cause = cause.cause) if (cause === refusal) return true;
+      return false;
+    }), 'L2 retains the original sink refusal through L3’s judge wrapper');
+    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card), [42, 95, 95], 'normal refill reaches B and its subsequent move to Owner');
+    assert.deepEqual(built.agent.runs().map(({ card }) => card), [95], 'A never starts a maker');
+    assert.deepEqual(built.l3Events().filter(({ event, card }) => event === 'pull' && card === 95).map(({ queueDepth }) => queueDepth), [0, 0], 'deferred A occupies no queue position');
+    assert.equal(built.events().some(({ event }) => event === 'admission.close'), false, 'the recording refusal does not close admission');
+    assert.deepEqual(built.events().filter(({ event, card }) => card === 42 && event === 'attempt.decided'), [], 'no host retry was recorded');
+    assert.equal(built.events().filter(({ event, card }) => card === 42 && event === 'attempt.failed').length, record === 'attempt.decided' ? 1 : 0, 'a previously accepted failure record is retained');
+    reads = 0;
+    await built.loop.run().catch(() => {});
+    assert.equal(built.l3Events().filter(({ event, card }) => event === 'pull' && card === 42).length, stage === 'optional' ? 3 : 2, 'a new invocation admits A again; its successful optional-step maker also reaches the ordinary Owner move');
+    assert.equal(built.agent.runs().filter(({ card }) => card === 42).length, stage === 'optional' ? 1 : 0, 'only the restored optional-step path actually starts A');
+    assert.equal(refused, 1, 'the recording refusal belonged only to the first invocation');
+  });
+});
+
 // An unclassified preparation error is not evidence of a terminal recording refusal.
 // proves R-RECORD-9
 test('generic preparation failures never defer a selected maker or judge identity as recording refusals', SETTLES_WITHIN, async (t) => {
   for (const judging of [false, true]) await t.test(judging ? 'judge' : 'maker', async (t) => {
     const failures = [];
-    const fail = async () => { const failure = new Error('unclassified preparation failure', { cause: null }); failures.push(failure); throw failure; };
+    const fail = async () => { const failure = Object.assign(new Error('unclassified preparation failure', { cause: null }), { halt: true }); failures.push(failure); throw failure; };
     const built = onManualHost(t, { cards: [judging ? cardIn(42, COLUMNS.review) : 42], concurrency: 1,
       ...(judging ? { judgeDirectory: fail } : { workspace: fail }),
       kinds: { change: { ...KINDS.change, judges: judging ? ['reviewer'] : ['owner'] } },
