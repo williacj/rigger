@@ -78,6 +78,8 @@ function setAside(clockHeld) {
   const compared = new Map();
   const reading = new Set();
   const lineStops = new Map();
+  // The number of the read that last collapsed each card's compared columns.
+  const collapsed = new Map();
   let reads = 0;
   return {
     /** Begins a read of the board, answering it: its number, the compared columns as it began, and what this run changes while it is in flight. */
@@ -118,7 +120,7 @@ function setAside(clockHeld) {
      * run-owned change accepted while the read was in flight. Each comparison by the same read
      * decides again, and its last decides at `done`, so a change accepted before the pull claims still
      * counts. One that keeps the skip, having overlapped no such change, makes the column it shows the
-     * one compared column. No other read writes them.
+     * one compared column, unless it began before the last read to do so. No other read writes them.
      */
     skips: (item, read) => {
       const entry = cards.get(item.number);
@@ -128,7 +130,10 @@ function setAside(clockHeld) {
       const ends = after && !read.began.get(item.number)?.has(item.column) && !changes.has(item.column);
       read.ends.set(item.number, ends ? entry : undefined);
       if (ends) return false;
-      if (after && changes.size === 0) compared.set(item.number, new Set([item.column]));
+      if (after && changes.size === 0 && read.number > (collapsed.get(item.number) ?? 0)) {
+        compared.set(item.number, new Set([item.column]));
+        collapsed.set(item.number, read.number);
+      }
       return true;
     },
     /** Counts a stop of card `number` for its line of work moved or deleted, answering whether it is a second. */

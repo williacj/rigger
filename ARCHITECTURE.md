@@ -521,8 +521,9 @@ Each read of the board ends a skip, or leaves it, as follows:
 | begun after a refused change that the forge made anyway | the read finds the card in the change's target column, so the skip ends under the two rows above |
 
 A read begun after the run set the card aside, while the board accepted no change of this run's to the
-card, that leaves the skip makes the column it shows the one compared column. Before such a read, a
-person's move into one of the compared columns goes unseen.
+card, that leaves the skip makes the column it shows the one compared column. A read that began
+before the last read to do so changes nothing. Before such a read, a person's move into one of the
+compared columns goes unseen.
 
 L3 sees only what each read shows. A card moved out of its column and back again between two of
 this run's reads therefore stays skipped, because a change undone before the next read is not

@@ -761,7 +761,7 @@ test('S8a S8b S8c table: every claim that makes a workspace is re-read once at a
  * removes the card from the board, and recovery adds it back and makes its `created` move to Ready.
  * `ending` gives the world options for how that move ends, as `OUTCOMES` names them.
  */
-function recoveryWorld(t, { madeMove = () => false, refuseMove = () => false, refuseRecord = () => false, holdWorkspace = false, create, other = false } = {}) {
+function recoveryWorld(t, { madeMove = () => false, refuseMove = () => false, refuseRecord = () => false, holdWorkspace = false, create, other = false, holdCard } = {}) {
   const clock = manualClock(START + 500);
   const directory = temporaryDirectory('rigger-set-aside-recovery-', { context: t });
   const template = { title: 'Clock work', labels: ['type:change'], acceptance: '- Do the work.' };
@@ -860,10 +860,11 @@ function recoveryWorld(t, { madeMove = () => false, refuseMove = () => false, re
       return facts(cards);
     },
     // makeWorkspace rejects BRANCH_REFUSED where git refuses the admitted topic's derived name, as `bad 12` (workspace.mjs).
-    // Where `holdWorkspace`, the first workspace asked for waits for the test, holding its claim.
+    // Where `holdWorkspace`, the first workspace asked for waits for the test, holding its claim; where
+    // `holdCard`, that card's workspace waits instead.
     workspace: async (n) => {
       workspaces += 1;
-      if (holdWorkspace && workspaces === 1) await work.promise;
+      if (holdCard === undefined ? (holdWorkspace && workspaces === 1) : n === holdCard) await work.promise;
       throw Object.assign(new Error(`git refuses bad ${n} as a branch name`), { code: BRANCH_REFUSED });
     },
     judgeDirectory: async () => { throw new Error('no judge is dispatched'); }, removeDirectories: async () => {} });
@@ -1302,6 +1303,47 @@ test('S5g′: a run change accepted after the pull first compares and before it 
       assert.equal(here.offered(), offered + 1, `${end}: only the first comparison, which the change then overtook, handed the card to L2's facts call`);
     });
   }
+});
+
+// R-SCHED-43 row S5h, the attacker's P3 probe on round 7, unchanged (the architect's ruling
+// 1178#6606219866): at concurrency 2, two reads in flight at once, and the older one's collapse
+// landing after the newer one's. Only the latest-begun collapsing read writes the compared columns.
+// proves R-SCHED-43
+test('S5h: an older read collapsing after a newer one does not end the skip at the column the newer read saw', async (t) => {
+  const here = recoveryWorld(t, { other: true, holdCard: 13 });
+  // A person puts card 12 in Coding before the first read snapshots it.
+  here.item().column = here.columns.coding;
+  const snap0 = here.holdSnap();
+  await positive(() => snap0.snapped === true && here.waiting());
+  // Recovery's created move into Ready is accepted while that read is in flight.
+  here.fake.onBoard.splice(here.fake.onBoard.indexOf(here.item()), 1);
+  here.recovery.open();
+  await positive(() => here.events().some((event) => event.event === 'trigger.outcome' && event.name === 'gone') || here.handed.some((answer) => answer.failure));
+  assert.equal(here.item().column, here.columns.ready, 'recovery placed card 12 in Ready');
+  const snap1 = here.holdSnap();
+  snap0.open();
+  // Card 12 is claimed from Coding, its compared columns {Coding, Ready}, and set aside; its release read R1 snapshots Ready and holds.
+  await positive(() => snap1.snapped === true);
+  assert.equal(here.pulls(12), 1, 'card 12 claimed once');
+  assert.equal(here.pulls(13), 1, 'card 13 claimed, its workspace held');
+  console.log('P3 R1 snapshot taken; card 12 column', here.item().column);
+  const offered = here.offered();
+  // A person moves card 12 to Coding, the column its claim read showed.
+  here.item().column = here.columns.coding;
+  const before = here.answered();
+  // Card 13's stop releases its slot, whose read R2 begins after R1 and answers first.
+  here.work.open();
+  await positive(() => here.answered() > before && here.events().some((event) => event.event === 'slot.release' && event.card === 13));
+  await new Promise((resolve) => setImmediate(resolve));
+  console.log('P3 R2 answered; offered delta', here.offered() - offered);
+  snap1.open();
+  await positive(() => here.answered() > before + 1);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(here.offered(), offered, 'R1 and R2 each found card 12 in a compared column, so the skip held');
+  // Nobody moves card 12 again: it stays in Coding, where R2, the newer read, saw it.
+  for (let each = 0; each < 3; each += 1) await here.clock.advance(here.clock.now() + POLL);
+  console.log('P3 final offered delta', here.offered() - offered, 'pulls', here.pulls(12), 'column', here.item().column);
+  assert.equal(here.offered(), offered, 'no column change since R2 found Coding, the claim read\'s own column, so no later read finding Coding may end the skip');
 });
 
 // R-SCHED-43 rows S3 and S4 against the compared column (the ruling's row 5): a read that overlapped
