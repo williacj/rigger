@@ -722,7 +722,7 @@ test('S8a S8b S8c table: every claim that makes a workspace is re-read once at a
  * removes the card from the board, and recovery adds it back and makes its `created` move to Ready.
  * `ending` gives the world options for how that move ends, as `OUTCOMES` names them.
  */
-function recoveryWorld(t, { madeMove = () => false, refuseMove = () => false, refuseRecord = () => false, holdWorkspace = false, create, other = false, owner = false } = {}) {
+function recoveryWorld(t, { madeMove = () => false, refuseMove = () => false, refuseRecord = () => false, holdWorkspace = false, create, other = false } = {}) {
   const clock = manualClock(START + 500);
   const directory = temporaryDirectory('rigger-set-aside-recovery-', { context: t });
   const template = { title: 'Clock work', labels: ['type:change'], acceptance: '- Do the work.' };
@@ -736,20 +736,17 @@ function recoveryWorld(t, { madeMove = () => false, refuseMove = () => false, re
     body: `${composeClockMark('gone', START + 123)}\n\n## Acceptance\n\n- Do the work.\n` };
   const plain = { number: 13, title: 'Other work', labels: ['type:change'], state: 'open', author: 'rigger-bot', body: '## Acceptance\n\n- Do other work.\n' };
   const issues = [...(create === undefined ? [marked] : []), ...(other ? [plain] : [])];
-  const fake = forge({ issues, items: issues.map(({ number }) => ({ id: `item-${number}`, number, column: owner ? columns.owner : columns.ready })) });
+  const fake = forge({ issues, items: issues.map(({ number }) => ({ id: `item-${number}`, number, column: columns.ready })) });
   // The card the test follows: the marked issue 12, or the one creation opens, the forge's next number.
   const number = create === undefined ? 12 : Math.max(0, ...issues.map((issue) => issue.number)) + 1;
   const repository = createFakeRepository({ repo: settings.repo, issues: issues.map(({ number: n, title, body, labels }) => ({ number: n, title, body, labels })) });
   const recovery = gate();
   const added = gate();
   const work = gate();
-  const read = gate();
-  let reading = false;
-  if (owner) {
-    // The owner's sound marker on pull request 77 at its head, so L2 answers the Owner card a merge.
-    repository.open({ number: 77, head: 'bad 12', sha: HEADS.judged, mergeBase: 'c'.repeat(40), mergeable: 'mergeable',
-      comments: [markerComment({ card: 12, pull: 77, head: HEADS.judged, body: marked.body, role: 'owner' })] });
-  }
+  // Gates the test queues: the next read of the board waits before its snapshot (`holdPre`), or
+  // takes its snapshot and then waits (`holdSnap`), so a change can land at either point.
+  const snaps = [];
+  const pres = [];
   let waiting = false;
   let adding = false;
   const reads = { ...repository.operations, ...fake.reads, readNewestNumber: async () => {
@@ -763,13 +760,11 @@ function recoveryWorld(t, { madeMove = () => false, refuseMove = () => false, re
   const cards = async () => (await fake.board.readItems()).map((item) => ({ ...fake.issues.find((issue) => issue.number === item.number), ...item, type: 'issue', repository: settings.repo, priority: null }));
   const board = { ...fake.board, readColumns: async () => columns, readItems: cards,
     readPriority: async () => {
+      const pre = pres.shift();
+      if (pre !== undefined) { pre.waiting = true; await pre.promise; }
       const answer = { declared: null, options: null, items: await cards() };
-      // Where `owner`, the first read answers what it read only once the test lets it, so a change
-      // the run accepts meanwhile lands after that read began.
-      if (owner && !reading) {
-        reading = true;
-        await read.promise;
-      }
+      const snap = snaps.shift();
+      if (snap !== undefined) { snap.snapped = true; await snap.promise; }
       return answer;
     } };
   const items = {
@@ -824,10 +819,11 @@ function recoveryWorld(t, { madeMove = () => false, refuseMove = () => false, re
   const handed = [];
   const running = built.run({ stop: stop.signal, handOver: (answer) => handed.push(answer) });
   running.catch(() => {});
-  t.after(async () => { recovery.open(); added.open(); work.open(); read.open(); stop.abort(); await running.catch(() => {}); });
+  t.after(async () => { recovery.open(); added.open(); work.open(); stop.abort(); await running.catch(() => {}); });
   const pulls = (n = number) => events().filter((event) => event.event === 'pull' && event.card === n).length;
   const item = () => fake.onBoard.find((each) => each.number === number);
-  return { clock, columns, fake, recovery, added, work, read, handed, events, pulls, item, number, offered: () => offered, waiting: () => waiting, adding: () => adding, reading: () => reading };
+  return { holdPre: () => { const g = gate(); pres.push(g); return g; }, holdSnap: () => { const g = gate(); snaps.push(g); return g; },
+    clock, columns, fake, recovery, added, work, handed, events, pulls, item, number, offered: () => offered, waiting: () => waiting, adding: () => adding };
 }
 
 // R-SCHED-43 row S5 at a move no claim makes: recovery's `created` move of a pending firing's card
@@ -941,31 +937,142 @@ test('S5 creation: a card set aside before the delayed created move of its creat
   }
 });
 
-// R-SCHED-43 row S5 at a claim that makes no move: the claiming read found the card in Owner, and
-// recovery's `created` move to Ready landed while that read was still answering. The claim takes
-// the read's Owner as its column only where the run accepted no change since the read began, so
-// the merge claim sets the card aside with Ready.
+
+/**
+ * Runs a creation-in-recovery world until a pull has claimed the new card from Ready and set it
+ * aside in Coding, the claim's accepted move, with creation's own `created` move still held.
+ */
+async function setAsideBeforeCreation(t, options) {
+  const here = recoveryWorld(t, { ...options, create: 'recovery' });
+  await positive(() => here.adding() && here.item() !== undefined);
+  here.item().column = here.columns.ready;
+  await here.clock.advance(here.clock.now() + POLL);
+  await positive(() => here.events().some((event) => event.event === 'slot.release' && event.card === here.number));
+  assert.equal(here.pulls(), 1, 'a pull claimed the new card and set it aside');
+  assert.equal(here.item().column, here.columns.coding, 'set aside in Coding, the claim\'s accepted move');
+  return here;
+}
+
+/** Lets creation's held `created` move land, and waits for its firing to settle. */
+async function landCreation(here) {
+  here.added.open();
+  await positive(() => here.events().some((event) => event.event === 'trigger.outcome' && event.name === 'pending') || here.handed.some((answer) => answer.failure));
+  assert.equal(here.item().column, here.columns.ready, 'creation\'s created move, this run\'s own, placed the card in Ready');
+}
+
+// R-SCHED-43 row S5, at a read in flight while this run's own change lands (the architect's
+// ruling on the attacker's probe A, round 6): a read begun after the setting aside ends the skip
+// only at a column other than the card's record as the read began and other than the target of
+// each run-owned change accepted while the read was in flight. Rows 1 to 3 of the ruling.
 // proves R-SCHED-43
-test('S5 claiming read: a change the run accepted while the claiming read answered outlives that read', async (t) => {
+test('S5 reads in flight: a run change landing during a read neither ends the skip nor hides a person move', async (t) => {
+  const cells = {
+    // Row 1, the attacker's probe A: the read shows the column the change moved the card from.
+    'shows the column before the change': { hold: 'snap', person: undefined, ends: false },
+    // Row 2: the read shows the change's target.
+    'shows the change\'s target': { hold: 'pre', person: undefined, ends: false },
+    // Row 3: a person moved the card to a third column, which the read shows.
+    'shows a third column': { hold: 'snap', person: COLUMNS.review, ends: true },
+  };
+  for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
+    for (const [cell, { hold, person, ends }] of Object.entries(cells)) {
+      await t.test(`${cell}, ${end}`, async (t) => {
+        const here = await setAsideBeforeCreation(t, options);
+        const offered = here.offered();
+        if (person !== undefined) here.item().column = person;
+        const gated = hold === 'snap' ? here.holdSnap() : here.holdPre();
+        const polling = here.clock.advance(here.clock.now() + POLL);
+        await positive(() => (hold === 'snap' ? gated.snapped : gated.waiting) === true);
+        await landCreation(here);
+        if (person !== undefined) here.item().column = person;
+        gated.open();
+        await polling;
+        assert.equal(here.offered(), offered + (ends ? 1 : 0), `${cell}, ${end}: the read in flight ${ends ? 'ends' : 'keeps'} the skip`);
+        if (ends) return;
+        for (let each = 0; each < 3; each += 1) await here.clock.advance(here.clock.now() + POLL);
+        assert.equal(here.offered(), offered, `${cell}, ${end}: the next reads, showing the change's target, keep the skip`);
+        assert.equal(here.pulls(), 1, `${cell}, ${end}: the card is claimed once`);
+      });
+    }
+  }
+});
+
+// R-SCHED-43 row S5 at the claiming read (the ruling's row 4, the attacker's probe B): this run's
+// `created` move lands while the claiming read is in flight, before its snapshot, and a person then
+// moves the card. The card is claimed from what the read shows and set aside with that column.
+// proves R-SCHED-43
+test('S5 claiming read: the card is claimed and set aside from the column its claiming read shows', async (t) => {
   for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
     await t.test(end, async (t) => {
-      const here = recoveryWorld(t, { ...options, owner: true });
-      await positive(() => here.waiting() && here.reading());
-      // The read holds the card in Owner; a person removes it, and recovery puts it back in Ready.
+      const here = recoveryWorld(t, { ...options, create: 'recovery' });
+      await positive(() => here.adding() && here.item() !== undefined);
+      const pre = here.holdPre();
+      const polling = here.clock.advance(here.clock.now() + POLL);
+      await positive(() => pre.waiting === true);
+      await landCreation(here);
+      here.item().column = here.columns.coding;
+      pre.open();
+      await polling;
+      await positive(() => here.events().some((event) => event.event === 'slot.release' && event.card === here.number));
+      const offered = here.offered();
+      for (let each = 0; each < 3; each += 1) await here.clock.advance(here.clock.now() + POLL);
+      assert.equal(here.pulls(), 1, `${end}: the card stays in Coding, the column its claim read, so no read claims it again`);
+      assert.equal(here.offered(), offered, `${end}: reads finding Coding keep the skip`);
+    });
+  }
+});
+
+// R-SCHED-43 rows S3 and S4 against the record (the ruling's row 5): a read that overlapped no
+// run-owned change ends the skip at any column but the record's, the column a run change moved the
+// card away from included.
+// proves R-SCHED-43
+test('S5 record: a read overlapping no run change ends the skip at the column the run moved the card away from', async (t) => {
+  for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
+    await t.test(end, async (t) => {
+      const here = await setAsideBeforeCreation(t, options);
+      await landCreation(here);
+      const offered = here.offered();
+      await here.clock.advance(here.clock.now() + POLL);
+      assert.equal(here.offered(), offered, `${end}: a read finding Ready, the record, keeps the skip`);
+      here.item().column = here.columns.coding;
+      await here.clock.advance(here.clock.now() + POLL);
+      assert.equal(here.offered(), offered + 1, `${end}: a read finding Coding, which the run's own move left, ends the skip`);
+    });
+  }
+});
+
+// R-SCHED-43 row S1 with a run change in flight (the ruling's row 6): a read begun before the
+// setting aside never ends the skip, though a run change landed while it was in flight and it
+// shows a column a person moved the card to, other than any the run set.
+// proves R-SCHED-43
+test('S1 with a change in flight: a read begun before the setting aside keeps the skip whatever it shows', async (t) => {
+  for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
+    await t.test(end, async (t) => {
+      // Card 12's claim holds its workspace, and card 13's stop fires a release read held at its snapshot.
+      const here = recoveryWorld(t, { ...options, holdWorkspace: true, other: true });
+      // The first read, which claims both cards, passes; the release read after card 13's stop is
+      // held before its snapshot, and again after it.
+      here.holdPre().open();
+      here.holdSnap().open();
+      const pre = here.holdPre();
+      const snap = here.holdSnap();
+      await positive(() => here.waiting() && here.pulls() === 1 && here.pulls(13) === 1 && pre.waiting === true);
+      assert.equal(here.item()?.column, here.columns.coding, `${end}: card 12's claim holds it in Coding`);
+      // A person moves card 12 to Review, which the held read snapshots.
+      here.item().column = here.columns.review;
+      pre.open();
+      await positive(() => snap.snapped === true);
+      // While that read is in flight, a person removes card 12, recovery puts it in Ready, and its claim sets it aside.
       here.fake.onBoard.splice(here.fake.onBoard.indexOf(here.item()), 1);
       here.recovery.open();
       await positive(() => here.events().some((event) => event.event === 'trigger.outcome' && event.name === 'gone') || here.handed.some((answer) => answer.failure));
-      assert.equal(here.item()?.column, here.columns.ready, `${end}: recovery placed the card in Ready`);
-      here.read.open();
-      await positive(() => here.events().some((event) => event.event === 'merge.end' && event.card === 12));
-      assert.equal(here.pulls(), 1, `${end}: the read claimed the Owner card for its merge`);
+      here.work.open();
+      await positive(() => here.events().some((event) => event.event === 'slot.release' && event.card === 12));
       const offered = here.offered();
+      snap.open();
       for (let each = 0; each < 3; each += 1) await here.clock.advance(here.clock.now() + POLL);
-      assert.equal(here.pulls(), 1, `${end}: reads finding the card in Ready claim it no second time`);
-      assert.equal(here.offered(), offered, `${end}: reads finding the card in Ready, the column recovery placed it in, keep its skip`);
-      here.item().column = here.columns.review;
-      await here.clock.advance(here.clock.now() + POLL);
-      assert.equal(here.offered(), offered + 1, `${end}: a person's move away from Ready ends the skip`);
+      assert.equal(here.pulls(), 1, `${end}: the read begun before the setting aside, showing Review, ends no skip`);
+      assert.equal(here.offered(), offered, `${end}: nor do later reads finding Ready`);
     });
   }
 });
