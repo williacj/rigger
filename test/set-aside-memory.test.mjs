@@ -161,7 +161,11 @@ function world(t, { cards = [12], clockHeld = true, concurrency = 1, script = ()
   // How many of L3's reads handed card 12 to L2's facts call, which a skipped card never is.
   let offered = 0;
   const facts = factsCall({ config: settings, reads: repository.operations, decide });
-  const offering = (items) => {
+  // Gates the test queues for the next calls of L2's facts call, which a pull awaits after its read answers.
+  const factsHolds = [];
+  const offering = async (items) => {
+    const hold = factsHolds.shift();
+    if (hold !== undefined) { hold.waiting = true; await hold.promise; }
     if (items.some((item) => item.number === 12)) offered += 1;
     return facts(items);
   };
@@ -195,6 +199,7 @@ function world(t, { cards = [12], clockHeld = true, concurrency = 1, script = ()
   /** One poll of an idle clock-held run: settles once the poll has claimed, or settled claiming nothing. */
   const poll = () => clock.advance(clock.now() + POLL);
   return { start, poll, pulls, makers, column, move, events, repository, fake, clock, holdNextRead: (promise) => held.push(promise), reads: () => ({ begun, ended }), offered: () => offered,
+    holdFacts: () => { const g = gate(); factsHolds.push(g); return g; },
     // A person removing every label but the kind's, as the board's issue labels change, moving nothing.
     unlabel: () => fake.setIssueLabels(settings.repo, 12, ['type:change']) };
 }
@@ -443,6 +448,37 @@ test('S8c: each skip a person ends makes the next line-moved stop a first', asyn
   });
 });
 
+
+// R-FAIL-8 rows S8b and S8c with two pulls ending one skip (the round-7 attacker's P5): a read whose
+// first comparison ended card 12's skip waits in L2's facts call, while another pull ends the same
+// skip, claims the card and counts its first line stop. The waiting read's `done` must not reset
+// that count, so the card's second line stop sets it aside: claimed exactly twice after its skip.
+// proves R-SCHED-43
+test('S8b S8c: a pull whose read ended a skip another pull already ended resets no line-stop count taken since', async (t) => {
+  const g13 = gate();
+  const g14 = gate();
+  const g12 = gate();
+  const here = world(t, { cards: [12, 13, 14], concurrency: 2, script: (number, claim) => {
+    if (number === 12) return claim === 1 ? 'refused' : claim === 3 ? g12.promise : 'moved';
+    if (number === 13) return claim === 1 ? g13.promise : 'refused';
+    return claim === 1 ? g14.promise : 'refused';
+  } });
+  here.start();
+  await positive(() => here.pulls(12) === 1 && here.pulls(13) === 1 && here.pulls(14) === 1);
+  assert.equal(await here.column(12), COLUMNS.coding, 'card 12 set aside in Coding');
+  await here.move(12, COLUMNS.ready);
+  const facts = here.holdFacts();
+  g14.open('refused');
+  await positive(() => facts.waiting === true);
+  g13.open('refused');
+  await positive(() => here.pulls(12) === 3);
+  facts.open();
+  for (let each = 0; each < 5; each += 1) await new Promise((resolve) => setImmediate(resolve));
+  g12.open('moved');
+  await positive(() => here.events().filter((event) => event.event === 'slot.release' && event.card === 12).length >= 3);
+  for (let each = 0; each < 3; each += 1) await here.poll();
+  assert.equal(here.pulls(12), 3, 'S8b/S8c: after the skip ends, the card is claimed exactly twice, then set aside at its second line stop');
+});
 // R-SCHED-43 row S9: with no clock trigger declared, a set-aside card stays skipped for the run's
 // life, though a read after the setting aside finds it in Ready.
 // proves R-SCHED-43
@@ -856,7 +892,8 @@ function recoveryWorld(t, { madeMove = () => false, refuseMove = () => false, re
     facts: async (cards) => {
       if (cards.some((card) => card.number === number)) offered += 1;
       const hold = factsHolds.shift();
-      if (hold !== undefined) { hold.waiting = true; await hold.promise; }
+      // A hold opened with 'reject' fails the facts call, as a forge read under it can fail.
+      if (hold !== undefined) { hold.waiting = true; if (await hold.promise === 'reject') throw new Error('the facts call failed'); }
       return facts(cards);
     },
     // makeWorkspace rejects BRANCH_REFUSED where git refuses the admitted topic's derived name, as `bad 12` (workspace.mjs).
@@ -1344,6 +1381,27 @@ test('S5h: an older read collapsing after a newer one does not end the skip at t
   for (let each = 0; each < 3; each += 1) await here.clock.advance(here.clock.now() + POLL);
   console.log('P3 final offered delta', here.offered() - offered, 'pulls', here.pulls(12), 'column', here.item().column);
   assert.equal(here.offered(), offered, 'no column change since R2 found Coding, the claim read\'s own column, so no later read finding Coding may end the skip');
+});
+
+// R-SCHED-43 row S5g where the pull fails before its last comparison (the round-7 attacker's P4):
+// as S5g′, but L2's facts call fails after this run's `created` move into Ready lands. The read was
+// in flight until `done`, so Ready, a change it overlapped, still keeps the skip.
+// proves R-SCHED-43
+test('S5g″: a run change accepted while a pull whose facts call fails is in flight keeps the skip', async (t) => {
+  for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
+    await t.test(end, async (t) => {
+      const here = await setAsideBeforeCreation(t, options);
+      here.item().column = here.columns.ready;
+      const facts = here.holdFacts();
+      const polling = here.clock.advance(here.clock.now() + POLL);
+      await positive(() => facts.waiting === true);
+      await landCreation(here);
+      facts.open('reject');
+      await polling;
+      for (let each = 0; each < 3; each += 1) await here.clock.advance(here.clock.now() + POLL);
+      assert.equal(here.pulls(), 1, `${end}: Ready is the target of a run change accepted while the read was in flight, so the skip holds`);
+    });
+  }
 });
 
 // R-SCHED-43 rows S3 and S4 against the compared column (the ruling's row 5): a read that overlapped

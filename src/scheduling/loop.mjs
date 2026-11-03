@@ -90,13 +90,15 @@ function setAside(clockHeld) {
       return read;
     },
     /**
-     * Ends `read`, so changes after it no longer reach it, once its pull has compared and claimed:
-     * each skip its last comparison of a card ended is removed then, with the card's line-stop count.
+     * Ends `read`, so changes after it no longer reach it, once its pull has compared and claimed, or
+     * failed: each skip its last comparison of a card ended is removed then, with the card's line-stop
+     * count, unless a run change the read overlapped has since targeted the column it compared, or the
+     * card was set aside afresh meanwhile.
      */
     done: (read) => {
       reading.delete(read);
-      for (const [number, entry] of read.ends) {
-        if (entry === undefined || cards.get(number) !== entry) continue;
+      for (const [number, end] of read.ends) {
+        if (end === undefined || cards.get(number) !== end.entry || read.changes.get(number)?.has(end.column)) continue;
         cards.delete(number);
         lineStops.delete(number);
       }
@@ -128,7 +130,7 @@ function setAside(clockHeld) {
       const after = clockHeld && read.number > entry.reads;
       const changes = read.changes.get(item.number) ?? new Set();
       const ends = after && !read.began.get(item.number)?.has(item.column) && !changes.has(item.column);
-      read.ends.set(item.number, ends ? entry : undefined);
+      read.ends.set(item.number, ends ? { entry, column: item.column } : undefined);
       if (ends) return false;
       if (after && changes.size === 0 && read.number > (collapsed.get(item.number) ?? 0)) {
         compared.set(item.number, new Set([item.column]));
