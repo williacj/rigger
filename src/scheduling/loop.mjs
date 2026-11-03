@@ -91,14 +91,14 @@ function setAside(clockHeld) {
     },
     /**
      * Ends `read`, so changes after it no longer reach it, once its pull has compared and claimed, or
-     * failed: each skip its last comparison of a card ended is removed then, with the card's line-stop
-     * count, unless a run change the read overlapped has since targeted the column it compared, or the
-     * card was set aside afresh meanwhile.
+     * failed: each skip a comparison of it ended is removed then, with the card's line-stop count,
+     * unless a run change the read overlapped has since targeted the column it compared, or the card
+     * was set aside afresh meanwhile.
      */
     done: (read) => {
       reading.delete(read);
       for (const [number, end] of read.ends) {
-        if (end === undefined || cards.get(number) !== end.entry || read.changes.get(number)?.has(end.column)) continue;
+        if (cards.get(number) !== end.entry || read.changes.get(number)?.has(end.column)) continue;
         cards.delete(number);
         lineStops.delete(number);
       }
@@ -119,9 +119,9 @@ function setAside(clockHeld) {
     /**
      * Whether `read` skips `item`. A read begun after the setting aside ends the skip only where it
      * finds the card outside its compared columns as the read began and outside the target of each
-     * run-owned change accepted while the read was in flight. Each comparison by the same read
-     * decides again, and its last decides at `done`, so a change accepted before the pull claims still
-     * counts. One that keeps the skip, having overlapped no such change, makes the column it shows the
+     * run-owned change accepted while the read was in flight. A comparison that ends it records so on
+     * the read, and `done` removes the skip, weighing every change the read overlapped by then, so a
+     * change accepted before the pull claims, or fails, still counts. One that keeps the skip, having overlapped no such change, makes the column it shows the
      * one compared column, unless it began before the last read to do so. No other read writes them.
      */
     skips: (item, read) => {
@@ -130,8 +130,10 @@ function setAside(clockHeld) {
       const after = clockHeld && read.number > entry.reads;
       const changes = read.changes.get(item.number) ?? new Set();
       const ends = after && !read.began.get(item.number)?.has(item.column) && !changes.has(item.column);
-      read.ends.set(item.number, ends ? { entry, column: item.column } : undefined);
-      if (ends) return false;
+      if (ends) {
+        read.ends.set(item.number, { entry, column: item.column });
+        return false;
+      }
       if (after && changes.size === 0 && read.number > (collapsed.get(item.number) ?? 0)) {
         compared.set(item.number, new Set([item.column]));
         collapsed.set(item.number, read.number);
