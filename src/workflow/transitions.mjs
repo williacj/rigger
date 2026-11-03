@@ -199,7 +199,10 @@ export function columnChanges({
     try {
       number = await writes.openIssue(template.title, body, ...template.labels);
     } catch (refusal) {
-      if (refusal.made) throw Object.assign(madeUnrecorded(`clock trigger ${name} at ${new Date(occurrence).toISOString()} opened issue #${refusal.made.answer}`, refusal), { issue: refusal.made.answer });
+      if (refusal.made) {
+        const what = `clock trigger ${name} at ${new Date(occurrence).toISOString()} opened issue #${refusal.made.answer}: ${refusal.message}`;
+        throw Object.assign(refusal.unrecorded === undefined ? new Error(what, { cause: refusal }) : madeUnrecorded(what, refusal), { issue: refusal.made.answer });
+      }
       throw new Error(`clock trigger ${name} at ${new Date(occurrence).toISOString()} could not open its card: ${refusal.message}`, { cause: refusal });
     }
     try {
