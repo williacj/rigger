@@ -835,6 +835,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       } else {
         [settled] = await Promise.allSettled([l2.settled(card, outcome, { dispatch, continuing: continuing !== undefined, ...(scope === undefined ? {} : { noClock: true }) })]);
       }
+      // Only L2's settlement answer supplies this halt; a generic L1 failure is not terminal.
+      if (scope !== undefined && settled.status === 'rejected' && settled.reason?.halt === true) defer(scope, card, actionIdentity(next));
       const makerWork = settled.status === 'fulfilled' ? settled.value?.makerWork : settled.reason?.makerWork;
       if (scope !== undefined && makerWork !== undefined && makerWork !== 'present') scope.memory.barred.add(card.number);
       if (settled.status === 'fulfilled' && settled.value?.action === 'escalate') {

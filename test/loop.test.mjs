@@ -5584,3 +5584,219 @@ test('A5: the run verb hands L3 its record, so a trigger the stream already arms
     await running.catch(() => {});
   }
 });
+
+/** An actual missing-directory failure whose L2 settlement append is refused by the filesystem. */
+async function makerSettlementRefusal(t, changeKind = false) {
+  const root = temporaryDirectory('rigger-maker-settlement-');
+  const making = makingWorkspaces(root);
+  const paths = new Map();
+  const built = onManualHost(t, {
+    cards: [42, { ...readyCard(95), labels: ['type:handoff'] }], concurrency: 1, makerHold: false, fresh: false,
+    kinds: { change: { ...KINDS.change, judges: ['owner'] }, handoff: { ...KINDS.change, select: { labels: ['type:handoff'] } }, correction: { ...KINDS.change, select: { labels: ['type:correction'] } } },
+    workspace: async (number) => { const made = await making(number); paths.set(number, made.path); return made; },
+  });
+  const emitter = built.sink.emitter.bind(built.sink);
+  let physicalFailure = true;
+  let renamed = 0;
+  built.sink.emitter = (context) => {
+    const actual = emitter(context);
+    return { emit: (event, fields) => {
+      actual.emit(event, fields);
+      // A real directory disappears after L1 made it and before the role starts, a named R-FAIL-8 host cause.
+      // Retain each moved directory in scratch; no producer fabricates a failure or a malformed handle.
+      if (physicalFailure && context.layer === 'L3' && context.card === 42 && event === 'dispatch' && fields.role === 'engineer') {
+        const path = paths.get(42);
+        fs.renameSync(path, `${path}-moved-${++renamed}`);
+      }
+    } };
+  };
+  const priority = built.fake.operations.readPriority;
+  let reads = 0;
+  built.fake.operations.readPriority = async (...args) => {
+    const actual = await priority(...args);
+    // Make a missing deferral finite, without altering any selecting fact on the first four offers.
+    return ++reads > 4 ? { ...actual, items: actual.items.filter(({ number }) => number !== 42) } : actual;
+  };
+  const append = fs.appendFileSync;
+  const refusal = new Error('reviewer disk refuses maker.failed');
+  let refused = 0;
+  fs.appendFileSync = (path, data, ...rest) => {
+    if (String(path) === streamPath(built.directory)) {
+      const row = JSON.parse(String(data));
+      if (row.layer === 'L2' && row.card === 42 && row.event === 'maker.failed') {
+        refused += 1;
+        if (changeKind && refused === 1) built.fake.setIssueLabels(config.repo, 42, ['type:correction']);
+        throw refusal;
+      }
+    }
+    return append(path, data, ...rest);
+  };
+  syncBuiltinESMExports();
+  let reached;
+  try { reached = await built.loop.run(); }
+  finally { fs.appendFileSync = append; syncBuiltinESMExports(); }
+  const attempts = reached.filter(({ card }) => card === 42);
+  assert.ok(attempts.length > 0, 'the selected maker really reached settlement');
+  for (const attempt of attempts) {
+    assert.equal(attempt.outcome.status, 'rejected');
+    assert.equal(attempt.outcome.reason.code, 'NOT_STARTED', 'L1 really reports an unstarted role');
+    assert.equal(attempt.outcome.reason.result, undefined, 'no command ran');
+    assert.equal(attempt.settled.status, 'rejected');
+    assert.strictEqual(attempt.settled.reason.cause, refusal, 'the actual L2 settlement retained the original disk refusal');
+  }
+  const { actionIdentity } = await import('../src/workflow/next-action.mjs');
+  const selected = built.decisions.filter(({ card, action }) => card === 42 && action.action === 'dispatch');
+  const identities = new Set(selected.map(({ action }) => actionIdentity(action))).size;
+  console.log('settlement observed:', JSON.stringify({ refused, renamed, reads, selectedIdentities: new Set(selected.map(({ action }) => actionIdentity(action))).size, claims: built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card), agentCards: built.agent.runs().map(({ card }) => card) }));
+  return { built, refused, renamed, identities, reset: () => { reads = 0; physicalFailure = false; } };
+}
+
+// A real missing workspace reaches L2 settlement; a refused record must not re-admit A.
+// proves R-RECORD-9, R-SCHED-6
+test('a refused maker.failed settlement defers an unstarted maker and immediately refills B', SETTLES_WITHIN, async (t) => {
+  const { built, refused, identities } = await makerSettlementRefusal(t);
+  assert.equal(identities, 1, 'every repeated offer selects the same L2 maker identity');
+  await t.test('the unchanged unstarted identity waits until the next invocation', () => {
+    assert.equal(refused, 1, 'persistent maker.failed recording refusal must defer the unchanged unstarted identity');
+  });
+  await t.test('the freed slot reaches B before any repeated claim of A', () => {
+    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card), [42, 95, 95], 'the normal freed-slot pull reaches B and its separate Owner move without reclaiming A');
+  });
+});
+
+// Settlement deferral remembers the selected identity, without barring a new identity or invocation.
+// proves R-RECORD-9, R-SCHED-6
+test('a refused maker settlement keeps a changed maker identity eligible and retries the same identity in a new invocation', SETTLES_WITHIN, async (t) => {
+  const { built, refused, renamed, identities, reset } = await makerSettlementRefusal(t, true);
+  assert.equal(identities, 2, 'the changed kind independently selects a different maker action');
+  assert.equal(refused, 2, 'each selected identity reaches its terminal settlement refusal once');
+  assert.equal(renamed, 2, 'neither selected maker started');
+  assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card), [42, 42, 95, 95], 'the changed identity remains eligible before B refills');
+  assert.deepEqual(built.agent.runs().map(({ card }) => card), [95]);
+  reset();
+  await built.loop.run();
+  assert.equal(built.agent.runs().filter(({ card }) => card === 42).length, 1, 'restored recording and a new invocation admit the same selected identity');
+  assert.equal(built.events().some(({ event }) => event === 'admission.close' || event === 'attempt.failed'), false, 'the recording refusal consumes no host attempt and closes no admission');
+});
+
+// Each settlement producer retains its own refusal while the next pull omits the same action.
+// proves R-RECORD-9, R-SCHED-6, R-WORK-41
+test('settlement recording refusals retain original causes and omit the selected action across maker judge removal and merge paths', BOUNDS[60_000], async (t) => {
+  const cases = [
+    ['maker.failed', 'L2', 'maker.failed'], ['maker.withheld', 'L2', 'review.withheld'],
+    ['maker.transition', 'L2', 'transition'], ['maker.end', 'L1', 'dispatch.end'],
+    ['judge.withheld', 'L2', 'judge.withheld'], ['judge.end', 'L1', 'dispatch.end'],
+    ['removal.end', 'L1', 'workspace.removed'], ['merge.end', 'L3', 'merge.end'],
+    ['merge.transition', 'L2', 'transition'], ['merge.cleanup', 'L1', 'workspace.removed'],
+  ];
+  for (const [stage, layer, event] of cases) await t.test(stage, async (t) => {
+    const judging = stage.startsWith('judge.');
+    const merging = stage.startsWith('merge.');
+    const removing = stage === 'removal.end';
+    const root = temporaryDirectory('rigger-settlement-refusal-');
+    const repository = repositoryIn('rigger-settlement-repository-');
+    const making = makingWorkspaces(join(root, 'workspaces'));
+    const paths = new Map();
+    let built;
+    const head = 'a'.repeat(40);
+    const pull = { number: 733, head: 'rigger-42', sha: head, mergeBase: 'b'.repeat(40), diff: 'diff --git a/help b/help\n', mergeable: 'mergeable',
+      ...(removing ? { closed: true } : {}),
+      ...(merging ? { comments: [markerComment({ card: 42, pull: 733, head, body: PASSING, role: 'owner' })] } : {}),
+    };
+    const initial = cardIn(42, judging || removing ? COLUMNS.review : merging ? COLUMNS.owner : COLUMNS.coding);
+    const scratch = join(root, 'scratch', 'rigger-42', 'reviewer');
+    if (removing || stage === 'merge.cleanup') {
+      fs.mkdirSync(scratch, { recursive: true });
+      fs.writeFileSync(join(scratch, 'kept.txt'), 'the actual directory to remove');
+    }
+    built = onManualHost(t, { cards: [initial, { ...readyCard(95), labels: ['type:handoff'] }], concurrency: 1, makerHold: false, fresh: false,
+      kinds: { change: { ...KINDS.change, judges: judging ? ['reviewer'] : ['owner'] }, handoff: { ...KINDS.change, select: { labels: ['type:handoff'] } } },
+      workspace: async (card) => { const made = await making(card); paths.set(card, made.path); return made; },
+      ...(stage === 'judge.withheld' ? { judgeDirectory: (card, role, at) => makeJudgeDirectory({ root, topic: 'rigger-{number}', repository: join(root, 'absent-repository'), card, role, head: at, sink: built.sink }) } : {}),
+      removeDirectories: (card) => removeCardDirectories({ root, repository, topic: 'rigger-{number}', card, sink: built.sink }),
+      forge: { pullRequests: judging || merging || removing ? [pull] : [] },
+    });
+    if (judging) built.agent.plan(42, 'reviewer', {});
+    let settling = false;
+    const settle = built.l2.settled;
+    built.l2.settled = async (...args) => {
+      settling = true;
+      try { return await settle(...args); }
+      finally { settling = false; }
+    };
+    // D16 permits a later pull to read an earlier forge/board snapshot. Capture real fake
+    // responses before acting, replay only A's selecting facts, and leave settlement/B fresh.
+    const priority = built.fake.operations.readPriority;
+    let offered;
+    let reads = 0;
+    built.fake.operations.readPriority = async (...args) => {
+      const actual = await priority(...args);
+      offered ??= structuredClone(actual.items.find(({ number }) => number === 42));
+      return { ...actual, items: actual.items.flatMap((card) => card.number !== 42 ? [card] : ++reads > 4 ? [] : [structuredClone(offered)]) };
+    };
+    const branches = built.repository.operations.readBranches;
+    let selectedBranch;
+    built.repository.operations.readBranches = async (names) => {
+      const actual = await branches(names);
+      if (names.includes('rigger-42') && !settling) {
+        selectedBranch ??= actual['rigger-42'];
+        actual['rigger-42'] = selectedBranch;
+      }
+      return actual;
+    };
+    const pulls = built.repository.operations.readPullRequests;
+    let selectedPulls;
+    built.repository.operations.readPullRequests = async (line) => {
+      const actual = await pulls(line);
+      if (line !== 'rigger-42') return actual;
+      if (!settling) selectedPulls ??= structuredClone(actual);
+      return settling && stage !== 'maker.withheld' ? actual : structuredClone(selectedPulls);
+    };
+    const emitter = built.sink.emitter.bind(built.sink);
+    let renamed = 0;
+    built.sink.emitter = (context) => {
+      const actual = emitter(context);
+      return { emit: (name, fields) => {
+        actual.emit(name, fields);
+        if (stage === 'maker.failed' && context.layer === 'L3' && context.card === 42 && name === 'dispatch' && fields.role === 'engineer') {
+          const path = paths.get(42);
+          fs.renameSync(path, `${path}-moved-${++renamed}`);
+        }
+      } };
+    };
+    const append = fs.appendFileSync;
+    const refusal = new Error(`disk refused ${stage}`);
+    let refused = 0;
+    fs.appendFileSync = (path, data, ...rest) => {
+      if (String(path) === streamPath(built.directory)) {
+        const row = JSON.parse(String(data));
+        if (row.card === 42 && row.layer === layer && row.event === event) { refused += 1; throw refusal; }
+      }
+      return append(path, data, ...rest);
+    };
+    syncBuiltinESMExports();
+    let result;
+    try { result = await built.loop.run().then((value) => ({ value }), (failure) => ({ value: failure.reached, failure })); }
+    finally { fs.appendFileSync = append; syncBuiltinESMExports(); }
+    const contains = (value, seen = new Set()) => {
+      if (value === refusal) return true;
+      if (value === null || typeof value !== 'object' || seen.has(value)) return false;
+      seen.add(value);
+      return Object.values(value).some((each) => contains(each, seen)) || contains(value.cause, seen) || contains(value.errors, seen);
+    };
+    assert.equal(refused, 1, `${stage}: unchanged selected action reaches its refused settlement once`);
+    assert.ok(contains(result), `${stage}: original filesystem refusal survives in the reached outcome or failure`);
+    const claims = built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card);
+    assert.equal(claims.filter((card) => card === 42).length, 1, `${stage}: the same selecting snapshot never reclaims A`);
+    assert.deepEqual(claims.filter((card) => card === 95), [95, 95], `${stage}: B is claimed and then makes its ordinary Owner move`);
+    if (!merging) assert.deepEqual(claims, [42, 95, 95], `${stage}: the successful claim releases normally and immediately refills B`);
+    assert.equal(built.agent.runs().filter(({ card }) => card === 95).length, 1, `${stage}: B really dispatches`);
+    assert.equal(built.events().some(({ event }) => event === 'admission.close'), false, `${stage}: no admission close`);
+    assert.deepEqual(built.events().filter(({ event, card }) => card === 42 && ['attempt.failed', 'attempt.decided'].includes(event)), [], `${stage}: no host-failure attempt consumed`);
+    if (removing || stage === 'merge.cleanup') assert.equal(fs.existsSync(scratch), false, `${stage}: actual removal preceded its refused record`);
+    if (stage === 'maker.failed') {
+      assert.equal(renamed, 1, 'the real unstarted-maker premise was reached');
+      assert.deepEqual(built.agent.runs().map(({ card }) => card), [95], 'A did not start');
+    }
+  });
+});

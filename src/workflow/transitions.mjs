@@ -12,7 +12,7 @@ import { escalationDestination, makerEscalation, makerNote, routingComment, esca
 import { acceptanceItems } from './form-check.mjs';
 import { pullRequestsFrom } from './facts.mjs';
 import { statusNotice } from './status-issue.mjs';
-import { kindOf, providerOf, tierOf } from './next-action.mjs';
+import { kindOf, providerOf, tierOf, recordingHalt } from './next-action.mjs';
 import { composeClockMark, carriesClockMark } from './clock-mark.mjs';
 import { firstAbove } from './first-above.mjs';
 
@@ -135,7 +135,7 @@ export function columnChanges({
     try {
       sink.emitter({ layer: 'L2', card: card.number, ...context }).emit(event, fields);
     } catch (refusal) {
-      throw new Error(`card #${card.number}: ${fields.reason ?? event}, and the event sink refused to record it: ${refusal.message}`, { cause: refusal });
+      throw recordingHalt(`card #${card.number}: ${fields.reason ?? event}, and the event sink refused to record it: ${refusal.message}`, refusal);
     }
   };
 
