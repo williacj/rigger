@@ -5800,3 +5800,141 @@ test('settlement recording refusals retain original causes and omit the selected
     }
   });
 });
+
+// Every fresh admission consults invocation memory; asks progressing an admitted judge retain its retry.
+// proves R-SCHED-6, R-RECORD-9, R-WORK-41
+test('judge selection memory covers pull fresh-maker continuing-maker and removal-redo entries in every identity state', BOUNDS[60_000], async (t) => {
+  const { columnChanges } = await import('../src/workflow/transitions.mjs');
+  const { makingJudgeDirectories } = await import('./loop-world.mjs');
+  for (const entry of ['pull', 'fresh-maker', 'continuing-maker', 'removal-redo']) {
+    for (const state of ['started', 'deferred', 'eligible', 'changed']) await t.test(`${entry}/${state}`, async (t) => {
+      const seeded = state !== 'eligible';
+      const oldHead = 'a'.repeat(40);
+      const newHead = state === 'changed' ? 'c'.repeat(40) : oldHead;
+      const card = cardIn(42, !seeded && entry === 'fresh-maker' ? COLUMNS.ready : COLUMNS.review);
+      const marker = (role, verdict = 'sound') => ({ ...markerComment({ card: 42, pull: 733, head: oldHead, body: card.body, role,
+        ...(verdict === 'sound' ? {} : { verdict, items: ['unmet'], toSound: 'Correct the help line.' }),
+      }), id: `IC_${role}` });
+      const covered = [marker('architect'), marker('pm')];
+      const edited = covered.map((comment) => ({ ...comment, id: `${comment.id}_after`, includesCreatedEdit: true }));
+      const continuation = () => [marker('reviewer'), marker('architect', 'needs revision'), marker('pm')];
+      const kinds = { change: { ...KINDS.change, judges: ['reviewer', 'architect', 'pm'] } };
+      // These are fake-repository's documented PR/comment shapes, as in the reviewer's real-L2 probe.
+      // Ready with a deleted line selects a fresh maker; Review with closed history selects removal.
+      const built = onManualHost(t, { cards: [card], kinds, concurrency: 1, fresh: false, makerHold: false,
+        forge: { pullRequests: [{ number: 733, head: 'rigger-42', sha: oldHead, mergeBase: 'b'.repeat(40),
+          diff: 'diff --git a/help b/help\n', closed: !seeded && ['fresh-maker', 'removal-redo'].includes(entry),
+          comments: seeded ? covered : entry === 'continuing-maker' ? continuation() : edited,
+        }] },
+      });
+      const root = temporaryDirectory('rigger-selection-entries-');
+      const making = makingWorkspaces(root);
+      const directories = makingJudgeDirectories(root);
+      const settings = { ...config, concurrency: 1, clock: undefined, kinds };
+      const clock = { ...manualClock(), pause: async () => {} };
+      let phase = seeded ? 'seed' : entry === 'pull' ? 'target' : 'prepare';
+      let seedEnded = false;
+      let transitioned = false;
+      let branch = seeded || entry === 'continuing-maker' || entry === 'pull';
+      let removals = 0;
+      let makers = 0;
+      let missing = false;
+      let reads = 0;
+      const attempts = [];
+      const starts = [];
+      const identities = [];
+      const roles = new Map();
+      const locations = new Map();
+      const refusal = new Error('persistent selected reviewer recording refusal');
+      built.repository.operations.readBranches = async (names) => Object.fromEntries(names.map((name) => [name, branch]));
+      const board = handleOn(built.fake);
+      const priority = board.readPriority;
+      board.readPriority = async (...args) => {
+        if (seedEnded && !transitioned) {
+          transitioned = true;
+          phase = entry === 'pull' ? 'target' : 'prepare';
+          if (entry === 'pull') built.repository.update(733, { sha: newHead, comments: edited });
+          else if (entry === 'continuing-maker') built.repository.update(733, { comments: continuation() });
+          else {
+            branch = false;
+            built.repository.update(733, { closed: true });
+            if (entry === 'fresh-maker') await built.fake.operations.moveItem('item-1', COLUMNS.ready);
+          }
+        }
+        const answer = await priority(...args);
+        // An eligibility defect is finite and fails a named assertion, never a timer or file verdict.
+        return ++reads > 3 ? { ...answer, items: [] } : answer;
+      };
+      const sink = { emitter: (context) => {
+        const actual = built.sink.emitter(context);
+        return { emit: (event, fields = {}) => {
+          if (context.layer === 'L3' && event === 'dispatch' && fields.role !== undefined) {
+            roles.set(context.dispatch, fields.role);
+            if (fields.role === 'engineer') makers += 1;
+            else attempts.push({ phase, role: fields.role });
+            if (fields.role === 'reviewer' && state === 'deferred') {
+              seedEnded = true;
+              throw refusal;
+            }
+          }
+          // Reopen at the following maker's actual end, after its workspace was made, before settle reads.
+          if (context.layer === 'L1' && event === 'dispatch.end' && roles.get(context.dispatch) === 'engineer') {
+            phase = 'target';
+            branch = true;
+            built.repository.update(733, { closed: false, sha: newHead, comments: edited });
+          }
+          actual.emit(event, fields);
+          if (context.layer === 'L1' && event === 'dispatch.start' && roles.get(context.dispatch) !== 'engineer') {
+            starts.push({ phase, role: roles.get(context.dispatch) });
+          }
+          if (context.layer === 'L1' && event === 'dispatch.end' && roles.get(context.dispatch) === 'reviewer' && phase === 'seed') seedEnded = true;
+          if (state === 'eligible' && !missing && phase === 'target' && context.layer === 'L3' && event === 'dispatch' && fields.role === 'reviewer') {
+            // Real L1 NOT_STARTED, without a recording refusal: the already-admitted judge must retry.
+            missing = true;
+            const main = locations.get('reviewer');
+            fs.renameSync(main, `${main}-missing`);
+          }
+        } };
+      } };
+      const decide = (given, outcomes, options = {}) => {
+        const answer = nextAction(given, kinds, undefined, { roles: settings.roles, provisioning: {}, outcomes, sink, ...options });
+        if (answer.action === 'judge') for (const judge of answer.judges.filter(({ role }) => role === 'reviewer')) {
+          identities.push({ phase, head: judge.facts.head, pull: judge.facts.pull, revision: judge.facts.revision,
+            provider: judge.provider, tier: judge.tier, comment: judge.comment });
+        }
+        return answer;
+      };
+      const l2 = columnChanges({ config: settings, sink, items: built.fake.operations, reads: built.repository.operations, repositoryWrites: built.repository });
+      const handle = loop({ config: settings, board, decide, facts: factsCall({ config: settings, reads: built.repository.operations, decide }), l2, sink,
+        kill: async () => {}, workspace: making, workspaceTip: async () => newHead,
+        judgeDirectory: async (...args) => { const made = await directories(...args); locations.set(args[1], made.main); return made; },
+        removeDirectories: async () => { removals += 1; }, state: built.directory,
+        environment: { ...process.env, PATH: built.agent.first() }, run: 'r-test', clock, host: { ...realHost, clock },
+      });
+      const result = await handle.run().then((value) => ({ value }), (failure) => ({ failure }));
+      const reached = result.value ?? result.failure?.reached ?? [];
+      const panels = reached.filter(({ judges }) => judges !== undefined).map(({ judges }) => judges.map(({ role }) => role));
+      if (seeded) assert.deepEqual(panels[0], ['reviewer'], `${entry}/${state}: only A was initially owed`);
+      const expected = ['started', 'deferred'].includes(state) ? ['architect', 'pm'] : ['reviewer', 'architect', 'pm'];
+      assert.deepEqual(panels[seeded ? 1 : 0] ?? [], expected, `${entry}/${state}: new admission omits only remembered identities and preserves unmatched L2 order`);
+      assert.equal(removals, entry === 'removal-redo' ? 1 : 0, `${entry}/${state}: the selected removal entry was exercised`);
+      assert.equal(makers, entry === 'pull' ? 0 : 1, `${entry}/${state}: the selected maker entry was exercised`);
+      const expectedOffers = state === 'eligible' || state === 'changed' ? 2 : 1;
+      assert.equal(attempts.filter(({ role }) => role === 'reviewer').length, expectedOffers, `${entry}/${state}: A is offered only for an eligible identity or its under-claim retry`);
+      assert.equal(starts.filter(({ role }) => role === 'reviewer').length, state === 'deferred' ? 0 : state === 'changed' ? 2 : 1,
+        `${entry}/${state}: actual L1 starts distinguish remembered deferred and retryable identities`);
+      assert.deepEqual(starts.filter(({ phase, role }) => phase === 'target' && role !== 'reviewer').map(({ role }) => role).sort(), ['architect', 'pm']);
+      const target = identities.find(({ phase }) => phase === 'target');
+      assert.ok(target, `${entry}/${state}: real L2 supplied the target reviewer identity`);
+      assert.equal(target.head, newHead);
+      if (seeded) assert.deepEqual({ ...target, phase: 'seed', head: oldHead }, identities.find(({ phase }) => phase === 'seed'), 'only the explicitly changed head differs from the original selecting facts');
+      assert.equal(built.events().some(({ event }) => event === 'admission.close'), false, 'recording refusal and one ordinary retry close no admission');
+      assert.equal(built.events().filter(({ event }) => event === 'attempt.failed').length, state === 'eligible' ? 1 : 0, 'only the genuine unstarted host failure consumes an attempt');
+      if (state === 'deferred') assert.ok(leavesOf(result.failure).some((failure) => {
+        for (let cause = failure; cause != null; cause = cause.cause) if (cause === refusal) return true;
+        return false;
+      }), 'the original recording refusal survives');
+      else assert.equal(result.failure, undefined, result.failure?.message);
+    });
+  }
+});

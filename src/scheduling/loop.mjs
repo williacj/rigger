@@ -63,6 +63,17 @@ function eventsOf(unrecorded) {
   return unrecorded.map(({ event }) => causeOf(event)).join(', ');
 }
 
+/** L2's newly selected action, omitting only identities this no-clock invocation already remembers. */
+function eligible(card, next, memory) {
+  if (memory?.barred.has(card.number) && makerAction(next)) next = { action: 'ignore' };
+  if (memory !== undefined && next.action === 'judge') {
+    const judges = next.judges.filter((judge) => !memory.actions.has(`${card.number}:${judgeIdentity(judge)}`) && !memory.deferred.has(`${card.number}:${judgeIdentity(judge)}`));
+    next = judges.length === 0 ? { action: 'ignore' } : { ...next, judges };
+  }
+  if (memory !== undefined && makerAction(next) && (memory.actions.has(`${card.number}:${actionIdentity(next)}`) || memory.deferred.has(`${card.number}:${actionIdentity(next)}`))) next = { action: 'ignore' };
+  return next;
+}
+
 /**
  * What the loop holds over the board `config` names: N, the claims held
  * in memory, L3's events, the start's kill, and the steps that take a claim, start it and release
@@ -123,13 +134,7 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow,
     // Each card's answer is kept as L2 gave it at the pull, so L3 asks nothing again to begin.
     const answers = new Map();
     const { pulls } = pullOrder({ items: unclaimed, columns, declared }, (card) => {
-      let next = decide(card);
-      if (memory?.barred.has(card.number) && makerAction(next)) next = { action: 'ignore' };
-      if (memory !== undefined && next.action === 'judge') {
-        const judges = next.judges.filter((judge) => !memory.actions.has(`${card.number}:${judgeIdentity(judge)}`) && !memory.deferred.has(`${card.number}:${judgeIdentity(judge)}`));
-        next = judges.length === 0 ? { action: 'ignore' } : { ...next, judges };
-      }
-      if (memory !== undefined && makerAction(next) && (memory.actions.has(`${card.number}:${actionIdentity(next)}`) || memory.deferred.has(`${card.number}:${actionIdentity(next)}`))) next = { action: 'ignore' };
+      const next = eligible(card, decide(card), memory);
       answers.set(card.number, next);
       return next;
     });
@@ -898,7 +903,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       // The facts L2's settle answered go back to L2 unread, so one read decides both the move and
       // the judges (the architect's ruling 3, AQ4, on #467).
       const ask = (options) => answerFrom(decide, card, [], { ...options, forge: settled.value });
-      const judging = ask({});
+      const judging = eligible(card, ask({}), scope?.memory);
       if (judging.action !== 'judge') return reached;
       return { ...reached, judges: await judges(card, judging, ask, (ended) => kept({ ...reached, judges: ended }), remember, scope) };
     }
