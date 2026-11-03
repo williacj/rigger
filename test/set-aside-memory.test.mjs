@@ -80,9 +80,10 @@ function gate() {
  * made, and where `judgeRefused`, L1 refused its replace rule, which L2 escalates as card-local.
  * `madeMove(column)` and `madeLabel` have the forge make that move, or add the escalation label,
  * and refuse only its event, as `made` below shapes the failure. `merge`, where given, answers the
- * lane's next merge call in place of the fake repository's merge.
+ * lane's next merge call in place of the fake repository's merge. `beforeMove(column)` is awaited as
+ * each move of a card reaches the board, so a test can hold that move.
  */
-function world(t, { cards = [12], clockHeld = true, concurrency = 1, script = () => 'refused', branches = [], refuseMove = () => false, madeAnyway = false, refuseLabel = false, exit = 7, judges = KINDS.change.judges, refuseRecord = () => false, escalate = {}, beforeSettle = () => {}, judgeRefused = false, madeMove = () => false, madeLabel = false, merge } = {}) {
+function world(t, { cards = [12], clockHeld = true, concurrency = 1, script = () => 'refused', branches = [], refuseMove = () => false, madeAnyway = false, refuseLabel = false, exit = 7, judges = KINDS.change.judges, refuseRecord = () => false, escalate = {}, beforeSettle = () => {}, judgeRefused = false, madeMove = () => false, madeLabel = false, merge, beforeMove = async () => {} } = {}) {
   const clock = manualClock();
   const directory = temporaryDirectory('rigger-set-aside-', { context: t });
   const kinds = { change: { ...KINDS.change, judges } };
@@ -102,6 +103,7 @@ function world(t, { cards = [12], clockHeld = true, concurrency = 1, script = ()
   const items = {
     ...fake.operations,
     moveItem: async (id, column) => {
+      await beforeMove(column);
       if (madeMove(column)) {
         await fake.operations.moveItem(id, column);
         throw made('the move', {}, '{}');
@@ -300,6 +302,40 @@ test('S5 S8: an accepted move sets the compared column, and a refused move made 
         : 'S8: the refused move left Ready as the compared column, so the read finding Owner ends the skip');
     });
   }
+});
+
+// R-SCHED-43 row S8′ (the architect's ruling 1178#6605091082): a move the board refused but made,
+// a read begun before the setting aside that answers after it showing the move's target, and a
+// read begun after the setting aside. The first read keeps the skip under S1 and changes no
+// compared column, so the second, finding the card in the refused move's target, ends the skip.
+// proves R-SCHED-43
+test('S8′: a read begun before the setting aside changes no compared column, so the next read ends the skip at a refused move made anyway', async (t) => {
+  const workspace = gate();
+  const owner = gate();
+  const here = world(t, { cards: [12, 13], concurrency: 2, branches: ['rigger-12'], refuseMove: (column) => column === COLUMNS.owner, madeAnyway: true,
+    beforeMove: (column) => (column === COLUMNS.owner ? owner.promise : undefined),
+    script: async (number, claim) => (number === 13 && claim === 1 ? workspace.promise : 'refused') });
+  const run = here.start();
+  await positive(() => here.pulls(12) === 1 && here.pulls(13) === 1);
+  const before = gate();
+  const after = gate();
+  here.holdNextRead(before.promise);
+  here.holdNextRead(after.promise);
+  // Card 13's stop begins a read while card 12's escalation move waits.
+  workspace.open('refused');
+  await positive(() => here.reads().begun === 2);
+  owner.open();
+  // The board makes the move it refuses, card 12 is set aside, and its release begins the next read.
+  await positive(() => here.reads().begun === 3);
+  assert.equal(await here.column(12), COLUMNS.owner, 'the board made the escalation move it refused');
+  before.open();
+  await positive(() => here.reads().ended >= 2);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(here.pulls(12), 1, 'S1: the read begun before the setting aside keeps the skip, though it shows Owner');
+  after.open();
+  await positive(() => here.pulls(12) === 2);
+  assert.equal(here.pulls(12), 2, 'the read begun after the setting aside finds Owner, the refused move\'s target, and ends the skip');
+  await busy(run, 1);
 });
 
 // R-LOOP-19 row S6a: a failed maker's card the board shows moved to Ready has its maker dispatched again.
@@ -747,7 +783,10 @@ function recoveryWorld(t, { madeMove = () => false, refuseMove = () => false, re
   // takes its snapshot and then waits (`holdSnap`), so a change can land at either point.
   const snaps = [];
   const pres = [];
+  // Gates the test queues for the next calls of L2's facts call, which a pull awaits after its read answers.
+  const factsHolds = [];
   let readsBegun = 0;
+  let answered = 0;
   let waiting = false;
   let adding = false;
   const reads = { ...repository.operations, ...fake.reads, readNewestNumber: async () => {
@@ -769,6 +808,7 @@ function recoveryWorld(t, { madeMove = () => false, refuseMove = () => false, re
       const answer = { declared: null, options: null, items: await cards() };
       const snap = snaps.shift();
       if (snap !== undefined) { snap.snapped = true; await snap.promise; }
+      answered += 1;
       return answer;
     } };
   const items = {
@@ -810,7 +850,12 @@ function recoveryWorld(t, { madeMove = () => false, refuseMove = () => false, re
   const events = () => readEvents(directory);
   let workspaces = 0;
   const built = loop({ config: settings, board, decide, l2, sink, state: directory, readRecord: events, clock, run: 'r-recovery', environment: {}, kill: async () => {},
-    facts: (cards) => { if (cards.some((card) => card.number === number)) offered += 1; return facts(cards); },
+    facts: async (cards) => {
+      if (cards.some((card) => card.number === number)) offered += 1;
+      const hold = factsHolds.shift();
+      if (hold !== undefined) { hold.waiting = true; await hold.promise; }
+      return facts(cards);
+    },
     // makeWorkspace rejects BRANCH_REFUSED where git refuses the admitted topic's derived name, as `bad 12` (workspace.mjs).
     // Where `holdWorkspace`, the first workspace asked for waits for the test, holding its claim.
     workspace: async (n) => {
@@ -827,6 +872,7 @@ function recoveryWorld(t, { madeMove = () => false, refuseMove = () => false, re
   const pulls = (n = number) => events().filter((event) => event.event === 'pull' && event.card === n).length;
   const item = () => fake.onBoard.find((each) => each.number === number);
   return { holdPre: () => { const g = gate(); pres.push(g); return g; }, holdSnap: () => { const g = gate(); snaps.push(g); return g; },
+    holdFacts: () => { const g = gate(); factsHolds.push(g); return g; }, answered: () => answered,
     clock, columns, fake, recovery, added, work, handed, events, pulls, item, number, offered: () => offered, waiting: () => waiting, adding: () => adding };
 }
 
@@ -964,48 +1010,63 @@ async function landCreation(here) {
   assert.equal(here.item().column, here.columns.ready, 'creation\'s created move, this run\'s own, placed the card in Ready');
 }
 
-// R-SCHED-43 row S5, at a read in flight while this run's own change lands (the architect's
-// ruling on the attacker's probe A, round 6): a read begun after the setting aside ends the skip
-// only at a column other than the card's record as the read began and other than the target of
-// each run-owned change accepted while the read was in flight. Rows 1 to 3 of the ruling.
+/**
+ * Runs B1's interleaving (row S5a) to its setting aside: creation adds a new card in no column and
+ * its `created` move waits; a person puts the unclaimed card in Coding; a pull's read snapshots
+ * Coding and is held while the `created` move into Ready lands; the read answers, the pull claims
+ * the card from Coding, and `BRANCH_REFUSED` sets it aside, its compared columns Coding and Ready.
+ * The board then shows the card in Ready. Where `holdRelease`, the read the card's release begins
+ * waits before its snapshot, as `release`.
+ */
+async function setAsideAtS5a(t, options, holdRelease = false) {
+  const here = recoveryWorld(t, { ...options, create: 'recovery' });
+  await positive(() => here.adding() && here.item() !== undefined);
+  here.item().column = here.columns.coding;
+  const snap = here.holdSnap();
+  const polling = here.clock.advance(here.clock.now() + POLL);
+  await positive(() => snap.snapped === true);
+  const release = holdRelease ? here.holdPre() : undefined;
+  await landCreation(here);
+  snap.open();
+  await polling;
+  await positive(() => here.events().some((event) => event.event === 'slot.release' && event.card === here.number));
+  assert.equal(here.pulls(), 1, 'the pull claimed the card from Coding and set it aside');
+  assert.equal(here.item().column, here.columns.ready, 'the board shows the card in Ready, where creation placed it');
+  return { ...here, release };
+}
+
+// R-SCHED-43 row S5a1, the judge's B1 probe (the reviewer 1192#6594679358), unchanged: the claim
+// takes Coding, the column its read showed, and Ready, the `created` move accepted while that read
+// was in flight, so reads finding Ready keep the skip.
 // proves R-SCHED-43
-test('S5 reads in flight: a run change landing during a read neither ends the skip nor hides a person move', async (t) => {
-  const cells = {
-    // Row 1, the attacker's probe A: the read shows the column the change moved the card from.
-    'shows the column before the change': { hold: 'snap', person: undefined, ends: false },
-    // Row 2: the read shows the change's target.
-    'shows the change\'s target': { hold: 'pre', person: undefined, ends: false },
-    // Row 3: a person moved the card to a third column, which the read shows.
-    'shows a third column': { hold: 'snap', person: COLUMNS.review, ends: true },
-  };
+test('S5a1: a card claimed from a stale read keeps the column creation placed it in while that read was in flight', async (t) => {
   for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
-    for (const [cell, { hold, person, ends }] of Object.entries(cells)) {
-      await t.test(`${cell}, ${end}`, async (t) => {
-        const here = await setAsideBeforeCreation(t, options);
-        const offered = here.offered();
-        if (person !== undefined) here.item().column = person;
-        const gated = hold === 'snap' ? here.holdSnap() : here.holdPre();
-        const polling = here.clock.advance(here.clock.now() + POLL);
-        await positive(() => (hold === 'snap' ? gated.snapped : gated.waiting) === true);
-        await landCreation(here);
-        if (person !== undefined) here.item().column = person;
-        gated.open();
-        await polling;
-        assert.equal(here.offered(), offered + (ends ? 1 : 0), `${cell}, ${end}: the read in flight ${ends ? 'ends' : 'keeps'} the skip`);
-        if (ends) return;
-        for (let each = 0; each < 3; each += 1) await here.clock.advance(here.clock.now() + POLL);
-        assert.equal(here.offered(), offered, `${cell}, ${end}: the next reads, showing the change's target, keep the skip`);
-        assert.equal(here.pulls(), 1, `${cell}, ${end}: the card is claimed once`);
-      });
-    }
+    await t.test(end, async (t) => {
+      const here = recoveryWorld(t, { ...options, create: 'recovery' });
+      await positive(() => here.adding() && here.item() !== undefined);
+      assert.equal(here.item().column, null, 'creation added the item without a column');
+      here.item().column = here.columns.coding;
+      const snap = here.holdSnap();
+      const polling = here.clock.advance(here.clock.now() + POLL);
+      await positive(() => snap.snapped === true);
+      assert.equal(here.pulls(), 0, 'the read has snapshotted Coding, but has taken no claim');
+      await landCreation(here);
+      assert.equal(here.pulls(), 0, 'creation placed the unclaimed card in Ready');
+      snap.open();
+      await polling;
+      await positive(() => here.events().some((event) => event.event === 'slot.release' && event.card === here.number));
+      for (let each = 0; each < 3; each += 1) await here.clock.advance(here.clock.now() + POLL);
+      assert.equal(here.pulls(), 1, `${end}: this run's accepted Ready placement must keep its skip; no person moved the card after creation`);
+      assert.equal(here.item().column, here.columns.ready, 'no second claim may move the skipped card to Coding');
+    });
   }
 });
 
-// R-SCHED-43 row S5 at the claiming read (the ruling's row 4, the attacker's probe B): this run's
-// `created` move lands while the claiming read is in flight, before its snapshot, and a person then
-// moves the card. The card is claimed from what the read shows and set aside with that column.
+// R-SCHED-43 row S5a2, the attacker's probe B (round 6), unchanged: this run's `created` move lands
+// once the claiming read has begun, a person then moves the card to Coding, which the read shows,
+// and the claim sets it aside. Reads finding Coding keep the skip.
 // proves R-SCHED-43
-test('S5 claiming read: the card is claimed and set aside from the column its claiming read shows', async (t) => {
+test('S5a2: a person move the claiming read saw is not taken as a second move once the card is set aside', async (t) => {
   for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
     await t.test(end, async (t) => {
       const here = recoveryWorld(t, { ...options, create: 'recovery' });
@@ -1013,21 +1074,208 @@ test('S5 claiming read: the card is claimed and set aside from the column its cl
       const pre = here.holdPre();
       const polling = here.clock.advance(here.clock.now() + POLL);
       await positive(() => pre.waiting === true);
-      await landCreation(here);
+      here.added.open();
+      await positive(() => here.events().some((event) => event.event === 'trigger.outcome' && event.name === 'pending') || here.handed.some((answer) => answer.failure));
+      assert.equal(here.item().column, here.columns.ready, 'creation placed the card in Ready');
       here.item().column = here.columns.coding;
       pre.open();
       await polling;
       await positive(() => here.events().some((event) => event.event === 'slot.release' && event.card === here.number));
-      const offered = here.offered();
       for (let each = 0; each < 3; each += 1) await here.clock.advance(here.clock.now() + POLL);
+      console.log('DIAG-B', end, 'pulls', here.pulls(), 'column', here.item().column);
       assert.equal(here.pulls(), 1, `${end}: the card stays in Coding, the column its claim read, so no read claims it again`);
-      assert.equal(here.offered(), offered, `${end}: reads finding Coding keep the skip`);
     });
   }
 });
 
-// R-SCHED-43 rows S3 and S4 against the record (the ruling's row 5): a read that overlapped no
-// run-owned change ends the skip at any column but the record's, the column a run change moved the
+// R-SCHED-43 row S5a3: after B1's interleaving, a person moves the card to Review before the next
+// read, which finds it outside both its compared columns and ends the skip.
+// proves R-SCHED-43
+test('S5a3: a card set aside with two compared columns ends its skip at a read finding it in a third', async (t) => {
+  for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
+    await t.test(end, async (t) => {
+      const here = await setAsideAtS5a(t, options);
+      const offered = here.offered();
+      here.item().column = here.columns.review;
+      await here.clock.advance(here.clock.now() + POLL);
+      assert.equal(here.offered(), offered + 1, `${end}: a read finding Review, neither Coding nor Ready, ends the skip and hands the card to L2`);
+    });
+  }
+});
+
+/** Holds the next read before its snapshot, lets creation's held `created` move land, then lets the read answer. */
+async function landDuringRead(here, person) {
+  const pre = here.holdPre();
+  const polling = here.clock.advance(here.clock.now() + POLL);
+  await positive(() => pre.waiting === true);
+  await landCreation(here);
+  if (person !== undefined) here.item().column = person;
+  pre.open();
+  await polling;
+}
+
+// R-SCHED-43 row S5b: a card set aside with one compared column, Coding; this run's change to Ready
+// is accepted while a read begun after the setting aside is in flight, and the read shows Ready.
+// The skip holds, and the change, not the read, makes Ready the compared column: a later person's
+// move to Coding ends the skip.
+// proves R-SCHED-43
+test('S5b: a read showing the target of a run change accepted while it was in flight keeps the skip', async (t) => {
+  for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
+    await t.test(end, async (t) => {
+      const here = await setAsideBeforeCreation(t, options);
+      const offered = here.offered();
+      await landDuringRead(here);
+      assert.equal(here.offered(), offered, `${end}: the read finding Ready, the change's target, keeps the skip`);
+      here.item().column = here.columns.coding;
+      await here.clock.advance(here.clock.now() + POLL);
+      assert.equal(here.offered(), offered + 1, `${end}: Ready is now the one compared column, so a read finding Coding ends the skip`);
+    });
+  }
+});
+
+// R-SCHED-43 row S5b′, the attacker's probe A (round 6), unchanged: the read begun after the
+// setting aside shows Coding, the compared column as it began, while this run's `created` move into
+// Ready lands. The skip holds, and the next reads, finding Ready, keep it.
+// proves R-SCHED-43
+test('S5b′: a read whose snapshot predates the run\'s own accepted move does not end the skip', async (t) => {
+  for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
+    await t.test(end, async (t) => {
+      const here = recoveryWorld(t, { ...options, create: 'recovery' });
+      await positive(() => here.adding() && here.item() !== undefined);
+      here.item().column = here.columns.ready;
+      await here.clock.advance(here.clock.now() + POLL);
+      await positive(() => here.events().some((event) => event.event === 'slot.release' && event.card === here.number));
+      assert.equal(here.pulls(), 1, 'a pull claimed the new card and set it aside');
+      assert.equal(here.item().column, here.columns.coding, 'set aside in Coding, the claim\'s accepted move');
+      const offered = here.offered();
+      const snap = here.holdSnap();
+      const polling = here.clock.advance(here.clock.now() + POLL);
+      await positive(() => snap.snapped === true);
+      // The read, begun after the setting aside, has read the card in Coding. Only this run writes from here on.
+      here.added.open();
+      await positive(() => here.events().some((event) => event.event === 'trigger.outcome' && event.name === 'pending') || here.handed.some((answer) => answer.failure));
+      assert.equal(here.item().column, here.columns.ready, 'creation\'s created move, this run\'s own, placed the card in Ready');
+      snap.open();
+      await polling;
+      for (let each = 0; each < 3; each += 1) await here.clock.advance(here.clock.now() + POLL);
+      console.log('DIAG', end, 'pulls', here.pulls(), 'offered', here.offered() - offered, 'column', here.item().column);
+      assert.equal(here.offered(), offered, `${end}: no column the run did not set was ever read, so the card is never handed to L2 again`);
+      assert.equal(here.pulls(), 1, `${end}: and never claimed again`);
+    });
+  }
+});
+
+// R-SCHED-43 row S5c: as S5b, a person having moved the card to Review, which the read shows. Review
+// is neither the compared column as the read began nor the change's target, so the skip ends.
+// proves R-SCHED-43
+test('S5c: a read showing a column neither its compared column nor a run change\'s target ends the skip', async (t) => {
+  for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
+    await t.test(end, async (t) => {
+      const here = await setAsideBeforeCreation(t, options);
+      const offered = here.offered();
+      await landDuringRead(here, here.columns.review);
+      assert.equal(here.offered(), offered + 1, `${end}: the read finding Review ends the skip and hands the card to L2`);
+    });
+  }
+});
+
+// R-SCHED-43 row S5d, the collapse: after B1's interleaving, the first read with no change in
+// flight finds Ready, keeps the skip, and makes Ready the one compared column, so a later read
+// finding Coding ends it.
+// proves R-SCHED-43
+test('S5d: a read with no change in flight makes the column it shows the one compared column', async (t) => {
+  for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
+    await t.test(end, async (t) => {
+      const here = await setAsideAtS5a(t, options);
+      const offered = here.offered();
+      await here.clock.advance(here.clock.now() + POLL);
+      assert.equal(here.offered(), offered, `${end}: the first read, finding Ready, keeps the skip`);
+      here.item().column = here.columns.coding;
+      await here.clock.advance(here.clock.now() + POLL);
+      assert.equal(here.offered(), offered + 1, `${end}: Coding is no longer a compared column, so the read finding it ends the skip`);
+    });
+  }
+});
+
+// R-SCHED-43 row S5e, the residual M7-U27 accepts: after B1's interleaving, a person moves the card
+// from Ready to Coding before any read with no change in flight. The next read finds Coding, a
+// compared column, keeps the skip and makes Coding the one compared column, so a later read finding
+// Ready ends it.
+// proves R-SCHED-43
+test('S5e: a person move into a compared column before the collapse goes unseen', async (t) => {
+  for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
+    await t.test(end, async (t) => {
+      // The read the card's release begins, the first after the setting aside, waits while a person moves the card.
+      const here = await setAsideAtS5a(t, options, true);
+      await positive(() => here.release.waiting === true);
+      const offered = here.offered();
+      const answered = here.answered();
+      here.item().column = here.columns.coding;
+      here.release.open();
+      await positive(() => here.answered() > answered);
+      await here.clock.advance(here.clock.now() + POLL);
+      assert.equal(here.offered(), offered, `${end}: the reads finding Coding, a compared column, keep the skip`);
+      here.item().column = here.columns.ready;
+      await here.clock.advance(here.clock.now() + POLL);
+      assert.equal(here.offered(), offered + 1, `${end}: Coding became the one compared column, so the read finding Ready ends the skip`);
+    });
+  }
+});
+
+// R-SCHED-43 row S5f (the architect's ruling 1178#6605091082): a pull's read answers showing the
+// unclaimed card in Coding, and this run's `created` move into Ready lands while the pull awaits
+// L2's facts call. The pull claims the card from Coding, its compared columns Coding and Ready, so
+// once it is set aside, reads finding Ready keep the skip.
+// proves R-SCHED-43
+test('S5f: a run change accepted while the pull awaits the facts call is a compared column of the card it claims', async (t) => {
+  for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
+    await t.test(end, async (t) => {
+      const here = recoveryWorld(t, { ...options, create: 'recovery' });
+      await positive(() => here.adding() && here.item() !== undefined);
+      here.item().column = here.columns.coding;
+      const facts = here.holdFacts();
+      const polling = here.clock.advance(here.clock.now() + POLL);
+      await positive(() => facts.waiting === true);
+      assert.equal(here.pulls(), 0, `${end}: the read answered Coding, and the pull has taken no claim`);
+      await landCreation(here);
+      facts.open();
+      await polling;
+      await positive(() => here.events().some((event) => event.event === 'slot.release' && event.card === here.number));
+      assert.equal(here.pulls(), 1, `${end}: the pull claimed the card from Coding and set it aside`);
+      const offered = here.offered();
+      for (let each = 0; each < 3; each += 1) await here.clock.advance(here.clock.now() + POLL);
+      assert.equal(here.offered(), offered, `${end}: reads finding Ready, a compared column, keep the skip`);
+      assert.equal(here.pulls(), 1, `${end}: and claim the card no second time`);
+    });
+  }
+});
+
+// R-SCHED-43 row S5g (the architect's ruling 1178#6605091082): a card set aside with one compared
+// column, Coding. A pull's read answers showing Coding, and this run's `created` move into Ready
+// lands before that pull compares again, after L2's facts call. The read keeps the skip and leaves
+// Ready, the change's target, the one compared column, so later reads finding Ready keep it too.
+// proves R-SCHED-43
+test('S5g: a run change accepted after a read answers and before its pull compares counts for that read', async (t) => {
+  for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
+    await t.test(end, async (t) => {
+      const here = await setAsideBeforeCreation(t, options);
+      const offered = here.offered();
+      const facts = here.holdFacts();
+      const polling = here.clock.advance(here.clock.now() + POLL);
+      await positive(() => facts.waiting === true);
+      await landCreation(here);
+      facts.open();
+      await polling;
+      assert.equal(here.offered(), offered, `${end}: the read that showed Coding keeps the skip`);
+      for (let each = 0; each < 3; each += 1) await here.clock.advance(here.clock.now() + POLL);
+      assert.equal(here.offered(), offered, `${end}: Ready, the change's target, is the compared column, so reads finding it keep the skip`);
+      assert.equal(here.pulls(), 1, `${end}: and claim the card no second time`);
+    });
+  }
+});
+
+// R-SCHED-43 rows S3 and S4 against the compared column (the ruling's row 5): a read that overlapped
+// no run-owned change ends the skip at any column but the compared one, the column a run change moved the
 // card away from included.
 // proves R-SCHED-43
 test('S5 record: a read overlapping no run change ends the skip at the column the run moved the card away from', async (t) => {

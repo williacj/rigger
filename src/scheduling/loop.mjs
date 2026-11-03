@@ -63,65 +63,64 @@ function eventsOf(unrecorded) {
 
 /**
  * A `run`'s memory of the cards it set aside ("Cards this run set aside"): each card's number and
- * how many reads of the board had begun when the run set it aside, and, for every card, set aside
- * or not, its record: the column the read that claimed it found it in, as each column change this
- * run accepted for it, from any path, has since set. Each read of the board in flight keeps, per
- * card, the record's column as it began and the target of each run-owned change accepted since.
- * Beside it, how many times L2 stopped each card because its line of work moved or was deleted
- * since L2 read it, counted from the invocation's start or the end of the card's last skip
- * ("Failure model"). Where no clock trigger keeps the run up, `clockHeld` is false and no skip ends.
- *
- * Only a claim and an accepted run-owned change write the record. A claim may overwrite it,
- * because the only run-owned change that reaches an unclaimed card is a clock card's `created`
- * placement, and that reaches only a card in no column.
+ * how many reads of the board had begun when the run set it aside, and, for every card it claimed,
+ * set aside or not, its compared columns, the columns Rigger can have last known it in. At the
+ * claim, they are the column the claiming read showed and the target of each run-owned change the
+ * board accepted while that read was in flight; each accepted change since makes its target the one
+ * compared column. A read is in flight from when its pull takes it until that pull has compared and
+ * claimed from it, and keeps the compared columns as it began and the target of each run-owned change
+ * accepted meanwhile. Beside it, how many times L2 stopped each card because its line of work moved
+ * or was deleted since L2 read it, counted from the invocation's start or the end of the card's last
+ * skip ("Failure model"). Where no clock trigger keeps the run up, `clockHeld` is false and no skip ends.
  */
 function setAside(clockHeld) {
   const cards = new Map();
-  const record = new Map();
+  const compared = new Map();
   const reading = new Set();
   const lineStops = new Map();
   let reads = 0;
   return {
-    /** Begins a read of the board, answering it: its number, and what this run changes while it is in flight. */
+    /** Begins a read of the board, answering it: its number, the compared columns as it began, and what this run changes while it is in flight. */
     read: () => {
       reads += 1;
-      const read = { number: reads, changes: new Map() };
+      const read = { number: reads, began: new Map(compared), changes: new Map() };
       reading.add(read);
       return read;
     },
     /** Ends `read`, so changes after it no longer reach it. */
     done: (read) => reading.delete(read),
-    /** Takes `column`, the column the claiming read found card `number` in, as its record. */
-    claimed: (number, column) => record.set(number, column),
+    /** Takes `column`, the column claiming `read` showed card `number` in, and each change `read` overlapped, as its compared columns. */
+    claimed: (number, column, read) => compared.set(number, new Set([column, ...(read?.changes.get(number) ?? [])])),
     /**
      * Takes `column`, where it names one, as the target of a run-owned change of card `number` the
-     * board accepted, whatever holds the card, and keeps it for each read now in flight.
+     * board accepted, whatever holds the card: its one compared column, and kept for each read now in flight.
      */
     placed: (number, column) => {
       if (typeof column !== 'string') return;
-      for (const read of reading) {
-        if (!read.changes.has(number)) read.changes.set(number, [record.get(number)]);
-        read.changes.get(number).push(column);
-      }
-      record.set(number, column);
+      for (const read of reading) read.changes.set(number, new Set([...(read.changes.get(number) ?? []), column]));
+      compared.set(number, new Set([column]));
     },
-    /** Sets card `number` aside; its compared column is its record. */
+    /** Sets card `number` aside, against its compared columns. */
     add: (number) => cards.set(number, { reads }),
     /**
      * Whether `read` skips `item`. A read begun after the setting aside ends the skip only where it
-     * finds the card in a column other than its record as the read began, and other than the target
-     * of each run-owned change accepted while the read was in flight. It then restarts the card's
-     * line-stop count.
+     * finds the card outside its compared columns as the read began and outside the target of each
+     * run-owned change accepted while the read was in flight; it then restarts the card's line-stop
+     * count. One that keeps the skip, having overlapped no such change, makes the column it shows the
+     * one compared column. No other read writes them.
      */
     skips: (item, read) => {
       const entry = cards.get(item.number);
       if (entry === undefined) return false;
-      if (!clockHeld || read.number <= entry.reads) return true;
-      const seen = read.changes.get(item.number) ?? [record.get(item.number)];
-      if (seen.includes(item.column)) return true;
-      cards.delete(item.number);
-      lineStops.delete(item.number);
-      return false;
+      const after = clockHeld && read.number > entry.reads;
+      const changes = read.changes.get(item.number) ?? new Set();
+      if (after && !read.began.get(item.number)?.has(item.column) && !changes.has(item.column)) {
+        cards.delete(item.number);
+        lineStops.delete(item.number);
+        return false;
+      }
+      if (after && changes.size === 0) compared.set(item.number, new Set([item.column]));
+      return true;
     },
     /** Counts a stop of card `number` for its line of work moved or deleted, answering whether it is a second. */
     lineStopped: (number) => {
@@ -210,7 +209,7 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow,
       claims.add(pull.card);
       if (!merge) slots.add(pull.card);
       const card = unclaimed.find((item) => item.number === pull.card);
-      memory?.claimed(card.number, card.column);
+      memory?.claimed(card.number, card.column, read);
       taken.push({ ...pull, card, next, decide, queueDepth: pulls.length - taken.length - 1, inFlight: slots.size });
     }
     return { claims: taken, failures, notices };
@@ -1089,9 +1088,9 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * transition event passes through unchanged as the work's failure where it comes from the claim;
    * from the maker's settle it comes back in the card's `settled`, as `attempt` says. `memory`,
    * the run's memory as `setAside` says, sets aside a stopped card, a card whose judges L2
-   * withheld, or a removal's following refusal or ignore before `freed` fires another trigger. Its
-   * compared column is the column the claim read, as each of L2's column changes under the claim
-   * answered it. A stop for a line of work moved or deleted sets the card aside only at its second.
+   * withheld, or a removal's following refusal or ignore before `freed` fires another trigger,
+   * against its compared columns, which each of L2's column changes under the claim sets to the
+   * column it answered. A stop for a line of work moved or deleted sets the card aside only at its second.
    * A removal keeps this claim through guarded cleanup and its following ordinary action.
    * Cleanup failure is retained beside that action's failure and never replaces the action;
    * a following Coding move is attempted only after cleanup.
@@ -1103,7 +1102,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     // for its line of work, which counts in place of every other rule.
     let aside = false;
     let lineStop = false;
-    /** Takes `answered`, where it names a column, as the column this run last accepted for the card. */
+    /** Takes `answered`, where it names a column, as the target of a change of the card the board accepted. */
     const placed = (answered) => memory?.placed(card.number, answered);
     /** Keeps L2's withheld, set-aside or escalating card out of later pulls, including a refused escalation write. */
     const remember = (answer) => {
@@ -1183,7 +1182,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * One merge claim's work: its start, which records its pull, then its merge in the lane, as the
    * lane's `merge` says. Its claim is released however it ends, with no `slot.release`, since it
    * holds no slot, and fires no trigger, since it frees none. Settles on `{ reached, failure }` as
-   * `work` does. The run's `memory` sets the card aside, its compared column the one the claim read
+   * `work` does. The run's `memory` sets the card aside, against the compared columns its claim took
    * or the one the merge's end answered.
    */
   const merged = async (claim, memory) => {

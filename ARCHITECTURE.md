@@ -495,36 +495,47 @@ answered once it ends. The verb prints it and picks the exit status. While a clo
 **Cards this run set aside.** A card L3 keeps out of later pulls under "Failure model"'s memory is
 **set aside**. With no clock trigger declared, a set-aside card stays skipped for the run's life,
 which ends at the drain. While a clock trigger keeps `run` up, a set-aside card stays skipped until a
-read of the board begun after the run set it aside finds it in a column other than its compared
-column (M7-U4 Q20 (c) on #1009). That holds whatever set the card aside.
+read begun after the run set it aside finds it outside its compared columns (M7-U4 Q20 (c) on
+#1009). That holds whatever set the card aside.
 
-A set-aside card's **compared column** is the column the pull that claimed it read. Each column
-change this run made to the card that the board accepted changes the compared column to the
-change's target. The claim's move to Coding, L2's moves, the lane's moves at a merge's end and an
-escalation's move to Owner are such changes, so none of them ends the skip. A change the board
-refused leaves the compared column as it was.
+A card's **compared columns** are the columns Rigger can have last known it in (M7-U27 on #1009). At
+the claim, they are the column the pull that claimed it read, and the target of each change this run
+made to the card's column that the board accepted while that read was in flight. A read is in flight
+from when its pull takes it until that pull has compared and claimed from it. Each such change the board accepts afterwards makes its target
+the one compared column. The claim's move to Coding, L2's moves, the `created` placement, the lane's
+moves at a merge's end and an escalation's move to Owner are such changes, so none of them ends the
+skip. A change the board refused leaves the compared columns as they were.
+
+L3 cannot tell whether a read saw the card before or after a change of this run's that the board
+accepted while that read was in flight. For that read, the change's target therefore counts as a
+compared column too, beside the compared columns as the read began.
 
 Each read of the board ends a skip, or leaves it, as follows:
 
 | A read of the board | What follows |
 |---|---|
 | begun before the run set the card aside | the skip holds, whatever column the read shows the card in |
-| begun after, finding the card in its compared column | the skip holds. A card whose compared column is Ready stays skipped while each read finds it in Ready |
-| begun after, finding the card in Ready, its compared column being another | the skip ends, and a pull claims the card as it claims any Ready card, at the next poll or slot release |
-| begun after, finding the card in a column other than Ready and other than its compared column | the skip ends, and a pull answers the card as it answers any card in that column |
+| begun after, finding the card in one of its compared columns for that read | the skip holds. A card whose one compared column is Ready stays skipped while each read finds it in Ready |
+| begun after, finding the card in Ready, Ready being none of its compared columns for that read | the skip ends, and a pull claims the card as it claims any Ready card, at the next poll or slot release |
+| begun after, finding the card in a column other than Ready and other than each of its compared columns for that read | the skip ends, and a pull answers the card as it answers any card in that column |
 | begun after a refused change that the forge made anyway | the read finds the card in the change's target column, so the skip ends under the two rows above |
+
+A read begun after the run set the card aside, while the board accepted no change of this run's to the
+card, that leaves the skip makes the column it shows the one compared column. Before such a read, a
+person's move into one of the compared columns goes unseen.
 
 L3 sees only what each read shows. A card moved out of its column and back again between two of
 this run's reads therefore stays skipped, because a change undone before the next read is not
 seen. A skip that ends removes the card from the memory, and a later setting aside starts its
 entry afresh. A new `run`, as after launchd's relaunch, starts with no card set aside.
 
-`loop.mjs`'s `run` keeps the memory, in place of its set of excluded card numbers. For each
-set-aside card it keeps the card's number, its compared column, and how many reads of the board
-had begun when it set the card aside. Each of L2's column changes answers, once the board accepted
-it, the column it left the card in, and `run` takes that as the compared column. `take`'s
-`available` is the step that compares: for a read begun after the setting aside, it compares the
-compared column with the item's `column`, which `readPriority` already answers. No other module
+`loop.mjs`'s `run` keeps the memory, in place of its set of excluded card numbers. For each card it
+keeps the card's number, its compared columns, and how many reads of the board had begun when it set
+the card aside. For each read in flight, it keeps the targets of this run's changes to the card that
+the board accepted meanwhile. Each of L2's column changes answers, once the board accepted it, the
+column it left the card in, and `run` takes that as the change's target. `take`'s `available` is the
+step that compares. For a read begun after the setting aside, it compares the item's `column`, which
+`readPriority` already answers, with the card's compared columns for that read. No other module
 holds the memory. What would reverse it: a second reader of the memory, such as `plan` or `doctor`
 showing which cards are skipped.
 
