@@ -1277,6 +1277,33 @@ test('S5g: a run change accepted after a read answers and before its pull compar
   }
 });
 
+// R-SCHED-43 row S5g, where the pull's first comparison would end the skip (the attacker's P1 on
+// round 7): a card set aside with one compared column, Coding, which the board already shows in
+// Ready, as the forge shows the `created` move it made before answering it. The pull's read finds
+// Ready, and this run's `created` move into Ready is accepted while the pull awaits L2's facts call,
+// before it claims. The read is in flight until its pull has compared and claimed, so Ready counts
+// for it, the skip holds, and the card is claimed once.
+// proves R-SCHED-43
+test('S5g′: a run change accepted after the pull first compares and before it claims keeps a skip that comparison would end', async (t) => {
+  for (const [end, options] of Object.entries(CREATED_ACCEPTED)) {
+    await t.test(end, async (t) => {
+      const here = await setAsideBeforeCreation(t, options);
+      const offered = here.offered();
+      here.item().column = here.columns.ready;
+      const facts = here.holdFacts();
+      const polling = here.clock.advance(here.clock.now() + POLL);
+      await positive(() => facts.waiting === true);
+      await landCreation(here);
+      facts.open();
+      await polling;
+      assert.equal(here.pulls(), 1, `${end}: Ready, the target of a run change accepted before the pull claimed, keeps the skip, so the card is claimed once`);
+      for (let each = 0; each < 3; each += 1) await here.clock.advance(here.clock.now() + POLL);
+      assert.equal(here.pulls(), 1, `${end}: and later reads finding Ready, its compared column, claim it no second time`);
+      assert.equal(here.offered(), offered + 1, `${end}: only the first comparison, which the change then overtook, handed the card to L2's facts call`);
+    });
+  }
+});
+
 // R-SCHED-43 rows S3 and S4 against the compared column (the ruling's row 5): a read that overlapped
 // no run-owned change ends the skip at any column but the compared one, the column a run change moved the
 // card away from included.
