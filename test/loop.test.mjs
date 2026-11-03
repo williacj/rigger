@@ -2055,7 +2055,12 @@ test('a no-clock maker whose adapter wraps a refused probe kill as NOT_STARTED d
     `appendFileSync(${JSON.stringify(sessions)}, 'session\\n');`,
     '}',
   ].join('\n'));
-  const probes = () => fs.existsSync(probePids) ? fs.readFileSync(probePids, 'utf8').trim().split('\n').map(Number) : [];
+  const probes = () => fs.existsSync(probePids) ? fs.readFileSync(probePids, 'utf8').split('\n').slice(0, -1).map(Number) : [];
+  fs.writeFileSync(probePids, '');
+  assert.deepEqual(probes(), [], 'an opened but unwritten PID file is not probe readiness');
+  fs.writeFileSync(probePids, '12');
+  assert.deepEqual(probes(), [], 'an incomplete PID record is not probe readiness');
+  fs.writeFileSync(probePids, '');
   const formerPath = process.env.PATH;
   process.env.PATH = stand.first();
   t.after(() => { process.env.PATH = formerPath; });
