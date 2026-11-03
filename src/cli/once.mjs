@@ -173,13 +173,14 @@ async function rootInsideTree(verb, root, top, options) {
 /**
  * The line `verb` prints for hold `id`'s notice that did not finish, from the `failed` L2 returned:
  * a step the forge made, which L2 marks `made`, named as made with each event of it that went
- * unrecorded, and otherwise the step the notice failed to take, and its cause. Both of `claiming`'s
+ * unrecorded where there are any, and its cause; otherwise the step the notice failed to take.
+ * Both of `claiming`'s
  * paths print it, the closer's `notice` and the pull's `notices` (the architect's placement rulings
  * on #1056).
  */
 export const noticeLine = (verb, id, { step, cause, made, unrecorded }) => (made === undefined
   ? `rigger ${verb}: the notice for hold ${id} failed to ${outsideText(step)}: ${outsideText(cause)}`
-  : `rigger ${verb}: the notice for hold ${id} made its step to ${outsideText(step)}, but the sink refused its record, so these events went unrecorded: ${unrecorded.map(({ event }) => outsideText(event)).join(', ')}`);
+  : `rigger ${verb}: the notice for hold ${id} made its step to ${outsideText(step)}${unrecorded === undefined ? '' : `, but the sink refused its record, so these events went unrecorded: ${unrecorded.map(({ event }) => outsideText(event)).join(', ')}`}: ${outsideText(cause)}`);
 
 export const claimVerb = (verb, limit, options) => recording((opened) => claiming(verb, limit, opened, options), options?.push);
 

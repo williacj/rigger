@@ -1,5 +1,5 @@
-// ABOUTME: The forge write sides' shared mark: a write call's refused event marked made where its
-// result passes the side's own check, and the mark's carry through a side's rewrap of a failure.
+// ABOUTME: The forge write sides' shared mark for a write the forge made, including a side's own
+// refusal of its answer, and the mark's carry through a side's rewrap of a failure.
 
 import { EVENT_REFUSED } from '../process.mjs';
 
@@ -9,7 +9,8 @@ import { EVENT_REFUSED } from '../process.mjs';
  * of it went unrecorded. Where `check`, the side's own success check, passes on that result, the
  * forge made the write: the failure is marked `made`, holding `check`'s parsed answer as `answer`,
  * and rethrown. `check` is handed the result as the runners hand a resolved call's, its output as
- * text, and throws where the write was not made. Any other rejection passes on unmarked.
+ * text. A check's own refusal marked made retains that mark and its reason alongside the refused
+ * event. Any other rejection passes on unmarked.
  */
 export async function written(call, check) {
   try {
@@ -19,8 +20,11 @@ export async function written(call, check) {
       const { exit, timedOut, stdout, stderr } = failure.result;
       try {
         failure.made = { answer: check({ status: exit, timedOut, stdout: String(stdout), stderr: String(stderr) }) };
-      } catch {
-        // A result the side's check refuses is no write made, so the failure stays unmarked.
+      } catch (refusal) {
+        if (refusal.made !== undefined) {
+          failure.made = refusal.made;
+          failure.message = `${refusal.message}; ${failure.message}`;
+        }
       }
     }
     throw failure;
