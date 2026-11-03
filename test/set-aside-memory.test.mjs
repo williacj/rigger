@@ -747,6 +747,7 @@ function recoveryWorld(t, { madeMove = () => false, refuseMove = () => false, re
   // takes its snapshot and then waits (`holdSnap`), so a change can land at either point.
   const snaps = [];
   const pres = [];
+  let readsBegun = 0;
   let waiting = false;
   let adding = false;
   const reads = { ...repository.operations, ...fake.reads, readNewestNumber: async () => {
@@ -760,6 +761,9 @@ function recoveryWorld(t, { madeMove = () => false, refuseMove = () => false, re
   const cards = async () => (await fake.board.readItems()).map((item) => ({ ...fake.issues.find((issue) => issue.number === item.number), ...item, type: 'issue', repository: settings.repo, priority: null }));
   const board = { ...fake.board, readColumns: async () => columns, readItems: cards,
     readPriority: async () => {
+      // A run that claims a skipped card again at every release fails its next read here, rather than spinning.
+      readsBegun += 1;
+      if (readsBegun > READ_CAP) throw new Error(`the world answers at most ${READ_CAP} reads of the board`);
       const pre = pres.shift();
       if (pre !== undefined) { pre.waiting = true; await pre.promise; }
       const answer = { declared: null, options: null, items: await cards() };
