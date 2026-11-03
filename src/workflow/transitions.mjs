@@ -185,8 +185,12 @@ export function columnChanges({
     return evidence;
   };
 
-  /** Open the due firing's card, add it to the board and place it in Ready. */
-  const openClockCard = async (name, occurrence, template, active = () => true) => {
+  /**
+   * Open the due firing's card, add it to the board and place it in Ready, handing `placed` its
+   * number and the column the board accepted. A placing rejected after the board accepted it
+   * carries that column as `column`, beside the issue as `issue`.
+   */
+  const openClockCard = async (name, occurrence, template, active = () => true, placed = () => {}) => {
     if (!active()) return undefined;
     const author = (template.author ?? 'owner').replace(/\n/g, '\\n').replace(/\r/g, '\\r');
     const body = `${composeClockMark(name, occurrence)}\n\n**Author:** ${author}\n\n## Acceptance\n\n${template.acceptance}`;
@@ -208,7 +212,7 @@ export function columnChanges({
         throw new Error(`opened issue #${number}'s board add was refused: ${refusal.message}`, { cause: refusal });
       }
       if (!active()) return number;
-      await change({ number, id }, 'created');
+      placed(number, await change({ number, id }, 'created'));
     } catch (failure) {
       throw Object.assign(failure, { issue: number });
     }
@@ -230,7 +234,7 @@ export function columnChanges({
       const issue = await firstAbove(after, { ...supplied, readNewestNumber: async () => Math.max(floor, await supplied.readNewestNumber()) },
         (candidate) => carriesClockMark(candidate.body, name, occurrence), active);
       if (!active()) return issue?.number;
-      if (issue === undefined) return template === undefined ? undefined : openClockCard(name, occurrence, template, active);
+      if (issue === undefined) return template === undefined ? undefined : openClockCard(name, occurrence, template, active, placed);
       try {
         if (issue.state === 'open') {
           const item = (await board.readItems()).find((each) => each.number === issue.number);

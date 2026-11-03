@@ -62,14 +62,19 @@ function eventsOf(unrecorded) {
 }
 
 /**
- * A `run`'s memory of the cards it set aside ("Cards this run set aside"): each card's number, its
- * compared column, and how many reads of the board had begun when the run set it aside. Beside it,
+ * A `run`'s memory of the cards it set aside ("Cards this run set aside"): each card's number and
+ * how many reads of the board had begun when the run set it aside, and, for every card, set aside
+ * or not, its compared column: the column the run read as it claimed the card, as each column
+ * change this run accepted for it, from any path, has since changed it. Beside it,
  * how many times L2 stopped each card because its line of work moved or was deleted since L2 read
  * it, counted from the invocation's start or the end of the card's last skip ("Failure model").
  * Where no clock trigger keeps the run up, `clockHeld` is false and no skip ends.
  */
 function setAside(clockHeld) {
   const cards = new Map();
+  // The column this run last accepted for each card, or read as it claimed it, and how many reads
+  // of the board had begun then: each card's compared column, set aside or not.
+  const columns = new Map();
   const lineStops = new Map();
   let reads = 0;
   return {
@@ -78,13 +83,20 @@ function setAside(clockHeld) {
       reads += 1;
       return reads;
     },
-    /** Sets card `number` aside, with `column` as its compared column. */
-    add: (number, column) => cards.set(number, { column, reads }),
-    /** Takes `column`, where it names one, as the compared column of card `number`, where this run set it aside. */
-    placed: (number, column) => {
-      const entry = cards.get(number);
-      if (entry !== undefined && typeof column === 'string') entry.column = column;
+    /**
+     * Takes `column`, the column the read numbered `read` found card `number` in as a pull claimed
+     * it, unless the run accepted a change of the card once that read had begun.
+     */
+    claimed: (number, column, read) => {
+      const last = columns.get(number);
+      if (last === undefined || last.at < read) columns.set(number, { column, at: read });
     },
+    /** Takes `column`, where it names one, as the column this run last accepted for card `number`, whatever holds the card. */
+    placed: (number, column) => {
+      if (typeof column === 'string') columns.set(number, { column, at: reads });
+    },
+    /** Sets card `number` aside; its compared column is the one this run last accepted or read for it. */
+    add: (number) => cards.set(number, { reads }),
     /**
      * Whether the read numbered `read` skips `item`. A read begun after the setting aside that
      * finds the card outside its compared column ends the skip, and restarts its line-stop count.
@@ -92,7 +104,7 @@ function setAside(clockHeld) {
     skips: (item, read) => {
       const entry = cards.get(item.number);
       if (entry === undefined) return false;
-      if (!clockHeld || read <= entry.reads || item.column === entry.column) return true;
+      if (!clockHeld || read <= entry.reads || item.column === columns.get(item.number)?.column) return true;
       cards.delete(item.number);
       lineStops.delete(item.number);
       return false;
@@ -185,6 +197,7 @@ function claiming({ config, board, facts, l2, sink, kill, readAdmission, follow,
       claims.add(pull.card);
       if (!merge) slots.add(pull.card);
       const card = unclaimed.find((item) => item.number === pull.card);
+      memory?.claimed(card.number, card.column, read);
       taken.push({ ...pull, card, next, decide, queueDepth: pulls.length - taken.length - 1, inFlight: slots.size });
     }
     return { claims: taken, failures, notices };
@@ -1070,15 +1083,12 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
   const work = async (claim, freed, memory) => {
     const { card, decide: atPull } = claim;
     let next = claim.next;
-    // The card's compared column, whether the run sets the card aside once its work ends, and
-    // whether its claim ended at a stop for its line of work, which counts in place of every other rule.
-    let column = card.column;
+    // Whether the run sets the card aside once its work ends, and whether its claim ended at a stop
+    // for its line of work, which counts in place of every other rule.
     let aside = false;
     let lineStop = false;
-    /** Takes `answered` as the card's column, where it names one. */
-    const placed = (answered) => {
-      if (typeof answered === 'string') column = answered;
-    };
+    /** Takes `answered`, where it names a column, as the column this run last accepted for the card. */
+    const placed = (answered) => memory?.placed(card.number, answered);
     /** Keeps L2's withheld, set-aside or escalating card out of later pulls, including a refused escalation write. */
     const remember = (answer) => {
       if (answer.action === 'escalate' || answer.action === 'stop' || answer.action === 'set-aside' || answer.withheld?.length > 0) aside = true;
@@ -1147,7 +1157,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     if (next.action === 'continue' && !held && !lineStop && !(reached?.settled?.status === 'fulfilled' && reached.settled.value !== undefined)) {
       aside = true;
     }
-    if (aside) memory?.add(card.number, column);
+    if (aside) memory?.add(card.number);
     failure = released(release, claim, failure);
     holds.delete(card.number);
     if (claimed) await freed();
@@ -1170,8 +1180,9 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       ended = { failure };
     }
     // Whatever its merge answered, the card waits for the next invocation rather than this run's next pull.
-    const { number, column } = claim.card;
-    memory?.add(number, mergeEnds.get(number) ?? column);
+    const { number } = claim.card;
+    memory?.placed(number, mergeEnds.get(number));
+    memory?.add(number);
     mergeEnds.delete(number);
     claims.delete(number);
     return { reached: ended.reached, failure: ended.failure };
@@ -1440,12 +1451,14 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
           const firing = { occurrence: at, after };
           pending.set(name, firing);
           try {
-            const issue = await l2.openClockCard(name, occurrence, template, active);
+            const issue = await l2.openClockCard(name, occurrence, template, active, memory.placed);
             rememberIssue(firing, issue);
             if (ending()) return;
             clockOutcome(name, firing, 'card', issue);
           } catch (failure) {
             rememberIssue(firing, failure.issue);
+            // A move the board accepted before its record failed still placed the card.
+            memory.placed(failure.issue, failure.column);
             clockFailed(new Error(`clock trigger ${name} at ${at} stayed pending: ${failure.message}`, { cause: failure }));
           }
           return true;
