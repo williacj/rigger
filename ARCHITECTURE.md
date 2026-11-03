@@ -1702,8 +1702,7 @@ How a call ends decides what L0 records and what the call's caller is handed:
 | L0's exit cleanup ended it, and the process ends | Nothing | Nothing: the process ends before the call settles |
 | L0's exit cleanup ended it, and a signal listener of the caller keeps the process running | One `call.end`, with the outcome the call's result gives. The cleanup's kill gives a non-zero exit, so a call it killed records `failed` | The call's result, as the process adapter gives it |
 
-A forge write side marks an `EVENT_REFUSED` failure from its write call as `made`, with its parsed
-answer, where the call's result passes the side's success check. A refusal on any read before the
+A forge write side marks a failure from its write call as `made`, with its parsed answer, where the call's result shows the forge made the write. That failure is an `EVENT_REFUSED` one, carrying its unrecorded events, or the side's own refusal of an answer the forge made, such as an opened issue lacking a requested label. A caller names unrecorded events only where the failure carries them. A refusal on any read before the
 write is never marked, and a GraphQL write's check also requires the mutation's root field in
 `data`, non-null.
 
