@@ -353,9 +353,20 @@ function sightingTrace(t, observation, family) {
     written.push(line);
     if (event === 'retention.start') retaining.add(payload.phase);
     if (event === 'retention') { retentions.push(payload); retaining.delete(payload.phase); }
+    const bounded = (value, choices) => choices.includes(value) ? value : 'unknown';
+    const classification = event === 'attempt.finish' ? {
+      evidenceAvailability: bounded(payload.availability, ['returned', 'partial-or-unresolved', 'unreturned', 'evidence-failure']),
+    } : event === 'retention' ? {
+      retainedReads: bounded(payload.reads, ['settled-returned-originals', 'partial-or-unresolved', 'no-observed-spawn-reason-unknown']),
+      retainedCopy: bounded(payload.copy, ['byte-complete-at-snapshot', 'partial-or-changed', 'partial']),
+      lostOriginals: Array.isArray(payload.producedThenLost) ? payload.producedThenLost.length : null,
+      retainedOriginalStates: [...new Set((Array.isArray(payload.expected) ? payload.expected : []).map(({ state }) => bounded(state,
+        ['produced', 'produced-empty', 'not-present-at-snapshot', 'produced-then-lost', 'unknown-source-inventory', 'unknown-copy-inventory'])))].sort(),
+    } : {};
     t.diagnostic(JSON.stringify({ event: 'never-stop.evidence', source: identity.source, run: identity.run,
       result: createHash('sha256').update(identity.result).digest('hex'), context: identity.context,
       caseName: identity.caseName, family, writer: identity.writer, sequence, phase: event,
+      ...classification,
       readId: Number.isSafeInteger(payload.readId) ? payload.readId : null,
       bytes: Buffer.byteLength(line), sha256: createHash('sha256').update(line).digest('hex'),
       locator: `attempt-${identity.context}/trace.jsonl`, availability: 'private-local-provider-raw-unconfirmed' }));
@@ -1086,8 +1097,14 @@ async function censusExit(t, cell, afterKill = 'omit') {
   const selectedRoot = sightingEvidenceRoot();
   if (prepared) assert.ok(selectedRoot, 'prepared sighting needs private returned-read originals');
   const directory = holding(t);
-  if (prepared) sightingObservation(directory, { ps: 'ps-sighted' }, selectedRoot);
-  const enrolled = sightingAttempts.get(directory) ?? sightingObservation(directory, { ps: 'ps-sighted' }, selectedRoot);
+  let enrolled;
+  try {
+    if (prepared) sightingObservation(directory, { ps: 'ps-sighted' }, selectedRoot);
+    enrolled = sightingAttempts.get(directory) ?? sightingObservation(directory, { ps: 'ps-sighted' }, selectedRoot);
+  } catch (error) {
+    t.diagnostic(JSON.stringify({ event: 'never-stop.evidence.failure', reason: 'enrollment' }));
+    throw error;
+  }
   if (!enrolled) { t.diagnostic(JSON.stringify({ event: 'never-stop.evidence.failure', reason: 'enrollment' })); throw new Error('never-stop evidence enrollment refused'); }
   const traceRecord = sightingTrace(t, enrolled, 'census');
   traceRecord.record('fixture.start', { cell, afterKill, forcing: exitForcings.get(t) ?? null });

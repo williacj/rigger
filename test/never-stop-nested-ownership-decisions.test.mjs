@@ -275,3 +275,115 @@ test('ordinary census callers enroll before native fixture work', { timeout: 20_
     for (const hook of teardowns) await hook();
   });
 });
+
+// Break: an ordinary census root refusal throws without its safe evidence diagnostic.
+test('census missing root reports an explicit evidence failure', { timeout: 20_000 }, async (t) => {
+  await withOwnershipModule(t, async ({ root, callbacks, diagnostics, calls, teardowns, fixtureCheck }) => {
+    const existing = join(root, 'preexisting-evidence');
+    const original = Buffer.from('private evidence before enrollment\n');
+    writeFileSync(existing, original, { flag: 'wx', mode: 0o600 });
+    const before = readdirSync(root).sort();
+    const selected = join(root, 'missing-census-root');
+    assert.equal(existsSync(selected), false);
+    process.env.C615_EVIDENCE_ROOT = selected;
+    fixtureCheck(() => assert.fail('invalid root reached native fixture boundary'));
+    const title = 'X0 exit: a once-shown member reaped on its own before confirmation has no kill event';
+    assert.equal(typeof callbacks.get(title), 'function');
+    let refusal;
+    try {
+      await callbacks.get(title)({ name: title, signal: t.signal, after: (hook) => teardowns.push(hook), diagnostic: (line) => diagnostics.push(line) });
+    } catch (error) { refusal = error; }
+    assert.equal(refusal?.code, 'ENOENT', 'the selected missing root must refuse enrollment');
+    assert.equal(calls.length, 0, 'a refused census must start no native child');
+    assert.deepEqual(readdirSync(root).sort(), before, 'refusal must leave existing evidence entries unchanged');
+    assert.deepEqual(readFileSync(existing), original);
+    for (const hook of teardowns) await hook();
+    assert.deepEqual(readFileSync(existing), original, 'existing evidence must survive fixture teardown byte-exact');
+    const reports = diagnostics.map((line) => JSON.parse(line));
+    assert.ok(reports.some(({ event, reason }) => event === 'never-stop.evidence.failure' && reason === 'enrollment'),
+      'ordinary census invalid root must emit a public-safe explicit evidence failure');
+    assert.deepEqual(reports, [{ event: 'never-stop.evidence.failure', reason: 'enrollment' }]);
+    assert.ok(diagnostics.every((line) => !line.includes(root) && !line.includes(original.toString())));
+  });
+});
+
+// Break: safe summaries omit independently observed partial, returned, unreturned or lost evidence.
+test('public completion summaries retain evidence classification', { timeout: 20_000 }, async (t) => {
+  await withOwnershipModule(t, async ({ root, callbacks, diagnostics, teardowns, command }) => {
+    const title = 'never-stop recorder keeps cancellation evidence after fixture cleanup';
+    assert.equal(typeof callbacks.get(title), 'function');
+    await callbacks.get(title)({ name: title, signal: t.signal, after: (hook) => teardowns.push(hook), diagnostic: (line) => diagnostics.push(line) });
+    for (const hook of teardowns) await hook();
+    const contexts = readdirSync(root).filter((name) => name.startsWith('attempt-')).map((name) => ({
+      directory: join(root, name), inventory: JSON.parse(readFileSync(join(root, name, 'trace-inventory.json'), 'utf8')),
+    }));
+    const summaries = diagnostics.map((line) => JSON.parse(line)).filter(({ event }) => event === 'never-stop.evidence');
+    const rows = (context) => readFileSync(join(context.directory, 'trace.jsonl'), 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    const summary = (context, phase) => {
+      assert.ok(context, 'the independently specified private context must exist');
+      const records = summaries.filter((row) => row.context === context.inventory.context);
+      assert.ok(records.length > 0);
+      for (const row of records) {
+        for (const key of ['source', 'run', 'context', 'caseName', 'family', 'writer']) assert.equal(row[key], context.inventory[key]);
+        assert.match(row.result, /^[a-f0-9]{64}$/);
+        assert.equal(row.result, records[0].result, 'public result identity must remain stable within a context');
+        assert.equal(row.availability, 'private-local-provider-raw-unconfirmed', 'bounded classifications must not claim retrievable provider raw');
+      }
+      const found = records.filter((row) => row.phase === phase);
+      assert.equal(found.length, 1, 'each selected phase must have one corresponding safe summary');
+      return found[0];
+    };
+
+    // Actual incomplete read and empty events file retained before the original fixture cleanup.
+    const partial = contexts.find(({ inventory }) => inventory.caseName === title && inventory.family === 'census'
+      && inventory.retentions[0]?.expected?.some(({ name, state }) => name === 'events' && state === 'produced-empty'));
+    assert.ok(partial, 'premise: actual partial retention with a produced empty original');
+    assert.equal(partial.inventory.availability, 'partial-or-unresolved');
+    assert.equal(partial.inventory.retentions[0].reads, 'partial-or-unresolved');
+    assert.equal(partial.inventory.retentions[0].copy, 'byte-complete-at-snapshot');
+    assert.deepEqual(partial.inventory.retentions[0].producedThenLost, []);
+    assert.equal(readFileSync(join(partial.directory, 'unsettled', 'fixture', 'sighting-reads', 'trace.jsonl'), 'utf8'),
+      '{"kind":"start","id":"r000001"}\n');
+    assert.equal(readFileSync(join(partial.directory, 'unsettled', 'fixture', 'events')).length, 0);
+    assert.equal(summary(partial, 'attempt.finish').evidenceAvailability, 'partial-or-unresolved',
+      'safe completion summary must preserve the bounded partial evidence classification');
+    const retained = summary(partial, 'retention');
+    assert.equal(retained.retainedReads, 'partial-or-unresolved');
+    assert.equal(retained.retainedCopy, 'byte-complete-at-snapshot');
+    assert.equal(retained.lostOriginals, 0);
+    assert.deepEqual(retained.retainedOriginalStates, ['not-present-at-snapshot', 'produced', 'produced-empty']);
+
+    const returned = contexts.find(({ inventory }) => inventory.caseName === `${title}: A`);
+    assert.ok(returned, 'premise: privately returned context');
+    assert.equal(returned.inventory.availability, 'returned');
+    assert.deepEqual(returned.inventory.pending, []);
+    const answer = rows(returned).find(({ event }) => event === 'ps.returned');
+    assert.ok(answer, 'premise: a return was actually observed');
+    assert.equal(answer.payload.observation.stdout, '', 'premise: an observed empty stream');
+    assert.equal(answer.payload.observation.stderr, '');
+    assert.equal(summary(returned, 'attempt.finish').evidenceAvailability, 'returned');
+
+    const unreturned = contexts.find(({ inventory }) => inventory.caseName === `${title}: interrupted`);
+    assert.ok(unreturned, 'premise: privately unreturned context');
+    assert.equal(unreturned.inventory.availability, 'unreturned');
+    assert.deepEqual(unreturned.inventory.pending, [1]);
+    assert.equal(rows(unreturned).some(({ event }) => event === 'ps.returned'), false);
+    assert.equal(summary(unreturned, 'attempt.finish').evidenceAvailability, 'unreturned');
+
+    const lost = contexts.find(({ inventory }) => inventory.caseName === `${title}: produced-then-lost`);
+    assert.ok(lost, 'premise: privately recorded produced-then-lost original');
+    assert.equal(lost.inventory.availability, 'partial-or-unresolved');
+    assert.equal(lost.inventory.retentions[0].reads, 'settled-returned-originals');
+    assert.equal(lost.inventory.retentions[0].copy, 'partial-or-changed');
+    assert.deepEqual(lost.inventory.retentions[0].producedThenLost, [{ name: 'events' }]);
+    assert.equal(summary(lost, 'attempt.finish').evidenceAvailability, 'partial-or-unresolved');
+    const lostRetention = summary(lost, 'retention');
+    assert.equal(lostRetention.retainedReads, 'settled-returned-originals');
+    assert.equal(lostRetention.retainedCopy, 'partial-or-changed');
+    assert.equal(lostRetention.lostOriginals, 1);
+    assert.deepEqual(lostRetention.retainedOriginalStates, [], 'the synthetic loss case supplies no per-file state inventory');
+    for (const privateText of [root, command, 'controlled read', 'controlled pending read', 'controlled unreturned read', 'recorder ready']) {
+      assert.ok(diagnostics.every((line) => !line.includes(privateText)), 'ordinary summaries must exclude private paths, commands and streams');
+    }
+  });
+});
