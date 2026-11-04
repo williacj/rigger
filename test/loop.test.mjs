@@ -51,6 +51,13 @@ import { failuresIn, keptUp, keptUpVerb, reportsIn, settledIn } from './kept-up-
 import { keptUpRunVerb } from './kept-up-verb-world.mjs';
 import { REFUSED as REFUSED_CARD, card as verbCard } from './verb-consumer.mjs';
 import { readEvents as readEventsAt } from '../src/observation/sink.mjs';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { columnChanges } from '../src/workflow/transitions.mjs';
+import { createFakeRepository } from './fake-repository.mjs';
+import { openSink } from '../src/observation/sink.mjs';
+import { consumerConfig } from './verb-consumer.mjs';
+import { commandOf } from './fake-gh.mjs';
 
 const synchronousCalls = [];
 let synchronousDeadline = Infinity;
@@ -1318,14 +1325,137 @@ function onManualHost(t, options) {
   return built;
 }
 
-/** One warmed native world for independent refusal cases, with a fresh active pair per case. */
+/** Observes native starts so an algorithm fixture cannot silently acquire host dependencies. */
+function nativeCalls(t) {
+  const calls = [];
+  const originals = new Map();
+  for (const method of ['spawn', 'spawnSync', 'execFile', 'execFileSync']) {
+    const original = childProcess[method];
+    originals.set(method, original);
+    childProcess[method] = (...args) => {
+      calls.push({ method, command: args[0] });
+      return original(...args);
+    };
+  }
+  syncBuiltinESMExports();
+  t.after(() => {
+    for (const [method, original] of originals) childProcess[method] = original;
+    syncBuiltinESMExports();
+  });
+  return calls;
+}
+
+/** Node's documented child event/pipe contract, with immediate answers and no OS process. */
+function answeringHost(t, answer, clock) {
+  let serial = 900_000_000;
+  const host = { ...realHost, clock,
+    spawn(command, args, options) {
+      const response = answer(command, args, options);
+      const child = Object.assign(new EventEmitter(), { pid: ++serial, exitCode: null, signalCode: null,
+        stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() });
+      Promise.resolve(response).then((response) => {
+        child.stdout.end(response.stdout ?? '');
+        child.stderr.end(response.stderr ?? '');
+        child.exitCode = response.exit ?? 0;
+        child.emit('exit', child.exitCode, null);
+      });
+      return child;
+    },
+    spawnSync(tool, args) {
+      assert.equal(tool, realHost.ps, 'only the documented synchronous leader identity read is needed');
+      assert.equal(args.at(-1), 'lstart=');
+      return { status: 0, stdout: 'Sun Nov  1 21:00:00 2026\n', stderr: '' };
+    },
+    execFile(tool, _args, _options, done) {
+      assert.equal(tool, realHost.lsof, 'completed commands leave an empty directory census');
+      queueMicrotask(() => done(null, '', ''));
+      return { stdout: { destroy() {} }, stderr: { destroy() {} } };
+    },
+    signal() { throw Object.assign(new Error('the controlled command has exited'), { code: 'ESRCH' }); },
+    killChild() { assert.fail('an answered controlled read needs no kill'); },
+  };
+  // L1's scratch registration check also uses L0's host, through its default argument.
+  const saved = new Map(['spawn', 'spawnSync', 'execFile', 'signal', 'killChild', 'clock'].map((key) => [key, Object.getOwnPropertyDescriptor(realHost, key)]));
+  for (const key of saved.keys()) Object.defineProperty(realHost, key, { configurable: true, value: host[key] });
+  t.after(() => { for (const [key, descriptor] of saved) Object.defineProperty(realHost, key, descriptor); });
+  return host;
+}
+
+/** Real L1/L2/L3 over the existing forge doubles, with completed command answers at L0. */
+function answeredWorld(t, { cards, root = temporaryDirectory('rigger-answered-loop-'), kinds = KINDS, provisioning = {},
+  fresh = true, answer = () => ({ exit: 0 }), workspace, judgeDirectory, removeDirectories = async () => {}, forge = {} } = {}) {
+  const clock = { ...manualClock(), pause: async () => {} };
+  const settings = { ...config, concurrency: 1 };
+  const fake = boardOf(cards);
+  const repository = createFakeRepository({ repo: settings.repo, issues: fake.issues(), ...forge });
+  const directory = join(root, 'state');
+  const repositoryPath = join(root, 'repository');
+  fs.mkdirSync(repositoryPath, { recursive: true });
+  const actualSink = openSink({ directory, run: 'r-answered', now: clock.now });
+  const roles = new Map();
+  const events = () => fs.existsSync(streamPath(directory)) ? readEventsAt(directory) : [];
+  const runs = [];
+  const sink = { emitter(context) {
+    const emitter = actualSink.emitter(context);
+    return { emit(event, fields) {
+      if (context.layer === 'L3' && event === 'dispatch' && fields.role !== undefined) roles.set(context.dispatch, fields.role);
+      emitter.emit(event, fields);
+      if (context.layer === 'L1' && event === 'dispatch.end' && roles.get(context.dispatch) === 'engineer' && (fields.exit === 0 || fresh)) {
+        const branch = `rigger-${context.card}`;
+        if (!repository.held().pullRequests.some((pull) => pull.head === branch && !pull.closed && !pull.merged)) repository.open({ number: 1000 + runs.length, head: branch, sha: String(context.card).padStart(40, '0') });
+      }
+    } };
+  } };
+  const host = answeringHost(t, (command, args, options) => {
+    if (command === 'git') {
+      assert.deepEqual(args, ['worktree', 'list', '--porcelain', '-z']);
+      return { stdout: `worktree ${repositoryPath}\0HEAD ${'a'.repeat(40)}\0branch refs/heads/main\0\0` };
+    }
+    if (command === '/bin/sh') {
+      assert.equal(args[0], '-c');
+      assert.ok(['true', 'false'].includes(args[1]));
+      return { exit: args[1] === 'true' ? 0 : 1 };
+    }
+    assert.equal(command, 'claude');
+    const start = events().findLast(({ layer, event }) => layer === 'L3' && event === 'dispatch');
+    runs.push({ card: start.card, role: start.role, cwd: options.cwd });
+    const response = answer({ number: start.card });
+    assert.equal(response instanceof Error, false, 'unstarted commands are represented by an unusable workspace');
+    return response;
+  }, clock);
+  const makeDirectory = (path) => {
+    fs.mkdirSync(join(path, '.claude', 'agents'), { recursive: true });
+    for (const [role, { agent }] of Object.entries(settings.roles)) fs.writeFileSync(join(path, agent ?? `.claude/agents/${role}.md`), '# Controlled role\n');
+    return path;
+  };
+  const makeWorkspace = async (number) => ({ path: makeDirectory(join(root, 'workspaces', `rigger-${number}`)),
+    branch: `rigger-${number}`, scratch: join(root, 'scratch', `rigger-${number}`), repository: repositoryPath });
+  const makeJudgeDirectories = async (number, role) => {
+    const path = join(root, 'judges', `rigger-${number}`, role);
+    return { path, main: makeDirectory(join(path, 'main')), head: makeDirectory(join(path, 'head')),
+      scratch: join(root, 'scratch', `rigger-${number}`), repository: repositoryPath };
+  };
+  const l2 = columnChanges({ config: settings, sink, items: fake.operations, reads: repository.operations, repositoryWrites: repository });
+  const decide = (card, outcomes, options) => nextAction(card, kinds, undefined, { roles: settings.roles, provisioning, outcomes, sink, ...options });
+  const built = loop({ config: settings, board: handleOn(fake), decide, facts: factsCall({ config: settings, reads: repository.operations, decide }),
+    l2, sink, kill: async () => {}, workspace: workspace ?? makeWorkspace, judgeDirectory: judgeDirectory ?? makeJudgeDirectories,
+    workspaceTip: async ({ card }) => repository.held().pullRequests.find((pull) => pull.head === `rigger-${card}` && !pull.closed && !pull.merged)?.sha,
+    removeDirectories, state: directory, environment: {}, run: 'r-answered', clock, host });
+  return { fake, repository, l2, directory, sink, loop: built, events, l3Events: () => events().filter(({ layer }) => layer === 'L3'),
+    agent: { runs: () => [...runs] }, makeWorkspace, makeJudgeDirectories,
+    settles: () => false, dispatches: { releaseAll() {} } };
+}
+
+/** Independent refusal cases over controlled commands, with a fresh active card pair per case. */
 function refusalWorld(t, cases, stepRun, fresh) {
   const root = temporaryDirectory('rigger-refusal-matrix-');
-  const making = makingWorkspaces(join(root, 'workspaces'));
-  const directories = makingJudgeDirectories(join(root, 'judges'));
+  const making = (number) => built.makeWorkspace(number);
+  const directories = (...args) => built.makeJudgeDirectories(...args);
   const rows = cases.map((given, at) => ({ ...given, number: 42 + at, peer: 95 + at, kind: `case${at}` }));
   const byCard = new Map(rows.map((row) => [row.number, row]));
   let selected = rows[0];
+  let peerGate;
+  let peerStarted = false;
   let reads = 0;
   let built;
   const workspace = async (number) => {
@@ -1340,17 +1470,20 @@ function refusalWorld(t, cases, stepRun, fresh) {
     provisioning: stage === 'optional' ? ['optional'] : stage.includes('step') ? ['prepare'] : [],
   }]));
   kinds.handoff = { ...KINDS.change, select: { labels: ['type:handoff'] } };
-  built = onManualHost(t, { cards: rows.flatMap(({ number, peer, kind, judging }) => [
+  built = answeredWorld(t, { root, cards: rows.flatMap(({ number, peer, kind, judging }) => [
     { ...cardIn(number, judging ? COLUMNS.review : COLUMNS.ready), labels: [`type:${kind}`] },
     { ...readyCard(peer), labels: ['type:handoff'] },
-  ]), concurrency: 1, makerHold: false, fresh, workspace, kinds,
+  ]), fresh, workspace, kinds,
+    answer: async ({ number }) => {
+      if (peerGate && number === selected.peer) { peerStarted = true; await peerGate.promise; }
+      return { exit: 0 };
+    },
     provisioning: { prepare: { run: stepRun, required: true }, optional: { run: stepRun, required: false } },
     judgeDirectory: (number, role, head) => ['workspace', 'preparation'].includes(byCard.get(number)?.stage)
       ? makeJudgeDirectory({ root, topic: 'rigger-{number}', repository: join(root, 'missing-repository'), card: number, role, head, sink: built.sink })
       : directories(number, role, head),
     forge: { pullRequests: rows.flatMap(({ number, judging }, at) => judging ? [{ number: 733 + at, head: `rigger-${number}`, sha: 'a'.repeat(40), mergeBase: 'b'.repeat(40), diff: 'diff --git a/help b/help\n' }] : []) },
   });
-  for (const { number, judging } of rows) if (judging) built.agent.plan(number, 'reviewer', {});
   const emitter = built.sink.emitter.bind(built.sink);
   const priority = built.fake.operations.readPriority;
   built.fake.operations.readPriority = async (...args) => {
@@ -1362,22 +1495,26 @@ function refusalWorld(t, cases, stepRun, fresh) {
     if (fs.existsSync(admissionOf(built.directory))) removeClosers(built.directory);
     built.sink.emitter = emitter;
     selected = rows[at];
+    peerGate = selected.judging && selected.stage === 'step' && stepRun === 'false' ? Promise.withResolvers() : undefined;
+    peerStarted = false;
+    t.after(() => peerGate?.resolve());
     reads = 0;
     const eventsAt = built.events().length;
     const runsAt = built.agent.runs().length;
     return { number: selected.number, peer: selected.peer,
+      peerPending: () => peerStarted, releasePeer: () => peerGate?.resolve(),
       events: () => built.events().slice(eventsAt), runs: () => built.agent.runs().slice(runsAt),
       l3: () => built.events().slice(eventsAt).filter(({ layer }) => layer === 'L3'),
     };
   } };
 }
 
-/** A failed stand-in's exit-time reads, followed by a newly closed PR and a controlled line read. */
+/** A failed command's exit-time reads, followed by a newly closed PR and a controlled line read. */
 function closedAfterFailedMaker(t, { exitBranch = 'unreadable', exitPull = 'absent', closedBranch = false, kinds = KINDS, earlyRead, cases } = {}) {
   const removals = [];
   const choices = cases ?? [{ number: 42, exitBranch, exitPull, closedBranch, earlyRead }];
   let selected = choices[0];
-  const built = onManualHost(t, { cards: choices.map(({ number }) => number), concurrency: 1, fresh: false, answer: () => ({ exit: 7, output: '' }), kinds,
+  const built = answeredWorld(t, { cards: choices.map(({ number }) => number), fresh: false, answer: () => ({ exit: 7, output: '' }), kinds,
     removeDirectories: async (number) => { removals.push(number); },
   });
   const priority = built.fake.operations.readPriority;
@@ -1507,6 +1644,7 @@ test('a no-clock maker may redo closed work when either exit-time read establish
 // Early comment or escalation reads must still classify both work sources for L3's maker bar.
 // proves R-LOOP-18, R-WORK-41
 test('early failed-maker reads preserve presence and defer absent or unreadable work before later removal', SETTLES_WITHIN, async (t) => {
+  const native = nativeCalls(t);
   const cases = [
     ['comments', 'absent', 'absent', 'absent'],
     ['comments', 'unreadable', 'absent', 'unreadable'],
@@ -1518,7 +1656,7 @@ test('early failed-maker reads preserve presence and defer absent or unreadable 
     ['escalation', 'unreadable', 'unreadable', 'unreadable'],
     ['escalation', 'present', 'unreadable', 'present'],
   ];
-  // One warmed native stand-in serves independent cards; no cell pays another cold world setup.
+  // Each cell owns a separate card while sharing controlled command and forge collaborators.
   const { built, removals, exitReads, select } = closedAfterFailedMaker(t, {
     cases: cases.map(([earlyRead, exitBranch, exitPull], at) => ({ number: 42 + at, earlyRead, exitBranch, exitPull })),
   });
@@ -1535,6 +1673,7 @@ test('early failed-maker reads preserve presence and defer absent or unreadable 
     assert.equal(built.agent.runs().filter(({ card }) => card === number).length, expected === 'present' ? 2 : 1, 'only established presence permits the later maker');
     assert.deepEqual(removals.filter((card) => card === number), expected === 'present' ? [number] : [], 'absence or unreadable facts defer removal with its maker');
   });
+  assert.equal(native.length, 0, 'exit-time classification and invocation memory require no native child processes');
 });
 
 // A is already run while new governing comments independently owe B and C at the same head.
@@ -1626,31 +1765,114 @@ test('a successful maker whose open pull later closes with its line deleted gets
   assert.equal(built.l3Events().filter(({ event }) => event === 'slot.release').length, 3);
 });
 
+/** Raw gh responses measured in pending-response-worker.json at 3432752c on this Mini.
+ * The only substitutions are fixture SHAs and the actual judge dispatch/evidence identities.
+ * Commands are matched by the existing fake transport's documented request shapes.
+ */
+const pendingMergeReplies = [
+  {"request":"gh api graphql -f query=query { repositoryOwner(login: _) { ... on ProjectV2Owner { projectV2(number: _) { fields(first: _) { pageInfo { hasNextPage endCursor } nodes { ... on ProjectV2SingleSelectField { name options { name } } } } } } } }","replies":[{"phase":0,"status":0,"stdout":"{\"data\":{\"repositoryOwner\":{\"projectV2\":{\"fields\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"100\"},\"nodes\":[{\"name\":\"Status\",\"options\":[{\"name\":\"Backlog\"},{\"name\":\"Ready\"},{\"name\":\"Coding\"},{\"name\":\"Review\"},{\"name\":\"Owner\"},{\"name\":\"Done\"}]},{\"name\":\"Priority\",\"options\":[{\"name\":\"Low\"},{\"name\":\"High\"},{\"name\":\"Normal\"}]}]}}}}}\n","stderr":""}]},
+  {"request":"gh api graphql -f query=query { repositoryOwner(login: _) { ... on ProjectV2Owner { projectV2(number: _) { fields(first: _) { pageInfo { hasNextPage endCursor } nodes { ... on ProjectV2FieldCommon { name dataType } ... on ProjectV2SingleSelectField { options { name } } } } } } } }","replies":[{"phase":0,"status":0,"stdout":"{\"data\":{\"repositoryOwner\":{\"projectV2\":{\"fields\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"100\"},\"nodes\":[{\"name\":\"Status\",\"dataType\":\"SINGLE_SELECT\",\"options\":[{\"name\":\"Backlog\"},{\"name\":\"Ready\"},{\"name\":\"Coding\"},{\"name\":\"Review\"},{\"name\":\"Owner\"},{\"name\":\"Done\"}]},{\"name\":\"Priority\",\"dataType\":\"SINGLE_SELECT\",\"options\":[{\"name\":\"Low\"},{\"name\":\"High\"},{\"name\":\"Normal\"}]}]}}}}}\n","stderr":""}]},
+  {"request":"gh api graphql -f query=query { repositoryOwner(login: _) { ... on ProjectV2Owner { projectV2(number: _) { items(first: _) { pageInfo { hasNextPage endCursor } nodes { id fieldValues(first: _) { pageInfo { hasNextPage } nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } } } content { __typename ... on Issue { number title body repository { nameWithOwner } labels(first: _) { pageInfo { hasNextPage } nodes { name } } } } } } } } } }","replies":[{"phase":0,"status":0,"stdout":"{\"data\":{\"repositoryOwner\":{\"projectV2\":{\"items\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"100\"},\"nodes\":[{\"id\":\"item-1\",\"fieldValues\":{\"pageInfo\":{\"hasNextPage\":false},\"nodes\":[{\"name\":\"Ready\",\"field\":{\"name\":\"Status\"}}]},\"content\":{\"__typename\":\"Issue\",\"number\":10,\"title\":\"Card 10\",\"body\":\"## Acceptance\\n\\n- The widget turns blue when pressed.\\n\",\"repository\":{\"nameWithOwner\":\"acme/widgets\"},\"labels\":{\"pageInfo\":{\"hasNextPage\":false},\"nodes\":[{\"name\":\"type:change\"}]}}}]}}}}}\n","stderr":""},{"phase":2,"status":0,"stdout":"{\"data\":{\"repositoryOwner\":{\"projectV2\":{\"items\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"100\"},\"nodes\":[{\"id\":\"item-1\",\"fieldValues\":{\"pageInfo\":{\"hasNextPage\":false},\"nodes\":[{\"name\":\"Review\",\"field\":{\"name\":\"Status\"}}]},\"content\":{\"__typename\":\"Issue\",\"number\":10,\"title\":\"Card 10\",\"body\":\"## Acceptance\\n\\n- The widget turns blue when pressed.\\n\",\"repository\":{\"nameWithOwner\":\"acme/widgets\"},\"labels\":{\"pageInfo\":{\"hasNextPage\":false},\"nodes\":[{\"name\":\"type:change\"}]}}}]}}}}}\n","stderr":""}]},
+  {"request":"gh api graphql -f query=query { repository(owner: _, name: _) { refs(refPrefix: _, first: _) { pageInfo { hasNextPage endCursor } nodes { name } } } }","replies":[{"phase":0,"status":0,"stdout":"{\"data\":{\"repository\":{\"refs\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"100\"},\"nodes\":[{\"name\":\"main\"}]}}}}\n","stderr":""},{"phase":2,"status":0,"stdout":"{\"data\":{\"repository\":{\"refs\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"100\"},\"nodes\":[{\"name\":\"rigger-10\"},{\"name\":\"main\"}]}}}}\n","stderr":""}]},
+  {"request":"gh api graphql -f query=query { repository(owner: _, name: _) { pullRequests(headRefName: _, states: [], first: _) { pageInfo { hasNextPage endCursor } nodes { number state headRefOid baseRefName headRepository { nameWithOwner } } } } }","replies":[{"phase":0,"status":0,"stdout":"{\"data\":{\"repository\":{\"pullRequests\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"100\"},\"nodes\":[]}}}}\n","stderr":""},{"phase":1,"status":0,"stdout":"{\"data\":{\"repository\":{\"pullRequests\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"100\"},\"nodes\":[{\"number\":11,\"state\":\"OPEN\",\"headRefOid\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"baseRefName\":\"main\",\"headRepository\":{\"nameWithOwner\":\"acme/widgets\"}}]}}}}\n","stderr":""}]},
+  {"request":"gh api graphql -f query=query { repositoryOwner(login: _) { ... on ProjectV2Owner { projectV2(number: _) { id field(name: _) { ... on ProjectV2SingleSelectField { id options { id name color description } } } } } } }","replies":[{"phase":0,"status":0,"stdout":"{\"data\":{\"repositoryOwner\":{\"projectV2\":{\"id\":\"PVT_fake\",\"field\":{\"id\":\"PVTSSF_Status\",\"options\":[{\"id\":\"option-0\",\"name\":\"Backlog\",\"color\":\"GRAY\",\"description\":\"\"},{\"id\":\"option-1\",\"name\":\"Ready\",\"color\":\"GRAY\",\"description\":\"\"},{\"id\":\"option-2\",\"name\":\"Coding\",\"color\":\"GRAY\",\"description\":\"\"},{\"id\":\"option-3\",\"name\":\"Review\",\"color\":\"GRAY\",\"description\":\"\"},{\"id\":\"option-4\",\"name\":\"Owner\",\"color\":\"GRAY\",\"description\":\"\"},{\"id\":\"option-5\",\"name\":\"Done\",\"color\":\"GRAY\",\"description\":\"\"}]}}}}}\n","stderr":""}]},
+  {"request":"gh api graphql -f query=query { project: node(id: _) { ... on ProjectV2 { field(name: _) { ... on ProjectV2SingleSelectField { id } } } } target: node(id: _) { ... on ProjectV2FieldCommon { name } } }","replies":[{"phase":0,"status":0,"stdout":"{\"data\":{\"project\":{\"field\":{\"id\":\"PVTSSF_Status\"}},\"target\":{\"name\":\"Status\"}}}\n","stderr":""}]},
+  {"request":"gh api graphql -f query=mutation { updateProjectV2ItemFieldValue(input: {projectId: _, itemId: _, fieldId: _, value: {singleSelectOptionId: _}}) { projectV2Item { id } } }","replies":[{"phase":0,"status":0,"stdout":"{\"data\":{\"updateProjectV2ItemFieldValue\":{\"projectV2Item\":{\"id\":\"item-1\"}}}}\n","stderr":""}]},
+  {"request":"gh api graphql -f query=query { repository(owner: _, name: _) { issue(number: _) { comments(first: _) { pageInfo { hasNextPage endCursor } nodes { body createdAt id author { login } lastEditedAt includesCreatedEdit } } } } }","replies":[{"phase":1,"status":0,"stdout":"{\"data\":{\"repository\":{\"issue\":{\"comments\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"100\"},\"nodes\":[]}}}}}\n","stderr":""}]},
+  {"request":"gh api graphql -f query=query { repository(owner: _, name: _) { pullRequest(number: _) { baseRefName headRefOid } } }","replies":[{"phase":1,"status":0,"stdout":"{\"data\":{\"repository\":{\"pullRequest\":{\"baseRefName\":\"main\",\"headRefOid\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}}}\n","stderr":""}]},
+  {"request":"gh api repos/_/_/pulls/_ -X GET -H Accept: application/vnd.github.diff","replies":[{"phase":1,"status":0,"stdout":"","stderr":""}]},
+  {"request":"gh api graphql -f query=query { repository(owner: _, name: _) { pullRequest(number: _) { comments(first: _) { pageInfo { hasNextPage endCursor } nodes { body createdAt id author { login } lastEditedAt includesCreatedEdit } } } } }","replies":[{"phase":1,"status":0,"stdout":"{\"data\":{\"repository\":{\"pullRequest\":{\"comments\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"100\"},\"nodes\":[]}}}}}\n","stderr":""},{"phase":2,"status":0,"stdout":"{\"data\":{\"repository\":{\"pullRequest\":{\"comments\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"100\"},\"nodes\":[{\"body\":\"Sound, by reviewer\\n```rigger-marker\\ncard: 10\\npull: 11\\nhead: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\ndigest: 127e331847a30d7a2ef7d5b39015176fd4a901696101c70fe3d4f946278b410e\\nrole: reviewer\\nprovider: claude\\nverdict: sound\\nitem 1: met\\ncoverage: covered\\ndispatch: d-73290400-e10f-4ee7-b4b8-32abc3afd652\\nevidence: 1edc153dbc093d4405b899b38118b4b4749bc3ff2ded517affe8f5708bb69e58\\n```\\n\\nThe stand-in's findings.\",\"createdAt\":\"2026-11-04T03:17:32Z\",\"id\":\"IC_11_1\",\"author\":{\"login\":\"rigger-fake\"},\"lastEditedAt\":null,\"includesCreatedEdit\":false}]}}}}}\n","stderr":""}]},
+  {"request":"gh api graphql -f query=query { repository(owner: _, name: _) { pullRequest(number: _) { mergeable } } }","replies":[{"phase":1,"status":0,"stdout":"{\"data\":{\"repository\":{\"pullRequest\":{\"mergeable\":\"UNKNOWN\"}}}}\n","stderr":""},{"phase":2,"status":0,"stdout":"{\"data\":{\"repository\":{\"pullRequest\":{\"mergeable\":\"MERGEABLE\"}}}}\n","stderr":""}]},
+  {"request":"gh api repos/_/_/rules/branches/_?per_page=100&page=_ -X GET","replies":[{"phase":1,"status":0,"stdout":"[]","stderr":""}]},
+  {"request":"gh api repos/_/_/branches/_/protection -X GET","replies":[{"phase":1,"status":1,"stdout":"{\"message\":\"Branch not protected\",\"status\":\"404\"}","stderr":"gh: Branch not protected (HTTP 404)\n"}]},
+  {"request":"gh api repos/_/_/compare/_..._ -X GET","replies":[{"phase":1,"status":0,"stdout":"{\"merge_base_commit\":{\"sha\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}}","stderr":""}]},
+  {"request":"gh api repos/_/_/commits/_/check-runs?per_page=100&page=_ -X GET","replies":[{"phase":1,"status":0,"stdout":"{\"total_count\":0,\"check_runs\":[]}","stderr":""}]},
+  {"request":"gh api repos/_/_/commits/_/statuses?per_page=100&page=_ -X GET","replies":[{"phase":1,"status":0,"stdout":"[]","stderr":""}]},
+  {"request":"gh api repos/_/_/collaborators/_/permission -X GET","replies":[{"phase":2,"status":0,"stdout":"{\"permission\":\"write\",\"role_name\":\"write\"}","stderr":""}]},
+  {"request":"gh api repos/_/_/pulls/_ -X GET","replies":[{"phase":2,"status":0,"stdout":"{\"state\":\"open\",\"merged\":false,\"mergeable\":\"MERGEABLE\",\"head\":{\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"merge_commit_sha\":null}","stderr":""}]},
+  {"request":"gh api repos/_/_/pulls/_/merge -X PUT -f sha=_ -f merge_method=merge","replies":[{"phase":2,"status":1,"stdout":"{\"status\":\"405\",\"message\":\"Repository rule violations found\\n\\nRequired status check \\\"ci\\\" is pending.\"}","stderr":"gh: Method Not Allowed (HTTP 405)\n"}]},
+];
+
+/** The public claiming verb over controlled tool protocols, retaining its real L1/L2/L3 wiring. */
+function pendingMergeVerb(t) {
+  const root = temporaryDirectory('rigger-pending-presentation-');
+  const consumer = join(root, 'consumer');
+  const settings = { ...consumerConfig(1), clock: { poll: 1000, triggers: {} } };
+  fs.mkdirSync(join(consumer, '.claude', 'agents'), { recursive: true });
+  for (const { agent } of Object.values(settings.roles)) fs.writeFileSync(join(consumer, agent), '# Controlled role\n');
+  fs.writeFileSync(join(consumer, 'rigger.config.mjs'), `export default ${JSON.stringify(settings)};\n`);
+  const clock = { ...manualClock(), pause: async () => {} };
+  const head = 'a'.repeat(40);
+  const main = 'b'.repeat(40);
+  const fake = createFakeBoard({ columns: ['Backlog', 'Ready', 'Coding', 'Review', 'Owner', 'Done'], items: [verbCard(10, 'Ready')] });
+  const worktrees = [{ path: consumer, head: main, branch: 'main' }];
+  const sent = [];
+  let phase = 0;
+  let judge;
+  const git = (given) => {
+    const args = given[0] === '-C' ? given.slice(2) : given;
+    if (args[0] === 'check-ref-format') return { stdout: `${args[2]}\n` };
+    if (args[0] === 'ls-remote') return { stdout: `ref: refs/heads/main\tHEAD\n${main}\tHEAD\n` };
+    if (['fetch', 'worktree'].includes(args[0]) && (args[0] === 'fetch' || args[1] === 'prune')) return {};
+    if (args[0] === 'cat-file') return { stdout: 'commit\n' };
+    if (args[0] === 'rev-parse') return { stdout: `${args.includes('--verify') ? head : consumer}\n` };
+    if (args[0] === 'worktree' && args[1] === 'list') return { stdout: worktrees.map((tree) => `worktree ${tree.path}\0HEAD ${tree.head}\0${tree.branch ? `branch refs/heads/${tree.branch}` : 'detached'}\0\0`).join('') };
+    if (args[0] === 'worktree' && args[1] === 'add') {
+      const path = args.at(-2);
+      fs.mkdirSync(path, { recursive: true });
+      fs.cpSync(join(consumer, '.claude'), join(path, '.claude'), { recursive: true });
+      worktrees.push({ path, head: args.at(-1), branch: args.includes('-B') ? args[args.indexOf('-B') + 1] : undefined });
+      return {};
+    }
+    assert.fail(`the controlled git protocol has no answer for ${JSON.stringify(args)}`);
+  };
+  const host = answeringHost(t, (command, args) => {
+    if (command === 'git') return git(args);
+    assert.equal(command, 'claude');
+    if (args.at(-1).endsWith('/engineer.md')) phase = 1;
+    else {
+      assert.ok(args.at(-1).endsWith('/reviewer.md'));
+      phase = 2;
+      judge = readEventsAt(join(consumer, '.rigger')).findLast(({ layer, event }) => layer === 'L1' && event === 'dispatch.start');
+    }
+    return {};
+  }, clock);
+  const send = async (command, args) => {
+    assert.equal(command, 'gh');
+    sent.push(args);
+    const row = pendingMergeReplies.find(({ request }) => request === commandOf(args));
+    assert.ok(row, `the captured gh protocol has no answer for ${commandOf(args)}`);
+    const reply = row.replies.findLast((candidate) => candidate.phase <= phase) ?? row.replies[0];
+    let stdout = reply.stdout;
+    if (stdout.includes('rigger-marker')) stdout = stdout.replace(/dispatch: d-[a-z0-9-]+/, `dispatch: ${judge.dispatch}`).replace(/evidence: [a-f0-9]{64}/, `evidence: ${judge.digest}`);
+    if (args[1] === 'graphql' && args[3].includes('updateProjectV2ItemFieldValue')) {
+      const option = Number(/singleSelectOptionId: "option-(\d+)"/.exec(args[3])[1]);
+      await fake.operations.moveItem('item-1', ['Backlog', 'Ready', 'Coding', 'Review', 'Owner', 'Done'][option]);
+    }
+    if (args[1] === 'graphql' && args[3].includes('items(first:')) {
+      const data = JSON.parse(stdout);
+      data.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.nodes[0].name = (await fake.operations.readItems())[0].column;
+      stdout = JSON.stringify(data);
+    }
+    return { status: reply.status, stdout, stderr: reply.stderr };
+  };
+  const controller = new AbortController();
+  const running = runVerb({ target: consumer, clock, host, ask: async (command, args) => {
+    assert.equal(command, 'git');
+    return { status: 0, stdout: '', stderr: '', ...git(args) };
+  }, send, stop: controller.signal });
+  running.catch(() => {});
+  return { consumer, running, fake: { sent: () => [...sent], model: async () => fake },
+    ended: async () => { controller.abort(); await running; } };
+}
+
 // A later pending merge must not overwrite the same card's earlier Review outcome or make exit zero.
 // proves R-SCHED-6
 test('a no-clock run presents a maker reaching Review before its later pending-check merge refusal and exits nonzero', SETTLES_WITHIN, async (t) => {
-  const clock = { ...manualClock(), pause: async () => {} };
-  const former = realHost.clock;
-  realHost.clock = clock;
-  const here = keptUpRunVerb({ items: [verbCard(10, 'Ready')], triggers: {}, clock,
-    plan: { 10: { engineer: { pr: true }, reviewer: { findings: true } } },
-  });
-  t.after(async () => { try { await here.ended(); } finally { realHost.clock = former; } });
-  // The helper is suspended at its initial git read; install the after-role boundary before dispatch.
-  assert.deepEqual(here.fake.sent(), [], 'install the stand-in before its first forge read');
-  fs.writeFileSync(join(here.agent.dir, 'claude'), [
-    `#!${process.execPath}`,
-    '// ABOUTME: Sets the fake transport merge response after actual findings and before the judge exits.',
-    'if (!process.env.RIGGER_FIXTURE_WARMING) {',
-    `await import(${JSON.stringify(new URL('./stub-claude.mjs', import.meta.url).href)}).then(({ standInMain }) => standInMain());`,
-    "const fs = await import('node:fs');",
-    `const path = ${JSON.stringify(join(dirname(here.fake.gh), 'board.json'))};`,
-    "const state = JSON.parse(fs.readFileSync(path, 'utf8'));",
-    'if (state.repository.pullRequests?.[0]?.comments.length > 0) {',
-    'state.repository.mergeable = { 11: "MERGEABLE" };',
-    `state.repository.mergeReplies = ${JSON.stringify({ 11: { status: '405', message: 'Repository rule violations found\n\nRequired status check "ci" is pending.' } })};`,
-    "fs.writeFileSync(path, JSON.stringify(state)); } }",
-  ].join('\n'));
+  const native = nativeCalls(t);
+  const here = pendingMergeVerb(t);
+  t.after(() => here.ended());
+  assert.deepEqual(here.fake.sent(), [], 'install the controlled host before its first forge read');
   const answer = await here.running;
   assert.equal(answer.code, 1, answer.text);
   const lines = answer.text.split('\n');
@@ -1661,6 +1883,7 @@ test('a no-clock run presents a maker reaching Review before its later pending-c
   assert.deepEqual(events.filter(({ event }) => event === 'pull').map(({ card }) => card), [10, 10]);
   assert.deepEqual(events.filter(({ event }) => event === 'merge.end').map(({ outcome, reason, context }) => ({ outcome, reason, context })), [{ outcome: 'refused', reason: 'pending', context: 'ci' }]);
   assert.equal((await (await here.fake.model()).operations.readItems())[0].column, 'Review');
+  assert.equal(native.length, 0, 'ordered presentation runs on controlled tool answers without native child processes');
 });
 
 // A refused selected identity is deferred while its freed slot still pulls normally.
@@ -1922,11 +2145,12 @@ test('terminal preparation provisioning and start refusals defer their selected 
 // L2's refused attempt record halts A before its selected maker, while the freed slot reaches B.
 // proves R-RECORD-9, R-SCHED-6
 test('L2 recording halts defer the selected maker or judge while another card refills its slot', SETTLES_WITHIN, async (t) => {
+  const native = nativeCalls(t);
   const cases = ['workspace', 'step', 'maker'].flatMap((stage) => ['attempt.failed', 'attempt.decided'].map((record) => ({ stage, record, judging: false })));
   cases.push({ stage: 'optional', record: 'step.failed', judging: false }, { stage: 'workspace', record: 'judge.withheld', judging: true }, { stage: 'step', record: 'judge.withheld', judging: true });
   const { built, select, resetReads } = refusalWorld(t, cases, 'false', false);
   for (const [at, { stage, record, judging }] of cases.entries()) await t.test(`${judging ? 'judge' : 'maker'}/${stage}/${record}`, async () => {
-    const { number, peer, events, runs, l3 } = select(at);
+    const { number, peer, events, runs, l3, peerPending, releasePeer } = select(at);
     const append = fs.appendFileSync;
     const refusal = new Error(`the disk refuses L2 ${record}`);
     let refused = 0;
@@ -1943,7 +2167,15 @@ test('L2 recording halts defer the selected maker or judge while another card re
     syncBuiltinESMExports();
     let failure;
     try {
-      failure = await built.loop.run().then(() => assert.fail('L2 recording refusal must be reported'), (failure) => failure);
+      const running = built.loop.run();
+      running.catch(() => {});
+      if (judging && stage === 'step') {
+        await positive(peerPending);
+        assert.deepEqual(l3().filter(({ event }) => event === 'pull').map(({ card }) => card), [number, peer], 'the two-claim prefix is observed only while B has not completed');
+        assert.equal(events().some(({ layer, event, card }) => layer === 'L1' && event === 'dispatch.end' && card === peer), false, 'the controlled B command is still pending');
+        releasePeer();
+      }
+      failure = await running.then(() => assert.fail('L2 recording refusal must be reported'), (failure) => failure);
     } finally {
       fs.appendFileSync = append;
       syncBuiltinESMExports();
@@ -1953,6 +2185,10 @@ test('L2 recording halts defer the selected maker or judge while another card re
       for (let cause = each; cause != null; cause = cause.cause) if (cause === refusal) return true;
       return false;
     }), 'L2 retains the original sink refusal through L3’s judge wrapper');
+    const made = failure.reached.find(({ card, outcome }) => card === peer && outcome !== undefined);
+    assert.equal(made?.outcome.status, 'fulfilled', 'B completed its actual L1 dispatch before its refill is assessed');
+    assert.equal(made.outcome.value.exit, 0, 'B exited successfully');
+    assert.equal(made.settled.status, 'fulfilled', 'B completed its actual L2 Review settlement');
     assert.deepEqual(l3().filter(({ event }) => event === 'pull').map(({ card }) => card), [number, peer, peer], 'normal refill reaches B and its subsequent move to Owner');
     assert.deepEqual(runs().map(({ card }) => card), [peer], 'A never starts a maker');
     assert.deepEqual(l3().filter(({ event, card }) => event === 'pull' && card === peer).map(({ queueDepth }) => queueDepth), [0, 0], 'deferred A occupies no queue position');
@@ -1965,6 +2201,7 @@ test('L2 recording halts defer the selected maker or judge while another card re
     assert.equal(runs().filter(({ card }) => card === number).length, stage === 'optional' ? 1 : 0, 'only the restored optional-step path actually starts A');
     assert.equal(refused, 1, 'the recording refusal belonged only to the first invocation');
   });
+  assert.equal(native.length, 0, 'recording-halt deferral and normal refill require no native child processes');
 });
 
 // An unclassified preparation error is not evidence of a terminal recording refusal.
