@@ -308,6 +308,8 @@ function sightingTrace(t, observation, family) {
     result: process.env.RIGGER_1194_RESULT || observation.id, context: observation.id,
     family, caseName: t.name, writer: process.pid,
   };
+  const explicitLocation = path !== join(observation.target, 'trace.jsonl');
+  const traceLocator = `attempt-${identity.context}/${explicitLocation ? 'trace-location.json' : 'trace.jsonl'}`;
   const directory = (path) => {
     const entry = lstatSync(path);
     assert.ok(entry.isDirectory() && !entry.isSymbolicLink() && entry.uid === process.getuid()
@@ -320,6 +322,10 @@ function sightingTrace(t, observation, family) {
     assert.ok(resolve(path).startsWith(`${observation.root}/`));
     const fd = openSync(path, traceFiles.O_CREAT | traceFiles.O_EXCL | traceFiles.O_WRONLY | traceFiles.O_NOFOLLOW, 0o600);
     closeSync(fd);
+    if (explicitLocation) writeFileSync(join(observation.target, 'trace-location.json'), JSON.stringify({
+      schema: 1, source: identity.source, context: identity.context, trace: resolve(path),
+      inventory: join(observation.target, 'trace-inventory.json'),
+    }) + '\n', { flag: 'wx', mode: 0o600 });
   } catch {
     failure('enrollment');
     throw new Error('never-stop evidence enrollment refused');
@@ -369,7 +375,7 @@ function sightingTrace(t, observation, family) {
       ...classification,
       readId: Number.isSafeInteger(payload.readId) ? payload.readId : null,
       bytes: Buffer.byteLength(line), sha256: createHash('sha256').update(line).digest('hex'),
-      locator: `attempt-${identity.context}/trace.jsonl`, availability: 'private-local-provider-raw-unconfirmed' }));
+      locator: traceLocator, availability: 'private-local-provider-raw-unconfirmed' }));
     if (event === 'retention' && payload.errors?.length) fail('retention');
     return true;
   };
@@ -1094,11 +1100,13 @@ async function censusCall(t, cell, afterKill = 'omit') {
 /** Runs the same stand-in through synchronous exit containment. */
 async function censusExit(t, cell, afterKill = 'omit') {
   const prepared = ['B', 'A', 'U2'].includes(cell);
-  const selectedRoot = sightingEvidenceRoot();
-  if (prepared) assert.ok(selectedRoot, 'prepared sighting needs private returned-read originals');
-  const directory = holding(t);
+  let selectedRoot;
+  let directory;
   let enrolled;
   try {
+    selectedRoot = sightingEvidenceRoot();
+    if (prepared) assert.ok(selectedRoot, 'prepared sighting needs private returned-read originals');
+    directory = holding(t);
     if (prepared) sightingObservation(directory, { ps: 'ps-sighted' }, selectedRoot);
     enrolled = sightingAttempts.get(directory) ?? sightingObservation(directory, { ps: 'ps-sighted' }, selectedRoot);
   } catch (error) {

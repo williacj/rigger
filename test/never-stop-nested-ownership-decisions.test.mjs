@@ -8,8 +8,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { mkdirSync, readdirSync, rmSync, realpathSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
-import { writeFileSync, symlinkSync, chmodSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { writeFileSync, symlinkSync, chmodSync, lstatSync } from 'node:fs';
 
 let evaluation = 0;
 
@@ -84,8 +84,8 @@ async function withOwnershipModule(t, exercise) {
   const modules = {
     'node:test': `export const test = globalThis[${JSON.stringify(key)}].test;`,
     'node:child_process': `export const spawn = globalThis[${JSON.stringify(key)}].spawn; export const spawnSync = globalThis[${JSON.stringify(key)}].unexpected;`,
-    'node:crypto': `export * from 'node:crypto'; import { randomUUID as uuid } from 'node:crypto'; export const randomUUID = () => globalThis[${JSON.stringify(key)}].uuid ?? uuid();`,
-    './process-fixtures.mjs': `export * from ${JSON.stringify(new URL('./process-fixtures.mjs', import.meta.url).href)}; import * as actual from ${JSON.stringify(new URL('./process-fixtures.mjs', import.meta.url).href)}; export const holding = (...args) => globalThis[${JSON.stringify(key)}].fixtureCheck ? globalThis[${JSON.stringify(key)}].holding(...args) : actual.holding(...args); export const fixture = (...args) => globalThis[${JSON.stringify(key)}].fixtureCheck ? globalThis[${JSON.stringify(key)}].fixtureCheck(...args) : actual.fixture(...args);`,
+    'node:crypto': `export * from 'node:crypto'; import { randomUUID as uuid } from 'node:crypto'; export const randomUUID = () => { const selected = globalThis[${JSON.stringify(key)}].uuid; return typeof selected === 'function' ? selected() : selected ?? uuid(); };`,
+    './process-fixtures.mjs': `export * from ${JSON.stringify(new URL('./process-fixtures.mjs', import.meta.url).href)}; import * as actual from ${JSON.stringify(new URL('./process-fixtures.mjs', import.meta.url).href)}; export const holding = (...args) => { const selected = globalThis[${JSON.stringify(key)}]; return selected.holdingCheck ? selected.holdingCheck(...args) : selected.fixtureCheck ? selected.holding(...args) : actual.holding(...args); }; export const fixture = (...args) => globalThis[${JSON.stringify(key)}].fixtureCheck ? globalThis[${JSON.stringify(key)}].fixtureCheck(...args) : actual.fixture(...args);`,
   };
   const urls = new Map(Object.keys(modules).map((name) => [name, `nested-ownership-capture:${evaluation}/${name}`]));
   const previous = Object.getOwnPropertyDescriptor(globalThis, key);
@@ -122,7 +122,7 @@ async function withOwnershipModule(t, exercise) {
     await import(entry.href);
     assert.equal(loaded, true);
     assert.equal(typeof callbacks.get(title), 'function', 'the original registration must be captured');
-    await exercise({ root, title, callbacks, diagnostics, calls, teardowns, birth, command, fixtureCheck(value) { collaborators.fixtureCheck = value; }, setUUID(value) { collaborators.uuid = value; }, reset() { state = 'S'; calls.length = 0; teardowns.length = 0; diagnostics.length = 0; } });
+    await exercise({ root, title, callbacks, diagnostics, calls, teardowns, birth, command, fixtureCheck(value) { collaborators.fixtureCheck = value; }, holdingCheck(value) { collaborators.holdingCheck = value; }, setUUID(value) { collaborators.uuid = value; }, reset() { state = 'S'; calls.length = 0; teardowns.length = 0; diagnostics.length = 0; } });
   } finally {
     hooks?.deregister();
     t.mock.restoreAll();
@@ -384,6 +384,235 @@ test('public completion summaries retain evidence classification', { timeout: 20
     assert.deepEqual(lostRetention.retainedOriginalStates, [], 'the synthetic loss case supplies no per-file state inventory');
     for (const privateText of [root, command, 'controlled read', 'controlled pending read', 'controlled unreturned read', 'recorder ready']) {
       assert.ok(diagnostics.every((line) => !line.includes(privateText)), 'ordinary summaries must exclude private paths, commands and streams');
+    }
+  });
+});
+
+// Break: a prepared selector or scratch refusal bypasses the enrollment reporting boundary.
+test('prepared census refusals report evidence failure before native work', { timeout: 20_000 }, async (t) => {
+  await withOwnershipModule(t, async ({ root, callbacks, diagnostics, calls, teardowns, fixtureCheck, holdingCheck, setUUID, reset }) => {
+    const prepared = [
+      ['B', 'B1 exit: a member named by an early census read and left a zombie is recorded by name'],
+      ['A', 'A0 exit omitted: a member shown only in the after state read records the unnamed group kill'],
+      ['U2', 'U2 exit: a missing second command read records the unnamed group kill'],
+    ];
+    const validators = [
+      'type', 'symlink', 'location-checkout', 'location-nested', 'mode', 'access',
+      'canonical-absent', 'canonical-lstat-error', 'canonical-realpath-error', 'canonical-checkout-error', 'canonical-scratch-error',
+    ].flatMap((kind) => ['explicit', 'suite'].map((route) => kind.startsWith('location-') || kind.startsWith('canonical-')
+      ? `C615 fixture-root-${kind.split('-')[0]}-${route}-${kind.slice(kind.indexOf('-') + 1)} denies before preparation starts`
+      : `C615 fixture-root-${kind}-${route} denies before preparation starts`));
+    for (const title of [...prepared.map(([, title]) => title), ...validators]) assert.equal(typeof callbacks.get(title), 'function', title);
+    const sentinel = join(root, 'preexisting-evidence');
+    const original = Buffer.from('unchanged private original\n');
+    writeFileSync(sentinel, original, { flag: 'wx', mode: 0o600 });
+    const priorTmpdir = process.env.TMPDIR;
+    const scratch = temporaryDirectory('rigger-1194-refusal-', { context: t });
+    const context = (name) => ({ name, signal: t.signal, after: (hook) => teardowns.push(hook), diagnostic: (line) => diagnostics.push(line) });
+    const unchanged = () => assert.deepEqual(readFileSync(sentinel), original, 'preexisting evidence must remain byte-exact');
+    const reported = () => {
+      const reports = diagnostics.map((line) => JSON.parse(line));
+      assert.deepEqual(reports, [{ event: 'never-stop.evidence.failure', reason: 'enrollment' }],
+        'prepared census root refusal must emit a safe evidence failure while preserving refusal and untouched scratch');
+    };
+    const cleanup = async () => { for (const hook of teardowns) await hook(); unchanged(); };
+    fixtureCheck(() => assert.fail('refused preparation reached native fixture work'));
+    try {
+      process.env.TMPDIR = scratch;
+      for (const [, title] of prepared) {
+        for (const selection of ['absent-both', 'empty-suite', 'explicit-empty']) {
+          reset();
+          delete process.env.C615_SIGHTING_EVIDENCE_ROOT;
+          delete process.env.C615_EVIDENCE_ROOT;
+          if (selection === 'empty-suite') process.env.C615_EVIDENCE_ROOT = '';
+          if (selection === 'explicit-empty') {
+            process.env.C615_SIGHTING_EVIDENCE_ROOT = '';
+            process.env.C615_EVIDENCE_ROOT = root;
+          }
+          const before = readdirSync(scratch).sort();
+          const evidenceBefore = readdirSync(root).sort();
+          let refusal;
+          try { await callbacks.get(title)(context(title)); } catch (error) { refusal = error; }
+          assert.equal(refusal?.name, 'AssertionError');
+          assert.match(refusal?.message ?? '', /prepared sighting needs private returned-read originals/);
+          assert.equal(calls.length, 0, 'refusal must start no native child');
+          assert.deepEqual(readdirSync(scratch).sort(), before, 'the original selector refusal must remain before scratch');
+          assert.deepEqual(readdirSync(root).sort(), evidenceBefore);
+          unchanged();
+          await cleanup();
+          assert.deepEqual(readdirSync(scratch).sort(), before);
+          assert.deepEqual(readdirSync(root).sort(), evidenceBefore);
+          reported();
+        }
+      }
+      delete process.env.C615_SIGHTING_EVIDENCE_ROOT;
+      process.env.C615_EVIDENCE_ROOT = root;
+      for (const [, title] of prepared) {
+        for (const partial of [false, true]) {
+          reset();
+          const refusal = Object.assign(new Error('private preparation refusal'), { code: partial ? 'EIO' : 'EACCES' });
+          const before = readdirSync(scratch).sort();
+          let allocated;
+          holdingCheck((running) => {
+            if (partial) {
+              allocated = temporaryDirectory('rigger-1194-partial-', { context: running });
+              writeFileSync(join(allocated, 'prepared'), 'partial preparation\n', { flag: 'wx', mode: 0o600 });
+            }
+            throw refusal;
+          });
+          let caught;
+          try { await callbacks.get(title)(context(title)); } catch (error) { caught = error; }
+          assert.equal(caught, refusal, 'reporting must rethrow the identical preparation error');
+          assert.equal(calls.length, 0);
+          if (partial) {
+            assert.deepEqual(readdirSync(scratch).sort(), [...before, allocated.slice(scratch.length + 1)].sort());
+            assert.equal(readFileSync(join(allocated, 'prepared'), 'utf8'), 'partial preparation\n');
+            assert.equal(teardowns.length, 1, 'the original preparation cleanup must remain registered');
+          } else {
+            assert.deepEqual(readdirSync(scratch).sort(), before);
+            assert.equal(teardowns.length, 0);
+          }
+          unchanged();
+          await cleanup();
+          assert.deepEqual(readdirSync(scratch).sort(), before, 'registered partial preparation cleanup must still finish');
+          reported();
+        }
+      }
+      holdingCheck(undefined);
+      // These actual callbacks establish their original error and hold-only scratch oracles first.
+      for (const title of validators) {
+        reset();
+        await callbacks.get(title)(context(title));
+        assert.equal(calls.length, 0);
+        unchanged();
+        await cleanup();
+        reported();
+      }
+      for (const kind of ['uuid', 'complete-collision', 'partial-collision', 'marker-write', 'trace-open']) {
+        reset();
+        const title = prepared[0][1];
+        const refusal = new Error('private identity allocation refusal');
+        const id = '22222222-2222-4222-8222-222222222222';
+        const prior = join(root, `attempt-${id}`);
+        const bytes = Buffer.from(kind === 'partial-collision' ? '{"partial":' : '{"closed":true}\n');
+        if (kind.endsWith('-collision')) {
+          mkdirSync(prior, { mode: 0o700 });
+          writeFileSync(join(prior, 'trace.jsonl'), bytes, { flag: 'wx', mode: 0o600 });
+          setUUID(id);
+        } else if (kind === 'uuid') setUUID(() => { throw refusal; });
+        else if (kind === 'marker-write') holdingCheck((running) => {
+          const directory = temporaryDirectory('rigger-1194-marker-', { context: running });
+          writeFileSync(join(directory, 'hold'), '');
+          writeFileSync(join(directory, 'sighting-attempt'), 'existing marker', { flag: 'wx', mode: 0o600 });
+          return directory;
+        });
+        else process.env.RIGGER_1194_CAPTURE = sentinel;
+        let caught;
+        try { await callbacks.get(title)(context(title)); } catch (error) { caught = error; }
+        assert.equal(calls.length, 0);
+        if (kind === 'uuid') assert.equal(caught, refusal);
+        else if (kind === 'trace-open') assert.equal(caught?.message, 'never-stop evidence enrollment refused');
+        else assert.equal(caught?.code, 'EEXIST');
+        unchanged();
+        if (kind.endsWith('-collision')) assert.deepEqual(readFileSync(join(prior, 'trace.jsonl')), bytes);
+        await cleanup();
+        if (kind.endsWith('-collision')) {
+          assert.deepEqual(readFileSync(join(prior, 'trace.jsonl')), bytes);
+          rmSync(prior, { recursive: true });
+        }
+        if (kind === 'trace-open') {
+          const reports = diagnostics.map((line) => JSON.parse(line));
+          assert.equal(reports.length, 1, 'trace enrollment must report exactly once');
+          assert.equal(reports[0].event, 'never-stop.evidence.failure');
+          assert.equal(reports[0].reason, 'enrollment');
+          assert.match(reports[0].context, /^[a-f0-9-]{36}$/);
+        } else reported();
+        holdingCheck(undefined);
+        setUUID(undefined);
+        delete process.env.RIGGER_1194_CAPTURE;
+      }
+    } finally {
+      holdingCheck(undefined);
+      setUUID(undefined);
+      if (priorTmpdir === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = priorTmpdir;
+    }
+  });
+});
+
+// Break: explicit capture succeeds, but its public locator names an unrelated or absent trace.
+test('explicit capture summaries locate the retained trace safely', { timeout: 20_000 }, async (t) => {
+  await withOwnershipModule(t, async ({ root, title, callbacks, diagnostics, calls, teardowns, reset }) => {
+    const privateDirectory = join(root, 'private selected "directory"');
+    mkdirSync(privateDirectory, { mode: 0o700 });
+    const source = createHash('sha256').update(readFileSync(new URL('./never-stop.test.mjs', import.meta.url))).digest('hex');
+    for (const selected of [join(root, 'selected "quote"\n$().jsonl'), join(privateDirectory, 'nested selected.jsonl'), null]) {
+      reset();
+      assert.equal(existsSync(join(root, '1194-missing-locator.jsonl')), false, 'the guarded missing locator must be absent');
+      if (selected) process.env.RIGGER_1194_CAPTURE = selected;
+      else delete process.env.RIGGER_1194_CAPTURE;
+      await callbacks.get(title)({ name: title, signal: t.signal, after: (hook) => teardowns.push(hook), diagnostic: (line) => diagnostics.push(line) });
+      for (const hook of teardowns) await hook();
+      assert.ok(diagnostics.some((line) => line.includes('"event":"complete","outcome":7')), 'the original outcome must finish');
+      assert.equal(calls.length, 6, 'explicit compatibility must add no tool calls');
+      const summaries = diagnostics.map((line) => JSON.parse(line)).filter(({ event }) => event === 'never-stop.evidence');
+      assert.ok(summaries.length > 0);
+      const context = summaries[0].context;
+      const actual = selected ?? join(root, `attempt-${context}`, 'trace.jsonl');
+      const bytes = readFileSync(actual);
+      const rows = bytes.toString().trim().split('\n').map((line) => JSON.parse(line));
+      assert.equal(rows.at(-1).event, 'attempt.finish');
+      assert.equal(rows.at(-1).payload.availability, 'returned');
+      const inventoryPath = join(root, `attempt-${context}`, 'trace-inventory.json');
+      const inventory = JSON.parse(readFileSync(inventoryPath, 'utf8'));
+      assert.equal(inventory.availability, 'returned');
+      assert.equal(inventory.closed, true);
+      assert.deepEqual(inventory.pending, []);
+      assert.equal(inventory.bytes, bytes.length);
+      assert.equal(inventory.sha256, createHash('sha256').update(bytes).digest('hex'));
+      assert.equal(summaries.length, rows.length, 'one safe summary must describe each retained trace row');
+      assert.ok(summaries.every(({ locator }) => {
+        try { return existsSync(join(root, locator)) && readFileSync(join(root, locator)).length > 0; }
+        catch { return false; }
+      }), 'each public locator must resolve to the trace it describes with a valid explicit destination');
+      const locators = [...new Set(summaries.map(({ locator }) => locator))];
+      assert.equal(locators.length, 1);
+      const locator = locators[0];
+      assert.equal(locator, `attempt-${context}/${selected ? 'trace-location.json' : 'trace.jsonl'}`,
+        'public locators must contain only a context and fixed safe filename');
+      const located = join(root, locator);
+      assert.equal(lstatSync(located).mode & 0o777, 0o600);
+      assert.equal(lstatSync(join(root, `attempt-${context}`)).mode & 0o777, 0o700);
+      let trace = located;
+      if (selected) {
+        const index = JSON.parse(readFileSync(located, 'utf8'));
+        assert.deepEqual(index, { schema: 1, source, context, trace: selected, inventory: inventoryPath },
+          'the private index must bind the actual selected trace and its own inventory');
+        trace = index.trace;
+        assert.deepEqual(readFileSync(index.inventory), readFileSync(inventoryPath));
+      }
+      assert.deepEqual(readFileSync(trace), bytes, 'the public locator must lead to exactly the captured bytes');
+      for (const [index, row] of rows.entries()) {
+        for (const key of ['source', 'context', 'caseName', 'family', 'writer']) assert.equal(row[key], inventory[key]);
+        assert.equal(row.source, source);
+        assert.equal(row.context, context);
+        const summary = summaries[index];
+        assert.equal(summary.source, source);
+        assert.equal(summary.context, context);
+        assert.equal(summary.sequence, row.sequence);
+        assert.equal(summary.phase, row.event);
+        const line = JSON.stringify(row) + '\n';
+        assert.equal(summary.bytes, Buffer.byteLength(line));
+        assert.equal(summary.sha256, createHash('sha256').update(line).digest('hex'));
+        assert.equal(summary.availability, 'private-local-provider-raw-unconfirmed');
+      }
+      for (const line of diagnostics) {
+        assert.equal(line.includes(root), false);
+        if (selected) {
+          assert.equal(line.includes(JSON.stringify(selected).slice(1, -1)), false);
+          assert.equal(line.includes('selected'), false, 'a public locator must not encode user-supplied private names');
+        }
+      }
     }
   });
 });
