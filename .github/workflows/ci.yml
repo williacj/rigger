@@ -371,50 +371,59 @@ jobs:
           };
           livePr(await get(ROOT + '/pulls/' + event.number));
           const found = new Map();
-          for (const status of STATUSES) {
-            let response;
-            try { response = await request(ROOT + '/actions/workflows/' + workflow.id + '/runs?event=pull_request&exclude_pull_requests=false&status=' + status + '&per_page=100&page=1'); }
-            catch (error) {
-              const reason = error?.message === 'API discovery pagination incomplete' ? 'pagination incomplete'
-                : error?.message === 'API body incomplete' ? 'body incomplete'
-                : error?.message === 'API decode failed' ? 'decode failed'
-                : error?.message === 'API JSON invalid' ? 'JSON invalid' : 'transport failed';
-              diagnostic({ action: 'discovery-refused', query: status, reason });
-              throw error;
+          discovery: for (let epoch = 0; epoch < 2; epoch += 1) {
+            found.clear();
+            for (const status of STATUSES) {
+              let response;
+              try { response = await request(ROOT + '/actions/workflows/' + workflow.id + '/runs?event=pull_request&exclude_pull_requests=false&status=' + status + '&per_page=100&page=1'); }
+              catch (error) {
+                const reason = error?.message === 'API discovery pagination incomplete' ? 'pagination incomplete'
+                  : error?.message === 'API body incomplete' ? 'body incomplete'
+                  : error?.message === 'API decode failed' ? 'decode failed'
+                  : error?.message === 'API JSON invalid' ? 'JSON invalid' : 'transport failed';
+                diagnostic({ action: 'discovery-refused', query: status, reason });
+                throw error;
+              }
+              const page = response?.body;
+              if (response?.status !== 200) {
+                diagnostic({ action: 'discovery-refused', query: status, reason: 'HTTP status', ...(Number.isInteger(response?.status) && response.status >= 100 && response.status <= 599 ? { httpStatus: response.status } : {}) });
+                refuse('discovery incomplete');
+              }
+              const count = page?.total_count;
+              if (!Number.isSafeInteger(count) || count < 0) {
+                diagnostic({ action: 'discovery-refused', query: status, reason: 'count invalid' });
+                refuse('discovery incomplete');
+              }
+              if (count > 100) {
+                diagnostic({ action: 'discovery-refused', query: status, reason: 'page limit reached', count });
+                refuse('discovery incomplete');
+              }
+              if (!Array.isArray(page.workflow_runs) || page.workflow_runs.length > 100) {
+                diagnostic({ action: 'discovery-refused', query: status, reason: 'list invalid', count });
+                refuse('discovery incomplete');
+              }
+              try { links(response.link); } catch {
+                diagnostic({ action: 'discovery-refused', query: status, reason: 'pagination incomplete' });
+                refuse('API discovery pagination incomplete');
+              }
+              for (const run of page.workflow_runs) {
+                const source = sourceIdentity(run);
+                const association = associationIdentity(run);
+                const previous = found.get(run.id);
+                if (previous && (previous.source !== source || previous.association && association && previous.association !== association)) refuse('conflicting run identity');
+                found.set(run.id, { run, source, association: association ?? previous?.association });
+              }
+              if (page.workflow_runs.length !== count) {
+                diagnostic({ action: 'discovery-refused', query: status, reason: 'count/list mismatch', count, length: page.workflow_runs.length });
+                if (epoch === 0) {
+                  diagnostic({ action: 'discovery-recovering', epoch: 1 });
+                  continue discovery;
+                }
+                refuse('discovery incomplete');
+              }
             }
-            const page = response?.body;
-            if (response?.status !== 200) {
-              diagnostic({ action: 'discovery-refused', query: status, reason: 'HTTP status', ...(Number.isInteger(response?.status) && response.status >= 100 && response.status <= 599 ? { httpStatus: response.status } : {}) });
-              refuse('discovery incomplete');
-            }
-            const count = page?.total_count;
-            if (!Number.isSafeInteger(count) || count < 0) {
-              diagnostic({ action: 'discovery-refused', query: status, reason: 'count invalid' });
-              refuse('discovery incomplete');
-            }
-            if (count > 100) {
-              diagnostic({ action: 'discovery-refused', query: status, reason: 'page limit reached', count });
-              refuse('discovery incomplete');
-            }
-            if (!Array.isArray(page.workflow_runs)) {
-              diagnostic({ action: 'discovery-refused', query: status, reason: 'list invalid', count });
-              refuse('discovery incomplete');
-            }
-            if (page.workflow_runs.length !== count) {
-              diagnostic({ action: 'discovery-refused', query: status, reason: 'count/list mismatch', count, length: page.workflow_runs.length });
-              refuse('discovery incomplete');
-            }
-            try { links(response.link); } catch {
-              diagnostic({ action: 'discovery-refused', query: status, reason: 'pagination incomplete' });
-              refuse('API discovery pagination incomplete');
-            }
-            for (const run of page.workflow_runs) {
-              const source = sourceIdentity(run);
-              const association = associationIdentity(run);
-              const previous = found.get(run.id);
-              if (previous && (previous.source !== source || previous.association && association && previous.association !== association)) refuse('conflicting run identity');
-              found.set(run.id, { run, source, association: association ?? previous?.association });
-            }
+            if (epoch === 1) diagnostic({ action: 'discovery-recovered', epoch: 2 });
+            break;
           }
           // Resolve every older, different-head run before any cancellation request.
           for (const entry of found.values()) {
