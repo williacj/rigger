@@ -30,7 +30,7 @@ These figures are judgments over the 6,115 ordinary-entry S identities, derived 
 | deterministic | timingLoad | 4 | 3768 | 140 |
 | deterministic | implementationCoupling | 0 | 3833 | 79 |
 | deterministic | discrimination | 7 | 3867 | 38 |
-| deterministic | fakeHelperContract | 1 | 2595 | 1316 |
+| deterministic | fakeHelperContract | 1 | 3104 | 807 |
 | host | expectation | 0 | 2149 | 54 |
 | host | timingLoad | 0 | 2142 | 61 |
 | host | implementationCoupling | 0 | 1873 | 330 |
@@ -82,3 +82,13 @@ Existing observable-boundary, independent-oracle, truthful-double and injected-c
 The diagnosed new guards strengthen existing invariant bodies and require meaningful bounded counterexamples. An inventory is not a reason to add a test per card, mutation or historical incident. Missing contract/observation evidence is settled against its actual producer and selected value form before a repair is proposed.
 
 The corrected source structure is a maker proposal awaiting an independent completeness check. It explicitly includes generated child declarations and invocation-only controls, complete outer/factory callback bounds, selected helper conditions and the historical origin chain. All 6,328 existing M named outcomes and 100 load nodes keep their original receipt identities; 495 stale M source-line annotations now bind to actual source titles/domains and Git lineage. Open dispositions remain work, not repaired behavior. Final-head verification and independent reviews must use the eventual corrected head; old-head green checks cannot verify this draft.
+
+## Finite contract evidence adjudication
+
+The adopted source adjudication corrects empty contract-evidence referrals in846 existing families covering977 measured-M members. Of these,522 member projections are retained against available exact local/native/documented or source-attributed fixture authority;455 retain concrete unresolved producer/field/value questions. The522 contain509 distinct ordinary S identities and13 M-only cases. Only those509 S fake-axis judgments change the deterministic debt above. These are source-audit judgments at the frozen snapshots, not repaired tests or measurements of present main.
+
+The JSON fakeContractAdjudication.members records each actual finite tuple, selected producer/consumer boundary, available authority or question, evidence needed, and owner. Shared classes use exact local references with lossless expansion; an empty historical qualification array supplies no active authority. Partial families D-3879 and D-3892 keep unresolved shared defaults with exact member overrides, so no unapproved sibling inherits retained. All other axes, generated-domain debt, source identities, native outcomes and baseline evidence are conserved.
+
+Unresolved check-run cells keep all fourteen status/conclusion/app/context pairings separate. D1400 asks only about its consumed board-item projection; its unused typed-field fixture supplies no question. Successful service prefixes remain in scope before controlled errors and native telemetry observations. Ordinary move callers ignore returned mutation IDs: only their consumed request/status/JSON and EVENT_REFUSED result-root behavior needs qualification. D3793 retains only its rejected-wrapper/unchanged-column projection, and synthetic report records qualify their actual L5 serialized input domain, not normal L0–L4 producer histories.
+
+The four inaccurate private whole-file LF citations are overlaid from exact bytes, preserving the original maps and unknown cause. The optional72 source quotations now reproduce the exact marker assertion and its authored mirrors; raw catalogs are unchanged. This private correction awaits independent semantic review and future-head proof. Old-head checks and the permanent missing C615 auxiliary-original limitation do not establish proof or waive retention for a later head.
