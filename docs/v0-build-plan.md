@@ -209,8 +209,8 @@ Exit:
   value.
 - `once` and `run` start no dispatch in M1; M4 gives them dispatch. After claiming a card that
   nobody worked, each exits non-zero with a message saying so.
-- `run` claims until it holds as many cards as `concurrency` allows, or until no card is left to
-  pull. It then exits, and where it claimed a card it exits non-zero naming the cards it claimed.
+- In M1's pre-dispatch interim, `run` claims until its slots are full or no card is left to pull.
+  It exits non-zero where it claimed a card. The README's `run` contract governs once dispatch is present.
 - During M1, `once` and `run` never run against this repository's real board. `plan`,
   `setup-board` and `doctor` may.
 - `docs/demo.tape` records `rigger once` against the fake board with `vhs`, as M1 builds it: the
@@ -232,9 +232,9 @@ Exit:
   issue number, oldest first. The values are set so that this order differs from each of four
   orders that ignore priority: issue number ascending, issue number descending, column position,
   and column position reversed.
-- Concurrency comes from config. On a fake board holding four pullable cards, `run` claims one card
-  with `concurrency: 1` and three with `concurrency: 3`, then exits. It never holds more claims
-  than the setting allows.
+- Concurrency comes from config. M1's pre-dispatch exit test claimed one of four pullable cards
+  with `concurrency: 1` and three with `concurrency: 3`, then exited. This is interim evidence;
+  the README's board-drain `run` contract governs once dispatch is present. `R-SCHED-2` bounds simultaneous claims.
 - The column display names come from config: Rigger reads, pulls from, and claims from a fake
   board whose columns are named differently exactly as it does one with the default names.
 - The demo GIF regenerates from the tape in CI.
