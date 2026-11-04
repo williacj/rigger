@@ -1,5 +1,6 @@
 // ABOUTME: Executes the protected cancellation literal with independent bounded API scripts and checks its isolated job.
 import { test } from 'node:test';
+import { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseWorkflow, evaluateCiPolicy, ciFacts, ciProof } from './ci-policy-fixtures.mjs';
@@ -50,6 +51,25 @@ try {
 } finally {
   if (had) process.env.CI_CANCEL_ACTION = saved; else delete process.env.CI_CANCEL_ACTION;
 }
+
+// CI_CANCEL requestApi supplies AbortSignal.timeout's returned signal to send; its
+// configured delay is asserted while the test supplies a signal with no host deadline.
+async function requestWithAbort(path, { send, ...options }) {
+  const signal = new AbortController().signal;
+  const timeout = mock.method(AbortSignal, 'timeout', delay => {
+    assert.equal(delay, 30_000);
+    return signal;
+  });
+  try {
+    return await controller.requestApi(path, { ...options, send: (url, request) => {
+      assert.equal(request.signal, signal);
+      return send(url, request);
+    } });
+  } finally {
+    timeout.mock.restore();
+  }
+}
+
 const root = '/repos/williacj/rigger';
 const current = 'd'.repeat(40), old = 'a'.repeat(40);
 const repo = { id: 44, full_name: 'williacj/rigger' };
@@ -361,12 +381,12 @@ test('cancellation treats 202 as acceptance only and handles 409 once without re
 test('cancellation HTTP adapter uses fixed scoped routes manual redirects and configured abort', async () => {
   const calls = [];
   const send = async (url, options) => { calls.push({ url, options }); return new Response('{"id":80}', { status: 200 }); };
-  assert.deepEqual(await controller.requestApi(root + '/actions/runs/80', { send, token: 'synthetic-token' }), { status: 200, body: { id: 80 }, link: null });
+  assert.deepEqual(await requestWithAbort(root + '/actions/runs/80', { send, token: 'synthetic-token' }), { status: 200, body: { id: 80 }, link: null });
   assert.equal(calls[0].url, 'https://api.github.com/repos/williacj/rigger/actions/runs/80');
   assert.equal(calls[0].options.method, 'GET'); assert.equal(calls[0].options.redirect, 'manual');
   assert.equal(calls[0].options.headers.authorization, 'Bearer synthetic-token');
   assert.ok(calls[0].options.signal instanceof AbortSignal); assert.equal(calls[0].options.signal.aborted, false);
-  const accepted = await controller.requestApi(root + '/actions/runs/60/cancel', { method: 'POST', token: 'synthetic-token', send: async () => new Response('', { status: 202 }) });
+  const accepted = await requestWithAbort(root + '/actions/runs/60/cancel', { method: 'POST', token: 'synthetic-token', send: async () => new Response('', { status: 202 }) });
   assert.deepEqual(accepted, { status: 202, body: null, link: null });
   for (const response of [
     () => new Response('{}', { status: 302, headers: { location: 'https://evil.test' } }),
@@ -374,11 +394,11 @@ test('cancellation HTTP adapter uses fixed scoped routes manual redirects and co
     () => new Response('{}', { status: 200, headers: { link: '<https://api.github.com/next>; rel="next"' } }),
     () => new Response('{}', { status: 200, headers: { 'content-length': '10' } }),
     () => new Response('{', { status: 200 }),
-  ]) await assert.rejects(controller.requestApi(root + '/actions/runs/80', { token: 'synthetic-token', send: async () => response() }));
+  ]) await assert.rejects(requestWithAbort(root + '/actions/runs/80', { token: 'synthetic-token', send: async () => response() }));
   for (const path of ['https://evil.test/run', root + '/actions/runs/60/force-cancel', '/repos/other/repo/actions/runs/60', root + '/actions/runs/0/cancel']) {
-    await assert.rejects(controller.requestApi(path, { method: 'POST', token: 'synthetic-token', send: async () => assert.fail('unsafe route reached transport') }), /API scope/);
+    await assert.rejects(requestWithAbort(path, { method: 'POST', token: 'synthetic-token', send: async () => assert.fail('unsafe route reached transport') }), /API scope/);
   }
-  await assert.rejects(controller.requestApi(root + '/actions/runs/80', { token: '', send }), /API scope/);
+  await assert.rejects(requestWithAbort(root + '/actions/runs/80', { token: '', send }), /API scope/);
   assert.ok(ci.jobs.cancel_superseded.env.CI_CANCEL.includes('AbortSignal.timeout(30_000)'));
 });
 
@@ -472,7 +492,7 @@ test('older-head cancellation composes its actual HTTP adapter and sends the exa
     assert.ok(options.signal instanceof AbortSignal); assert.equal(options.signal.aborted, false);
     return new Response(expected[3] === null ? '' : JSON.stringify(expected[3]), { status: expected[2] });
   };
-  const result = await controller.cancelSuperseded({ ...f, request: (path, options) => controller.requestApi(path, { ...options, send, token: 'synthetic-composed-token' }), log: () => {} });
+  const result = await controller.cancelSuperseded({ ...f, request: (path, options) => requestWithAbort(path, { ...options, send, token: 'synthetic-composed-token' }), log: () => {} });
   assert.deepEqual(result, { accepted: [60], completed: [] }); assert.deepEqual(script, []);
 });
 
@@ -484,18 +504,18 @@ test('decoded CI response budget accepts exact bound and rejects oversized valid
   assert.equal(Buffer.byteLength(oversized), limit + 1);
   assert.equal(JSON.parse(oversized).length, limit - 1, 'oversized fixture must remain valid JSON');
   const response = body => new Response(body, { status: 200, headers: { 'content-length': String(Buffer.byteLength(body)) } });
-  const accepted = await controller.requestApi(root + '/actions/runs/80', { token: 'synthetic-token', send: async () => response(exact) });
+  const accepted = await requestWithAbort(root + '/actions/runs/80', { token: 'synthetic-token', send: async () => response(exact) });
   assert.equal(accepted.status, 200); assert.equal(accepted.body.length, limit - 2);
-  await assert.rejects(controller.requestApi(root + '/actions/runs/80', { token: 'synthetic-token', send: async () => response(oversized) }), { message: 'API body incomplete' });
+  await assert.rejects(requestWithAbort(root + '/actions/runs/80', { token: 'synthetic-token', send: async () => response(oversized) }), { message: 'API body incomplete' });
 });
 
 test('CI response decoding rejects invalid UTF8 inside valid JSON syntax', async () => {
   const invalid = new Uint8Array([123, 34, 120, 34, 58, 34, 255, 34, 125]);
   assert.deepEqual(JSON.parse(new TextDecoder().decode(invalid)), { x: '\uFFFD' }, 'lossy decoding would leave valid JSON');
   const valid = JSON.stringify({ x: '\uFFFD' });
-  const accepted = await controller.requestApi(root + '/actions/runs/80', { token: 'synthetic-token', send: async () => new Response(valid, { status: 200 }) });
+  const accepted = await requestWithAbort(root + '/actions/runs/80', { token: 'synthetic-token', send: async () => new Response(valid, { status: 200 }) });
   assert.deepEqual(accepted.body, { x: '\uFFFD' });
-  await assert.rejects(controller.requestApi(root + '/actions/runs/80', { token: 'synthetic-token', send: async () => new Response(invalid, { status: 200 }) }), TypeError);
+  await assert.rejects(requestWithAbort(root + '/actions/runs/80', { token: 'synthetic-token', send: async () => new Response(invalid, { status: 200 }) }), TypeError);
 });
 
 async function diagnosed(f, script, failure = false) {
@@ -561,7 +581,7 @@ test('pre-page API failures name the active query and a safe refusal class once'
     { reason: 'pagination incomplete', response: async () => new Response('{}', { headers: { link: '<https://api.github.com/next>; rel="next"' } }) },
   ];
   for (const sample of samples) {
-    const f = input(), request = ['GET', route, () => controller.requestApi(route, { token: 'synthetic-token-secret', send: sample.response })];
+    const f = input(), request = ['GET', route, () => requestWithAbort(route, { token: 'synthetic-token-secret', send: sample.response })];
     const answer = await diagnosed(f, [...start(f), ...pages().slice(0, 4), request], true);
     assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), [], sample.reason);
     assert.deepEqual(answer.diagnostics, [{ action: 'discovery-refused', query: 'requested', reason: sample.reason }], sample.reason);
@@ -596,7 +616,7 @@ test('discovery records numeric redirect and malformed error statuses before par
   ];
   for (const response of samples) {
     const f = input();
-    const request = ['GET', route, () => controller.requestApi(route, { token: 'synthetic-token-secret', send: async () => response })];
+    const request = ['GET', route, () => requestWithAbort(route, { token: 'synthetic-token-secret', send: async () => response })];
     const answer = await diagnosed(f, [...start(f), list('queued', [run(60, old, 10)]), ...pages().slice(1, 4), request], true);
     assert.match(answer.error, /discovery incomplete/);
     assert.deepEqual(answer.diagnostics, [{ action: 'discovery-refused', query: 'requested', reason: 'HTTP status', httpStatus: response.status }]);
