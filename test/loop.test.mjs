@@ -5846,7 +5846,11 @@ test('judge selection memory covers pull fresh-maker continuing-maker and remova
   const { columnChanges } = await import('../src/workflow/transitions.mjs');
   const { makingJudgeDirectories } = await import('./loop-world.mjs');
   for (const entry of ['pull', 'fresh-maker', 'continuing-maker', 'removal-redo']) {
-    for (const state of ['started', 'deferred', 'eligible', 'changed']) for (const shape of ['single', 'mixed']) await t.test(`${entry}/${state}/${shape}`, async (t) => {
+    const cases = [
+      ...['started', 'deferred', 'eligible', 'changed'].flatMap((state) => ['single', 'mixed'].map((shape) => ({ state, shape }))),
+      ...['started', 'deferred'].map((state) => ({ state, shape: 'mixed', provisioning: true })),
+    ];
+    for (const { state, shape, provisioning } of cases) await t.test(`${entry}/${state}/${shape}${provisioning ? '/provisioning' : ''}`, async (t) => {
       const seeded = state !== 'eligible';
       const oldHead = 'a'.repeat(40);
       const newHead = state === 'changed' ? 'c'.repeat(40) : oldHead;
@@ -5865,7 +5869,8 @@ test('judge selection memory covers pull fresh-maker continuing-maker and remova
         { ...marker('reviewer'), id: 'IC_reviewer_covered', createdAt: '2026-10-01T11:00:01Z' },
         { ...marker('architect', 'needs revision'), id: 'IC_architect_revision', createdAt: '2026-10-01T11:00:02Z' },
       ];
-      const kinds = { change: { ...KINDS.change, judges: ['reviewer', 'architect', 'pm'] } };
+      const kinds = { change: { ...KINDS.change, judges: ['reviewer', 'architect', 'pm'], ...(provisioning ? { provisioning: ['prepare'] } : {}) } };
+      const steps = provisioning ? { prepare: { run: 'true', required: true } } : {};
       // These are fake-repository's documented PR/comment shapes, as in the reviewer's real-L2 probe.
       // Ready with a deleted line selects a fresh maker; Review with closed history selects removal.
       const built = onManualHost(t, { cards: [card], kinds, concurrency: 1, fresh: false, makerHold: false,
@@ -5877,7 +5882,7 @@ test('judge selection memory covers pull fresh-maker continuing-maker and remova
       const root = temporaryDirectory('rigger-selection-entries-');
       const making = makingWorkspaces(root);
       const directories = makingJudgeDirectories(root);
-      const settings = { ...config, concurrency: 1, clock: undefined, kinds };
+      const settings = { ...config, concurrency: 1, clock: undefined, kinds, provisioning: steps };
       const clock = { ...manualClock(), pause: async () => {} };
       let phase = seeded ? 'seed' : entry === 'pull' ? 'target' : 'prepare';
       let seedEnded = false;
@@ -5915,7 +5920,7 @@ test('judge selection memory covers pull fresh-maker continuing-maker and remova
       const sink = { emitter: (context) => {
         const actual = built.sink.emitter(context);
         return { emit: (event, fields = {}) => {
-          if (context.layer === 'L3' && event === 'dispatch' && fields.role !== undefined) {
+          if (context.layer === 'L3' && event === 'dispatch' && fields.role !== undefined && fields.step === undefined) {
             roles.set(context.dispatch, fields.role);
             if (fields.role === 'engineer') makers += 1;
             else attempts.push({ phase, role: fields.role });
@@ -5931,7 +5936,7 @@ test('judge selection memory covers pull fresh-maker continuing-maker and remova
             built.repository.update(733, { closed: false, sha: newHead, comments: targetComments });
           }
           actual.emit(event, fields);
-          if (context.layer === 'L1' && event === 'dispatch.start' && roles.get(context.dispatch) !== 'engineer') {
+          if (context.layer === 'L1' && event === 'dispatch.start' && roles.has(context.dispatch) && roles.get(context.dispatch) !== 'engineer') {
             starts.push({ phase, role: roles.get(context.dispatch) });
           }
           if (context.layer === 'L1' && event === 'dispatch.end' && roles.get(context.dispatch) === 'reviewer' && phase === 'seed') seedEnded = true;
@@ -5944,7 +5949,7 @@ test('judge selection memory covers pull fresh-maker continuing-maker and remova
         } };
       } };
       const decide = (given, outcomes, options = {}) => {
-        const answer = nextAction(given, kinds, undefined, { roles: settings.roles, provisioning: {}, outcomes, sink, ...options });
+        const answer = nextAction(given, kinds, undefined, { roles: settings.roles, provisioning: steps, outcomes, sink, ...options });
         if (answer.action === 'judge') for (const judge of answer.judges.filter(({ role }) => role === 'reviewer')) {
           identities.push({ phase, head: judge.facts.head, pull: judge.facts.pull, revision: judge.facts.revision,
             provider: judge.provider, tier: judge.tier, comment: judge.comment });
@@ -5972,6 +5977,17 @@ test('judge selection memory covers pull fresh-maker continuing-maker and remova
       assert.deepEqual(panels[seeded ? 1 : 0] ?? [], expected, `${entry}/${state}/${shape}: new admission omits only remembered identities and preserves unmatched L2 order`);
       assert.equal(removals, entry === 'removal-redo' ? 1 : 0, `${entry}/${state}/${shape}: the selected removal entry was exercised`);
       assert.equal(makers, entry === 'pull' ? 0 : 1, `${entry}/${state}/${shape}: the selected maker entry was exercised`);
+      if (provisioning) {
+        const judgeSteps = built.l3Events().filter(({ event, step, role }) => event === 'dispatch' && step === 'prepare' && role !== undefined);
+        const completed = new Set(built.events().filter(({ layer, event, exit }) => layer === 'L1' && event === 'dispatch.end' && exit === 0).map(({ dispatch }) => dispatch));
+        assert.ok(['reviewer', 'architect', 'pm'].every((role) => judgeSteps.some((step) => step.role === role && completed.has(step.dispatch))),
+          `${entry}/${state}: each admitted judge completed a real provisioning step before role progress`);
+        // The stand-in records the role it actually executes, independently of L3's panel labels.
+        const native = ['reviewer', 'architect', 'pm'].map((role) => ({ role, count: built.agent.runs().filter((run) => run.role === role).length }));
+        assert.deepEqual(native, [{ role: 'reviewer', count: state === 'deferred' ? 0 : 1 }, { role: 'architect', count: 1 }, { role: 'pm', count: 1 }],
+          `${entry}/${state}: provisioning progress dispatches only admitted judge identities`);
+        assert.deepEqual(judgeSteps.map(({ role }) => role).sort(), ['architect', 'pm', 'reviewer'], 'remembered A acquires no second provisioning step');
+      }
       assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card), seeded && (entry !== 'pull' || shape === 'mixed' || state === 'changed') ? [42, 42] : [42],
         `${entry}/${state}/${shape}: an under-claim retry creates no new claim and remembered identities create no later claim`);
       const expectedOffers = state === 'eligible' || state === 'changed' ? 2 : 1;
