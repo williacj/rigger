@@ -2713,7 +2713,7 @@ async function closedRemoval(here, options = {}) {
   return built;
 }
 
-// proves R-WORK-36
+// proves R-WORK-41
 test('closed cleanup reaches shared real Git removal for every directory class before the ordinary owner action and keeps branches and unrelated trees', async (t) => {
   const here = world(t);
   const made = await here.make(42);
@@ -2759,7 +2759,7 @@ test('closed cleanup reaches shared real Git removal for every directory class b
 });
 
 
-// proves R-WORK-36
+// proves R-WORK-41
 test('actual closed cleanup retains and names every person-locked path while removing eligible siblings and still escalating the card', async (t) => {
   const here = world(t);
   const made = await here.make(42);

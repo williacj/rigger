@@ -1,5 +1,5 @@
 // ABOUTME: Tests `rigger run`: the real bin run in a consumer's repository with the fake `gh` first
-// on PATH, claiming through L3's single pull until the slots are full, making and provisioning each
+// on PATH, draining through L3's freed-slot pulls, making and provisioning each
 // claimed card's workspace, dispatching its maker, printing its outcome, and refusing its own source tree.
 
 import { test } from 'node:test';
@@ -104,15 +104,25 @@ const transitionsIn = (events) => events
   .map(({ card, from, to }) => ({ card, from, to }));
 
 /**
- * The most claims L3 held at once, derived from the events: each `pull` takes a slot and each
- * `slot.release` frees one, in the order recorded.
+ * The most slots L3 held at once: each release pairs with its card's latest pull, and a pull
+ * with no matching release contributes no held interval, as for a merge claim.
  */
 function mostHeld(events) {
+  const pulls = new Map();
+  const deltas = new Map();
+  for (const [at, event] of events.entries()) {
+    if (event.layer !== 'L3') continue;
+    if (event.event === 'pull') pulls.set(event.card, at);
+    if (event.event === 'slot.release' && pulls.has(event.card)) {
+      deltas.set(pulls.get(event.card), 1);
+      deltas.set(at, -1);
+      pulls.delete(event.card);
+    }
+  }
   let held = 0;
   let most = 0;
-  for (const event of events.filter((event) => event.layer === 'L3')) {
-    if (event.event === 'pull') held += 1;
-    if (event.event === 'slot.release') held -= 1;
+  for (const [at] of events.entries()) {
+    held += deltas.get(at) ?? 0;
     most = Math.max(most, held);
   }
   return most;
@@ -121,32 +131,32 @@ function mostHeld(events) {
 /** Four ready cards L2 would dispatch, oldest first #10, #20, #30, #40. */
 const FOUR_READY = { items: [card(30, 'Ready'), card(10, 'Ready'), card(40, 'Ready'), card(20, 'Ready')] };
 
-test('run, given N 1 and four pullable cards, claims exactly one card, which ends in the coding column', async () => {
+test('run, given N 1 and four pullable cards, drains all four into the coding column', async () => {
   const ran = run(FOUR_READY, { concurrency: 1 });
 
-  assert.deepEqual(await columnsOf(ran), { 10: 'Coding', 20: 'Ready', 30: 'Ready', 40: 'Ready' }, ran.err);
+  assert.deepEqual(await columnsOf(ran), { 10: 'Coding', 20: 'Coding', 30: 'Coding', 40: 'Coding' }, ran.err);
 });
 
-test('run, given N 1 and four pullable cards, exits non-zero naming the one card it claimed', () => {
+test('run, given N 1 and four pullable cards, exits non-zero naming all four claimed cards', () => {
   const ran = run(FOUR_READY, { concurrency: 1 });
 
   assert.notEqual(ran.code, 0, ran.out);
   assert.match(ran.err, /claimed #10\b/, ran.err);
-  for (const other of [20, 30, 40]) assert.doesNotMatch(ran.err, new RegExp(`#${other}\\b`), ran.err);
+  for (const other of [20, 30, 40]) assert.match(ran.err, new RegExp(`claimed #${other}\\b`), ran.err);
 });
 
-test('run, given N 3 and four pullable cards, claims exactly three cards, which end in the coding column', async () => {
+test('run, given N 3 and four pullable cards, drains all four into the coding column', async () => {
   const ran = run(FOUR_READY, { concurrency: 3 });
 
-  assert.deepEqual(await columnsOf(ran), { 10: 'Coding', 20: 'Coding', 30: 'Coding', 40: 'Ready' }, ran.err);
+  assert.deepEqual(await columnsOf(ran), { 10: 'Coding', 20: 'Coding', 30: 'Coding', 40: 'Coding' }, ran.err);
 });
 
-test('run, given N 3 and four pullable cards, exits non-zero naming the three cards it claimed', () => {
+test('run, given N 3 and four pullable cards, exits non-zero naming all four claimed cards', () => {
   const ran = run(FOUR_READY, { concurrency: 3 });
 
   assert.notEqual(ran.code, 0, ran.out);
   for (const claimed of [10, 20, 30]) assert.match(ran.err, new RegExp(`claimed #${claimed}\\b`), ran.err);
-  assert.doesNotMatch(ran.err, /#40\b/, ran.err);
+  assert.match(ran.err, /claimed #40\b/, ran.err);
 });
 
 /** Two ready cards L2 would dispatch, oldest first #10, #20. */
@@ -251,8 +261,8 @@ test('run, given a ready card L2 refuses, names the card and the reason', () => 
 test('run dispatches each card\'s selected steps and its maker: the agent CLI runs once per claimed card, and every L1 dispatch event is a step\'s or the maker\'s', async () => {
   const ran = run(FOUR_READY, { concurrency: 3 });
 
-  assert.deepEqual(await columnsOf(ran), { 10: 'Coding', 20: 'Coding', 30: 'Coding', 40: 'Ready' }, ran.err);
-  assert.deepEqual(ran.agentRuns().map((args) => /\/rigger-(\d+)\/\.claude\/agents\/engineer\.md$/.exec(args)?.[1]).sort(), ['10', '20', '30']);
+  assert.deepEqual(await columnsOf(ran), { 10: 'Coding', 20: 'Coding', 30: 'Coding', 40: 'Coding' }, ran.err);
+  assert.deepEqual(ran.agentRuns().map((args) => /\/rigger-(\d+)\/\.claude\/agents\/engineer\.md$/.exec(args)?.[1]).sort(), ['10', '20', '30', '40']);
   const events = eventsOf(ran);
   assert.ok(events.length > 0, 'the run recorded events');
   assert.deepEqual(events.filter((event) => event.layer === 'L1' && event.dispatch !== undefined && !events.some((named) => named.layer === 'L3' && named.event === 'dispatch' && named.dispatch === event.dispatch && (typeof named.step === 'string' || (named.role === 'engineer' && named.tier === 'standard')))), []);
@@ -276,6 +286,7 @@ test('each card run claims from the ready column has one L2 transition event fro
     { card: 10, from: 'ready', to: 'coding' },
     { card: 20, from: 'ready', to: 'coding' },
     { card: 30, from: 'ready', to: 'coding' },
+    { card: 40, from: 'ready', to: 'coding' },
   ], ran.err);
 });
 
@@ -464,15 +475,15 @@ test('given run over a fake board with one ready card and a stand-in maker exiti
   assert.deepEqual(ran.err.split('\n').filter((line) => /#10\b/.test(line)), [makerLine(ran.consumer, 10, 'its maker exited 0 and opened no pull request from rigger-10')]);
 });
 
-test('given run where the stand-in maker exits 0 and opens a pull request on the fake forge, the card ends in Review, run prints that it is in review naming the pull request, and exits 0', SETTLES_WITHIN, async () => {
+test('given run where the stand-in maker opens a pull request with only an owner judge, run prints Review then Owner and exits 0', SETTLES_WITHIN, async () => {
   // The kind's only judge is the owner, so no later card's judges reach this card.
   const settings = { ...config(3), kinds: { change: { ...KINDS.change, judges: ['owner'] } } };
   const ran = runWithAgent(standInAgent({ 10: { engineer: { pr: true } } }), { items: [card(10, 'Ready')] }, { settings });
 
   assert.equal(ran.code, 0, ran.err);
   const columns = Object.fromEntries((await (await ran.fake.model()).operations.readItems()).map((item) => [item.number, item.column]));
-  assert.deepEqual(columns, { 10: 'Review' });
-  assert.deepEqual(ran.out.split('\n').filter((line) => /#10\b/.test(line)), [makerLine(ran.consumer, 10, 'its maker exited 0 and pull request #11 is open from rigger-10, so the card is in review')]);
+  assert.deepEqual(columns, { 10: 'Owner' });
+  assert.deepEqual(ran.out.split('\n').filter((line) => /#10\b/.test(line)), [makerLine(ran.consumer, 10, 'its maker exited 0 and pull request #11 is open from rigger-10, so the card is in review'), 'rigger run: card #10 moved to owner']);
 });
 
 test('given run where the maker exits non-zero, run exits non-zero, and prints the card and the exit code', SETTLES_WITHIN, () => {
@@ -529,15 +540,15 @@ test('given run over three cards where one card\'s required step fails twice, ru
   assert.ok(lines.some((line) => line.startsWith('rigger run: card #20 was held after 2 attempts, each failing before the maker:')), ran.err);
 });
 
-test('run claims no more than N cards, and dispatches roles for no more cards at once than N, derived from the events it wrote', SETTLES_WITHIN, () => {
+test('run drains three cards, dispatching roles for no more cards at once than N, derived from the events it wrote', SETTLES_WITHIN, () => {
   const board = { items: [card(10, 'Ready'), card(20, 'Ready'), card(30, 'Ready')] };
   const ran = runWithAgent(standInAgent(reviewed([10, 20, 30])), board, { settings: config(2) });
 
   assert.equal(ran.code, 0, ran.err);
   const events = eventsOf(ran);
-  assert.equal(events.filter((event) => event.layer === 'L3' && event.event === 'pull').length, 2, JSON.stringify(events));
+  assert.equal(events.filter((event) => event.layer === 'L3' && event.event === 'pull').length, 3, JSON.stringify(events));
   assert.equal(mostHeld(events), 2);
-  assert.deepEqual(events.filter((event) => event.layer === 'L3' && event.event === 'dispatch').map((event) => event.role).sort(), ['engineer', 'engineer', 'reviewer', 'reviewer'], 'no judge was dispatched, so the test proves nothing of the judges');
+  assert.deepEqual(events.filter((event) => event.layer === 'L3' && event.event === 'dispatch').map((event) => event.role).sort(), ['engineer', 'engineer', 'engineer', 'reviewer', 'reviewer', 'reviewer'], 'no judge was dispatched, so the test proves nothing of the judges');
   // Each L1 dispatch.start opens a dispatch for its card and each dispatch.end closes it, in the
   // order recorded; the cards with a dispatch open at once never number more than N.
   const open = new Map();
@@ -649,4 +660,155 @@ test('C9: run with telemetry.push true, whose board drains so run ends, pushes e
   const before = Buffer.from(events.slice(0, -1).map((event) => `${JSON.stringify(event)}\n`).join(''));
   assert.deepEqual(pushed, heldStream(before), said);
   assertPushEnd(ends[0], { outcome: 'pushed', bytes: pushed.length, commit: tip });
+});
+
+// A second Ready card must not be stranded by the CLI's initial slotful pull.
+// proves R-SCHED-6
+test('a no-clock real-bin run at N one claims the second Ready card after the first releases its slot', SETTLES_WITHIN, () => {
+  const agent = standInAgent({ 10: { engineer: { exit: 7 } }, 20: { engineer: { exit: 7 } } });
+  const ran = runWithAgent(agent, TWO_READY, { settings: config(1) });
+  const events = eventsOf(ran);
+  const pulls = events.filter(({ layer, event }) => layer === 'L3' && event === 'pull');
+
+  assert.deepEqual(pulls.map(({ card }) => card), [10, 20], ran.err);
+  const released = events.findIndex(({ event, card }) => event === 'slot.release' && card === 10);
+  assert.ok(released >= 0 && released < events.indexOf(pulls[1]), 'the second claim follows the first slot release');
+  assert.deepEqual(agent.runs().map(({ card }) => card), [10, 20]);
+  assert.equal(mostHeld(events), 1);
+  assert.equal(ran.code, 1, 'both nonzero maker outcomes remain failures');
+  assert.deepEqual([...ran.err.matchAll(/^rigger run: claimed #(\d+) /gm)].map((held) => Number(held[1])), [10, 20], 'outcomes retain claim order across freed-slot pulls');
+});
+
+/** Changes the documented stand-in plan after a role runs, keeping a duplicate-dispatch fault finite. */
+function afterAgentRun(agent, updates) {
+  const program = join(agent.dir, 'claude');
+  writeFileSync(program, [
+    `#!${process.execPath}`,
+    '// ABOUTME: Runs the documented stand-in and changes its next plan to bound a duplicate-dispatch fault.',
+    'if (!process.env.RIGGER_FIXTURE_WARMING) {',
+    `  const { standInMain } = await import(${JSON.stringify(new URL('./stub-claude.mjs', import.meta.url).href)});`,
+    '  await standInMain();',
+    "  const { readFileSync, writeFileSync } = await import('node:fs');",
+    `  const directory = ${JSON.stringify(agent.dir)};`,
+    "  const lines = readFileSync(directory + '/runs.jsonl', 'utf8').trim().split('\\n');",
+    '  const last = JSON.parse(lines.at(-1));',
+    `  const updates = ${JSON.stringify(updates)};`,
+    '  if (Object.hasOwn(updates, last.role)) {',
+    "    const plan = JSON.parse(readFileSync(directory + '/plan.json', 'utf8'));",
+    '    plan[last.card][last.role] = updates[last.role];',
+    "    writeFileSync(directory + '/plan.json', JSON.stringify(plan));",
+    '  }',
+    '}',
+    '',
+  ].join('\n'));
+  warmed(program);
+  return agent;
+}
+
+// A judge without a verdict must not occupy each freed slot ahead of a Ready card.
+// proves R-SCHED-6
+test('a no-clock real-bin run dispatches an unmarked judge once and reaches another Ready card', SETTLES_WITHIN, () => {
+  const agent = afterAgentRun(standInAgent({ 10: { engineer: { pr: true }, reviewer: {} }, 20: { engineer: { exit: 7 } } }), { reviewer: { findings: true } });
+  const settings = { ...config(1), kinds: { change: { ...KINDS.change, judges: ['reviewer'] } } };
+  const ran = runWithAgent(agent, TWO_READY, { settings });
+
+  assert.equal(agent.runs().filter(({ role }) => role === 'reviewer').length, 1, ran.out + ran.err);
+  assert.deepEqual(agent.runs().filter(({ role }) => role === 'engineer').map(({ card }) => card), [10, 20]);
+  assert.deepEqual(eventsOf(ran).filter(({ event }) => event === 'pull').map(({ card, queueDepth }) => [card, queueDepth]), [[10, 1], [20, 0]], 'the under-claim judge runs once and its repeated answer takes no claim or queue position');
+  assert.equal(ran.code, 1, 'the second maker failure is still presented');
+});
+
+// A zero-exit maker leaving no PR must not repeat ahead of the next Ready card.
+// proves R-SCHED-6
+test('a no-clock real-bin run dispatches an unchanged top-level maker once', SETTLES_WITHIN, () => {
+  const agent = afterAgentRun(standInAgent({ 10: { engineer: {}, reviewer: { findings: true } }, 20: { engineer: { exit: 7 } } }), { engineer: { pr: true } });
+  const settings = { ...config(1), kinds: { change: { ...KINDS.change, judges: ['reviewer'] } } };
+  const ran = runWithAgent(agent, TWO_READY, { settings });
+
+  assert.deepEqual(agent.runs().filter(({ role }) => role === 'engineer').map(({ card }) => card), [10, 20], ran.out + ran.err);
+  assert.deepEqual(eventsOf(ran).filter(({ event }) => event === 'pull').map(({ card, queueDepth }) => [card, queueDepth]), [[10, 1], [20, 0]], 'the repeated maker answer takes no claim or queue position');
+  assert.equal(ran.code, 1, 'the second maker failure is still presented');
+});
+
+// L3's merge-pull contract has no matching release; it must not inflate a real drain's slots.
+// proves R-SCHED-2, R-SCHED-6
+test('a no-clock real-bin run at N three drains four Ready cards and the slot counter pairs only released pulls', SETTLES_WITHIN, () => {
+  const numbers = [10, 20, 30, 40];
+  const agent = standInAgent(Object.fromEntries(numbers.map((number) => [number, { engineer: { exit: 7 } }])));
+  const ran = runWithAgent(agent, FOUR_READY, { settings: config(3) });
+  const events = eventsOf(ran);
+
+  assert.deepEqual(agent.runs().filter(({ role }) => role === 'engineer').map(({ card }) => card).sort((a, b) => a - b), numbers, ran.out + ran.err);
+  assert.equal(mostHeld(events), 3, 'only pulls paired with a slot release count as held slots');
+  // Independent literals from Architecture's L3 pull/slot.release contract: each of these is
+  // a merge claim after the maker's release, so none holds a slot despite sharing its card.
+  const mergePulls = numbers.map((card) => ({ layer: 'L3', event: 'pull', card, queueDepth: 0, inFlight: 0 }));
+  assert.equal(mostHeld([...events, ...mergePulls]), 3, 'slot-free merge pulls add no held interval');
+  assert.equal(ran.code, 1, 'the four nonzero maker outcomes remain failures');
+});
+
+// A CLI run must use the same single start boundary L3's held-kill controls establish.
+// proves R-SCHED-2, R-SCHED-6
+test('a no-clock real-bin run at N two records one run.start before its first pull', SETTLES_WITHIN, () => {
+  const agent = standInAgent({ 10: { engineer: { exit: 7 } }, 20: { engineer: { exit: 7 } } });
+  const ran = runWithAgent(agent, TWO_READY, { settings: config(2) });
+  const events = eventsOf(ran).filter(({ layer }) => layer === 'L3');
+  assert.deepEqual(events.filter(({ event }) => event === 'run.start').map(({ concurrency }) => concurrency), [2]);
+  assert.equal(events[0].event, 'run.start', 'the start precedes every pull trigger and claim');
+  assert.deepEqual(events.filter(({ event }) => event === 'pull').map(({ card }) => card), [10, 20]);
+  assert.equal(mostHeld(events), 2);
+  assert.equal(ran.code, 1);
+});
+
+// A nested pull's unrecorded release must retain its outcome beside earlier completed claims.
+// proves R-SCHED-6, R-RECORD-9
+test('a no-clock real-bin run retains nested failed and successful pull outcomes in claim order and fails despite delivered cards', SETTLES_WITHIN, () => {
+  const preload = join(temporaryDirectory('rigger-run-nested-release-'), 'refuse-release.mjs');
+  writeFileSync(preload, [
+    "// ABOUTME: Refuses one nested card's release record while keeping every other append live.",
+    "import fs from 'node:fs'; import { syncBuiltinESMExports } from 'node:module';",
+    'const append = fs.appendFileSync; let refused = false;',
+    "fs.appendFileSync = (path, bytes, ...rest) => { const row = String(path).endsWith('/.rigger/events.jsonl') ? JSON.parse(String(bytes)) : {};",
+    "if (!refused && row.layer === 'L3' && row.event === 'slot.release' && row.card === 20) { refused = true; throw new Error('nested release record refused'); }",
+    'return append(path, bytes, ...rest); }; syncBuiltinESMExports();',
+  ].join('\n'));
+  const previous = process.env.NODE_OPTIONS;
+  process.env.NODE_OPTIONS = [previous, `--import=${preload}`].filter(Boolean).join(' ');
+  let ran;
+  try {
+    ran = runWithAgent(standInAgent({ 10: { engineer: { pr: true } }, 20: { engineer: { pr: true } } }), TWO_READY, {
+      settings: { ...config(1), kinds: { change: { ...KINDS.change, judges: ['owner'] } } },
+    });
+  } finally {
+    if (previous === undefined) delete process.env.NODE_OPTIONS;
+    else process.env.NODE_OPTIONS = previous;
+  }
+  assert.equal(ran.code, 1, ran.out + ran.err);
+  const lines = ran.err.split('\n');
+  const outcomes = lines.filter((line) => /^rigger run: (claimed|card) #/.test(line) && !line.includes('slot was released'));
+  assert.equal(outcomes.length, 4, ran.err);
+  assert.ok(reviewLine(ran.consumer, 10).test(outcomes[0]), ran.err);
+  assert.equal(outcomes[1], 'rigger run: card #10 moved to owner', ran.err);
+  assert.ok(reviewLine(ran.consumer, 20).test(outcomes[2]), ran.err);
+  assert.equal(outcomes[3], 'rigger run: card #20 moved to owner', ran.err);
+  assert.equal(lines.filter((line) => line.includes('nested release record refused')).length, 1, ran.err);
+});
+
+// Once keeps its literal single-card boundary even when run would drain the four-card board.
+// proves R-SCHED-2, R-SCHED-6
+test('real-bin once at N three with four Ready cards fires one pull claims one card and records no run.start', SETTLES_WITHIN, async () => {
+  const consumer = consumerRepository(3);
+  const dir = temporaryDirectory('rigger-once-four-gh-');
+  const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, ...FOUR_READY } });
+  const agent = installAgentCli(dir);
+  const ran = spawnSync(process.execPath, [bin, 'once'], { cwd: consumer, encoding: 'utf8', timeout: SETTLES_WITHIN.timeout,
+    env: { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), PATH: [dir, process.env.PATH].join(delimiter) },
+  });
+  assert.equal(ran.error, undefined);
+  const events = readEvents(join(consumer, '.rigger')).filter(({ layer }) => layer === 'L3');
+  assert.deepEqual(events.filter(({ event }) => event === 'trigger').map(({ trigger }) => trigger), ['pull']);
+  assert.deepEqual(events.filter(({ event }) => event === 'pull').map(({ card }) => card), [10]);
+  assert.equal(events.filter(({ event }) => event === 'run.start').length, 0);
+  assert.equal(agent.runs().length, 1);
+  assert.deepEqual((await (await fake.model()).operations.readItems()).map(({ number, column }) => [number, column]).sort((a, b) => a[0] - b[0]), [[10, 'Coding'], [20, 'Ready'], [30, 'Ready'], [40, 'Ready']]);
 });
