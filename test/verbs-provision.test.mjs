@@ -18,7 +18,7 @@ import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { fixture, GIT, gitUnansweredAdd, scratch, withFirstOnPath } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { standInAgent } from './stub-claude.mjs';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 /** The stand-in agent every maker in this file runs as, on the PATH each verb runs under. */
 const agent = standInAgent();
@@ -87,8 +87,23 @@ function world(t, { items, concurrency = 3, steps = ONE_STEP.steps, listed = ONE
       writeFileSync(join(evidence, 'verb.stderr'), ran.stderr ?? '');
       writeFileSync(join(evidence, 'verb.json'), JSON.stringify({ pid: ran.pid, status: ran.status, signal: ran.signal, error: ran.error?.stack }));
       if (existsSync(stream)) writeFileSync(join(evidence, 'events.jsonl'), readFileSync(stream));
-      // The CI log retains the same originals after the hosted runner's filesystem disappears.
-      t.diagnostic(`1216 originals ${evidence} ${JSON.stringify(Object.fromEntries(readdirSync(evidence).map((file) => [file, readFileSync(join(evidence, file)).toString('base64')])) )}`);
+      publishCloseEvidence(t, evidence);
+      const history = readFileSync(join(evidence, 'trace.jsonl'), 'utf8').trimEnd().split('\n').map(JSON.parse);
+      const recorded = readEvents(join(target, '.rigger'));
+      const closed = recorded.find(({ event }) => event === 'admission.close');
+      for (const number of [20, 30]) {
+        const dispatched = recorded.find(({ event, card, role }) => event === 'dispatch' && card === number && role === 'engineer');
+        const start = recorded.find(({ event, dispatch }) => event === 'dispatch.start' && dispatch === dispatched?.dispatch);
+        const worker = history.find(({ event, cwd }) => event === 'waiter.start' && cwd === start?.workspace);
+        const ended = recorded.find(({ event, dispatch }) => event === 'dispatch.end' && dispatch === start?.dispatch);
+        const exited = history.find(({ event, pid }) => event === 'worker.exit' && pid === worker?.pid);
+        const observed = history.find(({ event, pid }) => event === 'waiter.close' && pid === worker?.pid);
+        const premise = `wait-for-close fixture premise failed for sibling #${number}; originals ${evidence}\n${ran.stderr}`;
+        assert.equal(ended?.exit, 0, premise);
+        assert.equal(exited?.code, 0, premise);
+        assert.ok(closed && observed, premise);
+        assert.deepEqual(observed.record, closed, premise);
+      }
     }
     assert.equal(ran.error, undefined);
     return { out: ran.stdout, err: ran.stderr, code: ran.status, said: `exited ${ran.status}: ${ran.stdout}${ran.stderr}` };
@@ -104,10 +119,21 @@ function afterAdmissionClose(target, evidence) {
     "const fs = require('node:fs');",
     `const stream = ${JSON.stringify(stream)};`,
     `const trace = (${closeWorldObserver.toString()})(stream, ${JSON.stringify(evidence)});`,
-    "const closed = () => trace.read(() => fs.readFileSync(stream, 'utf8')).trimEnd().split('\\n').some((line) => trace.parse(line).event === 'admission.close');",
+    "const closed = () => trace.read(() => fs.readFileSync(stream, 'utf8')).split('\\n').slice(0, -1).map((line) => trace.parse(line)).some((record) => record.event === 'admission.close');",
     'function untilClosed() { if (!closed()) setImmediate(untilClosed); } untilClosed();',
   ].join('\n');
   return standInAgent({ '*': { engineer: { exec: [process.execPath, '-e', script] } } });
+}
+
+/** Bounded log records preserve every original through hosted-runner teardown without one giant line. */
+function publishCloseEvidence(t, evidence) {
+  for (const file of readdirSync(evidence)) {
+    const bytes = readFileSync(join(evidence, file));
+    t.diagnostic(JSON.stringify({ tool: '1216-evidence', evidence, file, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }));
+    for (let offset = 0; offset < bytes.length; offset += 1024) {
+      t.diagnostic(JSON.stringify({ tool: '1216-evidence', evidence, file, offset, base64: bytes.subarray(offset, offset + 1024).toString('base64') }));
+    }
+  }
 }
 
 /** Observation only: one append orders records across processes; read ordinals coalesce identical snapshots. */
@@ -122,7 +148,10 @@ function closeWorldObserver(stream, evidence, engine = false) {
   const errorOf = (error) => ({ name: error.name, code: error.code, message: error.message, stack: error.stack });
   const record = (event, fields = {}) => append(join(evidence, 'trace.jsonl'), `${JSON.stringify({ pid: process.pid, sequence: ++sequence, at: String(process.hrtime.bigint()), event, ...fields })}\n`);
   const flush = () => {
-    if (current) record('read.outcome', current);
+    if (current) {
+      const { text, ...outcome } = current;
+      record('read.outcome', { ...outcome, bytes: Buffer.byteLength(text) });
+    }
     current = undefined;
   };
   record(engine ? 'engine.start' : 'waiter.start', { cwd: process.cwd() });
@@ -720,4 +749,88 @@ test('given that world, #10 and #30 are in the coding column after rigger run', 
   const columns = await columnsOf(here);
   assert.equal(columns[10], 'Coding', ran.said);
   assert.equal(columns[30], 'Coding', ran.said);
+});
+
+/** A scripted append boundary, using the actual native read and generated waiter, with retained originals. */
+function nativeCloseWaiter(t, number, fault = 'partial') {
+  const directory = scratch(t);
+  const target = join(directory, 'target');
+  const workspace = join(directory, 'widgets-worktrees', `rigger-${number}`);
+  const evidence = join(process.env.RIGGER_1216_EVIDENCE_ROOT ?? join(dirname(process.env.TMPDIR ?? '/tmp'), 'rigger-1216-evidence'), 'controls', randomUUID());
+  mkdirSync(join(target, '.rigger'), { recursive: true });
+  mkdirSync(workspace, { recursive: true });
+  mkdirSync(evidence, { recursive: true, mode: 0o700 });
+  const stream = join(target, '.rigger', 'events.jsonl');
+  // These are independent fixture records, not production-derived expected values.
+  const runId = '12345678-1234-4123-8123-123456789abc';
+  const envelope = { ts: '2026-11-05T00:00:00.000Z', run: runId };
+  const dispatch = 'd-12345678-1234-4123-8123-123456789abc';
+  const before = JSON.stringify({ ...envelope, layer: 'L3', event: 'dispatch', card: number, dispatch, role: 'engineer', tier: 'standard' }) + '\n';
+  const starting = JSON.stringify({ ...envelope, layer: 'L1', event: 'dispatch.start', card: number, dispatch, command: process.execPath, timeout: SETTLES_WITHIN, workspace }) + '\n';
+  const partial = before + starting.slice(0, starting.indexOf('dispatch.start') + 'dispatch.st'.length);
+  const complete = before + starting + JSON.stringify({ ...envelope, layer: 'L3', event: 'admission.close', kind: 'hold', id: '0123456789abcdef0123456789abcdef', name: 'hold-0123456789abcdef0123456789abcdef.json', reason: 'card #10 held after two controlled step failures' }) + '\n';
+  assert.ok(complete.startsWith(partial), 'the controlled append must preserve every observed byte');
+  const initial = fault === 'malformed' ? before + '{broken}\n' : partial;
+  if (fault === 'read') mkdirSync(stream);
+  else writeFileSync(stream, initial);
+  writeFileSync(join(evidence, 'fixture.json'), JSON.stringify({ fault, stream, kind: fault === 'read' ? 'directory' : 'file' }));
+  if (fault !== 'read') writeFileSync(join(evidence, 'before.jsonl'), initial);
+  const maker = afterAdmissionClose(target, evidence);
+  const [command, flag, body] = maker.act('*', 'engineer').exec;
+  const boundary = fault === 'partial' ? [
+    "const boundaryFs = require('node:fs');",
+    'const actualRead = boundaryFs.readFileSync; let supplied = false;',
+    `boundaryFs.readFileSync = function(path, ...args) {
+      const bytes = actualRead.call(this, path, ...args);
+      if (path === ${JSON.stringify(stream)} && !supplied) {
+        supplied = true;
+        boundaryFs.appendFileSync(path, ${JSON.stringify(complete.slice(partial.length))});
+        process.stdout.write(JSON.stringify({ event: 'controlled.read-before-append-return', observed: Buffer.from(bytes).toString('base64'), committed: Buffer.from(actualRead(path)).toString('base64') }) + '\\n');
+      }
+      return bytes;
+    };`,
+  ].join('\n') : '';
+  const ran = spawnSync(command, [flag, `${boundary}\n${body}`], { cwd: workspace, env: process.env, encoding: 'utf8', timeout: SETTLES_WITHIN, killSignal: 'SIGKILL' });
+  writeFileSync(join(evidence, 'worker.stdout'), ran.stdout ?? '');
+  writeFileSync(join(evidence, 'worker.stderr'), ran.stderr ?? '');
+  writeFileSync(join(evidence, 'worker.json'), JSON.stringify({ title: t.name, number, pid: ran.pid, status: ran.status, signal: ran.signal, error: ran.error?.stack }));
+  if (fault !== 'read') writeFileSync(join(evidence, 'after.jsonl'), readFileSync(stream));
+  const trace = readFileSync(join(evidence, 'trace.jsonl'), 'utf8').trimEnd().split('\n').map(JSON.parse);
+  publishCloseEvidence(t, evidence);
+  return { ran, evidence, trace, partial, complete, runId };
+}
+
+// Native wiring counterpart: the VM controls in closed-before-refill.test.mjs specify the byte/barrier decision.
+// A real file read and actual worker exit distinguish an observation failure from a simulated exception.
+test('native sibling waiters establish the close after a forced partial append observation', async (t) => {
+  for (const order of [[20, 30], [30, 20]]) {
+    for (const number of order) await t.test(`sibling ${number}, completion order ${order.join('/')}`, (cell) => {
+      const { ran, trace, partial, complete, evidence, runId } = nativeCloseWaiter(cell, number);
+      const observation = JSON.parse(ran.stdout);
+      assert.equal(Buffer.from(observation.observed, 'base64').toString(), partial, 'the real read returned the controlled incomplete record');
+      assert.equal(Buffer.from(observation.committed, 'base64').toString(), complete, 'the append completed before the waiter parsed its saved observation');
+      assert.equal(ran.error, undefined, ran.error?.stack);
+      assert.equal(ran.signal, null, 'the waiter reached an actual exit rather than its timeout');
+      assert.equal(ran.status, 0, `wait-for-close premise failed; originals ${evidence}\n${ran.stderr}`);
+      assert.equal(trace.filter(({ event, record }) => event === 'waiter.close' && record.run === runId).length, 1);
+      assert.ok(trace.some(({ event, ordinal }) => event === 'waiter.close' && ordinal > 1), 'the incomplete first observation cannot establish the close');
+      assert.ok(trace.some(({ event, code }) => event === 'worker.exit' && code === 0));
+    });
+  }
+});
+
+// Native wiring counterparts: the VM read-error and complete-malformed-record controls retain each decision.
+test('native sibling read and complete-record failures remain failed premises with their original diagnostics', async (t) => {
+  for (const fault of ['read', 'malformed']) {
+    for (const number of [20, 30]) await t.test(`sibling ${number}, ${fault}`, (cell) => {
+      const { ran, trace, evidence } = nativeCloseWaiter(cell, number, fault);
+      assert.equal(ran.error, undefined, ran.error?.stack);
+      assert.equal(ran.signal, null);
+      assert.equal(ran.status, 1, `a damaged waiter must remain an actual failed premise; ${evidence}`);
+      assert.match(ran.stderr, fault === 'read' ? /EISDIR/ : /SyntaxError/);
+      assert.ok(trace.some(({ event, error }) => event === 'worker.exception' && (fault === 'read' ? error.code === 'EISDIR' : error.name === 'SyntaxError')));
+      assert.ok(trace.some(({ event, code }) => event === 'worker.exit' && code === 1));
+      assert.equal(trace.some(({ event }) => event === 'waiter.close'), false);
+    });
+  }
 });
