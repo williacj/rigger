@@ -31,3 +31,9 @@ Cases met under row P13, each as the merge base answers or failing closed for a 
 - An Owner card one of whose agent markers no longer governs: it moves to Review, reading no forge
   fact, as at the merge base.
 - A Coding card whose judges are all sound: it reads mergeability alone, as at the merge base.
+
+The real proof ran under a widened declaration: `sandbox_mode = "danger-full-access"` in the
+disposable fixture's own `.codex/config.toml` only, under M7-U39. It proves nothing about the default
+declaration or Codex maker delivery. Under `workspace-write` the fixture's first Codex maker could
+not commit, because the worktree's Git metadata lies outside its writable roots, and #1230 holds that
+defect. The first card stays in Owner as evidence, and the retry ran on a second card.
