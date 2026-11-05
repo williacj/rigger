@@ -153,6 +153,46 @@ own each attempt's exact command, source, load, actual child result and original
 | `affected-repaired` | Both complete affected files pass: tests=53, pass=53, fail=0. All 179 emitted original files reconstruct byte-exact with matching SHA-256 after fixture teardown. |
 | `repair-commit` | Full hook refused the introduced native-control spawn's implicit environment: tests=4833, pass=4832, fail=1. No commit was created or hook bypassed. |
 | `explicit-environment-green` | The exact git-environment census assertion passes after naming the same inherited environment explicitly. |
+| `repair-commit-fixed` | Normal full deterministic hook green: tests=4833, pass=4833, fail=0; load before/after 8.6304 / 5.6265. Clean repaired head 60c3eb246493bcb7bc2b3adcbf4d9e24d7295697. |
+| `receipt-admission` | Overbroad closed-guard deletion re-admitted held #10 until the 60-second runner bound: actual exit 137, named count=0, no verdict. Restored hashes/status are clean; retained noncredit. |
+| `framing-decision-green` | The explicit pure counterpart checks incomplete JSON and a balanced close lacking its newline, for both siblings/orders, without starting a host process. |
+
+## Guarded regression receipts
+
+The six receipts below were measured at clean repaired head
+`60c3eb246493bcb7bc2b3adcbf4d9e24d7295697`, before the additive pure-counterpart and journal
+completion. `guarded-receipt-index.json` owns their complete anchors, failures and restoration
+hashes. Each `<phase>/stdout` is the complete `mutation:receipt` report, and
+`<phase>/selected-originals/{1,2,3}/` preserves actual harness argv, ref/status/diff,
+byte-complete source before/after, raw stdout/stderr and actual PID/status/signal BEFORE parser
+or fixture teardown. Originals were reopened after the tool removed its temporary worktree.
+All selected harness exits are 0/1/0; all restored source hashes match and source status is empty.
+Final-head receipt execution is recorded in the PR, rather than silently inheriting these refs.
+
+| Phase | Semantic deletion and named assertion | Original / mutant / restored named counts |
+| --- | --- | --- |
+| `receipt-framing` | Remove newline framing; all four native sibling/order exit assertions see 1 instead of 0. | 5 / 5 / 5 |
+| `receipt-complete_record` | Short-circuit after a close; malformed complete damage loses its expected SyntaxError. | 1 / 1 / 1 |
+| `receipt-barrier` | Stop polling without a close; the no-close control sees a released barrier instead of a pending observation. | 1 / 1 / 1 |
+| `receipt-read_failure` | Swallow the read error; the caller loses the original EIO. | 1 / 1 / 1 |
+| `receipt-premise` | Exit 17 before observing a close; the ORIGINAL output-only test fails the independent successful-premise assertion. | 1 / 1 / 1 |
+| `receipt-admission-bounded` | Allow only #40 through closed admission; the ORIGINAL refill test observes five pulls instead of four. | 1 / 1 / 1 |
+
+The receipt's applied anchor, readback and diff are necessary, but the trace establishes its
+effect. In `receipt-premise`, only the mutant's two waiters actually exit 17; original/restored
+waiters exit 0. In `receipt-admission-bounded`, the mutant records an actual pull of #40 AFTER the
+committed close, and all three workers exit 0. Original/restored streams contain no post-close
+pull and only the two successful siblings. Thus a failed fixture premise is not misreported as
+an engine invariant breach, and the product oracle still rejects a real new claim with valid
+premises. The overbroad timed-out admission attempt remains no verdict; these facts come from
+the bounded control, not from rehabilitating a timeout.
+
+The explicit pure framing counterpart is additive coverage of the same byte/barrier decision
+exercised by the native control. Its final-head framing deletion is separate from the native
+receipt. New native comments name exact pure counterpart titles and the actual file-read/error
+and process-exit premises. Node24 verification was deferred until that final head; the earlier
+planned `node24-repaired` command was not executed and earns no credit. No native allowance or
+historical proof is transferred by that deferral.
 
 The fault search is retained in `causal-search.txt`: the live wait-for-close observer is the scoped
 fixture. The two loop-test matches read report snapshots after explicit test conditions; other

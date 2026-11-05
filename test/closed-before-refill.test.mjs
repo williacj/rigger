@@ -128,3 +128,32 @@ test('a complete malformed record after a close still fails the waiter premise',
   assert.ok(here.records.some(({ event, line }) => event === 'parse.error' && line === '{broken}'));
   t.diagnostic(JSON.stringify(here.original()));
 });
+
+// A plausible break parses an unfinished tail or accepts a balanced close before its terminating newline.
+test('unfinished records cannot fail or release either sibling before a complete close', (t) => {
+  const tail = '{"run":"run-1","event":"dispatch.st';
+  const completed = '{"run":"run-1","event":"dispatch.start"}\n';
+  for (const [observed, finished] of [[before + tail, before + completed + close], [before + close.slice(0, -1), before + close]]) {
+    assert.ok(finished.startsWith(observed), 'each controlled stream only grows');
+    for (const order of [[20, 30], [30, 20]]) {
+      const siblings = new Map(order.map((number) => [number, waiter([observed, finished], number)]));
+      for (const here of siblings.values()) {
+        t.diagnostic(JSON.stringify(here.original()));
+        assert.equal(here.error, undefined, 'an unfinished record is not a malformed complete record');
+        assert.equal(here.pending.length, 1, 'an unfinished close cannot release the barrier');
+        assert.equal(here.records.some(({ event }) => event === 'waiter.close'), false);
+      }
+      const completedOrder = [];
+      for (const number of order) {
+        const here = siblings.get(number);
+        assert.equal(here.advance(), undefined);
+        assert.equal(here.pending.length, 0);
+        assert.ok(here.records.some(({ event, ordinal }) => event === 'waiter.close' && ordinal === 2));
+        assert.ok([...here.files.values()].some((bytes) => bytes.equals(Buffer.from(observed))), 'the complete unfinished observation survives');
+        completedOrder.push(number);
+        t.diagnostic(JSON.stringify(here.original()));
+      }
+      assert.deepEqual(completedOrder, order);
+    }
+  }
+});

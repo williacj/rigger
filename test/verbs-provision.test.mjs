@@ -800,7 +800,8 @@ function nativeCloseWaiter(t, number, fault = 'partial') {
   return { ran, evidence, trace, partial, complete, runId };
 }
 
-// Native wiring counterpart: the VM controls in closed-before-refill.test.mjs specify the byte/barrier decision.
+// Wiring counterpart: "unfinished records cannot fail or release either sibling before a complete close"
+// in closed-before-refill.test.mjs proves the byte/barrier decision without a host.
 // A real file read and actual worker exit distinguish an observation failure from a simulated exception.
 test('native sibling waiters establish the close after a forced partial append observation', async (t) => {
   for (const order of [[20, 30], [30, 20]]) {
@@ -819,7 +820,9 @@ test('native sibling waiters establish the close after a forced partial append o
   }
 });
 
-// Native wiring counterparts: the VM read-error and complete-malformed-record controls retain each decision.
+// Wiring counterparts in closed-before-refill.test.mjs: "a read failure preserves its original error
+// and prior bytes without observing a close" and "a malformed complete record remains visible damage
+// rather than a successful waiter". Real file errors and actual child exits are the native premises.
 test('native sibling read and complete-record failures remain failed premises with their original diagnostics', async (t) => {
   for (const fault of ['read', 'malformed']) {
     for (const number of [20, 30]) await t.test(`sibling ${number}, ${fault}`, (cell) => {
