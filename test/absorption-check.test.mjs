@@ -23,43 +23,6 @@ const { bullets, MIN_CLAUSES } = await import(pathToFileURL(script).href);
  */
 const run = (...args) => spawnSync(process.execPath, [script, ...args], { encoding: 'utf8' });
 
-test('a bare invocation is refused rather than exiting 0 having compared nothing', () => {
-  // The defect. A caller reads exit 0 as the check having passed, and it never ran.
-  const { status } = run();
-
-  assert.notEqual(status, 0);
-});
-
-test('a single document path is refused, because one document compares against nothing', () => {
-  const { status } = run('ARCHITECTURE.md');
-
-  assert.notEqual(status, 0);
-});
-
-test('--self-test carrying a further argument is refused rather than silently ignoring it', () => {
-  // Two forms are accepted and this is neither. A caller who passed a document path alongside
-  // --self-test asked for something the script does not do, and watched it self-test instead.
-  //
-  // Two arguments is also the shape of the two-document form, so this vector is the one that
-  // tells whether the arity check alone is enough. An option is not a document path: read as
-  // one, it is refused for the wrong reason, as a file nothing answers to, and the caller is
-  // told nothing about what the script accepts.
-  const { status, stderr } = run('--self-test', 'ARCHITECTURE.md');
-
-  assert.notEqual(status, 0);
-  assert.match(stderr, /no such invocation/);
-  assert.match(stderr, /<source\.md> <destination\.md>/);
-});
-
-test('three document paths are refused rather than comparing the first two', () => {
-  // A throw out of the two-document form also exits non-zero, so a bare exit code cannot tell a
-  // refusal from an accident. The refusal is what is asserted here.
-  const { status, stderr } = run('ARCHITECTURE.md', 'docs/spec/requirements.md', 'README.md');
-
-  assert.notEqual(status, 0);
-  assert.match(stderr, /no such invocation/);
-});
-
 // Every shape of argument vector that is neither accepted form: too few, too many, an
 // unrecognised option, an option where a path belongs, and an option twice over.
 const REFUSED = [
@@ -220,14 +183,6 @@ test('--self-test exits 0 and prints the bytes it printed on 65a7de7', () => {
 
   assert.equal(status, 0);
   assert.equal(stdout, SELF_TEST_OUTPUT);
-});
-
-test('--self-test prints one result line per case', () => {
-  // Two cases are written into the script, and a result line is what a reader counts. A case
-  // that stopped running would leave the count short while every line printed still read PASS.
-  const { stdout } = run('--self-test');
-
-  assert.equal(stdout.split('\n').filter((line) => /^(PASS|FAIL)\b/.test(line)).length, 2);
 });
 
 test('the report a working two-document invocation prints is the report 65a7de7 printed', () => {
