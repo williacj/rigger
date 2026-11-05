@@ -295,3 +295,38 @@ Their oracle is the named ancestor and its recorded signal, independently suppli
 and the observed absence of continuation in the controlled host process. The PR holds guarded
 mutation receipts at the committed head. The initial stop function shell was empty before its
 first meaningful red, just as the event decision's shell was.
+
+## Round 2: D29 host declarations
+
+The reviewer’s [B1 finding](https://github.com/williacj/rigger/pull/1204#issuecomment-6648391689)
+ruled all 25 acceptance items met at 45422a3e and required D29 rule 11 declarations for
+four host-tier identities. The architect [ruled sound](https://github.com/williacj/rigger/pull/1204#issuecomment-6648340133)
+at that head. This revision resolves B1 with comment additions only, under the coordinator’s
+explicit grant. No existing test line, title, assertion or executable body changes. It adds no
+host-declaration checker; the reviewer’s carry note puts that pre-existing gap outside this card.
+
+I read D29 rule 11 and its rule 3.5 timer definition in full, the four test bodies, their
+helpers and the named deterministic counterparts before adding the declarations. The real
+process controls use spawnSync timeouts, not a setTimeout/setInterval/timers/AbortSignal timer
+as D29 rule 3.5 defines one, so their declarations do not claim a real deadline.
+
+| Identity (round-1 line) | Declared reason and deterministic decision evidence |
+|---|---|
+| CI assigns portable candidate, selected macOS and protected-main regression lanes with Node 26 (29) | Wiring. Explicitly process-free and retained under D30 rule 3’s awaiting-split allowance; asserts declared topology, with no runtime Rigger decision. The runner-output wiring and R8 unrelated-runner tests are deterministic configuration counterparts. |
+| self-hosted job guard exits zero only for allowed events in source and installed JS form (1306) | Wiring. R9 allowed/refused exported-function tests independently prove the event decisions; this host control connects them to CJS/installed-JS process exits. |
+| actual plan runtime reads the runner variable and publishes only allowlisted JSON or no output on refusal (1336) | Wiring. R1–R3, R5, R6 and R6a prove selection, fork handling, refusal and unused-value decisions; the host control connects environment input and output-file bytes to those decisions. |
+| opted-in refused hook ends only its controlled Worker ancestor before continuation (1393) | OS behaviour. The injected exact-Worker signal test proves the ancestor/signal decision; R9 allowed/refused tests prove the event decision. This host control observes actual SIGKILL and continuation on a recorded surrogate. |
+
+All named counterparts live in test/macos-runner.test.mjs. The host and conversion lists in
+test/suite.sh name no such file, so D29 rule 1 places it in the deterministic tier, outside
+D30’s conversion list. The first declaration does not invent a real-process need for its
+process-free check; it records the existing awaiting-split exception and no runtime decision.
+No new tests, product-requirement declarations, behaviour or mutation claims are introduced.
+
+Compared with proof head ecebafbb, the head differs only in these four declaration blocks and
+this journal. Guard and ci.yml remain byte-identical to the installed/proved implementation.
+The owner’s measurement and hosted/Mini/hosted runs remain historical ecebafbb evidence, with
+that exact difference stated in the PR. The owner’s hosted proof and marker must bind the final
+head. The retained full suite, affected named files, fresh clone, preflight and PR-body-check
+outputs for this revision are recorded in the PR handoff; no verification result is inferred
+from these comments alone.

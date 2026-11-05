@@ -26,6 +26,10 @@ const LIVE = join(ROOT, '.github', 'workflows', 'rigger-gate.yml');
 const TEMPLATE = join(ROOT, 'templates', 'github', 'workflows', 'rigger-gate.yml');
 const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 
+// Host reason: wiring; this process-free configuration check remains in an awaiting-split file (D30 rule 3).
+// Rigger decision: none; this check reads declared job and Node wiring without evaluating CI_POLICY.
+// Deterministic wiring counterpart: test/macos-runner.test.mjs :: runner wiring supplies exactly the three macOS jobs from the one plan output.
+// Deterministic wiring counterpart: test/macos-runner.test.mjs :: R8: unrelated jobs keep their literal base runners.
 test('CI assigns portable candidate, selected macOS and protected-main regression lanes with Node 26', () => {
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
   assert.deepEqual(Object.keys(ci.jobs).sort(), ['cancel_superseded', 'check', 'demo', 'fast', 'full_host', 'full_ordinary', 'nightly', 'plan']);
@@ -1303,6 +1307,9 @@ test('actual local Git authenticates forward tested bases and refuses nonancesto
   }
 });
 
+// Host reason: wiring; executes source CJS and installed-form JS to tie event decisions to CLI exits.
+// Ordinary decision counterpart: test/macos-runner.test.mjs :: R9: hook allows only the named trusted events and a same-repository pull request.
+// Ordinary decision counterpart: test/macos-runner.test.mjs :: R9: hook refuses unknown events forks deleted heads and unavailable event files.
 test('self-hosted job guard exits zero only for allowed events in source and installed JS form', (t) => {
   const directory = temporaryDirectory('rigger-job-guard-', { context: t });
   const source = join(ROOT, '.github/scripts/self-hosted-job-guard.cjs');
@@ -1333,6 +1340,11 @@ test('self-hosted job guard exits zero only for allowed events in source and ins
   }
 });
 
+// Host reason: wiring; connects the child runtime's environment and output file to the in-process plan decisions.
+// Ordinary decision counterpart: test/macos-runner.test.mjs :: R1-R3: same-repository full runs emit the selected allowlisted runner as JSON.
+// Ordinary decision counterpart: test/macos-runner.test.mjs :: R5: every fork variable state plans hosted jobs without changing their eligibility.
+// Ordinary decision counterpart: test/macos-runner.test.mjs :: R6: needed macOS jobs refuse every nonallowlisted value and name its exact text.
+// Ordinary decision counterpart: test/macos-runner.test.mjs :: R6a: runs needing no macOS job ignore malformed values and still admit fast.
 test('actual plan runtime reads the runner variable and publishes only allowlisted JSON or no output on refusal', (t) => {
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8'));
   const directory = temporaryDirectory('rigger-runner-runtime-', { context: t });
@@ -1390,6 +1402,10 @@ test('actual plan runtime reads the runner variable and publishes only allowlist
   }
 });
 
+// Host reason: OS behaviour; observes the controlled Worker's actual SIGKILL and absent continuation.
+// Ordinary decision counterpart: test/macos-runner.test.mjs :: worker stop signals only the exact Runner.Worker in its own parent chain.
+// Ordinary decision counterpart: test/macos-runner.test.mjs :: R9: hook allows only the named trusted events and a same-repository pull request.
+// Ordinary decision counterpart: test/macos-runner.test.mjs :: R9: hook refuses unknown events forks deleted heads and unavailable event files.
 test('opted-in refused hook ends only its controlled Worker ancestor before continuation', (t) => {
   const directory = temporaryDirectory('rigger-hook-worker-', { context: t });
   const worker = join(directory, 'Runner.Worker');
