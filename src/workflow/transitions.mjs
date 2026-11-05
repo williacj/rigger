@@ -185,6 +185,9 @@ export function columnChanges({
     return evidence;
   };
 
+  /** Why a maker that exited `exit` left the forge holding nothing of its line of work `line`. */
+  const heldNothing = (card, exit, line) => `card #${card.number}'s maker exited ${exit}, and the forge holds no branch of its line of work ${line}, and no open or merged pull request from it`;
+
   /** Both exit-time reads of a no-clock maker, with presence surviving the other read's failure. */
   const failedMakerWork = async (card, exit, reading, earlier = [], pullFailure) => {
     const line = topicFor(topic, card.number);
@@ -193,13 +196,13 @@ export function columnChanges({
       pullFailure === undefined ? pullRequestsFrom(card.number, line, reading, false) : Promise.reject(pullFailure),
     ]);
     const present = (branch.status === 'fulfilled' && branch.value[line] === true)
-      || (pulls.status === 'fulfilled' && ['open', 'merged', 'closed'].some((state) => pulls.value[state].length > 0));
+      || (pulls.status === 'fulfilled' && ['open', 'merged'].some((state) => pulls.value[state].length > 0));
     const failures = [...earlier, ...[branch, pulls].flatMap((outcome, at) => outcome.status === 'fulfilled' ? []
       : [new Error(`card #${card.number}'s ${at === 0 ? 'branch' : 'pull requests'} could not be read after its maker exited ${exit}: ${outcome.reason.message}`, { cause: outcome.reason })])];
     const makerWork = present ? 'present' : [branch, pulls].every(({ status }) => status === 'fulfilled') ? 'absent' : 'unreadable';
     if (failures.length > 0) throw Object.assign(new AggregateError(failures, failures.map(({ message }) => message).join('; ')), { makerWork });
     if (present) return { makerWork: 'present' };
-    return { action: 'set-aside', makerWork: 'absent', reason: `card #${card.number}'s maker exited ${exit}, and the forge holds no branch or pull request from its line of work ${line}` };
+    return { action: 'set-aside', makerWork: 'absent', reason: heldNothing(card, exit, line) };
   };
 
   /**
@@ -486,7 +489,7 @@ export function columnChanges({
         }
         // Closed pull requests are not work held (M7-U24), so only open and merged ones count.
         if (!branches[line] && facts.open.length === 0 && facts.merged.length === 0) {
-          return { action: 'set-aside', reason: `card #${card.number}'s maker exited ${exit}, and the forge holds no branch of its line of work ${line}, and no open or merged pull request from it` };
+          return { action: 'set-aside', reason: heldNothing(card, exit, line) };
         }
         return undefined;
       }

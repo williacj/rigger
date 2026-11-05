@@ -125,9 +125,13 @@ function world(t, { cards = [12], clockHeld = true, concurrency = 1, script = ()
     },
   } });
   const settle = l2.settled;
+  // Each no-clock settle's `makerWork`, as L2 answered it.
+  const answers = [];
   l2.settled = async (card, outcome, options = {}) => {
     await beforeSettle({ repository, card: card.number, dispatch: options.dispatch });
-    return settle(card, ran(exit), options);
+    const answer = await settle(card, ran(exit), options);
+    answers.push(answer?.makerWork);
+    return answer;
   };
   if (merge !== undefined) repository.answerMerge(merge(repository));
   const roleSettle = l2.roleSettled;
@@ -199,7 +203,7 @@ function world(t, { cards = [12], clockHeld = true, concurrency = 1, script = ()
   /** One poll of an idle clock-held run: settles once the poll has claimed, or settled claiming nothing. */
   const poll = () => clock.advance(clock.now() + POLL);
   return { start, poll, pulls, makers, column, move, events, repository, fake, clock, holdNextRead: (promise) => held.push(promise), reads: () => ({ begun, ended }), offered: () => offered,
-    holdFacts: () => { const g = gate(); factsHolds.push(g); return g; },
+    holdFacts: () => { const g = gate(); factsHolds.push(g); return g; }, answers: () => answers,
     // A person removing every label but the kind's, as the board's issue labels change, moving nothing.
     unlabel: () => fake.setIssueLabels(settings.repo, 12, ['type:change']) };
 }
@@ -787,6 +791,181 @@ test('S8a S8b S8c table: every claim that makes a workspace is re-read once at a
       });
     }
   }
+});
+
+/**
+ * A no-clock world whose first maker exits 7 and whose next read, the release pull's, waits as
+ * `release`. Where `closed`, the forge holds S6d's closed pull request when L2 settles that maker,
+ * and no branch.
+ */
+function barredWorld(t, { closed = false, judges } = {}) {
+  const release = gate();
+  let first = true;
+  const here = world(t, { clockHeld: false, judges, script: () => 'maker', beforeSettle: ({ repository }) => {
+    if (!first) return;
+    first = false;
+    if (closed) repository.open({ number: 76, head: 'rigger-12', sha: HEADS.judged, closed: true });
+    repository.operations.readBranches = async (names) => Object.fromEntries(names.map((name) => [name, false]));
+    here.holdNextRead(release.promise);
+  } });
+  return { here, release };
+}
+
+// R-LOOP-19 row S6e, at the release pull: S6d's forge in a no-clock run answers `absent`, so L3 bars
+// every later maker of the card, `continue` among them, without setting the card aside, and the
+// next invocation dispatches it as any other. `S6e: a closed-only forge` in `test/loop.test.mjs`
+// holds the `remove.following` case.
+// proves R-LOOP-19
+test('S6e: a no-clock maker leaving only closed pull requests bars its later makers for the run, and sets the card aside no further', async (t) => {
+  const cells = {
+    'a fresh start': (here) => here.move(12, COLUMNS.ready),
+    continue: (here) => judgedPull(here, COLUMNS.review),
+  };
+  for (const [cell, move] of Object.entries(cells)) {
+    await t.test(cell, async (t) => {
+      const { here, release } = barredWorld(t, { closed: true, judges: ['reviewer'] });
+      const run = here.start();
+      await positive(() => here.reads().begun === 2);
+      assert.equal(here.makers(), 1, `${cell}: the first maker ran`);
+      assert.equal(here.answers()[0], 'absent', `${cell}: L2 answers absent for a forge holding only closed pull requests`);
+      await move(here);
+      const offered = here.offered();
+      release.open();
+      await run.running.catch(() => {});
+      assert.equal(here.offered(), offered + 1, `${cell}: the card is not set aside, so the read hands it to L2`);
+      assert.equal(here.makers(), 1, `${cell}: the bar stops the later maker`);
+      assert.equal(here.pulls(), 1, `${cell}: and L2's maker action takes no claim`);
+      const next = here.start();
+      await next.running.catch(() => {});
+      assert.equal(here.makers(), 2, `${cell}: the next invocation dispatches the card as any other`);
+    });
+  }
+});
+
+// R-LOOP-19 row S9a: a barred card is not set aside. A column change does not lift its bar, its
+// non-maker actions stay eligible, and the bar ends with the invocation.
+// proves R-LOOP-19
+test('S9a: a card barred in a no-clock run keeps its non-maker actions, and no column change lifts the bar', async (t) => {
+  const cells = {
+    [COLUMNS.ready]: { pulls: 1, escalated: false },
+    [COLUMNS.owner]: { pulls: 2, escalated: true },
+  };
+  for (const [column, expected] of Object.entries(cells)) {
+    await t.test(column, async (t) => {
+      const { here, release } = barredWorld(t);
+      const run = here.start();
+      await positive(() => here.reads().begun === 2);
+      await here.move(12, column);
+      const offered = here.offered();
+      release.open();
+      await run.running.catch(() => {});
+      assert.ok(here.offered() > offered, `${column}: the read hands the barred card to L2`);
+      assert.equal(here.makers(), 1, `${column}: no column change lifts the bar`);
+      assert.equal(here.pulls(), expected.pulls, `${column}: only a non-maker action claims the card`);
+      assert.equal(here.events().some((event) => event.event === 'review.escalate' && event.card === 12), expected.escalated, `${column}: whether the non-maker action ran`);
+      if (expected.escalated) return;
+      const next = here.start();
+      await next.running.catch(() => {});
+      assert.equal(here.makers(), 2, `${column}: the bar ends with the invocation`);
+    });
+  }
+});
+
+// R-FAIL-8's table, row S9b: in a no-clock run a direct set-aside is tested first, so an action
+// identity the run has not remembered clears nothing: no claim, and no refusal.
+// proves R-FAIL-8
+test('S9b: a card set aside in a no-clock run stays out of the pull though L2 would answer it a new identity', async (t) => {
+  const release = gate();
+  const here = world(t, { clockHeld: false, script: (number, claim) => {
+    if (claim === 1) here.holdNextRead(release.promise);
+    return 'refused';
+  } });
+  const run = here.start();
+  await positive(() => here.reads().begun === 2);
+  assert.equal(here.pulls(), 1, 'the refused branch stopped the card, which is set aside');
+  await here.move(12, COLUMNS.ready);
+  const offered = here.offered();
+  release.open();
+  await run.running.catch(() => {});
+  assert.equal(here.offered(), offered, 'the read leaves the set-aside card out, so L2 answers it nothing');
+  assert.equal(here.pulls(), 1, 'no claim');
+  assert.equal(here.events().filter((event) => event.event === 'refused' && event.card === 12).length, 0, 'no refusal');
+});
+
+// R-LOOP-19 row S9c: a continuing maker that exited non-zero in a no-clock run is set aside, whether
+// L2 answered `present` or `absent`, under "a continuing attempt that did not settle". A set-aside
+// card reaches no pull, so the bar `absent` adds shows only in L2's answer.
+// proves R-LOOP-19
+test('S9c: a continuing maker exiting non-zero in a no-clock run sets its card aside, on absent and on present alike', async (t) => {
+  for (const work of ['present', 'absent']) {
+    await t.test(work, async (t) => {
+      const release = gate();
+      let first = true;
+      const here = world(t, { clockHeld: false, judges: ['reviewer'], script: () => 'maker', beforeSettle: ({ repository }) => {
+        if (!first) return;
+        first = false;
+        if (work === 'absent') {
+          repository.update(77, { closed: true });
+          repository.operations.readBranches = async (names) => Object.fromEntries(names.map((name) => [name, false]));
+        }
+        here.holdNextRead(release.promise);
+      } });
+      await judgedPull(here, COLUMNS.review);
+      const run = here.start();
+      await positive(() => here.reads().begun === 2);
+      assert.equal(here.answers()[0], work, `${work}: L2's answer`);
+      await here.move(12, COLUMNS.ready);
+      const offered = here.offered();
+      release.open();
+      await run.running.catch(() => {});
+      assert.equal(here.offered(), offered, `${work}: the set-aside card reaches no later pull, whatever column it shows`);
+      assert.equal(here.makers(), 1, `${work}: no maker starts again`);
+    });
+  }
+});
+
+// R-FAIL-8's table, row S9d: S8a and S8b in a no-clock run. The stopped dispatch never started, so
+// it records no identity that could omit the second claim.
+// proves R-FAIL-8
+test('S9d: a no-clock run claims a line-stopped card a second time, its dispatch having recorded no identity, then sets it aside', async (t) => {
+  for (const stop of ['moved', 'deleted']) {
+    await t.test(stop, async (t) => {
+      const here = world(t, { clockHeld: false, script: () => stop });
+      const run = here.start();
+      await run.running.catch(() => {});
+      assert.equal(here.pulls(), 2, `${stop}: claimed exactly twice, the second stop setting the card aside`);
+      assert.equal(here.makers(), 0, `${stop}: no dispatch started`);
+    });
+  }
+});
+
+// R-SCHED-43 row S9e: a pull's facts call in flight, and a card it offered taken by another claim
+// meanwhile. That claim's start fails, so the card stands unclaimed and no longer set aside, and
+// only its claim generation keeps the older read from it. A fresh read reevaluates it.
+// proves R-SCHED-43
+test('S9e: an older read reaches no card another claim took while its facts call was in flight', async (t) => {
+  const g13 = gate();
+  const g14 = gate();
+  let refusing = false;
+  const here = world(t, { cards: [12, 13, 14], concurrency: 2, refuseMove: (column) => refusing && column === COLUMNS.coding, script: (number, claim) => {
+    if (number === 12) return 'refused';
+    if (number === 13) return claim === 1 ? g13.promise : 'refused';
+    return claim === 1 ? g14.promise : 'refused';
+  } });
+  here.start();
+  await positive(() => here.pulls(12) === 1 && here.pulls(13) === 1 && here.pulls(14) === 1);
+  await here.move(12, COLUMNS.ready);
+  const facts = here.holdFacts();
+  g14.open('refused');
+  await positive(() => facts.waiting === true);
+  refusing = true;
+  g13.open('refused');
+  await positive(() => here.pulls(12) === 2);
+  await positive(() => here.events().some((event) => event.event === 'pull' && event.card === 12) && here.reads().ended >= 3);
+  for (let each = 0; each < 5; each += 1) await new Promise((resolve) => setImmediate(resolve));
+  facts.open();
+  for (let each = 0; each < 5; each += 1) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(here.pulls(12), 2, 'the older read reaches neither decide nor pull order for the card the other claim took');
 });
 
 /**
