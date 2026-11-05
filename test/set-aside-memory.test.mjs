@@ -942,7 +942,6 @@ test('S9d: a no-clock run claims a line-stopped card a second time, its dispatch
 // R-SCHED-43 row S9e: a pull's facts call in flight, and a card it offered taken by another claim
 // meanwhile. That claim's start fails, so the card stands unclaimed and no longer set aside, and
 // only its claim generation keeps the older read from it. A fresh read reevaluates it.
-// proves R-SCHED-43
 test('S9e: an older read reaches no card another claim took while its facts call was in flight', async (t) => {
   const g13 = gate();
   const g14 = gate();
@@ -1581,6 +1580,22 @@ test('S5g″: a run change accepted while a pull whose facts call fails is in fl
       assert.equal(here.pulls(), 1, `${end}: Ready is the target of a run change accepted while the read was in flight, so the skip holds`);
     });
   }
+});
+
+// R-SCHED-43 row S6f, the attacker's P3 on round 7's merge, unchanged: a card removed from the board
+// shows no column, which is no column other than the one Rigger last knew, so the skip holds, and the
+// compared columns stay, so a read finding the card back in Coding holds it too.
+// proves R-SCHED-43
+test('S6f: a read finding the card in no column ends no skip, since no column is no column other than the one Rigger last knew', async (t) => {
+  const here = recoveryWorld(t);
+  await positive(() => here.waiting() && here.handed.some((answer) => answer.settled));
+  assert.equal(here.pulls(), 1);
+  assert.equal(here.item().column, here.columns.coding, 'set aside in Coding');
+  here.item().column = null;
+  await here.clock.advance(here.clock.now() + POLL);
+  here.item().column = here.columns.coding;
+  await here.clock.advance(here.clock.now() + POLL);
+  assert.equal(here.pulls(), 1, 'the card only ever showed its compared column, or no column at all');
 });
 
 // R-SCHED-43 rows S3 and S4 against the compared column (the ruling's row 5): a read that overlapped

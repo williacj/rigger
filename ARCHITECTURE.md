@@ -504,7 +504,8 @@ made to the card's column that the board accepted while that read was in flight.
 from when its pull takes it until that pull has compared and claimed from it. Each such change the board accepts afterwards makes its target
 the one compared column. The claim's move to Coding, L2's moves, the `created` placement, the lane's
 moves at a merge's end and an escalation's move to Owner are such changes, so none of them ends the
-skip. A change the board refused leaves the compared columns as they were.
+skip, but for the window set out below. A change the board refused leaves the compared columns as they were.
+A change counts as accepted once its answer reaches L3, because L3 knows a change only from that answer. A read can show a `created` placement before its answer arrives, or that answer can land after a later change of this run's, and either can end a skip and let a pull claim the card once more. Only a firing's write reaches a card this run holds no claim on, so that window is one write's answer long. What would reverse it: the event record showing a card pulled twice this way, which would have L2 tell L3 of a change before sending it.
 
 L3 cannot tell whether a read saw the card before or after a change of this run's that the board
 accepted while that read was in flight. For that read, the change's target therefore counts as a
@@ -515,6 +516,7 @@ Each read of the board ends a skip, or leaves it, as follows:
 | A read of the board | What follows |
 |---|---|
 | begun before the run set the card aside | the skip holds, whatever column the read shows the card in |
+| begun after, finding the card in no column | the skip holds, and its compared columns stay as they were |
 | begun after, finding the card in one of its compared columns for that read | the skip holds. A card whose one compared column is Ready stays skipped while each read finds it in Ready |
 | begun after, finding the card in Ready, Ready being none of its compared columns for that read | the skip ends, and a pull claims the card as it claims any Ready card, at the next poll or slot release |
 | begun after, finding the card in a column other than Ready and other than each of its compared columns for that read | the skip ends, and a pull answers the card as it answers any card in that column |
@@ -533,7 +535,7 @@ entry afresh. A new `run`, as after launchd's relaunch, starts with no card set 
 `loop.mjs`'s `run` keeps the memory, in place of its set of excluded card numbers. For each card it
 keeps the card's number, its compared columns, and how many reads of the board had begun when it set
 the card aside. For each read in flight, it keeps the targets of this run's changes to the card that
-the board accepted meanwhile. Each of L2's column changes answers, once the board accepted it, the
+the board accepted meanwhile. Each of L2's column changes hands L3, once the board accepted it, the
 column it left the card in, and `run` takes that as the change's target. `take`'s `available` is the
 step that compares. For a read begun after the setting aside, it compares the item's `column`, which
 `readPriority` already answers, with the card's compared columns for that read. No other module

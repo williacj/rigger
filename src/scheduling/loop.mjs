@@ -130,7 +130,8 @@ function setAside(clockHeld) {
     /** Sets card `number` aside, against its compared columns. */
     add: (number) => cards.set(number, { reads }),
     /**
-     * Whether `read` skips `item`. A read begun after the setting aside ends the skip only where it
+     * Whether `read` skips `item`. A card in no column stays skipped, its compared columns as they
+     * were. Otherwise, a read begun after the setting aside ends the skip only where it
      * finds the card outside its compared columns as the read began and outside the target of each
      * run-owned change accepted while the read was in flight. A comparison that ends it records so on
      * the read, and `done` removes the skip, weighing every change the read overlapped by then, so a
@@ -140,6 +141,7 @@ function setAside(clockHeld) {
     skips: (item, read) => {
       const entry = cards.get(item.number);
       if (entry === undefined) return false;
+      if (item.column == null) return true;
       const after = clockHeld && read.number > entry.reads;
       const changes = read.changes.get(item.number) ?? new Set();
       const ends = after && !read.began.get(item.number)?.has(item.column) && !changes.has(item.column);
@@ -525,9 +527,10 @@ function triggerRecord(readRecord) {
  * A claim and its slot are held in memory from the moment L3 pulls a card until its work settles.
  * A card L2 answers `merge` takes a claim and no slot, and is handed to the repo lane, which merges
  * one card at a time in the order L3 pulled them (`R-SCHED-15`), as `lane` says. Its claim is
- * released once its merge ends, and the card is left out of this run's later pulls.
- * One run also remembers stopped cards and cards whose
- * judges L2 withheld, leaving them out of its later pulls; a later invocation starts empty. A held
+ * released once its merge ends, and the card is set aside.
+ * One run also sets aside stopped cards, though not at a first stop for a line of work moved or
+ * deleted, and cards whose judges L2 withheld, leaving each out of its later pulls until its skip
+ * ends, as `setAside` says; a later invocation starts empty. A held
  * card needs no memory, because its hold closes admission ("Failure model"): L3 follows L2's `hold`
  * at every point it asks L2 within a claim, as `attempt` and `judged` say, and links one closer for
  * the card through that handle on its first `hold` answer, as `holding` says. Where a hold's close
@@ -1286,7 +1289,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     } catch (failure) {
       ended = { failure };
     }
-    // Whatever its merge answered, the card waits for the next invocation rather than this run's next pull.
+    // Whatever its merge answered, the card is set aside, so this run's next pull leaves it out.
     const { number } = claim.card;
     setAsides?.placed(number, mergeEnds.get(number));
     setAsides?.add(number);
@@ -1379,9 +1382,10 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     /**
      * Fires the pull trigger, and fires it again each time a slot this run filled is released, so
      * a card freeing its slot lets the next pullable card start while the others still run. A slot
-     * freed by a claim move the board refused fires nothing, as `work` says. A stopped card or one
-     * whose judges L2 withheld stays out of later pulls in this run; the next invocation starts
-     * without that memory.
+     * freed by a claim move the board refused fires nothing, as `work` says. A stopped card, though
+     * not at a first stop for a line of work moved or deleted, or one whose judges L2 withheld, stays
+     * out of later pulls in this run until its skip ends, as `setAside` says; the next invocation
+     * starts without that memory.
      *
      * With no clock trigger declared it ends once every pull it fired has settled, which is once a
      * pull fired on a freed slot claims nothing and no card it claimed is still being worked. It settles on
