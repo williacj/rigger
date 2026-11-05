@@ -24,6 +24,27 @@ The [README prerequisites](../README.md#prerequisites) own the Node floor and su
 
 The historical `gh` token held `gist`, `project`, `read:org`, `repo` and `workflow`. `repo` serves the forge, `workflow` permits workflow-file pushes, `project` serves the board, and `read:org` was requested by `gh auth login`. No step here needs `gist`. The minimum sufficient scope set was not measured. The owner signs in to `gh`, Claude Code and Codex CLI as the owner's account; do not put their credentials in the repository.
 
+## Turn off system sleep on AC power
+
+A host running CI, a suite or agents unattended must have system sleep off on AC power. Have the
+owner run:
+
+~~~sh
+sudo pmset -c sleep 0
+~~~
+
+`-c` sets the AC profile, so this setting does not cover battery. Read the setting back with
+`pmset -g custom`; a held host shows `sleep` 0 under "AC Power".
+
+The [owner's account on #1207](https://github.com/williacj/rigger/issues/1207) says the setting
+alone did not stop an existing DarkWake cycle on the Mini. Logging in at the machine with its
+keyboard and mouse ended that cycle ([M7-U34](https://github.com/williacj/rigger/issues/1009#issuecomment-6666909633)).
+That account does not establish which other actions would end the cycle.
+
+The Mini's `pmset -g log`, read on 2026-11-05 by the coordinator and PM and
+[recorded on #1207](https://github.com/williacj/rigger/issues/1207), shows only the cycle ending
+at a `Wake` line. A full wake shows in that log as a `Wake` line, not a `DarkWake` line.
+
 ## Lay out the checkout and local state
 
 The main checkout belongs at `~/GitHub/rigger` and is never a workspace (AGENTS.md, “Version control”). With that checkout, the engine's default worktrees.root is `../rigger-worktrees`, relative to the checkout, as [ARCHITECTURE.md, “Engine settings”](../ARCHITECTURE.md#extension-points) defines. The engine's worktree root must stay outside both the checkout and the installed package.
@@ -44,6 +65,7 @@ Set up only these host-local entries; the repository does not carry them:
 
 | Entry | Supplier |
 |---|---|
+| System sleep off on AC power | Owner |
 | User-level Codex configuration under `~/.codex/`, including project trust | Owner |
 | Suite slot directory beneath `$HOME/GitHub/rigger-worktrees` | `tools/coordinator/suite-slot.sh` on first use |
 | `gh` Git credential helper for HTTPS pushes | Host setup operator, by `gh auth setup-git` after owner sign-in |
