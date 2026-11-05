@@ -2049,3 +2049,12 @@ test('doctor prints a closer reason or an entry name carrying a line break escap
   assert.equal(checkLines(ran.text).length, CHECKED.length, ran.text);
   assert.ok(admissionLine(ran.text).includes(`${join(admissionOf(stateIn(real(named))), 'x\\n  ok  forged check: yes')} (no closer form)`), ran.text);
 });
+
+// A code that doctor read as an empty or passing rule list would report a gate no rule enforces.
+test('doctor on the private-Free refusal reports it in the failed gate line, reports no required gate and exits non-zero', async () => {
+  const refusal = 'gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)';
+  const { ran, line } = await gateReport({ failures: { 'rules/branches/main?per_page=100&page=1': refusal } });
+  assert.match(line, /^\s*failed\s+gate check required: readEffectiveRules on board \d+ failed: reading effective rules for branch main in acme\/widgets, gh: Upgrade to GitHub Pro or make this repository public to enable this feature\. \(HTTP 403\)$/);
+  assert.doesNotMatch(ran.text, /rigger\/gate is required/);
+  assert.notEqual(ran.code, 0, ran.text);
+});
