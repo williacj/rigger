@@ -18,6 +18,7 @@ import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { fixture, GIT, gitUnansweredAdd, scratch, withFirstOnPath } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { standInAgent } from './stub-claude.mjs';
+import { randomUUID } from 'node:crypto';
 
 /** The stand-in agent every maker in this file runs as, on the PATH each verb runs under. */
 const agent = standInAgent();
@@ -69,10 +70,26 @@ function world(t, { items, concurrency = 3, steps = ONE_STEP.steps, listed = ONE
   const fake = installFakeGh(join(directory, 'fake'), {
     repo: REPO, project: PROJECT, board: { columns: Object.values(template.board.columns), fields: [{ name: template.board.priority.field, options: template.board.priority.options }], items },
   });
-  const maker = waitForClose ? afterAdmissionClose(target) : agent;
+  const evidence = waitForClose ? join(process.env.RIGGER_1216_EVIDENCE_ROOT ?? join(process.env.RUNNER_TEMP ?? dirname(process.env.TMPDIR ?? '/tmp'), 'rigger-1216-evidence'), randomUUID()) : undefined;
+  const stream = join(target, '.rigger', 'events.jsonl');
+  const preload = evidence && join(evidence, 'observer.cjs');
+  if (evidence) {
+    mkdirSync(evidence, { recursive: true, mode: 0o700 });
+    writeFileSync(join(evidence, 'world.json'), JSON.stringify({ title: t.name, target, directory, items, pid: process.pid }));
+    writeFileSync(preload, `// ABOUTME: Observes this fixture's native event writes and worker results.\n(${closeWorldObserver.toString()})(${JSON.stringify(stream)}, ${JSON.stringify(evidence)}, true);\n`);
+  }
+  const maker = waitForClose ? afterAdmissionClose(target, evidence) : agent;
   const env = { ...process.env, PATH: [maker.dir, join(directory, 'fake'), gitDirectory, process.env.PATH].filter(Boolean).join(delimiter) };
   const verb = (name, cwd = target) => {
-    const ran = spawnSync(process.execPath, [bin, name], { cwd, encoding: 'utf8', env, timeout: SETTLES_WITHIN, killSignal: 'SIGKILL' });
+    const ran = spawnSync(process.execPath, [...(preload ? ['--require', preload] : []), bin, name], { cwd, encoding: 'utf8', env, timeout: SETTLES_WITHIN, killSignal: 'SIGKILL' });
+    if (evidence) {
+      writeFileSync(join(evidence, 'verb.stdout'), ran.stdout ?? '');
+      writeFileSync(join(evidence, 'verb.stderr'), ran.stderr ?? '');
+      writeFileSync(join(evidence, 'verb.json'), JSON.stringify({ pid: ran.pid, status: ran.status, signal: ran.signal, error: ran.error?.stack }));
+      if (existsSync(stream)) writeFileSync(join(evidence, 'events.jsonl'), readFileSync(stream));
+      // The CI log retains the same originals after the hosted runner's filesystem disappears.
+      t.diagnostic(`1216 originals ${evidence} ${JSON.stringify(Object.fromEntries(readdirSync(evidence).map((file) => [file, readFileSync(join(evidence, file)).toString('base64')])) )}`);
+    }
     assert.equal(ran.error, undefined);
     return { out: ran.stdout, err: ran.stderr, code: ran.status, said: `exited ${ran.status}: ${ran.stdout}${ran.stderr}` };
   };
@@ -81,15 +98,109 @@ function world(t, { items, concurrency = 3, steps = ONE_STEP.steps, listed = ONE
 }
 
 /** A successful maker held by the actual recorded admission.close, so no fast sibling races it. */
-function afterAdmissionClose(target) {
+function afterAdmissionClose(target, evidence) {
   const stream = join(target, '.rigger', 'events.jsonl');
   const script = [
     "const fs = require('node:fs');",
     `const stream = ${JSON.stringify(stream)};`,
-    "const closed = () => fs.readFileSync(stream, 'utf8').trimEnd().split('\\n').some((line) => JSON.parse(line).event === 'admission.close');",
+    `const trace = (${closeWorldObserver.toString()})(stream, ${JSON.stringify(evidence)});`,
+    "const closed = () => trace.read(() => fs.readFileSync(stream, 'utf8')).trimEnd().split('\\n').some((line) => trace.parse(line).event === 'admission.close');",
     'function untilClosed() { if (!closed()) setImmediate(untilClosed); } untilClosed();',
   ].join('\n');
   return standInAgent({ '*': { engineer: { exec: [process.execPath, '-e', script] } } });
+}
+
+/** Observation only: one append orders records across processes; read ordinals coalesce identical snapshots. */
+function closeWorldObserver(stream, evidence, engine = false) {
+  const fs = require('node:fs');
+  const { join } = require('node:path');
+  const append = fs.appendFileSync;
+  const write = fs.writeFileSync;
+  let sequence = 0;
+  let ordinal = 0;
+  let current;
+  const errorOf = (error) => ({ name: error.name, code: error.code, message: error.message, stack: error.stack });
+  const record = (event, fields = {}) => append(join(evidence, 'trace.jsonl'), `${JSON.stringify({ pid: process.pid, sequence: ++sequence, at: String(process.hrtime.bigint()), event, ...fields })}\n`);
+  const flush = () => {
+    if (current) record('read.outcome', current);
+    current = undefined;
+  };
+  record(engine ? 'engine.start' : 'waiter.start', { cwd: process.cwd() });
+  process.once('uncaughtExceptionMonitor', (error) => { flush(); record('worker.exception', { error: errorOf(error) }); });
+  process.once('exit', (code) => { flush(); record(engine ? 'engine.exit' : 'worker.exit', { code }); });
+  if (engine) {
+    const cp = require('node:child_process');
+    const spawn = cp.spawn;
+    fs.appendFileSync = function(path, bytes, ...options) {
+      if (path !== stream) return append.call(this, path, bytes, ...options);
+      record('event.append.begin', { bytes: Buffer.from(bytes).toString('base64') });
+      try {
+        const returned = append.call(this, path, bytes, ...options);
+        record('event.append.end', { record: JSON.parse(String(bytes)) });
+        return returned;
+      } catch (error) { record('event.append.error', { error: errorOf(error) }); throw error; }
+    };
+    const admission = join(stream.slice(0, stream.lastIndexOf('/')), 'admission');
+    for (const method of ['lstatSync', 'readdirSync']) {
+      const actual = fs[method];
+      fs[method] = function(path, ...args) {
+        if (path !== admission) return actual.call(this, path, ...args);
+        try {
+          const value = actual.call(this, path, ...args);
+          record(`admission.${method}`, { entries: method === 'readdirSync' ? value.map((entry) => entry.name) : undefined });
+          return value;
+        } catch (error) { record(`admission.${method}.error`, { error: errorOf(error) }); throw error; }
+      };
+    }
+    const descriptors = new Map();
+    for (const method of ['openSync', 'readFileSync', 'closeSync']) {
+      const actual = fs[method];
+      fs[method] = function(path, ...args) {
+        const tracked = typeof path === 'string' ? path.startsWith(`${admission}/`) : descriptors.has(path);
+        const value = actual.call(this, path, ...args);
+        if (tracked) {
+          if (method === 'openSync') descriptors.set(value, path);
+          record(`admission.${method}`, { path: descriptors.get(path) ?? path, bytes: method === 'readFileSync' ? Buffer.from(value).toString('base64') : undefined });
+          if (method === 'closeSync') descriptors.delete(path);
+        }
+        return value;
+      };
+    }
+    cp.spawn = function(command, args, options) {
+      const child = spawn.apply(this, arguments);
+      if (options?.detached) {
+        record('worker.spawn', { child: child.pid, command, args, cwd: options.cwd });
+        for (const channel of ['stdout', 'stderr']) child[channel]?.on('data', (bytes) => record(`worker.${channel}`, { child: child.pid, bytes: bytes.toString('base64') }));
+        child.once('exit', (code, signal) => record('worker.result', { child: child.pid, code, signal }));
+        child.once('error', (error) => record('worker.start.error', { child: child.pid, error: errorOf(error) }));
+      }
+      return child;
+    };
+    require('node:module').syncBuiltinESMExports();
+  }
+  return {
+    read: (use) => {
+      ordinal += 1;
+      let text;
+      try { text = use(); }
+      catch (error) { flush(); record('read.error', { ordinal, error: errorOf(error) }); throw error; }
+      if (current?.text === text) { current.last = ordinal; current.count += 1; return text; }
+      flush();
+      const snapshot = `${process.pid}-read-${ordinal}.jsonl`;
+      write(join(evidence, snapshot), text);
+      current = { text, snapshot, first: ordinal, last: ordinal, count: 1, parsed: [] };
+      record('read.snapshot', { ordinal, snapshot });
+      return text;
+    },
+    parse: (line) => {
+      try {
+        const parsed = JSON.parse(line);
+        if (current?.count === 1) current.parsed.push(parsed);
+        if (parsed.event === 'admission.close') { record('waiter.close', { ordinal, record: parsed }); flush(); }
+        return parsed;
+      } catch (error) { record('parse.error', { ordinal, line, error: errorOf(error) }); flush(); throw error; }
+    },
+  };
 }
 
 /** The directories under `path`, sorted, or none where nothing is there. */
