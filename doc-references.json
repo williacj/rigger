@@ -43,5 +43,13 @@
   },
   "exempt": {
     "paths": {}
+  },
+  "preflight": {
+    "retiredIdEvidence": {
+      "path": "docs/spikes/existing-suite-audit.json",
+      "gitMode": "100644",
+      "sha256": "fe98d55e74975c3d8ddfd9b223b48f070079d11baba44cf6003ea66f68e675b1",
+      "reason": "Owner-approved immutable historical audit; changed bytes require new approval (#1212)."
+    }
   }
 }
