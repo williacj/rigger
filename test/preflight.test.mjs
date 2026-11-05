@@ -2,6 +2,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import { chmodSync, closeSync, openSync, readSync, unlinkSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, readdirSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -41,6 +45,38 @@ function commit(f, files) {
   gitIn(f.root, 'commit', '-qm', 'fixture change');
 }
 
+function nativeExecute(command, args, options) {
+  return spawnSync(command, args, { ...options, env: options.env });
+}
+
+function evidenceFixture() {
+  const f = fixture();
+  const path = 'docs/spikes/existing-suite-audit.json';
+  // Bytes 5,583,279..5,583,346 of the approved public audit at f1fc6d230c692607980dc1a7c69ca18f95e1f0bf.
+  // The decision homonym quotes a historical test title; Python hashlib independently measured this digest.
+  const decision = 'D' + 4;
+  const historical = `ine":1565,"sourceTitle":"the C1-${decision}-R0a origin shell still reports th`;
+  const policy = {
+    path, gitMode: '100644', sha256: 'efef95f29439cc52f7b6b5447371d43f04d2c9ee7ce0e16d0c85e4ea493776f7',
+    reason: 'Historical source quotation fixture.',
+  };
+  writeFileSync(f.bodyFile, '- **Lands in:** `doc-references.json`, `docs/`, `allowed/`\n');
+  commit(f, {
+    [path]: historical,
+    'docs/spec/decisions-retired.md': `## ${decision} — Historical\n`,
+    'doc-references.json': JSON.stringify({ preflight: { retiredIdEvidence: policy } }),
+  });
+  return { ...f, path, historical, policy, decision };
+}
+
+function assertQualificationRefused(f, options) {
+  const result = run(f, options);
+  assert.equal(result.status, 1, `unqualified evidence must return nonzero:\n${result.output}`);
+  assert.match(result.output, /retired evidence: failed/);
+  assert.ok(result.output.includes(`"${f.path}" qualification failed:`), result.output);
+  return result;
+}
+
 function run(f, options = {}) {
   const { argv = ['978', '--body-file', f.bodyFile], ...settings } = options;
   const lines = [];
@@ -53,7 +89,18 @@ function run(f, options = {}) {
     .map((entry) => {
       const path = join(entry.parentPath, entry.name);
       const stat = statSync(path, { bigint: true });
-      return [path, readFileSync(path).toString('hex'), String(stat.mtimeNs), String(stat.ctimeNs)];
+      const hash = createHash('sha256');
+      const buffer = Buffer.alloc(65_536);
+      const descriptor = openSync(path, 'r');
+      try {
+        let length;
+        while ((length = readSync(descriptor, buffer, 0, buffer.length, null)) !== 0) {
+          hash.update(buffer.subarray(0, length));
+        }
+      } finally {
+        closeSync(descriptor);
+      }
+      return [path, hash.digest('hex'), String(stat.size), String(stat.mtimeNs), String(stat.ctimeNs)];
     })
     .sort(([a], [b]) => a.localeCompare(b));
   const before = files();
@@ -67,6 +114,349 @@ function run(f, options = {}) {
   }
   return { status, output: lines.join('\n') };
 }
+
+test('bounded fixture snapshot detects an equal-size byte change', () => {
+  const f = fixture();
+  const target = join(f.root, 'allowed/existing.mjs');
+  const size = statSync(target).size;
+  let tampered = false;
+  assert.throws(() => run(f, { execute: (command, args, options) => {
+    if (!tampered) {
+      tampered = true;
+      writeFileSync(target, 'different\n');
+      assert.equal(statSync(target).size, size, 'the tamper must preserve byte length');
+    }
+    return nativeExecute(command, args, options);
+  } }), (error) => {
+    assert.equal(error.code, 'ERR_ASSERTION');
+    const before = error.expected.find(([path]) => path === target);
+    const after = error.actual.find(([path]) => path === target);
+    assert.ok(before && after, 'both snapshots must include the changed file');
+    assert.notEqual(after[1], before[1], 'the byte observation must detect equal-size tampering');
+    return true;
+  });
+  assert.ok(tampered, 'the control must reach the fixture write');
+});
+
+test('retired evidence qualifies committed bytes before requesting its patch', () => {
+  const f = evidenceFixture();
+  const { path, historical } = f;
+  const head = gitIn(f.root, 'rev-parse', 'HEAD').trim();
+  assert.match(gitIn(f.root, 'ls-tree', head, '--', path), /^100644 blob /);
+  const calls = [];
+  const blobReads = [];
+  const result = run(f, { execute: (command, args, options) => {
+    calls.push(args);
+    const answer = nativeExecute(command, args, options);
+    if (args.includes('cat-file')) {
+      assert.equal(answer.status, 0, answer.stderr);
+      const buffer = Buffer.alloc(69);
+      const length = readSync(options.stdio[1], buffer, 0, buffer.length, 0);
+      assert.equal(length, 68, 'the real Git blob read must produce the complete historical fixture');
+      assert.equal(buffer.subarray(0, length).toString(), historical);
+      blobReads.push(length);
+    }
+    return answer;
+  } });
+  assert.equal(result.status, 0, result.output);
+  assert.match(result.output, /retired evidence: passed/);
+  assert.deepEqual(blobReads, [68], 'qualification must read the committed blob successfully');
+  assert.ok(calls.some((args) => args.includes('ls-tree') && args.includes(head)), 'qualification must use the frozen committed head');
+  assert.ok(!calls.some((args) => args.includes('diff') && args.includes('--unified=0') && args.at(-1) === path),
+    'qualified evidence must never request its full patch');
+});
+
+test('retired evidence refuses an equal-size changed committed blob after a complete read', () => {
+  const f = evidenceFixture();
+  const changed = f.historical.replace('C1', 'C2');
+  assert.equal(Buffer.byteLength(changed), 68, 'the changed fixture must preserve byte length');
+  commit(f, { [f.path]: changed });
+  let completeRead = false;
+  const result = assertQualificationRefused(f, { execute: (command, args, options) => {
+    const answer = nativeExecute(command, args, options);
+    if (args.includes('cat-file')) {
+      assert.equal(answer.status, 0, answer.stderr);
+      const buffer = Buffer.alloc(69);
+      const length = readSync(options.stdio[1], buffer, 0, buffer.length, 0);
+      assert.equal(length, 68, 'the changed committed blob must be completely readable');
+      assert.equal(buffer.subarray(0, length).toString(), changed);
+      completeRead = true;
+    }
+    return answer;
+  } });
+  assert.ok(completeRead, 'the wrong digest control must reach a complete successful blob read');
+  assert.match(result.output, /SHA-256 does not match qualification/);
+});
+
+test('retired evidence refuses appended retired text', () => {
+  const f = evidenceFixture();
+  commit(f, { [f.path]: `${f.historical}\n${f.decision}\n` });
+  const result = assertQualificationRefused(f);
+  assert.match(result.output, /SHA-256 does not match qualification/);
+});
+
+test('retired evidence does not exempt another path', () => {
+  const f = evidenceFixture();
+  commit(f, { 'allowed/copied.json': `${f.historical}\n${f.decision} and R-EXAMPLE-7\n` });
+  const result = run(f);
+  assert.equal(result.status, 1, result.output);
+  assert.match(result.output, /retired evidence: passed/);
+  assert.match(result.output, /lands-in: passed/);
+  assert.match(result.output, /retired ids: failed/);
+  for (const location of [`"allowed/copied.json":1 ${f.decision}`, `"allowed/copied.json":2 ${f.decision}`, '"allowed/copied.json":2 R-EXAMPLE-7']) {
+    assert.ok(result.output.includes(location), result.output);
+  }
+});
+
+test('retired evidence refuses a deleted committed path', () => {
+  const f = evidenceFixture();
+  gitIn(f.root, 'update-ref', 'refs/remotes/origin/main', gitIn(f.root, 'rev-parse', 'HEAD').trim());
+  gitIn(f.root, 'rm', '--', f.path);
+  gitIn(f.root, 'commit', '-qm', 'fixture deletion');
+  const result = assertQualificationRefused(f);
+  assert.match(result.output, /committed evidence is missing or is not mode 100644/);
+});
+
+test('retired evidence refuses nonregular committed modes', () => {
+  for (const mode of ['symlink', 'executable']) {
+    const f = evidenceFixture();
+    if (mode === 'symlink') {
+      unlinkSync(join(f.root, f.path));
+      symlinkSync('historical-target', join(f.root, f.path));
+    } else chmodSync(join(f.root, f.path), 0o755);
+    gitIn(f.root, 'add', '--', f.path);
+    gitIn(f.root, 'commit', '-qm', 'fixture mode');
+    const observed = gitIn(f.root, 'ls-tree', 'HEAD', '--', f.path);
+    assert.ok(observed.startsWith(mode === 'symlink' ? '120000 ' : '100755 '), observed);
+    const result = assertQualificationRefused(f);
+    assert.match(result.output, /committed evidence is missing or is not mode 100644/);
+  }
+});
+
+test('retired evidence refuses malformed and unknown qualification fields', () => {
+  const f = evidenceFixture();
+  const policies = [
+    null, [], {}, { ...f.policy, extra: true },
+    ...Object.keys(f.policy).map((field) => Object.fromEntries(Object.entries(f.policy).filter(([name]) => name !== field))),
+    { ...f.policy, path: 'allowed/other.json' }, { ...f.policy, gitMode: '100755' },
+    { ...f.policy, sha256: 'a'.repeat(63) }, { ...f.policy, sha256: 'A'.repeat(64) },
+    { ...f.policy, sha256: 7 }, { ...f.policy, reason: '' }, { ...f.policy, reason: 7 },
+  ];
+  const configurations = [null, [], 'invalid', { preflight: null }, { preflight: [] },
+    ...policies.map((policy) => ({ preflight: { retiredIdEvidence: policy } }))];
+  for (const config of configurations) {
+    commit(f, { 'doc-references.json': JSON.stringify(config) });
+    assertQualificationRefused(f);
+  }
+  commit(f, { 'doc-references.json': '{' });
+  assertQualificationRefused(f);
+});
+
+test('retired evidence refuses Git blob read and close failures', () => {
+  for (const fault of ['tree', 'child', 'child-empty', 'read', 'close', 'config', 'spool']) {
+    const f = evidenceFixture();
+    const nativeClose = fs.closeSync;
+    const nativeReadFile = fs.readFileSync;
+    const temporary = process.env.TMPDIR;
+    let exercised = false;
+    try {
+      if (fault === 'spool') process.env.TMPDIR = f.root;
+      const result = assertQualificationRefused(f, { execute: (command, args, options) => {
+        if (fault === 'tree' && args.includes('ls-tree')) {
+          exercised = true;
+          return { status: 7, stdout: '', stderr: 'fixture tree failure' };
+        }
+        if ((fault === 'child' || fault === 'child-empty') && args.includes('cat-file')) {
+          exercised = true;
+          return { status: 7, stdout: null, stderr: fault === 'child-empty' ? '' : 'fixture blob failure' };
+        }
+        const answer = nativeExecute(command, args, options);
+        if (fault === 'config' && args.includes('--name-only')) {
+          fs.readFileSync = (path, ...settings) => {
+            if (path === join(f.root, 'doc-references.json')) {
+              exercised = true;
+              const error = new Error('fixture config read failure');
+              error.code = 'EACCES';
+              throw error;
+            }
+            return nativeReadFile(path, ...settings);
+          };
+          syncBuiltinESMExports();
+        }
+        if (args.includes('cat-file') && (fault === 'read' || fault === 'close')) {
+          assert.equal(answer.status, 0, answer.stderr);
+          const buffer = Buffer.alloc(69);
+          const length = readSync(options.stdio[1], buffer, 0, buffer.length, 0);
+          assert.equal(length, 68, 'the native blob must exist before the injected file fault');
+          assert.equal(buffer.subarray(0, length).toString(), f.historical);
+          if (fault === 'read') {
+            nativeClose(options.stdio[1]);
+            exercised = true;
+          } else {
+            const descriptor = options.stdio[1];
+            fs.closeSync = (closed) => {
+              if (closed !== descriptor) return nativeClose(closed);
+              fs.closeSync = nativeClose;
+              syncBuiltinESMExports();
+              nativeClose(closed);
+              exercised = true;
+              throw new Error('fixture close failure');
+            };
+            syncBuiltinESMExports();
+          }
+        }
+        return answer;
+      } });
+      if (fault === 'spool') {
+        assert.match(result.output, /spool must be outside the repository and checker source/);
+        exercised = true;
+      }
+      assert.ok(exercised, `the ${fault} failure premise must be exercised`);
+      if (fault === 'child-empty') {
+        assert.match(result.output, /qualification failed: blob read exited 7/,
+          'a failed blob child with empty stderr must name its exit status');
+      }
+      for (const name of ['matrix', 'spec-style', 'paths']) assert.ok(result.output.includes(`${name}: passed`), result.output);
+    } finally {
+      fs.closeSync = nativeClose;
+      fs.readFileSync = nativeReadFile;
+      syncBuiltinESMExports();
+      if (temporary === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = temporary;
+    }
+  }
+});
+
+test('retired evidence preserves dirty-state refusal', () => {
+  const f = evidenceFixture();
+  writeFileSync(join(f.root, f.path), 'dirty worktree bytes\n');
+  const result = run(f);
+  assert.equal(result.status, 1, result.output);
+  assert.match(result.output, /clean: failed/);
+  assert.match(result.output, /retired evidence: passed/);
+  assert.ok(result.output.includes(JSON.stringify(f.path)), result.output);
+  assert.match(result.output, /retired ids: passed/);
+});
+
+test('retired evidence preserves outside-Lands-in refusal', () => {
+  const f = evidenceFixture();
+  writeFileSync(f.bodyFile, '- **Lands in:** `doc-references.json`, `docs/spec/`, `allowed/`\n');
+  const result = run(f);
+  assert.equal(result.status, 1, result.output);
+  assert.match(result.output, /clean: passed/);
+  assert.match(result.output, /lands-in: failed/);
+  assert.ok(result.output.includes(JSON.stringify(f.path)), result.output);
+  assert.match(result.output, /retired evidence: passed/);
+  assert.match(result.output, /retired ids: passed/);
+});
+
+test('retired evidence preserves other-path retired requirement and decision locations', () => {
+  const f = evidenceFixture();
+  commit(f, { 'allowed/current.mjs': `first\n${f.decision} and R-EXAMPLE-7\n` });
+  const result = run(f);
+  assert.equal(result.status, 1, result.output);
+  assert.match(result.output, /retired evidence: passed/);
+  assert.match(result.output, /lands-in: passed/);
+  assert.match(result.output, /retired ids: failed/);
+  for (const token of [f.decision, 'R-EXAMPLE-7']) {
+    assert.ok(result.output.includes(`"allowed/current.mjs":2 ${token}`), result.output);
+  }
+});
+
+test('retired evidence binds committed comparisons to captured identities during ref drift', () => {
+  const f = evidenceFixture();
+  const A = f.base;
+  const H = gitIn(f.root, 'rev-parse', 'HEAD').trim();
+  const originalBlob = gitIn(f.root, 'rev-parse', `${H}:${f.path}`).trim();
+  const originalBytes = gitIn(f.root, 'cat-file', 'blob', originalBlob);
+  assert.equal(Buffer.byteLength(originalBytes), 68);
+  assert.equal(originalBytes, f.historical);
+  assert.equal(createHash('sha256').update(originalBytes).digest('hex'), f.policy.sha256);
+  const advancedBytes = f.historical.replace('C1', 'C2');
+  const sentinel = 'outside/advanced-only.mjs';
+  commit(f, { [f.path]: advancedBytes, [sentinel]: 'advanced-only\n' });
+  const J = gitIn(f.root, 'rev-parse', 'HEAD').trim();
+  const advancedBlob = gitIn(f.root, 'rev-parse', `${J}:${f.path}`).trim();
+  assert.notEqual(advancedBlob, originalBlob);
+  assert.equal(gitIn(f.root, 'cat-file', 'blob', advancedBlob), advancedBytes);
+  assert.equal(gitIn(f.root, 'merge-base', H, A).trim(), A);
+  assert.equal(gitIn(f.root, 'merge-base', J, J).trim(), J);
+  const expectedPaths = ['doc-references.json', 'docs/spec/decisions-retired.md', f.path].sort();
+  const pathsAt = (range) => gitIn(f.root, 'diff', '--no-renames', '--name-only', '-z', range).split('\0').filter(Boolean).sort();
+  assert.deepEqual(pathsAt(`${A}..${H}`), expectedPaths);
+  assert.ok(pathsAt(`${A}..${J}`).includes(sentinel));
+  gitIn(f.root, 'checkout', '--detach', H);
+  gitIn(f.root, 'update-ref', 'refs/remotes/origin/main', A);
+  assert.equal(gitIn(f.root, 'status', '--porcelain=v1'), '');
+  assert.equal(gitIn(f.root, 'rev-parse', 'HEAD').trim(), H);
+  assert.equal(gitIn(f.root, 'rev-parse', 'origin/main').trim(), A);
+  console.log('committed identity fixture premises:', JSON.stringify({ A, H, J, originalBlob, advancedBlob, expectedPaths }));
+  const lines = [], comparisons = [], blobReads = [];
+  let capturedHead, capturedMain, transitioned = false;
+  // This direct invocation isolates the deliberate fixture transition; run() retains its no-change assertion.
+  const status = subject.preflight(['978', '--body-file', f.bodyFile], {
+    root: f.root,
+    scriptChecks: ['matrix', 'spec-style', 'paths'].map((name) => ({ name, command: ['git', 'rev-parse', 'HEAD'] })),
+    write: (line) => lines.push(line),
+    execute: (command, args, options) => {
+      const answer = nativeExecute(command, args, options);
+      assert.equal(answer.status, 0, answer.stderr);
+      if (args.includes('rev-parse') && args.at(-1) === 'HEAD' && capturedHead === undefined) {
+        capturedHead = answer.stdout.trim();
+        assert.equal(capturedHead, H);
+      }
+      if (args.includes('--verify') && args.at(-1) === 'origin/main^{commit}') {
+        capturedMain = answer.stdout.trim();
+        assert.equal(capturedHead, H);
+        assert.equal(capturedMain, A);
+        assert.equal(transitioned, false);
+        gitIn(f.root, 'checkout', '--detach', J);
+        gitIn(f.root, 'update-ref', 'refs/remotes/origin/main', J);
+        transitioned = true;
+        assert.equal(gitIn(f.root, 'rev-parse', 'HEAD').trim(), J);
+        assert.equal(gitIn(f.root, 'rev-parse', 'origin/main').trim(), J);
+        assert.equal(gitIn(f.root, 'status', '--porcelain=v1'), '');
+      }
+      if (args.includes('merge-base') || args.includes('diff') || args.includes('ls-tree')) {
+        comparisons.push({ args, stdout: answer.stdout });
+      }
+      if (args.includes('cat-file')) {
+        const buffer = Buffer.alloc(69);
+        const length = readSync(options.stdio[1], buffer, 0, buffer.length, 0);
+        assert.equal(length, 68, 'the invocation must read the complete captured-head blob');
+        assert.equal(buffer.subarray(0, length).toString(), originalBytes);
+        blobReads.push(args.at(-1));
+      }
+      return answer;
+    },
+  });
+  assert.ok(transitioned, 'both original ref answers must precede the owned transition');
+  assert.equal(capturedHead, H);
+  assert.equal(capturedMain, A);
+  assert.equal(gitIn(f.root, 'rev-parse', 'HEAD').trim(), J);
+  assert.equal(gitIn(f.root, 'rev-parse', 'origin/main').trim(), J);
+  assert.equal(gitIn(f.root, 'status', '--porcelain=v1'), '');
+  assert.equal(readFileSync(join(f.root, f.path), 'utf8'), advancedBytes);
+  assert.equal(readFileSync(join(f.root, sentinel), 'utf8'), 'advanced-only\n');
+  assert.deepEqual(JSON.parse(readFileSync(join(f.root, 'doc-references.json'), 'utf8')).preflight.retiredIdEvidence, f.policy);
+  console.log('committed identity fixture post-state:', JSON.stringify({ HEAD: J, originMain: J, capturedHead, capturedMain, blobReads }));
+  console.log('committed identity invocation comparisons:', JSON.stringify(comparisons));
+  console.log('committed identity invocation output:', JSON.stringify(lines));
+  assert.equal(lines[0], `preflight head ${H} merge-base ${A}`, 'the invocation must name its captured head and captured-base comparison');
+  const listed = comparisons.find(({ args }) => args.includes('--name-only'));
+  assert.ok(listed, 'the captured committed comparison must list changed paths');
+  assert.deepEqual(listed.stdout.split('\0').filter(Boolean).sort(), expectedPaths,
+    'changed paths must derive from the captured base and head');
+  for (const { args } of comparisons.filter(({ args }) => args.includes('diff'))) {
+    assert.ok(args.includes(`${A}..${H}`), 'every committed diff must use the captured full identities');
+  }
+  assert.deepEqual(comparisons.find(({ args }) => args.includes('merge-base')).args.slice(-2), [H, A]);
+  assert.ok(comparisons.some(({ args }) => args.includes('ls-tree') && args.includes(H)));
+  assert.deepEqual(blobReads, [originalBlob], 'qualification must read only the captured-head audit blob');
+  assert.equal(status, 0, lines.join('\n'));
+  assert.ok(lines.includes('retired evidence: passed'), lines.join('\n'));
+  assert.ok(lines.includes('lands-in: passed'), lines.join('\n'));
+});
 
 test('every preflight check passes on a clean committed head and names its merge base', () => {
   const f = fixture();
