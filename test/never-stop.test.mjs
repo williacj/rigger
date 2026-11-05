@@ -36,6 +36,10 @@ import { unlinkSync } from 'node:fs';
 import { symlinkSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { running } from './process-fixtures.mjs';
+import { appendFileSync } from 'node:fs';
+import { removeTemporaryDirectory } from './temporary-directory.mjs';
+import { dirname } from 'node:path';
+import { constants as traceFiles, fstatSync } from 'node:fs';
 
 // Bounds on the tests alone, so that a call which never settles fails here rather than holding
 // the suite: nothing waits on them when the call settles. The longer is for a call that waits out
@@ -294,6 +298,304 @@ const sightingEvidenceRoot = () => process.env.C615_SIGHTING_EVIDENCE_ROOT ?? pr
 const sightingAttempts = new Map();
 const sightingRootFaults = new Map();
 
+const sightingSource = createHash('sha256').update(readFileSync(fileURLToPath(import.meta.url))).digest('hex');
+
+/** One private writer namespace; fixture teardown never owns this external record. */
+function sightingTrace(t, observation, family) {
+  const path = process.env.RIGGER_1194_CAPTURE || join(observation.target, 'trace.jsonl');
+  const identity = {
+    source: sightingSource, run: createHash('sha256').update(observation.root).digest('hex'),
+    result: process.env.RIGGER_1194_RESULT || observation.id, context: observation.id,
+    family, caseName: t.name, writer: process.pid,
+  };
+  const explicitLocation = path !== join(observation.target, 'trace.jsonl');
+  const traceLocator = `attempt-${identity.context}/${explicitLocation ? 'trace-location.json' : 'trace.jsonl'}`;
+  const directory = (path) => {
+    const entry = lstatSync(path);
+    assert.ok(entry.isDirectory() && !entry.isSymbolicLink() && entry.uid === process.getuid()
+      && (entry.mode & 0o077) === 0 && (entry.mode & 0o300) === 0o300
+      && realpathSync.native(path) === resolve(path));
+  };
+  const failure = (reason) => t.diagnostic(JSON.stringify({ event: 'never-stop.evidence.failure', context: identity.context, reason }));
+  try {
+    for (const parent of [observation.root, observation.target, dirname(path)]) directory(parent);
+    assert.ok(resolve(path).startsWith(`${observation.root}/`));
+    const fd = openSync(path, traceFiles.O_CREAT | traceFiles.O_EXCL | traceFiles.O_WRONLY | traceFiles.O_NOFOLLOW, 0o600);
+    closeSync(fd);
+    if (explicitLocation) writeFileSync(join(observation.target, 'trace-location.json'), JSON.stringify({
+      schema: 1, source: identity.source, context: identity.context, trace: resolve(path),
+      inventory: join(observation.target, 'trace-inventory.json'),
+    }) + '\n', { flag: 'wx', mode: 0o600 });
+  } catch {
+    failure('enrollment');
+    throw new Error('never-stop evidence enrollment refused');
+  }
+  const access = (flags, action) => {
+    directory(dirname(path));
+    const fd = openSync(path, flags | traceFiles.O_NOFOLLOW);
+    try {
+      const entry = fstatSync(fd);
+      assert.ok(entry.isFile() && entry.uid === process.getuid() && (entry.mode & 0o077) === 0);
+      return action(fd);
+    } finally { closeSync(fd); }
+  };
+  let sequence = 0;
+  let serial = 0;
+  let lastRead = 0;
+  let finished = false;
+  const pending = new Set();
+  const retentions = [];
+  const retaining = new Set();
+  const written = [];
+  const errors = [];
+  const fail = (reason) => { errors.push(reason); failure(reason); };
+  const check = () => { if (errors.length) throw new Error('never-stop evidence failure: ' + errors[0]); };
+  const record = (event, payload = {}) => {
+    if (finished) { failure('closed-write'); throw new Error('never-stop evidence failure: closed-write'); }
+    if (errors.length) return false;
+    const line = JSON.stringify({ ...identity, sequence: ++sequence, event, payload }) + '\n';
+    try { access(traceFiles.O_WRONLY | traceFiles.O_APPEND, (fd) => appendFileSync(fd, line)); }
+    catch { fail('write'); return false; }
+    written.push(line);
+    if (event === 'retention.start') retaining.add(payload.phase);
+    if (event === 'retention') { retentions.push(payload); retaining.delete(payload.phase); }
+    const bounded = (value, choices) => choices.includes(value) ? value : 'unknown';
+    const classification = event === 'attempt.finish' ? {
+      evidenceAvailability: bounded(payload.availability, ['returned', 'partial-or-unresolved', 'unreturned', 'evidence-failure']),
+    } : event === 'retention' ? {
+      retainedReads: bounded(payload.reads, ['settled-returned-originals', 'partial-or-unresolved', 'no-observed-spawn-reason-unknown']),
+      retainedCopy: bounded(payload.copy, ['byte-complete-at-snapshot', 'partial-or-changed', 'partial']),
+      lostOriginals: Array.isArray(payload.producedThenLost) ? payload.producedThenLost.length : null,
+      retainedOriginalStates: [...new Set((Array.isArray(payload.expected) ? payload.expected : []).map(({ state }) => bounded(state,
+        ['produced', 'produced-empty', 'not-present-at-snapshot', 'produced-then-lost', 'unknown-source-inventory', 'unknown-copy-inventory'])))].sort(),
+    } : {};
+    t.diagnostic(JSON.stringify({ event: 'never-stop.evidence', source: identity.source, run: identity.run,
+      result: createHash('sha256').update(identity.result).digest('hex'), context: identity.context,
+      caseName: identity.caseName, family, writer: identity.writer, sequence, phase: event,
+      ...classification,
+      readId: Number.isSafeInteger(payload.readId) ? payload.readId : null,
+      bytes: Buffer.byteLength(line), sha256: createHash('sha256').update(line).digest('hex'),
+      locator: traceLocator, availability: 'private-local-provider-raw-unconfirmed' }));
+    if (event === 'retention' && payload.errors?.length) fail('retention');
+    return true;
+  };
+  const aborted = () => record('context.abort', { pending: [...pending], state: 'aborted' });
+  const trace = {
+    path, identity, record, check,
+    get lastRead() { return lastRead; },
+    tool(extra = {}) {
+      let readId;
+      return {
+        ...extra,
+        onStart(input) { readId = ++serial; pending.add(readId); record('ps.start', { readId, ...input }); check(); extra.onStart?.(input); },
+        onSpawn(child) { record('ps.spawn', { readId, pid: child.pid ?? null }); extra.onSpawn?.(child); },
+        onClose(observation) {
+          if (!Number.isSafeInteger(readId) || !pending.has(readId)) { fail('read-correlation'); return; }
+          record('ps.returned', { readId, observation: { ...observation, error: observation.error ? { name: observation.error.name, message: observation.error.message, code: observation.error.code } : null } });
+          pending.delete(readId); lastRead = readId; extra.onClose?.(observation);
+        },
+      };
+    },
+    finish() {
+      if (finished) return;
+      let bytes;
+      try {
+        try { bytes = access(traceFiles.O_RDONLY, (fd) => readFileSync(fd)); }
+        catch { fail('read'); }
+        if (bytes && !bytes.equals(Buffer.from(written.join('')))) fail('trace-bytes');
+        if (retaining.size) fail('retention-unreturned');
+        const availability = errors.length ? 'evidence-failure' : pending.size ? 'unreturned'
+          : retentions.some(({ reads, copy, producedThenLost }) => reads !== 'settled-returned-originals' || copy !== 'byte-complete-at-snapshot' || producedThenLost?.length) ? 'partial-or-unresolved' : 'returned';
+        record('attempt.finish', { availability, pending: [...pending] });
+        if (!errors.length) bytes = access(traceFiles.O_RDONLY, (fd) => readFileSync(fd));
+        try {
+          directory(observation.target);
+          writeFileSync(join(observation.target, 'trace-inventory.json'), JSON.stringify({ ...identity,
+            availability: errors.length ? 'evidence-failure' : availability, pending: [...pending], retentions,
+            closed: true, otherContexts: 'uninspected', errors,
+            bytes: bytes?.length ?? null, sha256: bytes ? createHash('sha256').update(bytes).digest('hex') : null,
+          }) + '\n', { flag: 'wx', mode: 0o600 });
+        } catch { fail('inventory'); }
+      } finally { t.signal.removeEventListener('abort', aborted); finished = true; }
+      check();
+    },
+  };
+  observation.trace = trace;
+  record('attempt.start', { censusOriginals: family === 'census' ? observation.id : null });
+  check();
+  t.signal.addEventListener('abort', aborted, { once: true });
+  if (family === 'nested') t.after(() => t.after(() => trace.finish()));
+  return trace;
+}
+
+/** Ordinary nested callers enroll under the suite's existing validated private root. */
+function nestedTrace(t) {
+  try {
+    const directory = temporaryDirectory('rigger-nested-evidence-', { context: t });
+    const observation = sightingObservation(directory, { ps: 'ps-sighted' });
+    assert.ok(observation);
+    const trace = sightingTrace(t, observation, 'nested');
+    t.after(() => sightingAttempts.delete(directory));
+    return trace;
+  } catch {
+    t.diagnostic(JSON.stringify({ event: 'never-stop.evidence.failure', reason: 'enrollment' }));
+    throw new Error('never-stop evidence enrollment refused');
+  }
+}
+
+// Host reason: wiring.
+// Deterministic counterpart: test/never-stop-nested-ownership-decisions.test.mjs — never-stop recorder retains partial census originals through cleanup.
+test('never-stop recorder keeps cancellation evidence after fixture cleanup', SETTLES_WITHIN, async (t) => {
+  const directory = temporaryDirectory('rigger-1194-partial-', { context: t });
+  const observation = sightingObservation(directory, { ps: 'ps-sighted' });
+  const trace = sightingTrace(t, observation, 'census');
+  const reads = join(directory, 'sighting-reads');
+  mkdirSync(reads, { mode: 0o700 });
+  // An independently specified incomplete read: no returned row or invented empty stream.
+  writeFileSync(join(reads, 'trace.jsonl'), '{"kind":"start","id":"r000001"}\n', { flag: 'wx', mode: 0o600 });
+  writeFileSync(join(directory, 'events'), '', { flag: 'wx', mode: 0o600 });
+  const retained = retainSighting(observation, directory, 'unsettled');
+  assert.equal(retained.reads, 'partial-or-unresolved');
+  assert.equal(retained.expected.find(({ name }) => name === 'events').state, 'produced-empty');
+  removeTemporaryDirectory(directory);
+  trace.finish();
+  const rows = readFileSync(trace.path, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.ok(rows.some(({ event, payload }) => event === 'retention' && payload.phase === 'unsettled' && payload.inventory === 'unsettled/inventory.json'),
+    'cancellation retention must persist its census link across cleanup');
+  assert.equal(readFileSync(join(observation.target, 'unsettled', 'fixture', 'sighting-reads', 'trace.jsonl'), 'utf8'),
+    '{"kind":"start","id":"r000001"}\n', 'an unresolved original must remain byte-exact');
+  const damagedDirectory = temporaryDirectory('rigger-1194-damaged-', { context: t });
+  const damagedObservation = sightingObservation(damagedDirectory, { ps: 'ps-sighted' });
+  const damaged = sightingTrace(t, damagedObservation, 'nested');
+  appendFileSync(damaged.path, '{"truncated":');
+  assert.throws(() => damaged.finish(), /never-stop evidence failure/,
+    'corrupt trace must not claim returned evidence');
+  const failedDirectory = temporaryDirectory('rigger-1194-write-failed-', { context: t });
+  const failedObservation = sightingObservation(failedDirectory, { ps: 'ps-sighted' });
+  const failed = sightingTrace(t, failedObservation, 'nested');
+  unlinkSync(failed.path);
+  mkdirSync(failed.path, { mode: 0o700 });
+  assert.doesNotThrow(() => failed.record('phase', { state: 'original-outcome' }),
+    'write failure must preserve the original outcome for teardown reporting');
+  assert.throws(() => failed.finish(), /never-stop evidence failure/);
+  assert.equal(JSON.parse(readFileSync(join(failedObservation.target, 'trace-inventory.json'), 'utf8')).availability, 'evidence-failure');
+  const make = (label, signal = t.signal) => {
+    const directory = temporaryDirectory('rigger-1194-context-', { context: t });
+    const observation = sightingObservation(directory, { ps: 'ps-sighted' });
+    const trace = sightingTrace({ name: `${t.name}: ${label}`, signal, after: t.after.bind(t), diagnostic: t.diagnostic.bind(t) }, observation, 'census');
+    return { directory, observation, trace };
+  };
+  const inventory = (context) => JSON.parse(readFileSync(join(context.observation.target, 'trace-inventory.json'), 'utf8'));
+  for (const order of [['A', 'B'], ['B', 'A']]) {
+    const first = make(order[0]);
+    const second = make(order[1]);
+    const one = first.trace.tool();
+    const two = second.trace.tool();
+    one.onStart({ requestedPid: 101, command: 'controlled read', args: ['first'] });
+    two.onStart({ requestedPid: 202, command: 'controlled read', args: ['second'] });
+    one.onClose({ status: 0, signal: null, stdout: '', stderr: '', error: undefined });
+    first.trace.finish();
+    assert.equal(inventory(first).otherContexts, 'uninspected', 'a completed inventory must not borrow another writer');
+    assert.equal(existsSync(join(second.observation.target, 'trace-inventory.json')), false, 'the other writer remains unclosed');
+    removeTemporaryDirectory(first.directory);
+    second.trace.record('phase', { state: 'still-writable' });
+    two.onClose({ status: 1, signal: null, stdout: '', stderr: '', error: undefined });
+    second.trace.finish();
+    assert.notEqual(first.trace.identity.context, second.trace.identity.context);
+    for (const context of [first, second]) {
+      const rows = readFileSync(context.trace.path, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+      assert.deepEqual(rows.map(({ sequence }) => sequence), rows.map((_, index) => index + 1));
+      assert.ok(rows.every(({ context: id, writer }) => id === context.observation.id && writer === process.pid));
+      assert.deepEqual(inventory(context).pending, []);
+    }
+  }
+  const interrupted = make('interrupted');
+  interrupted.trace.tool().onStart({ requestedPid: 303, command: 'controlled pending read', args: [] });
+  interrupted.trace.record('context.abort', { state: 'aborted' });
+  interrupted.trace.finish();
+  assert.equal(inventory(interrupted).availability, 'unreturned', 'no return must remain unknown rather than empty');
+  const originalBytes = readFileSync(interrupted.trace.path);
+  const restarted = make('restarted');
+  restarted.trace.record('phase', { state: 'fresh' });
+  restarted.trace.finish();
+  assert.notEqual(interrupted.observation.target, restarted.observation.target);
+  assert.deepEqual(readFileSync(interrupted.trace.path), originalBytes, 'restart must retain the interrupted original');
+  for (const phase of ['readiness', 'read', 'cleanup', 'retention']) {
+    const controller = new AbortController();
+    const context = make(phase, controller.signal);
+    context.trace.record('phase', { state: phase });
+    context.trace.tool().onStart({ requestedPid: 404, command: 'controlled unreturned read', args: [phase] });
+    controller.abort(new Error('controlled phase cancellation'));
+    context.trace.finish();
+    assert.equal(inventory(context).availability, 'unreturned', `${phase}: abort must not invent a return`);
+    const records = readFileSync(context.trace.path, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+    assert.deepEqual(records.find(({ event }) => event === 'context.abort').payload.pending, [1]);
+    assert.equal(records.some(({ event }) => event === 'ps.returned'), false);
+  }
+  for (const [label, prefix] of [['B1 N2', 'state'], ['X0 N2', 'state'], ['B1 F5Te', 'confirm'], ['B1 F5Te status 1', 'confirm']]) {
+    const context = make(label);
+    const raw = join(context.directory, 'sighting-reads');
+    mkdirSync(raw, { mode: 0o700 });
+    const status = label.endsWith('status 1') ? 1 : 0;
+    const records = prefix === 'confirm' ? [
+      { kind: 'start', id: 'r000001' },
+      { kind: 'end', id: 'r000001', status, stdout: { type: 'string', file: 'empty', bytes: 0, sha256: createHash('sha256').update('').digest('hex') }, stderr: { type: 'string', file: 'empty', bytes: 0, sha256: createHash('sha256').update('').digest('hex') } },
+      { kind: 'start', id: 'r000002' },
+    ] : [{ kind: 'start', id: 'r000001' }];
+    writeFileSync(join(raw, 'trace.jsonl'), records.map((row) => JSON.stringify(row) + '\n').join(''), { flag: 'wx', mode: 0o600 });
+    writeFileSync(join(raw, 'empty'), '', { flag: 'wx', mode: 0o600 });
+    context.trace.record('fixture.start', { cell: label.startsWith('X') ? 'X' : 'B', afterKill: label.startsWith('X') ? 'omit' : 'zombie', forcing: prefix, status });
+    const report = retainSighting(context.observation, context.directory, 'unsettled');
+    context.trace.finish();
+    assert.equal(report.reads, 'partial-or-unresolved', `${label}: unresolved later read must not become an empty answer`);
+    assert.equal(inventory(context).retentions[0].inventory, 'unsettled/inventory.json');
+    assert.equal(inventory(context).retentions[0].reads, 'partial-or-unresolved');
+  }
+  const orphan = make('unissued return');
+  orphan.trace.tool().onClose({ status: 0, signal: null, stdout: '', stderr: '' });
+  assert.throws(() => orphan.trace.finish(), /never-stop evidence failure/,
+    'an unissued return must fail read correlation');
+  const lost = make('produced-then-lost');
+  lost.trace.record('retention', { phase: 'unsettled', inventory: 'unsettled/inventory.json', reads: 'settled-returned-originals', copy: 'partial-or-changed', producedThenLost: [{ name: 'events' }], errors: [] });
+  lost.trace.finish();
+  assert.equal(inventory(lost).availability, 'partial-or-unresolved', 'a lost raw original must not produce complete availability');
+  const cancelledDirectory = temporaryDirectory('rigger-1194-cancelled-', { context: t });
+  const cancelledObservation = sightingObservation(cancelledDirectory, { ps: 'ps-sighted' });
+  const controller = new AbortController();
+  const cancelled = sightingTrace({ name: t.name, signal: controller.signal, after: t.after.bind(t), diagnostic: t.diagnostic.bind(t) }, cancelledObservation, 'census');
+  const parentAborted = () => controller.abort(t.signal.reason);
+  t.signal.addEventListener('abort', parentAborted, { once: true });
+  let ready = false;
+  const returned = await nestedPs(process.pid, 'controlled owned child', controller.signal, cancelled.tool({
+    command: process.execPath,
+    args: ['-e', "process.stdout.write('recorder ready\\n'); setInterval(() => {}, 1000);"],
+    onSpawn(child) {
+      cancelledObservation.callerPid = child.pid;
+      const closed = new Promise((resolveClose) => child.once('close', resolveClose));
+      t.after(async () => { controller.abort(); await closed; t.signal.removeEventListener('abort', parentAborted); });
+      child.stdout.on('data', (chunk) => {
+        if (ready || !chunk.includes('recorder ready\n')) return;
+        ready = true;
+        cancelled.record('phase', { state: 'ready', pid: child.pid });
+        controller.abort(new Error('controlled recorder cancellation'));
+        retainSighting(cancelledObservation, cancelledDirectory, 'unsettled');
+      });
+    },
+  }));
+  assert.equal(ready, true, 'the owned cancellation child must establish readiness');
+  assert.equal(returned.signal, 'SIGKILL');
+  assert.equal(returned.error?.code, 'ABORT_ERR');
+  assert.equal(returned.stdout, 'recorder ready\n');
+  removeTemporaryDirectory(cancelledDirectory);
+  cancelled.finish();
+  const cancellationRows = readFileSync(cancelled.path, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  assert.ok(cancellationRows.find(({ event }) => event === 'ps.start').sequence < cancellationRows.find(({ event }) => event === 'context.abort').sequence);
+  assert.ok(cancellationRows.find(({ event }) => event === 'retention').sequence < cancellationRows.find(({ event }) => event === 'ps.returned').sequence,
+    'cancellation snapshot must preserve the not-yet-returned boundary');
+  assert.ok(existsSync(join(cancelledObservation.target, 'unsettled', 'inventory.json')),
+    'cancelled child retention must survive ordinary fixture cleanup');
+});
+
 /** Forces a named validator read to fail only for one test-selected root. */
 function selectedRootRead(requested, stage, read) {
   if (sightingRootFaults.get(requested) === `${stage}-error`) throw new Error(`forced ${stage} failure`);
@@ -340,6 +642,7 @@ function sightingFiles(directory) {
 
 /** Copies produced bytes even when the caller or an outer read is unresolved. */
 function retainSighting(observation, directory, phase) {
+  observation.trace?.record('retention.start', { phase });
   const output = join(observation.target, phase);
   mkdirSync(output, { mode: 0o700 });
   const report = { attempt: observation.id, phase, callerPid: observation.callerPid ?? null, exit: observation.exit, close: observation.close, finalizer: 'pending', source: [], copied: [], producedThenLost: [], expected: [], copy: 'partial', reads: 'unknown', writer: 'unknown', errors: [] };
@@ -349,7 +652,7 @@ function retainSighting(observation, directory, phase) {
   catch (error) { report.stderr.state = 'produced-then-lost'; report.errors.push({ stage: 'stderr', code: error.code ?? error.name }); }
   try { report.source = sightingFiles(directory); }
   catch (error) { report.errors.push({ stage: 'source-inventory', code: error.code ?? error.name }); }
-  try { cpSync(directory, join(output, 'fixture'), { recursive: true, force: false, errorOnExist: true }); }
+  try { cpSync(directory, join(output, 'fixture'), { recursive: true, force: false, errorOnExist: true }); privateSightingCopy(join(output, 'fixture')); }
   catch (error) { report.errors.push({ stage: 'fixture-copy', code: error.code ?? error.name }); }
   try { report.copied = sightingFiles(join(output, 'fixture')); }
   catch (error) { report.errors.push({ stage: 'copy-inventory', code: error.code ?? error.name }); }
@@ -382,7 +685,19 @@ function retainSighting(observation, directory, phase) {
     return { name, state };
   });
   writeFileSync(join(output, 'inventory.json'), JSON.stringify(report) + '\n', { flag: 'wx', mode: 0o600 });
+  observation.trace?.record('retention', { phase, inventory: `${phase}/inventory.json`, reads: report.reads, copy: report.copy, expected: report.expected, producedThenLost: report.producedThenLost, errors: report.errors });
   return report;
+}
+
+/** Retained originals are data; no retained executable or link gains authority. */
+function privateSightingCopy(directory) {
+  chmodSync(directory, 0o700);
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    assert.ok(!entry.isSymbolicLink());
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) privateSightingCopy(path);
+    else { assert.ok(entry.isFile()); chmodSync(path, 0o600); }
+  }
 }
 
 /** Admits a prepared attempt only after its retained copy and finalizer are both closed. */
@@ -458,17 +773,20 @@ const linesOf = (directory, name) => (existsSync(join(directory, name)) ? readFi
  */
 async function cleanedUp(directory, options) {
   const observation = sightingAttempts.get(directory) ?? sightingObservation(directory, options);
+  observation?.trace?.record('caller.start');
+  observation?.trace?.check();
   const caller = join(directory, 'caller.mjs');
   writeFileSync(caller, CALLER);
   const run = spawn(process.execPath, [caller, directory, JSON.stringify({ readTimeout: CLEANUP_BOUND, ...options })], { stdio: ['ignore', 'ignore', 'pipe'], ...(observation ? { env: { ...process.env, C615_SIGHTING_EVIDENCE_ROOT: observation.root } } : {}) });
   if (observation) observation.callerPid = run.pid ?? null;
+  observation?.trace?.record('caller.spawn', { pid: run.pid ?? null });
   let stderr = '';
   run.stderr.on('data', (chunk) => { stderr += chunk; });
   if (observation) {
     run.stderr.on('data', (chunk) => { observation.stderr.push(Buffer.from(chunk)); });
-    run.once('exit', (code, signal) => { observation.exit = { state: 'observed', code, signal }; });
-    run.once('error', (error) => { observation.exit = { state: 'error', code: error.code ?? error.name }; });
-    observation.closed = new Promise((resolveClose) => run.once('close', (code, signal) => { observation.close = { state: 'closed', code, signal }; resolveClose(); }));
+    run.once('exit', (code, signal) => { observation.exit = { state: 'observed', code, signal }; observation.trace?.record('caller.exit', observation.exit); });
+    run.once('error', (error) => { observation.exit = { state: 'error', code: error.code ?? error.name }; observation.trace?.record('caller.error', observation.exit); });
+    observation.closed = new Promise((resolveClose) => run.once('close', (code, signal) => { observation.close = { state: 'closed', code, signal }; observation.trace?.record('caller.close', observation.close); resolveClose(); }));
   }
   try {
   const [status] = await once(run, 'exit');
@@ -782,10 +1100,22 @@ async function censusCall(t, cell, afterKill = 'omit') {
 /** Runs the same stand-in through synchronous exit containment. */
 async function censusExit(t, cell, afterKill = 'omit') {
   const prepared = ['B', 'A', 'U2'].includes(cell);
-  const selectedRoot = sightingEvidenceRoot();
-  if (prepared) assert.ok(selectedRoot, 'prepared sighting needs private returned-read originals');
-  const directory = holding(t);
-  if (prepared) sightingObservation(directory, { ps: 'ps-sighted' }, selectedRoot);
+  let selectedRoot;
+  let directory;
+  let enrolled;
+  try {
+    selectedRoot = sightingEvidenceRoot();
+    if (prepared) assert.ok(selectedRoot, 'prepared sighting needs private returned-read originals');
+    directory = holding(t);
+    if (prepared) sightingObservation(directory, { ps: 'ps-sighted' }, selectedRoot);
+    enrolled = sightingAttempts.get(directory) ?? sightingObservation(directory, { ps: 'ps-sighted' }, selectedRoot);
+  } catch (error) {
+    t.diagnostic(JSON.stringify({ event: 'never-stop.evidence.failure', reason: 'enrollment' }));
+    throw error;
+  }
+  if (!enrolled) { t.diagnostic(JSON.stringify({ event: 'never-stop.evidence.failure', reason: 'enrollment' })); throw new Error('never-stop evidence enrollment refused'); }
+  const traceRecord = sightingTrace(t, enrolled, 'census');
+  traceRecord.record('fixture.start', { cell, afterKill, forcing: exitForcings.get(t) ?? null });
   if (selectedRoot) {
     t.signal.addEventListener('abort', () => {
       const observation = sightingAttempts.get(directory);
@@ -811,6 +1141,8 @@ async function censusExit(t, cell, afterKill = 'omit') {
           snapshot: observation.snapshotResult ?? 'unresolved', snapshotError: observation.snapshotError ?? null,
           identities }) + '\n', { flag: 'wx', mode: 0o600 });
         sightingAttempts.delete(directory);
+        traceRecord.record('fixture.finalized', { state, scratch });
+        traceRecord.finish();
       });
     });
   }
@@ -823,6 +1155,7 @@ async function censusExit(t, cell, afterKill = 'omit') {
   const { status, stderr, events, pairs } = await cleanedUp(directory, { ps: 'ps-sighted', hangAfter: 'group' });
   if (CUTOFF_CELLS.includes(cell)) {
     const exit = exitSighting(directory, pidIn(directory, 'group'));
+    traceRecord.record('census.returned', { branch: exit.branch, C: exit.C, N: exit.N, F: exit.F, statuses: exit.statuses });
     exitResults.set(t, { exit, events, directory });
     t.diagnostic(JSON.stringify({ exitSighting: exitSummary(exit) }));
     if (exitAnswerRequired.has(t) || process.env.EXIT_SIGHTING_REQUIRES === 'answered') {
@@ -3176,6 +3509,7 @@ async function nestedPs(pid, fields, signal, tool = {}) {
   signal.throwIfAborted();
   const command = tool.command ?? PS;
   const args = tool.args ?? ['-ww', '-p', String(pid), '-o', fields];
+  tool.onStart?.({ requestedPid: pid, command, args });
   const child = spawn(command, args, {
     env: { ...process.env, LC_ALL: 'C', TZ: 'UTC0' },
     stdio: ['ignore', 'pipe', 'pipe'], signal, killSignal: 'SIGKILL',
@@ -9512,7 +9846,13 @@ async function realOwnershipRun(t, entry, descendant, ending = 'abort', finalToo
   let ready;
   let resolveRecorded;
   const descendantRecord = new Promise((resolve) => { resolveRecorded = resolve; });
-  const record = (event, fields = {}) => t.diagnostic(JSON.stringify({ ownership: entry, descendant, event, ...fields }));
+  const trace = nestedTrace(t);
+  const capture = trace.record;
+  const record = (event, fields = {}) => {
+    capture(event, fields);
+    const safe = Object.fromEntries(Object.entries(fields).filter(([name]) => ['pid', 'status', 'signal', 'state', 'outcome'].includes(name)));
+    t.diagnostic(JSON.stringify({ ownership: entry, descendant, event, ...safe }));
+  };
   const diagnosticCase = descendant && ending === 'close';
   let diagnosticSequence = 0;
   let expectedCleanupReads = 0;
@@ -9523,6 +9863,7 @@ async function realOwnershipRun(t, entry, descendant, ending = 'abort', finalToo
   let diagnosticSignalResult = null;
   const diagnosticLines = [];
   const diagnosticRead = (read) => {
+    capture('identity', { readId: trace.lastRead, ...read });
     if (!diagnosticCase) return;
     const { sequence: cleanupSequence, ...fields } = read;
     if (cleanupSequence !== undefined) {
@@ -9536,6 +9877,7 @@ async function realOwnershipRun(t, entry, descendant, ending = 'abort', finalToo
     t.diagnostic(line);
   };
   const diagnosticSignal = (signal) => {
+    capture('descendant.signal', { signal });
     if (diagnosticCase) {
       diagnosticSignalResult = signal.result;
       t.diagnostic(JSON.stringify({ event: 'nested.signal', caseName: t.name, ...signal }));
@@ -9544,6 +9886,7 @@ async function realOwnershipRun(t, entry, descendant, ending = 'abort', finalToo
   nestedRunControls.set(context, {
     spawn: () => {
       const { NODE_TEST_CONTEXT, ...env } = process.env;
+      capture('runner.start');
       child = spawn(process.execPath, ['-e', ownershipPayload(descendant, ending === 'close')], { env, detached: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
       record('runner.spawn', { pid: child.pid });
       ready = new Promise((resolve, reject) => {
@@ -9559,7 +9902,7 @@ async function realOwnershipRun(t, entry, descendant, ending = 'abort', finalToo
             if (descendant) {
               assert.ok(Number.isInteger(report.descendant) && report.descendant > 0);
               let psResult;
-              recorded = await nestedProcessIdentity(report.descendant, t.signal, { onIdentity: (result) => { psResult = result; } });
+              recorded = await nestedProcessIdentity(report.descendant, t.signal, trace.tool({ onIdentity: (result) => { psResult = result; } }));
               assert.equal(recorded.state, 'live');
               diagnosticRead({ phase: 'recorded', requestedPid: recorded.pid, pidSource: 'requested', readOutcome: 'answered', state: 'live-matching', birthMatch: 'match', commandMatch: 'match', ...psResult });
               record('descendant.recorded', recorded);
@@ -9580,7 +9923,7 @@ async function realOwnershipRun(t, entry, descendant, ending = 'abort', finalToo
           await closed;
         }
         if (recorded) {
-          const current = await nestedProcessIdentity(recorded.pid, t.signal);
+          const current = await nestedProcessIdentity(recorded.pid, t.signal, trace.tool());
           if (current.state === 'live' && current.birth === recorded.birth && current.command === recorded.command) process.kill(recorded.pid, 'SIGKILL');
         }
       });
@@ -9588,6 +9931,7 @@ async function realOwnershipRun(t, entry, descendant, ending = 'abort', finalToo
     },
     descendant: () => descendantRecord,
     observationSignal: t.signal,
+    psTool: () => trace.tool(),
     onObservation: diagnosticRead,
     onSignal: diagnosticSignal,
     onObservationEnd: ({ expectedReads }) => { expectedCleanupReads = expectedReads; },
@@ -9609,7 +9953,7 @@ async function realOwnershipRun(t, entry, descendant, ending = 'abort', finalToo
   if (recorded) {
     let psResult;
     let current;
-    try { current = await nestedProcessIdentity(recorded.pid, t.signal, { ...finalTool, onIdentity: (result) => { psResult = result; } }); }
+    try { current = await nestedProcessIdentity(recorded.pid, t.signal, trace.tool({ ...finalTool, onIdentity: (result) => { psResult = result; } })); }
     catch (error) {
       finalRefused = true;
       diagnosticRead({
