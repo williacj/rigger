@@ -1,4 +1,4 @@
-ABOUTME: Card 1203's runner selection, test-first evidence and owner proof still required before merge.
+ABOUTME: Card 1203's runner selection, test-first evidence and owner-run macOS proof.
 
 # macOS runner selection
 
@@ -9,9 +9,9 @@ request. A fork or unavailable identity selects hosted before validation. A same
 validates the exact variable text only when broad proof or demo needs a macOS job.
 
 The hook exports its event-file decision and its ancestor stop. Its CLI refusal lives separately
-in `refuseJob`. By default it exits nonzero. The owner may set `RIGGER_JOB_GUARD_STOP_WORKER=1`
-in the runner's environment if the controlled measurement prints its later-step marker, under
-M7-U29. The stop follows only the hook's own parent chain, checks the exact executable basename
+in `refuseJob`. By default it exits nonzero. After the exit-only measurement printed its later-step marker,
+the owner enabled `RIGGER_JOB_GUARD_STOP_WORKER=1` in the runner's environment under
+M7-U29, as recorded below. The stop follows only the hook's own parent chain, checks the exact executable basename
 `Runner.Worker`, reads that identity again and signals that positive PID with SIGKILL. It refuses
 missing, malformed, cyclic or changed ancestry without a signal. It never searches unrelated
 processes or signals Runner.Listener. A failed stop logs its error and retains the nonzero exit.
@@ -70,23 +70,196 @@ results and the unrelated literal runners. Their killed mutation receipts belong
 No test adds a product requirement declaration: the card claims none, and these assertions concern
 this repository's CI and owner-installed hook, rather than a Rigger deployment.
 
-## Owner acts and unproved host behaviour
+## Owner acts and runner proof, recorded 2026-11-05
 
-The maker installed nothing on the runner, changed no repository setting or variable, touched
-no actions-runner directory and ran no controlled refusal measurement. No value setter or clearing
-time exists to report from this work. The owner must record who sets and clears each value and
-when during the three CI proof runs. The maker added no labels and will not merge this card.
+Re-read card 1203 and all comments on 2026-11-05; its acceptance revision remains
+`bb02ec39dd3d`. This journal-only continuation changes no guard, workflow, test or binding
+proposal. All owner proof runs below tested commit ecebafbbdec70aaea4d19a5515d92bfd4010f003;
+the next head differs only in this journal. The installed guard remains that commit's copy.
+The maker changed no variable, setting, label, runner, installed hook or power policy.
 
-The controlled `if: always()` measurement, R9a's single-runner listing and hook messages,
-the hosted/Mini/hosted proof sequence, Mini demo with preinstalled vhs, and the bootstrap runner
-for the owner's marker are pending the owner. M7-U29 settles the conditional worker stop;
-the owner has not yet measured whether to enable it. The card stays open. A real fork-account run is unproved; controlled R5 and R9 tests
-supply the bounded selection and decision proof only.
+The owner performed the measurement on the throwaway same-repository branch
+rigger-1203-measure, as [the owner's measurement record](https://github.com/williacj/rigger/issues/1203#issuecomment-6642585821)
+states. Both runs concluded failure. In [41916358005](https://github.com/williacj/rigger/actions/runs/41916358005),
+2026-11-04 21:28:09–21:28:14 UTC, a refuse-all exit-only hook allowed the later
+`if: always()` step to run. The retained log shows exit 1 followed by MARKER-42 and a
+write to $HOME/.rigger-runner-hooks/marker-exit-only. In
+[41916412376](https://github.com/williacj/rigger/actions/runs/41916412376),
+21:28:30–21:28:31 UTC, the guard from ecebafbb with RIGGER_JOB_GUARD_STOP_WORKER=1
+prevented that step. **The second run used a wrapper to give the guard a refused event.**
+The owner read the file the step writes on the Mini to decide whether it ran; absence of log
+output alone is not the oracle because killing Runner.Worker can lose logs. The second job's
+logs API returns HTTP 404; its jobs API confirms failure, and the file observation is the owner's
+reported measurement, not a maker observation. The measurement commits are throwaway workflow
+commits, not the PR head; the repeated run used the PR head's guard bytes.
 
-No run exercised R10's failed-job re-run or R11's queued-job behaviour. No Mini proof-job timings
-or writes under the owner's home were measured. Therefore there is no measured comparison with
-the card's Serial jobs judgment, or a home-file inventory, yet. The temporary `.js` hook copy
-was only a test fixture under the suite's temporary directory, never an installed runner hook.
+By the end of that measurement the owner had removed CJs-MacBook-Pro, installed the reviewed
+guard as ~/.rigger-runner-hooks/self-hosted-job-guard.js, and installed vhs 0.12.1. The owner
+record does not give individual setup-command timestamps: setup preceded the first selected
+Mini proof job at 2026-11-04 22:50:28 UTC; final guard/stop configuration was in use by
+21:28:30 UTC. RIGGER_JOB_GUARD_STOP_WORKER=1 stays in the runner's .env. The owner set
+MACOS_RUNNER to ["self-hosted","macOS","ARM64"] at 2026-11-04T22:49:04Z and deleted it
+about 01:38Z on 2026-11-05. Those times are the owner's dispatch report. No change required a
+commit. The maker read today's API policy as {"approval_policy":"all_external_contributors"}.
+
+The following are measurements from the jobs API read by the maker on 2026-11-05, with
+filter=all, retaining each attempt. All three runs concluded success at ecebafbb.
+
+| Run / variable | Job | runner_name | UTC start → end | Elapsed |
+|---|---|---|---|---|
+| [41916588204](https://github.com/williacj/rigger/actions/runs/41916588204), attempt 2, unset | full_ordinary | GitHub Actions 1000044990 | 2026-11-04T22:04:22Z → 2026-11-04T22:20:49Z | 16m27s |
+| [41916588204](https://github.com/williacj/rigger/actions/runs/41916588204), attempt 2, unset | full_host | GitHub Actions 1000044987 | 2026-11-04T21:34:59Z → 2026-11-04T22:03:32Z | 28m33s |
+| [41916588204](https://github.com/williacj/rigger/actions/runs/41916588204), attempt 2, unset | demo | GitHub Actions 1000044985 | 2026-11-04T21:36:35Z → 2026-11-04T21:38:40Z | 2m05s |
+| [41945694368](https://github.com/williacj/rigger/actions/runs/41945694368), attempt 1, Mini | full_ordinary | CJs-Mac-mini | 2026-11-05T01:02:30Z → 2026-11-05T01:06:39Z | 4m09s |
+| [41945694368](https://github.com/williacj/rigger/actions/runs/41945694368), attempt 1, Mini | full_host | CJs-Mac-mini | 2026-11-05T01:07:06Z → 2026-11-05T01:30:35Z | 23m29s |
+| [41945694368](https://github.com/williacj/rigger/actions/runs/41945694368), attempt 1, Mini | demo | CJs-Mac-mini | 2026-11-05T01:06:40Z → 2026-11-05T01:07:04Z | 0m24s |
+| [41950001732](https://github.com/williacj/rigger/actions/runs/41950001732), attempt 1, deleted | full_ordinary | GitHub Actions 1000045115 | 2026-11-05T01:39:53Z → 2026-11-05T01:47:27Z | 7m34s |
+| [41950001732](https://github.com/williacj/rigger/actions/runs/41950001732), attempt 1, deleted | full_host | GitHub Actions 1000045114 | 2026-11-05T01:39:54Z → 2026-11-05T02:07:57Z | 28m03s |
+| [41950001732](https://github.com/williacj/rigger/actions/runs/41950001732), attempt 1, deleted | demo | GitHub Actions 1000045113 | 2026-11-05T01:39:53Z → 2026-11-05T01:40:50Z | 0m57s |
+
+The first hosted run's attempt 1 full_ordinary was cancelled for capacity, as reported by the
+owner; attempt 2 used --failed with the variable still unset. Its other successful macOS jobs
+were carried forward. This exercises a failed-job rerun with an unchanged value, not R10's
+changed-variable case. The failed Mini run below also retried only full_ordinary with the value
+unchanged. R10 across a value change and R11's already-queued switch were not exercised.
+
+Compared with the card's “Serial jobs” judgment of about 30 minutes on the Mini versus about
+22 hosted, the successful Mini proof jobs ran serially for 4m09s + 24s + 23m29s, with gaps
+of 1s and 2s: first start 01:02:30, last finish 01:30:35, wall time 28m05s. The entire run
+including hosted controller jobs lasted 28m40s. Its full_ordinary log reports tests/pass/fail =
+4804/4804/0. Its full_host log reports tests/pass/fail/skipped = 2263/2238/0/25.
+
+Today's runner API lists exactly one runner, id 23, CJs-Mac-mini, online, labels self-hosted,
+macOS, ARM64. Every successful Mini job's log contains “A job started hook has been configured
+by the self-hosted runner administrator”, followed by the installed guard path. The demo log
+at 01:06:47.875209Z starts `if ! command -v vhs >/dev/null; then brew install vhs; fi`, ends
+that step at 01:06:47.917250Z without installation output, runs `vhs docs/demo.tape` at
+01:06:47.944504Z, and reports “Creating docs/demo.gif...” at 01:06:58.287162Z. Because the
+owner had installed vhs and the existing command only installs when lookup fails, successful
+lookup and the skipped brew branch are inferred from that completed branch and successful VHS
+execution; the lookup suppresses its path in the log. The brew line stays unchanged.
+
+The Mini's Homebrew default Node moved from v26.12.1 to v26.13.0 on 2026-11-05 as a side
+effect of M6's brew install node@24, according to the owner. The maker independently observed
+node --version = v26.13.0 today. These CI jobs instead use actions/setup-node's runner tool
+cache: each successful Mini job logs “Found in cache @
+/Users/cjwilliams/Github/rigger-action-runner/_work/_tool/node/26.13.0/arm64”. The hook is
+invoked with the runner's separate externals/node24 binary. No maker inspected or modified the
+runner installation.
+
+Bootstrap has both a hosted proof, 41916588204 (attempt 2), and a Mini proof, 41945694368,
+plus the hosted return 41950001732. The owner states the marker will rest on a **hosted run
+at the final head**. These ecebafbb proofs do not themselves prove a later head; the final
+hosted proof and sound marker remain for the owner/coordinator. D31 and the AGENTS.md bullet
+remain proposals until that marker. A real fork-account run remains unproved; controlled R5
+selection and R9 event/file/CLI controls stand for those bounded parts.
+
+## Failed Mini attempts and power-state cause
+
+[41928699953](https://github.com/williacj/rigger/actions/runs/41928699953), both attempts at
+ecebafbb, failed full_ordinary. The maker retrieved each original job's log directly with
+`gh api --allow-escape-sequences repos/williacj/rigger/actions/jobs/<job-id>/logs`, rather
+than reading only the latest attempt. Job 126919905482 (attempt 1) reports tests/pass/fail/
+cancelled = 4804/4800/2/2: “settlement recording refusals retain original causes and omit the
+selected action across maker judge removal and merge paths” timed out after 60000ms; its
+merge.transition and merge.cleanup children were cancelled; “real-bin once at N three with four
+Ready cards fires one pull claims one card and records no run.start” found spawnSync ETIMEDOUT.
+Job 126945074360 (attempt 2) reports 4804/4799/4/1: the renamed-five-columns test expected
+one held card but got 0 after 5000ms; L2 and L14 loop tests and the restarted-run drain test
+also exceeded 5000ms conditions; “recordRun pull ends its loop and makers when the first
+positive wait fails” timed out after 10000ms and was cancelled. Complete original logs and
+failure sections are retained as owner-job-126919905482.log, owner-job-126945074360.log and
+owner-failure-<job-id>.txt in the assigned scratch directory. No maker reran these jobs.
+
+The owner's spike measured a sleeping Mini: a caffeinate hold died at 2026-11-04T22:46:00Z
+while AC sleep was 1. All five unprotected npm test runs failed; with gh on PATH under
+caffeinate -dims or -s the spike passed 4804/4804. These spike figures and attribution come
+from the owner's dispatch, not a maker-run experiment. The owner subsequently ran
+`sudo pmset -c sleep 0` and fully woke the Mini; the exact command time was not supplied.
+The maker's read-only pmset log confirms the last sleep at 2026-11-05T00:55:56Z, followed
+by full Wake at 00:56:03Z, and no sleep during successful run 41945694368. Today's pmset
+-g custom reads AC sleep 0. The maker changed no power setting and started no caffeinate hold.
+
+## Home-file inventory
+
+At 2026-11-05T02:12:53Z the maker used Python os.walk/lstat read-only over ~/.npm,
+~/.cache, ~/.config, ~/Library/Caches, ~/Library/Application Support, ~/Library/Logs and
+~/Downloads, selecting mtimes in the successful Mini jobs' 01:02:30–01:30:35 UTC window.
+The retained owner-home-inventory.json records every path, size, mtime, scope and no read errors.
+The scan excluded the runner installation and other home paths. This is a post-run inventory,
+not a before/after diff: files subsequently removed cannot be reconstructed, and coincidence
+of mtime alone does not attribute a write to a job.
+
+Observed job-related writes are the following eleven npm logs (15649 bytes in total). The
+maker read only their title/argv/cwd/Node metadata to tie them to the runner checkout,
+containment proof or suite scratch. npm's normal log rotation means earlier ordinary/demo
+logs may already be gone. Under ~/.npm/_logs/:
+
+- 2026-11-05T01_28_40_822Z-debug-0.log
+- 2026-11-05T01_30_27_187Z-debug-0.log
+- 2026-11-05T01_26_42_681Z-debug-0.log
+- 2026-11-05T01_26_42_511Z-debug-0.log
+- 2026-11-05T01_30_26_344Z-debug-0.log
+- 2026-11-05T01_30_25_560Z-debug-0.log
+- 2026-11-05T01_28_45_157Z-debug-0.log
+- 2026-11-05T01_30_27_736Z-debug-0.log
+- 2026-11-05T01_30_17_962Z-debug-0.log
+- 2026-11-05T01_30_18_776Z-debug-0.log
+- 2026-11-05T01_28_44_603Z-debug-0.log
+
+The same window contains eighteen npm cache entries (37322 bytes) below ~/.npm/_cacache/.
+They are measured retained cache writes in the host-test interval; no pre-run inventory proves
+which were newly created rather than rewritten. Their complete relative paths are:
+
+- content-v2/sha512/67/46/5cf4a2741b25636c0acac96ebd11a65943f5c944cd54cd2e6d7986414f9bc82da8a1b9692355b8aef4058d1931e510abfb029cac8de0b4fb830416cd1e50
+- content-v2/sha512/9d/fd/f455d729547836052e407c6bb039c1b69d27426fe2e810b731f847ef47d9a5087b9aeccbc768557043336ad4e38a32810be95639bc9af47caaf62023554f
+- content-v2/sha512/b5/09/395416924ace5856a270c2e3b24b1011a33095fd1cec302e3cc75b230c4408b1e82da5cac7a290f6567583503bd5cd4f27e42ebf5b56769e7910c95fb0bd
+- content-v2/sha512/5c/92/23b00dd2088eda9c1da785644936ec94418ec84cdd0597300f98d3c3abc3409c6f3fd5df96b368b2191f5a98cca8e60196e575883168f8b27e279bcedaf9
+- content-v2/sha512/54/94/d7b7dddfff5cd5d3083e54e4fa7aee2a1747c43edb8837c3381c2d600d5c9b908884a13727da51b0498b3666eb7047de7af54366f584a642e1b26e8d9e0a
+- content-v2/sha512/53/c7/0feb01266ec27a2ceb5beceef2a2313a51c3b322cff62a3227486912bc3d11ec02c6e5ba588ab8a78e4a84ede6a88ae948f0e2bee73888671ac7e0d1f015
+- content-v2/sha512/53/97/37d21dc1f25c203a62ead5f8daaf3ee093e3675ae629b275da37ee88ba58cf0bf00c0480daf32cd4c51678c05d27dc25a5a2af73fc84d64d093eeacad1d8
+- index-v5/bd/b5/3cabc61cc740a1f572b169149d0b9ef5cd3c8bca62125a234a3315feea66
+- index-v5/ab/68/dc022db69ac5a1c97eca26eb9584f9d42af637e79a304def76f6687bd7e9
+- index-v5/c9/47/0537fa2a3442fad91f7f5fbec0ce64ba338ee5c38d4d4edefd5ecb5eede1
+- index-v5/89/cd/42d4af8d29550a75d18398e49e5e3b3d0b445d46544bd9926921d645d935
+- index-v5/43/70/d6190e415f563041a45eb979993eb6e3884bb7ed76acfa116bf42fd1880d
+- index-v5/bf/d1/42d27878193082eb60d8c4f34d57f8a876330e75b00cd3370729ff41a033
+- index-v5/cc/09/61ea5f00760e5cf7b105820705f3058110146ee124c2fa08b85aeaa7e09b
+- index-v5/f0/75/1a9f20ab06be959cdbdf14e824dba0b0371b7d9b5a90b83849fef5b415bd
+- index-v5/e0/3a/47de1afd513efaa39dbc98f10aeb4ec7f4a4b05c4f2fbb68c44743f335cd
+- index-v5/15/3e/254c1e687eecb7caec3cc4ed552a24dd3daac4925362ea212a63cec4facf
+- index-v5/8b/b2/b3f969ef71b5219418d48ca03d8a9e7b125238eb9d79c849fddc530e072a
+
+Sixteen Node DiagnosticReports (284569 bytes) also have mtimes in the host-test window. Their
+metadata names parent node PID 67540 and redacts the executable path, so this inventory does
+not prove they came from these jobs. They are retained as coincident writes, not asserted CI
+outputs. Under ~/Library/Logs/DiagnosticReports/:
+
+- node-2026-11-04-190933.ips
+- node-2026-11-04-190934.ips
+- node-2026-11-04-191001.000.ips
+- node-2026-11-04-191003.000.ips
+- node-2026-11-04-190934.000.ips
+- node-2026-11-04-190933.0002.ips
+- node-2026-11-04-191001.0005.ips
+- node-2026-11-04-190934.0003.ips
+- node-2026-11-04-190934.0002.ips
+- node-2026-11-04-191001.0004.ips
+- node-2026-11-04-191001.0003.ips
+- node-2026-11-04-191003.ips
+- node-2026-11-04-190934.0004.ips
+- node-2026-11-04-191001.0002.ips
+- node-2026-11-04-191001.ips
+- node-2026-11-04-190933.000.ips
+
+The remaining 47 matching files are OS/Edge activity and are not attributed to CI. No
+VHS/Charm/Rod-named cache or configuration path was found in those inspected roots. This does
+not claim no home writes outside the scope. The demo log locates docs/demo.gif and demo.txt
+in the runner checkout, with uploaded artifact 13377964899. Actions checkout, downloads,
+tool-cache and containment artifacts also live below the runner's work/temp paths as the logs
+show; those paths were not read on disk. The owner-installed guard, environment and vhs
+predate these jobs and are setup, not job-created files. Full job logs, runner listing and fork
+policy responses remain in assigned scratch; the maker performed read-only observation only.
 
 ## Table R15
 
