@@ -5,6 +5,7 @@
 
 import { OWNER, judgeRole, roleTimeout, workRequires } from '../config/validate.mjs';
 import { SCRATCH_REFUSED, WORKSPACE_NOT_MADE, WORKSPACE_REFUSED } from '../execution/workspace.mjs';
+import { EFFECTIVE_RULES_UNAVAILABLE } from '../substrate/forge/read.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
 import { EVENT_REFUSED } from '../substrate/process.mjs';
 import { acceptanceItems, checkAcceptanceForm } from './form-check.mjs';
@@ -554,12 +555,24 @@ function stateOf(governing, provider) {
 }
 
 /**
+ * What the read named `read`, the rules or the check states they leave unread, answered for `card`,
+ * or null where it failed because L0 read the forge's refusal as the feature being unavailable.
+ * Any other failure is held.
+ */
+function policyFact(card, read) {
+  const outcome = card.forge?.[read];
+  return outcome?.status === 'rejected' && outcome.reason?.code === EFFECTIVE_RULES_UNAVAILABLE ? null : held(card, read);
+}
+
+/**
  * The forge facts every advance of a Review or Owner card rests on, `card`'s mergeability, its base
- * branch's effective rules and its check states, each held, so a failed read of any one answers no
- * action naming it, whatever the others answered (the answers table's failed-read row).
+ * branch's effective rules and its check states, so a failed read of any one answers no action
+ * naming it, whatever the others answered (the answers table's failed-read row). Rules the forge
+ * offers this repository no feature for are null, as `policyFact` says, and `mergeAnswer` alone
+ * reads what that means.
  */
 function forgeFacts(card) {
-  return { mergeable: held(card, 'mergeable'), rules: held(card, 'rules'), states: held(card, 'checks') };
+  return { mergeable: held(card, 'mergeable'), rules: policyFact(card, 'rules'), states: policyFact(card, 'checks') };
 }
 
 /** `answer`, L2's advance of `card`, once every read `forgeFacts` holds was served. */
@@ -580,7 +593,8 @@ function advanced(card, answer) {
  * "The engine's merge decision"): it answers `merge` where the gate admits, and `ignore` naming each
  * refusal where it does not. L2 judges no status's creator; the forge enforces the pin at the merge.
  * A failed read of the mergeability, the rules or the check states answers no action, naming it,
- * whatever the other reads answered.
+ * whatever the other reads answered. Rules the forge offers this repository no feature for leave
+ * nothing for the gate rule to take, so L2 refuses the merge, naming them, and never answers `merge`.
  */
 function mergeAnswer(card, panel, pull, comments, round) {
   const { mergeable, rules, states } = forgeFacts(card);
@@ -589,6 +603,10 @@ function mergeAnswer(card, panel, pull, comments, round) {
     return continued(pull, [], [], panel.map(({ role }) => governing.get(role)?.comment).filter((id) => id !== undefined));
   }
   if (mergeable !== 'mergeable') return { action: 'ignore', reason: `the forge reads pull request #${pull.number}'s mergeability as ${mergeable}`, ...(mergeable === 'unknown' ? { unknownMergeability: true } : {}) };
+  if (rules === null || states === null) {
+    const { reason } = [card.forge.rules, card.forge.checks].find(({ status }) => status === 'rejected');
+    return { action: 'refuse', card: card.number, reason: `pull request #${pull.number} is not merged, because the forge offers this repository no effective rules for its base branch, so the checks they require are unavailable evidence: ${reason.message}` };
+  }
   const required = new Set(rules.map((rule) => rule.context).filter((context) => context !== GATE_CONTEXT));
   const checks = Object.fromEntries([...required].map((context) => [context, states[context] ?? { state: 'absent', creator: null }]));
   const gate = gateAnswer({ comments, ...round, judges: panel, checks });

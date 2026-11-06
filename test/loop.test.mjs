@@ -1545,6 +1545,7 @@ function closedAfterFailedMaker(t, { exitBranch = 'unreadable', exitPull = 'abse
     if (exitReading && selected.earlyRead === 'escalation') throw new Error('exit-time escalation PR unavailable');
     if (exitReading && selected.exitPull === 'unreadable') throw new Error('exit-time PR unavailable');
     if (exitReading && selected.exitPull === 'closed') return { open: [], merged: [], closed: [{ number: 733 + selected.number - 42, head: 'a'.repeat(40), base: 'main' }] };
+    if (exitReading && selected.exitPull === 'open') return { open: [{ number: 733 + selected.number - 42, head: 'a'.repeat(40), base: 'main' }], merged: [], closed: [] };
     return pulls(...args);
   };
   let first = true;
@@ -1578,7 +1579,7 @@ test('a no-clock run defers closed-card removal after unreadable maker work and 
   assert.equal(reached[0].settled.status, 'rejected');
   assert.equal(reached[0].settled.reason.makerWork, 'unreadable');
   assert.match(reached[0].settled.reason.message, /exit-time branch unavailable/);
-  assert.doesNotMatch(reached[0].settled.reason.message, /forge holds no branch|R-LOOP-18/);
+  assert.doesNotMatch(reached[0].settled.reason.message, /forge holds no branch|R-LOOP-19/);
   assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.review });
 
   await drive(built);
@@ -1605,7 +1606,7 @@ test('a no-clock failed-maker bar leaves closed cleanup and its following escala
 });
 
 // Established absence bars the following maker and its removal for this invocation alone.
-// proves R-LOOP-18, R-WORK-41
+// proves R-LOOP-19, R-WORK-41
 test('a no-clock absent-work maker bar defers a closed-card redo until a new invocation', SETTLES_WITHIN, async (t) => {
   const { built, removals } = closedAfterFailedMaker(t, { exitBranch: 'absent' });
   const reached = await drive(built);
@@ -1615,17 +1616,32 @@ test('a no-clock absent-work maker bar defers a closed-card redo until a new inv
   assert.equal(reached[0].settled.status, 'fulfilled');
   assert.equal(reached[0].settled.value.makerWork, 'absent');
   assert.equal(reached[0].settled.value.action, 'set-aside');
-  assert.match(reached[0].settled.value.reason, /exited 7.*no branch or pull request.*rigger-42/);
+  assert.match(reached[0].settled.value.reason, /exited 7.*no branch of its line of work rigger-42, and no open or merged pull request from it/);
   await drive(built);
   assert.deepEqual(built.agent.runs().map(({ card }) => card), [42, 42]);
   assert.deepEqual(removals, [42]);
 });
 
+// R-LOOP-19 row S6e: a forge holding no branch and only closed pull requests holds nothing of the
+// line of work, so L3 bars `remove.following` too, and `R-WORK-41` defers that removal to the next invocation.
+// proves R-LOOP-19, R-WORK-41
+test('S6e: a closed-only forge at a no-clock maker\'s exit defers the closed-card redo until a new invocation', SETTLES_WITHIN, async (t) => {
+  const { built, removals } = closedAfterFailedMaker(t, { exitBranch: 'absent', exitPull: 'closed' });
+  const reached = await drive(built);
+
+  assert.equal(reached[0].settled.value.makerWork, 'absent');
+  assert.deepEqual(built.agent.runs().map(({ card }) => card), [42], 'the bar stops the following maker');
+  assert.deepEqual(removals, [], 'and the removal it follows');
+  await drive(built);
+  assert.deepEqual(built.agent.runs().map(({ card }) => card), [42, 42], 'the next invocation starts without the bar');
+  assert.deepEqual(removals, [42]);
+});
+
 // Presence established by either source keeps the later removal and maker eligible.
-// proves R-LOOP-18, R-WORK-41
+// proves R-LOOP-19, R-WORK-41
 test('a no-clock maker may redo closed work when either exit-time read establishes presence despite the other failing', SETTLES_WITHIN, async (t) => {
   const formerClock = realHost.clock;
-  for (const [exitBranch, exitPull] of [['present', 'unreadable'], ['unreadable', 'closed']]) {
+  for (const [exitBranch, exitPull] of [['present', 'unreadable'], ['unreadable', 'open']]) {
     await t.test(`${exitBranch}/${exitPull}`, async (t) => {
       const { built, removals } = closedAfterFailedMaker(t, { exitBranch, exitPull });
       const reached = await drive(built);
@@ -1635,14 +1651,14 @@ test('a no-clock maker may redo closed work when either exit-time read establish
       assert.equal(reached[0].settled.status, 'rejected', 'the failed read is still reported');
       assert.equal(reached[0].settled.reason.makerWork, 'present');
       assert.match(reached[0].settled.reason.message, /exit-time (branch|PR) unavailable/);
-      assert.doesNotMatch(reached[0].settled.reason.message, /forge holds no branch|R-LOOP-18/);
+      assert.doesNotMatch(reached[0].settled.reason.message, /forge holds no branch|R-LOOP-19/);
     });
   }
   assert.strictEqual(realHost.clock, formerClock);
 });
 
 // Early comment or escalation reads must still classify both work sources for L3's maker bar.
-// proves R-LOOP-18, R-WORK-41
+// proves R-LOOP-19, R-WORK-41
 test('early failed-maker reads preserve presence and defer absent or unreadable work before later removal', SETTLES_WITHIN, async (t) => {
   const native = nativeCalls(t);
   const cases = [
@@ -1650,8 +1666,9 @@ test('early failed-maker reads preserve presence and defer absent or unreadable 
     ['comments', 'unreadable', 'absent', 'unreadable'],
     ['comments', 'absent', 'unreadable', 'unreadable'],
     ['comments', 'present', 'unreadable', 'present'],
-    ['comments', 'unreadable', 'closed', 'present'],
-    ['comments', 'absent', 'closed', 'present'],
+    ['comments', 'unreadable', 'closed', 'unreadable'],
+    ['comments', 'absent', 'closed', 'absent'],
+    ['comments', 'absent', 'open', 'present'],
     ['escalation', 'absent', 'unreadable', 'unreadable'],
     ['escalation', 'unreadable', 'unreadable', 'unreadable'],
     ['escalation', 'present', 'unreadable', 'present'],
@@ -1927,7 +1944,7 @@ test('a no-clock maker or step whose L3 start record is refused fires no immedia
 });
 
 // A new continuation or selected maker kind must not evade an absent or unreadable maker bar.
-// proves R-LOOP-18
+// proves R-LOOP-19
 test('a no-clock failed-maker bar defers later continue and differently selected dispatch actions until the next invocation', SETTLES_WITHIN, async (t) => {
   for (const exitBranch of ['absent', 'unreadable']) for (const action of ['continue', 'dispatch']) await t.test(`${exitBranch}/${action}`, async (t) => {
     const kinds = { change: { ...KINDS.change, judges: ['reviewer'] }, spec: { ...KINDS.change, select: { labels: ['type:spec'] }, judges: ['reviewer'] } };

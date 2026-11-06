@@ -252,8 +252,8 @@ function movedCopy(dir) {
 
 /**
  * The rebuilt source copy, launchers and prompts, each checked against the manifest's sha256 first.
- * The comparison below sets aside the two lines in which the prompts may differ, the header and
- * the slot line.
+ * The comparison below sets aside only the header and slot line; in the source wrapper line it
+ * rewrites caffeinate -i to caffeinate -dims, keeping every other byte in the comparison.
  */
 function sourceCopy(dir) {
   mkdirSync(dir);
@@ -288,7 +288,7 @@ function invocation(w, copy, launch) {
   const result = run(w, join(tools, launch.name), launch.args(env.CODEX_LOG_DIR, tools), { env });
   assert.equal(result.status, 0, `${copy} ${launch.name}: ${result.stderr}`);
   const generic = (text) => text.replaceAll(tools, '<TOOLS>').replaceAll(home, '<HOME>');
-  const kept = (stdin) => stdin.split('\n').filter((line) => !line.startsWith('<!-- ABOUTME:') && !line.includes('**Load and the slot:**')).join('\n').replace(/\n*$/, '');
+  const kept = (stdin) => stdin.split('\n').filter((line) => !line.startsWith('<!-- ABOUTME:') && !line.includes('**Load and the slot:**')).map((line) => copy === 'source' && line.includes('Wrap every suite run') ? line.replaceAll('caffeinate -i', 'caffeinate -dims') : line).join('\n').replace(/\n*$/, '');
   return codexCalls({ stub }).map((call) => ({
     args: call.args.map(generic),
     cwd: generic(call.cwd),
