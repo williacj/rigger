@@ -1550,7 +1550,7 @@ directory, `scratch/<topic>/<role>` under the worktree root and outside every wo
 makes fresh before L3 dispatches the role. Its provider adapter keeps there what its CLI writes that
 belongs in no worktree. After L0 kills a dispatch's group, it also kills every process of Rigger's
 own user whose working directory is the dispatch's directory, or its scratch directory where it has
-one, or lies under either. L0 records each as it records a survivor. Where such a process is one L0
+one, or lies under either. Past exit cleanup's budget, L0 leaves that to the next start ("Supervising `run`"). L0 records each as it records a survivor. Where such a process is one L0
 may not signal, or outlives that kill for the longer bound above, L0 records it by name and command
 line as a process it could not end, and waits on it no further. Where L0 cannot read which processes
 work in one of them, it records that directory and why in their place, and waits on them no further.

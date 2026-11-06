@@ -15,7 +15,6 @@ import { join } from 'node:path';
 import { readEvents, streamPath } from '../src/observation/sink.mjs';
 import { readGroups } from '../src/execution/groups.mjs';
 import { HANDLED, LEFT_OUT, PS } from '../src/substrate/process.mjs';
-import * as adapter from '../src/substrate/process.mjs';
 import { killRecordedGroups } from '../src/execution/run.mjs';
 import { openSink } from '../src/observation/sink.mjs';
 import { UNDRAINED_BOUND } from '../src/substrate/standard-error.mjs';
@@ -23,6 +22,7 @@ import { alive, fixture, read, running, scratch, shellQuote, turn, undrained } f
 import { beginFixtureWarmBatch, finishFixtureWarmBatch, literally } from './process-fixtures.mjs';
 import { warmed } from './process-fixtures.mjs';
 import { gone, tailIn } from './process-fixtures.mjs';
+import { BUDGET, assertAllEnded } from './exit-budget-world.mjs';
 
 // A bound on the test alone, so that a caller which never ends fails here rather than holding the
 // suite: nothing waits on it once the caller has ended.
@@ -1710,192 +1710,51 @@ test('given a record that refuses the entry\'s removal, after the caller receive
   assert.equal(readGroups(join(directory, 'state')).filter(({ dispatch }) => dispatch === 'd-1').length, 1, 'the record did not keep the entry, so this proves nothing');
 });
 
-// Table X of #1240: exit cleanup against its fixed budget. Time here is a clock the caller injects,
-// so nothing below waits on it.
-
-// Read through the namespace so that `proof:diff` gets a verdict on each test at the merge base.
-const { EXIT_BOUND, EXIT_CARE_BOUND, READ_TIMEOUT } = adapter;
+// Table X of #1240: exit cleanup against its fixed budget, ended by a real SIGTERM in a real Node
+// process. What it decides from a stand-in's answers is proved in `test/exit-budget.test.mjs`.
 
 /**
- * The caller for the budget's tests: a Node process that starts one dispatch through L1's function
- * for each of `plan.groups`, on a host of its own, and then receives SIGTERM, as launchd sends it.
- * Its arguments are its scratch directory and the JSON `plan`. Its sink is never named, so every
- * event reaches standard error only at the sink's end, and the test's reading them proves that end.
- *
- * The host's process table is a stand-in: `table` holds each process, and its reads answer in the
- * forms `src/substrate/process.mjs` documents from `ps` and `lsof` (`census`, `listing`, `emptied`).
- * Each group is its leader and a child, with a survivor working in its workspace and one in its
- * scratch directory where `survivors` is set. Each `plan.groups` item can also say:
- *
- * - `speed`: how far into its timeout each of this group's reads answers: `last`, one millisecond
- *   short of it; `half` or `tenth` of it; or a number of milliseconds. Five milliseconds if unset.
- * - `outlives`: which of `member` and `survivors` the kill does not end.
- * - `silent`: that the read just before the kill lists nothing, though signal 0 reaches the group.
- * - `hung`: that `ps` never answers once a read of this group is made: each read takes its timeout.
- * - `spent`: where the clock stands, from the cleanup's start, once the listing of this group's
- *   scratch directory, its last read where it has no survivors, has answered. Time can pass between
- *   reads, so the jump is the host's and not a read's.
- * - `emptied`: that the group is gone by the exit, its command reaped with the exit code 3.
- * - `contained`: that the call has emptied the group and is reading its output as the exit comes.
+ * The caller for the budget's tests: a Node process that sets up `budgetWorld` for the JSON `plan`
+ * and then receives SIGTERM, as launchd sends it. Its arguments are its scratch directory and
+ * `plan`. Its sink is never named, so every event reaches standard error only at the sink's end,
+ * and the test's reading them proves that end. It writes what the host saw to `report.json`, as
+ * the step after the sink's end.
  *
  * `plan.finished` runs one real command to its end first, and starts no group, so the cleanup holds
  * none. `plan.real` runs each of `plan.real.labels` as a real `command` fixture, its clock
- * `plan.real.ahead[label]` milliseconds ahead of the host's, and exits.
- *
- * It writes what the host saw to `report.json`, as the step after the sink's end.
+ * `plan.real.ahead[label]` milliseconds ahead of the host's.
  */
 const BUDGET_CALLER = String.raw`
-import { EventEmitter } from 'node:events';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { PassThrough } from 'node:stream';
-import { dispatch } from ${moduleAt('../src/execution/run.mjs')};
-import { readGroups } from ${moduleAt('../src/execution/groups.mjs')};
 import { openSink } from ${moduleAt('../src/observation/sink.mjs')};
 import { atExit } from ${moduleAt('../src/substrate/process.mjs')};
 import { realHost } from ${moduleAt('../src/substrate/host.mjs')};
+import { budgetWorld } from ${moduleAt('./exit-budget-world.mjs')};
 
 const [directory, given] = process.argv.slice(2);
 const plan = JSON.parse(given);
-const state = join(directory, 'state');
 const sink = openSink({ run: 'r-test', now: () => 0 });
 const turn = () => new Promise((resolve) => setImmediate(resolve));
-const within = (name, label) => { const path = join(directory, name + '.' + label); mkdirSync(path, { recursive: true }); return path; };
-
-let now = 1_000_000;
-let exiting = false;
-let began;
-let current;
-const groups = new Map((plan.groups ?? []).map((group) => [group.label * 1_000, group]));
-const table = new Map();
-const signals = [];
-const reads = [];
-const schedules = [];
-const listings = new Map();
-// Under a hung table a read L0 gives up on at once moves no stand-in clock, and L0 retries on the
-// clock's word, so each look at the clock costs a millisecond there, as it costs some on a real host.
-const clock = { now: () => (exiting && groups.get(current)?.hung ? ++now : now), pause: async () => {}, schedule: (done, delay) => { schedules.push(delay); return {}; }, cancel: () => {} };
-
-const add = (pid, group, name, cwd, outlives) => table.set(pid, { pid, group, name, cwd, outlives, state: 'S', xstat: '0' });
-for (const [group, { label, survivors, outlives = [] }] of groups) {
-  add(group, group, 'stand-in', undefined, false);
-  add(group + 1, group, 'stand-in', undefined, outlives.includes('member'));
-  if (!survivors) continue;
-  add(group + 2, 0, 'left', within('work', label), outlives.includes('survivors'));
-  add(group + 3, 0, 'left', within('scratch', label), outlives.includes('survivors'));
-}
-
-function signal(target, name) {
-  if (name !== 0) signals.push({ target, name, at: now - (began ?? now) });
-  const reached = [...table.values()].filter((each) => (target < 0 ? each.group === -target : each.pid === target));
-  if (reached.length === 0) throw Object.assign(new Error('kill ESRCH'), { code: 'ESRCH' });
-  for (const each of reached) {
-    if (name === 'SIGSTOP') each.state = 'T';
-    if (name === 'SIGCONT') each.state = 'S';
-    if (name !== 'SIGKILL' || each.outlives) continue;
-    if (each.group === 0) table.delete(each.pid);
-    else Object.assign(each, { state: 'Z', xstat: '9' });
-  }
-}
-
-/** What a read of the table prints: its last argument names the columns, as every read's does. */
-function answer(tool, args) {
-  const pidsAt = args.indexOf('-p');
-  const pids = pidsAt === -1 ? undefined : args[pidsAt + 1].split(',').map(Number);
-  if (tool === realHost.lsof) {
-    const lines = [...table.values()].filter((each) => each.cwd !== undefined && (pids === undefined || pids.includes(each.pid)))
-      .flatMap((each) => ['p' + each.pid, 'u' + realHost.uid(), 'n' + each.cwd]);
-    return lines.length === 0 ? { status: 1, stdout: '', stderr: '' } : { status: 0, stdout: lines.join('\n') + '\n', stderr: '' };
-  }
-  const at = args.indexOf('-g');
-  const group = at === -1 ? undefined : Number(args[at + 1]);
-  const columns = args.at(-1);
-  if (group !== undefined) current = group;
-  if (group !== undefined && columns === 'pid=,stat=' && !args.includes('-ww') && groups.get(group)?.silent) return { status: 0, stdout: '', stderr: '' };
-  const rows = [...table.values()].filter((each) => (group === undefined ? pids.includes(each.pid) : each.group === group)).map((each) => ({
-    'ucomm=': each.name,
-    'lstart=': 'Thu Oct 29 12:00:00 2026',
-    'pid=,stat=': each.pid + ' ' + each.state,
-    'pid=,stat=,xstat=': each.pid + ' ' + each.state + ' ' + each.xstat,
-    'pid=,command=': each.pid + ' ' + each.name + ' --held',
-  }[columns]));
-  return rows.length === 0 ? { status: 1, stdout: '', stderr: '' } : { status: 0, stdout: rows.join('\n') + '\n', stderr: '' };
-}
-
-const short = (timeout) => (timeout > 1 ? timeout - 1 : timeout);
-const taken = (speed, timeout) => {
-  if (speed === 'last') return short(timeout);
-  if (speed === 'half') return Math.min(short(timeout), Math.ceil(timeout / 2));
-  if (speed === 'tenth') return Math.min(short(timeout), Math.ceil(timeout / 10));
-  return Math.min(short(timeout), speed ?? 5);
-};
-
-function spawnSync(tool, args, { timeout }) {
-  const printed = answer(tool, args);
-  if (!exiting) return printed;
-  const plain = tool === realHost.lsof ? 'lsof' : 'ps';
-  const { speed, hung, spent } = groups.get(current) ?? {};
-  if (hung && plain === 'ps') {
-    now += timeout;
-    reads.push({ tool: plain, args, group: current, hung: true });
-    return { status: null, signal: 'SIGKILL', stdout: '', stderr: '', error: Object.assign(new Error('spawnSync ETIMEDOUT'), { code: 'ETIMEDOUT' }) };
-  }
-  now += taken(speed, timeout);
-  reads.push({ tool: plain, args, group: current });
-  if (plain === 'lsof' && spent !== undefined) {
-    listings.set(current, (listings.get(current) ?? 0) + 1);
-    if (listings.get(current) === 2) now = began + spent;
-  }
-  return printed;
-}
-
-function execFile(tool, args, options, done) {
-  const { stdout } = answer(tool, args);
-  setImmediate(() => done(null, stdout, ''));
-  return {};
-}
-
-function spawn(command, [label]) {
-  const pid = Number(label) * 1_000;
-  return Object.assign(new EventEmitter(), { pid, exitCode: null, signalCode: null, stdout: new PassThrough(), stderr: new PassThrough() });
-}
-
-const host = { ...realHost, clock, signal, spawn, spawnSync, execFile, killChild: () => {} };
-const children = new Map();
-const held = { ...host, spawn: (...input) => { const child = spawn(...input); children.set(child.pid, child); return child; } };
+const world = budgetWorld(directory, plan, sink);
 
 atExit(sink.end);
-atExit(() => writeFileSync(join(directory, 'report.json'), JSON.stringify({ reads, signals, elapsed: now - (began ?? now), left: [...table.values()] })));
-
-const start = (label, { command = '/usr/bin/true', on = held } = {}) => dispatch({
-  id: 'd-' + label, card: label, directory: state, sink, command, args: [String(label)], env: {}, timeout: 600_000, host: on, clock: () => 0,
-  cwd: within('work', label), workspace: within('work', label), scratch: within('scratch', label),
-});
+atExit(() => writeFileSync(join(directory, 'report.json'), JSON.stringify(world.report())));
 
 if (plan.finished) {
-  const counted = { ...realHost, spawnSync: (...input) => { if (exiting) reads.push({ tool: 'any', args: input[1] }); return realHost.spawnSync(...input); } };
-  await start(1, { on: counted });
+  const counted = { ...realHost, spawnSync: (...input) => { world.logRead({ tool: 'any', args: input[1] }); return realHost.spawnSync(...input); } };
+  await world.start(1, { on: counted });
   await turn();
 } else if (plan.real) {
   const { labels, ahead } = plan.real;
   const hosts = new Map(labels.map((label) => [label, { ...realHost, clock: { ...realHost.clock, now: () => Date.now() + (ahead[label] ?? 0) } }]));
-  for (const label of labels) start(label, { command: join(directory, 'command'), on: hosts.get(label) }).catch(() => {});
+  for (const label of labels) world.start(label, { command: join(directory, 'command'), on: hosts.get(label) }).catch(() => {});
   while (labels.some((label) => !existsSync(join(directory, 'child.' + label)))) await turn();
 } else {
-  for (const { label } of groups.values()) start(label).catch(() => {});
-  while (readGroups(state).length < groups.size) await turn();
-  for (const [group, { emptied, contained }] of groups) {
-    if (!emptied && !contained) continue;
-    for (const [pid, each] of table) if (each.group === group) table.delete(pid);
-    const child = children.get(group);
-    child.exitCode = emptied ? 3 : 0;
-    if (contained) child.emit('exit', 0, null);
-  }
-  if ([...groups.values()].some(({ contained }) => contained)) while (!schedules.includes(1_000)) await turn();
+  await world.settled();
 }
 setInterval(() => {}, 1_000);
-exiting = true;
-began = now;
+world.exit();
 process.kill(process.pid, 'SIGTERM');
 `;
 
@@ -1909,127 +1768,63 @@ function budgeted(t, plan, directory = scratch(t)) {
   return { directory, stderr: ran.stderr, events: eventLines(ran.stderr), ...JSON.parse(read(directory, 'report.json')), record: readGroups(join(directory, 'state')) };
 }
 
-/** The group of the dispatch labelled `label`, as the budget's caller numbers them. */
-const groupOf = (label) => label * 1_000;
-
-/** Row X5: the sink's end wrote one `dispatch.end` for each of `labels`, read off standard error, so the end ran. */
-function assertAllEnded({ events, stderr }, labels) {
-  for (const label of labels) assert.equal(endsOf(events, `d-${label}`).length, 1, `dispatch d-${label} has no one end: ${stderr}`);
-}
-
-/** Dispatch `label` had the bare kill: one group SIGKILL, one record of it, no read, no sweep, its entry kept. */
-function assertBare({ events, record, signals, reads, left }, label) {
-  const group = groupOf(label);
-  const d = `d-${label}`;
-  assert.deepEqual(signals.filter(({ target }) => Math.abs(target) >= group && Math.abs(target) < group + 1_000).map(({ target, name }) => [target, name]), [[-group, 'SIGKILL']], `${d} was not sent the one bare kill`);
-  assert.deepEqual(reads.filter((each) => each.group === group), [], `${d}'s group was read`);
-  const kills = events.filter(({ dispatch: id, event }) => id === d && event !== 'dispatch.start' && event !== 'dispatch.end');
-  assert.deepEqual(kills.map(({ event, group: killed }) => [event, killed]), [['group.killed', group]], `${d}'s only kill record is not the group's`);
-  assert.match(kills[0].census, /15000 ms/);
-  const [end] = endsOf(events, d);
-  assert.match(end.unread, /15000 ms/, JSON.stringify(end));
-  assert.doesNotMatch(end.unread, /undefined/);
-  assert.match(end.kept, new RegExp(`kept the entry for group ${group}`), JSON.stringify(end));
-  assert.equal(record.filter(({ dispatch: id }) => id === d).length, 1, `${d}'s entry was not kept`);
-  assert.equal(left.filter(({ pid }) => pid === group + 2 || pid === group + 3).length, 2, `${d}'s directories were swept`);
-}
-
-/** Dispatch `label` had its census and sweep: no group kill recorded for the budget, and its entry gone. */
-function assertCareful({ events, record }, label) {
-  const d = `d-${label}`;
-  assert.deepEqual(events.filter(({ dispatch: id, census }) => id === d && /15000 ms/.test(census ?? '')), [], `${d} had the bare kill`);
-  assert.equal(endsOf(events, d)[0].kept, undefined);
-  assert.deepEqual(record.filter(({ dispatch: id }) => id === d), [], `${d}'s entry was kept`);
-}
-
-// proves R-STATE-28
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup in a Node process that has run a real command, and the sink's end reaches a real standard error.
+// Deterministic counterpart: test/exit-budget.test.mjs :: with no group held at the exit, the cleanup makes no read, sends no signal, and the sink still ends
 test('X1: with no group held, the exit cleanup makes no read, and the sink\'s end still writes what it held', ENDS_WITHIN, (t) => {
-  const ran = budgeted(t, { finished: true });
-  assert.deepEqual(ran.reads, []);
-  assert.deepEqual(ran.signals, []);
-  assertAllEnded(ran, [1]);
-  assert.equal(endsOf(ran.events, 'd-1')[0].exit, 0);
-  assert.deepEqual(ran.record, []);
+  BUDGET.noGroup(budgeted(t, { finished: true }));
 });
 
-// proves R-STATE-28
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup, and each event of its census and sweep reaches a real standard error at the sink's end.
+// Deterministic counterpart: test/exit-budget.test.mjs :: nine ordinary groups at the exit each have their census and sweep inside EXIT_CARE_BOUND
+// proves R-STATE-9, R-STATE-17
 test('X2: nine ordinary groups are each ended with their census and sweep inside the budget, and no bare kill fires', ENDS_WITHIN, (t) => {
-  const labels = [1, 2, 3, 4, 5, 6, 7, 8, 9];
-  const ran = budgeted(t, { groups: labels.map((label) => ({ label, survivors: true })) });
-  assert.ok(ran.elapsed < EXIT_CARE_BOUND, `the nine took ${ran.elapsed} ms`);
-  assertAllEnded(ran, labels);
-  for (const label of labels) {
-    assertCareful(ran, label);
-    const survivors = ran.events.filter(({ dispatch: id, event }) => id === `d-${label}` && event === 'survivor.killed');
-    assert.deepEqual(survivors.map(({ pid }) => pid).sort(), [groupOf(label), groupOf(label) + 1, groupOf(label) + 2, groupOf(label) + 3], `d-${label}'s census and sweep`);
-    assert.equal(endsOf(ran.events, `d-${label}`)[0].exit, 137);
-  }
-  assert.deepEqual(ran.left.filter(({ state }) => state !== 'Z'), []);
+  BUDGET.nineOrdinary((plan) => budgeted(t, plan));
 });
 
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup, and the record it leaves on disk is the one a real process exit left.
+// Deterministic counterpart: test/exit-budget.test.mjs :: past EXIT_CARE_BOUND a stuck group finishes its cleanup, and each remaining group has the bare kill, its record and a reason
 // proves R-STATE-28
 test('X3: a stuck group that spends the budget finishes its careful cleanup, and each remaining group has the bare kill, a group kill record and a reason', ENDS_WITHIN, (t) => {
-  const ran = budgeted(t, { groups: [{ label: 1, speed: 500, survivors: true, outlives: ['member', 'survivors'] }, { label: 2, survivors: true }, { label: 3, survivors: true }] });
-  assert.ok(ran.elapsed >= EXIT_CARE_BOUND, `the stuck group took ${ran.elapsed} ms, so it spent no budget`);
-  assertAllEnded(ran, [1, 2, 3]);
-  assertCareful(ran, 1);
-  const unended = ran.events.filter(({ dispatch: id, event }) => id === 'd-1' && event === 'survivor.unended').map(({ pid }) => pid).sort();
-  assert.deepEqual(unended, [1_001, 1_002, 1_003], 'the stuck group did not finish its census and both sweeps');
-  assertBare(ran, 2);
-  assertBare(ran, 3);
+  BUDGET.stuckGroup((plan) => budgeted(t, plan));
 });
 
-// proves R-STATE-28
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup, and each group's record reaches a real standard error at the sink's end.
+// Deterministic counterpart: test/exit-budget.test.mjs :: a process table that hangs at the exit is waited on once, and each group is recorded in place of what it could not read
+// proves R-STATE-12, R-STATE-19
 test('X4: a process table that hangs is paid once, and the groups after it are ended as X2 gives', ENDS_WITHIN, (t) => {
-  const ran = budgeted(t, { groups: [1, 2, 3].map((label) => ({ label, hung: true })) });
-  assert.equal(ran.reads.filter(({ hung }) => hung).length, 1, JSON.stringify(ran.reads));
-  assert.ok(ran.elapsed < EXIT_CARE_BOUND && ran.elapsed >= READ_TIMEOUT, `the hung table cost ${ran.elapsed} ms`);
-  assertAllEnded(ran, [1, 2, 3]);
-  for (const label of [1, 2, 3]) {
-    assertCareful(ran, label);
-    assert.deepEqual(ran.signals.filter(({ target, name }) => target === -groupOf(label) && name === 'SIGKILL').length > 0, true, `d-${label} was not killed`);
-  }
+  BUDGET.hungOnce((plan) => budgeted(t, plan));
 });
 
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup, and the record it leaves on disk is the one a real process exit left.
+// Deterministic counterpart: test/exit-budget.test.mjs :: where the budget runs out during a hung read, the group that read began is finished and the next has the bare kill
 // proves R-STATE-28
 test('X4: a process table that hangs where the budget runs out during its wait has the groups after it ended as X3 gives', ENDS_WITHIN, (t) => {
-  const ran = budgeted(t, { groups: [{ label: 1, spent: EXIT_CARE_BOUND - 1 }, { label: 2, hung: true }, { label: 3, survivors: true }] });
-  assert.equal(ran.reads.filter(({ hung }) => hung).length, 1, JSON.stringify(ran.reads));
-  assertAllEnded(ran, [1, 2, 3]);
-  assertCareful(ran, 1);
-  assertCareful(ran, 2);
-  assertBare(ran, 3);
+  BUDGET.hungPastBudget((plan) => budgeted(t, plan));
 });
 
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup, and the record it leaves on disk is the one a real process exit left.
+// Deterministic counterpart: test/exit-budget.test.mjs :: the budget is spent at EXIT_CARE_BOUND exactly, and a millisecond under it the next group has its census and sweep
 // proves R-STATE-28
 test('X10: the budget is spent at EXIT_CARE_BOUND exactly, and one millisecond under it the next group still has its census and sweep', ENDS_WITHIN, (t) => {
-  const under = budgeted(t, { groups: [{ label: 1, spent: EXIT_CARE_BOUND - 1 }, { label: 2 }] });
-  assertCareful(under, 2);
-  const at = budgeted(t, { groups: [{ label: 1, spent: EXIT_CARE_BOUND }, { label: 2, survivors: true }] });
-  assertBare(at, 2);
+  BUDGET.exactBound((plan) => budgeted(t, plan));
 });
 
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup, and the record it leaves on disk is the one a real process exit left.
+// Deterministic counterpart: test/exit-budget.test.mjs :: a group already empty past the budget has no kill, keeps its entry, and ends with its own exit code
 // proves R-STATE-28
 test('X10: a group already empty past the budget has no kill recorded, keeps its entry for its unswept directories, and ends with its own exit code', ENDS_WITHIN, (t) => {
-  const ran = budgeted(t, { groups: [{ label: 1, spent: EXIT_CARE_BOUND }, { label: 2, emptied: true }] });
-  assert.deepEqual(ran.signals.filter(({ target }) => target === -groupOf(2)), []);
-  assert.deepEqual(ran.events.filter(({ event }) => event === 'group.killed'), []);
-  const [end] = endsOf(ran.events, 'd-2');
-  assert.equal(end.exit, 3);
-  assert.match(end.kept, /kept the entry for group 2000/);
-  assert.equal(ran.record.filter(({ dispatch: id }) => id === 'd-2').length, 1);
+  BUDGET.alreadyEmpty((plan) => budgeted(t, plan));
 });
 
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup while a call waits on its output, and the record it leaves on disk is the one a real process exit left.
+// Deterministic counterpart: test/exit-budget.test.mjs :: a group its call already ended and swept, reached past the budget, has no kill and its entry goes
 // proves R-STATE-28
 test('X10: a group the call has already ended and swept, reached past the budget, has no kill and its entry goes', ENDS_WITHIN, (t) => {
-  const ran = budgeted(t, { groups: [{ label: 1, spent: EXIT_CARE_BOUND }, { label: 2, contained: true }, { label: 3, survivors: true }] });
-  assertAllEnded(ran, [1, 2, 3]);
-  assert.deepEqual(ran.signals.filter(({ target }) => target === -groupOf(2)), []);
-  assertCareful(ran, 2);
-  assert.equal(endsOf(ran.events, 'd-2')[0].exit, 0);
-  assertBare(ran, 3);
+  BUDGET.alreadySwept((plan) => budgeted(t, plan));
 });
 
+// Host reason: OS behaviour; a real group kill ends real processes, real survivors outlive it in real directories, and a real `lsof` finds them at the next start.
+// Deterministic counterpart: test/exit-budget.test.mjs :: a group killed bare keeps its entry and its survivors, and the next start sweeps both its directories and removes the entry
 // proves R-STATE-28
 test('X6: a group that had the bare kill keeps its entry, its survivors outlive the exit, and the next start\'s kill sweeps both its directories', ENDS_WITHIN, async (t) => {
   const directory = scratch(t);
@@ -2038,7 +1833,7 @@ test('X6: a group that had the bare kill keeps its entry, its survivors outlive 
   const inScratch = await tailIn(t, directory, join(directory, 'scratch.2'));
   const state = join(directory, 'state');
 
-  const ran = budgeted(t, { real: { labels: [1, 2], ahead: { 2: 4 * EXIT_CARE_BOUND } } }, directory);
+  const ran = budgeted(t, { real: { labels: [1, 2], ahead: { 2: 60_000 } } }, directory);
 
   assertAllEnded(ran, [1, 2]);
   await assertNoneAlive(directory);
@@ -2057,22 +1852,9 @@ test('X6: a group that had the bare kill keeps its entry, its survivors outlive 
   assert.deepEqual(killed.sort(), [[inWork, 'd-2'], [inScratch, 'd-2']].sort());
 });
 
-// proves R-STATE-28
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup, and each kill's record reaches a real standard error at the sink's end.
+// Deterministic counterpart: test/exit-budget.test.mjs :: one dispatch whose every read answers at its last moment ends within EXIT_BOUND less EXIT_CARE_BOUND, recording what the kill did not end
+// proves R-STATE-19
 test('X11: one dispatch whose every read answers at the last moment, with a member the kill does not end and a survivor in both directories, ends within EXIT_BOUND less EXIT_CARE_BOUND', ENDS_WITHIN, (t) => {
-  const longest = [];
-  for (const speed of ['last', 'half', 'tenth']) {
-    for (const outlives of [['member'], ['member', 'survivors']]) {
-      for (const silent of [false, true]) {
-        const ran = budgeted(t, { groups: [{ label: 1, speed, outlives, silent, survivors: true }] });
-        const shown = JSON.stringify({ speed, outlives, silent, elapsed: ran.elapsed });
-        t.diagnostic(shown);
-        assert.ok(ran.elapsed <= EXIT_BOUND - EXIT_CARE_BOUND, shown);
-        assertAllEnded(ran, [1]);
-        assertCareful(ran, 1);
-        longest.push(ran.elapsed);
-      }
-    }
-  }
-  // The premise: these reads did spend the deadlines, so the bound above was tested.
-  assert.ok(Math.max(...longest) > EXIT_CARE_BOUND + READ_TIMEOUT, `the longest took ${Math.max(...longest)} ms`);
+  BUDGET.lastMoment((plan) => budgeted(t, plan), (shown) => t.diagnostic(shown));
 });

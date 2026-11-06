@@ -142,6 +142,7 @@ settings.
 repository. Rigger contains the process groups it creates, and the processes of your user that
 work in the directory it made for a dispatch or below it. When a dispatch ends, Rigger ends every
 process left in its group or working in its directory, unless Rigger itself is killed outright.
+Where Rigger's own exit runs past a fixed time, it ends each remaining group without searching that group's directories, and its next start ends what remains in them. Until that start, such a process keeps running.
 Rigger ends a process of yours working in a running dispatch's directory, such as a shell, when
 that dispatch ends. A process that leaves its group and works elsewhere is outside that
 containment. Rigger cannot make an agent more restricted than the account it runs under.
