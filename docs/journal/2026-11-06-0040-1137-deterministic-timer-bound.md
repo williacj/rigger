@@ -3,12 +3,16 @@ ABOUTME: Records the timer guard's placement, test-first checks and host-test cl
 # Deterministic timer bound
 
 Card [#1137](https://github.com/williacj/rigger/issues/1137), acceptance revision
-`e889a34b32e1`, implements [D29 rule 3.5 and D30 rule 6](../spec/decisions.md) in
+`ec3296ec4111`, implements [D29 rule 3.5 and D30 rule 6](../spec/decisions.md) in
 the existing suite guard. Its placement follows the
 [architect's ruling](https://github.com/williacj/rigger/issues/740#issuecomment-6497153704)
 and its fourth and fifth amendments. It answers the
 [owner's direction](https://github.com/williacj/rigger/issues/740#issuecomment-6497180994)
 to stop bad tests before they become debt.
+
+The [author's acceptance amendment](https://github.com/williacj/rigger/issues/1137#issuecomment-6680962934)
+exempts the two named filesystem-premise skips only with their stated reason.
+The full host log and each exemption's evidence belong to the PR.
 
 The callback and promise APIs share one observer in `test/suite-guard.cjs`.
 The promise interval remains lazy: creating its iterator arms nothing. Only an

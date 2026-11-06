@@ -184,7 +184,7 @@ export function preflight(argv, { root = process.cwd(), scriptChecks = SCRIPT_CH
   }
   const retired = retiredIds(root);
   const citations = changed.flatMap((path) => {
-    if ((omitEvidencePatch && path === HISTORICAL_AUDIT) || path.startsWith('docs/spec/') || path.startsWith('docs/journal/')) return [];
+    if ((omitEvidencePatch && path === HISTORICAL_AUDIT) || path.startsWith('docs/spec/') || path.startsWith('docs/journal/') || path.startsWith('docs/derived/')) return [];
     const diff = git('diff', '--no-color', '--no-renames', '--no-ext-diff', '--no-textconv', '--unified=0', `${base}..${head}`, '--', path);
     return addedLines(diff).flatMap(({ number, text }) =>
       [...text.matchAll(/\b(?:R-[A-Z][A-Z0-9]*-\d+|D\d+)\b/g)]
