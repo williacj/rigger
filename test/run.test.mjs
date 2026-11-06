@@ -11,6 +11,7 @@ import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { run as runVerb } from '../src/cli/run.mjs';
+import { repositoryReads } from '../src/substrate/forge/read.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { installFakeGh, installGhRefusingStreamAfterMove, seedRepository } from './fake-gh.mjs';
@@ -794,6 +795,36 @@ test('a no-clock real-bin run retains nested failed and successful pull outcomes
   assert.ok(reviewLine(ran.consumer, 20).test(outcomes[2]), ran.err);
   assert.equal(outcomes[3], 'rigger run: card #20 moved to owner', ran.err);
   assert.equal(lines.filter((line) => line.includes('nested release record refused')).length, 1, ran.err);
+});
+
+// A board emptied over several claims is one idle period, whichever claim ended last.
+test('a no-clock real-bin run at N one records one drain trigger once the board drains after two claims', SETTLES_WITHIN, () => {
+  const settings = { ...config(1), kinds: { change: { ...KINDS.change, judges: ['owner'] } } };
+  const ran = runWithAgent(standInAgent({ 10: { engineer: { pr: true } }, 20: { engineer: { pr: true } } }), TWO_READY, { settings });
+  const events = eventsOf(ran).filter(({ layer }) => layer === 'L3');
+
+  assert.equal(ran.code, 0, ran.err);
+  assert.deepEqual([...new Set(events.filter(({ event }) => event === 'pull').map(({ card }) => card))], [10, 20], 'the run claimed both cards before its board drained');
+  assert.equal(events.filter(({ event, trigger }) => event === 'trigger' && trigger === 'drain').length, 1, JSON.stringify(events));
+});
+
+/** The engine's own forge reads, answered by `fake`'s `gh` as a `run` over its repository is answered. */
+const readsThrough = (fake) => repositoryReads({ repo: REPO, project: PROJECT }, { send: (_, args) => spawnSync(fake.gh, args, { encoding: 'utf8', env: gitEnvironment() }) });
+
+// A failed maker that left nothing must not take a second dispatch from the slot it freed.
+// proves R-LOOP-19
+test('a no-clock real-bin run dispatches a maker that exited non-zero and left nothing on the forge once', SETTLES_WITHIN, async () => {
+  const ran = runWithAgent(standInAgent({ 10: { engineer: { exit: 7 } } }), { items: [card(10, 'Ready')] });
+  const reads = readsThrough(ran.fake);
+  const { open, merged } = await reads.readPullRequests('rigger-10');
+  const events = eventsOf(ran);
+  const makers = events.filter((event) => event.layer === 'L3' && event.event === 'dispatch' && event.card === 10 && event.role === 'engineer' && event.attempt !== undefined);
+
+  assert.equal(ran.code, 1, ran.err);
+  assert.deepEqual(await reads.readBranches(['rigger-10']), { 'rigger-10': false }, 'the forge holds no branch of the card');
+  assert.deepEqual({ open, merged }, { open: [], merged: [] }, 'the forge holds no open or merged pull request from it');
+  assert.equal(makers.length, 1, JSON.stringify(events));
+  assert.equal(events.filter((event) => event.layer === 'L1' && event.event === 'dispatch.start' && event.dispatch === makers[0].dispatch).length, 1, JSON.stringify(events));
 });
 
 // Once keeps its literal single-card boundary even when run would drain the four-card board.
