@@ -6,6 +6,8 @@ import { spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { statSync } from 'node:fs';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -265,42 +267,81 @@ test('native readiness wait without the literal ends only at the test signal wit
   assert.equal(statSync(run.ready).size, 0, 'the writer published without gate release');
 });
 
+/** Changing bytes at the exit boundary distinguishes an early cache from a post-exit read. */
+async function exitOrderedReadiness(t, automatic) {
+  const observations = [], reads = [];
+  let directPID, ready;
+  const originalRead = fs.readFileSync;
+  const originalKill = process.kill;
+  process.kill = function (pid, signal) {
+    // A real SIGKILL has no exit trap: publish the fixture's final bytes immediately before it.
+    if (automatic && pid === directPID && signal === 'SIGKILL') writeFileSync(ready, 'at-exit');
+    return originalKill.call(this, pid, signal);
+  };
+  fs.readFileSync = function (path, ...args) {
+    const watched = typeof path === 'string' && path.endsWith('/list.ready');
+    const pidFile = watched ? join(dirname(path), 'list.pid') : null;
+    const pid = watched && existsSync(pidFile) ? Number(originalRead(pidFile, 'utf8').trim()) : null;
+    const directAlive = watched ? (pid === null ? null : alive(pid)) : undefined;
+    const value = originalRead.call(this, path, ...args);
+    if (directAlive !== undefined) reads.push({ directAlive, value });
+    return value;
+  };
+  syncBuiltinESMExports();
+  try {
+    // Host reason: OS behaviour; the real shell exit and signal establish order, with no Rigger decision.
+    await t.test('native readiness record fixture reaches live pre-exit bytes', SETTLES_WITHIN, async (fixture) => {
+      const name = automatic ? 'automatic-readiness-record' : 'readiness-record';
+      const context = {
+        signal: fixture.signal,
+        after: (hook) => fixture.after(hook),
+        diagnostic(message) {
+          fixture.diagnostic(message);
+          const observation = JSON.parse(message);
+          if (observation.name === name) observations.push(observation);
+        },
+      };
+      const run = nativeRead(context, name,
+        'printf before-exit > "$MATRIX_READY"\n'
+        + 'printf armed > "$MATRIX_PROBE"\n'
+        + 'while [ ! -f "$MATRIX_CALLED" ]; do :; done\n'
+        + 'printf at-exit > "$MATRIX_READY"\n'
+        + 'printf "test/a.test.mjs\\n"');
+      ready = run.ready;
+      await until(() => existsSync(run.probe) && readFileSync(run.probe, 'utf8') === 'armed', fixture);
+      directPID = run.directPID();
+      assert.ok(Number.isSafeInteger(directPID) && directPID > 0);
+      assert.equal(alive(directPID), true, 'the direct shell must be alive before observation');
+      assert.equal(originalRead(ready, 'utf8'), 'before-exit');
+      if (!automatic) {
+        const finishing = run.finish();
+        writeFileSync(run.called, 'release');
+        const result = await finishing;
+        assert.equal(result.status, 0, result.stderr);
+      }
+    });
+  } finally {
+    process.kill = originalKill;
+    fs.readFileSync = originalRead;
+    syncBuiltinESMExports();
+  }
+  assert.equal(observations.length, 1, 'completion must emit one readiness snapshot');
+  const [observation] = observations;
+  if (automatic) assert.equal(observation.teardownOnly, true);
+  assert.equal(observation.directPID, directPID);
+  assert.equal(observation.readiness, 'at-exit', 'readiness retained bytes from before shell exit');
+  assert.ok(reads.length > 0, 'the readiness field must be read from the file');
+  assert.equal(reads.every((read) => read.directAlive === false), true, 'readiness was read while the direct shell was alive');
+  assert.equal(observation.directGone, true, 'readiness was recorded while the direct shell was alive');
+  assert.equal(alive(directPID), false, 'completion left the direct shell alive');
+}
+
 // Host reason: wiring; the generator's real shell exit and recording depend on no Rigger decision.
 test('native readiness record reads the final bytes after the direct shell ends', SETTLES_WITHIN, async (t) => {
-  const run = nativeRead(t, 'readiness-record',
-    'printf finished > "$MATRIX_READY"\nprintf "test/a.test.mjs\\n"');
-  const result = await run.finish();
-  assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.readiness, 'finished', 'readiness was recorded before the shell finished');
-  assert.equal(result.directGone, true, 'readiness was recorded while the shell was alive');
+  await exitOrderedReadiness(t, false);
 });
 
 // Host reason: OS behaviour; automatic teardown of the real shell depends on no Rigger decision.
 test('native automatic teardown records readiness only after direct shell exit', SETTLES_WITHIN, async (t) => {
-  const observations = [];
-  let directPID;
-  // Host reason: OS behaviour; this live shell is the teardown premise, with no Rigger decision.
-  await t.test('native automatic teardown fixture reaches live readiness', SETTLES_WITHIN, async (fixture) => {
-    const context = {
-      signal: fixture.signal,
-      after: (hook) => fixture.after(hook),
-      diagnostic(message) {
-        fixture.diagnostic(message);
-        const observation = JSON.parse(message);
-        if (observation.name === 'automatic-readiness-record') observations.push(observation);
-      },
-    };
-    const run = nativeRead(context, 'automatic-readiness-record', 'while :; do :; done');
-    await until(() => readyComplete(run.ready), fixture);
-    directPID = run.directPID();
-    assert.ok(Number.isSafeInteger(directPID) && directPID > 0);
-    assert.equal(alive(directPID), true, 'the direct shell must be alive before automatic teardown');
-  });
-  assert.equal(observations.length, 1, 'automatic teardown must emit one readiness snapshot');
-  const [observation] = observations;
-  assert.equal(observation.teardownOnly, true);
-  assert.equal(observation.directPID, directPID);
-  assert.equal(observation.readiness, 'ready');
-  assert.equal(observation.directGone, true, 'automatic teardown recorded readiness while the direct shell was alive');
-  assert.equal(alive(directPID), false, 'automatic teardown left the direct shell alive');
+  await exitOrderedReadiness(t, true);
 });
