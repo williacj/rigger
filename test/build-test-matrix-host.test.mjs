@@ -5,6 +5,10 @@ import { spawn } from 'node:child_process';
 import { spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { statSync } from 'node:fs';
+import { unlinkSync } from 'node:fs';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -136,7 +140,7 @@ test('native missing sh refuses launch without changing matrix bytes', SETTLES_W
 
 test('native TERM-resistant direct shell times out at the selected policy and is reaped', SETTLES_WITHIN, async (t) => {
   const run = nativeRead(t, 'timeout', 'responded=no\nwhile :; do\n  if [ "$responded" = no ] && [ -f "$MATRIX_PROBE" ]; then\n    printf survived > "$MATRIX_REPLY"\n    responded=yes\n  fi\ndone');
-  await until(() => existsSync(run.ready), t);
+  await until(() => readyComplete(run.ready), t);
   assert.equal(readFileSync(run.ready, 'utf8'), 'ready');
   const pid = run.directPID();
   assert.ok(Number.isSafeInteger(pid) && pid > 0);
@@ -169,6 +173,13 @@ test('native reply observation waits for the complete literal', (t) => {
   assert.equal(replyObserved(), false, 'an empty reply was accepted');
   publish('surv');
   assert.equal(replyObserved(), false, 'a partial reply was accepted');
+  for (const value of ['s', 'su', 'sur', 'survi', 'surviv', 'survive', 'wrong', 'Survived',
+    ' survived', 'survived ', 'survived\n', 'survived\r\n', 'survived!', 'not-survived', 'survived\0', '"survived"']) {
+    // NUL is valid file content but cannot be passed as a process argument.
+    if (value.includes('\0')) writeFileSync(reply, value);
+    else publish(value);
+    assert.equal(replyObserved(), false, 'a nonliteral reply was accepted: ' + JSON.stringify(value));
+  }
   publish('survived');
   assert.equal(replyObserved(), true, 'the complete reply was not accepted');
 });
@@ -181,4 +192,193 @@ test('importing the generator starts no suite-list process', SETTLES_WITHIN, asy
   const result = await run.finish();
   assert.equal(result.status, 0, result.stderr);
   assert.equal(existsSync(run.called), false, 'import started a suite-list command');
+});
+
+function readyComplete(path) {
+  return existsSync(path) && readFileSync(path, 'utf8') === 'ready';
+}
+
+/** The shell has redirected its output but cannot publish until its stdin gate is released. */
+async function heldReadiness(t) {
+  const root = temporaryDirectory('rigger-matrix-ready-', { context: t });
+  const ready = join(root, 'ready');
+  const writer = spawn('/bin/sh', ['-c',
+    '{ printf held >&2; IFS= read -r gate; printf ready; } > "$MATRIX_READY"'], {
+    env: { ...process.env, MATRIX_READY: ready }, stdio: ['pipe', 'ignore', 'pipe'],
+  });
+  t.diagnostic(JSON.stringify({ readinessWriterPID: writer.pid }));
+  const closed = new Promise((resolve, reject) => {
+    writer.once('error', reject);
+    writer.once('close', (status, signal) => resolve({ status, signal }));
+  });
+  t.after(async () => {
+    if (writer.exitCode === null && writer.signalCode === null) writer.kill('SIGKILL');
+    await closed;
+  });
+  let acknowledgement = '';
+  writer.stderr.setEncoding('utf8').on('data', (bytes) => { acknowledgement += bytes; });
+  await until(() => acknowledgement === 'held', t);
+  assert.equal(statSync(ready).size, 0, 'the writer must be held after creating an empty file');
+  return { ready, writer, closed };
+}
+
+/** A second predicate check witnesses a pending wait; an early read fails before that witness. */
+function observeReadiness(path, context) {
+  const checked = Promise.withResolvers();
+  let checks = 0, reads = 0, ended = false;
+  const reading = until(() => {
+    const complete = readyComplete(path);
+    if (++checks === 2) checked.resolve();
+    return complete;
+  }, context).then(() => {
+    reads += 1;
+    assert.equal(existsSync(path), true, 'a readiness assertion tried to read an absent file');
+    const value = readFileSync(path, 'utf8');
+    assert.equal(value, 'ready');
+    return value;
+  });
+  reading.then(() => { ended = true; }, () => { ended = true; });
+  return { reading, checked: checked.promise, reads: () => reads, ended: () => ended };
+}
+
+// Host reason: OS behaviour; the shell redirect and pipe gate depend on no decision Rigger makes.
+test('native readiness wait holds at the empty file until the writer completes', SETTLES_WITHIN, async (t) => {
+  for (const initial of ['', 'r', 're', 'rea', 'read']) {
+    const run = await heldReadiness(t);
+    writeFileSync(run.ready, initial);
+    assert.equal(readFileSync(run.ready, 'utf8'), initial);
+    const observation = observeReadiness(run.ready, t);
+    await Promise.race([observation.checked, observation.reading]);
+    assert.equal(observation.ended(), false, 'the nonliteral readiness wait ended before release');
+    assert.equal(observation.reads(), 0, 'an assertion read the held readiness file');
+    run.writer.stdin.end('release\n');
+    assert.deepEqual(await run.closed, { status: 0, signal: null });
+    assert.equal(readyComplete(run.ready), true, 'the complete readiness literal was refused');
+    assert.equal(await observation.reading, 'ready');
+    assert.equal(observation.reads(), 1);
+  }
+});
+
+// Host reason: OS behaviour; held real writers supply nonliteral states, with no Rigger decision.
+test('native readiness wait without the literal ends only at the test signal without reading', SETTLES_WITHIN, async (t) => {
+  const nonliteral = [null, '', 'rea', 'r', 're', 'read', 'wrong', 'Ready', 'READY',
+    ' ready', 'ready ', 'ready\n', 'ready\r\n', 'ready!', 'not-ready', 'ready\0', '"ready"'];
+  for (const content of nonliteral) {
+    const run = await heldReadiness(t);
+    if (content === null) unlinkSync(run.ready);
+    else writeFileSync(run.ready, content);
+    const actual = () => existsSync(run.ready) ? readFileSync(run.ready, 'utf8') : null;
+    assert.equal(actual(), content, 'the nonliteral fixture must be established before observation');
+    assert.equal(alive(run.writer.pid), true, 'the writer must still be held at its gate');
+    const controller = new AbortController();
+    const signal = AbortSignal.any([t.signal, controller.signal]);
+    const observation = observeReadiness(run.ready, { signal });
+    await Promise.race([observation.checked, observation.reading]);
+    assert.equal(signal.aborted, false);
+    assert.equal(observation.ended(), false, 'the wait ended before the test aborted its signal');
+    assert.equal(observation.reads(), 0, 'an assertion read readiness before cancellation');
+    const reason = 'the readiness test cancelled its observation';
+    controller.abort(reason);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(observation.ended(), true, 'the readiness wait ignored the test signal');
+    await assert.rejects(observation.reading, {
+      message: 'the test ended before the condition this wait was on held', cause: reason,
+    });
+    assert.equal(observation.reads(), 0, 'an assertion read readiness after cancellation');
+    assert.equal(actual(), content, 'the writer published without gate release');
+    run.writer.kill('SIGKILL');
+    await run.closed;
+  }
+});
+
+// Host reason: OS behaviour; a live gated writer and complete file depend on no Rigger decision.
+test('native readiness already complete is observed while the writer remains held', SETTLES_WITHIN, async (t) => {
+  const run = await heldReadiness(t);
+  writeFileSync(run.ready, 'ready');
+  assert.equal(alive(run.writer.pid), true);
+  assert.equal(readFileSync(run.ready, 'utf8'), 'ready');
+  assert.equal(readyComplete(run.ready), true, 'the already complete readiness literal was refused');
+  const observation = observeReadiness(run.ready, t);
+  assert.equal(await observation.reading, 'ready');
+  assert.equal(observation.reads(), 1);
+  assert.equal(alive(run.writer.pid), true, 'observation must not require writer exit');
+});
+
+/** Changing bytes at the exit boundary distinguishes an early cache from a post-exit read. */
+async function exitOrderedReadiness(t, automatic) {
+  const observations = [], reads = [];
+  let directPID, ready;
+  const originalRead = fs.readFileSync;
+  const originalKill = process.kill;
+  process.kill = function (pid, signal) {
+    // A real SIGKILL has no exit trap: publish the fixture's final bytes immediately before it.
+    if (automatic && pid === directPID && signal === 'SIGKILL') writeFileSync(ready, 'at-exit');
+    return originalKill.call(this, pid, signal);
+  };
+  fs.readFileSync = function (path, ...args) {
+    const watched = typeof path === 'string' && path.endsWith('/list.ready');
+    const pidFile = watched ? join(dirname(path), 'list.pid') : null;
+    const pid = watched && existsSync(pidFile) ? Number(originalRead(pidFile, 'utf8').trim()) : null;
+    const directAlive = watched ? (pid === null ? null : alive(pid)) : undefined;
+    const value = originalRead.call(this, path, ...args);
+    if (directAlive !== undefined) reads.push({ directAlive, value });
+    return value;
+  };
+  syncBuiltinESMExports();
+  try {
+    // Host reason: OS behaviour; the real shell exit and signal establish order, with no Rigger decision.
+    await t.test('native readiness record fixture reaches live pre-exit bytes', SETTLES_WITHIN, async (fixture) => {
+      const name = automatic ? 'automatic-readiness-record' : 'readiness-record';
+      const context = {
+        signal: fixture.signal,
+        after: (hook) => fixture.after(hook),
+        diagnostic(message) {
+          fixture.diagnostic(message);
+          const observation = JSON.parse(message);
+          if (observation.name === name) observations.push(observation);
+        },
+      };
+      const run = nativeRead(context, name,
+        'printf before-exit > "$MATRIX_READY"\n'
+        + 'printf armed > "$MATRIX_PROBE"\n'
+        + 'while [ ! -f "$MATRIX_CALLED" ]; do :; done\n'
+        + 'printf at-exit > "$MATRIX_READY"\n'
+        + 'printf "test/a.test.mjs\\n"');
+      ready = run.ready;
+      await until(() => existsSync(run.probe) && readFileSync(run.probe, 'utf8') === 'armed', fixture);
+      directPID = run.directPID();
+      assert.ok(Number.isSafeInteger(directPID) && directPID > 0);
+      assert.equal(alive(directPID), true, 'the direct shell must be alive before observation');
+      assert.equal(originalRead(ready, 'utf8'), 'before-exit');
+      if (!automatic) {
+        const finishing = run.finish();
+        writeFileSync(run.called, 'release');
+        const result = await finishing;
+        assert.equal(result.status, 0, result.stderr);
+      }
+    });
+  } finally {
+    process.kill = originalKill;
+    fs.readFileSync = originalRead;
+    syncBuiltinESMExports();
+  }
+  assert.equal(observations.length, 1, 'completion must emit one readiness snapshot');
+  const [observation] = observations;
+  if (automatic) assert.equal(observation.teardownOnly, true);
+  assert.equal(observation.directPID, directPID);
+  assert.equal(observation.readiness, 'at-exit', 'readiness retained bytes from before shell exit');
+  assert.ok(reads.length > 0, 'the readiness field must be read from the file');
+  assert.equal(reads.every((read) => read.directAlive === false), true, 'readiness was read while the direct shell was alive');
+  assert.equal(observation.directGone, true, 'readiness was recorded while the direct shell was alive');
+  assert.equal(alive(directPID), false, 'completion left the direct shell alive');
+}
+
+// Host reason: wiring; the generator's real shell exit and recording depend on no Rigger decision.
+test('native readiness record reads the final bytes after the direct shell ends', SETTLES_WITHIN, async (t) => {
+  await exitOrderedReadiness(t, false);
+});
+
+// Host reason: OS behaviour; automatic teardown of the real shell depends on no Rigger decision.
+test('native automatic teardown records readiness only after direct shell exit', SETTLES_WITHIN, async (t) => {
+  await exitOrderedReadiness(t, true);
 });
