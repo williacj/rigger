@@ -60,6 +60,51 @@ const RETURNED = { status: 'fulfilled', value: { exit: 0, output: 'FAIL: 3 of 12
 const EXITED = { status: 'fulfilled', value: { exit: 1, output: 'All 12 tests passed.' } };
 const THREW = { status: 'rejected', reason: new Error('the dispatch could not start') };
 
+// Either successful read can establish presence; unreadable work is never classified absent.
+// proves R-LOOP-18
+test('no-clock nonzero maker settlement reads both forge sources and distinguishes absent present and unreadable', async () => {
+  for (const continuing of [false, true]) for (const branch of ['absent', 'present', 'unreadable']) for (const pull of ['absent', 'open', 'merged', 'closed', 'unreadable']) {
+    const named = `${continuing ? 'continuing' : 'fresh'} branch=${branch} PR=${pull}`;
+    const calls = [];
+    const failures = [];
+    const reads = {
+      readIssueComments: async () => [],
+      readBranches: async () => {
+        calls.push('readBranches');
+        if (branch === 'unreadable') { const failure = new Error('branch unavailable'); failures.push(failure); throw failure; }
+        return { 'rigger-12': branch === 'present' };
+      },
+      readPullRequests: async () => {
+        calls.push('readPullRequests');
+        if (pull === 'unreadable') { const failure = new Error('PR unavailable'); failures.push(failure); throw failure; }
+        return Object.fromEntries(['open', 'merged', 'closed'].map((state) => [state, state === pull ? [{ number: 733, head: 'a'.repeat(40), base: 'main' }] : []]));
+      },
+    };
+    const built = world();
+    const [card] = await itemsOf(built.fake);
+    const changes = columnChanges({ config, sink: built.sink, items: built.fake.operations, reads });
+    let answer;
+    let failure;
+    try { answer = await changes.settled(card, EXITED, { noClock: true, continuing }); }
+    catch (thrown) { failure = thrown; }
+    const present = branch === 'present' || ['open', 'merged', 'closed'].includes(pull);
+    const unreadable = branch === 'unreadable' || pull === 'unreadable';
+    const expected = present ? 'present' : unreadable ? 'unreadable' : 'absent';
+    assert.deepEqual(calls.sort(), ['readBranches', 'readPullRequests'], `${named}: both reads happen exactly once`);
+    assert.equal(answer?.makerWork ?? failure?.makerWork, expected, named);
+    assert.equal(failure !== undefined, unreadable, `${named}: every failed read is reported`);
+    if (expected === 'absent') {
+      assert.equal(answer.action, 'set-aside', named);
+      assert.match(answer.reason, /card #12.*exited 1.*no branch or pull request.*rigger-12/, named);
+    }
+    if (failure !== undefined) {
+      for (const refused of failures) assert.ok(failure.message.includes(refused.message), `${named}: ${refused.message} retained`);
+      assert.doesNotMatch(failure.message, /forge holds no branch|R-LOOP-18/, named);
+    }
+    assert.deepEqual(built.fake.writes(), [], `${named}: classification makes no move`);
+  }
+});
+
 test("a dispatch that exited zero moves its card from the coding column to the review column, whatever its output says", async () => {
   const { fake, l2 } = world();
   const [card] = await itemsOf(fake);

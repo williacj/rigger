@@ -59,12 +59,7 @@ export async function defaultConfig(reads, repository) {
     rmSync(directory, { recursive: true, force: true });
   }
   if (loaded.problem) return { problem: `${loaded.problem}, on the default branch, ${at}` };
-  let refusals;
-  try {
-    refusals = validate(loaded.config);
-  } catch (error) {
-    return { problem: `\`${CONFIG}\` on the default branch, ${at}, could not be validated: ${error.message}` };
-  }
+  const refusals = validate(loaded.config);
   if (refusals.length > 0) return { problem: `\`${CONFIG}\` on the default branch, ${at}, is refused: ${refusals.join('; ')}` };
   const named = loaded.config.repo;
   if (typeof named !== 'string' || named.toLowerCase() !== repository.toLowerCase()) {

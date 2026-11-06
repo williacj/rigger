@@ -4,6 +4,7 @@
 
 import { test } from 'node:test';
 import { ciFacts, ciProof, ciFullFixture, ciCollectorFixture, parseWorkflow } from './ci-policy-fixtures.mjs';
+import { ciNodeVersionPrefix } from './ci-policy-fixtures.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -25,11 +26,15 @@ const LIVE = join(ROOT, '.github', 'workflows', 'rigger-gate.yml');
 const TEMPLATE = join(ROOT, 'templates', 'github', 'workflows', 'rigger-gate.yml');
 const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 
-test('CI assigns portable, concurrent hosted candidate and protected-main regression lanes with Node 26', () => {
+// Host reason: wiring; this process-free configuration check remains in an awaiting-split file (D30 rule 3).
+// Rigger decision: none; this check reads declared job and Node wiring without evaluating CI_POLICY.
+// Deterministic wiring counterpart: test/macos-runner.test.mjs :: runner wiring supplies exactly the three macOS jobs from the one plan output.
+// Deterministic wiring counterpart: test/macos-runner.test.mjs :: R8: unrelated jobs keep their literal base runners.
+test('CI assigns portable candidate, selected macOS and protected-main regression lanes with Node 26', () => {
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
   assert.deepEqual(Object.keys(ci.jobs).sort(), ['cancel_superseded', 'check', 'demo', 'fast', 'full_host', 'full_ordinary', 'nightly', 'plan']);
   for (const name of ['plan', 'fast', 'check']) assert.equal(ci.jobs[name]['runs-on'], 'ubuntu-latest', name);
-  for (const name of ['full_ordinary', 'full_host', 'demo']) assert.equal(ci.jobs[name]['runs-on'], 'macos-latest', name);
+  for (const name of ['full_ordinary', 'full_host', 'demo']) assert.equal(ci.jobs[name]['runs-on'], '${{ fromJSON(needs.plan.outputs.runner) }}', name);
   assert.deepEqual(ci.jobs.nightly['runs-on'], ['self-hosted', 'macOS', 'ARM64']);
   assert.deepEqual(ci.jobs.check.strategy.matrix.node, ['26']);
   for (const name of ['plan', 'fast', 'full_ordinary', 'full_host', 'check', 'demo', 'nightly']) {
@@ -44,7 +49,7 @@ function ciPolicy(operation, facts, extra = {}) {
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
   const source = ci.env.CI_POLICY;
   assert.equal(typeof source, 'string', 'the protected workflow has no inline CI_POLICY');
-  const runner = `const input = JSON.parse(process.env.CI_CONTROL);
+  const runner = ciNodeVersionPrefix() + `const input = JSON.parse(process.env.CI_CONTROL);
     const policy = await import('data:text/javascript;base64,' + Buffer.from(process.env.CI_SOURCE).toString('base64'));
     if (input.operation === 'requestJson') {
       const calls = [];
@@ -540,7 +545,7 @@ test('actual inline CLI plans and verifies real Git source through a local read-
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
   const { NODE_TEST_CONTEXT, ...env } = gitEnvironment();
   const execute = (action, extra = {}) => new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['--input-type=module', '-e', ci.env.CI_POLICY], {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', ciNodeVersionPrefix() + ci.env.CI_POLICY], {
       cwd: directory, signal: t.signal,
       env: { ...env, GH_TOKEN: 'fixture-token', GITHUB_API_URL: 'http://127.0.0.1:' + server.address().port, GITHUB_EVENT_PATH: eventPath, GITHUB_EVENT_NAME: 'pull_request', GITHUB_REF: 'refs/pull/7/merge', GITHUB_SHA: sha, GITHUB_REPOSITORY: 'williacj/rigger', GITHUB_REPOSITORY_OWNER: 'williacj', GITHUB_OUTPUT: outputPath, CI_POLICY_ACTION: action, ...extra },
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -1299,5 +1304,137 @@ test('actual local Git authenticates forward tested bases and refuses nonancesto
     assert.equal(actual.policy(rejected).mode, 'INVALID', refused);
     assert.deepEqual(calls.filter((args) => args[0] === 'merge-base'), [['merge-base', '--is-ancestor', refused, testedBase]]);
     assert.equal(calls.some((args) => args[0] === 'diff'), false);
+  }
+});
+
+// Host reason: wiring; executes source CJS and installed-form JS to tie event decisions to CLI exits.
+// Ordinary decision counterpart: test/macos-runner.test.mjs :: R9: hook allows only the named trusted events and a same-repository pull request.
+// Ordinary decision counterpart: test/macos-runner.test.mjs :: R9: hook refuses unknown events forks deleted heads and unavailable event files.
+test('self-hosted job guard exits zero only for allowed events in source and installed JS form', (t) => {
+  const directory = temporaryDirectory('rigger-job-guard-', { context: t });
+  const source = join(ROOT, '.github/scripts/self-hosted-job-guard.cjs');
+  const installed = join(directory, 'self-hosted-job-guard.js');
+  writeFileSync(installed, readFileSync(source));
+  writeFileSync(join(directory, 'package.json'), '{"type":"commonjs"}\n');
+  const path = join(directory, 'event.json');
+  // GitHub's webhook repository and PR-head repository IDs, independent of the guard's answer.
+  const cases = [
+    ...['schedule', 'workflow_dispatch', 'push', 'merge_group', 'pull_request'].map(event => [event, { repository: { id: 44 }, pull_request: { head: { repo: { id: 44 } } } }, 0]),
+    ['pull_request', { repository: { id: 44 }, pull_request: { head: { repo: { id: 99 } } } }, 1],
+    ['pull_request', { repository: { id: 44 }, pull_request: { head: { repo: null } } }, 1],
+    ['pull_request_review', {}, 1], ['release', {}, 1],
+    ['schedule', null, 1], ['push', '{malformed', 1],
+  ];
+  for (const executable of [source, installed]) for (const [event, payload, expected] of cases) {
+    const bytes = typeof payload === 'string' ? payload : JSON.stringify(payload);
+    writeFileSync(path, bytes);
+    const ran = spawnSync(process.execPath, [executable], {
+      encoding: 'utf8', timeout: 5000,
+      env: { ...process.env, GITHUB_EVENT_NAME: event, GITHUB_EVENT_PATH: payload === null ? join(directory, 'missing.json') : path, RIGGER_JOB_GUARD_STOP_WORKER: '0' },
+    });
+    assert.equal(ran.error, undefined);
+    assert.equal(ran.status, expected, event + ':' + bytes + ':' + ran.stderr);
+    if (expected !== 0) assert.match(ran.stderr, /self-hosted job guard refused/);
+    assert.doesNotMatch(ran.stderr, /stopped Runner.Worker|could not stop Runner.Worker/, 'decision controls disable the runner stop');
+    assert.equal(readFileSync(path, 'utf8'), bytes, 'the guard leaves its event unchanged');
+  }
+});
+
+// Host reason: wiring; connects the child runtime's environment and output file to the in-process plan decisions.
+// Ordinary decision counterpart: test/macos-runner.test.mjs :: R1-R3: same-repository full runs emit the selected allowlisted runner as JSON.
+// Ordinary decision counterpart: test/macos-runner.test.mjs :: R5: every fork variable state plans hosted jobs without changing their eligibility.
+// Ordinary decision counterpart: test/macos-runner.test.mjs :: R6: needed macOS jobs refuse every nonallowlisted value and name its exact text.
+// Ordinary decision counterpart: test/macos-runner.test.mjs :: R6a: runs needing no macOS job ignore malformed values and still admit fast.
+test('actual plan runtime reads the runner variable and publishes only allowlisted JSON or no output on refusal', (t) => {
+  const ci = parseWorkflow(readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8'));
+  const directory = temporaryDirectory('rigger-runner-runtime-', { context: t });
+  const eventPath = join(directory, 'event.json'), outputPath = join(directory, 'output');
+  // These doubles serve only ciCollectorFixture's recorded Git/API responses; the policy text is unaltered.
+  const prefix = `import cp from 'node:child_process';
+    import { syncBuiltinESMExports } from 'node:module';
+    const fixture = JSON.parse(process.env.RUNNER_FIXTURE);
+    cp.execFileSync = (command, args) => {
+      const key = JSON.stringify(args);
+      if (command !== 'git' || !Object.hasOwn(fixture.git, key)) throw new Error('unrecorded Git call');
+      return Buffer.from(fixture.git[key], 'base64');
+    };
+    syncBuiltinESMExports();
+    globalThis.fetch = async (url, options) => {
+      const path = new URL(url).pathname + new URL(url).search;
+      if (options.method !== 'GET' || !Object.hasOwn(fixture.api, path)) throw new Error('unrecorded API call');
+      return new Response(JSON.stringify(fixture.api[path]), { status: 200 });
+    };\n`;
+  for (const [value, fork, full, expected] of [
+    ['["self-hosted","macOS","ARM64"]', false, true, ['self-hosted', 'macOS', 'ARM64']],
+    ['"macos-latest"', false, true, 'macos-latest'],
+    ['bad\nrunner=injected', false, true, null],
+    ['bad\nrunner=injected', false, false, 'macos-latest'],
+    ['["self-hosted","macOS","ARM64"]', true, true, 'macos-latest'],
+  ]) {
+    const fixture = ciCollectorFixture();
+    fixture.event.repository.id = 44;
+    fixture.event.pull_request.head.repo = { id: fork ? 99 : 44 };
+    if (full) {
+      Object.assign(fixture.event, { action: 'labeled', sender: { login: 'williacj' }, label: { name: 'ci:full' } });
+      fixture.api['/repos/williacj/rigger/issues/7/labels?per_page=100'] = [{ name: 'ci:full' }];
+    }
+    writeFileSync(eventPath, JSON.stringify(fixture.event)); writeFileSync(outputPath, '');
+    const ran = spawnSync(process.execPath, ['--input-type=module', '-e', prefix + ci.env.CI_POLICY], {
+      encoding: 'utf8', timeout: 5000,
+      env: { ...process.env, GH_TOKEN: 'fixture-token', GITHUB_API_URL: 'https://api.github.test',
+        GITHUB_EVENT_PATH: eventPath, GITHUB_EVENT_NAME: 'pull_request', GITHUB_REF: 'refs/pull/7/merge',
+        GITHUB_SHA: 'a'.repeat(40), GITHUB_REPOSITORY: 'williacj/rigger', GITHUB_REPOSITORY_OWNER: 'williacj',
+        GITHUB_OUTPUT: outputPath, CI_POLICY_ACTION: 'plan', CI_MACOS_RUNNER: value, RUNNER_FIXTURE: JSON.stringify(fixture) },
+    });
+    assert.equal(ran.error, undefined);
+    const output = readFileSync(outputPath, 'utf8');
+    if (expected === null) {
+      assert.notEqual(ran.status, 0, ran.stdout + ran.stderr);
+      assert.ok(ran.stderr.includes('MACOS_RUNNER') && ran.stderr.includes(JSON.stringify(value)), ran.stderr);
+      assert.equal(output, '', 'refusal publishes no job output, including injected lines');
+    } else {
+      assert.equal(ran.status, 0, ran.stdout + ran.stderr);
+      const runners = output.split('\n').filter(line => line.startsWith('runner='));
+      assert.equal(runners.length, 1);
+      assert.deepEqual(JSON.parse(runners[0].slice('runner='.length)), expected);
+      assert.doesNotMatch(output, /^runner=injected$/m);
+    }
+  }
+});
+
+// Host reason: OS behaviour; observes the controlled Worker's actual SIGKILL and absent continuation.
+// Ordinary decision counterpart: test/macos-runner.test.mjs :: worker stop signals only the exact Runner.Worker in its own parent chain.
+// Ordinary decision counterpart: test/macos-runner.test.mjs :: R9: hook allows only the named trusted events and a same-repository pull request.
+// Ordinary decision counterpart: test/macos-runner.test.mjs :: R9: hook refuses unknown events forks deleted heads and unavailable event files.
+test('opted-in refused hook ends only its controlled Worker ancestor before continuation', (t) => {
+  const directory = temporaryDirectory('rigger-hook-worker-', { context: t });
+  const worker = join(directory, 'Runner.Worker');
+  symlinkSync('/bin/bash', worker);
+  const eventPath = join(directory, 'event.json');
+  writeFileSync(eventPath, JSON.stringify({ repository: { id: 44 }, pull_request: { head: { repo: { id: 99 } } } }));
+  const guard = join(ROOT, '.github/scripts/self-hosted-job-guard.cjs');
+  // The runner directly starts Node, or uses its macOS Node invoker (actions/runner ScriptHandler).
+  // This extra Node parent exercises that ancestry without starting an installed runner.
+  const hop = `const {spawnSync,execFileSync} = require('node:child_process');
+    const parent = execFileSync('/bin/ps', ['-p', String(process.ppid), '-o', 'comm='], {encoding:'utf8'}).trim();
+    if (require('node:path').basename(parent) !== 'Runner.Worker') throw new Error('controlled Worker identity not established');
+    const hook = spawnSync(process.env.HOOK_NODE, [process.env.HOOK_SOURCE], {env:process.env, encoding:'utf8'});
+    process.stderr.write(hook.stderr); process.exitCode = hook.status;`;
+  const body = 'printf "controlled-worker-pid=%s\\n" "$$"\n"$HOOK_NODE" -e "$HOOK_HOP"\nworker_status=$?\nprintf "AFTER_GUARD\\n"\nexit "$worker_status"';
+  for (const [enabled, event, expected] of [['0', 'pull_request', 'refused'], ['1', 'push', 'allowed'], ['1', 'pull_request', 'stopped']]) {
+    const ran = spawnSync(worker, ['-c', body], { encoding: 'utf8', timeout: 10000,
+      env: { ...process.env, HOOK_NODE: process.execPath, HOOK_SOURCE: guard, HOOK_HOP: hop,
+        GITHUB_EVENT_NAME: event, GITHUB_EVENT_PATH: eventPath, RIGGER_JOB_GUARD_STOP_WORKER: enabled } });
+    assert.equal(ran.error, undefined);
+    t.diagnostic(JSON.stringify({ pid: ran.pid, enabled, event, status: ran.status, signal: ran.signal, stdout: ran.stdout, stderr: ran.stderr }));
+    assert.match(ran.stdout, new RegExp('controlled-worker-pid=' + ran.pid));
+    if (expected === 'stopped') {
+      assert.equal(ran.signal, 'SIGKILL', ran.stdout + ran.stderr);
+      assert.doesNotMatch(ran.stdout, /AFTER_GUARD/);
+    } else {
+      assert.equal(ran.signal, null);
+      assert.equal(ran.status, expected === 'allowed' ? 0 : 1, ran.stdout + ran.stderr);
+      assert.match(ran.stdout, /AFTER_GUARD/);
+    }
   }
 });

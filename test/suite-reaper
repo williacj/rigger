@@ -1,20 +1,48 @@
 // ABOUTME: Ends a test run's processes after its suite shell closes a pipe, even if that shell was killed.
 
 import { spawnSync } from 'node:child_process';
-import { createReadStream } from 'node:fs';
-import { realpathSync } from 'node:fs';
-import { join } from 'node:path';
-import { closeSync, constants as files, existsSync, lstatSync, openSync, statSync, writeSync } from 'node:fs';
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { closeSync, constants as files, createReadStream, existsSync, lstatSync, openSync, realpathSync, statSync, writeSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { targetReadRecord } from './suite-reaper-probe.mjs';
 
 import { removeTemporaryDirectory } from './temporary-directory.mjs';
 import { SWEEPS } from './process-fixtures.mjs';
 import { LSOF } from '../src/substrate/process.mjs';
 
+const traceRoot = process.env.RIGGER_1075_TRACE_DIR;
+const traceWriter = traceRoot ? randomUUID() : undefined;
+let traceFile;
+let traceFailed = false;
+let traceOrdinal = 0;
+let traceRead;
+const traceValue = (value) => value === undefined ? { type: 'undefined' } : { type: value === null ? 'null' : typeof value, value };
+const traceOutput = (raw, decoded) => typeof raw === 'string'
+  ? { type: 'string', base64: Buffer.from(raw, 'latin1').toString('base64'), byteLength: Buffer.byteLength(raw, 'latin1'), decoded: traceValue(decoded) }
+  : { ...traceValue(raw), decoded: traceValue(decoded) };
+
+function trace(event) {
+  if (!traceRoot || traceFailed) return;
+  try {
+    if (traceFile === undefined) traceFile = openSync(join(traceRoot, `${process.pid}-${traceWriter}.jsonl`), 'wx', 0o600);
+    const bytes = Buffer.from(`${JSON.stringify({ invocationId: process.env.RIGGER_1075_INVOCATION_ID,
+      writerId: traceWriter, run, reaperPid: process.pid, ...event })}\n`);
+    if (writeSync(traceFile, bytes) !== bytes.length) traceFailed = true;
+  } catch {
+    // A missing or incomplete shard invalidates evidence, never the reaper's verdict.
+    traceFailed = true;
+  }
+}
+
+if (traceRoot) process.once('exit', () => {
+  trace({ event: 'complete', reads: traceOrdinal });
+  if (traceFile !== undefined) closeSync(traceFile);
+});
+
 const [directory, pipe] = process.argv.slice(2);
 const run = realpathSync.native(directory);
 const marker = join(run, 'runner.cjs');
+trace({ event: 'writer-start' });
 
 function read(command, args) {
   const result = spawnSync(command, args, { cwd: '/', env: process.env, encoding: 'utf8', maxBuffer: Infinity });
@@ -63,11 +91,28 @@ function finishTrace() {
   appendTrace({ type: 'terminal', cell: /^(?:E[56]-F[1-7]|E4-F6)$/.test(cell) ? cell : 'other', completedReads, lostWrite });
 }
 
-function targetState(pid) {
-  const result = spawnSync('/bin/ps', ['-ww', '-p', String(pid), '-o', 'pid=,stat=,lstart=,command='], {
-    cwd: '/', env: { ...process.env, LC_ALL: 'C', TZ: 'UTC0' }, encoding: 'utf8', maxBuffer: Infinity,
+function targetState(pid, round) {
+  const args = ['-ww', '-p', String(pid), '-o', 'pid=,stat=,lstart=,command='];
+  if (traceRoot) {
+    traceRead = `${traceWriter}:${++traceOrdinal}`;
+    trace({ event: 'target-read-start', readId: traceRead, targetPid: pid, ordinal: traceOrdinal, sweep: round });
+  }
+  const result = spawnSync('/bin/ps', args, {
+    cwd: '/', env: { ...process.env, LC_ALL: 'C', TZ: 'UTC0' }, encoding: traceRoot ? 'latin1' : 'utf8', maxBuffer: Infinity,
     timeout: 1_000, killSignal: 'SIGKILL',
   });
+  if (traceRoot) {
+    const stdout = result.stdout; const stderr = result.stderr;
+    // Latin-1 transports octets through the existing string-based collaborator controls.
+    if (typeof stdout === 'string') result.stdout = Buffer.from(stdout, 'latin1').toString('utf8');
+    if (typeof stderr === 'string') result.stderr = Buffer.from(stderr, 'latin1').toString('utf8');
+    trace({ event: 'target-read', readId: traceRead, targetPid: pid, ordinal: traceOrdinal, sweep: round,
+      command: '/bin/ps', args, locale: { LC_ALL: 'C', TZ: 'UTC0' }, result: {
+        status: traceValue(result.status), signal: traceValue(result.signal),
+        error: result.error ? { type: 'error', code: traceValue(result.error.code), message: traceValue(result.error.message) } : traceValue(result.error),
+        stdout: traceOutput(stdout, result.stdout), stderr: traceOutput(stderr, result.stderr),
+      } });
+  }
   let parserClass = 'read-failed';
   let signalZero = 'not-checked';
   try {
@@ -95,7 +140,8 @@ function targetState(pid) {
       parserClass = 'framing';
       throw new Error(`target ${pid} ending read has invalid row framing`);
     }
-    const row = /^[ \t]*([0-9]+)[ \t]+([A-Zt][A-Za-z+<>]*)[ \t]+([A-Za-z]{3} [A-Za-z]{3} [ 0-9][0-9] [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4})(?:[ \t]+(.*))?[ \t]*$/.exec(line);
+    // Native ?E remains unconfirmed; only Z or verified absence clears a target.
+    const row = /^[ \t]*([0-9]+)[ \t]+([A-Zt?][A-Za-z+<>]*)[ \t]+([A-Za-z]{3} [A-Za-z]{3} [ 0-9][0-9] [0-9]{2}:[0-9]{2}:[0-9]{2} [0-9]{4})(?:[ \t]+(.*))?[ \t]*$/.exec(line);
     if (result.status !== 0 || !row || !Number.isSafeInteger(Number(row[1])) || Number(row[1]) !== pid) {
       parserClass = 'malformed';
       throw new Error(`target ${pid} ending read was malformed or ambiguous`);
@@ -186,11 +232,19 @@ try {
       }
     }
     for (const [pid, target] of observed) {
-      const current = targetState(pid);
-      if (current.absent) observed.delete(pid);
-      else if (target.started !== undefined && current.started !== target.started) throw new Error(`target ${pid} changed its coarse start identity; original ending remains unconfirmed`);
-      else if (current.zombie) observed.delete(pid);
-      else target.started ??= current.started;
+      const before = traceValue(target.started);
+      try {
+        const current = targetState(pid, round);
+        if (current.absent) observed.delete(pid);
+        else if (target.started !== undefined && current.started !== target.started) throw new Error(`target ${pid} changed its coarse start identity; original ending remains unconfirmed`);
+        else if (current.zombie) observed.delete(pid);
+        else target.started ??= current.started;
+        trace({ event: 'target-decision', readId: traceRead, targetPid: pid, sweep: round, before,
+          current, remembered: observed.has(pid), after: traceValue(target.started) });
+      } catch (error) {
+        trace({ event: 'target-decision', readId: traceRead, targetPid: pid, sweep: round, before, refused: error.message });
+        throw error;
+      }
     }
     if (left.length === 0 && observed.size === 0) {
       removeTemporaryDirectory(run);

@@ -66,7 +66,7 @@ function checkoutBytes(root) {
 }
 
 /** Every invocation, including a refusal, must leave the checkout and worktree inventory intact. */
-export async function invoke(fixture, script, args, env = {}) {
+export async function invoke(fixture, script, args, env = {}, { cleanupRefusal } = {}) {
   const { t, root, tmp, directory } = fixture;
   const before = checkoutBytes(root);
   const worktrees = worktreeList(root);
@@ -76,6 +76,8 @@ export async function invoke(fixture, script, args, env = {}) {
     env: { ...process.env, TMPDIR: tmp, ...env }, timeout: 15_000,
     directory, emitter: { emit() {} },
   });
+  if (cleanupRefusal) await cleanupRefusal(Object.freeze({ exit: ran.exit, timedOut: ran.timedOut,
+    stdout: Buffer.from(ran.stdout), stderr: Buffer.from(ran.stderr) }));
   t.diagnostic(`${script} ${JSON.stringify(args)}\n${ran.stdout}${ran.stderr}`);
   assert.deepEqual(checkoutBytes(root), before, 'the checkout files changed');
   assert.equal(worktreeList(root), worktrees, 'a temporary worktree remains');

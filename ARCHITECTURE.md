@@ -492,8 +492,7 @@ answered once it ends. The verb prints it and picks the exit status. While a clo
 - A `run` ended on a hold's closer it could not save hands the verb what settled since the previous
   drain and was not yet handed, and the verb exits non-zero, as above.
 
-**Cards this run set aside.** A card L3 keeps out of later pulls under "Failure model"'s memory is
-**set aside**. With no clock trigger declared, a set-aside card stays skipped for the run's life,
+**Cards this run set aside.** A card L3 excludes outright under "Failure model"'s direct set-aside table is **set aside**. No-clock action memory excludes an identity, not its card. With no clock trigger declared, a set-aside card stays skipped for the run's life,
 which ends at the drain. While a clock trigger keeps `run` up, a set-aside card stays skipped until a
 read of the board begun after the run set it aside finds it in a column other than its compared
 column (M7-U4 Q20 (c) on #1009). That holds whatever set the card aside.
@@ -634,6 +633,11 @@ report in-process, with no L1 dispatch, no agent, no group and no slot. L3 recor
 unread, as one hand-over, and writes nothing to standard output itself. The verb prints the report
 as it prints each hand-over, and the LaunchAgent's log under `~/Library/Logs/rigger/` keeps it.
 
+Where L5's `report` throws, as on a line of the stream that does not parse, L3 records the outcome
+as `trigger.outcome` `{ name, occurrence, outcome: 'failed' }`. It hands the verb the failure in
+place of the report, as one hand-over. The firing is settled, so the job does not run again for
+that occurrence, and the trigger's next occurrence fires as any other.
+
 **Admission.** A firing is no pull, so admission does not govern it. Under a closed admission, a
 trigger whose work is a card still creates its card, and no pull claims that card until admission
 reopens (`R-SCHED-3`). The `report` job runs whatever admission says (M7-U2 Q4 on #1009).
@@ -658,6 +662,7 @@ its row says otherwise.
 | a card-shaped occurrence comes due, admission open | steps 1 to 4; the card enters Ready |
 | a card-shaped occurrence comes due, admission closed | steps 1 to 4; the card enters Ready, and no pull claims it until admission reopens |
 | an occurrence of `report` comes due, whatever admission says | L3 records the start, runs `report` in-process and records the outcome; no dispatch, no slot |
+| `report` throws while a firing runs | L3 records the outcome `failed` and hands the verb the failure in place of the report; the occurrence is settled, and the next one fires as any other |
 | an occurrence comes due while the card of the trigger's previous firing is open | another card (M7-U2 Q3 on #1009) |
 | occurrences missed while Rigger was down | one firing carrying the newest missed occurrence under `fire`, and none under `skip`; never one per missed occurrence |
 | a card-shaped firing pending at a start | settled as "Settling a pending firing" says |
@@ -695,6 +700,8 @@ gate cannot tell apart").
 - **The interval-and-anchor schedule:** a consumer needing a calendar schedule, such as weekdays
   only.
 - **The in-process job:** a job that must spawn a command, which only L1 runs.
+- **A failed `report` settled as `failed`:** the record showing `report` failures that clear on a
+  retry within the same run, which would argue for leaving the firing pending.
 - **The record as the last firing's source:** a start's whole read of the record becoming
   measurably slow, or a requirement that a firing survive the loss of the local record.
 - **The duplicate guard:** the event record showing two cards for one occurrence.
@@ -1041,9 +1048,7 @@ facts. Those facts are the card's column, its line of work's open, merged and cl
 each open request's head SHA. They include the head SHA and acceptance digest each marker names,
 and the last transition the board shows. They also include
 the escalation label the card carries, the escalation notes on its issue, and L2's routing comment
-where it sent the card to a role. L2 derives them on every read, so no card state is kept. The one
-exception is L3's memory of the cards it does not pull again in one invocation, set out below,
-after the rule that an environment failure retries the card once.
+where it sent the card to a role. L2 derives card actions on each read and keeps no card state. L3 keeps the invocation-local direct set-asides and no-clock action memory described below; neither is persisted.
 
 `.rigger/` holds three things and no others: the process groups L1 must read back to kill, each with
 its dispatch and card, whether admission is open and why it closed, and L5's event stream. Each record's
@@ -1163,18 +1168,41 @@ reaches the owner.
    label. For each, L2 removes the status label, then closes the issue. Where the label's removal is
    refused, L2 leaves that issue open, and `resume` exits non-zero naming it.
 
-Where `resume` changes nothing, it removes no label and closes no issue. The CLI never reaches a
-write side itself. An issue whose label `resume` removed is no longer the status issue
-(`R-SCHED-27`), so `resume`'s own close never clears a hold. A hold linked after `resume`'s read
-may still attach such an issue, and `resume` leaves its closer. At the next trigger that issue is no
-longer the closer's notice, so L2 finds or opens another. `resume` removes the closers it read
-before it removes any label, so no closer it read outlives the label's removal.
+Where `resume` changes nothing, it removes no label and closes no issue, and reads no config.
+Otherwise `resume` reads `rigger.config.mjs` only after step 2, so a missing config or the forge
+never keeps admission closed (`R-SCHED-23`). What step 3 then closes depends on what fails:
+
+- Where the config is missing or does not validate, `resume` reaches no forge and closes no
+  issue.
+- Where L2's read of the open issues carrying the status label is refused or times out, L2 still
+  removes the label from each issue a hold closer's file name gave, then closes it. Every other
+  issue carrying the label stays open.
+- Where a read or write for one issue is refused or times out, L2 leaves that issue open and goes
+  on to the next.
+
+In each case `resume` exits non-zero, naming the closers it removed, each issue it left open, and
+why. A `resume` run again changes nothing, so it closes none of them.
+
+A refused event never stops `resume`. Where the sink refuses an event `resume` records, of a
+closer's removal, a label's removal or a close, `resume` still makes every other removal step 2
+names, and then step 3. It then exits non-zero, naming each event the sink refused, the closers it
+removed and each issue it left open. None of `resume`'s writes is a start, so the halt does not
+bind them.
+
+`resume` reaches L2's notice function through L2's own entry point, built from the config, as
+`once` reaches L2. The CLI never reaches a write side itself. An issue whose label `resume` removed
+is no longer the status issue (`R-SCHED-27`), so `resume`'s own close never clears a hold. A hold
+linked after `resume`'s read may still attach such an issue, and `resume` leaves its closer. At the
+next trigger that issue is no longer the closer's notice, so L2 finds or opens another. `resume`
+removes the closers it read before it removes any label, so no closer it read outlives the label's
+removal.
 
 The closers in `.rigger/admission/` govern, and the status issue is a notice the owner can act on.
 While a hold's closer names an issue, L3 reads that issue's state by its number, once per trigger
-and never per claim. It reads through L0's read side, which gains an issue's state. L3 never reads
-a label. A read that fails or times out counts as unreadable: admission stays closed, and the next
-trigger reads again. At each trigger, after it lists the directory, L3 acts on each hold's closer:
+and never per claim. It reads through the board reads L0's read side hands L3, which gain a read of
+one issue's state. That read answers open, closed, or that the repository holds no such issue, and
+no label. L3 never reads a label. A read that fails or times out counts as unreadable: admission
+stays closed, and the next trigger reads again. At each trigger, after it lists the directory, L3 acts on each hold's closer:
 
 - For a hold's closer that names no issue, L3 calls L2's notice function for it. For
   `hold-<id>.json`, the hold's steps 2 to 6 run.
@@ -1228,6 +1256,9 @@ whose notices it followed. The closers and the issue can disagree:
 | a hold's closer naming the issue, then a second card's hold | open | closed | L2 comments on the open issue, naming the second card |
 | an unreadable closer, then `rigger resume` | open | closed | `resume` names the closer, changes nothing, and closes no issue |
 | no closer, after `resume` | `resume`'s close refused | open | `resume` removes every closer first, then closes the issue, and exits non-zero naming the issue left open |
+| no closer, after `resume` | open, with no `rigger.config.mjs`, or one that does not validate | open | `resume` removes every closer first, closes no issue, and exits non-zero naming the closers it removed and why no issue was closed |
+| no closer, after `resume` | open, and L2's read of the issues carrying the status label refused or timed out | open | `resume` removes every closer first, closes each issue a closer's file name gave, and exits non-zero naming the read and each issue left open |
+| no closer, after `resume` | closed, after the sink refused the event of a closer's removal | open | `resume` removes every closer it read, closes the issue, and exits non-zero naming each event the sink refused |
 | no closer | open | open | absent means open, and the issue is stale; a later hold reuses it and comments naming the new card |
 | no closer | reopened by a person | open | a reopened issue changes nothing while admission is open |
 | any | the status label copied onto another issue by a person | unchanged | that issue is never worked, and `rigger resume` closes it too |
@@ -1291,9 +1322,7 @@ hands L2 the first attempt's failure unread, as it hands the attempt number, so 
 memory and is never persisted. For a judge's dispatch that never started for a host cause, the
 second attempt is that judge's next dispatch, as set out below.
 
-L3 keeps one memory, for one invocation alone: the cards it does not pull again in that
-invocation. The next invocation pulls them as it would any other. L3 keeps a card out of later
-pulls for these reasons, and no others:
+L3 keeps direct set-aside card memory for one invocation. The existing table gives its cases, and no others. A card set aside under that table is excluded before any no-clock action identity is considered. In particular, a merge remains set aside whatever it answered, as do stopped cards and the table's failed writes. A new action identity does not clear a direct set-aside. The next invocation starts without either kind of memory.
 
 | Case | Why |
 |---|---|
@@ -1305,6 +1334,31 @@ pulls for these reasons, and no others:
 | a merge, whatever it answered | a merge the lane refused, because the head moved, checks were pending or mergeability was unknown, would be pulled again at once and poll the forge |
 | a continuing attempt that did not settle | L2 moved nothing, so the next pull would read the same head and markers, answer `continue` again, and dispatch the maker again at once |
 | a closed-card removal followed by a refusal | the refusal leaves the removal conditions unchanged, so the next pull would remove the same directories again at once |
+| while a clock trigger keeps `run` up, a maker whose dispatch L2's settle reads, where all of these hold: | L2's settle answers `set-aside`; without the memory the next pull dispatches the maker again at once, which `R-LOOP-18` rules out |
+| — the maker ran; | |
+| — it exited non-zero; | |
+| — the card is not escalated; | |
+| — the forge holds nothing of the card's line of work, no branch and no pull request from it. | |
+
+In a no-clock `run`, L3 also remembers identities of maker starts from the beginning, continuing maker actions, individual judge dispatches, and closed-card removals with a following maker. This identity rule covers only those actions. `move`, `return`, `escalate`, `merge`, and other removal answers keep their existing handling and exclusions. L2 supplies each identity from the facts selecting its answer; L3 does not reconstruct forge facts. For a removal with a following maker, L2 names the closed pull requests by number and head in stable order and includes the following maker action in its identity. A new closed pull request or changed head therefore gives a different removal identity.
+
+L3 remembers a removal identity after its claim start succeeds and before L1 begins removal, even if the following maker never starts.
+
+L3 remembers a maker or judge identity when its dispatch starts. An unstarted dispatch retains its existing under-claim retry, except for a terminal recording refusal.
+
+In a no-clock run, a terminal recording refusal defers the affected selected maker or individual judge identity until the next invocation. This includes a refusal during that action's preparation or provisioning. L3 retains the identity as deferred, without claiming the dispatch started.
+
+L3 omits that deferred identity before later pull order, without claim, refusal or queue position. For a judge panel, it omits only the affected identities, preserving L2's order for the others.
+
+A successful claim start still permits the normal freed-slot pull after its work settles. Recording refusal neither consumes a host-failure attempt nor closes admission. Every admitted later start must record its own event before acting.
+
+Existing direct set-asides and maker bars still take precedence. A changed identity remains eligible unless another existing exclusion applies. The next invocation starts without deferred identities.
+
+An identical remembered action is omitted before pull order, without claim or refusal. For a mixed judge answer, L3 offers only unmatched judge identities, in L2's order. Other L2 actions remain eligible unless direct set-aside memory or the maker bar below excludes them.
+
+After a non-zero maker exit, L2 reads both the card's line and its open, merged and closed pull requests. It answers **absent** only when the branch and every pull-request set were read successfully and all were absent. It answers **present** when either read establishes a branch or pull request. Otherwise it answers **unreadable**, without claiming absence. L3 bars every later maker for that card in this invocation, including `continue` and `remove.following`, when L2 answered absent under `R-LOOP-18`. It also defers later maker work on unreadable facts, without asserting that `R-LOOP-18` applies. `R-WORK-41` permits deferral of an eligible removal in either case.
+
+L3 increments a card's claim generation synchronously when it takes any claim, before awaiting its start. Each pull fixes its original facts-call offer and those cards' generations. After the facts call returns, only an originally offered card that remains unclaimed, is not directly set aside, and retains that generation may reach the returned `decide` or pull order. An intervening claim therefore invalidates an older read even when its maker or removal never starts. An omitted card creates no claim, refusal or queue position; a fresh read reevaluates it.
 
 Where a hold's closer could not be saved, L3 pulls no card for the rest of the invocation, and
 claims it already holds finish. The command exits non-zero, naming the failure. Without a lock, only
@@ -1363,7 +1417,7 @@ While L2 reads a continuing attempt's pull request at a head other than the tip 
 read it again under the same claim and slot, until the bound `R-WORK-34` sets has passed. Every wait for the forge to show a write runs this way:
 L3 owns the pause, the clock and the bound, and L2 owns what each read shows.
 
-L1's directory-removal operation lives in `src/execution/workspace.mjs`. L2 selects it, and L3 invokes it under the card's claim. It serves both `R-WORK-35` and `R-WORK-36`.
+L1's directory-removal operation lives in `src/execution/workspace.mjs`. L2 selects it, and L3 invokes it under the card's claim. It serves both `R-WORK-35` and `R-WORK-41`.
 
 Once L2 reads a card's pull request as merged, whoever merged it, L3 has L1 remove the card's
 directories: its workspace, and each of its roles' judge, escalation and scratch directories
@@ -1371,18 +1425,20 @@ directories: its workspace, and each of its roles' judge, escalation and scratch
 refuses is left and named, and does not hold the move back. Where a removal failed, the card stays
 where it is, and the next pull that reads it removes again.
 
-For a card satisfying `R-WORK-36` to `R-WORK-40`, L2 answers removal carrying the action it would otherwise answer. L2 chooses that following action before L3 acts. Its qualifying forge-refusal escalation carries `raiser: 'loop'`. L3 treats removal as pullable work and follows this order:
+For a card satisfying `R-WORK-41` and `R-WORK-37` to `R-WORK-40`, L2 answers removal carrying the action it would otherwise answer. L2 chooses that following action before L3 acts. Its qualifying forge-refusal escalation carries `raiser: 'loop'`. L3 treats removal as pullable work and follows this order:
 
 1. L3 claims the card and records the claim's start without moving the card to Coding.
 2. L3 invokes L1's removal and retains its remaining paths, failures and unrecorded events for its caller.
 3. L3 performs L2's following action under the same claim, even where the removal failed or its event could not be recorded.
 4. L3 releases the claim once the following action ends, and reports the retained removal failures with that action's outcome.
 
+When `R-WORK-41` defers removal, L3 takes no claim and performs neither removal nor its following action. Every admitted removal retains the four-step order above, including the following action after a removal failure.
+
 A following attempt moves the card to Coding only after removal, through L2's existing claim operation. Its own start and event boundaries still apply. A sink that continues refusing records therefore prevents the following action's unrecordable start; the removal failure alone does not.
 
 L2 preserves an ordinary refusal's reason and precedence. It converts only the qualifying forge refusal into an ambiguous escalation; it does not convert a form, tier or provider refusal. L3 applies the following action's existing retry exclusions as well as the removal row above.
 
-L3 rechecks claim availability after asynchronous reads and holds one claim through removal and the following action. The decision uses the facts L2 read. Reopening after that read follows `R-WORK-36`'s table; L3 creates no restoration or persisted cleanup state.
+L3 rechecks claim availability after asynchronous reads and holds one claim through removal and the following action. The decision uses the facts L2 read. Reopening after that read follows `R-WORK-41`'s table; L3 creates no restoration or persisted cleanup state.
 
 L3 hands L2 each outcome unread, and L2 answers the next action. A provisioning step is a
 dispatch, so L1 records its group as it records any dispatch's. L2 classifies six failures as
@@ -1663,8 +1719,7 @@ How a call ends decides what L0 records and what the call's caller is handed:
 | L0's exit cleanup ended it, and the process ends | Nothing | Nothing: the process ends before the call settles |
 | L0's exit cleanup ended it, and a signal listener of the caller keeps the process running | One `call.end`, with the outcome the call's result gives. The cleanup's kill gives a non-zero exit, so a call it killed records `failed` | The call's result, as the process adapter gives it |
 
-A forge write side marks an `EVENT_REFUSED` failure from its write call as `made`, with its parsed
-answer, where the call's result passes the side's success check. A refusal on any read before the
+A forge write side marks a failure from its write call as `made`, with its parsed answer, where the call's result shows the forge made the write. That failure is an `EVENT_REFUSED` one, carrying its unrecorded events, or the side's own refusal of an answer the forge made, such as an opened issue lacking a requested label. A caller names unrecorded events only where the failure carries them. A refusal on any read before the
 write is never marked, and a GraphQL write's check also requires the mutation's root field in
 `data`, non-null.
 
@@ -2150,8 +2205,8 @@ comment lines are outside it too: a comment cannot carry a bug.
 | L1 | 1,200 |
 | L2 | 1,600 |
 | The gate | 300 |
-| L3 | 1,200 |
-| L5 | 1,300 |
+| L3 | 1,700 |
+| L5 | 800 |
 | L6 | 1,100 |
 | CLI and config | 2,300 |
 | **Package** | **12,000** |

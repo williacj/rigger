@@ -95,12 +95,7 @@ async function posting(opened, given) {
   if (refusal) return refusal;
   const { config, problem } = await consumerConfig(named);
   if (problem) return refused(problem);
-  let refusals;
-  try {
-    refusals = validate(config);
-  } catch (error) {
-    return refused(`\`${CONFIG}\` in ${named} could not be validated: ${error.message}`);
-  }
+  const refusals = validate(config);
   if (refusals.length > 0) return refused(`\`${CONFIG}\` in ${named} is refused: ${refusals.join('; ')}`);
   opened.admitted(config);
   const emitter = opened.sink.emitter({ layer: 'L0' });

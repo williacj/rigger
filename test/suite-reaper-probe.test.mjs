@@ -146,7 +146,7 @@ test('only a matching final terminal validates a complete contiguous targeted-re
 
 test('a successful trace prefix followed by a lost later read remains incomplete without changing ending decisions', (t) => {
   const source = readFileSync(new URL('./suite-reaper', import.meta.url), 'utf8');
-  const start = source.indexOf('function targetState(pid) {');
+  const start = source.indexOf('function targetState(pid, round) {');
   const end = source.indexOf('\nfunction inside(path) {', start);
   assert.ok(start >= 0 && end > start, 'the targeted read function is present');
   const targetFunction = source.slice(source.indexOf('let completedReads = 0;'), end);
@@ -163,6 +163,7 @@ test('a successful trace prefix followed by a lost later read remains incomplete
     const run = (tracing) => {
       let writes = 0;
       const context = {
+        traceRoot: undefined,
         spawnSync: () => ({ ...answer }),
         process: { env: tracing ? { RIGGER_REAPER_TRACE_FILE: destination,
           RIGGER_REAPER_TRACE_ROOT: root, RIGGER_REAPER_CELL: cell } : {},
@@ -210,6 +211,7 @@ test('interruption during a later targeted read leaves its earlier valid prefix 
         ? join(root, 'reads.jsonl') : join(root, randomUUID() + '.jsonl');
       let reads = 0;
       const context = {
+        traceRoot: undefined,
         spawnSync: () => {
           reads += 1;
           if (reads === 2 && interruption === 'during later read') throw new Error('controlled interruption before read return');
@@ -239,7 +241,7 @@ test('interruption during a later targeted read leaves its earlier valid prefix 
 
 test('targeted-read sessions preserve decisions and report complete reads or latched append loss', (t) => {
   const source = readFileSync(new URL('./suite-reaper', import.meta.url), 'utf8');
-  const targetStart = source.indexOf('function targetState(pid) {');
+  const targetStart = source.indexOf('function targetState(pid, round) {');
   const sessionStart = source.indexOf('let completedReads = 0;');
   const end = source.indexOf('\nfunction inside(path) {', targetStart);
   assert.ok(targetStart >= 0 && end > targetStart);
@@ -258,6 +260,7 @@ test('targeted-read sessions preserve decisions and report complete reads or lat
         const run = (tracing) => {
           let writes = 0;
           const context = {
+            traceRoot: undefined,
             spawnSync: () => ({ ...result }),
             process: { env: tracing ? { RIGGER_REAPER_TRACE_FILE: destination,
               RIGGER_REAPER_TRACE_ROOT: root, RIGGER_REAPER_CELL: cell } : {},
@@ -338,7 +341,7 @@ test('targeted-read sessions preserve decisions and report complete reads or lat
 
 test('targeted read outcomes and trace failures retain the confirmed-ending decision', (t) => {
   const source = readFileSync(new URL('./suite-reaper', import.meta.url), 'utf8');
-  const start = source.indexOf('function targetState(pid) {');
+  const start = source.indexOf('function targetState(pid, round) {');
   const end = source.indexOf('\nfunction inside(path) {', start);
   assert.ok(start >= 0 && end > start, 'the targeted read function is present');
   const targetFunction = source.slice(source.indexOf('let completedReads = 0;'), end);
@@ -348,6 +351,7 @@ test('targeted read outcomes and trace failures retain the confirmed-ending deci
   const answer = (changes = {}) => ({ status: 0, signal: null, error: null, stdout: row, stderr: '', ...changes });
   const cases = [
     ['live row', answer(), 'reached', 'live', 'return'],
+    ['question-mark pending', answer({ stdout: '123 ?E Mon Oct 28 10:00:00 2026 command\n' }), 'reached', 'live', 'return'],
     ['zombie row', answer({ stdout: zombie }), 'reached', 'zombie', 'return'],
     ['status 0 absent', answer({ stdout: '' }), 'ESRCH', 'absent', 'return'],
     ['status 0 reached', answer({ stdout: '' }), 'reached', 'omitted', 'throw'],
@@ -374,6 +378,7 @@ test('targeted read outcomes and trace failures retain the confirmed-ending deci
       },
     };
     const context = {
+      traceRoot: undefined,
       spawnSync: () => result, process: mockedProcess, targetReadRecord,
       realpathSync, dirname, isAbsolute, relative, sep, statSync, existsSync, join,
       lstatSync, openSync, resolve, files: constants, closeSync, Buffer,
@@ -429,6 +434,9 @@ test('targeted read outcomes and trace failures retain the confirmed-ending deci
   for (const { name, mode, result, signalZero, parserClass, kind, signalZeroOverride, traced, untraced, bytes } of e4Observations) {
     assert.deepEqual(traced, untraced, 'E4-F6 ' + name + ' ' + mode + ' changed the reaper decision');
     assert.equal(traced.kind, kind, 'E4-F6 ' + name + ' ' + mode);
+    if (name === 'question-mark pending') assert.deepEqual(JSON.parse(traced.value), {
+      started: 'Mon Oct 28 10:00:00 2026', zombie: false,
+    }, 'E4-F6 question-mark pending ' + mode + ' independently expected non-zombie return');
     assert.doesNotMatch(bytes, /SECRET_WALRUS|\/private\/branch/, 'E4-F6 ' + name + ' ' + mode + ' actual writer synthetic secret/path exclusion');
     if (mode !== 'complete') {
       assert.equal(bytes, '', 'E4-F6 ' + name + ' ' + mode + ' lost write invents no record');

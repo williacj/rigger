@@ -193,7 +193,7 @@ evidence that would bring it back.
   and labels.
 - [`gh`](https://cli.github.com/), authenticated with access to that repository and board.
 - One coding-agent CLI, authenticated. Claude Code is the default adapter; Codex is shipped beside it.
-- Node.js 26 or later.
+- Node.js 24 or later.
 - **macOS** today. **Windows** is planned through WSL2, pending a spike; native Windows is not in
   v0. Linux is untested as a host in its own right, though the WSL2 route runs on it.
 - The owner provisions the forge settings needed by the required check; see
@@ -216,9 +216,9 @@ npx @williacj/rigger doctor        # check Node, gh auth, agent CLI auth, config
 npx @williacj/rigger setup-board   # create the board columns, fields, and labels
 npx @williacj/rigger plan          # show what the next run would pull, and what it refuses
 npx @williacj/rigger once          # pull and finish one card, then exit
-npx @williacj/rigger run           # run until the board drains
+npx @williacj/rigger run           # run until the board drains, or, while a clock trigger is declared, until stopped
 npx @williacj/rigger pause         # stop admitting new cards; in-flight cards finish
-npx @williacj/rigger resume        # reopen admission
+npx @williacj/rigger resume        # reopen admission and close the status issue
 npx @williacj/rigger report        # derive the signals from the event stream
 npx @williacj/rigger verdict <pr> <verdict>  # post your verdict on a pull request, once you confirm it
 ```

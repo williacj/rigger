@@ -90,6 +90,8 @@ function forge() {
       return ok({ repositoryOwner: { projectV2: { id: boardId(owner), field: { id: `PVTSSF_${owner}`, options: HELD } } } });
     }
     if (document.includes('labels(')) return ok({ repository: { labels: { pageInfo: { hasNextPage: false, endCursor: 'MA' }, nodes: [] } } });
+    // The state read of one issue, which names the repository and never the board.
+    if (document.includes('issue(number:')) return ok({ repository: { issue: { state: 'OPEN', repository: { nameWithOwner: 'williacj/rigger' } } } });
     if (document.includes('repository(')) return ok({ repository: { id: 'R_kgDOTcdlSg' } });
     throw new Error(`the test forge does not answer ${document}`);
   };
@@ -106,6 +108,7 @@ const OPERATIONS = {
   readLabels: (board, send) => readSide(board, { send }).readLabels(),
   readPriority: (board, send) => readSide(board, { send }).readPriority(),
   readOtherRepositories: (board, send) => readSide(board, { send }).readOtherRepositories(),
+  readIssueState: (board, send) => readSide(board, { send }).readIssueState(214),
   addIssue: (board, send) => itemWriteSide(board, { send }).addIssue(214),
   moveItem: (board, send) => itemWriteSide(board, { send }).moveItem('PVTI_1', 'Review'),
   createField: (board, send) => schemaWriteSide(board, { send }).createField('Priority', ['High']),

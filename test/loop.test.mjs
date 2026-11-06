@@ -12,6 +12,7 @@ import childProcess from 'node:child_process';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { readdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 
 import config from '../rigger.config.mjs';
 import { createFakeBoard } from './fake-board.mjs';
@@ -21,18 +22,42 @@ import { until } from './process-fixtures.mjs';
 import {
   COLUMNS, DRIVEN_ROUNDS, KINDS, boardOf, cardIn, columnsOf, drive, handleOn, waitFor, readyCard, world,
 } from './loop-world.mjs';
+import { makingWorkspaces } from './loop-world.mjs';
+import { makingJudgeDirectories } from './loop-world.mjs';
+import { removeClosers } from './admission-world.mjs';
 import { readingLater, settledOf } from './loop-world.mjs';
 import { positive, settling, turnWait } from './loop-world.mjs';
 import { loop } from '../src/scheduling/loop.mjs';
+import { realHost } from '../src/substrate/host.mjs';
 import { itemWriteSide } from '../src/substrate/forge/item-write.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { EVENT_REFUSED } from '../src/substrate/process.mjs';
+import { makeJudgeDirectory } from '../src/execution/workspace.mjs';
+import { standInCodex } from './stub-claude.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { heldCard } from './stop-failure.mjs';
 import { markerComment } from './fake-repository.mjs';
 import { PASSING } from './loop-world.mjs';
+import { START as CLOCK_START, manualClock, reportWorld } from './clock-report-world.mjs';
+import { report as deriveReport } from '../src/observation/report.mjs';
+import { streamPath } from '../src/observation/sink.mjs';
+import { run as runVerb } from '../src/cli/run.mjs';
+import { once as onceVerb } from '../src/cli/once.mjs';
+import { clockVerb } from './clock-report-verb-world.mjs';
+import { reportText } from '../src/cli/report.mjs';
+import { failuresIn, keptUp, keptUpVerb, reportsIn, settledIn } from './kept-up-run.mjs';
+import { keptUpRunVerb } from './kept-up-verb-world.mjs';
+import { REFUSED as REFUSED_CARD, card as verbCard } from './verb-consumer.mjs';
+import { readEvents as readEventsAt } from '../src/observation/sink.mjs';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { columnChanges } from '../src/workflow/transitions.mjs';
+import { createFakeRepository } from './fake-repository.mjs';
+import { openSink } from '../src/observation/sink.mjs';
+import { consumerConfig } from './verb-consumer.mjs';
+import { commandOf } from './fake-gh.mjs';
 
 const synchronousCalls = [];
 let synchronousDeadline = Infinity;
@@ -777,7 +802,7 @@ test('when the board refuses a card\'s claim move, L3 does not hand that card to
   await next;
 });
 
-test('when the board read fails, L3 hands no card to the dispatch and passes the read\'s error on unchanged', async () => {
+test('when the board read fails, L3 hands no card to the dispatch and passes on the read\'s message, code and unreadable entries in an error it built', async () => {
   // #215's missing-column error: the read side's column read, through the fake gh, of a board whose
   // Status field lacks the declared `Owner`.
   const gh = installFakeGh(temporaryDirectory('rigger-loop-gh-'), {
@@ -799,7 +824,9 @@ test('when the board read fails, L3 hands no card to the dispatch and passes the
 
   await assert.rejects(built.loop.pull(), (error) => {
     assert.ok(thrown, 'the column read failed');
-    assert.equal(error, thrown);
+    assert.equal(error.message, thrown.message);
+    assert.equal(error.code, thrown.code);
+    assert.deepEqual(error.unreadable, thrown.unreadable);
     assert.ok(error.message.includes('owner (Owner)'), error.message);
     return true;
   });
@@ -1133,6 +1160,1223 @@ test('from the recorded events of a concurrency 3 run over four cards, the most 
  * made that held took 1,139 ms. So a condition that has not held in half this long never will.
  */
 const { 10_000: SETTLES_WITHIN } = BOUNDS;
+
+// A facts read must not acquire a closed card omitted from its offer or claimed since that offer.
+// proves R-WORK-41
+test('a stale closed-card offer cannot decide or remove a card after a held released or refused intervening claim', async (t) => {
+  for (const race of ['held', 'released', 'refused']) {
+    const waitingFacts = Promise.withResolvers();
+    const factsEntered = Promise.withResolvers();
+    const waitingRemoval = Promise.withResolvers();
+    const removalEntered = Promise.withResolvers();
+    if (race !== 'held') waitingRemoval.resolve();
+    const offered = [];
+    const decided = [];
+    let removals = 0;
+    let refusals = 0;
+    let refuseStart = false;
+    const item = cardIn(42, COLUMNS.owner);
+    const forge = { stage: 'owner', line: 'rigger-42', branch: false, open: [], merged: [], closed: [{ number: 733, head: 'a'.repeat(40), base: 'main' }] };
+    const decide = (card) => nextAction({ ...card, forge }, KINDS, undefined, { roles: config.roles });
+    const heldRead = race === 'held' ? 1 : 0;
+    const handle = loop({ config: { ...config, concurrency: 1 },
+      board: { readColumns: async () => COLUMNS, readPriority: async () => ({ items: [item], declared: null }) },
+      facts: async (cards) => {
+        const at = offered.length;
+        offered.push(cards.map(({ number }) => number));
+        decided.push([]);
+        if (at === heldRead) { factsEntered.resolve(); await waitingFacts.promise; }
+        return (card) => { decided[at].push(card.number); return decide(card); };
+      }, decide,
+      l2: { escalated: async () => {} },
+      sink: { emitter: ({ layer }) => ({ emit: (event) => {
+        if (layer === 'L3' && event === 'pull' && refuseStart) {
+          refuseStart = false;
+          refusals += 1;
+          throw new Error('the controlled pull record was refused');
+        }
+      } }) },
+      kill: async () => {}, workspace: async () => { assert.fail('Owner cleanup starts no maker'); },
+      judgeDirectory: async () => { assert.fail('Owner cleanup starts no judge'); },
+      removeDirectories: async () => { removals += 1; removalEntered.resolve(); await waitingRemoval.promise; },
+      state: stateOf(), environment: {}, run: 'r-stale-offer', clock: manualClock(),
+    });
+    let first;
+    let stale;
+    t.after(async () => { waitingFacts.resolve(); waitingRemoval.resolve(); await Promise.allSettled([first, stale].filter(Boolean)); });
+    if (race === 'held') {
+      first = handle.pull();
+      await removalEntered.promise;
+      stale = handle.pull();
+      await factsEntered.promise;
+      waitingRemoval.resolve();
+      await first;
+    } else {
+      stale = handle.pull();
+      await factsEntered.promise;
+      refuseStart = race === 'refused';
+      first = handle.pull();
+      if (race === 'refused') await assert.rejects(first, (failure) => failure.errors.some(({ message }) => message.includes('controlled pull record was refused')));
+      else await first;
+    }
+    waitingFacts.resolve();
+    assert.deepEqual(await stale, [], `${race}: the stale snapshot takes no claim`);
+    assert.deepEqual(decided[heldRead], [], `${race}: stale cards never reach the returned decide or pull order`);
+    assert.deepEqual(offered[heldRead], race === 'held' ? [] : [42], `${race}: the original offer is established before the intervening release`);
+    assert.equal(removals, race === 'refused' ? 0 : 1, `${race}: no stale removal`);
+    assert.equal(refusals, race === 'refused' ? 1 : 0);
+    await handle.pull();
+    assert.equal(removals, race === 'refused' ? 1 : 2, `${race}: a fresh read may claim current facts`);
+  }
+});
+
+// A begun removal remains remembered even when its following maker never starts.
+// proves R-WORK-41
+test('a no-clock run remembers removal before cleanup and following work but retries a refused removal claim start', async (t) => {
+  for (const scenario of ['removed', 'cleanup failed', 'claim refused', 'new number', 'changed head', 'following refusal']) {
+    await t.test(scenario, async (t) => {
+      const firstBoundary = Promise.withResolvers();
+      const otherMove = Promise.withResolvers();
+      const otherReleased = Promise.withResolvers();
+      const freshFacts = Promise.withResolvers();
+      const items = [cardIn(42, COLUMNS.review), cardIn(43, COLUMNS.review)];
+      if (scenario === 'following refusal') items[0].body = 'No acceptance.';
+      const closed = [{ number: 733, head: 'a'.repeat(40), base: 'main' }];
+      const cleanupFailure = new Error('cleanup kept /remaining/a and /remaining/b');
+      let reads = 0;
+      let removals = 0;
+      let following = 0;
+      let startRefused = false;
+      const pulls = [];
+      const decide = (card) => nextAction({ ...card, forge: { stage: 'review', line: `rigger-${card.number}`, branch: false,
+        open: [], closed: card.number === 42 ? closed : [], merged: card.number === 43 ? [{ number: 734, head: 'b'.repeat(40), base: 'main' }] : [],
+      } }, KINDS, undefined, { roles: config.roles, provisioning: {} });
+      const handle = loop({ config: { ...config, concurrency: 2 },
+        board: { readColumns: async () => COLUMNS, readPriority: async () => ({ items: structuredClone(items), declared: null }) },
+        facts: async () => {
+          reads += 1;
+          if (reads >= 3) return () => ({ action: 'ignore' });
+          if (reads === 2) await freshFacts.promise;
+          return decide;
+        }, decide,
+        l2: {
+          claimed: async (card) => { following += 1; items.find(({ number }) => number === card.number).column = COLUMNS.coding; },
+          moved: async (card) => { await otherMove.promise; items.find(({ number }) => number === card.number).column = COLUMNS.done; },
+        },
+        sink: { emitter: ({ layer, card }) => ({ emit: (event, fields) => {
+          if (layer !== 'L3') return;
+          if (event === 'pull') {
+            if (card === 42 && scenario === 'claim refused' && !startRefused) {
+              startRefused = true;
+              firstBoundary.resolve();
+              throw new Error('the removal claim start was refused');
+            }
+            pulls.push(card);
+          }
+          if (event === 'dispatch' && card === 42) {
+            // A person restores Review after the failed start; the claimed move still entered Coding.
+            items[0].column = COLUMNS.review;
+            throw new Error('the following maker start was refused');
+          }
+          if (event === 'slot.release' && card === 42) firstBoundary.resolve();
+          if (event === 'slot.release' && card === 43) otherReleased.resolve();
+        } }) },
+        kill: async () => {}, workspace: async () => ({ path: temporaryDirectory('rigger-removal-maker-') }),
+        judgeDirectory: async () => { assert.fail('this cleanup has no judge'); },
+        removeDirectories: async (card) => {
+          if (card !== 42) return;
+          removals += 1;
+          // The next forge read observes a newly closed PR or changed head after this removal began.
+          if (removals === 1 && ['new number', 'following refusal'].includes(scenario)) closed.push({ number: 735, head: 'c'.repeat(40), base: 'main' });
+          if (removals === 1 && scenario === 'changed head') closed[0].head = 'c'.repeat(40);
+          if (scenario === 'cleanup failed') throw cleanupFailure;
+        }, state: stateOf(), environment: {}, run: 'r-removal-memory', clock: manualClock(),
+      });
+      const running = handle.run();
+      running.catch(() => {});
+      t.after(async () => { otherMove.resolve(); freshFacts.resolve(); await running.catch(() => {}); });
+      await firstBoundary.promise;
+      otherMove.resolve();
+      await otherReleased.promise;
+      freshFacts.resolve();
+      const result = await running.then((value) => ({ value }), (failure) => ({ failure }));
+
+      const admitted = ['new number', 'changed head'].includes(scenario) ? 2 : 1;
+      assert.equal(removals, admitted, 'unchanged removal is omitted and a new number or head is admitted');
+      assert.equal(following, scenario === 'following refusal' ? 0 : admitted, 'each admitted cleanup attempts its following action');
+      assert.equal(pulls.filter((card) => card === 42).length, admitted, 'omitted removal takes no extra claim or queue position');
+      assert.equal(startRefused, scenario === 'claim refused');
+      if (scenario === 'following refusal') assert.equal(result.value.find(({ card }) => card === 42).action, 'refuse', 'direct refusal set-aside wins over changed closed history');
+      else assert.ok(result.failure, 'the refused following start must be reported');
+      if (scenario === 'cleanup failed') assert.ok(leavesOf(result.failure).includes(cleanupFailure), 'the original cleanup failure stays beside the following start failure');
+    });
+  }
+});
+
+/** A world whose L0 and L3 time decisions use the same manual clock, restored after its cleanup. */
+function onManualHost(t, options) {
+  const formerClock = realHost.clock;
+  const clock = { ...manualClock(), pause: async () => {} };
+  realHost.clock = clock;
+  let built;
+  try { built = world({ ...options, clock, host: { ...realHost, clock } }); }
+  catch (failure) { realHost.clock = formerClock; throw failure; }
+  t.after(() => { realHost.clock = formerClock; });
+  return built;
+}
+
+/** Observes native starts so an algorithm fixture cannot silently acquire host dependencies. */
+function nativeCalls(t) {
+  const calls = [];
+  const originals = new Map();
+  for (const method of ['spawn', 'spawnSync', 'execFile', 'execFileSync']) {
+    const original = childProcess[method];
+    originals.set(method, original);
+    childProcess[method] = (...args) => {
+      calls.push({ method, command: args[0] });
+      return original(...args);
+    };
+  }
+  syncBuiltinESMExports();
+  t.after(() => {
+    for (const [method, original] of originals) childProcess[method] = original;
+    syncBuiltinESMExports();
+  });
+  return calls;
+}
+
+/** Node's documented child event/pipe contract, with immediate answers and no OS process. */
+function answeringHost(t, answer, clock) {
+  let serial = 900_000_000;
+  const host = { ...realHost, clock,
+    spawn(command, args, options) {
+      const response = answer(command, args, options);
+      const child = Object.assign(new EventEmitter(), { pid: ++serial, exitCode: null, signalCode: null,
+        stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough() });
+      Promise.resolve(response).then((response) => {
+        child.stdout.end(response.stdout ?? '');
+        child.stderr.end(response.stderr ?? '');
+        child.exitCode = response.exit ?? 0;
+        child.emit('exit', child.exitCode, null);
+      });
+      return child;
+    },
+    spawnSync(tool, args) {
+      assert.equal(tool, realHost.ps, 'only the documented synchronous leader identity read is needed');
+      assert.equal(args.at(-1), 'lstart=');
+      return { status: 0, stdout: 'Sun Nov  1 21:00:00 2026\n', stderr: '' };
+    },
+    execFile(tool, _args, _options, done) {
+      assert.equal(tool, realHost.lsof, 'completed commands leave an empty directory census');
+      queueMicrotask(() => done(null, '', ''));
+      return { stdout: { destroy() {} }, stderr: { destroy() {} } };
+    },
+    signal() { throw Object.assign(new Error('the controlled command has exited'), { code: 'ESRCH' }); },
+    killChild() { assert.fail('an answered controlled read needs no kill'); },
+  };
+  // L1's scratch registration check also uses L0's host, through its default argument.
+  const saved = new Map(['spawn', 'spawnSync', 'execFile', 'signal', 'killChild', 'clock'].map((key) => [key, Object.getOwnPropertyDescriptor(realHost, key)]));
+  for (const key of saved.keys()) Object.defineProperty(realHost, key, { configurable: true, value: host[key] });
+  t.after(() => { for (const [key, descriptor] of saved) Object.defineProperty(realHost, key, descriptor); });
+  return host;
+}
+
+/** Real L1/L2/L3 over the existing forge doubles, with completed command answers at L0. */
+function answeredWorld(t, { cards, root = temporaryDirectory('rigger-answered-loop-'), kinds = KINDS, provisioning = {},
+  fresh = true, answer = () => ({ exit: 0 }), workspace, judgeDirectory, removeDirectories = async () => {}, forge = {} } = {}) {
+  const clock = { ...manualClock(), pause: async () => {} };
+  const settings = { ...config, concurrency: 1 };
+  const fake = boardOf(cards);
+  const repository = createFakeRepository({ repo: settings.repo, issues: fake.issues(), ...forge });
+  const directory = join(root, 'state');
+  const repositoryPath = join(root, 'repository');
+  fs.mkdirSync(repositoryPath, { recursive: true });
+  const actualSink = openSink({ directory, run: 'r-answered', now: clock.now });
+  const roles = new Map();
+  const events = () => fs.existsSync(streamPath(directory)) ? readEventsAt(directory) : [];
+  const runs = [];
+  const sink = { emitter(context) {
+    const emitter = actualSink.emitter(context);
+    return { emit(event, fields) {
+      if (context.layer === 'L3' && event === 'dispatch' && fields.role !== undefined) roles.set(context.dispatch, fields.role);
+      emitter.emit(event, fields);
+      if (context.layer === 'L1' && event === 'dispatch.end' && roles.get(context.dispatch) === 'engineer' && (fields.exit === 0 || fresh)) {
+        const branch = `rigger-${context.card}`;
+        if (!repository.held().pullRequests.some((pull) => pull.head === branch && !pull.closed && !pull.merged)) repository.open({ number: 1000 + runs.length, head: branch, sha: String(context.card).padStart(40, '0') });
+      }
+    } };
+  } };
+  const host = answeringHost(t, (command, args, options) => {
+    if (command === 'git') {
+      assert.deepEqual(args, ['worktree', 'list', '--porcelain', '-z']);
+      return { stdout: `worktree ${repositoryPath}\0HEAD ${'a'.repeat(40)}\0branch refs/heads/main\0\0` };
+    }
+    if (command === '/bin/sh') {
+      assert.equal(args[0], '-c');
+      assert.ok(['true', 'false'].includes(args[1]));
+      return { exit: args[1] === 'true' ? 0 : 1 };
+    }
+    assert.equal(command, 'claude');
+    const start = events().findLast(({ layer, event }) => layer === 'L3' && event === 'dispatch');
+    runs.push({ card: start.card, role: start.role, cwd: options.cwd });
+    const response = answer({ number: start.card });
+    assert.equal(response instanceof Error, false, 'unstarted commands are represented by an unusable workspace');
+    return response;
+  }, clock);
+  const makeDirectory = (path) => {
+    fs.mkdirSync(join(path, '.claude', 'agents'), { recursive: true });
+    for (const [role, { agent }] of Object.entries(settings.roles)) fs.writeFileSync(join(path, agent ?? `.claude/agents/${role}.md`), '# Controlled role\n');
+    return path;
+  };
+  const makeWorkspace = async (number) => ({ path: makeDirectory(join(root, 'workspaces', `rigger-${number}`)),
+    branch: `rigger-${number}`, scratch: join(root, 'scratch', `rigger-${number}`), repository: repositoryPath });
+  const makeJudgeDirectories = async (number, role) => {
+    const path = join(root, 'judges', `rigger-${number}`, role);
+    return { path, main: makeDirectory(join(path, 'main')), head: makeDirectory(join(path, 'head')),
+      scratch: join(root, 'scratch', `rigger-${number}`), repository: repositoryPath };
+  };
+  const l2 = columnChanges({ config: settings, sink, items: fake.operations, reads: repository.operations, repositoryWrites: repository });
+  const decide = (card, outcomes, options) => nextAction(card, kinds, undefined, { roles: settings.roles, provisioning, outcomes, sink, ...options });
+  const built = loop({ config: settings, board: handleOn(fake), decide, facts: factsCall({ config: settings, reads: repository.operations, decide }),
+    l2, sink, kill: async () => {}, workspace: workspace ?? makeWorkspace, judgeDirectory: judgeDirectory ?? makeJudgeDirectories,
+    workspaceTip: async ({ card }) => repository.held().pullRequests.find((pull) => pull.head === `rigger-${card}` && !pull.closed && !pull.merged)?.sha,
+    removeDirectories, state: directory, environment: {}, run: 'r-answered', clock, host });
+  return { fake, repository, l2, directory, sink, loop: built, events, l3Events: () => events().filter(({ layer }) => layer === 'L3'),
+    agent: { runs: () => [...runs] }, makeWorkspace, makeJudgeDirectories,
+    settles: () => false, dispatches: { releaseAll() {} } };
+}
+
+/** Independent refusal cases over controlled commands, with a fresh active card pair per case. */
+function refusalWorld(t, cases, stepRun, fresh) {
+  const root = temporaryDirectory('rigger-refusal-matrix-');
+  const making = (number) => built.makeWorkspace(number);
+  const directories = (...args) => built.makeJudgeDirectories(...args);
+  const rows = cases.map((given, at) => ({ ...given, number: 42 + at, peer: 95 + at, kind: `case${at}` }));
+  const byCard = new Map(rows.map((row) => [row.number, row]));
+  let selected = rows[0];
+  let peerGate;
+  let peerStarted = false;
+  let reads = 0;
+  let built;
+  const workspace = async (number) => {
+    const row = byCard.get(number);
+    if (row && !row.judging && ['workspace', 'preparation'].includes(row.stage)) return makeWorkspace({ root, topic: 'rigger-{number}', repository: join(root, 'missing-repository'), card: number, sink: built.sink });
+    const made = await making(number);
+    if (row?.stage === 'maker') fs.rmSync(made.path, { recursive: true });
+    return made;
+  };
+  const kinds = Object.fromEntries(rows.map(({ kind, judging, stage }) => [kind, { ...KINDS.change,
+    select: { labels: [`type:${kind}`] }, judges: judging ? ['reviewer'] : ['owner'],
+    provisioning: stage === 'optional' ? ['optional'] : stage.includes('step') ? ['prepare'] : [],
+  }]));
+  kinds.handoff = { ...KINDS.change, select: { labels: ['type:handoff'] } };
+  built = answeredWorld(t, { root, cards: rows.flatMap(({ number, peer, kind, judging }) => [
+    { ...cardIn(number, judging ? COLUMNS.review : COLUMNS.ready), labels: [`type:${kind}`] },
+    { ...readyCard(peer), labels: ['type:handoff'] },
+  ]), fresh, workspace, kinds,
+    answer: async ({ number }) => {
+      if (peerGate && number === selected.peer) { peerStarted = true; await peerGate.promise; }
+      return { exit: 0 };
+    },
+    provisioning: { prepare: { run: stepRun, required: true }, optional: { run: stepRun, required: false } },
+    judgeDirectory: (number, role, head) => ['workspace', 'preparation'].includes(byCard.get(number)?.stage)
+      ? makeJudgeDirectory({ root, topic: 'rigger-{number}', repository: join(root, 'missing-repository'), card: number, role, head, sink: built.sink })
+      : directories(number, role, head),
+    forge: { pullRequests: rows.flatMap(({ number, judging }, at) => judging ? [{ number: 733 + at, head: `rigger-${number}`, sha: 'a'.repeat(40), mergeBase: 'b'.repeat(40), diff: 'diff --git a/help b/help\n' }] : []) },
+  });
+  const emitter = built.sink.emitter.bind(built.sink);
+  const priority = built.fake.operations.readPriority;
+  built.fake.operations.readPriority = async (...args) => {
+    const answer = await priority(...args);
+    return { ...answer, items: ++reads > 4 ? [] : answer.items.filter(({ number }) => number === selected.number || number === selected.peer) };
+  };
+  return { built, resetReads: () => { reads = 0; }, select: (at) => {
+    // Independent rows start with open admission, as their former separate worlds did.
+    if (fs.existsSync(admissionOf(built.directory))) removeClosers(built.directory);
+    built.sink.emitter = emitter;
+    selected = rows[at];
+    peerGate = selected.judging && selected.stage === 'step' && stepRun === 'false' ? Promise.withResolvers() : undefined;
+    peerStarted = false;
+    t.after(() => peerGate?.resolve());
+    reads = 0;
+    const eventsAt = built.events().length;
+    const runsAt = built.agent.runs().length;
+    return { number: selected.number, peer: selected.peer,
+      peerPending: () => peerStarted, releasePeer: () => peerGate?.resolve(),
+      events: () => built.events().slice(eventsAt), runs: () => built.agent.runs().slice(runsAt),
+      l3: () => built.events().slice(eventsAt).filter(({ layer }) => layer === 'L3'),
+    };
+  } };
+}
+
+/** A failed command's exit-time reads, followed by a newly closed PR and a controlled line read. */
+function closedAfterFailedMaker(t, { exitBranch = 'unreadable', exitPull = 'absent', closedBranch = false, kinds = KINDS, earlyRead, cases } = {}) {
+  const removals = [];
+  const choices = cases ?? [{ number: 42, exitBranch, exitPull, closedBranch, earlyRead }];
+  let selected = choices[0];
+  const built = answeredWorld(t, { cards: choices.map(({ number }) => number), fresh: false, answer: () => ({ exit: 7, output: '' }), kinds,
+    removeDirectories: async (number) => { removals.push(number); },
+  });
+  const priority = built.fake.operations.readPriority;
+  built.fake.operations.readPriority = async (...args) => {
+    const answer = await priority(...args);
+    return { ...answer, items: answer.items.filter(({ number }) => number === selected.number) };
+  };
+  let exitReading = false;
+  let afterExit = false;
+  const exitReads = [];
+  const comments = built.repository.operations.readIssueComments;
+  built.repository.operations.readIssueComments = async (...args) => {
+    if (!exitReading || selected.earlyRead === undefined) return comments(...args);
+    if (selected.earlyRead === 'comments') throw new Error('exit-time issue comments unavailable');
+    const dispatch = built.l3Events().findLast(({ event, role }) => event === 'dispatch' && role === 'engineer').dispatch;
+    return [{ permission: 'write', edited: false, body: ['```rigger-escalation', 'category: ambiguous', 'item: 1', 'reason: maker cannot finish', `dispatch: ${dispatch}`, '```'].join('\n') }];
+  };
+  // The documented branch-read answer models deletion after the fake's open, as F4's
+  // closed-no-branch fixture does; opening the fake PR itself also retains its branch.
+  built.repository.operations.readBranches = async (names) => {
+    if (exitReading) exitReads.push('branch');
+    if (exitReading && selected.exitBranch === 'unreadable') throw new Error('exit-time branch unavailable');
+    return Object.fromEntries(names.map((name) => [name, exitReading ? selected.exitBranch === 'present' : afterExit && (selected.closedBranch ?? false)]));
+  };
+  const pulls = built.repository.operations.readPullRequests;
+  built.repository.operations.readPullRequests = async (...args) => {
+    if (exitReading) exitReads.push('PR');
+    if (exitReading && selected.earlyRead === 'escalation') throw new Error('exit-time escalation PR unavailable');
+    if (exitReading && selected.exitPull === 'unreadable') throw new Error('exit-time PR unavailable');
+    if (exitReading && selected.exitPull === 'closed') return { open: [], merged: [], closed: [{ number: 733 + selected.number - 42, head: 'a'.repeat(40), base: 'main' }] };
+    return pulls(...args);
+  };
+  let first = true;
+  const settle = built.l2.settled;
+  built.l2.settled = async (...args) => {
+    const initial = first;
+    first = false;
+    exitReading = initial;
+    try { return await settle(...args); }
+    finally {
+      exitReading = false;
+      const card = (await built.fake.operations.readItems()).find(({ number }) => number === selected.number);
+      if (initial) {
+        afterExit = true;
+        built.repository.open({ number: 733 + selected.number - 42, head: `rigger-${selected.number}`, sha: 'a'.repeat(40), closed: true });
+        await built.fake.operations.moveItem(card.id, COLUMNS.review);
+      } else await built.fake.operations.moveItem(card.id, COLUMNS.done);
+    }
+  };
+  return { built, removals, exitReads, select: (at) => { selected = choices[at]; first = true; afterExit = false; exitReads.length = 0; } };
+}
+
+// An unreadable failed-maker snapshot must not admit a later closed-card redo in the same run.
+// proves R-WORK-41
+test('a no-clock run defers closed-card removal after unreadable maker work and permits it in the next invocation', SETTLES_WITHIN, async (t) => {
+  const { built, removals } = closedAfterFailedMaker(t);
+  const reached = await drive(built);
+
+  assert.deepEqual(built.agent.runs().map(({ card }) => card), [42], 'unreadable exit facts defer every following maker');
+  assert.deepEqual(removals, [], `the deferred following maker admits no removal claim: ${JSON.stringify(reached, (_key, value) => value instanceof Error ? { message: value.message, code: value.code, makerWork: value.makerWork } : value)}`);
+  assert.equal(reached[0].settled.status, 'rejected');
+  assert.equal(reached[0].settled.reason.makerWork, 'unreadable');
+  assert.match(reached[0].settled.reason.message, /exit-time branch unavailable/);
+  assert.doesNotMatch(reached[0].settled.reason.message, /forge holds no branch|R-LOOP-18/);
+  assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.review });
+
+  await drive(built);
+  assert.deepEqual(built.agent.runs().map(({ card }) => card), [42, 42], 'the next invocation starts without the maker bar');
+  assert.deepEqual(removals, [42], 'the admitted redo removes before its maker');
+});
+
+// A maker bar does not set the whole card aside when its later action starts no maker.
+// proves R-WORK-41
+test('a no-clock failed-maker bar leaves closed cleanup and its following escalation eligible', SETTLES_WITHIN, async (t) => {
+  const formerClock = realHost.clock;
+  for (const exitBranch of ['absent', 'unreadable']) {
+    await t.test(exitBranch, async (t) => {
+      const { built, removals } = closedAfterFailedMaker(t, { exitBranch, closedBranch: true });
+      const reached = await drive(built);
+
+      assert.deepEqual(removals, [42], `${exitBranch}: non-maker cleanup remains eligible`);
+      assert.deepEqual(built.agent.runs().map(({ card }) => card), [42], `${exitBranch}: cleanup starts no second maker`);
+      assert.deepEqual(reached.map(({ action }) => action ?? 'maker'), ['maker', 'escalate'], `${exitBranch}: both reached outcomes remain in claim order`);
+      assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.owner });
+    });
+  }
+  assert.strictEqual(realHost.clock, formerClock, 'each fixture restores the host clock before the next fixture');
+});
+
+// Established absence bars the following maker and its removal for this invocation alone.
+// proves R-LOOP-18, R-WORK-41
+test('a no-clock absent-work maker bar defers a closed-card redo until a new invocation', SETTLES_WITHIN, async (t) => {
+  const { built, removals } = closedAfterFailedMaker(t, { exitBranch: 'absent' });
+  const reached = await drive(built);
+
+  assert.deepEqual(built.agent.runs().map(({ card }) => card), [42]);
+  assert.deepEqual(removals, []);
+  assert.equal(reached[0].settled.status, 'fulfilled');
+  assert.equal(reached[0].settled.value.makerWork, 'absent');
+  assert.equal(reached[0].settled.value.action, 'set-aside');
+  assert.match(reached[0].settled.value.reason, /exited 7.*no branch or pull request.*rigger-42/);
+  await drive(built);
+  assert.deepEqual(built.agent.runs().map(({ card }) => card), [42, 42]);
+  assert.deepEqual(removals, [42]);
+});
+
+// Presence established by either source keeps the later removal and maker eligible.
+// proves R-LOOP-18, R-WORK-41
+test('a no-clock maker may redo closed work when either exit-time read establishes presence despite the other failing', SETTLES_WITHIN, async (t) => {
+  const formerClock = realHost.clock;
+  for (const [exitBranch, exitPull] of [['present', 'unreadable'], ['unreadable', 'closed']]) {
+    await t.test(`${exitBranch}/${exitPull}`, async (t) => {
+      const { built, removals } = closedAfterFailedMaker(t, { exitBranch, exitPull });
+      const reached = await drive(built);
+
+      assert.deepEqual(built.agent.runs().map(({ card }) => card), [42, 42], 'presence permits the following maker despite the other read failing');
+      assert.deepEqual(removals, [42], 'one admitted removal precedes that maker');
+      assert.equal(reached[0].settled.status, 'rejected', 'the failed read is still reported');
+      assert.equal(reached[0].settled.reason.makerWork, 'present');
+      assert.match(reached[0].settled.reason.message, /exit-time (branch|PR) unavailable/);
+      assert.doesNotMatch(reached[0].settled.reason.message, /forge holds no branch|R-LOOP-18/);
+    });
+  }
+  assert.strictEqual(realHost.clock, formerClock);
+});
+
+// Early comment or escalation reads must still classify both work sources for L3's maker bar.
+// proves R-LOOP-18, R-WORK-41
+test('early failed-maker reads preserve presence and defer absent or unreadable work before later removal', SETTLES_WITHIN, async (t) => {
+  const native = nativeCalls(t);
+  const cases = [
+    ['comments', 'absent', 'absent', 'absent'],
+    ['comments', 'unreadable', 'absent', 'unreadable'],
+    ['comments', 'absent', 'unreadable', 'unreadable'],
+    ['comments', 'present', 'unreadable', 'present'],
+    ['comments', 'unreadable', 'closed', 'present'],
+    ['comments', 'absent', 'closed', 'present'],
+    ['escalation', 'absent', 'unreadable', 'unreadable'],
+    ['escalation', 'unreadable', 'unreadable', 'unreadable'],
+    ['escalation', 'present', 'unreadable', 'present'],
+  ];
+  // Each cell owns a separate card while sharing controlled command and forge collaborators.
+  const { built, removals, exitReads, select } = closedAfterFailedMaker(t, {
+    cases: cases.map(([earlyRead, exitBranch, exitPull], at) => ({ number: 42 + at, earlyRead, exitBranch, exitPull })),
+  });
+  for (const [at, [earlyRead, exitBranch, exitPull, expected]] of cases.entries()) await t.test(`${earlyRead}/${exitBranch}/${exitPull}`, async (t) => {
+    const number = 42 + at;
+    select(at);
+    assert.equal((await built.fake.operations.readItems()).find((card) => card.number === number).column, COLUMNS.ready, 'each cell starts from its own untouched Ready card');
+    assert.deepEqual(await built.repository.operations.readPullRequests(`rigger-${number}`), { open: [], merged: [], closed: [] }, "each cell starts without another cell's pull request");
+    const reached = await drive(built);
+    assert.equal(reached[0].settled.status, 'rejected', 'the original early read failure remains reported');
+    assert.equal(reached[0].settled.reason.makerWork, expected, 'classification reaches L3 despite the earlier catch');
+    assert.deepEqual(exitReads.sort(), ['PR', 'branch'], 'both exit-time work sources are attempted once');
+    assert.match(reached[0].settled.reason.message, earlyRead === 'comments' ? /exit-time issue comments unavailable/ : /exit-time escalation PR unavailable/);
+    assert.equal(built.agent.runs().filter(({ card }) => card === number).length, expected === 'present' ? 2 : 1, 'only established presence permits the later maker');
+    assert.deepEqual(removals.filter((card) => card === number), expected === 'present' ? [number] : [], 'absence or unreadable facts defer removal with its maker');
+  });
+  assert.equal(native.length, 0, 'exit-time classification and invocation memory require no native child processes');
+});
+
+// A is already run while new governing comments independently owe B and C at the same head.
+// proves R-SCHED-6
+test('a no-clock mixed judge answer dispatches only new B and C identities in L2 order', SETTLES_WITHIN, async (t) => {
+  const roles = ['reviewer', 'engineer', 'architect'];
+  const head = 'a'.repeat(40);
+  const built = onManualHost(t, { cards: [cardIn(42, COLUMNS.review)], concurrency: 1,
+    kinds: { change: { ...KINDS.change, judges: roles } },
+    forge: { pullRequests: [{ number: 733, head: 'rigger-42', sha: head, mergeBase: 'b'.repeat(40), diff: 'diff --git a/help b/help\n', comments: [] }] },
+  });
+  for (const role of roles) built.agent.plan(42, role, {});
+  const comments = built.repository.operations.readComments;
+  built.repository.operations.readComments = async (...args) => {
+    const ran = built.agent.runs().length;
+    if (ran >= 3) built.repository.update(733, { comments: (ran >= 5 ? roles : roles.slice(1)).map((role, at) => ({
+      ...markerComment({ card: 42, pull: 733, head, body: PASSING, role }),
+      id: `IC_${role}_${at + 1}`, includesCreatedEdit: ran < 5,
+    })) });
+    return comments(...args);
+  };
+  const reached = await drive(built);
+
+  assert.deepEqual(reached.filter(({ judges }) => judges !== undefined).map(({ judges }) => judges.map(({ role }) => role)), [roles, ['engineer', 'architect']], 'mixed answers retain only unmatched identities in the declared order');
+  const runs = built.agent.runs();
+  assert.deepEqual(roles.map((role) => runs.filter((ran) => ran.role === role).length), [1, 2, 2], 'A is never redispatched while B and C each run at their new identity');
+});
+
+// A newly governing comment permits a continuation, while direct failure set-aside still wins.
+// proves R-SCHED-6
+test('a no-clock continuing maker runs once per governing comment while failure set-aside precedes a new identity', SETTLES_WITHIN, async (t) => {
+  for (const scenario of ['unchanged', 'new comment', 'failed continuation']) {
+    await t.test(scenario, async (t) => {
+      const head = 'a'.repeat(40);
+      const before = { ...markerComment({ card: 42, pull: 733, head, body: PASSING, role: 'reviewer', verdict: 'needs revision', items: ['unmet'], toSound: 'Print the help.' }), id: 'IC_before' };
+      const after = { ...before, id: 'IC_after', createdAt: '2026-10-01T12:00:00Z' };
+      const sound = { ...markerComment({ card: 42, pull: 733, head, body: PASSING, role: 'reviewer' }), id: 'IC_sound', createdAt: '2026-10-01T13:00:00Z' };
+      const failed = scenario === 'failed continuation';
+      const built = onManualHost(t, { cards: [cardIn(42, COLUMNS.review)], concurrency: 1, fresh: false,
+        kinds: { change: { ...KINDS.change, judges: ['reviewer'] } }, answer: () => ({ exit: failed ? 7 : 0, output: '' }),
+        forge: { pullRequests: [{ number: 733, head: 'rigger-42', sha: head, mergeBase: 'b'.repeat(40), diff: 'diff --git a/help b/help\n', comments: [before] }] },
+      });
+      const settle = built.l2.settled;
+      let attempts = 0;
+      built.l2.settled = async (...args) => {
+        attempts += 1;
+        if (attempts >= 2) built.repository.update(733, { comments: [before, after, sound] });
+        else if (scenario !== 'unchanged') built.repository.update(733, { comments: [before, after] });
+        return settle(...args);
+      };
+      const reached = await drive(built);
+      const expected = scenario === 'new comment' ? 2 : 1;
+
+      assert.equal(built.agent.runs().filter(({ role }) => role === 'engineer').length, expected, `${scenario}: only the selected continuing identities may run`);
+      assert.equal(reached.filter(({ action }) => action === 'continue').length, expected);
+      assert.ok(reached.every(({ head: at }) => at === head), 'a comment change alone selected the new action');
+      if (scenario !== 'unchanged') assert.ok(built.repository.pull(733).comments.some(({ id }) => id === 'IC_after'), 'the newly governing comment really reached the forge');
+    });
+  }
+});
+
+// A successful earlier maker identity must not suppress a newly eligible closed-card redo.
+// proves R-WORK-41
+test('a successful maker whose open pull later closes with its line deleted gets cleanup and a fresh maker under one later claim', SETTLES_WITHIN, async (t) => {
+  const order = [];
+  const built = onManualHost(t, { cards: [42], concurrency: 1,
+    removeDirectories: async (number) => { order.push(['remove', number]); },
+  });
+  const branches = built.repository.operations.readBranches;
+  let makers = 0;
+  built.repository.operations.readBranches = async (names) => (makers === 1 ? Object.fromEntries(names.map((name) => [name, false])) : branches(names));
+  const settled = built.l2.settled;
+  built.l2.settled = async (...args) => {
+    const answer = await settled(...args);
+    makers += 1;
+    order.push(['maker', makers]);
+    if (makers === 1) {
+      assert.equal(answer.open.length, 1, 'the first successful maker really delivered an open pull');
+      built.repository.update(answer.open[0].number, { closed: true });
+    }
+    return answer;
+  };
+  const reached = await drive(built);
+  assert.deepEqual(order, [['maker', 1], ['remove', 42], ['maker', 2]], 'one new removal runs before its following fresh maker');
+  assert.equal(built.agent.runs().filter(({ role }) => role === 'engineer').length, 2);
+  assert.equal(reached.filter(({ outcome }) => outcome !== undefined).length, 2, 'both maker outcomes are retained');
+  const pulls = built.l3Events().filter(({ event }) => event === 'pull');
+  assert.deepEqual(pulls.map(({ card }) => card), [42, 42, 42], 'initial maker, removal with its maker, then Owner move each take one claim');
+  assert.equal(built.l3Events().filter(({ event }) => event === 'slot.release').length, 3);
+});
+
+/** Raw gh responses measured in pending-response-worker.json at 3432752c on this Mini.
+ * The only substitutions are fixture SHAs and the actual judge dispatch/evidence identities.
+ * Commands are matched by the existing fake transport's documented request shapes.
+ */
+const pendingMergeReplies = [
+  {"request":"gh api graphql -f query=query { repositoryOwner(login: _) { ... on ProjectV2Owner { projectV2(number: _) { fields(first: _) { pageInfo { hasNextPage endCursor } nodes { ... on ProjectV2SingleSelectField { name options { name } } } } } } } }","replies":[{"phase":0,"status":0,"stdout":"{\"data\":{\"repositoryOwner\":{\"projectV2\":{\"fields\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"100\"},\"nodes\":[{\"name\":\"Status\",\"options\":[{\"name\":\"Backlog\"},{\"name\":\"Ready\"},{\"name\":\"Coding\"},{\"name\":\"Review\"},{\"name\":\"Owner\"},{\"name\":\"Done\"}]},{\"name\":\"Priority\",\"options\":[{\"name\":\"Low\"},{\"name\":\"High\"},{\"name\":\"Normal\"}]}]}}}}}\n","stderr":""}]},
+  {"request":"gh api graphql -f query=query { repositoryOwner(login: _) { ... on ProjectV2Owner { projectV2(number: _) { fields(first: _) { pageInfo { hasNextPage endCursor } nodes { ... on ProjectV2FieldCommon { name dataType } ... on ProjectV2SingleSelectField { options { name } } } } } } } }","replies":[{"phase":0,"status":0,"stdout":"{\"data\":{\"repositoryOwner\":{\"projectV2\":{\"fields\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"100\"},\"nodes\":[{\"name\":\"Status\",\"dataType\":\"SINGLE_SELECT\",\"options\":[{\"name\":\"Backlog\"},{\"name\":\"Ready\"},{\"name\":\"Coding\"},{\"name\":\"Review\"},{\"name\":\"Owner\"},{\"name\":\"Done\"}]},{\"name\":\"Priority\",\"dataType\":\"SINGLE_SELECT\",\"options\":[{\"name\":\"Low\"},{\"name\":\"High\"},{\"name\":\"Normal\"}]}]}}}}}\n","stderr":""}]},
+  {"request":"gh api graphql -f query=query { repositoryOwner(login: _) { ... on ProjectV2Owner { projectV2(number: _) { items(first: _) { pageInfo { hasNextPage endCursor } nodes { id fieldValues(first: _) { pageInfo { hasNextPage } nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } } } content { __typename ... on Issue { number title body repository { nameWithOwner } labels(first: _) { pageInfo { hasNextPage } nodes { name } } } } } } } } } }","replies":[{"phase":0,"status":0,"stdout":"{\"data\":{\"repositoryOwner\":{\"projectV2\":{\"items\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"100\"},\"nodes\":[{\"id\":\"item-1\",\"fieldValues\":{\"pageInfo\":{\"hasNextPage\":false},\"nodes\":[{\"name\":\"Ready\",\"field\":{\"name\":\"Status\"}}]},\"content\":{\"__typename\":\"Issue\",\"number\":10,\"title\":\"Card 10\",\"body\":\"## Acceptance\\n\\n- The widget turns blue when pressed.\\n\",\"repository\":{\"nameWithOwner\":\"acme/widgets\"},\"labels\":{\"pageInfo\":{\"hasNextPage\":false},\"nodes\":[{\"name\":\"type:change\"}]}}}]}}}}}\n","stderr":""},{"phase":2,"status":0,"stdout":"{\"data\":{\"repositoryOwner\":{\"projectV2\":{\"items\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"100\"},\"nodes\":[{\"id\":\"item-1\",\"fieldValues\":{\"pageInfo\":{\"hasNextPage\":false},\"nodes\":[{\"name\":\"Review\",\"field\":{\"name\":\"Status\"}}]},\"content\":{\"__typename\":\"Issue\",\"number\":10,\"title\":\"Card 10\",\"body\":\"## Acceptance\\n\\n- The widget turns blue when pressed.\\n\",\"repository\":{\"nameWithOwner\":\"acme/widgets\"},\"labels\":{\"pageInfo\":{\"hasNextPage\":false},\"nodes\":[{\"name\":\"type:change\"}]}}}]}}}}}\n","stderr":""}]},
+  {"request":"gh api graphql -f query=query { repository(owner: _, name: _) { refs(refPrefix: _, first: _) { pageInfo { hasNextPage endCursor } nodes { name } } } }","replies":[{"phase":0,"status":0,"stdout":"{\"data\":{\"repository\":{\"refs\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"100\"},\"nodes\":[{\"name\":\"main\"}]}}}}\n","stderr":""},{"phase":2,"status":0,"stdout":"{\"data\":{\"repository\":{\"refs\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"100\"},\"nodes\":[{\"name\":\"rigger-10\"},{\"name\":\"main\"}]}}}}\n","stderr":""}]},
+  {"request":"gh api graphql -f query=query { repository(owner: _, name: _) { pullRequests(headRefName: _, states: [], first: _) { pageInfo { hasNextPage endCursor } nodes { number state headRefOid baseRefName headRepository { nameWithOwner } } } } }","replies":[{"phase":0,"status":0,"stdout":"{\"data\":{\"repository\":{\"pullRequests\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"100\"},\"nodes\":[]}}}}\n","stderr":""},{"phase":1,"status":0,"stdout":"{\"data\":{\"repository\":{\"pullRequests\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"100\"},\"nodes\":[{\"number\":11,\"state\":\"OPEN\",\"headRefOid\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"baseRefName\":\"main\",\"headRepository\":{\"nameWithOwner\":\"acme/widgets\"}}]}}}}\n","stderr":""}]},
+  {"request":"gh api graphql -f query=query { repositoryOwner(login: _) { ... on ProjectV2Owner { projectV2(number: _) { id field(name: _) { ... on ProjectV2SingleSelectField { id options { id name color description } } } } } } }","replies":[{"phase":0,"status":0,"stdout":"{\"data\":{\"repositoryOwner\":{\"projectV2\":{\"id\":\"PVT_fake\",\"field\":{\"id\":\"PVTSSF_Status\",\"options\":[{\"id\":\"option-0\",\"name\":\"Backlog\",\"color\":\"GRAY\",\"description\":\"\"},{\"id\":\"option-1\",\"name\":\"Ready\",\"color\":\"GRAY\",\"description\":\"\"},{\"id\":\"option-2\",\"name\":\"Coding\",\"color\":\"GRAY\",\"description\":\"\"},{\"id\":\"option-3\",\"name\":\"Review\",\"color\":\"GRAY\",\"description\":\"\"},{\"id\":\"option-4\",\"name\":\"Owner\",\"color\":\"GRAY\",\"description\":\"\"},{\"id\":\"option-5\",\"name\":\"Done\",\"color\":\"GRAY\",\"description\":\"\"}]}}}}}\n","stderr":""}]},
+  {"request":"gh api graphql -f query=query { project: node(id: _) { ... on ProjectV2 { field(name: _) { ... on ProjectV2SingleSelectField { id } } } } target: node(id: _) { ... on ProjectV2FieldCommon { name } } }","replies":[{"phase":0,"status":0,"stdout":"{\"data\":{\"project\":{\"field\":{\"id\":\"PVTSSF_Status\"}},\"target\":{\"name\":\"Status\"}}}\n","stderr":""}]},
+  {"request":"gh api graphql -f query=mutation { updateProjectV2ItemFieldValue(input: {projectId: _, itemId: _, fieldId: _, value: {singleSelectOptionId: _}}) { projectV2Item { id } } }","replies":[{"phase":0,"status":0,"stdout":"{\"data\":{\"updateProjectV2ItemFieldValue\":{\"projectV2Item\":{\"id\":\"item-1\"}}}}\n","stderr":""}]},
+  {"request":"gh api graphql -f query=query { repository(owner: _, name: _) { issue(number: _) { comments(first: _) { pageInfo { hasNextPage endCursor } nodes { body createdAt id author { login } lastEditedAt includesCreatedEdit } } } } }","replies":[{"phase":1,"status":0,"stdout":"{\"data\":{\"repository\":{\"issue\":{\"comments\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"100\"},\"nodes\":[]}}}}}\n","stderr":""}]},
+  {"request":"gh api graphql -f query=query { repository(owner: _, name: _) { pullRequest(number: _) { baseRefName headRefOid } } }","replies":[{"phase":1,"status":0,"stdout":"{\"data\":{\"repository\":{\"pullRequest\":{\"baseRefName\":\"main\",\"headRefOid\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"}}}}\n","stderr":""}]},
+  {"request":"gh api repos/_/_/pulls/_ -X GET -H Accept: application/vnd.github.diff","replies":[{"phase":1,"status":0,"stdout":"","stderr":""}]},
+  {"request":"gh api graphql -f query=query { repository(owner: _, name: _) { pullRequest(number: _) { comments(first: _) { pageInfo { hasNextPage endCursor } nodes { body createdAt id author { login } lastEditedAt includesCreatedEdit } } } } }","replies":[{"phase":1,"status":0,"stdout":"{\"data\":{\"repository\":{\"pullRequest\":{\"comments\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"100\"},\"nodes\":[]}}}}}\n","stderr":""},{"phase":2,"status":0,"stdout":"{\"data\":{\"repository\":{\"pullRequest\":{\"comments\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"100\"},\"nodes\":[{\"body\":\"Sound, by reviewer\\n```rigger-marker\\ncard: 10\\npull: 11\\nhead: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\ndigest: 127e331847a30d7a2ef7d5b39015176fd4a901696101c70fe3d4f946278b410e\\nrole: reviewer\\nprovider: claude\\nverdict: sound\\nitem 1: met\\ncoverage: covered\\ndispatch: d-73290400-e10f-4ee7-b4b8-32abc3afd652\\nevidence: 1edc153dbc093d4405b899b38118b4b4749bc3ff2ded517affe8f5708bb69e58\\n```\\n\\nThe stand-in's findings.\",\"createdAt\":\"2026-11-04T03:17:32Z\",\"id\":\"IC_11_1\",\"author\":{\"login\":\"rigger-fake\"},\"lastEditedAt\":null,\"includesCreatedEdit\":false}]}}}}}\n","stderr":""}]},
+  {"request":"gh api graphql -f query=query { repository(owner: _, name: _) { pullRequest(number: _) { mergeable } } }","replies":[{"phase":1,"status":0,"stdout":"{\"data\":{\"repository\":{\"pullRequest\":{\"mergeable\":\"UNKNOWN\"}}}}\n","stderr":""},{"phase":2,"status":0,"stdout":"{\"data\":{\"repository\":{\"pullRequest\":{\"mergeable\":\"MERGEABLE\"}}}}\n","stderr":""}]},
+  {"request":"gh api repos/_/_/rules/branches/_?per_page=100&page=_ -X GET","replies":[{"phase":1,"status":0,"stdout":"[]","stderr":""}]},
+  {"request":"gh api repos/_/_/branches/_/protection -X GET","replies":[{"phase":1,"status":1,"stdout":"{\"message\":\"Branch not protected\",\"status\":\"404\"}","stderr":"gh: Branch not protected (HTTP 404)\n"}]},
+  {"request":"gh api repos/_/_/compare/_..._ -X GET","replies":[{"phase":1,"status":0,"stdout":"{\"merge_base_commit\":{\"sha\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"}}","stderr":""}]},
+  {"request":"gh api repos/_/_/commits/_/check-runs?per_page=100&page=_ -X GET","replies":[{"phase":1,"status":0,"stdout":"{\"total_count\":0,\"check_runs\":[]}","stderr":""}]},
+  {"request":"gh api repos/_/_/commits/_/statuses?per_page=100&page=_ -X GET","replies":[{"phase":1,"status":0,"stdout":"[]","stderr":""}]},
+  {"request":"gh api repos/_/_/collaborators/_/permission -X GET","replies":[{"phase":2,"status":0,"stdout":"{\"permission\":\"write\",\"role_name\":\"write\"}","stderr":""}]},
+  {"request":"gh api repos/_/_/pulls/_ -X GET","replies":[{"phase":2,"status":0,"stdout":"{\"state\":\"open\",\"merged\":false,\"mergeable\":\"MERGEABLE\",\"head\":{\"sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"},\"merge_commit_sha\":null}","stderr":""}]},
+  {"request":"gh api repos/_/_/pulls/_/merge -X PUT -f sha=_ -f merge_method=merge","replies":[{"phase":2,"status":1,"stdout":"{\"status\":\"405\",\"message\":\"Repository rule violations found\\n\\nRequired status check \\\"ci\\\" is pending.\"}","stderr":"gh: Method Not Allowed (HTTP 405)\n"}]},
+];
+
+/** The public claiming verb over controlled tool protocols, retaining its real L1/L2/L3 wiring. */
+function pendingMergeVerb(t) {
+  const root = temporaryDirectory('rigger-pending-presentation-');
+  const consumer = join(root, 'consumer');
+  const settings = { ...consumerConfig(1), clock: { poll: 1000, triggers: {} } };
+  fs.mkdirSync(join(consumer, '.claude', 'agents'), { recursive: true });
+  for (const { agent } of Object.values(settings.roles)) fs.writeFileSync(join(consumer, agent), '# Controlled role\n');
+  fs.writeFileSync(join(consumer, 'rigger.config.mjs'), `export default ${JSON.stringify(settings)};\n`);
+  const clock = { ...manualClock(), pause: async () => {} };
+  const head = 'a'.repeat(40);
+  const main = 'b'.repeat(40);
+  const fake = createFakeBoard({ columns: ['Backlog', 'Ready', 'Coding', 'Review', 'Owner', 'Done'], items: [verbCard(10, 'Ready')] });
+  const worktrees = [{ path: consumer, head: main, branch: 'main' }];
+  const sent = [];
+  let phase = 0;
+  let judge;
+  const git = (given) => {
+    const args = given[0] === '-C' ? given.slice(2) : given;
+    if (args[0] === 'check-ref-format') return { stdout: `${args[2]}\n` };
+    if (args[0] === 'ls-remote') return { stdout: `ref: refs/heads/main\tHEAD\n${main}\tHEAD\n` };
+    if (['fetch', 'worktree'].includes(args[0]) && (args[0] === 'fetch' || args[1] === 'prune')) return {};
+    if (args[0] === 'cat-file') return { stdout: 'commit\n' };
+    if (args[0] === 'rev-parse') return { stdout: `${args.includes('--verify') ? head : consumer}\n` };
+    if (args[0] === 'worktree' && args[1] === 'list') return { stdout: worktrees.map((tree) => `worktree ${tree.path}\0HEAD ${tree.head}\0${tree.branch ? `branch refs/heads/${tree.branch}` : 'detached'}\0\0`).join('') };
+    if (args[0] === 'worktree' && args[1] === 'add') {
+      const path = args.at(-2);
+      fs.mkdirSync(path, { recursive: true });
+      fs.cpSync(join(consumer, '.claude'), join(path, '.claude'), { recursive: true });
+      worktrees.push({ path, head: args.at(-1), branch: args.includes('-B') ? args[args.indexOf('-B') + 1] : undefined });
+      return {};
+    }
+    assert.fail(`the controlled git protocol has no answer for ${JSON.stringify(args)}`);
+  };
+  const host = answeringHost(t, (command, args) => {
+    if (command === 'git') return git(args);
+    assert.equal(command, 'claude');
+    if (args.at(-1).endsWith('/engineer.md')) phase = 1;
+    else {
+      assert.ok(args.at(-1).endsWith('/reviewer.md'));
+      phase = 2;
+      judge = readEventsAt(join(consumer, '.rigger')).findLast(({ layer, event }) => layer === 'L1' && event === 'dispatch.start');
+    }
+    return {};
+  }, clock);
+  const send = async (command, args) => {
+    assert.equal(command, 'gh');
+    sent.push(args);
+    const row = pendingMergeReplies.find(({ request }) => request === commandOf(args));
+    assert.ok(row, `the captured gh protocol has no answer for ${commandOf(args)}`);
+    const reply = row.replies.findLast((candidate) => candidate.phase <= phase) ?? row.replies[0];
+    let stdout = reply.stdout;
+    if (stdout.includes('rigger-marker')) stdout = stdout.replace(/dispatch: d-[a-z0-9-]+/, `dispatch: ${judge.dispatch}`).replace(/evidence: [a-f0-9]{64}/, `evidence: ${judge.digest}`);
+    if (args[1] === 'graphql' && args[3].includes('updateProjectV2ItemFieldValue')) {
+      const option = Number(/singleSelectOptionId: "option-(\d+)"/.exec(args[3])[1]);
+      await fake.operations.moveItem('item-1', ['Backlog', 'Ready', 'Coding', 'Review', 'Owner', 'Done'][option]);
+    }
+    if (args[1] === 'graphql' && args[3].includes('items(first:')) {
+      const data = JSON.parse(stdout);
+      data.data.repositoryOwner.projectV2.items.nodes[0].fieldValues.nodes[0].name = (await fake.operations.readItems())[0].column;
+      stdout = JSON.stringify(data);
+    }
+    return { status: reply.status, stdout, stderr: reply.stderr };
+  };
+  const controller = new AbortController();
+  const running = runVerb({ target: consumer, clock, host, ask: async (command, args) => {
+    assert.equal(command, 'git');
+    return { status: 0, stdout: '', stderr: '', ...git(args) };
+  }, send, stop: controller.signal });
+  running.catch(() => {});
+  return { consumer, running, fake: { sent: () => [...sent], model: async () => fake },
+    ended: async () => { controller.abort(); await running; } };
+}
+
+// A later pending merge must not overwrite the same card's earlier Review outcome or make exit zero.
+// proves R-SCHED-6
+test('a no-clock run presents a maker reaching Review before its later pending-check merge refusal and exits nonzero', SETTLES_WITHIN, async (t) => {
+  const native = nativeCalls(t);
+  const here = pendingMergeVerb(t);
+  t.after(() => here.ended());
+  assert.deepEqual(here.fake.sent(), [], 'install the controlled host before its first forge read');
+  const answer = await here.running;
+  assert.equal(answer.code, 1, answer.text);
+  const lines = answer.text.split('\n');
+  const reviewed = lines.findIndex((line) => /^rigger run: claimed #10 .*so the card is in review/.test(line));
+  const refused = lines.findIndex((line) => line === 'rigger run: card #10 did not merge pull request #11: refused, pending, ci');
+  assert.ok(reviewed >= 0 && refused > reviewed, answer.text);
+  const events = readEventsAt(join(here.consumer, '.rigger'));
+  assert.deepEqual(events.filter(({ event }) => event === 'pull').map(({ card }) => card), [10, 10]);
+  assert.deepEqual(events.filter(({ event }) => event === 'merge.end').map(({ outcome, reason, context }) => ({ outcome, reason, context })), [{ outcome: 'refused', reason: 'pending', context: 'ci' }]);
+  assert.equal((await (await here.fake.model()).operations.readItems())[0].column, 'Review');
+  assert.equal(native.length, 0, 'ordered presentation runs on controlled tool answers without native child processes');
+});
+
+// A refused selected identity is deferred while its freed slot still pulls normally.
+// proves R-RECORD-9
+test('a no-clock maker or step whose L3 start record is refused fires no immediate retry and remains eligible in a fresh invocation', SETTLES_WITHIN, async (t) => {
+  for (const part of ['maker', 'step']) await t.test(part, async (t) => {
+    const built = onManualHost(t, { cards: [42], concurrency: 1,
+      kinds: { change: { ...KINDS.change, provisioning: part === 'step' ? ['prepare'] : [] } },
+      provisioning: { prepare: { run: 'true', required: true } },
+    });
+    const emitter = built.sink.emitter.bind(built.sink);
+    let blocking = true;
+    let refused = 0;
+    built.sink.emitter = (context) => {
+      const actual = emitter(context);
+      return { emit: (event, fields) => {
+        if (blocking && context.layer === 'L3' && event === 'dispatch' && (part === 'maker' ? fields.role === 'engineer' : fields.step === 'prepare')) {
+          refused += 1;
+          throw new Error(`${part} start record refused`);
+        }
+        return actual.emit(event, fields);
+      } };
+    };
+    const priority = built.fake.operations.readPriority;
+    let reads = 0;
+    built.fake.operations.readPriority = async (...args) => {
+      reads += 1;
+      const actual = await priority(...args);
+      return reads >= 3 ? { ...actual, items: [] } : actual;
+    };
+    await assert.rejects(built.loop.run(), (failure) => leavesOf(failure).some(({ message }) => message.includes(`${part} start record refused`)));
+    assert.equal(refused, 1, 'one unrecordable start defers only its selected identity');
+    assert.equal(reads, 2, 'the freed slot still pulls and omits the deferred identity');
+    assert.deepEqual(built.agent.runs(), [], 'L1 started no maker');
+    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card), [42]);
+    built.fake.operations.readPriority = priority;
+    blocking = false;
+    await drive(built);
+    assert.equal(built.agent.runs().filter(({ role }) => role === 'engineer').length, 1, 'the new invocation may retry the unstarted action');
+  });
+});
+
+// A new continuation or selected maker kind must not evade an absent or unreadable maker bar.
+// proves R-LOOP-18
+test('a no-clock failed-maker bar defers later continue and differently selected dispatch actions until the next invocation', SETTLES_WITHIN, async (t) => {
+  for (const exitBranch of ['absent', 'unreadable']) for (const action of ['continue', 'dispatch']) await t.test(`${exitBranch}/${action}`, async (t) => {
+    const kinds = { change: { ...KINDS.change, judges: ['reviewer'] }, spec: { ...KINDS.change, select: { labels: ['type:spec'] }, judges: ['reviewer'] } };
+    const { built, removals } = closedAfterFailedMaker(t, { exitBranch, kinds });
+    const settle = built.l2.settled;
+    let calls = 0;
+    built.l2.settled = async (...args) => {
+      calls += 1;
+      try { return await settle(...args); }
+      finally {
+        if (calls === 1) {
+          if (action === 'continue') built.repository.update(733, { closed: false, comments: [{
+            ...markerComment({ card: 42, pull: 733, head: 'a'.repeat(40), body: PASSING, role: 'reviewer', verdict: 'needs revision', items: ['unmet'], toSound: 'Print the help.' }), id: 'IC_after_failure',
+          }] });
+          else {
+            built.repository.update(733, { headRepositoryDeleted: true });
+            built.fake.setIssueLabels(config.repo, 42, ['type:spec']);
+          }
+        }
+      }
+    };
+    const reached = await drive(built);
+    assert.equal(built.agent.runs().filter(({ role }) => role === 'engineer').length, 1, `${exitBranch}/${action}: new maker identity remains barred`);
+    assert.deepEqual(removals, [], 'these newly eligible actions have no cleanup premise');
+    assert.equal(reached[0].settled.status, exitBranch === 'absent' ? 'fulfilled' : 'rejected');
+    assert.equal((await built.fake.operations.readItems())[0].column, COLUMNS.review);
+    await drive(built);
+    assert.equal(built.agent.runs().filter(({ role }) => role === 'engineer').length, 2, 'the next invocation admits the new maker identity');
+  });
+});
+
+// Direct set-asides must dominate a later, independently established closed-card maker identity.
+// proves R-FAIL-8, R-RECORD-10
+test('direct merge stop and failed-write set-asides defeat a newly eligible closed-card maker identity', SETTLES_WITHIN, async (t) => {
+  for (const scenario of ['merge', 'stop', 'failed write']) await t.test(scenario, async (t) => {
+    const head = 'a'.repeat(40);
+    const rejected = new Error('board move refused');
+    const making = makingWorkspaces(temporaryDirectory('rigger-direct-set-aside-'));
+    let built;
+    let firstWorkspace = true;
+    const changed = async () => {
+      if (scenario === 'stop') built.repository.open({ number: 733, head: 'rigger-42', sha: 'b'.repeat(40), closed: true });
+      else built.repository.update(733, { merged: false, closed: true, sha: 'b'.repeat(40) });
+      const card = (await built.fake.operations.readItems()).find(({ number }) => number === 42);
+      await built.fake.operations.moveItem(card.id, COLUMNS.review);
+    };
+    built = onManualHost(t, { cards: [cardIn(42, scenario === 'stop' ? COLUMNS.ready : scenario === 'merge' ? COLUMNS.owner : COLUMNS.review), 95], concurrency: 2,
+      forge: { pullRequests: scenario === 'stop' ? [] : [{ number: 733, head: 'rigger-42', sha: head, mergeBase: 'c'.repeat(40), mergeable: 'mergeable', merged: scenario === 'failed write',
+        comments: [markerComment({ card: 42, pull: 733, head, body: PASSING, role: 'owner' })] }] },
+      workspace: async (number) => {
+        if (number === 42 && scenario === 'stop' && firstWorkspace) {
+          firstWorkspace = false;
+          await changed();
+          throw Object.assign(new Error('derived branch refused'), { code: 'BRANCH_REFUSED', path: '/controlled/rigger-42' });
+        }
+        return making(number);
+      },
+    });
+    built.repository.operations.readBranches = async (names) => Object.fromEntries(names.map((name) => [name, false]));
+    if (scenario === 'merge') built.repository.answerMerge(async () => { await changed(); return { outcome: 'refused', reason: 'pending', context: 'ci' }; });
+    if (scenario === 'failed write') {
+      const moved = built.l2.moved;
+      let first = true;
+      built.l2.moved = async (card, ...rest) => {
+        if (card.number === 42 && first) { first = false; await changed(); throw rejected; }
+        return moved(card, ...rest);
+      };
+    }
+    const running = built.loop.run();
+    running.catch(() => {});
+    const ended = settledOf(running);
+    await positive(() => built.l3Events().some(({ card, event }) => card === 42 && event === (scenario === 'merge' ? 'merge.end' : 'slot.release')));
+    await new Promise((resolve) => setImmediate(resolve));
+    const current = (await built.fake.operations.readItems()).find(({ number }) => number === 42);
+    const choose = await factsCall({ config, reads: built.repository.operations, decide: (card) => nextAction(card, KINDS, undefined, { roles: config.roles, sink: built.sink }) })([current]);
+    const next = choose(current);
+    assert.equal(next.action, 'remove', 'changed forge and board facts really select a new removal identity');
+    assert.equal(next.following.action, 'dispatch', 'that new identity would start a maker without the direct set-aside');
+    assert.deepEqual(next.closed, [{ number: 733, head: 'b'.repeat(40) }]);
+    await positive(() => { built.dispatches.releaseAll(); return ended(); });
+    const result = await running.then((value) => ({ value }), (failure) => ({ failure }));
+    assert.equal(built.l3Events().filter(({ event, card }) => event === 'pull' && card === 42).length, 1, 'the new identity cannot clear a direct set-aside');
+    assert.deepEqual(built.agent.runs().filter(({ card }) => card === 42), []);
+    if (scenario === 'merge') assert.deepEqual(built.l3Events().filter(({ event }) => event === 'merge.end').map(({ outcome, reason, context }) => ({ outcome, reason, context })), [{ outcome: 'refused', reason: 'pending', context: 'ci' }]);
+    if (scenario === 'stop') assert.deepEqual(built.events().filter(({ event }) => event === 'attempt.decided').map(({ decision }) => decision), ['stop']);
+    if (scenario === 'failed write') assert.ok(leavesOf(result.failure).includes(rejected), 'the original write failure is retained');
+  });
+});
+
+// A real L1 refusal before its command starts must not spend that maker or judge identity.
+// proves R-RECORD-9
+test('a no-clock maker or judge whose L1 start was unrecorded defers its unchanged identity until a new invocation', SETTLES_WITHIN, async (t) => {
+  for (const role of ['engineer', 'reviewer']) await t.test(role, async (t) => {
+    const judging = role === 'reviewer';
+    const built = onManualHost(t, { cards: judging ? [cardIn(42, COLUMNS.review), { ...readyCard(95), labels: ['type:handoff'] }] : [42], concurrency: 2,
+      kinds: { change: { ...KINDS.change, judges: judging ? ['reviewer'] : ['owner'] }, handoff: { ...KINDS.change, select: { labels: ['type:handoff'] } } },
+      forge: { pullRequests: judging ? [{ number: 733, head: 'rigger-42', sha: 'a'.repeat(40), mergeBase: 'b'.repeat(40), diff: 'diff --git a/help b/help\n' }] : [] },
+    });
+    if (judging) {
+      const comments = built.repository.operations.readComments;
+      built.repository.operations.readComments = async (number) => {
+        if (number === 733 && built.agent.runs().some(({ card, role }) => card === 42 && role === 'reviewer')) built.repository.update(733, {
+          comments: [markerComment({ card: 42, pull: 733, head: 'a'.repeat(40), body: PASSING, role: 'reviewer' })],
+        });
+        return comments(number);
+      };
+    }
+    const emitter = built.sink.emitter.bind(built.sink);
+    let refused = 0;
+    built.sink.emitter = (context) => {
+      const actual = emitter(context);
+      return { emit: (event, fields) => {
+        if (refused === 0 && context.card === 42 && context.layer === 'L1' && event === 'dispatch.start') {
+          refused += 1;
+          throw new Error('first L1 dispatch.start refused');
+        }
+        return actual.emit(event, fields);
+      } };
+    };
+    const running = built.loop.run();
+    running.catch(() => {});
+    const ended = settledOf(running);
+    await positive(() => built.l3Events().some(({ card, event }) => card === 42 && event === 'slot.release'));
+    await positive(() => { built.dispatches.releaseAll(); return ended(); });
+    const returned = await running.then((value) => ({ value }), (failure) => ({ failure }));
+    assert.equal(returned.failure, undefined, 'no unrelated failed read may conceal the retry');
+    const result = returned.value;
+    assert.equal(refused, 1);
+    assert.equal(built.agent.runs().filter(({ card, role: selected }) => card === 42 && selected === role).length, 0, 'restoring recording does not clear this invocation’s deferred identity');
+    assert.equal(built.l3Events().filter(({ card, event, role: selected }) => card === 42 && event === 'dispatch' && selected === role).length, 1, 'no second L3 dispatch is admitted for the deferred identity');
+    const first = result.find(({ card }) => card === 42);
+    const outcome = judging ? first.judges[0].outcome : first.outcome;
+    assert.equal(outcome.status, 'rejected');
+    assert.equal(outcome.reason.code, EVENT_REFUSED);
+    assert.deepEqual(outcome.reason.unrecorded.map(({ event }) => event), ['dispatch.start'], 'the actual producer identifies the unstarted boundary');
+    await drive(built);
+    assert.equal(built.agent.runs().filter(({ card, role: selected }) => card === 42 && selected === role).length, 1, 'the next invocation attempts the same identity with recording restored');
+  });
+});
+
+// Persistent recording refusal must spare other identities and preserve each pull's own failure.
+// proves R-SCHED-6, R-RECORD-9
+test('persistent refused judge starts defer only that identity and retain both Review pulls and siblings', SETTLES_WITHIN, async (t) => {
+  const roles = ['reviewer', 'architect'];
+  const built = onManualHost(t, { cards: [42, 95].map((number) => cardIn(number, COLUMNS.review)), concurrency: 1,
+    kinds: { change: { ...KINDS.change, judges: roles } },
+    forge: { pullRequests: [42, 95].map((number) => ({ number: number + 700, head: `rigger-${number}`, sha: 'a'.repeat(40), mergeBase: 'b'.repeat(40), diff: 'diff --git a/help b/help\n' })) },
+  });
+  for (const card of [42, 95]) for (const role of roles) built.agent.plan(card, role, {});
+  const emitter = built.sink.emitter.bind(built.sink);
+  const refused = [];
+  built.sink.emitter = (context) => {
+    const actual = emitter(context);
+    return { emit: (event, fields) => {
+      if (context.layer === 'L3' && event === 'dispatch' && fields.role === 'reviewer') {
+        refused.push(context.card);
+        throw new Error(`persistent reviewer recording refusal for #${context.card}`);
+      }
+      return actual.emit(event, fields);
+    } };
+  };
+  // A bounded fault control lets a missing deferral reach an assertion rather than loop forever.
+  const priority = built.fake.operations.readPriority;
+  let reads = 0;
+  built.fake.operations.readPriority = async (...args) => {
+    const actual = await priority(...args);
+    return ++reads > 4 ? { ...actual, items: [] } : actual;
+  };
+  const failure = await built.loop.run().then(() => assert.fail('both refused starts must be reported'), (failure) => failure);
+  assert.deepEqual(refused, [42, 95], 'each persistent refusal is attempted once and the freed slot reaches B');
+  assert.equal(failure.errors.length, 2, 'both original pull failures survive');
+  assert.deepEqual(failure.reached.map(({ card }) => card), [42, 95]);
+  for (const [at, card] of [42, 95].entries()) {
+    assert.ok(failure.errors.some((pull) => pull.reached.length === 1 && pull.reached[0].card === card), `original failure for #${card}`);
+    const judges = failure.reached[at].judges;
+    assert.deepEqual(judges.map(({ role }) => role), roles);
+    assert.match(judges[0].failure.message, /reviewer/);
+    assert.equal(judges[1].outcome.status, 'fulfilled');
+    assert.equal(judges[1].outcome.value.exit, 0);
+  }
+  assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card), [42, 95]);
+});
+
+// Each real recording boundary must defer A while a normal freed pull still reaches B.
+// proves R-RECORD-9, R-SCHED-6
+test('terminal preparation provisioning and start refusals defer their selected identity while the freed slot admits another card', SETTLES_WITHIN, async (t) => {
+  const cases = [false, true].flatMap((judging) => ['preparation', 'L3 step', 'L1 step', 'L3 role', 'L1 role'].map((stage) => ({ judging, stage })));
+  const { built, select } = refusalWorld(t, cases, 'true', true);
+  for (const [at, { judging, stage }] of cases.entries()) await t.test(`${judging ? 'judge' : 'maker'}/${stage}`, async () => {
+    const { number, peer, events, runs, l3 } = select(at);
+    const emitter = built.sink.emitter.bind(built.sink);
+    let refused = 0;
+    built.sink.emitter = (context) => {
+      const actual = emitter(context);
+      return { emit: (event, fields) => {
+        const boundary = stage === 'preparation' ? context.layer === 'L1' && event === 'workspace.failed'
+          : stage.startsWith('L3') ? context.layer === 'L3' && event === 'dispatch' && (stage.endsWith('step') ? fields.step === 'prepare' : fields.role === (judging ? 'reviewer' : 'engineer'))
+            : context.layer === 'L1' && event === 'dispatch.start';
+        if (context.card === number && boundary) { refused += 1; throw new Error(`persistent ${stage} recording refusal`); }
+        return actual.emit(event, fields);
+      } };
+    };
+    const result = await built.loop.run().then((value) => ({ value }), (failure) => ({ failure, value: failure.reached }));
+    assert.equal(refused, 1, 'fixed selecting facts admit one terminal refusal');
+    assert.deepEqual(l3().filter(({ event }) => event === 'pull').map(({ card }) => card), [number, peer, peer], 'A releases normally, B runs and later moves to Owner');
+    assert.deepEqual(runs().map(({ card }) => card), [peer], 'no role of A started');
+    assert.deepEqual(l3().filter(({ event, card }) => event === 'pull' && card === peer).map(({ queueDepth }) => queueDepth), [0, 0], 'the deferred identity occupies no queue position');
+    assert.equal(events().some(({ event }) => event === 'admission.close' || event === 'attempt.failed'), false, 'recording refusal neither consumes a host attempt nor closes admission');
+    const columns = await columnsOf(built.fake);
+    assert.deepEqual({ [number]: columns[number], [peer]: columns[peer] }, { [number]: judging ? COLUMNS.review : COLUMNS.coding, [peer]: COLUMNS.owner });
+    assert.ok(result.value.some(({ card }) => card === peer));
+  });
+});
+
+// L2's refused attempt record halts A before its selected maker, while the freed slot reaches B.
+// proves R-RECORD-9, R-SCHED-6
+test('L2 recording halts defer the selected maker or judge while another card refills its slot', SETTLES_WITHIN, async (t) => {
+  const native = nativeCalls(t);
+  const cases = ['workspace', 'step', 'maker'].flatMap((stage) => ['attempt.failed', 'attempt.decided'].map((record) => ({ stage, record, judging: false })));
+  cases.push({ stage: 'optional', record: 'step.failed', judging: false }, { stage: 'workspace', record: 'judge.withheld', judging: true }, { stage: 'step', record: 'judge.withheld', judging: true });
+  const { built, select, resetReads } = refusalWorld(t, cases, 'false', false);
+  for (const [at, { stage, record, judging }] of cases.entries()) await t.test(`${judging ? 'judge' : 'maker'}/${stage}/${record}`, async () => {
+    const { number, peer, events, runs, l3, peerPending, releasePeer } = select(at);
+    const append = fs.appendFileSync;
+    const refusal = new Error(`the disk refuses L2 ${record}`);
+    let refused = 0;
+    fs.appendFileSync = (path, data, ...rest) => {
+      if (String(path) === streamPath(built.directory)) {
+        const event = JSON.parse(String(data));
+        if (event.layer === 'L2' && event.card === number && event.event === record) {
+          refused += 1;
+          throw refusal;
+        }
+      }
+      return append(path, data, ...rest);
+    };
+    syncBuiltinESMExports();
+    let failure;
+    try {
+      const running = built.loop.run();
+      running.catch(() => {});
+      if (judging && stage === 'step') {
+        await positive(peerPending);
+        assert.deepEqual(l3().filter(({ event }) => event === 'pull').map(({ card }) => card), [number, peer], 'the two-claim prefix is observed only while B has not completed');
+        assert.equal(events().some(({ layer, event, card }) => layer === 'L1' && event === 'dispatch.end' && card === peer), false, 'the controlled B command is still pending');
+        releasePeer();
+      }
+      failure = await running.then(() => assert.fail('L2 recording refusal must be reported'), (failure) => failure);
+    } finally {
+      fs.appendFileSync = append;
+      syncBuiltinESMExports();
+    }
+    assert.equal(refused, 1, 'one terminal L2 record refusal must defer the unchanged selected identity');
+    assert.ok(leavesOf(failure).some((each) => {
+      for (let cause = each; cause != null; cause = cause.cause) if (cause === refusal) return true;
+      return false;
+    }), 'L2 retains the original sink refusal through L3’s judge wrapper');
+    const made = failure.reached.find(({ card, outcome }) => card === peer && outcome !== undefined);
+    assert.equal(made?.outcome.status, 'fulfilled', 'B completed its actual L1 dispatch before its refill is assessed');
+    assert.equal(made.outcome.value.exit, 0, 'B exited successfully');
+    assert.equal(made.settled.status, 'fulfilled', 'B completed its actual L2 Review settlement');
+    assert.deepEqual(l3().filter(({ event }) => event === 'pull').map(({ card }) => card), [number, peer, peer], 'normal refill reaches B and its subsequent move to Owner');
+    assert.deepEqual(runs().map(({ card }) => card), [peer], 'A never starts a maker');
+    assert.deepEqual(l3().filter(({ event, card }) => event === 'pull' && card === peer).map(({ queueDepth }) => queueDepth), [0, 0], 'deferred A occupies no queue position');
+    assert.equal(events().some(({ event }) => event === 'admission.close'), false, 'the recording refusal does not close admission');
+    assert.deepEqual(events().filter(({ event, card }) => card === number && event === 'attempt.decided'), [], 'no host retry was recorded');
+    assert.equal(events().filter(({ event, card }) => card === number && event === 'attempt.failed').length, record === 'attempt.decided' ? 1 : 0, 'a previously accepted failure record is retained');
+    resetReads();
+    await built.loop.run().catch(() => {});
+    assert.equal(l3().filter(({ event, card }) => event === 'pull' && card === number).length, stage === 'optional' ? 3 : 2, 'a new invocation admits A again; its successful optional-step maker also reaches the ordinary Owner move');
+    assert.equal(runs().filter(({ card }) => card === number).length, stage === 'optional' ? 1 : 0, 'only the restored optional-step path actually starts A');
+    assert.equal(refused, 1, 'the recording refusal belonged only to the first invocation');
+  });
+  assert.equal(native.length, 0, 'recording-halt deferral and normal refill require no native child processes');
+});
+
+// An unclassified preparation error is not evidence of a terminal recording refusal.
+// proves R-RECORD-9
+test('generic preparation failures never defer a selected maker or judge identity as recording refusals', SETTLES_WITHIN, async (t) => {
+  for (const judging of [false, true]) await t.test(judging ? 'judge' : 'maker', async (t) => {
+    const failures = [];
+    const fail = async () => { const failure = Object.assign(new Error('unclassified preparation failure', { cause: null }), { halt: true }); failures.push(failure); throw failure; };
+    const built = onManualHost(t, { cards: [judging ? cardIn(42, COLUMNS.review) : 42], concurrency: 1,
+      ...(judging ? { judgeDirectory: fail } : { workspace: fail }),
+      kinds: { change: { ...KINDS.change, judges: judging ? ['reviewer'] : ['owner'] } },
+      forge: { pullRequests: judging ? [{ number: 733, head: 'rigger-42', sha: 'a'.repeat(40), mergeBase: 'b'.repeat(40), diff: 'diff --git a/help b/help\n' }] : [] },
+    });
+    const priority = built.fake.operations.readPriority;
+    let reads = 0;
+    built.fake.operations.readPriority = async (...args) => {
+      const actual = await priority(...args);
+      return ++reads >= 3 ? { ...actual, items: [] } : actual;
+    };
+    const failure = await built.loop.run().then(() => assert.fail('both generic failures must be reported'), (failure) => failure);
+    assert.equal(failures.length, 2, 'generic failures do not populate deferred recording identities');
+    const contains = (error, sought) => error === sought || (error?.cause != null && contains(error.cause, sought)) || (error instanceof AggregateError && error.errors.some((each) => contains(each, sought)));
+    for (const original of failures) assert.ok(contains(failure, original), 'each original generic failure survives');
+    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card), [42, 42]);
+  });
+});
+
+// A deferred judge leaves newly owed siblings in the order L2 selected them.
+// proves R-SCHED-6, R-RECORD-9
+test('a deferred judge A is omitted while newly owed B and C run in L2 order', SETTLES_WITHIN, async (t) => {
+  const roles = ['reviewer', 'engineer', 'architect'];
+  const head = 'a'.repeat(40);
+  const markers = (selected, edited = false) => selected.map((role) => ({ ...markerComment({ card: 42, pull: 733, head, body: PASSING, role }), id: `IC_${role}`, includesCreatedEdit: edited }));
+  const built = onManualHost(t, { cards: [cardIn(42, COLUMNS.review)], concurrency: 1,
+    kinds: { change: { ...KINDS.change, judges: roles } },
+    forge: { pullRequests: [{ number: 733, head: 'rigger-42', sha: head, mergeBase: 'b'.repeat(40), diff: 'diff --git a/help b/help\n', comments: markers(roles.slice(1)) }] },
+  });
+  for (const role of roles) built.agent.plan(42, role, {});
+  const emitter = built.sink.emitter.bind(built.sink);
+  let refused = 0;
+  built.sink.emitter = (context) => {
+    const actual = emitter(context);
+    return { emit: (event, fields) => {
+      if (context.layer === 'L3' && event === 'dispatch' && fields.role === 'reviewer') { refused += 1; throw new Error('A start remains unrecordable'); }
+      return actual.emit(event, fields);
+    } };
+  };
+  const comments = built.repository.operations.readComments;
+  built.repository.operations.readComments = async (...args) => {
+    if (refused > 0) built.repository.update(733, { comments: built.agent.runs().length >= 2 ? markers(roles) : markers(roles.slice(1), true) });
+    return comments(...args);
+  };
+  const priority = built.fake.operations.readPriority;
+  let reads = 0;
+  built.fake.operations.readPriority = async (...args) => {
+    const actual = await priority(...args);
+    return ++reads > 4 ? { ...actual, items: [] } : actual;
+  };
+  const failure = await built.loop.run().then(() => assert.fail('A’s original refusal must survive'), (failure) => failure);
+  assert.equal(refused, 1, 'the later mixed answer omits only deferred A');
+  assert.deepEqual(failure.reached.filter(({ judges }) => judges !== undefined).map(({ judges }) => judges.map(({ role }) => role)), [['reviewer'], ['engineer', 'architect']]);
+  assert.deepEqual(built.agent.runs().map(({ role }) => role).sort(), ['architect', 'engineer'], 'both unmatched roles actually start once; OS process-start order is unconstrained');
+});
+
+// Invocation-local deferral binds the original identity rather than every later action of its card.
+// proves R-SCHED-6, R-RECORD-9
+test('changed maker and judge identities remain eligible after a terminal recording refusal', SETTLES_WITHIN, async (t) => {
+  for (const judging of [false, true]) await t.test(judging ? 'judge head' : 'maker kind', async (t) => {
+    let changed = false;
+    const built = onManualHost(t, { cards: [judging ? cardIn(42, COLUMNS.review) : 42], concurrency: 1, makerHold: false,
+      kinds: { change: { ...KINDS.change, judges: judging ? ['reviewer'] : ['owner'] }, spec: { ...KINDS.change, select: { labels: ['type:spec'] } } },
+      forge: { pullRequests: judging ? [{ number: 733, head: 'rigger-42', sha: 'a'.repeat(40), mergeBase: 'b'.repeat(40), diff: 'diff --git a/help b/help\n' }] : [] },
+    });
+    if (judging) built.agent.plan(42, 'reviewer', {});
+    const emitter = built.sink.emitter.bind(built.sink);
+    let refused = 0;
+    built.sink.emitter = (context) => {
+      const actual = emitter(context);
+      return { emit: (event, fields) => {
+        if (!changed && context.layer === 'L3' && event === 'dispatch' && fields.role === (judging ? 'reviewer' : 'engineer')) { refused += 1; throw new Error('original selected action remains unrecordable'); }
+        return actual.emit(event, fields);
+      } };
+    };
+    const priority = built.fake.operations.readPriority;
+    built.fake.operations.readPriority = async (...args) => {
+      if (refused > 0 && !changed) {
+        changed = true;
+        if (judging) built.repository.update(733, { sha: 'c'.repeat(40) });
+        else built.fake.setIssueLabels(config.repo, 42, ['type:spec']);
+      }
+      return priority(...args);
+    };
+    if (judging) {
+      const comments = built.repository.operations.readComments;
+      built.repository.operations.readComments = async (...args) => {
+        if (built.agent.runs().length > 0) built.repository.update(733, { comments: [markerComment({ card: 42, pull: 733, head: 'c'.repeat(40), body: PASSING, role: 'reviewer' })] });
+        return comments(...args);
+      };
+    }
+    const failure = await built.loop.run().then(() => assert.fail('the first refused start is retained'), (failure) => failure);
+    assert.equal(refused, 1);
+    assert.equal(built.agent.runs().filter(({ card }) => card === 42).length, 1, 'the changed identity starts once');
+    assert.equal(failure.reached.filter(({ card }) => card === 42).length >= 1, true);
+  });
+});
+
+// An actual adapter recording refusal must not become an under-claim host-failure attempt.
+// proves R-RECORD-9
+test('a no-clock maker whose adapter wraps a refused probe kill as NOT_STARTED defers without charging a host attempt', SETTLES_WITHIN, async (t) => {
+  const stand = standInCodex();
+  const probePids = join(stand.dir, 'probe-pids');
+  const sessions = join(stand.dir, 'sessions');
+  // The documented debug prompt-input probe records readiness before awaiting filesystem events.
+  fs.writeFileSync(join(stand.dir, 'codex'), [
+    `#!${process.execPath}`,
+    '// ABOUTME: Records probe readiness and waits for filesystem events without arming a timer.',
+    "import { appendFileSync, watch } from 'node:fs';",
+    "if (process.argv.includes('debug') && process.argv.includes('prompt-input')) {",
+    `watch(${JSON.stringify(stand.dir)}, () => {});`,
+    `appendFileSync(${JSON.stringify(probePids)}, String(process.pid) + '\\n');`,
+    '} else {',
+    `appendFileSync(${JSON.stringify(sessions)}, 'session\\n');`,
+    '}',
+  ].join('\n'));
+  const probes = () => fs.existsSync(probePids) ? fs.readFileSync(probePids, 'utf8').split('\n').slice(0, -1).map(Number) : [];
+  fs.writeFileSync(probePids, '');
+  assert.deepEqual(probes(), [], 'an opened but unwritten PID file is not probe readiness');
+  fs.writeFileSync(probePids, '12');
+  assert.deepEqual(probes(), [], 'an incomplete PID record is not probe readiness');
+  fs.writeFileSync(probePids, '');
+  const formerPath = process.env.PATH;
+  process.env.PATH = stand.first();
+  t.after(() => { process.env.PATH = formerPath; });
+  const making = makingWorkspaces(temporaryDirectory('rigger-adapter-refusal-'));
+  const built = onManualHost(t, { cards: [{ ...readyCard(42), labels: ['type:change', 'maker:codex'] }, 95], concurrency: 1, makerHold: false,
+    workspace: async (number) => {
+      const made = await making(number);
+      fs.mkdirSync(join(made.path, '.claude', 'agents'), { recursive: true });
+      fs.writeFileSync(join(made.path, '.claude', 'agents', 'engineer.md'), '---\nname: engineer\n---\n# Engineer\n');
+      return made;
+    },
+  });
+  const clock = realHost.clock;
+  const emitter = built.sink.emitter.bind(built.sink);
+  let refused = 0;
+  built.sink.emitter = (context) => {
+    const actual = emitter(context);
+    return { emit: (event, fields) => {
+      if (context.card === 42 && context.layer === 'L0' && event.endsWith('.killed')) { refused += 1; throw new Error('probe kill record remains refused'); }
+      return actual.emit(event, fields);
+    } };
+  };
+  const running = built.loop.run();
+  running.catch(() => {});
+  const ended = settledOf(running);
+  // The stand-in's recorded probe is readiness; advancing the injected clock expires its bound.
+  for (let probe = 1; probe <= 2; probe += 1) {
+    await positive(() => ended() || probes().length >= probe);
+    if (ended()) break;
+    assert.ok(probes().every((pid) => Number.isSafeInteger(pid) && pid > 0), 'probe readiness records actual positive process IDs');
+    await clock.advance(clock.now() + 60_000);
+  }
+  await positive(() => ended());
+  const result = await running.then((value) => ({ value }), (failure) => ({ failure, value: failure.reached }));
+  assert.equal(probes().length, 1, 'terminal adapter recording refusal must not retry the probe');
+  assert.ok(refused > 0, 'the actual probe kill reached the refusing sink');
+  assert.deepEqual(built.events().filter(({ card, event }) => card === 42 && (event === 'attempt.failed' || event === 'attempt.decided')), [], 'the terminal refusal spends no host-failure attempt');
+  const first = result.value.find(({ card }) => card === 42);
+  assert.equal(first.outcome.reason.code, 'NOT_STARTED');
+  assert.deepEqual(first.outcome.reason.startCause, { kind: 'event-unrecorded' });
+  assert.equal(first.outcome.reason.cause.code, EVENT_REFUSED, 'L1 retains the actual recording provenance');
+  assert.equal(fs.existsSync(sessions), false, 'no Codex agent session starts');
+  assert.deepEqual(built.agent.runs().map(({ card }) => card), [95], 'the freed slot still reaches the peer maker');
+  assert.equal(built.events().some(({ event }) => event === 'admission.close'), false);
+});
 
 /** The first condition still missing from a timed single-pull world. */
 function targetBoundary(record, bodyStart, now = () => performance.now()) {
@@ -2466,7 +3710,7 @@ test('given a loop handle whose injected kill rejects, a pull reads nothing, rec
   const refusal = new Error('the sink refused 1 kill(s) of recorded groups');
   const built = world({ fake, board: counted.handle, kill: async () => { throw refusal; } });
 
-  await assert.rejects(built.loop.pull(), (failure) => failure === refusal);
+  await assert.rejects(built.loop.pull(), (failure) => failure.message === refusal.message && failure.code === refusal.code && failure.unreadable === refusal.unreadable);
 
   assert.equal(counted.reads, 0);
   assert.deepEqual(built.l3Events(), []);
@@ -2804,7 +4048,7 @@ test('a closer linked after a run claims a card lets it finish and stops its fre
   built.dispatches.releaseAll();
   await positive(() => done() || built.dispatches.heldNow(83));
   if (built.dispatches.heldNow(83)) built.dispatches.release(83);
-  const reached = await running;
+  const { reached } = await running;
 
   assert.deepEqual(reached.map(({ card }) => card).sort(), [81, 82]);
   assert.deepEqual(built.dispatches.started, [81, 82]);
@@ -2858,7 +4102,7 @@ test('the loop world opens a new pull after closed history and still suppresses 
 });
 
 
-// proves R-WORK-36, R-WORK-37, R-WORK-39
+// proves R-WORK-41, R-WORK-37, R-WORK-39
 test('one closed-card claim removes before redo Coding or the ordinary Owner operation in every eligible stage and branch cell', SETTLES_WITHIN, async (t) => {
   for (const column of [COLUMNS.review, COLUMNS.owner]) for (const branch of [false, true]) {
     const number = 190;
@@ -2914,7 +4158,7 @@ test('one closed-card claim removes before redo Coding or the ordinary Owner ope
 });
 
 
-// proves R-WORK-36
+// proves R-WORK-41
 test('a closed removal failure retains every remaining path while the ordinary redo or owner escalation still runs under that claim', SETTLES_WITHIN, async (t) => {
   for (const column of [COLUMNS.review, COLUMNS.owner]) {
     const number = 191;
@@ -2933,7 +4177,7 @@ test('a closed removal failure retains every remaining path while the ordinary r
     built.dispatches.releaseAll();
     await assert.rejects(running, (failure) => {
       const leaves = leavesOf(failure);
-      for (const path of remaining) assert.ok(leaves.includes(path), `lost ${path.message}`);
+      for (const path of remaining) assert.ok(leaves.some((held) => held.message === path.message && held.code === path.code && held.unreadable === path.unreadable), `lost ${path.message}`);
       assert.equal(failure.reached.length, 1, 'the ordinary reached outcome survives cleanup failure');
       if (column === COLUMNS.review) assert.equal(failure.reached[0].outcome.value.exit, 1);
       else assert.equal(failure.reached[0].action, 'escalate');
@@ -2949,7 +4193,7 @@ test('a closed removal failure retains every remaining path while the ordinary r
 
 import { factsCall } from '../src/workflow/facts.mjs';
 
-// proves R-WORK-36
+// proves R-WORK-41
 test('a closed removal followed by unchanged refusal or injected ignore runs once per invocation and retries on the next invocation', SETTLES_WITHIN, async () => {
   for (const action of ['refuse', 'ignore']) {
     const number = 192;
@@ -2986,7 +4230,7 @@ test('a closed removal followed by unchanged refusal or injected ignore runs onc
 });
 
 
-// proves R-WORK-36
+// proves R-WORK-41
 test('a refused redo start after closed cleanup releases once without an immediate retry and preserves both actual failures', SETTLES_WITHIN, async () => {
   for (const cleanupFails of [false, true]) {
     const number = 193;
@@ -3011,7 +4255,7 @@ test('a refused redo start after closed cleanup releases once without an immedia
       await assert.rejects(built.loop.run(), (failure) => {
         const leaves = leavesOf(failure);
         assert.ok(leaves.some(({ message }) => message.includes('the board refuses the following Coding start')));
-        assert.equal(leaves.includes(cleanup), cleanupFails, 'cleanup failure is retained exactly when it happened');
+        assert.equal(leaves.some((held) => held.message === cleanup.message && held.code === cleanup.code && held.unreadable === cleanup.unreadable), cleanupFails, 'cleanup failure is retained exactly when it happened');
         assert.deepEqual(failure.reached, []);
         return true;
       });
@@ -3027,7 +4271,7 @@ test('a refused redo start after closed cleanup releases once without an immedia
 });
 
 
-// proves R-WORK-36
+// proves R-WORK-41
 test('closed cleanup composes each Owner write rejection with actual cleanup failure and excludes that outer claim until the next invocation', BOUNDS[60_000], async () => {
   for (const column of [COLUMNS.review, COLUMNS.owner]) for (const cleanupFails of [false, true]) for (const rejected of ['postIssueComment', 'moveItem', 'addIssueLabel']) {
     const number = 194;
@@ -3059,8 +4303,8 @@ test('closed cleanup composes each Owner write rejection with actual cleanup fai
       const before = writes.length;
       await assert.rejects(built.loop.run(), (failure) => {
         const leaves = leavesOf(failure);
-        assert.equal(leaves.includes(cleanup), cleanupFails);
-        assert.ok(leaves.some((held) => held.cause === ordinary && held.message.includes(`Owner ${rejected} refused`)), `${column}/${cleanupFails}/${rejected}`);
+        assert.equal(leaves.some((held) => held.message === cleanup.message && held.code === cleanup.code && held.unreadable === cleanup.unreadable), cleanupFails);
+        assert.ok(leaves.some((held) => held.cause?.message === ordinary.message && held.cause?.code === ordinary.code && held.cause?.unreadable === ordinary.unreadable && held.message.includes(`Owner ${rejected} refused`)), `${column}/${cleanupFails}/${rejected}`);
         assert.deepEqual(failure.reached, []);
         return true;
       });
@@ -3078,7 +4322,7 @@ test('closed cleanup composes each Owner write rejection with actual cleanup fai
 });
 
 
-// proves R-RECORD-9, R-WORK-36
+// proves R-RECORD-9, R-WORK-41
 test('a refused initial closed-cleanup claim record starts neither removal nor its ordinary action and a recordable retry does both', async () => {
   const number = 195;
   const removed = [];
@@ -3107,7 +4351,7 @@ import { join } from 'node:path';
 import { repositoryIn } from './git-repository.mjs';
 import { removeCardDirectories } from '../src/execution/workspace.mjs';
 
-// proves R-WORK-36, R-RECORD-9
+// proves R-WORK-41, R-RECORD-9
 test('an actual closed cleanup names its unrecorded removal while a one-shot refusal permits ordinary dispatch and persistent refusal prevents it', BOUNDS[60_000], async (t) => {
   for (const persistent of [false, true]) {
     const number = 196;
@@ -3227,7 +4471,7 @@ test('another cards held maker does not exclude an eligible closed cleanup when 
 });
 
 
-// proves R-WORK-36
+// proves R-WORK-41
 test('a closed cleanup rechecks claim availability after an independently delayed facts read', BOUNDS[60_000], async (t) => {
   const number = 200;
   const built = world({ cards: [cardIn(number, COLUMNS.owner)], forge: { pullRequests: [{ number: 733, head: `rigger-${number}`, sha: 'd6d079f3258e1b74aad7baf725895b8d74c5b315', closed: true }] } });
@@ -3278,7 +4522,7 @@ test('a closed cleanup rechecks claim availability after an independently delaye
 });
 
 
-// proves R-WORK-36
+// proves R-WORK-41
 test('one closed claim spans delayed removal and every following owner write without duplicate cleanup or early release', BOUNDS[60_000], async (t) => {
   const number = 201;
   const entered = [];
@@ -3326,7 +4570,7 @@ test('one closed claim spans delayed removal and every following owner write wit
 });
 
 
-// proves R-WORK-36, R-WORK-39
+// proves R-WORK-41, R-WORK-39
 test('reopening before closed facts prevents removal while reopening after the selected snapshot restores no removed directory', BOUNDS[60_000], async () => {
   for (const when of ['before', 'after']) {
     const number = 202;
@@ -3366,7 +4610,7 @@ test('reopening before closed facts prevents removal while reopening after the s
 import { clonedFromOrigin } from './git-repository.mjs';
 import { makeWorkspace } from '../src/execution/workspace.mjs';
 
-// proves R-WORK-36, R-WORK-37
+// proves R-WORK-41, R-WORK-37
 test('a new attempt after closed cleanup retains the real directories it creates on later eligible-looking Coding reads after dispatch ends', BOUNDS[60_000], async (t) => {
   const number = 203;
   const { repository } = clonedFromOrigin(temporaryDirectory('rigger-closed-coding-git-'));
@@ -3414,7 +4658,7 @@ test('a new attempt after closed cleanup retains the real directories it creates
 });
 
 
-// proves R-WORK-36, R-WORK-38
+// proves R-WORK-41, R-WORK-38
 test('a failed closed cleanup followed by escalation stays withheld until the owner clears the label before a fresh eligible invocation', async () => {
   const number = 204;
   const fake = boardOf([cardIn(number, COLUMNS.owner)]);
@@ -3422,7 +4666,7 @@ test('a failed closed cleanup followed by escalation stays withheld until the ow
   let removals = 0;
   const built = world({ fake, forge: { pullRequests: [{ ...pullFor(number), closed: true }] }, removeDirectories: async () => { removals += 1; throw remaining; } });
   await assert.rejects(built.loop.pull(1), (failure) => {
-    assert.ok(leavesOf(failure).includes(remaining));
+    assert.ok(leavesOf(failure).some((held) => held.message === remaining.message && held.code === remaining.code && held.unreadable === remaining.unreadable));
     assert.equal(failure.reached[0].action, 'escalate');
     return true;
   });
@@ -3519,7 +4763,7 @@ test('a refused maker note escalation keeps the card out of later pulls in the i
   ].join('\n'));
   built.dispatches.release(number);
   await assert.rejects(running, (failure) => {
-    assert.ok(leavesOf(failure).some((held) => held.cause === refusal && /escalation issue comment was refused/.test(held.message)));
+    assert.ok(leavesOf(failure).some((held) => held.cause?.message === refusal.message && held.cause?.code === refusal.code && held.cause?.unreadable === refusal.unreadable && /escalation issue comment was refused/.test(held.message)));
     return true;
   });
   assert.deepEqual(cardsOf(built, 'pull'), [number]);
@@ -3532,4 +4776,1469 @@ test('a refused maker note escalation keeps the card out of later pulls in the i
   assert.deepEqual((await built.fake.operations.readItems())[0].labels, ['type:change']);
   assert.equal(built.agent.runs().filter(({ role }) => role === 'reviewer').length, 0);
   assert.equal(built.events().find(({ event }) => event === 'review.escalate').raiser, 'maker');
+});
+
+// proves R-SCHED-6
+test('J1: run fires a due report occurrence while a claim is held', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock);
+  const { handed, stop } = keptUp(built);
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    await clock.advance(CLOCK_START + 1000);
+    const firings = built.l3Events().filter((event) => event.trigger === 'clock' || event.event === 'trigger.outcome');
+    assert.deepEqual(firings.map(({ event, trigger, name, occurrence, outcome }) => ({ event, trigger, name, occurrence, outcome })), [
+      { event: 'trigger', trigger: 'clock', name: 'hourly', occurrence: new Date(CLOCK_START + 1000).toISOString(), outcome: undefined },
+      { event: 'trigger.outcome', trigger: undefined, name: 'hourly', occurrence: new Date(CLOCK_START + 1000).toISOString(), outcome: 'job' },
+    ]);
+    built.dispatches.releaseAll();
+    await stop();
+    const answer = { reports: reportsIn(handed) };
+    assert.equal(answer.reports.length, 1, 'L3 hands the derived report to the verb');
+    assert.ok(answer.reports[0].runs?.length > 0, 'the handed report has the run L5 derived');
+  } finally {
+    built.dispatches.releaseAll();
+    await stop();
+  }
+});
+
+test('J13: a failed report settles its occurrence and the next report still fires', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock);
+  const path = streamPath(built.directory);
+  const { handed, stop } = keptUp(built);
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    fs.appendFileSync(path, 'unreadable event line\n');
+    assert.throws(() => deriveReport(built.directory), /line \d+ is not a recorded event/, 'the stream premise makes L5 throw');
+    let wakeFailure;
+    try { await clock.advance(CLOCK_START + 1000); }
+    catch (failure) { wakeFailure = failure; }
+    fs.writeFileSync(path, fs.readFileSync(path, 'utf8').split('\n').filter((line) => line !== 'unreadable event line').join('\n'));
+    assert.equal(wakeFailure, undefined, 'L3 handles L5 failure without throwing from the timer');
+    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'trigger.outcome').map(({ outcome }) => outcome), ['failed']);
+    await clock.advance(CLOCK_START + 2000);
+    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'trigger.outcome').map(({ outcome }) => outcome), ['failed', 'job']);
+    built.dispatches.releaseAll();
+    await stop();
+    const failure = { errors: failuresIn(handed) };
+    const messages = failure.errors.map((held) => held.message);
+    assert.ok(messages.some((message) => /hourly/.test(message) && /2026-10-29T12:00:01.000Z/.test(message)
+      && /line \d+ is not a recorded event/.test(message)), messages.join('\n'));
+  } finally {
+    built.dispatches.releaseAll();
+    await stop();
+  }
+});
+
+test('J11: a refused clock start runs no report and leaves the occurrence due for the next wake', async () => {
+  const clock = manualClock();
+  const scheduled = [];
+  const schedule = clock.schedule;
+  clock.schedule = (call, delay) => {
+    scheduled.push(delay);
+    return schedule(call, delay);
+  };
+  const built = reportWorld(clock);
+  const { handed, stop } = keptUp(built);
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    const armedBeforeRefusal = scheduled.length;
+    built.refuseAppends('clock start refused', 1);
+    const readFile = fs.readFileSync;
+    let streamReads = 0;
+    fs.readFileSync = (path, ...args) => {
+      if (path === streamPath(built.directory)) streamReads += 1;
+      return readFile(path, ...args);
+    };
+    syncBuiltinESMExports();
+    let wakeFailure;
+    try {
+      try { await clock.advance(CLOCK_START + 1000); }
+      catch (failure) { wakeFailure = failure; }
+    } finally {
+      fs.readFileSync = readFile;
+      syncBuiltinESMExports();
+    }
+    assert.equal(wakeFailure, undefined, 'the timer hands a start refusal to run');
+    assert.equal(streamReads, 0, 'a refused start never calls L5 report to read the stream');
+    assert.deepEqual(scheduled.slice(armedBeforeRefusal), [1000], 'a refused start schedules only the next occurrence, without an early retry');
+    assert.deepEqual(built.l3Events().filter(({ trigger, event }) => trigger === 'clock' || event === 'trigger.outcome'), []);
+    built.acceptAppends();
+    await clock.advance(CLOCK_START + 2000);
+    assert.deepEqual(built.l3Events().filter(({ trigger }) => trigger === 'clock').map(({ occurrence }) => occurrence), [
+      new Date(CLOCK_START + 2000).toISOString(),
+    ]);
+    built.dispatches.releaseAll();
+    await stop();
+    const failure = { errors: failuresIn(handed), reports: reportsIn(handed), message: JSON.stringify(handed) };
+    assert.ok(failure.errors.some((held) => /clock start refused/.test(held.message)), failure.message);
+    assert.equal(failure.reports.length, 1, 'only the second occurrence ran report');
+  } finally {
+    built.dispatches.releaseAll();
+    await stop();
+  }
+});
+
+test('J12: a refused report outcome is abandoned before the next occurrence fires', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock);
+  const originalEmitter = built.sink.emitter;
+  let refusedOnce = false;
+  built.sink.emitter = (context) => {
+    const emitter = originalEmitter(context);
+    return { emit(event, fields) {
+      if (event === 'trigger.outcome' && !refusedOnce) {
+        refusedOnce = true;
+        throw new Error('clock outcome refused');
+      }
+      return emitter.emit(event, fields);
+    } };
+  };
+  const { handed, stop } = keptUp(built);
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    let wakeFailure;
+    try { await clock.advance(CLOCK_START + 1000); }
+    catch (failure) { wakeFailure = failure; }
+    assert.equal(wakeFailure, undefined, 'the timer hands an outcome refusal to run');
+    assert.equal(refusedOnce, true, 'the sink refused the first report outcome');
+    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'trigger.outcome'), []);
+    await clock.advance(CLOCK_START + 2000);
+    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'trigger.outcome')
+      .map(({ occurrence, outcome }) => [occurrence, outcome]), [
+      [new Date(CLOCK_START + 1000).toISOString(), 'abandoned'],
+      [new Date(CLOCK_START + 2000).toISOString(), 'job'],
+    ]);
+    assert.deepEqual(built.l3Events().filter(({ trigger }) => trigger === 'clock').map(({ occurrence }) => occurrence), [
+      new Date(CLOCK_START + 1000).toISOString(), new Date(CLOCK_START + 2000).toISOString(),
+    ]);
+    built.dispatches.releaseAll();
+    await stop();
+    const failure = { errors: failuresIn(handed), message: JSON.stringify(handed) };
+    assert.ok(failure.errors.some((held) => /clock outcome refused/.test(held.message)), failure.message);
+  } finally {
+    built.dispatches.releaseAll();
+    await stop();
+  }
+});
+
+test('J12: a freed-slot pull settles a pending report before another clock wake', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock);
+  const originalEmitter = built.sink.emitter;
+  let refusedOnce = false;
+  built.sink.emitter = (context) => {
+    const emitter = originalEmitter(context);
+    return { emit(event, fields) {
+      if (event === 'trigger.outcome' && !refusedOnce) {
+        refusedOnce = true;
+        throw new Error('outcome pending until pull');
+      }
+      return emitter.emit(event, fields);
+    } };
+  };
+  const { handed, stop } = keptUp(built);
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    await clock.advance(CLOCK_START + 1000);
+    built.dispatches.releaseAll();
+    await positive(() => settledIn(handed).length === 1);
+    await stop();
+    assert.ok(failuresIn(handed).some(({ message }) => /outcome pending until pull/.test(message)), JSON.stringify(handed));
+    const events = built.l3Events();
+    const abandoned = events.findIndex(({ event, outcome }) => event === 'trigger.outcome' && outcome === 'abandoned');
+    const nextPull = events.findIndex(({ event, trigger }, at) => at > abandoned && event === 'trigger' && trigger === 'pull');
+    assert.ok(abandoned >= 0 && nextPull > abandoned, 'the freed-slot pull settles the pending report first');
+    assert.equal(clock.pending(), 0, 'the run ended before a second clock wake');
+  } finally {
+    built.dispatches.releaseAll();
+    await stop();
+  }
+});
+
+test('J14: run hands its injected clock to L3 while a claim is held', async () => {
+  const clock = manualClock();
+  const { agent, consumer, stop } = await keptUpVerb(clockVerb, runVerb, clock);
+  try {
+    assert.equal(clock.pending(), 1, 'run armed the report timer through L3');
+    await clock.advance(CLOCK_START + 1000);
+    const events = (await import('../src/observation/sink.mjs')).readEvents(`${consumer}/.rigger`);
+    assert.deepEqual(events.filter(({ trigger }) => trigger === 'clock').map(({ name, occurrence }) => [name, occurrence]), [
+      ['hourly', new Date(CLOCK_START + 1000).toISOString()],
+    ]);
+  } finally {
+    if (agent.held(10)) agent.release(10);
+    await stop().catch(() => {});
+  }
+});
+
+test('J14: run prints the report hand-over before its card lines without changing the card status', async () => {
+  const clock = manualClock();
+  const { agent, consumer, written, stop } = await keptUpVerb(clockVerb, runVerb, clock);
+  try {
+    await clock.advance(CLOCK_START + 1000);
+    const path = streamPath(`${consumer}/.rigger`);
+    const lines = fs.readFileSync(path, 'utf8').trimEnd().split('\n');
+    assert.equal(JSON.parse(lines.at(-1)).event, 'trigger.outcome', 'the firing completed before the snapshot');
+    const snapshot = temporaryDirectory('rigger-clock-report-snapshot-');
+    fs.writeFileSync(streamPath(snapshot), `${lines.slice(0, -1).join('\n')}\n`);
+    const expected = reportText({ ...deriveReport(snapshot), path });
+    agent.release(10);
+    const stopped = await stop();
+    const answer = { ...stopped, text: [...written, stopped.text].join('\n') };
+    const cardLine = answer.text.indexOf('rigger run: claimed #10');
+    const reportLine = answer.text.indexOf(`rigger report: the events recorded at ${path}`);
+    assert.ok(reportLine >= 0 && cardLine > reportLine, answer.text);
+    assert.equal(answer.text.slice(reportLine, reportLine + expected.length + 1), `${expected}\n`, 'run writes exactly the report rendering of the event snapshot, whole');
+    assert.equal(answer.code, 1, 'the card outcome alone decides this run status');
+  } finally {
+    if (agent.held(10)) agent.release(10);
+    await stop().catch(() => {});
+  }
+});
+
+test('J13 J14: run prints a successful report before a later failed report and exits one', async () => {
+  const clock = manualClock();
+  const { agent, consumer, written, stop } = await keptUpVerb(clockVerb, runVerb, clock);
+  const path = streamPath(`${consumer}/.rigger`);
+  try {
+    await clock.advance(CLOCK_START + 1000);
+    fs.appendFileSync(path, 'unreadable event line\n');
+    assert.throws(() => deriveReport(`${consumer}/.rigger`), /line \d+ is not a recorded event/);
+    await clock.advance(CLOCK_START + 2000);
+    fs.writeFileSync(path, fs.readFileSync(path, 'utf8').split('\n').filter((line) => line !== 'unreadable event line').join('\n'));
+    agent.release(10);
+    const answer = { ...(await stop()), text: written.join('\n') };
+    const reportAt = answer.text.indexOf(`rigger report: the events recorded at ${path}`);
+    const failureAt = answer.text.indexOf(`rigger run: clock trigger hourly at ${new Date(CLOCK_START + 2000).toISOString()}`);
+    assert.ok(reportAt >= 0 && failureAt > reportAt, answer.text);
+    assert.match(answer.text.slice(failureAt), /line \d+ is not a recorded event/);
+    assert.equal(answer.code, 1);
+  } finally {
+    if (agent.held(10)) agent.release(10);
+    await stop().catch(() => {});
+  }
+});
+
+// proves R-SCHED-34
+test('J2 J3: owner and Rigger admission closers do not stop a due report while a claim is held', async () => {
+  for (const kind of ['owner', 'hold']) {
+    const clock = manualClock();
+    const built = reportWorld(clock);
+    const { stop } = keptUp(built);
+    try {
+      await positive(() => built.dispatches.held() === 1);
+      if (kind === 'owner') seed(built.directory, 'owner-a1.json', closerText({ reason: 'owner paused claims' }));
+      else await moduleOver(built.directory).close({ kind: 'hold', reason: 'Rigger held claims' });
+      await clock.advance(CLOCK_START + 1000);
+      assert.deepEqual(built.l3Events().filter(({ event }) => event === 'trigger.outcome')
+        .map(({ name, outcome }) => [name, outcome]), [['hourly', 'job']], kind);
+      built.dispatches.releaseAll();
+    } finally {
+      built.dispatches.releaseAll();
+      await stop();
+    }
+  }
+});
+
+// proves R-SCHED-35
+test('J4: once never arms or fires a clock report while its claim is held', async () => {
+  const clock = manualClock();
+  const { agent, consumer, running } = await clockVerb(onceVerb, clock);
+  try {
+    assert.equal(clock.pending(), 0);
+    await clock.advance(CLOCK_START + 1000);
+    const events = (await import('../src/observation/sink.mjs')).readEvents(`${consumer}/.rigger`);
+    assert.deepEqual(events.filter(({ trigger, event }) => trigger === 'clock' || event === 'trigger.outcome'), []);
+    agent.release(10);
+    const answer = await running;
+    assert.doesNotMatch(answer.text, /rigger report:/);
+  } finally {
+    if (agent.held(10)) agent.release(10);
+    await running.catch(() => {});
+  }
+});
+
+// proves R-SCHED-5
+test('J5 J6: a due report with every slot held adds no dispatch or claim and leaves the slot held', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock);
+  const { stop } = keptUp(built);
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    const before = built.events().length;
+    const started = [...built.dispatches.started];
+    await clock.advance(CLOCK_START + 1000);
+    const during = built.events().slice(before);
+    assert.deepEqual(during.filter(({ layer, event }) => (layer === 'L3' && event === 'dispatch') || (layer === 'L1' && event === 'dispatch.start')), []);
+    assert.deepEqual(during.filter(({ layer, event }) => layer === 'L3' && event === 'slot.release'), []);
+    assert.deepEqual(during.filter(({ layer, event }) => layer === 'L3' && event === 'trigger.outcome').map(({ outcome }) => outcome), ['job']);
+    assert.deepEqual(built.dispatches.started, started);
+    assert.deepEqual(built.dispatches.holding(), [1], 'the claim still holds the only slot');
+  } finally {
+    built.dispatches.releaseAll();
+    await stop();
+  }
+});
+
+test('J7: a late wake fires only the newest due occurrence', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock);
+  const { stop } = keptUp(built);
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    await clock.advance(CLOCK_START + 3500);
+    assert.deepEqual(built.l3Events().filter(({ trigger }) => trigger === 'clock').map(({ occurrence }) => occurrence), [
+      new Date(CLOCK_START + 3000).toISOString(),
+    ]);
+    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'trigger.outcome').map(({ outcome }) => outcome), ['job']);
+  } finally {
+    built.dispatches.releaseAll();
+    await stop();
+  }
+});
+
+test('J8: an occurrence at the start with no arming record never fires in that run', async () => {
+  const clock = manualClock(CLOCK_START + 1000);
+  const built = reportWorld(clock);
+  const { stop } = keptUp(built);
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    assert.deepEqual(built.events().filter(({ event }) => event === 'trigger.armed').map(({ name }) => name), ['hourly'], 'the start armed the trigger, which no earlier arming named');
+    await clock.advance(CLOCK_START + 1500);
+    assert.deepEqual(built.l3Events().filter(({ trigger }) => trigger === 'clock'), []);
+    await clock.advance(CLOCK_START + 2000);
+    assert.deepEqual(built.l3Events().filter(({ trigger }) => trigger === 'clock').map(({ occurrence }) => occurrence), [
+      new Date(CLOCK_START + 2000).toISOString(),
+    ]);
+  } finally {
+    built.dispatches.releaseAll();
+    await stop();
+  }
+});
+
+test('J9: different due occurrences fire serially with the earlier occurrence first', async () => {
+  const clock = manualClock();
+  const trigger = (interval) => ({ interval, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip', job: 'report' });
+  const built = reportWorld(clock, { triggers: { later: trigger(2000), earlier: trigger(1500) } });
+  const { stop } = keptUp(built);
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    await clock.advance(CLOCK_START + 2500);
+    assert.deepEqual(built.l3Events().filter(({ trigger, event }) => trigger === 'clock' || event === 'trigger.outcome')
+      .map(({ event, name, occurrence }) => [event, name, occurrence]), [
+      ['trigger', 'earlier', new Date(CLOCK_START + 1500).toISOString()],
+      ['trigger.outcome', 'earlier', new Date(CLOCK_START + 1500).toISOString()],
+      ['trigger', 'later', new Date(CLOCK_START + 2000).toISOString()],
+      ['trigger.outcome', 'later', new Date(CLOCK_START + 2000).toISOString()],
+    ]);
+  } finally {
+    built.dispatches.releaseAll();
+    await stop();
+  }
+});
+
+test('J10: triggers due at one occurrence fire serially in code-unit name order', async () => {
+  const clock = manualClock();
+  const trigger = { interval: 1000, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip', job: 'report' };
+  const built = reportWorld(clock, { triggers: { zeta: trigger, Alpha: trigger } });
+  const { stop } = keptUp(built);
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    await clock.advance(CLOCK_START + 1000);
+    assert.deepEqual(built.l3Events().filter(({ trigger, event }) => trigger === 'clock' || event === 'trigger.outcome')
+      .map(({ event, name }) => [event, name]), [
+      ['trigger', 'Alpha'], ['trigger.outcome', 'Alpha'], ['trigger', 'zeta'], ['trigger.outcome', 'zeta'],
+    ]);
+  } finally {
+    built.dispatches.releaseAll();
+    await stop();
+  }
+});
+
+test('J15: absent and empty clocks retain the same run answer and event sequence', async () => {
+  const clock = manualClock();
+  const worlds = [
+    world({ cards: [1], concurrency: 1, clock }),
+    reportWorld(clock, { triggers: {} }),
+  ];
+  const observed = [];
+  for (const built of worlds) {
+    const answer = await drive(built);
+    assert.equal(clock.pending(), 0, 'no report timer is held');
+    assert.deepEqual(built.l3Events().filter(({ trigger }) => trigger === 'clock'), []);
+    observed.push({
+      events: built.events().map(({ layer, event, card, trigger }) => ({ layer, event, card, trigger })),
+      answer: answer.map(({ card, settled, judges }) => ({ card, settled: settled?.status, judges: judges?.length })),
+    });
+  }
+  assert.deepEqual(observed[1], observed[0]);
+});
+
+test('J16: the default clock fires a report while a claim holds run open', async () => {
+  const built = reportWorld(undefined);
+  const { stop } = keptUp(built);
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    await positive(() => built.l3Events().some(({ event, outcome }) => event === 'trigger.outcome' && outcome === 'job'));
+    assert.equal(built.l3Events().filter(({ trigger }) => trigger === 'clock').length, 1);
+  } finally {
+    built.dispatches.releaseAll();
+    await stop();
+  }
+});
+
+/** How many `trigger` events of kind `kind` L3 has recorded in `built`. */
+const count = (built, kind) => triggersOf(built).filter((trigger) => trigger === kind).length;
+
+/** A report trigger whose first occurrence is an hour after the clock's start, so no firing falls in a poll test. */
+const HOUR_AWAY = { hourly: { interval: 3_600_000, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip', job: 'report' } };
+
+/** A card-shaped trigger whose first occurrence is an hour after the clock's start. */
+const CARD_SHAPED = { daily: { interval: 3_600_000, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip',
+  card: { title: 'Audit', labels: ['type:change'], acceptance: '- The audit writes a result.' } } };
+
+// proves R-SCHED-28
+test('L1: run stays up past the drain while a report trigger is declared, recording one drain for the idle period', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { cards: [], triggers: HOUR_AWAY });
+  const { running, handed, stop } = keptUp(built);
+  const ended = settledOf(running);
+  try {
+    await positive(() => count(built, 'drain') === 1);
+    await clock.advance(CLOCK_START + 5_000);
+    assert.equal(ended(), false, 'run did not end at the drain');
+    assert.equal(count(built, 'drain'), 1, 'one drain for the idle period');
+    assert.deepEqual(settledIn(handed), [{ status: 'fulfilled', value: [] }], 'the drain handed the verb what settled');
+  } finally {
+    await stop();
+  }
+});
+
+// proves R-SCHED-28
+test('L2a: a clock declaring only card-shaped triggers keeps run up before its first occurrence', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { cards: [], triggers: CARD_SHAPED });
+  const { running, stop } = keptUp(built);
+  const ended = settledOf(running);
+  try {
+    await positive(() => count(built, 'drain') === 1);
+    await clock.advance(CLOCK_START + 3_500);
+    assert.equal(ended(), false, 'run did not end at the drain');
+    assert.deepEqual(built.l3Events().filter(({ trigger, event }) => trigger === 'clock' || event === 'trigger.outcome'), []);
+  } finally {
+    await stop();
+  }
+});
+
+test('L5: an idle poll that claims nothing fires no second drain in that idle period', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { cards: [], triggers: HOUR_AWAY });
+  const { stop } = keptUp(built);
+  try {
+    await positive(() => count(built, 'drain') === 1);
+    const pullsAtDrain = count(built, 'pull');
+    for (const at of [1000, 2000, 3000]) await clock.advance(CLOCK_START + at);
+    assert.equal(count(built, 'pull'), pullsAtDrain + 3, 'three polls fired, one each second');
+    assert.equal(count(built, 'drain'), 1);
+  } finally {
+    await stop();
+  }
+});
+
+// proves R-SCHED-29
+test('L4: an idle poll claims a card that entered Ready no later than the poll interval after it did', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { cards: [cardIn(5, COLUMNS.done)], triggers: HOUR_AWAY });
+  const { stop } = keptUp(built);
+  try {
+    await positive(() => count(built, 'drain') === 1);
+    await clock.advance(CLOCK_START + 300);
+    await built.fake.operations.moveItem('item-1', COLUMNS.ready);
+    const entered = clock.now();
+    await clock.advance(entered + 1000);
+    const claimed = built.l3Events().find(({ event, card }) => event === 'pull' && card === 5);
+    assert.ok(claimed, 'a poll within the bound claimed card #5');
+    assert.equal(built.l3Events().filter(({ event }) => event === 'pull').length, 1);
+    await positive(() => built.dispatches.held() === 1);
+  } finally {
+    built.dispatches.releaseAll();
+    await stop();
+  }
+});
+
+test('L6: an idle poll that claims a card ends the idle period, and the next idle period records one drain', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { cards: [cardIn(5, COLUMNS.done)], triggers: HOUR_AWAY });
+  const { handed, stop } = keptUp(built);
+  try {
+    await positive(() => count(built, 'drain') === 1);
+    await built.fake.operations.moveItem('item-1', COLUMNS.ready);
+    await clock.advance(CLOCK_START + 1000);
+    await positive(() => built.dispatches.held() === 1);
+    built.dispatches.releaseAll();
+    await positive(() => count(built, 'drain') === 2);
+    await positive(() => settledIn(handed).length === 2);
+    assert.deepEqual([...new Set(settledIn(handed)[1].value.map(({ card }) => card))], [5], 'the second drain handed card #5\'s outcomes');
+  } finally {
+    built.dispatches.releaseAll();
+    await stop();
+  }
+});
+
+test('L13a: a stop while idle cancels the timer and ends run with nothing more handed and no failure', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { cards: [], triggers: HOUR_AWAY });
+  const { stop } = keptUp(built);
+  await positive(() => count(built, 'drain') === 1);
+  assert.equal(clock.pending(), 1, 'the poll timer is pending while idle');
+  const answer = await stop();
+  assert.deepEqual(answer, []);
+  assert.equal(clock.pending(), 0, 'the timer was cancelled');
+  const events = built.l3Events().length;
+  await clock.advance(CLOCK_START + 10_000);
+  assert.equal(built.l3Events().length, events, 'no poll or firing after the stop');
+});
+
+test('L13a: a stop with a claim held polls and fires no more and ends once the claim finishes, with what settled since the drain', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { triggers: { hourly: { ...HOUR_AWAY.hourly, interval: 1000 } } });
+  const { running, handed, stop } = keptUp(built);
+  const ended = settledOf(running);
+  await positive(() => built.dispatches.held() === 1);
+  const stopped = stop();
+  assert.equal(clock.pending(), 0, 'the timer was cancelled');
+  await clock.advance(CLOCK_START + 5_000);
+  assert.deepEqual(built.l3Events().filter(({ trigger, event }) => trigger === 'clock' || event === 'trigger.outcome'), [], 'no firing after the stop');
+  await turnWait(() => true);
+  assert.equal(ended(), false, 'run waits for its claim');
+  const pulls = count(built, 'pull');
+  built.dispatches.releaseAll();
+  const answer = await stopped;
+  assert.deepEqual(answer.map(({ card }) => card), [1], 'what settled since the previous drain');
+  assert.equal(count(built, 'pull'), pulls, 'no poll after the stop');
+  assert.deepEqual(handed, [], 'nothing was handed before the stop');
+});
+
+test('L2: with no clock key, or a clock holding a poll and no trigger, run ends at the drain with the same events and answer', async () => {
+  const observed = [];
+  for (const triggers of [undefined, {}]) {
+    const clock = manualClock();
+    const built = triggers === undefined ? world({ cards: [1], concurrency: 1, clock }) : reportWorld(clock, { triggers });
+    const answer = await drive(built);
+    assert.equal(clock.pending(), 0, 'no timer is held');
+    observed.push({
+      events: built.events().map(({ layer, event, card, trigger }) => ({ layer, event, card, trigger })),
+      answer: answer.map(({ card, settled }) => ({ card, settled: settled?.status })),
+    });
+  }
+  assert.deepEqual(observed[1], observed[0]);
+  assert.equal(observed[0].events.filter(({ event, trigger }) => event === 'trigger' && trigger === 'drain').length, 1);
+});
+
+// proves R-SCHED-35
+test('L3: once with a clock trigger declared fires one pull, arms nothing and polls nothing', async () => {
+  const clock = manualClock();
+  const { agent, consumer, running } = await clockVerb(onceVerb, clock);
+  try {
+    assert.equal(clock.pending(), 0, 'once armed no timer');
+    agent.release(10);
+    await running;
+    await clock.advance(CLOCK_START + 10_000);
+    const events = (await import('../src/observation/sink.mjs')).readEvents(`${consumer}/.rigger`);
+    assert.deepEqual(events.filter(({ event }) => event === 'trigger').map(({ trigger }) => trigger), ['pull'], 'one pull, and no poll or firing');
+  } finally {
+    if (agent.held(10)) agent.release(10);
+    await running.catch(() => {});
+  }
+});
+
+test('L7: while a claim is held a clock-held run does not poll, and a slot release fires a pull', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { cards: [1, 2], triggers: HOUR_AWAY });
+  const { stop } = keptUp(built);
+  try {
+    await positive(() => built.dispatches.held() === 1);
+    const pulls = count(built, 'pull');
+    for (const at of [1000, 2000, 3000]) await clock.advance(CLOCK_START + at);
+    assert.equal(count(built, 'pull'), pulls, 'no poll while the claim is held');
+    built.dispatches.release(built.dispatches.holding()[0]);
+    await positive(() => count(built, 'pull') > pulls);
+    assert.equal(clock.now(), CLOCK_START + 3000, 'the pull fired at the release, with no clock advance');
+    await positive(() => built.dispatches.held() === 1);
+  } finally {
+    built.dispatches.releaseAll();
+    await stop();
+  }
+});
+
+test('L8: a poll whose reads outlast the poll interval delays the next, which fires the interval after it settles', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { cards: [], triggers: HOUR_AWAY });
+  const { stop } = keptUp(built);
+  try {
+    await positive(() => count(built, 'drain') === 1);
+    const release = built.fake.holdNextRead();
+    const advancing = clock.advance(CLOCK_START + 1000);
+    await positive(() => count(built, 'pull') === 2);
+    await clock.advance(CLOCK_START + 2500);
+    assert.equal(count(built, 'pull'), 2, 'no second poll while the first is reading');
+    release();
+    await advancing;
+    await clock.advance(CLOCK_START + 3499);
+    assert.equal(count(built, 'pull'), 2, 'no poll before the interval after the slow one settled');
+    await clock.advance(CLOCK_START + 3500);
+    assert.equal(count(built, 'pull'), 3, 'the next poll fired the interval after the slow one settled');
+  } finally {
+    await stop();
+  }
+});
+
+test('L9: after a claim whose move the board refused, the first poll that finds nothing to pull records the drain', async () => {
+  const clock = manualClock();
+  const fake = boardOf([1]);
+  const built = reportWorld(clock, { fake, items: { ...fake.operations, moveItem: async () => { throw new Error('the board refused the move'); } }, triggers: HOUR_AWAY });
+  const { handed, stop } = keptUp(built);
+  try {
+    await positive(() => settledIn(handed).length === 1);
+    assert.equal(count(built, 'drain'), 0, 'no drain fired since the claim ended');
+    await fake.operations.moveItem('item-1', COLUMNS.done);
+    await clock.advance(CLOCK_START + 1000);
+    assert.equal(count(built, 'drain'), 1, 'the first poll finding nothing records the drain');
+    await clock.advance(CLOCK_START + 2000);
+    assert.equal(count(built, 'drain'), 1);
+  } finally {
+    await stop();
+  }
+});
+
+test('L10: an idle poll with admission closed claims nothing and hands over each closer', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { cards: [cardIn(5, COLUMNS.done)], triggers: HOUR_AWAY });
+  const { handed, stop } = keptUp(built);
+  try {
+    await positive(() => settledIn(handed).length === 1);
+    seed(built.directory, 'owner-a1.json', closerText({ reason: 'owner paused claims' }));
+    await built.fake.operations.moveItem('item-1', COLUMNS.ready);
+    await clock.advance(CLOCK_START + 1000);
+    assert.equal(built.l3Events().filter(({ event }) => event === 'pull').length, 0, 'the poll claimed nothing');
+    const [, closed] = settledIn(handed);
+    assert.equal(closed.value.admission.state, 'closed');
+    assert.deepEqual(closed.value.admission.closers.map(({ reason }) => reason), ['owner paused claims']);
+  } finally {
+    await stop();
+  }
+});
+
+// proves R-SCHED-29
+test('L11: a poll whose read fails claims nothing, hands its failure over once, and the next poll on schedule claims the card', async () => {
+  const clock = manualClock();
+  const fake = boardOf([cardIn(5, COLUMNS.done)]);
+  let failing = false;
+  const handle = handleOn(fake);
+  const board = { ...handle, readPriority: async (...args) => {
+    if (failing) { failing = false; throw new Error('the priority read failed'); }
+    return handle.readPriority(...args);
+  } };
+  const built = reportWorld(clock, { fake, board, triggers: HOUR_AWAY });
+  const { handed, stop } = keptUp(built);
+  try {
+    await positive(() => settledIn(handed).length === 1);
+    await fake.operations.moveItem('item-1', COLUMNS.ready);
+    failing = true;
+    await clock.advance(CLOCK_START + 1000);
+    assert.equal(built.l3Events().filter(({ event }) => event === 'pull').length, 0, 'the failed poll claimed nothing');
+    assert.equal(settledIn(handed).length, 2, 'the failure was handed over as the poll settled');
+    assert.match(leavesOf(settledIn(handed)[1].reason).map(({ message }) => message).join('\n'), /the priority read failed/);
+    await clock.advance(CLOCK_START + 2000);
+    assert.ok(built.l3Events().some(({ event, card }) => event === 'pull' && card === 5), 'the next poll, on schedule, claimed card #5');
+    await positive(() => built.dispatches.held() === 1);
+    built.dispatches.releaseAll();
+    await positive(() => settledIn(handed).length === 3);
+    assert.equal(settledIn(handed)[2].status, 'fulfilled', 'the next drain does not hand the failure again');
+  } finally {
+    built.dispatches.releaseAll();
+    await stop();
+  }
+});
+
+test('L12: a poll whose trigger event the sink refuses claims nothing, hands the refusal over, and the next poll fires on schedule', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { cards: [], triggers: HOUR_AWAY });
+  const { handed, stop } = keptUp(built);
+  try {
+    await positive(() => settledIn(handed).length === 1);
+    built.refuseAppends('the poll trigger was refused', 1);
+    await clock.advance(CLOCK_START + 1000);
+    assert.equal(settledIn(handed).length, 2);
+    assert.match(leavesOf(settledIn(handed)[1].reason).map(({ message }) => message).join('\n'), /refused to record the pull trigger/);
+    const tried = () => built.attempts.filter(({ layer, event, fields }) => layer === 'L3' && event === 'trigger' && fields.trigger === 'pull').length;
+    const before = tried();
+    await clock.advance(CLOCK_START + 2000);
+    assert.equal(tried(), before + 1, 'the next poll fired on schedule');
+    assert.equal(settledIn(handed).length, 2, 'the accepted poll hands nothing over');
+  } finally {
+    await stop();
+  }
+});
+
+test('L13: a hold whose closer could not be saved ends a clock-held run once its claims finish, naming the failure, and polls no more', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { triggers: HOUR_AWAY, answer: () => new Error('the dispatch could not start') });
+  const admissionDirectory = join(built.directory, 'admission');
+  fs.mkdirSync(admissionDirectory, { recursive: true });
+  fs.chmodSync(admissionDirectory, 0o555);
+  try {
+    const { running, handed } = keptUp(built);
+    const ended = settledOf(running);
+    await positive(() => ended());
+    await assert.rejects(running, (failure) => {
+      assert.match(leavesOf(failure).map(({ message }) => message).join('\n'), /card #1 was held/);
+      return true;
+    });
+    assert.deepEqual(handed, [], 'what settled since the previous drain came with the ending');
+    assert.equal(clock.pending(), 0, 'the timer was cancelled');
+    const pulls = count(built, 'pull');
+    await clock.advance(CLOCK_START + 5000);
+    assert.equal(count(built, 'pull'), pulls, 'no poll after the ending');
+  } finally {
+    fs.chmodSync(admissionDirectory, 0o755);
+  }
+});
+
+test('each hand-over of a clock-held run is handed before the next poll fires', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { cards: [], triggers: HOUR_AWAY });
+  const tried = () => built.attempts.filter(({ layer, event, fields }) => layer === 'L3' && event === 'trigger' && fields.trigger === 'pull').length;
+  const order = [];
+  const controller = new AbortController();
+  const running = built.loop.run({ handOver: () => order.push(tried()), stop: controller.signal });
+  try {
+    await positive(() => order.length === 1);
+    built.refuseAppends('the poll trigger was refused', 1);
+    await clock.advance(CLOCK_START + 1000);
+    await clock.advance(CLOCK_START + 2000);
+    assert.equal(tried(), 3, 'the first pull and two polls');
+    assert.deepEqual(order, [1, 2], 'each hand-over came after its own pull and before the next poll');
+  } finally {
+    controller.abort();
+    await running;
+  }
+});
+
+test('L7: through the run verb, a clock-held run fires a pull at its slot release', async () => {
+  const clock = manualClock();
+  const { agent, consumer, running, stop } = keptUpRunVerb({ items: [verbCard(10, 'Ready')], plan: { 10: { engineer: { hold: true } } }, clock });
+  const pulls = () => (fs.existsSync(streamPath(`${consumer}/.rigger`)) ? readEventsAt(`${consumer}/.rigger`) : []).filter(({ event, trigger }) => event === 'trigger' && trigger === 'pull').length;
+  try {
+    await positive(() => agent.held(10));
+    assert.equal(pulls(), 1);
+    agent.release(10);
+    await positive(() => pulls() === 2 && agent.held(10));
+    assert.equal(clock.now(), CLOCK_START, 'the second pull was the slot release\'s, not a poll');
+  } finally {
+    const stopped = stop();
+    if (agent.held(10)) agent.release(10);
+    await stopped.catch(() => {});
+    await running.catch(() => {});
+  }
+});
+
+test('L14: at each drain the run verb writes what settled since the previous drain, and does not exit', async () => {
+  const clock = manualClock();
+  const { consumer, written, running, stop } = keptUpRunVerb({ clock });
+  const ended = settledOf(running);
+  seed(`${consumer}/.rigger`, 'owner-a1.json', closerText({ reason: 'owner paused claims' }));
+  try {
+    await positive(() => written.length === 1);
+    assert.match(written[0], /^rigger run: admission is closed/m);
+    assert.match(written[0], /owner paused claims/);
+    await clock.advance(CLOCK_START + 1000);
+    assert.equal(ended(), false, 'the verb did not exit at the drain');
+  } finally {
+    const answer = await stop();
+    assert.deepEqual(answer, { text: '', code: 0 }, 'a stopped verb answers nothing it already wrote');
+  }
+});
+
+test('L15: the run verb writes a report firing\'s hand-over as it settles, rendered as report renders it, and does not exit', async () => {
+  const clock = manualClock();
+  const triggers = { hourly: { interval: 1000, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip', job: 'report' } };
+  const { consumer, written, running, stop } = keptUpRunVerb({ clock, triggers });
+  const ended = settledOf(running);
+  try {
+    await positive(() => written.length === 1);
+    const path = streamPath(`${consumer}/.rigger`);
+    await clock.advance(CLOCK_START + 1000);
+    assert.equal(written.length, 2, 'the firing was written as it settled');
+    // The report read the stream as it stood before the firing recorded its outcome.
+    const lines = fs.readFileSync(path, 'utf8').trimEnd().split('\n');
+    const outcome = lines.findIndex((line) => JSON.parse(line).event === 'trigger.outcome');
+    const snapshot = temporaryDirectory('rigger-kept-up-report-snapshot-');
+    fs.writeFileSync(streamPath(snapshot), `${lines.slice(0, outcome).join('\n')}\n`);
+    assert.equal(written[1], reportText({ ...deriveReport(snapshot), path }));
+    assert.equal(ended(), false, 'the verb did not exit at the firing');
+  } finally {
+    await stop();
+  }
+});
+
+test('L16: one idle poll with admission open makes the forge calls the journal measures, for two board states', async (t) => {
+  const states = [
+    { name: 'one card in Done', a: 0, r: 0, cards: [cardIn(20, COLUMNS.done)], pullRequests: [] },
+    { name: 'two cards in Owner, each holding one open pull request', a: 2, r: 2, cards: [cardIn(20, COLUMNS.owner), cardIn(21, COLUMNS.owner)],
+      pullRequests: [20, 21].map((number) => ({ number: 1000 + number, head: `rigger-${number}`, sha: String(number).padStart(40, '0') })) },
+  ];
+  const counted = [];
+  for (const { name, a, r, cards, pullRequests } of states) {
+    const clock = manualClock();
+    const fake = boardOf(cards);
+    const calls = [];
+    const handle = handleOn(fake);
+    const board = Object.fromEntries(Object.entries(handle).map(([read, call]) => [read, (...args) => { calls.push(read); return call(...args); }]));
+    const built = reportWorld(clock, { fake, board, triggers: HOUR_AWAY, forge: { pullRequests } });
+    for (const [read, call] of Object.entries(built.repository.operations)) {
+      built.repository.operations[read] = (...args) => { calls.push(read); return call(...args); };
+    }
+    const { stop } = keptUp(built);
+    try {
+      await positive(() => count(built, 'drain') === 1);
+      const before = calls.length;
+      const pulls = count(built, 'pull');
+      const claims = built.l3Events().filter(({ event }) => event === 'pull').length;
+      await clock.advance(CLOCK_START + 1000);
+      assert.equal(count(built, 'pull'), pulls + 1, 'one idle poll');
+      assert.equal(built.l3Events().filter(({ event }) => event === 'pull').length, claims, 'the poll claimed nothing');
+      const poll = calls.slice(before);
+      counted.push({ name, a, r, calls: poll.length, judged: 3 + a + 6 * r });
+      t.diagnostic(`${name}: ${poll.length} forge calls (${poll.join(', ')}); judged 3 + a + 6r = ${3 + a + 6 * r}`);
+    } finally {
+      await stop();
+    }
+  }
+  // Derived from "What a poll costs"'s premise list, not from the code: readColumns and readPriority
+  // once each; readBranches once where any card is in Ready, Coding, Review or Owner; one pull
+  // request read per such card; and six reads for each card holding one open pull request.
+  assert.deepEqual(counted.map(({ calls }) => calls), [2, 2 + 1 + 2 + 2 * 6]);
+});
+
+// proves R-SCHED-28
+test('L14: a drain that reads admission closed writes each card that settled beside the closers, and a stop answers their status', async () => {
+  const clock = manualClock();
+  const triggers = { hourly: { interval: 1000, anchor: new Date(CLOCK_START).toISOString(), catchUp: 'skip', job: 'report' } };
+  const { agent, consumer, written, running, stop } = keptUpRunVerb({ items: [verbCard(10, 'Ready')], plan: { 10: { engineer: { hold: true, exit: 1 } } }, clock, triggers });
+  try {
+    await positive(() => agent.held(10));
+    seed(`${consumer}/.rigger`, 'owner-a1.json', closerText({ reason: 'owner paused claims' }));
+    agent.release(10);
+    await positive(() => written.length === 1);
+    assert.match(written[0], /^rigger run: claimed #10 from board \d+; its maker exited 1/m, 'the card that settled is written at the drain');
+    assert.match(written[0], /^rigger run: admission is closed by owner: owner paused claims/m, 'beside the closer');
+    await clock.advance(CLOCK_START + 1000);
+    assert.ok(written.some((text) => text.startsWith('rigger report:')), 'a later report was written');
+    const answer = await stop();
+    assert.equal(answer.code, 1, 'the card that fell short of review decides the stopped status, whatever was written after it');
+  } finally {
+    const ending = stop();
+    if (agent.held(10)) agent.release(10);
+    await ending.catch(() => {});
+    await running.catch(() => {});
+  }
+});
+
+// proves R-SCHED-29
+test('L12: a poll whose trigger event the sink refuses claims no Ready card, and the next poll claims it', async () => {
+  const clock = manualClock();
+  const built = reportWorld(clock, { cards: [cardIn(5, COLUMNS.done)], triggers: HOUR_AWAY });
+  const { handed, stop } = keptUp(built);
+  try {
+    await positive(() => count(built, 'drain') === 1);
+    await built.fake.operations.moveItem('item-1', COLUMNS.ready);
+    built.refuseAppends('the poll trigger was refused', 1);
+    await clock.advance(CLOCK_START + 1000);
+    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card), [], 'the refused poll claimed nothing');
+    assert.equal(settledIn(handed).length, 2, 'the refusal was handed over as the poll settled');
+    await clock.advance(CLOCK_START + 2000);
+    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card), [5], 'the next poll, on schedule, claimed it');
+    await positive(() => built.dispatches.held() === 1);
+  } finally {
+    const ending = stop();
+    if (built.l3Events().some(({ event }) => event === 'pull')) await positive(() => built.dispatches.held() === 1);
+    built.dispatches.releaseAll();
+    await ending.catch(() => {});
+  }
+});
+
+test('L2: with no clock declared, a run that fails answers the merge base\'s failure fields', async () => {
+  const clock = manualClock();
+  const fake = createFakeBoard({ columns: Object.values(COLUMNS), items: [readyCard(1)], refuseMoves: true });
+  const built = world({ fake, concurrency: 1, clock });
+  await assert.rejects(built.loop.run(), (failure) => {
+    assert.equal(failure.message, '1 of the pulls this run fired failed');
+    assert.deepEqual(Object.keys(failure).filter((key) => key !== 'errors').sort(), ['handoffs', 'reached', 'reports']);
+    assert.deepEqual({ reports: failure.reports, handoffs: failure.handoffs }, { reports: [], handoffs: [] });
+    return true;
+  });
+});
+
+// proves R-SCHED-28
+test('L14: at a drain the run verb writes each card that settled since the previous drain, and does not exit', BOUNDS[60_000], async () => {
+  const clock = manualClock();
+  const { written, running, stop } = keptUpRunVerb({ items: [verbCard(10, 'Ready')], plan: { 10: { engineer: { pr: true }, reviewer: { findings: true } } }, clock });
+  const ended = settledOf(running);
+  try {
+    await positive(() => written.length === 1, BOUNDS[60_000].timeout / 2);
+    const lines = written[0].split('\n');
+    assert.match(lines[0], /^rigger run: claimed #10 from board \d+; its maker exited 0 and pull request #\d+ is open from rigger-10, so the card is in review/);
+    assert.equal(lines[1], 'rigger run: card #10\'s judge `reviewer` exited 0');
+    await clock.advance(CLOCK_START + 1000);
+    assert.equal(ended(), false, 'the verb did not exit at the drain');
+  } finally {
+    const answer = await stop();
+    assert.deepEqual(answer, { text: '', code: 0 }, 'every card delivered, and nothing was left to answer');
+  }
+});
+
+/**
+ * Each way a clock-held run's hand-over can end, as the verb writes it: one row each. `plan` is the
+ * stand-in agent's, `held` the role whose dispatch is held while the owner's pause closer is
+ * written (none where the row reads admission open), and `refuse` the one L3 event append the
+ * event stream refuses, by a refusal of `node:fs`'s `appendFileSync`, the sink's own write, as
+ * `test/run.test.mjs`'s `refusingJudgeStart` refuses one. Each row names the card line, the other
+ * lines and the status the verb's whole hand-over must carry.
+ */
+const DELIVERED = { 10: { engineer: { pr: true }, reviewer: { findings: true } } };
+const MAKER_FAILS = { 10: { engineer: { hold: true, exit: 1 } } };
+const IN_REVIEW = /^rigger run: claimed #10 from board \d+; its maker exited 0 and pull request #\d+ is open from rigger-10, so the card is in review/m;
+const MAKER_EXITED_1 = /^rigger run: claimed #10 from board \d+; its maker exited 1/m;
+const CLOSER = /^rigger run: admission is closed by owner: owner paused claims/m;
+const releaseOf10 = ({ layer, event, card }) => layer === 'L3' && event === 'slot.release' && card === 10;
+const HAND_OVER_WAYS = [
+  { way: 'success', plan: DELIVERED, card: IN_REVIEW, lines: [/^rigger run: card #10's judge `reviewer` exited 0$/m], code: 0 },
+  { way: 'maker failure', plan: MAKER_FAILS, held: 'engineer', card: MAKER_EXITED_1, lines: [CLOSER], code: 1 },
+  { way: 'judge failure', plan: { 10: { engineer: { pr: true }, reviewer: { hold: true, exit: 1 } } }, held: 'reviewer', card: IN_REVIEW,
+    lines: [/^rigger run: card #10's judge `reviewer` exited 1$/m, CLOSER], code: 1 },
+  { way: 'admission closed', plan: { 10: { engineer: { pr: true }, reviewer: { hold: true, findings: true } } }, held: 'reviewer', card: IN_REVIEW,
+    lines: [CLOSER], code: 0 },
+  { way: 'the sink refuses a release', plan: DELIVERED, refuse: releaseOf10, card: IN_REVIEW,
+    lines: [/^rigger run: card #10's slot was released, and the event sink refused to record it: EIO: the test refuses this append/m], code: 1 },
+  { way: 'the sink refuses a release, admission closed', plan: MAKER_FAILS, held: 'engineer', refuse: releaseOf10, card: MAKER_EXITED_1,
+    lines: [/event sink refused to record it: EIO: the test refuses this append/m, CLOSER], code: 1 },
+  { way: 'the sink refuses the release pull\'s trigger, admission closed', plan: MAKER_FAILS, held: 'engineer',
+    refuse: (event, pulls) => event.layer === 'L3' && event.event === 'trigger' && event.trigger === 'pull' && pulls === 2, card: MAKER_EXITED_1,
+    lines: [/refused to record the pull trigger: EIO: the test refuses this append/m, CLOSER], code: 1 },
+  { way: 'the sink refuses a release, admission closed by a hold whose notice fails', plan: MAKER_FAILS, held: 'engineer',
+    closer: ['hold-a1-issue-77.json', closerText({ reason: 'Rigger held claims' })], items: [verbCard(77, 'Owner', { labels: ['rigger:status'] })],
+    failingRead: 'issue(number: 77)', refuse: releaseOf10, card: MAKER_EXITED_1, notices: 1, poll: true,
+    lines: [/event sink refused to record it: EIO: the test refuses this append/m, /^rigger run: admission is closed by hold: Rigger held claims/m,
+      /^rigger run: the notice for hold a1 failed to read issue #77's state: .*the test fails this forge read once/m], code: 1 },
+];
+
+const NOTICE = /^rigger run: the notice for hold /gm;
+for (const { way, plan, held, refuse, card, lines, code, closer = ['owner-a1.json', closerText({ reason: 'owner paused claims' })], items = [], failingRead, notices = 0, poll = false } of HAND_OVER_WAYS) {
+  test(`hand-over ways: ${way}: the verb writes each card that settled, each line beside it, and the status`, BOUNDS[60_000], async (t) => {
+    const clock = manualClock();
+    const append = fs.appendFileSync;
+    let refused = 0;
+    let pulls = 0;
+    const { agent, consumer, written, stop, ended } = keptUpRunVerb({ items: [verbCard(10, 'Ready'), ...items], plan, clock, failingRead });
+    fs.appendFileSync = (path, data, ...rest) => {
+      if (String(path) === streamPath(`${consumer}/.rigger`)) {
+        const event = JSON.parse(String(data));
+        if (event.layer === 'L3' && event.event === 'trigger' && event.trigger === 'pull') pulls += 1;
+        if (refuse?.(event, pulls) && refused === 0) {
+          refused += 1;
+          throw Object.assign(new Error('EIO: the test refuses this append'), { code: 'EIO' });
+        }
+      }
+      return append(path, data, ...rest);
+    };
+    syncBuiltinESMExports();
+    try {
+      if (held !== undefined) {
+        await positive(() => agent.held(10, held), BOUNDS[60_000].timeout / 3);
+        seed(`${consumer}/.rigger`, ...closer);
+        agent.release(10, held);
+      }
+      await positive(() => written.length > 0, BOUNDS[60_000].timeout / 3);
+      if (poll) {
+        // An idle poll after the hand-over hands over only what it read: under a closed
+        // admission, its closers (L10), and nothing the previous hand-over already carried.
+        await clock.advance(CLOCK_START + 1000);
+        assert.equal(written.length, 2, 'the idle poll under a closed admission named its closers');
+        assert.match(written[1], /^rigger run: admission is closed by /m);
+        assert.doesNotMatch(written[1], /claimed #10|no card was pullable|the notice for hold|refused/, 'the idle poll repeats nothing');
+      }
+      const answer = await stop();
+      t.diagnostic(JSON.stringify({ written, answer }));
+      assert.equal(refused, refuse === undefined ? 0 : 1, 'the refusal the row names applied, once');
+      assert.equal(written.length, poll ? 2 : 1, 'one hand-over, written whole, and one more for the idle poll where the row has one');
+      assert.equal([...written, answer.text].join('\n').match(NOTICE)?.length ?? 0, notices, 'each failed notice is named once');
+      assert.match(written[0], card, 'the card that settled is written');
+      assert.equal(written[0].match(/^rigger run: claimed #10 /gm).length, 1, 'the card is written once');
+      assert.equal((written[0].match(/^rigger run: admission is closed/gm) ?? []).length, held === undefined ? 0 : 1, 'each closer is written once');
+      for (const line of lines) assert.match(written[0], line);
+      assert.equal(answer.code, code, 'the status counts every outcome the run handed over');
+    } finally {
+      fs.appendFileSync = append;
+      syncBuiltinESMExports();
+      await ended();
+    }
+  });
+}
+
+test('hand-over ways: a card L2 refuses is written at the drain, and an idle poll that refuses it again hands nothing more over', BOUNDS[60_000], async () => {
+  const clock = manualClock();
+  const { written, running, stop } = keptUpRunVerb({ items: [REFUSED_CARD], clock });
+  try {
+    await positive(() => written.length === 1, BOUNDS[60_000].timeout / 4);
+    assert.match(written[0], /^rigger run: from board \d+, no card was pullable$/m);
+    assert.equal(written[0].match(/#11\b/g)?.length, 1, 'the refusal is written once, at the drain');
+    for (const at of [1000, 2000, 3000]) await clock.advance(CLOCK_START + at);
+    assert.equal(written.length, 1, 'the idle polls hand nothing over');
+    assert.deepEqual(await stop(), { text: '', code: 0 }, 'the stop repeats no refusal the drain already wrote');
+  } finally {
+    await stop();
+    await running.catch(() => {});
+  }
+});
+
+test('hand-over ways: a refusal met at each of several pulls before the first hand-over is written once in it', BOUNDS[60_000], async (t) => {
+  const clock = manualClock();
+  const { written, running, stop } = keptUpRunVerb({ items: [verbCard(10, 'Ready'), REFUSED_CARD], plan: DELIVERED, clock });
+  try {
+    await positive(() => written.length === 1, BOUNDS[60_000].timeout / 4);
+    t.diagnostic(JSON.stringify(written));
+    assert.match(written[0], IN_REVIEW, 'card #10 delivered, its slot released before the first hand-over');
+    assert.equal(written[0].match(/#11\b/g)?.length, 1, 'the refusal is written once in the first hand-over');
+    assert.deepEqual(await stop(), { text: '', code: 0 });
+  } finally {
+    await stop();
+    await running.catch(() => {});
+  }
+});
+
+// proves R-SCHED-37
+test('A5: the run verb hands L3 its record, so a trigger the stream already arms at its schedule is not armed again, and one it does not name is', async () => {
+  const { gitIn, repositoryAt, withOrigin } = await import('./git-repository.mjs');
+  const { COLUMNS: VERB_COLUMNS, FIELDS, PROJECT, REPO, consumerConfig } = await import('./verb-consumer.mjs');
+  const { onClock } = await import('./clock-report-verb-world.mjs');
+  const { withFirstOnPath } = await import('./process-fixtures.mjs');
+  const { dirname } = await import('node:path');
+  const anchor = new Date(CLOCK_START).toISOString();
+  const hourly = { interval: 3_600_000, anchor, catchUp: 'skip', job: 'report' };
+  const root = temporaryDirectory('rigger-verb-record-');
+  const repository = repositoryAt(`${root}/consumer`, {
+    'rigger.config.mjs': `export default ${JSON.stringify({ ...consumerConfig(1), clock: { poll: 1000, triggers: { armed: hourly, fresh: hourly } } })};\n`,
+  });
+  gitIn(repository, 'branch', '-M', 'main');
+  const consumer = withOrigin(repository, `${root}/origin.git`);
+  // The consumer's record, as an earlier run under the same schedule left it: `armed` armed.
+  fs.mkdirSync(`${consumer}/.rigger`, { recursive: true });
+  fs.writeFileSync(streamPath(`${consumer}/.rigger`), [
+    { ts: anchor, run: 'r-earlier', layer: 'L3', event: 'run.start', concurrency: 1 },
+    { ts: anchor, run: 'r-earlier', layer: 'L3', event: 'trigger.armed', name: 'armed', interval: hourly.interval, anchor },
+  ].map((event) => `${JSON.stringify(event)}\n`).join(''));
+  const fake = installFakeGh(temporaryDirectory('rigger-verb-record-gh-'), {
+    repo: REPO, project: PROJECT, board: { columns: VERB_COLUMNS, fields: FIELDS, items: [] }, origin: `${root}/origin.git`,
+  });
+  const clock = manualClock(CLOCK_START + 1000);
+  const written = [];
+  const controller = new AbortController();
+  const running = onClock(clock, () => withFirstOnPath(dirname(fake.gh), () => runVerb({ target: consumer, clock, write: (text) => written.push(text), stop: controller.signal })));
+  running.catch(() => {});
+  const ofThisRun = () => readEventsAt(`${consumer}/.rigger`).filter(({ run }) => run !== 'r-earlier');
+  try {
+    await positive(() => ofThisRun().some(({ event, trigger }) => event === 'trigger' && trigger === 'drain'));
+    assert.deepEqual(ofThisRun().filter(({ event }) => event === 'trigger.armed').map(({ name }) => name), ['fresh'],
+      'L3 read the stream: `armed` keeps its arming, and `fresh`, which no arming names, is armed');
+    assert.deepEqual(written.filter((text) => /could not be read/.test(text)), [], 'the record was readable');
+    assert.ok(ofThisRun().every(({ ts }) => ts === new Date(CLOCK_START + 1000).toISOString()), 'the verb\'s sink stamps on the injected clock');
+  } finally {
+    controller.abort();
+    await running.catch(() => {});
+  }
+});
+
+/** An actual missing-directory failure whose L2 settlement append is refused by the filesystem. */
+async function makerSettlementRefusal(t, changeKind = false) {
+  const root = temporaryDirectory('rigger-maker-settlement-');
+  const making = makingWorkspaces(root);
+  const paths = new Map();
+  const built = onManualHost(t, {
+    cards: [42, { ...readyCard(95), labels: ['type:handoff'] }], concurrency: 1, makerHold: false, fresh: false,
+    kinds: { change: { ...KINDS.change, judges: ['owner'] }, handoff: { ...KINDS.change, select: { labels: ['type:handoff'] } }, correction: { ...KINDS.change, select: { labels: ['type:correction'] } } },
+    workspace: async (number) => { const made = await making(number); paths.set(number, made.path); return made; },
+  });
+  const emitter = built.sink.emitter.bind(built.sink);
+  let physicalFailure = true;
+  let renamed = 0;
+  built.sink.emitter = (context) => {
+    const actual = emitter(context);
+    return { emit: (event, fields) => {
+      actual.emit(event, fields);
+      // A real directory disappears after L1 made it and before the role starts, a named R-FAIL-8 host cause.
+      // Retain each moved directory in scratch; no producer fabricates a failure or a malformed handle.
+      if (physicalFailure && context.layer === 'L3' && context.card === 42 && event === 'dispatch' && fields.role === 'engineer') {
+        const path = paths.get(42);
+        fs.renameSync(path, `${path}-moved-${++renamed}`);
+      }
+    } };
+  };
+  const priority = built.fake.operations.readPriority;
+  let reads = 0;
+  built.fake.operations.readPriority = async (...args) => {
+    const actual = await priority(...args);
+    // Make a missing deferral finite, without altering any selecting fact on the first four offers.
+    return ++reads > 4 ? { ...actual, items: actual.items.filter(({ number }) => number !== 42) } : actual;
+  };
+  const append = fs.appendFileSync;
+  const refusal = new Error('reviewer disk refuses maker.failed');
+  let refused = 0;
+  fs.appendFileSync = (path, data, ...rest) => {
+    if (String(path) === streamPath(built.directory)) {
+      const row = JSON.parse(String(data));
+      if (row.layer === 'L2' && row.card === 42 && row.event === 'maker.failed') {
+        refused += 1;
+        if (changeKind && refused === 1) built.fake.setIssueLabels(config.repo, 42, ['type:correction']);
+        throw refusal;
+      }
+    }
+    return append(path, data, ...rest);
+  };
+  syncBuiltinESMExports();
+  let reached;
+  try { reached = await built.loop.run(); }
+  finally { fs.appendFileSync = append; syncBuiltinESMExports(); }
+  const attempts = reached.filter(({ card }) => card === 42);
+  assert.ok(attempts.length > 0, 'the selected maker really reached settlement');
+  for (const attempt of attempts) {
+    assert.equal(attempt.outcome.status, 'rejected');
+    assert.equal(attempt.outcome.reason.code, 'NOT_STARTED', 'L1 really reports an unstarted role');
+    assert.equal(attempt.outcome.reason.result, undefined, 'no command ran');
+    assert.equal(attempt.settled.status, 'rejected');
+    assert.strictEqual(attempt.settled.reason.cause, refusal, 'the actual L2 settlement retained the original disk refusal');
+  }
+  const { actionIdentity } = await import('../src/workflow/next-action.mjs');
+  const selected = built.decisions.filter(({ card, action }) => card === 42 && action.action === 'dispatch');
+  const identities = new Set(selected.map(({ action }) => actionIdentity(action))).size;
+  console.log('settlement observed:', JSON.stringify({ refused, renamed, reads, selectedIdentities: new Set(selected.map(({ action }) => actionIdentity(action))).size, claims: built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card), agentCards: built.agent.runs().map(({ card }) => card) }));
+  return { built, refused, renamed, identities, reset: () => { reads = 0; physicalFailure = false; } };
+}
+
+// A real missing workspace reaches L2 settlement; a refused record must not re-admit A.
+// proves R-RECORD-9, R-SCHED-6
+test('a refused maker.failed settlement defers an unstarted maker and immediately refills B', SETTLES_WITHIN, async (t) => {
+  const { built, refused, identities } = await makerSettlementRefusal(t);
+  assert.equal(identities, 1, 'every repeated offer selects the same L2 maker identity');
+  await t.test('the unchanged unstarted identity waits until the next invocation', () => {
+    assert.equal(refused, 1, 'persistent maker.failed recording refusal must defer the unchanged unstarted identity');
+  });
+  await t.test('the freed slot reaches B before any repeated claim of A', () => {
+    assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card), [42, 95, 95], 'the normal freed-slot pull reaches B and its separate Owner move without reclaiming A');
+  });
+});
+
+// Settlement deferral remembers the selected identity, without barring a new identity or invocation.
+// proves R-RECORD-9, R-SCHED-6
+test('a refused maker settlement keeps a changed maker identity eligible and retries the same identity in a new invocation', SETTLES_WITHIN, async (t) => {
+  const { built, refused, renamed, identities, reset } = await makerSettlementRefusal(t, true);
+  assert.equal(identities, 2, 'the changed kind independently selects a different maker action');
+  assert.equal(refused, 2, 'each selected identity reaches its terminal settlement refusal once');
+  assert.equal(renamed, 2, 'neither selected maker started');
+  assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card), [42, 42, 95, 95], 'the changed identity remains eligible before B refills');
+  assert.deepEqual(built.agent.runs().map(({ card }) => card), [95]);
+  reset();
+  await built.loop.run();
+  assert.equal(built.agent.runs().filter(({ card }) => card === 42).length, 1, 'restored recording and a new invocation admit the same selected identity');
+  assert.equal(built.events().some(({ event }) => event === 'admission.close' || event === 'attempt.failed'), false, 'the recording refusal consumes no host attempt and closes no admission');
+});
+
+// Each settlement producer retains its own refusal while the next pull omits the same action.
+// proves R-RECORD-9, R-SCHED-6, R-WORK-41
+test('settlement recording refusals retain original causes and omit the selected action across maker judge removal and merge paths', BOUNDS[60_000], async (t) => {
+  const cases = [
+    ['maker.failed', 'L2', 'maker.failed'], ['maker.withheld', 'L2', 'review.withheld'],
+    ['maker.transition', 'L2', 'transition'], ['maker.end', 'L1', 'dispatch.end'],
+    ['judge.withheld', 'L2', 'judge.withheld'], ['judge.end', 'L1', 'dispatch.end'],
+    ['removal.end', 'L1', 'workspace.removed'], ['merge.end', 'L3', 'merge.end'],
+    ['merge.transition', 'L2', 'transition'], ['merge.cleanup', 'L1', 'workspace.removed'],
+  ];
+  for (const [stage, layer, event] of cases) await t.test(stage, async (t) => {
+    const judging = stage.startsWith('judge.');
+    const merging = stage.startsWith('merge.');
+    const removing = stage === 'removal.end';
+    const root = temporaryDirectory('rigger-settlement-refusal-');
+    const repository = repositoryIn('rigger-settlement-repository-');
+    const making = makingWorkspaces(join(root, 'workspaces'));
+    const paths = new Map();
+    let built;
+    const head = 'a'.repeat(40);
+    const pull = { number: 733, head: 'rigger-42', sha: head, mergeBase: 'b'.repeat(40), diff: 'diff --git a/help b/help\n', mergeable: 'mergeable',
+      ...(removing ? { closed: true } : {}),
+      ...(merging ? { comments: [markerComment({ card: 42, pull: 733, head, body: PASSING, role: 'owner' })] } : {}),
+    };
+    const initial = cardIn(42, judging || removing ? COLUMNS.review : merging ? COLUMNS.owner : COLUMNS.coding);
+    const scratch = join(root, 'scratch', 'rigger-42', 'reviewer');
+    if (removing || stage === 'merge.cleanup') {
+      fs.mkdirSync(scratch, { recursive: true });
+      fs.writeFileSync(join(scratch, 'kept.txt'), 'the actual directory to remove');
+    }
+    built = onManualHost(t, { cards: [initial, { ...readyCard(95), labels: ['type:handoff'] }], concurrency: 1, makerHold: false, fresh: false,
+      kinds: { change: { ...KINDS.change, judges: judging ? ['reviewer'] : ['owner'] }, handoff: { ...KINDS.change, select: { labels: ['type:handoff'] } } },
+      workspace: async (card) => { const made = await making(card); paths.set(card, made.path); return made; },
+      ...(stage === 'judge.withheld' ? { judgeDirectory: (card, role, at) => makeJudgeDirectory({ root, topic: 'rigger-{number}', repository: join(root, 'absent-repository'), card, role, head: at, sink: built.sink }) } : {}),
+      removeDirectories: (card) => removeCardDirectories({ root, repository, topic: 'rigger-{number}', card, sink: built.sink }),
+      forge: { pullRequests: judging || merging || removing ? [pull] : [] },
+    });
+    if (judging) built.agent.plan(42, 'reviewer', {});
+    let settling = false;
+    const settle = built.l2.settled;
+    built.l2.settled = async (...args) => {
+      settling = true;
+      try { return await settle(...args); }
+      finally { settling = false; }
+    };
+    // D16 permits a later pull to read an earlier forge/board snapshot. Capture real fake
+    // responses before acting, replay only A's selecting facts, and leave settlement/B fresh.
+    const priority = built.fake.operations.readPriority;
+    let offered;
+    let reads = 0;
+    built.fake.operations.readPriority = async (...args) => {
+      const actual = await priority(...args);
+      offered ??= structuredClone(actual.items.find(({ number }) => number === 42));
+      return { ...actual, items: actual.items.flatMap((card) => card.number !== 42 ? [card] : ++reads > 4 ? [] : [structuredClone(offered)]) };
+    };
+    const branches = built.repository.operations.readBranches;
+    let selectedBranch;
+    built.repository.operations.readBranches = async (names) => {
+      const actual = await branches(names);
+      if (names.includes('rigger-42') && !settling) {
+        selectedBranch ??= actual['rigger-42'];
+        actual['rigger-42'] = selectedBranch;
+      }
+      return actual;
+    };
+    const pulls = built.repository.operations.readPullRequests;
+    let selectedPulls;
+    built.repository.operations.readPullRequests = async (line) => {
+      const actual = await pulls(line);
+      if (line !== 'rigger-42') return actual;
+      if (!settling) selectedPulls ??= structuredClone(actual);
+      return settling && stage !== 'maker.withheld' ? actual : structuredClone(selectedPulls);
+    };
+    const emitter = built.sink.emitter.bind(built.sink);
+    let renamed = 0;
+    built.sink.emitter = (context) => {
+      const actual = emitter(context);
+      return { emit: (name, fields) => {
+        actual.emit(name, fields);
+        if (stage === 'maker.failed' && context.layer === 'L3' && context.card === 42 && name === 'dispatch' && fields.role === 'engineer') {
+          const path = paths.get(42);
+          fs.renameSync(path, `${path}-moved-${++renamed}`);
+        }
+      } };
+    };
+    const append = fs.appendFileSync;
+    const refusal = new Error(`disk refused ${stage}`);
+    let refused = 0;
+    fs.appendFileSync = (path, data, ...rest) => {
+      if (String(path) === streamPath(built.directory)) {
+        const row = JSON.parse(String(data));
+        if (row.card === 42 && row.layer === layer && row.event === event) { refused += 1; throw refusal; }
+      }
+      return append(path, data, ...rest);
+    };
+    syncBuiltinESMExports();
+    let result;
+    try { result = await built.loop.run().then((value) => ({ value }), (failure) => ({ value: failure.reached, failure })); }
+    finally { fs.appendFileSync = append; syncBuiltinESMExports(); }
+    const contains = (value, seen = new Set()) => {
+      if (value === refusal) return true;
+      if (value === null || typeof value !== 'object' || seen.has(value)) return false;
+      seen.add(value);
+      return Object.values(value).some((each) => contains(each, seen)) || contains(value.cause, seen) || contains(value.errors, seen);
+    };
+    assert.equal(refused, 1, `${stage}: unchanged selected action reaches its refused settlement once`);
+    assert.ok(contains(result), `${stage}: original filesystem refusal survives in the reached outcome or failure`);
+    const claims = built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card);
+    assert.equal(claims.filter((card) => card === 42).length, 1, `${stage}: the same selecting snapshot never reclaims A`);
+    assert.deepEqual(claims.filter((card) => card === 95), [95, 95], `${stage}: B is claimed and then makes its ordinary Owner move`);
+    if (!merging) assert.deepEqual(claims, [42, 95, 95], `${stage}: the successful claim releases normally and immediately refills B`);
+    assert.equal(built.agent.runs().filter(({ card }) => card === 95).length, 1, `${stage}: B really dispatches`);
+    assert.equal(built.events().some(({ event }) => event === 'admission.close'), false, `${stage}: no admission close`);
+    assert.deepEqual(built.events().filter(({ event, card }) => card === 42 && ['attempt.failed', 'attempt.decided'].includes(event)), [], `${stage}: no host-failure attempt consumed`);
+    if (removing || stage === 'merge.cleanup') assert.equal(fs.existsSync(scratch), false, `${stage}: actual removal preceded its refused record`);
+    if (stage === 'maker.failed') {
+      assert.equal(renamed, 1, 'the real unstarted-maker premise was reached');
+      assert.deepEqual(built.agent.runs().map(({ card }) => card), [95], 'A did not start');
+    }
+  });
+});
+
+// Every fresh admission consults invocation memory; asks progressing an admitted judge retain its retry.
+// proves R-SCHED-6, R-RECORD-9, R-WORK-41
+test('judge selection memory covers pull fresh-maker continuing-maker and removal-redo entries in every identity state', { timeout: 120_000 }, async (t) => {
+  const { columnChanges } = await import('../src/workflow/transitions.mjs');
+  const { makingJudgeDirectories } = await import('./loop-world.mjs');
+  for (const entry of ['pull', 'fresh-maker', 'continuing-maker', 'removal-redo']) {
+    const cases = [
+      ...['started', 'deferred', 'eligible', 'changed'].flatMap((state) => ['single', 'mixed'].map((shape) => ({ state, shape }))),
+      ...['started', 'deferred'].map((state) => ({ state, shape: 'mixed', provisioning: true })),
+    ];
+    for (const { state, shape, provisioning } of cases) await t.test(`${entry}/${state}/${shape}${provisioning ? '/provisioning' : ''}`, async (t) => {
+      const seeded = state !== 'eligible';
+      const oldHead = 'a'.repeat(40);
+      const newHead = state === 'changed' ? 'c'.repeat(40) : oldHead;
+      const card = cardIn(42, !seeded && entry === 'fresh-maker' ? COLUMNS.ready : COLUMNS.review);
+      const marker = (role, verdict = 'sound', head = oldHead) => ({ ...markerComment({ card: 42, pull: 733, head, body: card.body, role,
+        ...(verdict === 'sound' ? {} : { verdict, items: ['unmet'], toSound: 'Correct the help line.' }),
+      }), id: `IC_${role}` });
+      const covered = [marker('architect'), marker('pm')];
+      const edited = covered.map((comment) => ({ ...comment, id: `${comment.id}_after`, createdAt: '2026-10-01T11:00:03Z', includesCreatedEdit: true }));
+      const targetComments = shape === 'mixed' ? edited : ['architect', 'pm'].map((role) => ({
+        ...marker(role, 'sound', newHead), id: `IC_${role}_target`, createdAt: '2026-10-01T11:00:03Z',
+      }));
+      // Fresh comments cover A and request B's revision. Removing A's covering comment after
+      // that maker returns restores A's original unmarked identity without rewriting a comment.
+      const continuation = () => [marker('pm'),
+        { ...marker('reviewer'), id: 'IC_reviewer_covered', createdAt: '2026-10-01T11:00:01Z' },
+        { ...marker('architect', 'needs revision'), id: 'IC_architect_revision', createdAt: '2026-10-01T11:00:02Z' },
+      ];
+      const kinds = { change: { ...KINDS.change, judges: ['reviewer', 'architect', 'pm'], ...(provisioning ? { provisioning: ['prepare'] } : {}) } };
+      const steps = provisioning ? { prepare: { run: 'true', required: true } } : {};
+      // These are fake-repository's documented PR/comment shapes, as in the reviewer's real-L2 probe.
+      // Ready with a deleted line selects a fresh maker; Review with closed history selects removal.
+      const built = onManualHost(t, { cards: [card], kinds, concurrency: 1, fresh: false, makerHold: false,
+        forge: { pullRequests: [{ number: 733, head: 'rigger-42', sha: oldHead, mergeBase: 'b'.repeat(40),
+          diff: 'diff --git a/help b/help\n', closed: !seeded && ['fresh-maker', 'removal-redo'].includes(entry),
+          comments: seeded ? covered : entry === 'continuing-maker' ? continuation() : targetComments,
+        }] },
+      });
+      const root = temporaryDirectory('rigger-selection-entries-');
+      const making = makingWorkspaces(root);
+      const directories = makingJudgeDirectories(root);
+      const settings = { ...config, concurrency: 1, clock: undefined, kinds, provisioning: steps };
+      const clock = { ...manualClock(), pause: async () => {} };
+      let phase = seeded ? 'seed' : entry === 'pull' ? 'target' : 'prepare';
+      let seedEnded = false;
+      let transitioned = false;
+      let branch = seeded || entry === 'continuing-maker' || entry === 'pull';
+      let removals = 0;
+      let makers = 0;
+      let missing = false;
+      let reads = 0;
+      const attempts = [];
+      const starts = [];
+      const identities = [];
+      const roles = new Map();
+      const locations = new Map();
+      const refusal = new Error('persistent selected reviewer recording refusal');
+      built.repository.operations.readBranches = async (names) => Object.fromEntries(names.map((name) => [name, branch]));
+      const board = handleOn(built.fake);
+      const priority = board.readPriority;
+      board.readPriority = async (...args) => {
+        if (seedEnded && !transitioned) {
+          transitioned = true;
+          phase = entry === 'pull' ? 'target' : 'prepare';
+          if (entry === 'pull') built.repository.update(733, { sha: newHead, comments: targetComments });
+          else if (entry === 'continuing-maker') built.repository.update(733, { comments: continuation() });
+          else {
+            branch = false;
+            built.repository.update(733, { closed: true });
+            if (entry === 'fresh-maker') await built.fake.operations.moveItem('item-1', COLUMNS.ready);
+          }
+        }
+        const answer = await priority(...args);
+        // An eligibility defect is finite and fails a named assertion, never a timer or file verdict.
+        return ++reads > 3 ? { ...answer, items: [] } : answer;
+      };
+      const sink = { emitter: (context) => {
+        const actual = built.sink.emitter(context);
+        return { emit: (event, fields = {}) => {
+          if (context.layer === 'L3' && event === 'dispatch' && fields.role !== undefined && fields.step === undefined) {
+            roles.set(context.dispatch, fields.role);
+            if (fields.role === 'engineer') makers += 1;
+            else attempts.push({ phase, role: fields.role });
+            if (fields.role === 'reviewer' && state === 'deferred') {
+              seedEnded = true;
+              throw refusal;
+            }
+          }
+          // Reopen at the following maker's actual end, after its workspace was made, before settle reads.
+          if (context.layer === 'L1' && event === 'dispatch.end' && roles.get(context.dispatch) === 'engineer') {
+            phase = 'target';
+            branch = true;
+            built.repository.update(733, { closed: false, sha: newHead, comments: targetComments });
+          }
+          actual.emit(event, fields);
+          if (context.layer === 'L1' && event === 'dispatch.start' && roles.has(context.dispatch) && roles.get(context.dispatch) !== 'engineer') {
+            starts.push({ phase, role: roles.get(context.dispatch) });
+          }
+          if (context.layer === 'L1' && event === 'dispatch.end' && roles.get(context.dispatch) === 'reviewer' && phase === 'seed') seedEnded = true;
+          if (state === 'eligible' && !missing && phase === 'target' && context.layer === 'L3' && event === 'dispatch' && fields.role === 'reviewer') {
+            // Real L1 NOT_STARTED, without a recording refusal: the already-admitted judge must retry.
+            missing = true;
+            const main = locations.get('reviewer');
+            fs.renameSync(main, `${main}-missing`);
+          }
+        } };
+      } };
+      const decide = (given, outcomes, options = {}) => {
+        const answer = nextAction(given, kinds, undefined, { roles: settings.roles, provisioning: steps, outcomes, sink, ...options });
+        if (answer.action === 'judge') for (const judge of answer.judges.filter(({ role }) => role === 'reviewer')) {
+          identities.push({ phase, head: judge.facts.head, pull: judge.facts.pull, revision: judge.facts.revision,
+            provider: judge.provider, tier: judge.tier, comment: judge.comment });
+        }
+        return answer;
+      };
+      const l2 = columnChanges({ config: settings, sink, items: built.fake.operations, reads: built.repository.operations, repositoryWrites: built.repository });
+      const handle = loop({ config: settings, board, decide, facts: factsCall({ config: settings, reads: built.repository.operations, decide }), l2, sink,
+        kill: async () => {}, workspace: making, workspaceTip: async () => newHead,
+        judgeDirectory: async (...args) => { const made = await directories(...args); locations.set(args[1], made.main); return made; },
+        removeDirectories: async () => { removals += 1; }, state: built.directory,
+        environment: { ...process.env, PATH: built.agent.first() }, run: 'r-test', clock, host: { ...realHost, clock },
+      });
+      const result = await handle.run().then((value) => ({ value }), (failure) => ({ failure }));
+      const reached = result.value ?? result.failure?.reached ?? [];
+      const panels = reached.filter(({ judges }) => judges !== undefined).map(({ judges }) => judges.map(({ role }) => role));
+      if (seeded) assert.deepEqual(panels[0], ['reviewer'], `${entry}/${state}/${shape}: only A was initially owed`);
+      const target = identities.find(({ phase }) => phase === 'target');
+      assert.ok(target, `${entry}/${state}/${shape}: real L2 supplied the target reviewer identity`);
+      assert.equal(target.head, newHead);
+      if (seeded) assert.deepEqual({ ...target, phase: 'seed', head: oldHead }, identities.find(({ phase }) => phase === 'seed'), 'only the explicitly changed head differs from the original selecting facts');
+      const expected = ['started', 'deferred'].includes(state)
+        ? (shape === 'mixed' ? ['architect', 'pm'] : [])
+        : (shape === 'mixed' ? ['reviewer', 'architect', 'pm'] : ['reviewer']);
+      assert.deepEqual(panels[seeded ? 1 : 0] ?? [], expected, `${entry}/${state}/${shape}: new admission omits only remembered identities and preserves unmatched L2 order`);
+      assert.equal(removals, entry === 'removal-redo' ? 1 : 0, `${entry}/${state}/${shape}: the selected removal entry was exercised`);
+      assert.equal(makers, entry === 'pull' ? 0 : 1, `${entry}/${state}/${shape}: the selected maker entry was exercised`);
+      if (provisioning) {
+        const judgeSteps = built.l3Events().filter(({ event, step, role }) => event === 'dispatch' && step === 'prepare' && role !== undefined);
+        const completed = new Set(built.events().filter(({ layer, event, exit }) => layer === 'L1' && event === 'dispatch.end' && exit === 0).map(({ dispatch }) => dispatch));
+        assert.ok(['reviewer', 'architect', 'pm'].every((role) => judgeSteps.some((step) => step.role === role && completed.has(step.dispatch))),
+          `${entry}/${state}: each admitted judge completed a real provisioning step before role progress`);
+        // The stand-in records the role it actually executes, independently of L3's panel labels.
+        const native = ['reviewer', 'architect', 'pm'].map((role) => ({ role, count: built.agent.runs().filter((run) => run.role === role).length }));
+        assert.deepEqual(native, [{ role: 'reviewer', count: state === 'deferred' ? 0 : 1 }, { role: 'architect', count: 1 }, { role: 'pm', count: 1 }],
+          `${entry}/${state}: provisioning progress dispatches only admitted judge identities`);
+        assert.deepEqual(judgeSteps.map(({ role }) => role).sort(), ['architect', 'pm', 'reviewer'], 'remembered A acquires no second provisioning step');
+      }
+      assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card }) => card), seeded && (entry !== 'pull' || shape === 'mixed' || state === 'changed') ? [42, 42] : [42],
+        `${entry}/${state}/${shape}: an under-claim retry creates no new claim and remembered identities create no later claim`);
+      const expectedOffers = state === 'eligible' || state === 'changed' ? 2 : 1;
+      assert.equal(attempts.filter(({ role }) => role === 'reviewer').length, expectedOffers, `${entry}/${state}/${shape}: A is offered only for an eligible identity or its under-claim retry`);
+      assert.equal(starts.filter(({ role }) => role === 'reviewer').length, state === 'deferred' ? 0 : state === 'changed' ? 2 : 1,
+        `${entry}/${state}/${shape}: actual L1 starts distinguish remembered deferred and retryable identities`);
+      assert.deepEqual(starts.filter(({ phase, role }) => phase === 'target' && role !== 'reviewer').map(({ role }) => role).sort(), shape === 'mixed' ? ['architect', 'pm'] : []);
+      assert.equal(built.events().some(({ event }) => event === 'admission.close'), false, 'recording refusal and one ordinary retry close no admission');
+      assert.equal(built.events().filter(({ event }) => event === 'attempt.failed').length, state === 'eligible' ? 1 : 0, 'only the genuine unstarted host failure consumes an attempt');
+      if (state === 'deferred') assert.ok(leavesOf(result.failure).some((failure) => {
+        for (let cause = failure; cause != null; cause = cause.cause) if (cause === refusal) return true;
+        return false;
+      }), 'the original recording refusal survives');
+      else assert.equal(result.failure, undefined, result.failure?.message);
+    });
+  }
 });

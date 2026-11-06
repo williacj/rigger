@@ -542,11 +542,11 @@ test('a config that throws anything at all is one failed line, and the other thr
   }
 });
 
-test('doctor prints its report when validation throws from a BigInt or a getter', () => {
+test('doctor prints its report when consumerConfig refuses a getter in the config, one that would throw from a BigInt or of its own', () => {
   const bin = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger;
   const cases = [
-    ['export default { get repo() { return JSON.stringify(10n); } };', 'Do not know how to serialize a BigInt'],
-    ["export default { get repo() { throw new Error('repo getter failed'); } };", 'repo getter failed'],
+    ['export default { get repo() { return JSON.stringify(10n); } };', 'holds an accessor at `default.repo`'],
+    ["export default { get repo() { throw new Error('repo getter failed'); } };", 'holds an accessor at `default.repo`'],
   ];
 
   for (const [source, reason] of cases) {
@@ -557,9 +557,9 @@ test('doctor prints its report when validation throws from a BigInt or a getter'
     const printed = ran.stdout + ran.stderr;
 
     assert.equal(ran.error, undefined);
-    // A config that throws during validation names no board, so one board line says so.
+    // A config `consumerConfig` refuses names no board, so one board line says so.
     assert.equal(checkLines(printed).length, UNREAD.length, printed);
-    assert.match(checkLines(printed).find((line) => line.includes('board checks')), /could not be validated/, printed);
+    assert.match(checkLines(printed).find((line) => line.includes('board checks')), /could not be read/, printed);
     assert.doesNotMatch(printed, /(?:^|\n)\s+at /, printed);
     const config = checkLines(printed).find((line) => line.includes('config validity'));
     assert.match(config, new RegExp(`failed.*${reason}`));

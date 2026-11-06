@@ -1,25 +1,36 @@
 // ABOUTME: The `once` verb: fires one pull through L3's dispatching entry point, which claims one card,
 // has L1 make and provision its workspace and dispatches its maker and then the judges L2 names, and says
 // what the maker and each judge did. It reads the
-// board through L0, moves the card through L2, and records through L5. `run` is the same verb with
-// no claim limit, so what the two share is one function here.
+// board through L0, moves the card through L2, and records through L5. `run` shares the setup and
+// presenter, handing L3 its run instead of one pull.
 
-import { lstatSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync, writeSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 
 import { OWNER, validate, worktreeTopic } from '../config/validate.mjs';
 import { killRecordedGroups } from '../execution/run.mjs';
 import { escalationDirectoryHandle, judgeDirectoryHandle, removeCardDirectories, workspaceHandle } from '../execution/workspace.mjs';
 import { loop } from '../scheduling/loop.mjs';
+import { readEvents, streamPath } from '../observation/sink.mjs';
 import { readSide, repositoryReads } from '../substrate/forge/read.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
 import { factsCall } from '../workflow/facts.mjs';
 import { failed, nextAction } from '../workflow/next-action.mjs';
 import { REVIEW_WITHHELD, columnChanges } from '../workflow/transitions.mjs';
 import { CONFIG } from './init.mjs';
-import { PACKAGE, closerLine, consumerConfig, gitAnswer, real, sameTree, settled, unreadableAdmission, within } from './doctor.mjs';
+import { PACKAGE, closerLine, outsideText, consumerConfig, gitAnswer, real, sameTree, settled, unreadableAdmission, within } from './doctor.mjs';
 import { refusalLine } from './plan.mjs';
 import { STATE, recording } from './recording.mjs';
+import { reportText } from './report.mjs';
+
+/**
+ * Writes `text` and a newline to standard output, whole, before it returns, so a signal that ends
+ * the process after it never cuts what it wrote (the architect's placement P3 on #1175).
+ */
+function standardOutput(text) {
+  let rest = Buffer.from(`${text}\n`);
+  while (rest.length > 0) rest = rest.subarray(writeSync(1, rest));
+}
 
 /**
  * Every failure `failure` holds, an AggregateError opened to the failures inside it, however
@@ -142,11 +153,13 @@ async function rootInsideTree(verb, root, top, options) {
 }
 
 /**
- * What a verb named `verb` that fires one pull through L3's dispatching entry point prints, and the
- * status it exits with. `limit` is the claim limit handed to the pull, or undefined for none, in
- * which case the pull claims until the slots are full: L3 reads N from the config it is handed.
- * The pull fires once, and nothing fires another as a slot frees, so a card whose second attempt
- * fails is not pulled a third time (the owner's O5 on #423).
+ * The claiming verbs' shared setup and presenter. `once` fires one L3 pull with `limit`;
+ * `run` hands L3 its run, which refills freed slots. L3 reads N and the clock declaration from
+ * the config. Each hand-over L3 makes is written through `write`, rendered as a whole run,
+ * and a report as `report` renders one. `stop`, which the `rigger run` command never passes,
+ * is handed to L3's `run`; once that run
+ * ends, the verb answers what settled since the last hand-over, with the status picked over every
+ * outcome it handed.
  *
  * It records through the sink `recording` opens, in the repository the guard names. L3 is handed
  * L1's kill of the process groups a dead engine recorded in that repository's state directory,
@@ -160,13 +173,14 @@ async function rootInsideTree(verb, root, top, options) {
 /**
  * The line `verb` prints for hold `id`'s notice that did not finish, from the `failed` L2 returned:
  * a step the forge made, which L2 marks `made`, named as made with each event of it that went
- * unrecorded, and otherwise the step the notice failed to take, and its cause. Both of `claiming`'s
+ * unrecorded where there are any, and its cause; otherwise the step the notice failed to take.
+ * Both of `claiming`'s
  * paths print it, the closer's `notice` and the pull's `notices` (the architect's placement rulings
  * on #1056).
  */
 export const noticeLine = (verb, id, { step, cause, made, unrecorded }) => (made === undefined
-  ? `rigger ${verb}: the notice for hold ${id} failed to ${step}: ${cause}`
-  : `rigger ${verb}: the notice for hold ${id} made its step to ${step}, but the sink refused its record, so these events went unrecorded: ${unrecorded.map(({ event }) => event).join(', ')}`);
+  ? `rigger ${verb}: the notice for hold ${id} failed to ${outsideText(step)}: ${outsideText(cause)}`
+  : `rigger ${verb}: the notice for hold ${id} made its step to ${outsideText(step)}${unrecorded === undefined ? '' : `, but the sink refused its record, so these events went unrecorded: ${unrecorded.map(({ event }) => outsideText(event)).join(', ')}`}: ${outsideText(cause)}`);
 
 export const claimVerb = (verb, limit, options) => recording((opened) => claiming(verb, limit, opened, options), options?.push);
 
@@ -176,7 +190,7 @@ export const claimVerb = (verb, limit, options) => recording((opened) => claimin
  * choose the wording shared by `once` and `run`.
  */
 async function claiming(verb, limit, opened, {
-  target = process.cwd(), packageRoot = PACKAGE, ask, send, host, readTimeout,
+  target = process.cwd(), packageRoot = PACKAGE, ask, send, host, readTimeout, clock, stop, write = standardOutput,
 } = {}) {
   const { named, refusal } = await settled(verb, opened, { target, packageRoot, ask });
   if (refusal) return refusal;
@@ -267,6 +281,10 @@ async function claiming(verb, limit, opened, {
   const facts = (cards) => factsCall({ config, reads: cards.length === 1 ? cardReads(cards[0].number) : reads, decide })(cards);
   const state = join(named, STATE);
   const kill = () => killRecordedGroups({ directory: state, sink, host, readTimeout });
+  // L3's read of the event record, handed down as the sink is: its events in order, none where no
+  // stream exists yet, as `report` reads it, and otherwise what `readEvents` throws. `stream`
+  // names the stream, so L3 can name the line it refuses.
+  const readRecord = Object.assign(() => (existsSync(streamPath(state)) ? readEvents(state) : []), { stream: streamPath(state) });
   const { project } = config.board;
   // One line for each card that reached its maker, or that was pulled for its judges alone, each
   // followed by a line for each of its judges, then one for each failure of L2's settle that was
@@ -340,6 +358,7 @@ async function claiming(verb, limit, opened, {
    * failure.
    */
   const failureLine = (held) => {
+    if (held.notice !== undefined) return noticeLine(verb, held.notice.id, held.notice);
     if (Array.isArray(held.unreadable)) return `rigger ${verb}: ${unreadableAdmission(held.unreadable)}`;
     const attempts = held.attemptFailures;
     if (!Array.isArray(attempts) || attempts.at(-1)?.maker === undefined) return `rigger ${verb}: ${held.message}`;
@@ -357,46 +376,91 @@ async function claiming(verb, limit, opened, {
       ...(closer.notice ? [noticeLine(verb, closer.id, closer.notice)] : []),
       ...(closer.leftover ? [`rigger ${verb}: the temporary file ${closer.leftover} could not be removed, and the close stands`] : []),
     ]);
-  let reached;
-  try {
-    // The verb hands L3 the process's own environment, which L3 hands every dispatch it makes
-    // (the architect's ruling 2, P7, on #467), and no maker: L3 dispatches it through L1.
-    reached = await loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, environment: process.env, run: opened.run }).pull(limit);
-  } catch (failure) {
-    // What L3 reports is said whole, one line per failure it holds, and the exit is non-zero:
-    // an event the record refused names an action Rigger took and could not record, or a start
-    // it did not make, and so does a start's kill that failed, naming each unrecorded kill,
-    // unconfirmed group or unreadable record. A card held or stopped after its second attempt names each
-    // attempt's failure. Each is loud by the owner's ruling (#277; `ARCHITECTURE.md`, "Failure
-    // model"). The record is not used to say so, because the record is what failed. A held or stopped
-    // card is named only from its failure, and a held card's closer after the failures, once, in
-    // `closerLine`'s words, as `holdLines` says. When its last failure was a maker that never started,
-    // the shared presenter puts that reason first; other stops keep L3's wording. The cards the
-    // same pull left at their workspaces are named first, as they would be had none failed, a card
-    // whose maker ran and whose judges then failed among them. A judge that failed to hand back is
-    // said among its card's judge lines, where L3 carried it, and not again after them.
-    const reachedCards = failure.reached ?? [];
-    const carried = new Set(reachedCards.flatMap(({ judges = [] }) => judges.flatMap(({ failure: held }) => (held === undefined ? [] : [held]))));
-    return {
-      text: [...said(outcomes(reachedCards)), ...failuresIn(failure).filter((held) => !carried.has(held)).map(failureLine), ...holdLines([...failuresIn(failure), ...carried]), ...refusals.map(refusalLine)].join('\n'),
-      code: 1,
-    };
-  }
-  const refused = refusals.map(refusalLine);
-  if (reached.admission?.state === 'closed') {
-    const notices = (reached.notices ?? []).map((failed) => noticeLine(verb, failed.id, failed));
-    return {
-      text: [...reached.admission.closers.map((closer) => `rigger ${verb}: ${closerLine(closer)}`), ...notices, ...refused].join('\n'),
-      code: notices.length === 0 ? 0 : 1,
-    };
-  }
-  // Nothing to pull is the one outcome this verb meets in full, so it alone exits zero (U29).
-  if (reached.length === 0) return { text: [`rigger ${verb}: from board ${project}, no card was pullable`, ...refused].join('\n'), code: 0 };
-  // Zero only where every card's maker delivered, its card in review; any other outcome is short
-  // of what the README promises of this verb, and a zero exit would read to whoever called it as
-  // work that was done (the owner's O8 on #423).
-  const worked = outcomes(reached);
-  return { text: [...said(worked), ...refused].join('\n'), code: worked.every(({ review, failure, judgesPassed }) => review && failure === undefined && judgesPassed) ? 0 : 1 };
+  /**
+   * The text and status of a whole run whose settle `settled` records, as `Promise.allSettled`
+   * records it, naming the refusals met since the last one rendered.
+   */
+  // The status over every hand-over written, and whether any was.
+  let handedCode;
+  // Each refusal line a hand-over has written: a clock-held run's idle polls ask L2 again about a
+  // card it refuses, and a refusal already written is no news.
+  const handedRefusals = new Set();
+  /**
+   * The refusal lines met since the last render that no hand-over has written, once each. A pull
+   * can ask L2 about an unchanged refusal on several pulls, and renders each distinct line once.
+   */
+  const freshRefusals = () => {
+    const lines = refusals.splice(0).map(refusalLine);
+    const fresh = [...new Set(lines)].filter((line) => !handedRefusals.has(line));
+    for (const line of fresh) handedRefusals.add(line);
+    return fresh;
+  };
+  const rendered = (settled, refused = freshRefusals()) => {
+    // Zero only where every card's maker delivered, its card in review; any other outcome is short
+    // of what the README promises of this verb, and a zero exit would read to whoever called it as
+    // work that was done (the owner's O8 on #423).
+    const delivered = (worked) => worked.every(({ review, failure, judgesPassed }) => review && failure === undefined && judgesPassed);
+    if (settled.status === 'rejected') {
+      const failure = settled.reason;
+      // What L3 reports is said whole, one line per failure it holds, and the exit is non-zero:
+      // an event the record refused names an action Rigger took and could not record, or a start
+      // it did not make, and so does a start's kill that failed, naming each unrecorded kill,
+      // unconfirmed group or unreadable record. A card held or stopped after its second attempt names each
+      // attempt's failure. Each is loud by the owner's ruling (#277; `ARCHITECTURE.md`, "Failure
+      // model"). The record is not used to say so, because the record is what failed. A held or stopped
+      // card is named only from its failure, and a held card's closer after the failures, once, in
+      // `closerLine`'s words, as `holdLines` says. When its last failure was a maker that never started,
+      // the shared presenter puts that reason first; other stops keep L3's wording. The cards the
+      // same pull left at their workspaces are named first, as they would be had none failed, a card
+      // whose maker ran and whose judges then failed among them. A judge that failed to hand back is
+      // said among its card's judge lines, where L3 carried it, and not again after them.
+      const reachedCards = failure.reached ?? [];
+      const carried = new Set(reachedCards.flatMap(({ judges = [] }) => judges.flatMap(({ failure: held }) => (held === undefined ? [] : [held]))));
+      // A clock-held run's hand-over can carry a closed admission beside its failures; each closer
+      // the held cards' lines have not already named is said after them.
+      const holding = [...failuresIn(failure), ...carried];
+      const named = new Set(holding.flatMap(({ closer }) => (closer === undefined ? [] : [closer.id])));
+      const closers = failure.admission?.state === 'closed' ? failure.admission.closers.filter(({ id }) => !named.has(id)) : [];
+      return {
+        text: [...said(outcomes(reachedCards)), ...failuresIn(failure).filter((held) => !carried.has(held)).map(failureLine), ...holdLines(holding), ...closers.map((closer) => `rigger ${verb}: ${closerLine(closer)}`), ...(failure.notices ?? []).map((failed) => noticeLine(verb, failed.id, failed)), ...refused].join('\n'),
+        code: 1,
+      };
+    }
+    const reached = settled.value;
+    if (reached.admission?.state === 'closed') {
+      const notices = (reached.notices ?? []).map((failed) => noticeLine(verb, failed.id, failed));
+      // A clock-held run's drain can read admission closed after cards settled; each is said, and
+      // counts toward the status, as it would without the closer.
+      const worked = outcomes(reached.reached ?? []);
+      return {
+        text: [...reached.admission.closers.map((closer) => `rigger ${verb}: ${closerLine(closer)}`), ...notices, ...said(worked), ...refused].join('\n'),
+        code: notices.length === 0 && delivered(worked) ? 0 : 1,
+      };
+    }
+    // Nothing to pull is the one outcome this verb meets in full, so it alone exits zero (U29).
+    if (reached.length === 0) return { text: [`rigger ${verb}: from board ${project}, no card was pullable`, ...refused].join('\n'), code: 0 };
+    const worked = outcomes(reached);
+    return { text: [...said(worked), ...refused].join('\n'), code: delivered(worked) ? 0 : 1 };
+  };
+  /** Writes one hand-over of a kept-up `run` as it settles: a report, a firing's failure, or what settled since the last. */
+  const handOver = ({ report, failure, settled: each }) => {
+    const { text, code } = report !== undefined ? { text: reportText(report), code: 0 }
+      : failure !== undefined ? { text: failureLine(failure), code: 1 } : rendered(each);
+    handedCode = Math.max(handedCode ?? 0, code);
+    write(text);
+  };
+  // The verb hands L3 the process's own environment, which L3 hands every dispatch it makes
+  // (the architect's ruling 2, P7, on #467), and no maker: L3 dispatches it through L1.
+  const [settledRun] = await Promise.allSettled([(async () => {
+    const l3 = loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, readRecord, environment: process.env, run: opened.run, clock });
+    return verb === 'run' ? l3.run({ handOver, stop }) : l3.pull(limit);
+  })()]);
+  if (handedCode === undefined) return rendered(settledRun);
+  // A kept-up run that ended answers only what it had not yet handed over (the architect's ruling 1175#6560236393, (b)).
+  const refused = freshRefusals();
+  const nothing = settledRun.status === 'fulfilled' && Array.isArray(settledRun.value) && settledRun.value.length === 0 && refused.length === 0;
+  const { text, code } = nothing ? { text: '', code: 0 } : rendered(settledRun, refused);
+  return { text, code: Math.max(code, handedCode) };
 }
 
 /**

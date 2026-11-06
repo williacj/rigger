@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseWorkflow } from './ci-policy-fixtures.mjs';
 import { evaluateCiPolicy, ciFacts, ciProof, ciFullFixture, ciCollectorFixture } from './ci-policy-fixtures.mjs';
+import { ciNodeMajor } from './ci-policy-fixtures.mjs';
 
 test('recorded CI Table A equal start and unmoved main retains full proof', async () => {
   const { facts, proof } = ciFullFixture();
@@ -392,4 +393,28 @@ test('non-PR routes preserve literal source shapes without event-base fields', a
     assert.equal(plan.ok, true, event);
     assert.deepEqual(JSON.parse(plan.output.snapshot), { event, ref: 'refs/heads/main', sha: 'a'.repeat(40), tree: 'b'.repeat(40), parents: ['c'.repeat(40), 'd'.repeat(40)], head: 'a'.repeat(40), base: 'a'.repeat(40), baseRef: event === 'merge_group' ? 'refs/heads/main' : 'main' });
   }
+});
+
+test('inline CI worker admits exactly major 26 and restores the fixture Node version', async (t) => {
+  const ci = parseWorkflow(readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'));
+  const policyJobs = Object.entries(ci.jobs).filter(([, job]) => job.steps.some((step) => step.env?.CI_POLICY_ACTION));
+  assert.ok(policyJobs.length > 0, 'the workflow runs the inline policy');
+  for (const [name, job] of policyJobs) {
+    const installed = job.steps.find((step) => step.uses === 'actions/setup-node@v5').with['node-version'];
+    const majors = installed === '${{ matrix.node }}' ? job.strategy.matrix.node : [installed];
+    assert.deepEqual(majors, [ciNodeMajor], name + ' installs the shared fixture major');
+  }
+  const original = Object.getOwnPropertyDescriptor(process.versions, 'node');
+  t.diagnostic(JSON.stringify({ node: process.version, descriptor: original }));
+  assert.equal(original.configurable, true, 'the fixture can temporarily state the CI Node version');
+  const facts = ciFacts(), proof = ciProof();
+  for (const [major, expected] of [['24', false], ['25', false], ['26', true], ['27', false]]) {
+    const worker = await evaluateCiPolicy('runPolicy', { action: 'worker', facts, proof, worker: 'fast' }, {}, major);
+    assert.equal(worker.ok, expected, 'worker major ' + major);
+    assert.deepEqual(Object.getOwnPropertyDescriptor(process.versions, 'node'), original, 'restored after major ' + major);
+  }
+  assert.equal((await evaluateCiPolicy('runPolicy', { action: 'worker', facts, proof, worker: 'fast' })).ok, true, 'default CI major');
+  assert.deepEqual(Object.getOwnPropertyDescriptor(process.versions, 'node'), original, 'restored after the default major');
+  await assert.rejects(evaluateCiPolicy('runPolicy', null, {}, '25'), TypeError);
+  assert.deepEqual(Object.getOwnPropertyDescriptor(process.versions, 'node'), original, 'restored after the inline policy throws');
 });

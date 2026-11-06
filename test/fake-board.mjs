@@ -16,11 +16,12 @@ const ITEM_FACTS = ['type', 'repository', 'number', 'title', 'body', 'labels', '
  * the repository's `labels`. Each item is given the board item
  * id `item-1`, `item-2` and so on, in the order given, which is what a move names. A board built
  * with `refuseMoves` refuses every move it is asked for, as a board whose writes fail would.
+ * `issueStates` holds, by issue number, the state the issue state read answers.
  *
  * Its `operations` are what the forge adapter offers, and nothing else is: `writes()`,
- * `requests()`, `holdNextRead()`, `issues()` and `setIssueLabels()` are test controls, not operations.
+ * `requests()`, `holdNextRead()`, `issues()`, `setIssueLabels()` and `setIssueState()` are test controls, not operations.
  */
-export function createFakeBoard({ columns = [], fields = [], items = [], labels = [], refuseMoves = false } = {}) {
+export function createFakeBoard({ columns = [], fields = [], items = [], labels = [], refuseMoves = false, issueStates = {} } = {}) {
   for (const item of items) {
     const unmodelled = Object.keys(item).filter((fact) => !ITEM_FACTS.includes(fact));
     if (unmodelled.length > 0) {
@@ -32,6 +33,7 @@ export function createFakeBoard({ columns = [], fields = [], items = [], labels 
     fields,
     labels,
     items: items.map((item, index) => ({ ...item, id: `item-${index + 1}` })),
+    issueStates,
   });
   const writes = [];
   const requests = [];
@@ -51,6 +53,11 @@ export function createFakeBoard({ columns = [], fields = [], items = [], labels 
     readFields: () => read(() => board.fields.filter((field) => field.type === undefined)),
     readFieldTypes: () => read(() => [{ name: 'Status', type: 'SINGLE_SELECT' }, ...board.fields.map(({ name, type = 'SINGLE_SELECT' }) => ({ name, type }))]),
     readLabels: () => read(() => board.labels),
+    /**
+     * Issue `number`'s state as `{ state }`, `open`, `closed` or `none`, from the states the board
+     * was built with or `setIssueState` gave it, and `none` for a number it holds no state for.
+     */
+    readIssueState: (number) => read(() => ({ state: board.issueStates[number] ?? 'none' })),
     /**
      * What L0 hands L3 for the priority declaration `priority`, a config's `board.priority`:
      * every item with its `priority` as `{ value, declared }`, the declared order, and the
@@ -127,6 +134,10 @@ export function createFakeBoard({ columns = [], fields = [], items = [], labels 
     /** Updates only the board view of this repository issue's labels, not its write operations. */
     setIssueLabels: (repo, number, labels) => {
       for (const item of board.items.filter((item) => item.type === 'issue' && item.number === number && item.repository.toLowerCase() === repo.toLowerCase())) item.labels = structuredClone(labels);
+    },
+    /** Sets the state `readIssueState` answers for issue `number`. */
+    setIssueState: (number, state) => {
+      board.issueStates[number] = state;
     },
     /** Holds the next read unanswered, and returns the function that releases it. */
     holdNextRead: () => {

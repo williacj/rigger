@@ -341,7 +341,7 @@ test('plan names a labelled card when its workflow facts cannot be read', async 
 
 import { mkdirSync, readdirSync } from 'node:fs';
 
-// proves R-WORK-36
+// proves R-WORK-41
 test('plan describes closed removal followed by redo escalation or refusal and changes neither directories nor forge facts', async () => {
   const directory = temporaryDirectory('rigger-plan-closed-directories-');
   const settings = { ...template, repo: REPO, board: { ...template.board, project: PROJECT }, worktrees: { ...template.worktrees, root: directory } };
