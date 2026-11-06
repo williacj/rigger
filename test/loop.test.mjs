@@ -6282,10 +6282,36 @@ const returnedAt = (head, kind = {}) => ({
   ] }] },
 });
 
+/** What the board and forge hold of `card` beside its column, for a row to compare with what it may change. */
+const heldOf = async (built, card) => ({
+  labels: (await built.fake.operations.readItems()).find(({ number }) => number === card).labels,
+  issue: (built.repository.held().issues.find(({ number }) => number === card)?.comments ?? []).map(({ body }) => body),
+  pulls: built.repository.held().pullRequests.map(({ number, comments = [] }) => ({ number, comments: comments.map(({ body }) => body) })),
+  merges: built.repository.merges().map(({ number }) => number),
+  moves: built.fake.writes().map(({ operation }) => operation),
+});
+
+/** Asserts `card` stayed in coding, with its claim's move the one thing changed since `before`. */
+async function leftInCoding(built, card, before) {
+  assert.equal((await columnsOf(built.fake))[card], COLUMNS.coding);
+  assert.deepEqual(await heldOf(built, card), { ...before, moves: [...before.moves, 'moveItem'] }, 'only the claim changed the board or forge');
+}
+
+/** Asserts `card` reached the owner with its claim, one move, `comments` on its issue and the label, and nothing more since `before`. */
+async function escalatedOnce(built, card, before, comments = 1) {
+  assert.equal((await columnsOf(built.fake))[card], COLUMNS.owner);
+  const { issue, ...held } = await heldOf(built, card);
+  assert.equal(issue.length, before.issue.length + comments, 'no other issue comment');
+  const { issue: unread, ...expected } = before;
+  assert.deepEqual(held, { ...expected, labels: [...before.labels, 'rigger:escalated'], moves: [...before.moves, 'moveItem', 'moveItem'] }, 'only the escalation changed the board or forge');
+  return issue;
+}
+
 // proves R-LOOP-20, R-WORK-43
 test('Table C C1: a continuing maker that exits 0 at the head it was given escalates ambiguous to the owner, and no maker follows', async () => {
   const head = 'a'.repeat(40);
   const { built, card, pull, elapsed } = continuingForge(head, head);
+  const before = await heldOf(built, card);
 
   await continuingPull(built);
   await continuingPull(built);
@@ -6293,8 +6319,7 @@ test('Table C C1: a continuing maker that exits 0 at the head it was given escal
   assert.equal(makersRan(built), 1, 'exactly one maker ran after the rulings');
   assert.equal(built.agent.runs().filter(({ role }) => role === 'reviewer').length, 0);
   assert.equal(elapsed(), 0, 'the first read showed the head, so nothing waited');
-  assert.equal((await columnsOf(built.fake))[card], COLUMNS.owner);
-  assert.ok((await built.fake.operations.readItems())[0].labels.includes('rigger:escalated'));
+  const [body] = await escalatedOnce(built, card, before);
   assert.equal(built.events().some(({ layer, event, cause }) => layer === 'L2' && event === 'transition' && cause === 'returned'), false, 'never moved to review');
   const [recorded, ...others] = escalationsOf(built, card);
   assert.deepEqual(others, []);
@@ -6302,17 +6327,16 @@ test('Table C C1: a continuing maker that exits 0 at the head it was given escal
   assert.deepEqual({ category: recorded.category, raiser: recorded.raiser, pull: recorded.pull, head: recorded.head, destination: recorded.destination, dispatch: recorded.dispatch },
     { category: 'ambiguous', raiser: 'loop', pull, head, destination: 'owner', dispatch: makerDispatch });
   assert.equal(Object.hasOwn(recorded, 'reads'), false, 'one read is no read to name');
-  const [comment] = built.repository.held().issues.find((issue) => issue.number === card).comments;
-  assert.match(comment.body, /owner \(ambiguous\)/);
-  assert.ok(comment.body.includes(`Head: ${head}`), comment.body);
-  assert.ok(comment.body.includes('reviewer (needs revision): Fix the help line.; unmet item 1: The verb prints its help.'), comment.body);
+  assert.match(body, /owner \(ambiguous\)/);
+  assert.ok(body.includes(`Head: ${head}`), body);
+  assert.ok(body.includes('reviewer (needs revision): Fix the help line.; unmet item 1: The verb prints its help.'), body);
 });
 
 // proves R-LOOP-20
 test('Table C C2: with rounds remaining the unchanged head escalates at once and spends no round', async () => {
   const head = 'a'.repeat(40);
   const built = world({ ...returnedAt(head, { rounds: 3 }), clock: { now: () => 0, pause: async () => assert.fail('the first read showed the head') } });
-  const markers = built.repository.pull(961).comments.map(({ body }) => body);
+  const before = await heldOf(built, 96);
 
   await continuingPull(built);
 
@@ -6322,7 +6346,7 @@ test('Table C C2: with rounds remaining the unchanged head escalates at once and
   assert.equal(category, 'ambiguous');
   assert.doesNotMatch(reason, /rounds spent/, 'the bound did not raise it');
   assert.equal(built.agent.runs().filter(({ role }) => role === 'reviewer').length, 0, 'no judge ran to spend a round');
-  assert.deepEqual(built.repository.pull(961).comments.map(({ body }) => body), markers, 'the forge holds the one (head, digest) pair it held');
+  await escalatedOnce(built, 96, before);
 });
 
 // proves R-LOOP-20
@@ -6330,6 +6354,7 @@ test('Table C C3: in a kept-up run later pulls dispatch nothing for the escalate
   const head = 'a'.repeat(40);
   const clock = manualClock();
   const built = reportWorld(clock, { ...returnedAt(head), triggers: HOUR_AWAY });
+  const before = await heldOf(built, 96);
   const { stop } = keptUp(built);
   try {
     await positive(() => built.dispatches.holding().includes(96));
@@ -6343,7 +6368,7 @@ test('Table C C3: in a kept-up run later pulls dispatch nothing for the escalate
     assert.equal(count(built, 'pull'), pulls + 3, 'three later pulls fired');
     assert.equal(makersRan(built), 1);
     assert.equal(escalationsOf(built, 96).length, 1);
-    assert.equal((await columnsOf(built.fake))[96], COLUMNS.owner);
+    await escalatedOnce(built, 96, before);
   } finally {
     const ended = settledOf(stop());
     await positive(() => { built.dispatches.releaseAll(); return ended(); });
@@ -6354,15 +6379,17 @@ test('Table C C3: in a kept-up run later pulls dispatch nothing for the escalate
 test('Table C C4: after a no-clock run the escalation label holds the next invocation back', SETTLES_WITHIN, async (t) => {
   const head = 'a'.repeat(40);
   const built = onManualHost(t, { ...returnedAt(head), concurrency: 1, fresh: false });
+  const before = await heldOf(built, 96);
 
   await drive(built);
   assert.equal(makersRan(built), 1, 'the first invocation ran one maker');
-  assert.ok((await built.fake.operations.readItems())[0].labels.includes('rigger:escalated'));
+  await escalatedOnce(built, 96, before);
 
   await drive(built);
 
   assert.equal(makersRan(built), 1, 'the next invocation ran no maker');
   assert.equal(escalationsOf(built, 96).length, 1);
+  await escalatedOnce(built, 96, before);
 });
 
 // proves R-LOOP-20
@@ -6373,6 +6400,7 @@ test('Table C C1: an unchanged head the forge shows only on a later read records
     built.repository.update(pull, { sha: other });
     return head;
   });
+  const before = await heldOf(built, card);
 
   await continuingPull(built);
 
@@ -6380,6 +6408,7 @@ test('Table C C1: an unchanged head the forge shows only on a later read records
   assert.equal(escalationsOf(built, card).length, 1, 'the unchanged head escalated');
   const [{ head: read, reads, elapsedMs }] = escalationsOf(built, card);
   assert.deepEqual({ read, reads, elapsedMs }, { read: head, reads: 2, elapsedMs: 5000 });
+  await escalatedOnce(built, card, before);
 });
 
 // proves R-WORK-43
@@ -6390,10 +6419,13 @@ test('Table C C5: a continuing maker that exits 0 at a new head moves to review 
     built.repository.update(pull, { sha: tip });
     return tip;
   });
+  const { labels, issue, merges } = await heldOf(built, card);
 
   await continuingPull(built);
 
   assert.deepEqual(escalationsOf(built, card), []);
+  const after = await heldOf(built, card);
+  assert.deepEqual({ labels: after.labels, issue: after.issue, merges: after.merges }, { labels, issue, merges }, 'no escalation write was left');
   const returned = built.events().find(({ layer, event, cause }) => layer === 'L2' && event === 'transition' && cause === 'returned');
   assert.equal(returned?.forgeHead, tip);
   assert.ok(built.agent.runs().some(({ role }) => role === 'reviewer'), 'the judge ruled on the new head');
@@ -6403,6 +6435,7 @@ test('Table C C5: a continuing maker that exits 0 at a new head moves to review 
 test('Table C C6: a continuing maker’s own note at the head it was given wins over the unchanged head', async () => {
   const head = 'a'.repeat(40);
   const { built, card } = continuingForge(head, head);
+  const before = await heldOf(built, card);
   const pulled = built.loop.pull();
   await positive(() => built.dispatches.holding().includes(card));
   const { dispatch } = built.events().find(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'engineer');
@@ -6413,17 +6446,19 @@ test('Table C C6: a continuing maker’s own note at the head it was given wins 
   const [recorded, ...others] = escalationsOf(built, card);
   assert.deepEqual(others, []);
   assert.deepEqual({ category: recorded.category, raiser: recorded.raiser, reason: recorded.reason }, { category: 'critical', raiser: 'maker', reason: 'A required condition failed.' });
+  await escalatedOnce(built, card, before, 2);
 });
 
 // proves R-WORK-43
 test('Table C C7: an unreadable tip is withheld, however the given head stands, and escalates nothing', async () => {
   const head = 'a'.repeat(40);
   const { built, card } = continuingForge(head, head, undefined, async () => { throw new Error('the branch has no commit'); });
+  const before = await heldOf(built, card);
 
   await continuingPull(built);
 
   assert.deepEqual(escalationsOf(built, card), []);
-  assert.equal((await columnsOf(built.fake))[card], COLUMNS.coding);
+  await leftInCoding(built, card, before);
   const withheld = built.events().find(({ layer, event }) => layer === 'L2' && event === 'review.withheld');
   assert.match(withheld.reason, /card #96.*branch has no commit/);
 });
@@ -6436,12 +6471,13 @@ test('Table C C8: a tip at the given head that the forge never shows runs the ex
     built.repository.update(pull, { sha: other });
     return head;
   });
+  const before = await heldOf(built, card);
 
   await continuingPull(built);
 
   assert.equal(elapsed(), 60000);
   assert.deepEqual(escalationsOf(built, card), []);
-  assert.equal((await columnsOf(built.fake))[card], COLUMNS.coding);
+  await leftInCoding(built, card, before);
   const withheld = built.events().find(({ layer, event }) => layer === 'L2' && event === 'review.withheld');
   assert.deepEqual({ forgeHead: withheld.forgeHead, reads: withheld.reads, elapsedMs: withheld.elapsedMs }, { forgeHead: other, reads: 13, elapsedMs: 60000 });
 });
@@ -6450,11 +6486,12 @@ test('Table C C8: a tip at the given head that the forge never shows runs the ex
 test('Table C C9: a continuing maker that exits non-zero at the head it was given stays in coding and escalates nothing', async () => {
   const head = 'a'.repeat(40);
   const built = world({ ...returnedAt(head), fresh: false, answer: () => ({ exit: 7, output: '' }), clock: { now: () => 0, pause: async () => assert.fail('a failed maker reads no forge head') } });
+  const before = await heldOf(built, 96);
 
   await continuingPull(built);
 
   assert.deepEqual(escalationsOf(built, 96), []);
-  assert.equal((await columnsOf(built.fake))[96], COLUMNS.coding);
+  await leftInCoding(built, 96, before);
   assert.equal(built.events().some(({ event }) => event === 'review.withheld'), false);
   assert.equal(built.events().some(({ layer, event, cause }) => layer === 'L2' && event === 'transition' && cause === 'returned'), false);
 });
@@ -6462,10 +6499,13 @@ test('Table C C9: a continuing maker that exits non-zero at the head it was give
 // proves R-LOOP-20
 test('Table C C10: a fresh maker that exits 0 moves to review and escalates nothing', async () => {
   const built = world({ cards: [readyCard(96)], clock: { now: () => 0, pause: async () => assert.fail('a fresh maker waits for no head') } });
+  const { labels, issue, merges } = await heldOf(built, 96);
 
   await continuingPull(built);
 
   assert.deepEqual(escalationsOf(built, 96), []);
+  const after = await heldOf(built, 96);
+  assert.deepEqual({ labels: after.labels, issue: after.issue, merges: after.merges }, { labels, issue, merges }, 'no escalation write was left');
   assert.ok(built.events().some(({ layer, event, cause }) => layer === 'L2' && event === 'transition' && cause === 'returned'), 'moved to review');
 });
 
@@ -6476,11 +6516,12 @@ test('Table C C12: a pull request gone at the unchanged head stays in coding und
     built.repository.update(pull, { closed: true });
     return head;
   });
+  const before = await heldOf(built, card);
 
   await continuingPull(built);
 
   assert.deepEqual(escalationsOf(built, card), []);
-  assert.equal((await columnsOf(built.fake))[card], COLUMNS.coding);
+  await leftInCoding(built, card, before);
   assert.match(built.events().find(({ event }) => event === 'review.withheld').reason, /no open pull request/);
 });
 
@@ -6491,11 +6532,12 @@ test('Table C C12: a forge read that fails at the unchanged head stays in coding
     built.repository.operations.readPullRequests = async () => { throw new Error('the forge read failed: HTTP 502'); };
     return head;
   });
+  const before = await heldOf(built, card);
 
   await continuingPull(built);
 
   assert.deepEqual(escalationsOf(built, card), []);
-  assert.equal((await columnsOf(built.fake))[card], COLUMNS.coding);
+  await leftInCoding(built, card, before);
   assert.match(built.events().find(({ event }) => event === 'review.withheld').reason, /HTTP 502/);
 });
 
@@ -6504,10 +6546,11 @@ test('Table C C12: a refused escalation comment at the unchanged head fails the 
   const head = 'a'.repeat(40);
   const built = onManualHost(t, { ...returnedAt(head), concurrency: 1, fresh: false });
   built.repository.postIssueComment = async () => { throw new Error('the issue comment write was refused'); };
+  const before = await heldOf(built, 96);
 
   await assert.rejects(drive(built), (failure) => leavesOf(failure).some(({ message }) => /escalation issue comment was refused/.test(message)));
 
   assert.equal(makersRan(built), 1);
   assert.equal(escalationsOf(built, 96).length, 1);
-  assert.equal((await columnsOf(built.fake))[96], COLUMNS.coding);
+  await leftInCoding(built, 96, before);
 });
