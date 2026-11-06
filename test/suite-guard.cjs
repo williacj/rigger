@@ -100,6 +100,7 @@ function watchTimers(recordFile) {
   const { createHook, executionAsyncResource } = require('node:async_hooks');
   const { appendFileSync, writeSync } = require('node:fs');
   const { promisify } = require('node:util');
+  const kill = process.kill;
   const owners = new WeakMap();
   const tests = new WeakSet();
   const refusals = new Map();
@@ -147,8 +148,9 @@ function watchTimers(recordFile) {
           refusals.set(running?.getCtx() ?? null, refusal);
           try {
             appendFileSync(timerRefusalFile, JSON.stringify({ file, test, api, delay }) + '\n');
-          } catch (error) {
-            writeSync(2, `deterministic tier: could not record timer refusal: ${error.message}\n`);
+          } catch {
+            try { writeSync(2, refusal.message + '\n'); } catch {}
+            kill.call(process, process.pid, 'SIGKILL');
           }
           writeSync(2, refusal.message + '\n');
           throw refusal;

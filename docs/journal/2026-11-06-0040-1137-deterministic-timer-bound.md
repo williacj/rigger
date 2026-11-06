@@ -3,7 +3,7 @@ ABOUTME: Records the timer guard's placement, test-first checks and host-test cl
 # Deterministic timer bound
 
 Card [#1137](https://github.com/williacj/rigger/issues/1137), acceptance revision
-`98b0a2865bba`, implements [D29 rule 3.5 and D30 rule 6](../spec/decisions.md) in
+`783e6d4844d8`, implements [D29 rule 3.5 and D30 rule 6](../spec/decisions.md) in
 the existing suite guard. Its placement follows the
 [architect's ruling](https://github.com/williacj/rigger/issues/740#issuecomment-6497153704)
 and its fourth and fifth amendments. It answers the
@@ -73,7 +73,13 @@ throwing. The runner prints that file and fails on it after its worker ends.
 A worker returning, resetting its exit status, exiting inside its exit listener,
 using `reallyExit`, or killing itself cannot erase that recorded refusal.
 The worker captures the destination before deleting its environment variable.
-A failed append is reported and still throws the refusal before any native arm.
+The [author's fallback and scope amendment](https://github.com/williacj/rigger/issues/1137#issuecomment-6688440546)
+withdraws the catchable append-error fallback. If the refusal cannot be recorded,
+the worker attempts its refusal diagnostic on standard error, ignores a failure
+of that write, then sends itself SIGKILL through the process.kill captured at
+installation. No code after the arm, including a catch, can run. The EIO table
+crosses all nine API/mock variants with return, public exit, reallyExit and a
+replaced process.kill. A guarded mutation restores the catchable throw.
 
 The [reviewer](https://github.com/williacj/rigger/pull/1254#issuecomment-6686112520)
 and [architect](https://github.com/williacj/rigger/pull/1254#issuecomment-6685958817)
@@ -104,3 +110,13 @@ promise function before this preload, leaving a self-reference in that function'
 custom descriptor. The wrapper redirects that self-reference to itself. The
 regressions check allowed zero-delay values, positive refusal without native
 effects, conversion recording, and the pre-existing promisify cache.
+
+The independent attack at `4ea40282162e0c76374ff652b8a9afa102a71aec`
+showed two escapes: controlled EIO followed by a successful public/really exit,
+and an adapter cached by an environment NODE_OPTIONS preload before the guard
+installed. The first is the fallback defect addressed above. For the second,
+the same author amendment records the architect's ruling that code loading
+before the guard is outside its sight. The cached adapter armed nothing during
+preload and later armed a native timer in its test. That historical attack is
+retained as scope evidence, not a passing refusal claim. The runner preserves
+NODE_OPTIONS; a test cannot add a preload to its own already-running worker.

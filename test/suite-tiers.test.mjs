@@ -1881,12 +1881,25 @@ test('timer refusal destination is removed before the module evaluates', (t) => 
   assertTimerPassed(probe, 'private refusal destination');
 });
 
-test('timer refusal still throws and reports a failed record append', (t) => {
-  const title = 'a record failure still refuses the arm';
-  const probe = timerProbe(t, `test(${JSON.stringify(title)}, () => {
-    try { observeArm(() => clearTimeout(setTimeout(timerCallback, 5))); } catch {}
-  });`, {
-    'refusal-write-failure.cjs': `// ABOUTME: Supplies an observed write failure for the supervisor refusal file alone.
+// An unwritable record must end the worker before any catch or exit override can run.
+for (const [ending, next] of [
+  ['caught-return', "note('returned');"],
+  ['caught-exit', "note('terminating'); process.exit(0);"],
+  ['caught-really-exit', "note('terminating'); process.reallyExit(0);"],
+  ['replaced-kill', "note('returned');"],
+]) {
+  for (const api of refusalApis) {
+    test(`timer refusal EIO ${ending} ${api[0]}`, (t) => {
+      const title = `unwritable refusal ${ending} ${api[0]}`;
+      const probe = timerProbe(t, `import { attempt } from '../src/clocked.mjs';
+        test(${JSON.stringify(title)}, async () => {
+          ${ending === 'replaced-kill' ? "process.kill = () => note('replacement-kill');" : ''}
+          try { await attempt('EIO'); } catch { note('caught'); }
+          note('after-arm');
+          ${next}
+        });`, {
+        'src/clocked.mjs': refusalSource(api),
+        'refusal-write-failure.cjs': `// ABOUTME: Supplies an observed EIO for the supervisor refusal file alone.
 if (process.env.NODE_TEST_CONTEXT === 'child-v8') {
   const fs = require('node:fs');
   const destination = process.env.RIGGER_SUITE_TIMER_REFUSALS;
@@ -1897,8 +1910,16 @@ if (process.env.NODE_TEST_CONTEXT === 'child-v8') {
   };
 }
 `,
-  }, { preload: 'refusal-write-failure.cjs' });
-  const output = assertTimerRefused(probe, title, 'setTimeout');
-  assert.match(output, /could not record timer refusal: refusal-write-control/);
-  assert.deepEqual(printedTimerRefusals(probe), []);
-});
+      }, { preload: 'refusal-write-failure.cjs' });
+      assertNoNativeTimers(probe);
+      const events = readFileSync(probe.positionEvents, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      assert.deepEqual(events, ['attempt:EIO'], 'an unwritable refusal must not return or throw to its caller');
+      assert.equal(probe.result.error, undefined, probe.result.stdout + probe.result.stderr);
+      assert.notEqual(probe.result.status, 0, 'an unwritable refusal must fail the suite');
+      assert.ok((probe.result.stdout + probe.result.stderr).includes(
+        `deterministic tier: ${probe.file}: ${title} cannot arm ${api[1]} with delay 5`),
+      probe.result.stdout + probe.result.stderr);
+      assert.deepEqual(printedTimerRefusals(probe), []);
+    });
+  }
+}
