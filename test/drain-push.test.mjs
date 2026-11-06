@@ -97,7 +97,7 @@ test('D3: a recorded drain of a clock-held run pushes its starting stream throug
 
 // The network copy must not hold back the next poll on the injected schedule.
 // proves R-RECORD-14
-test('D4: a held drain push does not delay the next poll on the injected clock', async (t) => {
+test('a held drain push does not delay the next poll on the injected clock', async (t) => {
   const controlled = heldSide();
   const w = drainWorld(t, { side: controlled.side });
   const run = keptUp(w);

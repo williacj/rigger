@@ -175,7 +175,7 @@ test('D13: the run verb exits nonzero naming an unrecorded drain-push event at t
 });
 
 // Host reason: OS behaviour.
-// Rigger decision: test/drain-push.test.mjs — D4: a held drain push does not delay the next poll on the injected clock
+// Rigger decision: test/drain-push.test.mjs — a held drain push does not delay the next poll on the injected clock
 // proves R-STATE-17, R-STATE-9
 test('D17: SIGTERM ends the run bin and its push held by a bare origin hook, with no further push.end and whole stream lines', BOUNDS[60_000], async (t) => {
   const directory = temporaryDirectory('rigger-drain-signal-host-');
