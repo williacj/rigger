@@ -120,11 +120,13 @@ function pushedRun({ side, work = true, refuseEnd = false }) {
   const agent = standInAgent({ 10: { engineer: { pr: true }, reviewer: { findings: true } } });
   const written = [];
   const returnLines = [];
+  const requests = [];
   const controller = new AbortController();
   let pushes = 0;
   const push = pushAtReturn({ side: async (given) => { pushes += 1; return side(given); }, now: clock.now, write: (line) => returnLines.push(line) });
   // The sink's documented synchronous refusal contract, confined to the drain's push.end.
   const pushStep = (given) => {
+    requests.push(given.handOver === undefined ? 'return' : 'drain');
     const sink = !refuseEnd || given.handOver === undefined ? given.sink : { ...given.sink, emitter: (context) => ({ emit(event, fields) {
       if (event === 'push.end') throw new Error('refused push.end');
       return given.sink.emitter(context).emit(event, fields);
@@ -135,7 +137,7 @@ function pushedRun({ side, work = true, refuseEnd = false }) {
     target: consumer, clock, push: pushStep, write: (text) => written.push(text), stop: controller.signal,
   }))));
   running.catch(() => {});
-  return { consumer, clock, written, returnLines, running, pushes: () => pushes, stop: () => { controller.abort(); return running; } };
+  return { consumer, clock, written, returnLines, requests, running, pushes: () => pushes, stop: () => { controller.abort(); return running; } };
 }
 
 // Host reason: wiring.
@@ -247,3 +249,74 @@ test('D17: SIGTERM ends the run bin and its push held by a bare origin hook, wit
   assert.ok(events().length > 0);
   for (const line of fs.readFileSync(join(state, 'events.jsonl'), 'utf8').split('\n').filter(Boolean)) JSON.parse(line);
 });
+
+// Host reason: wiring; the real claiming verb must retain the refusal across recording's return.
+// Rigger decision: card #1219 Table D row D13, intersecting the return wait in D8.
+test('D13: a refused drain push.end raises the final exit before or during the return wait', BOUNDS[60_000], async (t) => {
+  await refusedDrainAtReturn(t, 'push.end');
+});
+
+// Host reason: wiring; L0's documented EVENT_REFUSED must retain its distinct failure route.
+// Rigger decision: card #1219 Table D row D13, intersecting the return wait in D8.
+test('D13: a refused drain L0 event raises the final exit before or during the return wait', BOUNDS[60_000], async (t) => {
+  await refusedDrainAtReturn(t, 'survivor.killed');
+});
+
+/** Holds each copy independently, establishing both orders of refusal and normal-return entry. */
+async function refusedDrainAtReturn(t, event) {
+  for (const ordering of ['before return', 'during return wait']) {
+    let releaseDrain;
+    let releaseReturn;
+    let finishing = false;
+    let copies = 0;
+    const pushed = { outcome: 'pushed', commit: 'a'.repeat(40) };
+    // The sink and L0 failure shapes are the same documented contracts as the existing D13 test.
+    const w = pushedRun({ work: false, refuseEnd: event === 'push.end', side: () => {
+      copies += 1;
+      if (finishing) return Promise.resolve(pushed);
+      if (copies > 1) return new Promise((resolve) => { releaseReturn = () => resolve(pushed); });
+      return new Promise((resolve, reject) => {
+        releaseDrain = () => event === 'survivor.killed'
+          ? reject(Object.assign(new Error('survivor.killed went unrecorded: EIO'), { code: EVENT_REFUSED }))
+          : resolve(pushed);
+      });
+    } });
+    t.after(() => {
+      finishing = true;
+      releaseDrain?.();
+      releaseReturn?.();
+      return w.stop();
+    });
+    let ended = false;
+    w.running.then(() => { ended = true; }, () => { ended = true; });
+    await waitFor(() => w.written.some((text) => text.includes('no card was pullable')), 30_000);
+    assert.equal(copies, 1, 'the drain copy is held before stopping');
+    const refusals = () => w.written.filter((text) => text.includes(event) && text.includes('went unrecorded'));
+    if (ordering === 'before return') {
+      releaseDrain();
+      await waitFor(() => refusals().length === 1, 30_000);
+      assert.deepEqual(w.requests, ['drain'], 'the refusal settles before normal-return entry');
+    }
+    const stopping = w.stop();
+    await waitFor(() => w.requests.includes('return'), 30_000);
+    if (ordering === 'during return wait') {
+      assert.equal(copies, 1, 'the normal return queues without overlapping the held drain');
+      assert.deepEqual(refusals(), [], 'the refusal has not settled when the return queues');
+      assert.equal(ended, false, 'the verb waits for the held drain');
+      releaseDrain();
+    }
+    await waitFor(() => releaseReturn !== undefined, 30_000);
+    assert.deepEqual(w.requests, ['drain', 'return']);
+    assert.equal(copies, 2, 'only the return copy follows the drain');
+    assert.equal(refusals().length, 1, 'the refusal reaches the verb exactly once');
+    assert.equal(ended, false, 'the verb waits for its own return copy too');
+    releaseReturn();
+    const answer = await stopping;
+    t.diagnostic(JSON.stringify({ event, ordering, requests: w.requests, copies, answer }));
+    assert.equal(answer.code, 1, `${event}, ${ordering}: every settled drain-event refusal raises the final exit`);
+    assert.equal(answer.text, '', 'the final answer repeats no previously written refusal');
+    assert.equal(w.written.some((text) => text.includes('the push of the event stream')), false, 'a refused event is no failed push');
+    assert.deepEqual(w.returnLines, []);
+    assert.deepEqual(readEvents(join(w.consumer, '.rigger')).filter(({ event }) => event === 'push.end').map(({ outcome }) => outcome), ['pushed'], 'only the successful return outcome is recorded');
+  }
+}
