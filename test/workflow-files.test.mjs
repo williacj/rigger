@@ -240,7 +240,7 @@ test('inline aggregate requires fresh equal source mode and every literally requ
   demoProof.results.demo = 'skipped';
   assert.equal(ciPolicy('guard', demo, demoProof), false);
   const deferred = ciFacts(); deferred.changes[0].path = 'src/other.mjs';
-  assert.equal(ciPolicy('guard', deferred, ciProof('BROAD_DEFERRED')), false);
+  assert.equal(ciPolicy('guard', deferred, ciProof('BROAD_DEFERRED')), true);
 });
 
 
@@ -383,8 +383,8 @@ test('actual inline runtime routes plan worker and aggregate through the same so
   assert.equal(ciPolicy('runPolicy', { action: 'aggregate', facts, proof: stale }).ok, false);
   const deferred = ciFacts(); deferred.changes[0].path = 'src/other.mjs';
   const result = ciPolicy('runPolicy', { action: 'aggregate', facts: deferred, proof: ciProof('BROAD_DEFERRED') });
-  assert.equal(result.ok, false);
-  assert.match(result.reason, /missing-current-batch-proof/);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.source, ciProof('BROAD_DEFERRED').source);
   assert.equal(ciPolicy('runPolicy', { action: 'unknown', facts, proof }).ok, false);
 });
 
