@@ -747,9 +747,9 @@ asset is one per-user LaunchAgent template under `templates/launchd/`, and `D28`
   them under `R-STATE-10`. launchd sends `SIGTERM`, not `SIGKILL`, to the rest of the job's own
   group, at its kill and at its normal exit. A member that ignores `SIGTERM` survives (Q-d3).
 - **`ExitTimeOut`.** The template sets it explicitly, and never leaves it at launchd's default,
-  which is 5 s on the owner's host (Q-d2), and it reports at most 60 s on macOS 27.2. One dispatch's cleanup, with one read that never
+  which is 5 s on the owner's host (Q-d2), and `launchctl print` reports at most 60 s on macOS 27.2. One dispatch's cleanup, with one read that never
   answers, took about 5.5 s as a test's measured duration (Q-e2).
-- **The bound.** Exit cleanup has one fixed budget, whatever `concurrency` or a panel's size. L0 cleans up groups with their census and sweep for `EXIT_CARE_BOUND`. After it, L0 kills each remaining group without a census, records the kill of the group, and keeps its entry, so that the next start sweeps its directories. Each dispatch's end and the sink's end are still written. The function in `src/config/` answers `EXIT_BOUND`, which L0's process adapter exports: `EXIT_CARE_BOUND` and the longest one dispatch's careful cleanup can take. A judgment. launchd's cap is 60 s on macOS 27.2, so the bound stays below it. Exit cleanup makes no push, so the bound holds no network call ("Pushing the stream").
+- **The bound.** Exit cleanup has one fixed budget, whatever `concurrency` or a panel's size. L0 cleans up groups with their census and sweep for `EXIT_CARE_BOUND`. After it, L0 kills each remaining group without a census and records the kill of the group. L1 keeps that group's entry, so that the next start sweeps its directories. L1 still records each dispatch's end, and L0 still ends the sink. The function in `src/config/` answers `EXIT_BOUND`, which L0's process adapter exports: `EXIT_CARE_BOUND` and the longest one dispatch's careful cleanup can take. A judgment. launchd's cap is 60 s on macOS 27.2, so the bound stays below it. Exit cleanup makes no push, so the bound holds no network call ("Pushing the stream").
 - **What L0 answers, and what `doctor` compares.** `doctor` reads a loaded job through a new L0
   module, `src/substrate/launchd.mjs`, which spawns only through the process adapter. It answers
   only the loaded job's fields, because L0 knows neither `concurrency` nor a kind. `doctor`
@@ -1526,12 +1526,13 @@ agent's own git commands in its workspace are outside the queue.
 A process still in the command's group when the direct child exits is terminated by L0, and recorded
 by name and command line where a read before the kill found it; it never changes the exit code. A
 process that leaves its group is outside this containment. L0 never stops a process group to contain
-it. It reads which processes the group holds, kills the group whole, then kills and reads it again
-until no member is left alive, with three exceptions. Where it cannot read the table, it sends the
-kill on every look until a bound passes, then records the kill of the group and why, and settles
-without knowing the group is empty. Where a member is one L0 may not signal, or outlives the kill
-for a second, longer bound, L0 records it by name and command line as a process it could not end,
-and settles. Past exit cleanup's budget, L0 kills the group once and settles, as "Supervising `run`" says. A process the kill ended that no read before it found is recorded as the kill of the
+it. It reads which processes the group holds, kills the group whole, then kills and reads it again until no member is left alive, with three exceptions:
+
+- Where it cannot read the table, it sends the kill on every look until a bound passes, then records the kill of the group and why, and settles without knowing the group is empty.
+- Where a member is one L0 may not signal, or outlives the kill for a second, longer bound, L0 records it by name and command line as a process it could not end, and settles.
+- Past exit cleanup's budget, L0 kills the group once and settles, as "Supervising `run`" says.
+
+A process the kill ended that no read before it found is recorded as the kill of the
 group, as when L0 cannot read the table, wherever a later read finds it. L0 records only what its
 reads of the table show, for a group as for a directory. Before the kill, reads of a group that list
 none of its processes while signal 0 still reaches it show nothing. So does a census read that
@@ -1552,13 +1553,13 @@ directory, `scratch/<topic>/<role>` under the worktree root and outside every wo
 makes fresh before L3 dispatches the role. Its provider adapter keeps there what its CLI writes that
 belongs in no worktree. After L0 kills a dispatch's group, it also kills every process of Rigger's
 own user whose working directory is the dispatch's directory, or its scratch directory where it has
-one, or lies under either. Past exit cleanup's budget, L0 leaves that to the next start ("Supervising `run`"). L0 records each as it records a survivor. Where such a process is one L0
+one, or lies under either. L0 records each as it records a survivor. Where such a process is one L0
 may not signal, or outlives that kill for the longer bound above, L0 records it by name and command
 line as a process it could not end, and waits on it no further. Where L0 cannot read which processes
 work in one of them, it records that directory and why in their place, and waits on them no further.
 L1 hands L0 each of them and records it in the dispatch's entry. A later start does the same for
 each only where the directory at its path is still the one recorded. Where it is not, or L0 cannot
-tell, the start sweeps nothing there and records why. A command that is not a dispatch has no such
+tell, the start sweeps nothing there and records why. Past exit cleanup's budget, L0 leaves this sweep to the next start ("Supervising `run`"). A command that is not a dispatch has no such
 directory, and its group remains its whole containment.
 
 A judge's directory holds two worktrees, each at a detached commit. `main` holds the main line as
