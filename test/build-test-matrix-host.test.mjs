@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { statSync } from 'node:fs';
+import { unlinkSync } from 'node:fs';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { createHash } from 'node:crypto';
@@ -172,6 +173,13 @@ test('native reply observation waits for the complete literal', (t) => {
   assert.equal(replyObserved(), false, 'an empty reply was accepted');
   publish('surv');
   assert.equal(replyObserved(), false, 'a partial reply was accepted');
+  for (const value of ['s', 'su', 'sur', 'survi', 'surviv', 'survive', 'wrong', 'Survived',
+    ' survived', 'survived ', 'survived\n', 'survived\r\n', 'survived!', 'not-survived', 'survived\0', '"survived"']) {
+    // NUL is valid file content but cannot be passed as a process argument.
+    if (value.includes('\0')) writeFileSync(reply, value);
+    else publish(value);
+    assert.equal(replyObserved(), false, 'a nonliteral reply was accepted: ' + JSON.stringify(value));
+  }
   publish('survived');
   assert.equal(replyObserved(), true, 'the complete reply was not accepted');
 });
@@ -224,6 +232,7 @@ function observeReadiness(path, context) {
     return complete;
   }, context).then(() => {
     reads += 1;
+    assert.equal(existsSync(path), true, 'a readiness assertion tried to read an absent file');
     const value = readFileSync(path, 'utf8');
     assert.equal(value, 'ready');
     return value;
@@ -234,37 +243,65 @@ function observeReadiness(path, context) {
 
 // Host reason: OS behaviour; the shell redirect and pipe gate depend on no decision Rigger makes.
 test('native readiness wait holds at the empty file until the writer completes', SETTLES_WITHIN, async (t) => {
-  const run = await heldReadiness(t);
-  const observation = observeReadiness(run.ready, t);
-  await Promise.race([observation.checked, observation.reading]);
-  assert.equal(observation.ended(), false, 'the empty readiness wait ended before release');
-  assert.equal(observation.reads(), 0, 'an assertion read the held readiness file');
-  run.writer.stdin.end('release\n');
-  assert.deepEqual(await run.closed, { status: 0, signal: null });
-  assert.equal(readyComplete(run.ready), true, 'the complete readiness literal was refused');
-  assert.equal(await observation.reading, 'ready');
-  assert.equal(observation.reads(), 1);
+  for (const initial of ['', 'r', 're', 'rea', 'read']) {
+    const run = await heldReadiness(t);
+    writeFileSync(run.ready, initial);
+    assert.equal(readFileSync(run.ready, 'utf8'), initial);
+    const observation = observeReadiness(run.ready, t);
+    await Promise.race([observation.checked, observation.reading]);
+    assert.equal(observation.ended(), false, 'the nonliteral readiness wait ended before release');
+    assert.equal(observation.reads(), 0, 'an assertion read the held readiness file');
+    run.writer.stdin.end('release\n');
+    assert.deepEqual(await run.closed, { status: 0, signal: null });
+    assert.equal(readyComplete(run.ready), true, 'the complete readiness literal was refused');
+    assert.equal(await observation.reading, 'ready');
+    assert.equal(observation.reads(), 1);
+  }
 });
 
-// Host reason: OS behaviour; a held real writer supplies the empty file, with no Rigger decision.
+// Host reason: OS behaviour; held real writers supply nonliteral states, with no Rigger decision.
 test('native readiness wait without the literal ends only at the test signal without reading', SETTLES_WITHIN, async (t) => {
+  const nonliteral = [null, '', 'rea', 'r', 're', 'read', 'wrong', 'Ready', 'READY',
+    ' ready', 'ready ', 'ready\n', 'ready\r\n', 'ready!', 'not-ready', 'ready\0', '"ready"'];
+  for (const content of nonliteral) {
+    const run = await heldReadiness(t);
+    if (content === null) unlinkSync(run.ready);
+    else writeFileSync(run.ready, content);
+    const actual = () => existsSync(run.ready) ? readFileSync(run.ready, 'utf8') : null;
+    assert.equal(actual(), content, 'the nonliteral fixture must be established before observation');
+    assert.equal(alive(run.writer.pid), true, 'the writer must still be held at its gate');
+    const controller = new AbortController();
+    const signal = AbortSignal.any([t.signal, controller.signal]);
+    const observation = observeReadiness(run.ready, { signal });
+    await Promise.race([observation.checked, observation.reading]);
+    assert.equal(signal.aborted, false);
+    assert.equal(observation.ended(), false, 'the wait ended before the test aborted its signal');
+    assert.equal(observation.reads(), 0, 'an assertion read readiness before cancellation');
+    const reason = 'the readiness test cancelled its observation';
+    controller.abort(reason);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(observation.ended(), true, 'the readiness wait ignored the test signal');
+    await assert.rejects(observation.reading, {
+      message: 'the test ended before the condition this wait was on held', cause: reason,
+    });
+    assert.equal(observation.reads(), 0, 'an assertion read readiness after cancellation');
+    assert.equal(actual(), content, 'the writer published without gate release');
+    run.writer.kill('SIGKILL');
+    await run.closed;
+  }
+});
+
+// Host reason: OS behaviour; a live gated writer and complete file depend on no Rigger decision.
+test('native readiness already complete is observed while the writer remains held', SETTLES_WITHIN, async (t) => {
   const run = await heldReadiness(t);
-  const controller = new AbortController();
-  const signal = AbortSignal.any([t.signal, controller.signal]);
-  const observation = observeReadiness(run.ready, { signal });
-  await Promise.race([observation.checked, observation.reading]);
-  assert.equal(signal.aborted, false);
-  assert.equal(observation.ended(), false, 'the wait ended before the test aborted its signal');
-  assert.equal(observation.reads(), 0, 'an assertion read readiness before cancellation');
-  const reason = 'the readiness test cancelled its observation';
-  controller.abort(reason);
-  await new Promise((resolve) => setImmediate(resolve));
-  assert.equal(observation.ended(), true, 'the readiness wait ignored the test signal');
-  await assert.rejects(observation.reading, {
-    message: 'the test ended before the condition this wait was on held', cause: reason,
-  });
-  assert.equal(observation.reads(), 0, 'an assertion read readiness after cancellation');
-  assert.equal(statSync(run.ready).size, 0, 'the writer published without gate release');
+  writeFileSync(run.ready, 'ready');
+  assert.equal(alive(run.writer.pid), true);
+  assert.equal(readFileSync(run.ready, 'utf8'), 'ready');
+  assert.equal(readyComplete(run.ready), true, 'the already complete readiness literal was refused');
+  const observation = observeReadiness(run.ready, t);
+  assert.equal(await observation.reading, 'ready');
+  assert.equal(observation.reads(), 1);
+  assert.equal(alive(run.writer.pid), true, 'observation must not require writer exit');
 });
 
 /** Changing bytes at the exit boundary distinguishes an early cache from a post-exit read. */
