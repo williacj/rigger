@@ -11,6 +11,7 @@ import { dispatch } from '../src/execution/run.mjs';
 import { openSink } from '../src/observation/sink.mjs';
 import { bareCloneInto, gitIn, repositoryAt, worktreeAt } from './git-repository.mjs';
 import { pastRefusing, put } from './claude-live.mjs';
+import { stubGh } from './stub-gh.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 export const MAKER_SESSION = 600_000;
@@ -79,6 +80,10 @@ export async function liveMaker(t, provider) {
   const id = 'd-maker-live';
   const home = join(base, 'claude-home');
   mkdirSync(home);
+  // Claude Code 2.1.319 runs `gh pr view --json url` itself after a successful push, and reads a
+  // non-zero exit as no pull request. The owner's run met that call with the suite's refusal, which
+  // exits 1 and left the session at exit 0, so this stand-in answers as that run observed (#276).
+  const forge = provider === 'claude' ? stubGh({ status: 1, stderr: 'no pull requests found\n' }) : undefined;
   const inherited = process.env.PATH;
   process.env.PATH = pastRefusing();
   t.after(() => { process.env.PATH = inherited; });
@@ -87,7 +92,7 @@ export async function liveMaker(t, provider) {
     : `Run these three Bash commands, one per tool call, stopping on any failure: git add delivery.txt; git commit -m '${COMMIT_MESSAGE}'; git push origin rigger-42. Do not combine commands, change settings or run any other tool.\n`;
   const handed = await roleDispatch({ answer: { role: 'maker', provider, agent: '.claude/agents/maker.md', tier: 'standard', instruction: prompt, evidence: '', timeout: MAKER_SESSION },
     cwd: directory, directory, repository, scratch: join(base, 'scratch', 'rigger-42'), maker: true, reach: [],
-    env: { ...process.env, PATH: pastRefusing(), CLAUDE_CONFIG_DIR: home }, sink, id, card: 42 });
+    env: { ...process.env, PATH: forge?.first(pastRefusing()) ?? pastRefusing(), CLAUDE_CONFIG_DIR: home }, sink, id, card: 42 });
   const origin = join(handed.env.TMPDIR ?? handed.scratch, 'origin.git');
   bareCloneInto(repository, origin);
   gitIn(repository, 'remote', 'add', 'origin', origin);
@@ -113,7 +118,7 @@ export async function liveMaker(t, provider) {
 
   t.diagnostic(`maker ${provider} exit ${result.exit}; stdout:\n${result.stdout.toString('utf8')}\nstderr:\n${result.stderr.toString('utf8')}`);
   t.diagnostic(`maker ${provider} retained originals: ${artifacts}`);
-  return { base, directory, repository, common, origin, configuration, main, handed, result, artifacts };
+  return { base, directory, repository, common, origin, configuration, main, handed, result, artifacts, forge };
 }
 
 /** Independent observations of the commit, bare origin and local tracking ref. */
