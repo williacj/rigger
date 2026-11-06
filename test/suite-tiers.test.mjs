@@ -1686,7 +1686,7 @@ for (const [position, schedule] of refusalPositions) {
       const output = probe.result.stdout + probe.result.stderr;
       for (const mode of refusalModes) {
         assert.equal(events.filter(event => event === `attempt:${mode}`).length, 1, JSON.stringify(events));
-        if (position !== 'exit') assert.equal(events.filter(event => event === `returned:${mode}`).length, 1, JSON.stringify(events));
+        assert.equal(events.filter(event => event === `returned:${mode}`).length, 1, JSON.stringify(events));
       }
       if (['after-root', 'after-root-promise', 'after-root-explicit-exit', 'before-exit', 'exit'].includes(position)) {
         assert.ok(events.indexOf('root-after') < events.indexOf('position'), JSON.stringify(events));

@@ -81,3 +81,8 @@ timer still fails that assertion. Guarded mutations arm the real API or execute
 the callback before the expected refusal, so a useful diagnostic message cannot
 hide an earlier native effect. The PR holds the complete matrix, test-first
 failures and final-head receipts.
+
+The return ledger applies to the exit-event phase as well as every other phase.
+Every error-discard path must actually return normally before a cell can claim
+that a successful source completion still fails its worker. Retained Node 26
+exit fixtures established that premise before the assertion was strengthened.
