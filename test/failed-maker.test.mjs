@@ -188,7 +188,7 @@ function world(t, { cards = [12], clock = manualClock(), afterMaker = () => {}, 
 const makerReady = (here) => positive(() => here.makerStarts().length > 0 && [...here.processes.children.values()].some((child) => child.cwd.includes('workspaces') && child.exitCode === null && child.signalCode === null));
 
 // F4: a continuing maker already has its release exclusion and must not enter fresh-work classification.
-// proves R-WORK-34, R-LOOP-19
+// proves R-WORK-43, R-LOOP-19
 test('F4 continuing: failed fresh and continuing makers take distinct forge-read paths', async (t) => {
   for (const kind of ['fresh', 'continuing']) {
     await t.test(kind, async (t) => {
@@ -217,7 +217,7 @@ test('F4 continuing: failed fresh and continuing makers take distinct forge-read
       }
       here.finish(12, 7);
       const [result] = await pending;
-      assert.deepEqual(reads, kind === 'continuing' ? [] : ['readBranches', 'readPullRequests'], 'R-WORK-34: only a fresh failed maker reads forge work');
+      assert.deepEqual(reads, kind === 'continuing' ? [] : ['readBranches', 'readPullRequests'], 'R-WORK-43: only a fresh failed maker reads forge work');
       assert.equal(result.settled.status, 'fulfilled');
       assert.equal(result.settled.value?.action, kind === 'continuing' ? undefined : 'set-aside');
       assert.equal(result.action, kind === 'continuing' ? 'continue' : undefined);
@@ -228,7 +228,7 @@ test('F4 continuing: failed fresh and continuing makers take distinct forge-read
 });
 
 // F4: rejected continuing outcomes retain the merge-base no-work-read boundary.
-// proves R-WORK-34
+// proves R-WORK-43
 test('F4 continuing outcomes: refused nonzero results and never-started makers read no forge work', async (t) => {
   // L1's completed refusals carry result; NOT_STARTED carries no completed command result.
   for (const code of ['EVENT_REFUSED', 'RECORD_REFUSED', 'NOT_STARTED']) {
