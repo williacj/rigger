@@ -7,6 +7,7 @@ import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+import { packResult } from '../scripts/lib/pack-result.mjs';
 
 /** Runs a shell command in `cwd` and hands back what it printed, refusing a non-zero exit by throwing. */
 function ran(command, cwd) {
@@ -32,7 +33,7 @@ function ran(command, cwd) {
 export function installFromTarball(root, into) {
   const packs = join(into, 'packs');
   mkdirSync(packs, { recursive: true });
-  const [{ filename }] = JSON.parse(ran(`npm pack --json --loglevel=error --logs-dir "${join(into, 'npm-logs')}" --cache "${join(into, 'npm-cache')}" --pack-destination "${packs}"`, root));
+  const { filename } = packResult(ran(`npm pack --json --loglevel=error --logs-dir "${join(into, 'npm-logs')}" --cache "${join(into, 'npm-cache')}" --pack-destination "${packs}"`, root));
 
   const consumer = join(into, 'consumer');
   mkdirSync(consumer, { recursive: true });

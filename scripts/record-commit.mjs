@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+import { packResult } from './lib/pack-result.mjs';
 
 /** The package this script ships in: the directory above `scripts/`. */
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -42,7 +43,7 @@ function commitToRecord() {
   if (!head) return null;
   const listed = answer('npm', ['pack', '--dry-run', '--json', '--ignore-scripts', '--loglevel=error']);
   if (listed === null) return null;
-  const packed = JSON.parse(listed)[0].files.map((file) => file.path).filter((path) => path !== RECORD);
+  const packed = packResult(listed).files.map((file) => file.path).filter((path) => path !== RECORD);
   const held = answer('git', ['ls-tree', '-r', '-z', '--name-only', head]);
   if (held === null) return null;
   const atHead = new Set(held.split('\0').filter(Boolean));
