@@ -1187,14 +1187,44 @@ function timerProbe(t, source, files = {}, { tier = 'bounded', record = false } 
     mkdirSync(resolve(destination, '..'), { recursive: true });
     writeFileSync(destination, content);
   }
-  writeFileSync(join(directory, file), "// ABOUTME: Exercises the suite's timer contract in its own worker.\nimport { test } from 'node:test';\nconsole.log('timer-worker ' + process.pid);\n" + source + '\n');
+  const nativeEffects = join(directory, 'native-timer-effects.jsonl');
+  const positionEvents = join(directory, 'timer-position-events.jsonl');
+  writeFileSync(nativeEffects, '');
+  writeFileSync(positionEvents, '');
+  writeFileSync(join(directory, 'native-timer-audit.mjs'), `// ABOUTME: Observes native Timeout creation and dispatch within an explicitly scoped API attempt.
+import { AsyncLocalStorage, createHook } from 'node:async_hooks';
+import { appendFileSync } from 'node:fs';
+const scope = new AsyncLocalStorage();
+const timers = new Set();
+const record = event => appendFileSync(${JSON.stringify(nativeEffects)}, JSON.stringify(event) + '\\n');
+createHook({
+  init(id, type) {
+    if (type === 'Timeout' && scope.getStore() === true) {
+      timers.add(id);
+      record({ event: 'native-timer-created', id });
+    }
+  },
+  before(id) {
+    if (timers.has(id)) record({ event: 'native-timer-callback', id });
+  },
+}).enable();
+export const observeArm = action => scope.run(true, action);
+export const timerCallback = () => record({ event: 'callback-effect' });
+export const note = event => appendFileSync(${JSON.stringify(positionEvents)}, JSON.stringify(event) + '\\n');
+`);
+  writeFileSync(join(directory, file), "// ABOUTME: Exercises the suite's timer contract in its own worker.\nimport { test } from 'node:test';\nimport { observeArm, timerCallback, note } from '../native-timer-audit.mjs';\nconsole.log('timer-worker ' + process.pid);\n" + source + '\n');
   const result = spawnSync('sh', ['test/suite.sh', ...(tier === 'host' ? ['--host'] : []), file], {
     cwd: directory, env: environment, encoding: 'utf8', timeout: 60_000,
   });
-  return { directory, file, recordDirectory, result };
+  return { directory, file, recordDirectory, nativeEffects, positionEvents, result };
 }
 
-function assertTimerRefused({ file, result }, title, api) {
+function assertNoNativeTimers({ nativeEffects }) {
+  assert.equal(readFileSync(nativeEffects, 'utf8'), '', 'a refused API created a native timer or dispatched its callback');
+}
+
+function assertTimerRefused(probe, title, api) {
+  const { file, result } = probe;
   const output = result.stdout + result.stderr;
   assert.equal(result.error, undefined, output);
   assert.notEqual(result.status, 0, output);
@@ -1203,13 +1233,14 @@ function assertTimerRefused({ file, result }, title, api) {
   if (title !== null) {
     assert.ok(output.includes(`✖ ${title} (`) || output.includes(`not ok 1 - ${title}`), output);
   }
+  assertNoNativeTimers(probe);
   return output;
 }
 
 // A positive timer that is cleared immediately still breaks the deterministic bound.
 test('timer bound T1 refuses a positive global setTimeout', (t) => {
   const title = 'arms a positive global timeout';
-  const probe = timerProbe(t, `test('${title}', () => { clearTimeout(setTimeout(() => {}, 5)); });`);
+  const probe = timerProbe(t, `test('${title}', () => observeArm(() => { clearTimeout(setTimeout(timerCallback, 5)); }));`);
   assertTimerRefused(probe, title, 'setTimeout');
 });
 
@@ -1220,10 +1251,10 @@ test('timer bound T9a refuses a timer whose error the source catches', (t) => {
 import assert from 'node:assert/strict';
 import { arm } from '../src/clocked.mjs';
 test('${title}', () => {
-  assert.equal(arm(), 'returned normally');
+  assert.equal(observeArm(arm), 'returned normally');
   console.log('source returned normally');
 });`, {
-    'src/clocked.mjs': "// ABOUTME: Catches a real timer's error and returns normally.\nexport function arm() { try { clearTimeout(setTimeout(() => {}, 5)); } catch {} return 'returned normally'; }\n",
+    'src/clocked.mjs': "// ABOUTME: Catches a real timer's error and returns normally.\nimport { timerCallback } from '../native-timer-audit.mjs';\nexport function arm() { try { clearTimeout(setTimeout(timerCallback, 5)); } catch {} return 'returned normally'; }\n",
   });
   const output = probe.result.stdout + probe.result.stderr;
   assert.match(output, /source returned normally/);
@@ -1232,9 +1263,9 @@ test('${title}', () => {
 
 // Each API must reach the bound even when it has its own built-in module binding.
 for (const [row, api, imports, arm] of [
-  ['T2', 'setInterval', '', 'clearInterval(setInterval(() => {}, 5));'],
-  ['T3', 'node:timers.setTimeout', "import { setTimeout as arm } from 'node:timers';", 'clearTimeout(arm(() => {}, 5));'],
-  ['T4', 'node:timers.setInterval', "import { setInterval as arm } from 'node:timers';", 'clearInterval(arm(() => {}, 5));'],
+  ['T2', 'setInterval', '', 'clearInterval(setInterval(timerCallback, 5));'],
+  ['T3', 'node:timers.setTimeout', "import { setTimeout as arm } from 'node:timers';", 'clearTimeout(arm(timerCallback, 5));'],
+  ['T4', 'node:timers.setInterval', "import { setInterval as arm } from 'node:timers';", 'clearInterval(arm(timerCallback, 5));'],
   ['T5', 'node:timers/promises.setTimeout', "import { setTimeout as arm } from 'node:timers/promises';", 'await arm(5);'],
   ['T5a', 'scheduler.wait', "import { scheduler } from 'node:timers/promises';", 'await scheduler.wait(5);'],
   ['T6', 'node:timers/promises.setInterval', "import { setInterval as arm } from 'node:timers/promises';", 'for await (const value of arm(5)) { break; }'],
@@ -1243,21 +1274,21 @@ for (const [row, api, imports, arm] of [
 ]) {
   test(`timer bound ${row} refuses ${api}`, (t) => {
     const title = `arms ${api}`;
-    const probe = timerProbe(t, `${imports}\ntest(${JSON.stringify(title)}, async (t) => { ${arm} });`);
+    const probe = timerProbe(t, `${imports}\ntest(${JSON.stringify(title)}, async (t) => observeArm(async () => { ${arm} }));`);
     assertTimerRefused(probe, title, api);
   });
 }
 
 test('timer bound T8 refuses an arm while its file loads', (t) => {
-  const probe = timerProbe(t, "setTimeout(() => {}, 5);\ntest('load completed', () => console.log('body reached'));\n");
+  const probe = timerProbe(t, "observeArm(() => setTimeout(timerCallback, 5));\ntest('load completed', () => console.log('body reached'));\n");
   const output = assertTimerRefused(probe, null, 'setTimeout');
   assert.doesNotMatch(output, /body reached/);
 });
 
 test('timer bound T9 refuses an arm from a src module', (t) => {
   const title = 'calls the src timer';
-  const probe = timerProbe(t, `import { arm } from '../src/clocked.mjs';\ntest('${title}', () => arm());`, {
-    'src/clocked.mjs': '// ABOUTME: Arms a real callback timer for the deterministic-worker probe.\nexport function arm() { clearTimeout(setTimeout(() => {}, 5)); }\n',
+  const probe = timerProbe(t, `import { arm } from '../src/clocked.mjs';\ntest('${title}', () => observeArm(arm));`, {
+    'src/clocked.mjs': "// ABOUTME: Arms a real callback timer for the deterministic-worker probe.\nimport { timerCallback } from '../native-timer-audit.mjs';\nexport function arm() { clearTimeout(setTimeout(timerCallback, 5)); }\n",
   });
   assertTimerRefused(probe, title, 'setTimeout');
 });
@@ -1477,7 +1508,7 @@ test('timer bound keeps a caught refusal with its concurrent test', (t) => {
     const finish = new Promise(resolve => { release = resolve; });
     await Promise.all([
       t.test('violating child', async () => {
-        try { clearTimeout(setTimeout(() => {}, 5)); } catch {}
+        try { observeArm(() => clearTimeout(setTimeout(timerCallback, 5))); } catch {}
         armed();
         await finish;
       }),
@@ -1488,8 +1519,245 @@ test('timer bound keeps a caught refusal with its concurrent test', (t) => {
     ]);
   });`);
   const output = probe.result.stdout + probe.result.stderr;
+  assertNoNativeTimers(probe);
   assert.equal(probe.result.error, undefined, output);
   assert.notEqual(probe.result.status, 0, output);
   assert.match(output, /^\s+✖ violating child \(/m);
   assert.match(output, /^\s+✔ clean child \(/m);
 });
+
+test('timer bound refuses a caught source arm after root teardown', (t) => {
+  const title = 'starts the late source call';
+  const probe = timerProbe(t, `import { after } from 'node:test';
+    import { arm } from '../src/clocked.mjs';
+    after(() => console.log('fixture root teardown completed'));
+    test(${JSON.stringify(title)}, () => {
+      setImmediate(() => {
+        observeArm(arm);
+        console.log('late source returned normally');
+      });
+    });`, {
+    'src/clocked.mjs': "// ABOUTME: Swallows a timer refusal and returns to a delayed caller.\nimport { timerCallback } from '../native-timer-audit.mjs';\nexport function arm() { try { clearTimeout(setTimeout(timerCallback, 5)); } catch {} }\n",
+  });
+  assertNoNativeTimers(probe);
+  const { stdout, stderr, status, error } = probe.result;
+  assert.equal(error, undefined, stdout + stderr);
+  assert.match(stdout, /fixture root teardown completed[\s\S]*late source returned normally/);
+  assert.notEqual(status, 0, stdout + stderr);
+  assert.ok((stdout + stderr).includes(`deterministic tier: ${probe.file}: ${title} cannot arm setTimeout`), stdout + stderr);
+});
+
+test('timer bound retains failure through an exit callback resetting status', (t) => {
+  const probe = timerProbe(t, `process.once('exit', () => {
+    try { observeArm(() => clearTimeout(setTimeout(timerCallback, 5))); } catch {}
+    process.exitCode = 0;
+    note('exit callback returned normally');
+  });
+  test('registers the exit callback', () => {});`);
+  assertNoNativeTimers(probe);
+  assert.match(readFileSync(probe.positionEvents, 'utf8'), /exit callback returned normally/);
+  const output = probe.result.stdout + probe.result.stderr;
+  assert.equal(probe.result.error, undefined, output);
+  assert.notEqual(probe.result.status, 0, output);
+  assert.ok(output.includes(`deterministic tier: ${probe.file}: <module> cannot arm setTimeout`), output);
+});
+
+test('timer bound retains failure when an exit throw is globally captured', (t) => {
+  const probe = timerProbe(t, `process.setUncaughtExceptionCaptureCallback(() => {
+    note('globally handled'); process.exitCode = 0;
+  });
+  process.once('exit', () => observeArm(() => clearTimeout(setTimeout(timerCallback, 5))));
+  test('registers the exit throw', () => {});`);
+  assertNoNativeTimers(probe);
+  assert.match(readFileSync(probe.positionEvents, 'utf8'), /globally handled/);
+  const output = probe.result.stdout + probe.result.stderr;
+  assert.equal(probe.result.error, undefined, output);
+  assert.notEqual(probe.result.status, 0, output);
+  assert.ok(output.includes(`deterministic tier: ${probe.file}: <module> cannot arm setTimeout`), output);
+});
+
+const refusalApis = [
+  ['T1', 'setTimeout', '', 'setTimeout(callback, 5)', 'timeout'],
+  ['T2', 'setInterval', '', 'setInterval(callback, 5)', 'interval'],
+  ['T3', 'node:timers.setTimeout', "import { setTimeout as timer } from 'node:timers';", 'timer(callback, 5)', 'timeout'],
+  ['T4', 'node:timers.setInterval', "import { setInterval as timer } from 'node:timers';", 'timer(callback, 5)', 'interval'],
+  ['T5', 'node:timers/promises.setTimeout', "import { setTimeout as timer } from 'node:timers/promises';", 'timer(5)', 'promise'],
+  ['T5a', 'scheduler.wait', "import { scheduler } from 'node:timers/promises';", 'scheduler.wait(5)', 'promise'],
+  ['T6', 'node:timers/promises.setInterval', "import { setInterval as timer } from 'node:timers/promises';", 'timer(5)', 'iterator'],
+  ['T7', 'AbortSignal.timeout', '', 'AbortSignal.timeout(5)', 'signal'],
+  ['T14a', 'node:timers/promises.setTimeout', "import { setTimeout as timer } from 'node:timers/promises';\nimport { mock } from 'node:test';\nmock.timers.enable({ apis: ['setTimeout'] });", 'timer(5)', 'promise'],
+];
+
+const refusalModes = ['catch', 'finally', 'finally-break', 'finally-continue',
+  'promise-catch', 'promise-then', 'all-settled', 'any', 'generator-return'];
+
+function refusalSource([, , imports, expression, kind]) {
+  const finish = kind === 'timeout' ? 'clearTimeout(armed);'
+    : kind === 'interval' ? 'clearInterval(armed);'
+    : kind === 'iterator' ? 'return armed.next().finally(() => armed.return());'
+    : 'return armed;';
+  return `// ABOUTME: Attempts the selected real timer and swallows its error through ordinary JavaScript completion paths.
+${imports}
+import { observeArm, timerCallback, note } from '../native-timer-audit.mjs';
+export const rawArm = (callback = timerCallback) => ${expression};
+export function attempt(mode) {
+  note('attempt:' + mode);
+  return observeArm(() => { const armed = rawArm(); ${finish} });
+}
+export async function silence(mode) {
+  if (mode === 'finally') {
+    try { await attempt(mode); } finally { return 'returned normally'; }
+  }
+  if (mode === 'catch') {
+    try { await attempt(mode); } catch {}
+  } else if (mode === 'finally-break') {
+    for (;;) { try { await attempt(mode); } finally { break; } }
+  } else if (mode === 'finally-continue') {
+    for (let index = 0; index < 1; index++) { try { await attempt(mode); } finally { continue; } }
+  } else if (mode === 'generator-return') {
+    async function* values() { try { await attempt(mode); } finally { yield 'suspended'; } }
+    const iterator = values(); await iterator.next(); await iterator.return();
+  } else {
+    const pending = new Promise(resolve => resolve(attempt(mode)));
+    if (mode === 'promise-catch') await pending.catch(() => {});
+    else if (mode === 'all-settled') await Promise.allSettled([pending]);
+    else if (mode === 'any') await Promise.any([pending, Promise.resolve('fallback')]);
+    else await pending.then(undefined, () => {});
+  }
+  return 'returned normally';
+}
+`;
+}
+
+const refusalPositions = [
+  ['module', "void run(); test(title, () => {});"],
+  ['module-await', "await run(); test(title, () => {});"],
+  ['suite-declaration', "describe('declaring suite', () => { void run(); test(title, () => {}); });"],
+  ['before', "before(run); test(title, () => {});"],
+  ['before-each', "beforeEach(run); test(title, () => {});"],
+  ['body', 'test(title, run);'],
+  ['nested-body', "test(title, async t => { await t.test('nested attempt', run); });"],
+  ['concurrent-body', `test(title, { concurrency: true }, async t => {
+    let release; const gate = new Promise(resolve => { release = resolve; });
+    await Promise.all([t.test('violating child', async () => { await run(); release(); }),
+      t.test('clean child', async () => { await gate; note('clean-child-returned'); })]);
+  });`],
+  ['context-before', "test(title, async t => { t.before(run); await t.test('child', () => {}); });"],
+  ['context-before-each', "test(title, async t => { t.beforeEach(run); await t.test('child', () => {}); });"],
+  ['context-after-each', "test(title, async t => { t.afterEach(run); await t.test('child', () => {}); });"],
+  ['context-after', 'test(title, t => { t.after(run); });'],
+  ['after-each', 'afterEach(run); test(title, () => {});'],
+  ['after', 'after(run); test(title, () => {});'],
+  ['during-other-test', `let release, continuation; const gate = new Promise(resolve => { release = resolve; });
+    test(title, t => { t.after(() => note('origin-after')); continuation = gate.then(run); });
+    test('other running test', async () => { note('other-running'); release(); await continuation; });`],
+  ['next-tick', 'test(title, () => { process.nextTick(run); });'],
+  ['microtask', 'test(title, () => { queueMicrotask(run); });'],
+  ['after-root', 'test(title, () => { setImmediate(run); });'],
+  ['after-root-promise', 'test(title, () => { setImmediate(() => Promise.resolve().then(run)); });'],
+  ['after-root-explicit-exit', 'test(title, () => { setImmediate(async () => { await run(); process.exit(0); }); });'],
+  ['before-exit', "process.once('beforeExit', run); test(title, () => {});"],
+  ['exit', "process.once('exit', run); test(title, () => {});"],
+];
+
+// Each cell checks the completion paths independently through its attempt/return ledger.
+for (const [position, schedule] of refusalPositions) {
+  for (const api of refusalApis) {
+    test(`timer refusal matrix ${position} ${api[0]}`, (t) => {
+      const title = `origin ${position} ${api[0]}`;
+      const source = `import assert from 'node:assert/strict';
+        import { before, beforeEach, afterEach, after, describe } from 'node:test';
+        import { silence } from '../src/clocked.mjs';
+        const title = ${JSON.stringify(title)};
+        const modes = ${JSON.stringify(refusalModes)};
+        after(() => note('root-after'));
+        const run = async () => {
+          note('position');
+          await Promise.all(modes.map(async mode => {
+            assert.equal(await silence(mode), 'returned normally');
+            process.exitCode = 0;
+            note('returned:' + mode);
+          }));
+        };
+        ${schedule}`;
+      const probe = timerProbe(t, source, { 'src/clocked.mjs': refusalSource(api) });
+      assertNoNativeTimers(probe);
+      const events = readFileSync(probe.positionEvents, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      const output = probe.result.stdout + probe.result.stderr;
+      for (const mode of refusalModes) {
+        assert.equal(events.filter(event => event === `attempt:${mode}`).length, 1, JSON.stringify(events));
+        if (position !== 'exit') assert.equal(events.filter(event => event === `returned:${mode}`).length, 1, JSON.stringify(events));
+      }
+      if (['after-root', 'after-root-promise', 'after-root-explicit-exit', 'before-exit', 'exit'].includes(position)) {
+        assert.ok(events.indexOf('root-after') < events.indexOf('position'), JSON.stringify(events));
+      }
+      if (position === 'during-other-test') {
+        assert.ok(events.indexOf('origin-after') < events.indexOf('other-running'), JSON.stringify(events));
+        assert.ok(events.indexOf('other-running') < events.indexOf('position'), JSON.stringify(events));
+      }
+      assert.equal(probe.result.error, undefined, output);
+      assert.notEqual(probe.result.status, 0, output);
+      assert.ok(output.includes(`deterministic tier: ${probe.file}:`), output);
+      assert.ok(output.includes(`cannot arm ${api[1]} with delay 5`), output);
+      if (['body', 'after-root', 'after-root-promise', 'after-root-explicit-exit', 'during-other-test'].includes(position)) {
+        assert.ok(output.includes(`: ${title} cannot arm ${api[1]}`), output);
+      }
+    });
+  }
+}
+
+for (const handling of ['uncaught-listener', 'uncaught-capture', 'domain', 'unhandled-rejection']) {
+  for (const api of refusalApis) {
+    test(`timer refusal global ${handling} ${api[0]}`, (t) => {
+      const setup = handling === 'uncaught-capture'
+        ? 'process.setUncaughtExceptionCaptureCallback(handled);'
+        : handling === 'domain' ? "const { create } = await import('node:domain'); const domain = create(); domain.on('error', handled);"
+          : `process.on('${handling === 'unhandled-rejection' ? 'unhandledRejection' : 'uncaughtException'}', handled);`;
+      const dispatch = handling === 'unhandled-rejection'
+        ? "void Promise.resolve().then(() => attempt('global'));"
+        : "const pending = attempt('global'); if (pending?.then) pending.catch(error => setImmediate(() => { throw error; }));";
+      const probe = timerProbe(t, `import { after } from 'node:test';
+        import { attempt } from '../src/clocked.mjs';
+        const handled = () => { note('handled'); process.exitCode = 0; };
+        ${setup}
+        after(() => note('root-after'));
+        test('starts the globally handled source call', () => {
+          ${handling === 'domain' ? 'domain.run(() => {' : ''}
+          setImmediate(() => { note('position'); ${dispatch} });
+          ${handling === 'domain' ? '});' : ''}
+        });`, { 'src/clocked.mjs': refusalSource(api) });
+      assertNoNativeTimers(probe);
+      const events = readFileSync(probe.positionEvents, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      assert.ok(events.indexOf('root-after') < events.indexOf('position'), JSON.stringify(events));
+      assert.equal(events.filter(event => event === 'attempt:global').length, 1, JSON.stringify(events));
+      assert.equal(events.filter(event => event === 'handled').length, 1, JSON.stringify(events));
+      const output = probe.result.stdout + probe.result.stderr;
+      assert.equal(probe.result.error, undefined, output);
+      assert.notEqual(probe.result.status, 0, output);
+      assert.ok(output.includes(`deterministic tier: ${probe.file}: starts the globally handled source call cannot arm ${api[1]}`), output);
+    });
+  }
+}
+
+// The observer must see real native resources and dispatch for every refused API binding.
+for (const api of refusalApis) {
+  test(`timer native audit calibration ${api[0]}`, (t) => {
+    const kind = api[4];
+    const action = kind === 'timeout' || kind === 'interval'
+      ? `await new Promise(resolve => { const handle = rawArm(() => { timerCallback(); ${kind === 'interval' ? 'clearInterval(handle);' : ''} resolve(); }); });`
+      : kind === 'iterator' ? 'for await (const value of rawArm()) break;'
+      : kind === 'signal' ? `await new Promise(resolve => { const signal = rawArm(); signal.addEventListener('abort', resolve);
+          const keepAlive = () => { if (!signal.aborted) setImmediate(keepAlive); }; keepAlive(); });`
+      : 'await rawArm();';
+    const probe = timerProbe(t, `import { rawArm } from '../src/clocked.mjs';
+      test('native calibration', async () => observeArm(async () => { ${action} }));`,
+    { 'src/clocked.mjs': refusalSource(api) }, { tier: 'converting' });
+    assertTimerPassed(probe, 'native calibration');
+    const events = readFileSync(probe.nativeEffects, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(events.filter(event => event.event === 'native-timer-created').length, 1, JSON.stringify(events));
+    assert.equal(events.filter(event => event.event === 'native-timer-callback').length, 1, JSON.stringify(events));
+    if (kind === 'timeout' || kind === 'interval') {
+      assert.equal(events.filter(event => event.event === 'callback-effect').length, 1, JSON.stringify(events));
+    }
+  });
+}

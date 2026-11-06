@@ -55,3 +55,29 @@ Measured with `npm run test:host -- test/suite-tiers.test.mjs` at that same cut
 commit on 2026-11-06: all 123 existing tests passed. `uptime` reported loads of
 15.70 at start and 28.95 at end. Head verification, retained failure evidence,
 fresh-clone counts, mutation receipts and CI evidence belong to the PR.
+
+The round-two judges found two instances of item 1's refusal class: a caught
+source call after root teardown could leave a successful worker, and a refusal
+assertion could miss a native timer armed before the expected exception. The
+regressions enumerate module evaluation, suite declaration, hooks, test bodies,
+concurrent and nested work, delayed continuations, and process termination.
+They exercise ordinary completion overrides, promise rejection handlers and
+Node's global exception and rejection handlers. Their phase and attempt ledger
+establishes which work actually ran, independently of the refusal diagnostic.
+
+A refusal now latches the worker's failure and writes its diagnostic before it
+throws. Node test hooks retain test-specific failures; asynchronous callback
+completion and process event/exception delivery retain the worker verdict after
+those hooks finish, including a handler that resets the exit status. The fatal
+exception delivery wrapper covers Node's capture callback and domain route as
+well as its uncaught-exception event. Record-only conversion workers install
+none of those verdict wrappers.
+
+The refusal fixtures scope a public async-resource observer to each API attempt.
+They require no native Timeout creation, no native timer callback dispatch and
+no user callback effect. Separate conversion-worker controls establish that the
+observer sees each API's real native resource and dispatch. A cleared native
+timer still fails that assertion. Guarded mutations arm the real API or execute
+the callback before the expected refusal, so a useful diagnostic message cannot
+hide an earlier native effect. The PR holds the complete matrix, test-first
+failures and final-head receipts.

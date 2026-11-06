@@ -97,11 +97,29 @@ if (worker && process.env.RIGGER_SUITE_MODE === 'host' && !awaitingFiles.has(fil
 
 function watchTimers(recordFile) {
   const { createHook, executionAsyncResource } = require('node:async_hooks');
-  const { appendFileSync } = require('node:fs');
+  const { appendFileSync, writeSync } = require('node:fs');
   const owners = new WeakMap();
   const tests = new WeakSet();
   const refusals = new Map();
+  let refused = false;
+  const retainFailure = () => { if (refused) process.exitCode = 1; };
   if (!recordFile) {
+    // A caught refusal must outlive test teardown and handlers that reset exitCode.
+    function deliver(callback, receiver, args) {
+      try { return Reflect.apply(callback, receiver, args); }
+      finally { retainFailure(); }
+    }
+    const emit = process.emit;
+    process.emit = function timerVerdict(event) {
+      'use strict';
+      return deliver(emit, this, arguments);
+    };
+    // Node delivers capture callbacks, domains and uncaughtException through this hook.
+    const fatal = process._fatalException;
+    process._fatalException = function timerException(error, fromPromise) {
+      'use strict';
+      return deliver(fatal, this, arguments);
+    };
     const test = require('node:test');
     test.afterEach((context) => {
       const refusal = refusals.get(context);
@@ -120,11 +138,15 @@ function watchTimers(recordFile) {
     while (test?.parent?.parent) test = test.parent;
     return test;
   }
-  createHook({ init(_id, type, _trigger, resource) {
-    if (type === 'Test') tests.add(resource);
-    const test = owner();
-    if (test) owners.set(resource, test);
-  } }).enable();
+  createHook({
+    init(_id, type, _trigger, resource) {
+      if (type === 'Test') tests.add(resource);
+      const test = owner();
+      if (test) owners.set(resource, test);
+    },
+    // Exit-event promise continuations can run after process.emit has returned.
+    after: recordFile ? undefined : retainFailure,
+  }).enable();
   function wrapTimer(object, name, api, delayIndex, iterator = false) {
     const original = object[name];
     function boundedTimer(...args) {
@@ -141,6 +163,9 @@ function watchTimers(recordFile) {
         } else {
           const refusal = new Error(`deterministic tier: ${file}: ${test ?? '<module>'} cannot arm ${api} with delay ${delay}`);
           refusals.set(running?.getCtx() ?? null, refusal);
+          refused = true;
+          process.exitCode = 1;
+          writeSync(2, refusal.message + '\n');
           throw refusal;
         }
       }
