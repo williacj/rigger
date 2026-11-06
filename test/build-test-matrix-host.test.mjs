@@ -238,9 +238,10 @@ test('native readiness wait holds at the empty file until the writer completes',
   assert.equal(observation.ended(), false, 'the empty readiness wait ended before release');
   assert.equal(observation.reads(), 0, 'an assertion read the held readiness file');
   run.writer.stdin.end('release\n');
+  assert.deepEqual(await run.closed, { status: 0, signal: null });
+  assert.equal(readyComplete(run.ready), true, 'the complete readiness literal was refused');
   assert.equal(await observation.reading, 'ready');
   assert.equal(observation.reads(), 1);
-  assert.deepEqual(await run.closed, { status: 0, signal: null });
 });
 
 // Host reason: OS behaviour; a held real writer supplies the empty file, with no Rigger decision.
@@ -255,6 +256,8 @@ test('native readiness wait without the literal ends only at the test signal wit
   assert.equal(observation.reads(), 0, 'an assertion read readiness before cancellation');
   const reason = 'the readiness test cancelled its observation';
   controller.abort(reason);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(observation.ended(), true, 'the readiness wait ignored the test signal');
   await assert.rejects(observation.reading, {
     message: 'the test ended before the condition this wait was on held', cause: reason,
   });
@@ -270,4 +273,34 @@ test('native readiness record reads the final bytes after the direct shell ends'
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.readiness, 'finished', 'readiness was recorded before the shell finished');
   assert.equal(result.directGone, true, 'readiness was recorded while the shell was alive');
+});
+
+// Host reason: OS behaviour; automatic teardown of the real shell depends on no Rigger decision.
+test('native automatic teardown records readiness only after direct shell exit', SETTLES_WITHIN, async (t) => {
+  const observations = [];
+  let directPID;
+  // Host reason: OS behaviour; this live shell is the teardown premise, with no Rigger decision.
+  await t.test('native automatic teardown fixture reaches live readiness', SETTLES_WITHIN, async (fixture) => {
+    const context = {
+      signal: fixture.signal,
+      after: (hook) => fixture.after(hook),
+      diagnostic(message) {
+        fixture.diagnostic(message);
+        const observation = JSON.parse(message);
+        if (observation.name === 'automatic-readiness-record') observations.push(observation);
+      },
+    };
+    const run = nativeRead(context, 'automatic-readiness-record', 'while :; do :; done');
+    await until(() => readyComplete(run.ready), fixture);
+    directPID = run.directPID();
+    assert.ok(Number.isSafeInteger(directPID) && directPID > 0);
+    assert.equal(alive(directPID), true, 'the direct shell must be alive before automatic teardown');
+  });
+  assert.equal(observations.length, 1, 'automatic teardown must emit one readiness snapshot');
+  const [observation] = observations;
+  assert.equal(observation.teardownOnly, true);
+  assert.equal(observation.directPID, directPID);
+  assert.equal(observation.readiness, 'ready');
+  assert.equal(observation.directGone, true, 'automatic teardown recorded readiness while the direct shell was alive');
+  assert.equal(alive(directPID), false, 'automatic teardown left the direct shell alive');
 });
