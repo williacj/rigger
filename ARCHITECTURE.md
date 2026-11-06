@@ -1039,7 +1039,7 @@ cannot record runs no command. Each entry names:
 - the dispatch's directory, where it has one, and what L0 needs to tell that directory from a
   later one at the same path.
 
-L1 removes an entry once its group is empty, and on Rigger's own exit. On start, L3 has L1 kill
+L1 removes an entry once its group is empty, and on Rigger's own exit. Past exit cleanup's budget, it keeps each remaining group's entry, so that the next start sweeps that group's directories. On start, L3 has L1 kill
 every group it recorded, before L3 records or reads anything. L0 kills a recorded group only once it
 has confirmed that the group is the one recorded. A start that cannot confirm a recorded group kills
 nothing in it, keeps its entry, and stops, as an unrecorded kill does. Every kill of a dispatch's
@@ -1525,11 +1525,11 @@ A process still in the command's group when the direct child exits is terminated
 by name and command line where a read before the kill found it; it never changes the exit code. A
 process that leaves its group is outside this containment. L0 never stops a process group to contain
 it. It reads which processes the group holds, kills the group whole, then kills and reads it again
-until no member is left alive, with two exceptions. Where it cannot read the table, it sends the
+until no member is left alive, with three exceptions. Where it cannot read the table, it sends the
 kill on every look until a bound passes, then records the kill of the group and why, and settles
 without knowing the group is empty. Where a member is one L0 may not signal, or outlives the kill
 for a second, longer bound, L0 records it by name and command line as a process it could not end,
-and settles. A process the kill ended that no read before it found is recorded as the kill of the
+and settles. Past exit cleanup's budget, L0 kills the group once and settles, as "Supervising `run`" says. A process the kill ended that no read before it found is recorded as the kill of the
 group, as when L0 cannot read the table, wherever a later read finds it. L0 records only what its
 reads of the table show, for a group as for a directory. Before the kill, reads of a group that list
 none of its processes while signal 0 still reaches it show nothing. So does a census read that
@@ -1566,8 +1566,7 @@ A role's escalation directory holds `main`, and the role's agent CLI runs there,
 It holds `head` only where the card has an open pull request.
 
 Where a process that left its group holds the command's output open once the group is empty, L0 stops
-reading after a bound it sets and records that it did. A dispatch ends only once L0 has terminated
-the group's processes.
+reading after a bound it sets and records that it did. A dispatch ends only once L0 has terminated the group's processes, or, past exit cleanup's budget, has sent the group its kill.
 
 L0's process adapter reaches the operating system through one host. No other module under `src/`
 starts a process, sends a signal, or reads the process table. The host gives the adapter a clock
