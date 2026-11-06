@@ -9,7 +9,7 @@ import { SETTLES_WITHIN } from './settles-within.mjs';
 import { gitIn, worktreeList, unlockWorktreeAt, removeWorktreeAt } from './git-repository.mjs';
 import { existsSync, readFileSync, realpathSync, writeFileSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseEvents, runTests } from '../scripts/mutation-receipt.mjs';
+import { noVerdict, parseEvents, runTests } from '../scripts/mutation-receipt.mjs';
 
 const script = fileURLToPath(new URL('../scripts/mutation-receipt.mjs', import.meta.url));
 
@@ -143,6 +143,13 @@ test('A3 a mutation all named tests pass is reported as survived', SETTLES_WITHI
   assert.equal(exit, 0);
   assert.equal(report.status, 'survived');
   assert.deepEqual(report.failures, []);
+  for (const [phase, exit] of [['unmutated', 0], ['mutant', 0], ['restored', 0]]) {
+    const selected = report[phase];
+    assert.equal(selected.exit, exit, `${phase}: retain the actual selected exit`);
+    assert.equal(selected.timedOut, false, `${phase}: retain the actual timeout answer`);
+    assert.ok(Number.isSafeInteger(selected.process?.group) && selected.process.group > 0, `${phase}: retain the selected group leader`);
+    assert.ok(Number.isFinite(selected.process.started), `${phase}: retain the OS start answer`);
+  }
 });
 
 // A thrown application error is evidence, but must never be labelled an assertion.
@@ -177,6 +184,13 @@ test('A1 a matching anchor produces a named assertion receipt', SETTLES_WITHIN[6
   assert.equal(report.failures[0].name, 'value stays one');
   assert.match(report.failures[0].error.message, /value must stay one/);
   assert.equal(report.failures[0].error.name, 'AssertionError');
+  for (const [phase, exit] of [['unmutated', 0], ['mutant', 1], ['restored', 0]]) {
+    const selected = report[phase];
+    assert.equal(selected.exit, exit, `${phase}: retain the actual selected exit`);
+    assert.equal(selected.timedOut, false, `${phase}: retain the actual timeout answer`);
+    assert.ok(Number.isSafeInteger(selected.process?.group) && selected.process.group > 0, `${phase}: retain the selected group leader`);
+    assert.ok(Number.isFinite(selected.process.started), `${phase}: retain the OS start answer`);
+  }
 });
 
 // A real pending test, with an active port rather than a sleep, exercises the run's deadline.
@@ -728,4 +742,96 @@ test('TQ diff refusal restores before cleanup', SETTLES_WITHIN[60_000], async (t
 // D29 reason: wiring. Ordinary counterpart: TQ restoration duty survives mutant launch refusal.
 test('TQ mutant launch refusal restores before cleanup', SETTLES_WITHIN[60_000], async (t) => {
   await faultRestorationWitness(t, 'F11d');
+});
+
+
+/** Inserts literal shell text before the real suite without interpreting its dollar characters. */
+function suiteWithPrelude(prelude) {
+  const suite = readFileSync(new URL('suite.sh', import.meta.url), 'utf8');
+  const selected = suite.replace('#!/bin/sh\n', () => '#!/bin/sh\n' + prelude);
+  assert.ok(selected.startsWith('#!/bin/sh\n' + prelude), 'the fixture must contain the exact shell prelude before execution');
+  return selected;
+}
+
+// D29 reason: wiring. Ordinary counterpart: TQ selected-suite evidence requires observed start and settled ending.
+// The shell and the worker identify themselves independently of the receipt's recorded start.
+test('TQ selected-suite start belongs to the shell leader rather than its worker', SETTLES_WITHIN[60_000], async (t) => {
+  const prelude = 'if [ "${1-}" != --list ]; then\n  printf "1232-leader %s " "$$" >&2\n  LC_ALL=C TZ=UTC ps -p "$$" -o lstart= >&2\nfi\n';
+  const fixture = proofRepository(t, {
+    body: "test('selected leader witness', () => { console.error('1232-worker ' + process.pid); assert.equal(3 * 7, 21); });\n",
+    headFiles: { 'test/suite.sh': suiteWithPrelude(prelude) },
+  });
+  const run = await runTests(fixture.root, fixture.tmp, fixture.file);
+  assert.equal(run.exit, 0, run.stderr);
+  assert.equal(run.timedOut, false);
+  assert.deepEqual(run.tests.map(({ name, outcome }) => [name, outcome]), [['selected leader witness', 'pass']]);
+  const leader = /^1232-leader (\d+) (.+)$/m.exec(run.stderr);
+  assert.ok(leader, 'the actual selected shell must print its PID and its own ps start answer');
+  const start = Date.parse(leader[2].trim() + ' UTC') / 1000;
+  assert.ok(Number.isFinite(start), 'the real ps start answer must be independently readable');
+  const events = run.stdout.split('\n').filter((line) => line.startsWith('@@proof ')).map((line) => JSON.parse(line.slice(8)));
+  const workers = events.filter((event) => event.type === 'test:stderr').flatMap((event) => {
+    const matched = /^1232-worker (\d+)\n$/.exec(event.data.message);
+    return matched ? [Number(matched[1])] : [];
+  });
+  assert.equal(workers.length, 1, 'the actual assertion worker must identify itself once');
+  assert.notEqual(workers[0], Number(leader[1]), 'the observed assertion worker is not the selected shell leader');
+  assert.deepEqual(run.process, { group: Number(leader[1]), started: start },
+    'the receipt must retain the actual shell/group leader and its OS start answer');
+});
+
+
+/** tee writes the same input bytes to the selected shell's captured stderr and its private mirror. */
+function suiteWithCapture(octal) {
+  return suiteWithPrelude([
+    'if [ "${1-}" != --list ]; then',
+    `  printf '${octal}\\n' | tee "$TMPDIR/1232-stream-bytes" >&2`,
+    'fi', '',
+  ].join('\n'));
+}
+
+// D29 reason: wiring. Ordinary counterpart: TQ selected-suite UTF8 fidelity is required for proof credit.
+test('TQ selected-suite capture retains actual bytes and refuses a lossy UTF8 pipe', SETTLES_WITHIN[60_000], async (t) => {
+  const rows = [
+    { octal: '\\101', bytes: [65, 10], text: 'A\n', sha256: '06f961b802bc46ee168555f066d28f4f0e9afdf3f88174c1ee6f9de004fc30a0', faithful: true },
+    { octal: '\\357\\277\\275', bytes: [239, 191, 189, 10], text: '\ufffd\n', sha256: '8d75cfafa290dea108e554948eae67ba5c418cad73059f9452ff6fc652d5c869', faithful: true },
+    { octal: '\\377', bytes: [255, 10], text: '\ufffd\n', sha256: 'e4688624e5f1ad0629505e6768e3bb36244f2f3e33e751215afa820334a76ed3', faithful: false },
+  ];
+  for (const row of rows) {
+    const fixture = proofRepository(t, {
+      body: "test('capture pipe witness', () => assert.equal(3 * 7, 21));\n",
+      headFiles: { 'test/suite.sh': suiteWithCapture(row.octal) },
+    });
+    const run = await runTests(fixture.root, fixture.tmp, fixture.file);
+    assert.equal(run.exit, 0, run.stderr);
+    assert.equal(run.timedOut, false);
+    assert.deepEqual(run.tests.map(({ name, outcome }) => [name, outcome]), [['capture pipe witness', 'pass']]);
+    const runs = readdirSync(fixture.tmp).filter((name) => name.startsWith('run-'));
+    assert.equal(runs.length, 1, 'the one selected invocation must own one scratch root');
+    const mirror = readFileSync(join(fixture.tmp, runs[0], '1232-stream-bytes'));
+    assert.deepEqual(mirror, Buffer.from(row.bytes), 'the actual selected shell must send the specified bytes through tee');
+    assert.equal(run.stderr, row.text, 'the returned text must expose the actual UTF8 decode');
+    assert.deepEqual(run.capture?.stderr, { bytes: row.bytes.length, sha256: row.sha256, faithful: row.faithful },
+      'capture metadata must identify the original selected-shell bytes separately from decoded text');
+    assert.equal(noVerdict(run), row.faithful ? undefined : 'selected suite UTF8 text fidelity unavailable');
+    t.diagnostic(JSON.stringify({ mirrorHex: mirror.toString('hex'), capture: run.capture.stderr }));
+  }
+});
+
+// D29 reason: wiring. Ordinary counterpart: TQ selected-suite UTF8 fidelity is required for proof credit.
+test('TQ proof diff refuses invalid UTF8 capture at both source sides', SETTLES_WITHIN[60_000], async (t) => {
+  const fixture = proofRepository(t, {
+    base: 'export const value = 2;\n', head: 'export const value = 1;\n',
+    headFiles: { 'test/suite.sh': suiteWithCapture('\\377') },
+  });
+  const { exit, report } = await invoke(fixture, 'proof-diff.mjs', [fixture.file]);
+  assert.equal(exit, 1);
+  for (const side of ['base', 'head']) {
+    assert.equal(report.runs[side].status, 'no verdict');
+    assert.equal(report.runs[side].reason, 'selected suite UTF8 text fidelity unavailable');
+    assert.deepEqual(report.runs[side].capture.stderr, {
+      bytes: 2, sha256: 'e4688624e5f1ad0629505e6768e3bb36244f2f3e33e751215afa820334a76ed3', faithful: false,
+    });
+  }
+  assert.deepEqual(report.tests.map(({ status }) => status), ['no verdict at the head']);
 });
