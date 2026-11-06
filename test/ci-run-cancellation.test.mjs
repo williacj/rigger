@@ -267,8 +267,8 @@ test('cancellation refuses incomplete discovery and malformed attribution before
     if (script.at(-1)[2].body?.total_count === 1) {
       const repeated = list('queued'); repeated[2].body.total_count = 1; script.push(repeated);
     }
-    const answer = await execute(f, script, true);
-    assert.match(answer.error, /discovery/); assert.ok(answer.calls.every(([method]) => method === 'GET'));
+    const disagreed = script.at(-1)[2].body?.total_count === 1, answer = await execute(f, script, !disagreed);
+    if (!disagreed) assert.match(answer.error, /discovery/); assert.ok(answer.calls.every(([method]) => method === 'GET'));
   }
   for (const change of [t => { t.event = ''; }, t => { t.event = 'unknown-event'; }, t => { t.repository.full_name = ''; }, t => { t.path = 'unknown'; }, t => { t.id = 0; }, t => { t.head_sha = 'BAD'; }, t => { delete t.path; }, t => { t.workflow_id = '55'; }, t => { t.run_attempt = 0; }, t => { t.pull_requests.push(assoc()); }, t => { delete t.head_repository; }, t => { delete t.pull_requests[0].base.repo.id; }]) {
     const f = input(), target = run(60, old, 10); change(target);
@@ -552,8 +552,8 @@ test('discovery page shape refusals explain the bounded count and list failure b
     const f = input(), page = list('waiting', []);
     sample.change(page[2]);
     const repeated = list('queued'); repeated[2].body.total_count = 1;
-    const answer = await diagnosed(f, [...start(f), list('queued', [run(60, old, 10)]), list('in_progress'), page, ...(sample.name === 'mismatched list' ? [repeated] : [])], true);
-    assert.match(answer.error, /discovery incomplete/, sample.name);
+    const answer = await diagnosed(f, [...start(f), list('queued', [run(60, old, 10)]), list('in_progress'), page, ...(sample.name === 'mismatched list' ? [repeated] : [])], sample.name !== 'mismatched list');
+    assert.equal(answer.error, sample.name === 'mismatched list' ? undefined : 'discovery incomplete', sample.name);
     assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), [], sample.name);
     assert.deepEqual(answer.diagnostics, [{ action: 'discovery-refused', query: 'waiting', reason: sample.reason, ...(sample.count === undefined ? {} : { count: sample.count }), ...(sample.length === undefined ? {} : { length: sample.length }) }, ...(sample.name === 'mismatched list' ? [{ action: 'discovery-recovering', epoch: 1 }, { action: 'discovery-refused', query: 'queued', reason: 'count/list mismatch', count: 1, length: 0 }] : [])], sample.name);
   }
@@ -702,17 +702,18 @@ const disagreement = (status = 'queued', count = 1, rows = []) => {
   const page = list(status, rows); page[2].body.total_count = count; return page;
 };
 
-test('a second discovery disagreement refuses after exactly ten listing reads without a third epoch', async () => {
+test('a second discovery disagreement cancels nothing and ends success after exactly ten listing reads without a third epoch', async () => {
   const f = input();
   const script = [...start(f), list('queued', [run(60, old, 10)]), ...pages().slice(1, 4), disagreement('requested'), ...pages().slice(0, 4), disagreement('requested')];
   const expectedCalls = script.map(([method, path]) => [method, path]);
-  const answer = await diagnosed(f, script, true);
-  assert.equal(answer.error, 'discovery incomplete');
+  const answer = await diagnosed(f, script);
+  assert.equal(answer.error, undefined);
+  assert.deepEqual(answer.result, { accepted: [], completed: [] });
   assert.deepEqual(answer.calls, expectedCalls);
   assert.equal(answer.calls.length, 13);
   assert.equal(answer.calls.filter(([, path]) => path.includes('/runs?')).length, 10);
   assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), []);
-  assert.deepEqual(answer.logs, []);
+  assert.deepEqual(answer.logs, [{ action: 'cancelled-nothing', reason: 'count and list disagreed on a second discovery', query: 'requested', count: 1, length: 0 }]);
   assert.deepEqual(answer.diagnostics, [
     { action: 'discovery-refused', query: 'requested', reason: 'count/list mismatch', count: 1, length: 0 },
     { action: 'discovery-recovering', epoch: 1 },
