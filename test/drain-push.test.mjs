@@ -74,6 +74,16 @@ function drainWorld(t, { side = pushStream, telemetry = true, triggers = true, r
   return { loop: built, clock, calls, starts, written, push, context, events, fake, forgeRepository, origin: join(directory, 'origin.git') };
 }
 
+/** A merge held on Backlog lets the test leave idle before it asks L3 for another drain. */
+function mergeWorld(t, side) {
+  return drainWorld(t, {
+    cards: [cardIn(1, COLUMNS.backlog)], kinds: { change: { ...KINDS.change, judges: ['reviewer'] } },
+    forge: { pullRequests: [{ number: 11, head: 'rigger-1', sha: 'a'.repeat(40), mergeable: 'mergeable',
+      comments: [markerComment({ card: 1, pull: 11, head: 'a'.repeat(40), body: PASSING })] }] },
+    side,
+  });
+}
+
 /** The independent original at each side's start must equal every byte the copy received. */
 const assertCopies = (w) => assert.deepEqual(w.calls, w.starts, 'each copy holds every byte the original held at its start');
 
@@ -137,12 +147,8 @@ test('D1 D2 D5: a terminating run or a single pull makes no drain push, and tele
 // proves R-RECORD-14, R-RECORD-16
 test('D12: after a failed drain push a newly pullable merge starts and finishes, and the next drain tries again', async (t) => {
   let copies = 0;
-  const w = drainWorld(t, {
-    cards: [cardIn(1, COLUMNS.backlog)], kinds: { change: { ...KINDS.change, judges: ['reviewer'] } },
-    forge: { pullRequests: [{ number: 11, head: 'rigger-1', sha: 'a'.repeat(40), mergeable: 'mergeable',
-      comments: [markerComment({ card: 1, pull: 11, head: 'a'.repeat(40), body: PASSING })] }] },
-    side: async () => (++copies === 1 ? { outcome: 'failed', reason: 'offline' } : { outcome: 'pushed', commit: 'b'.repeat(40) }),
-  });
+  const w = mergeWorld(t, async () => (++copies === 1
+    ? { outcome: 'failed', reason: 'offline' } : { outcome: 'pushed', commit: 'b'.repeat(40) }));
   const run = keptUp(w);
   let ended = false;
   run.running.then(() => { ended = true; }, () => { ended = true; });
@@ -250,7 +256,9 @@ test('D8 D9: the return waits for the held push and serves a queued drain follow
 // proves R-RECORD-15
 test('D10: refused, timed-out and failed drain pushes are recorded and handed over once outside run failures', async (t) => {
   for (const outcome of ['refused', 'timed-out', 'failed']) {
-    const w = drainWorld(t, { side: async () => ({ outcome, reason: 'the copy failed\nwith details' }) });
+    let copies = 0;
+    const w = mergeWorld(t, async () => (++copies === 1
+      ? { outcome, reason: 'the copy failed\nwith details' } : { outcome: 'pushed', commit: 'b'.repeat(40) }));
     const run = keptUp(w);
     t.after(() => run.stop());
     await waitFor(() => run.handed.some(({ settled }) => settled !== undefined));
@@ -258,8 +266,18 @@ test('D10: refused, timed-out and failed drain pushes are recorded and handed ov
     assert.equal(run.handed.some(({ failure }) => failure !== undefined), false, 'a failed push is no work failure');
     assert.equal(w.events().filter(({ event }) => event === 'push.end').length, 1);
     assert.equal(w.events().find(({ event }) => event === 'push.end').outcome, outcome);
+    assert.equal(w.events().filter(({ trigger }) => trigger === 'drain').length, 1, 'the first drain is recorded');
+    await waitFor(() => w.clock.pending() > 0);
+    await w.fake.operations.moveItem('item-1', COLUMNS.review);
     await w.clock.advance(START + 1000);
-    assert.equal(run.handed.filter(({ push }) => push !== undefined).length, 1, 'a later poll repeats no failed push');
+    await waitFor(() => w.events().some(({ event }) => event === 'merge.end') && w.clock.pending() > 0);
+    assert.deepEqual(w.forgeRepository.merges(), [{ number: 11, head: 'a'.repeat(40) }], 'work leaves the first idle period');
+    await w.clock.advance(START + 2000);
+    await waitFor(() => w.events().filter(({ event }) => event === 'push.end').length === 2);
+    assert.equal(w.events().filter(({ trigger }) => trigger === 'drain').length, 2, 'the later drain is recorded');
+    assert.equal(copies, 2, 'the later drain starts its own push');
+    assert.deepEqual(w.events().filter(({ event }) => event === 'push.end').map(({ outcome }) => outcome), [outcome, 'pushed']);
+    assert.deepEqual(run.handed.filter(({ push }) => push !== undefined), [{ push: { outcome, reason: 'the copy failed\nwith details' } }], 'a later drain repeats no failed push');
     assert.deepEqual(await run.stop(), []);
     assert.deepEqual(w.written, [], 'L5 leaves the drain line to the verb writer');
   }
