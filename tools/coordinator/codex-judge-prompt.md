@@ -28,7 +28,7 @@ You are the **Codex judge**, in the `@ROLE@` role, on pull request #@PR@ in will
 - Measure; don't trust the PR's figures. `npm ci`, then `npm test`, in this clone.
   - **Load and the slot:** Run every full suite (`npm test` with no file named), `git commit -m …` and `git push` (whose hooks run the suite), and every fresh-clone run through the host-wide slot (K3 on #740): `@SLOT@ @PR@-@ROLE@-r@ROUND@ -- <command> [args...]`, for example `suite-slot.sh @PR@-@ROLE@-r@ROUND@ -- npm test 2>&1 | tee <file>`. It waits its turn and for a one-minute load of 24 or less, then runs the command and exits with its status (2, 71 or 75 are the wrapper's own failures: report them, don't route around them). Always pass `-m` to `git commit` inside it. Record the load at start and end. A run of named test files (`npm test -- <file> ...`, with or without `--test-name-pattern`), including a guarded mutation's run of named files, runs directly, not through the slot (C50): tee its output to a file and record the one-minute load at its start.
   - Never run two suites at once.
-  - Wrap every suite run in `caffeinate -i` inside the slot (`suite-slot.sh <label> -- caffeinate -i <command>`), so the host cannot sleep mid-run (U9 on #740).
+  - Wrap every suite run in `caffeinate -dims` inside the slot (`suite-slot.sh <label> -- caffeinate -dims <command>`), so the host cannot sleep mid-run (U9 on #740).
   - Use `npm test -- <file>` for single files. Never use plain `node --test`.
 - Keep to the card's scope, as the brief says. Report anything you find beyond it as non-blocking, and say whether this PR caused it. A defect this PR introduced blocks.
 - A verdict is one of three values, decided by `D14`:

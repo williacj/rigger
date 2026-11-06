@@ -12,6 +12,7 @@ import { killRecordedGroups } from '../execution/run.mjs';
 import { escalationDirectoryHandle, judgeDirectoryHandle, removeCardDirectories, workspaceHandle } from '../execution/workspace.mjs';
 import { loop } from '../scheduling/loop.mjs';
 import { readEvents, streamPath } from '../observation/sink.mjs';
+import { failedPushLine } from '../observation/push.mjs';
 import { readSide, repositoryReads } from '../substrate/forge/read.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
 import { factsCall } from '../workflow/facts.mjs';
@@ -182,7 +183,12 @@ export const noticeLine = (verb, id, { step, cause, made, unrecorded }) => (made
   ? `rigger ${verb}: the notice for hold ${id} failed to ${outsideText(step)}: ${outsideText(cause)}`
   : `rigger ${verb}: the notice for hold ${id} made its step to ${outsideText(step)}${unrecorded === undefined ? '' : `, but the sink refused its record, so these events went unrecorded: ${unrecorded.map(({ event }) => outsideText(event)).join(', ')}`}: ${outsideText(cause)}`);
 
-export const claimVerb = (verb, limit, options) => recording((opened) => claiming(verb, limit, opened, options), options?.push);
+export const claimVerb = async (verb, limit, options) => {
+  // A drain can hand over a refusal while recording waits for the normal return's push.
+  const handed = {};
+  const answer = await recording((opened) => claiming(verb, limit, opened, options, handed), options?.push);
+  return { ...answer, code: Math.max(answer.code, handed.code ?? 0) };
+};
 
 /**
  * `claimVerb`'s work, recording through the sink `opened` holds once `settled` has named its state
@@ -190,8 +196,8 @@ export const claimVerb = (verb, limit, options) => recording((opened) => claimin
  * choose the wording shared by `once` and `run`.
  */
 async function claiming(verb, limit, opened, {
-  target = process.cwd(), packageRoot = PACKAGE, ask, send, host, readTimeout, clock, stop, write = standardOutput,
-} = {}) {
+  target = process.cwd(), packageRoot = PACKAGE, ask, send, host, readTimeout, clock, stop, write = standardOutput, push,
+} = {}, handed) {
   const { named, refusal } = await settled(verb, opened, { target, packageRoot, ask });
   if (refusal) return refusal;
   const { sink } = opened;
@@ -380,8 +386,6 @@ async function claiming(verb, limit, opened, {
    * The text and status of a whole run whose settle `settled` records, as `Promise.allSettled`
    * records it, naming the refusals met since the last one rendered.
    */
-  // The status over every hand-over written, and whether any was.
-  let handedCode;
   // Each refusal line a hand-over has written: a clock-held run's idle polls ask L2 again about a
   // card it refuses, and a refusal already written is no news.
   const handedRefusals = new Set();
@@ -443,24 +447,29 @@ async function claiming(verb, limit, opened, {
     return { text: [...said(worked), ...refused].join('\n'), code: delivered(worked) ? 0 : 1 };
   };
   /** Writes one hand-over of a kept-up `run` as it settles: a report, a firing's failure, or what settled since the last. */
-  const handOver = ({ report, failure, settled: each }) => {
+  const handOver = ({ report, failure, push, settled: each }) => {
+    if (push !== undefined) {
+      write(failedPushLine(push).slice(0, -1));
+      return;
+    }
     const { text, code } = report !== undefined ? { text: reportText(report), code: 0 }
       : failure !== undefined ? { text: failureLine(failure), code: 1 } : rendered(each);
-    handedCode = Math.max(handedCode ?? 0, code);
+    handed.code = Math.max(handed.code ?? 0, code);
     write(text);
   };
   // The verb hands L3 the process's own environment, which L3 hands every dispatch it makes
   // (the architect's ruling 2, P7, on #467), and no maker: L3 dispatches it through L1.
   const [settledRun] = await Promise.allSettled([(async () => {
-    const l3 = loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, readRecord, environment: process.env, run: opened.run, clock });
+    const drained = push === undefined ? undefined : (handOver) => push({ sink, run: opened.run, config, repository: named, directory: state, handOver });
+    const l3 = loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, readRecord, environment: process.env, run: opened.run, clock, drained });
     return verb === 'run' ? l3.run({ handOver, stop }) : l3.pull(limit);
   })()]);
-  if (handedCode === undefined) return rendered(settledRun);
+  if (handed.code === undefined) return rendered(settledRun);
   // A kept-up run that ended answers only what it had not yet handed over (the architect's ruling 1175#6560236393, (b)).
   const refused = freshRefusals();
   const nothing = settledRun.status === 'fulfilled' && Array.isArray(settledRun.value) && settledRun.value.length === 0 && refused.length === 0;
   const { text, code } = nothing ? { text: '', code: 0 } : rendered(settledRun, refused);
-  return { text, code: Math.max(code, handedCode) };
+  return { text, code: Math.max(code, handed.code) };
 }
 
 /**

@@ -509,7 +509,7 @@ async function continuingPull(built) {
   return pulled;
 }
 
-// proves R-WORK-34, R-RECORD-11, R-RECORD-12
+// proves R-WORK-43, R-RECORD-11, R-RECORD-12
 test('a continuing maker is judged only after the forge shows the workspace tip on its second read', async () => {
   const old = 'a'.repeat(40);
   const tip = 'b'.repeat(40);
@@ -527,7 +527,7 @@ test('a continuing maker is judged only after the forge shows the workspace tip 
   assert.ok(built.events().some(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'reviewer'));
 });
 
-// proves R-WORK-34, R-RECORD-11, R-RECORD-12
+// proves R-WORK-43, R-RECORD-11, R-RECORD-12
 test('a continuing maker stays in coding after the forge shows the old head through the read at 60 seconds', async () => {
   const old = 'a'.repeat(40);
   const tip = 'b'.repeat(40);
@@ -545,7 +545,7 @@ test('a continuing maker stays in coding after the forge shows the old head thro
   assert.deepEqual({ forgeHead: withheld.forgeHead, reads: withheld.reads, elapsedMs: withheld.elapsedMs }, { forgeHead: old, reads: 13, elapsedMs: 60000 });
 });
 
-// proves R-WORK-34, R-RECORD-11, R-RECORD-12
+// proves R-WORK-43, R-RECORD-11, R-RECORD-12
 test('a continuing maker records the last forge head and wait when its pull closes after a stale read', async () => {
   const old = 'a'.repeat(40);
   const tip = 'b'.repeat(40);
@@ -559,7 +559,7 @@ test('a continuing maker records the last forge head and wait when its pull clos
   assert.deepEqual({ forgeHead: withheld.forgeHead, reads: withheld.reads, elapsedMs: withheld.elapsedMs }, { forgeHead: old, reads: 2, elapsedMs: 5000 });
 });
 
-// proves R-WORK-34, R-RECORD-11, R-RECORD-12
+// proves R-WORK-43, R-RECORD-11, R-RECORD-12
 test('a failed second forge read keeps a continuing card in coding and records the last head and wait', async () => {
   const old = 'a'.repeat(40);
   const tip = 'b'.repeat(40);
@@ -578,7 +578,7 @@ test('a failed second forge read keeps a continuing card in coding and records t
   assert.deepEqual({ forgeHead: withheld.forgeHead, reads: withheld.reads, elapsedMs: withheld.elapsedMs }, { forgeHead: old, reads: 2, elapsedMs: 5000 });
 });
 
-// proves R-WORK-34
+// proves R-WORK-43
 test('a continuing maker stays in coding when L1 cannot read a tip from its workspace', async () => {
   const old = 'a'.repeat(40);
   const { built, card } = continuingForge(old, old, undefined, async () => { throw new Error('the branch has no commit'); });
@@ -1546,6 +1546,7 @@ function closedAfterFailedMaker(t, { exitBranch = 'unreadable', exitPull = 'abse
     if (exitReading && selected.earlyRead === 'escalation') throw new Error('exit-time escalation PR unavailable');
     if (exitReading && selected.exitPull === 'unreadable') throw new Error('exit-time PR unavailable');
     if (exitReading && selected.exitPull === 'closed') return { open: [], merged: [], closed: [{ number: 733 + selected.number - 42, head: 'a'.repeat(40), base: 'main' }] };
+    if (exitReading && selected.exitPull === 'open') return { open: [{ number: 733 + selected.number - 42, head: 'a'.repeat(40), base: 'main' }], merged: [], closed: [] };
     return pulls(...args);
   };
   let first = true;
@@ -1579,7 +1580,7 @@ test('a no-clock run defers closed-card removal after unreadable maker work and 
   assert.equal(reached[0].settled.status, 'rejected');
   assert.equal(reached[0].settled.reason.makerWork, 'unreadable');
   assert.match(reached[0].settled.reason.message, /exit-time branch unavailable/);
-  assert.doesNotMatch(reached[0].settled.reason.message, /forge holds no branch|R-LOOP-18/);
+  assert.doesNotMatch(reached[0].settled.reason.message, /forge holds no branch|R-LOOP-19/);
   assert.deepEqual(await columnsOf(built.fake), { 42: COLUMNS.review });
 
   await drive(built);
@@ -1606,7 +1607,7 @@ test('a no-clock failed-maker bar leaves closed cleanup and its following escala
 });
 
 // Established absence bars the following maker and its removal for this invocation alone.
-// proves R-LOOP-18, R-WORK-41
+// proves R-LOOP-19, R-WORK-41
 test('a no-clock absent-work maker bar defers a closed-card redo until a new invocation', SETTLES_WITHIN, async (t) => {
   const { built, removals } = closedAfterFailedMaker(t, { exitBranch: 'absent' });
   const reached = await drive(built);
@@ -1616,17 +1617,32 @@ test('a no-clock absent-work maker bar defers a closed-card redo until a new inv
   assert.equal(reached[0].settled.status, 'fulfilled');
   assert.equal(reached[0].settled.value.makerWork, 'absent');
   assert.equal(reached[0].settled.value.action, 'set-aside');
-  assert.match(reached[0].settled.value.reason, /exited 7.*no branch or pull request.*rigger-42/);
+  assert.match(reached[0].settled.value.reason, /exited 7.*no branch of its line of work rigger-42, and no open or merged pull request from it/);
   await drive(built);
   assert.deepEqual(built.agent.runs().map(({ card }) => card), [42, 42]);
   assert.deepEqual(removals, [42]);
 });
 
+// R-LOOP-19 row S6e: a forge holding no branch and only closed pull requests holds nothing of the
+// line of work, so L3 bars `remove.following` too, and `R-WORK-41` defers that removal to the next invocation.
+// proves R-LOOP-19, R-WORK-41
+test('S6e: a closed-only forge at a no-clock maker\'s exit defers the closed-card redo until a new invocation', SETTLES_WITHIN, async (t) => {
+  const { built, removals } = closedAfterFailedMaker(t, { exitBranch: 'absent', exitPull: 'closed' });
+  const reached = await drive(built);
+
+  assert.equal(reached[0].settled.value.makerWork, 'absent');
+  assert.deepEqual(built.agent.runs().map(({ card }) => card), [42], 'the bar stops the following maker');
+  assert.deepEqual(removals, [], 'and the removal it follows');
+  await drive(built);
+  assert.deepEqual(built.agent.runs().map(({ card }) => card), [42, 42], 'the next invocation starts without the bar');
+  assert.deepEqual(removals, [42]);
+});
+
 // Presence established by either source keeps the later removal and maker eligible.
-// proves R-LOOP-18, R-WORK-41
+// proves R-LOOP-19, R-WORK-41
 test('a no-clock maker may redo closed work when either exit-time read establishes presence despite the other failing', SETTLES_WITHIN, async (t) => {
   const formerClock = realHost.clock;
-  for (const [exitBranch, exitPull] of [['present', 'unreadable'], ['unreadable', 'closed']]) {
+  for (const [exitBranch, exitPull] of [['present', 'unreadable'], ['unreadable', 'open']]) {
     await t.test(`${exitBranch}/${exitPull}`, async (t) => {
       const { built, removals } = closedAfterFailedMaker(t, { exitBranch, exitPull });
       const reached = await drive(built);
@@ -1636,14 +1652,14 @@ test('a no-clock maker may redo closed work when either exit-time read establish
       assert.equal(reached[0].settled.status, 'rejected', 'the failed read is still reported');
       assert.equal(reached[0].settled.reason.makerWork, 'present');
       assert.match(reached[0].settled.reason.message, /exit-time (branch|PR) unavailable/);
-      assert.doesNotMatch(reached[0].settled.reason.message, /forge holds no branch|R-LOOP-18/);
+      assert.doesNotMatch(reached[0].settled.reason.message, /forge holds no branch|R-LOOP-19/);
     });
   }
   assert.strictEqual(realHost.clock, formerClock);
 });
 
 // Early comment or escalation reads must still classify both work sources for L3's maker bar.
-// proves R-LOOP-18, R-WORK-41
+// proves R-LOOP-19, R-WORK-41
 test('early failed-maker reads preserve presence and defer absent or unreadable work before later removal', SETTLES_WITHIN, async (t) => {
   const native = nativeCalls(t);
   const cases = [
@@ -1651,8 +1667,9 @@ test('early failed-maker reads preserve presence and defer absent or unreadable 
     ['comments', 'unreadable', 'absent', 'unreadable'],
     ['comments', 'absent', 'unreadable', 'unreadable'],
     ['comments', 'present', 'unreadable', 'present'],
-    ['comments', 'unreadable', 'closed', 'present'],
-    ['comments', 'absent', 'closed', 'present'],
+    ['comments', 'unreadable', 'closed', 'unreadable'],
+    ['comments', 'absent', 'closed', 'absent'],
+    ['comments', 'absent', 'open', 'present'],
     ['escalation', 'absent', 'unreadable', 'unreadable'],
     ['escalation', 'unreadable', 'unreadable', 'unreadable'],
     ['escalation', 'present', 'unreadable', 'present'],
@@ -1709,6 +1726,7 @@ test('a no-clock continuing maker runs once per governing comment while failure 
   for (const scenario of ['unchanged', 'new comment', 'failed continuation']) {
     await t.test(scenario, async (t) => {
       const head = 'a'.repeat(40);
+      const tip = 'c'.repeat(40);
       const before = { ...markerComment({ card: 42, pull: 733, head, body: PASSING, role: 'reviewer', verdict: 'needs revision', items: ['unmet'], toSound: 'Print the help.' }), id: 'IC_before' };
       const after = { ...before, id: 'IC_after', createdAt: '2026-10-01T12:00:00Z' };
       const sound = { ...markerComment({ card: 42, pull: 733, head, body: PASSING, role: 'reviewer' }), id: 'IC_sound', createdAt: '2026-10-01T13:00:00Z' };
@@ -1716,6 +1734,7 @@ test('a no-clock continuing maker runs once per governing comment while failure 
       const built = onManualHost(t, { cards: [cardIn(42, COLUMNS.review)], concurrency: 1, fresh: false,
         kinds: { change: { ...KINDS.change, judges: ['reviewer'] } }, answer: () => ({ exit: failed ? 7 : 0, output: '' }),
         forge: { pullRequests: [{ number: 733, head: 'rigger-42', sha: head, mergeBase: 'b'.repeat(40), diff: 'diff --git a/help b/help\n', comments: [before] }] },
+        workspaceTip: async () => tip,
       });
       const settle = built.l2.settled;
       let attempts = 0;
@@ -1723,7 +1742,10 @@ test('a no-clock continuing maker runs once per governing comment while failure 
         attempts += 1;
         if (attempts >= 2) built.repository.update(733, { comments: [before, after, sound] });
         else if (scenario !== 'unchanged') built.repository.update(733, { comments: [before, after] });
-        return settle(...args);
+        built.repository.update(733, { sha: tip });
+        const answer = await settle(...args);
+        built.repository.update(733, { sha: head });
+        return answer;
       };
       const reached = await drive(built);
       const expected = scenario === 'new comment' ? 2 : 1;
@@ -1928,7 +1950,7 @@ test('a no-clock maker or step whose L3 start record is refused fires no immedia
 });
 
 // A new continuation or selected maker kind must not evade an absent or unreadable maker bar.
-// proves R-LOOP-18
+// proves R-LOOP-19
 test('a no-clock failed-maker bar defers later continue and differently selected dispatch actions until the next invocation', SETTLES_WITHIN, async (t) => {
   for (const exitBranch of ['absent', 'unreadable']) for (const action of ['continue', 'dispatch']) await t.test(`${exitBranch}/${action}`, async (t) => {
     const kinds = { change: { ...KINDS.change, judges: ['reviewer'] }, spec: { ...KINDS.change, select: { labels: ['type:spec'] }, judges: ['reviewer'] } };
@@ -6108,16 +6130,18 @@ test('judge selection memory covers pull fresh-maker continuing-maker and remova
       }));
       // Fresh comments cover A and request B's revision. Removing A's covering comment after
       // that maker returns restores A's original unmarked identity without rewriting a comment.
-      const continuation = () => [marker('pm'),
-        { ...marker('reviewer'), id: 'IC_reviewer_covered', createdAt: '2026-10-01T11:00:01Z' },
-        { ...marker('architect', 'needs revision'), id: 'IC_architect_revision', createdAt: '2026-10-01T11:00:02Z' },
+      // The maker continues from a head of its own, so it leaves a head other than the one it was given.
+      const givenHead = entry === 'continuing-maker' && state !== 'changed' ? 'd'.repeat(40) : oldHead;
+      const continuation = () => [marker('pm', 'sound', givenHead),
+        { ...marker('reviewer', 'sound', givenHead), id: 'IC_reviewer_covered', createdAt: '2026-10-01T11:00:01Z' },
+        { ...marker('architect', 'needs revision', givenHead), id: 'IC_architect_revision', createdAt: '2026-10-01T11:00:02Z' },
       ];
       const kinds = { change: { ...KINDS.change, judges: ['reviewer', 'architect', 'pm'], ...(provisioning ? { provisioning: ['prepare'] } : {}) } };
       const steps = provisioning ? { prepare: { run: 'true', required: true } } : {};
       // These are fake-repository's documented PR/comment shapes, as in the reviewer's real-L2 probe.
       // Ready with a deleted line selects a fresh maker; Review with closed history selects removal.
       const built = onManualHost(t, { cards: [card], kinds, concurrency: 1, fresh: false, makerHold: false,
-        forge: { pullRequests: [{ number: 733, head: 'rigger-42', sha: oldHead, mergeBase: 'b'.repeat(40),
+        forge: { pullRequests: [{ number: 733, head: 'rigger-42', sha: seeded ? oldHead : givenHead, mergeBase: 'b'.repeat(40),
           diff: 'diff --git a/help b/help\n', closed: !seeded && ['fresh-maker', 'removal-redo'].includes(entry),
           comments: seeded ? covered : entry === 'continuing-maker' ? continuation() : targetComments,
         }] },
@@ -6149,7 +6173,7 @@ test('judge selection memory covers pull fresh-maker continuing-maker and remova
           transitioned = true;
           phase = entry === 'pull' ? 'target' : 'prepare';
           if (entry === 'pull') built.repository.update(733, { sha: newHead, comments: targetComments });
-          else if (entry === 'continuing-maker') built.repository.update(733, { comments: continuation() });
+          else if (entry === 'continuing-maker') built.repository.update(733, { sha: givenHead, comments: continuation() });
           else {
             branch = false;
             built.repository.update(733, { closed: true });
@@ -6247,4 +6271,307 @@ test('judge selection memory covers pull fresh-maker continuing-maker and remova
       else assert.equal(result.failure, undefined, result.failure?.message);
     });
   }
+});
+
+/** Card `card`'s `review.escalate` events, as L2 recorded them. */
+const escalationsOf = (built, card) => built.events().filter(({ layer, event, card: number }) => layer === 'L2' && event === 'review.escalate' && number === card);
+
+/** How many makers `built`'s loop ran. */
+const makersRan = (built) => built.agent.runs().filter(({ role }) => role === 'engineer').length;
+
+/** What a world holds of card 96, returned at `head` by a reviewer's ruling, as `world` takes it. */
+const returnedAt = (head, kind = {}) => ({
+  cards: [cardIn(96, COLUMNS.review)],
+  kinds: { change: { ...KINDS.change, judges: ['reviewer'], ...kind } },
+  forge: { pullRequests: [{ number: 961, head: 'rigger-96', sha: head, mergeBase: 'c'.repeat(40), diff: 'diff --git a/help b/help\n', mergeable: 'mergeable', comments: [
+    markerComment({ card: 96, pull: 961, head, body: PASSING, role: 'reviewer', verdict: 'needs revision', items: ['unmet'], toSound: 'Fix the help line.' }),
+  ] }] },
+});
+
+/** What the board and forge hold of `card` beside its column, for a row to compare with what it may change. */
+const heldOf = async (built, card) => ({
+  labels: (await built.fake.operations.readItems()).find(({ number }) => number === card).labels,
+  issue: (built.repository.held().issues.find(({ number }) => number === card)?.comments ?? []).map(({ body }) => body),
+  pulls: built.repository.held().pullRequests.map(({ number, comments = [] }) => ({ number, comments: comments.map(({ body }) => body) })),
+  merges: built.repository.merges().map(({ number }) => number),
+  moves: built.fake.writes().map(({ operation }) => operation),
+});
+
+/** Asserts `card` stayed in coding, with its claim's move the one thing changed since `before`. */
+async function leftInCoding(built, card, before) {
+  assert.equal((await columnsOf(built.fake))[card], COLUMNS.coding);
+  assert.deepEqual(await heldOf(built, card), { ...before, moves: [...before.moves, 'moveItem'] }, 'only the claim changed the board or forge');
+}
+
+/** Asserts `card` reached review with its claim and one move, its pull requests as `pulls`, and nothing more since `before`. */
+async function movedToReview(built, card, before, pulls = before.pulls) {
+  assert.equal((await columnsOf(built.fake))[card], COLUMNS.review);
+  assert.deepEqual(await heldOf(built, card), { ...before, pulls, moves: [...before.moves, 'moveItem', 'moveItem'] }, 'only the move to review changed the board or forge');
+}
+
+/** Asserts `card` reached the owner with its claim, one move, `comments` on its issue and the label, and nothing more since `before`. */
+async function escalatedOnce(built, card, before, comments = 1) {
+  assert.equal((await columnsOf(built.fake))[card], COLUMNS.owner);
+  const { issue, ...held } = await heldOf(built, card);
+  assert.equal(issue.length, before.issue.length + comments, 'no other issue comment');
+  const { issue: unread, ...expected } = before;
+  assert.deepEqual(held, { ...expected, labels: [...before.labels, 'rigger:escalated'], moves: [...before.moves, 'moveItem', 'moveItem'] }, 'only the escalation changed the board or forge');
+  assert.equal(built.events().some(({ layer, event, cause }) => layer === 'L2' && event === 'transition' && cause === 'returned'), false, 'never moved to review');
+  assert.equal(built.agent.runs().filter(({ role }) => role === 'reviewer').length, 0, 'no judge ran to spend a round');
+  return issue;
+}
+
+/** The reason Table C's C1 owes card 96 at `head`: the head, and the fixture's standing ruling. */
+const unchangedReason = (head) => `card #96's continuing maker exited 0 at head ${head}, the head it was given, so it answered nothing.\nreviewer (needs revision): Fix the help line.; unmet item 1: The verb prints its help.`;
+
+/** Asserts card 96 escalated at its unchanged `head` as row C1 says, in whole: its effects, its one comment and its one record, with `measure` where more than one read was made. */
+async function escalatedUnchanged(built, head, before, measure = {}) {
+  const [body] = await escalatedOnce(built, 96, before);
+  assert.equal(body, `Rigger escalates card #96 to the owner (ambiguous).\n\n${unchangedReason(head)}\n\nPull request: #961\nHead: ${head}\n`);
+  const [{ category, raiser, pull, head: read, destination, dispatch, reason, reads, elapsedMs }, ...others] = escalationsOf(built, 96);
+  assert.deepEqual(others, []);
+  const maker = built.events().find(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'engineer').dispatch;
+  assert.deepEqual({ category, raiser, pull, read, destination, dispatch, reason, reads, elapsedMs },
+    { category: 'ambiguous', raiser: 'loop', pull: 961, read: head, destination: 'owner', dispatch: maker, reason: unchangedReason(head), reads: measure.reads, elapsedMs: measure.elapsedMs });
+}
+
+// proves R-LOOP-20, R-WORK-43
+test('Table C C1: a continuing maker that exits 0 at the head it was given escalates ambiguous to the owner, and no maker follows', async () => {
+  const head = 'a'.repeat(40);
+  const { built, card, elapsed } = continuingForge(head, head);
+  const before = await heldOf(built, card);
+
+  await continuingPull(built);
+  await continuingPull(built);
+
+  assert.equal(makersRan(built), 1, 'exactly one maker ran after the rulings');
+  assert.equal(elapsed(), 0, 'the first read showed the head, so nothing waited');
+  await escalatedUnchanged(built, head, before);
+});
+
+// proves R-LOOP-20
+test('Table C C2: with rounds remaining the unchanged head escalates at once and spends no round', async () => {
+  const head = 'a'.repeat(40);
+  const built = world({ ...returnedAt(head, { rounds: 3 }), clock: { now: () => 0, pause: async () => assert.fail('the first read showed the head') } });
+  const before = await heldOf(built, 96);
+
+  await continuingPull(built);
+  await continuingPull(built);
+
+  assert.equal(makersRan(built), 1);
+  assert.equal(escalationsOf(built, 96).length, 1, 'the unchanged head escalated');
+  await escalatedUnchanged(built, head, before);
+});
+
+// proves R-LOOP-20
+test('Table C C3: in a kept-up run later pulls dispatch nothing for the escalated card', async () => {
+  const head = 'a'.repeat(40);
+  const clock = manualClock();
+  const built = reportWorld(clock, { ...returnedAt(head), triggers: HOUR_AWAY });
+  const before = await heldOf(built, 96);
+  const { stop } = keptUp(built);
+  try {
+    await positive(() => built.dispatches.holding().includes(96));
+    built.dispatches.releaseAll();
+    const starts = () => built.dispatches.started.filter((card) => card === 96).length;
+    await positive(() => count(built, 'drain') === 1 || starts() > 1);
+    assert.equal(starts(), 1, 'no second maker followed the first');
+    const pulls = count(built, 'pull');
+    for (const at of [1000, 2000, 3000]) await clock.advance(CLOCK_START + at);
+
+    assert.equal(count(built, 'pull'), pulls + 3, 'three later pulls fired');
+    assert.equal(makersRan(built), 1);
+    await escalatedUnchanged(built, head, before);
+  } finally {
+    const ended = settledOf(stop());
+    await positive(() => { built.dispatches.releaseAll(); return ended(); });
+  }
+});
+
+// proves R-LOOP-20
+test('Table C C4: after a no-clock run the escalation label holds the next invocation back', SETTLES_WITHIN, async (t) => {
+  const head = 'a'.repeat(40);
+  const built = onManualHost(t, { ...returnedAt(head), concurrency: 1, fresh: false });
+  const before = await heldOf(built, 96);
+
+  await drive(built);
+  assert.equal(makersRan(built), 1, 'the first invocation ran one maker');
+  await escalatedUnchanged(built, head, before);
+
+  await drive(built);
+
+  assert.equal(makersRan(built), 1, 'the next invocation ran no maker');
+  await escalatedUnchanged(built, head, before);
+});
+
+// proves R-LOOP-20
+test('Table C C1: an unchanged head the forge shows only on a later read records that head, the reads and the wait', async () => {
+  const head = 'a'.repeat(40);
+  const other = 'd'.repeat(40);
+  const { built, card, pull, elapsed } = continuingForge(head, head, (here) => here.repository.update(pull, { sha: head }), async () => {
+    built.repository.update(pull, { sha: other });
+    return head;
+  });
+  const before = await heldOf(built, card);
+
+  await continuingPull(built);
+
+  assert.equal(elapsed(), 5000);
+  assert.equal(escalationsOf(built, card).length, 1, 'the unchanged head escalated');
+  await escalatedUnchanged(built, head, before, { reads: 2, elapsedMs: 5000 });
+});
+
+// proves R-WORK-43
+test('Table C C5: a continuing maker that exits 0 at a new head moves to review at it and escalates nothing', async () => {
+  const old = 'a'.repeat(40);
+  const tip = 'b'.repeat(40);
+  const { built, card, pull } = continuingForge(old, tip, undefined, async () => {
+    built.repository.update(pull, { sha: tip });
+    return tip;
+  });
+  const before = await heldOf(built, card);
+
+  await continuingPull(built);
+
+  assert.deepEqual(escalationsOf(built, card), []);
+  await movedToReview(built, card, before);
+  const returned = built.events().find(({ layer, event, cause }) => layer === 'L2' && event === 'transition' && cause === 'returned');
+  assert.equal(returned?.forgeHead, tip);
+  assert.equal(Object.hasOwn(returned, 'reads'), false, 'one read is no read to name');
+  const heads = built.decisions.filter(({ card: number, action }) => number === card && action.action === 'judge').flatMap(({ action }) => action.judges.map(({ facts }) => facts.head));
+  assert.ok(heads.length > 0 && heads.every((at) => at === tip), `the judge ruled on the new head alone: ${JSON.stringify(heads)}`);
+  assert.ok(built.agent.runs().some(({ role }) => role === 'reviewer'), 'the judge ran');
+});
+
+// proves R-LOOP-20
+test('Table C C6: a continuing maker’s own note at the head it was given wins over the unchanged head', async () => {
+  const head = 'a'.repeat(40);
+  const { built, card } = continuingForge(head, head);
+  const before = await heldOf(built, card);
+  const pulled = built.loop.pull();
+  await positive(() => built.dispatches.holding().includes(card));
+  const { dispatch } = built.events().find(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'engineer');
+  await built.repository.postIssueComment(card, ['```rigger-escalation', 'category: critical', 'item: 1', 'reason: A required condition failed.', `dispatch: ${dispatch}`, '```'].join('\n'));
+  built.dispatches.releaseAll();
+  await pulled;
+
+  const [recorded, ...others] = escalationsOf(built, card);
+  assert.deepEqual(others, []);
+  assert.deepEqual({ category: recorded.category, raiser: recorded.raiser, reason: recorded.reason, item: recorded.item, pull: recorded.pull, head: recorded.head, line: recorded.line, destination: recorded.destination, dispatch: recorded.dispatch },
+    { category: 'critical', raiser: 'maker', reason: 'A required condition failed.', item: 1, pull: 961, head, line: 'rigger-96', destination: 'owner', dispatch });
+  const issue = await escalatedOnce(built, card, before, 2);
+  assert.equal(issue.at(-1), `Rigger escalates card #96 to the owner (critical).\n\nA required condition failed.\n\nAcceptance item: 1\nPull request: #961\nHead: ${head}\nLine of work: rigger-96\n`);
+});
+
+// proves R-WORK-43
+test('Table C C7: an unreadable tip is withheld, however the given head stands, and escalates nothing', async () => {
+  const head = 'a'.repeat(40);
+  const { built, card } = continuingForge(head, head, undefined, async () => { throw new Error('the branch has no commit'); });
+  const before = await heldOf(built, card);
+
+  await continuingPull(built);
+
+  assert.deepEqual(escalationsOf(built, card), []);
+  await leftInCoding(built, card, before);
+  const withheld = built.events().find(({ layer, event }) => layer === 'L2' && event === 'review.withheld');
+  assert.match(withheld.reason, /card #96.*branch has no commit/);
+});
+
+// proves R-WORK-43
+test('Table C C8: a tip at the given head that the forge never shows runs the existing reads and escalates nothing', async () => {
+  const head = 'a'.repeat(40);
+  const other = 'd'.repeat(40);
+  const { built, card, pull, elapsed } = continuingForge(head, head, undefined, async () => {
+    built.repository.update(pull, { sha: other });
+    return head;
+  });
+  const before = await heldOf(built, card);
+
+  await continuingPull(built);
+
+  assert.equal(elapsed(), 60000);
+  assert.deepEqual(escalationsOf(built, card), []);
+  await leftInCoding(built, card, before);
+  const withheld = built.events().find(({ layer, event }) => layer === 'L2' && event === 'review.withheld');
+  assert.deepEqual({ forgeHead: withheld.forgeHead, reads: withheld.reads, elapsedMs: withheld.elapsedMs }, { forgeHead: other, reads: 13, elapsedMs: 60000 });
+  assert.equal(withheld.reason, `card #96's maker exited 0 at head ${head}, but the forge last showed pull request #961 at head ${other}`);
+});
+
+// proves R-LOOP-20
+test('Table C C9: a continuing maker that exits non-zero at the head it was given stays in coding and escalates nothing', async () => {
+  const head = 'a'.repeat(40);
+  const built = world({ ...returnedAt(head), fresh: false, answer: () => ({ exit: 7, output: '' }), clock: { now: () => 0, pause: async () => assert.fail('a failed maker reads no forge head') } });
+  const before = await heldOf(built, 96);
+  const pulled = built.loop.pull();
+  await positive(() => built.dispatches.holding().includes(96));
+  const read = built.repository.operations.readPullRequests;
+  let reads = 0;
+  built.repository.operations.readPullRequests = async (...args) => { reads += 1; return read(...args); };
+  built.dispatches.releaseAll();
+  await pulled;
+
+  assert.equal(reads, 0, 'the forge is not read');
+  assert.deepEqual(escalationsOf(built, 96), []);
+  await leftInCoding(built, 96, before);
+  assert.equal(built.events().some(({ event }) => event === 'review.withheld'), false);
+  assert.equal(built.events().some(({ layer, event, cause }) => layer === 'L2' && event === 'transition' && cause === 'returned'), false);
+});
+
+// proves R-LOOP-20
+test('Table C C10: a fresh maker that exits 0 moves to review and escalates nothing', async () => {
+  const built = world({ cards: [readyCard(96)], clock: { now: () => 0, pause: async () => assert.fail('a fresh maker waits for no head') } });
+  const before = await heldOf(built, 96);
+
+  await continuingPull(built);
+
+  assert.deepEqual(escalationsOf(built, 96), []);
+  await movedToReview(built, 96, before, [{ number: 1000, comments: [] }]);
+  assert.ok(built.events().some(({ layer, event, cause }) => layer === 'L2' && event === 'transition' && cause === 'returned'), 'moved to review');
+});
+
+// proves R-WORK-43
+test('Table C C12: a pull request gone at the unchanged head stays in coding under the existing read, and escalates nothing', async () => {
+  const head = 'a'.repeat(40);
+  const { built, card, pull } = continuingForge(head, head, undefined, async () => {
+    built.repository.update(pull, { closed: true });
+    return head;
+  });
+  const before = await heldOf(built, card);
+
+  await continuingPull(built);
+
+  assert.deepEqual(escalationsOf(built, card), []);
+  await leftInCoding(built, card, before);
+  assert.match(built.events().find(({ event }) => event === 'review.withheld').reason, /no open pull request/);
+});
+
+// proves R-WORK-43
+test('Table C C12: a forge read that fails at the unchanged head stays in coding, and escalates nothing', async () => {
+  const head = 'a'.repeat(40);
+  const { built, card } = continuingForge(head, head, undefined, async () => {
+    built.repository.operations.readPullRequests = async () => { throw new Error('the forge read failed: HTTP 502'); };
+    return head;
+  });
+  const before = await heldOf(built, card);
+
+  await continuingPull(built);
+
+  assert.deepEqual(escalationsOf(built, card), []);
+  await leftInCoding(built, card, before);
+  assert.match(built.events().find(({ event }) => event === 'review.withheld').reason, /HTTP 502/);
+});
+
+// proves R-LOOP-20
+test('Table C C12: a refused escalation comment at the unchanged head fails the run, naming it, and no second maker runs', SETTLES_WITHIN, async (t) => {
+  const head = 'a'.repeat(40);
+  const built = onManualHost(t, { ...returnedAt(head), concurrency: 1, fresh: false });
+  built.repository.postIssueComment = async () => { throw new Error('the issue comment write was refused'); };
+  const before = await heldOf(built, 96);
+
+  await assert.rejects(drive(built), (failure) => leavesOf(failure).some(({ message }) => /escalation issue comment was refused/.test(message)));
+
+  assert.equal(makersRan(built), 1);
+  const [{ category, reason }, ...others] = escalationsOf(built, 96);
+  assert.deepEqual({ category, reason, others }, { category: 'ambiguous', reason: unchangedReason(head), others: [] });
+  await leftInCoding(built, 96, before);
 });

@@ -1,0 +1,384 @@
+{
+  "about": "Sanitized operational findings for issue #1220; private evidence is retained separately.",
+  "card": 1220,
+  "conclusion": "inconclusive",
+  "actor": "unknown",
+  "historicalCause": "unknown",
+  "measurement": {
+    "date": "2026-11-05",
+    "sourceCommit": "24f5bccb861edde9e0d10e9ef7e7ae5da6ebedb9",
+    "sourceTree": "35aa3d4130256093da7256f6439c2956c383e591",
+    "sourceKind": "Coordinator-created persistent home clone on rigger-1220; fixed snapshot, not a claim about later moving main.",
+    "sourceComparison": "All eight cleanup/ownership file SHA-256 values matched the earlier f6 inspected copies; actual G definitions were reopened.",
+    "privateCustodyId": "C1220",
+    "interpretation": "Repository map is source-derived reachability; OS and command records are measurements; explanations remain explicitly unresolved."
+  },
+  "incidents": [
+    {
+      "id": "SC1",
+      "reviewedHead": "465bd0a112b641ce3548305645ccd1ce42d4e1ae",
+      "observedStage": "Original source unavailable reported after verification/preflight completed.",
+      "preflight": {
+        "command": "npm run preflight -- --body-file <retained-card-body>",
+        "startUtc": "2026-11-05T14:23:27.744882+00:00",
+        "endUtc": "2026-11-05T14:23:28.466229+00:00",
+        "exit": 0,
+        "sanitizedStdout": [
+          "preflight head 465bd0a112b641ce3548305645ccd1ce42d4e1ae merge-base 233bb948bd16597e12f002e836dc0c3277367b74",
+          "clean: passed"
+        ]
+      },
+      "timingLimit": "Command times and post-completion loss-detection stage are retained. No independent last filesystem-presence observation, first missing UTC or actual deletion interval is retained. Do not equate detection after completion with proof deletion happened then.",
+      "retained": "Original custody record, preflight metadata/streams and deterministic metadata/stream fingerprints reopened and rehashed; selected hashes match the prior custody record.",
+      "laterSource": {
+        "head": "465bd0a112b641ce3548305645ccd1ce42d4e1ae",
+        "tree": "45b279eefdc1f8215a55bbbaae800081f289dd41",
+        "attribution": "Separately recorded static clone, not the original runtime source; primary says no tests ran there. Its current filesystem availability was not probed."
+      },
+      "historicalBootIdentity": "not retained"
+    },
+    {
+      "id": "SC2",
+      "reviewedHead": "465bd0a112b641ce3548305645ccd1ce42d4e1ae",
+      "observedStage": "Original source absent before Node-command admission guard.",
+      "firstRetainedMissingUtc": "2026-11-05T14:28:17.755709+00:00",
+      "gitDirectExit": 128,
+      "nodeCommandsBeforeGuard": 0,
+      "timingLimit": "Last original-source presence and disappearance interval unavailable from the approved originals. No common loss time with SC1 is measured.",
+      "retained": "Primary loss record and four explicitly approved clone/Git raw streams reopened and rehashed. Raw-stream names/content supply no missing command exits, PID, timing or original-source custody.",
+      "laterSource": "Approved clone stream names a separate durable source destination; two raw merge-tree outputs match each other. Neither reconstructs original temporary-source custody.",
+      "historicalBootIdentity": "not retained"
+    }
+  ],
+  "cleanup": [
+    {
+      "surface": "test/suite.sh",
+      "root": "Canonical caller temporary root; newly created suite run directory.",
+      "selection": "Exact mktemp run result, canonicalized before being exported as the suite temporary root.",
+      "trigger": "Early EXIT trap, or normal finish closes the completion FIFO and waits for the reaper.",
+      "target": "The exact suite run tree; separately, rmdir of its own automatically created evidence directory.",
+      "limits": "No arbitrary review-source scan. Nonempty auto evidence is not removed by rmdir. The current script is source evidence, not proof of historical execution.",
+      "source": "https://github.com/williacj/rigger/blob/24f5bccb861edde9e0d10e9ef7e7ae5da6ebedb9/test/suite.sh"
+    },
+    {
+      "surface": "test/suite-reaper",
+      "root": "Explicit run-directory and completion-FIFO arguments; run realpath.",
+      "selection": "Own-user process rows matching run text, runner descendants or cwd containment; remembered targets must be confirmed ended.",
+      "trigger": "Completion FIFO reaches EOF; cleanup reaches no selected or remembered targets.",
+      "target": "removeTemporaryDirectory of that exact run root.",
+      "limits": "Failure to confirm ending keeps the run. Imported process helper definitions outside the eight-file scope were not traced. No cleanup tool or process census was executed by this investigation.",
+      "source": "https://github.com/williacj/rigger/blob/24f5bccb861edde9e0d10e9ef7e7ae5da6ebedb9/test/suite-reaper"
+    },
+    {
+      "surface": "test/temporary-directory.mjs",
+      "root": "mkdtemp result under tmpdir with caller prefix.",
+      "selection": "Exact fixture path captured by temporaryDirectory; exported remover takes an explicit caller path.",
+      "trigger": "Registered test/file teardown or abort fallback, after beforeRemoval.",
+      "target": "Owner-writable directories followed by recursive removal of that exact fixture.",
+      "limits": "Links are not followed. beforeRemoval failure retains the fixture. The exported remover has no independent creator registry; no historical call or argument was recovered.",
+      "source": "https://github.com/williacj/rigger/blob/24f5bccb861edde9e0d10e9ef7e7ae5da6ebedb9/test/temporary-directory.mjs"
+    },
+    {
+      "surface": "src/execution/workspace.mjs",
+      "route": "card workspace",
+      "root": "Worktree root plus card-derived topic.",
+      "selection": "Absolute root, accepted branch, linked worktree of the served repository, exact card branch; exclude handed/main worktree and nested registered worktrees; realpath comparisons.",
+      "trigger": "Workspace replacement, or card-directory removal selected by workflow.",
+      "target": "Validated real workspace through adapter.remove; remove remaining path link after worktree removal.",
+      "limits": "A standalone manual clone does not satisfy linked-worktree membership. Unanswered checks fail. Person locks are retained by card-directory removal. No historical engine registration or action was recovered.",
+      "source": "https://github.com/williacj/rigger/blob/24f5bccb861edde9e0d10e9ef7e7ae5da6ebedb9/src/execution/workspace.mjs"
+    },
+    {
+      "surface": "src/execution/workspace.mjs",
+      "route": "judge/escalation and scratch",
+      "root": "Judges/escalations/scratch family, card topic, then role.",
+      "selection": "Detached role directory: nonlink directory with only registered detached linked children, not handed/nested foreign paths, acceptable locks. Scratch: nonlink ancestors, no checkout above/within and no served-repository worktree overlap.",
+      "trigger": "Role-directory replacement or card-directory removal.",
+      "target": "Validated detached children then role rmdir; exact validated scratch role tree; empty family topic directories.",
+      "limits": "Only initialization locks are unlocked. Scratch source documents a detection limit for another repository's worktree whose .git entry was moved aside. No such historical premise was established.",
+      "source": "https://github.com/williacj/rigger/blob/24f5bccb861edde9e0d10e9ef7e7ae5da6ebedb9/src/execution/workspace.mjs"
+    },
+    {
+      "surface": "src/execution/workspace.mjs",
+      "route": "CLI folder",
+      "root": "Absolute configuration home, projects, one named folder segment.",
+      "selection": "Pre-command listing plus unchanged realpath/device/inode of existing folder or initially absent folder's parent.",
+      "trigger": "Caller invokes sweepCliFolder after command.",
+      "target": "Only newly added entries, children first; folder root only when initially absent.",
+      "limits": "Unreadable or replaced anchors refuse cleanup; links are not followed. No historical listing or invocation against either review source was recovered.",
+      "source": "https://github.com/williacj/rigger/blob/24f5bccb861edde9e0d10e9ef7e7ae5da6ebedb9/src/execution/workspace.mjs"
+    },
+    {
+      "surface": "src/substrate/worktrees.mjs",
+      "root": "Exact path supplied by L1.",
+      "selection": "remove delegates to Git; membership helper distinguishes linked worktree from main clone by top/common/admin directories.",
+      "trigger": "Adapter remove call after caller checks.",
+      "target": "git worktree remove --force of the explicit path; prune/unlock affect registrations.",
+      "limits": "Removal method does not independently implement card ownership. Git refuses the main working tree. No historical removal command was recovered.",
+      "source": "https://github.com/williacj/rigger/blob/24f5bccb861edde9e0d10e9ef7e7ae5da6ebedb9/src/substrate/worktrees.mjs"
+    },
+    {
+      "surface": "tools/coordinator/sweep.mjs",
+      "root": "Canonical configured worktree root's immediate entries.",
+      "selection": "Whole-name patterns judge-PR-codex-rROUND, judge-PR-codex-ROLE-rROUND, judge-PR-claude-ROLE-rROUND, codex-CARD or codex-CARD-tmp. ROLE is architect/engineer/pm/reviewer/spike-engineer. Nonlink directory; serving PRs ended; no process use or foreign worktree; maker also no uncommitted/stashed/flag-hidden/local-only work.",
+      "trigger": "Manual non-list invocation after every applicable check.",
+      "target": "rm -rf -- of that exact matching entry. Forge-reachability helper also removes only its own newly made scratch in finally.",
+      "limits": "Open, no-serving-PR, unreadable, unsafe or in-use entries are kept. TMP entry is retained when its maker clone was kept. Incident clone basenames do not match these entry patterns; historical root configuration/realpath relationships were not recovered. Not executed, even in list mode.",
+      "source": "https://github.com/williacj/rigger/blob/24f5bccb861edde9e0d10e9ef7e7ae5da6ebedb9/tools/coordinator/sweep.mjs"
+    },
+    {
+      "surface": "tools/coordinator/codex-judge.sh",
+      "root": "Derived judge round directory, with clone in its repo child.",
+      "selection": "Exact work variable; clone attempted only when it does not exist.",
+      "trigger": "A failed clone followed by an allowed retry.",
+      "target": "rm -rf of that exact work path before retry.",
+      "limits": "No normal-success final clone-removal route in this file. Incident temporary clone names differ from this naming scheme, without proving any external remover absent.",
+      "source": "https://github.com/williacj/rigger/blob/24f5bccb861edde9e0d10e9ef7e7ae5da6ebedb9/tools/coordinator/codex-judge.sh"
+    },
+    {
+      "surface": "AGENTS.md",
+      "root": "Worktrees and scratch clones created by the session.",
+      "selection": "Creator ownership, process-use restriction and forge custody; owner permission for uncommitted/unpublished work.",
+      "trigger": "After merge/closure, or when finishing a handoff under the stated retention rule.",
+      "target": "Only permitted creator-owned worktrees/clones.",
+      "limits": "An instruction is not execution evidence. This maker did not create the investigation clone and has no creator-cleanup authority over it.",
+      "source": "https://github.com/williacj/rigger/blob/24f5bccb861edde9e0d10e9ef7e7ae5da6ebedb9/AGENTS.md"
+    }
+  ],
+  "platform": {
+    "observationId": "O1",
+    "phaseStartUtc": "2026-11-05T21:07:36.408554+00:00",
+    "phaseEndUtc": "2026-11-05T21:07:36.828193+00:00",
+    "sourceCommit": "24f5bccb861edde9e0d10e9ef7e7ae5da6ebedb9",
+    "readMethod": "Python standard-library literal-file reads; four recorded installed-utility subprocesses. No new query was run while writing the report.",
+    "files": [
+      {
+        "role": "kernel type",
+        "standardPath": "/proc/sys/kernel/ostype",
+        "outcome": "read",
+        "safeValue": "Linux",
+        "observedUtc": "2026-11-05T21:07:36.677668+00:00"
+      },
+      {
+        "role": "kernel release",
+        "standardPath": "/proc/sys/kernel/osrelease",
+        "outcome": "read",
+        "safeValue": "6.18.54.1-microsoft-standard-WSL2",
+        "observedUtc": "2026-11-05T21:07:36.681201+00:00"
+      },
+      {
+        "role": "distribution",
+        "standardPath": "/etc/os-release",
+        "outcome": "read",
+        "safeValue": {
+          "ID": "ubuntu",
+          "VERSION_ID": "26.04",
+          "PRETTY_NAME": "Ubuntu 26.04.1 LTS"
+        },
+        "observedUtc": "2026-11-05T21:07:36.684246+00:00"
+      },
+      {
+        "role": "boot identity",
+        "standardPath": "/proc/sys/kernel/random/boot_id",
+        "outcome": "read",
+        "safeValue": "O1-generation; raw value retained privately only",
+        "observedUtc": "2026-11-05T21:07:36.687655+00:00"
+      },
+      {
+        "role": "uptime",
+        "standardPath": "/proc/uptime",
+        "outcome": "read",
+        "safeValue": {
+          "uptimeSeconds": 687.47,
+          "aggregateIdleSeconds": 19561.97
+        },
+        "observedUtc": "2026-11-05T21:07:36.690685+00:00"
+      },
+      {
+        "role": "vendor temporary policy",
+        "standardPath": "/usr/lib/tmpfiles.d/tmp.conf",
+        "outcome": "read",
+        "safeValue": [
+          "q /tmp 1777 root root 10d",
+          "q /var/tmp 1777 root root 30d"
+        ],
+        "observedUtc": "2026-11-05T21:07:36.694209+00:00",
+        "limit": "Selected file text only; not a complete effective-policy enumeration or historical execution proof."
+      },
+      {
+        "role": "system temporary policy",
+        "standardPath": "/etc/tmpfiles.d/tmp.conf",
+        "outcome": "unavailable",
+        "error": "FileNotFoundError",
+        "errno": 2,
+        "observedUtc": "2026-11-05T21:07:36.697230+00:00"
+      }
+    ],
+    "queries": [
+      {
+        "role": "temporary filesystem",
+        "command": "findmnt --noheadings --raw --target <temporary-root> --output TARGET,FSTYPE,SOURCE,OPTIONS,ID,PARENT,MAJ:MIN",
+        "exit": 0,
+        "safeValue": {
+          "filesystem": "tmpfs",
+          "options": [
+            "rw",
+            "nosuid",
+            "nodev",
+            "nr_inodes=1048576"
+          ]
+        },
+        "endUtc": "2026-11-05T21:07:36.704004+00:00"
+      },
+      {
+        "role": "home filesystem",
+        "command": "findmnt --noheadings --raw --target <home-root> --output TARGET,FSTYPE,SOURCE,OPTIONS,ID,PARENT,MAJ:MIN",
+        "exit": 0,
+        "safeValue": {
+          "filesystem": "ext4",
+          "options": [
+            "rw",
+            "relatime",
+            "discard",
+            "errors=remount-ro",
+            "data=ordered"
+          ]
+        },
+        "endUtc": "2026-11-05T21:07:36.710738+00:00"
+      },
+      {
+        "role": "temporary cleanup timer",
+        "command": "systemctl --no-pager show systemd-tmpfiles-clean.timer --property=LoadState,ActiveState,SubState,NextElapseUSecRealtime,LastTriggerUSec",
+        "exit": 0,
+        "safeValue": {
+          "LoadState": "loaded",
+          "ActiveState": "active",
+          "SubState": "waiting",
+          "NextElapseUSecRealtime": "",
+          "LastTriggerUSec": ""
+        },
+        "endUtc": "2026-11-05T21:07:36.721289+00:00"
+      },
+      {
+        "role": "temporary cleanup service",
+        "command": "systemctl --no-pager show systemd-tmpfiles-clean.service --property=LoadState,ActiveState,SubState,Result,ExecMainCode,ExecMainStatus",
+        "exit": 0,
+        "safeValue": {
+          "LoadState": "loaded",
+          "ActiveState": "inactive",
+          "SubState": "dead",
+          "Result": "success",
+          "ExecMainCode": 0,
+          "ExecMainStatus": 0
+        },
+        "endUtc": "2026-11-05T21:07:36.732586+00:00"
+      }
+    ],
+    "limits": [
+      "No incident-time mount or boot identity is retained.",
+      "Selected timer/service state and policy text do not establish a historical run, target or actor.",
+      "Low PIDs and short current uptime identify no historical restart or cause.",
+      "Private host idle settings, journals, process command lines and unapproved configuration were not read."
+    ]
+  },
+  "tools": {
+    "boundary": "Installed trusted tools; selected executable/manifest hashes and actual version outputs are identity markers. Complete transitive executable, library, npm-module or OS-utility closure integrity was not established.",
+    "versions": {
+      "node": "26.12.0",
+      "npm": "12.2.2",
+      "python": "3.14.4",
+      "git": "2.53.0"
+    },
+    "lockedDependency": "acorn@8.18.0; admitted npm ci and npm ls --depth=0 exited zero.",
+    "identityHashes": {
+      "node": "caa24debe02770c92a70677e2a62ca98890150e7ac1c17bcfe31bcc98cc89943",
+      "python": "52e0a13e60a981d8c4b6478be2ba5176f69da07948a056bf49cf6f077e30cb41",
+      "git": "ed8b2df973b28c0fb773b9c0dc0816d3ee2b3835bb932d9153c21417bb51b362",
+      "npmCli": "8e5f6f3429f8cdbe693cdc29904e9d5a7b127a494bd15c804bd54c7403bfcbe7",
+      "npmManifest": "44c37a6a06ae01d4ad987bc4710031ae3a42d47173100316e4913ab2cd113cd3",
+      "findmnt": "104f0c23a239d1582a052caa52e0bb81bf67ad1da974274dbdb470d23704015d",
+      "systemctl": "6394f5e8df92878184de9d4dfb7ac242471cb09daf89d23be4e81ae17e9c03b2"
+    }
+  },
+  "baseline": {
+    "sourceCommit": "24f5bccb861edde9e0d10e9ef7e7ae5da6ebedb9",
+    "command": "node <installed-npm-cli> test",
+    "startUtc": "2026-11-05T21:06:49.421485+00:00",
+    "endUtc": "2026-11-05T21:08:48.226546+00:00",
+    "exit": 0,
+    "tests": 4847,
+    "passed": 4838,
+    "skipped": 9,
+    "failed": 0,
+    "cancelled": 0,
+    "todo": 0,
+    "scope": "Pre-work deterministic baseline at fixed G with unchanged source guards; not historical-cause evidence or final report-head verification.",
+    "finalHeadChecks": "unexecuted at report authoring; separately admitted delivery required",
+    "affectedHost": "No changed external product boundary; no host-suite success claimed."
+  },
+  "optionalObservation": {
+    "disposition": "unexecuted",
+    "sentinelCreated": false,
+    "controlCreated": false,
+    "verificationInvocationAdded": false,
+    "naturalIdleTransition": "unproved",
+    "limit": "No sentinel survival/loss evidence; plain sentinels would not establish old Git-clone lifecycle or historical actor."
+  },
+  "explanations": [
+    {
+      "hypothesis": "The original sources were unavailable at their separately recorded observation stages.",
+      "classification": "supported",
+      "basis": "SC1 custody note and retained preflight original; SC2 primary absence/exit/guard fields.",
+      "limit": "This identifies observation stages, not a common deletion time."
+    },
+    {
+      "hypothesis": "Unmount/restart of temporary tmpfs storage caused either historical loss.",
+      "classification": "unresolved",
+      "basis": "Current tmpfs observation and documented tmpfs/WSL lifetime mechanisms make this plausible.",
+      "missing": "Incident-time storage identity, historical boot identities and matching transition interval."
+    },
+    {
+      "hypothesis": "A selected temporary-policy cleanup removed either source.",
+      "classification": "unresolved",
+      "basis": "Current selected policy text and service/timer state.",
+      "missing": "Historical execution, eligibility/age, actual matching target and interval."
+    },
+    {
+      "hypothesis": "An inspected repository cleanup route removed either source.",
+      "classification": "unresolved",
+      "basis": "Bounded static cleanup reachability map.",
+      "missing": "Matching historical root/registration/argument and actual execution."
+    },
+    {
+      "hypothesis": "Another actor or tool removed either source.",
+      "classification": "unresolved",
+      "basis": "No approved execution evidence identifies or excludes an external remover.",
+      "missing": "Primary matching action/target/interval; no actor attribution is made."
+    }
+  ],
+  "nextProposal": {
+    "classification": "proposal, not implemented policy or repair",
+    "action": "For the next already-required manual review, independently qualify creator-owned durable-home source custody and retain source identity plus boot/mount generation at its existing readiness/end observations; keep originals outside source. If loss recurs, compare that finite interval before proposing any wider inspection.",
+    "reversal": "A primary matching historical action/target/interval, or a newly admitted reproducible interval with identity continuity, would reopen the causal conclusion; a fresh passing suite alone would not.",
+    "noExtraRun": true
+  },
+  "custody": {
+    "index": "C1220",
+    "access": "Coordinator supplies the finite private C1220 custody index to the independent reviewer through final ruling. It names approved original retention paths and actual commands/source/PID/start/end/status/stream bytes/digests. No findings/sessions are included.",
+    "retention": "Original SC1/SC2 records and new phase originals remain outside disposable source roots through final independent ruling; unavailable originals earn no credit.",
+    "publicFiltering": "Private source/evidence paths, raw boot/mount identifiers, PIDs, raw logs and credentials excluded. Public commands use opaque root/card-body placeholders; exact argv remain private.",
+    "registry": "Only the own report Markdown strict entry is added; all prior registration values/exemptions are preserved."
+  },
+  "references": [
+    {
+      "title": "Linux kernel tmpfs documentation",
+      "url": "https://docs.kernel.org/filesystems/tmpfs.html",
+      "claim": "Unmounting a tmpfs instance loses its contents; no incident-specific unmount is proven."
+    },
+    {
+      "title": "Microsoft WSL configuration reference",
+      "url": "https://learn.microsoft.com/en-us/windows/wsl/wsl-config",
+      "claim": "Documents WSL VM lifetime/idle shutdown mechanisms; actual host idle settings were not read."
+    }
+  ]
+}

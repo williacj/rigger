@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 import template from '../templates/rigger.config.mjs';
 import { help } from '../src/cli/verbs.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+import { packResult } from '../scripts/lib/pack-result.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { gitIn, repositoryIn } from './git-repository.mjs';
 import { repositoryAt, withOrigin } from './git-repository.mjs';
@@ -111,7 +112,7 @@ function packListing() {
     cwd: root, shell: true, encoding: 'utf8',
   });
   assert.equal(packed.status, 0, packed.stderr);
-  const [{ files, size }] = JSON.parse(packed.stdout);
+  const { files, size } = packResult(packed.stdout);
   return { paths: files.map((file) => file.path), size };
 }
 

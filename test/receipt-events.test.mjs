@@ -20,6 +20,23 @@ import { failures, mutationReceiptAt, mutationVerdict, noVerdict, parseEvents, r
 //     | sed -n 's/^@@proof //p' | jq -s .
 const subject = 'test/fixtures/receipt-events/subject.mjs';
 
+// Synthetic invocation metadata follows onGroup's contract and claims no recorded host identity.
+const syntheticProcess = () => ({ group: 731, started: 1700000000 });
+
+// Fixture metadata must not consume the product source-hash fault that existing controls inject.
+const createCaptureHash = crypto.createHash;
+
+// These byte facts belong only to controlled transport strings, never to a recorded host capture.
+function withSyntheticCapture(run) {
+  const stdout = run.stdout ?? '';
+  const stderr = run.stderr ?? '';
+  const capture = Object.fromEntries(Object.entries({ stdout, stderr }).map(([stream, text]) => {
+    const bytes = Buffer.from(text, 'utf8');
+    return [stream, { bytes: bytes.length, sha256: createCaptureHash('sha256').update(bytes).digest('hex'), faithful: true }];
+  }));
+  return { ...run, stdout, stderr, capture };
+}
+
 // The suite's exit status as each recording observed it, which the stream itself does not carry.
 const exits = { control: 0, mutant: 1, after: 1, load: 1, skip: 0, pattern: 0 };
 
@@ -28,7 +45,7 @@ function recorded(node, shape) {
   const stream = JSON.parse(readFileSync(new URL(`fixtures/receipt-events/node-${node}-${shape}.json`, import.meta.url), 'utf8'));
   const absolute = stream.find((event) => event.data.file?.endsWith(`/${subject}`)).data.file;
   const root = absolute.slice(0, -subject.length - 1);
-  return { stream, root, run: { ...parseEvents(stream, root, subject), exit: exits[shape], timedOut: false } };
+  return { stream, root, run: withSyntheticCapture({ ...parseEvents(stream, root, subject), process: syntheticProcess(), exit: exits[shape], timedOut: false }) };
 }
 
 /** The receipt's status for a mutant run, as mutationReceipt reads it. */
@@ -196,25 +213,25 @@ test('TQ restored lifecycle requires matching original bytes', (t) => {
 
 // An applied semantic candidate cannot retain a verdict after the actual caught restoration reason.
 test('TQ restored lifecycle refuses a restoration error', (t) => {
-  const control = {
-    exit: 0, timedOut: false, fileVerdicts: [], count: 1,
+  const control = withSyntheticCapture({
+    process: syntheticProcess(), exit: 0, timedOut: false, fileVerdicts: [], count: 1,
     tests: [{ name: '1141 selected witness', outcome: 'pass',
       identity: ['test/cell.test.mjs', [['1141 selected witness', 'test/cell.test.mjs', 5, 1]]],
       details: { type: 'test' } }],
-  };
-  const killed = {
-    exit: 1, timedOut: false, fileVerdicts: [], count: 1,
+  });
+  const killed = withSyntheticCapture({
+    process: syntheticProcess(), exit: 1, timedOut: false, fileVerdicts: [], count: 1,
     tests: [{ name: '1141 selected witness', outcome: 'fail',
       identity: ['test/cell.test.mjs', [['1141 selected witness', 'test/cell.test.mjs', 5, 1]]],
       details: { type: 'test', assertion: true,
         error: { failureType: 'testCodeFailure', cause: { name: 'AssertionError', message: '1141 literal value must remain one' } } } }],
-  };
-  const survived = {
-    exit: 0, timedOut: false, fileVerdicts: [], count: 1,
+  });
+  const survived = withSyntheticCapture({
+    process: syntheticProcess(), exit: 0, timedOut: false, fileVerdicts: [], count: 1,
     tests: [{ name: '1141 selected witness', outcome: 'pass',
       identity: ['test/cell.test.mjs', [['1141 selected witness', 'test/cell.test.mjs', 5, 1]]],
       details: { type: 'test' } }],
-  };
+  });
   const reports = [
     { mutated: true, status: 'no verdict', unmutated: structuredClone(control), mutant: killed, reason: '1141 restoration refused' },
     { mutated: true, status: 'no verdict', unmutated: structuredClone(control), mutant: survived, reason: '1141 restoration refused' },
@@ -239,11 +256,11 @@ function selectedWitnessRun(mutant) {
   const detail = { type: 'test', assertion: mutant };
   if (mutant) detail.error = { failureType: 'testCodeFailure',
     cause: { name: 'AssertionError', message: '1141 literal value must remain one' } };
-  return { exit: mutant ? 1 : 0, timedOut: false, count: 1, fileVerdicts: [],
+  return withSyntheticCapture({ process: syntheticProcess(), exit: mutant ? 1 : 0, timedOut: false, count: 1, fileVerdicts: [],
     command: ['controlled-selected', 'test/cell.test.mjs'],
     stdout: 'synthetic controlled selected producer; no child stdout credit\n', stderr: '', events: [],
     tests: [{ name: '1141 selected witness', outcome: mutant ? 'fail' : 'pass',
-      identity: ['test/cell.test.mjs', [['1141 selected witness', 'test/cell.test.mjs', 5, 1]]], details: detail }] };
+      identity: ['test/cell.test.mjs', [['1141 selected witness', 'test/cell.test.mjs', 5, 1]]], details: detail }] });
 }
 
 /** Builds the fixed committed source and named selection for receipt lifecycle diagnostics. */
@@ -419,7 +436,7 @@ test('TQ restored verdict requires a recorded restored run', () => {
 
 // Existing JSON streams and checked exits own these producer fields; added transport metadata is synthetic.
 test('TQ restored verdict honors recorded unavailable runs', () => {
-  const observedRun = (shape) => ({ ...recorded('v26.12.1', shape).run,
+  const observedRun = (shape) => withSyntheticCapture({ ...recorded('v26.12.1', shape).run,
     command: ['controlled-recorded-selected', shape], stdout: 'synthetic transport metadata; recorded JSON is the source\n',
     stderr: '', events: [] });
   const original = observedRun('control');
@@ -759,7 +776,7 @@ test('TQ restoration duty survives mutant launch refusal', async (t) => {
 
 test('TQ restored lifecycle requires unambiguous complete selected identities', () => {
   const { stream, root } = recorded('v26.12.1', 'control');
-  const parsed = (events, exit = 0) => ({ ...parseEvents(events, root, subject), exit, timedOut: false,
+  const parsed = (events, exit = 0) => withSyntheticCapture({ ...parseEvents(events, root, subject), process: syntheticProcess(), exit, timedOut: false,
     command: ['controlled-recording-variant'], stdout: events.map((event) => `@@proof ${JSON.stringify(event)}\n`).join(''),
     stderr: '', events: [] });
   const original = parsed(stream);
@@ -1015,4 +1032,83 @@ test('TQ restored lifecycle applies guards to survived verdicts', async (t) => {
   assert.equal(result.report.restoration.afterRunHash, result.report.restoration.preimageHash);
   assert.equal(result.report.restoration.status, '');
   assertMutationFixtureClean(fixture);
+});
+
+
+// Process metadata is synthetic and follows runCommand's onGroup/settled-result contract.
+// These values claim no host observation; the recorded Node event fixtures are unchanged.
+test('TQ selected-suite evidence requires observed start and settled ending', () => {
+  const complete = { ...selectedWitnessRun(false), process: { group: 731, started: 1700000000 } };
+  assert.equal(noVerdict(complete), undefined, 'the complete synthetic selected result must remain classifiable');
+  for (const field of ['process', 'group', 'started', 'exit', 'timedOut']) {
+    const run = structuredClone(complete);
+    if (field === 'group' || field === 'started') delete run.process[field];
+    else delete run[field];
+    assert.equal(noVerdict(run), ['exit', 'timedOut'].includes(field)
+      ? 'selected suite settled ending unavailable' : 'selected suite start unavailable',
+    `${field}: a named pass must not replace missing selected-suite evidence`);
+  }
+});
+
+
+// runCommand records ['output.held', { group, bound }] when its output pipes exceed the drain bound.
+// Named outcomes below follow the checked selected producer contract; no host or timer is simulated.
+test('TQ selected-suite held output supplies no mutation verdict', async (t) => {
+  for (const [phase, heldAt, killed] of [['original', 1, true], ['mutant-pass', 2, false], ['mutant-fail', 2, true], ['restored', 3, true]]) {
+    const fixture = mutationFixture(t);
+    let calls = 0;
+    const availability = [];
+    const heldDecisions = [];
+    const result = await receiptInFixture(fixture, () => {
+      calls += 1;
+      const run = selectedWitnessRun(calls === 2 && killed);
+      availability.push(noVerdict(run));
+      if (calls === heldAt) {
+        run.events.push(['output.held', { group: run.process.group, bound: 5000 }]);
+        heldDecisions.push(noVerdict(run));
+      }
+      return run;
+    });
+    assert.ok(availability.every((reason) => reason === undefined), `${phase}: complete named-result controls must remain available`);
+    assert.deepEqual(heldDecisions, ['selected suite output incomplete: output.held'],
+      `${phase}: an explicit held-output event must override a named pass or failure`);
+    assert.equal(result.report.status, 'no verdict', `${phase}: incomplete output must not retain killed or survived`);
+    assert.equal(result.exit, 1);
+    assert.match(result.report.reason, /selected suite output incomplete: output\.held/);
+    if (heldAt === 1) {
+      assert.equal(calls, 1, 'a refused original must prevent the mutation and all later selected calls');
+      assert.equal(result.report.mutated, false);
+      assert.equal(result.report.mutant, undefined);
+      assert.equal(result.report.restored, undefined);
+    } else {
+      assert.equal(calls, 3, 'a held mutant or restored result must still complete the literal restoration duty');
+      assert.equal(result.report.mutated, true);
+      assert.equal(result.report.restoration.preimageHash, result.report.restoration.beforeRunHash);
+      assert.equal(result.report.restoration.preimageHash, result.report.restoration.afterRunHash);
+      assert.equal(result.report.restoration.status, '');
+      assert.deepEqual(fixture.observations.map(({ bytes }) => bytes), [
+        Buffer.from(fixture.original).toString('base64'), Buffer.from(fixture.mutant).toString('base64'), Buffer.from(fixture.original).toString('base64'),
+      ]);
+    }
+    assertMutationFixtureClean(fixture);
+  }
+});
+
+
+// Literal byte/hash oracles were independently calculated for empty and FF0A bytes, not by the producer.
+test('TQ selected-suite UTF8 fidelity is required for proof credit', () => {
+  const empty = { bytes: 0, sha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', faithful: true };
+  const complete = { ...selectedWitnessRun(false), stdout: '', stderr: '', capture: { stdout: empty, stderr: empty } };
+  assert.equal(noVerdict(complete), undefined, 'faithful empty UTF8 transport must remain classifiable');
+  for (const stream of ['stdout', 'stderr']) {
+    const invalid = structuredClone(complete);
+    invalid[stream] = '\ufffd\n';
+    invalid.capture[stream] = { bytes: 2, sha256: 'e4688624e5f1ad0629505e6768e3bb36244f2f3e33e751215afa820334a76ed3', faithful: false };
+    assert.equal(noVerdict(invalid), 'selected suite UTF8 text fidelity unavailable',
+      `${stream}: a named pass must not earn proof credit from replacement text`);
+    const missing = structuredClone(complete);
+    delete missing.capture[stream];
+    assert.equal(noVerdict(missing), 'selected suite UTF8 text fidelity unavailable',
+      `${stream}: absent fidelity evidence must not earn proof credit`);
+  }
 });
