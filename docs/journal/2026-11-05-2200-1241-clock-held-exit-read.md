@@ -145,6 +145,10 @@ the single-pull entry used by `once`. Their existing assertions are retained.
 
 ## Test-line grants
 
+Before publication, main advanced to `4e8c34ec`. The merge conflicted only in the generated
+test matrix, which `npm run matrix` regenerated. The card's diff against main still contains
+only its six Lands-in paths; the pinned architecture row is its only architecture delta.
+
 F4b changes existing merge-base lines 461, 463, 475, 476, 477, 478, 479 and 480. M7-K59 grants
 the retargets and M7-U43 Q88 grants the two dropped lines. The single grant round identified
 line 479, whose recovery assertion changes its maker count from two to one. M7-K62
