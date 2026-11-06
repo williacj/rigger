@@ -188,7 +188,7 @@ function world(t, { cards = [12], clock = manualClock(), afterMaker = () => {}, 
 const makerReady = (here) => positive(() => here.makerStarts().length > 0 && [...here.processes.children.values()].some((child) => child.cwd.includes('workspaces') && child.exitCode === null && child.signalCode === null));
 
 // F4: a continuing maker already has its release exclusion and must not enter fresh-work classification.
-// proves R-WORK-34, R-LOOP-18
+// proves R-WORK-34, R-LOOP-19
 test('F4 continuing: failed fresh and continuing makers take distinct forge-read paths', async (t) => {
   for (const kind of ['fresh', 'continuing']) {
     await t.test(kind, async (t) => {
@@ -258,7 +258,7 @@ test('F4 continuing outcomes: refused nonzero results and never-started makers r
 });
 
 // F1c: refusing the end must retain both the completed result and the refusal report.
-// proves R-LOOP-18
+// proves R-LOOP-19
 test('F1c: a refused maker end reports its nonzero result without dispatching the maker again', async (t) => {
   for (const cell of ['end', 'timeout', 'L0', 'record', 'record-and-end']) {
     await t.test(cell, async (t) => {
@@ -304,7 +304,7 @@ test('F1c: a refused maker end reports its nonzero result without dispatching th
 });
 
 // F1c's retained result must take the same note-first and forge classification as a fulfilled result.
-// proves R-LOOP-18
+// proves R-LOOP-19
 test('F1c classification: rejected nonzero results retain escalation, forge and failed-read handling', async (t) => {
   for (const cell of ['note', 'branch', 'open', 'merged', 'closed', 'readBranches', 'readPullRequests', 'no-result', 'zero']) {
     await t.test(cell, async (t) => {
@@ -334,7 +334,7 @@ test('F1c classification: rejected nonzero results retain escalation, forge and 
 });
 
 // F1: a release that immediately reclaims the failed card must produce a second L1 maker start.
-// proves R-LOOP-18
+// proves R-LOOP-19
 test('F1: a clock-held run dispatches a plain failed maker exactly once across releases and polls', async (t) => {
   const here = world(t);
   const run = here.start();
@@ -353,7 +353,7 @@ test('F1: a clock-held run dispatches a plain failed maker exactly once across r
 });
 
 // F1a: losing the timeout's nonzero result would let the release start the maker again.
-// proves R-LOOP-18
+// proves R-LOOP-19
 test('F1a: a maker ended by its role timeout is set aside for the clock-held run', async (t) => {
   const here = world(t);
   const run = here.start();
@@ -368,7 +368,7 @@ test('F1a: a maker ended by its role timeout is set aside for the clock-held run
 });
 
 // F2: excluding the card must still release its slot and claim the other Ready card immediately.
-// proves R-LOOP-18
+// proves R-LOOP-19
 test('F2: the failed maker releases its slot to the other Ready card without a clock advance', async (t) => {
   const here = world(t, { cards: [12, 13] });
   const run = here.start();
@@ -387,7 +387,7 @@ test('F2: the failed maker releases its slot to the other Ready card without a c
 });
 
 // F3 is an invariant guard: the memory must be allocated per invocation, even on one loop handle.
-// proves R-LOOP-18
+// proves R-LOOP-19
 test('F3: a second run on the same board forgets the failed-maker exclusion', async (t) => {
   const here = world(t);
   const first = here.start();
@@ -416,8 +416,8 @@ test('F4: a failed maker with a branch or pull request keeps the merge-base rele
       await makerReady(here);
       here.finish();
       await positive(() => run.handed.length > 0 || here.makerStarts().length > 1);
-      assert.equal(here.settles[0].value, undefined, `${cell}: L2 must leave the ordinary release action intact`);
-      assert.equal(here.makerStarts().length, cell === 'closed-no-branch' ? 2 : 1);
+      assert.equal(cell === 'closed-no-branch' ? here.settles[0].value?.action : here.settles[0].value, cell === 'closed-no-branch' ? 'set-aside' : undefined, `${cell}: L2 must leave the ordinary release action intact, and set aside a forge holding only closed pull requests`);
+      assert.equal(here.makerStarts().length, 1);
       const [card] = await here.fake.operations.readItems();
       assert.equal(card.column, (cell.startsWith('open') || cell === 'closed-no-branch') ? 'Coding' : 'Owner', `${cell}: the release pull must retain the merge-base column`);
       if ((cell.startsWith('open') || cell === 'closed-no-branch')) assert.equal(here.events().filter((event) => event.event === 'review.escalate').length, 0);
@@ -459,7 +459,7 @@ test('F8: once still makes one pull and dispatches no second card after a failed
 });
 
 // F4b: a failed classification read must be named and must not suppress the release pull.
-// proves R-LOOP-18
+// proves R-LOOP-19
 test('F4b: a failed branch or pull-request read rejects the settle and leaves the card retryable', async (t) => {
   for (const readFailure of ['readBranches', 'readPullRequests']) {
     await t.test(readFailure, async (t) => {
@@ -502,7 +502,7 @@ test('F6: failures before the maker command retry once and hold on the same envi
 });
 
 // F7 is an invariant guard: the handled escalation stays under one claim and is not a plain failure.
-// proves R-LOOP-18
+// proves R-LOOP-19
 test('F7: a role-handled maker escalation still waits for another invocation', async (t) => {
   const here = world(t, { escalations: true, afterMaker: ({ repository, card, dispatch }) => {
     repository.postIssueComment(card, postedNote(dispatch).body.replace('item: 2', 'item: 1'));
