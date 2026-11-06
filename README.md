@@ -247,7 +247,7 @@ changes your host, so you install it yourself. In these steps, `<uid>` is what `
    | `__PATH__` | a `PATH` that reaches `node`, `gh`, `claude` and `codex` (`ARCHITECTURE.md`, "Triggers", "The environment") |
    | `__HOME__` | your home directory |
    | `__START_INTERVAL__` | the seconds launchd waits, after a run exits, before starting the next |
-   | `__EXIT_TIMEOUT__` | the seconds launchd waits at the job's exit, at least the bound `ARCHITECTURE.md`'s "Triggers" sets |
+   | `__EXIT_TIMEOUT__` | the seconds launchd waits at the job's exit, at least the bound `ARCHITECTURE.md`'s "Triggers" sets; 60 is enough on every macOS Rigger supports |
 
 3. Install the job, re-install it, or apply an edit to the plist, with these two commands:
 

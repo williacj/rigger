@@ -747,21 +747,13 @@ asset is one per-user LaunchAgent template under `templates/launchd/`, and `D28`
   them under `R-STATE-10`. launchd sends `SIGTERM`, not `SIGKILL`, to the rest of the job's own
   group, at its kill and at its normal exit. A member that ignores `SIGTERM` survives (Q-d3).
 - **`ExitTimeOut`.** The template sets it explicitly, and never leaves it at launchd's default,
-  which is 5 s on the owner's host (Q-d2). One dispatch's cleanup, with one read that never
+  which is 5 s on the owner's host (Q-d2), and it reports at most 60 s on macOS 27.2. One dispatch's cleanup, with one read that never
   answers, took about 5.5 s as a test's measured duration (Q-e2).
-- **The bound.** A function in `src/config/` computes the least `ExitTimeOut` the job needs, and
-  the CLI only calls it. It multiplies `concurrency` by the largest agent-judge panel a kind names,
-  never fewer than one, and that by the per-dispatch cleanup figure. That figure is `KILL_BOUND`
-  plus `READ_TIMEOUT`, which L0's process adapter exports and the function imports. The bound is a
-  judgment on Q-e's premises: `concurrency` counts cards, a panel's judges run at once, and Rigger
-  cleans up dispatches one after another, each within that figure. At this repository's config the
-  report recommends 150 s (Q-e, a judgment). Exit cleanup makes no push, so the bound holds no
-  network call ("Pushing the stream").
+- **The bound.** Exit cleanup has one fixed budget, whatever `concurrency` or a panel's size. L0 cleans up groups with their census and sweep for `EXIT_CARE_BOUND`. After it, L0 kills each remaining group without a census, records the kill of the group, and keeps its entry, so that the next start sweeps its directories. Each dispatch's end and the sink's end are still written. The function in `src/config/` answers `EXIT_BOUND`, which L0's process adapter exports: `EXIT_CARE_BOUND` and the longest one dispatch's careful cleanup can take. A judgment. launchd's cap is 60 s on macOS 27.2, so the bound stays below it. Exit cleanup makes no push, so the bound holds no network call ("Pushing the stream").
 - **What L0 answers, and what `doctor` compares.** `doctor` reads a loaded job through a new L0
   module, `src/substrate/launchd.mjs`, which spawns only through the process adapter. It answers
   only the loaded job's fields, because L0 knows neither `concurrency` nor a kind. `doctor`
-  compares the loaded job's exit timeout, as L0 answers it, against the bound. The template is
-  static, so it holds an `ExitTimeOut` the owner sets at installation to at least the bound.
+  compares the loaded job's exit timeout, as L0 answers it, against the bound. The template holds an `ExitTimeOut` the owner sets at installation to at least the bound; `doctor` reads the value launchd loaded, which a host can cap.
 - **`doctor`'s check.** Where a job under the documented label is loaded, `doctor` checks that its
   program's real path is an installed package outside the target (`R-SAFE-5`). Where none is
   loaded, the check prints no line, as S7 in the architect's review r1 on #740 places it.

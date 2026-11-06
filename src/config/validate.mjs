@@ -6,7 +6,7 @@ import { posix } from 'node:path';
 import { inspect } from 'node:util';
 
 import { ADAPTERS } from '../substrate/providers/adapters.mjs';
-import { KILL_BOUND, READ_TIMEOUT } from '../substrate/process.mjs';
+import { EXIT_BOUND } from '../substrate/process.mjs';
 import { kindOf } from '../workflow/next-action.mjs';
 import { checkAcceptanceForm } from '../workflow/form-check.mjs';
 
@@ -918,12 +918,8 @@ export const roleTimeout = (role) => role.timeout ?? 14_400_000;
 /** N when the config declares none (the Engine settings extension point). */
 export const DEFAULT_CONCURRENCY = 3;
 
-/** The milliseconds launchd must allow for serial cleanup of concurrent cards' largest judge panel. */
-export function launchdExitTimeout(config) {
-  const panel = Math.max(1, ...Object.values(config.kinds).map((kind) =>
-    kind.judges.filter((entry) => judgeRole(entry) !== OWNER).length));
-  return (config.concurrency ?? DEFAULT_CONCURRENCY) * panel * (KILL_BOUND + READ_TIMEOUT);
-}
+/** The milliseconds launchd must allow for L0's exit cleanup, which has one fixed budget whatever the config. */
+export const launchdExitTimeout = () => EXIT_BOUND;
 
 /**
  * The rule that derives a card's workspace and line of work from its number: the config's
