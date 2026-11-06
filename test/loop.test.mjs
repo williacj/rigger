@@ -6297,11 +6297,18 @@ async function leftInCoding(built, card, before) {
   assert.deepEqual(await heldOf(built, card), { ...before, moves: [...before.moves, 'moveItem'] }, 'only the claim changed the board or forge');
 }
 
+/** Asserts `card` reached review with its claim and one move, its pull requests as `pulls`, and nothing more since `before`. */
+async function movedToReview(built, card, before, pulls = before.pulls) {
+  assert.equal((await columnsOf(built.fake))[card], COLUMNS.review);
+  assert.deepEqual(await heldOf(built, card), { ...before, pulls, moves: [...before.moves, 'moveItem', 'moveItem'] }, 'only the move to review changed the board or forge');
+}
+
 /** Asserts `card` reached the owner with its claim, one move, `comments` on its issue and the label, and nothing more since `before`. */
 async function escalatedOnce(built, card, before, comments = 1) {
   assert.equal((await columnsOf(built.fake))[card], COLUMNS.owner);
   const { issue, ...held } = await heldOf(built, card);
   assert.equal(issue.length, before.issue.length + comments, 'no other issue comment');
+  assert.match(issue.at(-1), new RegExp(`^Rigger escalates card #${card} to the owner`));
   const { issue: unread, ...expected } = before;
   assert.deepEqual(held, { ...expected, labels: [...before.labels, 'rigger:escalated'], moves: [...before.moves, 'moveItem', 'moveItem'] }, 'only the escalation changed the board or forge');
   return issue;
@@ -6419,13 +6426,12 @@ test('Table C C5: a continuing maker that exits 0 at a new head moves to review 
     built.repository.update(pull, { sha: tip });
     return tip;
   });
-  const { labels, issue, merges } = await heldOf(built, card);
+  const before = await heldOf(built, card);
 
   await continuingPull(built);
 
   assert.deepEqual(escalationsOf(built, card), []);
-  const after = await heldOf(built, card);
-  assert.deepEqual({ labels: after.labels, issue: after.issue, merges: after.merges }, { labels, issue, merges }, 'no escalation write was left');
+  await movedToReview(built, card, before);
   const returned = built.events().find(({ layer, event, cause }) => layer === 'L2' && event === 'transition' && cause === 'returned');
   assert.equal(returned?.forgeHead, tip);
   assert.ok(built.agent.runs().some(({ role }) => role === 'reviewer'), 'the judge ruled on the new head');
@@ -6499,13 +6505,12 @@ test('Table C C9: a continuing maker that exits non-zero at the head it was give
 // proves R-LOOP-20
 test('Table C C10: a fresh maker that exits 0 moves to review and escalates nothing', async () => {
   const built = world({ cards: [readyCard(96)], clock: { now: () => 0, pause: async () => assert.fail('a fresh maker waits for no head') } });
-  const { labels, issue, merges } = await heldOf(built, 96);
+  const before = await heldOf(built, 96);
 
   await continuingPull(built);
 
   assert.deepEqual(escalationsOf(built, 96), []);
-  const after = await heldOf(built, 96);
-  assert.deepEqual({ labels: after.labels, issue: after.issue, merges: after.merges }, { labels, issue, merges }, 'no escalation write was left');
+  await movedToReview(built, 96, before, [{ number: 1000, comments: [] }]);
   assert.ok(built.events().some(({ layer, event, cause }) => layer === 'L2' && event === 'transition' && cause === 'returned'), 'moved to review');
 });
 
