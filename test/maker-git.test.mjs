@@ -323,7 +323,9 @@ test('a role routed by L3 receives only its temporary root and no git-directory 
   assert.equal(invocations.length, 2, 'the maker and its routed role both reached the controlled agent');
   const added = invocations[1].flatMap((arg, index) => invocations[1][index - 1] === '--add-dir' ? [arg] : []);
   assert.deepEqual(added, [join(request.scratch, 'pm', 'tmp')]);
-  assert.equal(events.filter((event) => event.event === 'call.end' && event.operation === 'rev-parse').length, 1, 'only the maker read git directories');
+  const routed = events.find((event) => event.layer === 'L3' && event.event === 'dispatch' && event.role === 'pm');
+  assert.ok(routed, 'L3 recorded the routed dispatch');
+  assert.equal(events.filter((event) => event.event === 'call.end' && event.operation === 'rev-parse' && event.dispatch === routed.dispatch).length, 0, 'the routed role read git directories');
 });
 
 // Invariant guard M11: top-level declaration keys cannot be commented out, duplicated or weakened.
