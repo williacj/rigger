@@ -929,6 +929,8 @@ branch's effective rules require, read through L0's read side, less the gate's o
 key names them. A person's merge does not run the rule again, and the required check is what binds
 it.
 
+Where L0 reads the forge's refusal of the effective rules as the feature being unavailable, L2 still answers every action but a merge, and refuses a merge, naming the unavailable rules.
+
 Where the forge reads the pull request's mergeability as unknown, L2's answer says so in a field of
 its own, beside its reason. L2 answers the same where the forge refuses the merge call for that
 reason. The lane then reads the card again and has L2 run the rule again, holding its turn, until L2

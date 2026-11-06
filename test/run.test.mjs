@@ -23,6 +23,8 @@ import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 import { admissionOf, closerText, seed, TIME } from './admission-world.mjs';
 import { COLUMNS, FIELDS, KINDS, PROJECT, REFUSED, REPO, card, consumerConfig } from './verb-consumer.mjs';
 import { assertPushEnd, held as heldStream } from './push-fixtures.mjs';
+import { markerComment } from './fake-repository.mjs';
+import { fixture, shellQuote } from './process-fixtures.mjs';
 
 // A bound on a test that waits on the real bin and its maker, so one that never settles fails here.
 const { 60_000: SETTLES_WITHIN } = BOUNDS;
@@ -811,4 +813,308 @@ test('real-bin once at N three with four Ready cards fires one pull claims one c
   assert.equal(events.filter(({ event }) => event === 'run.start').length, 0);
   assert.equal(agent.runs().length, 1);
   assert.deepEqual((await (await fake.model()).operations.readItems()).map(({ number, column }) => [number, column]).sort((a, b) => a[0] - b[0]), [[10, 'Coding'], [20, 'Ready'], [30, 'Ready'], [40, 'Ready']]);
+});
+
+// The private-Free refusal of the effective rules, through the real bin and the fake `gh`. Each
+// test below is a wiring test, and its controlled counterpart is named above it.
+
+/** The first line `gh` prints for the refusal, as #1090 recorded it and the private fixture answered it on 2026-11-05. */
+const FEATURE_REFUSED = 'gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)';
+
+/** A kind that ends with the owner, `change`, and one that names no owner, `merged`, each under two agent judges. */
+const privateFreeSettings = () => ({ ...config(1), kinds: {
+  change: { ...KINDS.change, judges: ['reviewer', 'architect', 'owner'] },
+  merged: { ...KINDS.change, select: { labels: ['type:merged'] }, judges: ['reviewer', 'architect'] },
+} });
+
+/** A stand-in plan under which card `number`'s maker opens a pull request and both agent judges write sound markers. */
+const panelled = (number) => ({ [number]: { engineer: { pr: true }, reviewer: { findings: true }, architect: { findings: true } } });
+
+/** Has `agent`'s run as `role` end by running `source`, a function body given `consumer` and `node`'s spawn, before it exits. */
+function afterRole(agent, role, source) {
+  const program = join(agent.dir, 'claude');
+  writeFileSync(program, [
+    `#!${process.execPath}`,
+    '// ABOUTME: Runs the documented stand-in, then acts as the owner while that role is still running.',
+    'if (!process.env.RIGGER_FIXTURE_WARMING) {',
+    `  const { standInMain } = await import(${JSON.stringify(new URL('./stub-claude.mjs', import.meta.url).href)});`,
+    '  await standInMain();',
+    "  const { readFileSync } = await import('node:fs');",
+    `  const lines = readFileSync(${JSON.stringify(join(agent.dir, 'runs.jsonl'))}, 'utf8').trim().split('\\n');`,
+    `  if (JSON.parse(lines.at(-1)).role === ${JSON.stringify(role)}) {`,
+    `    ${source}`,
+    '  }',
+    '}',
+    '',
+  ].join('\n'));
+  warmed(program);
+  return agent;
+}
+
+/**
+ * A consumer of `privateFreeSettings` over a fake `gh` holding `items` and `agent`. A `gh` ahead of
+ * the fake refuses the rules read with the first line `rules`, and serves it where that is undefined,
+ * as a seed alone would not outlast the fake's next write. `verb(...)` runs the real bin in the
+ * consumer, each a process of its own, with its pid, and `answerRulesWith` changes the first line.
+ */
+function privateFree(items, agent, { seeded = {}, ...answers } = {}) {
+  const rules = Object.hasOwn(answers, 'rules') ? answers.rules : FEATURE_REFUSED;
+  const directory = temporaryDirectory('rigger-run-private-free-');
+  const consumer = repositoryAt(join(directory, 'consumer'), { 'rigger.config.mjs': `export default ${JSON.stringify(privateFreeSettings())};\n` });
+  gitIn(consumer, 'branch', '-M', 'main');
+  const origin = join(directory, 'origin.git');
+  withOrigin(consumer, origin);
+  const dir = temporaryDirectory('rigger-run-private-free-gh-');
+  const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, items }, origin });
+  seedRepository(fake, seeded);
+  const refusing = temporaryDirectory('rigger-run-private-free-rules-');
+  const answerRulesWith = (line) => writeFileSync(join(refusing, 'rules-line'), line === undefined ? '' : `${line}\n`);
+  answerRulesWith(rules);
+  fixture(refusing, 'gh', [
+    'case "$*" in *rules/branches/*) if [ -s "$here/rules-line" ]; then cat "$here/rules-line" >&2; exit 1; fi ;; esac',
+    `exec ${shellQuote(fake.gh)} "$@"`,
+  ].join('\n'));
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), PATH: [agent.dir, refusing, dir, process.env.PATH].join(delimiter) };
+  const verb = (...args) => {
+    const ran = spawnSync(process.execPath, [bin, ...args], { cwd: consumer, encoding: 'utf8', env });
+    assert.equal(ran.error, undefined);
+    return { out: ran.stdout, err: ran.stderr, code: ran.status, pid: ran.pid };
+  };
+  return { consumer, fake, verb, answerRulesWith, state: join(consumer, '.rigger') };
+}
+
+/** What the fake board holds and every merge sent: the facts each row's claim and write oracle reads. */
+const forgeOf = async ({ fake }) => {
+  const model = await fake.model();
+  return { columns: Object.fromEntries((await model.operations.readItems()).map(({ number, column }) => [number, column])), writes: model.writes(),
+    merges: fake.sent().filter((args) => args[1]?.endsWith('/merge')) };
+};
+
+/** The events a consumer's stream holds, as `eventsOf` reads them, for `run` alone where one is named. */
+const streamOf = ({ consumer }, run) => eventsOf({ consumer }).filter((event) => run === undefined || event.run === run);
+
+/** The run ids in order of their `run.start`. */
+const runsIn = (world) => streamOf(world).filter(({ event }) => event === 'run.start').map(({ run }) => run);
+
+/** The roles the stand-in ran for card `number`, in order. */
+const rolesRan = (agent, number) => agent.runs().filter(({ card }) => card === number).map(({ role }) => role);
+
+/** A Review card an earlier run left, stopped on a failed rules read, #1090's state: every role finished, no move to Owner. */
+async function leftInReview() {
+  const agent = standInAgent(panelled(10));
+  const world = privateFree([card(10, 'Ready')], agent, { rules: 'gh: Bad Gateway (HTTP 502)' });
+  const stopped = world.verb('run');
+  assert.notEqual(stopped.code, 0, stopped.out);
+  assert.match(stopped.err, /effective rules/, stopped.err);
+  assert.equal((await forgeOf(world)).columns[10], 'Review', stopped.err);
+  assert.deepEqual(rolesRan(agent, 10).sort(), ['architect', 'engineer', 'reviewer'], stopped.err);
+  world.answerRulesWith(FEATURE_REFUSED);
+  return { ...world, agent, stopped };
+}
+
+// Host reason: wiring. Controlled counterpart: 'L2 moves a Review card to Owner over the refusal,
+// where its kind ends with the owner or names the owner alone' in test/private-free-policy.test.mjs.
+test('P1: over the refusal a run paused during its maker finishes the claimed card\'s work, leaves it in Review, exits 0 naming the closer, claims nothing more and merges nothing', SETTLES_WITHIN, async () => {
+  const agent = standInAgent({ ...panelled(10), ...panelled(20) });
+  const world = privateFree([card(10, 'Ready'), card(20, 'Ready')], agent);
+  afterRole(agent, 'engineer', `(await import('node:child_process')).execFileSync(process.execPath, [${JSON.stringify(bin)}, 'pause'], { cwd: ${JSON.stringify(world.consumer)}, env: process.env });`);
+
+  const ran = world.verb('run');
+
+  assert.equal(ran.code, 0, ran.out + ran.err);
+  assert.match(ran.out, /admission is closed by owner/, ran.out);
+  const lines = ran.out.split('\n').filter((line) => /#10\b/.test(line));
+  assert.deepEqual(lines.slice(1), ['rigger run: card #10\'s judge `reviewer` exited 0', 'rigger run: card #10\'s judge `architect` exited 0', 'rigger run: card #10\'s judge `owner` judges last, once every agent judge is satisfied, and Rigger never dispatches it'], ran.out);
+  assert.equal(readdirSync(admissionOf(world.state)).filter((name) => /^owner-.*\.json$/.test(name)).length, 1, 'the closer is still present');
+  const forge = await forgeOf(world);
+  // The move to Owner is a pull's, and a closed admission claims nothing.
+  assert.deepEqual(forge.columns, { 10: 'Review', 20: 'Ready' });
+  assert.deepEqual(forge.merges, []);
+  assert.deepEqual(rolesRan(agent, 10).sort(), ['architect', 'engineer', 'reviewer'], 'each role ran once');
+  assert.deepEqual(rolesRan(agent, 20), []);
+  const events = streamOf(world);
+  const at = (matches) => events.findIndex(matches);
+  const order = [
+    at(({ layer, event, card: held }) => layer === 'L3' && event === 'pull' && held === 10),
+    at(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'engineer'),
+    at(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'reviewer'),
+    at(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'architect'),
+    at(({ layer, event, card: held }) => layer === 'L3' && event === 'slot.release' && held === 10),
+  ];
+  assert.ok(order.every((place) => place >= 0), JSON.stringify(order));
+  const [pulled, maker, reviewer, architect, released] = order;
+  assert.ok(pulled < maker && maker < Math.min(reviewer, architect) && Math.max(reviewer, architect) < released, JSON.stringify(order));
+  assert.equal(events.filter(({ layer, event, role }) => layer === 'L1' && event === 'dispatch.end' && role === undefined).length, 3, 'each of the three roles\' dispatches ended');
+  assert.deepEqual(events.filter(({ layer, event, to }) => layer === 'L2' && event === 'transition' && to === 'owner'), []);
+  assert.deepEqual(events.filter(({ layer, event }) => layer === 'L3' && event === 'pull').map(({ card: held }) => held), [10], 'no claim after the pause');
+});
+
+// Host reason: wiring. Controlled counterpart: 'L2 moves a Review card to Owner over the refusal,
+// where its kind ends with the owner or names the owner alone' in test/private-free-policy.test.mjs.
+test('P2: over the refusal a new run under a persisted closer exits 0 naming it and claims no Review card a stopped run left', SETTLES_WITHIN, async () => {
+  const world = await leftInReview();
+  assert.equal(world.verb('pause').code, 0);
+  const before = await forgeOf(world);
+  const roles = world.agent.runs().length;
+
+  const ran = world.verb('run');
+
+  assert.equal(ran.code, 0, ran.out + ran.err);
+  assert.match(ran.out, /admission is closed by owner/, ran.out);
+  assert.deepEqual(await forgeOf(world), before);
+  assert.equal(world.agent.runs().length, roles);
+  const [first, second, ...others] = runsIn(world);
+  assert.deepEqual(others, []);
+  assert.notEqual(first, second, 'a second run identity holds the restart');
+  assert.notEqual(ran.pid, world.stopped.pid, 'a second process holds the restart');
+  assert.deepEqual(streamOf(world, second).filter(({ layer, event }) => layer === 'L3' && ['pull', 'dispatch'].includes(event)), []);
+  assert.ok(streamOf(world, first).some(({ event, role }) => event === 'dispatch' && role === 'architect'), 'the first run\'s stream is whole');
+});
+
+// Host reason: wiring. Controlled counterpart: 'L2 moves a Review card to Owner over the refusal,
+// where its kind ends with the owner or names the owner alone' in test/private-free-policy.test.mjs.
+test('P3: over the refusal, after the owner resumes, a stopped run\'s Review card moves to Owner without a remake or a rejudging, and no merge follows', SETTLES_WITHIN, async () => {
+  const world = await leftInReview();
+  assert.equal(world.verb('pause').code, 0);
+  assert.equal(world.verb('run').code, 0);
+  assert.equal(world.verb('resume').code, 0);
+  const before = await forgeOf(world);
+  const roles = world.agent.runs().length;
+
+  const ran = world.verb('run');
+
+  assert.equal(ran.code, 0, ran.out + ran.err);
+  assert.ok(ran.out.split('\n').includes('rigger run: card #10 moved to owner'), ran.out);
+  const after = await forgeOf(world);
+  assert.deepEqual(after.columns, { 10: 'Owner' });
+  assert.deepEqual(after.writes.slice(0, before.writes.length), before.writes, 'no completed write was retried or rolled back');
+  assert.deepEqual(after.writes.slice(before.writes.length).map(({ operation, args }) => [operation, args[1]]), [['moveItem', 'Owner']]);
+  assert.deepEqual(after.merges, []);
+  assert.equal(world.agent.runs().length, roles, 'no maker or judge ran again');
+});
+
+// Host reason: wiring. Controlled counterpart: 'the pull over the refusal and an unreadable
+// admission rejects naming admission, no rules failure in its place, and claims nothing' in
+// test/private-free-policy.test.mjs.
+test('P7a: over the refusal and an admission that turns unreadable in flight, the claimed card finishes and the failure comes at the freed-slot pull', SETTLES_WITHIN, async () => {
+  const agent = standInAgent({ ...panelled(10), ...panelled(20) });
+  const world = privateFree([card(10, 'Ready'), card(20, 'Ready')], agent);
+  afterRole(agent, 'engineer', `const fs = await import('node:fs'); fs.mkdirSync(${JSON.stringify(admissionOf(world.state))}, { recursive: true }); fs.writeFileSync(${JSON.stringify(join(admissionOf(world.state), 'not-a-closer'))}, 'x');`);
+
+  const ran = world.verb('run');
+
+  assert.notEqual(ran.code, 0, ran.out);
+  assert.ok(ran.err.includes(`${join(admissionOf(world.state), 'not-a-closer')} (no closer form)`), ran.err);
+  assert.doesNotMatch(ran.err, /effective rules/, ran.err);
+  const forge = await forgeOf(world);
+  // Every role finished. The move to Owner needs a claim, and this pull claims nothing.
+  assert.deepEqual(forge.columns, { 10: 'Review', 20: 'Ready' }, ran.err);
+  assert.deepEqual(forge.merges, []);
+  assert.deepEqual(rolesRan(agent, 10).sort(), ['architect', 'engineer', 'reviewer']);
+  assert.deepEqual(rolesRan(agent, 20), []);
+  assert.deepEqual(streamOf(world).filter(({ layer, event }) => layer === 'L3' && event === 'pull').map(({ card: held }) => held), [10]);
+  const trigger = streamOf(world).map(({ event, trigger: fired }) => (event === 'trigger' ? fired : event));
+  assert.ok(trigger.lastIndexOf('pull') > trigger.indexOf('slot.release'), 'a pull fired on the freed slot');
+});
+
+/** The pull request a seeded card holds: #70 from rigger-10 at this head, its markers `comments`. */
+const SEEDED_HEAD = 'c'.repeat(40);
+const seededPull = (comments) => ({ branches: ['rigger-10'], mergeable: { 70: 'MERGEABLE' }, pullRequests: [{ number: 70, head: 'rigger-10', sha: SEEDED_HEAD, mergeBase: 'd'.repeat(40), comments }] });
+const soundMarkers = (...roles) => roles.map((role) => markerComment({ card: 10, pull: 70, head: SEEDED_HEAD, body: card(10, 'Review').body, role }));
+
+/** Each preexisting card a run can meet, by name: its column, labels and markers. */
+const PREEXISTING = {
+  'a Review card of a kind ending with the owner': { column: 'Review', labels: ['type:change'], roles: ['reviewer', 'architect'] },
+  'a Review card of a kind naming no owner': { column: 'Review', labels: ['type:merged'], roles: ['reviewer', 'architect'] },
+  'an Owner card with no owner verdict': { column: 'Owner', labels: ['type:change'], roles: ['reviewer', 'architect'] },
+  'an Owner card with a sound owner verdict': { column: 'Owner', labels: ['type:change'], roles: ['reviewer', 'architect', 'owner'] },
+};
+
+/** A consumer holding the preexisting card named `name`, under the rules answer `rules`, with `admission` open, closed or unreadable. */
+function preexisting(name, rules, admission) {
+  const { column, labels, roles } = PREEXISTING[name];
+  const world = privateFree([card(10, column, { labels })], standInAgent(), { rules, seeded: seededPull(soundMarkers(...roles)) });
+  if (admission === 'closed') seed(world.state, 'owner-c3.json', closerText({ reason: 'paused by the owner' }));
+  if (admission === 'unreadable') seed(world.state, 'not-a-closer');
+  return world;
+}
+
+/** What a run must do, each a claim, a write, an exit and an output oracle written by hand. */
+const ANSWERS = {
+  moved: { code: 0, column: 'Owner', moves: 1, out: 'rigger run: card #10 moved to owner' },
+  stays: { code: 0, moves: 0, out: 'no card was pullable' },
+  closed: { code: 0, moves: 0, out: `admission is closed by owner: paused by the owner; time ${TIME}` },
+  unreadable: { code: 1, moves: 0, err: '/not-a-closer (no closer form)' },
+  rulesFailed: { code: 1, moves: 0, err: 'read of the base branch\'s effective rules failed' },
+};
+
+/** The line `run` and `plan` print for a merge the refusal holds back, written out by hand. */
+const REFUSED_MERGE_LINE = `  refuse  #10  pull request #70 is not merged, because the forge offers this repository no effective rules for its base branch, so the checks they require are unavailable evidence: readEffectiveRules on board ${PROJECT} failed: reading effective rules for branch main in ${REPO}, ${FEATURE_REFUSED}`;
+
+/** `answer`, with the line a person reads for the refused merge beside its own output. */
+const refusing = (answer) => ({ ...answer, refusal: REFUSED_MERGE_LINE });
+
+/** Asserts run's output, exit, claims and writes over the preexisting card `name` meet `answer`. */
+async function runsAs(name, rules, admission, answer) {
+  const world = preexisting(name, rules, admission);
+  const at = `${name}, admission ${admission}`;
+  const before = await forgeOf(world);
+  const ran = world.verb('run');
+  const after = await forgeOf(world);
+  assert.equal(ran.code, answer.code, `${at}: ${ran.out}${ran.err}`);
+  if (answer.out !== undefined) assert.ok(ran.out.includes(answer.out), `${at}: ${ran.out}`);
+  if (answer.err !== undefined) assert.ok(ran.err.includes(answer.err), `${at}: ${ran.err}`);
+  if (answer.refusal !== undefined) assert.ok(`${ran.out}\n${ran.err}`.split('\n').includes(answer.refusal), `${at}: ${ran.out}${ran.err}`);
+  assert.deepEqual(after.columns, { 10: answer.column ?? PREEXISTING[name].column }, at);
+  assert.equal(after.writes.length - before.writes.length, answer.moves, at);
+  assert.deepEqual(after.merges, [], at);
+  assert.equal(streamOf(world).filter(({ layer, event }) => layer === 'L3' && event === 'dispatch').length, 0, at);
+  assert.equal(streamOf(world).filter(({ layer, event }) => layer === 'L3' && event === 'pull').length, answer.moves, at);
+}
+
+// Host reason: wiring. Controlled counterpart: 'L2 refuses a merge over the refusal, naming the
+// unavailable rules, for a Review card and an Owner card a served read would merge' in
+// test/private-free-policy.test.mjs. In-flight work is the P1 and P7a tests' above.
+test('P4, P7, P8: over the verified refusal, run answers each preexisting card under open, closed and unreadable admission', { timeout: 120_000 }, async () => {
+  const [owned, merged, waiting, verdict] = Object.keys(PREEXISTING);
+  for (const name of [owned, waiting]) {
+    await runsAs(name, FEATURE_REFUSED, 'open', name === owned ? ANSWERS.moved : ANSWERS.stays);
+    await runsAs(name, FEATURE_REFUSED, 'closed', ANSWERS.closed);
+    await runsAs(name, FEATURE_REFUSED, 'unreadable', ANSWERS.unreadable);
+  }
+  for (const name of [merged, verdict]) {
+    await runsAs(name, FEATURE_REFUSED, 'open', refusing(ANSWERS.stays));
+    await runsAs(name, FEATURE_REFUSED, 'closed', refusing(ANSWERS.closed));
+    await runsAs(name, FEATURE_REFUSED, 'unreadable', refusing(ANSWERS.unreadable));
+  }
+});
+
+// Host reason: wiring. Controlled counterpart: 'L2 answers no action, naming the rules read, for
+// an unverified 403 wherever the action needs the read' in test/private-free-policy.test.mjs.
+test('P5: over an unverified 403, run fails naming the rules read under every admission where the action needs it, and an Owner card with no verdict needs none', { timeout: 120_000 }, async () => {
+  const denied = 'gh: Resource not accessible by integration (HTTP 403)';
+  const [owned, merged, waiting, verdict] = Object.keys(PREEXISTING);
+  for (const name of [owned, merged, verdict]) {
+    for (const admission of ['open', 'closed', 'unreadable']) await runsAs(name, denied, admission, ANSWERS.rulesFailed);
+  }
+  await runsAs(waiting, denied, 'open', ANSWERS.stays);
+  await runsAs(waiting, denied, 'closed', ANSWERS.closed);
+  await runsAs(waiting, denied, 'unreadable', ANSWERS.unreadable);
+});
+
+// Host reason: wiring. Controlled counterpart: 'L2 moves a Review card to Owner over the refusal,
+// where its kind ends with the owner or names the owner alone' in test/private-free-policy.test.mjs.
+test('P9a: plan over the refusal shows the non-merge answer and no merge, where served rules would show the merge', SETTLES_WITHIN, () => {
+  const [owned, merged, , verdict] = Object.keys(PREEXISTING);
+  const moving = preexisting(owned, FEATURE_REFUSED, 'open').verb('plan');
+  assert.equal(moving.code, 0, moving.out + moving.err);
+  assert.match(moving.out, /pull {4}#10 {2}move to owner/, moving.out);
+  for (const name of [merged, verdict]) {
+    const planned = preexisting(name, FEATURE_REFUSED, 'open').verb('plan');
+    assert.equal(planned.code, 0, planned.out + planned.err);
+    assert.match(planned.out, /nothing would be pulled, and refuses 1 card/, planned.out);
+    assert.ok(planned.out.split('\n').includes(REFUSED_MERGE_LINE), planned.out);
+    assert.doesNotMatch(planned.out, /merge pull request #/, planned.out);
+    assert.match(preexisting(name, undefined, 'open').verb('plan').out, /merge pull request #70/, 'with the rules served plan shows the merge, so the refusal alone holds it');
+  }
 });
