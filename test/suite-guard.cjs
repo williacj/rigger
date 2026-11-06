@@ -12,6 +12,7 @@ const hostFiles = normalized(process.env.RIGGER_SUITE_HOST_FILES);
 const awaitingFiles = normalized(process.env.RIGGER_SUITE_AWAITING_FILES);
 const convertingFiles = normalized(process.env.RIGGER_SUITE_CONVERTING_FILES);
 const worker = process.env.NODE_TEST_CONTEXT === 'child-v8';
+const timerRefusalFile = process.env.RIGGER_SUITE_TIMER_REFUSALS;
 
 function globPattern(pattern) {
   let expression = '^';
@@ -98,28 +99,11 @@ if (worker && process.env.RIGGER_SUITE_MODE === 'host' && !awaitingFiles.has(fil
 function watchTimers(recordFile) {
   const { createHook, executionAsyncResource } = require('node:async_hooks');
   const { appendFileSync, writeSync } = require('node:fs');
+  const { promisify } = require('node:util');
   const owners = new WeakMap();
   const tests = new WeakSet();
   const refusals = new Map();
-  let refused = false;
-  const retainFailure = () => { if (refused) process.exitCode = 1; };
   if (!recordFile) {
-    // A caught refusal must outlive test teardown and handlers that reset exitCode.
-    function deliver(callback, receiver, args) {
-      try { return Reflect.apply(callback, receiver, args); }
-      finally { retainFailure(); }
-    }
-    const emit = process.emit;
-    process.emit = function timerVerdict(event) {
-      'use strict';
-      return deliver(emit, this, arguments);
-    };
-    // Node delivers capture callbacks, domains and uncaughtException through this hook.
-    const fatal = process._fatalException;
-    process._fatalException = function timerException(error, fromPromise) {
-      'use strict';
-      return deliver(fatal, this, arguments);
-    };
     const test = require('node:test');
     test.afterEach((context) => {
       const refusal = refusals.get(context);
@@ -144,8 +128,6 @@ function watchTimers(recordFile) {
       const test = owner();
       if (test) owners.set(resource, test);
     },
-    // Exit-event promise continuations can run after process.emit has returned.
-    after: recordFile ? undefined : retainFailure,
   }).enable();
   function wrapTimer(object, name, api, delayIndex, iterator = false) {
     const original = object[name];
@@ -163,8 +145,11 @@ function watchTimers(recordFile) {
         } else {
           const refusal = new Error(`deterministic tier: ${file}: ${test ?? '<module>'} cannot arm ${api} with delay ${delay}`);
           refusals.set(running?.getCtx() ?? null, refusal);
-          refused = true;
-          process.exitCode = 1;
+          try {
+            appendFileSync(timerRefusalFile, JSON.stringify({ file, test, api, delay }) + '\n');
+          } catch (error) {
+            writeSync(2, `deterministic tier: could not record timer refusal: ${error.message}\n`);
+          }
           writeSync(2, refusal.message + '\n');
           throw refusal;
         }
@@ -174,6 +159,10 @@ function watchTimers(recordFile) {
     object[name] = iterator ? async function* boundedInterval(...args) {
       yield* Reflect.apply(boundedTimer, this, args);
     } : boundedTimer;
+    const custom = Object.getOwnPropertyDescriptor(original, promisify.custom);
+    // Node's promisify cache may hold a self-reference; it must name the guarded function.
+    if (custom?.value === original) custom.value = object[name];
+    if (custom) Object.defineProperty(object[name], promisify.custom, custom);
   }
   wrapTimer(globalThis, 'setTimeout', 'setTimeout', 1);
   wrapTimer(globalThis, 'setInterval', 'setInterval', 1);
@@ -270,6 +259,7 @@ if (worker && process.env.RIGGER_SUITE_MODE === 'deterministic' && convertingFil
 // A test that starts its own node --test run gets a fresh tier decision from that run's script.
 if (worker) {
   delete process.env.RIGGER_SUITE_TIMER_RECORD;
+  delete process.env.RIGGER_SUITE_TIMER_REFUSALS;
   for (const name of ['RIGGER_SUITE_MODE', 'RIGGER_SUITE_HOST_FILES', 'RIGGER_SUITE_AWAITING_FILES', 'RIGGER_SUITE_CONVERTING_FILES', 'RIGGER_SUITE_ALLOWED_PATH', 'RIGGER_SUITE_HOST_KEY']) {
     delete process.env[name];
   }

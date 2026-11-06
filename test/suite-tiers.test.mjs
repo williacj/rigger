@@ -1170,11 +1170,12 @@ for (const state of ['alias', 'absent']) {
   });
 }
 
-function timerProbe(t, source, files = {}, { tier = 'bounded', record = false } = {}) {
+function timerProbe(t, source, files = {}, { tier = 'bounded', record = false, preload } = {}) {
   const { directory, environment } = isolatedHostTree(t);
   const file = tier === 'host' ? 'test/host.test.mjs' : 'test/other.test.mjs';
   const recordDirectory = temporaryDirectory('rigger-timer-record-', { context: t });
   delete environment.RIGGER_SUITE_TIMER_RECORD;
+  if (preload) environment.NODE_OPTIONS = `${environment.NODE_OPTIONS ?? ''} --require=${JSON.stringify(join(directory, preload))}`;
   if (record) environment.RIGGER_SUITE_TIMER_RECORD = recordDirectory;
   if (tier === 'converting') {
     const suite = join(directory, 'test/suite.sh');
@@ -1761,3 +1762,143 @@ for (const api of refusalApis) {
     }
   });
 }
+
+function printedTimerRefusals({ result }) {
+  return result.stderr.split('\n').filter(line => line.startsWith('{"file":')).map(line => JSON.parse(line));
+}
+
+// The supervisor must retain the refusal after every way its worker can end.
+const refusalEnds = [
+  ['normal-return', "await attempt('end');"],
+  ['caught', 'await caught();'],
+  ['caught-exit', "await caught(); note('terminating'); process.exit(0);"],
+  ['exit-caught', "process.once('exit', AsyncResource.bind(async () => { note('exit-entered'); await caught(); note('terminating'); process.exit(0); }));"],
+  ['exit-continuation', "process.once('exit', AsyncResource.bind(() => { note('exit-entered'); caught().then(() => { note('terminating'); process.exit(0); }); }));"],
+  ['really-exit', "await caught(); note('terminating'); process.reallyExit(0);"],
+  ['sigkill', "await caught(); note('terminating'); process.kill(process.pid, 'SIGKILL');"],
+  ['exit-sync', `process.once('exit', AsyncResource.bind(() => {
+    note('exit-entered');
+    try { const pending = attempt('end'); pending?.catch(() => {}); } catch {}
+    note('terminating'); process.exit(0);
+  }));`],
+];
+
+for (const [ending, action] of refusalEnds) {
+  for (const api of refusalApis) {
+    test(`timer refusal supervisor ${ending} ${api[0]}`, (t) => {
+      const title = `origin ${ending} ${api[0]}`;
+      const inExit = ending.startsWith('exit-');
+      const probe = timerProbe(t, `import assert from 'node:assert/strict';
+        import { after } from 'node:test';
+        import { AsyncResource } from 'node:async_hooks';
+        import { attempt, silence } from '../src/clocked.mjs';
+        after(() => note('root-after'));
+        const caught = async () => {
+          assert.equal(await silence('catch'), 'returned normally');
+          note('source-returned');
+        };
+        test(${JSON.stringify(title)}, async () => { ${action} });`,
+      { 'src/clocked.mjs': refusalSource(api) });
+      assertNoNativeTimers(probe);
+      const events = readFileSync(probe.positionEvents, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+      assert.equal(events.filter(event => event.startsWith('attempt:')).length, 1, JSON.stringify(events));
+      if (inExit) assert.ok(events.indexOf('root-after') < events.indexOf('exit-entered'), JSON.stringify(events));
+      if (!['normal-return', 'exit-sync'].includes(ending)) assert.equal(events.filter(event => event === 'source-returned').length, 1, JSON.stringify(events));
+      if (!['normal-return', 'caught'].includes(ending)) assert.ok(events.includes('terminating'), JSON.stringify(events));
+      assert.equal(probe.result.error, undefined, probe.result.stdout + probe.result.stderr);
+      assert.deepEqual(printedTimerRefusals(probe), [{ file: probe.file, test: title, api: api[1], delay: 5 }],
+        'the supervisor must print the refusal recorded before the worker ended');
+      assert.notEqual(probe.result.status, 0, 'a recorded timer refusal must fail the suite regardless of worker termination');
+    });
+  }
+}
+
+for (const [binding, imports, expression] of [
+  ['global', '', 'globalThis.setTimeout'],
+  ['timers', "import { setTimeout } from 'node:timers';", 'setTimeout'],
+]) {
+  for (const mode of ['zero', 'positive', 'conversion']) {
+    test(`timer promisify ${mode} ${binding}`, (t) => {
+      const title = `promisify ${mode} ${binding} preserves its contract`;
+      const delay = mode === 'zero' ? 0 : 5;
+      const probe = timerProbe(t, `import assert from 'node:assert/strict';
+        import { promisify } from 'node:util';
+        ${imports}
+        test(${JSON.stringify(title)}, async () => {
+          const value = await observeArm(() => promisify(${expression})(${delay}, 'completed'));
+          assert.equal(value, 'completed');
+          note('value:completed');
+        });`, {}, { tier: mode === 'conversion' ? 'converting' : 'bounded', record: mode === 'conversion' });
+      if (mode === 'positive') {
+        assertNoNativeTimers(probe);
+        assert.deepEqual(printedTimerRefusals(probe), [{ file: probe.file, test: title, api: 'node:timers/promises.setTimeout', delay: 5 }]);
+        assert.notEqual(probe.result.status, 0, probe.result.stdout + probe.result.stderr);
+      } else {
+        assertTimerPassed(probe, title);
+        assert.deepEqual(readFileSync(probe.positionEvents, 'utf8').trim().split('\n').map(line => JSON.parse(line)), ['value:completed']);
+        if (mode === 'conversion') {
+          const records = timerRecords(probe);
+          t.diagnostic(JSON.stringify({ binding, records }));
+          assert.deepEqual(records, [
+            { file: probe.file, test: null, api: null, delay: null },
+            { file: probe.file, test: title, api: 'node:timers/promises.setTimeout', delay: 5 },
+          ]);
+        }
+      }
+    });
+  }
+}
+
+// Node's own promisify operation can have cached a self-reference before this preload runs.
+test('timer promisify seeded promise custom remains bounded', (t) => {
+  const title = 'a previously promisified promise binding still refuses a positive delay';
+  const probe = timerProbe(t, `import { promisify } from 'node:util';
+    import { setTimeout } from 'node:timers/promises';
+    test(${JSON.stringify(title)}, async () => {
+      await observeArm(() => promisify(setTimeout)(5));
+    });`, {
+    'seed-promisify.cjs': "// ABOUTME: Exercises Node's ordinary promisify cache before the suite guard installs.\nif (process.env.NODE_TEST_CONTEXT === 'child-v8') require('node:util').promisify(require('node:timers').setTimeout);\n",
+  }, { preload: 'seed-promisify.cjs' });
+  assertNoNativeTimers(probe);
+  assert.deepEqual(printedTimerRefusals(probe), [{ file: probe.file, test: title, api: 'node:timers/promises.setTimeout', delay: 5 }]);
+  assert.notEqual(probe.result.status, 0, probe.result.stdout + probe.result.stderr);
+});
+
+test('timer refusal supervisor preserves an escaped title and numeric delay', (t) => {
+  const title = 'outside "worker"\nreturned';
+  const probe = timerProbe(t, `test(${JSON.stringify(title)}, () => {
+    try { observeArm(() => clearTimeout(setTimeout(timerCallback, '5'))); } catch {}
+  });`);
+  assertNoNativeTimers(probe);
+  assert.deepEqual(printedTimerRefusals(probe), [{ file: probe.file, test: title, api: 'setTimeout', delay: 5 }]);
+  assert.notEqual(probe.result.status, 0, probe.result.stdout + probe.result.stderr);
+});
+
+test('timer refusal destination is removed before the module evaluates', (t) => {
+  const probe = timerProbe(t, `import assert from 'node:assert/strict';
+    assert.equal(Object.hasOwn(process.env, 'RIGGER_SUITE_TIMER_REFUSALS'), false);
+    test('private refusal destination', () => {});`);
+  assertTimerPassed(probe, 'private refusal destination');
+});
+
+test('timer refusal still throws and reports a failed record append', (t) => {
+  const title = 'a record failure still refuses the arm';
+  const probe = timerProbe(t, `test(${JSON.stringify(title)}, () => {
+    try { observeArm(() => clearTimeout(setTimeout(timerCallback, 5))); } catch {}
+  });`, {
+    'refusal-write-failure.cjs': `// ABOUTME: Supplies an observed write failure for the supervisor refusal file alone.
+if (process.env.NODE_TEST_CONTEXT === 'child-v8') {
+  const fs = require('node:fs');
+  const destination = process.env.RIGGER_SUITE_TIMER_REFUSALS;
+  const append = fs.appendFileSync;
+  fs.appendFileSync = function failingRefusalWrite(file, ...args) {
+    if (file === destination) throw Object.assign(new Error('refusal-write-control'), { code: 'EIO' });
+    return Reflect.apply(append, this, [file, ...args]);
+  };
+}
+`,
+  }, { preload: 'refusal-write-failure.cjs' });
+  const output = assertTimerRefused(probe, title, 'setTimeout');
+  assert.match(output, /could not record timer refusal: refusal-write-control/);
+  assert.deepEqual(printedTimerRefusals(probe), []);
+});

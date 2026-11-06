@@ -3,7 +3,7 @@ ABOUTME: Records the timer guard's placement, test-first checks and host-test cl
 # Deterministic timer bound
 
 Card [#1137](https://github.com/williacj/rigger/issues/1137), acceptance revision
-`ec3296ec4111`, implements [D29 rule 3.5 and D30 rule 6](../spec/decisions.md) in
+`98b0a2865bba`, implements [D29 rule 3.5 and D30 rule 6](../spec/decisions.md) in
 the existing suite guard. Its placement follows the
 [architect's ruling](https://github.com/williacj/rigger/issues/740#issuecomment-6497153704)
 and its fourth and fifth amendments. It answers the
@@ -56,7 +56,7 @@ commit on 2026-11-06: all 123 existing tests passed. `uptime` reported loads of
 15.70 at start and 28.95 at end. Head verification, retained failure evidence,
 fresh-clone counts, mutation receipts and CI evidence belong to the PR.
 
-The round-two judges found two instances of item 1's refusal class: a caught
+The first judges found two instances of item 1's refusal class: a caught
 source call after root teardown could leave a successful worker, and a refusal
 assertion could miss a native timer armed before the expected exception. The
 regressions enumerate module evaluation, suite declaration, hooks, test bodies,
@@ -65,13 +65,23 @@ They exercise ordinary completion overrides, promise rejection handlers and
 Node's global exception and rejection handlers. Their phase and attempt ledger
 establishes which work actually ran, independently of the refusal diagnostic.
 
-A refusal now latches the worker's failure and writes its diagnostic before it
-throws. Node test hooks retain test-specific failures; asynchronous callback
-completion and process event/exception delivery retain the worker verdict after
-those hooks finish, including a handler that resets the exit status. The fatal
-exception delivery wrapper covers Node's capture callback and domain route as
-well as its uncaught-exception event. Record-only conversion workers install
-none of those verdict wrappers.
+The [round-three author amendment](https://github.com/williacj/rigger/issues/1137#issuecomment-6686375354)
+places refusal persistence in `test/suite.sh`. The runner creates a file inside
+its own run directory and passes its path to the preload. Each bounded arm
+appends its file, owning test, API and numeric delay synchronously before
+throwing. The runner prints that file and fails on it after its worker ends.
+A worker returning, resetting its exit status, exiting inside its exit listener,
+using `reallyExit`, or killing itself cannot erase that recorded refusal.
+The worker captures the destination before deleting its environment variable.
+A failed append is reported and still throws the refusal before any native arm.
+
+The [reviewer](https://github.com/williacj/rigger/pull/1254#issuecomment-6686112520)
+and [architect](https://github.com/williacj/rigger/pull/1254#issuecomment-6685958817)
+showed that an exit listener can terminate before a worker-local finally or async
+after hook runs. The parent record replaces those retention hooks. The existing
+Node test hooks still fail the actual violating test when a source catches its
+error while that test runs. Conversion recording keeps its separate destination,
+ran/arm writes and R0–R8 interface.
 
 The refusal fixtures scope a public async-resource observer to each API attempt.
 They require no native Timeout creation, no native timer callback dispatch and
@@ -86,3 +96,11 @@ The return ledger applies to the exit-event phase as well as every other phase.
 Every error-discard path must actually return normally before a cell can claim
 that a successful source completion still fails its worker. Retained Node 26
 exit fixtures established that premise before the assertion was strengthened.
+
+Node's timeout promisify accessor must survive the wrapper. Copying its descriptor
+keeps its lazy lookup of the guarded promise API; copying the accessor's current
+value would cache a native function. Node can also have promisified its native
+promise function before this preload, leaving a self-reference in that function's
+custom descriptor. The wrapper redirects that self-reference to itself. The
+regressions check allowed zero-delay values, positive refusal without native
+effects, conversion recording, and the pre-existing promisify cache.
