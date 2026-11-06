@@ -6,8 +6,7 @@ the documents that own it, and a short FAQ. -->
 This reference is where you look a fact up while you operate Rigger. The [guide](guide.md) is how
 you operate it, in order, and each section here links to its matching section there. This page
 retypes none of the facts it points to: each section names the document that owns its fact, and that
-document is the one to read. A part marked **Placeholder** is behaviour a later card writes; it
-names that card.
+document is the one to read.
 
 ## Verbs
 
@@ -42,8 +41,11 @@ The categories are fixed by Rigger, and a consumer adds none
 [`docs/spec/requirements.md`](spec/requirements.md) defines what each one covers. How you answer one
 is the guide's [answering escalations](guide.md#answering-escalations).
 
-> **Placeholder.** Destinations: where each category goes, and how a consumer names it. Written by
-> M6-19 and M6-20a.
+Every category goes to the owner unless the consumer names a role for it. The "Escalation
+destinations" row of [`ARCHITECTURE.md`, "Extension points"](../ARCHITECTURE.md#extension-points)
+says where each goes and what the validator refuses, and the `escalate` line of the config shape
+that section publishes is where a consumer names a role. Rigger refuses a configuration naming a
+role for a recorded-decision change or for critical ([`R-ESCALATE-14`](spec/requirements.md)).
 
 ## The marker vocabulary
 
