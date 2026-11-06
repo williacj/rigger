@@ -5,7 +5,7 @@ ABOUTME: Records the timer guard's placement, test-first checks and host-test cl
 Card [#1137](https://github.com/williacj/rigger/issues/1137) implements
 [D29 rule 3.5 and D30 rule 6](../spec/decisions.md) in the existing suite guard.
 The EIO implementation work used acceptance revision `783e6d4844d8`; the
-subsequent architect scope ruling and pending owner amendment are recorded below.
+subsequent architect scope ruling, which the owner agreed, is recorded below.
 Its placement follows the
 [architect's ruling](https://github.com/williacj/rigger/issues/740#issuecomment-6497153704)
 and its fourth and fifth amendments. It answers the
@@ -146,9 +146,10 @@ or Node internal, tamper with the record, or load code before the guard; an
 in-scope new counterexample must use ordinary test code without those changes.
 
 The architect specified the following scope sentence for the card, subject to
-the owner's agreement because it narrows the literal acceptance. That agreement
-and the card's resulting revision were pending when this entry was committed;
-this records the ruling and its status rather than ratifying the amendment:
+the owner's agreement because it narrows the literal acceptance. The owner agreed
+at [M7-U52](https://github.com/williacj/rigger/issues/1009#issuecomment-6697364157),
+and the card carries the sentence from
+[revision `e16f2ec0d681`](https://github.com/williacj/rigger/issues/1137#issuecomment-6697389027):
 
 > A test that replaces or patches a JavaScript built-in or a Node internal the
 > guard relies on, such as `Number`, `Function.prototype.call` or `process._kill`,
@@ -160,3 +161,9 @@ The two recorded cases remain historical scope evidence. They are not passing
 refusal claims and will not be rerun as attacks. The runner and guard retain
 their implementation; the existing timer-mock and replaced-public-kill
 regressions remain required verification.
+
+Under [M7-U53](https://github.com/williacj/rigger/issues/1009#issuecomment-6697364467)
+a Claude maker finished this card in the same clone after the Codex maker was
+stopped during the final receipt refresh. Codex judges still review it. The
+mechanism is unchanged from that candidate; the finish merged current `main`,
+updated this entry and refreshed the evidence at the final head.
