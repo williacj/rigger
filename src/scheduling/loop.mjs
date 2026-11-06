@@ -470,8 +470,8 @@ function triggerRecord(readRecord) {
  * the maker's settle, L3 asks it again with the facts the settle answered as `forge`, and, while
  * the judges it names are made and run, with `directories` and `judged`, as `attempt` and `judged`
  * say. `l2` is L2's column changes, whose `claimed` takes each claim and whose `settled` takes the
- * maker's outcome and, for a continuing maker that exited 0, L1's workspace tip and the read
- * measure. It answers what it read of the forge, which L3 reads nothing of. The
+ * maker's outcome and, for a continuing maker that exited 0, L1's workspace tip, the head and
+ * rulings L2 handed that maker, unread, and the read measure. It answers what it read of the forge, which L3 reads nothing of. The
  * maker is always the role L2's maker answer names, dispatched through L1, as `dispatchRole` says
  * (the architect's ruling 1, Q1, on #467). `environment` is the environment L3 hands
  * every dispatch it makes, each step's, the maker's and each judge's (ruling 2, AQ1). `ps` and
@@ -944,7 +944,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         for (;;) {
           const elapsedMs = now() - first;
           reads += 1;
-          [settled] = await settling({ continuing: true, expectedHead, tipFailure, lastForgeHead, last: elapsedMs >= 60_000, reads, elapsedMs });
+          [settled] = await settling({ continuing: true, startHead: continuing.head, rulings: continuing.markers, expectedHead, tipFailure, lastForgeHead, last: elapsedMs >= 60_000, reads, elapsedMs });
           if (settled.status !== 'fulfilled' || !settled.value?.waiting) break;
           lastForgeHead = settled.value.forgeHead;
           // D16 rule 3: the forge can still show the old head after a push. #664's journal/P58

@@ -1439,8 +1439,10 @@ Two other ends of the role's dispatch escalate the card. L2 answers each with ra
 - **A non-zero exit** (`R-ESCALATE-25`). L2 answers it as `ambiguous`.
 
 While L2 reads a continuing attempt's pull request at a head other than the tip L1 read, L3 has L2
-read it again under the same claim and slot, until the bound `R-WORK-34` sets has passed. Every wait for the forge to show a write runs this way:
+read it again under the same claim and slot, until the bound `R-WORK-43` sets has passed. Every wait for the forge to show a write runs this way:
 L3 owns the pause, the clock and the bound, and L2 owns what each read shows.
+
+Where a continuing maker exits 0 at the head L2 gave it, L2 answers a loop-raised `ambiguous` escalation in place of the move to Review (`R-LOOP-20`). L3 hands L2 that head unread. The comparison lies within one settle, so it needs no memory.
 
 L1's directory-removal operation lives in `src/execution/workspace.mjs`. L2 selects it, and L3 invokes it under the card's claim. It serves both `R-WORK-35` and `R-WORK-41`.
 
