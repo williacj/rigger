@@ -603,7 +603,6 @@ test('E3: two failed exit reads name both failures and defer the maker', async (
 });
 
 // E4: either positive source must survive the other failure, and presence must never masquerade as review facts.
-// proves R-LOOP-19
 test('E4: a branch or open or merged pull preserves the ordinary release after the other read fails', async (t) => {
   for (const held of ['branch', 'open', 'merged']) await t.test(held, async (t) => {
     const here = world(t, { afterMaker: ({ repository }) => {
@@ -694,7 +693,6 @@ test('E9: a new run dispatches a card deferred after an unreadable exit', async 
 });
 
 // E10 and E12 are invariant guards: these exits must not enter fresh nonzero classification.
-// proves R-LOOP-19
 test('E10 and E12: continuing failures and zero exits retain their early-read boundaries', async (t) => {
   for (const cell of ['continuing', 'zero']) await t.test(cell, async (t) => {
     const here = world(t);

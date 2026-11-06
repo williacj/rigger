@@ -1356,7 +1356,11 @@ L3 keeps direct set-aside card memory for one invocation. The existing table giv
 | — it exited non-zero; | |
 | — the card is not escalated; | |
 | — the forge holds nothing of the card's line of work: no branch of it, and no open or merged pull request from it. | |
-| while a clock trigger keeps `run` up, a maker not continuing that exited non-zero, where a read its settle made failed and no read showed the line of work's branch or an open or merged pull request from it | L2 cannot say whether `R-LOOP-19` applies, so without the memory the next pull could dispatch the maker again. Its settle rejects naming the read |
+| while a clock trigger keeps `run` up, a maker whose dispatch L2's settle reads, where all of these hold: | L2 cannot say whether `R-LOOP-19` applies, so without the memory the next pull could dispatch the maker again. Its settle rejects naming the read |
+| — the maker was not continuing; | |
+| — it exited non-zero; | |
+| — a read its settle made failed; | |
+| — no read showed the line of work's branch or an open or merged pull request from it. | |
 | stopped a second time because its line of work moved or was deleted since L2 read it, counting from the invocation's start or from the end of the card's last skip | the forge's answer and `git`'s still disagree, so without the memory each pull reads and stops it again at once |
 
 In a no-clock `run`, L3 also remembers identities of maker starts from the beginning, continuing maker actions, individual judge dispatches, and closed-card removals with a following maker. This identity rule covers only those actions. `move`, `return`, `escalate`, `merge`, and other removal answers keep their existing handling and exclusions. L2 supplies each identity from the facts selecting its answer; L3 does not reconstruct forge facts. For a removal with a following maker, L2 names the closed pull requests by number and head in stable order and includes the following maker action in its identity. A new closed pull request or changed head therefore gives a different removal identity.

@@ -2,7 +2,7 @@ ABOUTME: Card #1241's clock-held exit-read classification, test-first evidence a
 
 # A failed exit read defers a clock-held maker
 
-Card #1241, acceptance revision `7706c7882b07`, defines completion. The architecture row is
+Card #1241, acceptance revision `fa576015f5d2`, defines completion. The architecture rows are
 the card's pinned proposal, for the owner to ratify at the pull request's marker.
 
 L2 uses its existing failed-maker classifier for fresh clock-held exits as well as no-clock
@@ -154,3 +154,32 @@ the retargets and M7-U43 Q88 grants the two dropped lines. The single grant roun
 line 479, whose recovery assertion changes its maker count from two to one. M7-K62
 (#1009, comment 6676605853) explicitly extends M7-K59 to that line; the coordinator relayed
 the grant before this work was committed.
+
+## Round 1 revision
+
+Both judges found no production defect at the first reviewed head. Their B1 finding concerns
+spec-style rule 4: the failed-read case has several independent conditions. The PM repinned
+that case as a lead row and four continuation rows in card revision `fa576015f5d2`, announced
+in comment 6679425294. This revision applies those exact rows. The proposal still awaits
+the owner's marker.
+
+The reviewer's B2 finding concerns requirement declarations. E4's presence cases and E10/E12's
+early-read guards do not exercise `R-LOOP-19`. The revised card authorizes them as harness
+diagnostics under the TDD skill. Their two declaration lines are removed; their bodies and
+independent oracles stay intact, and the generated matrix drops those claims.
+
+E4 checks the classification boundary where established presence preserves the release answer.
+The card explains why `R-LOOP-19`, `R-SCHED-43` and `R-WORK-18` describe none of its assertions.
+Its existing presence and presence-answer receipts discriminate lost presence and metadata
+escaping as forge facts. E10/E12 check exclusion of continuing and zero exits from early failed
+read classification. They dispatch no maker and assert no move, so the card excludes
+`R-LOOP-19`, `R-WORK-18` and `R-WORK-34`. Their existing continuing and zero receipts
+discriminate each boundary. These diagnostic receipts retain their original measured head;
+no production byte or test-body byte changes in this revision.
+
+The affected command ran the failed-maker, transitions, settle, escalation-note, config,
+instruction-budget, document-checks and build-test-matrix files. It passed: tests 350, pass 350,
+fail 0, with measured start/end loads 16.94/16.79 and 648 user processes at start. Matrix,
+spec-style, references, headers and package-budget checks passed. The scheduling total remains
+1523 production lines. A byte comparison confirms all five architecture rows match the new
+card pin and both production files match the prior reviewed head.
