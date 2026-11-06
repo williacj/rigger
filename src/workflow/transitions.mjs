@@ -175,7 +175,7 @@ export function columnChanges({
     const evidence = {
       category: next.category, reason: next.reason, raiser: next.raiser ?? 'loop',
       ...(next.item === undefined ? {} : { item: next.item }),
-      ...Object.fromEntries(['pull', 'head', 'line', 'destination'].filter((key) => next[key] !== undefined).map((key) => [key, next[key]])),
+      ...Object.fromEntries(['pull', 'head', 'line', 'destination', 'reads', 'elapsedMs'].filter((key) => next[key] !== undefined).map((key) => [key, next[key]])),
     };
     try {
       sink.emitter({ layer: 'L2', card: card.number, dispatch: next.dispatch ?? null }).emit('review.escalate', evidence);
@@ -188,12 +188,12 @@ export function columnChanges({
   /** Why a maker that exited `exit` left the forge holding nothing of its line of work `line`. */
   const heldNothing = (card, exit, line) => `card #${card.number}'s maker exited ${exit}, and the forge holds no branch of its line of work ${line}, and no open or merged pull request from it`;
 
-  /** Both exit-time reads of a no-clock maker, with presence surviving the other read's failure. */
-  const failedMakerWork = async (card, exit, reading, earlier = [], pullFailure) => {
+  /** Both exit-time reads, with presence surviving the other read's failure. */
+  const failedMakerWork = async (card, exit, reading, noClock, earlier = [], pullFailure) => {
     const line = topicFor(topic, card.number);
     const [branch, pulls] = await Promise.allSettled([
       Promise.resolve().then(() => reading.readBranches([line])),
-      pullFailure === undefined ? pullRequestsFrom(card.number, line, reading, false) : Promise.reject(pullFailure),
+      Promise.resolve().then(() => pullFailure === undefined ? pullRequestsFrom(card.number, line, reading, false) : Promise.reject(pullFailure)),
     ]);
     const present = (branch.status === 'fulfilled' && branch.value[line] === true)
       || (pulls.status === 'fulfilled' && ['open', 'merged'].some((state) => pulls.value[state].length > 0));
@@ -201,7 +201,7 @@ export function columnChanges({
       : [new Error(`card #${card.number}'s ${at === 0 ? 'branch' : 'pull requests'} could not be read after its maker exited ${exit}: ${outcome.reason.message}`, { cause: outcome.reason })])];
     const makerWork = present ? 'present' : [branch, pulls].every(({ status }) => status === 'fulfilled') ? 'absent' : 'unreadable';
     if (failures.length > 0) throw Object.assign(new AggregateError(failures, failures.map(({ message }) => message).join('; ')), { makerWork });
-    if (present) return { makerWork: 'present' };
+    if (present) return noClock ? { makerWork: 'present' } : undefined;
     return { action: 'set-aside', makerWork: 'absent', reason: heldNothing(card, exit, line) };
   };
 
@@ -423,11 +423,16 @@ export function columnChanges({
      * zero leaves the card in coding. A continuing maker's plain nonzero exit answers nothing,
      * without reading forge work. A fresh maker's plain nonzero exit reads the branch and pull requests in
      * every state, without review facts. Where it holds no branch and no open or merged pull request, it answers `set-aside`, with a reason
-     * naming the card, exit code and line of work; otherwise it answers nothing. A failed read
-     * rejects naming the card and the read. Zero has L2 read the pull requests from the card's line of work
+     * naming the card, exit code and line of work; otherwise it answers nothing. Failed reads
+     * reject naming each read, carrying absent, present or unreadable work classification for L3.
+     * A no-clock settle also carries its successful classification; a clock-held present answer stays undefined.
+     * Zero has L2 read the pull requests from the card's line of work
      * and, where exactly one is open, what L2's judge answer reads of it, as
      * `pullRequestsFrom` reads them. For a continuing attempt, a head other than `expectedHead`
      * answers `waiting` until L3's last read, when L2 withholds review and names both heads.
+     * Where that head is `startHead`, the head L3 handed the maker, L2 moves nothing and answers a
+     * loop-raised `ambiguous` escalation naming the head and `rulings`, the markers L2 handed the
+     * maker, unread by L3 (`R-LOOP-20`).
      * With exactly one open at the expected head, the card moves to review (`R-WORK-18`),
      * and L2 hands `placed` the column the board accepted, as `change` answers it. A move whose record
      * then failed rejects carrying that column as `column`, as `change` says. L2
@@ -437,7 +442,7 @@ export function columnChanges({
      * tells its caller the card and why, as `withheld` says. A read that fails leaves it in coding too, and its
      * caller is told the card and the read.
      */
-    settled: async (card, outcome, { dispatch, continuing = false, noClock = false, expectedHead, tipFailure, lastForgeHead, last = false, reads: readCount, elapsedMs, placed = () => {} } = {}) => {
+    settled: async (card, outcome, { dispatch, continuing = false, noClock = false, startHead, rulings = [], expectedHead, tipFailure, lastForgeHead, last = false, reads: readCount, elapsedMs, placed = () => {} } = {}) => {
       const exit = outcome?.status === 'fulfilled' ? outcome.value?.exit : outcome?.status === 'rejected' ? outcome.reason?.result?.exit : undefined;
       // A refused recording retains the result of a command that ran; its failure still reaches L3.
       if (outcome?.status === 'rejected' && ((continuing && !noClock) || !Number.isInteger(exit) || exit === 0)) {
@@ -453,7 +458,7 @@ export function columnChanges({
         comments = await reading.readIssueComments(card.number);
       } catch (failure) {
         const unread = new Error(`card #${card.number}'s issue comments could not be read: ${failure.message}`, { cause: failure });
-        if (noClock && exit !== 0) return failedMakerWork(card, exit, reading, [unread]);
+        if ((noClock || !continuing) && exit !== 0) return failedMakerWork(card, exit, reading, noClock, [unread]);
         throw unread;
       }
       const escalation = makerNote(comments, dispatch, acceptanceItems(card.body ?? '').length);
@@ -463,7 +468,7 @@ export function columnChanges({
           facts = await pullRequestsFrom(card.number, topicFor(topic, card.number), reading);
         } catch (failure) {
           const unread = new Error(`card #${card.number}'s pull requests could not be read for its escalation: ${failure.message}`, { cause: failure });
-          if (noClock && exit !== 0) return failedMakerWork(card, exit, reading, [], unread);
+          if ((noClock || !continuing) && exit !== 0) return failedMakerWork(card, exit, reading, noClock, [], unread);
           throw unread;
         }
         const kinds = config.kinds ?? {};
@@ -472,25 +477,7 @@ export function columnChanges({
         return { ...answer, destination: escalationDestination({ ...answer, escalate: config.escalate, maker: kinds[kind]?.maker, judges: kinds[kind]?.judges, comments }) };
       }
       if (exit !== 0) {
-        if (noClock) return failedMakerWork(card, exit, reading);
-        if (continuing) return undefined;
-        const line = topicFor(topic, card.number);
-        let branches;
-        try {
-          branches = await reading.readBranches([line]);
-        } catch (failure) {
-          throw new Error(`card #${card.number}'s branch could not be read: ${failure.message}`, { cause: failure });
-        }
-        let facts;
-        try {
-          facts = await pullRequestsFrom(card.number, line, reading, false);
-        } catch (failure) {
-          throw new Error(`card #${card.number}'s pull requests could not be read after its maker exited ${exit}: ${failure.message}`, { cause: failure });
-        }
-        // Closed pull requests are not work held (M7-U24), so only open and merged ones count.
-        if (!branches[line] && facts.open.length === 0 && facts.merged.length === 0) {
-          return { action: 'set-aside', reason: heldNothing(card, exit, line) };
-        }
+        if (noClock || !continuing) return failedMakerWork(card, exit, reading, noClock);
         return undefined;
       }
       if (tipFailure !== undefined) withheld(card, `card #${card.number}'s maker exited 0, but L1 could not read the tip of its line of work in the workspace: ${tipFailure.message}`, undefined, {}, { dispatch });
@@ -515,6 +502,13 @@ export function columnChanges({
         if (!last) return { waiting: true, forgeHead: open[0].head };
         withheld(card, `card #${card.number}'s maker exited 0 at head ${expectedHead}, but the forge last showed pull request #${open[0].number} at head ${open[0].head}`, facts, observed, { dispatch });
       }
+      if (startHead !== undefined && expectedHead === startHead) {
+        return ownerEscalation({}, {
+          category: 'ambiguous', pull: open[0].number, head: open[0].head, dispatch,
+          ...(readCount > 1 ? { reads: readCount, elapsedMs } : {}),
+          reason: [`card #${card.number}'s continuing maker exited 0 at head ${startHead}, the head it was given, so it answered nothing.`, ...rulings.map(standingRuling)].join('\n'),
+        });
+      }
       placed(await change(card, 'returned', observed, { dispatch }));
       return facts;
     },
@@ -530,6 +524,11 @@ function escalationComment(card, { category, item, reason, pull, head, line }) {
     ...(line === undefined ? [] : [`Line of work: ${line}`]),
   ];
   return `Rigger escalates card #${card.number} to the owner (${category}).\n\n${reason}${work.length === 0 ? '' : `\n\n${work.join('\n')}`}\n`;
+}
+
+/** One ruling a continuing maker was handed, as `continued` in judges.mjs handed it. */
+function standingRuling({ role, verdict, toSound, unmet }) {
+  return `${role} (${verdict}): ${[...(toSound === undefined ? [] : [toSound]), ...unmet.map(({ item, text }) => `unmet item ${item}: ${text}`)].join('; ')}`;
 }
 
 /** A role's unresolved card always returns through L2's one destination function as loop-raised. */

@@ -188,7 +188,7 @@ function world(t, { cards = [12], clock = manualClock(), afterMaker = () => {}, 
 const makerReady = (here) => positive(() => here.makerStarts().length > 0 && [...here.processes.children.values()].some((child) => child.cwd.includes('workspaces') && child.exitCode === null && child.signalCode === null));
 
 // F4: a continuing maker already has its release exclusion and must not enter fresh-work classification.
-// proves R-WORK-34, R-LOOP-19
+// proves R-WORK-43, R-LOOP-19
 test('F4 continuing: failed fresh and continuing makers take distinct forge-read paths', async (t) => {
   for (const kind of ['fresh', 'continuing']) {
     await t.test(kind, async (t) => {
@@ -217,7 +217,7 @@ test('F4 continuing: failed fresh and continuing makers take distinct forge-read
       }
       here.finish(12, 7);
       const [result] = await pending;
-      assert.deepEqual(reads, kind === 'continuing' ? [] : ['readBranches', 'readPullRequests'], 'R-WORK-34: only a fresh failed maker reads forge work');
+      assert.deepEqual(reads, kind === 'continuing' ? [] : ['readBranches', 'readPullRequests'], 'R-WORK-43: only a fresh failed maker reads forge work');
       assert.equal(result.settled.status, 'fulfilled');
       assert.equal(result.settled.value?.action, kind === 'continuing' ? undefined : 'set-aside');
       assert.equal(result.action, kind === 'continuing' ? 'continue' : undefined);
@@ -228,7 +228,7 @@ test('F4 continuing: failed fresh and continuing makers take distinct forge-read
 });
 
 // F4: rejected continuing outcomes retain the merge-base no-work-read boundary.
-// proves R-WORK-34
+// proves R-WORK-43
 test('F4 continuing outcomes: refused nonzero results and never-started makers read no forge work', async (t) => {
   // L1's completed refusals carry result; NOT_STARTED carries no completed command result.
   for (const code of ['EVENT_REFUSED', 'RECORD_REFUSED', 'NOT_STARTED']) {
@@ -458,9 +458,9 @@ test('F8: once still makes one pull and dispatches no second card after a failed
   assert.equal(here.clock.pending(), 0);
 });
 
-// F4b: a failed classification read must be named and must not suppress the release pull.
+// F4b / E1, E2: an unreadable exit must reject by name and defer the card across later pulls.
 // proves R-LOOP-19
-test('F4b: a failed branch or pull-request read rejects the settle and leaves the card retryable', async (t) => {
+test('F4b: a failed branch or pull-request read rejects the settle and sets the card aside', async (t) => {
   for (const readFailure of ['readBranches', 'readPullRequests']) {
     await t.test(readFailure, async (t) => {
       const here = world(t, { readFailure });
@@ -472,12 +472,10 @@ test('F4b: a failed branch or pull-request read rejects the settle and leaves th
       assert.match(here.settles[0].error.message, /card #12/);
       assert.match(here.settles[0].error.message, new RegExp(readFailure === 'readBranches' ? 'branch' : 'pull requests'));
       assert.match(here.settles[0].error.message, new RegExp(`scripted ${readFailure} unavailable`));
-      assert.equal(here.makerStarts().length, 2, 'the release pull must read and claim the card again');
-      await makerReady(here);
-      here.finish();
-      await positive(() => run.handed.length > 0 || here.makerStarts().length > 2);
-      assert.equal(here.makerStarts().length, 2, 'after the read recovers the failed maker stays set aside');
-      assert.equal(here.settles[1].value.action, 'set-aside');
+      assert.equal(here.makerStarts().length, 1, 'the release pull must defer the unreadable maker');
+      await here.clock.advance(START + 100);
+      assert.equal(here.makerStarts().length, 1, 'after the read recovers the failed maker stays set aside');
+      assert.equal(here.events().filter(({ trigger }) => trigger === 'pull').length, 3, 'the later poll settled without claiming the card');
       await run.stop();
     });
   }
@@ -522,5 +520,212 @@ test('F7: a role-handled maker escalation still waits for another invocation', a
   assert.deepEqual(here.repository.held().branches, []);
   assert.deepEqual(here.repository.held().pullRequests, []);
   assert.equal((await here.fake.operations.readItems())[0].column, 'Coding');
+  await run.stop();
+});
+
+// E5: losing the comments read must still classify an empty forge and suppress the next maker.
+// proves R-LOOP-19
+test('E5: failed exit comments with absent work report the failure and set the card aside', async (t) => {
+  const here = world(t, { readFailure: 'readIssueComments' });
+  const run = here.start();
+  await makerReady(here);
+  here.finish();
+  await positive(() => run.handed.length > 0 || here.makerStarts().length > 1);
+  assert.equal(here.makerStarts().length, 1, 'unread comments must not bypass the failed-maker exclusion');
+  assert.equal(here.settles[0].error.makerWork, 'absent', 'both work reads establish absence despite unread comments');
+  assert.match(here.settles[0].error.message, /card #12.*issue comments.*scripted readIssueComments unavailable/);
+  assert.deepEqual(here.repository.held().branches, []);
+  assert.deepEqual(here.repository.held().pullRequests, []);
+  assert.deepEqual(here.fake.writes().map(({ operation, args }) => [operation, ...args]), [['moveItem', 'item-1', 'Coding']], 'the failed settle makes no move or escalation');
+  await run.stop();
+});
+
+/** Fail only the first exit's selected repository reads; release pulls see the actual forge again. */
+function failExitReads(here, names) {
+  const calls = [];
+  const settled = here.l2.settled;
+  here.l2.settled = async (...args) => {
+    here.l2.settled = settled;
+    const reads = here.repository.operations;
+    const originals = new Map(['readIssueComments', 'readBranches', 'readPullRequests'].map((name) => [name, reads[name]]));
+    for (const [name, original] of originals) reads[name] = async (...args) => {
+      calls.push(name);
+      if (names.includes(name)) throw new Error(`exit-time ${name} unavailable`);
+      return original(...args);
+    };
+    try { return await settled(...args); }
+    finally { for (const [name, original] of originals) reads[name] = original; }
+  };
+  return calls;
+}
+
+// E6: an early failed read must report its failure and retain either established presence or deferral.
+// proves R-LOOP-19
+test('E6: failed comments and escalation reads preserve present or unreadable work handling', async (t) => {
+  for (const early of ['comments', 'escalation']) for (const classification of ['present', 'unreadable']) {
+    await t.test(`${early}/${classification}`, async (t) => {
+      const here = world(t, { afterMaker: ({ repository, dispatch }) => {
+        if (classification === 'present') repository.operations.readBranches = async (names) => Object.fromEntries(names.map((name) => [name, true]));
+        if (early === 'escalation') repository.postIssueComment(12, postedNote(dispatch).body.replace('item: 2', 'item: 1'));
+      } });
+      const failed = early === 'comments' ? 'readIssueComments' : 'readPullRequests';
+      const calls = failExitReads(here, [failed, ...(early === 'comments' && classification === 'unreadable' ? ['readBranches'] : [])]);
+      const run = here.start();
+      await makerReady(here);
+      here.finish();
+      await positive(() => run.handed.length > 0 || here.makerStarts().length > 1);
+      assert.equal(here.makerStarts().length, 1, 'an early failed read must not redispatch an unclassified maker');
+      assert.equal(here.settles[0].error.makerWork, classification);
+      assert.match(here.settles[0].error.message, new RegExp(`card #12.*exit-time ${failed} unavailable`));
+      assert.deepEqual(calls.sort(), ['readBranches', 'readIssueComments', 'readPullRequests'].sort(), 'each classification source is tried exactly once');
+      assert.equal(here.events().filter(({ event }) => event === 'pull').length, classification === 'present' ? 2 : 1, 'presence permits the ordinary release action; unreadable work excludes the card');
+      await run.stop();
+    });
+  }
+});
+
+// E3: short-circuiting either failed source would lose its diagnostic and permit an unreadable retry.
+// proves R-LOOP-19
+test('E3: two failed exit reads name both failures and defer the maker', async (t) => {
+  const here = world(t);
+  const calls = failExitReads(here, ['readBranches', 'readPullRequests']);
+  const run = here.start();
+  await makerReady(here);
+  here.finish();
+  await positive(() => run.handed.length > 0 || here.makerStarts().length > 1);
+  assert.equal(here.makerStarts().length, 1, 'two unreadable sources must not admit another maker');
+  assert.equal(here.settles[0].error.makerWork, 'unreadable');
+  assert.match(here.settles[0].error.message, /card #12.*exit-time readBranches unavailable.*card #12.*exit-time readPullRequests unavailable/);
+  assert.equal(here.settles[0].error.errors.length, 2, 'neither failed read is lost');
+  assert.deepEqual(calls.sort(), ['readBranches', 'readIssueComments', 'readPullRequests'].sort());
+  assert.equal(here.events().filter(({ event }) => event === 'pull').length, 1);
+  await run.stop();
+});
+
+// E4: either positive source must survive the other failure, and presence must never masquerade as review facts.
+test('E4: a branch or open or merged pull preserves the ordinary release after the other read fails', async (t) => {
+  for (const held of ['branch', 'open', 'merged']) await t.test(held, async (t) => {
+    const here = world(t, { afterMaker: ({ repository }) => {
+      if (held === 'branch') repository.operations.readBranches = async (names) => Object.fromEntries(names.map((name) => [name, true]));
+      else repository.open({ number: 77, head: 'rigger-12', sha: 'a'.repeat(40), merged: held === 'merged' });
+    } });
+    const failed = held === 'branch' ? 'readPullRequests' : 'readBranches';
+    const releaseReads = [];
+    const pullRequests = here.repository.operations.readPullRequests;
+    here.repository.operations.readPullRequests = async (...args) => {
+      if (here.settles.length > 0) releaseReads.push(args[0]);
+      return pullRequests(...args);
+    };
+    failExitReads(here, [failed]);
+    const run = here.start();
+    await makerReady(here);
+    here.finish();
+    await positive(() => run.handed.length > 0 || here.makerStarts().length > 1);
+    assert.equal(here.makerStarts().length, 1);
+    assert.match(here.settles[0].error.message, new RegExp(`card #12.*exit-time ${failed} unavailable`));
+    assert.equal(here.settles[0].value, undefined, 'a failed read is reported without manufacturing forge facts');
+    assert.deepEqual(releaseReads, ['rigger-12'], 'the release must read this card instead of skipping it');
+    assert.equal(here.events().filter(({ event }) => event === 'pull').length, held === 'open' ? 1 : 2, 'the ordinary release waits on the open pull and escalates work without one');
+    assert.equal((await here.fake.operations.readItems())[0].column, held === 'open' ? 'Coding' : 'Owner');
+    const [card] = await here.fake.operations.readItems();
+    assert.equal(await here.l2.settled(card, { status: 'fulfilled', value: { exit: 7 } }), undefined, 'successful clock-held presence stays undefined rather than entering the judges path');
+    await run.stop();
+  });
+});
+
+// E7: a later board read outside Coding must end even an unreadable exit's skip.
+// proves R-SCHED-43
+test('E7: a board move ends an unreadable exit skip and permits the next maker', async (t) => {
+  const here = world(t, { readFailure: 'readBranches' });
+  const run = here.start();
+  await makerReady(here);
+  here.finish();
+  await positive(() => run.handed.length > 0 || here.makerStarts().length > 1);
+  assert.equal(here.makerStarts().length, 1, 'the unreadable exit first leaves the card skipped');
+  assert.equal((await here.fake.operations.readItems())[0].column, 'Coding');
+  await here.fake.operations.moveItem('item-1', 'Ready');
+  await here.clock.advance(START + 100);
+  assert.equal(here.events().filter(({ event }) => event === 'pull').length, 2, 'the settled poll must claim the card after its skip ends');
+  await positive(() => here.makerStarts().length === 2);
+  assert.equal(here.makerStarts().length, 2, 'the read after the board move must end the skip');
+  assert.equal(here.clock.now(), START + 100);
+  await run.stop();
+});
+
+// E8: recovery alone must not end the skip or trigger any new reads of the card's work.
+// proves R-SCHED-43
+test('E8: recovered forge reads in the same column leave the unreadable card skipped', async (t) => {
+  const here = world(t, { readFailure: 'readBranches' });
+  const run = here.start();
+  await makerReady(here);
+  here.finish();
+  await positive(() => run.handed.length > 0 || here.makerStarts().length > 1);
+  assert.equal(here.makerStarts().length, 1);
+  const reads = [];
+  for (const name of ['readBranches', 'readPullRequests']) {
+    const original = here.repository.operations[name];
+    here.repository.operations[name] = async (...args) => { reads.push(name); return original(...args); };
+  }
+  for (const at of [START + 100, START + 200]) await here.clock.advance(at);
+  assert.equal(here.events().filter(({ trigger }) => trigger === 'pull').length, 4, 'both later polls have settled');
+  assert.deepEqual(reads, [], 'a skipped card must be filtered before its work is read');
+  assert.equal(here.settles.length, 1);
+  assert.equal(here.makerStarts().length, 1);
+  assert.equal((await here.fake.operations.readItems())[0].column, 'Coding');
+  await run.stop();
+});
+
+// E9: an unreadable exit's deferral belongs to its invocation, never the loop handle or the board.
+// proves R-LOOP-19
+test('E9: a new run dispatches a card deferred after an unreadable exit', async (t) => {
+  const here = world(t, { readFailure: 'readBranches' });
+  const first = here.start();
+  await makerReady(here);
+  here.finish();
+  await positive(() => first.handed.length > 0 || here.makerStarts().length > 1);
+  assert.equal(here.makerStarts().length, 1, 'the first run defers the unreadable maker');
+  await first.stop();
+  const second = here.start();
+  await positive(() => here.makerStarts().length === 2 || second.handed.length > 0);
+  assert.equal(here.makerStarts().length, 2, 'the second run starts without the first run\'s skip');
+  assert.equal(here.clock.now(), START, 'no poll or wall-clock delay was needed');
+  await second.stop();
+});
+
+// E10 and E12 are invariant guards: these exits must not enter fresh nonzero classification.
+test('E10 and E12: continuing failures and zero exits retain their early-read boundaries', async (t) => {
+  for (const cell of ['continuing', 'zero']) await t.test(cell, async (t) => {
+    const here = world(t);
+    const calls = failExitReads(here, ['readIssueComments']);
+    const [card] = await here.fake.operations.readItems();
+    await assert.rejects(here.l2.settled(card, { status: 'fulfilled', value: { exit: cell === 'zero' ? 0 : 7 } }, { continuing: cell === 'continuing' }), (failure) => {
+      assert.match(failure.message, /card #12.*issue comments.*exit-time readIssueComments unavailable/);
+      assert.equal(failure.makerWork, undefined, 'this exit must retain its ordinary read failure without classifying work');
+      return true;
+    });
+    assert.deepEqual(calls, ['readIssueComments'], 'no branch or pull request classification read is made');
+    assert.deepEqual(here.fake.writes(), [], 'the failed read leaves the board untouched');
+    assert.equal(here.clock.now(), START);
+  });
+});
+
+// E11 is an invariant guard: no-clock runs keep their maker bar and their successful presence answer.
+// proves R-LOOP-19
+test('E11: a no-clock run retains failed-read classification and its presence answer', async (t) => {
+  const here = world(t, { readFailure: 'readIssueComments' });
+  delete here.settings.clock;
+  const run = here.start();
+  await makerReady(here);
+  here.finish();
+  const result = await run.running;
+  assert.equal(here.makerStarts().length, 1);
+  assert.equal(result[0].settled.reason.makerWork, 'absent', 'the no-clock failure still reaches its maker bar');
+  assert.equal(run.handed.length, 0);
+  assert.equal(here.clock.pending(), 0);
+  assert.equal(here.events().some(({ event }) => event === 'trigger.armed'), false);
+  here.repository.operations.readBranches = async () => ({ 'rigger-12': true });
+  const [card] = await here.fake.operations.readItems();
+  assert.deepEqual(await here.l2.settled(card, { status: 'fulfilled', value: { exit: 7 } }, { noClock: true }), { makerWork: 'present' }, 'no-clock presence keeps its L3 classification instead of becoming forge facts');
+  assert.equal(here.clock.now(), START);
   await run.stop();
 });

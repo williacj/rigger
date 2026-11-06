@@ -10,6 +10,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+import { packResult } from '../scripts/lib/pack-result.mjs';
 import { gitIn, repositoryAt } from './git-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
@@ -45,7 +46,9 @@ function packageAt({ git = true } = {}) {
   }
   mkdirSync(join(root, 'scripts'), { recursive: true });
   copyFileSync(join(ROOT, SCRIPT), join(root, SCRIPT));
-  // The one module the script imports, from where the package holds it.
+  mkdirSync(join(root, 'scripts/lib'), { recursive: true });
+  copyFileSync(join(ROOT, 'scripts/lib/pack-result.mjs'), join(root, 'scripts/lib/pack-result.mjs'));
+  // The Git environment module the script imports, from where the package holds it.
   mkdirSync(join(root, 'src/substrate'), { recursive: true });
   copyFileSync(join(ROOT, 'src/substrate/git-environment.mjs'), join(root, 'src/substrate/git-environment.mjs'));
   if (git) {
@@ -107,8 +110,8 @@ test('a file the pack carries from under a directory git ignores, absent from HE
   mkdirSync(join(root, 'src/ignored'));
   writeFileSync(join(root, 'src/ignored/extra.mjs'), 'export const extra = 1;\n');
   // npm packs it, though git reports only its directory, and only as ignored.
-  const listed = JSON.parse(execFileSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts', '--loglevel=error'], { cwd: root, encoding: 'utf8', env: gitEnvironment() }));
-  assert.ok(listed[0].files.some((file) => file.path === 'src/ignored/extra.mjs'), JSON.stringify(listed[0].files.map((file) => file.path)));
+  const listed = packResult(execFileSync('npm', ['pack', '--dry-run', '--json', '--ignore-scripts', '--loglevel=error'], { cwd: root, encoding: 'utf8', env: gitEnvironment() }));
+  assert.ok(listed.files.some((file) => file.path === 'src/ignored/extra.mjs'), JSON.stringify(listed.files.map((file) => file.path)));
 
   record(root);
 
@@ -140,7 +143,7 @@ test('where the script recorded a commit, the tarball npm pack makes holds src/p
   const into = temporaryDirectory('rigger-record-commit-pack-');
 
   const packed = execFileSync('npm', ['pack', '--json', '--loglevel=error', '--pack-destination', into], { cwd: root, encoding: 'utf8', env: gitEnvironment() });
-  const [{ filename }] = JSON.parse(packed);
+  const { filename } = packResult(packed);
   const held = execFileSync('tar', ['-xzOf', join(into, filename), `package/${RECORD}`], { encoding: 'utf8' });
 
   assert.equal(JSON.parse(held).commit, gitIn(root, 'rev-parse', 'HEAD').trim());

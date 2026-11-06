@@ -696,7 +696,7 @@ test('once exits non-zero when a continuing maker exits non-zero', SETTLES_WITHI
   assert.match(err, /exited 4/);
 });
 
-// proves R-WORK-34
+// proves R-WORK-43
 test('once names a continuing card whose maker left no checked-out line tip and keeps it in Coding', SETTLES_WITHIN, async (t) => {
   const script = join(temporaryDirectory('rigger-no-tip-'), 'detach.sh');
   writeFileSync(script, '#!/bin/sh\ngit checkout --detach -q HEAD\n');
