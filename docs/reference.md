@@ -47,6 +47,11 @@ says where each goes and what the validator refuses, and the `escalate` line of 
 that section publishes is where a consumer names a role. Rigger refuses a configuration naming a
 role for a recorded-decision change or for critical ([`R-ESCALATE-14`](spec/requirements.md)).
 
+A role receives only an ambiguity a maker raised, and the loop's own escalations go to the owner
+whatever is configured ([`R-ESCALATE-15`](spec/requirements.md)). A card already sent to a role
+([`R-ESCALATE-16`](spec/requirements.md)), and a card whose kind names that role as its maker or a
+judge ([`R-ESCALATE-17`](spec/requirements.md)), go to the owner instead.
+
 ## The marker vocabulary
 
 Markers are owned by [`ARCHITECTURE.md`, "The gate"](../ARCHITECTURE.md#the-gate), under

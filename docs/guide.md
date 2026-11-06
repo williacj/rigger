@@ -168,10 +168,17 @@ number and the category filled in. Rigger never leaves the label on a card witho
 a retried escalation may post the comment again, each copy naming the same category and reason
 ([`R-ESCALATE-9`](spec/requirements.md)).
 
+Only an ambiguity a maker raised can reach a consumer's role instead of you, and then only where the
+consumer named that role ([`R-ESCALATE-15`](spec/requirements.md)); the reference's [escalation
+categories and destinations](reference.md#escalation-categories-and-destinations) says where each
+category goes. Every escalation the loop raises, every recorded-decision change and every critical
+comes to you.
+
 A maker that cannot meet an acceptance item raises an escalation by writing one escalation note on
 the card's issue and ending, as the "Escalation categories" row of [`ARCHITECTURE.md`, "Extension
 points"](../ARCHITECTURE.md#extension-points) and [`ARCHITECTURE.md`,
-"Escalation"](../ARCHITECTURE.md#escalation) say. Rigger then writes the comment above.
+"Escalation"](../ARCHITECTURE.md#escalation) say. Rigger then routes it to you or to the role, and
+writes the comment above only for an escalation that comes to you.
 
 ## Running unattended
 
