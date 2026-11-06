@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import { constants } from 'node:os';
+import { loadavg } from 'node:os';
 import { join } from 'node:path';
 
 import { realHost } from '../src/substrate/host.mjs';
@@ -187,10 +188,13 @@ test('D17: SIGTERM ends the run bin and its push held by a bare origin hook, wit
     'rigger.config.mjs': `export default ${JSON.stringify(settings)};\n`,
   }), origin);
   const waiting = join(directory, 'waiting');
+  // Exercise the empty file visible after opening the hook's append redirection.
+  fs.writeFileSync(waiting, '');
+  const published = join(directory, 'published');
   const fifo = join(directory, 'release');
   assert.equal(spawnSync('/usr/bin/mkfifo', [fifo]).status, 0);
   const hook = join(origin, 'hooks', 'pre-receive');
-  fs.writeFileSync(hook, `#!/bin/sh\nprintf '%s %s\\n' "$$" "$PPID" >> ${shellQuote(waiting)}\nIFS= read -r released < ${shellQuote(fifo)}\n`);
+  fs.writeFileSync(hook, `#!/bin/sh\nprintf '%s %s\\n' "$$" "$PPID" >> ${shellQuote(waiting)}\n: > ${shellQuote(published)}\nIFS= read -r released < ${shellQuote(fifo)}\n`);
   fs.chmodSync(hook, 0o755);
   const fake = installFakeGh(temporaryDirectory('rigger-drain-signal-gh-'), {
     repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, items: [] }, origin,
@@ -221,11 +225,15 @@ test('D17: SIGTERM ends the run bin and its push held by a bare origin hook, wit
   });
   const state = join(consumer, '.rigger');
   const events = () => fs.existsSync(join(state, 'events.jsonl')) ? readEvents(state) : [];
-  await waitFor(() => ended !== undefined || fs.existsSync(waiting) || events().filter(({ trigger }) => trigger === 'pull').length >= 50, 30_000);
+  // Opening the append redirection creates waiting before printf publishes its PID line.
+  await waitFor(() => ended !== undefined || fs.existsSync(published) || events().filter(({ trigger }) => trigger === 'pull').length >= 50, 30_000);
   assert.equal(ended, undefined, stderr);
-  assert.ok(fs.existsSync(waiting), `the drain never reached the blocking receive hook\n${stderr}`);
-  const [hookPid, receivePid] = fs.readFileSync(waiting, 'utf8').trim().split(' ').map(Number);
+  assert.ok(fs.existsSync(published), `the drain never reached the blocking receive hook\n${stderr}`);
+  const readiness = fs.readFileSync(waiting, 'utf8');
+  const [hookPid, receivePid] = readiness.trim().split(' ').map(Number);
   const groupRead = spawnSync('/bin/ps', ['-p', String(hookPid), '-o', 'pgid='], { encoding: 'utf8' });
+  t.diagnostic(JSON.stringify({ readiness, hookPid, receivePid, groupRead: { status: groupRead.status, stdout: groupRead.stdout, stderr: groupRead.stderr }, ended, load: loadavg()[0] }));
+  assert.match(readiness, /^[1-9]\d* [1-9]\d*\n$/, 'the hook publishes both PIDs as one complete line');
   assert.equal(groupRead.status, 0, 'the receive hook is in flight before the signal');
   pushGroup = Number(groupRead.stdout.trim());
   assert.ok(pushGroup > 1);
