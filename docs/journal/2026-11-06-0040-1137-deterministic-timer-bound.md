@@ -2,9 +2,11 @@ ABOUTME: Records the timer guard's placement, test-first checks and host-test cl
 
 # Deterministic timer bound
 
-Card [#1137](https://github.com/williacj/rigger/issues/1137), acceptance revision
-`783e6d4844d8`, implements [D29 rule 3.5 and D30 rule 6](../spec/decisions.md) in
-the existing suite guard. Its placement follows the
+Card [#1137](https://github.com/williacj/rigger/issues/1137) implements
+[D29 rule 3.5 and D30 rule 6](../spec/decisions.md) in the existing suite guard.
+The EIO implementation work used acceptance revision `783e6d4844d8`; the
+subsequent architect scope ruling and pending owner amendment are recorded below.
+Its placement follows the
 [architect's ruling](https://github.com/williacj/rigger/issues/740#issuecomment-6497153704)
 and its fourth and fifth amendments. It answers the
 [owner's direction](https://github.com/williacj/rigger/issues/740#issuecomment-6497180994)
@@ -120,3 +122,41 @@ before the guard is outside its sight. The cached adapter armed nothing during
 preload and later armed a native timer in its test. That historical attack is
 retained as scope evidence, not a passing refusal claim. The runner preserves
 NODE_OPTIONS; a test cannot add a preload to its own already-running worker.
+
+Measured by the independent attacker's three-case `npm run test:host` run on
+2026-11-06 at `6a50b9339241de447ddf3fca53d39294e9ff9b04`: the unchanged EIO
+control ended with SIGKILL and suite status 1. The following two test-body
+replacements instead allowed a caught refusal followed by `process.exit(0)`
+and suite status 0. Both left the refusal file unchanged and empty and produced
+no native timer effects. The outer result was tests3/pass1/fail2, exit1, with
+`uptime` one-minute loads of 7.63 and 7.50. The
+[escalation](https://github.com/williacj/rigger/issues/1137#issuecomment-6690514670)
+retains the exact source, command and observations.
+
+| Replacement made after guard installation | Observed dependency |
+|---|---|
+| `process._kill` returns zero | The captured public `process.kill` dynamically calls this Node internal. |
+| `Function.prototype.call` intercepts the own-worker SIGKILL invocation | The captured function's `.call` lookup reaches the replacement. |
+
+The architect's final ruling for this class, relayed in the maker instruction on
+2026-11-06, retains that candidate's mechanism: no new capture, no
+`process._kill` capture and no change to the existing kill invocation. The
+replaced-public-`process.kill` cells stay. No further attack may replace a built-in
+or Node internal, tamper with the record, or load code before the guard; an
+in-scope new counterexample must use ordinary test code without those changes.
+
+The architect specified the following scope sentence for the card, subject to
+the owner's agreement because it narrows the literal acceptance. That agreement
+and the card's resulting revision were pending when this entry was committed;
+this records the ruling and its status rather than ratifying the amendment:
+
+> A test that replaces or patches a JavaScript built-in or a Node internal the
+> guard relies on, such as `Number`, `Function.prototype.call` or `process._kill`,
+> is outside the runner's sight, whatever "Refused" says of what the worker does
+> next. The guard runs in that test's own process and cannot defend against it.
+> `node:test`'s timer mock is not such a replacement. The judges read for it.
+
+The two recorded cases remain historical scope evidence. They are not passing
+refusal claims and will not be rerun as attacks. The runner and guard retain
+their implementation; the existing timer-mock and replaced-public-kill
+regressions remain required verification.
