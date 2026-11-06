@@ -52,6 +52,18 @@ import { runCommand } from '../process.mjs';
  *   stripping for the end marker to arrive (x28 to x30), so it is not stripped (O16).
  * - **The prompt.** With no prompt argument, `codex exec` reads the prompt from standard input
  *   (x34), and exits 1 on an empty one (r1-x35).
+ * - **A maker's git directories.** Exact writable roots for the linked worktree's git directory
+ *   and common `objects`, `refs` and `logs` override the git-metadata write refusal without
+ *   granting common `hooks` or `config`. The architect measured this with `codex sandbox` and
+ *   `writable_roots`, at codex-cli 0.164.0 on the Mini and 0.166.0 on the laptop, on 2026-11-05
+ *   (#1230, at `40ecb3f8`). The gated maker run checks the same behaviour through `--add-dir`.
+ *   A release dropping that exact-root override reverses the choice to a separate git directory;
+ *   a documented Codex setting for git writes replaces these explicit roots.
+ * - **The process table and setuid programs.** The sandbox refuses `/bin/ps`, `pgrep`, `sysctl`
+ *   and `sudo` to processes inside a session on macOS, measured with codex-cli 0.164.0 on the
+ *   Mini and 0.166.0 on the laptop (#1230, row M17, 2026-11-05). A consumer's hook, test or build
+ *   needing them cannot pass there; this repository's pre-commit suite meets that limit (M5a).
+ *   A release permitting those operations would require re-measuring the limit.
  * - **The tiers.** `-m gpt-6.1-sol` with `model_reasoning_effort` `medium` resolved to that model
  *   and effort in the rollout, and `high` to `high` (r1-x37, r1-x38).
  * - **The bundled `.system` skills.** They are written into every fresh home (ruling 4) and
@@ -121,7 +133,7 @@ const HOME = 'codex-home';
 
 /**
  * The name of the temporary directory a dispatch's scratch directory holds, the one directory
- * outside the declaration's roots the session may write (O93). The declaration leaves `/tmp` and
+ * outside the declaration's roots for temporary files (O93). The declaration leaves `/tmp` and
  * `$TMPDIR` out of the sandbox, so without it a session has nowhere to put a temporary file: zsh
  * writes a here-document under `$TMPPREFIX`, `/tmp/zsh` unless set, and fails (#489).
  */
@@ -286,13 +298,15 @@ function homeFor(directory, scratch) {
  * (ruling 18), and `TMPDIR` and `TMPPREFIX`, the temporary directory and a prefix inside it. It runs the skill probe first, through `emitter`, bounded by
  * `probeTimeout`, and disables, by a `skills.config` entry per `SKILL.md` path, every skill the
  * probe reports from outside `directory`.
+ * A maker's optional `gitDirectories` thunk supplies its git metadata roots, read before the home
+ * or probe is made; an unreadable answer refuses the invocation under its own preparation kind.
  *
  * Refused, each naming what it refused: a tier Rigger does not fix, before anything is made or
  * run; an agent file whose real path is not under `directory` (`R-SAFE-6`); an agent file that
  * cannot be read; a home or temporary directory that cannot be made; and a probe that fails,
  * outlives its bound, or answers nothing it can read.
  */
-export async function invocation({ agent, tier, prompt, directory, scratch, reach = [], emitter, probeTimeout = PROBE_TIMEOUT }) {
+export async function invocation({ agent, tier, prompt, directory, scratch, reach = [], gitDirectories, emitter, probeTimeout = PROBE_TIMEOUT }) {
   if (!Object.hasOwn(tiers, tier)) {
     throw new Error(`the Codex adapter maps no model to the tier \`${tier}\`, only to \`standard\` and \`high\``);
   }
@@ -303,6 +317,8 @@ export async function invocation({ agent, tier, prompt, directory, scratch, reac
     throw startFailure(new Error(`the agent file ${agent} lies at ${fileReal}, outside the consumer's repository ${real}, so the Codex adapter refused it (R-SAFE-6)`), 'agent-outside', { file: agent });
   }
   const instructions = atStart('agent-unreadable', () => readFileSync(file, 'utf8'), { file: agent });
+  const gitRoots = gitDirectories === undefined ? [] : await atStart('codex-git-directories-unreadable', gitDirectories)
+    .catch((failure) => { throw startFailure(failure, 'codex-git-directories-unreadable'); });
   const home = homeFor(directory, scratch);
   const temporary = join(atStart('directory-unusable', () => realpathSync.native(scratch)), TEMPORARY);
   atStart('codex-directory-unmade', () => mkdirSync(temporary));
@@ -313,7 +329,7 @@ export async function invocation({ agent, tier, prompt, directory, scratch, reac
     args: [
       'exec', '--json',
       '-C', directory,
-      ...[...reach, temporary].flatMap((each) => ['--add-dir', each]),
+      ...[...reach, ...gitRoots, temporary].flatMap((each) => ['--add-dir', each]),
       '-m', tiers[tier],
       '-c', `model_reasoning_effort=${toml(EFFORT[tier])}`,
       ...WITHHELD,

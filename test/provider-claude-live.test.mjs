@@ -9,6 +9,7 @@ import { userInfo } from 'node:os';
 
 import { AGENT, SERVER, SESSION, callsOf, forgetting, pastRefusing, transcriptsOf, unclassified, withheldBy, put, scratch, session, skip, textOf } from './claude-live.mjs';
 import { onPath } from './on-path.mjs';
+import { assertDelivered, liveMaker, MAKER_SESSION } from './maker-git-live.mjs';
 
 /** The adapter and the process adapter from this checkout. */
 async function fromCheckout() {
@@ -157,4 +158,13 @@ test('project settings set the Bash tool default timeout under the Claude adapte
   assert.equal(calls[0].input.command, command);
   assert.equal(calls[0].input.timeout, undefined);
   assert.match(textOf(calls[0].result), /did not complete within its 10s timeout/);
+});
+
+// proves R-WORK-42
+test('a live Claude maker commits and pushes under the forked shipped settings and hook with a test-made configuration home', { skip, timeout: 2 * MAKER_SESSION }, async (t) => {
+  assert.ok(onPath('claude', pastRefusing()), 'no claude is installed past the refusing one');
+  const made = await liveMaker(t, 'claude');
+  const head = assertDelivered(made);
+  assert.equal(made.handed.env.CLAUDE_CONFIG_DIR, join(made.base, 'claude-home'));
+  t.diagnostic(`maker Claude summary: ${JSON.stringify({ head, commit: 0, push: 0, tracking: head, configurationHome: made.handed.env.CLAUDE_CONFIG_DIR, artifacts: made.artifacts })}`);
 });
