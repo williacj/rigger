@@ -499,6 +499,8 @@ function triggerRecord(readRecord) {
  * `readRecord` is the verb's read of the event record, handed down as the sink is: it answers the
  * record's events in order, and its `stream` names the stream. A start under `run` reads it once;
  * a loop handed none reads the record as holding no event.
+ * `drained`, where supplied, is L5's injected push step. A clock-held run calls it after a drain's
+ * event is recorded, without waiting, handing it the verb's `handOver` unread.
  * `sink` is L5's, and L3 writes its own events through it under layer `L3`:
  *
  * - `run.start`, with `concurrency`, the run's N, as a run starts.
@@ -536,7 +538,7 @@ function triggerRecord(readRecord) {
  * the card through that handle on its first `hold` answer, as `holding` says. Where a hold's close
  * rejects, no pull of this loop claims a card after it, and claims already held finish.
  */
-export function loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, readRecord = () => [], environment, run, host, readTimeout, clock }) {
+export function loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, readRecord = () => [], environment, run, host, readTimeout, clock, drained }) {
   let admissionRecord;
   const { concurrency, claims, killed, record, refused, take, start, release } = claiming({ config, board, facts, l2, sink, kill, readAdmission: () => admissionRecord.read(), follow: () => follow(), halted: () => unsaved !== undefined });
   // The column each merge's end left its card in, by card, which `merged` takes for the run's memory.
@@ -956,7 +958,10 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       // Only L2's settlement answer supplies this halt; a generic L1 failure is not terminal.
       if (scope !== undefined && settled.status === 'rejected' && settled.reason?.halt === true) defer(scope, card, actionIdentity(next));
       const makerWork = settled.status === 'fulfilled' ? settled.value?.makerWork : settled.reason?.makerWork;
-      if (scope !== undefined && makerWork !== undefined && makerWork !== 'present') scope.memory.barred.add(card.number);
+      if (makerWork !== undefined && makerWork !== 'present') {
+        if (scope === undefined) remember({ action: 'set-aside' });
+        else scope.memory.barred.add(card.number);
+      }
       if (settled.status === 'fulfilled' && settled.value?.action === 'escalate') {
         const escalation = settled.value;
         remember(escalation);
@@ -1331,7 +1336,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * in `errors`, inside an AggregateError beside the refusal where its release event was refused,
    * as `released` says.
    */
-  const trigger = async (freed = () => {}, limit = undefined, setAsides, settlePending = () => {}, { taken = () => {}, poll = false, carry = false, memory } = {}) => {
+  const trigger = async (freed = () => {}, limit = undefined, setAsides, settlePending = () => {}, { taken = () => {}, poll = false, carry = false, memory, drained } = {}) => {
     await settlePending();
     const { claims: claimed, failures, admission: closed, notices = [] } = await take(limit, setAsides, poll, memory);
     taken(claimed.length);
@@ -1346,13 +1351,16 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     if (claimed.length > 0) idle = false;
     if (claims.size === 0 && !idle) {
       idle = true;
+      let recorded = false;
       try {
         await settlePending();
         drains += 1;
         record('trigger', { trigger: 'drain' });
+        recorded = true;
       } catch (refusal) {
         failures.push(refused('the event sink refused to record the drain trigger', refusal));
       }
+      if (recorded) drained?.();
     }
     const worked = await Promise.allSettled(claimed.map((claim) => (claim.next.action === 'merge' ? merged(claim, setAsides) : work(claim, freed, setAsides))));
     const ended = worked.map((result) => (result.status === 'fulfilled' ? result.value : { failure: result.reason }));
@@ -1427,6 +1435,10 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       const active = () => !ending();
       const pending = new Map();
       const clockFailed = (failure) => handOver({ failure });
+      const drain = () => {
+        try { Promise.resolve(drained(handOver)).catch(clockFailed); }
+        catch (failure) { clockFailed(failure); }
+      };
       const rememberIssue = (firing, issue) => {
         if (issue !== undefined) firing.issue = Math.max(firing.issue ?? 0, issue);
       };
@@ -1585,7 +1597,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         else handOver({ report });
         return true;
       });
-      const fire = (polling) => trigger(() => (kept && ending() ? undefined : fire()), undefined, setAsides, settlePending, { ...polling, carry: true, memory }).then((each) => {
+      const fire = (polling) => trigger(() => (kept && ending() ? undefined : fire()), undefined, setAsides, settlePending, { ...polling, carry: true, memory, ...(kept && drained !== undefined && { drained: drain }) }).then((each) => {
         reached.push(...(Array.isArray(each) ? each : each.reached));
         if (Array.isArray(each)) return;
         closed = each.admission;

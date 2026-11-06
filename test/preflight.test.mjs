@@ -12,6 +12,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { countWords } from '../scripts/instruction-budget.mjs';
+import { generate } from '../scripts/build-test-matrix.mjs';
 
 import { gitIn, repositoryAt } from './git-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
@@ -738,4 +739,118 @@ test('retired ids refuses added citations when repository configuration forces c
     assert.ok(result.output.includes('"allowed/colored.mjs":2 R-EXAMPLE-7'), result.output);
     assert.ok(result.output.includes('"allowed/colored.mjs":2 D713'), result.output);
   }
+});
+
+// Table P in card #1245 covers this development diagnostic, not a deployed product requirement.
+// The requirement register's Scope excludes repository working rules; these tests claim no ids.
+function matrixFixture() {
+  const f = fixture();
+  f.testPath = 'test/claims.test.mjs';
+  f.matrixPath = 'docs/derived/test-matrix.md';
+  f.source = "import { test } from 'node:test';\n// proves R-EXAMPLE-1\ntest('historical D713 title', () => {});\n";
+  writeFileSync(f.bodyFile, '- **Lands in:** `test/`, `docs/`\n');
+  commit(f, {
+    'docs/spec/requirements.md': '| id | checked by |\n|---|---|\n| R-EXAMPLE-1 | the test suite |\n',
+    [f.testPath]: f.source,
+  });
+  generate(f.root, { write: true });
+  commit(f, {});
+  gitIn(f.root, 'update-ref', 'refs/remotes/origin/main', gitIn(f.root, 'rev-parse', 'HEAD').trim());
+  return f;
+}
+
+test('P1 regenerated matrix rows ignore retired ids in unchanged test titles', () => {
+  const f = matrixFixture();
+  commit(f, { [f.testPath]: `${f.source}// proves R-EXAMPLE-1\ntest('another proof', () => {});\n` });
+  generate(f.root, { write: true });
+  commit(f, {});
+  const patch = gitIn(f.root, 'diff', '--unified=0', 'origin/main..HEAD', '--', f.matrixPath);
+  assert.ok(patch.split('\n').some((line) => line.startsWith('+|') && line.includes('historical D713 title')),
+    'regeneration must add a row carrying the unchanged retired title');
+  assert.equal(generate(f.root).stale, false, 'the matrix must be generated, not hand edited');
+  const result = run(f);
+  assert.match(result.output, /retired ids: passed/, 'generated rows must not create retired citations');
+  assert.equal(result.status, 0, result.output);
+});
+
+test('P2 added test citations retain the retired id file and line diagnostic', () => {
+  const f = fixture();
+  writeFileSync(f.bodyFile, '- **Lands in:** `test/`\n');
+  commit(f, { 'test/citation.test.mjs': '// a current comment\n// D713 and R-EXAMPLE-7\n' });
+  const result = run(f);
+  assert.equal(result.status, 1, 'added test citations must still fail preflight');
+  assert.match(result.output, /retired ids: failed/);
+  assert.deepEqual(result.output.split('\n').filter((line) => line.startsWith('"test/')), [
+    '"test/citation.test.mjs":2 D713',
+    '"test/citation.test.mjs":2 R-EXAMPLE-7',
+  ], 'test citations must name each id exactly at its added source line');
+});
+
+test('P3 an added retired test title is reported once at its source rather than its matrix row', () => {
+  const f = matrixFixture();
+  commit(f, { [f.testPath]: `${f.source}// proves R-EXAMPLE-1\ntest('added D713 title', () => {});\n` });
+  generate(f.root, { write: true });
+  commit(f, {});
+  assert.ok(readFileSync(join(f.root, f.matrixPath), 'utf8').includes('added D713 title'),
+    'the added title must reach the generated matrix');
+  const result = run(f);
+  assert.equal(result.status, 1, result.output);
+  assert.match(result.output, /retired ids: failed/);
+  assert.deepEqual(result.output.split('\n').filter((line) => / D713$/.test(line)), [
+    '"test/claims.test.mjs":5 D713',
+  ], 'only the added source title must produce a retired diagnostic');
+});
+
+test('P4 a hand edited retired matrix id passes retired ids but fails the matrix check', () => {
+  const f = matrixFixture();
+  const matrix = readFileSync(join(f.root, f.matrixPath), 'utf8');
+  commit(f, { [f.matrixPath]: `${matrix}hand edited D713\n` });
+  const checked = [];
+  const result = run(f, {
+    scriptChecks: subject.SCRIPT_CHECKS.filter(({ name }) => name === 'matrix'),
+    execute: (command, args, options) => {
+      if (command !== 'npm') return nativeExecute(command, args, options);
+      assert.deepEqual(args, ['run', 'matrix:check']);
+      // build-test-matrix.mjs's CLI maps the actual report's stale/stray fields to exit 1.
+      const report = generate(f.root);
+      checked.push(report);
+      return { status: report.stale || report.strays.length ? 1 : 0, stdout: '', stderr: '' };
+    },
+  });
+  assert.equal(checked.length, 1, 'preflight must run the configured matrix check');
+  assert.equal(checked[0].stale, true, 'the actual generator must refuse the hand edit');
+  assert.equal(result.status, 1, result.output);
+  assert.match(result.output, /retired ids: passed/, 'matrix text must remain outside retired citation checking');
+  assert.match(result.output, /matrix: failed \(exit 1\)/);
+});
+
+test('P5 spec journal and qualified historical audit keep their retired id exemptions', () => {
+  const f = evidenceFixture();
+  commit(f, {
+    'docs/spec/decisions.md': `${f.decision} and R-EXAMPLE-7\n`,
+    'docs/journal/history.md': `${f.decision} and R-EXAMPLE-7\n`,
+  });
+  const result = run(f);
+  assert.equal(result.status, 0, 'spec journal and qualified historical audit must stay exempt');
+  assert.match(result.output, /retired evidence: passed/);
+  assert.match(result.output, /retired ids: passed/);
+  // The same historical path without a qualification must still be scanned.
+  commit(f, { 'doc-references.json': '{}' });
+  const unqualified = run(f);
+  assert.equal(unqualified.status, 1, unqualified.output);
+  assert.ok(unqualified.output.includes(`"${f.path}":1 ${f.decision}`),
+    'the historical path alone must never grant an exemption');
+});
+
+test('P7 nearby derived path spellings still report added retired citations', () => {
+  const f = fixture();
+  writeFileSync(f.bodyFile, '- **Lands in:** `docs/`, `allowed/`\n');
+  const paths = ['docs/derived-copy/note.md', 'docs/derived.md', 'allowed/derived/note.md'];
+  commit(f, Object.fromEntries(paths.map((path) => [path, 'first\nD713\n'])));
+  const result = run(f);
+  assert.equal(result.status, 1, result.output);
+  assert.match(result.output, /retired ids: failed/);
+  assert.deepEqual(result.output.split('\n').filter((line) => / D713$/.test(line)),
+    paths.sort().map((path) => `${JSON.stringify(path)}:2 D713`),
+    'only the docs/derived directory subtree receives the added exemption');
 });
