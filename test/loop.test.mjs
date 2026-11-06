@@ -6334,7 +6334,9 @@ test('Table C C3: in a kept-up run later pulls dispatch nothing for the escalate
   try {
     await positive(() => built.dispatches.holding().includes(96));
     built.dispatches.releaseAll();
-    await positive(() => count(built, 'drain') === 1);
+    const starts = () => built.dispatches.started.filter((card) => card === 96).length;
+    await positive(() => count(built, 'drain') === 1 || starts() > 1);
+    assert.equal(starts(), 1, 'no second maker followed the first');
     const pulls = count(built, 'pull');
     for (const at of [1000, 2000, 3000]) await clock.advance(CLOCK_START + at);
 
@@ -6375,6 +6377,7 @@ test('Table C C1: an unchanged head the forge shows only on a later read records
   await continuingPull(built);
 
   assert.equal(elapsed(), 5000);
+  assert.equal(escalationsOf(built, card).length, 1, 'the unchanged head escalated');
   const [{ head: read, reads, elapsedMs }] = escalationsOf(built, card);
   assert.deepEqual({ read, reads, elapsedMs }, { read: head, reads: 2, elapsedMs: 5000 });
 });
