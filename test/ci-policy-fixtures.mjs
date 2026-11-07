@@ -189,6 +189,13 @@ export async function evaluateCiPolicy(operation, facts, extra = {}, major = ciN
       });
       return { answer, calls };
     }
+    if (operation === 'runPolicy' && facts?.action === 'plan') {
+      const runnerSelection = await policy.selectRunner({
+        facts: facts.facts, macosRunner: facts.macosRunner,
+        token: extra.token ?? '', send: extra.send, deadline: extra.deadline,
+      });
+      return policy.runPolicy({ ...facts, runnerSelection });
+    }
     if (['policy', 'guard', 'runPolicy'].includes(operation)) return await policy[operation](facts, extra);
     throw new Error('unsupported in-process CI operation ' + operation);
   } finally {
