@@ -167,3 +167,10 @@ a Claude maker finished this card in the same clone after the Codex maker was
 stopped during the final receipt refresh. Codex judges still review it. The
 mechanism is unchanged from that candidate; the finish merged current `main`,
 updated this entry and refreshed the evidence at the final head.
+
+The coordinator's evidence check found the EIO cells could not tell the card's
+uncatchable signal from a plain non-zero exit: a guarded mutation turning the kill
+into `process.reallyExit(1)` survived all 36 cells. The spec reporter drops a
+worker's signal, so those cells now run under the TAP reporter and assert
+`signal: 'SIGKILL'` ([M7-K77](https://github.com/williacj/rigger/issues/1009)).
+The guard did not change.

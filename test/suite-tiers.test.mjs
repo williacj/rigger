@@ -1170,7 +1170,7 @@ for (const state of ['alias', 'absent']) {
   });
 }
 
-function timerProbe(t, source, files = {}, { tier = 'bounded', record = false, preload } = {}) {
+function timerProbe(t, source, files = {}, { tier = 'bounded', record = false, preload, reporter } = {}) {
   const { directory, environment } = isolatedHostTree(t);
   const file = tier === 'host' ? 'test/host.test.mjs' : 'test/other.test.mjs';
   const recordDirectory = temporaryDirectory('rigger-timer-record-', { context: t });
@@ -1214,7 +1214,7 @@ export const timerCallback = () => record({ event: 'callback-effect' });
 export const note = event => appendFileSync(${JSON.stringify(positionEvents)}, JSON.stringify(event) + '\\n');
 `);
   writeFileSync(join(directory, file), "// ABOUTME: Exercises the suite's timer contract in its own worker.\nimport { test } from 'node:test';\nimport { observeArm, timerCallback, note } from '../native-timer-audit.mjs';\nconsole.log('timer-worker ' + process.pid);\n" + source + '\n');
-  const result = spawnSync('sh', ['test/suite.sh', ...(tier === 'host' ? ['--host'] : []), file], {
+  const result = spawnSync('sh', ['test/suite.sh', ...(tier === 'host' ? ['--host'] : []), ...(reporter ? [`--test-reporter=${reporter}`] : []), file], {
     cwd: directory, env: environment, encoding: 'utf8', timeout: 60_000,
   });
   return { directory, file, recordDirectory, nativeEffects, positionEvents, result };
@@ -1910,12 +1910,14 @@ if (process.env.NODE_TEST_CONTEXT === 'child-v8') {
   };
 }
 `,
-      }, { preload: 'refusal-write-failure.cjs' });
+      }, { preload: 'refusal-write-failure.cjs', reporter: 'tap' });
       assertNoNativeTimers(probe);
       const events = readFileSync(probe.positionEvents, 'utf8').trim().split('\n').map(line => JSON.parse(line));
       assert.deepEqual(events, ['attempt:EIO'], 'an unwritable refusal must not return or throw to its caller');
       assert.equal(probe.result.error, undefined, probe.result.stdout + probe.result.stderr);
       assert.notEqual(probe.result.status, 0, 'an unwritable refusal must fail the suite');
+      // The spec reporter drops the worker's signal; TAP keeps it, and a plain exit shows none.
+      assert.match(probe.result.stdout, /^\s*signal: 'SIGKILL'$/m, 'an unwritable refusal must end its worker by SIGKILL');
       assert.ok((probe.result.stdout + probe.result.stderr).includes(
         `deterministic tier: ${probe.file}: ${title} cannot arm ${api[1]} with delay 5`),
       probe.result.stdout + probe.result.stderr);
