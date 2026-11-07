@@ -12,6 +12,7 @@ const hostFiles = normalized(process.env.RIGGER_SUITE_HOST_FILES);
 const awaitingFiles = normalized(process.env.RIGGER_SUITE_AWAITING_FILES);
 const convertingFiles = normalized(process.env.RIGGER_SUITE_CONVERTING_FILES);
 const worker = process.env.NODE_TEST_CONTEXT === 'child-v8';
+const timerRefusalFile = process.env.RIGGER_SUITE_TIMER_REFUSALS;
 
 function globPattern(pattern) {
   let expression = '^';
@@ -95,7 +96,89 @@ if (worker && process.env.RIGGER_SUITE_MODE === 'host' && !awaitingFiles.has(fil
   };
 }
 
+function watchTimers(recordFile) {
+  const { createHook, executionAsyncResource } = require('node:async_hooks');
+  const { appendFileSync, writeSync } = require('node:fs');
+  const { promisify } = require('node:util');
+  const kill = process.kill;
+  const owners = new WeakMap();
+  const tests = new WeakSet();
+  const refusals = new Map();
+  if (!recordFile) {
+    const test = require('node:test');
+    test.afterEach((context) => {
+      const refusal = refusals.get(context);
+      refusals.delete(context);
+      if (refusal) throw refusal;
+    });
+    test.after(() => {
+      if (refusals.size) throw new AggregateError([...refusals.values()], `deterministic tier: ${file} has timer refusals after its tests`);
+    });
+  }
+  function owner() {
+    const resource = executionAsyncResource();
+    return tests.has(resource) && resource.parent ? resource : owners.get(resource) ?? null;
+  }
+  function topLevel(test) {
+    while (test?.parent?.parent) test = test.parent;
+    return test;
+  }
+  createHook({
+    init(_id, type, _trigger, resource) {
+      if (type === 'Test') tests.add(resource);
+      const test = owner();
+      if (test) owners.set(resource, test);
+    },
+  }).enable();
+  function wrapTimer(object, name, api, delayIndex, iterator = false) {
+    const original = object[name];
+    function boundedTimer(...args) {
+      const delay = Number(args[delayIndex]);
+      if (delay > 0) {
+        const call = {};
+        Error.captureStackTrace(call, boundedTimer);
+        const caller = String(call.stack).split('\n')[1] || '';
+        if (/\bnode:internal\/test_runner(?:\/|:)/.test(caller)) return Reflect.apply(original, this, args);
+        const running = owner();
+        const test = (recordFile ? topLevel(running) : running)?.name ?? null;
+        if (recordFile) {
+          appendFileSync(recordFile, JSON.stringify({ file, test, api, delay }) + '\n');
+        } else {
+          const refusal = new Error(`deterministic tier: ${file}: ${test ?? '<module>'} cannot arm ${api} with delay ${delay}`);
+          refusals.set(running?.getCtx() ?? null, refusal);
+          try {
+            appendFileSync(timerRefusalFile, JSON.stringify({ file, test, api, delay }) + '\n');
+          } catch {
+            try { writeSync(2, refusal.message + '\n'); } catch {}
+            kill.call(process, process.pid, 'SIGKILL');
+          }
+          writeSync(2, refusal.message + '\n');
+          throw refusal;
+        }
+      }
+      return Reflect.apply(original, this, args);
+    }
+    object[name] = iterator ? async function* boundedInterval(...args) {
+      yield* Reflect.apply(boundedTimer, this, args);
+    } : boundedTimer;
+    const custom = Object.getOwnPropertyDescriptor(original, promisify.custom);
+    // Node's promisify cache may hold a self-reference; it must name the guarded function.
+    if (custom?.value === original) custom.value = object[name];
+    if (custom) Object.defineProperty(object[name], promisify.custom, custom);
+  }
+  wrapTimer(globalThis, 'setTimeout', 'setTimeout', 1);
+  wrapTimer(globalThis, 'setInterval', 'setInterval', 1);
+  wrapTimer(require('node:timers'), 'setTimeout', 'node:timers.setTimeout', 1);
+  wrapTimer(require('node:timers'), 'setInterval', 'node:timers.setInterval', 1);
+  wrapTimer(require('node:timers/promises'), 'setTimeout', 'node:timers/promises.setTimeout', 0);
+  wrapTimer(require('node:timers/promises').scheduler, 'wait', 'scheduler.wait', 0);
+  wrapTimer(require('node:timers/promises'), 'setInterval', 'node:timers/promises.setInterval', 0, true);
+  wrapTimer(AbortSignal, 'timeout', 'AbortSignal.timeout', 0);
+  syncBuiltinESMExports();
+}
+
 if (worker && process.env.RIGGER_SUITE_MODE === 'deterministic' && file?.endsWith('.test.mjs') && !convertingFiles.has(file)) {
+  watchTimers();
   const allowedPath = process.env.RIGGER_SUITE_ALLOWED_PATH;
   const programs = new Map(['git', 'tar'].map((name) => [name, realpathSync.native(join(allowedPath, name))]));
   const gitVariables = new Set([
@@ -166,8 +249,19 @@ if (worker && process.env.RIGGER_SUITE_MODE === 'deterministic' && file?.endsWit
   syncBuiltinESMExports();
 }
 
+if (worker && process.env.RIGGER_SUITE_MODE === 'deterministic' && convertingFiles.has(file) && process.env.RIGGER_SUITE_TIMER_RECORD) {
+  const { appendFileSync, mkdirSync } = require('node:fs');
+  const directory = process.env.RIGGER_SUITE_TIMER_RECORD;
+  mkdirSync(directory, { recursive: true });
+  const recordFile = join(directory, `${process.pid}.jsonl`);
+  appendFileSync(recordFile, JSON.stringify({ file, test: null, api: null, delay: null }) + '\n');
+  watchTimers(recordFile);
+}
+
 // A test that starts its own node --test run gets a fresh tier decision from that run's script.
 if (worker) {
+  delete process.env.RIGGER_SUITE_TIMER_RECORD;
+  delete process.env.RIGGER_SUITE_TIMER_REFUSALS;
   for (const name of ['RIGGER_SUITE_MODE', 'RIGGER_SUITE_HOST_FILES', 'RIGGER_SUITE_AWAITING_FILES', 'RIGGER_SUITE_CONVERTING_FILES', 'RIGGER_SUITE_ALLOWED_PATH', 'RIGGER_SUITE_HOST_KEY']) {
     delete process.env[name];
   }
