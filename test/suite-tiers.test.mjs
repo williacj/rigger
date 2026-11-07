@@ -1170,7 +1170,7 @@ for (const state of ['alias', 'absent']) {
   });
 }
 
-function timerProbe(t, source, files = {}, { tier = 'bounded', record = false, preload, reporter } = {}) {
+function timerProbe(t, source, files = {}, { tier = 'bounded', record = false, preload, reporter, ending = '\n' } = {}) {
   const { directory, environment } = isolatedHostTree(t);
   const file = tier === 'host' ? 'test/host.test.mjs' : 'test/other.test.mjs';
   const recordDirectory = temporaryDirectory('rigger-timer-record-', { context: t });
@@ -1213,7 +1213,7 @@ export const observeArm = action => scope.run(true, action);
 export const timerCallback = () => record({ event: 'callback-effect' });
 export const note = event => appendFileSync(${JSON.stringify(positionEvents)}, JSON.stringify(event) + '\\n');
 `);
-  writeFileSync(join(directory, file), "// ABOUTME: Exercises the suite's timer contract in its own worker.\nimport { test } from 'node:test';\nimport { observeArm, timerCallback, note } from '../native-timer-audit.mjs';\nconsole.log('timer-worker ' + process.pid);\n" + source + '\n');
+  writeFileSync(join(directory, file), "// ABOUTME: Exercises the suite's timer contract in its own worker.\nimport { test } from 'node:test';\nimport { observeArm, timerCallback, note } from '../native-timer-audit.mjs';\nconsole.log('timer-worker ' + process.pid);\n" + source + ending);
   const result = spawnSync('sh', ['test/suite.sh', ...(tier === 'host' ? ['--host'] : []), ...(reporter ? [`--test-reporter=${reporter}`] : []), file], {
     cwd: directory, env: environment, encoding: 'utf8', timeout: 60_000,
   });
@@ -2142,6 +2142,80 @@ test('timer record keeps a load-time arm after a top-level await with no test', 
     await gate;
     clearTimeout(setTimeout(() => {}, 5));`, {}, { tier: 'converting', record: true });
   assertTimerPassed(probe, 'runs while the file loads');
+  assert.deepEqual(timerRecords(probe), [
+    { file: probe.file, test: null, api: null, delay: null },
+    { file: probe.file, test: null, api: 'setTimeout', delay: 5 },
+  ]);
+});
+
+// The load marker's key is random per run, so a test can neither fire it early nor remove it.
+const wellKnownMarker = "globalThis[Symbol.for('rigger.suite.timer-file-loaded')]";
+test('timer record ignores an early call of the load marker by its well-known name', (t) => {
+  const probe = timerProbe(t, `let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    test('runs while the file loads', async () => { release(); await new Promise(resolve => setImmediate(resolve)); });
+    await gate;
+    ${wellKnownMarker}?.();
+    clearTimeout(setTimeout(() => {}, 5));`, {}, { tier: 'converting', record: true });
+  assertTimerPassed(probe, 'runs while the file loads');
+  assert.deepEqual(timerRecords(probe), [
+    { file: probe.file, test: null, api: null, delay: null },
+    { file: probe.file, test: null, api: 'setTimeout', delay: 5 },
+  ]);
+});
+
+test('timer record ignores a deletion of the load marker by its well-known name', (t) => {
+  const probe = timerProbe(t, `${moduleBind}
+    delete ${wellKnownMarker};
+    test('calls the bound arm', () => arm());`, {}, { tier: 'converting', record: true });
+  assertTimerPassed(probe, 'calls the bound arm');
+  assert.deepEqual(timerRecords(probe), [
+    { file: probe.file, test: null, api: null, delay: null },
+    { file: probe.file, test: 'calls the bound arm', api: 'setTimeout', delay: 5 },
+  ]);
+});
+
+// The appended marker survives whatever the file's last line is.
+for (const [ending, last] of [
+  ['a comment with no trailing newline', '// the last line is a comment'],
+  ['a source map comment', '//# sourceMappingURL=other.test.mjs.map\n'],
+]) {
+  test(`timer record attributes a module-bound arm when the file ends with ${ending}`, (t) => {
+    const probe = timerProbe(t, `${moduleBind}
+      test('calls the bound arm', () => arm());
+      ${last}`, {}, { tier: 'converting', record: true, ending: '' });
+    assertTimerPassed(probe, 'calls the bound arm');
+    assert.deepEqual(timerRecords(probe), [
+      { file: probe.file, test: null, api: null, delay: null },
+      { file: probe.file, test: 'calls the bound arm', api: 'setTimeout', delay: 5 },
+    ]);
+  });
+}
+
+// Concurrent subtests share their top-level test, so each arm is that test's.
+test('timer record attributes concurrent subtests handler arms to their top-level test', (t) => {
+  const probe = timerProbe(t, `${handlerServer}
+    test('requests twice', { concurrency: true }, async (t) => {
+      await Promise.all([
+        t.test('first request', async () => { assert.equal(await fetchArm(), 'armed'); }),
+        t.test('second request', async () => { assert.equal(await fetchArm(), 'armed'); }),
+      ]);
+    });`, {}, { tier: 'converting', record: true });
+  assertTimerPassed(probe, 'requests twice');
+  assert.deepEqual(timerRecords(probe), [
+    { file: probe.file, test: null, api: null, delay: null },
+    { file: probe.file, test: 'requests twice', api: 'setTimeout', delay: 5 },
+    { file: probe.file, test: 'requests twice', api: 'setTimeout', delay: 5 },
+  ]);
+});
+
+// After the last test ends no test is running, so an ownerless arm belongs to none.
+test('timer record attributes an ownerless arm after the last test to no test', (t) => {
+  const probe = timerProbe(t, `import { after } from 'node:test';
+    ${moduleBind}
+    test('runs first', () => {});
+    after(() => arm());`, {}, { tier: 'converting', record: true });
+  assertTimerPassed(probe, 'runs first');
   assert.deepEqual(timerRecords(probe), [
     { file: probe.file, test: null, api: null, delay: null },
     { file: probe.file, test: null, api: 'setTimeout', delay: 5 },

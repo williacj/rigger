@@ -211,6 +211,21 @@ appends one call to the entry module's source, which runs only after its body,
 top-level awaits included, completes. An earlier attempt that imported the entry
 from the preload settled after the first test had already started, so it was racy.
 
+The architect accepted that design with conditions. The marker's key carries a
+per-run random token, so a test cannot fire it early by a fixed name, crediting a
+load-time arm to a running test, or delete it, switching the fallback off; tests
+show both attempts change nothing. The hook decodes byte sources as UTF-8, since a
+byte view in a template string would print as numbers. The guard names `startTime`
+and `endTime`, the internal `Test` fields it reads, beside the code, as `D16` rule 3
+asks, and a receipt shows R11 depends on them.
+
+Measured under the guard, in both modes: a file whose last line is a comment with
+no trailing newline, or a source map comment, still marks its end; concurrent
+subtests' handler arms belong to their top-level test; an ownerless arm after the
+last test belongs to no test. A file that throws while loading, or whose top-level
+await never settles, never marks its end, so an ownerless arm in it belongs to no
+test and a bounded refusal names `<module>`. Such a file fails anyway.
+
 A function captured with `AsyncLocalStorage.snapshot()` in test A and run in test B
 keeps A's context, so its arm is recorded under A, as the architect ruled. #1138
 needs to know this when it reads the record.

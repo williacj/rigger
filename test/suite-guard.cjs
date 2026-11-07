@@ -112,13 +112,17 @@ function watchTimers(recordFile) {
   // Tests can run while the file still loads, so the file's own last statement marks its end:
   // a load hook appends a call that runs once the module body, top-level awaits included, is done.
   const entry = require('node:url').pathToFileURL(realpathSync.native(process.argv[1])).href;
-  const marker = Symbol.for('rigger.suite.timer-file-loaded');
+  // The key carries a per-run random token, so no test can call or delete the marker by name.
+  const markerKey = `rigger.suite.timer-file-loaded.${require('node:crypto').randomUUID()}`;
+  const marker = Symbol.for(markerKey);
   Object.defineProperty(globalThis, marker, { configurable: true, value: () => { loaded = true; delete globalThis[marker]; } });
   require('node:module').registerHooks({
     load(url, context, nextLoad) {
       const result = nextLoad(url, context);
       if (url !== entry || result.format !== 'module') return result;
-      return { ...result, source: `${result.source}\n;globalThis[Symbol.for('rigger.suite.timer-file-loaded')]?.();\n` };
+      // A hook may hand back a string, a Buffer or another byte view; decode bytes as UTF-8.
+      const source = typeof result.source === 'string' ? result.source : new TextDecoder().decode(result.source);
+      return { ...result, source: `${source}\n;globalThis[Symbol.for(${JSON.stringify(markerKey)})]?.();\n` };
     },
   });
   if (!recordFile) {
@@ -141,6 +145,10 @@ function watchTimers(recordFile) {
   function owner() {
     const found = asyncOwner();
     if (found || !loaded) return found;
+    // startTime and endTime are fields of Node's internal Test, not a documented API (D16 rule 3).
+    // Measured on Node 26.13.0: startTime is set when a test starts running and endTime when it
+    // ends. Were Node to rename them, every ownerless arm would belong to no test; R11's test and
+    // its receipt fail on that.
     const running = topLevelTests.filter((candidate) => candidate.parent && !candidate.parent.parent
       && candidate.startTime != null && candidate.endTime == null);
     return running.length === 1 ? running[0] : null;
