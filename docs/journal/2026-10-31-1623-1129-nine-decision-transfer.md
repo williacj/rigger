@@ -76,3 +76,7 @@ The new logical registration behavior first ran at stubedcb and ordinary99d3: PI
 These five calls are snapshot-scoped to HEADed4564c7faeb3504266623240428cc2e4414f709 plus ordinary99d3fca946ed01dd8ee83e2e3e094b4480c372837987be69e9bd7ed027cdd832 and stubf8107cd114c7eb70e32b6239fe3e7a69a3ec23b45841a003900c5e98d801e122. Full separate originals/source freezes are sealed at custodyab54baa0f5b3f387d97d4fc2bbba69fdb479f458513d158923a621246eb63158. Returning from finish is not natural logical or OS exit; no Promise/virtual-time/signal equivalence is claimed.
 
 The required cleanup-registration guarded fault remains unexecuted. Official receipts require a tracked checkpoint containing f810/99d3; no result from the old HEAD can satisfy its missing-anchor premise. Broader A/F/I/C1 semantic proofs, final full deterministic/host/platform checks, claim conservation and independent review remain open.
+
+## Restoration ref
+
+The commit carrying this section is the restoration ref for the nine old bodies P1-P5 and S2-S5. It takes `test/plan.test.mjs` and `test/build-test-matrix.test.mjs` byte-exact from admission base M0 `93a24132c9272670473ed576aa5efd00f8759e20`, tree `4dfbcd5eaeebce33be1f2df5c7eee1573c276301`, and regenerates `docs/derived/test-matrix.md`. Each body stays until its replacement and retained boundary proof pass, under the [owner's decision](https://github.com/williacj/rigger/issues/1129#issuecomment-6698072835). The merge beneath this commit keeps the owner-approved custody commits intact.
