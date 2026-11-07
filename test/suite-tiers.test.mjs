@@ -1925,3 +1925,135 @@ if (process.env.NODE_TEST_CONTEXT === 'child-v8') {
     });
   }
 }
+
+// Caller text is the test's own to choose, so it can never earn an exemption.
+const callerDisguises = [
+  ['T17', 'R9', 'a method named for the Node test runner', `const helper = { 'node:internal/test_runner/probe'() { clearTimeout(setTimeout(timerCallback, 5)); } };
+    helper['node:internal/test_runner/probe']();`],
+  ['T18', 'R10', 'a direct eval with a Node test runner source URL', `eval("clearTimeout(setTimeout(timerCallback, 5));\\n//# sourceURL=node:internal/test_runner/probe");`],
+];
+for (const [row, , title, body] of callerDisguises) {
+  test(`timer bound ${row} refuses ${title}`, (t) => {
+    const probe = timerProbe(t, `test(${JSON.stringify(title)}, () => observeArm(() => { ${body} }));`);
+    assertTimerRefused(probe, title, 'setTimeout');
+  });
+}
+for (const [, row, title, body] of callerDisguises) {
+  test(`timer record ${row} records ${title}`, (t) => {
+    const probe = timerProbe(t, `test(${JSON.stringify(title)}, () => observeArm(() => { ${body} }));`, {}, { tier: 'converting', record: true });
+    assertTimerPassed(probe, title);
+    const records = timerRecords(probe);
+    t.diagnostic(JSON.stringify({ row, records }));
+    assert.deepEqual(records, [
+      { file: probe.file, test: null, api: null, delay: null },
+      { file: probe.file, test: title, api: 'setTimeout', delay: 5 },
+    ]);
+  });
+}
+
+test('timer bound T19 converts an object delay once', (t) => {
+  const probe = timerProbe(t, `import assert from 'node:assert/strict';
+    test('allowed timer', () => {
+      let conversions = 0;
+      const delay = { valueOf() { conversions += 1; return 0; } };
+      clearTimeout(setTimeout(() => {}, delay));
+      assert.equal(conversions, 1, 'the delay was converted more than once');
+    });`);
+  assertTimerPassed(probe, 'allowed timer');
+});
+
+test('timer bound T20 arms the delay it checked', (t) => {
+  const probe = timerProbe(t, `import assert from 'node:assert/strict';
+    test('allowed timer', () => {
+      let conversions = 0;
+      const delay = { valueOf() { conversions += 1; return conversions === 1 ? 0 : 5; } };
+      const timer = setTimeout(() => {}, delay);
+      const armed = timer._idleTimeout;
+      clearTimeout(timer);
+      // Node arms a zero delay as one millisecond.
+      assert.equal(armed, 1, 'the timer armed a delay other than the one the guard checked');
+    });`);
+  assertTimerPassed(probe, 'allowed timer');
+});
+
+test('timer bound T21 refuses a scheduler wait taken from its prototype', (t) => {
+  const title = 'arms the prototype wait';
+  const probe = timerProbe(t, `import { scheduler } from 'node:timers/promises';
+    test(${JSON.stringify(title)}, async () => {
+      const wait = Object.getPrototypeOf(scheduler).wait;
+      await observeArm(() => wait.call(scheduler, 5));
+    });`);
+  assertTimerRefused(probe, title, 'scheduler.wait');
+});
+
+// Every documented way to reach a guarded function after the guard installs meets the same bound.
+for (const [route, api, imports, arm] of [
+  ['destructured', 'node:timers.setTimeout', "import timers from 'node:timers';", 'const { setTimeout: later } = timers; clearTimeout(later(timerCallback, 5));'],
+  ['call', 'setTimeout', '', 'clearTimeout(setTimeout.call(globalThis, timerCallback, 5));'],
+  ['apply', 'setTimeout', '', 'clearTimeout(setTimeout.apply(globalThis, [timerCallback, 5]));'],
+  ['bind', 'setTimeout', '', 'clearTimeout(setTimeout.bind(globalThis)(timerCallback, 5));'],
+  ['util.promisify', 'node:timers/promises.setTimeout', "import { promisify } from 'node:util';", 'await promisify(setTimeout)(5);'],
+  ['timers.promises', 'node:timers/promises.setTimeout', "import timers from 'node:timers';", 'await timers.promises.setTimeout(5);'],
+  ['ESM default import', 'node:timers.setInterval', "import timers from 'node:timers';", 'clearInterval(timers.setInterval(timerCallback, 5));'],
+  ['createRequire', 'node:timers.setTimeout', "import { createRequire } from 'node:module';", "clearTimeout(createRequire(import.meta.url)('node:timers').setTimeout(timerCallback, 5));"],
+  ['getBuiltinModule', 'node:timers.setTimeout', '', "clearTimeout(process.getBuiltinModule('node:timers').setTimeout(timerCallback, 5));"],
+  ['getBuiltinModule scheduler', 'scheduler.wait', '', "await process.getBuiltinModule('node:timers/promises').scheduler.wait(5);"],
+  ['async iterator', 'node:timers/promises.setInterval', "import { setInterval as every } from 'node:timers/promises';", 'await every(5)[Symbol.asyncIterator]().next();'],
+  ['AbortSignal call', 'AbortSignal.timeout', '', 'AbortSignal.timeout.call(AbortSignal, 5);'],
+]) {
+  test(`timer route ${route} refuses ${api}`, (t) => {
+    const title = `reaches ${api} by ${route}`;
+    const probe = timerProbe(t, `${imports}\ntest(${JSON.stringify(title)}, async () => observeArm(async () => { ${arm} }));`);
+    assertTimerRefused(probe, title, api);
+  });
+}
+
+// Each API takes an object delay as Node does: the callback timers coerce it, the others reject it.
+for (const [api, expression, coerces] of [
+  ['setTimeout', 'clearTimeout(setTimeout(() => {}, delay))', true],
+  ['setInterval', 'clearInterval(setInterval(() => {}, delay))', true],
+  ['node:timers/promises.setTimeout', "await (await import('node:timers/promises')).setTimeout(delay)", false],
+  ['scheduler.wait', "await (await import('node:timers/promises')).scheduler.wait(delay)", false],
+  ['node:timers/promises.setInterval', "await (await import('node:timers/promises')).setInterval(delay).next()", false],
+  ['AbortSignal.timeout', 'AbortSignal.timeout(delay)', false],
+]) {
+  test(`timer delay form object zero ${api}`, (t) => {
+    const probe = timerProbe(t, `import assert from 'node:assert/strict';
+      test('allowed timer', async () => {
+        let conversions = 0;
+        const delay = { valueOf() { conversions += 1; return 0; } };
+        let code = null;
+        try { ${expression}; } catch (error) { code = error.code; }
+        assert.equal(code, ${coerces ? 'null' : "'ERR_INVALID_ARG_TYPE'"});
+        assert.equal(conversions, 1);
+      });`);
+    assertTimerPassed(probe, 'allowed timer');
+  });
+}
+
+// The guard wraps every timer function these lists hold; a new export would need its own wrapper.
+test('timer surface is the one Node 26 exports', (t) => {
+  const probe = timerProbe(t, `import assert from 'node:assert/strict';
+    import timers from 'node:timers';
+    import promises from 'node:timers/promises';
+    test('surface', () => {
+      assert.deepEqual(Object.keys(timers), ['setTimeout', 'clearTimeout', 'setImmediate', 'clearImmediate', 'setInterval', 'clearInterval', 'promises']);
+      assert.deepEqual(Object.keys(promises), ['setTimeout', 'setImmediate', 'setInterval', 'scheduler']);
+      assert.deepEqual(Object.getOwnPropertyNames(Object.getPrototypeOf(promises.scheduler)), ['constructor', 'yield', 'wait']);
+      console.log('surface ' + process.version);
+    });`);
+  assertTimerPassed(probe, 'surface');
+  t.diagnostic(/surface (v[0-9.]+)/.exec(probe.result.stdout)?.[1] ?? 'no version');
+});
+
+// The guard wraps the scheduler's prototype; Node's mock for that API must still answer the call.
+test('timer mock answers scheduler.wait without a refusal', (t) => {
+  const probe = timerProbe(t, `import { scheduler } from 'node:timers/promises';
+    test('allowed timer', async (t) => {
+      t.mock.timers.enable({ apis: ['scheduler.wait'] });
+      const waited = scheduler.wait(5);
+      t.mock.timers.tick(5);
+      await waited;
+    });`);
+  assertTimerPassed(probe, 'allowed timer');
+});

@@ -174,3 +174,23 @@ into `process.reallyExit(1)` survived all 36 cells. The spec reporter drops a
 worker's signal, so those cells now run under the TAP reporter and assert
 `signal: 'SIGKILL'` ([M7-K77](https://github.com/williacj/rigger/issues/1009)).
 The guard did not change.
+
+Round three's judges found three holes in one function, and the owner fixed the
+bound's line at [M7-U56](https://github.com/williacj/rigger/issues/1009#issuecomment-6710020317):
+every reference to a function rule 3.5 names is in sight, however it was obtained.
+The fixes follow the architect's placement ruling.
+
+- The caller-text exemption is gone. A test chooses its own method names and source
+  URLs, so stack text could never prove a call was Node's. The guard now loads
+  `node:test` before wrapping, in both worker modes; the runner binds the timers
+  its own timeouts use when it loads, so they never reach the wrappers. T13 and R7
+  pass with no exemption, under the guard.
+- `wait` is wrapped on the scheduler's prototype, where every route to it looks it up.
+  Node's mock for `scheduler.wait` still answers it.
+- The delay is converted once. Measured on Node 26.13.0: `setTimeout` and
+  `setInterval` coerce an object delay, so they get the number the guard checked;
+  the `node:timers/promises` APIs and `AbortSignal.timeout` reject one with
+  `ERR_INVALID_ARG_TYPE`, so they get it unchanged. Primitives pass unchanged.
+
+New tests cover T17 to T21, R9 and R10, the documented call routes, an object delay
+for each API, and the export lists the guard depends on.

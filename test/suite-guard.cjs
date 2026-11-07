@@ -104,8 +104,10 @@ function watchTimers(recordFile) {
   const owners = new WeakMap();
   const tests = new WeakSet();
   const refusals = new Map();
+  // node:test binds the timers its own timeouts use when it loads, so loading it before the
+  // wrappers keeps those off them; no caller needs an exemption.
+  const test = require('node:test');
   if (!recordFile) {
-    const test = require('node:test');
     test.afterEach((context) => {
       const refusal = refusals.get(context);
       refusals.delete(context);
@@ -130,15 +132,15 @@ function watchTimers(recordFile) {
       if (test) owners.set(resource, test);
     },
   }).enable();
-  function wrapTimer(object, name, api, delayIndex, iterator = false) {
+  // A delay is converted once. The callback timers coerce an object delay themselves, so they get
+  // the number the guard checked; the other APIs reject an object, so they get it unchanged.
+  function wrapTimer(object, name, api, delayIndex, { iterator = false, coerces = false } = {}) {
     const original = object[name];
     function boundedTimer(...args) {
-      const delay = Number(args[delayIndex]);
+      const given = args[delayIndex];
+      const delay = Number(given);
+      if (coerces && given !== null && (typeof given === 'object' || typeof given === 'function')) args[delayIndex] = delay;
       if (delay > 0) {
-        const call = {};
-        Error.captureStackTrace(call, boundedTimer);
-        const caller = String(call.stack).split('\n')[1] || '';
-        if (/\bnode:internal\/test_runner(?:\/|:)/.test(caller)) return Reflect.apply(original, this, args);
         const running = owner();
         const test = (recordFile ? topLevel(running) : running)?.name ?? null;
         if (recordFile) {
@@ -166,13 +168,14 @@ function watchTimers(recordFile) {
     if (custom?.value === original) custom.value = object[name];
     if (custom) Object.defineProperty(object[name], promisify.custom, custom);
   }
-  wrapTimer(globalThis, 'setTimeout', 'setTimeout', 1);
-  wrapTimer(globalThis, 'setInterval', 'setInterval', 1);
-  wrapTimer(require('node:timers'), 'setTimeout', 'node:timers.setTimeout', 1);
-  wrapTimer(require('node:timers'), 'setInterval', 'node:timers.setInterval', 1);
+  wrapTimer(globalThis, 'setTimeout', 'setTimeout', 1, { coerces: true });
+  wrapTimer(globalThis, 'setInterval', 'setInterval', 1, { coerces: true });
+  wrapTimer(require('node:timers'), 'setTimeout', 'node:timers.setTimeout', 1, { coerces: true });
+  wrapTimer(require('node:timers'), 'setInterval', 'node:timers.setInterval', 1, { coerces: true });
   wrapTimer(require('node:timers/promises'), 'setTimeout', 'node:timers/promises.setTimeout', 0);
-  wrapTimer(require('node:timers/promises').scheduler, 'wait', 'scheduler.wait', 0);
-  wrapTimer(require('node:timers/promises'), 'setInterval', 'node:timers/promises.setInterval', 0, true);
+  // The scheduler's wait lives on its prototype, where every route to it looks it up.
+  wrapTimer(Object.getPrototypeOf(require('node:timers/promises').scheduler), 'wait', 'scheduler.wait', 0);
+  wrapTimer(require('node:timers/promises'), 'setInterval', 'node:timers/promises.setInterval', 0, { iterator: true });
   wrapTimer(AbortSignal, 'timeout', 'AbortSignal.timeout', 0);
   syncBuiltinESMExports();
 }
