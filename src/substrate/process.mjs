@@ -102,6 +102,27 @@ const LONGEST_PAUSE = 50;
  */
 export const KILL_BOUND = 10_000;
 
+/**
+ * How long from its start the exit cleanup goes on ending groups with their census and sweep. Past
+ * it, each group it has not reached has the kill of the group alone (`killedBare`). A group it has
+ * begun, it finishes. A judgment, not a measurement. Its premises: the architect's reading on
+ * #1240 that nine ordinary cleanups fit in about 3 s, and Q-e2's slowest cleanup of 5.5 s, the cost
+ * of a process table that hangs, which is paid once (`unanswered`).
+ */
+export const EXIT_CARE_BOUND = 15_000;
+
+/**
+ * The longest the exit cleanup's reads can hold the process's ending: `EXIT_CARE_BOUND`, and 40 s
+ * for the one dispatch that can be in progress when it passes. A reading of the deadlines, which
+ * `test/exit-cleanup.test.mjs` bounds with a host that answers each read at its last moment: 5 s for
+ * `containNow`'s census, 5 and 5 spare before its kill, 5 for its confirmation, and 5 and 5 for each
+ * of `sweptNow`'s two directories. It bounds reads alone: a hung sink write, or a process stuck in
+ * the kernel, is outside it. It stays below the 60 s launchd allows on macOS 27.2
+ * (`ARCHITECTURE.md`, "Supervising `run`"). L0 answers it here, since these deadlines are L0's, and
+ * `launchdExitTimeout` hands it on.
+ */
+export const EXIT_BOUND = 55_000;
+
 /** The pause after `wait`, doubling it up to `LONGEST_PAUSE`. */
 const longer = (wait) => Math.min(Math.max(1, 2 * wait), LONGEST_PAUSE);
 
@@ -238,8 +259,9 @@ function onSignal(name) {
 /**
  * L0's exit cleanup, synchronous because Node runs an `exit` listener synchronously. It ends every
  * read of the process table still in flight; then, for every call in flight whose group the call
- * has not emptied, it ends the group as the call would have, and confirms it (`containNow`); and
- * only then records
+ * has not emptied, it ends the group as the call would have, and confirms it (`containNow`), until
+ * `EXIT_CARE_BOUND` has passed since it reached its first call, by that call's host clock, and past
+ * that it kills each remaining group bare (`killedBare`); and only then records
  * each kill, the call's own unrecorded kills first, and writes to standard error every kill the
  * sink refused, since no caller is left to report it to. It then takes each caller's step for its
  * group, handing it how the command ended (`endingOf`), which is L1's removal of the group's
@@ -257,14 +279,33 @@ function cleanup() {
   unanswered.clear();
   unreadSince = undefined;
   const ended = [];
+  let began;
   for (const [group, call] of calls) {
     calls.delete(group);
-    attempt(() => ended.push([group, call, call.contained ? {} : endedNow(group, call)]));
+    attempt(() => {
+      const now = call.host.clock.now();
+      began ??= now;
+      ended.push([group, call, call.contained ? {} : now - began < EXIT_CARE_BOUND ? endedNow(group, call) : killedBare(group, call)]);
+    });
   }
   const unrecorded = ended.flatMap(([, { emitter, events }, { kills = [] }]) => record(emitter, [...events.splice(0), ...kills]));
   if (unrecorded.length > 0) attempt(() => writeWhole(`${refused(unrecorded).message}\n`));
-  for (const [group, { onExit, child }, look] of ended) attempt(() => onExit?.(group, endingOf(child, look)));
+  for (const [group, { onExit, child }, look] of ended) attempt(() => onExit?.(group, { ...endingOf(child, look), ...(look.unswept === undefined ? {} : { unswept: look.unswept }) }));
   for (const step of steps) attempt(step);
+}
+
+/**
+ * Kills `group` for the exit cleanup once `EXIT_CARE_BOUND` has passed: the group's kill and nothing
+ * else, so no read, and no search of the call's directories. Hands back the kill of the group to
+ * record, where signal 0 still reaches the group, and as `unread` and `unswept` why it did no more
+ * (`R-STATE-28`). `unswept` tells the caller's step to keep the group's entry, so that the next
+ * start sweeps those directories, which it does whether the group is still there or not.
+ */
+function killedBare(group, { kill }) {
+  const why = `the exit cleanup had run for ${EXIT_CARE_BOUND} ms, so it killed the group without reading it or searching its directories`;
+  if (!occupied(group, kill)) return { kills: [], unread: why, unswept: why };
+  signal(group, 'SIGKILL', kill);
+  return { kills: [['group.killed', { group, census: why }]], unread: why, unswept: why };
 }
 
 /**
@@ -1732,7 +1773,8 @@ function refused(unrecorded, result, ending = '') {
  * L0 holds the call from the step that creates the group until a turn after the call settles. Where
  * the process exits meanwhile, L0's exit cleanup kills the group where the call has not emptied
  * it, records every kill, and then hands the group and how the command ended to `onExit`, where
- * the caller gives one: `{ exit }`, its exit code, or `{ unread }`, why it could not be read.
+ * the caller gives one: `{ exit }`, its exit code, or `{ unread }`, why it could not be read, and
+ * `unswept`, why, where the cleanup left the call's directories unsearched (`killedBare`).
  * `onExit` is a synchronous step, which is how L1 removes a dispatch's entry and records its end.
  * The step can come after the call has settled, in the turn it settled, and must then do
  * nothing for a call its caller has finished. A process kept running past its ending still has the

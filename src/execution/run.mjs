@@ -63,7 +63,9 @@ export const RECORD_REFUSED = 'RECORD_REFUSED';
  * the group and records each kill; L1 removes the entry and appends `dispatch.end`, carrying the
  * exit code L0 hands it, which is the command's own where it had exited. Where L0 could not read
  * the command's status, the end carries no exit code, and says as `unread` why. Where the record
- * refuses the removal, the end still goes, saying as `kept` which entry was kept and why. The sink's
+ * refuses the removal, the end still goes, saying as `kept` which entry was kept and why, and so it
+ * does where L0 left the group's directories unsearched, whose entry L1 keeps for the next start
+ * (`R-STATE-28`). The sink's
  * refusal of that end has no caller left to reach, so L0 writes it to standard error, on a line
  * naming the event, the dispatch and its card. A process kept running past its ending has the call
  * settle as before, and records nothing more of the dispatch.
@@ -161,13 +163,15 @@ export async function dispatch({ id, card, directory, sink, provider, command, a
       // removal. No caller is left to hear of a
       // refused end, so L0 writes this refusal to standard error. L0 can hand over a dispatch
       // whose end L1 has already recorded, which is left as it is.
-      onExit: (group, ending) => {
+      onExit: (group, { unswept, ...ending }) => {
         if (ended) return;
         ended = true;
         const fields = { ...ending, ms: Math.round(clock() - began) };
         if (folder !== undefined) fields.folderLeft = [unsweptFolder(folder, folderListing, 'Rigger exited before the CLI folder sweep')];
         try {
-          removeGroup(directory, group);
+          // A group L0 killed bare has directories nothing swept, so the next start's kill needs its entry.
+          if (unswept === undefined) removeGroup(directory, group);
+          else fields.kept = keptEntry(directory, group, { message: unswept });
         } catch (cause) {
           fields.kept = keptEntry(directory, group, cause);
         }

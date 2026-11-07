@@ -16,12 +16,16 @@ import { createHash } from 'node:crypto';
 import { readEvents, streamPath } from '../src/observation/sink.mjs';
 import { readGroups } from '../src/execution/groups.mjs';
 import { HANDLED, LEFT_OUT, PS } from '../src/substrate/process.mjs';
+import { killRecordedGroups } from '../src/execution/run.mjs';
+import { openSink } from '../src/observation/sink.mjs';
 import { UNDRAINED_BOUND } from '../src/substrate/standard-error.mjs';
 import { alive, fixture, read, running, scratch, shellQuote, turn, undrained } from './process-fixtures.mjs';
 import { beginFixtureWarmBatch, finishFixtureWarmBatch, literally } from './process-fixtures.mjs';
 import { warmed } from './process-fixtures.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { EX_CAUSAL_CASES } from './process-proof-fixture.mjs';
+import { gone, tailIn } from './process-fixtures.mjs';
+import { BUDGET, assertAllEnded } from './exit-budget-world.mjs';
 
 // A bound on the test alone, so that a caller which never ends fails here rather than holding the
 // suite: nothing waits on it once the caller has ended.
@@ -1928,4 +1932,153 @@ test("606 B0 EX causal: RUNTIME-MALFORMED", { timeout: 40000 }, async (t) => {
 // D29 reason: real deadline. Ordinary counterpart: the worker's refusal decides no Rigger behaviour, so its claim depends on no decision Rigger makes.
 test("606 B0 EX causal: RUNTIME-WRONG-BINARY", { timeout: 40000 }, async (t) => {
   await runExCausal(t, EX_CAUSAL_CASES[0], { runtimeArgument: runtime => JSON.stringify({ ...runtime, binarySha256: '0'.repeat(64) }), reason: 'runtime binary changed' });
+});
+
+// Table X of #1240: exit cleanup against its fixed budget, ended by a real SIGTERM in a real Node
+// process. What it decides from a stand-in's answers is proved in `test/exit-budget.test.mjs`.
+
+/**
+ * The caller for the budget's tests: a Node process that sets up `budgetWorld` for the JSON `plan`
+ * and then receives SIGTERM, as launchd sends it. Its arguments are its scratch directory and
+ * `plan`. Its sink is never named, so every event reaches standard error only at the sink's end,
+ * and the test's reading them proves that end. It writes what the host saw to `report.json`, as
+ * the step after the sink's end.
+ *
+ * `plan.finished` runs one real command to its end first, and starts no group, so the cleanup holds
+ * none. `plan.real` runs each of `plan.real.labels` as a real `command` fixture, its clock
+ * `plan.real.ahead[label]` milliseconds ahead of the host's.
+ */
+const BUDGET_CALLER = String.raw`
+import { existsSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { openSink } from ${moduleAt('../src/observation/sink.mjs')};
+import { atExit } from ${moduleAt('../src/substrate/process.mjs')};
+import { realHost } from ${moduleAt('../src/substrate/host.mjs')};
+import { budgetWorld } from ${moduleAt('./exit-budget-world.mjs')};
+
+const [directory, given] = process.argv.slice(2);
+const plan = JSON.parse(given);
+const sink = openSink({ run: 'r-test', now: () => 0 });
+const turn = () => new Promise((resolve) => setImmediate(resolve));
+const world = budgetWorld(directory, plan, sink);
+
+atExit(sink.end);
+atExit(() => writeFileSync(join(directory, 'report.json'), JSON.stringify(world.report())));
+
+if (plan.finished) {
+  const counted = { ...realHost, spawnSync: (...input) => { world.logRead({ tool: 'any', args: input[1] }); return realHost.spawnSync(...input); } };
+  await world.start(1, { on: counted });
+  await turn();
+} else if (plan.real) {
+  const { labels, ahead } = plan.real;
+  const hosts = new Map(labels.map((label) => [label, { ...realHost, clock: { ...realHost.clock, now: () => Date.now() + (ahead[label] ?? 0) } }]));
+  for (const label of labels) world.start(label, { command: join(directory, 'command'), on: hosts.get(label) }).catch(() => {});
+  while (labels.some((label) => !existsSync(join(directory, 'child.' + label)))) await turn();
+} else {
+  await world.settled();
+}
+setInterval(() => {}, 1_000);
+world.exit();
+process.kill(process.pid, 'SIGTERM');
+`;
+
+/** Runs `plan` through the budget's caller to its end, and reads back what it left. */
+function budgeted(t, plan, directory = scratch(t)) {
+  const caller = join(directory, 'budget.mjs');
+  writeFileSync(caller, BUDGET_CALLER);
+  const ran = spawnSync(process.execPath, [caller, directory, JSON.stringify(plan)], { encoding: 'utf8', timeout: ENDS_WITHIN.timeout, killSignal: 'SIGKILL' });
+  assert.equal(ran.error, undefined, ran.stderr);
+  assert.equal(ran.signal, 'SIGTERM', `the caller ended with ${ran.status}: ${ran.stderr}`);
+  return { directory, stderr: ran.stderr, events: eventLines(ran.stderr), ...JSON.parse(read(directory, 'report.json')), record: readGroups(join(directory, 'state')) };
+}
+
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup in a Node process that has run a real command, and the sink's end reaches a real standard error.
+// Deterministic counterpart: test/exit-budget.test.mjs :: with no group held at the exit, the cleanup makes no read, sends no signal, and the sink still ends
+test('X1: with no group held, the exit cleanup makes no read, and the sink\'s end still writes what it held', ENDS_WITHIN, (t) => {
+  BUDGET.noGroup(budgeted(t, { finished: true }));
+});
+
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup, and each event of its census and sweep reaches a real standard error at the sink's end.
+// Deterministic counterpart: test/exit-budget.test.mjs :: nine ordinary groups at the exit each have their census and sweep inside EXIT_CARE_BOUND
+// proves R-STATE-9, R-STATE-17
+test('X2: nine ordinary groups are each ended with their census and sweep inside the budget, and no bare kill fires', ENDS_WITHIN, (t) => {
+  BUDGET.nineOrdinary((plan) => budgeted(t, plan));
+});
+
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup, and the record it leaves on disk is the one a real process exit left.
+// Deterministic counterpart: test/exit-budget.test.mjs :: past EXIT_CARE_BOUND a stuck group finishes its cleanup, and each remaining group has the bare kill, its record and a reason
+// proves R-STATE-28
+test('X3: a stuck group that spends the budget finishes its careful cleanup, and each remaining group has the bare kill, a group kill record and a reason', ENDS_WITHIN, (t) => {
+  BUDGET.stuckGroup((plan) => budgeted(t, plan));
+});
+
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup, and each group's record reaches a real standard error at the sink's end.
+// Deterministic counterpart: test/exit-budget.test.mjs :: a process table that hangs at the exit is waited on once, and each group is recorded in place of what it could not read
+// proves R-STATE-12, R-STATE-19
+test('X4: a process table that hangs is paid once, and the groups after it are ended as X2 gives', ENDS_WITHIN, (t) => {
+  BUDGET.hungOnce((plan) => budgeted(t, plan));
+});
+
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup, and the record it leaves on disk is the one a real process exit left.
+// Deterministic counterpart: test/exit-budget.test.mjs :: where the budget runs out during a hung read, the group that read began is finished and the next has the bare kill
+// proves R-STATE-28
+test('X4: a process table that hangs where the budget runs out during its wait has the groups after it ended as X3 gives', ENDS_WITHIN, (t) => {
+  BUDGET.hungPastBudget((plan) => budgeted(t, plan));
+});
+
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup, and the record it leaves on disk is the one a real process exit left.
+// Deterministic counterpart: test/exit-budget.test.mjs :: the budget is spent at EXIT_CARE_BOUND exactly, and a millisecond under it the next group has its census and sweep
+// proves R-STATE-28
+test('X10: the budget is spent at EXIT_CARE_BOUND exactly, and one millisecond under it the next group still has its census and sweep', ENDS_WITHIN, (t) => {
+  BUDGET.exactBound((plan) => budgeted(t, plan));
+});
+
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup, and the record it leaves on disk is the one a real process exit left.
+// Deterministic counterpart: test/exit-budget.test.mjs :: a group already empty past the budget has no kill, keeps its entry, and ends with its own exit code
+// proves R-STATE-28
+test('X10: a group already empty past the budget has no kill recorded, keeps its entry for its unswept directories, and ends with its own exit code', ENDS_WITHIN, (t) => {
+  BUDGET.alreadyEmpty((plan) => budgeted(t, plan));
+});
+
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup while a call waits on its output, and the record it leaves on disk is the one a real process exit left.
+// Deterministic counterpart: test/exit-budget.test.mjs :: a group its call already ended and swept, reached past the budget, has no kill and its entry goes
+// proves R-STATE-28
+test('X10: a group the call has already ended and swept, reached past the budget, has no kill and its entry goes', ENDS_WITHIN, (t) => {
+  BUDGET.alreadySwept((plan) => budgeted(t, plan));
+});
+
+// Host reason: OS behaviour; a real group kill ends real processes, real survivors outlive it in real directories, and a real `lsof` finds them at the next start.
+// Deterministic counterpart: test/exit-budget.test.mjs :: a group killed bare keeps its entry and its survivors, and the next start sweeps both its directories and removes the entry
+// proves R-STATE-28
+test('X6: a group that had the bare kill keeps its entry, its survivors outlive the exit, and the next start\'s kill sweeps both its directories', ENDS_WITHIN, async (t) => {
+  const directory = scratch(t);
+  fixtures(directory);
+  const inWork = await tailIn(t, directory, join(directory, 'work.2', 'sub'));
+  const inScratch = await tailIn(t, directory, join(directory, 'scratch.2'));
+  const state = join(directory, 'state');
+
+  const ran = budgeted(t, { real: { labels: [1, 2], ahead: { 2: 60_000 } } }, directory);
+
+  assertAllEnded(ran, [1, 2]);
+  await assertNoneAlive(directory);
+  const group = Number(read(directory, 'group.2'));
+  assert.equal(ran.events.filter(({ dispatch: id, event, group: killed }) => id === 'd-2' && event === 'group.killed' && killed === group).length, 1, ran.stderr);
+  assert.deepEqual(ran.events.filter(({ dispatch: id, event }) => id === 'd-2' && event === 'survivor.killed'), []);
+  assert.deepEqual(ran.record.map(({ dispatch: id, group: held }) => [id, held]), [['d-2', group]]);
+  assert.equal(alive(inWork) && alive(inScratch), true, 'the bare kill searched the directories');
+
+  const next = openSink({ directory: state, run: 'r-next', now: () => 0 });
+  await killRecordedGroups({ directory: state, sink: next });
+
+  assert.equal(await gone(inWork) && await gone(inScratch), true, 'the next start left a survivor alive');
+  assert.deepEqual(readGroups(state), []);
+  const killed = streamOf(directory).filter(({ event }) => event === 'recorded.killed').map(({ pid, dispatch: id }) => [pid, id]);
+  assert.deepEqual(killed.sort(), [[inWork, 'd-2'], [inScratch, 'd-2']].sort());
+});
+
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup, and each kill's record reaches a real standard error at the sink's end.
+// Deterministic counterpart: test/exit-budget.test.mjs :: one dispatch whose every read answers at its last moment ends within EXIT_BOUND less EXIT_CARE_BOUND, recording what the kill did not end
+// proves R-STATE-19
+test('X11: one dispatch whose every read answers at the last moment, with a member the kill does not end and a survivor in both directories, ends within EXIT_BOUND less EXIT_CARE_BOUND', ENDS_WITHIN, (t) => {
+  BUDGET.lastMoment((plan) => budgeted(t, plan), (shown) => t.diagnostic(shown));
 });

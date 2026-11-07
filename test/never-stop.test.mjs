@@ -3550,7 +3550,23 @@ async function nestedProcessIdentity(pid, signal, tool) {
   if (result.status !== 0 || !fields) fail(new Error('cannot observe recorded descendant ' + pid + ': ' + JSON.stringify(result)));
   const [, birth, stat, command] = fields;
   report();
-  return { pid, birth, command, state: stat.startsWith('Z') ? 'Z' : 'live' };
+  return { pid, birth, command, stat, state: stat.startsWith('Z') ? 'Z' : 'live' };
+}
+
+/**
+ * A dying read is the recorded process trying to exit: ps has lost its arguments and prints the
+ * name alone, with the E flag after a run state other than Z. It earns no credit and no signal.
+ */
+function nestedDyingRead(recorded, current) {
+  const name = recorded.command.split(' ')[0].split('/').at(-1);
+  return current.pid === recorded.pid && current.birth === recorded.birth && current.command === `(${name})`
+    && typeof current.stat === 'string' && !current.stat.startsWith('Z') && current.stat.slice(1).includes('E');
+}
+
+/** A ps state column for the safe records: a known run state, then known flags; any other token could be command text. */
+function nestedStateColumn(stat) {
+  if (stat === undefined) return null;
+  return /^[DIRSTUWXZt?][+<>AELNSsVWXl]*$/.test(stat) ? stat : 'unrecognized';
 }
 
 /** Classifies one answer without copying its command or birth into diagnostic output. */
@@ -3559,7 +3575,7 @@ function nestedObservationState(recorded, current) {
   if (current.pid !== recorded.pid) return 'changed-pid';
   if (current.birth !== recorded.birth) return 'birth-mismatch';
   if (current.state === 'Z') return 'zombie';
-  if (current.state === 'live') return current.command === recorded.command ? 'live-matching' : 'live-changed-command';
+  if (current.state === 'live') return current.command === recorded.command ? 'live-matching' : nestedDyingRead(recorded, current) ? 'dying' : 'live-changed-command';
   return 'unconfirmed';
 }
 
@@ -3578,6 +3594,15 @@ async function endNestedDescendant(t, control) {
   const signal = control.signal ?? process.kill;
   let sequence = 0;
   let signalled = false;
+  let dying = false;
+  /** Once a read is dying, only a dying, Z or absent read can be the same process. */
+  const sameProcess = (read) => {
+    const dyingRead = nestedDyingRead(recorded, read);
+    const same = read.pid === recorded.pid && read.birth === recorded.birth
+      && (read.state === 'Z' || dyingRead || (!dying && read.command === recorded.command));
+    dying ||= dyingRead;
+    return same;
+  };
   const observeRead = async (phase) => {
     const readSequence = ++sequence;
     psResult = undefined;
@@ -3594,7 +3619,8 @@ async function endNestedDescendant(t, control) {
     control.onObservation?.({
       phase, sequence: readSequence, requestedPid: recorded.pid, pidSource: 'requested', readOutcome: 'answered', state: nestedObservationState(recorded, current),
       birthMatch: nestedMatchClass(current.birth, recorded.birth),
-      commandMatch: nestedMatchClass(current.command, recorded.command),
+      commandMatch: nestedDyingRead(recorded, current) ? 'dying-name' : nestedMatchClass(current.command, recorded.command),
+      stat: nestedStateColumn(current.stat),
       ...psResult,
     });
     return current;
@@ -3605,11 +3631,12 @@ async function endNestedDescendant(t, control) {
     const current = await observeRead(signalled ? 'after-signal' : 'before-signal');
     (control.observationSignal ?? t.signal).throwIfAborted();
     if (current.state === 'absent') return 'absent';
-    if (current.pid !== recorded.pid || current.birth !== recorded.birth || (current.state !== 'Z' && current.command !== recorded.command)) {
+    if (!sameProcess(current)) {
       throw new Error(`recorded descendant identity changed: ${JSON.stringify({ recorded, current })}`);
     }
     if (current.state === 'Z') return 'Z';
     if (current.state !== 'live') throw new Error(`recorded descendant state unknown: ${JSON.stringify(current)}`);
+    if (!dying) {
     try { signal(recorded.pid, 'SIGKILL'); }
     catch (error) {
       control.onSignal?.({ requestedPid: recorded.pid, result: ['ESRCH', 'EPERM'].includes(error.code) ? error.code : 'other' });
@@ -3620,11 +3647,12 @@ async function endNestedDescendant(t, control) {
     const after = await observeRead('after-signal');
     (control.observationSignal ?? t.signal).throwIfAborted();
     if (after.state === 'absent') return 'absent';
-    if (after.pid !== recorded.pid || after.birth !== recorded.birth || (after.state !== 'Z' && after.command !== recorded.command)) {
+    if (!sameProcess(after)) {
       throw new Error(`recorded descendant identity changed after signal: ${JSON.stringify({ recorded, current: after })}`);
     }
     if (after.state === 'Z') return 'Z';
     if (after.state !== 'live') throw new Error(`recorded descendant state unknown: ${JSON.stringify(after)}`);
+    }
     const signalForObservation = control.observationSignal ?? t.signal;
     signalForObservation.throwIfAborted();
     await (control.turn ?? (() => new Promise((resolve) => setImmediate(resolve))))();
@@ -9826,9 +9854,9 @@ function nestedEvidenceStatus(lines, expected) {
         || !Number.isInteger(record.requestedPid) || record.requestedPid <= 0 || record.pidSource !== 'requested'
         || !['answered', 'refused'].includes(record.readOutcome)
         || !(record.signalResult === null || ['returned', 'ESRCH', 'EPERM', 'other'].includes(record.signalResult))
-        || !['absent', 'live-matching', 'live-changed-command', 'zombie', 'birth-mismatch', 'changed-pid', 'unconfirmed'].includes(record.state)
+        || !['absent', 'live-matching', 'live-changed-command', 'dying', 'zombie', 'birth-mismatch', 'changed-pid', 'unconfirmed'].includes(record.state)
         || !['match', 'mismatch', 'unavailable'].includes(record.birthMatch)
-        || !['match', 'mismatch', 'unavailable'].includes(record.commandMatch)
+        || !['match', 'mismatch', 'dying-name', 'unavailable'].includes(record.commandMatch)
         || !(record.psStatus === null || Number.isInteger(record.psStatus))
         || !(record.psSignal === null || ['SIGKILL', 'SIGTERM', 'SIGINT', 'SIGABRT', 'other'].includes(record.psSignal))
         || !(record.psError === null || ['ABORT_ERR', 'ETIMEDOUT', 'ESRCH', 'EPERM', 'EACCES', 'other', 'unavailable'].includes(record.psError))) return 'incomplete';
@@ -10356,6 +10384,237 @@ test('nested ownership diagnostic marks missing or truncated safe records incomp
   assert.equal(nestedEvidenceStatus([first], 2), 'incomplete');
   assert.equal(nestedEvidenceStatus([first, second.slice(0, -1)], 2), 'incomplete');
   assert.equal(nestedEvidenceStatus([first, JSON.stringify({ ...JSON.parse(second), psStatus: undefined })], 2), 'incomplete');
+});
+
+/** The answers follow native macOS reads (docs/journal/2026-11-02-0412-1075-reaper-native-state.md): ?E and the name alone. */
+const exitingRecorded = { pid: 987654321, birth: 'Wed Oct 28 12:00:00 2026', command: '/opt/homebrew/Cellar/node/26.13.0_2/bin/node -e process.send(1)' };
+const psAnswer = (stat, command, birth = exitingRecorded.birth) => `${birth} ${stat} ${command}\n`;
+const liveAnswer = psAnswer('S', exitingRecorded.command);
+const dyingAnswer = psAnswer('?E', '(node)');
+const zombieAnswer = psAnswer('Z', '<defunct>');
+const absentAnswer = '';
+const psAnswerTool = (answer) => ({ command: process.execPath, args: ['-e', answer ? `process.stdout.write(${JSON.stringify(answer)})` : 'process.exit(1)'] });
+
+/** Gives each targeted read a literal ps answer; an empty answer is ps's status 1 for an absent pid. */
+async function exitingReads(t, answers, control = {}) {
+  const remaining = [...answers];
+  const observations = [];
+  const signals = [];
+  let turns = 0;
+  const ended = await endNestedDescendant(t, {
+    descendant: () => exitingRecorded,
+    psTool: () => psAnswerTool(remaining.shift()),
+    signal: (pid, name) => signals.push([pid, name]),
+    onObservation: (observation) => observations.push(observation),
+    turn: async () => { turns += 1; },
+    ...control,
+  }).then((outcome) => ({ outcome }), (error) => ({ error }));
+  return { ...ended, observations, signals, unread: remaining.length, turns };
+}
+
+test('nested ownership identity keeps the raw ps state column for its refusals', SETTLES_WITHIN, async (t) => {
+  for (const [answers, message] of [
+    [[liveAnswer, psAnswer('R+', '/bin/other')], /identity changed after signal: /],
+    [[psAnswer('R+', '/bin/other')], /identity changed: /],
+  ]) {
+    const { error } = await exitingReads(t, answers);
+    assert.match(error.message, message);
+    assert.equal(JSON.parse(error.message.slice(error.message.indexOf('{'))).current.stat, 'R+');
+  }
+});
+
+test('nested ownership diagnostic records each after-signal read state column and command class', SETTLES_WITHIN, async (t) => {
+  for (const [answer, stat, state, commandMatch] of [
+    [dyingAnswer, '?E', 'dying', 'dying-name'],
+    [psAnswer('UEs', '(node)'), 'UEs', 'dying', 'dying-name'],
+    [psAnswer('?E', exitingRecorded.command), '?E', 'live-matching', 'match'],
+    [psAnswer('S', '(node)'), 'S', 'live-changed-command', 'mismatch'],
+    [psAnswer('?E', '(python)'), '?E', 'live-changed-command', 'mismatch'],
+    [psAnswer('?E', '<exiting>'), '?E', 'live-changed-command', 'mismatch'],
+    [zombieAnswer, 'Z', 'zombie', 'mismatch'],
+    [absentAnswer, null, 'absent', 'unavailable'],
+  ]) {
+    const { observations } = await exitingReads(t, [liveAnswer, answer]);
+    assert.deepEqual([observations[0].phase, observations[0].stat], ['before-signal', 'S']);
+    assert.deepEqual([observations[1].phase, observations[1].stat, observations[1].state, observations[1].commandMatch],
+      ['after-signal', stat, state, commandMatch], answer);
+  }
+});
+
+test('nested ownership diagnostic records hold no raw command text from any read', SETTLES_WITHIN, async (t) => {
+  const recorded = { ...exitingRecorded, command: '/private/unique-secret-token --flag' };
+  const live = psAnswer('S', recorded.command);
+  for (const answer of [psAnswer('?E', '(unique-secret-token)'), psAnswer('?E', '/private/another-secret-token'), psAnswer('/private/stat-secret-token', 'x'), psAnswer('Sunique-secret-token', 'x')]) {
+    const { observations } = await exitingReads(t, [live, answer], { descendant: () => recorded });
+    assert.ok(observations.length >= 2);
+    assert.doesNotMatch(JSON.stringify(observations), /secret-token|\/private\//);
+    assert.equal(observations[1].stat, answer.includes('?E') ? '?E' : 'unrecognized');
+  }
+});
+
+test('nested ownership evidence admits the dying classes and still refuses an unknown class', SETTLES_WITHIN, () => {
+  const line = (fields) => JSON.stringify({ event: 'nested.identity', caseName: 'real close', sequence: 2, phase: 'after-signal', requestedPid: 4343, pidSource: 'requested', readOutcome: 'answered', signalResult: 'returned', state: 'dying', birthMatch: 'match', commandMatch: 'dying-name', psStatus: 0, psSignal: null, psError: null, stat: '?E', ...fields });
+  const first = line({ sequence: 1, state: 'live-matching', commandMatch: 'match', stat: 'S' });
+  assert.equal(nestedEvidenceStatus([first, line()], 2), 'complete');
+  assert.equal(nestedEvidenceStatus([first, line({ state: 'exiting' })], 2), 'incomplete');
+  assert.equal(nestedEvidenceStatus([first, line({ commandMatch: 'exiting' })], 2), 'incomplete');
+});
+
+test('nested ownership diagnostic real-close output carries each after-signal read state column', SETTLES_WITHIN, async (t) => {
+  const title = 'nested ownership real close: answered, live descendant';
+  nestedRunControls.set(t, {});
+  const { status, output } = await answeredRun(t, title);
+  assert.equal(status, 0, output);
+  const reads = output.split('\n').filter((line) => line.startsWith('# {')).map((line) => JSON.parse(line.slice(2))).filter(({ event }) => event === 'nested.identity');
+  const afterSignal = reads.filter(({ phase }) => phase === 'after-signal');
+  assert.ok(afterSignal.length >= 1, output);
+  for (const read of afterSignal) {
+    if (read.state === 'absent') assert.equal(read.stat, null, output);
+    else assert.match(read.stat, /^[A-Z?]/, output);
+    assert.ok(['match', 'mismatch', 'dying-name', 'unavailable'].includes(read.commandMatch), output);
+  }
+});
+
+const dyingAfterSignal = (...reads) => [liveAnswer, dyingAnswer, ...reads];
+const sigkill = [exitingRecorded.pid, 'SIGKILL'];
+
+test('nested ownership N1: a dying read straight after SIGKILL returned is no refusal and no credit', SETTLES_WITHIN, async (t) => {
+  for (const [end, outcome] of [[absentAnswer, 'absent'], [zombieAnswer, 'Z']]) {
+    const reads = await exitingReads(t, dyingAfterSignal(end));
+    assert.equal(reads.error, undefined, reads.error?.stack);
+    assert.equal(reads.outcome, outcome);
+    assert.equal(reads.unread, 0, 'reading went on past the dying read');
+    assert.deepEqual(reads.observations.map(({ phase, state }) => [phase, state]).slice(0, 2), [['before-signal', 'live-matching'], ['after-signal', 'dying']]);
+  }
+});
+
+test('nested ownership N1: a repeated dying read after SIGKILL keeps reading to the end', SETTLES_WITHIN, async (t) => {
+  const reads = await exitingReads(t, dyingAfterSignal(dyingAnswer, dyingAnswer, absentAnswer));
+  assert.equal(reads.error, undefined, reads.error?.stack);
+  assert.equal(reads.outcome, 'absent');
+  assert.equal(reads.unread, 0);
+  assert.deepEqual(reads.observations.map(({ phase, state }) => [phase, state]), [
+    ['before-signal', 'live-matching'], ['after-signal', 'dying'], ['after-signal', 'dying'], ['after-signal', 'dying'], ['after-signal', 'absent'],
+  ]);
+  assert.equal(reads.turns, 3, 'every dying read yields before the next read');
+});
+
+test('nested ownership N2: a dying read before any SIGKILL is no refusal and earns no signal', SETTLES_WITHIN, async (t) => {
+  for (const [answers, outcome] of [
+    [[dyingAnswer, absentAnswer], 'absent'],
+    [[dyingAnswer, zombieAnswer], 'Z'],
+    [[dyingAnswer, dyingAnswer, dyingAnswer, absentAnswer], 'absent'],
+  ]) {
+    const reads = await exitingReads(t, answers);
+    assert.equal(reads.error, undefined, reads.error?.stack);
+    assert.equal(reads.outcome, outcome);
+    assert.equal(reads.unread, 0);
+    assert.deepEqual(reads.signals, []);
+    assert.ok(reads.observations.every(({ phase }) => phase === 'before-signal'));
+    assert.equal(reads.turns, answers.length - 1, 'a dying read at the top of the loop yields before the next read');
+  }
+});
+
+test('nested ownership dying reads count one SIGKILL after it returned and none before it', SETTLES_WITHIN, async (t) => {
+  const after = await exitingReads(t, dyingAfterSignal(dyingAnswer, dyingAnswer, absentAnswer));
+  assert.deepEqual(after.signals, [sigkill]);
+  const before = await exitingReads(t, [dyingAnswer, dyingAnswer, dyingAnswer, absentAnswer]);
+  assert.deepEqual(before.signals, []);
+});
+
+test('nested ownership N3: dying reads that never end meet the observation bound without another signal', SETTLES_WITHIN, async (t) => {
+  for (const [first, signals] of [[dyingAnswer, []], [liveAnswer, [sigkill]]]) {
+    const observation = new AbortController();
+    const bound = new Error('controlled observation bound');
+    let reads = 0;
+    let turns = 0;
+    const ended = await exitingReads(t, [], {
+      observationSignal: observation.signal,
+      psTool: () => psAnswerTool(reads++ === 0 ? first : dyingAnswer),
+      turn: async () => { if (++turns === 4) observation.abort(bound); },
+    });
+    assert.equal(ended.error, bound);
+    assert.equal(ended.observations.length, first === dyingAnswer ? 4 : 5);
+    assert.deepEqual(ended.signals, signals);
+  }
+});
+
+test('nested ownership N4: after a dying read, any answer but dying, Z or absent is refused', SETTLES_WITHIN, async (t) => {
+  for (const answer of [liveAnswer, psAnswer('?E', exitingRecorded.command), psAnswer('S', '(node)'), psAnswer('?E', '(python)'), psAnswer('?E', '<exiting>'), psAnswer('S', '/bin/other'), psAnswer('?E', '(node)', 'Thu Oct 29 12:00:00 2026')]) {
+    for (const [answers, signals] of [[[dyingAnswer, answer], []], [dyingAfterSignal(answer), [sigkill]]]) {
+      const reads = await exitingReads(t, answers);
+      assert.match(reads.error?.message ?? '', /recorded descendant identity changed/, answer);
+      assert.deepEqual(reads.signals, signals, answer);
+    }
+  }
+});
+
+test('nested ownership N5: the recorded command is answered as it always was, whatever its state flags', SETTLES_WITHIN, async (t) => {
+  for (const stat of ['S', 'R+', '?E']) {
+    const live = psAnswer(stat, exitingRecorded.command);
+    const once = await exitingReads(t, [live, live, absentAnswer]);
+    assert.equal(once.outcome, 'absent', stat);
+    assert.deepEqual(once.signals, [sigkill], stat);
+    const twice = await exitingReads(t, [live, live, live, zombieAnswer]);
+    assert.equal(twice.outcome, 'Z', stat);
+    assert.deepEqual(twice.signals, [sigkill, sigkill], stat);
+  }
+});
+
+/** Rows whose read is refused at either read in the loop, with no signal following it. */
+async function assertRefusedRead(t, answer) {
+  const before = await exitingReads(t, [answer]);
+  assert.match(before.error?.message ?? '', /recorded descendant identity changed: /, answer);
+  assert.deepEqual(before.signals, [], answer);
+  const after = await exitingReads(t, [liveAnswer, answer]);
+  assert.match(after.error?.message ?? '', /recorded descendant identity changed after signal: /, answer);
+  assert.deepEqual(after.signals, [sigkill], answer);
+}
+
+test('nested ownership N6: the dying form without the E flag is refused', SETTLES_WITHIN, async (t) => {
+  for (const stat of ['S', '?', 'R+', 'E', '?e', 'Ss']) await assertRefusedRead(t, psAnswer(stat, '(node)'));
+});
+
+test('nested ownership N7: another program in parentheses is refused', SETTLES_WITHIN, async (t) => {
+  for (const command of ['(python)', '(nod)', '(nodes)', '(Cellar)', `(${exitingRecorded.command.split(' ')[0]})`]) await assertRefusedRead(t, psAnswer('?E', command));
+});
+
+test('nested ownership N8: any other command is refused, with the E flag or without', SETTLES_WITHIN, async (t) => {
+  for (const command of ['<exiting>', '(node) x', '((node))', '(node', 'node)', 'node', '/bin/other']) {
+    await assertRefusedRead(t, psAnswer('?E', command));
+    await assertRefusedRead(t, psAnswer('S', command));
+  }
+});
+
+test('nested ownership N9: another birth or pid is refused even in the dying form', SETTLES_WITHIN, async (t) => {
+  const otherBirth = 'Thu Oct 29 12:00:00 2026';
+  const forms = [['?E', '(node)', 'live'], ['S', exitingRecorded.command, 'live'], ['Z', '<defunct>', 'Z']];
+  for (const [stat, command] of forms) await assertRefusedRead(t, psAnswer(stat, command, otherBirth));
+  assert.match((await exitingReads(t, [dyingAnswer, psAnswer('Z', '<defunct>', otherBirth)])).error?.message ?? '', /identity changed/);
+  for (const [stat, command, state] of forms) {
+    const other = { ...exitingRecorded, pid: exitingRecorded.pid + 1, stat, command, state };
+    for (const [answers, expected, refused] of [
+      [[other], /identity changed: /, []],
+      [[{ ...exitingRecorded, stat: 'S', state: 'live' }, other], /identity changed after signal: /, [sigkill]],
+    ]) {
+      const reads = await exitingReads(t, [], { observe: () => answers.shift() });
+      assert.match(reads.error?.message ?? '', expected);
+      assert.deepEqual(reads.signals, refused);
+    }
+  }
+});
+
+test('nested ownership N10: Z and absent end the reads, however the Z command reads', SETTLES_WITHIN, async (t) => {
+  for (const [answer, outcome] of [[absentAnswer, 'absent'], [zombieAnswer, 'Z'], [psAnswer('Z', '(node)'), 'Z'], [psAnswer('ZE', '(node)'), 'Z'], [psAnswer('Z+', '<defunct>'), 'Z']]) {
+    const before = await exitingReads(t, [answer]);
+    assert.equal(before.outcome, outcome, answer);
+    assert.deepEqual(before.signals, [], answer);
+    const after = await exitingReads(t, [liveAnswer, answer]);
+    assert.equal(after.outcome, outcome, answer);
+    assert.deepEqual(after.signals, [sigkill], answer);
+  }
+  const otherBirth = await exitingReads(t, [psAnswer('Z', '(node)', 'Thu Oct 29 12:00:00 2026')]);
+  assert.match(otherBirth.error?.message ?? '', /identity changed/);
 });
 
 /** Retains the separate ps authority fields used to record and revalidate this one payload. */
