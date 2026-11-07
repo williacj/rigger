@@ -194,3 +194,33 @@ The fixes follow the architect's placement ruling.
 
 New tests cover T17 to T21, R9 and R10, the documented call routes, an object delay
 for each API, and the export lists the guard depends on.
+
+An independent attacker then swept that head and found no escape inside the line,
+but found an attribution defect the architect ruled against the record interface
+(row R11). An arm that a top-level test's run started was recorded with no test when
+it went through a server a root `before` hook started, or through a module-level
+`AsyncResource.bind` the test called. Async ownership still comes first, so R2 and
+R3 hold. Where the async owner is no test and the file has finished loading, the arm
+belongs to the one top-level test that is running; with none or several running it
+belongs to no test. Bounded refusals use the same owner, so they name that test.
+
+Tests can run while a file still loads: they start as soon as the module first
+yields, including during a top-level await. The guard therefore marks the end of
+loading with the file's own last statement. A load hook registered in the preload
+appends one call to the entry module's source, which runs only after its body,
+top-level awaits included, completes. An earlier attempt that imported the entry
+from the preload settled after the first test had already started, so it was racy.
+
+A function captured with `AsyncLocalStorage.snapshot()` in test A and run in test B
+keeps A's context, so its arm is recorded under A, as the architect ruled. #1138
+needs to know this when it reads the record.
+
+Three behaviours need no change:
+
+- A delay of `Infinity` is above zero and is recorded as `delay: null`, because JSON
+  has no infinity. The line is still an arm line, marked by its non-null `api`.
+- A bounded file cannot `listen` with an HTTP server: Node arms
+  `setInterval(30000)` for its connection check. A test can pass
+  `connectionsCheckingInterval: 0`, as R11's does.
+- After a timer mock is reset, `scheduler.wait` throws `ERR_INVALID_THIS`. The
+  attacker traced this to Node itself, not to the guard.

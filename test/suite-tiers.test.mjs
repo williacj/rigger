@@ -2057,3 +2057,93 @@ test('timer mock answers scheduler.wait without a refusal', (t) => {
     });`);
   assertTimerPassed(probe, 'allowed timer');
 });
+
+// Work whose async owner is no test belongs to the one top-level test running when it arms.
+const handlerServer = `import assert from 'node:assert/strict';
+    import http from 'node:http';
+    import { before, after } from 'node:test';
+    let server;
+    // A zero interval keeps the server from arming its own connection check.
+    before(async () => {
+      server = http.createServer({ connectionsCheckingInterval: 0 }, (request, response) => {
+        try { clearTimeout(setTimeout(() => {}, 5)); } catch {}
+        response.end('armed');
+      });
+      await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    });
+    after(() => new Promise(resolve => server.close(resolve)));
+    const fetchArm = () => new Promise((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port: server.address().port, agent: false }, (response) => {
+        let body = '';
+        response.on('data', chunk => { body += chunk; });
+        response.on('end', () => resolve(body));
+      }).on('error', reject);
+    });`;
+test('timer record R11 attributes a root server handler arm to the test that requested it', (t) => {
+  const probe = timerProbe(t, `${handlerServer}
+    test('requests the handler', async () => { assert.equal(await fetchArm(), 'armed'); });`, {}, { tier: 'converting', record: true });
+  assertTimerPassed(probe, 'requests the handler');
+  const records = timerRecords(probe);
+  t.diagnostic(JSON.stringify({ row: 'R11', records }));
+  assert.deepEqual(records, [
+    { file: probe.file, test: null, api: null, delay: null },
+    { file: probe.file, test: 'requests the handler', api: 'setTimeout', delay: 5 },
+  ]);
+});
+
+test('timer bound refuses a root server handler arm under the test that requested it', (t) => {
+  const title = 'requests the handler';
+  const probe = timerProbe(t, `${handlerServer}
+    test(${JSON.stringify(title)}, async () => { await fetchArm(); });`);
+  const output = probe.result.stdout + probe.result.stderr;
+  assert.notEqual(probe.result.status, 0, output);
+  assert.ok(output.includes(`deterministic tier: ${probe.file}: ${title} cannot arm setTimeout with delay 5`), output);
+});
+
+const moduleBind = `import { AsyncResource } from 'node:async_hooks';
+    const arm = AsyncResource.bind(() => clearTimeout(setTimeout(() => {}, 5)));`;
+test('timer record attributes a module-bound arm to the test that calls it', (t) => {
+  const probe = timerProbe(t, `${moduleBind}
+    test('calls the bound arm', () => arm());`, {}, { tier: 'converting', record: true });
+  assertTimerPassed(probe, 'calls the bound arm');
+  assert.deepEqual(timerRecords(probe), [
+    { file: probe.file, test: null, api: null, delay: null },
+    { file: probe.file, test: 'calls the bound arm', api: 'setTimeout', delay: 5 },
+  ]);
+});
+
+test('timer bound refuses a module-bound arm under the test that calls it', (t) => {
+  const title = 'calls the bound arm';
+  const probe = timerProbe(t, `${moduleBind}
+    test(${JSON.stringify(title)}, () => { try { arm(); } catch {} });`);
+  const output = probe.result.stdout + probe.result.stderr;
+  assert.notEqual(probe.result.status, 0, output);
+  assert.ok(output.includes(`deterministic tier: ${probe.file}: ${title} cannot arm setTimeout with delay 5`), output);
+});
+
+// A snapshot keeps the context it was taken in, so its arm stays with the test that took it.
+test('timer record keeps a snapshot arm with the test that took the snapshot', (t) => {
+  const probe = timerProbe(t, `import { AsyncLocalStorage } from 'node:async_hooks';
+    let snapshot;
+    test('takes the snapshot', () => { snapshot = AsyncLocalStorage.snapshot(); });
+    test('runs the snapshot', () => snapshot(() => clearTimeout(setTimeout(() => {}, 5))));`, {}, { tier: 'converting', record: true });
+  assertTimerPassed(probe, 'runs the snapshot');
+  assert.deepEqual(timerRecords(probe), [
+    { file: probe.file, test: null, api: null, delay: null },
+    { file: probe.file, test: 'takes the snapshot', api: 'setTimeout', delay: 5 },
+  ]);
+});
+
+// Module code still running after a top-level await belongs to no test, even while one runs.
+test('timer record keeps a load-time arm after a top-level await with no test', (t) => {
+  const probe = timerProbe(t, `let release;
+    const gate = new Promise(resolve => { release = resolve; });
+    test('runs while the file loads', async () => { release(); await new Promise(resolve => setImmediate(resolve)); });
+    await gate;
+    clearTimeout(setTimeout(() => {}, 5));`, {}, { tier: 'converting', record: true });
+  assertTimerPassed(probe, 'runs while the file loads');
+  assert.deepEqual(timerRecords(probe), [
+    { file: probe.file, test: null, api: null, delay: null },
+    { file: probe.file, test: null, api: 'setTimeout', delay: 5 },
+  ]);
+});
