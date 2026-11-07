@@ -9,6 +9,10 @@ import { userInfo } from 'node:os';
 
 import { AGENT, SERVER, SESSION, callsOf, forgetting, pastRefusing, transcriptsOf, unclassified, withheldBy, put, scratch, session, skip, textOf } from './claude-live.mjs';
 import { onPath } from './on-path.mjs';
+import { assertDelivered, liveMaker, MAKER_SESSION } from './maker-git-live.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
+import { chmodSync, realpathSync, writeFileSync } from 'node:fs';
+import { delimiter } from 'node:path';
 
 /** The adapter and the process adapter from this checkout. */
 async function fromCheckout() {
@@ -157,4 +161,52 @@ test('project settings set the Bash tool default timeout under the Claude adapte
   assert.equal(calls[0].input.command, command);
   assert.equal(calls[0].input.timeout, undefined);
   assert.match(textOf(calls[0].result), /did not complete within its 10s timeout/);
+});
+
+// proves R-WORK-42
+test('a live Claude maker commits and pushes under the forked shipped settings and hook with a test-made configuration home', { skip, timeout: 2 * MAKER_SESSION }, async (t) => {
+  assert.ok(onPath('claude', pastRefusing()), 'no claude is installed past the refusing one');
+  const made = await liveMaker(t, 'claude');
+  const head = assertDelivered(made);
+  assert.equal(made.handed.env.CLAUDE_CONFIG_DIR, join(made.base, 'claude-home'));
+  t.diagnostic(`maker Claude summary: ${JSON.stringify({ head, commit: 0, push: 0, tracking: head, configurationHome: made.handed.env.CLAUDE_CONFIG_DIR, forgeCalls: made.forge.calls(), artifacts: made.artifacts })}`);
+});
+
+/**
+ * A stand-in for Claude Code after a delivered push. Claude Code 2.1.319's own post-processing of a
+ * successful `git push` runs `gh pr view --json url`, which no model call or transcript shows
+ * (its `fi("pushed")`; the owner's run of 2026-11-06 met the suite's refusal of that exact call).
+ * It records what that `gh` answered, because the CLI itself discards it.
+ */
+function claudeAfterPush(t) {
+  const directory = realpathSync.native(temporaryDirectory('rigger-claude-after-push-', { context: t }));
+  writeFileSync(join(directory, 'claude'), [
+    '#!/bin/sh',
+    '# ABOUTME: Delivers the fixture, then makes the pull request lookup Claude Code makes after a push.',
+    'cat > /dev/null',
+    "git add delivery.txt && git commit -qm 'Deliver card 1230 fixture' && git push -q origin rigger-42 || exit 1",
+    'gh pr view --json url > /dev/null 2> "${0%/*}/gh-stderr"',
+    'printf \'%s\\n\' "$?" > "${0%/*}/gh-exit"',
+    '',
+  ].join('\n'));
+  chmodSync(join(directory, 'claude'), 0o755);
+  const [path, evidence] = [process.env.PATH, process.env.RIGGER_1230_EVIDENCE_ROOT];
+  process.env.PATH = `${directory}${delimiter}${path}`;
+  process.env.RIGGER_1230_EVIDENCE_ROOT = join(directory, 'evidence');
+  t.after(() => {
+    process.env.PATH = path;
+    if (evidence === undefined) delete process.env.RIGGER_1230_EVIDENCE_ROOT;
+    else process.env.RIGGER_1230_EVIDENCE_ROOT = evidence;
+  });
+  return directory;
+}
+
+// Without its own gh the live M12 run ends red after a passing test: the suite refuses Claude Code's lookup (#276).
+test('the live Claude fixture answers the pull request lookup Claude Code makes after a push with its own gh', async (t) => {
+  const directory = claudeAfterPush(t);
+  const made = await liveMaker(t, 'claude');
+  assertDelivered(made);
+  assert.equal(readFileSync(join(directory, 'gh-stderr'), 'utf8'), 'no pull requests found\n', 'the lookup did not reach the fixture\'s gh');
+  assert.equal(readFileSync(join(directory, 'gh-exit'), 'utf8'), '1\n');
+  assert.deepEqual(made.forge.calls(), ['pr view --json url']);
 });
