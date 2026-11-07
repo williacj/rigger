@@ -3563,7 +3563,7 @@ function nestedDyingRead(recorded, current) {
     && typeof current.stat === 'string' && !current.stat.startsWith('Z') && current.stat.slice(1).includes('E');
 }
 
-/** A ps state column for the safe records, in `man ps`'s letters; any other token could be command text. */
+/** A ps state column for the safe records: a known run state, then known flags; any other token could be command text. */
 function nestedStateColumn(stat) {
   if (stat === undefined) return null;
   return /^[DIRSTUWXZt?][+<>AELNSsVWXl]*$/.test(stat) ? stat : 'unrecognized';
