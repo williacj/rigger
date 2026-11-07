@@ -2,10 +2,10 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fixedCommand } from './in-process-fixtures.mjs';
+import { FORGE_MANIFEST, assertForgeState, assertOriginState, fixedCommand, forgeStore, originFixture, withFacts } from './in-process-fixtures.mjs';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { answerFakeGh } from './fake-gh.mjs';
+import { AGENT_ANSWERED, ANSWERED, answerFakeGh, commandOf } from './fake-gh.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { clonedFromOrigin, gitIn, repositoryIn } from './git-repository.mjs';
 import { standInAct, standInRecord, standInReply } from './stub-claude.mjs';
@@ -358,4 +358,243 @@ test('the shared stand-in forever resource remains pending until its registered 
     assert.deepEqual(models[order[1]].snapshot(), cleaned, 'the remaining registered cleanup releases its resource');
     assert.deepEqual(models[order[0]].snapshot(), cleaned, 'the earlier cleanup stays released without another release or exit');
   }
+});
+
+const seeded = (t, seed = FORGE_MANIFEST.world) => {
+  const directory = temporaryDirectory('rigger-forge-', { context: t });
+  const statePath = join(directory, 'board.json');
+  writeFileSync(statePath, JSON.stringify(seed));
+  return { directory, statePath };
+};
+const heldAt = (statePath) => JSON.parse(readFileSync(statePath, 'utf8'));
+
+test('a forge transaction reaches its gate points in order and only success reaches commit', async (t) => {
+  const cases = [
+    { args: ['pr', 'comment', '301', '--body', 'Gate note'], points: [['recorded', 2], ['answered', 2]] },
+    { args: ['api', 'graphql', '-f', 'query=query { repository(owner: "example", name: "widgets") { id } }'], points: [['recorded', 2], ['answered', 2]] },
+    { args: ['pr', 'comment', '999', '--body', 'x'], points: [['recorded', 2]] },
+    { args: ['auth', 'status'], points: [['recorded', 2]] },
+  ];
+  for (const { args, points } of cases) {
+    const { statePath } = seeded(t);
+    const seen = [];
+    const gate = async (point) => { seen.push([point, heldAt(statePath).repository.pullRequests[0].comments.length]); };
+    await answerFakeGh(statePath, args, { now: () => '2000-01-01T00:00:01Z', gate });
+    assert.deepEqual(seen, points, 'each gate point fires in order, before any commit');
+  }
+});
+
+const contextOf = (t, directory, given = {}) => ({
+  now: () => given.now, input: () => given.input,
+  cwd: given.cwd === '$EMPTY' ? temporaryDirectory('rigger-forge-cwd-', { context: t }) : directory,
+});
+const answerOf = ({ status, stdout, stderr }) => ({ status, stdout, stderr });
+
+test('forge cases cover every answered command and agent subcommand', () => {
+  const all = [...FORGE_MANIFEST.cases, ...FORGE_MANIFEST.originCases];
+  const shapes = all.filter(({ key }) => typeof key === 'number').map(({ args }) => commandOf(args));
+  assert.deepEqual([...new Set(shapes)].sort(), [...ANSWERED].sort(), 'every answered shape has a case and every case shape is answered');
+  const agents = all.filter(({ key }) => typeof key === 'string').map(({ key }) => key);
+  assert.deepEqual([...new Set(agents)].sort(), [...AGENT_ANSWERED].sort(), 'every agent subcommand has a case');
+});
+
+for (const given of FORGE_MANIFEST.cases) {
+  test(`forge case ${given.id} answers its independent literal`, async (t) => {
+    const { directory, statePath } = seeded(t);
+    assert.deepEqual(await answerFakeGh(statePath, given.args, contextOf(t, directory, given.context)), answerOf(given), `${given.id} answer`);
+    assertForgeState(heldAt(statePath), given, FORGE_MANIFEST.world);
+  });
+}
+
+for (const raw of FORGE_MANIFEST.originCases) {
+  test(`forge origin case ${raw.id} answers its independent literal`, async (t) => {
+    const directory = temporaryDirectory('rigger-forge-origin-', { context: t });
+    const { repository, facts } = originFixture(directory);
+    const given = withFacts(raw, facts);
+    const statePath = join(directory, 'board.json');
+    writeFileSync(statePath, JSON.stringify(withFacts(FORGE_MANIFEST.originWorld, facts)));
+    const context = { cwd: repository, input: () => given.input };
+    if (given.priorCase) await answerFakeGh(statePath, FORGE_MANIFEST.originCases.find(({ id }) => id === given.priorCase).args, context);
+    const before = heldAt(statePath);
+    assert.deepEqual(await answerFakeGh(statePath, given.args, context), answerOf(given), `${given.id} answer`);
+    assertOriginState(heldAt(statePath), before, given);
+  });
+}
+
+for (const given of FORGE_MANIFEST.sequences) {
+  test(`forge sequence ${given.id} ${given.title}`, async (t) => {
+    const { directory, statePath } = seeded(t, given.seed ?? FORGE_MANIFEST.world);
+    const store = forgeStore(statePath);
+    for (const step of given.steps) {
+      assert.deepEqual(await store.answer(step.args, contextOf(t, directory, step.context)), answerOf(step), `${given.id} step answer`);
+    }
+    const held = heldAt(statePath);
+    assert.deepEqual(held.sent, given.steps.map(({ args }) => args), `${given.id} request order`);
+    assert.deepEqual(held.writes, given.writes, `${given.id} write order`);
+  });
+}
+
+const STORE = { repo: 'example/widgets', owner: 'example', project: 23, writes: [], sent: [],
+  model: { columns: ['Todo', 'Done'], items: [
+    { type: 'issue', repository: 'example/widgets', number: 12, column: 'Todo' },
+    { type: 'issue', repository: 'example/widgets', number: 13, column: 'Todo' } ] },
+  repository: { pullRequests: [{ number: 301, head: 'topic', sha: 'a'.repeat(40), comments: [] }] } };
+const NOTE = { A: '2000-01-01T00:00:01Z', B: '2000-01-01T00:00:02Z' };
+const comment = (word) => ['pr', 'comment', '301', '--body', `Comment ${word}.`];
+const noted = (word) => ({ body: `Comment ${word}.`, createdAt: NOTE[word] });
+const READ = ['pr', 'view', '301', '--json', 'comments'];
+const url = (n) => `https://github.com/example/widgets/pull/301#issuecomment-${n}\n`;
+const success = (stdout) => ({ status: 0, stdout, stderr: '' });
+const read = (...comments) => success(`${JSON.stringify({ comments })}\n`);
+const move = (item) => ['api', 'graphql', '-f', `query=mutation { updateProjectV2ItemFieldValue(input: {projectId: "PVT_fake", itemId: "${item}", fieldId: "PVTSSF_Status", value: {singleSelectOptionId: "option-1"}}) { projectV2Item { id } } }`];
+const moved = (item) => success(`{"data":{"updateProjectV2ItemFieldValue":{"projectV2Item":{"id":"${item}"}}}}\n`);
+const BOARD_READ = ['api', 'graphql', '-f', 'query=query { repositoryOwner(login: "example") { ... on ProjectV2Owner { projectV2(number: 23) { items(first: 2) { pageInfo { hasNextPage endCursor } nodes { id fieldValues(first: 5) { pageInfo { hasNextPage } nodes { ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } } } } content { __typename ... on Issue { number title body repository { nameWithOwner } labels(first: 5) { pageInfo { hasNextPage } nodes { name } } } } } } } } } }'];
+const doneItem = (index, number) => ({ id: `item-${index}`, fieldValues: { pageInfo: { hasNextPage: false }, nodes: [{ name: 'Done', field: { name: 'Status' } }] }, content: { __typename: 'Issue', number, title: '', body: '', repository: { nameWithOwner: 'example/widgets' }, labels: { pageInfo: { hasNextPage: false }, nodes: [] } } });
+const BOTH_DONE = success(`${JSON.stringify({ data: { repositoryOwner: { projectV2: { items: { pageInfo: { hasNextPage: false, endCursor: '2' }, nodes: [doneItem(1, 12), doneItem(2, 13)] } } } } })}\n`);
+
+/** An explicit transaction gate that logs each point and holds at `held` until released. */
+function holding(label, log, held) {
+  let arrive; let open;
+  const reached = new Promise((resolve) => { arrive = resolve; });
+  const opened = new Promise((resolve) => { open = resolve; });
+  return {
+    reached,
+    release: () => { log.push(`${label}:released`); open(); },
+    gate: async (point) => { log.push(`${label}:${point}`); if (point === held) { arrive(); await opened; } },
+  };
+}
+
+test('a read after a mutation on one forge store sees it once, in request order', async (t) => {
+  const { statePath } = seeded(t, STORE);
+  const store = forgeStore(statePath);
+  assert.deepEqual(await store.answer(comment('A'), { now: () => NOTE.A }), success(url(1)));
+  assert.deepEqual(await store.answer(READ, {}), read(noted('A')), 'the read sees the mutation once');
+  assert.deepEqual(heldAt(statePath).sent, [comment('A'), READ], 'records stay in request order');
+});
+
+test('a read before a mutation on one forge store sees the seed and a later read the mutation', async (t) => {
+  const { statePath } = seeded(t, STORE);
+  const store = forgeStore(statePath);
+  assert.deepEqual(await store.answer(READ, {}), read(), 'the first read sees the original seed');
+  assert.deepEqual(await store.answer(comment('A'), { now: () => NOTE.A }), success(url(1)));
+  assert.deepEqual(await store.answer(READ, {}), read(noted('A')), 'the later read sees the mutation');
+  assert.deepEqual(heldAt(statePath).sent, [READ, comment('A'), READ]);
+});
+
+test('a failed mutation on one forge store keeps its record and invents no effect', async (t) => {
+  const { statePath } = seeded(t, STORE);
+  const store = forgeStore(statePath);
+  const held = holding('F', [], 'recorded');
+  const refused = ['pr', 'comment', '999', '--body', 'lost'];
+  const failing = store.answer(refused, { now: () => NOTE.A, gate: held.gate });
+  await held.reached;
+  const next = store.answer(READ, {});
+  held.release();
+  assert.deepEqual(await failing, { status: 1, stdout: '', stderr: 'GraphQL: Could not resolve to a PullRequest with the number of 999. (repository.pullRequest)\n' });
+  assert.deepEqual(await next, read(), 'the later read sees no invented mutation');
+  assert.deepEqual(heldAt(statePath).sent, [refused, READ]);
+  assert.deepEqual(heldAt(statePath).writes, []);
+});
+
+test('two overlapping comments on one forge store both survive, in either forced order', async (t) => {
+  for (const [first, second] of [['A', 'B'], ['B', 'A']]) {
+    const { statePath } = seeded(t, STORE);
+    const store = forgeStore(statePath);
+    const log = [];
+    const held = holding(first, log, 'answered');
+    const firstAnswer = store.answer(comment(first), { now: () => NOTE[first], gate: held.gate });
+    await held.reached;
+    assert.deepEqual(heldAt(statePath).repository.pullRequests[0].comments, [], 'the first comment is entered and uncommitted');
+    const secondAnswer = store.answer(comment(second), { now: () => NOTE[second], gate: async (point) => { log.push(`${second}:${point}`); } });
+    log.push(`${second}:submitted`);
+    held.release();
+    assert.deepEqual([await firstAnswer, await secondAnswer], [success(url(1)), success(url(2))], 'responses follow the one serialized order');
+    assert.deepEqual(heldAt(statePath).repository.pullRequests[0].comments, [noted(first), noted(second)], 'both effects survive exactly once');
+    assert.deepEqual(log, [`${first}:recorded`, `${first}:answered`, `${second}:submitted`, `${first}:released`, `${second}:recorded`, `${second}:answered`], 'the second transaction enters only after the first ends');
+    assert.deepEqual(await store.answer(READ, {}), read(noted(first), noted(second)), 'a later read sees the same serialized order');
+    assert.deepEqual(heldAt(statePath).sent, [comment(first), comment(second), READ], 'every request survives in serialized order');
+  }
+});
+
+test('two overlapping board moves on one forge store both survive, in either forced order', async (t) => {
+  for (const [first, second] of [['item-1', 'item-2'], ['item-2', 'item-1']]) {
+    const { statePath } = seeded(t, STORE);
+    const store = forgeStore(statePath);
+    const held = holding(first, [], 'answered');
+    const firstAnswer = store.answer(move(first), { gate: held.gate });
+    await held.reached;
+    const secondAnswer = store.answer(move(second), {});
+    held.release();
+    assert.deepEqual([await firstAnswer, await secondAnswer], [moved(first), moved(second)]);
+    assert.deepEqual(heldAt(statePath).writes, [first, second].map((item) => ({ operation: 'moveItem', args: [item, 'Done'] })), 'both board writes survive in serialized order');
+    assert.deepEqual(await store.answer(BOARD_READ, {}), BOTH_DONE, 'a later board read sees both moves');
+    assert.deepEqual(heldAt(statePath).sent, [move(first), move(second), BOARD_READ]);
+  }
+});
+
+test('a read overlapping a held mutation answers the committed result', async (t) => {
+  const { statePath } = seeded(t, STORE);
+  const store = forgeStore(statePath);
+  const log = [];
+  const held = holding('M', log, 'answered');
+  const mutation = store.answer(comment('A'), { now: () => NOTE.A, gate: held.gate });
+  await held.reached;
+  const overlap = store.answer(READ, { gate: async (point) => { log.push(`R:${point}`); } });
+  log.push('R:submitted');
+  held.release();
+  assert.deepEqual(await mutation, success(url(1)));
+  assert.deepEqual(await overlap, read(noted('A')), 'the read serializes after the mutation and sees it whole');
+  assert.deepEqual(heldAt(statePath).sent, [comment('A'), READ]);
+  assert.deepEqual(log, ['M:recorded', 'M:answered', 'R:submitted', 'M:released', 'R:recorded', 'R:answered']);
+});
+
+test('a held read keeps its seed answer and a later read sees the overlapping mutation', async (t) => {
+  const { statePath } = seeded(t, STORE);
+  const store = forgeStore(statePath);
+  const log = [];
+  const held = holding('R', log, 'answered');
+  const overlapped = store.answer(READ, { gate: held.gate });
+  await held.reached;
+  const mutation = store.answer(comment('A'), { now: () => NOTE.A, gate: async (point) => { log.push(`M:${point}`); } });
+  log.push('M:submitted');
+  // One turn drains every microtask, so an unserialized mutation commits before the release and
+  // its loss shows at the state assertion. The serialized path passes with or without it.
+  await new Promise((resolve) => setImmediate(resolve));
+  held.release();
+  assert.deepEqual(await overlapped, read(), 'the read serializes first and sees the complete seed');
+  assert.deepEqual(await mutation, success(url(1)));
+  assert.deepEqual(await store.answer(READ, {}), read(noted('A')), 'a later read sees the complete committed result');
+  assert.deepEqual(heldAt(statePath).sent, [READ, comment('A'), READ]);
+  assert.deepEqual(log, ['R:recorded', 'R:answered', 'M:submitted', 'R:released', 'M:recorded', 'M:answered']);
+});
+
+test('an unexpected rejection releases its forge store and keeps its record', async (t) => {
+  const { statePath } = seeded(t, STORE);
+  const store = forgeStore(statePath);
+  const rejected = store.answer(comment('A'), { now: () => { throw new Error('configured clock failure'); } });
+  await assert.rejects(rejected, /configured clock failure/);
+  const next = await store.answer(READ, {}).then((answer) => answer, (error) => ({ rejected: error.message }));
+  assert.deepEqual(next, read(), 'the next request still answers after an unexpected rejection');
+  assert.deepEqual(heldAt(statePath).sent, [comment('A'), READ]);
+});
+
+test('two forge stores keep their state and their queues separate', async (t) => {
+  const first = seeded(t, STORE);
+  const second = seeded(t, STORE);
+  const [firstStore, secondStore] = [forgeStore(first.statePath), forgeStore(second.statePath)];
+  const held = holding('A', [], 'answered');
+  const firstAnswer = firstStore.answer(comment('A'), { now: () => NOTE.A, gate: held.gate });
+  await held.reached;
+  let settled;
+  secondStore.answer(comment('B'), { now: () => NOTE.B }).then((answer) => { settled = answer; });
+  // This path holds only synchronous file calls and promise turns, so one turn settles it. New
+  // asynchronous work here would red this test, never green it.
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(settled, success(url(1)), 'the second store answers while the first is held');
+  held.release();
+  await firstAnswer;
+  assert.deepEqual(heldAt(first.statePath).repository.pullRequests[0].comments, [noted('A')]);
+  assert.deepEqual(heldAt(second.statePath).repository.pullRequests[0].comments, [noted('B')]);
+  assert.deepEqual(heldAt(first.statePath).sent, [comment('A')]);
+  assert.deepEqual(heldAt(second.statePath).sent, [comment('B')]);
 });

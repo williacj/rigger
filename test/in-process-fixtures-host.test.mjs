@@ -9,7 +9,9 @@ import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { installFromTarball } from './installed-rigger.mjs';
 import { installFakeGh } from './fake-gh.mjs';
-import { installStandInAgent } from './stub-claude.mjs';
+import { FORGE_MANIFEST, assertForgeState, assertOriginState, originFixture, withFacts } from './in-process-fixtures.mjs';
+import { stubGh } from './stub-gh.mjs';
+import { installStandInAgent, stubClaude, stubCodex } from './stub-claude.mjs';
 import { CONSUMER, COLUMNS, FIELDS, card, matrixRepository } from './in-process-entry.mjs';
 import { repositoryIn } from './git-repository.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
@@ -328,5 +330,106 @@ test('the native stand-in preserves no-act, literal print and configured exit', 
     assert.deepEqual(agent.runs(), [{ name: 'claude', args, cwd, card: 31, role: 'engineer', input, env: { RIGGER_STAND_IN_VALUE: 'literal' }, pid: result.pid }]);
     assert.deepEqual(readdirSync(agent.dir).sort(), ['claude', 'plan.json', 'runs.jsonl']);
     assert.deepEqual(readdirSync(cwd), [], 'these configured replies create no marker/worktree or PR action');
+  }
+});
+
+const WORLD = FORGE_MANIFEST.world;
+const WALL_CLOCK = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/;
+const answerOf = ({ status, stdout, stderr }) => ({ status, stdout, stderr });
+
+/** The executable's answer. Git's own stderr is the transport's, so one named case sheds it. */
+function executableAnswer(run, given) {
+  if (!given.gitStderr) return { status: run.code, stdout: run.stdout, stderr: run.stderr };
+  const owned = run.stderr.replace(/^(fatal: not a git repository|Stopping at filesystem boundary).*\n/gm, '');
+  assert.notEqual(owned, run.stderr, `${given.id} passes git's own stderr through`);
+  return { status: run.code, stdout: run.stdout, stderr: owned };
+}
+
+/** Held state with each wall-clock value checked and replaced by the case's supplied literal. */
+function withSuppliedTime(held, given) {
+  for (const path of given.wallClock ?? []) {
+    const parent = path.slice(0, -1).reduce((value, step) => value[step], held);
+    assert.match(parent[path.at(-1)], WALL_CLOCK, `${given.id} keeps the executable's wall clock`);
+    parent[path.at(-1)] = given.context.now;
+  }
+  return held;
+}
+
+async function executableWorldCases(t, group) {
+  const directory = temporaryDirectory('rigger-exec-forge-', { context: t });
+  const fake = installFakeGh(directory, { repo: WORLD.repo, owner: WORLD.owner, project: WORLD.project, board: WORLD.model });
+  const statePath = join(directory, 'board.json');
+  const cases = FORGE_MANIFEST.cases.filter(({ id }) => id.startsWith(group));
+  assert.ok(cases.length > 0, `${group} holds cases`);
+  for (const given of cases) {
+    writeFileSync(statePath, JSON.stringify(WORLD));
+    const cwd = temporaryDirectory('rigger-exec-forge-cwd-', { context: t });
+    const run = await entryChild(t, fake.gh, given.args, cwd, gitEnvironment(), given.context?.input ?? '');
+    assert.deepEqual(executableAnswer(run, given), answerOf(given), `${given.id} answer`);
+    assertForgeState(withSuppliedTime(JSON.parse(readFileSync(statePath, 'utf8')), given), given, WORLD);
+  }
+}
+
+// Host reason: wiring; the fixture's executable wiring depends on no Rigger decision.
+test('the executable fake answers every adapter case with its independent literal', (t) => executableWorldCases(t, 'F1-'));
+
+// Host reason: wiring; the fixture's executable wiring depends on no Rigger decision.
+test('the executable fake answers every agent case with its independent literal', (t) => executableWorldCases(t, 'F2-'));
+
+// Host reason: wiring; the fixture's executable wiring depends on no Rigger decision.
+test('the executable fake preserves every modeled refusal with its independent literal', (t) => executableWorldCases(t, 'F3-'));
+
+// Host reason: wiring; the fixture's executable wiring depends on no Rigger decision.
+test('the executable fake answers every origin case with its independent literal', async (t) => {
+  for (const raw of FORGE_MANIFEST.originCases) {
+    const directory = temporaryDirectory('rigger-exec-origin-', { context: t });
+    const { repository, facts } = originFixture(directory);
+    const given = withFacts(raw, facts);
+    const home = join(directory, 'fake');
+    mkdirSync(home);
+    const fake = installFakeGh(home, { repo: WORLD.repo, owner: WORLD.owner, project: WORLD.project, origin: facts.$ORIGIN });
+    const statePath = join(home, 'board.json');
+    writeFileSync(statePath, JSON.stringify(withFacts(FORGE_MANIFEST.originWorld, facts)));
+    if (given.priorCase) await entryChild(t, fake.gh, FORGE_MANIFEST.originCases.find(({ id }) => id === given.priorCase).args, repository, gitEnvironment());
+    const before = JSON.parse(readFileSync(statePath, 'utf8'));
+    const run = await entryChild(t, fake.gh, given.args, repository, gitEnvironment(), given.input ?? '');
+    assert.deepEqual({ status: run.code, stdout: run.stdout, stderr: run.stderr }, answerOf(given), `${given.id} answer`);
+    assertOriginState(JSON.parse(readFileSync(statePath, 'utf8')), before, given);
+  }
+});
+
+// Host reason: wiring.
+// Ordinary decision counterpart: test/in-process-fixtures.test.mjs :: a failed mutation on one forge store keeps its record and invents no effect.
+test('the executable fake keeps a failed mutation out of its next read', async (t) => {
+  const given = FORGE_MANIFEST.sequences.find(({ id }) => id === 'F4-Q10');
+  const directory = temporaryDirectory('rigger-exec-sequence-', { context: t });
+  const fake = installFakeGh(directory, { repo: WORLD.repo, owner: WORLD.owner, project: WORLD.project, board: WORLD.model });
+  const statePath = join(directory, 'board.json');
+  writeFileSync(statePath, JSON.stringify(WORLD));
+  for (const step of given.steps) {
+    const run = await entryChild(t, fake.gh, step.args, directory, gitEnvironment());
+    assert.deepEqual({ status: run.code, stdout: run.stdout, stderr: run.stderr }, answerOf(step));
+  }
+  const held = JSON.parse(readFileSync(statePath, 'utf8'));
+  assert.deepEqual(held, { ...WORLD, sent: given.steps.map(({ args }) => args) }, 'the failed mutation left only its record');
+});
+
+// Host reason: wiring.
+// Ordinary decision counterpart: test/in-process-fixtures.test.mjs :: an in-process fixed command keeps defaults and normalizes a noninteger status.
+test('the executable stubs keep their fixed answers and joined-space calls', async (t) => {
+  const answers = [
+    [undefined, { code: 0, stdout: '', stderr: '' }],
+    [{ status: 7, stdout: 'configured stdout\n', stderr: 'configured stderr\n' }, { code: 7, stdout: 'configured stdout\n', stderr: 'configured stderr\n' }],
+    [{ status: 7.5, stdout: 'fractional stdout\n', stderr: '' }, { code: 1, stdout: 'fractional stdout\n', stderr: '' }],
+  ];
+  for (const [make, name] of [[stubGh, 'gh'], [stubClaude, 'claude'], [stubCodex, 'codex']]) {
+    for (const [answer, expected] of answers) {
+      const stub = make(answer);
+      for (const argv of [['two words', '', 'tail'], ['two', 'words', '', 'tail']]) {
+        const run = await entryChild(t, join(stub.dir, name), argv, stub.dir, gitEnvironment());
+        assert.deepEqual({ code: run.code, stdout: run.stdout, stderr: run.stderr }, expected, `${name} answer`);
+      }
+      assert.deepEqual(stub.calls(), ['two words  tail', 'two words  tail'], 'the joined record cannot tell two different argument lists apart');
+    }
   }
 });

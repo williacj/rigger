@@ -80,3 +80,23 @@ The required cleanup-registration guarded fault remains unexecuted. Official rec
 ## Restoration ref
 
 The commit carrying this section is the restoration ref for the nine old bodies P1-P5 and S2-S5. It takes `test/plan.test.mjs` and `test/build-test-matrix.test.mjs` byte-exact from admission base M0 `93a24132c9272670473ed576aa5efd00f8759e20`, tree `4dfbcd5eaeebce33be1f2df5c7eee1573c276301`, and regenerates `docs/derived/test-matrix.md`. Each body stays until its replacement and retained boundary proof pass, under the [owner's decision](https://github.com/williacj/rigger/issues/1129#issuecomment-6698072835). The merge beneath this commit keeps the owner-approved custody commits intact.
+
+## Forge fixture records and restoration ref
+
+Stage S0, S-F and C1 maps the eight WIP forge tests to their pre-implementation records, for items 34 and 36. The restoration ref is H1 `0f6010e370a2850c5974048ea2907b22a60bcb08`.
+
+| WIP test | Record | Manifest case |
+|---|---|---|
+| Repository ID read | None located. It drove no new behavior | F1-10 |
+| Agent PR comment time | `<private-evidence>/1129-f1-continuation-static-20261031/F2-explicit-comment-time` | F2-C1 |
+| REST comment time | `<private-evidence>/1129-rest-time-static-20261031` | F1-57 |
+| Modeled refusal | `<private-evidence>/1129-f3-refusal-static-20261031` | F3-57b |
+| Unexpected error | `<private-evidence>/1129-f3-unexpected-static-20261031` | Rejection test |
+| Supplied cwd | `<private-evidence>/1129-g1-cwd-static-20261031` | F2-X3, F2-G1 |
+| Create from cwd | `<private-evidence>/1129-context-remaining-static-20261031`, stage 11 of `plan.md` and `prospective-stages.json`; runtime T7-R/G-F2-create-head-01 in `<private-evidence>/1129-create-runtime-20261031` | F2-G1 |
+| Body file sources | Same static directory, stage 12; runtime T7-R/G-F2-body-file-01 in `<private-evidence>/1129-body-file-runtime-20261031`; stdin in `<private-evidence>/1129-stdin-host-runtime-20261031` | F2-C3 |
+
+Create and body-file records are stage plans with hashed test and helper bytes, not `coverage-case.json`. A judge should read them as such.
+
+- **Stdin pins.** T7-H-stdin-R ran against helper bytes `1dc64662516eccc8cb0a0fd10655b35f882c6e49117510372273d1c6e6cef690` and test bytes `6d477cc1a0cd511f407e48d1a25268d090523845ce0d6ad9d4101b439a2d79d5`. Item 42's RED rests on those bytes.
+- **The old original.** T7-B-D at M0 is the nine old bodies' original green, ahead of the restoration, green and removal refs.

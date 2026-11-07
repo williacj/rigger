@@ -981,11 +981,15 @@ async function answering(statePath) {
   if (answer.status !== 0) process.exitCode = answer.status;
 }
 
-/** Answers one explicit request from the existing fixture state file; executable locking stays in main. */
-export async function answerFakeGh(statePath, args, { now, cwd, input } = {}) {
+/**
+ * Answers one explicit request from the existing fixture state file; executable locking stays in main.
+ * `gate`, a test's, is awaited after the request is recorded and again before a success commits.
+ */
+export async function answerFakeGh(statePath, args, { now, cwd, input, gate } = {}) {
   const state = JSON.parse(readFileSync(statePath, 'utf8'));
   state.sent.push(args);
   writeFileSync(statePath, JSON.stringify(state));
+  if (gate) await gate('recorded');
   const answer = COMMANDS[commandOf(args)] ?? (args[0] === 'pr' && Object.hasOwn(AGENT_COMMANDS, args[1]) ? AGENT_COMMANDS[args[1]] : undefined);
   if (!answer) {
     return { status: 1, stdout: '', stderr: `the fake gh does not model \`${spelled(args)}\`\n` };
@@ -997,6 +1001,7 @@ export async function answerFakeGh(statePath, args, { now, cwd, input } = {}) {
     // request with its data, which `gh` prints as one line.
     if (args[1] !== 'graphql') {
       const printed = await answer(board, state, args, now, cwd, input);
+      if (gate) await gate('answered');
       writeFileSync(statePath, JSON.stringify({ ...state, writes: board.writes() }));
       return { status: 0, stdout: printed, stderr: '' };
     }
@@ -1005,6 +1010,7 @@ export async function answerFakeGh(statePath, args, { now, cwd, input } = {}) {
     if (!(error instanceof GhFailure)) throw error;
     return { status: 1, stdout: error.printed ?? '', stderr: `${error.message}\n` };
   }
+  if (gate) await gate('answered');
   writeFileSync(statePath, JSON.stringify({ ...state, writes: board.writes() }));
   return { status: 0, stdout: `${JSON.stringify({ data })}\n`, stderr: '' };
 }
