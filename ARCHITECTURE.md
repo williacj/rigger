@@ -747,21 +747,13 @@ asset is one per-user LaunchAgent template under `templates/launchd/`, and `D28`
   them under `R-STATE-10`. launchd sends `SIGTERM`, not `SIGKILL`, to the rest of the job's own
   group, at its kill and at its normal exit. A member that ignores `SIGTERM` survives (Q-d3).
 - **`ExitTimeOut`.** The template sets it explicitly, and never leaves it at launchd's default,
-  which is 5 s on the owner's host (Q-d2). One dispatch's cleanup, with one read that never
+  which is 5 s on the owner's host (Q-d2), and `launchctl print` reports at most 60 s on macOS 27.2. One dispatch's cleanup, with one read that never
   answers, took about 5.5 s as a test's measured duration (Q-e2).
-- **The bound.** A function in `src/config/` computes the least `ExitTimeOut` the job needs, and
-  the CLI only calls it. It multiplies `concurrency` by the largest agent-judge panel a kind names,
-  never fewer than one, and that by the per-dispatch cleanup figure. That figure is `KILL_BOUND`
-  plus `READ_TIMEOUT`, which L0's process adapter exports and the function imports. The bound is a
-  judgment on Q-e's premises: `concurrency` counts cards, a panel's judges run at once, and Rigger
-  cleans up dispatches one after another, each within that figure. At this repository's config the
-  report recommends 150 s (Q-e, a judgment). Exit cleanup makes no push, so the bound holds no
-  network call ("Pushing the stream").
+- **The bound.** Exit cleanup has one fixed budget, whatever `concurrency` or a panel's size. L0 cleans up groups with their census and sweep for `EXIT_CARE_BOUND`. After it, L0 kills each remaining group without a census and records the kill of the group. L1 keeps that group's entry, so that the next start sweeps its directories. L1 still records each dispatch's end, and L0 still ends the sink. The function in `src/config/` answers `EXIT_BOUND`, which L0's process adapter exports: `EXIT_CARE_BOUND` and the longest one dispatch's careful cleanup can take. A judgment. launchd's cap is 60 s on macOS 27.2, so the bound stays below it. Exit cleanup makes no push, so the bound holds no network call ("Pushing the stream").
 - **What L0 answers, and what `doctor` compares.** `doctor` reads a loaded job through a new L0
   module, `src/substrate/launchd.mjs`, which spawns only through the process adapter. It answers
   only the loaded job's fields, because L0 knows neither `concurrency` nor a kind. `doctor`
-  compares the loaded job's exit timeout, as L0 answers it, against the bound. The template is
-  static, so it holds an `ExitTimeOut` the owner sets at installation to at least the bound.
+  compares the loaded job's exit timeout, as L0 answers it, against the bound. The template holds an `ExitTimeOut` the owner sets at installation to at least the bound; `doctor` reads the value launchd loaded, which a host can cap.
 - **`doctor`'s check.** Where a job under the documented label is loaded, `doctor` checks that its
   program's real path is an installed package outside the target (`R-SAFE-5`). Where none is
   loaded, the check prints no line, as S7 in the architect's review r1 on #740 places it.
@@ -1047,7 +1039,7 @@ cannot record runs no command. Each entry names:
 - the dispatch's directory, where it has one, and what L0 needs to tell that directory from a
   later one at the same path.
 
-L1 removes an entry once its group is empty, and on Rigger's own exit. On start, L3 has L1 kill
+L1 removes an entry once its group is empty, and on Rigger's own exit. Past exit cleanup's budget, it keeps each remaining group's entry, so that the next start sweeps that group's directories. On start, L3 has L1 kill
 every group it recorded, before L3 records or reads anything. L0 kills a recorded group only once it
 has confirmed that the group is the one recorded. A start that cannot confirm a recorded group kills
 nothing in it, keeps its entry, and stops, as an unrecorded kill does. Every kill of a dispatch's
@@ -1534,12 +1526,13 @@ agent's own git commands in its workspace are outside the queue.
 A process still in the command's group when the direct child exits is terminated by L0, and recorded
 by name and command line where a read before the kill found it; it never changes the exit code. A
 process that leaves its group is outside this containment. L0 never stops a process group to contain
-it. It reads which processes the group holds, kills the group whole, then kills and reads it again
-until no member is left alive, with two exceptions. Where it cannot read the table, it sends the
-kill on every look until a bound passes, then records the kill of the group and why, and settles
-without knowing the group is empty. Where a member is one L0 may not signal, or outlives the kill
-for a second, longer bound, L0 records it by name and command line as a process it could not end,
-and settles. A process the kill ended that no read before it found is recorded as the kill of the
+it. It reads which processes the group holds, kills the group whole, then kills and reads it again until no member is left alive, with three exceptions:
+
+- Where it cannot read the table, it sends the kill on every look until a bound passes, then records the kill of the group and why, and settles without knowing the group is empty.
+- Where a member is one L0 may not signal, or outlives the kill for a second, longer bound, L0 records it by name and command line as a process it could not end, and settles.
+- Past exit cleanup's budget, L0 kills the group once and settles, as "Supervising `run`" says.
+
+A process the kill ended that no read before it found is recorded as the kill of the
 group, as when L0 cannot read the table, wherever a later read finds it. L0 records only what its
 reads of the table show, for a group as for a directory. Before the kill, reads of a group that list
 none of its processes while signal 0 still reaches it show nothing. So does a census read that
@@ -1566,7 +1559,7 @@ line as a process it could not end, and waits on it no further. Where L0 cannot 
 work in one of them, it records that directory and why in their place, and waits on them no further.
 L1 hands L0 each of them and records it in the dispatch's entry. A later start does the same for
 each only where the directory at its path is still the one recorded. Where it is not, or L0 cannot
-tell, the start sweeps nothing there and records why. A command that is not a dispatch has no such
+tell, the start sweeps nothing there and records why. Past exit cleanup's budget, L0 leaves this sweep to the next start ("Supervising `run`"). A command that is not a dispatch has no such
 directory, and its group remains its whole containment.
 
 A judge's directory holds two worktrees, each at a detached commit. `main` holds the main line as
@@ -1576,8 +1569,7 @@ A role's escalation directory holds `main`, and the role's agent CLI runs there,
 It holds `head` only where the card has an open pull request.
 
 Where a process that left its group holds the command's output open once the group is empty, L0 stops
-reading after a bound it sets and records that it did. A dispatch ends only once L0 has terminated
-the group's processes.
+reading after a bound it sets and records that it did. A dispatch ends only once L0 has terminated the group's processes, or, past exit cleanup's budget, has sent the group its kill.
 
 L0's process adapter reaches the operating system through one host. No other module under `src/`
 starts a process, sends a signal, or reads the process table. The host gives the adapter a clock
