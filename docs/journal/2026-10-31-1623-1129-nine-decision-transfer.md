@@ -100,3 +100,12 @@ Create and body-file records are stage plans with hashed test and helper bytes, 
 
 - **Stdin pins.** T7-H-stdin-R ran against helper bytes `1dc64662516eccc8cb0a0fd10655b35f882c6e49117510372273d1c6e6cef690` and test bytes `6d477cc1a0cd511f407e48d1a25268d090523845ce0d6ad9d4101b439a2d79d5`. Item 42's RED rests on those bytes.
 - **The old original.** T7-B-D at M0 is the nine old bodies' original green, ahead of the restoration, green and removal refs.
+
+## S-ACTIONS head and native receipts
+
+The commit carrying this section is H3. Its native selection ran six of six at both sides of the stand-in delta, with the same six test names, and each original is retained under `<private-evidence>/1129-ACT-LIFE-20261106`. The after receipt is attempt 02: attempt 01 ran on a superseded port, after the commit hook refused a spread git call, and it stays retained for no credit.
+
+| Receipt | PID | stdout SHA-256 |
+|---|---|---|
+| T7-Q-G2-actions-native-before, attempt 01 | 579 | `87e90b7f051afcea77c83e97531dd3bdfe84678f47c8f67e1bcd2560b1645b3c` |
+| T7-Q-G2-actions-native-after, attempt 02 | 652 | `b8047d2f0ff79f1795e8817c37532e581bbf2eaf2858b61d2f325ff3dbd6b07e` |

@@ -2,10 +2,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { FORGE_MANIFEST, assertForgeState, assertOriginState, fixedCommand, forgeStore, originFixture, withFacts } from './in-process-fixtures.mjs';
+import { FORGE_MANIFEST, assertForgeState, assertOriginState, fixedCommand, forgeStore, judgeInput, originFixture, parsedFindings, runStandInActions, withFacts } from './in-process-fixtures.mjs';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AGENT_ANSWERED, ANSWERED, answerFakeGh, commandOf } from './fake-gh.mjs';
+import { parseMarker } from '../src/workflow/marker.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { clonedFromOrigin, gitIn, repositoryIn } from './git-repository.mjs';
 import { standInAct, standInRecord, standInReply } from './stub-claude.mjs';
@@ -597,4 +598,85 @@ test('two forge stores keep their state and their queues separate', async (t) =>
   assert.deepEqual(heldAt(second.statePath).repository.pullRequests[0].comments, [noted('B')]);
   assert.deepEqual(heldAt(first.statePath).sent, [comment('A')]);
   assert.deepEqual(heldAt(second.statePath).sent, [comment('B')]);
+});
+
+const request = (cwd, role = 'engineer', input = 'Work on card #31.\n') => ({ executable: '/fixture/claude', args: ['--append-system-prompt-file', `/fixture/.claude/agents/${role}.md`], input, cwd, env: {}, pid: 7001 });
+const CREATE = ['pr', 'create', '--title', 'Card #31', '--body', "The stand-in's pull request for card #31.", '--head', 'request-topic'];
+
+function actionWorld(t, repository) {
+  const directory = temporaryDirectory('rigger-action-', { context: t });
+  const world = originFixture(directory);
+  const statePath = join(directory, 'board.json');
+  writeFileSync(statePath, JSON.stringify({ ...withFacts(FORGE_MANIFEST.originWorld, world.facts), ...(repository ? { repository: repository(world.facts) } : {}) }));
+  return { ...world, statePath, store: forgeStore(statePath), head: () => gitIn(world.repository, 'rev-parse', 'HEAD').trim() };
+}
+const originHead = ({ facts }) => gitIn(facts.$ORIGIN, 'rev-parse', 'refs/heads/request-topic').trim();
+
+test('a controlled push moves the head and keeps its one open pull request', async (t) => {
+  const world = actionWorld(t, (facts) => ({ pullRequests: [{ number: 301, head: 'request-topic', sha: facts.$HEAD }] }));
+  await runStandInActions({ push: true }, standInRecord(request(world.repository)), { store: world.store });
+  assert.equal(gitIn(world.repository, 'rev-parse', 'HEAD~1').trim(), world.facts.$HEAD, 'the head is one later commit');
+  assert.equal(originHead(world), world.head(), 'origin holds the later head');
+  assert.deepEqual(heldAt(world.statePath).sent, [], 'push asks the forge for nothing');
+  const view = ['pr', 'view', '301', '--json', 'number,state,headRefOid'];
+  assert.deepEqual(await world.store.answer(view, {}), { status: 0, stdout: `{"headRefOid":"${world.head()}","number":301,"state":"OPEN"}\n`, stderr: '' }, 'the one pull request is open at the later head');
+  assert.equal(heldAt(world.statePath).repository.pullRequests.length, 1, 'push opens no second pull request');
+});
+
+test('a controlled pr or push outside a worktree fabricates nothing', async (t) => {
+  for (const act of [{ pr: true }, { push: true }]) {
+    const world = actionWorld(t);
+    const refs = gitIn(world.facts.$ORIGIN, 'for-each-ref');
+    const plain = temporaryDirectory('rigger-action-plain-', { context: t });
+    await runStandInActions(act, standInRecord(request(plain)), { store: world.store });
+    assert.equal(gitIn(world.facts.$ORIGIN, 'for-each-ref'), refs, 'origin holds no new ref or head');
+    assert.equal(world.head(), world.facts.$HEAD, 'the worktree gained no commit');
+    assert.deepEqual(heldAt(world.statePath).sent, [], 'no pull request was asked for');
+    assert.equal(heldAt(world.statePath).repository, undefined, 'no pull request was fabricated');
+  }
+});
+
+test('a controlled pr commits, pushes and opens one pull request', async (t) => {
+  const world = actionWorld(t);
+  await runStandInActions({ pr: true }, standInRecord(request(world.repository)), { store: world.store });
+  const head = world.head();
+  assert.equal(gitIn(world.repository, 'rev-parse', 'HEAD~1').trim(), world.facts.$HEAD, 'pr made one new commit');
+  assert.equal(gitIn(world.repository, 'log', '-1', '--format=%s').trim(), "The stand-in's work for card #31");
+  assert.equal(originHead(world), head, 'origin holds that head');
+  const pulls = heldAt(world.statePath).repository?.pullRequests ?? [];
+  assert.deepEqual(pulls.map(({ number, head: branch, sha, base, title, body }) => ({ number, branch, sha, base, title, body })),
+    [{ number: 1, branch: 'request-topic', sha: head, base: 'main', title: 'Card #31', body: "The stand-in's pull request for card #31." }], 'exactly one pull request with its literal identity');
+  assert.deepEqual(heldAt(world.statePath).sent, [CREATE]);
+});
+
+const pullFor = (head) => ({ pullRequests: [{ number: 301, head: 'request-topic', sha: head, comments: [] }] });
+
+test('controlled findings append one parsed marker comment', async (t) => {
+  const world = actionWorld(t, (facts) => pullFor(facts.$HEAD));
+  const run = standInRecord(request(world.repository, 'reviewer', judgeInput(world.facts.$HEAD)));
+  await runStandInActions({ findings: true }, run, { store: world.store, now: () => '2000-05-06T07:08:09Z' });
+  const comments = heldAt(world.statePath).repository.pullRequests[0].comments;
+  assert.equal(comments.length, 1, 'exactly one comment is appended');
+  assert.deepEqual(parseMarker(comments[0].body, 2), parsedFindings(world.facts.$HEAD), 'the comment parses to the supplied fields, sound, every item met');
+  assert.ok(comments[0].body.startsWith('Sound, by reviewer\n```rigger-marker\n'), 'the heading names the role');
+  assert.ok(comments[0].body.endsWith("\n```\n\nThe stand-in's findings."), 'the suffix follows the block');
+  assert.equal(comments[0].createdAt, '2000-05-06T07:08:09Z', 'the comment uses supplied time');
+});
+
+test('controlled findings with no marker block fail and append nothing', async (t) => {
+  const world = actionWorld(t, (facts) => pullFor(facts.$HEAD));
+  const run = standInRecord(request(world.repository, 'reviewer', 'Judge card #31 with no block.\n'));
+  const outcome = await runStandInActions({ findings: true }, run, { store: world.store }).then(() => 'resolved', (error) => error.message);
+  assert.equal(outcome, 'the stand-in for card #31 in reviewer was handed no marker block to fill in');
+  assert.deepEqual(heldAt(world.statePath).repository.pullRequests[0].comments, [], 'no comment was appended');
+  assert.deepEqual(heldAt(world.statePath).sent, [], 'the forge was asked nothing');
+});
+
+test('a controlled pr fails when the forge refuses it', async (t) => {
+  const world = actionWorld(t);
+  const run = standInRecord(request(world.repository));
+  await runStandInActions({ pr: true }, run, { store: world.store });
+  const outcome = await runStandInActions({ pr: true }, run, { store: world.store }).then(() => 'resolved', (error) => error.message);
+  assert.match(outcome, /a pull request for branch "request-topic" into branch "main" already exists/, 'the refusal ends the run as a failing gh does');
+  assert.equal(heldAt(world.statePath).repository.pullRequests.length, 1, 'no second pull request exists');
 });

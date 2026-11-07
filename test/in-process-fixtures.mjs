@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { answerFakeGh } from './fake-gh.mjs';
 import { clonedFromOrigin, gitIn } from './git-repository.mjs';
 import { fixedAnswer } from './stub-gh.mjs';
+import { standInFindings, standInPush } from './stub-claude.mjs';
 
 export function fixedCommand(options) {
   const answer = fixedAnswer(options);
@@ -68,6 +69,38 @@ export function forgeStore(statePath) {
       return answered;
     },
   };
+}
+
+const FINDINGS = { digest: 'd'.repeat(64), evidence: 'e'.repeat(64), dispatch: 'd-01234567-89ab-cdef-0123-456789abcdef' };
+
+/** A judge's input holding a marker block for pull 301 at `head`, written by hand as L3's instruction shapes it. */
+export const judgeInput = (head) => ['Judge card #31.', '```rigger-marker', 'card: 31', 'pull: 301', `head: ${head}`, `digest: ${FINDINGS.digest}`, 'role: reviewer', 'provider: claude', 'verdict: <sound, needs revision or critical>', 'item 1: <met or unmet>', 'item 2: <met or unmet>', 'coverage: <covered or insufficient>', `dispatch: ${FINDINGS.dispatch}`, `evidence: ${FINDINGS.evidence}`, '```', ''].join('\n');
+
+/** What `parseMarker` must read from the comment that input earns. */
+export const parsedFindings = (head) => ({ state: 'marker', marker: { card: 31, pull: 301, head, digest: FINDINGS.digest, role: 'reviewer', provider: 'claude', verdict: 'sound', items: ['met', 'met'], coverage: 'covered', dispatch: FINDINGS.dispatch, evidence: FINDINGS.evidence }, absent: [] });
+
+/** The stand-in's git work at `cwd`, each operation's subcommand named. */
+const gitAt = (cwd) => ({
+  inside: () => gitIn(cwd, 'rev-parse', '--is-inside-work-tree').trim(),
+  branch: () => gitIn(cwd, 'symbolic-ref', '--short', 'HEAD').trim(),
+  commit: (message) => gitIn(cwd, 'commit', '-q', '--allow-empty', '-m', message),
+  push: (branch) => gitIn(cwd, 'push', '-q', 'origin', branch),
+});
+
+/** Answers one `gh` request a stand-in owes; a refusal throws, as a failing `gh` ends the executable run. */
+async function forged(store, args, context) {
+  const answer = await store.answer(args, context);
+  if (answer.status !== 0) throw new Error(`gh ${args[0]} ${args[1]} failed: ${answer.stderr}`);
+  return answer;
+}
+
+/** Runs a stand-in act's git and forge work for `run`, in the order the executable does. */
+export async function runStandInActions(act, run, { store, now }) {
+  const context = { now, cwd: run.cwd };
+  const opened = standInPush(act, run.card, gitAt(run.cwd));
+  if (opened !== undefined) await forged(store, opened, context);
+  const finding = standInFindings(act, run);
+  if (finding !== undefined) await forged(store, finding, context);
 }
 
 export const FORGE_MANIFEST = {

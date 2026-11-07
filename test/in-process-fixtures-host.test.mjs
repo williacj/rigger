@@ -8,13 +8,14 @@ import { delimiter, dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { installFromTarball } from './installed-rigger.mjs';
-import { installFakeGh } from './fake-gh.mjs';
-import { FORGE_MANIFEST, assertForgeState, assertOriginState, originFixture, withFacts } from './in-process-fixtures.mjs';
+import { installFakeGh, seedRepository } from './fake-gh.mjs';
+import { FORGE_MANIFEST, assertForgeState, assertOriginState, judgeInput, originFixture, parsedFindings, withFacts } from './in-process-fixtures.mjs';
 import { stubGh } from './stub-gh.mjs';
 import { installStandInAgent, stubClaude, stubCodex } from './stub-claude.mjs';
 import { CONSUMER, COLUMNS, FIELDS, card, matrixRepository } from './in-process-entry.mjs';
-import { repositoryIn } from './git-repository.mjs';
+import { gitIn, repositoryIn } from './git-repository.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+import { parseMarker } from '../src/workflow/marker.mjs';
 import { admissionOf, closerText, seed } from './admission-world.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
@@ -433,3 +434,94 @@ test('the executable stubs keep their fixed answers and joined-space calls', asy
     }
   }
 });
+
+function nativeActionWorld(t, plan, seed) {
+  const directory = temporaryDirectory('rigger-native-actions-', { context: t });
+  const { repository, facts } = originFixture(directory);
+  const fakeHome = join(directory, 'fake');
+  const agentHome = join(directory, 'agent');
+  mkdirSync(fakeHome);
+  mkdirSync(agentHome);
+  const fake = installFakeGh(fakeHome, { repo: 'example/widgets', owner: 'example', project: 23, origin: facts.$ORIGIN });
+  if (seed) seedRepository(fake, seed(facts));
+  const agent = installStandInAgent(agentHome, plan);
+  const environment = { ...gitEnvironment(), PATH: `${dirname(fake.gh)}${delimiter}${process.env.PATH}` };
+  return {
+    repository, facts,
+    state: () => JSON.parse(readFileSync(join(fakeHome, 'board.json'), 'utf8')),
+    head: () => gitIn(repository, 'rev-parse', 'HEAD').trim(),
+    originHead: () => gitIn(facts.$ORIGIN, 'rev-parse', 'refs/heads/request-topic').trim(),
+    run: (cwd, role, input) => entryChild(t, join(agent.dir, 'claude'), ['--append-system-prompt-file', `/fixture/.claude/agents/${role}.md`], cwd, environment, input),
+  };
+}
+const openPull = (facts) => ({ pullRequests: [{ number: 301, head: 'request-topic', sha: facts.$HEAD, comments: [] }] });
+
+// Host reason: wiring.
+// Ordinary decision counterpart: test/in-process-fixtures.test.mjs :: a controlled pr commits, pushes and opens one pull request.
+test('the native stand-in commits, pushes and opens one pull request from its worktree', async (t) => {
+  const world = nativeActionWorld(t, { 31: { engineer: { pr: true } } });
+  const result = await world.run(world.repository, 'engineer', 'Work on card #31.\n');
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(gitIn(world.repository, 'rev-parse', 'HEAD~1').trim(), world.facts.$HEAD);
+  assert.equal(world.originHead(), world.head());
+  const pulls = world.state().repository.pullRequests;
+  assert.deepEqual(pulls.map(({ number, head, sha, base, title, body }) => ({ number, head, sha, base, title, body })),
+    [{ number: 1, head: 'request-topic', sha: world.head(), base: 'main', title: 'Card #31', body: "The stand-in's pull request for card #31." }]);
+});
+
+// Host reason: wiring.
+// Ordinary decision counterpart: test/in-process-fixtures.test.mjs :: a controlled push moves the head and keeps its one open pull request.
+test('the native stand-in pushes a later head onto its existing pull request', async (t) => {
+  const world = nativeActionWorld(t, { 31: { engineer: { push: true } } }, openPull);
+  const result = await world.run(world.repository, 'engineer', 'Work on card #31.\n');
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(gitIn(world.repository, 'rev-parse', 'HEAD~1').trim(), world.facts.$HEAD);
+  assert.equal(world.originHead(), world.head());
+  assert.deepEqual(world.state().sent, [], 'push asks the forge for nothing');
+  assert.equal(world.state().repository.pullRequests.length, 1);
+});
+
+// Host reason: wiring.
+// Ordinary decision counterpart: test/in-process-fixtures.test.mjs :: a controlled pr or push outside a worktree fabricates nothing.
+test('the native stand-in fabricates nothing outside a worktree', async (t) => {
+  const world = nativeActionWorld(t, { 31: { engineer: { pr: true, push: true } } });
+  const plain = temporaryDirectory('rigger-native-plain-', { context: t });
+  const result = await world.run(plain, 'engineer', 'Work on card #31.\n');
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(world.originHead(), world.facts.$HEAD, 'origin is unmoved');
+  assert.deepEqual(world.state().sent, [], 'no pull request was asked for');
+});
+
+// Host reason: wiring.
+// Ordinary decision counterpart: test/in-process-fixtures.test.mjs :: controlled findings append one parsed marker comment.
+test('the native stand-in appends its findings marker', async (t) => {
+  const world = nativeActionWorld(t, { 31: { reviewer: { findings: true } } }, openPull);
+  const result = await world.run(world.repository, 'reviewer', judgeInput(world.facts.$HEAD));
+  assert.equal(result.code, 0, result.stderr);
+  const comments = world.state().repository.pullRequests[0].comments;
+  assert.equal(comments.length, 1);
+  assert.deepEqual(parseMarker(comments[0].body, 2), parsedFindings(world.facts.$HEAD));
+  assert.match(comments[0].createdAt, WALL_CLOCK, 'the executable keeps its wall clock');
+});
+
+// Host reason: wiring.
+// Ordinary decision counterpart: test/in-process-fixtures.test.mjs :: controlled findings with no marker block fail and append nothing.
+test('the native stand-in refuses findings with no marker block', async (t) => {
+  const world = nativeActionWorld(t, { 31: { reviewer: { findings: true } } }, openPull);
+  const result = await world.run(world.repository, 'reviewer', 'Judge card #31 with no block.\n');
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /the stand-in for card #31 in reviewer was handed no marker block to fill in/);
+  assert.deepEqual(world.state().repository.pullRequests[0].comments, []);
+});
+
+// Host reason: wiring.
+// Ordinary decision counterpart: test/in-process-fixtures.test.mjs :: a controlled pr fails when the forge refuses it.
+test('the native stand-in fails when the forge refuses its pull request', async (t) => {
+  const world = nativeActionWorld(t, { 31: { engineer: { pr: true } } });
+  assert.equal((await world.run(world.repository, 'engineer', 'Work on card #31.\n')).code, 0);
+  const result = await world.run(world.repository, 'engineer', 'Work on card #31.\n');
+  assert.notEqual(result.code, 0);
+  assert.match(result.stderr, /already exists/);
+  assert.equal(world.state().repository.pullRequests.length, 1);
+});
+

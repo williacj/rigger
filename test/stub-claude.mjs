@@ -246,10 +246,10 @@ async function holding(held) {
  */
 const ran = (command, args) => execFileSync(command, args, { encoding: 'utf8', env: process.env, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
-/** Whether the working directory is a git worktree, as git answers; a plain directory is not. */
-function inWorktree() {
+/** Whether `git`'s working directory is a git worktree, as git answers; a plain directory is not. */
+function inWorktree(git) {
   try {
-    return ran('git', ['rev-parse', '--is-inside-work-tree']) === 'true';
+    return git.inside() === 'true';
   } catch {
     return false;
   }
@@ -451,6 +451,31 @@ export function standInReply(act, { output, exit, keepAlive, registerCleanup }) 
   };
 }
 
+/** Commits and pushes for a `pr` or `push` act through the `git` port, answering the `gh` arguments a `pr` still owes. */
+export function standInPush(act, card, git) {
+  if (!(act.pr || act.push) || !inWorktree(git)) return undefined;
+  const branch = git.branch();
+  git.commit(`The stand-in's work for card #${card}`);
+  git.push(branch);
+  return act.pr ? ['pr', 'create', '--title', `Card #${card}`, '--body', `The stand-in's pull request for card #${card}.`, '--head', branch] : undefined;
+}
+
+/** The stand-in's git work as the executable runs it, each operation's subcommand named. */
+const NATIVE_GIT = {
+  inside: () => ran('git', ['rev-parse', '--is-inside-work-tree']),
+  branch: () => ran('git', ['symbolic-ref', '--short', 'HEAD']),
+  commit: (message) => ran('git', ['commit', '-q', '--allow-empty', '-m', message]),
+  push: (branch) => ran('git', ['push', '-q', 'origin', branch]),
+};
+
+/** The `gh` arguments of a `findings` act, failing where the input holds no marker block. */
+export function standInFindings(act, { card, role, input }) {
+  if (!act.findings) return undefined;
+  const marker = instructedMarker(input);
+  if (marker === undefined) throw new Error(`the stand-in for card #${card} in ${role} was handed no marker block to fill in`);
+  return ['pr', 'comment', String(marker.pull), '--body', `${composeMarker(marker, `Sound, by ${marker.role}`)}\nThe stand-in's findings.`];
+}
+
 /** The stand-in agent's run, as `standInAgent` describes it, in the process its executable started. */
 export async function standInMain() {
   const dir = dirname(process.argv[1]);
@@ -478,17 +503,10 @@ export async function standInMain() {
   if (act.write) recorded(tracing, 'the file write', () => writeFileSync(marker(dir, 'wrote', card, role), ''), { path: marker(dir, 'wrote', card, role) });
   if (act.write) announce(marker(dir, 'wrote', card, role));
   if (act.await !== undefined) await recorded(tracing, 'the wait', () => written(marker(dir, 'wrote', card, act.await)));
-  if ((act.pr || act.push) && inWorktree()) {
-    const branch = ran('git', ['symbolic-ref', '--short', 'HEAD']);
-    ran('git', ['commit', '-q', '--allow-empty', '-m', `The stand-in's work for card #${card}`]);
-    ran('git', ['push', '-q', 'origin', branch]);
-    if (act.pr) ran('gh', ['pr', 'create', '--title', `Card #${card}`, '--body', `The stand-in's pull request for card #${card}.`, '--head', branch]);
-  }
-  if (act.findings) {
-    const marker = instructedMarker(input);
-    if (marker === undefined) throw new Error(`the stand-in for card #${card} in ${role} was handed no marker block to fill in`);
-    ran('gh', ['pr', 'comment', String(marker.pull), '--body', `${composeMarker(marker, `Sound, by ${marker.role}`)}\nThe stand-in's findings.`]);
-  }
+  const opened = standInPush(act, card, NATIVE_GIT);
+  if (opened !== undefined) ran('gh', opened);
+  const finding = standInFindings(act, run);
+  if (finding !== undefined) ran('gh', finding);
   if (act.leave) {
     writeFileSync(join(dir, `left-${card}`), '');
     spawn('/usr/bin/tail', ['-f', join(dir, `left-${card}`)], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] }).unref();
