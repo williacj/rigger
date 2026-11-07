@@ -9,27 +9,38 @@ import { CHECKS, doctor } from '../src/cli/doctor.mjs';
 import { configured, launchdLine, packageProgram } from './launchd-fixtures.mjs';
 import { loadedJob } from '../src/substrate/launchd.mjs';
 import { NOT_STARTED, EVENT_REFUSED } from '../src/substrate/process.mjs';
+import * as adapter from '../src/substrate/process.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 // Buffer fields, exit and timedOut are runCommand's contract. Field spelling: S1 Q-d2, S2 Q-n1.
 const printed = (text, exit = 0, timedOut = false) => ({ stdout: Buffer.from(text), stderr: Buffer.from(''), exit, timedOut });
 const JOB = 'gui/501/com.williacj.rigger = {\n\tprogram = /installed/rigger\n\texit timeout = 180\n\tlast exit code = 78: EX_CONFIG\n}\n';
 
-// The card's Table B fixes 15,000 ms per dispatch and excludes the owner from agent panels.
-test('the launchd exit bound covers every Table B panel and concurrency case in milliseconds', () => {
+// L0's exit cleanup has one fixed budget, so no panel and no concurrency moves the bound.
+test('the launchd exit bound is EXIT_BOUND for every Table B panel and concurrency case in milliseconds', () => {
   assert.equal(typeof config.launchdExitTimeout, 'function', 'config exports the launchd exit bound');
   assert.equal(config.DEFAULT_CONCURRENCY, 3);
   const panel = ['reviewer', { role: 'architect', provider: 'codex' }, 'engineer', 'owner'];
   const cases = [
-    [{ concurrency: 4, kinds: { change: { judges: panel } } }, 180_000],
-    [{ kinds: { change: { judges: ['reviewer', 'architect'] } } }, 90_000],
-    [{ concurrency: 2, kinds: { change: { judges: ['owner'] }, spike: { judges: [] } } }, 30_000],
-    [{ concurrency: 5, kinds: { spike: { judges: ['reviewer'] }, change: { judges: panel } } }, 225_000],
+    [{ concurrency: 4, kinds: { change: { judges: panel } } }, adapter.EXIT_BOUND],
+    [{ kinds: { change: { judges: ['reviewer', 'architect'] } } }, adapter.EXIT_BOUND],
+    [{ concurrency: 2, kinds: { change: { judges: ['owner'] }, spike: { judges: [] } } }, adapter.EXIT_BOUND],
+    [{ concurrency: 5, kinds: { spike: { judges: ['reviewer'] }, change: { judges: panel } } }, adapter.EXIT_BOUND],
   ];
   for (const [given, expected] of cases) assert.equal(config.launchdExitTimeout(given), expected, JSON.stringify(given));
   const loop = readFileSync(new URL('../src/scheduling/loop.mjs', import.meta.url), 'utf8');
   assert.match(loop, /import \{ DEFAULT_CONCURRENCY \} from '\.\.\/config\/validate\.mjs'/);
   assert.doesNotMatch(loop, /const DEFAULT_CONCURRENCY\s*=/);
+});
+
+// Table X, row X8. A config read through this proxy throws, so any field the bound reads fails here.
+test('the launchd exit bound is the fixed 55 s budget, for concurrency 10 and for a config it never reads a field of', () => {
+  assert.equal(adapter.EXIT_CARE_BOUND, 15_000);
+  assert.equal(adapter.EXIT_BOUND, 55_000);
+  const judges = ['reviewer', 'architect', 'engineer'];
+  assert.equal(config.launchdExitTimeout({ concurrency: 10, kinds: { change: { judges } } }), 55_000);
+  const unread = new Proxy({}, { get(_, field) { throw new Error(`the bound read the config's ${String(field)}`); } });
+  assert.equal(config.launchdExitTimeout(unread), 55_000);
 });
 
 test('the guide points the launchd job troubleshooting row at the README installation heading', () => {
@@ -138,17 +149,17 @@ test('doctor refuses a directory as the program and also refuses a dangling prog
   }
 });
 
-test('doctor compares seconds with the config bound in milliseconds including the five-second default and exact threshold', async () => {
+test('doctor compares seconds with the fixed bound in milliseconds including the five-second default and exact threshold', async () => {
   const { options } = configured();
   const program = packageProgram(join(temporaryDirectory('997-global-'), 'node_modules', '@williacj', 'rigger'));
-  for (const [exitTimeout, expected] of [[5, 1], [179, 1], [180, 0], [181, 0]]) {
+  for (const [exitTimeout, expected] of [[5, 1], [54, 1], [55, 0], [56, 0], [60, 0]]) {
     const ran = await doctor({ ...options, readLaunchdJob: async () => ({ program, exitTimeout }) });
     assert.equal(ran.code, expected, ran.text);
     const line = launchdLine(ran);
     assert.ok(line.includes('com.williacj.rigger'), line);
     assert.ok(line.includes(program), line);
     assert.ok(line.includes(`${exitTimeout} s`), line);
-    assert.ok(line.includes('180 s'), line);
+    assert.ok(line.includes('bound 55 s'), line);
   }
   const source = readFileSync(new URL('../src/cli/doctor.mjs', import.meta.url), 'utf8');
   assert.match(source, /launchdExitTimeout\(config\)\s*\/\s*1_?000/);
@@ -177,7 +188,7 @@ test('doctor reports both a missing program and its short timeout in the same fa
   const line = launchdLine(ran);
   assert.ok(line.includes(program), line);
   assert.match(line, /5 s/);
-  assert.match(line, /180 s/);
+  assert.match(line, /bound 55 s/);
   assert.match(line, /ENOENT/);
   assert.match(line, /below the bound/);
   assert.equal(ran.code, 1, ran.text);
