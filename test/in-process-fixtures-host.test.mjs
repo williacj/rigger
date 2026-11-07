@@ -11,7 +11,7 @@ import { installFromTarball } from './installed-rigger.mjs';
 import { installFakeGh, seedRepository } from './fake-gh.mjs';
 import { FORGE_MANIFEST, assertForgeState, assertOriginState, judgeInput, originFixture, parsedFindings, withFacts } from './in-process-fixtures.mjs';
 import { stubGh } from './stub-gh.mjs';
-import { installStandInAgent, stubClaude, stubCodex } from './stub-claude.mjs';
+import { installStandInAgent, standInCodex, stubClaude, stubCodex } from './stub-claude.mjs';
 import { CONSUMER, COLUMNS, FIELDS, card, matrixRepository } from './in-process-entry.mjs';
 import { gitIn, repositoryIn } from './git-repository.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
@@ -525,3 +525,17 @@ test('the native stand-in fails when the forge refuses its pull request', async 
   assert.equal(world.state().repository.pullRequests.length, 1);
 });
 
+// Host reason: wiring.
+// Ordinary decision counterpart: test/in-process-fixtures.test.mjs :: a logical codex answers its configured probe text and status.
+test('the native codex stand-in answers its probe and records its session', async (t) => {
+  const stand = standInCodex({ answer: 'Literal probe.\n', exit: 3 });
+  const cwd = temporaryDirectory('rigger-native-codex-', { context: t });
+  const environment = { HOME: cwd, LANG: 'C.UTF-8', PATH: process.env.PATH, CODEX_HOME: '/fixture/home' };
+  const codex = join(stand.dir, 'codex');
+  const probe = await entryChild(t, codex, ['debug', 'prompt-input'], cwd, environment);
+  assert.deepEqual([probe.code, probe.stdout, probe.stderr], [3, 'Literal probe.\n', '']);
+  assert.deepEqual(stand.probes(), [{ name: 'codex', probe: true, args: ['debug', 'prompt-input'], cwd, home: '/fixture/home', pid: probe.pid }]);
+  const session = await entryChild(t, codex, ['exec', '-'], cwd, environment, 'Session input.\n');
+  assert.deepEqual([session.code, session.stdout, session.stderr], [0, '', '']);
+  assert.deepEqual(stand.sessions(), [{ name: 'codex', args: ['exec', '-'], cwd, input: 'Session input.\n', home: '/fixture/home', pid: session.pid }]);
+});

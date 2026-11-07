@@ -109,3 +109,7 @@ The commit carrying this section is H3. Its native selection ran six of six at b
 |---|---|---|
 | T7-Q-G2-actions-native-before, attempt 01 | 579 | `87e90b7f051afcea77c83e97531dd3bdfe84678f47c8f67e1bcd2560b1645b3c` |
 | T7-Q-G2-actions-native-after, attempt 02 | 652 | `b8047d2f0ff79f1795e8817c37532e581bbf2eaf2858b61d2f325ff3dbd6b07e` |
+
+## S-LIFECYCLE head and A4
+
+The commit carrying this section is H4, on H3 `3e490578a2f38a24e10d1ba20e29afb1f8329709`. A4 exposes no action intent. The body's A4 row says it may, and item 17 is a negative, so extracting spawn options would change native lines for no proof. A logical run performs no OS act, one test shows that, and the native witnesses stay. This would reverse if a later card needs intent through a logical port.

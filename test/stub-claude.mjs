@@ -587,9 +587,24 @@ export function codexSkillAnswer(skills) {
  * session: it reads its standard input to its end, records itself as the stand-in agent's runs are
  * recorded, with `home` beside them, and exits 0.
  */
+/** What the stand-in `codex` answers its skill probe with. */
+export const codexProbed = ({ skills = [], answer, exit = 0, hang = false } = {}) => ({ text: answer ?? codexSkillAnswer(skills), exit, hang });
+
+/** Whether `args` are a skill probe: `debug` and `prompt-input` both among them, anywhere. */
+export const isCodexProbe = (args) => args.includes('debug') && args.includes('prompt-input');
+
+/** The reply act of a probe answering `probed`: a hang keeps running and prints nothing. */
+export const codexProbeAct = ({ text, exit, hang }) => (hang ? { forever: true } : { print: text, exit });
+
+/** What a probe records. */
+export const codexProbeRecord = ({ args, cwd, home, pid }) => ({ name: 'codex', probe: true, args, cwd, home, pid });
+
+/** What a session records. */
+export const codexSessionRecord = ({ args, cwd, input, home, pid }) => ({ name: 'codex', args, cwd, input, home, pid });
+
 export function standInCodex({ skills = [], answer, exit = 0, hang = false } = {}) {
   const agent = standInAgent();
-  writeFileSync(join(agent.dir, PROBED), JSON.stringify({ text: answer ?? codexSkillAnswer(skills), exit, hang }));
+  writeFileSync(join(agent.dir, PROBED), JSON.stringify(codexProbed({ skills, answer, exit, hang })));
   const entry = `import(${JSON.stringify(import.meta.url)}).then(({ standInCodexMain }) => standInCodexMain());\n`;
   writeFileSync(join(agent.dir, 'codex'), `#!${process.execPath}\n${entry}`);
   chmodSync(join(agent.dir, 'codex'), 0o755);
@@ -607,17 +622,18 @@ export async function standInCodexMain() {
   const dir = dirname(process.argv[1]);
   const args = process.argv.slice(2);
   const home = process.env.CODEX_HOME;
-  if (args.includes('debug') && args.includes('prompt-input')) {
+  if (isCodexProbe(args)) {
     const probed = JSON.parse(readFileSync(join(dir, PROBED), 'utf8'));
-    appendFileSync(join(dir, RUNS), `${JSON.stringify({ name: 'codex', probe: true, args, cwd: process.cwd(), home, pid: process.pid })}\n`);
-    if (probed.hang) {
-      setInterval(() => {}, 2 ** 30);
-      return;
-    }
-    process.stdout.write(probed.text);
-    process.exitCode = probed.exit;
+    appendFileSync(join(dir, RUNS), `${JSON.stringify(codexProbeRecord({ args, cwd: process.cwd(), home, pid: process.pid }))}\n`);
+    const reply = standInReply(codexProbeAct(probed), {
+      output: (text) => process.stdout.write(text),
+      exit: (code) => { process.exitCode = code; },
+      keepAlive: () => setInterval(() => {}, 2 ** 30),
+    });
+    reply.print();
+    reply.finish();
     return;
   }
   const input = readFileSync(0, 'utf8');
-  appendFileSync(join(dir, RUNS), `${JSON.stringify({ name: 'codex', args, cwd: process.cwd(), input, home, pid: process.pid })}\n`);
+  appendFileSync(join(dir, RUNS), `${JSON.stringify(codexSessionRecord({ args, cwd: process.cwd(), input, home, pid: process.pid }))}\n`);
 }

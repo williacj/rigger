@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { answerFakeGh } from './fake-gh.mjs';
 import { clonedFromOrigin, gitIn } from './git-repository.mjs';
 import { fixedAnswer } from './stub-gh.mjs';
-import { standInFindings, standInPush } from './stub-claude.mjs';
+import { codexProbeAct, codexProbeRecord, codexProbed, codexSessionRecord, isCodexProbe, standInAct, standInFindings, standInPush, standInRecord, standInReply } from './stub-claude.mjs';
 
 export function fixedCommand(options) {
   const answer = fixedAnswer(options);
@@ -101,6 +101,82 @@ export async function runStandInActions(act, run, { store, now }) {
   if (opened !== undefined) await forged(store, opened, context);
   const finding = standInFindings(act, run);
   if (finding !== undefined) await forged(store, finding, context);
+}
+
+/** A logical stand-in agent: one instance's plan, runs and writes, and no process. */
+export function logicalAgent(plan, { store, now } = {}) {
+  const runs = [];
+  const wrote = new Set();
+  const waiting = new Map();
+  const named = (card, role) => `${card}-${role}`;
+  const announced = (name) => {
+    wrote.add(name);
+    for (const resolve of waiting.get(name) ?? []) resolve();
+    waiting.delete(name);
+  };
+  const written = (name) => (wrote.has(name) ? Promise.resolve() : new Promise((resolve) => { waiting.set(name, [...(waiting.get(name) ?? []), resolve]); }));
+  return {
+    runs: () => structuredClone(runs),
+    wrote: (card, role) => wrote.has(named(card, role)),
+    start(request) {
+      const run = standInRecord(request);
+      runs.push(run);
+      const act = standInAct(plan, run);
+      const output = [];
+      const exits = [];
+      const reply = standInReply(act, { output: (text) => output.push(text), exit: (code) => exits.push(code) });
+      let open;
+      let ready;
+      const released = new Promise((resolve) => { open = resolve; });
+      const held = new Promise((resolve) => { ready = resolve; });
+      const completed = (async () => {
+        if (act.hold) {
+          ready({ release: open });
+          await released;
+        }
+        reply.print();
+        if (act.write) announced(named(run.card, run.role));
+        if (act.await !== undefined) await written(named(run.card, act.await));
+        if (store !== undefined) await runStandInActions(act, run, { store, now });
+        reply.finish();
+      })();
+      return { held, completed, output: () => [...output], exits: () => [...exits] };
+    },
+  };
+}
+
+/** A logical stand-in Codex on `clock`. A hang schedules what the executable's interval is, and does nothing else. */
+export function logicalCodex(options, { clock } = {}) {
+  const probed = codexProbed(options);
+  const runs = [];
+  return {
+    probes: () => runs.filter(({ probe }) => probe),
+    sessions: () => runs.filter(({ probe }) => !probe),
+    start({ args, cwd, home, pid, input }) {
+      const output = [];
+      let finish;
+      const completed = new Promise((resolve) => { finish = resolve; });
+      if (!isCodexProbe(args)) {
+        runs.push(codexSessionRecord({ args, cwd, input, home, pid }));
+        finish(0);
+        return { completed, output: () => [...output] };
+      }
+      runs.push(codexProbeRecord({ args, cwd, home, pid }));
+      const disposals = [];
+      const reply = standInReply(codexProbeAct(probed), {
+        output: (text) => output.push(text),
+        exit: finish,
+        keepAlive: () => {
+          const handle = clock.schedule(() => {}, 2 ** 30);
+          return () => { clock.cancel(handle); finish(null); };
+        },
+        registerCleanup: (dispose) => { disposals.push(dispose); },
+      });
+      reply.print();
+      reply.finish();
+      return { completed, output: () => [...output], cleanups: () => [...disposals] };
+    },
+  };
 }
 
 export const FORGE_MANIFEST = {

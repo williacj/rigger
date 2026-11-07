@@ -2,8 +2,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { FORGE_MANIFEST, assertForgeState, assertOriginState, fixedCommand, forgeStore, judgeInput, originFixture, parsedFindings, runStandInActions, withFacts } from './in-process-fixtures.mjs';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { FORGE_MANIFEST, assertForgeState, assertOriginState, fixedCommand, forgeStore, judgeInput, logicalAgent, logicalCodex, originFixture, parsedFindings, runStandInActions, withFacts } from './in-process-fixtures.mjs';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AGENT_ANSWERED, ANSWERED, answerFakeGh, commandOf } from './fake-gh.mjs';
 import { parseMarker } from '../src/workflow/marker.mjs';
@@ -679,4 +679,179 @@ test('a controlled pr fails when the forge refuses it', async (t) => {
   const outcome = await runStandInActions({ pr: true }, run, { store: world.store }).then(() => 'resolved', (error) => error.message);
   assert.match(outcome, /a pull request for branch "request-topic" into branch "main" already exists/, 'the refusal ends the run as a failing gh does');
   assert.equal(heldAt(world.statePath).repository.pullRequests.length, 1, 'no second pull request exists');
+});
+
+const turn = () => new Promise((resolve) => setImmediate(resolve));
+const noticed = (run) => {
+  const state = { ended: false };
+  run.completed.then(() => { state.ended = true; });
+  return state;
+};
+
+test('a logical agent records its run and replies with print and exit', async () => {
+  const agent = logicalAgent({ 31: { engineer: { print: 'Literal agent output.\n', exit: 7 } } });
+  const run = agent.start({ ...request('/fixture/consumer'), input: 'Rigger sends CaRd #31.\n', env: { RIGGER_STAND_IN_VALUE: 'literal', UNRELATED: 'not recorded' } });
+  await run.completed;
+  assert.deepEqual(agent.runs(), [{ name: 'claude', args: ['--append-system-prompt-file', '/fixture/.claude/agents/engineer.md'], cwd: '/fixture/consumer', card: 31, role: 'engineer', input: 'Rigger sends CaRd #31.\n', env: { RIGGER_STAND_IN_VALUE: 'literal' }, pid: 7001 }]);
+  assert.deepEqual(run.output(), ['Literal agent output.\n']);
+  assert.deepEqual(run.exits(), [7]);
+});
+
+test('a logical hold stays pending until released after readiness', async () => {
+  const agent = logicalAgent({ 31: { engineer: { hold: true, print: 'After release.\n', exit: 7 } } });
+  const run = agent.start(request('/fixture'));
+  const seen = noticed(run);
+  await turn();
+  assert.equal(seen.ended, false, 'a held run does not complete');
+  const { release } = await run.held;
+  assert.equal(agent.runs().length, 1, 'readiness follows the record');
+  await turn();
+  assert.equal(seen.ended, false, 'a ready run stays pending until released');
+  assert.deepEqual(run.output(), [], 'nothing prints before release');
+  release();
+  await run.completed;
+  assert.deepEqual(run.output(), ['After release.\n'], 'an immediate release after readiness settles the run');
+  assert.deepEqual(run.exits(), [7]);
+});
+
+test('a logical await before its write stays pending until the write', async () => {
+  const agent = logicalAgent({ 31: { reviewer: { await: 'engineer', print: 'Awaited.\n' }, engineer: { write: true } } });
+  const awaiting = agent.start(request('/fixture', 'reviewer'));
+  const seen = noticed(awaiting);
+  await turn();
+  assert.deepEqual(awaiting.output(), ['Awaited.\n'], 'the run has reached its await, which follows its print');
+  assert.equal(seen.ended, false, 'the await waits for a write that has not happened');
+  await agent.start(request('/fixture')).completed;
+  await awaiting.completed;
+  assert.deepEqual(awaiting.output(), ['Awaited.\n'], 'print precedes the await');
+  assert.deepEqual(awaiting.exits(), [0]);
+});
+
+test('a logical write before its await settles the await', async () => {
+  const agent = logicalAgent({ 31: { engineer: { write: true }, reviewer: { await: 'engineer' } } });
+  await agent.start(request('/fixture')).completed;
+  const awaiting = agent.start(request('/fixture', 'reviewer'));
+  const seen = noticed(awaiting);
+  await turn();
+  assert.equal(seen.ended, true, 'an earlier write settles a later await');
+  assert.equal(agent.wrote(31, 'engineer'), true);
+  assert.equal(agent.wrote(31, 'reviewer'), false);
+});
+
+test('two logical agents keep their runs, holds and writes separate', async () => {
+  const plan = { 31: { engineer: { hold: true, write: true, print: 'Mine.\n' } } };
+  const [first, second] = [logicalAgent(plan), logicalAgent(plan)];
+  const [one, two] = [first.start(request('/fixture/one')), second.start(request('/fixture/two'))];
+  const [held, twoHeld] = [await one.held, await two.held];
+  held.release();
+  await one.completed;
+  const seen = noticed(two);
+  await turn();
+  assert.equal(seen.ended, false, 'releasing one instance leaves the other held');
+  assert.equal(first.wrote(31, 'engineer'), true);
+  assert.equal(second.wrote(31, 'engineer'), false, 'a write stays in its instance');
+  assert.deepEqual(first.runs().map(({ cwd }) => cwd), ['/fixture/one']);
+  assert.deepEqual(second.runs().map(({ cwd }) => cwd), ['/fixture/two']);
+  twoHeld.release();
+  await two.completed;
+  assert.equal(second.wrote(31, 'engineer'), true);
+});
+
+test('a logical run keeps hold, print, write, await and action order', async (t) => {
+  const world = actionWorld(t);
+  const agent = logicalAgent({ 31: { engineer: { hold: true, print: 'Printed.\n', write: true, await: 'reviewer', pr: true }, reviewer: { write: true } } }, { store: world.store });
+  const run = agent.start(request(world.repository));
+  const { release } = await run.held;
+  assert.deepEqual(run.output(), [], 'hold precedes print');
+  assert.equal(agent.wrote(31, 'engineer'), false, 'hold precedes write');
+  release();
+  await turn();
+  assert.deepEqual(run.output(), ['Printed.\n'], 'print follows release');
+  assert.equal(agent.wrote(31, 'engineer'), true, 'write follows print');
+  assert.equal(world.head(), world.facts.$HEAD, 'the await precedes the action');
+  await agent.start(request(world.repository, 'reviewer')).completed;
+  await run.completed;
+  assert.equal(gitIn(world.repository, 'rev-parse', 'HEAD~1').trim(), world.facts.$HEAD, 'the action follows the await');
+  assert.deepEqual(heldAt(world.statePath).sent, [CREATE]);
+  assert.deepEqual(run.exits(), [0]);
+});
+
+test('a logical run performs none of the OS acts', async (t) => {
+  const cwd = temporaryDirectory('rigger-logical-os-', { context: t });
+  const agent = logicalAgent({ 31: { engineer: { orphanIn: 'orphaned', leave: true, leaveIn: '.', leaveInGroup: '.' } } });
+  const run = agent.start(request(cwd));
+  await run.completed;
+  assert.deepEqual(run.exits(), [0]);
+  assert.deepEqual(readdirSync(cwd), [], 'no OS act touched the directory, and no signal, group, pipe or exec claim follows');
+});
+
+const PROBE = { args: ['-C', '/fixture/consumer', 'debug', 'prompt-input'], cwd: '/fixture/consumer', home: '/fixture/home', pid: 7002 };
+
+test('a logical codex classifies a probe by debug and prompt-input together', async () => {
+  const cases = [[['debug', 'prompt-input'], true], [['prompt-input', '-x', 'debug'], true], [['debug'], false], [['prompt-input'], false], [['exec', '-'], false]];
+  for (const [args, probe] of cases) {
+    const codex = logicalCodex({ answer: 'Probe.\n' });
+    await codex.start({ ...PROBE, args, input: 'Session input.\n' }).completed;
+    assert.equal(codex.probes().length, probe ? 1 : 0, `${args.join(' ')} probe`);
+    assert.equal(codex.sessions().length, probe ? 0 : 1, `${args.join(' ')} session`);
+  }
+});
+
+test('a logical codex answers its configured probe text and status', async () => {
+  const codex = logicalCodex({ answer: 'Literal probe.\n', exit: 3 });
+  const run = codex.start(PROBE);
+  assert.equal(await run.completed, 3);
+  assert.deepEqual(run.output(), ['Literal probe.\n']);
+  assert.deepEqual(codex.probes(), [{ name: 'codex', probe: true, args: PROBE.args, cwd: '/fixture/consumer', home: '/fixture/home', pid: 7002 }]);
+  const text = '<skills_instructions>\n## Skills\nA skill is a set of local instructions to follow that is stored in a `SKILL.md` file.\n### Skill roots\n- `r0` = `/skills`\n### Available skills\n- one: A skill the test names. (file: r0/one/SKILL.md)\n</skills_instructions>';
+  const listed = logicalCodex({ skills: ['/skills/one/SKILL.md'] }).start(PROBE);
+  assert.equal(await listed.completed, 0);
+  assert.deepEqual(listed.output(), [`${JSON.stringify([{ type: 'message', role: 'developer', content: [{ type: 'input_text', text }] }], null, 2)}\n`]);
+});
+
+test('a logical codex session records its input and home and returns zero', async () => {
+  const codex = logicalCodex();
+  const args = ['exec', '-'];
+  const run = codex.start({ args, cwd: '/fixture/consumer', home: '/fixture/home', pid: 7003, input: 'Session input.\n' });
+  assert.equal(await run.completed, 0);
+  assert.deepEqual(codex.sessions(), [{ name: 'codex', args, cwd: '/fixture/consumer', input: 'Session input.\n', home: '/fixture/home', pid: 7003 }]);
+  assert.deepEqual(run.output(), []);
+});
+
+/** The two clock methods a hang uses, with a manual `advance` the test drives. */
+function manualClock() {
+  let at = 0;
+  let next = 0;
+  const pending = new Map();
+  return {
+    schedule: (done, delay) => { next += 1; pending.set(next, { done, due: at + delay }); return next; },
+    cancel: (handle) => { pending.delete(handle); },
+    advance: (by) => {
+      at += by;
+      for (const [handle, { done, due }] of [...pending]) if (due <= at) { pending.delete(handle); done(); }
+    },
+    pending: () => pending.size,
+  };
+}
+
+test('a logical hanging probe stays pending across injected time until its cleanup', async () => {
+  const clock = manualClock();
+  const codex = logicalCodex({ hang: true }, { clock });
+  const run = codex.start(PROBE);
+  assert.equal(codex.probes().length, 1, 'the probe is recorded, so it is ready');
+  const seen = noticed(run);
+  let boundary = false;
+  clock.schedule(() => { boundary = true; }, 1000);
+  await turn();
+  assert.deepEqual([seen.ended, run.output(), clock.pending(), boundary], [false, [], 2, false], 'pending with no output before the boundary');
+  clock.advance(999);
+  await turn();
+  assert.deepEqual([seen.ended, boundary], [false, false], 'the boundary has not passed');
+  clock.advance(1);
+  await turn();
+  assert.deepEqual([seen.ended, run.output(), clock.pending(), boundary], [false, [], 1, true], 'still pending with no output after the observed boundary');
+  assert.equal(run.cleanups().length, 1, 'the hang registers one cleanup');
+  run.cleanups()[0]();
+  await turn();
+  assert.deepEqual([seen.ended, clock.pending()], [true, 0], 'cleanup cancels the hang and ends it, with no real deadline claimed');
 });
