@@ -574,6 +574,7 @@ test('a Codex maker dispatch equals the merge base whole but for its four git ro
  * and that dispatch's own id alone is `d-<uuid>`: a prompt holding any other id does not compare.
  */
 function startedAs(sessions, at, root, events) {
+  assert.ok(at < sessions.length, `process ${at} never started: only ${sessions.length} did`);
   const start = events.filter((event) => event.event === 'dispatch.start' && event.layer === 'L1')[at];
   const { args, ...session } = sessions[at];
   return JSON.parse(JSON.stringify({ ...session, args: stableArgs(args, root), start }).split(root).join('<root>').split(start.dispatch).join('d-<uuid>'));
