@@ -28,14 +28,14 @@ const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 
 // Host reason: wiring; this process-free configuration check remains in an awaiting-split file (D30 rule 3).
 // Rigger decision: none; this check reads declared job and Node wiring without evaluating CI_POLICY.
-// Deterministic wiring counterpart: test/macos-runner.test.mjs :: runner wiring supplies exactly the three macOS jobs from the one plan output.
+// Deterministic wiring counterpart: test/macos-runner.test.mjs :: runner wiring supplies exactly the four macOS jobs from the one plan output.
 // Deterministic wiring counterpart: test/macos-runner.test.mjs :: R8: unrelated jobs keep their literal base runners.
 test('CI assigns portable candidate, selected macOS and protected-main regression lanes with Node 26', () => {
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
   assert.deepEqual(Object.keys(ci.jobs).sort(), ['cancel_superseded', 'check', 'demo', 'fast', 'full_host', 'full_ordinary', 'nightly', 'plan']);
   for (const name of ['plan', 'fast', 'check']) assert.equal(ci.jobs[name]['runs-on'], 'ubuntu-latest', name);
   for (const name of ['full_ordinary', 'full_host', 'demo']) assert.equal(ci.jobs[name]['runs-on'], '${{ fromJSON(needs.plan.outputs.runner) }}', name);
-  assert.deepEqual(ci.jobs.nightly['runs-on'], ['self-hosted', 'macOS', 'ARM64']);
+  assert.deepEqual(ci.jobs.nightly['runs-on'], '${{ fromJSON(needs.plan.outputs.runner) }}');
   assert.deepEqual(ci.jobs.check.strategy.matrix.node, ['26']);
   for (const name of ['plan', 'fast', 'full_ordinary', 'full_host', 'check', 'demo', 'nightly']) {
     const setup = ci.jobs[name].steps.find((step) => step.uses === 'actions/setup-node@v5');
@@ -1345,13 +1345,22 @@ test('self-hosted job guard exits zero only for allowed events in source and ins
 // Ordinary decision counterpart: test/macos-runner.test.mjs :: R5: every fork variable state plans hosted jobs without changing their eligibility.
 // Ordinary decision counterpart: test/macos-runner.test.mjs :: R6: needed macOS jobs refuse every nonallowlisted value and name its exact text.
 // Ordinary decision counterpart: test/macos-runner.test.mjs :: R6a: runs needing no macOS job ignore malformed values and still admit fast.
+// Ordinary decision counterpart: test/macos-runner.test.mjs :: Auto availability: ready offline busy and missing-secret states select the recorded pool.
+// Ordinary decision counterpart: test/macos-runner.test.mjs :: Auto read guards: failed incomplete malformed and ambiguous reads choose Hosted.
 test('actual plan runtime reads the runner variable and publishes only allowlisted JSON or no output on refusal', (t) => {
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github/workflows/ci.yml'), 'utf8'));
   const directory = temporaryDirectory('rigger-runner-runtime-', { context: t });
   const eventPath = join(directory, 'event.json'), outputPath = join(directory, 'output');
-  // These doubles serve only ciCollectorFixture's recorded Git/API responses; the policy text is unaltered.
+  const probePath = join(directory, 'auto-probe.json');
+  // Source doubles retain recorded collector contracts; Auto-only runners/probes follow card 971.
   const prefix = `import cp from 'node:child_process';
     import { syncBuiltinESMExports } from 'node:module';
+    import { writeFileSync } from 'node:fs';
+    const autoProbe = process.env.RUNNER_AUTO_PROBE ? { pid: process.pid,
+      sourceRequestCount: 0, ordinarySourceCredentialMatches: true, runnerRequests: [] } : undefined;
+    if (autoProbe) process.on('exit', () => {
+      writeFileSync(process.env.RUNNER_AUTO_PROBE, JSON.stringify(autoProbe));
+    });
     const fixture = JSON.parse(process.env.RUNNER_FIXTURE);
     cp.execFileSync = (command, args) => {
       const key = JSON.stringify(args);
@@ -1360,16 +1369,43 @@ test('actual plan runtime reads the runner variable and publishes only allowlist
     };
     syncBuiltinESMExports();
     globalThis.fetch = async (url, options) => {
+      // Auto-only fixed runners data follows card 971's accepted GitHub response contract.
+      if (autoProbe && String(url) === 'https://api.github.com/repos/williacj/rigger/actions/runners?per_page=100') {
+        autoProbe.runnerRequests.push({ url: String(url), method: options.method, redirect: options.redirect,
+          dedicatedCredentialMatches: options.headers?.authorization === 'Bearer fixture-runner-read',
+          ordinaryCredentialUsed: options.headers?.authorization === 'Bearer fixture-token',
+          hasAbortSignal: options.signal instanceof AbortSignal });
+        if (process.env.RUNNER_AUTO_CASE === 'sensitive-request-rejection') {
+          throw new Error('runner-private fixture-runner-read');
+        }
+        return new Response(JSON.stringify({ total_count: 1,
+          runners: [{ id: 23, name: 'CJs-Mac-mini', os: 'macOS', status: 'online', busy: false,
+            labels: [{ name: 'self-hosted' }, { name: 'macOS' }, { name: 'ARM64' }, { name: 'rigger-ci' }] }] }),
+          { status: 200 });
+      }
       const path = new URL(url).pathname + new URL(url).search;
       if (options.method !== 'GET' || !Object.hasOwn(fixture.api, path)) throw new Error('unrecorded API call');
+      if (autoProbe) {
+        autoProbe.sourceRequestCount += 1;
+        autoProbe.ordinarySourceCredentialMatches &&= options.headers?.authorization === 'Bearer fixture-token';
+      }
       return new Response(JSON.stringify(fixture.api[path]), { status: 200 });
     };\n`;
-  for (const [value, fork, full, expected] of [
-    ['["self-hosted","macOS","ARM64"]', false, true, ['self-hosted', 'macOS', 'ARM64']],
+  for (const [value, fork, full, expected, auto] of [
+    ['["self-hosted","macOS","ARM64","rigger-ci"]', false, true, ['self-hosted', 'macOS', 'ARM64', 'rigger-ci']],
     ['"macos-latest"', false, true, 'macos-latest'],
     ['bad\nrunner=injected', false, true, null],
     ['bad\nrunner=injected', false, false, 'macos-latest'],
     ['["self-hosted","macOS","ARM64"]', true, true, 'macos-latest'],
+    ['"auto"', false, true, ['self-hosted', 'macOS', 'ARM64', 'rigger-ci'],
+      { name: 'ready', token: 'fixture-runner-read', runnerGets: 1,
+        selectedRunner: '["self-hosted","macOS","ARM64","rigger-ci"]', runnerReason: 'auto-mini-ready' }],
+    ['"auto"', false, true, 'macos-latest',
+      { name: 'missing-secret', token: '', runnerGets: 0,
+        selectedRunner: '"macos-latest"', runnerReason: 'missing-secret' }],
+    ['"auto"', false, true, 'macos-latest',
+      { name: 'sensitive-request-rejection', token: 'fixture-runner-read', runnerGets: 1,
+        selectedRunner: '"macos-latest"', runnerReason: 'network-error' }],
   ]) {
     const fixture = ciCollectorFixture();
     fixture.event.repository.id = 44;
@@ -1378,13 +1414,18 @@ test('actual plan runtime reads the runner variable and publishes only allowlist
       Object.assign(fixture.event, { action: 'labeled', sender: { login: 'williacj' }, label: { name: 'ci:full' } });
       fixture.api['/repos/williacj/rigger/issues/7/labels?per_page=100'] = [{ name: 'ci:full' }];
     }
+    if (auto) writeFileSync(probePath, '');
     writeFileSync(eventPath, JSON.stringify(fixture.event)); writeFileSync(outputPath, '');
     const ran = spawnSync(process.execPath, ['--input-type=module', '-e', prefix + ci.env.CI_POLICY], {
       encoding: 'utf8', timeout: 5000,
       env: { ...process.env, GH_TOKEN: 'fixture-token', GITHUB_API_URL: 'https://api.github.test',
         GITHUB_EVENT_PATH: eventPath, GITHUB_EVENT_NAME: 'pull_request', GITHUB_REF: 'refs/pull/7/merge',
         GITHUB_SHA: 'a'.repeat(40), GITHUB_REPOSITORY: 'williacj/rigger', GITHUB_REPOSITORY_OWNER: 'williacj',
-        GITHUB_OUTPUT: outputPath, CI_POLICY_ACTION: 'plan', CI_MACOS_RUNNER: value, RUNNER_FIXTURE: JSON.stringify(fixture) },
+        GITHUB_OUTPUT: outputPath, CI_POLICY_ACTION: 'plan', CI_MACOS_RUNNER: value, RUNNER_FIXTURE: JSON.stringify(fixture),
+        ...(auto ? { CI_RUNNER_READ_TOKEN: auto.token, RUNNER_AUTO_CASE: auto.name,
+          RUNNER_AUTO_PROBE: probePath, RUNNER_NAME: 'fixture-plan-machine',
+          RUNNER_OS: 'Linux', RUNNER_ARCH: 'X64' } : {}),
+      },
     });
     assert.equal(ran.error, undefined);
     const output = readFileSync(outputPath, 'utf8');
@@ -1398,7 +1439,347 @@ test('actual plan runtime reads the runner variable and publishes only allowlist
       assert.equal(runners.length, 1);
       assert.deepEqual(JSON.parse(runners[0].slice('runner='.length)), expected);
       assert.doesNotMatch(output, /^runner=injected$/m);
+      if (auto) {
+        const reasons = output.split('\n').filter(line => line.startsWith('runnerReason='));
+        assert.equal(reasons.length, 1, auto.name + ': one actual selection-reason output');
+        assert.equal(reasons[0].slice('runnerReason='.length), auto.runnerReason, auto.name);
+        assert.deepEqual(output.split('\n').filter(line => line.startsWith('mode=')),
+          ['mode=BROAD_EXECUTED'], auto.name + ': trusted full-work source premise');
+        const probeText = readFileSync(probePath, 'utf8');
+        const probe = JSON.parse(probeText);
+        assert.equal(probe.pid, ran.pid, auto.name + ': observed the actual runtime child');
+        assert.ok(probe.sourceRequestCount > 0, auto.name + ': source API reads actually occurred');
+        assert.equal(probe.ordinarySourceCredentialMatches, true, auto.name + ': ordinary source-token separation');
+        assert.deepEqual(probe.runnerRequests, auto.runnerGets === 0 ? [] : [{
+          url: 'https://api.github.com/repos/williacj/rigger/actions/runners?per_page=100',
+          method: 'GET', redirect: 'error', dedicatedCredentialMatches: true,
+          ordinaryCredentialUsed: false, hasAbortSignal: true,
+        }], auto.name + ': bounded fixed request uses the dedicated environment token');
+        const records = ran.stdout.split('\n').filter(Boolean).map(line => JSON.parse(line));
+        assert.equal(records.length, 1, auto.name + ': one existing production metadata record');
+        assert.equal(records[0].runner, 'fixture-plan-machine', auto.name + ': execution machine is preserved');
+        assert.equal(records[0].runnerOS, 'Linux', auto.name);
+        assert.equal(records[0].runnerArch, 'X64', auto.name);
+        for (const [channel, text] of [['stdout', ran.stdout], ['stderr', ran.stderr], ['output', output]]) {
+          for (const marker of ['fixture-runner-read', 'fixture-token', 'runner-private']) {
+            assert.equal(text.includes(marker), false, auto.name + ':' + channel + ': no synthetic credential/private text');
+          }
+        }
+        // Retain safe byte-complete fixture/child observations in the outer proof before teardown.
+        t.diagnostic(JSON.stringify({ fixture: 'auto-runtime', case: auto.name, pid: ran.pid,
+          status: ran.status, signal: ran.signal,
+          probeBase64: Buffer.from(probeText).toString('base64'),
+          stdoutBase64: Buffer.from(ran.stdout).toString('base64'),
+          stderrBase64: Buffer.from(ran.stderr).toString('base64'),
+          outputBase64: Buffer.from(output).toString('base64') }));
+        assert.equal(records[0].selectedRunner, auto.selectedRunner, auto.name + ': selected pool is logged');
+        assert.equal(records[0].runnerReason, auto.runnerReason, auto.name + ': fixed selection reason is logged');
+      }
     }
+  }
+});
+
+// Host reason: real deadline; native timeout aborts real fetch/header/body IO at an owned HTTP endpoint.
+// Ordinary decision counterpart: test/macos-runner.test.mjs :: Auto deadlines: aborted header and body reads retain one Hosted snapshot.
+test('Auto native deadlines: headers and body reads abort the owned HTTP request', { timeout: 20_000 }, async (t) => {
+  const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
+  const deferred = () => {
+    let resolve;
+    const promise = new Promise((done) => { resolve = done; });
+    return { promise, resolve };
+  };
+  // Native contracts: Node AbortSignal.timeout/http/child_process and WHATWG Fetch #abort-fetch.
+  // The100ms native clock proves real wiring; [30000] separately proves the production request.
+  // Neither this test nor its elapsed observations claim a literal30-second/default-factory run.
+  const bootstrap = String.raw`const receipt = { fixture: 'native-runner-deadline', stage: process.env.NATIVE_STAGE,
+  pid: process.pid, requested: [], requests: [], trace: [], nativeArms: 0, nativeEvents: 0,
+  cleanupRequested: false, fetchSettled: false, bodySettled: false };
+const note = (event) => receipt.trace.push({ event, at: performance.now() });
+const tell = (kind, fields = {}) => {
+  if (process.connected) process.send({ kind, ...fields }, (error) => {
+    if (error) receipt.ipcError = error.code;
+  });
+};
+const controller = new AbortController();
+process.on('message', (message) => {
+  if (message.kind === 'cleanup') {
+    receipt.cleanupRequested = true;
+    controller.abort(new Error('owned fixture cleanup'));
+  } else if (message.kind === 'arm' && receipt.nativeArms === 0) {
+    receipt.nativeArms += 1;
+    receipt.armedAt = performance.now();
+    const clock = AbortSignal.timeout(100);
+    note('native-armed');
+    tell('armed', { nativeArms: receipt.nativeArms });
+    clock.addEventListener('abort', () => {
+      receipt.nativeEvents += 1;
+      receipt.abortAt = performance.now();
+      receipt.nativeReason = clock.reason?.name;
+      controller.abort(clock.reason);
+      receipt.relayReasonMatches = controller.signal.reason === clock.reason;
+      note('native-aborted');
+    }, { once: true });
+  }
+});
+try {
+  const policy = await import('data:text/javascript;base64,' + Buffer.from(process.env.NATIVE_SOURCE).toString('base64'));
+  const facts = JSON.parse(process.env.NATIVE_FACTS);
+  receipt.policy = policy.policy(facts);
+  receipt.trusted = facts.sameRepository === true;
+  tell('policy', { policy: receipt.policy, trusted: receipt.trusted });
+  const selection = await policy.selectRunner({
+    facts, macosRunner: '"auto"', token: process.env.NATIVE_RUNNER_TOKEN,
+    deadline: (milliseconds) => { receipt.requested.push(milliseconds); return controller.signal; },
+    send: async (url, options) => {
+      const request = { url: String(url), method: options.method, redirect: options.redirect,
+        credentialMatches: options.headers?.authorization === 'Bearer ' + process.env.NATIVE_RUNNER_TOKEN,
+        signalMatchesDeadline: options.signal === controller.signal };
+      receipt.requests.push(request);
+      const pending = fetch(process.env.NATIVE_URL, options);
+      pending.then(() => { receipt.fetchSettled = true; }, (error) => {
+        receipt.fetchSettled = true; receipt.fetchErrorName = error.name;
+      });
+      tell('request', { request, requested: [...receipt.requested] });
+      const response = await pending;
+      if (receipt.stage === 'body-nonreturn') {
+        const read = response.arrayBuffer.bind(response);
+        response.arrayBuffer = (...args) => {
+          const actual = read(...args);
+          actual.then(() => { receipt.bodySettled = true; }, (error) => {
+            receipt.bodySettled = true; receipt.bodyErrorName = error.name;
+          });
+          tell('body', { status: response.status, ok: response.ok,
+            pending: !receipt.bodySettled, nativePromise: actual instanceof Promise });
+          return actual;
+        };
+      }
+      return response;
+    },
+  });
+  receipt.result = policy.runPolicy({ action: 'plan', facts, macosRunner: '"auto"', runnerSelection: selection });
+  receipt.resolvedAt = performance.now();
+  note('plan-resolved');
+} catch (error) {
+  receipt.failure = { name: error.name, code: error.code };
+  process.exitCode = 1;
+} finally {
+  await new Promise((resolve) => process.stdout.write(JSON.stringify(receipt) + '\n', resolve));
+  if (process.connected) process.disconnect();
+}`;
+  for (const stage of ['headers-nonreturn', 'body-nonreturn']) {
+    const token = 'fixture-native-read';
+    const path = '/repos/williacj/rigger/actions/runners?per_page=100';
+    const { facts } = ciFullFixture();
+    facts.sameRepository = true;
+    const state = { stage, requests: [], events: [], cleanupStarted: false, forcedKill: false,
+      cleanupErrors: [], watchdog: false, readinessWatchdog: false, ready: false, completed: false };
+    const mark = (event) => state.events.push({ event, at: performance.now() });
+    const policyReady = deferred(), requestReady = deferred(), bodyReady = deferred();
+    const httpReady = deferred(), armed = deferred(), responseClosed = deferred(), childClosed = deferred();
+    const fault = deferred();
+    const sockets = new Set(), socketClosures = [];
+    let child, stdout = '', stderr = '', setupError, watchdogSignal, watchdogListener, cleanupPromise;
+    let readinessSignal, readinessListener;
+    const fail = (reason) => { state.fault ??= reason; fault.resolve(false); };
+    const server = createServer((request, response) => {
+      const observed = { method: request.method, path: request.url,
+        credentialMatches: request.headers.authorization === 'Bearer ' + token };
+      state.requests.push(observed);
+      mark('http-request');
+      response.on('close', () => {
+        observed.closeBeforeCleanup = !state.cleanupStarted;
+        observed.neverEnded = !response.writableEnded && !response.writableFinished;
+        mark('response-close');
+        responseClosed.resolve(true);
+      });
+      if (stage === 'body-nonreturn') {
+        response.writeHead(200, { 'content-type': 'application/json', 'content-length': '4096' });
+        response.flushHeaders();
+        response.write('{');
+      }
+      observed.headersSent = response.headersSent;
+      httpReady.resolve(true);
+    });
+    server.on('connection', (socket) => {
+      sockets.add(socket);
+      socketClosures.push(new Promise((resolve) => socket.once('close', () => {
+        sockets.delete(socket); resolve();
+      })));
+      socket.on('error', (error) => { state.socketError = error.code; });
+    });
+    server.on('error', (error) => fail('server:' + error.code));
+    const cleanup = () => {
+      if (cleanupPromise) return cleanupPromise;
+      cleanupPromise = (async () => {
+        state.cleanupStarted = true;
+        mark('cleanup-start');
+        if (readinessSignal) readinessSignal.removeEventListener('abort', readinessListener);
+        if (watchdogSignal) watchdogSignal.removeEventListener('abort', watchdogListener);
+        t.signal.removeEventListener('abort', onAbort);
+        if (child?.connected) child.send({ kind: 'cleanup' }, () => {});
+        const closed = new Promise((resolve) => server.close((error) => {
+          if (error && error.code !== 'ERR_SERVER_NOT_RUNNING') state.cleanupErrors.push(error.code);
+          state.serverClosed = true; resolve();
+        }));
+        server.closeAllConnections();
+        if (child && Number.isInteger(state.childPidAtStart) && child.exitCode === null && child.signalCode === null) {
+          const grace = AbortSignal.timeout(1000);
+          const expired = deferred();
+          const onGrace = () => expired.resolve();
+          grace.addEventListener('abort', onGrace, { once: true });
+          await Promise.race([childClosed.promise, expired.promise]);
+          grace.removeEventListener('abort', onGrace);
+          if (child.exitCode === null && child.signalCode === null) {
+            state.forcedKill = true;
+            child.kill('SIGKILL');
+          }
+        }
+        if (child) await childClosed.promise;
+        await closed;
+        await Promise.all(socketClosures);
+        state.openSockets = sockets.size;
+        mark('cleanup-complete');
+      })();
+      return cleanupPromise;
+    };
+    const onAbort = () => { fail('test-aborted'); void cleanup(); };
+    t.signal.addEventListener('abort', onAbort, { once: true });
+    t.after(cleanup);
+    try {
+      if (t.signal.aborted) throw new Error('fixture aborted before listen');
+      await new Promise((resolve, reject) => {
+        server.once('error', reject);
+        server.listen(0, '127.0.0.1', () => { server.removeListener('error', reject); resolve(); });
+      });
+      state.listening = server.listening;
+      mark('listening');
+      if (t.signal.aborted) throw new Error('fixture aborted before client');
+      child = spawn(process.execPath, ['--input-type=module', '-e', bootstrap], {
+        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+        env: { ...process.env, CI_POLICY_ACTION: '', GH_TOKEN: '', CI_RUNNER_READ_TOKEN: '',
+          NATIVE_STAGE: stage, NATIVE_SOURCE: ci.env.CI_POLICY, NATIVE_FACTS: JSON.stringify(facts),
+          NATIVE_URL: 'http://127.0.0.1:' + server.address().port + path, NATIVE_RUNNER_TOKEN: token },
+      });
+      state.childPidAtStart = child.pid;
+      mark('child-start');
+      child.stdout.on('data', (bytes) => { stdout += bytes; });
+      child.stderr.on('data', (bytes) => { stderr += bytes; });
+      child.on('error', (error) => fail('child:' + error.code));
+      child.on('message', (message) => {
+        mark('ipc-' + message.kind);
+        if (message.kind === 'policy') {
+          state.policy = message.policy; state.trusted = message.trusted; policyReady.resolve(true);
+        } else if (message.kind === 'request') {
+          state.request = message.request; state.requested = message.requested; requestReady.resolve(true);
+        } else if (message.kind === 'body') {
+          state.body = message; bodyReady.resolve(true);
+        } else if (message.kind === 'armed') {
+          state.armed = message; armed.resolve(true);
+        }
+      });
+      child.on('close', (code, signal) => {
+        state.childExit = { code, signal };
+        try { state.receipt = JSON.parse(stdout.trim()); }
+        catch { fail('child-receipt-unavailable'); }
+        state.resultBeforeCleanup = !state.cleanupStarted && Boolean(state.receipt?.result);
+        if (!state.receipt?.result || state.receipt.nativeArms !== 1) fail('child-closed-before-native-result');
+        childClosed.resolve(true);
+      });
+      // This failure-only readiness guard cannot arm or manufacture the production deadline.
+      readinessSignal = AbortSignal.timeout(5000);
+      readinessListener = () => { state.readinessWatchdog = true; fail('readiness-watchdog'); };
+      readinessSignal.addEventListener('abort', readinessListener, { once: true });
+      if (stage === 'headers-nonreturn') bodyReady.resolve(true);
+      state.ready = await Promise.race([
+        Promise.all([policyReady.promise, requestReady.promise, httpReady.promise, bodyReady.promise]).then(() => true),
+        fault.promise,
+      ]);
+      // Record/check premises outside send/Body so no fixture assertion becomes network-error.
+      const valid = state.ready && state.listening && state.trusted &&
+        state.policy?.mode === 'BROAD_EXECUTED' && state.policy.sourceValid &&
+        state.requested?.length === 1 && state.requested[0] === 30000 &&
+        state.request?.url === 'https://api.github.com' + path && state.request.method === 'GET' &&
+        state.request.redirect === 'error' && state.request.credentialMatches &&
+        state.requests.length === 1 && state.requests[0].method === 'GET' &&
+        state.requests[0].path === path && state.requests[0].credentialMatches &&
+        (stage === 'headers-nonreturn' || (state.body.ok && state.body.status === 200 &&
+          state.body.pending && state.body.nativePromise));
+      if (valid && state.request.signalMatchesDeadline) {
+        mark('arm-sent');
+        child.send({ kind: 'arm' }, (error) => { if (error) fail('arm:' + error.code); });
+        const acknowledged = await Promise.race([armed.promise, fault.promise]);
+        if (acknowledged) {
+          readinessSignal.removeEventListener('abort', readinessListener);
+          watchdogSignal = AbortSignal.timeout(5000);
+          const expired = deferred();
+          watchdogListener = () => { state.watchdog = true; expired.resolve(false); };
+          watchdogSignal.addEventListener('abort', watchdogListener, { once: true });
+          state.completed = await Promise.race([
+            Promise.all([childClosed.promise, responseClosed.promise]).then(() => true),
+            fault.promise, expired.promise,
+          ]);
+        }
+      }
+    } catch (error) {
+      setupError = error;
+    } finally {
+      await cleanup();
+    }
+    // Retain captured native streams/protocol before any assertion can fail; no header/token values.
+    t.diagnostic(JSON.stringify({ fixture: 'native-runner-deadline', stage, state,
+      argvFlags: ['--input-type=module', '-e'], execPath: process.execPath,
+      bootstrapBase64: Buffer.from(bootstrap).toString('base64'),
+      sourceBase64: Buffer.from(ci.env.CI_POLICY).toString('base64'),
+      factsBase64: Buffer.from(JSON.stringify(facts)).toString('base64'),
+      stdoutBase64: Buffer.from(stdout).toString('base64'), stderrBase64: Buffer.from(stderr).toString('base64') }));
+    assert.ifError(setupError);
+    assert.deepEqual(state.cleanupErrors, [], stage);
+    assert.equal(state.serverClosed, true, stage);
+    assert.equal(state.openSockets, 0, stage);
+    assert.equal(state.forcedKill, false, stage);
+    assert.equal(state.readinessWatchdog, false, stage + ': bounded fixture readiness');
+    assert.equal(state.ready, true, stage + ': fixture/policy/request readiness');
+    assert.deepEqual(state.policy, { mode: 'BROAD_EXECUTED', demoNeeded: false, sourceValid: true }, stage);
+    assert.equal(state.trusted, true, stage);
+    assert.deepEqual(state.requested, [30000], stage + ': independent production requested deadline');
+    assert.equal(state.request.url, 'https://api.github.com' + path, stage);
+    assert.equal(state.request.method, 'GET', stage);
+    assert.equal(state.request.redirect, 'error', stage);
+    assert.equal(state.request.credentialMatches, true, stage);
+    assert.equal(state.requests.length, 1, stage + ': one real HTTP GET');
+    assert.equal(state.requests[0].method, 'GET', stage);
+    assert.equal(state.requests[0].path, path, stage);
+    assert.equal(state.requests[0].credentialMatches, true, stage);
+    assert.equal(state.request.signalMatchesDeadline, true, stage + ': deadline signal reaches native fetch');
+    if (stage === 'body-nonreturn') {
+      assert.deepEqual(state.body, { kind: 'body', status: 200, ok: true, pending: true, nativePromise: true });
+    }
+    assert.equal(state.watchdog, false, stage + ': failure watchdog never supplies selection success');
+    assert.equal(state.completed, true, stage);
+    assert.deepEqual(state.childExit, { code: 0, signal: null }, stage);
+    assert.equal(state.receipt.pid, state.childPidAtStart, stage);
+    assert.equal(state.receipt.cleanupRequested, false, stage + ': result precedes fixture cleanup');
+    assert.equal(state.resultBeforeCleanup, true, stage);
+    assert.equal(state.receipt.nativeArms, 1, stage);
+    assert.equal(state.receipt.nativeEvents, 1, stage);
+    assert.equal(state.receipt.nativeReason, 'TimeoutError', stage);
+    assert.equal(state.receipt.relayReasonMatches, true, stage);
+    assert.equal(state.receipt.fetchSettled, true, stage + ': actual native fetch settled');
+    if (stage === 'headers-nonreturn') {
+      assert.equal(typeof state.receipt.fetchErrorName, 'string', stage + ': native fetch rejected');
+    } else {
+      assert.equal(state.receipt.bodySettled, true, stage + ': actual native body settled');
+      assert.equal(typeof state.receipt.bodyErrorName, 'string', stage + ': native body rejected');
+    }
+    assert.ok(state.receipt.abortAt > state.receipt.armedAt, stage);
+    assert.ok(state.receipt.resolvedAt >= state.receipt.abortAt, stage);
+    assert.equal(state.receipt.result.output.runner, '"macos-latest"', stage);
+    assert.equal(state.receipt.result.output.runnerReason, 'timed-out', stage);
+    assert.equal(state.receipt.result.output.mode, 'BROAD_EXECUTED', stage);
+    assert.equal(state.requests[0].headersSent, stage === 'body-nonreturn', stage);
+    assert.equal(state.requests[0].closeBeforeCleanup, true, stage + ': real peer abort before fixture cleanup');
+    assert.equal(state.requests[0].neverEnded, true, stage + ': server never finishes the response');
+    assert.equal(stdout.includes(token) || stderr.includes(token), false, stage + ': no synthetic credential leaks');
   }
 });
 

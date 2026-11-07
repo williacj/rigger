@@ -153,15 +153,71 @@ env:
       const required = fresh.mode === 'BROAD_EXECUTED' ? 'success' : 'skipped';
       return results.full_ordinary === required && results.full_host === required && results.demo === (fresh.demoNeeded ? 'success' : 'skipped');
     }
-    export function runPolicy({ action, facts, proof = {}, worker, macosRunner } = {}) {
+    export async function selectRunner({ facts, macosRunner, token, send = fetch, deadline = AbortSignal.timeout } = {}) {
+      const fresh = policy(facts);
+      if (macosRunner !== '"auto"' || !fresh.sourceValid || !(fresh.mode === 'BROAD_EXECUTED' || fresh.demoNeeded)
+        || (facts?.event === 'pull_request' && facts.sameRepository !== true)) return undefined;
+      const hosted = (runnerReason) => ({ runner: '"macos-latest"', runnerReason });
+      const credential = token ?? process.env.CI_RUNNER_READ_TOKEN;
+      if (!credential) return hosted('missing-secret');
+      let response, signal;
+      try {
+        signal = deadline(30_000);
+        response = await send('https://api.github.com/repos/williacj/rigger/actions/runners?per_page=100', {
+          method: 'GET', redirect: 'error',
+          headers: { authorization: 'Bearer ' + credential, accept: 'application/vnd.github+json' },
+          signal,
+        });
+      } catch { return hosted(signal?.aborted ? 'timed-out' : 'network-error'); }
+      if (!response.ok) return hosted([401, 403].includes(response.status) ? 'denied' : 'http-error');
+      if (/rel="next"/.test(response.headers.get('link') ?? '')) return hosted('incomplete');
+      const limit = 2 * 1024 * 1024;
+      const length = response.headers.get('content-length');
+      const encoding = response.headers.get('content-encoding');
+      const decodedLength = length !== null && (!encoding || encoding === 'identity');
+      if (decodedLength && Number(length) > limit) return hosted('incomplete');
+      let bytes;
+      try { bytes = new Uint8Array(await response.arrayBuffer()); }
+      catch { return hosted(signal?.aborted ? 'timed-out' : 'network-error'); }
+      if (bytes.length > limit || (decodedLength && Number(length) !== bytes.length)) return hosted('incomplete');
+      let body;
+      try { body = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); }
+      catch { return hosted('malformed'); }
+      if (!body || typeof body !== 'object' || Array.isArray(body) || !Number.isSafeInteger(body.total_count)
+        || body.total_count < 0 || !Array.isArray(body.runners)) return hosted('malformed');
+      if (body.total_count !== body.runners.length || body.runners.length > 100) return hosted('incomplete');
+      const ids = new Set();
+      for (const runner of body.runners) {
+        if (!runner || typeof runner !== 'object' || Array.isArray(runner) || !Number.isSafeInteger(runner.id)
+          || runner.id <= 0 || typeof runner.name !== 'string' || typeof runner.os !== 'string'
+          || !['online', 'offline'].includes(runner.status) || typeof runner.busy !== 'boolean'
+          || !Array.isArray(runner.labels) || !runner.labels.every((label) => label && typeof label.name === 'string')) return hosted('malformed');
+        if (ids.has(runner.id)) return hosted('ambiguous');
+        ids.add(runner.id);
+      }
+      const mini = body.runners.find((runner) => runner.id === 23);
+      if (!mini) return hosted('missing-id');
+      if (mini.name !== 'CJs-Mac-mini' || mini.os !== 'macOS') return hosted('identity-mismatch');
+      if (!['self-hosted', 'macOS', 'ARM64', 'rigger-ci'].every((name) => mini.labels.some((label) => label.name === name))) return hosted('missing-label');
+      if (body.runners.some((runner) => runner.id !== 23 && runner.labels.some((label) => label.name === 'rigger-ci'))) return hosted('ambiguous');
+      if (mini.status === 'offline') return hosted('auto-mini-offline');
+      if (mini.busy === true) return hosted('auto-mini-busy');
+      return { runner: '["self-hosted","macOS","ARM64","rigger-ci"]', runnerReason: 'auto-mini-ready' };
+    }
+    export function runPolicy({ action, facts, proof = {}, worker, macosRunner, runnerSelection } = {}) {
       const fresh = policy(facts);
       if (action === 'plan') {
         let runner = '"macos-latest"';
+        let runnerReason;
         if ((fresh.mode === 'BROAD_EXECUTED' || fresh.demoNeeded) && (facts?.event !== 'pull_request' || facts.sameRepository === true)) {
-          runner = macosRunner || runner;
-          if (!['"macos-latest"', '["self-hosted","macOS","ARM64"]'].includes(runner)) throw new Error('MACOS_RUNNER is outside the allowlist: ' + JSON.stringify(macosRunner));
+          runner = macosRunner === '"auto"' ? runner : macosRunner || runner;
+          if (!['"macos-latest"', '["self-hosted","macOS","ARM64","rigger-ci"]'].includes(runner)) throw new Error('MACOS_RUNNER is outside the allowlist: ' + JSON.stringify(macosRunner));
+          if (macosRunner === '"auto"' && runnerSelection) {
+            runner = runnerSelection.runner;
+            runnerReason = runnerSelection.runnerReason;
+          }
         }
-        return { ok: true, output: { runner, mode: fresh.mode, demoNeeded: fresh.demoNeeded, sha: fresh.sourceValid ? facts.checkout.sha : '', tree: fresh.sourceValid ? facts.checkout.tree : '', snapshot: fresh.sourceValid ? JSON.stringify(source(facts)) : '' } };
+        return { ok: true, output: { runner, ...(runnerReason === undefined ? {} : { runnerReason }), mode: fresh.mode, demoNeeded: fresh.demoNeeded, sha: fresh.sourceValid ? facts.checkout.sha : '', tree: fresh.sourceValid ? facts.checkout.tree : '', snapshot: fresh.sourceValid ? JSON.stringify(source(facts)) : '' } };
       }
       const verified = fresh.sourceValid && proof.sourceValid === true && proof.mode === fresh.mode && JSON.stringify(proof.source) === JSON.stringify(source(facts));
       if (action === 'worker') {
@@ -181,8 +237,10 @@ env:
       try { expected = JSON.parse(process.env.CI_EXPECTED_SOURCE ?? 'null'); } catch { expected = null; }
       let results = {};
       try { results = Object.fromEntries(Object.entries(JSON.parse(process.env.CI_RESULTS ?? '{}')).map(([name, job]) => [name, job.result])); } catch { results = {}; }
-      const result = runPolicy({ action: process.env.CI_POLICY_ACTION, facts, macosRunner: process.env.CI_MACOS_RUNNER, worker: process.env.CI_WORKER, proof: { mode: process.env.CI_EXPECTED_MODE, demoNeeded: process.env.CI_EXPECTED_DEMO === 'true' ? true : process.env.CI_EXPECTED_DEMO === 'false' ? false : undefined, sourceValid: expected !== null, source: expected, results } });
-      console.log(JSON.stringify({ job: process.env.GITHUB_JOB, mode: policy(facts).mode, source: result.source, testedBase: result.testedBase, eventBase: result.eventBase, currentMain: result.currentMain, mainAdvanced: result.mainAdvanced, node: process.version, platform: process.platform, runner: process.env.RUNNER_NAME, runnerOS: process.env.RUNNER_OS, runnerArch: process.env.RUNNER_ARCH }));
+      const runnerSelection = process.env.CI_POLICY_ACTION === 'plan'
+        ? await selectRunner({ facts, macosRunner: process.env.CI_MACOS_RUNNER }) : undefined;
+      const result = runPolicy({ action: process.env.CI_POLICY_ACTION, facts, macosRunner: process.env.CI_MACOS_RUNNER, runnerSelection, worker: process.env.CI_WORKER, proof: { mode: process.env.CI_EXPECTED_MODE, demoNeeded: process.env.CI_EXPECTED_DEMO === 'true' ? true : process.env.CI_EXPECTED_DEMO === 'false' ? false : undefined, sourceValid: expected !== null, source: expected, results } });
+      console.log(JSON.stringify({ job: process.env.GITHUB_JOB, mode: policy(facts).mode, source: result.source, testedBase: result.testedBase, eventBase: result.eventBase, currentMain: result.currentMain, mainAdvanced: result.mainAdvanced, node: process.version, platform: process.platform, runner: process.env.RUNNER_NAME, runnerOS: process.env.RUNNER_OS, runnerArch: process.env.RUNNER_ARCH, selectedRunner: result.output?.runner, runnerReason: result.output?.runnerReason }));
       if (result.output) for (const [key, value] of Object.entries(result.output)) appendFileSync(process.env.GITHUB_OUTPUT, key + '=' + String(value) + '\n');
       if (!result.ok) throw new Error(result.reason);
     }
@@ -192,6 +250,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       runner: ${{ steps.policy.outputs.runner }}
+      runnerReason: ${{ steps.policy.outputs.runnerReason }}
       mode: ${{ steps.policy.outputs.mode }}
       demoNeeded: ${{ steps.policy.outputs.demoNeeded }}
       sha: ${{ steps.policy.outputs.sha }}
@@ -210,6 +269,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CI_POLICY_ACTION: plan
           CI_MACOS_RUNNER: ${{ vars.MACOS_RUNNER }}
+          CI_RUNNER_READ_TOKEN: ${{ secrets.CI_RUNNER_READ_TOKEN }}
   fast:
     needs: [plan]
     if: ${{ needs.plan.result == 'success' && needs.plan.outputs.mode != 'MAIN_FULL' }}
@@ -554,7 +614,7 @@ jobs:
   nightly:
     needs: [plan]
     if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && needs.plan.result == 'success' && needs.plan.outputs.mode == 'MAIN_FULL' }}
-    runs-on: [self-hosted, macOS, ARM64]
+    runs-on: ${{ fromJSON(needs.plan.outputs.runner) }}
     steps:
       - uses: actions/checkout@v5
         with:

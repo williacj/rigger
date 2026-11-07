@@ -197,3 +197,38 @@ behaviour, which `docs/spec/requirements.md` alone records.
 The cost is that an authored binding edit under a kind without `owner` must stop and return to
 an owner-judged kind. That card incurs the configured judges and waits for the owner's merge.
 M5 ends the interim process rule; a trusted gate record would replace the human check.
+
+## D31 — macOS CI runs on hosted runners unless the owner selects the Mac mini
+
+**Status:** Superseded by D32.
+
+### Rule
+
+1. `full_ordinary`, `full_host` and `demo` run on GitHub's hosted macOS runner unless the repository
+   variable `MACOS_RUNNER` selects the owner's self-hosted runner. Only the owner sets it.
+2. A result from either runner counts alike for `check (26)`. Selecting the self-hosted runner is the
+   owner's trust in that machine's proof.
+3. No job from a fork runs on the self-hosted runner. Three things hold that:
+   - `plan` gives a fork head the hosted runner;
+   - GitHub's setting for fork runs stays at `all_external_contributors`, and the owner approves no fork run;
+   - the self-hosted runner's job-started hook refuses the job.
+4. Every runner carrying the self-hosted labels runs that hook, and the owner installs it before
+   selecting that runner.
+5. A job from a same-repository branch runs as the owner's user, with the owner's sign-ins, on the
+   self-hosted runner. Rigger accepts that, because only the owner and the owner's agents write
+   branches here, and agents already hold the owner's token (`D25` rule 3).
+
+### Deferred, and what returns it
+
+| Deferred | Returns when |
+|---|---|
+| A dedicated OS user for the self-hosted runner | `D28`'s row for a dedicated user returns, or anyone but the owner and the owner's agents gains write access |
+| A self-hosted runner in Rigger's shipped templates | A consumer asks for one |
+
+### Notes
+
+A condition in `.github/workflows/ci.yml` cannot bind a fork, because a `pull_request` run takes its workflow from the
+merge commit. So rule 3 names what holds outside the workflow.
+
+What reverses this: the repository accepting outside pull requests, which ends rule 3's reliance on
+approving none, or hosted capacity no longer failing, which removes the need for the variable.
