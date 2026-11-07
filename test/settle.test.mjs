@@ -60,7 +60,7 @@ const exited = (exit, stdout = '') => ({ status: 'fulfilled', value: { exit, std
 /** Each card on `fake` by number, with the column it is in now. */
 const columnOf = async (fake) => (await fake.operations.readItems())[0].column;
 
-// proves R-WORK-34, R-RECORD-11
+// proves R-WORK-43, R-RECORD-11
 test('a continuing maker whose new tip is already on the first forge read moves to review at that tip', async () => {
   const startingHead = pullFrom(12, 120).sha;
   const tip = pullFrom(12, 121).sha;
@@ -74,19 +74,19 @@ test('a continuing maker whose new tip is already on the first forge read moves 
   assert.equal(w.l2Events()[0].forgeHead, tip);
 });
 
-// proves R-WORK-34, R-RECORD-11
-test('a continuing maker that adds no commit moves to review at the first forge read of its starting head', async () => {
+// proves R-WORK-43, R-RECORD-11
+test('a continuing maker that left a head other than the one it was given moves to review at the first forge read of that head', async () => {
   const head = pullFrom(12, 120).sha;
   const w = await world({ seed: { pullRequests: [pullFrom(12, 120)] } });
 
-  await w.l2.settled(w.card, exited(0), { expectedHead: head, reads: 1, elapsedMs: 0 });
+  await w.l2.settled(w.card, exited(0), { startHead: pullFrom(12, 119).sha, expectedHead: head, reads: 1, elapsedMs: 0 });
 
   assert.equal(await columnOf(w.fake), columns.review);
   assert.deepEqual(w.reads, ['rigger-12']);
   assert.equal(w.l2Events()[0].forgeHead, head);
 });
 
-// proves R-WORK-34
+// proves R-WORK-43
 test('a continuing maker with no readable workspace tip stays in coding and records why', async () => {
   const w = await world({ seed: { pullRequests: [pullFrom(12, 120)] } });
 
@@ -106,17 +106,17 @@ async function noUniqueOpen(seed, reason) {
   assert.deepEqual(w.fake.writes(), []);
 }
 
-// proves R-WORK-34
+// proves R-WORK-43
 test('a continuing maker with no open pull request stays in coding under R-WORK-18', async () => {
   await noUniqueOpen({}, /no open pull request/);
 });
 
-// proves R-WORK-34
+// proves R-WORK-43
 test('a continuing maker with two open pull requests stays in coding under R-WORK-18', async () => {
   await noUniqueOpen({ pullRequests: [pullFrom(12, 120), pullFrom(12, 121)] }, /more than one open pull request/);
 });
 
-// proves R-WORK-34
+// proves R-WORK-43
 test('a failed read of a continuing maker’s pull requests keeps the card in coding', async () => {
   const w = await world({ fail: true });
 
@@ -127,7 +127,7 @@ test('a failed read of a continuing maker’s pull requests keeps the card in co
   assert.match(w.l2Events()[0].reason, /card #12.*pull requests from branch rigger-12/);
 });
 
-// proves R-WORK-34, R-RECORD-11, R-RECORD-12
+// proves R-WORK-43, R-RECORD-11, R-RECORD-12
 test('a failed second forge read leaves a continuing card in coding and records the read measure', async () => {
   const old = pullFrom(12, 120).sha;
   const w = await world({ fail: true });
@@ -212,14 +212,14 @@ test('given a maker outcome of exit 0 and a read of the forge that fails, L2 lea
 });
 
 // proves R-WORK-18
-test('given a maker outcome of non-zero exit, L2 leaves the card in coding, and the read side is not asked', async () => {
+test('given a maker outcome of non-zero exit, L2 leaves the card in coding, and the line of work is read', async () => {
   const w = await world({ seed: { pullRequests: [pullFrom(12, 120)] } });
 
   await w.l2.settled(w.card, exited(1));
 
   assert.equal(await columnOf(w.fake), columns.coding);
   assert.deepEqual(w.fake.writes(), []);
-  assert.deepEqual(w.reads, []);
+  assert.deepEqual(w.reads, ['rigger-12']);
 });
 
 // proves R-WORK-18

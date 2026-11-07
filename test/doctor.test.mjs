@@ -542,11 +542,11 @@ test('a config that throws anything at all is one failed line, and the other thr
   }
 });
 
-test('doctor prints its report when validation throws from a BigInt or a getter', () => {
+test('doctor prints its report when consumerConfig refuses a getter in the config, one that would throw from a BigInt or of its own', () => {
   const bin = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')).bin.rigger;
   const cases = [
-    ['export default { get repo() { return JSON.stringify(10n); } };', 'Do not know how to serialize a BigInt'],
-    ["export default { get repo() { throw new Error('repo getter failed'); } };", 'repo getter failed'],
+    ['export default { get repo() { return JSON.stringify(10n); } };', 'holds an accessor at `default.repo`'],
+    ["export default { get repo() { throw new Error('repo getter failed'); } };", 'holds an accessor at `default.repo`'],
   ];
 
   for (const [source, reason] of cases) {
@@ -557,9 +557,9 @@ test('doctor prints its report when validation throws from a BigInt or a getter'
     const printed = ran.stdout + ran.stderr;
 
     assert.equal(ran.error, undefined);
-    // A config that throws during validation names no board, so one board line says so.
+    // A config `consumerConfig` refuses names no board, so one board line says so.
     assert.equal(checkLines(printed).length, UNREAD.length, printed);
-    assert.match(checkLines(printed).find((line) => line.includes('board checks')), /could not be validated/, printed);
+    assert.match(checkLines(printed).find((line) => line.includes('board checks')), /could not be read/, printed);
     assert.doesNotMatch(printed, /(?:^|\n)\s+at /, printed);
     const config = checkLines(printed).find((line) => line.includes('config validity'));
     assert.match(config, new RegExp(`failed.*${reason}`));
@@ -2048,4 +2048,13 @@ test('doctor prints a closer reason or an entry name carrying a line break escap
   const ran = await doctor(against(named, PASSING));
   assert.equal(checkLines(ran.text).length, CHECKED.length, ran.text);
   assert.ok(admissionLine(ran.text).includes(`${join(admissionOf(stateIn(real(named))), 'x\\n  ok  forged check: yes')} (no closer form)`), ran.text);
+});
+
+// A code that doctor read as an empty or passing rule list would report a gate no rule enforces.
+test('doctor on the private-Free refusal reports it in the failed gate line, reports no required gate and exits non-zero', async () => {
+  const refusal = 'gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)';
+  const { ran, line } = await gateReport({ failures: { 'rules/branches/main?per_page=100&page=1': refusal } });
+  assert.match(line, /^\s*failed\s+gate check required: readEffectiveRules on board \d+ failed: reading effective rules for branch main in acme\/widgets, gh: Upgrade to GitHub Pro or make this repository public to enable this feature\. \(HTTP 403\)$/);
+  assert.doesNotMatch(ran.text, /rigger\/gate is required/);
+  assert.notEqual(ran.code, 0, ran.text);
 });

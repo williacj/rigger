@@ -696,7 +696,7 @@ test('once exits non-zero when a continuing maker exits non-zero', SETTLES_WITHI
   assert.match(err, /exited 4/);
 });
 
-// proves R-WORK-34
+// proves R-WORK-43
 test('once names a continuing card whose maker left no checked-out line tip and keeps it in Coding', SETTLES_WITHIN, async (t) => {
   const script = join(temporaryDirectory('rigger-no-tip-'), 'detach.sh');
   writeFileSync(script, '#!/bin/sh\ngit checkout --detach -q HEAD\n');
@@ -1541,7 +1541,7 @@ test('the owner label control updates seeded issue facts by repository and issue
 });
 
 
-// proves R-WORK-36
+// proves R-WORK-41
 test('once reports the ordinary refusal after closed cleanup exactly once with the existing refusal exit status', async () => {
   const directory = temporaryDirectory('rigger-once-closed-refusal-');
   const settings = config();
@@ -1571,7 +1571,7 @@ test('once reports the ordinary refusal after closed cleanup exactly once with t
 
 import { lockWorktreeAt } from './git-repository.mjs';
 
-// proves R-WORK-36, R-WORK-38
+// proves R-WORK-41, R-WORK-38
 test('once and run report the ordinary Owner result plus every real remaining cleanup path and wait for label acknowledgement', SETTLES_WITHIN, async () => {
   const number = 92;
   const directory = temporaryDirectory('rigger-once-closed-remaining-');
@@ -1620,7 +1620,7 @@ test('once and run report the ordinary Owner result plus every real remaining cl
 });
 
 
-// proves R-WORK-36
+// proves R-WORK-41
 test('once removes closed history directories before Coding and a normal redo opens its new pull without removing that new workspace', SETTLES_WITHIN, async (t) => {
   const number = 93;
   const settings = { ...config(), kinds: { change: { ...KINDS.change, judges: ['owner'] } } };
@@ -1653,7 +1653,7 @@ test('once removes closed history directories before Coding and a normal redo op
 });
 
 
-// proves R-SCHED-11, R-WORK-36
+// proves R-SCHED-11, R-WORK-41
 test('once ignores closed cards without a kind or carrying the epic label while selected equivalents remove their old directories', SETTLES_WITHIN, async () => {
   for (const column of ['Review', 'Owner']) for (const branch of [false, true]) {
     for (const labels of [[], ['type:epic', 'type:change'], ['type:change']]) {

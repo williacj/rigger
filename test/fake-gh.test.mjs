@@ -478,7 +478,8 @@ test('E-C P1/P2/P3-A1: the unforced recorder observes a passing target file', (t
   commandsIssuedBy('forge-runners.test.mjs', true);
 });
 
-test('the gh commands the fake gh answers are the ones the adapter issues across its own tests, compared both ways', () => {
+test('the gh commands the fake gh answers are the ones the adapter issues across its own tests, compared both ways', (t) => {
+  if (!hasInstalledGh()) return t.skip('no installed real gh available for the recorder control');
   // Recorded rather than listed: each file runs as it does in the suite, and every request the
   // adapter's read, item-write and schema-write sides hand a runner is kept, with the item-write
   // runner's own read. A runner sends every request as `gh` (`R-SAFE-2`), so a request is its

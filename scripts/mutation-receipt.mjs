@@ -1,7 +1,7 @@
 // ABOUTME: Runs one guarded mutation in a disposable worktree and reports the tests' evidence.
 
 import { AssertionError } from 'node:assert';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -52,14 +52,23 @@ export async function withTree(context, sha, run) {
   if (parent === context.root || parent.startsWith(`${context.root}/`)) throw new Error('TMPDIR must be outside the checkout');
   const temporary = mkdtempSync(join(parent, 'rigger-proof-'));
   const tree = join(temporary, 'tree');
+  let failure;
   try {
     git(context.root, 'worktree', 'add', '--quiet', '--detach', tree, sha);
     symlinkSync(realpathSync.native(join(context.root, 'node_modules')), join(tree, 'node_modules'), 'dir');
     return await run(tree, temporary);
+  } catch (error) {
+    failure = error;
+    throw error;
   } finally {
-    const registered = git(context.root, 'worktree', 'list', '--porcelain', '-z');
-    if (registered.includes(`worktree ${tree}\0`)) git(context.root, 'worktree', 'remove', '--force', tree);
-    rmSync(temporary, { recursive: true, force: true });
+    try {
+      const registered = git(context.root, 'worktree', 'list', '--porcelain', '-z');
+      if (registered.includes(`worktree ${tree}\0`)) git(context.root, 'worktree', 'remove', '--force', tree);
+      rmSync(temporary, { recursive: true, force: true });
+    } catch (cleanup) {
+      if (failure) throw new AggregateError([failure, cleanup], `${failure.message}; cleanup: ${cleanup.message}`, { cause: failure });
+      throw cleanup;
+    }
   }
 }
 
@@ -92,14 +101,20 @@ export async function runTests(tree, temporary, file, { timeout = 60, pattern } 
   const runTmp = mkdtempSync(join(temporary, 'run-'));
   const { NODE_TEST_CONTEXT, ...env } = gitEnvironment();
   const events = [];
+  let selectedProcess;
   const ran = await runCommand({ command: 'sh', args, cwd: tree,
+    onGroup: (group, started) => { selectedProcess = { group, started }; },
     env: { ...env, TMPDIR: runTmp, RIGGER_PROOF_ASSERTION_KEY: randomUUID() }, timeout: timeout * 1000,
     directory: tree, scratch: runTmp, emitter: { emit: (...event) => events.push(event) },
   });
+  const capture = Object.fromEntries(['stdout', 'stderr'].map((stream) => [stream, {
+    bytes: ran[stream].length, sha256: createHash('sha256').update(ran[stream]).digest('hex'),
+  }]));
   const stdout = ran.stdout.toString('utf8');
   const stderr = ran.stderr.toString('utf8');
+  for (const [stream, text] of Object.entries({ stdout, stderr })) capture[stream].faithful = Buffer.from(text, 'utf8').equals(ran[stream]);
   const stream = stdout.split('\n').filter((line) => line.startsWith('@@proof ')).map((line) => JSON.parse(line.slice(8)));
-  return { ...ran, stdout, stderr, command: ['sh', ...args], ...parseEvents(stream, tree, testFile), events };
+  return { ...ran, process: selectedProcess, capture, stdout, stderr, command: ['sh', ...args], ...parseEvents(stream, tree, testFile), events };
 }
 
 /**
@@ -149,38 +164,94 @@ export function parseEvents(stream, tree, testFile) {
   return { count: tests.length, tests: tests.filter((test) => !fileVerdict(test)), fileVerdicts: tests.filter(fileVerdict) };
 }
 
+/** Writes the captured original content back to its source path. */
+export function restoreSource(source, original) {
+  writeFileSync(source, original);
+  if (!readFileSync(source).equals(Buffer.from(original))) throw new Error('restored source bytes differ from original');
+}
+
+/** Classifies a completed mutant from its named failure evidence. */
+export function mutationVerdict(report) {
+  if (report.mutated && report.reason !== undefined) return { status: 'no verdict', reason: report.reason };
+  if (!report.restored) return { status: 'no verdict', reason: 'restored run unavailable' };
+  const restoredReason = noVerdict(report.restored);
+  if (restoredReason) return { status: 'no verdict', reason: `restored: ${restoredReason}` };
+  if (report.restored && failures(report.restored).length > 0) return { status: 'no verdict', reason: 'restored named tests failed' };
+  const originalReason = noVerdict(report.unmutated);
+  if (originalReason || report.unmutated.exit !== 0 || failures(report.unmutated).length > 0) {
+    return { status: 'no verdict', reason: `original selected run unavailable: ${originalReason ?? 'not green'}` };
+  }
+  const identities = [];
+  for (const [phase, run] of [['original', report.unmutated], ['restored', report.restored]]) {
+    const unavailable = run.tests.find((test) => !test.identity || test.identityReason);
+    if (unavailable) return { status: 'no verdict', reason: `${phase} selected identity unavailable: ${unavailable.identityReason ?? 'missing identity'}` };
+    const keys = run.tests.map((test) => JSON.stringify(test.identity));
+    if (new Set(keys).size !== keys.length) return { status: 'no verdict', reason: `${phase} selected identity is duplicated` };
+    identities.push(keys.sort());
+  }
+  if (JSON.stringify(identities[0]) !== JSON.stringify(identities[1])) return { status: 'no verdict', reason: 'restored selected identities differ from original' };
+  return { status: failures(report.mutant).length === 0 ? 'survived' : 'killed' };
+}
+
 export async function mutationReceipt(options) {
   const context = refs();
+  return mutationReceiptAt(context, options);
+}
+
+/** Runs the actual mutation lifecycle with a selected-suite producer. */
+export async function mutationReceiptAt(context, options, selected = runTests) {
   const report = { tool: 'mutation:receipt', head: context.head, base: context.base,
     dependencyChanges: context.dependencyChanges,
     check4: 'Check 4, what the mutation did, is the maker\'s to state.', mutated: false, status: 'no verdict' };
   try {
     await withTree(context, context.head, async (tree, temporary) => {
-      report.unmutated = await runTests(tree, temporary, options.test, options);
+      report.unmutated = await selected(tree, temporary, options.test, options);
       const controlReason = noVerdict(report.unmutated);
       if (controlReason) { report.reason = `unmutated: ${controlReason}; nothing mutated`; return; }
       if (report.unmutated.exit !== 0 || failures(report.unmutated).length > 0) { report.reason = 'unmutated run failed; nothing mutated'; return; }
       const source = inside(tree, options.source);
-      const original = readFileSync(source, 'utf8');
+      const preimage = readFileSync(source);
+      const original = preimage.toString('utf8');
       report.anchor = { text: options.anchor, expected: Number(options.count), found: original.split(options.anchor).length - 1 };
       if (!options.anchor || !Number.isSafeInteger(report.anchor.expected) || report.anchor.expected <= 0 || report.anchor.found !== report.anchor.expected) {
         report.status = 'did not apply'; report.reason = 'anchor count differs or is invalid; nothing mutated'; return;
       }
       const changed = original.split(options.anchor).join(options.replacement);
-      writeFileSync(source, changed);
-      report.readBack = readFileSync(source, 'utf8');
-      if (report.readBack !== changed) throw new Error('mutation readback differs');
-      report.diff = git(tree, 'diff', '--', relative(tree, source));
-      report.mutated = true;
-      report.mutant = await runTests(tree, temporary, options.test, options);
-      if (report.mutant.timedOut) { report.reason = 'mutant run exceeded its timeout'; return; }
-      if (report.mutant.count < report.unmutated.count) { report.reason = 'mutant reported fewer tests'; return; }
-      const mutantReason = noVerdict(report.mutant);
-      if (mutantReason) { report.reason = `mutant: ${mutantReason}`; return; }
-      report.failures = failures(report.mutant);
-      report.status = report.failures.length === 0 ? 'survived' : 'killed';
+      report.restoration = { preimageHash: createHash('sha256').update(preimage).digest('hex') };
+      let mutationFailure;
+      try {
+        writeFileSync(source, changed);
+        report.readBack = readFileSync(source, 'utf8');
+        if (report.readBack !== changed) throw new Error('mutation readback differs');
+        report.diff = git(tree, 'diff', '--', relative(tree, source));
+        report.mutated = true;
+        report.mutant = await selected(tree, temporary, options.test, options);
+        if (report.mutant.timedOut) { report.reason = 'mutant run exceeded its timeout'; return; }
+        if (report.mutant.count < report.unmutated.count) { report.reason = 'mutant reported fewer tests'; return; }
+        const mutantReason = noVerdict(report.mutant);
+        if (mutantReason) { report.reason = `mutant: ${mutantReason}`; return; }
+        report.failures = failures(report.mutant);
+      } catch (error) {
+        mutationFailure = error;
+        throw error;
+      } finally {
+        try {
+          restoreSource(source, preimage);
+          report.restoration.beforeRunHash = createHash('sha256').update(readFileSync(source)).digest('hex');
+          if (report.restoration.beforeRunHash !== report.restoration.preimageHash) throw new Error('restored source hash differs before selected run');
+          report.restored = await selected(tree, temporary, options.test, options);
+          report.restoration.afterRunHash = createHash('sha256').update(readFileSync(source)).digest('hex');
+          report.restoration.status = git(tree, 'status', '--porcelain', '--', relative(tree, source));
+          if (report.restoration.afterRunHash !== report.restoration.preimageHash) throw new Error('restored source changed after selected run');
+          if (report.restoration.status !== '') throw new Error('restored source status is dirty');
+        } catch (restoration) {
+          if (mutationFailure) throw new AggregateError([mutationFailure, restoration], `${mutationFailure.message}; restoration: ${restoration.message}`, { cause: mutationFailure });
+          throw restoration;
+        }
+      }
     });
-  } catch (error) { report.reason = error.message; }
+  } catch (error) { report.reason = [report.reason, error.message].filter((reason) => reason !== undefined).join('; '); }
+  if (report.mutated) Object.assign(report, mutationVerdict(report));
   return { report, exit: ['killed', 'survived'].includes(report.status) ? 0 : 1 };
 }
 
@@ -197,7 +268,11 @@ export function failures(run) {
 
 /** A completed named assertion or application error differs from an interrupted or refused run. */
 export function noVerdict(run) {
+  if (!Number.isSafeInteger(run.process?.group) || run.process.group <= 0 || !Number.isFinite(run.process.started)) return 'selected suite start unavailable';
+  if (!Number.isInteger(run.exit) || typeof run.timedOut !== 'boolean') return 'selected suite settled ending unavailable';
   if (run.timedOut) return 'run exceeded its timeout';
+  if (run.events?.some(([event]) => event === 'output.held')) return 'selected suite output incomplete: output.held';
+  if (run.capture?.stdout?.faithful !== true || run.capture?.stderr?.faithful !== true) return 'selected suite UTF8 text fidelity unavailable';
   if (run.fileVerdicts.length > 0) return 'file verdict; no named tests reached a verdict';
   if (run.tests.length === 0) return 'no named tests reached a verdict';
   if (run.tests.some((test) => test.skip !== undefined || test.todo !== undefined)) return 'skipped or todo named test';

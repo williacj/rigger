@@ -106,13 +106,26 @@ function world(t, config = ADMITTED, { source } = {}) {
 }
 
 /**
- * A config whose `telemetry.push` is read, each time, from `globalThis[key]`, so one repository's
- * config, imported once, runs a verb with the push off and then on.
+ * A config whose default export, `telemetry.push` false, is a live binding the test switches
+ * through `globalThis[key]` to one with `telemetry.push` true: plain data either way, and no
+ * accessor. `consumerConfig` reads a file once per process, so a run reads the switched value
+ * only where it is the first read of that file by its instance of `doctor.mjs`.
  */
 function switchable(key) {
   const config = { ...ADMITTED };
-  return `const config = ${JSON.stringify(config)};\nexport default { ...config, worktrees: { root: new URL('./worktrees', import.meta.url).pathname }, get telemetry() { return { push: globalThis[${JSON.stringify(key)}] }; } };\n`;
+  return `const config = { ...${JSON.stringify(config)}, worktrees: { root: new URL('./worktrees', import.meta.url).pathname } };\nlet value = { ...config, telemetry: { push: false } };\nexport { value as default };\nglobalThis[${JSON.stringify(key)}] = () => { value = { ...config, telemetry: { push: true } }; };\n`;
 }
+
+/**
+ * `doctor` from a second instance of `src/cli/doctor.mjs`, standing in for a run in another
+ * process: it holds its own reads of each config file, apart from the instance the verbs import.
+ */
+const { doctor: doctorElsewhere } = await import('../src/cli/doctor.mjs?elsewhere');
+
+/** The verbs `offThenOn` runs with the push off, each from the instance `doctorElsewhere` is. */
+const ELSEWHERE = {
+  doctor: (w, push, ask = asking()) => answerOf('doctor', doctorElsewhere({ target: w.repository, ask, checks: [], push })),
+};
 
 /**
  * The verb's answer, failing on an assertion where it ends by a throw instead: no push, and no push
@@ -198,23 +211,25 @@ function assertFailureLine(lines, answered) {
 }
 
 /**
- * Runs `verb` in `w` twice over its switchable config: with the push off, and then on, with `watch`.
- * Answers both answers and the one push the second run made.
+ * Runs `verb` in `w` twice over its switchable config, with `watch`: with the push off, as another
+ * process would, and then, the config switched, with it on. Answers both answers and the one push
+ * the second run made.
  */
 async function offThenOn(w, key, verb, watch) {
-  globalThis[key] = false;
-  const off = await IN_PROCESS[verb](w, watch.push);
+  const off = await ELSEWHERE[verb](w, watch.push);
   assert.equal(watch.pushes.length, 0, 'the run with the push off pushed');
-  globalThis[key] = true;
+  globalThis[key]();
   const on = await IN_PROCESS[verb](w, watch.push);
   return { off, on };
 }
 
-/** `doctor`'s answer in `w` with the push off, which every later answer there is held to. */
+/**
+ * `doctor`'s answer in `w` with the push off, as another process would run it, which every later
+ * answer there is held to; the config is then switched, so each later run has the push on.
+ */
 async function offAnswer(w, key, watch) {
-  globalThis[key] = false;
-  const off = await IN_PROCESS.doctor(w, watch.push);
-  globalThis[key] = true;
+  const off = await ELSEWHERE.doctor(w, watch.push);
+  globalThis[key]();
   return off;
 }
 

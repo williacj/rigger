@@ -160,9 +160,9 @@ export function worktreeAt(repository, path, branch, ...flags) {
   return path;
 }
 
-/** Removes a fixture worktree while retaining its branch for a later attempt. */
-export function removeWorktreeAt(repository, path) {
-  gitIn(repository, 'worktree', 'remove', path);
+/** Removes a fixture worktree, permitting dirty bytes to be discarded only with explicit force. */
+export function removeWorktreeAt(repository, path, force = false) {
+  gitIn(repository, 'worktree', 'remove', ...(force ? ['--force'] : []), path);
 }
 
 /**
@@ -199,5 +199,5 @@ export function previousCheckout(repository, branch) {
   return held;
 }
 
-/** What `git worktree list --porcelain` prints in the repository at `repository`. */
-export const worktreeList = (repository) => gitIn(repository, 'worktree', 'list', '--porcelain');
+/** Raw fixture worktree porcelain, with native NUL separators only when requested. */
+export const worktreeList = (repository, nul = false) => gitIn(repository, 'worktree', 'list', '--porcelain', ...(nul ? ['-z'] : []));

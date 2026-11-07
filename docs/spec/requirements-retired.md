@@ -36,6 +36,7 @@ Ids allocated here still count as allocated. The duplicate-id check reads both f
 | R-WORK-11 | Rigger never removes or changes a directory at a card's workspace path unless that directory is a workspace of the repository Rigger works. Finding one that is not, it fails the attempt and names the path. | | 2026-09-30 | R-WORK-13, R-WORK-14, R-WORK-15, R-WORK-16 |
 | R-WORK-30 | Before Rigger moves a card to Done for its merged pull request, whoever merged it, Rigger removes the card's directories. They are its workspace and each directory under `judges/<topic>` and `scratch/<topic>` for the card's topic, whichever role it is named for. Rigger removes each only where `R-WORK-13`, `R-WORK-20` or `R-WORK-26` lets Rigger replace it, and otherwise names the path and leaves it. Rigger moves the card to Done only once no removal failed, and a path left under those rows is no failure. Where a removal failed, the card stays where it is, and Rigger names each path that remains. The states it covers are in `### R-WORK-30 — When a merged card's directories are removed`. | | 2026-10-17 | R-WORK-33 |
 | R-WORK-33 | Before Rigger moves a card to Done for its merged pull request, whoever merged it, Rigger removes the card's directories. They are its workspace and each directory under `judges/<topic>`, `escalations/<topic>` and `scratch/<topic>` for the card's topic, whichever role it is named for. Rigger removes each only where `R-WORK-13`, `R-WORK-20`, `R-WORK-26` or `R-WORK-32` lets Rigger replace it, and otherwise names the path and leaves it. Rigger moves the card to Done only once no removal failed, and a path left under those rows is no failure. Where a removal failed, the card stays where it is, and Rigger names each path that remains. The states it covers are in `### R-WORK-33 — When a merged card's directories are removed`. |  | 2026-10-22 | R-WORK-35 |
+| R-LOOP-18 | Rigger dispatches no maker again, in the invocation that ran it, for a card whose maker ran, exited non-zero, and left the forge holding nothing of the card's line of work. The next invocation dispatches the card as it would any other. | | 2026-11-02 | R-LOOP-19 |
 | R-ESCALATE-1 | Every escalation to the owner is one of the configured categories. A card escalated to the owner proceeds no further until the owner answers it. | D3 | 2026-10-17 | R-ESCALATE-20 |
 | R-ESCALATE-2 | The set of categories is Rigger's. A consumer chooses which of them are the owner's to decide, and adds none. All are the owner's unless the consumer says otherwise. | D3 | 2026-10-17 | R-ESCALATE-13 |
 | R-ESCALATE-3 | The set holds exactly three: a change to a recorded decision, a fault that must not merge — the same fault a verdict names — and an ambiguity no role could resolve. | D3 | 2026-10-17 | R-ESCALATE-19 |
@@ -47,6 +48,34 @@ Ids allocated here still count as allocated. The duplicate-id check reads both f
 | R-FAIL-6 | Rigger closes admission, and records why, when a card's second attempt fails in its environment the same way its first did. The ways are in `### R-FAIL-6 — Environment failures and the hold`. | D12 | 2026-10-24 | R-FAIL-7 |
 | R-FAIL-7 | Rigger closes admission, and records why, when a card's second attempt fails in its environment the same way its first did. The ways are in `### R-FAIL-7 — Environment failures and the hold`. | D12 | 2026-10-26 | R-FAIL-8 |
 | R-RECORD-8 | A copy of the record placed anywhere else holds every event the original holds. | | 2026-10-27 | R-RECORD-13 |
+| R-WORK-36 | Before Rigger acts on a card it reads where all of these hold, it removes the card's directories, as `R-WORK-35` names them. It removes each only where `R-WORK-35` lets it remove that directory, and otherwise names the path and leaves it. Where a removal fails, Rigger names each path that remains, and acts on the card as it otherwise would. The states it covers are in `### R-WORK-36 — When a closed card's directories are removed`: | | 2026-10-30 | R-WORK-41 |
+| R-WORK-34 | After an attempt that continues a card's work, where the maker exits successfully, Rigger moves the card to review and decides its judges only at the head the maker left. That head is the commit at the tip of the card's line of work in its workspace when the maker exits. Rigger reads the card's pull request again 5 seconds after each read showing another head, until a read made 60 seconds or more after the first. Where no read shows the head the maker left, the card stays in coding. Rigger then names the card, the head the maker left, and the head the forge last showed. Its states are in `### R-WORK-34 — The head a continuing attempt is judged at`. | | 2026-11-06 | R-WORK-43 |
+
+### R-WORK-36 — When a closed card's directories are removed
+
+Each row is a card the forge holds a pull request for, from its line of work, closed without merging.
+
+| Situation | Scope |
+|---|---|
+| a card in review, its line of work still on the forge | in: removed; Rigger then refuses the card and escalates it under `R-ESCALATE-12`, as it would otherwise |
+| a card in review, its line of work deleted | in: removed; Rigger then does the card again from the beginning under `R-WORK-24` |
+| a card in the owner's column | in: removed; Rigger then refuses the card and escalates it under `R-ESCALATE-12`, as it would otherwise |
+| a card carrying the escalation label | out: `R-ESCALATE-10`; its directories stay until the owner removes the label, and a later pull that finds every condition removes them |
+| two or more pull requests closed, none open or merged | in: removed |
+| a pull request from the line of work open beside the closed one | in: nothing removed |
+| a pull request from the line of work merged beside the closed one | out: `R-WORK-35` answers it |
+| the pull request reopened before Rigger reads it | in: nothing removed |
+| the pull request reopened after Rigger read it closed | in: nothing restored; each later dispatch's directory is made as `R-WORK-20`, `R-WORK-25`, `R-WORK-26` or `R-WORK-32` requires |
+| an attempt from the beginning, started after the removal | in: nothing of the attempt's removed under this row while the card is in coding |
+| a card that is Ready or in coding | out: its next attempt replaces its directories under `R-WORK-10` or `R-WORK-25`, or `R-WORK-19` refuses it |
+| a dispatch of the card running when Rigger reads the pull request closed | in: removed at the first pull that finds every condition once no dispatch of the card runs |
+| a person moved the card to Done | out: Rigger reads no Done card, and its directories stay |
+| the card's issue closed while the card stays in review or in the owner's column | in: as the rows above answer it; the issue's state is no condition |
+| a removal that fails, wholly or partway through one directory | in: each remaining path named; Rigger acts on the card as it otherwise would; a later pull that finds every condition removes again |
+| Rigger cannot record an event of the removal | in: Rigger says what went unrecorded, and acts on the card as it otherwise would |
+| a second removal pass over a card already removed, or none of its directories exists | in: nothing changes, and nothing fails |
+| a check, a lock, a symbolic link, a process in a directory, a workspace's contents, or a topic directory once empty | in or out as `### R-WORK-35`'s table answers that situation |
+| the card's local branch | out: kept |
 
 ### R-WORK-30 — When a merged card's directories are removed
 
@@ -217,3 +246,17 @@ Each failure is one of three classes:
 | a card refused for its acceptance's form (`R-CARD-7`, `R-CARD-8`) | out | — | out: it stays a refusal `rigger plan` reports |
 | a card refused for its kinds (`R-SCHED-12`) | out | — | out: it stays a refusal `rigger plan` reports |
 | a card refused for its labels' tiers or providers (`R-LOOP-13`, `R-LOOP-16`) | out | — | out: it stays a refusal `rigger plan` reports |
+
+### R-WORK-34 — The head a continuing attempt is judged at
+
+| The maker | What Rigger reads after the maker exits | Scope |
+|---|---|---|
+| exits successfully | the pull request at the head the maker left, at the first read | in: moved to review; judges decided at that head |
+| exits successfully, having added no commit to the line of work | the pull request at the head the attempt started from, which is the head the maker left | in: moved to review; judges decided at that head |
+| exits successfully | the pull request at another head, then at the head the maker left at any later read, the last included | in: moved to review; judges decided at the head the maker left |
+| exits successfully | the pull request at another head on every read until one made 60 seconds or more after the first | in: stays in coding; Rigger names the card and both heads |
+| exits successfully | no tip of the card's line of work Rigger can read in its workspace | in: stays in coding; Rigger names the card and why |
+| exits successfully | no open pull request from the card's line of work, or more than one | in: stays in coding, under `R-WORK-18` |
+| exits successfully | a read of the card's pull requests that fails | in: stays in coding; Rigger names the card and the read |
+| exits unsuccessfully, or never starts | nothing | out: the forge is not read, and the card stays in coding |
+| starts the card's work from the beginning | any | out: `R-WORK-18` alone governs it |

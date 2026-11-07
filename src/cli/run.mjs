@@ -1,12 +1,10 @@
-// ABOUTME: The `run` verb: fires one pull through L3's dispatching entry point, which claims cards until
-// the slots are full or nothing is left to pull, has L1 make and provision each one's workspace,
-// dispatches each one's maker and then the judges L2 names, and says what each maker and judge did.
-// It is `once` with no claim limit.
+// ABOUTME: The `run` verb: hands L3 the board drain, which refills freed slots and dispatches
+// each card's work through L1 and L2, with the shared claiming-verb presenter.
 
 import { claimVerb } from './once.mjs';
 
 /**
- * What the command prints for a `run` run, and the status it exits with. No limit is given, so
- * the pull claims until the slots are full: L3 reads N from the config it is handed.
+ * What the command prints and exits with. L3 reads N and the clock declaration from the config,
+ * drains the board without a clock trigger, and otherwise keeps the run up until stopped.
  */
 export const run = (options) => claimVerb('run', undefined, options);

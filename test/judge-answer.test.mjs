@@ -3,18 +3,24 @@
 // each is handed, and what a failed read, a refused diff or a failed required step means.
 
 import { test } from 'node:test';
+import * as actionModule from '../src/workflow/next-action.mjs';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { readFileSync } from 'node:fs';
 import { parse } from 'acorn';
 
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { judgeAnswer } from '../src/workflow/judges.mjs';
+import * as judgeModule from '../src/workflow/judges.mjs';
 import { composeMarker } from '../src/workflow/marker.mjs';
 import { parseMarker } from '../src/workflow/marker.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
 import { panelOf } from '../src/workflow/next-action.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+
+const { actionIdentity } = actionModule;
+const { judgeIdentity } = judgeModule;
 
 /** A body whose acceptance passes the form check, with two items and a bullet outside it. */
 const BODY = '## Acceptance\n\n- The verb prints its help.\n- The verb exits 0.\n\n## Notes\n\n- Not an item.\n';
@@ -101,6 +107,35 @@ const named = (next) => (next.judges ?? []).map((judge) => judge.role);
 
 /** The judge a judge answer names as `role`. */
 const judge = (next, role) => next.judges.find((each) => each.role === role);
+
+// Each independently changed governing fact must select new judge work without unrelated facts doing so.
+// proves R-VERDICT-5, R-LOOP-8
+test('a judge identity distinguishes its governing comment head acceptance provider and tier independently', () => {
+  const governing = { ...verdict(HEAD, 'reviewer'), edited: true, id: 'IC_41' };
+  const first = judge(answer(card({ comments: [governing] })), 'reviewer');
+  const nextComment = judge(answer(card({ comments: [{ ...governing, id: 'IC_42' }] })), 'reviewer');
+  assert.equal(first.comment, 'IC_41');
+  assert.equal(nextComment.comment, 'IC_42');
+  assert.notEqual(judgeIdentity(first), judgeIdentity(nextComment), 'a newly governing comment owes a new dispatch');
+
+  const ordinary = judge(answer(card()), 'reviewer');
+  const changedHead = judge(answer(card({ open: [{ number: 70, head: EARLIER, base: 'main' }], pull: read({ number: 70, head: EARLIER, base: BASE }) })), 'reviewer');
+  const changedAcceptance = judge(answer({ ...card(), body: BODY.replace('exits 0', 'exits 1') }), 'reviewer');
+  const changedProvider = judge(answer(card(), { roles: { ...ROLES, reviewer: { ...ROLES.reviewer, provider: 'codex' } } }), 'reviewer');
+  const changedTier = judge(answer(card({ labels: ['tier:high'] })), 'reviewer');
+  assert.equal(ordinary.facts.head, HEAD);
+  assert.equal(ordinary.facts.revision, DIGEST);
+  assert.equal(ordinary.provider, 'claude');
+  assert.equal(ordinary.tier, 'standard');
+  assert.equal(changedHead.facts.head, EARLIER);
+  assert.notEqual(changedAcceptance.facts.revision, DIGEST);
+  assert.equal(changedProvider.provider, 'codex');
+  assert.equal(changedTier.tier, 'high');
+  for (const changed of [changedHead, changedAcceptance, changedProvider, changedTier]) {
+    assert.notEqual(judgeIdentity(ordinary), judgeIdentity(changed), 'each single changed fact owes only its newly selected identity');
+  }
+  assert.equal(judgeIdentity(ordinary), judgeIdentity(judge(answer(card()), 'reviewer')), 'identical facts retain one identity');
+});
 
 test('given a Review card of kind spec with one open pull request and no comments, the judge answer names reviewer, engineer and architect, each as a role answer with its declaration and tier', () => {
   const next = answer(card());
@@ -422,10 +457,19 @@ test('each judge\'s instruction asks for one pull request comment holding a mark
 });
 
 test('each judge\'s instruction names the evidence digest its role answer carries, which is SHA-256 of its evidence', () => {
-  for (const { instruction, evidence, digest } of answer(card()).judges) {
-    assert.match(digest, /^[0-9a-f]{64}$/);
-    assert.ok(instruction.split('\n').includes(`evidence: ${digest}`), instruction);
-    assert.ok(!instruction.includes(evidence), 'the instruction holds the evidence it digests');
+  const diffs = [DIFF, 'diff --git a/src/greeting.mjs b/src/greeting.mjs\n+export const greeting = "caf\u00e9";\n'];
+  const answers = diffs.map((diff) => answer(card({ diff: read(diff) })).judges);
+  for (const [fixture, judges] of answers.entries()) {
+    assert.equal(judges.length, 3);
+    for (const [index, { instruction, evidence, digest }] of judges.entries()) {
+      assert.notEqual(evidence, '');
+      assert.ok(evidence.includes(diffs[fixture]));
+      if (fixture > 0) assert.notEqual(evidence, answers[0][index].evidence);
+      assert.match(digest, /^[0-9a-f]{64}$/);
+      assert.equal(digest, createHash('sha256').update(evidence, 'utf8').digest('hex'), `${judges[index].role}: digest must hash actual evidence UTF-8 bytes`);
+      assert.ok(instruction.split('\n').includes(`evidence: ${digest}`), instruction);
+      assert.ok(!instruction.includes(evidence), 'the instruction holds the evidence it digests');
+    }
   }
 });
 
@@ -515,6 +559,46 @@ function markerOf({ role, provider = role === 'owner' ? undefined : 'claude', he
 /** Sound markers of every agent judge at `HEAD` and `DIGEST`, the first written at `from` minutes. */
 const allSound = (from = 1) => AGENTS.map((role, at) => markerOf({ role, at: from + at }));
 
+// Conflict work still has governing sources although it hands the maker no revision rulings.
+// proves R-CONFLICT-1
+test('a conflict continuation identifies its governing comments while its handed revision markers remain empty', () => {
+  for (const stage of ['review', 'coding', 'owner']) {
+    const owner = stage === 'owner' ? [markerOf({ role: 'owner', at: 9 })] : [];
+    const comments = [...allSound(), ...owner];
+    const given = { stage, label: stage === 'owner' ? 'type:spec' : 'type:change', mergeable: 'conflicting', comments };
+    const first = loopAnswer(loopCard(given));
+    const later = loopAnswer(loopCard({ ...given, comments: [...comments, markerOf({ role: 'reviewer', at: 10 })] }));
+
+    assert.equal(first.action, 'continue', stage);
+    assert.equal(first.head, HEAD, stage);
+    assert.deepEqual(first.markers, [], `${stage}: sound rulings are not handed as revision work`);
+    assert.deepEqual(first.comments, stage === 'owner' ? ['IC_1', 'IC_2', 'IC_3', 'IC_9'] : ['IC_1', 'IC_2', 'IC_3'], stage);
+    assert.deepEqual(later.comments, stage === 'owner' ? ['IC_10', 'IC_2', 'IC_3', 'IC_9'] : ['IC_10', 'IC_2', 'IC_3'], stage);
+    assert.notEqual(actionIdentity(first), actionIdentity(later), `${stage}: a newly governing sound comment selects a new conflict action`);
+  }
+});
+
+// Identical ruling text in a newly governing comment selects a different continuing action.
+// proves R-VERDICT-5
+test('a continuing maker identity carries the governing source comment as well as its head and acceptance ruling', () => {
+  const governing = markerOf({ role: 'reviewer', verdict: 'needs revision', items: ['met', 'unmet'], toSound: 'Return zero.', at: 7 });
+  const comments = [governing, ...allSound().filter((held) => !held.body.includes('role: reviewer\n'))];
+  const first = loopAnswer(loopCard({ comments }));
+  const later = loopAnswer(loopCard({ comments: [{ ...governing, id: 'IC_8' }, ...comments.slice(1)] }));
+
+  assert.equal(first.action, 'continue');
+  assert.equal(first.head, HEAD);
+  assert.equal(first.markers[0].comment, 'IC_7');
+  assert.equal(later.markers[0].comment, 'IC_8');
+  assert.notEqual(actionIdentity(first), actionIdentity(later), 'new source comment selects new continuing work despite identical marker bytes');
+  assert.deepEqual(first.markers[0].unmet, [{ item: 2, text: 'The verb exits 0.' }]);
+  const changedHead = loopCard({ comments, open: [{ number: 70, head: LATER, base: 'main' }], pull: read({ number: 70, head: LATER, base: BASE }) });
+  const changedAcceptance = { ...loopCard({ comments }), body: BODY.replace('exits 0', 'exits 1') };
+  for (const changed of [changedHead, changedAcceptance]) {
+    assert.deepEqual(named(loopAnswer(changed)), AGENTS, 'the selected comment cannot continue different work or acceptance');
+  }
+});
+
 /**
  * Card 7 carrying `label`, in `column`, with the facts L2's facts call holds for it at `stage`:
  * one open pull request, #70, from base `main` at `HEAD`, its comments `comments`, its mergeability
@@ -600,7 +684,7 @@ test('given every agent judge sound, the gate admitting and the forge reading th
 
 // proves R-CONFLICT-1
 test('given every agent judge sound and the forge reading the pull request as conflicting, L2 answers no merge for a Review card but a continuing attempt on its open pull request at the head it read', () => {
-  assert.deepEqual(loopAnswer(loopCard({ comments: allSound(), mergeable: 'conflicting' })), { action: 'continue', pull: 70, head: HEAD, markers: [] });
+  assert.deepEqual(loopAnswer(loopCard({ comments: allSound(), mergeable: 'conflicting' })), { action: 'continue', pull: 70, head: HEAD, markers: [], comments: ['IC_1', 'IC_2', 'IC_3'] });
 });
 
 test('given every agent judge sound and the read of the mergeability, the check states or the effective rules failed, L2 answers no action for a Review card, naming the card and the read', () => {
@@ -751,8 +835,8 @@ test('given markers at an older head only, or at an older acceptance digest only
 
 /** The marker a continuing attempt hands the maker for the reviewer's `ruling`, as the acceptance above words its two items. */
 const handed = {
-  m6: { role: 'engineer', verdict: 'sound', unmet: [{ item: 2, text: 'The verb exits 0.' }] },
-  m9: { role: 'engineer', verdict: 'needs revision', unmet: [], toSound: 'Print the help on stderr.' },
+  m6: { comment: 'IC_2', role: 'engineer', verdict: 'sound', unmet: [{ item: 2, text: 'The verb exits 0.' }] },
+  m9: { comment: 'IC_2', role: 'engineer', verdict: 'needs revision', unmet: [], toSound: 'Print the help on stderr.' },
 };
 
 test('given one agent judge needing revision, rounds below the bound, L2 answers a continuing attempt on the open pull request at the head it read, handing that judge\'s marker', () => {
@@ -766,7 +850,7 @@ test('given one agent judge\'s marker sound with an item unmet and the others so
 test('given one agent judge\'s two markers at the head and digest, the later needing revision, L2 answers as for needs revision', () => {
   const comments = [...markersFor(['m1', 'm1', 'm1']), markerOf({ role: 'engineer', at: 9, ...RULING.m9 })];
 
-  assert.deepEqual(loopAnswer(loopCard({ comments })), { action: 'continue', pull: 70, head: HEAD, markers: [handed.m9] });
+  assert.deepEqual(loopAnswer(loopCard({ comments })), { action: 'continue', pull: 70, head: HEAD, markers: [{ ...handed.m9, comment: 'IC_9' }] });
 });
 
 /** `written`, a marker comment, moved to `head` and `digest` and written at `at` minutes. */
@@ -952,8 +1036,8 @@ test('given an Owner card one of whose agent markers no longer governs at the he
 });
 
 test('given the owner\'s marker needing revision or sound with an item unmet, L2 answers a continuing attempt for an Owner card, handing the owner\'s marker', () => {
-  assert.deepEqual(loopAnswer(ownerCard([ownerMarker(RULING.m9)])), { action: 'continue', pull: 70, head: HEAD, markers: [{ ...handed.m9, role: 'owner' }] });
-  assert.deepEqual(loopAnswer(ownerCard([ownerMarker(RULING.m6)])), { action: 'continue', pull: 70, head: HEAD, markers: [{ ...handed.m6, role: 'owner' }] });
+  assert.deepEqual(loopAnswer(ownerCard([ownerMarker(RULING.m9)])), { action: 'continue', pull: 70, head: HEAD, markers: [{ ...handed.m9, role: 'owner', comment: 'IC_9' }] });
+  assert.deepEqual(loopAnswer(ownerCard([ownerMarker(RULING.m6)])), { action: 'continue', pull: 70, head: HEAD, markers: [{ ...handed.m6, role: 'owner', comment: 'IC_9' }] });
 });
 
 test('given the owner\'s marker unreadable or edited, L2 leaves an Owner card in Owner, answering ignore naming the owner marker\'s state', () => {
@@ -1025,7 +1109,7 @@ test('given a Coding card with one open pull request and a governing needs revis
 
 // proves R-CONFLICT-1
 test('given a Coding card with every agent judge sound and the forge reading its pull request as conflicting, L2 answers a continuing attempt', () => {
-  assert.deepEqual(loopAnswer(codingCard(allSound(), { mergeable: 'conflicting' })), { action: 'continue', pull: 70, head: HEAD, markers: [] });
+  assert.deepEqual(loopAnswer(codingCard(allSound(), { mergeable: 'conflicting' })), { action: 'continue', pull: 70, head: HEAD, markers: [], comments: ['IC_1', 'IC_2', 'IC_3'] });
 });
 
 // proves R-WORK-19

@@ -1,5 +1,5 @@
 // ABOUTME: Tests `rigger once` and `rigger run` making and provisioning each claimed card's
-// workspace through L3's single pull, over a fixture repository with a local `origin` and a fake
+// workspace through L3's pull and no-clock drain, over a fixture repository with a local `origin` and a fake
 // board, and then dispatching its maker through L1 to a stand-in.
 
 import { test } from 'node:test';
@@ -18,6 +18,7 @@ import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { fixture, GIT, gitUnansweredAdd, scratch, withFirstOnPath } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { standInAgent } from './stub-claude.mjs';
+import { createHash, randomUUID } from 'node:crypto';
 
 /** The stand-in agent every maker in this file runs as, on the PATH each verb runs under. */
 const agent = standInAgent();
@@ -61,7 +62,7 @@ const ONE_STEP = { steps: { ready: { run: 'true', required: true } }, listed: ['
  * given, with this file's stand-in agent first on PATH, the maker every claimed card runs as, and
  * the fake `gh` after it.
  */
-function world(t, { items, concurrency = 3, steps = ONE_STEP.steps, listed = ONE_STEP.listed, worktrees = template.worktrees, gitDirectory }, directory = scratch(t)) {
+function world(t, { items, concurrency = 3, steps = ONE_STEP.steps, listed = ONE_STEP.listed, worktrees = template.worktrees, gitDirectory, waitForClose = false }, directory = scratch(t)) {
   const kinds = Object.fromEntries(Object.entries(template.kinds).map(([name, kind]) => [name, { ...kind, provisioning: name === 'change' ? listed : [] }]));
   const config = { ...template, repo: REPO, board: { ...template.board, project: PROJECT }, concurrency, worktrees, kinds, provisioning: steps };
   const target = withOrigin(repositoryAt(join(directory, 'target'), { 'rigger.config.mjs': `export default ${JSON.stringify(config)};\n` }), join(directory, 'origin.git'));
@@ -69,14 +70,166 @@ function world(t, { items, concurrency = 3, steps = ONE_STEP.steps, listed = ONE
   const fake = installFakeGh(join(directory, 'fake'), {
     repo: REPO, project: PROJECT, board: { columns: Object.values(template.board.columns), fields: [{ name: template.board.priority.field, options: template.board.priority.options }], items },
   });
-  const env = { ...process.env, PATH: [agent.dir, join(directory, 'fake'), gitDirectory, process.env.PATH].filter(Boolean).join(delimiter) };
+  const evidence = waitForClose ? join(process.env.RIGGER_1216_EVIDENCE_ROOT ?? join(process.env.RUNNER_TEMP ?? dirname(process.env.TMPDIR ?? '/tmp'), 'rigger-1216-evidence'), randomUUID()) : undefined;
+  const stream = join(target, '.rigger', 'events.jsonl');
+  const preload = evidence && join(evidence, 'observer.cjs');
+  if (evidence) {
+    mkdirSync(evidence, { recursive: true, mode: 0o700 });
+    writeFileSync(join(evidence, 'world.json'), JSON.stringify({ title: t.name, target, directory, items, pid: process.pid }));
+    writeFileSync(preload, `// ABOUTME: Observes this fixture's native event writes and worker results.\n(${closeWorldObserver.toString()})(${JSON.stringify(stream)}, ${JSON.stringify(evidence)}, true);\n`);
+  }
+  const maker = waitForClose ? afterAdmissionClose(target, evidence) : agent;
+  const env = { ...process.env, PATH: [maker.dir, join(directory, 'fake'), gitDirectory, process.env.PATH].filter(Boolean).join(delimiter) };
   const verb = (name, cwd = target) => {
-    const ran = spawnSync(process.execPath, [bin, name], { cwd, encoding: 'utf8', env, timeout: SETTLES_WITHIN, killSignal: 'SIGKILL' });
+    const ran = spawnSync(process.execPath, [...(preload ? ['--require', preload] : []), bin, name], { cwd, encoding: 'utf8', env, timeout: SETTLES_WITHIN, killSignal: 'SIGKILL' });
+    if (evidence) {
+      writeFileSync(join(evidence, 'verb.stdout'), ran.stdout ?? '');
+      writeFileSync(join(evidence, 'verb.stderr'), ran.stderr ?? '');
+      writeFileSync(join(evidence, 'verb.json'), JSON.stringify({ pid: ran.pid, status: ran.status, signal: ran.signal, error: ran.error?.stack }));
+      if (existsSync(stream)) writeFileSync(join(evidence, 'events.jsonl'), readFileSync(stream));
+      publishCloseEvidence(t, evidence);
+      const history = readFileSync(join(evidence, 'trace.jsonl'), 'utf8').trimEnd().split('\n').map(JSON.parse);
+      const recorded = readEvents(join(target, '.rigger'));
+      const closed = recorded.find(({ event }) => event === 'admission.close');
+      for (const number of [20, 30]) {
+        const dispatched = recorded.find(({ event, card, role }) => event === 'dispatch' && card === number && role === 'engineer');
+        const start = recorded.find(({ event, dispatch }) => event === 'dispatch.start' && dispatch === dispatched?.dispatch);
+        const worker = history.find(({ event, cwd }) => event === 'waiter.start' && cwd === start?.workspace);
+        const ended = recorded.find(({ event, dispatch }) => event === 'dispatch.end' && dispatch === start?.dispatch);
+        const exited = history.find(({ event, pid }) => event === 'worker.exit' && pid === worker?.pid);
+        const observed = history.find(({ event, pid }) => event === 'waiter.close' && pid === worker?.pid);
+        const premise = `wait-for-close fixture premise failed for sibling #${number}; originals ${evidence}\n${ran.stderr}`;
+        assert.equal(ended?.exit, 0, premise);
+        assert.equal(exited?.code, 0, premise);
+        assert.ok(closed && observed, premise);
+        assert.deepEqual(observed.record, closed, premise);
+      }
+    }
     assert.equal(ran.error, undefined);
     return { out: ran.stdout, err: ran.stderr, code: ran.status, said: `exited ${ran.status}: ${ran.stdout}${ran.stderr}` };
   };
   const events = () => readEvents(join(target, '.rigger'));
   return { directory, target, fake, verb, events, worktrees: join(directory, 'widgets-worktrees') };
+}
+
+/** A successful maker held by the actual recorded admission.close, so no fast sibling races it. */
+function afterAdmissionClose(target, evidence) {
+  const stream = join(target, '.rigger', 'events.jsonl');
+  const script = [
+    "const fs = require('node:fs');",
+    `const stream = ${JSON.stringify(stream)};`,
+    `const trace = (${closeWorldObserver.toString()})(stream, ${JSON.stringify(evidence)});`,
+    "const closed = () => trace.read(() => fs.readFileSync(stream, 'utf8')).split('\\n').slice(0, -1).map((line) => trace.parse(line)).some((record) => record.event === 'admission.close');",
+    'function untilClosed() { if (!closed()) setImmediate(untilClosed); } untilClosed();',
+  ].join('\n');
+  return standInAgent({ '*': { engineer: { exec: [process.execPath, '-e', script] } } });
+}
+
+/** Bounded log records preserve every original through hosted-runner teardown without one giant line. */
+function publishCloseEvidence(t, evidence) {
+  for (const file of readdirSync(evidence)) {
+    const bytes = readFileSync(join(evidence, file));
+    t.diagnostic(JSON.stringify({ tool: '1216-evidence', evidence, file, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }));
+    for (let offset = 0; offset < bytes.length; offset += 1024) {
+      t.diagnostic(JSON.stringify({ tool: '1216-evidence', evidence, file, offset, base64: bytes.subarray(offset, offset + 1024).toString('base64') }));
+    }
+  }
+}
+
+/** Observation only: one append orders records across processes; read ordinals coalesce identical snapshots. */
+function closeWorldObserver(stream, evidence, engine = false) {
+  const fs = require('node:fs');
+  const { join } = require('node:path');
+  const append = fs.appendFileSync;
+  const write = fs.writeFileSync;
+  let sequence = 0;
+  let ordinal = 0;
+  let current;
+  const errorOf = (error) => ({ name: error.name, code: error.code, message: error.message, stack: error.stack });
+  const record = (event, fields = {}) => append(join(evidence, 'trace.jsonl'), `${JSON.stringify({ pid: process.pid, sequence: ++sequence, at: String(process.hrtime.bigint()), event, ...fields })}\n`);
+  const flush = () => {
+    if (current) {
+      const { text, ...outcome } = current;
+      record('read.outcome', { ...outcome, bytes: Buffer.byteLength(text) });
+    }
+    current = undefined;
+  };
+  record(engine ? 'engine.start' : 'waiter.start', { cwd: process.cwd() });
+  process.once('uncaughtExceptionMonitor', (error) => { flush(); record('worker.exception', { error: errorOf(error) }); });
+  process.once('exit', (code) => { flush(); record(engine ? 'engine.exit' : 'worker.exit', { code }); });
+  if (engine) {
+    const cp = require('node:child_process');
+    const spawn = cp.spawn;
+    fs.appendFileSync = function(path, bytes, ...options) {
+      if (path !== stream) return append.call(this, path, bytes, ...options);
+      record('event.append.begin', { bytes: Buffer.from(bytes).toString('base64') });
+      try {
+        const returned = append.call(this, path, bytes, ...options);
+        record('event.append.end', { record: JSON.parse(String(bytes)) });
+        return returned;
+      } catch (error) { record('event.append.error', { error: errorOf(error) }); throw error; }
+    };
+    const admission = join(stream.slice(0, stream.lastIndexOf('/')), 'admission');
+    for (const method of ['lstatSync', 'readdirSync']) {
+      const actual = fs[method];
+      fs[method] = function(path, ...args) {
+        if (path !== admission) return actual.call(this, path, ...args);
+        try {
+          const value = actual.call(this, path, ...args);
+          record(`admission.${method}`, { entries: method === 'readdirSync' ? value.map((entry) => entry.name) : undefined });
+          return value;
+        } catch (error) { record(`admission.${method}.error`, { error: errorOf(error) }); throw error; }
+      };
+    }
+    const descriptors = new Map();
+    for (const method of ['openSync', 'readFileSync', 'closeSync']) {
+      const actual = fs[method];
+      fs[method] = function(path, ...args) {
+        const tracked = typeof path === 'string' ? path.startsWith(`${admission}/`) : descriptors.has(path);
+        const value = actual.call(this, path, ...args);
+        if (tracked) {
+          if (method === 'openSync') descriptors.set(value, path);
+          record(`admission.${method}`, { path: descriptors.get(path) ?? path, bytes: method === 'readFileSync' ? Buffer.from(value).toString('base64') : undefined });
+          if (method === 'closeSync') descriptors.delete(path);
+        }
+        return value;
+      };
+    }
+    cp.spawn = function(command, args, options) {
+      const child = spawn.apply(this, arguments);
+      if (options?.detached) {
+        record('worker.spawn', { child: child.pid, command, args, cwd: options.cwd });
+        for (const channel of ['stdout', 'stderr']) child[channel]?.on('data', (bytes) => record(`worker.${channel}`, { child: child.pid, bytes: bytes.toString('base64') }));
+        child.once('exit', (code, signal) => record('worker.result', { child: child.pid, code, signal }));
+        child.once('error', (error) => record('worker.start.error', { child: child.pid, error: errorOf(error) }));
+      }
+      return child;
+    };
+    require('node:module').syncBuiltinESMExports();
+  }
+  return {
+    read: (use) => {
+      ordinal += 1;
+      let text;
+      try { text = use(); }
+      catch (error) { flush(); record('read.error', { ordinal, error: errorOf(error) }); throw error; }
+      if (current?.text === text) { current.last = ordinal; current.count += 1; return text; }
+      flush();
+      const snapshot = `${process.pid}-read-${ordinal}.jsonl`;
+      write(join(evidence, snapshot), text);
+      current = { text, snapshot, first: ordinal, last: ordinal, count: 1, parsed: [] };
+      record('read.snapshot', { ordinal, snapshot });
+      return text;
+    },
+    parse: (line) => {
+      try {
+        const parsed = JSON.parse(line);
+        if (current?.count === 1) current.parsed.push(parsed);
+        if (parsed.event === 'admission.close') { record('waiter.close', { ordinal, record: parsed }); flush(); }
+        return parsed;
+      } catch (error) { record('parse.error', { ordinal, line, error: errorOf(error) }); flush(); throw error; }
+    },
+  };
 }
 
 /** The directories under `path`, sorted, or none where nothing is there. */
@@ -179,12 +332,12 @@ test('given a required step that exits non-zero on both attempts, rigger once pr
 });
 
 /** A world where git gives no answer while L1 adds card 10's workspace twice. */
-function unansweredWorkspaceWorld(t, items) {
+function unansweredWorkspaceWorld(t, items, waitForClose = false) {
   const directory = scratch(t);
   const stand = join(directory, 'unanswered-git');
   mkdirSync(stand);
   gitUnansweredAdd(stand, 'rigger-10', 2);
-  return world(t, { items, gitDirectory: stand }, directory);
+  return world(t, { items, gitDirectory: stand, waitForClose }, directory);
 }
 
 test('given a workspace that cannot be made on either attempt, rigger once prints both attempts\' failures, each naming the workspace path, and exits non-zero', (t) => {
@@ -423,14 +576,14 @@ test('given a worktree root inside the running package\'s source tree, rigger ru
 /** Four pullable cards of kind `change`, oldest first #10, #20, #30, #40. */
 const FOUR = [card(30), card(10), card(40), card(20)];
 
-test('given four pullable cards, N 3, and a change kind listing one step whose run is true, rigger run leaves three workspaces at three different real paths, and claims no fourth card', async (t) => {
+test('given four pullable cards, N 3, and a change kind listing one true step, rigger run drains all four into distinct real workspaces', async (t) => {
   const here = world(t, { items: FOUR });
 
   const ran = here.verb('run');
 
   const made = under(here.worktrees).filter((name) => name !== 'scratch').map((name) => realpathSync(join(here.worktrees, name)));
-  assert.equal(new Set(made).size, 3, `${ran.said}\n${made.join('\n')}`);
-  assert.deepEqual(await columnsOf(here), { 10: 'Coding', 20: 'Coding', 30: 'Coding', 40: 'Ready' }, ran.said);
+  assert.equal(new Set(made).size, 4, `${ran.said}\n${made.join('\n')}`);
+  assert.deepEqual(await columnsOf(here), { 10: 'Coding', 20: 'Coding', 30: 'Coding', 40: 'Coding' }, ran.said);
 });
 
 test('given that world, the event stream shows the step dispatched for each card rigger run claimed, exiting 0, with its dispatch.start naming that card\'s own workspace', (t) => {
@@ -439,7 +592,7 @@ test('given that world, the event stream shows the step dispatched for each card
   const ran = here.verb('run');
 
   const events = here.events();
-  for (const number of [10, 20, 30]) {
+  for (const number of [10, 20, 30, 40]) {
     const dispatched = events.filter((event) => event.layer === 'L3' && event.event === 'dispatch' && event.card === number);
     assert.deepEqual(dispatched.map(({ step }) => step), ['ready', undefined], ran.said);
     const [{ dispatch: id }] = dispatched;
@@ -455,7 +608,7 @@ test('given that world, rigger run prints a line for each claimed card naming th
 
   const ran = here.verb('run');
 
-  for (const number of [10, 20, 30]) {
+  for (const number of [10, 20, 30, 40]) {
     const line = ran.err.split('\n').find((held) => new RegExp(`^rigger run: claimed #${number} from board 3\\b`).test(held));
     assert.ok(line, ran.said);
     assert.ok(line.includes(derived(here, number)), line);
@@ -473,7 +626,7 @@ test('given that world, rigger run exits non-zero', (t) => {
 const pulls = (events) => events.filter((event) => event.layer === 'L3' && event.event === 'trigger' && event.trigger === 'pull').length;
 
 test('given four pullable cards and N 3, where one claimed card\'s required step exits non-zero on both attempts, rigger run prints both attempts\' failures for that card, each naming the step and its exit code', (t) => {
-  const here = world(t, { items: [card(30), card(10, { labels: ['area:fails'] }), card(40), card(20)], ...FAILING });
+  const here = world(t, { items: [card(30), card(10, { labels: ['area:fails'] }), card(40), card(20)], ...FAILING, waitForClose: true });
 
   const ran = here.verb('run');
 
@@ -487,18 +640,19 @@ test('given four pullable cards and N 3, where one claimed card\'s required step
   }
 });
 
-test('in that case, rigger run fires no second pull after that card\'s slot is released, as the event stream\'s pull trigger events show', (t) => {
-  const here = world(t, { items: [card(30), card(10, { labels: ['area:fails'] }), card(40), card(20)], ...FAILING });
+test('in that case, freed-slot pulls read the hold closed and claim no fourth card', (t) => {
+  const here = world(t, { items: [card(30), card(10, { labels: ['area:fails'] }), card(40), card(20)], ...FAILING, waitForClose: true });
 
   const ran = here.verb('run');
 
   const events = here.events();
   assert.ok(events.some((event) => event.event === 'slot.release' && event.card === 10), ran.said);
-  assert.equal(pulls(events), 1, ran.said);
+  assert.equal(pulls(events), 4, ran.said);
+  assertClosedBeforeRefill(events, ran.said);
 });
 
-test('given a workspace that cannot be made on either attempt of a card rigger run claimed, rigger run prints both failures for that card and fires no second pull after its slot is released', async (t) => {
-  const here = unansweredWorkspaceWorld(t, FOUR);
+test('given a workspace not made on either attempt, run prints both failures and its freed-slot pulls claim no fourth card after the hold', async (t) => {
+  const here = unansweredWorkspaceWorld(t, FOUR, true);
   const path = derived(here, 10);
 
   const ran = here.verb('run');
@@ -511,9 +665,18 @@ test('given a workspace that cannot be made on either attempt of a card rigger r
   }
   const events = here.events();
   assert.ok(events.some((event) => event.event === 'slot.release' && event.card === 10), ran.said);
-  assert.equal(pulls(events), 1, ran.said);
+  assert.equal(pulls(events), 4, ran.said);
+  assertClosedBeforeRefill(events, ran.said);
   assert.equal((await columnsOf(here))[40], 'Ready', ran.said);
 });
+
+/** Every sibling maker releases only after the actual close, and every subsequent claim is barred. */
+function assertClosedBeforeRefill(events, said) {
+  const closed = events.findIndex(({ event }) => event === 'admission.close');
+  assert.ok(closed >= 0, said);
+  assert.deepEqual(events.slice(closed + 1).filter(({ event }) => event === 'pull'), [], said);
+  for (const number of [20, 30]) assert.ok(events.findIndex(({ event, card }) => event === 'slot.release' && card === number) > closed, said);
+}
 
 /** #10, #20 and #30, oldest first, where #20 alone carries `area:fails`, so under `FAILING` its required step exits non-zero on both attempts. */
 const ONE_FAILING = [card(30), card(10), card(20, { labels: ['area:fails'] })];
@@ -586,4 +749,91 @@ test('given that world, #10 and #30 are in the coding column after rigger run', 
   const columns = await columnsOf(here);
   assert.equal(columns[10], 'Coding', ran.said);
   assert.equal(columns[30], 'Coding', ran.said);
+});
+
+/** A scripted append boundary, using the actual native read and generated waiter, with retained originals. */
+function nativeCloseWaiter(t, number, fault = 'partial') {
+  const directory = scratch(t);
+  const target = join(directory, 'target');
+  const workspace = join(directory, 'widgets-worktrees', `rigger-${number}`);
+  const evidence = join(process.env.RIGGER_1216_EVIDENCE_ROOT ?? join(dirname(process.env.TMPDIR ?? '/tmp'), 'rigger-1216-evidence'), 'controls', randomUUID());
+  mkdirSync(join(target, '.rigger'), { recursive: true });
+  mkdirSync(workspace, { recursive: true });
+  mkdirSync(evidence, { recursive: true, mode: 0o700 });
+  const stream = join(target, '.rigger', 'events.jsonl');
+  // These are independent fixture records, not production-derived expected values.
+  const runId = '12345678-1234-4123-8123-123456789abc';
+  const envelope = { ts: '2026-11-05T00:00:00.000Z', run: runId };
+  const dispatch = 'd-12345678-1234-4123-8123-123456789abc';
+  const before = JSON.stringify({ ...envelope, layer: 'L3', event: 'dispatch', card: number, dispatch, role: 'engineer', tier: 'standard' }) + '\n';
+  const starting = JSON.stringify({ ...envelope, layer: 'L1', event: 'dispatch.start', card: number, dispatch, command: process.execPath, timeout: SETTLES_WITHIN, workspace }) + '\n';
+  const partial = before + starting.slice(0, starting.indexOf('dispatch.start') + 'dispatch.st'.length);
+  const complete = before + starting + JSON.stringify({ ...envelope, layer: 'L3', event: 'admission.close', kind: 'hold', id: '0123456789abcdef0123456789abcdef', name: 'hold-0123456789abcdef0123456789abcdef.json', reason: 'card #10 held after two controlled step failures' }) + '\n';
+  assert.ok(complete.startsWith(partial), 'the controlled append must preserve every observed byte');
+  const initial = fault === 'malformed' ? before + '{broken}\n' : partial;
+  if (fault === 'read') mkdirSync(stream);
+  else writeFileSync(stream, initial);
+  writeFileSync(join(evidence, 'fixture.json'), JSON.stringify({ fault, stream, kind: fault === 'read' ? 'directory' : 'file' }));
+  if (fault !== 'read') writeFileSync(join(evidence, 'before.jsonl'), initial);
+  const maker = afterAdmissionClose(target, evidence);
+  const [command, flag, body] = maker.act('*', 'engineer').exec;
+  const boundary = fault === 'partial' ? [
+    "const boundaryFs = require('node:fs');",
+    'const actualRead = boundaryFs.readFileSync; let supplied = false;',
+    `boundaryFs.readFileSync = function(path, ...args) {
+      const bytes = actualRead.call(this, path, ...args);
+      if (path === ${JSON.stringify(stream)} && !supplied) {
+        supplied = true;
+        boundaryFs.appendFileSync(path, ${JSON.stringify(complete.slice(partial.length))});
+        process.stdout.write(JSON.stringify({ event: 'controlled.read-before-append-return', observed: Buffer.from(bytes).toString('base64'), committed: Buffer.from(actualRead(path)).toString('base64') }) + '\\n');
+      }
+      return bytes;
+    };`,
+  ].join('\n') : '';
+  const ran = spawnSync(command, [flag, `${boundary}\n${body}`], { cwd: workspace, env: process.env, encoding: 'utf8', timeout: SETTLES_WITHIN, killSignal: 'SIGKILL' });
+  writeFileSync(join(evidence, 'worker.stdout'), ran.stdout ?? '');
+  writeFileSync(join(evidence, 'worker.stderr'), ran.stderr ?? '');
+  writeFileSync(join(evidence, 'worker.json'), JSON.stringify({ title: t.name, number, pid: ran.pid, status: ran.status, signal: ran.signal, error: ran.error?.stack }));
+  if (fault !== 'read') writeFileSync(join(evidence, 'after.jsonl'), readFileSync(stream));
+  const trace = readFileSync(join(evidence, 'trace.jsonl'), 'utf8').trimEnd().split('\n').map(JSON.parse);
+  publishCloseEvidence(t, evidence);
+  return { ran, evidence, trace, partial, complete, runId };
+}
+
+// Wiring counterpart: "unfinished records cannot fail or release either sibling before a complete close"
+// in closed-before-refill.test.mjs proves the byte/barrier decision without a host.
+// A real file read and actual worker exit distinguish an observation failure from a simulated exception.
+test('native sibling waiters establish the close after a forced partial append observation', async (t) => {
+  for (const order of [[20, 30], [30, 20]]) {
+    for (const number of order) await t.test(`sibling ${number}, completion order ${order.join('/')}`, (cell) => {
+      const { ran, trace, partial, complete, evidence, runId } = nativeCloseWaiter(cell, number);
+      const observation = JSON.parse(ran.stdout);
+      assert.equal(Buffer.from(observation.observed, 'base64').toString(), partial, 'the real read returned the controlled incomplete record');
+      assert.equal(Buffer.from(observation.committed, 'base64').toString(), complete, 'the append completed before the waiter parsed its saved observation');
+      assert.equal(ran.error, undefined, ran.error?.stack);
+      assert.equal(ran.signal, null, 'the waiter reached an actual exit rather than its timeout');
+      assert.equal(ran.status, 0, `wait-for-close premise failed; originals ${evidence}\n${ran.stderr}`);
+      assert.equal(trace.filter(({ event, record }) => event === 'waiter.close' && record.run === runId).length, 1);
+      assert.ok(trace.some(({ event, ordinal }) => event === 'waiter.close' && ordinal > 1), 'the incomplete first observation cannot establish the close');
+      assert.ok(trace.some(({ event, code }) => event === 'worker.exit' && code === 0));
+    });
+  }
+});
+
+// Wiring counterparts in closed-before-refill.test.mjs: "a read failure preserves its original error
+// and prior bytes without observing a close" and "a malformed complete record remains visible damage
+// rather than a successful waiter". Real file errors and actual child exits are the native premises.
+test('native sibling read and complete-record failures remain failed premises with their original diagnostics', async (t) => {
+  for (const fault of ['read', 'malformed']) {
+    for (const number of [20, 30]) await t.test(`sibling ${number}, ${fault}`, (cell) => {
+      const { ran, trace, evidence } = nativeCloseWaiter(cell, number, fault);
+      assert.equal(ran.error, undefined, ran.error?.stack);
+      assert.equal(ran.signal, null);
+      assert.equal(ran.status, 1, `a damaged waiter must remain an actual failed premise; ${evidence}`);
+      assert.match(ran.stderr, fault === 'read' ? /EISDIR/ : /SyntaxError/);
+      assert.ok(trace.some(({ event, error }) => event === 'worker.exception' && (fault === 'read' ? error.code === 'EISDIR' : error.name === 'SyntaxError')));
+      assert.ok(trace.some(({ event, code }) => event === 'worker.exit' && code === 1));
+      assert.equal(trace.some(({ event }) => event === 'waiter.close'), false);
+    });
+  }
 });

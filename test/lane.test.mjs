@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import {
   COLUMNS, KINDS, PASSING, boardOf, cardIn, columnsOf, handleOn, positive, readyCard, world,
 } from './loop-world.mjs';
+import { settledOf } from './loop-world.mjs';
 import { markerComment } from './fake-repository.mjs';
 import { createFakeBoard } from './fake-board.mjs';
 import config from '../rigger.config.mjs';
@@ -212,7 +213,9 @@ test('unknown then conflicting ends without a merge and the next pull continues 
   assert.match(endsOf(built)[0].reason, /L2 answered continue/);
   const next = built.loop.pull();
   await positive(() => built.dispatches.holding().includes(122));
-  built.dispatches.releaseAll();
+  built.repository.update(1221, { sha: 'c'.repeat(40), mergeBase: 'b'.repeat(40), diff: 'diff --git a/help b/help\n' });
+  const settled = settledOf(next);
+  await positive(() => { built.dispatches.releaseAll(); return settled(); });
   const [reached] = await next;
   assert.equal(reached.action, 'continue');
 });
@@ -760,7 +763,9 @@ test('given a merge refused while the mergeable-state read answers conflicting, 
   // The next pull dispatches its maker on the pull request at its head, a continuing attempt.
   const next = built.loop.pull();
   await positive(() => built.dispatches.holding().includes(101));
-  built.dispatches.releaseAll();
+  built.repository.update(1011, { sha: 'c'.repeat(40), mergeBase: 'b'.repeat(40), diff: 'diff --git a/help b/help\n' });
+  const settled = settledOf(next);
+  await positive(() => { built.dispatches.releaseAll(); return settled(); });
   const [reached] = await next;
   assert.deepEqual({ card: reached.card, action: reached.action, pull: reached.pull, head: reached.head }, { card: 101, action: 'continue', pull: 1011, head: shaOf(101) });
   const maker = built.decisions.find(({ card, action }) => card === 101 && action.maker !== undefined)?.action.maker;
