@@ -113,3 +113,12 @@ The commit carrying this section is H3. Its native selection ran six of six at b
 ## S-LIFECYCLE head and A4
 
 The commit carrying this section is H4, on H3 `3e490578a2f38a24e10d1ba20e29afb1f8329709`. A4 exposes no action intent. The body's A4 row says it may, and item 17 is a negative, so extracting spawn options would change native lines for no proof. A logical run performs no OS act, one test shows that, and the native witnesses stay. This would reverse if a later card needs intent through a logical port.
+
+## Lock witnesses
+
+The commit carrying this section is H5. I6 and I7 characterize the fixture wrapper's existing `wx` lock, so they carry no RED; their discrimination is the semantic rows T7-M-I6-lock and T7-M-I7-stale. The contender's readiness is its `begun` acknowledgement and the holder's recorded request. That a begun contender is contending is argued from source order, not observed, and nonentry is claimed for the 1000 ms bound only. Originals are retained under `<private-evidence>/1129-LOCK-CHECKPOINT-20261107`.
+
+| Receipt | PID | stdout SHA-256 |
+|---|---|---|
+| T7-E-I6, T7-E-I7 | 167026 | `d2811ff354af14f40aeecb70fca363d068a2d485401b61413012c5e57af32007` |
+| T7-E-lock-file | 167475 | `9da139addecd3af59d6844b0a7744e7f4e61168aeab7bef306649860a577e786` |

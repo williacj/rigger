@@ -18,6 +18,9 @@ import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { parseMarker } from '../src/workflow/marker.mjs';
 import { admissionOf, closerText, seed } from './admission-world.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { setTimeout as observed } from 'node:timers/promises';
+import { alive, until } from './process-fixtures.mjs';
+import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
 // Host reason: wiring.
 // Ordinary decision counterpart: test/in-process-fixtures.test.mjs :: an in-process forge reads comment body sources from supplied request context.
@@ -538,4 +541,108 @@ test('the native codex stand-in answers its probe and records its session', asyn
   const session = await entryChild(t, codex, ['exec', '-'], cwd, environment, 'Session input.\n');
   assert.deepEqual([session.code, session.stdout, session.stderr], [0, '', '']);
   assert.deepEqual(stand.sessions(), [{ name: 'codex', args: ['exec', '-'], cwd, input: 'Session input.\n', home: '/fixture/home', pid: session.pid }]);
+});
+
+const { 20_000: SETTLES_WITHIN } = BOUNDS;
+const NONENTRY_MS = 1000;
+const HOLD = ['pr', 'comment', '301', '--body-file', '-'];
+const CONTEND = ['pr', 'comment', '301', '--body', 'Contender note.'];
+const OBSERVE = ['pr', 'view', '301', '--json', 'comments'];
+
+/** A child with its streams kept and its ending as a promise, ended by the test's teardown if still running. */
+function ownedChild(t, world, child) {
+  world.children.push(child);
+  t.diagnostic(`lock-child-start ${child.pid}`);
+  const held = { child, stdout: '', stderr: '' };
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => { held.stdout += chunk; });
+  child.stderr.on('data', (chunk) => { held.stderr += chunk; });
+  held.closed = new Promise((resolve) => child.once('close', (code, signal) => resolve({ code, signal })));
+  return held;
+}
+
+/** A real fake gh over one seeded pull request, and the children a lock witness owns. */
+function lockWorld(t) {
+  const directory = temporaryDirectory('rigger-lock-', { context: t });
+  const fake = installFakeGh(directory, { repo: 'example/widgets', owner: 'example', project: 23 });
+  seedRepository(fake, { pullRequests: [{ number: 301, head: 'topic', sha: 'a'.repeat(40), comments: [] }] });
+  const world = { directory, fake, statePath: join(directory, 'board.json'), lock: join(directory, 'board.json.lock'), children: [] };
+  t.after(async () => {
+    for (const child of world.children) {
+      if (child.exitCode !== null || child.signalCode !== null) continue;
+      const closed = new Promise((resolve) => child.once('close', resolve));
+      child.kill('SIGKILL');
+      await closed;
+    }
+  });
+  return world;
+}
+
+/** The real executable, observed holding the lock: fd0 stays open, and its request is recorded. */
+async function holdingWriter(t, world) {
+  const holder = ownedChild(t, world, spawn(world.fake.gh, HOLD, { cwd: world.directory, env: gitEnvironment(), stdio: ['pipe', 'pipe', 'pipe'] }));
+  await until(() => readFileSync(world.statePath, 'utf8').includes('"--body-file"'), t);
+  assert.equal(existsSync(world.lock), true, 'the acknowledged holder has the lock file');
+  return holder;
+}
+
+/** A plain Node child of the exported `main`, observed loaded and begun; `main` then spins with no event loop. */
+async function begunContender(t, world, name, args) {
+  const script = join(world.directory, `${name}.mjs`);
+  writeFileSync(script, [
+    "import { writeSync } from 'node:fs';",
+    `import { main } from ${JSON.stringify(new URL('./fake-gh.mjs', import.meta.url).href)};`,
+    "writeSync(1, 'begun\\n');",
+    `await main(${JSON.stringify(world.statePath)});`,
+    '',
+  ].join('\n'));
+  const contender = ownedChild(t, world, spawn(process.execPath, [script, ...args], { cwd: world.directory, env: gitEnvironment(), stdio: ['ignore', 'pipe', 'pipe'] }));
+  await until(() => contender.stdout.startsWith('begun\n'), t);
+  return contender;
+}
+
+// Host reason: real deadline; the test arms the bound it watches two contenders across.
+// Ordinary decision counterpart: no product decision; this characterizes the fixture wrapper's lock, which holds no Rigger decision.
+test('a real writer holding the lock keeps other callers out until it releases', SETTLES_WITHIN, async (t) => {
+  const world = lockWorld(t);
+  const holder = await holdingWriter(t, world);
+  const writer = await begunContender(t, world, 'writer', CONTEND);
+  const reader = await begunContender(t, world, 'reader', OBSERVE);
+  await observed(NONENTRY_MS);
+  const during = readFileSync(world.statePath, 'utf8');
+  assert.deepEqual(JSON.parse(during).sent, [HOLD], 'neither contender recorded a request across the bound');
+  assert.equal(during.includes('Contender note.'), false, 'the writer committed nothing across the bound');
+  assert.deepEqual([alive(writer.child.pid), alive(reader.child.pid)], [true, true], 'both contenders are still waiting');
+  holder.child.stdin.end('Holder note.\n');
+  const [held, wrote, read] = await Promise.all([holder.closed, writer.closed, reader.closed]);
+  assert.deepEqual([held, wrote, read], [{ code: 0, signal: null }, { code: 0, signal: null }, { code: 0, signal: null }], `${holder.stderr}${writer.stderr}${reader.stderr}`);
+  const state = JSON.parse(readFileSync(world.statePath, 'utf8'));
+  assert.equal(state.sent.length, 3, 'all three requests survive');
+  assert.deepEqual(state.sent[0], HOLD, 'the holder is first in lock order');
+  assert.deepEqual([...state.sent.slice(1)].sort(), [CONTEND, OBSERVE].sort(), 'each contender entered once');
+  assert.deepEqual(state.repository.pullRequests[0].comments.map(({ body }) => body), ['Holder note.\n', 'Contender note.'], 'both effects survive in lock order');
+  assert.equal(holder.stdout, 'https://github.com/example/widgets/pull/301#issuecomment-1\n');
+  assert.equal(writer.stdout, 'begun\nhttps://github.com/example/widgets/pull/301#issuecomment-2\n');
+  const writerFirst = state.sent[1][1] === 'comment';
+  const seen = JSON.parse(reader.stdout.slice('begun\n'.length)).comments.map(({ body }) => body);
+  assert.deepEqual(seen, writerFirst ? ['Holder note.\n', 'Contender note.'] : ['Holder note.\n'], 'the reader sees a complete state for its place in lock order');
+  assert.equal(existsSync(world.lock), false, 'the last holder released the lock');
+});
+
+// Host reason: real deadline; the test arms the bound it watches the restarted writer across.
+// Ordinary decision counterpart: no product decision; this characterizes the fixture wrapper's stale lock, which holds no Rigger decision.
+test('a restarted writer cannot enter while a killed writer leaves its lock', SETTLES_WITHIN, async (t) => {
+  const world = lockWorld(t);
+  const holder = await holdingWriter(t, world);
+  holder.child.kill('SIGKILL');
+  assert.deepEqual(await holder.closed, { code: null, signal: 'SIGKILL' }, 'the owned writer was killed after observed acquisition');
+  assert.equal(existsSync(world.lock), true, 'the killed writer left its lock');
+  const restarted = await begunContender(t, world, 'restarted', CONTEND);
+  await observed(NONENTRY_MS);
+  assert.equal(readFileSync(world.statePath, 'utf8').includes('Contender note.'), false, 'the restarted writer entered no transaction across the bound');
+  assert.equal(alive(restarted.child.pid), true, 'the restarted writer is still waiting');
+  assert.equal(existsSync(world.lock), true, 'nothing recovered or removed the lock');
+  restarted.child.kill('SIGKILL');
+  assert.deepEqual(await restarted.closed, { code: null, signal: 'SIGKILL' }, 'only the owned recorded writer was ended');
 });
