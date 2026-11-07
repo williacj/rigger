@@ -122,3 +122,24 @@ The commit carrying this section is H5. I6 and I7 characterize the fixture wrapp
 |---|---|---|
 | T7-E-I6, T7-E-I7 | 167026 | `d2811ff354af14f40aeecb70fca363d068a2d485401b61413012c5e57af32007` |
 | T7-E-lock-file | 167475 | `9da139addecd3af59d6844b0a7744e7f4e61168aeab7bef306649860a577e786` |
+
+## Removal ref
+
+The commit carrying this section is the removal ref. It reverses the restoration ref `0f6010e3` for `test/plan.test.mjs` and `test/build-test-matrix.test.mjs`, which removes exactly the owner's nine bodies P1-P5 and S2-S5, and regenerates the matrix. The nine old bodies' original green is T7-B-D at M0 `93a24132`, attempt 02, PID 528919, stdout SHA-256 `374ec25b6274dc4b7053ed34ceb71e37dcd8906972596bb6ec943d693e901c46`. Each replacement and entry witness below passed at H6 `c89159131b3a1a014bfe1f553e68e433a31d54c0`, the merge beneath this commit, with the old bodies still in place. Originals are retained under `<private-evidence>/1129-LOCK-CHECKPOINT-20261107`.
+
+| Receipt | Ref | PID | stdout SHA-256 |
+|---|---|---|---|
+| T7-Q-P1 | `c8915913` | 584 | `f0a0d72c63344fb0393c6e5461b0d0a2393c942ef77b5735a85656aa3898b51f` |
+| T7-Q-P2 | `c8915913` | 844 | `94148b8c924125cd253d1a40398ceead69a374bcdf2ce1b06cbc967742ee057d` |
+| T7-Q-P3 | `c8915913` | 1083 | `920b03e5529762b024bd166ceceaa064d987039dfae08bbe3ed7b679a4f2f342` |
+| T7-Q-P4 | `c8915913` | 1305 | `543ae9c3e90178815ff9b8c48b93838636e75bc6f8f6282c8cc677cd86467d87` |
+| T7-Q-P5 | `c8915913` | 1548 | `a3559715f6d73eb01507d75388b6225c6c5a8ed8ee16bd8ab626e68f771e4644` |
+| T7-Q-S2 | `c8915913` | 1805 | `2a6ab9398ae0b371b086f2cff810a72b76993a6e89a765a5a952bb0713ccd047` |
+| T7-Q-S3 | `c8915913` | 2019 | `7b54a6bf886af5b02ac59c3103145226dbe28b37b786530f6bb5717ad623aefa` |
+| T7-Q-S4 | `c8915913` | 2233 | `26bb94748d7df3f4431ee95ba6c76c2e194ce61ade048cd212f52ef0b0c8d127` |
+| T7-Q-S5 | `c8915913` | 2447 | `22b67021e9c1727cf63435faab8aec0e424bd0d0781f52bbac680582ca046cca` |
+| T7-E-W-P-success | `c8915913` | 2663 | `609d1d53a971d7a1923edd6ae870e8dba59086e4b0941802e410cb55231bc4f2` |
+| T7-E-W-P-failure | `c8915913` | 3002 | `10b6886d72b1951e52fd578735dbec71ee419abe0569766706a3ceec0ce97fe4` |
+| T7-E-W-S-write | `c8915913` | 3327 | `00a653d652cce0b8a73e67ec40fb1a90ca1d5281b117968946bfec4fd7349be7` |
+| T7-E-W-S-stale | `c8915913` | 3568 | `91798a0481b491a3c17a134af95c4dad8980f57594f176bb16ef657953297465` |
+| T7-E-W-S-stray | `c8915913` | 3802 | `3f3c7cc39d75ac3d459f6b2d004f8c6eb4c47f3b2218b429af0802ef2c5ed550` |
