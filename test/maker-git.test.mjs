@@ -83,6 +83,15 @@ function completedChild(output = '') {
   return child;
 }
 
+/** A completed agent that keeps what L0 handed it: its arguments, options and standard input. */
+function recordedChild(sessions, args, options) {
+  const child = completedChild();
+  const session = { args, env: options.env, cwd: options.cwd, input: '' };
+  child.stdin.on('data', (chunk) => { session.input += chunk; });
+  sessions.push(session);
+  return child;
+}
+
 /** The recorded codex-cli 0.159.2 probe answer over Node's documented ChildProcess pipe/events. */
 function codexProbe(t) {
   const saved = Object.getOwnPropertyDescriptor(realHost, 'spawn');
@@ -181,7 +190,7 @@ test('an unreadable maker git directory records the failed git call and refuses 
 });
 
 /** The ordinary in-memory forge contracts wired to L3/L2/L1 and a controlled, successful maker. */
-async function scheduledMaker(t, { missingGit = false, routed = false, continuing = false } = {}) {
+async function scheduledMaker(t, { missingGit = false, routed = false, continuing = false, pinned = false } = {}) {
   const here = layout(t);
   const { request, root } = here;
   codexProbe(t);
@@ -205,6 +214,7 @@ async function scheduledMaker(t, { missingGit = false, routed = false, continuin
   l2.notice = async function* () { return {}; };
   const decide = (given, outcomes, options = {}) => nextAction(given, config.kinds, undefined, { roles: config.roles, provisioning: {}, sink: request.sink, outcomes, ...options });
   const invocations = [];
+  const sessions = [];
   const host = { ...realHost,
     spawn(command, args, options) {
       assert.equal(command, 'codex');
@@ -215,7 +225,7 @@ async function scheduledMaker(t, { missingGit = false, routed = false, continuin
         const start = here.events.findLast((event) => event.layer === 'L3' && event.event === 'dispatch' && event.role === 'engineer');
         repository.postIssueComment(42, postedNote(start.dispatch).body.replace('item: 2', 'item: 1'));
       }
-      return completedChild();
+      return recordedChild(sessions, args, options);
     },
     spawnSync: () => ({ status: 0, stdout: 'Thu Nov  5 12:00:00 2026\n', stderr: '' }),
   };
@@ -234,9 +244,9 @@ async function scheduledMaker(t, { missingGit = false, routed = false, continuin
       writeFileSync(join(main, 'agent.md'), '# Fixture routed role\n');
       return { path, main, scratch: request.scratch, repository: request.repository };
     },
-    state: join(root, 'state'), environment: process.env, run: 'r-maker-git', host });
+    state: join(root, 'state'), environment: pinned ? { HOME: root } : process.env, run: 'r-maker-git', host });
   const [outcome] = await Promise.allSettled([built.pull()]);
-  return { ...here, invocations, outcome, workspaceHeads, head };
+  return { ...here, invocations, sessions, outcome, workspaceHeads, head };
 }
 
 // Losing the maker mark between L3 and L1 leaves a scheduled maker with only its temporary root.
@@ -496,10 +506,11 @@ async function scheduledJudge(t) {
   l2.notice = async function* () { return {}; };
   const decide = (given, outcomes, options = {}) => nextAction(given, config.kinds, undefined, { roles: config.roles, provisioning: {}, sink: request.sink, outcomes, ...options });
   const invocations = [];
-  const host = { ...realHost, spawn(command, args) {
+  const sessions = [];
+  const host = { ...realHost, spawn(command, args, options) {
     assert.equal(command, 'codex');
     invocations.push(args);
-    return completedChild();
+    return recordedChild(sessions, args, options);
   }, spawnSync: () => ({ status: 0, stdout: 'Thu Nov  5 12:00:00 2026\n', stderr: '' }) };
   const built = loop({ config, board: handleOn(board, { columns: config.board.columns }), decide,
     facts: factsCall({ config, reads: repository.operations, decide }), l2, sink: request.sink, kill: async () => {},
@@ -511,9 +522,9 @@ async function scheduledJudge(t) {
       writeFileSync(join(path, 'main', 'agent.md'), '# Fixture agent\n');
       return { path, main: join(path, 'main'), head: join(path, 'head'), scratch: request.scratch, repository: request.repository };
     }, removeDirectories: async () => {}, escalationDirectory: async () => { throw new Error('no role is routed'); },
-    state: join(root, 'state'), environment: process.env, run: 'r-maker-git', host });
+    state: join(root, 'state'), environment: { HOME: root }, run: 'r-maker-git', host });
   const [outcome] = await Promise.allSettled([built.pull()]);
-  return { root, events, invocations, outcome };
+  return { root, head, events, invocations, sessions, outcome };
 }
 
 // Invariant guard M2 at L3's own site, where a false maker mark would be set.
@@ -527,4 +538,87 @@ test('a judge L3 starts reaches the agent with the merge base argument list whol
 test('a Codex maker dispatch equals the merge base whole but for its four git roots', async (t) => {
   const common = '<root>/repository/.git';
   assert.deepEqual(await dispatched(t, 'maker', 'codex'), codexDispatch(WORKTREE, WORKTREE, 'engineer', [`${common}/worktrees/rigger-42`, `${common}/objects`, `${common}/refs`, `${common}/logs`]));
+});
+
+/** What L0 handed the agent and L1 started for `session`, with each per-run value as a name. */
+function startedAs(session, root, head, events) {
+  const start = events.filter((event) => event.event === 'dispatch.start' && event.layer === 'L1').at(-1);
+  const text = JSON.stringify({ input: session.input, env: session.env, cwd: session.cwd, start });
+  return JSON.parse(text.split(root).join('<root>').split(head).join('<head>').split(start.digest).join('<digest>').replace(/d-[0-9a-f-]{36}/g, 'd-<uuid>'));
+}
+
+// The merge base's routed role and judge as L0 handed them to the agent, read by running merge-base
+// production through L3 over these fixtures. `<digest>` hashes evidence that holds the fixture's
+// commit, so it differs by run; the evidence itself stands in the prompt.
+const ROUTED_START = {
+  "input": "Rigger dispatched this session to handle an escalation for card #42.\nOnly the card's author changes an acceptance.\nWhere you cannot meet an acceptance item, write one comment on card #42's issue with this block, filling each field:\n```rigger-escalation\ncategory: <recorded-decision, critical, or ambiguous>\nitem: <the item ordinal>\nreason: <one line naming why>\ndispatch: d-<uuid>\n```\nCount the item ordinal from 1 over the acceptance items in the evidence below, in order.\nWrite the note once, never edit it, and end your session after posting it.\n\nCard #42: Card 42\nAcceptance:\n- The widget turns blue when pressed.\n\nMaker's ambiguous note, acceptance item 1:\nChoose `blue` or \"green\"; preserve $HOME and \\.\n",
+  "env": {
+    "HOME": "<root>",
+    "CODEX_HOME": "<root>/scratch/rigger-42/pm/codex-home",
+    "TMPDIR": "<root>/scratch/rigger-42/pm/tmp",
+    "TMPPREFIX": "<root>/scratch/rigger-42/pm/tmp/zsh"
+  },
+  "cwd": "<root>/escalations/rigger-42/pm/main",
+  "start": {
+    "layer": "L1",
+    "card": 42,
+    "dispatch": "d-<uuid>",
+    "event": "dispatch.start",
+    "command": "codex",
+    "timeout": 1000,
+    "workspace": "<root>/escalations/rigger-42/pm",
+    "facts": {
+      "card": 42,
+      "title": "Card 42",
+      "acceptance": [
+        "The widget turns blue when pressed."
+      ],
+      "category": "ambiguous",
+      "item": 1,
+      "reason": "Choose `blue` or \"green\"; preserve $HOME and \\."
+    },
+    "digest": "<digest>"
+  }
+};
+const JUDGE_START = {
+  "input": "Rigger dispatched this session, unattended, as the judge `reviewer` of pull request #77, at head `<head>`.\nWhat follows is a floor, never a limit: you may read beyond what you were given.\nThe pull request's head, with the card's provisioning steps run in it, is in the `head` directory beside your working directory. Build and test in the `head` directory, and never edit it.\nBefore ruling, run `git diff <head> <head>` in your working directory as its own tool call, even when the evidence below includes the diff.\nRun any command in `head` as one line: `cd ../head && <command>`.\nNever run git in `head`; run git commands in your working directory.\nYour working directory is not provisioned; never build or test there. Read a command's exit status from the tool's result.\nUse a separate tool call for each command, with no extra shell operations, pipes, groups, variables, or status probes such as `$?`, `${...}` or `$(...)`. Keep the `cd ../head && <command>` line by itself.\nRule on every acceptance item below, by its number, as met or unmet, then write your verdict as one comment on pull request #77.\nIts first line is yours, for the person reading the pull request. Its second line opens this block, which you fill in and write exactly once, under no other fence, leaving out the two optional lines where they do not apply:\n\n```rigger-marker\ncard: 42\npull: 77\nhead: <head>\ndigest: 127e331847a30d7a2ef7d5b39015176fd4a901696101c70fe3d4f946278b410e\nrole: reviewer\nprovider: codex\nverdict: <sound, needs revision or critical>\nitem 1: <met or unmet>\ncoverage: <covered or insufficient: whether the acceptance covered what the card asked>\ncoverageReason: <one line: why the acceptance does not cover what the card asked, written only where coverage is insufficient>\ntoSound: <one line: what would make the work sound, written only where the verdict is not sound>\ndispatch: d-<uuid>\nevidence: <digest>\n```\n\nThe acceptance items, by number:\n1. The widget turns blue when pressed.\n\nCard #42: Card 42\n\nAcceptance, whose digest your marker carries, 127e331847a30d7a2ef7d5b39015176fd4a901696101c70fe3d4f946278b410e:\n- The widget turns blue when pressed.\n\nPull request #77, from base <head> to head <head>.\n\nDiff:\ndiff --git a/delivery b/delivery\n",
+  "env": {
+    "HOME": "<root>",
+    "CODEX_HOME": "<root>/scratch/rigger-42/reviewer/codex-home",
+    "TMPDIR": "<root>/scratch/rigger-42/reviewer/tmp",
+    "TMPPREFIX": "<root>/scratch/rigger-42/reviewer/tmp/zsh"
+  },
+  "cwd": "<root>/judges/rigger-42/reviewer/main",
+  "start": {
+    "layer": "L1",
+    "card": 42,
+    "dispatch": "d-<uuid>",
+    "event": "dispatch.start",
+    "command": "codex",
+    "timeout": 1000,
+    "workspace": "<root>/judges/rigger-42/reviewer",
+    "facts": {
+      "card": 42,
+      "revision": "127e331847a30d7a2ef7d5b39015176fd4a901696101c70fe3d4f946278b410e",
+      "pull": 77,
+      "base": "<head>",
+      "head": "<head>"
+    },
+    "digest": "<digest>"
+  }
+};
+
+// Invariant guard M3 at L3's own site: what L3 adds to a routed role reaches no argument.
+test('a role L3 routes reaches the agent with the merge base prompt, environment and timeout', async (t) => {
+  const { root, head, events, sessions, outcome } = await scheduledMaker(t, { routed: true, pinned: true });
+  assert.equal(outcome.status, 'fulfilled', outcome.reason?.stack);
+  assert.equal(sessions.length, 2, 'the maker and its routed role both reached the controlled agent');
+  assert.deepEqual(startedAs(sessions[1], root, head, events), ROUTED_START);
+});
+
+// Invariant guard M2 at L3's own site: what L3 adds to a judge reaches no argument.
+test('a judge L3 starts reaches the agent with the merge base prompt, environment and timeout', async (t) => {
+  const { root, head, events, sessions, outcome } = await scheduledJudge(t);
+  assert.equal(sessions.length, 1, `one judge reached the controlled agent: ${outcome.reason?.stack}`);
+  assert.deepEqual(startedAs(sessions[0], root, head, events), JUDGE_START);
 });
