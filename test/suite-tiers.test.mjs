@@ -2221,3 +2221,14 @@ test('timer record attributes an ownerless arm after the last test to no test', 
     { file: probe.file, test: null, api: 'setTimeout', delay: 5 },
   ]);
 });
+
+// An unowned refusal must fail the run, not stop the file's own teardown and hang its worker.
+test('timer bound fails rather than hangs on an unowned refusal in a file with a root server', (t) => {
+  const probe = timerProbe(t, `${handlerServer}
+    try { clearTimeout(setTimeout(() => {}, 5)); } catch {}
+    test('requests the handler', async () => { assert.equal(await fetchArm(), 'armed'); });`);
+  const output = probe.result.stdout + probe.result.stderr;
+  assert.equal(probe.result.error, undefined, `the run did not end within its bound\n${output}`);
+  assert.notEqual(probe.result.status, 0, output);
+  assert.ok(output.includes(`deterministic tier: ${probe.file}: <module> cannot arm setTimeout with delay 5`), output);
+});

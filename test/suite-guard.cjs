@@ -131,9 +131,6 @@ function watchTimers(recordFile) {
       refusals.delete(context);
       if (refusal) throw refusal;
     });
-    test.after(() => {
-      if (refusals.size) throw new AggregateError([...refusals.values()], `deterministic tier: ${file} has timer refusals after its tests`);
-    });
   }
   function asyncOwner() {
     const resource = executionAsyncResource();
