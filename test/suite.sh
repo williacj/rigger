@@ -41,6 +41,7 @@ test/forge-runners.test.mjs
 test/forge-spawn.test.mjs
 test/guard-probe-kill.test.mjs
 test/hold-close-verbs.test.mjs
+test/in-process-fixtures-host.test.mjs
 test/init.test.mjs
 test/judge-head-live.test.mjs
 test/kill-recorded.test.mjs
