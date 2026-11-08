@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { refuseAfterBoardRead } from './call-event-fixtures.mjs';
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -1079,10 +1079,16 @@ test('given once where a judge is dispatched and its dispatch then fails, once p
 test('given once where a judge\'s directory cannot be made, once prints the judge\'s role and why, and exits non-zero', SETTLES_WITHIN, async (t) => {
   // A plain file where the judges' directories go, beside the workspaces under the default root.
   const agent = standInAgent({ 10: { engineer: { pr: true } } });
-  const { consumer, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] });
-  const root = join(dirname(consumer), 'widgets-worktrees');
-  mkdirSync(root, { recursive: true });
-  writeFileSync(join(root, 'judges'), 'not a directory');
+  const { consumer, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] }, {
+    prepare({ consumer }) {
+      const root = join(dirname(consumer), 'widgets-worktrees');
+      mkdirSync(root, { recursive: true });
+      writeFileSync(join(root, 'judges'), 'not a directory');
+      const blocker = join(dirname(consumer), 'widgets-worktrees', 'judges');
+      assert.ok(existsSync(blocker) && lstatSync(blocker).isFile(),
+        'judge-directory blocker is a regular file before CLI launch');
+    },
+  });
 
   const { code, out, err } = await ran;
 
