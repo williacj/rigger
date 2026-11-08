@@ -143,3 +143,62 @@ The commit carrying this section is the removal ref. It reverses the restoration
 | T7-E-W-S-write | `c8915913` | 3327 | `00a653d652cce0b8a73e67ec40fb1a90ca1d5281b117968946bfec4fd7349be7` |
 | T7-E-W-S-stale | `c8915913` | 3568 | `91798a0481b491a3c17a134af95c4dad8980f57594f176bb16ef657953297465` |
 | T7-E-W-S-stray | `c8915913` | 3802 | `3f3c7cc39d75ac3d459f6b2d004f8c6eb4c47f3b2218b429af0802ef2c5ed550` |
+
+## Mutation pass
+
+The pass ran at H7 `0e0d8bbcb6f51420b2e4baef11a08349449b8957` and credited 48 of 48 receipts, 47 families, each at its own oracle assertion under the frozen classifier. The receipt directory digest is `6dc946e6ec762c5bcd3ab4144591e7940d1896d2738c376a378325907ec958ea`, the SHA-256 of its sorted `sha256sum` listing, retained under `<private-evidence>/1129-FINAL-20261107/mutation-01`. The context-root records before and after are byte-identical, SHA-256 `94a906737a3fa60df45ec7c04cf12be2b2c8b4bd141a36e327a063481ee237d3` and `94a906737a3fa60df45ec7c04cf12be2b2c8b4bd141a36e327a063481ee237d3`. Each effect below is the failing assertion's actual value.
+
+| Row | Verdict | Failing test | Effect: actual value |
+|---|---|---|---|
+| T7-M-A10-cleanup | credited | a logical hanging probe stays pending across injected time until its cleanup | `[ true, 1 ]` |
+| T7-M-A10-clock | credited | a logical hanging probe stays pending across injected time until its cleanup | `[ true, [], 0, true ]` |
+| T7-M-A11-cleanup-registration | credited | the shared stand-in forever resource remains pending until its registered cleanup | `0` |
+| T7-M-A11-forever-branch-controlled | credited | the shared stand-in forever branch selects keep-alive without natural exit | `[ [ 'exit', 7 ] ]` |
+| T7-M-A11-forever-branch-native | credited | given once where a judge runs past its time, once prints that judge's role and that its time ran out, and exits non-zero | `0` |
+| T7-M-A2-await-first | credited | a logical await before its write stays pending until the write | `true` |
+| T7-M-A2-sequence | credited | a logical run keeps hold, print, write, await and action order | `'c51f4c6c12dfb17c3c1bb696ce8aa9534403e475'` |
+| T7-M-A2-write-first | credited | a logical write before its await settles the await | `false` |
+| T7-M-A4-none | credited | a logical run performs none of the OS acts | `[ 'orphaned' ]` |
+| T7-M-F1-page | credited | forge case F1-01 answers its independent literal | `{ status: 0, stdout: '{"data":{"repositoryOwner":{"projectV2":{"items":{"pageInf`… SHA-256 `91b321ce49430e6e` |
+| T7-M-F2-selector | credited | forge case F2-V5 answers its independent literal | `{ status: 0, stdout: '{"number":302}\n', stderr: '' }` |
+| T7-M-F3-printed | credited | forge case F3-40a answers its independent literal | `{ status: 1, stdout: '', stderr: 'gh: diff too large (HTTP 406)\n' }` |
+| T7-M-F4-commit-graphql | credited | forge case F1-15 answers its independent literal | `{ repo: 'example/widgets', owner: 'example', project: 23, writes: [], sent: [ [ `… SHA-256 `a5dc7e63d9041d93` |
+| T7-M-F4-commit-rest | credited | forge case F1-54 answers its independent literal | `undefined` |
+| T7-M-I34-serialization | credited | two overlapping comments on one forge store both survive, in either forced order | `[ { status: 0, stdout: 'https://github.com/example/widgets/pull/301#issuecomment`… SHA-256 `452cdda0057ecf30` |
+| T7-M-I34-serialization | credited | two overlapping board moves on one forge store both survive, in either forced order | `[ { operation: 'moveItem', args: [ 'item-2', 'Done' ] } ]` |
+| T7-M-I34-serialization | credited | a read overlapping a held mutation answers the committed result | `{ status: 0, stdout: '{"comments":[]}\n', stderr: '' }` |
+| T7-M-I34-serialization | credited | a held read keeps its seed answer and a later read sees the overlapping mutation | `{ status: 0, stdout: '{"comments":[]}\n', stderr: '' }` |
+| T7-M-I5-release | credited | an unexpected rejection releases its forge store and keeps its record | `{ rejected: 'configured clock failure' }` |
+| T7-M-I6-lock | credited | a real writer holding the lock keeps other callers out until it releases | `[ [ 'pr', 'comment', '301', '--body-file', '-' ], [ 'pr', 'comment', '301', '--b`… SHA-256 `838d5f7c28ee8d28` |
+| T7-M-I7-stale | credited | a restarted writer cannot enter while a killed writer leaves its lock | `true` |
+| T7-M-action-refusal | credited | a controlled pr fails when the forge refuses it | `'resolved'` |
+| T7-M-argv | credited | an in-process fixed command records argv elements without joining them | `[ [ 'two', 'words', '', 'tail' ] ]` |
+| T7-M-codex-session | credited | a logical codex session records its input and home and returns zero | `[ { name: 'codex', args: [ 'exec', '-' ], cwd: '/fixture/consumer', home: '/fixt`… SHA-256 `cc469bddc9f07617` |
+| T7-M-exit | credited | the shared stand-in reply preserves no-act, literal print and configured exit | `[ [ 'output', 'Literal before seven.\n' ], [ 'exit', 0 ] ]` |
+| T7-M-findings | credited | controlled findings append one parsed marker comment | `{ state: 'marker', marker: { card: 31, pull: 301, head: 'b8316384dc11123c0beba32`… SHA-256 `52277cc8fdb52c08` |
+| T7-M-gate | credited | a forge transaction reaches its gate points in order and only success reaches commit | `[ [ 'recorded', 2 ] ]` |
+| T7-M-isolation-agent | credited | two logical agents keep their runs, holds and writes separate | `true` |
+| T7-M-isolation-fixed | credited | in-process fixed command instances keep answers and requests separate | `[ [ 'first argument', '' ], [ 'second', 'two words' ], [ 'first tail' ] ]` |
+| T7-M-isolation-queue | credited | two forge stores keep their state and their queues separate | `undefined` |
+| T7-M-isolation | credited | two forge stores keep their state and their queues separate | `[]` |
+| T7-M-marker | credited | controlled findings with no marker block fail and append nothing | `'resolved'` |
+| T7-M-matrix-current | credited | a written matrix regenerates byte for byte, and the check admits it | `true` |
+| T7-M-matrix-stale | credited | a matrix edited by hand fails the check, naming the file | `false` |
+| T7-M-matrix-stale | credited | a matrix that no longer matches the tests fails the check | `false` |
+| T7-M-matrix-stray | credited | a file under docs/derived that no tool writes fails the check, naming it | `[]` |
+| T7-M-matrix-write | credited | a written matrix regenerates byte for byte, and the check admits it | `false` |
+| T7-M-plan-admission-pulls | credited | plan under an unreadable admission shows no pull line, names each path and cause, and exits non-zero | `[ ' pull #32 move to done (redo)', ' pull #31 change' ]` |
+| T7-M-plan-admission-status | credited | plan under an unreadable admission shows no pull line, names each path and cause, and exits non-zero | `0` |
+| T7-M-plan-admission-why | credited | plan under an unreadable admission shows no pull line, names each path and cause, and exits non-zero | `false` |
+| T7-M-plan-empty | credited | plan prints that nothing would be pulled, given an empty Ready column and no redo | `'rigger plan: from board 3, the next run would pull 0 cards, first pulled first'` |
+| T7-M-plan-missing | credited | plan prints a card with no acceptance with missing acceptance as the reason, and does not pull it | `''` |
+| T7-M-plan-order | credited | plan prints the pull order one card per line, highest declared priority first, then oldest | `[ 40, 10, 30, 20 ]` |
+| T7-M-plan-restated | credited | plan prints a card whose acceptance only restates its title with a restated title as the reason | `''` |
+| T7-M-pr | credited | a controlled pr commits, pushes and opens one pull request | `[]` |
+| T7-M-print | credited | the shared stand-in reply preserves no-act, literal print and configured exit | `[ [ 'exit', 0 ] ]` |
+| T7-M-probe | credited | a logical codex classifies a probe by debug and prompt-input together | `1` |
+| T7-M-push | credited | a controlled push moves the head and keeps its one open pull request | `'b44462b4df01f25651ccf2086275dc71fcb62570'` |
+| T7-M-readiness | credited | a logical hold stays pending until released after readiness | `true` |
+| T7-M-stdin-source | credited | supplied input overrides fd0 EOF for fake gh comments | `''` |
+| T7-M-unknown | credited | forge case F3-U1 answers its independent literal | `{ status: 0, stdout: '', stderr: 'the fake gh does not model gh auth status\n'`… SHA-256 `0086a9cde6887ef0` |
+| T7-M-unsupported-arg | credited | forge case F2-X5 answers its independent literal | `{ status: 0, stdout: 'title:\tTopic\n' + 'state:\tOPEN\n' + 'author:\trigger-fak`… SHA-256 `8b7238b537989735` |
