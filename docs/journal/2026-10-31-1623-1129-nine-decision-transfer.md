@@ -202,3 +202,20 @@ The pass ran at H7 `0e0d8bbcb6f51420b2e4baef11a08349449b8957` and credited 48 of
 | T7-M-stdin-source | credited | supplied input overrides fd0 EOF for fake gh comments | `''` |
 | T7-M-unknown | credited | forge case F3-U1 answers its independent literal | `{ status: 0, stdout: '', stderr: 'the fake gh does not model gh auth status\n'`… SHA-256 `0086a9cde6887ef0` |
 | T7-M-unsupported-arg | credited | forge case F2-X5 answers its independent literal | `{ status: 0, stdout: 'title:\tTopic\n' + 'state:\tOPEN\n' + 'author:\trigger-fak`… SHA-256 `8b7238b537989735` |
+
+## C0 and the effect audit
+
+A fresh independent reviewer, which had not read the maker's receipts, ran the four T7-C0 rows at H8 `c5c15856` in its own clone, through `npm run mutation:receipt` inside the shared slot. These results are the reviewer's, cited from its receipts as [recorded on the card](https://github.com/williacj/rigger/issues/1129#issuecomment-6715180358), comment SHA-256 `94941b154eb506625052034c4cb36bd0e2b5bd495ff51e63f9c223d8b19f16dd`. The reviewer's evidence digest is `98d002d06850b7f7119e324b0169461343e624edad4bd8c22aaff7ed255f9ed5`.
+
+| Row | Result |
+|---|---|
+| T7-C0-R-CARD-7 | Credited on attempt 02. Attempt 01's frozen design failed at the right assertion but refused #11 as a restated title, so it earned no credit. Attempt 02 used the reference table's `admitted: true` branch, and #11 was pulled. The independent architect ruled attempt 02 the valid credit, ruling SHA-256 `a536bc5deef15b4659fd60e0f27473ffb78fea80e8f0935717e7d71f2acc59f3` |
+| T7-C0-R-CARD-8 | Credited on attempt 01 |
+| T7-C0-R-SCHED-18-pulls | Credited on attempt 01 |
+| T7-C0-R-SCHED-18-why | Credited on attempt 01 |
+
+Every row was killed at its own oracle assertion and restored byte-exact.
+
+The independent architect read all 48 maker receipts against the effect clauses in the reference tables, re-running nothing, and found every stated effect present, ruling SHA-256 `c059465054c80b0e88617f1485172f72051887510c968a8dd8d1776729746f35`.
+
+**Correction to the mutation pass table.** T7-M-plan-missing's effect is "#11 pulled", and T7-M-plan-restated's is "#13 pulled". The table above shows each failing assertion's actual value, an empty refusal line, which is what a pulled card leaves; it does not state the effect.
