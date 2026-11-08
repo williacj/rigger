@@ -87,7 +87,7 @@ Stage S0, S-F and C1 maps the eight WIP forge tests to their pre-implementation 
 
 | WIP test | Record | Manifest case |
 |---|---|---|
-| Repository ID read | None located. It drove no new behavior | F1-10 |
+| Repository ID read | `<private-evidence>/1129-source-entry-20261031/F1-first-static`: `plan.md` and `first-case-oracle.json`, frozen 2026-10-31T07:20:29Z, before the body entered the test file at 07:26:28Z | F1-10 |
 | Agent PR comment time | `<private-evidence>/1129-f1-continuation-static-20261031/F2-explicit-comment-time` | F2-C1 |
 | REST comment time | `<private-evidence>/1129-rest-time-static-20261031` | F1-57 |
 | Modeled refusal | `<private-evidence>/1129-f3-refusal-static-20261031` | F3-57b |
@@ -258,3 +258,37 @@ Every RED and GREEN receipt of the S-F, S-ACTIONS and S-LIFECYCLE loops, in run 
 | T7-R-A10-hang | 01 | `3e490578` + tree `d665be445c2c` | `028841e7` | exit 1, 1 of 1 failed: "a logical hanging probe stays pending across injected time u…" at "the hang registers one cleanup", actual `0` | 340120 | `5b89354f562045222411a91ddb3cb81988f5f6c34cbd7ec267ad7f231c8ead50` |
 | T7-G-A10-hang | 01 | `3e490578` + tree `36595ac4135d` | `028841e7` | exit 0, 1 of 1 pass | 678 | `e4084f08b6acd266325574f4728f03332e1a4e774e0bb147aa1f220dca92103d` |
 | T7-G-lifecycle-file | 01 | `3e490578` + tree `36595ac4135d` | `028841e7` | exit 0, 219 of 219 pass | 10348 | `f9bef8e7a7e322261893100033a3c8c5ba52096a9fdda8e3645d07cfad26dba2` |
+
+## Initial fixture test-first receipts
+
+The forge-records table above first said no record existed for the repository-ID test. That was wrong: the record is `1129-source-entry-20261031/F1-first-static`, and the row now cites it. These are the actual RED and GREEN originals of the initial fixture changes, before the S-F loops, in run order. Each ran on base `fe4782a370e96ebc3bfbadb8b1bd468cb79bd5b1` plus that stage's uncommitted owned bytes, whose source hashes each receipt directory holds. All are committed at `915aded8`, the custody copy of the first checkpoint. A construction attempt is a missing-export failure and earns no credit. A GREEN with no RED is an honest characterization of behavior that already existed.
+
+| Receipt | Directory under `<private-evidence>/` | Result | PID | UTC | stdout SHA-256 |
+|---|---|---|---|---|---|
+| T7-R-C1-configured-construction-01 | `1129-source-entry-20261031/C1-first-runtime` | exit 1, missing export, zero credit | 478 | 2026-10-31T06:14:48.611Z | `689b9a91b0f8ea31bb6dab0c8df3bc7ebe2679376db78d210fcc2b322e9e0aad` |
+| T7-R-C1-configured-red-01 | same | exit 1 at "the fixed command returns the independently supplied output and status", actual `undefined` | 538 | 2026-10-31T06:14:48.888Z | `6654fefcb4c8d7fd8b78d2de55fe259743fdbcaefdb6f92f74fe9cff15073c57` |
+| T7-G-C1-configured-01 | same | exit 0 | 598 | 2026-10-31T06:14:49.154Z | `40e34a1643c4d2cb985bef1ff1932e7c12ab0702eefeaebf81e46f060ed66493` |
+| T7-R-C1-argv-01 | `1129-source-entry-20261031/C1-remaining-runtime` | exit 1 at "in-process calls preserve the supplied argument elements, spaces and empty argument", actual `undefined` | 472 | 2026-10-31T06:21:36.879Z | `e4f5491a0255431debe517f837c808e297767bb9a77aa933c2472ad1c67b54d1` |
+| T7-G-C1-argv-01 | same | exit 0 | 531 | 2026-10-31T06:21:37.139Z | `353740b613d7ebd7b6c9ad8572d2e36035429a7a50b638a505aa3543122d61b2` |
+| T7-G-C1-default-normalization-observation-01 | same | exit 0, characterization | 454 | 2026-10-31T06:22:31.002Z | `5c9ddcf6a8bc834de1b52881b962433c5379a91bcf64127d183321a62047f3d4` |
+| T7-G-C1-instance-isolation-observation-01 | same | exit 0, characterization | 468 | 2026-10-31T06:23:07.320Z | `ebcd7003ae4c3a0a51190edbf1cddb8182ffaa23e59eeac1c9051a05e90e6437` |
+| T7-R-F1-construction-01 | `1129-source-entry-20261031/F1-first-runtime` | exit 1, missing export, zero credit | 516 | 2026-10-31T07:26:28.587Z | `84af6450517a1fc051d6936602095027d5e615b4db4e3c4bf7a764f251555157` |
+| T7-R-F1-repository-id-01 | same | exit 1 at "the shared forge returns the independently expected repository ID response", actual `undefined` | 576 | 2026-10-31T07:26:28.884Z | `e0d3323b09fa31ea8d0fb9cdb420d027287547b5a19d86667a659a860ec62240` |
+| T7-G-F1-repository-id-01 | same | exit 0, 5 of 5 | 637 | 2026-10-31T07:26:29.156Z | `d27d0021c3b005721299334d33e1667c2c35c4999688ccf435dd74d1829b95d8` |
+| T7-R-F2-comment-time-01 | `1129-f2-time-runtime-20261031` | exit 1 at "the persisted comment uses the supplied time rather than ambient wall time", actual the wall time | 472 | 2026-10-31T09:15:57.750Z | `3310c666806663b52749b063069f1e4eab2425787d0d8baae404c7ed7ce7b807` |
+| T7-G-F2-comment-time-01 | same | exit 0, 6 of 6 | 538 | 2026-10-31T09:15:58.165Z | `62ad4de4d9fef2151ddb590c534bdccc071fdcc5f3ef86f69624b93dd5d9f410` |
+| T7-R-F1-rest-comment-time-01 | `1129-rest-time-runtime-20261031` | exit 1 at "the REST comment uses supplied time and preserves the earlier comment", actual the wall time | 483 | 2026-10-31T09:40:14.827Z | `eb99213ffd2b7cbcd3788dc828ba524f47f75656204b7c4a67e2782492d831d1` |
+| T7-G-F1-rest-comment-time-01 | same | exit 0, 7 of 7 | 549 | 2026-10-31T09:40:15.238Z | `43b117af7ab9ac1dcf7b5276ddff2958f0362152bc7179dc00eb8817d56326f5` |
+| T7-G-F3-modeled-http-refusal-01 | `1129-f3-refusal-runtime-20261031` | exit 0, 8 of 8, characterization | 501 | 2026-10-31T10:08:28.209Z | `7aa48da520717dada02d1c0a195be8a2c621d88cf3f89e6f075f7ec4911778b6` |
+| T7-G-F3-unexpected-clock-error-01 | `1129-f3-unexpected-runtime-20261031` | exit 0, 9 of 9, characterization | 472 | 2026-10-31T10:23:29.671Z | `f9fa50b6632f72867599b50370732ba5d0799b7cbea5348de84e8b33ec332278` |
+| T7-R-F2-request-cwd-01 | `1129-g1-cwd-runtime-20261031` | exit 1 at "the default selector uses the supplied directory rather than the caller directory", actual the ambient refusal | 511 | 2026-10-31T10:47:39.731Z | `69a840372da20a45567feba2eee307c2dd0cf038e183ece1ae05e41afdafdfa9` |
+| T7-G-F2-request-cwd-01 | same | exit 0, 10 of 10 | 588 | 2026-10-31T10:47:40.162Z | `7556b907a1c86cfecac29524f8cebfc4f8640586e62f8fd911bad53067fb0dc2` |
+| T7-R-F2-create-head-01 | `1129-create-runtime-20261031` | exit 1 at "create takes its default head from the supplied repository", actual the unpushed-branch refusal | 492 | 2026-10-31T11:05:18.976Z | `8b549143fa63690c6766a5647181aab062517e5b56bcf8e9ea82c384a23ed1f3` |
+| T7-G-F2-create-head-01 | same | exit 0 | 604 | 2026-10-31T11:05:19.464Z | `b2e9f975e2121f50aed46c8923fc80af5d65b2a0ad7a93399e4f76e90df59366` |
+| T7-R-F2-body-file-01 | `1129-body-file-runtime-20261031` | exit 1 at "a ready relative body file is read from the supplied request directory", actual ENOENT | 502 | 2026-10-31T11:10:16.319Z | `ffc6d8f3cc331a80cf2c9d69dca4b2f545a58587110b42c92b9c05ab6c350b54` |
+| T7-G-F2-body-file-01 | same | exit 0 | 618 | 2026-10-31T11:10:16.789Z | `ffcfae331ef8c8bf254e77bb186640c171343624f738ea465f961b9681588524` |
+| T7-H-stdin-R-01 | `1129-stdin-host-runtime-20261031` | exit 1 at the persisted-body assertion, actual empty fd0 body | 486 | 2026-10-31T12:43:16.495Z | `63c0429c6ca3e5448c54403d36135f3762357cee4678efd98d505fb0b8324bbf` |
+| T7-H-stdin-G-01 | same | exit 0 | 572 | 2026-10-31T12:43:16.964Z | `7167e4cf6391db52640dcd7bb7defeaf0db02592be970c61e58d6219188a1a8c` |
+| T7-D-stdin-G-01 | same | exit 0, 12 of 12 | 658 | 2026-10-31T12:43:17.476Z | `a854fb37b3f35b63ea268a79cfcbbd0d2718dba1101befa1d1deaad2393a841d` |
+
+Each RED's static record predates its run: the C1 records at 06:10 and 06:16Z, F1 at 07:20Z, comment time at 08:20Z, REST time at 09:36Z, refusal at 09:55Z, unexpected error at 10:15Z, cwd at 10:34Z, create and body file at 10:57Z with a refinement at 11:06Z, stdin before 12:43Z. The G2 A1/A5 and A11 receipts are in the sections above, and the S-F, S-ACTIONS and S-LIFECYCLE receipts in "Test-first receipts".
