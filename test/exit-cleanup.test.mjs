@@ -1860,7 +1860,7 @@ async function runExCausal(t, row, refusal) {
     ownership = { case: row.id, pid: child.pid, beforeSpawnMs, afterSpawnMs: Date.now(), command, cwd: new URL('..', import.meta.url).pathname, workerHash: digest(worker), inputHash: digest(input), runtime };
     assert.ok(Number.isSafeInteger(child.pid) && child.pid > 0, 'FIXTURE_OR_SETUP_FAILURE: spawn supplied no worker PID');
     writeFileSync(ownershipPath, JSON.stringify(ownership) + '\n', { flag: 'wx', mode: 0o600 });
-    writeFileSync(1, '606_EX_OWNERSHIP ' + JSON.stringify(ownership) + '\n');
+    process.stdout.write('606_EX_OWNERSHIP ' + JSON.stringify(ownership) + '\n');
     deadline = setTimeout(() => { timedOut = true; stop(); }, Math.max(0, 30000 - (Date.now() - beforeSpawnMs)));
     if (!refusal) {
       const message = await Promise.race([ready, ceiling, closure.then(() => { throw new Error(timedOut ? 'INVALID_HARNESS_TIMEOUT' : 'INVALID_GUARD: worker closed before readiness'); })]);
@@ -1872,7 +1872,7 @@ async function runExCausal(t, row, refusal) {
       assert.deepEqual(JSON.parse(command[6]), runtime, 'INVALID_GUARD: worker runtime argument changed before go');
       ownership.workerStartupMs = message.startedMs; ownership.goRecordedMs = Date.now();
       writeFileSync(ownershipPath, JSON.stringify(ownership) + '\n');
-      writeFileSync(1, '606_EX_GO ' + JSON.stringify(ownership) + '\n');
+      process.stdout.write('606_EX_GO ' + JSON.stringify(ownership) + '\n');
       child.stdin.end('go\n');
     }
     await Promise.race([closure, ceiling]);
@@ -1889,11 +1889,11 @@ async function runExCausal(t, row, refusal) {
     const emit = (name, bytes) => {
       const base64 = bytes.toString('base64');
       assert.ok(Buffer.from(base64, 'base64').equals(bytes), 'INVALID_GUARD: attachment roundtrip failed');
-      writeFileSync(1, '606_EX_ORIGINAL ' + JSON.stringify({ case: row.id, name, bytes: bytes.length, sha256: digest(bytes), base64, closed }) + '\n');
+      process.stdout.write('606_EX_ORIGINAL ' + JSON.stringify({ case: row.id, name, bytes: bytes.length, sha256: digest(bytes), base64, closed }) + '\n');
     };
     for (const [name, path] of [['worker', workerPath], ['input', inputPath], ['ownership', ownershipPath], ['trace', tracePath]]) {
       if (existsSync(path)) emit(name, readFileSync(path));
-      else writeFileSync(1, '606_EX_MISSING ' + JSON.stringify({ case: row.id, name, closed }) + '\n');
+      else process.stdout.write('606_EX_MISSING ' + JSON.stringify({ case: row.id, name, closed }) + '\n');
     }
     emit('stdout', Buffer.concat(stdout)); emit('stderr', Buffer.concat(stderr));
     preserved = true;
