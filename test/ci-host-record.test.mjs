@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { once } from 'node:events';
-import { ci, hostRecordInput, observeHostRecord, observeIssueTransport, publicationInvocation, reportInvocation, captureHostScenario, observeHostStep, observeWorkerTransport, observeRuntimeRecordInput, hostIssueStore } from './ci-host-fixtures.mjs';
+import { ci, hostRecordInput, observeHostRecord, observeIssueTransport, publicationInvocation, reportInvocation, captureHostScenario, observeHostStep, observeWorkerTransport, observeRuntimeRecordInput, hostIssueStore, hostOutputFields } from './ci-host-fixtures.mjs';
 
 // Break: no matching open labelled issue must create exactly one issue carrying the complete record.
 test('no matching open issue creates a body record once', async () => {
@@ -327,7 +327,7 @@ test('actual Issues transport rejects truncated invalid UTF8 malformed JSON and 
 test('complete producer transport preserves every selected field and decoded names', async () => {
   const xml = '<testsuites><testcase name="A &amp; B"><failure/></testcase><testcase name="line&#10;value"><failure/></testcase><testcase name="A &amp; B"><error/></testcase></testsuites>';
   const { observed, outputWrites } = await publicationInvocation(Buffer.from(xml), { exitCode: 1 });
-  const fields = Object.fromEntries(outputWrites.flatMap(([, bytes]) => bytes.trimEnd().split('\n').map(line => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)])));
+  const fields = hostOutputFields(outputWrites);
   const input = hostRecordInput();
   const expected = Object.fromEntries(['host_outcome', 'host_exit_code', 'host_invoked', 'host_key', 'report_state', 'names_state', 'failed_names', 'source', 'invocation', 'eligible'].map(key => [key, input[key]]));
   assert.deepEqual(fields, expected, 'every selected job field must be published without losing decoded LF or duplicates');
@@ -357,7 +357,7 @@ test('complete output budget counts every field and accepts equality without tru
     assert.deepEqual(observed.reporting.failedNames, [name], 'budget refusal does not corrupt XML truth or retain partial names');
     assert.equal(observed.host.outcome, 'failure');
     assert.ok(summaryWrites.every(([, bytes]) => Buffer.byteLength(bytes) < 1048576));
-    const fields = Object.fromEntries(outputWrites.flatMap(([, bytes]) => bytes.trimEnd().split('\n').map(line => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)])));
+    const fields = hostOutputFields(outputWrites);
     assert.equal(fields.report_state, 'valid');
     assert.equal(fields.names_state, row.state === 'available' ? 'available' : 'unavailable:output-size');
     assert.equal(fields.failed_names, row.state === 'available' ? '["' + name + '"]' : 'null');
@@ -546,7 +546,7 @@ test('actual report publication composes scheduled records for every report stat
     { bytes: undefined, exitCode: 0, text: null },
   ]) {
     const published = await publicationInvocation(row.bytes === undefined ? undefined : Buffer.from(row.bytes), { exitCode: row.exitCode });
-    const fields = Object.fromEntries(published.outputWrites.flatMap(([, bytes]) => bytes.trimEnd().split('\n').map(line => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)])));
+    const fields = hostOutputFields(published.outputWrites);
     const input = await observeRuntimeRecordInput({ CI_RECORD_INPUT: JSON.stringify(fields), GITHUB_EVENT_NAME: 'schedule', GITHUB_REF: 'refs/heads/main',
       GITHUB_REPOSITORY: 'williacj/rigger', GITHUB_RUN_ID: '123', GITHUB_RUN_ATTEMPT: '1' });
     const posts = [];

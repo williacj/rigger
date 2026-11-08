@@ -246,3 +246,8 @@ export function hostIssueStore(initialIssue) {
   };
   return store;
 }
+
+/** Decode controlled GITHUB_OUTPUT records while preserving each value. */
+export function hostOutputFields(writes) {
+  return Object.fromEntries(writes.flatMap(([, bytes]) => bytes.trimEnd().split('\n').map(line => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)])));
+}
