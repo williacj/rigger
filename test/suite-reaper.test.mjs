@@ -15,6 +15,9 @@ import { scratch, sweep } from './process-fixtures.mjs';
 import { ended } from './process-fixtures.mjs';
 import { constants } from 'node:fs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import * as reaperProbe from './suite-reaper-probe.mjs';
+import { proofRepository } from './proof-repository.mjs';
+import { gitIn } from './git-repository.mjs';
 
 const suite = resolve('test/suite.sh');
 const fixtureModule = new URL('./process-fixtures.mjs', import.meta.url).href;
@@ -303,8 +306,21 @@ async function runEnding(t, ending, kind, { holdPidPublication = false, gateSetu
   ].join('\n'));
   const output = join(directory, 'suite-output');
   const fd = openSync(output, 'w');
-  const { NODE_TEST_CONTEXT, ...env } = process.env;
-  const child = spawn('/bin/sh', [suite, '--host', ...(ending === 'E2' ? ['--test-reporter=tap'] : []), file], { cwd: resolve('.'), env: { ...env, TMPDIR: tmp }, detached: true, stdio: ['ignore', fd, fd] });
+  const { NODE_TEST_CONTEXT, RIGGER_REAPER_TRACE_FILE, RIGGER_REAPER_TRACE_ROOT, RIGGER_REAPER_CELL, ...env } = process.env;
+  const traceFile = ending === 'E5' || ending === 'E6' || (ending === 'E4' && kind === 'F6') ? join(tmp, 'reaper-reads.jsonl') : undefined;
+  const probeCell = ending + '-' + kind;
+  let tracePublished = false;
+  const publishReadEvidence = () => {
+    if (!traceFile || tracePublished) return;
+    tracePublished = true;
+    let bytes;
+    try { bytes = readFileSync(traceFile, 'utf8'); } catch { /* The probe did not retain a trace. */ }
+    for (const line of reaperProbe.traceDiagnosticLines(bytes, probeCell)) console.error(line);
+  };
+  const child = spawn('/bin/sh', [suite, '--host', ...(ending === 'E2' ? ['--test-reporter=tap'] : []), file], { cwd: resolve('.'), env: {
+    ...env, TMPDIR: tmp,
+    ...(traceFile ? { RIGGER_REAPER_TRACE_FILE: traceFile, RIGGER_REAPER_TRACE_ROOT: tmp, RIGGER_REAPER_CELL: probeCell } : {}),
+  }, detached: true, stdio: ['ignore', fd, fd] });
   closeSync(fd);
   const setupDeadline = performance.now() + 10_000;
   let spawnError;
@@ -379,6 +395,7 @@ async function runEnding(t, ending, kind, { holdPidPublication = false, gateSetu
       process.kill(filePid, 'SIGKILL');
     }
     await checkEnding(context, tmp, runName, output);
+    publishReadEvidence();
     if (context.signal.aborted) throw new Error('hold cancelled after readiness', { cause: context.signal.reason });
     if (ending === 'E2') {
       const report = readFileSync(output, 'utf8');
@@ -393,6 +410,7 @@ async function runEnding(t, ending, kind, { holdPidPublication = false, gateSetu
       assert.equal([...report.matchAll(/^\s*not ok /gm)].length, 2, report);
     }
   } catch (error) {
+    publishReadEvidence();
     try { await teardown(); } catch (cleanup) { throw new AggregateError([error, cleanup], `${phase} failed and teardown failed`); }
     onPhase('teardown');
     if (context.signal.aborted && phase === 'hold') throw new Error('hold cancelled after readiness', { cause: error });
@@ -429,6 +447,51 @@ for (const ending of ['E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E7']) {
 for (const ending of ['E1', 'E2', 'E3', 'E4', 'E5', 'E6', 'E7']) {
   test(`${ending} ends an F7 L0 process group by ten seconds after the run ends`, { timeout: 30_000 }, (t) => runEnding(t, ending, 'F7'));
 }
+
+async function checkReadEvidence(t, ending, kind, expectedCell) {
+  const diagnostics = [];
+  const previous = console.error;
+  console.error = (...args) => {
+    diagnostics.push(args.join(' '));
+    previous(...args);
+  };
+  try {
+    await runEnding(t, ending, kind);
+  } finally {
+    console.error = previous;
+  }
+  const records = diagnostics.filter((line) => line.startsWith('RIGGER_REAPER_READ '));
+  assert.ok(records.length > 0, expectedCell + ' produced no structural targeted-read record');
+  const record = JSON.parse(records[0].slice('RIGGER_REAPER_READ '.length));
+  assert.equal(record.cell, expectedCell);
+  assert.ok(Number.isSafeInteger(record.pid) && record.pid > 0);
+  assert.equal(typeof record.readSequence, 'number');
+  assert.equal(typeof record.parserClass, 'string');
+  if (record.parserClass === 'absent') assert.equal(record.signalZero, 'ESRCH');
+}
+
+// Host reason: wiring. Ordinary counterparts:
+// test/suite-reaper-probe.test.mjs :: outer targeted-read diagnostic hides a synthetic secret and path while showing framing and parser result
+// test/suite-reaper-probe.test.mjs :: targeted read outcomes and trace failures retain the confirmed-ending decision
+test('E5 publishes a safe structural record for completed targeted reads', { timeout: 30_000 }, (t) => checkReadEvidence(t, 'E5', 'F1', 'E5-F1'));
+
+// Host reason: wiring. Ordinary counterparts:
+// test/suite-reaper-probe.test.mjs :: outer targeted-read diagnostic hides a synthetic secret and path while showing framing and parser result
+// test/suite-reaper-probe.test.mjs :: targeted read outcomes and trace failures retain the confirmed-ending decision
+test('E4-F6 publishes a safe structural record for completed targeted reads', { timeout: 30_000 }, (t) => checkReadEvidence(t, 'E4', 'F6', 'E4-F6'));
+
+// Host reason: wiring. Committed-file inclusion and isolated native import depend on no Rigger decision.
+test('proof repositories commit and import the suite-reaper projection beside the reaper', (t) => {
+  const fixture = proofRepository(t);
+  for (const ref of [fixture.baseSha, fixture.headSha]) {
+    const paths = gitIn(fixture.root, 'ls-tree', '--name-only', ref, 'test/suite-reaper', 'test/suite-reaper-probe.mjs');
+    assert.deepEqual(paths.trim().split('\n'), ['test/suite-reaper', 'test/suite-reaper-probe.mjs']);
+  }
+  const imported = spawnSync(process.execPath, ['--input-type=module', '-e', "import('./test/suite-reaper-probe.mjs')"], {
+    cwd: fixture.root, encoding: 'utf8', timeout: 5_000,
+  });
+  assert.equal(imported.status, 0, 'isolated fixture import must resolve the copied projection');
+});
 
 test('the ending check waits for a transient reaper after removal', async (t) => {
   const directory = scratch(t);
