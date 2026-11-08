@@ -223,6 +223,25 @@ export function workspaces({ repository, emitter, git = 'git', timeout = GIT_TIM
   return {
     fetchMainLine,
 
+    /**
+     * A linked maker's own git directory and common objects, refs and logs, by real path.
+     * An absent common logs directory is named under its real parent without being made.
+     * An unresolved existing path or a main working tree is refused, never granted.
+     */
+    async gitDirectories(path) {
+      const [own, common] = (await answer(['-C', path, 'rev-parse', '--path-format=absolute', '--git-dir', '--git-common-dir'])).replace(/\n$/, '').split('\n');
+      if (realpathSync.native(own) === realpathSync.native(common)) throw new Error(`${path} is no linked worktree, so its common git directory cannot be granted`);
+      const directories = [own, ...['objects', 'refs'].map((name) => join(common, name))].map((directory) => realpathSync.native(directory));
+      const logs = join(realpathSync.native(common), 'logs');
+      try {
+        lstatSync(logs);
+      } catch (failure) {
+        if (failure.code !== 'ENOENT') throw failure;
+        return [...directories, logs];
+      }
+      return [...directories, realpathSync.native(logs)];
+    },
+
     /** Reads the checked-out `branch`'s commit at the tip of its own linked workspace `path`. */
     async tip(path, branch) {
       if (!(await this.isWorktree(path))) throw new Error(`${path} is not a linked worktree of this repository`);

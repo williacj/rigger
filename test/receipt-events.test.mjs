@@ -23,6 +23,9 @@ const subject = 'test/fixtures/receipt-events/subject.mjs';
 // Synthetic invocation metadata follows onGroup's contract and claims no recorded host identity.
 const syntheticProcess = () => ({ group: 731, started: 1700000000 });
 
+// These ordinary native envelopes are synthetic contract data, never historical host observations.
+const syntheticNative = (code) => ({ pid: 731, code, signal: null });
+
 // Fixture metadata must not consume the product source-hash fault that existing controls inject.
 const createCaptureHash = crypto.createHash;
 
@@ -45,7 +48,7 @@ function recorded(node, shape) {
   const stream = JSON.parse(readFileSync(new URL(`fixtures/receipt-events/node-${node}-${shape}.json`, import.meta.url), 'utf8'));
   const absolute = stream.find((event) => event.data.file?.endsWith(`/${subject}`)).data.file;
   const root = absolute.slice(0, -subject.length - 1);
-  return { stream, root, run: withSyntheticCapture({ ...parseEvents(stream, root, subject), process: syntheticProcess(), exit: exits[shape], timedOut: false }) };
+  return { stream, root, run: withSyntheticCapture({ ...parseEvents(stream, root, subject), process: syntheticProcess(), native: syntheticNative(exits[shape]), exit: exits[shape], timedOut: false }) };
 }
 
 /** The receipt's status for a mutant run, as mutationReceipt reads it. */
@@ -214,20 +217,20 @@ test('TQ restored lifecycle requires matching original bytes', (t) => {
 // An applied semantic candidate cannot retain a verdict after the actual caught restoration reason.
 test('TQ restored lifecycle refuses a restoration error', (t) => {
   const control = withSyntheticCapture({
-    process: syntheticProcess(), exit: 0, timedOut: false, fileVerdicts: [], count: 1,
+    process: syntheticProcess(), native: syntheticNative(0), exit: 0, timedOut: false, fileVerdicts: [], count: 1,
     tests: [{ name: '1141 selected witness', outcome: 'pass',
       identity: ['test/cell.test.mjs', [['1141 selected witness', 'test/cell.test.mjs', 5, 1]]],
       details: { type: 'test' } }],
   });
   const killed = withSyntheticCapture({
-    process: syntheticProcess(), exit: 1, timedOut: false, fileVerdicts: [], count: 1,
+    process: syntheticProcess(), native: syntheticNative(1), exit: 1, timedOut: false, fileVerdicts: [], count: 1,
     tests: [{ name: '1141 selected witness', outcome: 'fail',
       identity: ['test/cell.test.mjs', [['1141 selected witness', 'test/cell.test.mjs', 5, 1]]],
       details: { type: 'test', assertion: true,
         error: { failureType: 'testCodeFailure', cause: { name: 'AssertionError', message: '1141 literal value must remain one' } } } }],
   });
   const survived = withSyntheticCapture({
-    process: syntheticProcess(), exit: 0, timedOut: false, fileVerdicts: [], count: 1,
+    process: syntheticProcess(), native: syntheticNative(0), exit: 0, timedOut: false, fileVerdicts: [], count: 1,
     tests: [{ name: '1141 selected witness', outcome: 'pass',
       identity: ['test/cell.test.mjs', [['1141 selected witness', 'test/cell.test.mjs', 5, 1]]],
       details: { type: 'test' } }],
@@ -256,7 +259,7 @@ function selectedWitnessRun(mutant) {
   const detail = { type: 'test', assertion: mutant };
   if (mutant) detail.error = { failureType: 'testCodeFailure',
     cause: { name: 'AssertionError', message: '1141 literal value must remain one' } };
-  return withSyntheticCapture({ process: syntheticProcess(), exit: mutant ? 1 : 0, timedOut: false, count: 1, fileVerdicts: [],
+  return withSyntheticCapture({ process: syntheticProcess(), native: syntheticNative(mutant ? 1 : 0), exit: mutant ? 1 : 0, timedOut: false, count: 1, fileVerdicts: [],
     command: ['controlled-selected', 'test/cell.test.mjs'],
     stdout: 'synthetic controlled selected producer; no child stdout credit\n', stderr: '', events: [],
     tests: [{ name: '1141 selected witness', outcome: mutant ? 'fail' : 'pass',
@@ -776,7 +779,7 @@ test('TQ restoration duty survives mutant launch refusal', async (t) => {
 
 test('TQ restored lifecycle requires unambiguous complete selected identities', () => {
   const { stream, root } = recorded('v26.12.1', 'control');
-  const parsed = (events, exit = 0) => withSyntheticCapture({ ...parseEvents(events, root, subject), process: syntheticProcess(), exit, timedOut: false,
+  const parsed = (events, exit = 0) => withSyntheticCapture({ ...parseEvents(events, root, subject), process: syntheticProcess(), native: syntheticNative(exit), exit, timedOut: false,
     command: ['controlled-recording-variant'], stdout: events.map((event) => `@@proof ${JSON.stringify(event)}\n`).join(''),
     stderr: '', events: [] });
   const original = parsed(stream);
@@ -997,11 +1000,11 @@ test('TQ restored lifecycle refuses unavailable restored runs', () => {
   const cases = [
     { name: 'timeout', change: (run) => { run.timedOut = true; } },
     { name: 'empty todo', change: (run) => { run.tests[0].todo = ''; } },
-    { name: 'aborted named test', change: (run) => { run.tests[0].outcome = 'fail'; run.exit = 1;
+    { name: 'aborted named test', change: (run) => { run.tests[0].outcome = 'fail'; run.exit = 1; run.native = syntheticNative(1);
       run.tests[0].details.error = { failureType: 'testAborted', cause: { message: '1141 cancelled' } }; } },
-    { name: 'runner refusal', change: (run) => { run.tests[0].outcome = 'fail'; run.exit = 1;
+    { name: 'runner refusal', change: (run) => { run.tests[0].outcome = 'fail'; run.exit = 1; run.native = syntheticNative(1);
       run.tests[0].details.error = { failureType: 'hookFailed', cause: { message: '1141 runner refused' } }; } },
-    { name: 'nonzero without failure', change: (run) => { run.exit = 2; } },
+    { name: 'nonzero without failure', change: (run) => { run.exit = 2; run.native = syntheticNative(2); } },
     { name: 'empty named verdicts', change: (run) => { run.tests = []; run.count = 0; } },
   ];
   for (const killed of [true, false]) {
@@ -1110,5 +1113,160 @@ test('TQ selected-suite UTF8 fidelity is required for proof credit', () => {
     delete missing.capture[stream];
     assert.equal(noVerdict(missing), 'selected suite UTF8 text fidelity unavailable',
       `${stream}: absent fidelity evidence must not earn proof credit`);
+  }
+});
+
+
+// Each malformed record is synthetic diagnostic data, not a legal ChildProcess event sequence.
+test('native exit records refuse missing or ambiguous evidence', (t) => {
+  const complete = selectedWitnessRun(false);
+  const original = structuredClone(complete);
+  assert.deepEqual(complete.process, { group: 731, started: 1700000000 }, 'the synthetic start identity is an independent literal');
+  assert.deepEqual(complete.native, { pid: 731, code: 0, signal: null }, 'the control explicitly models an ordinary synthetic native ending');
+  assert.equal(complete.exit, 0);
+  assert.equal(complete.timedOut, false);
+  assert.deepEqual(complete.tests.map(({ name, outcome }) => [name, outcome]), [['1141 selected witness', 'pass']]);
+  assert.deepEqual(complete.fileVerdicts, []);
+  assert.equal(noVerdict(complete), undefined, 'the complete named control must qualify before its native evidence is damaged');
+  const rows = [
+    { name: 'missing native', change: (run) => { delete run.native; } },
+    { name: 'missing native PID', change: (run) => { delete run.native.pid; } },
+    { name: 'different native PID', change: (run) => { run.native.pid = 732; } },
+    { name: 'neither code nor signal', change: (run) => { run.native.code = null; } },
+    { name: 'both code and signal', change: (run) => { run.native.signal = 'SIGTERM'; } },
+    { name: 'missing null signal', change: (run) => { delete run.native.signal; } },
+    { name: 'fractional native code', change: (run) => { run.native.code = 0.5; } },
+    { name: 'observed native error', change: (run) => { run.native.error = { name: 'Error', message: 'controlled native observer error' }; } },
+    { name: 'native normalized mismatch', change: (run) => { run.native.code = 1; } },
+  ];
+  const observations = rows.map((row) => {
+    const run = structuredClone(complete);
+    row.change(run);
+    const before = structuredClone(run);
+    const reason = noVerdict(run);
+    return { name: row.name, before, after: structuredClone(run), reason };
+  });
+  t.diagnostic(JSON.stringify({ synthetic: true, control: complete, observations: observations.map((row) => ({
+    ...row, reasonType: typeof row.reason, reason: row.reason ?? null,
+  })) }));
+  assert.deepEqual(complete, original, 'qualification must preserve the complete controlled record');
+  for (const row of observations) assert.deepEqual(row.after, row.before, `${row.name}: qualification must not complete or rewrite a malformed record`);
+  for (const row of observations) assert.match(row.reason, /native/i, `${row.name}: incomplete or ambiguous native evidence earns no named proof credit`);
+});
+
+
+// Literal synthetic native pairs preserve named roles without claiming a recorded OS ending.
+test('native exit records distinguish ordinary and signalled endings', (t) => {
+  const ordinaryPass = selectedWitnessRun(false);
+  const ordinaryFailure = selectedWitnessRun(true);
+  const signalled = { ...selectedWitnessRun(false), exit: 143, native: { pid: 731, code: null, signal: 'SIGTERM' } };
+  const runs = [ordinaryPass, ordinaryFailure, signalled];
+  const before = structuredClone(runs);
+  const reasons = runs.map((run) => noVerdict(run));
+  const statuses = runs.map((run) => status(run));
+  const failures = runs.map((run) => named(run));
+  t.diagnostic(JSON.stringify({ synthetic: true, nativeRoleControls: runs,
+    reasons: reasons.map((reason) => ({ type: typeof reason, value: reason ?? null })), statuses, failures }));
+  assert.deepEqual(runs.map(({ native }) => native), [
+    { pid: 731, code: 0, signal: null },
+    { pid: 731, code: 1, signal: null },
+    { pid: 731, code: null, signal: 'SIGTERM' },
+  ], 'ordinary numeric exits and a signal remain distinct explicit native records');
+  assert.deepEqual(runs.map(({ exit }) => exit), [0, 1, 143], 'normalized results remain separate from native pairs');
+  assert.equal(reasons[0], undefined, 'ordinary native zero retains a qualifying named pass');
+  assert.equal(reasons[1], undefined, 'ordinary native one retains a qualifying named assertion failure');
+  assert.match(reasons[2], /native/i, 'a signal cannot earn proof credit from a named pass');
+  assert.deepEqual(statuses, ['survived', 'killed', 'no verdict']);
+  assert.deepEqual(failures, [[], [
+    { name: '1141 selected witness', kind: 'assertion', message: '1141 literal value must remain one' },
+  ], []], 'the controlled ordinary failure preserves its named assertion role');
+  assert.deepEqual(runs, before, 'native qualification preserves every complete controlled input');
+});
+
+
+// Phase answers are synthetic; source writes, restoration and Git inventories use the existing real lifecycle fixture.
+test('native records guard all mutation phases', async (t) => {
+  const direct = [];
+  const lifecycle = [];
+  const proofSides = [];
+  const originalBytes = 'ZXhwb3J0IGNvbnN0IHZhbHVlID0gMTsK';
+  const mutantBytes = 'ZXhwb3J0IGNvbnN0IHZhbHVlID0gMjsK';
+  const originalHash = '5d8f65d2774e206bc9f7a7a4ad39ca2dc563b5c31e46ab57ef4874961237ce29';
+  for (const killed of [true, false]) {
+    const complete = { mutated: true, status: 'no verdict', unmutated: selectedWitnessRun(false),
+      mutant: selectedWitnessRun(killed), restored: selectedWitnessRun(false) };
+    const completeBefore = structuredClone(complete);
+    assert.deepEqual(mutationVerdict(complete), { status: killed ? 'killed' : 'survived' }, 'complete direct controls must retain their literal candidate roles');
+    assert.deepEqual(complete, completeBefore, 'direct control qualification must preserve input records');
+    for (const phase of ['unmutated', 'restored', 'mutant']) {
+      const report = structuredClone(complete);
+      delete report[phase].native;
+      const before = structuredClone(report);
+      const decision = mutationVerdict(report);
+      direct.push({ killed, phase, before, after: structuredClone(report), decision });
+    }
+    for (const phase of [undefined, 'unmutated', 'mutant', 'restored']) {
+      const selectedBody = killed ? undefined : "// ABOUTME: Observes a constant named assertion while the source changes.\nimport { test } from 'node:test';\nimport assert from 'node:assert/strict';\nimport { value } from '../subject.mjs';\ntest('1141 selected witness', () => assert.equal(21, 21));\n";
+      const fixture = mutationFixture(t, selectedBody);
+      let calls = 0;
+      const missingAt = { unmutated: 1, mutant: 2, restored: 3 }[phase];
+      const result = await receiptInFixture(fixture, async () => {
+        calls += 1;
+        const run = selectedWitnessRun(calls === 2 && killed);
+        if (calls === missingAt) delete run.native;
+        return run;
+      });
+      lifecycle.push({ killed, phase: phase ?? 'complete', calls, result, observations: fixture.observations });
+      assertMutationFixtureClean(fixture);
+    }
+  }
+  // proof:diff imports this same noVerdict boundary for both producer-shaped sides; actual wiring remains host proof.
+  for (const side of ['base', 'head']) {
+    const run = selectedWitnessRun(side === 'base');
+    assert.equal(noVerdict(run), undefined, `${side}: the complete controlled proof-side premise must qualify`);
+    delete run.native;
+    const before = structuredClone(run);
+    const reason = noVerdict(run);
+    proofSides.push({ side, before, after: structuredClone(run), reason });
+  }
+  t.diagnostic(JSON.stringify({ syntheticNativePhaseObservations: true, direct, lifecycle, proofSides }));
+  for (const row of direct) assert.deepEqual(row.after, row.before, `${row.phase}: the exported decision must preserve unavailable phase records`);
+  for (const row of direct) {
+    assert.equal(row.decision.status, 'no verdict', `${row.phase}: direct ${row.killed ? 'killed' : 'survived'} candidate must refuse missing native evidence`);
+    assert.match(row.decision.reason, /native/i, `${row.phase}: the exported decision must identify the unavailable native phase`);
+  }
+  for (const row of proofSides) {
+    assert.deepEqual(row.after, row.before, `${row.side}: shared proof-side qualification must preserve the missing record`);
+    assert.match(row.reason, /native/i, `${row.side}: the shared proof boundary refuses unavailable native evidence`);
+  }
+  for (const row of lifecycle) {
+    const { report, exit } = row.result;
+    if (row.phase === 'complete') {
+      assert.equal(report.status, row.killed ? 'killed' : 'survived', 'complete lifecycle controls must retain candidate roles');
+      assert.equal(exit, 0);
+    } else {
+      assert.equal(report.status, 'no verdict', `${row.phase}: reached lifecycle missing native evidence cannot qualify`);
+      assert.equal(exit, 1);
+      assert.match(report.reason, /native/i, `${row.phase}: the initiating native refusal must remain visible`);
+      assert.equal(Object.hasOwn(report[row.phase], 'native'), false, `${row.phase}: missing evidence must not be completed`);
+    }
+    if (row.phase === 'unmutated') {
+      assert.equal(row.calls, 1, 'an unavailable original prevents mutation and all later selected calls');
+      assert.equal(report.mutated, false);
+      assert.equal(Object.hasOwn(report, 'mutant'), false);
+      assert.equal(Object.hasOwn(report, 'restored'), false);
+      assert.equal(Object.hasOwn(report, 'restoration'), false);
+      assert.deepEqual(row.observations.map(({ bytes, status }) => [bytes, status]), [[originalBytes, '']]);
+    } else {
+      assert.equal(row.calls, 3, 'an attempted mutation retains the literal restored selection duty');
+      assert.equal(report.mutated, true);
+      assert.equal(report.readBack, 'export const value = 2;\n', 'the real source mutation is the independent literal fault');
+      assert.deepEqual(row.observations.map(({ bytes, status }) => [bytes, status]), [
+        [originalBytes, ''], [mutantBytes, ' M subject.mjs\n'], [originalBytes, ''],
+      ], 'actual source bytes and status must follow original, mutant, original');
+      assert.deepEqual([report.restoration.preimageHash, report.restoration.beforeRunHash, report.restoration.afterRunHash],
+        [originalHash, originalHash, originalHash], 'restoration hashes must equal the independently fixed original bytes');
+      assert.equal(report.restoration.status, '', 'the restored source must be clean after selection');
+    }
   }
 });

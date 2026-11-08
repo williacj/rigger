@@ -10,6 +10,7 @@ import { gitEnvironment } from '../substrate/git-environment.mjs';
 import { EVENT_REFUSED, NOT_STARTED } from '../substrate/process.mjs';
 import { startFailure } from '../substrate/process.mjs';
 import { ADAPTERS } from '../substrate/providers/adapters.mjs';
+import { workspaces } from '../substrate/worktrees.mjs';
 
 /**
  * What L1's `dispatch` is handed to run `answer`, L2's role answer (the architect's ruling 1, Q1
@@ -27,6 +28,8 @@ import { ADAPTERS } from '../substrate/providers/adapters.mjs';
  * the answer's `provider`. It is handed the agent file joined under `cwd` as an absolute path, the
  * answer's `tier`, the prompt as `instruction` then `evidence`, and an L0 emitter under dispatch
  * `id` and `card`, through `sink`, for any process it runs (ruling 5).
+ * Only a dispatch L3 marks `maker` supplies a lazy `gitDirectories` reader through L0's workspace
+ * adapter. An adapter that does not need git metadata never calls it.
  *
  * The environment is built in four steps (ruling 9): `env`, as L3 hands it; less every variable
  * that redirects git (`gitEnvironment`); less the variables the adapter's `unset` names; and then
@@ -51,7 +54,7 @@ import { ADAPTERS } from '../substrate/providers/adapters.mjs';
  * ("Failure model", step 4). A sink that refused one of L1's scratch events rejects as the
  * refused event it is (`EVENT_REFUSED`).
  */
-export async function roleDispatch({ answer, cwd, directory, scratch, repository, reach, env, sink, id, card, adapters = ADAPTERS }) {
+export async function roleDispatch({ answer, cwd, directory, scratch, repository, reach, maker = false, env, sink, id, card, adapters = ADAPTERS }) {
   const { provider } = answer;
   if (!Object.hasOwn(adapters, provider)) throw unstarted(`L0 holds no provider adapter named ${JSON.stringify(provider)}, which role ${answer.role} names`);
   if (typeof scratch !== 'string' || !isAbsolute(scratch)) throw startFailure(unstarted(`L3 handed it the scratch base ${JSON.stringify(scratch)} as scratch, which is no absolute path`), 'dispatch-location');
@@ -76,6 +79,7 @@ export async function roleDispatch({ answer, cwd, directory, scratch, repository
       directory: cwd,
       scratch: made,
       reach,
+      ...(maker ? { gitDirectories: () => workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card, dispatch: id }) }).gitDirectories(cwd) } : {}),
       environment,
       emitter: sink.emitter({ layer: 'L0', card, dispatch: id }),
     });

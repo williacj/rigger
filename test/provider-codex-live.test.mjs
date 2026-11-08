@@ -5,6 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
@@ -17,13 +18,14 @@ import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { runCommand } from '../src/substrate/process.mjs';
 import * as codex from '../src/substrate/providers/codex.mjs';
 import { judgeAnswer } from '../src/workflow/judges.mjs';
-import { parseMarker } from '../src/workflow/marker.mjs';
+import { dispatched, parseMarker } from '../src/workflow/marker.mjs';
 import { SERVER, pastRefusing, put } from './claude-live.mjs';
 import { judgeShell } from './codex-judge-shell.mjs';
 import { installFakeGh, seedRepository } from './fake-gh.mjs';
 import { detachedWorktreeAt, gitIn, repositoryAt, worktreeAt } from './git-repository.mjs';
 import { onPath } from './on-path.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { assertDelivered, liveMaker, MAKER_SESSION } from './maker-git-live.mjs';
 
 /*
  * What these runs reach. Each session is one real `codex exec`, signed in as the host's owner
@@ -277,6 +279,9 @@ test('under the same home, a session the skill toggles are left off for loads ex
   linkHolds(ran.home, owner);
 });
 
+/** A dispatch id's form, copied from `src/workflow/marker.mjs`'s `DISPATCH`, which is not exported. */
+const DISPATCH_ID = /^d-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 /** The markers `head` plants, each in a source Codex would load were `head` its working directory. */
 const HEAD = { agents: 'OSPREY-c489-head-agentsmd', agentsSkill: 'OSPREY-c489-head-agentsskill', codexSkill: 'OSPREY-c489-head-codexskill', config: 'OSPREY-c489-head-config' };
 
@@ -333,16 +338,20 @@ test('a Codex judge dispatch through L1 from main loads main\'s AGENTS.md and no
   const roles = { reviewer: { agent: '.claude/agents/reviewer.md', provider: 'codex', tier: 'standard' } };
   const answered = judgeAnswer(card, kinds, undefined, { roles, sink });
   assert.equal(answered.action, 'judge', JSON.stringify(answered));
-  const [answer] = answered.judges;
+  // L3 runs a judge's `roleDispatch` and its L1 dispatch under one id it mints, and writes that id
+  // into the judge's instruction with `dispatched` (`src/scheduling/loop.mjs`).
+  const id = `d-${randomUUID()}`;
+  assert.match(id, DISPATCH_ID);
+  const [answer] = answered.judges.map((judged) => dispatched(judged, id));
   const scratchBase = join(base, 'scratch', 'rigger-1412');
   mkdirSync(scratchBase, { recursive: true });
   const env = { ...process.env, PATH: `${dirname(fake.gh)}${delimiter}${pastRefusing()}` };
 
-  const handed = await roleDispatch({ answer, cwd: main, directory: judge, scratch: scratchBase, repository, reach: [head], env, sink, id: 'd-live-judge', card: 1412 });
+  const handed = await roleDispatch({ answer, cwd: main, directory: judge, scratch: scratchBase, repository, reach: [head], env, sink, id, card: 1412 });
   const ghConfig = join(base, 'gh-config');
   mkdirSync(ghConfig);
   const shelled = judgeShell(handed, ghConfig);
-  const result = await dispatch({ id: 'd-live-judge', card: 1412, directory: state, sink, ...shelled, timeout: SESSION });
+  const result = await dispatch({ id, card: 1412, directory: state, sink, ...shelled, timeout: SESSION });
 
   assert.equal(result.exit, 0, result.stderr.toString('utf8'));
   const events = eventsOf(result.stdout);
@@ -381,6 +390,7 @@ test('a Codex judge dispatch through L1 from main loads main\'s AGENTS.md and no
   assert.equal(held.length, 1);
   const parsed = parseMarker(held[0].body, 1);
   assert.deepEqual({ state: parsed.state, head: parsed.marker?.head, role: parsed.marker?.role }, { state: 'marker', head: sha, role: 'reviewer' }, held[0].body);
+  assert.equal(parsed.marker.dispatch, id, held[0].body);
   assert.match(held[0].body, /OSPREY-c489-headfile/);
   assert.match(held[0].body, /OSPREY-c489-shared-skill/);
   assert.ok(held[0].body.includes(fake.gh), `the judge's shell found a gh other than the fake forge's ${fake.gh}`);
@@ -429,4 +439,40 @@ test('a session under the owner\'s own credentials lands its rollout under its h
   const owned = filesUnder(join(owner, 'sessions')).filter((file) => file.path.includes(ran.thread));
   quote('owner sessions files from this thread', owned.map((file) => file.path));
   assert.deepEqual(owned, []);
+});
+
+// proves R-WORK-42
+test('a live Codex maker commits and pushes through the shipped hook, denies common hooks and config, with common logs absent', { skip, timeout: 2 * MAKER_SESSION }, async (t) => {
+  realCodex(t);
+  const made = await liveMaker(t, 'codex');
+  assert.ok(existsSync(join(made.directory, '.c1230-result.json')), 'the maker did not run the fixture commands');
+  const report = JSON.parse(readFileSync(join(made.directory, '.c1230-result.json'), 'utf8'));
+  const committed = report.commands.find(({ args }) => args[0] === 'commit');
+  assert.equal(committed?.exit, 0, `the maker commit was denied: ${committed?.stderr ?? JSON.stringify(report)}`);
+  assert.equal(committed.signal, null, 'the commit ended naturally');
+  const head = assertDelivered(made);
+  const pushed = report.commands.find(({ args }) => args[0] === 'push' && args.at(-1) === 'rigger-42');
+  assert.equal(pushed.exit, 0, pushed.stderr);
+  assert.equal(pushed.signal, null, 'the push ended naturally');
+  const refused = report.commands.find(({ args }) => args.at(-1) === 'HEAD:refs/heads/main');
+  assert.notEqual(refused.exit, 0);
+  assert.match(refused.stderr, /refused: a push to the default branch main is not allowed/);
+  assert.deepEqual(report.denied.map(({ file, denied }) => ({ file, denied })), [{ file: 'hooks/c1230-denied', denied: true }, { file: 'config', denied: true }]);
+  assert.ok(report.denied.every(({ code }) => ['EPERM', 'EACCES'].includes(code)), JSON.stringify(report.denied));
+  assert.deepEqual(readFileSync(join(made.common, 'config')), made.configuration, 'the common config changed');
+  assert.equal(existsSync(join(made.common, 'hooks', 'c1230-denied')), false, 'the common hooks write landed');
+  assert.equal(existsSync(join(made.common, 'logs')), true, 'the commit did not create the absent common logs directory');
+  const events = eventsOf(made.result.stdout);
+  const thread = events.find((event) => event.type === 'thread.started')?.thread_id;
+  const rollout = rolloutIn(made.handed.env.CODEX_HOME, thread);
+  const policy = rollout.lines.find((line) => line.type === 'turn_context').payload.sandbox_policy;
+  assert.equal(policy.type, 'workspace-write');
+  const roots = policy.writable_roots ?? [];
+  const wanted = [join(made.common, 'worktrees', 'rigger-42'), ...['objects', 'refs', 'logs'].map((name) => join(made.common, name))];
+  for (const root of wanted) assert.ok(roots.includes(root), `the rollout omitted writable root ${root}`);
+  assert.ok(!roots.includes(made.common), 'the rollout grants the whole common git directory');
+  quote('maker writable_roots', roots);
+  quote('maker git results', report);
+  quote('maker summary', { head, commit: committed.exit, push: pushed.exit, tracking: head, hookRefusal: refused.exit, denied: report.denied, logsCreated: true, artifacts: made.artifacts });
+  linkHolds(made.handed.env.CODEX_HOME, process.env.CODEX_HOME || join(homedir(), '.codex'));
 });
