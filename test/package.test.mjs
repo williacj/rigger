@@ -50,23 +50,35 @@ test('the Node floor is 20 or later, and the README states the same one', () => 
 const unmet = `>=${Number(process.versions.node.split('.')[0]) + 1}`;
 
 /**
- * A real `npm install` of this repository's manifest with its Node floor raised to `unmet`, in a
- * throwaway directory beside a copy of this repository's `.npmrc`, run under `env`. Returns the
+ * A real `npm install` of this repository's identity and engines with its Node floor raised to
+ * `unmet`, beside its copied `.npmrc`, with an empty offline cache and isolated npm config. Returns the
  * exit status and everything the install printed on either stream.
  */
 function installUnderRaisedFloor(env) {
   const dir = temporaryDirectory('rigger-engines-');
   writeFileSync(
     join(dir, 'package.json'),
-    JSON.stringify({ ...manifest, engines: { ...manifest.engines, node: unmet } }, null, 2),
+    JSON.stringify({ name: manifest.name, version: manifest.version,
+      engines: { ...manifest.engines, node: unmet } }, null, 2),
   );
   copyFileSync(join(root, '.npmrc'), join(dir, '.npmrc'));
+  const cache = join(dir, 'cache');
+  mkdirSync(cache);
+  const userConfig = join(dir, 'user.npmrc');
+  const globalConfig = join(dir, 'global.npmrc');
+  writeFileSync(userConfig, '');
+  writeFileSync(globalConfig, '');
+  // Preserve the quiet-parent input while the fixture owns every other npm setting.
+  const installEnv = Object.fromEntries(Object.entries(env).filter(([name]) =>
+    !/^npm_config_/i.test(name) || /^npm_config_loglevel$/i.test(name)));
 
   const install = spawnSync('npm install --no-audit --no-fund --loglevel=error', {
     cwd: dir,
     shell: true,
     encoding: 'utf8',
-    env,
+    env: { ...installEnv, NPM_CONFIG_CACHE: cache, NPM_CONFIG_OFFLINE: 'true',
+      NPM_CONFIG_USERCONFIG: userConfig, NPM_CONFIG_GLOBALCONFIG: globalConfig,
+      NPM_CONFIG_UPDATE_NOTIFIER: 'false' },
   });
 
   return { status: install.status, said: install.stdout + install.stderr };
@@ -74,7 +86,7 @@ function installUnderRaisedFloor(env) {
 
 test('an install under an older Node fails, and names that as the reason', () => {
   // What is proved is the pair: `engines` states the floor and `engine-strict` refuses below it,
-  // against this repository's real manifest.
+  // against this repository's real engine and strict-configuration inputs.
   const { status, said } = installUnderRaisedFloor(process.env);
 
   assert.notEqual(status, 0);
