@@ -302,6 +302,7 @@ In this table, "the labels" are the labels a clock trigger's card template carri
 | R-WORK-38 | — the card carries no escalation label; | the engine | the test suite | |
 | R-WORK-39 | — the forge holds a pull request from the card's line of work closed without merging, and none from it open or merged; | the engine | the test suite | |
 | R-WORK-40 | — no dispatch of the card runs. | the engine | the test suite | |
+| R-WORK-42 | A maker Rigger dispatches, on any provider Rigger ships and on each host Rigger supports, can commit to its card's line of work and push that line, under the settings `rigger init` gives a consumer. | the engine | the test suite | |
 
 ### R-WORK-25 — Continuing workspace states
 

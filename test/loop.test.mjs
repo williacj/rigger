@@ -58,6 +58,7 @@ import { createFakeRepository } from './fake-repository.mjs';
 import { openSink } from '../src/observation/sink.mjs';
 import { consumerConfig } from './verb-consumer.mjs';
 import { commandOf } from './fake-gh.mjs';
+import { gitIn, worktreeAt } from './git-repository.mjs';
 
 const synchronousCalls = [];
 let synchronousDeadline = Infinity;
@@ -2361,6 +2362,11 @@ test('a no-clock maker whose adapter wraps a refused probe kill as NOT_STARTED d
   const built = onManualHost(t, { cards: [{ ...readyCard(42), labels: ['type:change', 'maker:codex'] }, 95], concurrency: 1, makerHold: false,
     workspace: async (number) => {
       const made = await making(number);
+      if (number === 42 && !fs.existsSync(join(made.path, '.git'))) {
+        gitIn(made.repository, 'commit', '--allow-empty', '-m', 'fixture');
+        fs.rmdirSync(made.path);
+        worktreeAt(made.repository, made.path, 'rigger-42');
+      }
       fs.mkdirSync(join(made.path, '.claude', 'agents'), { recursive: true });
       fs.writeFileSync(join(made.path, '.claude', 'agents', 'engineer.md'), '---\nname: engineer\n---\n# Engineer\n');
       return made;

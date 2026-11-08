@@ -635,7 +635,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * writes a judge's id into its instruction (the architect's r2 ruling 6 on #642). The outcome
    * carries the id as `dispatch`, as `dispatchStep`'s does.
    */
-  const dispatchRole = async (card, answer, { cwd, directory, reach, scratch, repository }, fields, stamp = (given) => given) => {
+  const dispatchRole = async (card, answer, { cwd, directory, reach, scratch, repository, maker }, fields, stamp = (given) => given) => {
     const id = `d-${randomUUID()}`;
     try {
       sink.emitter({ layer: 'L3', card: card.number, dispatch: id }).emit('dispatch', { role: answer.role, tier: answer.tier, ...fields });
@@ -643,7 +643,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       throw refusedStart(`card #${card.number}'s role \`${answer.role}\` was not started, because the event sink refused to record its start`, refusal);
     }
     const run = async () => {
-      const handed = await roleDispatch({ answer: stamp(answer, id), cwd, directory, scratch, repository, reach, env: environment, sink, id, card: card.number });
+      const handed = await roleDispatch({ answer: stamp(answer, id), cwd, directory, scratch, repository, reach, maker, env: environment, sink, id, card: card.number });
       return dispatchOnL1({ id, card: card.number, directory: state, sink, host, readTimeout, ...handed });
     };
     const [outcome] = await Promise.allSettled([run()]);
@@ -915,7 +915,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
         throw new Error(`card #${card.number}'s attempt stopped, as L2 answered: ${JSON.stringify(answer)}`);
       }
       let dispatch;
-      const outcome = await dispatchRole(card, answer.maker, { cwd: path, directory: path, reach: [], scratch, repository }, { attempt: number }, (given, id) => {
+      const outcome = await dispatchRole(card, answer.maker, { cwd: path, directory: path, reach: [], scratch, repository, maker: true }, { attempt: number }, (given, id) => {
         dispatch = id;
         return dispatchedEscalation(given, id);
       });

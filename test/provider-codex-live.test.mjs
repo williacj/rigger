@@ -24,6 +24,7 @@ import { installFakeGh, seedRepository } from './fake-gh.mjs';
 import { detachedWorktreeAt, gitIn, repositoryAt, worktreeAt } from './git-repository.mjs';
 import { onPath } from './on-path.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { assertDelivered, liveMaker, MAKER_SESSION } from './maker-git-live.mjs';
 
 /*
  * What these runs reach. Each session is one real `codex exec`, signed in as the host's owner
@@ -429,4 +430,40 @@ test('a session under the owner\'s own credentials lands its rollout under its h
   const owned = filesUnder(join(owner, 'sessions')).filter((file) => file.path.includes(ran.thread));
   quote('owner sessions files from this thread', owned.map((file) => file.path));
   assert.deepEqual(owned, []);
+});
+
+// proves R-WORK-42
+test('a live Codex maker commits and pushes through the shipped hook, denies common hooks and config, with common logs absent', { skip, timeout: 2 * MAKER_SESSION }, async (t) => {
+  realCodex(t);
+  const made = await liveMaker(t, 'codex');
+  assert.ok(existsSync(join(made.directory, '.c1230-result.json')), 'the maker did not run the fixture commands');
+  const report = JSON.parse(readFileSync(join(made.directory, '.c1230-result.json'), 'utf8'));
+  const committed = report.commands.find(({ args }) => args[0] === 'commit');
+  assert.equal(committed?.exit, 0, `the maker commit was denied: ${committed?.stderr ?? JSON.stringify(report)}`);
+  assert.equal(committed.signal, null, 'the commit ended naturally');
+  const head = assertDelivered(made);
+  const pushed = report.commands.find(({ args }) => args[0] === 'push' && args.at(-1) === 'rigger-42');
+  assert.equal(pushed.exit, 0, pushed.stderr);
+  assert.equal(pushed.signal, null, 'the push ended naturally');
+  const refused = report.commands.find(({ args }) => args.at(-1) === 'HEAD:refs/heads/main');
+  assert.notEqual(refused.exit, 0);
+  assert.match(refused.stderr, /refused: a push to the default branch main is not allowed/);
+  assert.deepEqual(report.denied.map(({ file, denied }) => ({ file, denied })), [{ file: 'hooks/c1230-denied', denied: true }, { file: 'config', denied: true }]);
+  assert.ok(report.denied.every(({ code }) => ['EPERM', 'EACCES'].includes(code)), JSON.stringify(report.denied));
+  assert.deepEqual(readFileSync(join(made.common, 'config')), made.configuration, 'the common config changed');
+  assert.equal(existsSync(join(made.common, 'hooks', 'c1230-denied')), false, 'the common hooks write landed');
+  assert.equal(existsSync(join(made.common, 'logs')), true, 'the commit did not create the absent common logs directory');
+  const events = eventsOf(made.result.stdout);
+  const thread = events.find((event) => event.type === 'thread.started')?.thread_id;
+  const rollout = rolloutIn(made.handed.env.CODEX_HOME, thread);
+  const policy = rollout.lines.find((line) => line.type === 'turn_context').payload.sandbox_policy;
+  assert.equal(policy.type, 'workspace-write');
+  const roots = policy.writable_roots ?? [];
+  const wanted = [join(made.common, 'worktrees', 'rigger-42'), ...['objects', 'refs', 'logs'].map((name) => join(made.common, name))];
+  for (const root of wanted) assert.ok(roots.includes(root), `the rollout omitted writable root ${root}`);
+  assert.ok(!roots.includes(made.common), 'the rollout grants the whole common git directory');
+  quote('maker writable_roots', roots);
+  quote('maker git results', report);
+  quote('maker summary', { head, commit: committed.exit, push: pushed.exit, tracking: head, hookRefusal: refused.exit, denied: report.denied, logsCreated: true, artifacts: made.artifacts });
+  linkHolds(made.handed.env.CODEX_HOME, process.env.CODEX_HOME || join(homedir(), '.codex'));
 });
