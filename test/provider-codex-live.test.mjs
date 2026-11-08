@@ -5,6 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { delimiter, dirname, join } from 'node:path';
@@ -17,7 +18,7 @@ import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { runCommand } from '../src/substrate/process.mjs';
 import * as codex from '../src/substrate/providers/codex.mjs';
 import { judgeAnswer } from '../src/workflow/judges.mjs';
-import { parseMarker } from '../src/workflow/marker.mjs';
+import { dispatched, parseMarker } from '../src/workflow/marker.mjs';
 import { SERVER, pastRefusing, put } from './claude-live.mjs';
 import { judgeShell } from './codex-judge-shell.mjs';
 import { installFakeGh, seedRepository } from './fake-gh.mjs';
@@ -278,6 +279,9 @@ test('under the same home, a session the skill toggles are left off for loads ex
   linkHolds(ran.home, owner);
 });
 
+/** A dispatch id's form, copied from `src/workflow/marker.mjs`'s `DISPATCH`, which is not exported. */
+const DISPATCH_ID = /^d-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
 /** The markers `head` plants, each in a source Codex would load were `head` its working directory. */
 const HEAD = { agents: 'OSPREY-c489-head-agentsmd', agentsSkill: 'OSPREY-c489-head-agentsskill', codexSkill: 'OSPREY-c489-head-codexskill', config: 'OSPREY-c489-head-config' };
 
@@ -334,16 +338,20 @@ test('a Codex judge dispatch through L1 from main loads main\'s AGENTS.md and no
   const roles = { reviewer: { agent: '.claude/agents/reviewer.md', provider: 'codex', tier: 'standard' } };
   const answered = judgeAnswer(card, kinds, undefined, { roles, sink });
   assert.equal(answered.action, 'judge', JSON.stringify(answered));
-  const [answer] = answered.judges;
+  // L3 runs a judge's `roleDispatch` and its L1 dispatch under one id it mints, and writes that id
+  // into the judge's instruction with `dispatched` (`src/scheduling/loop.mjs`).
+  const id = `d-${randomUUID()}`;
+  assert.match(id, DISPATCH_ID);
+  const [answer] = answered.judges.map((judged) => dispatched(judged, id));
   const scratchBase = join(base, 'scratch', 'rigger-1412');
   mkdirSync(scratchBase, { recursive: true });
   const env = { ...process.env, PATH: `${dirname(fake.gh)}${delimiter}${pastRefusing()}` };
 
-  const handed = await roleDispatch({ answer, cwd: main, directory: judge, scratch: scratchBase, repository, reach: [head], env, sink, id: 'd-live-judge', card: 1412 });
+  const handed = await roleDispatch({ answer, cwd: main, directory: judge, scratch: scratchBase, repository, reach: [head], env, sink, id, card: 1412 });
   const ghConfig = join(base, 'gh-config');
   mkdirSync(ghConfig);
   const shelled = judgeShell(handed, ghConfig);
-  const result = await dispatch({ id: 'd-live-judge', card: 1412, directory: state, sink, ...shelled, timeout: SESSION });
+  const result = await dispatch({ id, card: 1412, directory: state, sink, ...shelled, timeout: SESSION });
 
   assert.equal(result.exit, 0, result.stderr.toString('utf8'));
   const events = eventsOf(result.stdout);
@@ -382,6 +390,7 @@ test('a Codex judge dispatch through L1 from main loads main\'s AGENTS.md and no
   assert.equal(held.length, 1);
   const parsed = parseMarker(held[0].body, 1);
   assert.deepEqual({ state: parsed.state, head: parsed.marker?.head, role: parsed.marker?.role }, { state: 'marker', head: sha, role: 'reviewer' }, held[0].body);
+  assert.equal(parsed.marker.dispatch, id, held[0].body);
   assert.match(held[0].body, /OSPREY-c489-headfile/);
   assert.match(held[0].body, /OSPREY-c489-shared-skill/);
   assert.ok(held[0].body.includes(fake.gh), `the judge's shell found a gh other than the fake forge's ${fake.gh}`);
