@@ -232,7 +232,8 @@ env:
         if (!npmCli || basename(npmCli) !== 'npm-cli.js' || node !== await realpath(execPath)) return;
         const npmRoot = dirname(dirname(npmCli));
         const npm = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(await read(join(npmRoot, 'package.json'))));
-        if (npm.name !== 'npm' || npm.version !== '12.2.2' || npm.bin?.npm !== 'bin/npm-cli.js') return;
+        if (npm.name !== 'npm' || !['11.20.0', '12.2.2'].includes(npm.version) || npm.bin?.npm !== 'bin/npm-cli.js') return;
+        if (npm.version === '11.20.0' && (project.name !== '@williacj/rigger' || project.version !== '0.0.0')) return;
         for (const path of [join(npmRoot, 'npmrc'), join(env.HOME || homedir(), '.npmrc'), join(dirname(dirname(execPath)), 'etc/npmrc')]) {
           try { await read(path); return; }
           catch (error) { if (error.code !== 'ENOENT') return; }
@@ -243,7 +244,15 @@ env:
           "test/suite-guard.cjs": "cd0fea139d9547bcb613dab0f8b6c87ec12f182b36409ae971083a7132761c31"
         };
         for (const [path, expected] of Object.entries(projectSources)) if (await fingerprint(join(cwd, path)) !== expected) return;
-        const npmSources = {
+        const npmSources = npm.version === '11.20.0' ? {
+          "bin/npm-cli.js": "8e5f6f3429f8cdbe693cdc29904e9d5a7b127a494bd15c804bd54c7403bfcbe7",
+          "lib/commands/run.js": "86080ad381490dd347b5cde5071a8d2444c1f471e795f4a88957e4726fca20ab",
+          "node_modules/@npmcli/run-script/lib/run-script-pkg.js": "94dea9ff50028869f4f88c4ec5e520d56fa7c2f6cc03422a9f06c44d291a0c34",
+          "lib/utils/display.js": "ec7af29eebcb43c362818ad2386518758a31692155f6363d8285182320972d8c",
+          "node_modules/@npmcli/run-script/lib/make-spawn-args.js": "d1647624f0ce227e5cff1c4570f3e754e0eaaf08041db354102ec2bdbbd721df",
+          "node_modules/@npmcli/config/lib/index.js": "938b85a17fde9f2355497fd4befc9bac45d406fb4afacd8af63322796697ff06",
+          "node_modules/@npmcli/config/lib/definitions/definitions.js": "701d85fcce4a266cc60e7273ac2d1ee7a3feec56b16f5e4705aad9f00844f58f"
+        } : {
           "bin/npm-cli.js": "8e5f6f3429f8cdbe693cdc29904e9d5a7b127a494bd15c804bd54c7403bfcbe7",
           "lib/commands/run.js": "b7acdea61c0886f048d2b8c5ecbce1599416eec6ba5553ee21d77687f50ccf8c",
           "node_modules/@npmcli/run-script/lib/run-script-pkg.js": "1142ab865b1180409f0f3a93eb3bc01f9ca36fa9ead1c938b254eb6923de7886",
@@ -253,7 +262,8 @@ env:
           "node_modules/@npmcli/config/lib/definitions/definitions.js": "b352635a4b9ac0575a76e66dae679b16c67762030b1847564ea4b59e572f8372"
         };
         for (const [path, expected] of Object.entries(npmSources)) if (await fingerprint(join(npmRoot, path)) !== expected) return;
-        return { argv: ['npm', 'run', 'test:host'], npmVersion: '12.2.2', stdoutPrefix: '' };
+        return { argv: ['npm', 'run', 'test:host'], npmVersion: npm.version,
+          stdoutPrefix: npm.version === '11.20.0' ? '\n> @williacj/rigger@0.0.0 test:host\n> sh test/suite.sh --host\n\n' : '' };
       } catch { return; }
     }
     export async function executeScript({ spawnChild = spawn, stdoutSink = process.stdout, stderrSink = process.stderr, inspection, onStart } = {}) {

@@ -251,3 +251,20 @@ export function hostIssueStore(initialIssue) {
 export function hostOutputFields(writes) {
   return Object.fromEntries(writes.flatMap(([, bytes]) => bytes.trimEnd().split('\n').map(line => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)])));
 }
+
+/** npm11.20 facts from retained source snapshots and the real isolated reporter producer probe. */
+export function npm11StartupInspectionFixture() {
+  const fixture = startupInspectionFixture();
+  const read = fixture.inspection.read;
+  fixture.inspection.read = async path => path === join(fixture.npmRoot, 'package.json')
+    ? Buffer.from('{"name":"npm","version":"11.20.0","bin":{"npm":"bin/npm-cli.js","npx":"bin/npx-cli.js"}}', 'utf8')
+    : read(path);
+  fixture.fingerprints.set(join(fixture.npmRoot, "bin/npm-cli.js"), "8e5f6f3429f8cdbe693cdc29904e9d5a7b127a494bd15c804bd54c7403bfcbe7");
+  fixture.fingerprints.set(join(fixture.npmRoot, "lib/commands/run.js"), "86080ad381490dd347b5cde5071a8d2444c1f471e795f4a88957e4726fca20ab");
+  fixture.fingerprints.set(join(fixture.npmRoot, "node_modules/@npmcli/run-script/lib/run-script-pkg.js"), "94dea9ff50028869f4f88c4ec5e520d56fa7c2f6cc03422a9f06c44d291a0c34");
+  fixture.fingerprints.set(join(fixture.npmRoot, "lib/utils/display.js"), "ec7af29eebcb43c362818ad2386518758a31692155f6363d8285182320972d8c");
+  fixture.fingerprints.set(join(fixture.npmRoot, "node_modules/@npmcli/run-script/lib/make-spawn-args.js"), "d1647624f0ce227e5cff1c4570f3e754e0eaaf08041db354102ec2bdbbd721df");
+  fixture.fingerprints.set(join(fixture.npmRoot, "node_modules/@npmcli/config/lib/index.js"), "938b85a17fde9f2355497fd4befc9bac45d406fb4afacd8af63322796697ff06");
+  fixture.fingerprints.set(join(fixture.npmRoot, "node_modules/@npmcli/config/lib/definitions/definitions.js"), "701d85fcce4a266cc60e7273ac2d1ee7a3feec56b16f5e4705aad9f00844f58f");
+  return fixture;
+}

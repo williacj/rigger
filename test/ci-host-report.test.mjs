@@ -1436,3 +1436,35 @@ test('decoded failed names retain embedded LF and duplicates in the complete sum
   assert.deepEqual(observed.reporting.failedNames, ['A & B', 'line\nvalue', 'A & B']);
   assert.deepEqual(summaryWrites, [['/step-summary', '## Failed host tests\n\n```json\n[\n  "A & B",\n  "line\\nvalue",\n  "A & B"\n]\n```\n']]);
 });
+
+// Break: setup-node26 currently supplies npm11.20 on supported Mac; rejecting its source loses the parent key.
+// Literal prefix: real npm11 reporter probe plus pinned run-script-pkg's no-argument banner branch.
+// The prior hosted log is supporting context only; this controlled case makes no Mac proof claim.
+test('qualified npm11 startup preserves the parent key despite later worker lookalikes', async () => {
+  const { npm11StartupInspectionFixture } = await import('./ci-host-fixtures.mjs');
+  const prefix = '\n> @williacj/rigger@0.0.0 test:host\n> sh test/suite.sh --host\n\n';
+  const parent = 'linux-6.18.54.1-microsoft-standard-WSL2-x86_64-node26';
+  for (const variant of ['qualified', 'source drift', 'prefix mismatch']) {
+    const { inspection, npmRoot, fingerprints } = npm11StartupInspectionFixture();
+    if (variant === 'source drift') fingerprints.set(join(npmRoot, 'lib/commands/run.js'), '0'.repeat(64));
+    const stdout = (variant === 'prefix mismatch' ? 'unexpected\n' : prefix) + parent + '\nworker output\nmacos26-20261102.0473.1-ARM64-node26\n';
+    const { result } = await captureHostScenario({
+      stdout: new EventEmitter(), stderr: new EventEmitter(), inspection,
+      produce: child => {
+        child.emit('spawn'); child.stdout.emit('data', Buffer.from(stdout, 'utf8'));
+        child.stdout.emit('end'); child.stdout.emit('close');
+        child.stderr.emit('end'); child.stderr.emit('close');
+        child.emit('exit', 0, null); child.emit('close', 0, null);
+      },
+    });
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(result.stdout, Buffer.from(stdout, 'utf8'));
+    if (variant === 'qualified') assert.deepEqual(result.startup, {
+      argv: ['npm', 'run', 'test:host'], npmVersion: '11.20.0', stdoutPrefix: prefix, capture: { state: 'complete' },
+    }, 'actual npm11 source must qualify its observed banner');
+    if (variant === 'source drift') assert.equal(result.startup, undefined);
+    const { observed } = await reportInvocation(Buffer.from('<testsuites><testcase name="pass"/></testsuites>', 'utf8'), { child: result });
+    assert.equal(observed.hostKey, variant === 'qualified' ? parent : undefined,
+      'only the exact qualified npm11 prefix may expose the immediately following parent key');
+  }
+});
