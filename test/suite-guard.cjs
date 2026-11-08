@@ -139,8 +139,18 @@ function watchTimers(recordFile) {
       const delay = Number(given);
       if (coerces && given !== null && (typeof given === 'object' || typeof given === 'function')) args[delayIndex] = delay;
       if (delay > 0) {
-        // Attribution reads objects a test can reach. Any failure there gives no test, so the
-        // record is still written before anything else can throw.
+        // The refusal is recorded before attribution runs: attribution reads objects a test can
+        // reach, and nothing they do, exiting included, may stop the record. The record names the
+        // file, API and delay; the test is named in the diagnostic and in node:test's failure.
+        if (!recordFile) {
+          try {
+            appendFileSync(timerRefusalFile, JSON.stringify({ file, api, delay }) + '\n');
+          } catch {
+            try { writeSync(2, `deterministic tier: ${file}: cannot arm ${api} with delay ${delay}\n`); } catch {}
+            kill.call(process, process.pid, 'SIGKILL');
+          }
+        }
+        // Any failure while attributing gives no test.
         let test = null;
         let context = null;
         try {
@@ -156,12 +166,6 @@ function watchTimers(recordFile) {
           appendFileSync(recordFile, JSON.stringify({ file, test, api, delay }) + '\n');
         } else {
           const refusal = new Error(`deterministic tier: ${file}: ${test ?? '<module>'} cannot arm ${api} with delay ${delay}`);
-          try {
-            appendFileSync(timerRefusalFile, JSON.stringify({ file, test, api, delay }) + '\n');
-          } catch {
-            try { writeSync(2, refusal.message + '\n'); } catch {}
-            kill.call(process, process.pid, 'SIGKILL');
-          }
           refusals.set(context, refusal);
           writeSync(2, refusal.message + '\n');
           throw refusal;

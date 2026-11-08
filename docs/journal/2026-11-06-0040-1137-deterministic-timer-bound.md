@@ -237,6 +237,16 @@ as the owner ruled at
 [M7-U60](https://github.com/williacj/rigger/issues/1009#issuecomment-6716271766);
 the guard does not try to defeat it, and the refusal itself stays in sight.
 
+Round five's judges found that guarding attribution was not enough: a resource the
+guard accepted as a test could exit the worker from `getCtx` before the refusal was
+appended, leaving status 0 and no record. Under
+[M7-K85](https://github.com/williacj/rigger/issues/1009#issuecomment-6719576405) the
+guard now appends the refusal before any attribution runs. The record therefore holds
+the file, API and delay; the test is named in the worker's diagnostic and in
+`node:test`'s failure, which run after it. Where the record cannot be written, the
+diagnostic names the file and API and the worker ends by SIGKILL, still before any
+attribution. The conversion record keeps its four keys and its title.
+
 Once `main` gained `test/maker-git.test.mjs` (#1239), whose tests armed real
 `setTimeout` timers through Rigger code, the bound failed 32 of its tests on the
 pull request's merge ref. Under the card's rule the maker stopped and named each
