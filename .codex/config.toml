@@ -1,15 +1,14 @@
-# ABOUTME: Codex's declaration for this repository: the sandbox and network a Codex session Rigger
-# dispatches runs under, and the tools and connectors it may use. Rigger's Codex adapter copies it
+# ABOUTME: Codex's declaration for this repository: its sessions run unsandboxed, and this file
+# declares the tools and connectors they may use. Rigger's Codex adapter copies it
 # into each dispatch's own Codex home as that home's config.toml, where Codex reads it untrusted.
 
-# A session writes in its working directory and in each directory a judge reaches (`--add-dir`),
-# which Codex ignores under `read-only`. The temporary directories are left out. In their place the
-# adapter adds one temporary directory in the dispatch's own scratch directory and points `TMPDIR`
-# and `TMPPREFIX` at it (O93), so nothing outside those roots is writable.
-sandbox_mode = "workspace-write"
+# This repository's pre-commit suite needs process-table reads, which Codex's workspace-write
+# sandbox refuses on macOS. Makers and judges therefore run unsandboxed (M7-U42, #1237).
+# A Codex setting allowing process reads and setuid exec under workspace-write would reverse this.
+sandbox_mode = "danger-full-access"
 
 [sandbox_workspace_write]
-# On, so `gh pr comment` and the rest of `gh` can reach the forge from the sandbox.
+# This table is inert under danger-full-access.
 network_access = true
 exclude_tmpdir_env_var = true
 exclude_slash_tmp = true

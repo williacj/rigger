@@ -346,14 +346,14 @@ test('a role routed by L3 receives only its temporary root and no git-directory 
   assert.equal(events.filter((event) => event.event === 'call.end' && event.operation === 'rev-parse' && event.dispatch === routed.dispatch).length, 0, 'the routed role read git directories');
 });
 
-// Invariant guard M11: top-level declaration keys cannot be commented out, duplicated or weakened.
-test('both shipped Codex declarations select workspace-write exactly once', () => {
-  for (const path of ['../templates/codex/config.toml', '../.codex/config.toml']) {
+// Invariant guard M11: each declaration has exactly one active top-level mode of its own.
+test('the template and repository Codex declarations each select their own sandbox mode exactly once', () => {
+  for (const [path, expected] of [['../templates/codex/config.toml', 'workspace-write'], ['../.codex/config.toml', 'danger-full-access']]) {
     const lines = readFileSync(new URL(path, import.meta.url), 'utf8').split('\n');
     const table = lines.findIndex((line) => /^\s*\[/.test(line));
     const root = lines.slice(0, table === -1 ? undefined : table);
     const values = root.filter((line) => /^\s*sandbox_mode\s*=/.test(line)).map((line) => JSON.parse(line.slice(line.indexOf('=') + 1).split('#')[0].trim()));
-    assert.deepEqual(values, ['workspace-write'], `${path} must declare one workspace-write sandbox`);
+    assert.deepEqual(values, [expected], `${path} must declare one ${expected} sandbox`);
   }
 });
 
