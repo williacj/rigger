@@ -39,27 +39,134 @@ test('a wait on a condition that never holds, in a test that takes no bound, rej
   assert.ok(took >= 5_000, `the wait rejected after ${took} ms`);
 });
 
-test('drive\'s wait on a run that never settles rejects once 5,000 ms has passed, naming its condition and its bound', SETTLES_WITHIN, async () => {
+/** The actual supplied samples of one wait, starting away from zero. */
+function sampledWaitTime(elapsed) {
+  const samples = [];
+  return {
+    now: () => {
+      const sample = samples.length === 0 ? 40_000 : 40_000 + elapsed;
+      samples.push(sample);
+      return sample;
+    },
+    observedElapsed: () => samples.length < 2 ? 0 : samples.at(-1) - samples[0],
+  };
+}
+
+test('a false wait rejects at supplied elapsed 5000 before yielding', SETTLES_WITHIN, async () => {
+  const time = sampledWaitTime(5_000);
+  let released = false;
+  function namedDeadlineCondition() { return released; }
+  const waiting = waitFor(namedDeadlineCondition, undefined, time.now);
+  try {
+    assert.equal(time.observedElapsed(), 5_000, 'waitFor used the supplied elapsed time');
+    released = true;
+    await assert.rejects(waiting, /namedDeadlineCondition.*5000 ms/s);
+  } finally {
+    released = true;
+    await waiting.catch(() => {});
+  }
+});
+
+
+test('a false wait reaches its next condition check at supplied elapsed 4999', SETTLES_WITHIN, async () => {
+  const checkpoint = Promise.withResolvers();
+  const samples = [];
+  let current = 100_000;
+  let checks = 0;
+  let released = false;
+  function beforeDeadlineCondition() {
+    if (released) return true;
+    current = 104_999;
+    if (++checks === 2) checkpoint.resolve();
+    return false;
+  }
+  const waiting = waitFor(beforeDeadlineCondition, undefined, () => {
+    samples.push(current);
+    return current;
+  });
+  const outcome = waiting.then(() => ({ kind: 'resolved' }), (failure) => ({ kind: 'rejected', failure }));
+  try {
+    const observed = await Promise.race([checkpoint.promise.then(() => ({ kind: 'condition' })), outcome]);
+    assert.equal(observed.kind, 'condition', 'the wait reaches its next false-condition check before the deadline');
+    assert.equal(samples.at(-1), 104_999, 'the before-deadline read uses supplied time');
+    assert.equal(samples.at(-1) - samples[0], 4_999);
+  } finally {
+    released = true;
+    await outcome;
+  }
+});
+
+test('a false wait rejects after supplied elapsed 5001', SETTLES_WITHIN, async () => {
+  const time = sampledWaitTime(5_001);
+  let released = false;
+  function afterDeadlineCondition() { return released; }
+  const waiting = waitFor(afterDeadlineCondition, undefined, time.now);
+  try {
+    assert.equal(time.observedElapsed(), 5_001, 'the after-deadline read uses supplied time');
+    released = true;
+    await assert.rejects(waiting, /afterDeadlineCondition.*5000 ms/s);
+  } finally {
+    released = true;
+    await waiting.catch(() => {});
+  }
+});
+
+test('positive gives a true condition priority at and beyond the supplied deadline', SETTLES_WITHIN, async () => {
+  await assert.doesNotReject(() => positive(() => true));
+  for (const elapsed of [5_000, 5_001]) {
+    let current = 90_000;
+    let checkedAt;
+    function readyAtDeadline() {
+      current = 90_000 + elapsed;
+      checkedAt = current;
+      return true;
+    }
+    await assert.doesNotReject(() => positive(readyAtDeadline, 5_000, () => current));
+    assert.equal(checkedAt - 90_000, elapsed);
+  }
+});
+
+test('supplied expiry names its condition and a nondefault 17 ms bound', SETTLES_WITHIN, async () => {
+  const time = sampledWaitTime(17);
+  let released = false;
+  function namedDeadlineCondition() { return released; }
+  const waiting = waitFor(namedDeadlineCondition, 17, time.now);
+  try {
+    assert.equal(time.observedElapsed(), 17, 'nondefault expiry uses supplied time');
+    released = true;
+    const failure = await waiting.then(() => assert.fail('the wait settled'), (thrown) => thrown);
+    assert.match(failure.message, /namedDeadlineCondition/, 'expiry names the actual condition');
+    assert.match(failure.message, /\b17 ms\b/, 'expiry names the actual nondefault bound');
+  } finally {
+    released = true;
+    await waiting.catch(() => {});
+  }
+});
+
+test('drive\'s wait on a run that never settles rejects at supplied elapsed 5000 ms, naming its condition and its bound', SETTLES_WITHIN, async () => {
   // Card 1's workspace is never answered, so its claim is never held at a stand-in.
   const built = world({ cards: [1], concurrency: 1, workspace: () => new Promise(() => {}) });
 
-  const { took, failure } = await rejection(() => drive(built));
+  const time = sampledWaitTime(5_000);
+  const failure = await drive(built, time.now).then(() => assert.fail('the wait settled'), (thrown) => thrown);
 
   assert.match(failure.message, /settles\(\)/);
   assert.match(failure.message, /\b5000 ms\b/);
-  assert.ok(took >= 5_000, `the wait rejected after ${took} ms`);
+  assert.equal(time.observedElapsed(), 5_000, 'drive routed the supplied wait time');
 });
 
-test('stoppedRun\'s wait on makers that never hold rejects once 5,000 ms has passed, naming its condition and its bound', SETTLES_WITHIN, async () => {
+test('stoppedRun\'s wait on makers that never hold rejects at supplied elapsed 5000 ms, naming its condition and its bound', SETTLES_WITHIN, async () => {
   // A file stands where the world makes its workspaces, so no card's workspace can be made.
   const scratch = temporaryDirectory('rigger-loop-world-');
   writeFileSync(join(scratch, 'workspaces'), '');
 
-  const { took, failure } = await rejection(() => stoppedRun({ scratch }));
+  assert.equal(readFileSync(join(scratch, 'workspaces'), 'utf8'), '');
+  const time = sampledWaitTime(5_000);
+  const failure = await stoppedRun({ scratch, now: time.now }).then(() => assert.fail('the wait settled'), (thrown) => thrown);
 
   assert.match(failure.message, /held\(\) === 2/);
   assert.match(failure.message, /\b5000 ms\b/);
-  assert.ok(took >= 5_000, `the wait rejected after ${took} ms`);
+  assert.equal(time.observedElapsed(), 5_000, 'stoppedRun routed the supplied wait time');
 });
 
 test('given a world in which L3 makes a dispatch the test says it should not, a settling wait lets that dispatch start before the assertion that nothing happened reads, and the assertion fails', SETTLES_WITHIN, async () => {
