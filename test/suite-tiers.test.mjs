@@ -1807,7 +1807,7 @@ for (const [ending, action] of refusalEnds) {
       if (!['normal-return', 'exit-sync'].includes(ending)) assert.equal(events.filter(event => event === 'source-returned').length, 1, JSON.stringify(events));
       if (!['normal-return', 'caught'].includes(ending)) assert.ok(events.includes('terminating'), JSON.stringify(events));
       assert.equal(probe.result.error, undefined, probe.result.stdout + probe.result.stderr);
-      assert.deepEqual(printedTimerRefusals(probe), [{ file: probe.file, api: api[1], delay: 5 }],
+      assert.deepEqual(printedTimerRefusals(probe), [{ file: probe.file, api: api[1], delay: 5 }, { file: probe.file, test: title, api: api[1], delay: 5 }],
         'the supervisor must print the refusal recorded before the worker ended');
       assert.ok((probe.result.stdout + probe.result.stderr).includes(`: ${title} cannot arm ${api[1]} with delay 5`), probe.result.stdout + probe.result.stderr);
       assert.notEqual(probe.result.status, 0, 'a recorded timer refusal must fail the suite regardless of worker termination');
@@ -1833,7 +1833,7 @@ for (const [binding, imports, expression] of [
         });`, {}, { tier: mode === 'conversion' ? 'converting' : 'bounded', record: mode === 'conversion' });
       if (mode === 'positive') {
         assertNoNativeTimers(probe);
-        assert.deepEqual(printedTimerRefusals(probe), [{ file: probe.file, api: 'node:timers/promises.setTimeout', delay: 5 }]);
+        assert.deepEqual(printedTimerRefusals(probe), [{ file: probe.file, api: 'node:timers/promises.setTimeout', delay: 5 }, { file: probe.file, test: title, api: 'node:timers/promises.setTimeout', delay: 5 }]);
         assert.ok((probe.result.stdout + probe.result.stderr).includes(`: ${title} cannot arm node:timers/promises.setTimeout`), probe.result.stdout + probe.result.stderr);
         assert.notEqual(probe.result.status, 0, probe.result.stdout + probe.result.stderr);
       } else {
@@ -1863,7 +1863,7 @@ test('timer promisify seeded promise custom remains bounded', (t) => {
     'seed-promisify.cjs': "// ABOUTME: Exercises Node's ordinary promisify cache before the suite guard installs.\nif (process.env.NODE_TEST_CONTEXT === 'child-v8') require('node:util').promisify(require('node:timers').setTimeout);\n",
   }, { preload: 'seed-promisify.cjs' });
   assertNoNativeTimers(probe);
-  assert.deepEqual(printedTimerRefusals(probe), [{ file: probe.file, api: 'node:timers/promises.setTimeout', delay: 5 }]);
+  assert.deepEqual(printedTimerRefusals(probe), [{ file: probe.file, api: 'node:timers/promises.setTimeout', delay: 5 }, { file: probe.file, test: title, api: 'node:timers/promises.setTimeout', delay: 5 }]);
   assert.ok((probe.result.stdout + probe.result.stderr).includes(`: ${title} cannot arm node:timers/promises.setTimeout`), probe.result.stdout + probe.result.stderr);
   assert.notEqual(probe.result.status, 0, probe.result.stdout + probe.result.stderr);
 });
@@ -1874,7 +1874,7 @@ test('timer refusal supervisor records a numeric delay and names an escaped titl
     try { observeArm(() => clearTimeout(setTimeout(timerCallback, '5'))); } catch {}
   });`);
   assertNoNativeTimers(probe);
-  assert.deepEqual(printedTimerRefusals(probe), [{ file: probe.file, api: 'setTimeout', delay: 5 }]);
+  assert.deepEqual(printedTimerRefusals(probe), [{ file: probe.file, api: 'setTimeout', delay: 5 }, { file: probe.file, test: title, api: 'setTimeout', delay: 5 }]);
   assert.ok((probe.result.stdout + probe.result.stderr).includes(`: ${title} cannot arm setTimeout with delay 5`), probe.result.stdout + probe.result.stderr);
   assert.notEqual(probe.result.status, 0, probe.result.stdout + probe.result.stderr);
 });
@@ -2193,7 +2193,7 @@ test('timer bound refuses an arm inside a forged Test resource under the real te
   const output = probe.result.stdout + probe.result.stderr;
   assert.equal(probe.result.error, undefined, output);
   assert.notEqual(probe.result.status, 0, output);
-  assert.deepEqual(printedTimerRefusals(probe), [{ file: probe.file, api: 'setTimeout', delay: 5 }]);
+  assert.deepEqual(printedTimerRefusals(probe), [{ file: probe.file, api: 'setTimeout', delay: 5 }, { file: probe.file, test: title, api: 'setTimeout', delay: 5 }]);
   assert.ok((probe.result.stdout + probe.result.stderr).includes(`: ${title} cannot arm setTimeout with delay 5`), probe.result.stdout + probe.result.stderr);
 });
 
@@ -2230,4 +2230,27 @@ test('timer bound keeps a refusal when attribution exits the worker', (t) => {
   assert.equal(probe.result.error, undefined, output);
   assert.notEqual(probe.result.status, 0, 'an exit during attribution must not erase the refusal');
   assert.deepEqual(printedTimerRefusals(probe), [{ file: probe.file, api: 'setTimeout', delay: 5 }]);
+});
+
+// The record names the test after attribution, so a run whose worker closed its stderr and
+// exited 0 still names the test that armed the timer.
+test('timer bound names the test in the record when its worker closes stderr and exits 0', (t) => {
+  const title = 'real timer owner closed-exit';
+  const probe = timerProbe(t, `import { closeSync } from 'node:fs';
+    test(${JSON.stringify(title)}, () => {
+      closeSync(2); note('stderr closed');
+      try { observeArm(() => clearTimeout(setTimeout(timerCallback, 5))); }
+      catch { note('refusal caught'); }
+      note('exiting successfully');
+      process.exit(0);
+    });`);
+  assertNoNativeTimers(probe);
+  const output = probe.result.stdout + probe.result.stderr;
+  assert.equal(probe.result.error, undefined, output);
+  assert.notEqual(probe.result.status, 0, output);
+  assert.ok(output.includes(title), `the failed run must name the real test that armed the timer\n${output}`);
+  assert.deepEqual(printedTimerRefusals(probe), [
+    { file: probe.file, api: 'setTimeout', delay: 5 },
+    { file: probe.file, test: title, api: 'setTimeout', delay: 5 },
+  ]);
 });

@@ -186,6 +186,11 @@ function watchTimers(recordFile) {
         if (recordFile) {
           appendFileSync(recordFile, JSON.stringify({ file, test, api, delay }) + '\n');
         } else {
+          // A second line names the test, so the run's end names it even when the worker's stderr is
+          // gone; the unnamed line above is the refusal, whether or not this one follows.
+          if (test !== null) {
+            try { appendFileSync(timerRefusalFile, JSON.stringify({ file, test, api, delay }) + '\n'); } catch {}
+          }
           const refusal = new Error(`deterministic tier: ${file}: ${test ?? '<module>'} cannot arm ${api} with delay ${delay}`);
           refusals.set(context, refusal);
           writeSync(2, refusal.message + '\n');

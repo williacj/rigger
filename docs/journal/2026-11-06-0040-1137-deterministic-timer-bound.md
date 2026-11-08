@@ -250,6 +250,15 @@ second line naming it where it finds a string name, and ends the worker by SIGKI
 The architect ruled that the card's "Refused" naming covers that path too. The
 conversion record keeps its four keys and its title.
 
+Round six's reviewer showed a test could close its own stderr, catch the refusal and
+exit 0: the run failed on the record, but nothing named the test. Under
+[M7-U61](https://github.com/williacj/rigger/issues/1009#issuecomment-6724223840),
+once attribution has run on the ordinary path the guard appends a second line,
+`{file, test, api, delay}`, before the named diagnostic and the throw. The run's end
+prints the record, so `npm test`'s failure names the test from the record alone. The
+unnamed line stays first and is the refusal; a refusal with no naming line, as when a
+forged object exits during attribution, still fails the run.
+
 Once `main` gained `test/maker-git.test.mjs` (#1239), whose tests armed real
 `setTimeout` timers through Rigger code, the bound failed 32 of its tests on the
 pull request's merge ref. Under the card's rule the maker stopped and named each
