@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { registerHooks } from 'node:module';
+import { constants } from 'node:fs';
 import { SWEEPS } from './process-fixtures.mjs';
 
 const reaper = new URL('./suite-reaper', import.meta.url);
@@ -14,7 +15,7 @@ let evaluation = 0;
 
 // ps(1) documents these pid/stat/lstart/command columns. This scripted octet fault is
 // a capture/decoding control, not evidence that native ps emits invalid UTF-8.
-async function tracedEntry(check, { creationError, stdout = raw, answers, zero = 'ESRCH', enabled = true, appendFault, targetPid = pid } = {}) {
+async function tracedEntry(check, { creationError, stdout = raw, answers, zero = 'ESRCH', enabled = true, appendFault, targetPid = pid, safeObserver = false, safeCreationError, safeAppendFault } = {}) {
   const savedExitCode = process.exitCode;
   const keys = ['argv', 'env', 'exit', 'exitCode', 'kill', 'getuid', 'once'];
   const properties = Object.fromEntries(keys.map((key) => [key, Object.getOwnPropertyDescriptor(process, key)]));
@@ -27,12 +28,30 @@ async function tracedEntry(check, { creationError, stdout = raw, answers, zero =
   const exits = [];
   const exitListeners = [];
   const seen = { removed: [], diagnostics: [], stdout: [], files: [], signals: [], exit: undefined, targetReads: 0, openAttempts: 0, appendAttempts: 0 };
+  const safeRoot = '/controlled-1098/evidence';
+  const safePath = '/controlled-1098/evidence/reads.jsonl';
+  const safeFlags = constants.O_CREAT | constants.O_APPEND | constants.O_WRONLY | constants.O_NOFOLLOW;
+  const safeDescriptors = new Map();
+  let safeOpens = 0; let safeWrites = 0;
+  assert.ok(safeCreationError === undefined || safeCreationError === 'EACCES');
+  assert.ok(safeAppendFault === undefined || ['EIO', 'short'].includes(safeAppendFault));
+  seen.safe = { path: safePath, created: false, chunks: [], operations: [], handles: [] };
+  seen.rawFaults = []; seen.safe.faults = [];
+  const controlledRealpath = (path) => {
+    assert.ok(path === run || (safeObserver && path === safeRoot), 'only controlled realpath identities are admitted');
+    if (path === safeRoot) seen.safe.operations.push({ call: 'realpathSync', args: [path] });
+    return path;
+  };
   let census = 0;
   let hook;
   try {
     process.argv = [process.execPath, reaper.pathname, run, '/controlled-1075/ended'];
     process.env = { ...process.env, RIGGER_1075_TRACE_DIR: '/controlled-1075/evidence', RIGGER_1075_INVOCATION_ID: 'trace-octets' };
     if (!enabled) delete process.env.RIGGER_1075_TRACE_DIR;
+    for (const key of ['RIGGER_REAPER_TRACE_FILE', 'RIGGER_REAPER_TRACE_ROOT', 'RIGGER_REAPER_CELL']) delete process.env[key];
+    if (safeObserver) Object.assign(process.env, {
+      RIGGER_REAPER_TRACE_FILE: safePath, RIGGER_REAPER_TRACE_ROOT: safeRoot, RIGGER_REAPER_CELL: 'E5-F1',
+    });
     process.exitCode = undefined;
     process.getuid = () => 501;
     process.kill = (target, signal) => {
@@ -72,7 +91,25 @@ async function tracedEntry(check, { creationError, stdout = raw, answers, zero =
         assert.equal(command, '/controlled-lsof');
         return { status: 0, stdout: '', stderr: '' };
       },
-      realpathSync: Object.assign((path) => path, { native: (path) => path }),
+      constants,
+      realpathSync: Object.assign(controlledRealpath, { native: controlledRealpath }),
+      statSync(path) {
+        assert.equal(safeObserver, true); assert.equal(path, safeRoot);
+        seen.safe.operations.push({ call: 'statSync', args: [path] });
+        return { uid: 501 };
+      },
+      existsSync(path) {
+        assert.equal(safeObserver, true);
+        assert.ok(['/controlled-1098/evidence/.git', '/controlled-1098/.git', '/.git'].includes(path));
+        seen.safe.operations.push({ call: 'existsSync', args: [path] });
+        return false;
+      },
+      lstatSync(path) {
+        assert.equal(safeObserver, true); assert.equal(path, safePath);
+        seen.safe.operations.push({ call: 'lstatSync', args: [path] });
+        if (!seen.safe.created) throw Object.assign(new Error('controlled safe destination does not exist'), { code: 'ENOENT' });
+        return { isSymbolicLink: () => false };
+      },
       createReadStream() {
         seen.filesAtPipeOpen = seen.files.length;
         const stream = new EventEmitter();
@@ -80,31 +117,71 @@ async function tracedEntry(check, { creationError, stdout = raw, answers, zero =
         return stream;
       },
       openSync(path, flags, mode) {
+        if (path === safePath) {
+          assert.equal(safeObserver, true); assert.equal(flags, safeFlags); assert.equal(mode, 0o600);
+          seen.safe.operations.push({ call: 'openSync', args: [path, flags, mode] });
+          safeOpens += 1;
+          if (safeCreationError) {
+            seen.safe.faults.push({ call: 'openSync', code: 'EACCES', attempt: safeOpens, args: [path, flags, mode] });
+            throw Object.assign(new Error('controlled safe creation refusal'), { code: 'EACCES' });
+          }
+          seen.safe.created = true;
+          const descriptor = 1000 + safeDescriptors.size;
+          const handle = { descriptor, closed: false };
+          safeDescriptors.set(descriptor, handle); seen.safe.handles.push(handle);
+          return descriptor;
+        }
         seen.openAttempts += 1;
         assert.equal(flags, 'wx'); assert.equal(mode, 0o600);
         // openSync reports a missing parent by throwing ENOENT, as the card's fault control requires.
+        if (creationError) seen.rawFaults.push({ call: 'openSync', code: creationError, attempt: seen.openAttempts, args: [path, flags, mode] });
         if (creationError) throw Object.assign(new Error('controlled trace creation failure'), { code: creationError });
         seen.files.push({ path, chunks: [], closed: false });
         return seen.files.length - 1;
       },
       writeSync(fd, bytes) {
+        if (safeDescriptors.has(fd)) {
+          assert.equal(safeObserver, true); assert.equal(safeDescriptors.get(fd).closed, false);
+          const chunk = Buffer.from(bytes);
+          seen.safe.operations.push({ call: 'writeSync', args: [fd, chunk.length] });
+          safeWrites += 1;
+          if (safeWrites === 1 && safeAppendFault === 'EIO') {
+            seen.safe.faults.push({ call: 'writeSync', code: 'EIO', attempt: safeWrites, fd, requested: chunk.length });
+            throw Object.assign(new Error('controlled safe append failure'), { code: 'EIO' });
+          }
+          if (safeWrites === 1 && safeAppendFault === 'short') {
+            const partial = chunk.subarray(0, Math.floor(chunk.length / 2));
+            seen.safe.faults.push({ call: 'writeSync', code: 'short', attempt: safeWrites, fd, requested: chunk.length, written: partial.length });
+            seen.safe.chunks.push(partial); return partial.length;
+          }
+          seen.safe.chunks.push(chunk); return chunk.length;
+        }
         const chunk = Buffer.from(bytes);
         seen.appendAttempts += 1;
         // writeSync may throw EIO or return fewer bytes; neither is a complete append.
+        if (seen.appendAttempts === 2 && appendFault === 'EIO') seen.rawFaults.push({ call: 'writeSync', code: 'EIO', attempt: seen.appendAttempts, fd, requested: chunk.length });
         if (seen.appendAttempts === 2 && appendFault === 'EIO') throw Object.assign(new Error('controlled append failure'), { code: 'EIO' });
         if (seen.appendAttempts === 2 && appendFault === 'short') {
           const partial = chunk.subarray(0, Math.floor(chunk.length / 2));
+          seen.rawFaults.push({ call: 'writeSync', code: 'short', attempt: seen.appendAttempts, fd, requested: chunk.length, written: partial.length });
           seen.files[fd].chunks.push(partial); return partial.length;
         }
         seen.files[fd].chunks.push(chunk); return chunk.length;
       },
-      closeSync(fd) { seen.files[fd].closed = true; },
+      closeSync(fd) {
+        if (safeDescriptors.has(fd)) {
+          assert.equal(safeObserver, true); assert.equal(safeDescriptors.get(fd).closed, false);
+          seen.safe.operations.push({ call: 'closeSync', args: [fd] });
+          safeDescriptors.get(fd).closed = true; return;
+        }
+        seen.files[fd].closed = true;
+      },
       removeTemporaryDirectory(path) { seen.removed.push(path); },
     };
     const entry = `${reaper.href}?evaluation=${++evaluation}`;
     const exports = new Map([
       ['node:child_process', `export const { spawnSync } = globalThis.${name};`],
-      ['node:fs', `export const { realpathSync, createReadStream, openSync, writeSync, closeSync } = globalThis.${name};`],
+      ['node:fs', `export const { constants, realpathSync, createReadStream, openSync, writeSync, closeSync, existsSync, lstatSync, statSync } = globalThis.${name};`],
       ['./temporary-directory.mjs', `export const { removeTemporaryDirectory } = globalThis.${name};`],
       ['../src/substrate/process.mjs', "export const LSOF = '/controlled-lsof';"],
     ]);
@@ -132,6 +209,147 @@ async function tracedEntry(check, { creationError, stdout = raw, answers, zero =
     else delete globalThis[name];
   }
 }
+
+
+test('raw and bounded reaper traces retain octets and decoded safe observations', async () => {
+  // Literal ps columns follow ps(1); the invalid octet is a synthetic decoding control.
+  // The ASCII prefix is 62 bytes, followed by C3 A9, FF and LF: 66 octets, 65 decoded UTF-16 units.
+  const answer = Buffer.concat([
+    Buffer.from('4242 Z Thu Jan  1 00:00:00 1970 SECRET_WALRUS=/private/branch '),
+    Buffer.from([0xc3, 0xa9, 0xff, 0x0a]),
+  ]);
+  await tracedEntry((seen) => {
+    assert.equal(seen.exit, 0, 'the original successful ending must remain confirmed');
+    assert.deepEqual(seen.removed, [run]); assert.deepEqual(seen.diagnostics, []);
+    assert.equal(seen.targetReads, 1);
+    assert.deepEqual(seen.signals, [[pid, 'SIGKILL']]);
+    assert.equal(seen.files.length, 1); assert.ok(seen.files.every(({ closed }) => closed));
+    const rawRecords = seen.files.flatMap(({ chunks }) => Buffer.concat(chunks).toString('utf8').trim().split('\n').filter(Boolean).map(JSON.parse));
+    const reads = rawRecords.filter(({ event }) => event === 'target-read');
+    assert.equal(reads.length, 1);
+    assert.equal(reads[0].targetPid, pid); assert.equal(reads[0].ordinal, 1); assert.equal(reads[0].sweep, 0);
+    assert.deepEqual(reads[0].args, ['-ww', '-p', '4242', '-o', 'pid=,stat=,lstart=,command=']);
+    assert.deepEqual(reads[0].locale, { LC_ALL: 'C', TZ: 'UTC0' });
+    assert.equal(reads[0].result.stdout.byteLength, 66);
+    assert.equal(reads[0].result.stdout.base64, 'NDI0MiBaIFRodSBKYW4gIDEgMDA6MDA6MDAgMTk3MCBTRUNSRVRfV0FMUlVTPS9wcml2YXRlL2JyYW5jaCDDqf8K');
+    assert.deepEqual(reads[0].result.stdout.decoded, {
+      type: 'string', value: '4242 Z Thu Jan  1 00:00:00 1970 SECRET_WALRUS=/private/branch é\uFFFD\n',
+    });
+    assert.ok(rawRecords.some(({ event, readId }) => event === 'target-decision' && readId === reads[0].readId));
+    assert.ok(rawRecords.some(({ event, reads: count }) => event === 'complete' && count === 1));
+    const safeBytes = Buffer.concat(seen.safe.chunks).toString('utf8');
+    const safeRecords = safeBytes.split('\n').filter(Boolean).map(JSON.parse);
+    const safeReads = safeRecords.filter(({ type }) => type !== 'terminal');
+    assert.equal(safeReads.length, 1, 'both enabled observers retain one safe read');
+    assert.equal(safeReads[0].stdoutUnits, 65, 'bounded trace decoded stdoutUnits');
+    assert.deepEqual(safeReads[0], {
+      cell: 'E5-F1', pid: 4242, readSequence: 1, parserClass: 'zombie', signalZero: 'not-checked',
+      status: 0, signal: 'none', errorCode: 'none', stdoutUnits: 65, stderrUnits: 0,
+      rowCount: 1, separatorCount: 1, separators: [{ at: 64, kind: 'lf' }], separatorsTruncated: false,
+      skeleton: '0000 A Aaa Aaa  0 00.00.00 0000 AAAAAA.AAAAAA..aaaaaaa.aaaaaa ..|', skeletonTruncated: false,
+    });
+    assert.deepEqual(safeRecords.slice(1), [{ type: 'terminal', cell: 'E5-F1', completedReads: 1, lostWrite: false }]);
+    assert.equal(safeBytes.endsWith('\n'), true);
+    assert.doesNotMatch(safeBytes, /SECRET_WALRUS|\/private\/branch/, 'bounded trace excludes the synthetic token and path');
+    assert.equal(seen.safe.created, true);
+    assert.equal(seen.safe.handles.length, 2); assert.ok(seen.safe.handles.every(({ closed }) => closed));
+    assert.deepEqual(seen.safe.operations.filter(({ call }) => call === 'openSync').map(({ args }) => args[0]), [seen.safe.path, seen.safe.path]);
+  }, { stdout: answer, safeObserver: true });
+});
+
+test('raw and bounded trace IO failures preserve the other observer and ending', async () => {
+  // The same literal 66-octet producer answer keeps raw and decoded contracts independent.
+  const answer = Buffer.concat([
+    Buffer.from('4242 Z Thu Jan  1 00:00:00 1970 SECRET_WALRUS=/private/branch '),
+    Buffer.from([0xc3, 0xa9, 0xff, 0x0a]),
+  ]);
+  for (const [cell, options, rawState, safeState, rawFaults, safeFaults] of [
+    ['raw-create', { creationError: 'ENOENT' }, 'absent', 'complete', [['openSync', 'ENOENT', 1]], []],
+    ['raw-EIO', { appendFault: 'EIO' }, 'EIO', 'complete', [['writeSync', 'EIO', 2]], []],
+    ['raw-short', { appendFault: 'short' }, 'short', 'complete', [['writeSync', 'short', 2]], []],
+    ['safe-create', { safeCreationError: 'EACCES' }, 'complete', 'absent', [], [['openSync', 'EACCES', 1], ['openSync', 'EACCES', 2]]],
+    ['safe-EIO', { safeAppendFault: 'EIO' }, 'complete', 'EIO', [], [['writeSync', 'EIO', 1]]],
+    ['safe-short', { safeAppendFault: 'short' }, 'complete', 'short', [], [['writeSync', 'short', 1]]],
+    ['combined', { creationError: 'ENOENT', safeAppendFault: 'EIO' }, 'absent', 'EIO', [['openSync', 'ENOENT', 1]], [['writeSync', 'EIO', 1]]],
+  ]) {
+    await tracedEntry((seen) => {
+      assert.deepEqual(seen.rawFaults.map(({ call, code, attempt }) => [call, code, attempt]), rawFaults, cell + ' raw fault operation was exercised');
+      assert.deepEqual(seen.safe.faults.map(({ call, code, attempt }) => [call, code, attempt]), safeFaults, cell + ' safe fault operation was exercised');
+      assert.equal(seen.exit, 0, cell + ' diagnostic IO loss changed confirmed ending');
+      assert.deepEqual(seen.removed, [run], cell + ' cleanup'); assert.deepEqual(seen.diagnostics, [], cell + ' diagnostics');
+      assert.equal(seen.targetReads, 1, cell + ' target read count');
+      assert.deepEqual(seen.signals, [[pid, 'SIGKILL']], cell + ' only the selected target is signalled');
+      assert.ok(seen.files.every(({ closed }) => closed), cell + ' raw handles close');
+      assert.ok(seen.safe.handles.every(({ closed }) => closed), cell + ' safe handles close');
+      for (const fault of seen.rawFaults) {
+        if (fault.call === 'openSync') {
+          assert.equal(fault.args[1], 'wx'); assert.equal(fault.args[2], 0o600);
+          assert.ok(fault.args[0].startsWith('/controlled-1075/evidence/'));
+        } else {
+          assert.equal(fault.fd, 0); assert.ok(Number.isInteger(fault.requested) && fault.requested > 0);
+          if (fault.code === 'short') assert.equal(fault.written, Math.floor(fault.requested / 2));
+        }
+      }
+      for (const fault of seen.safe.faults) {
+        if (fault.call === 'openSync') assert.deepEqual(fault.args, [seen.safe.path,
+          constants.O_CREAT | constants.O_APPEND | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600]);
+        else {
+          assert.equal(fault.fd, 1000); assert.ok(Number.isInteger(fault.requested) && fault.requested > 0);
+          if (fault.code === 'short') assert.equal(fault.written, Math.floor(fault.requested / 2));
+        }
+      }
+      if (rawState === 'complete') {
+        assert.equal(seen.files.length, 1);
+        const records = Buffer.concat(seen.files[0].chunks).toString('utf8').trimEnd().split('\n').map(JSON.parse);
+        assert.deepEqual(records.map(({ event }) => event), ['writer-start', 'target-read-start', 'target-read', 'target-decision', 'complete'], cell + ' healthy raw session');
+        const read = records[2];
+        assert.equal(read.targetPid, pid); assert.equal(read.ordinal, 1); assert.equal(read.sweep, 0);
+        assert.equal(read.result.stdout.byteLength, 66);
+        assert.equal(read.result.stdout.base64, 'NDI0MiBaIFRodSBKYW4gIDEgMDA6MDA6MDAgMTk3MCBTRUNSRVRfV0FMUlVTPS9wcml2YXRlL2JyYW5jaCDDqf8K');
+        assert.deepEqual(read.result.stdout.decoded, { type: 'string', value: '4242 Z Thu Jan  1 00:00:00 1970 SECRET_WALRUS=/private/branch é\uFFFD\n' });
+        assert.equal(records[3].readId, read.readId); assert.equal(records[3].current.zombie, true);
+        assert.equal(records[4].reads, 1);
+      } else if (rawState === 'absent') {
+        assert.deepEqual(seen.files, [], cell + ' failed creation invents no raw file');
+        assert.equal(seen.openAttempts, 1); assert.equal(seen.appendAttempts, 0);
+      } else {
+        assert.equal(seen.files.length, 1); assert.equal(seen.appendAttempts, 2);
+        const chunks = seen.files[0].chunks;
+        assert.equal(chunks.length, rawState === 'EIO' ? 1 : 2);
+        assert.equal(JSON.parse(chunks[0].toString('utf8')).event, 'writer-start');
+        if (rawState === 'short') {
+          assert.equal(chunks[1].length, seen.rawFaults[0].written);
+          assert.equal(chunks[1].at(-1) === 10, false, cell + ' partial raw append is retained');
+          assert.throws(() => JSON.parse(chunks[1].toString('utf8')), SyntaxError);
+        }
+        assert.doesNotMatch(Buffer.concat(chunks).toString('utf8'), /"event":"complete"/, cell + ' failed raw trace invents no completion');
+      }
+      const chunks = seen.safe.chunks;
+      const bytes = Buffer.concat(chunks).toString('utf8');
+      assert.doesNotMatch(bytes, /SECRET_WALRUS|\/private\/branch/, cell + ' safe bytes exclude synthetic token and path');
+      if (safeState === 'complete') {
+        const records = bytes.trimEnd().split('\n').map(JSON.parse);
+        assert.equal(records.length, 2); assert.equal(records[0].parserClass, 'zombie');
+        assert.equal(records[0].stdoutUnits, 65); assert.equal(records[0].readSequence, 1);
+        assert.equal(records[0].cell, 'E5-F1'); assert.equal(records[0].pid, 4242);
+        assert.deepEqual(records[1], { type: 'terminal', cell: 'E5-F1', completedReads: 1, lostWrite: false }, cell + ' healthy safe session');
+        assert.equal(seen.safe.created, true); assert.equal(seen.safe.handles.length, 2);
+      } else if (safeState === 'absent') {
+        assert.equal(seen.safe.created, false); assert.deepEqual(chunks, []); assert.deepEqual(seen.safe.handles, []);
+      } else {
+        assert.equal(seen.safe.created, true); assert.equal(seen.safe.handles.length, 2);
+        assert.equal(chunks.length, safeState === 'EIO' ? 1 : 2);
+        assert.deepEqual(JSON.parse(chunks.at(-1).toString('utf8')),
+          { type: 'terminal', cell: 'E5-F1', completedReads: 1, lostWrite: true }, cell + ' lost safe read remains incomplete');
+        if (safeState === 'short') {
+          assert.equal(chunks[0].length, seen.safe.faults[0].written);
+          assert.equal(chunks[0].at(-1) === 10, false, cell + ' partial safe append is retained');
+          assert.throws(() => JSON.parse(bytes), SyntaxError);
+        }
+      }
+    }, { stdout: answer, safeObserver: true, ...options });
+  }
+});
 
 test('opt-in reaper trace preserves targeted octets and the UTF-8 decision value', async () => {
   assert.equal(SWEEPS, 10);
