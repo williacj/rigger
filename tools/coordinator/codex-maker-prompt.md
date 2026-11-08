@@ -23,7 +23,7 @@ Then make the change the card asks for, finishing against its acceptance:
   - run Rigger itself from a checkout;
   - call an installed agent CLI from `npm test`.
 - **Load and the slot:** Run every full suite (`npm test` with no file named), `git commit -m …` and `git push` (whose hooks run the suite), and every fresh-clone run through the host-wide slot (K3 on #740): `@SLOT@ @CARD@-maker -- <command> [args...]`, for example `suite-slot.sh @CARD@-maker -- npm test 2>&1 | tee <file>`. It waits its turn and for a one-minute load of 24 or less, then runs the command and exits with its status (2, 71 or 75 are the wrapper's own failures: report them, don't route around them). Always pass `-m` to `git commit` inside it. Record the load at start and end. A run of named test files (`npm test -- <file> ...`, with or without `--test-name-pattern`), including a guarded mutation's run of named files, runs directly, not through the slot (C50): tee its output to a file and record the one-minute load at its start.
-  - Wrap every suite run, commit, push and fresh clone in `caffeinate -i` inside the slot (`suite-slot.sh <label> -- caffeinate -i <command>`), so the host cannot sleep mid-run (U9 on #740).
+  - Wrap every suite run, commit, push and fresh clone in `caffeinate -dims` inside the slot (`suite-slot.sh <label> -- caffeinate -dims <command>`), so the host cannot sleep mid-run (U9 on #740).
 - **Temporary files:** use TMPDIR=@TMP@ for every suite run and every clone you make.
 - **Pushing:** push with `git push origin @BRANCH@`.
 - **The PR:** open it with `gh pr create`. Its body quotes the evidence for every acceptance item. That covers:

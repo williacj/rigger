@@ -51,7 +51,7 @@ function world(t) {
 const headOf = (path) => gitIn(path, 'rev-parse', 'HEAD').trim();
 const branchOf = (path) => gitIn(path, 'symbolic-ref', '--short', 'HEAD').trim();
 
-// proves R-WORK-34
+// proves R-WORK-43
 test('the workspace adapter reads the checked-out line tip after the maker commits', async (t) => {
   const { directory, repository } = world(t);
   const path = join(directory, 'rigger-42');
@@ -64,7 +64,7 @@ test('the workspace adapter reads the checked-out line tip after the maker commi
   assert.equal(await adapter.tip(path, 'rigger-42'), headOf(path));
 });
 
-// proves R-WORK-34
+// proves R-WORK-43
 test('a missing workspace yields no line tip and leaves worktree registrations and refs alone', async (t) => {
   const { directory, repository } = world(t);
   const path = join(directory, 'missing-rigger-42');

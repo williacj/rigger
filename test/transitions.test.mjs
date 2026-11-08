@@ -61,7 +61,7 @@ const EXITED = { status: 'fulfilled', value: { exit: 1, output: 'All 12 tests pa
 const THREW = { status: 'rejected', reason: new Error('the dispatch could not start') };
 
 // Either successful read can establish presence; unreadable work is never classified absent.
-// proves R-LOOP-18
+// proves R-LOOP-19
 test('no-clock nonzero maker settlement reads both forge sources and distinguishes absent present and unreadable', async () => {
   for (const continuing of [false, true]) for (const branch of ['absent', 'present', 'unreadable']) for (const pull of ['absent', 'open', 'merged', 'closed', 'unreadable']) {
     const named = `${continuing ? 'continuing' : 'fresh'} branch=${branch} PR=${pull}`;
@@ -87,7 +87,7 @@ test('no-clock nonzero maker settlement reads both forge sources and distinguish
     let failure;
     try { answer = await changes.settled(card, EXITED, { noClock: true, continuing }); }
     catch (thrown) { failure = thrown; }
-    const present = branch === 'present' || ['open', 'merged', 'closed'].includes(pull);
+    const present = branch === 'present' || ['open', 'merged'].includes(pull);
     const unreadable = branch === 'unreadable' || pull === 'unreadable';
     const expected = present ? 'present' : unreadable ? 'unreadable' : 'absent';
     assert.deepEqual(calls.sort(), ['readBranches', 'readPullRequests'], `${named}: both reads happen exactly once`);
@@ -95,11 +95,11 @@ test('no-clock nonzero maker settlement reads both forge sources and distinguish
     assert.equal(failure !== undefined, unreadable, `${named}: every failed read is reported`);
     if (expected === 'absent') {
       assert.equal(answer.action, 'set-aside', named);
-      assert.match(answer.reason, /card #12.*exited 1.*no branch or pull request.*rigger-12/, named);
+      assert.match(answer.reason, /card #12.*exited 1.*no branch of its line of work rigger-12, and no open or merged pull request from it/, named);
     }
     if (failure !== undefined) {
       for (const refused of failures) assert.ok(failure.message.includes(refused.message), `${named}: ${refused.message} retained`);
-      assert.doesNotMatch(failure.message, /forge holds no branch|R-LOOP-18/, named);
+      assert.doesNotMatch(failure.message, /forge holds no branch|R-LOOP-19/, named);
     }
     assert.deepEqual(built.fake.writes(), [], `${named}: classification makes no move`);
   }

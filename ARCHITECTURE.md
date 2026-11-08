@@ -362,7 +362,7 @@ command line as it runs a step's. The adapter also names, from the directory a d
 the environment it runs under, the one folder its CLI keeps for that directory outside the
 dispatch's directories, or none. This document uses folder for that directory alone. The Codex
 adapter names none. The adapter passes the CLI no setting that widens what the
-consumer's own provider settings allow, with two exceptions:
+consumer's own provider settings allow, with three exceptions:
 
 - **A reached directory.** A directory a dispatch reaches is one Rigger gives the dispatch beside
   the directory it runs in, and today that is only a judge's `head`. For each such directory, the
@@ -374,6 +374,7 @@ consumer's own provider settings allow, with two exceptions:
   to that dispatch alone and lies outside every worktree. A process working there is within L0's
   sweep of the scratch directory. It allows no command, and the consumer's deny rules still apply
   there.
+- **A maker's git directories.** For a maker's dispatch, an adapter whose CLI refuses writes to git metadata may let the agent write to the worktree's own git directory and to the `objects`, `refs` and `logs` of the common git directory, so that the maker can commit and push its line of work. It names neither the common git directory itself nor any other part of it. It allows no command, and the consumer's deny rules still apply there.
 
 A provisioning step's working directory is `cwd`, a relative path naming a directory under the
 card's workspace. Where it is absent the step runs in the workspace itself. A step's `timeout` is
@@ -492,38 +493,53 @@ answered once it ends. The verb prints it and picks the exit status. While a clo
 - A `run` ended on a hold's closer it could not save hands the verb what settled since the previous
   drain and was not yet handed, and the verb exits non-zero, as above.
 
-**Cards this run set aside.** A card L3 excludes outright under "Failure model"'s direct set-aside table is **set aside**. No-clock action memory excludes an identity, not its card. With no clock trigger declared, a set-aside card stays skipped for the run's life,
-which ends at the drain. While a clock trigger keeps `run` up, a set-aside card stays skipped until a
-read of the board begun after the run set it aside finds it in a column other than its compared
-column (M7-U4 Q20 (c) on #1009). That holds whatever set the card aside.
+**Cards this run set aside.** A card L3 excludes outright under "Failure model"'s direct set-aside
+table is **set aside**. No-clock action memory excludes an identity, not its card. With no clock
+trigger declared, a set-aside card stays skipped for the run's life, which ends at the drain. While a clock trigger keeps `run` up, a set-aside card stays skipped until a
+read begun after the run set it aside finds it outside its compared columns (M7-U4 Q20 (c) on
+#1009). That holds whatever set the card aside.
 
-A set-aside card's **compared column** is the column the pull that claimed it read. Each column
-change this run made to the card that the board accepted changes the compared column to the
-change's target. The claim's move to Coding, L2's moves, the lane's moves at a merge's end and an
-escalation's move to Owner are such changes, so none of them ends the skip. A change the board
-refused leaves the compared column as it was.
+A card's **compared columns** are the columns Rigger can have last known it in (M7-U27 on #1009). At
+the claim, they are the column the pull that claimed it read, and the target of each change this run
+made to the card's column that the board accepted while that read was in flight. A read is in flight
+from when its pull takes it until that pull has compared and claimed from it. Each such change the board accepts afterwards makes its target
+the one compared column. The claim's move to Coding, L2's moves, the `created` placement, the lane's
+moves at a merge's end and an escalation's move to Owner are such changes, so none of them ends the
+skip, but for the window set out below. A change the board refused leaves the compared columns as they were.
+A change counts as accepted once its answer reaches L3, because L3 knows a change only from that answer. A read can show a `created` placement before its answer arrives, or that answer can land after a later change of this run's, and either can end a skip and let a pull claim the card once more. Only a firing's write reaches a card this run holds no claim on, so that window is one write's answer long. What would reverse it: the event record showing a card pulled twice this way, which would have L2 tell L3 of a change before sending it.
+
+L3 cannot tell whether a read saw the card before or after a change of this run's that the board
+accepted while that read was in flight. For that read, the change's target therefore counts as a
+compared column too, beside the compared columns as the read began.
 
 Each read of the board ends a skip, or leaves it, as follows:
 
 | A read of the board | What follows |
 |---|---|
 | begun before the run set the card aside | the skip holds, whatever column the read shows the card in |
-| begun after, finding the card in its compared column | the skip holds. A card whose compared column is Ready stays skipped while each read finds it in Ready |
-| begun after, finding the card in Ready, its compared column being another | the skip ends, and a pull claims the card as it claims any Ready card, at the next poll or slot release |
-| begun after, finding the card in a column other than Ready and other than its compared column | the skip ends, and a pull answers the card as it answers any card in that column |
+| begun after, finding the card in no column | the skip holds, and its compared columns stay as they were |
+| begun after, finding the card in one of its compared columns for that read | the skip holds. A card whose one compared column is Ready stays skipped while each read finds it in Ready |
+| begun after, finding the card in Ready, Ready being none of its compared columns for that read | the skip ends, and a pull claims the card as it claims any Ready card, at the next poll or slot release |
+| begun after, finding the card in a column other than Ready and other than each of its compared columns for that read | the skip ends, and a pull answers the card as it answers any card in that column |
 | begun after a refused change that the forge made anyway | the read finds the card in the change's target column, so the skip ends under the two rows above |
+
+A read begun after the run set the card aside, while the board accepted no change of this run's to the
+card, that leaves the skip makes the column it shows the one compared column. A read that began
+before the last read to do so changes nothing. Before such a read, a person's move into one of the
+compared columns goes unseen.
 
 L3 sees only what each read shows. A card moved out of its column and back again between two of
 this run's reads therefore stays skipped, because a change undone before the next read is not
 seen. A skip that ends removes the card from the memory, and a later setting aside starts its
 entry afresh. A new `run`, as after launchd's relaunch, starts with no card set aside.
 
-`loop.mjs`'s `run` keeps the memory, in place of its set of excluded card numbers. For each
-set-aside card it keeps the card's number, its compared column, and how many reads of the board
-had begun when it set the card aside. Each of L2's column changes answers, once the board accepted
-it, the column it left the card in, and `run` takes that as the compared column. `take`'s
-`available` is the step that compares: for a read begun after the setting aside, it compares the
-compared column with the item's `column`, which `readPriority` already answers. No other module
+`loop.mjs`'s `run` keeps the memory, in place of its set of excluded card numbers. For each card it
+keeps the card's number, its compared columns, and how many reads of the board had begun when it set
+the card aside. For each read in flight, it keeps the targets of this run's changes to the card that
+the board accepted meanwhile. Each of L2's column changes hands L3, once the board accepted it, the
+column it left the card in, and `run` takes that as the change's target. `take`'s `available` is the
+step that compares. For a read begun after the setting aside, it compares the item's `column`, which
+`readPriority` already answers, with the card's compared columns for that read. No other module
 holds the memory. What would reverse it: a second reader of the memory, such as `plan` or `doctor`
 showing which cards are skipped.
 
@@ -732,21 +748,13 @@ asset is one per-user LaunchAgent template under `templates/launchd/`, and `D28`
   them under `R-STATE-10`. launchd sends `SIGTERM`, not `SIGKILL`, to the rest of the job's own
   group, at its kill and at its normal exit. A member that ignores `SIGTERM` survives (Q-d3).
 - **`ExitTimeOut`.** The template sets it explicitly, and never leaves it at launchd's default,
-  which is 5 s on the owner's host (Q-d2). One dispatch's cleanup, with one read that never
+  which is 5 s on the owner's host (Q-d2), and `launchctl print` reports at most 60 s on macOS 27.2. One dispatch's cleanup, with one read that never
   answers, took about 5.5 s as a test's measured duration (Q-e2).
-- **The bound.** A function in `src/config/` computes the least `ExitTimeOut` the job needs, and
-  the CLI only calls it. It multiplies `concurrency` by the largest agent-judge panel a kind names,
-  never fewer than one, and that by the per-dispatch cleanup figure. That figure is `KILL_BOUND`
-  plus `READ_TIMEOUT`, which L0's process adapter exports and the function imports. The bound is a
-  judgment on Q-e's premises: `concurrency` counts cards, a panel's judges run at once, and Rigger
-  cleans up dispatches one after another, each within that figure. At this repository's config the
-  report recommends 150 s (Q-e, a judgment). Exit cleanup makes no push, so the bound holds no
-  network call ("Pushing the stream").
+- **The bound.** Exit cleanup has one fixed budget, whatever `concurrency` or a panel's size. L0 cleans up groups with their census and sweep for `EXIT_CARE_BOUND`. After it, L0 kills each remaining group without a census and records the kill of the group. L1 keeps that group's entry, so that the next start sweeps its directories. L1 still records each dispatch's end, and L0 still ends the sink. The function in `src/config/` answers `EXIT_BOUND`, which L0's process adapter exports: `EXIT_CARE_BOUND` and the longest one dispatch's careful cleanup can take. A judgment. launchd's cap is 60 s on macOS 27.2, so the bound stays below it. Exit cleanup makes no push, so the bound holds no network call ("Pushing the stream").
 - **What L0 answers, and what `doctor` compares.** `doctor` reads a loaded job through a new L0
   module, `src/substrate/launchd.mjs`, which spawns only through the process adapter. It answers
   only the loaded job's fields, because L0 knows neither `concurrency` nor a kind. `doctor`
-  compares the loaded job's exit timeout, as L0 answers it, against the bound. The template is
-  static, so it holds an `ExitTimeOut` the owner sets at installation to at least the bound.
+  compares the loaded job's exit timeout, as L0 answers it, against the bound. The template holds an `ExitTimeOut` the owner sets at installation to at least the bound; `doctor` reads the value launchd loaded, which a host can cap.
 - **`doctor`'s check.** Where a job under the documented label is loaded, `doctor` checks that its
   program's real path is an installed package outside the target (`R-SAFE-5`). Where none is
   loaded, the check prints no line, as S7 in the architect's review r1 on #740 places it.
@@ -914,6 +922,8 @@ branch's effective rules require, read through L0's read side, less the gate's o
 key names them. A person's merge does not run the rule again, and the required check is what binds
 it.
 
+Where L0 reads the forge's refusal of the effective rules as the feature being unavailable, L2 still answers every action but a merge, and refuses a merge, naming the unavailable rules.
+
 Where the forge reads the pull request's mergeability as unknown, L2's answer says so in a field of
 its own, beside its reason. L2 answers the same where the forge refuses the merge call for that
 reason. The lane then reads the card again and has L2 run the rule again, holding its turn, until L2
@@ -1030,7 +1040,7 @@ cannot record runs no command. Each entry names:
 - the dispatch's directory, where it has one, and what L0 needs to tell that directory from a
   later one at the same path.
 
-L1 removes an entry once its group is empty, and on Rigger's own exit. On start, L3 has L1 kill
+L1 removes an entry once its group is empty, and on Rigger's own exit. Past exit cleanup's budget, it keeps each remaining group's entry, so that the next start sweeps that group's directories. On start, L3 has L1 kill
 every group it recorded, before L3 records or reads anything. L0 kills a recorded group only once it
 has confirmed that the group is the one recorded. A start that cannot confirm a recorded group kills
 nothing in it, keeps its entry, and stops, as an unrecorded kill does. Every kill of a dispatch's
@@ -1322,7 +1332,7 @@ hands L2 the first attempt's failure unread, as it hands the attempt number, so 
 memory and is never persisted. For a judge's dispatch that never started for a host cause, the
 second attempt is that judge's next dispatch, as set out below.
 
-L3 keeps direct set-aside card memory for one invocation. The existing table gives its cases, and no others. A card set aside under that table is excluded before any no-clock action identity is considered. In particular, a merge remains set aside whatever it answered, as do stopped cards and the table's failed writes. A new action identity does not clear a direct set-aside. The next invocation starts without either kind of memory.
+L3 keeps direct set-aside card memory for one invocation. The existing table gives its cases, and no others. A card set aside under that table is excluded before any no-clock action identity is considered. In particular, a merge remains set aside whatever it answered, as do the table's stopped cards and failed writes. A new action identity does not clear a direct set-aside. The next invocation starts without either kind of memory.
 
 | Case | Why |
 |---|---|
@@ -1334,11 +1344,17 @@ L3 keeps direct set-aside card memory for one invocation. The existing table giv
 | a merge, whatever it answered | a merge the lane refused, because the head moved, checks were pending or mergeability was unknown, would be pulled again at once and poll the forge |
 | a continuing attempt that did not settle | L2 moved nothing, so the next pull would read the same head and markers, answer `continue` again, and dispatch the maker again at once |
 | a closed-card removal followed by a refusal | the refusal leaves the removal conditions unchanged, so the next pull would remove the same directories again at once |
-| while a clock trigger keeps `run` up, a maker whose dispatch L2's settle reads, where all of these hold: | L2's settle answers `set-aside`; without the memory the next pull dispatches the maker again at once, which `R-LOOP-18` rules out |
+| while a clock trigger keeps `run` up, a maker whose dispatch L2's settle reads, where all of these hold: | L2's settle answers `set-aside`; without the memory the next pull dispatches the maker again at once, which `R-LOOP-19` rules out |
 | — the maker ran; | |
 | — it exited non-zero; | |
 | — the card is not escalated; | |
-| — the forge holds nothing of the card's line of work, no branch and no pull request from it. | |
+| — the forge holds nothing of the card's line of work: no branch of it, and no open or merged pull request from it. | |
+| while a clock trigger keeps `run` up, a maker whose dispatch L2's settle reads, where all of these hold: | L2 cannot say whether `R-LOOP-19` applies, so without the memory the next pull could dispatch the maker again. Its settle rejects naming the read |
+| — the maker was not continuing; | |
+| — it exited non-zero; | |
+| — a read its settle made failed; | |
+| — no read showed the line of work's branch or an open or merged pull request from it. | |
+| stopped a second time because its line of work moved or was deleted since L2 read it, counting from the invocation's start or from the end of the card's last skip | the forge's answer and `git`'s still disagree, so without the memory each pull reads and stops it again at once |
 
 In a no-clock `run`, L3 also remembers identities of maker starts from the beginning, continuing maker actions, individual judge dispatches, and closed-card removals with a following maker. This identity rule covers only those actions. `move`, `return`, `escalate`, `merge`, and other removal answers keep their existing handling and exclusions. L2 supplies each identity from the facts selecting its answer; L3 does not reconstruct forge facts. For a removal with a following maker, L2 names the closed pull requests by number and head in stable order and includes the following maker action in its identity. A new closed pull request or changed head therefore gives a different removal identity.
 
@@ -1356,7 +1372,7 @@ Existing direct set-asides and maker bars still take precedence. A changed ident
 
 An identical remembered action is omitted before pull order, without claim or refusal. For a mixed judge answer, L3 offers only unmatched judge identities, in L2's order. Other L2 actions remain eligible unless direct set-aside memory or the maker bar below excludes them.
 
-After a non-zero maker exit, L2 reads both the card's line and its open, merged and closed pull requests. It answers **absent** only when the branch and every pull-request set were read successfully and all were absent. It answers **present** when either read establishes a branch or pull request. Otherwise it answers **unreadable**, without claiming absence. L3 bars every later maker for that card in this invocation, including `continue` and `remove.following`, when L2 answered absent under `R-LOOP-18`. It also defers later maker work on unreadable facts, without asserting that `R-LOOP-18` applies. `R-WORK-41` permits deferral of an eligible removal in either case.
+After a non-zero maker exit, L2 reads both the card's line and its open, merged and closed pull requests. It answers **absent** only when both reads succeeded and the forge holds nothing of the card's line of work: no branch of it, and no open or merged pull request from it. It answers **present** when either read establishes a branch, or an open or merged pull request. Otherwise it answers **unreadable**, without claiming absence. L3 bars every later maker for that card in this invocation, including `continue` and `remove.following`, when L2 answered absent under `R-LOOP-19`. It also defers later maker work on unreadable facts, without asserting that `R-LOOP-19` applies. `R-WORK-41` permits deferral of an eligible removal in either case.
 
 L3 increments a card's claim generation synchronously when it takes any claim, before awaiting its start. Each pull fixes its original facts-call offer and those cards' generations. After the facts call returns, only an originally offered card that remains unclaimed, is not directly set aside, and retains that generation may reach the returned `decide` or pull order. An intervening claim therefore invalidates an older read even when its maker or removal never starts. An omitted card creates no claim, refusal or queue position; a fresh read reevaluates it.
 
@@ -1366,8 +1382,10 @@ a file-system error leaves a hold unsaved.
 
 A card stopped after two attempts that failed the same way needs no memory, because the hold closes
 admission. An escalated card needs none either, because L2 answers no action for a card carrying the
-escalation label. A card stopped because its line of work moved or was deleted since L2 read it
-needs no memory either, because `R-FAIL-8` has the next pull read the forge again. A card sent to
+escalation label. A card's first stop because its line of work moved or was deleted since L2 read
+it needs no memory either, because `R-FAIL-8` has the next pull read the forge again. The count
+starts with the invocation and again when the card's skip ends, and a second such stop is
+remembered, as the table above says. A card sent to
 a role needs no case of its own. Each outcome of the role's dispatch either escalates the card, or
 leaves it for the next pull to answer, and a refused routing comment is the case of a refused
 escalation write.
@@ -1414,8 +1432,10 @@ Two other ends of the role's dispatch escalate the card. L2 answers each with ra
 - **A non-zero exit** (`R-ESCALATE-25`). L2 answers it as `ambiguous`.
 
 While L2 reads a continuing attempt's pull request at a head other than the tip L1 read, L3 has L2
-read it again under the same claim and slot, until the bound `R-WORK-34` sets has passed. Every wait for the forge to show a write runs this way:
+read it again under the same claim and slot, until the bound `R-WORK-43` sets has passed. Every wait for the forge to show a write runs this way:
 L3 owns the pause, the clock and the bound, and L2 owns what each read shows.
+
+Where a continuing maker exits 0 at the head L2 gave it, L2 answers a loop-raised `ambiguous` escalation in place of the move to Review (`R-LOOP-20`). L3 hands L2 that head unread. The comparison lies within one settle, so it needs no memory.
 
 L1's directory-removal operation lives in `src/execution/workspace.mjs`. L2 selects it, and L3 invokes it under the card's claim. It serves both `R-WORK-35` and `R-WORK-41`.
 
@@ -1507,12 +1527,13 @@ agent's own git commands in its workspace are outside the queue.
 A process still in the command's group when the direct child exits is terminated by L0, and recorded
 by name and command line where a read before the kill found it; it never changes the exit code. A
 process that leaves its group is outside this containment. L0 never stops a process group to contain
-it. It reads which processes the group holds, kills the group whole, then kills and reads it again
-until no member is left alive, with two exceptions. Where it cannot read the table, it sends the
-kill on every look until a bound passes, then records the kill of the group and why, and settles
-without knowing the group is empty. Where a member is one L0 may not signal, or outlives the kill
-for a second, longer bound, L0 records it by name and command line as a process it could not end,
-and settles. A process the kill ended that no read before it found is recorded as the kill of the
+it. It reads which processes the group holds, kills the group whole, then kills and reads it again until no member is left alive, with three exceptions:
+
+- Where it cannot read the table, it sends the kill on every look until a bound passes, then records the kill of the group and why, and settles without knowing the group is empty.
+- Where a member is one L0 may not signal, or outlives the kill for a second, longer bound, L0 records it by name and command line as a process it could not end, and settles.
+- Past exit cleanup's budget, L0 kills the group once and settles, as "Supervising `run`" says.
+
+A process the kill ended that no read before it found is recorded as the kill of the
 group, as when L0 cannot read the table, wherever a later read finds it. L0 records only what its
 reads of the table show, for a group as for a directory. Before the kill, reads of a group that list
 none of its processes while signal 0 still reaches it show nothing. So does a census read that
@@ -1539,7 +1560,7 @@ line as a process it could not end, and waits on it no further. Where L0 cannot 
 work in one of them, it records that directory and why in their place, and waits on them no further.
 L1 hands L0 each of them and records it in the dispatch's entry. A later start does the same for
 each only where the directory at its path is still the one recorded. Where it is not, or L0 cannot
-tell, the start sweeps nothing there and records why. A command that is not a dispatch has no such
+tell, the start sweeps nothing there and records why. Past exit cleanup's budget, L0 leaves this sweep to the next start ("Supervising `run`"). A command that is not a dispatch has no such
 directory, and its group remains its whole containment.
 
 A judge's directory holds two worktrees, each at a detached commit. `main` holds the main line as
@@ -1549,8 +1570,7 @@ A role's escalation directory holds `main`, and the role's agent CLI runs there,
 It holds `head` only where the card has an open pull request.
 
 Where a process that left its group holds the command's output open once the group is empty, L0 stops
-reading after a bound it sets and records that it did. A dispatch ends only once L0 has terminated
-the group's processes.
+reading after a bound it sets and records that it did. A dispatch ends only once L0 has terminated the group's processes, or, past exit cleanup's budget, has sent the group its kill.
 
 L0's process adapter reaches the operating system through one host. No other module under `src/`
 starts a process, sends a signal, or reads the process table. The host gives the adapter a clock

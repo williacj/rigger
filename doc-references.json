@@ -26,6 +26,7 @@
     "templates/claude/skills/proposal/SKILL.md": "strict",
     "templates/claude/skills/spec-style/SKILL.md": "strict",
     "templates/claude/skills/tdd/SKILL.md": "strict",
+    "docs/spikes/existing-suite-audit.md": "strict",
     "docs/spikes/git-operations-at-once.md": "strict",
     "docs/spikes/reserved-git-indirection.md": "strict",
     "docs/spikes/status-option-through-gh.md": "strict",
@@ -38,10 +39,20 @@
     "docs/spikes/telemetry-push.md": "strict",
     "docs/spikes/entry-points-l1-l5-cli.md": "strict",
     "docs/spikes/sweep-lsof-observation.md": "strict",
+    "docs/spikes/npm-pack-output-investigation.md": "strict",
     "docs/guide.md": "strict",
-    "docs/reference.md": "strict"
+    "docs/reference.md": "strict",
+    "docs/spikes/review-workspace-custody.md": "strict"
   },
   "exempt": {
     "paths": {}
+  },
+  "preflight": {
+    "retiredIdEvidence": {
+      "path": "docs/spikes/existing-suite-audit.json",
+      "gitMode": "100644",
+      "sha256": "fe98d55e74975c3d8ddfd9b223b48f070079d11baba44cf6003ea66f68e675b1",
+      "reason": "Owner-approved immutable historical audit; changed bytes require new approval (#1212)."
+    }
   }
 }

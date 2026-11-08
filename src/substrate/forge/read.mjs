@@ -40,8 +40,10 @@ const asked = async (operation, board, query, via, addressed) =>
   answerOf(operation, board, await readRunner(graphqlRequest(query), via), addressed);
 
 /** Throws the error a read gives when the board answered something it cannot use. */
-function fail(operation, board, why) {
-  throw new Error(`${operation} on board ${board.project} failed: ${why}`);
+function fail(operation, board, why, code) {
+  const failure = new Error(`${operation} on board ${board.project} failed: ${why}`);
+  if (code !== undefined) failure.code = code;
+  throw failure;
 }
 
 /**
@@ -392,7 +394,17 @@ async function checkStates(board, via, sha, required, addressed) {
   return result;
 }
 
-/** Required contexts enforced on `branch` by active rulesets and classic protection. */
+/** The `code` of the failure of the effective-rules read that says the forge offers no such feature to this repository. */
+export const EFFECTIVE_RULES_UNAVAILABLE = 'EFFECTIVE_RULES_UNAVAILABLE';
+
+/** The first line `gh` prints where GitHub refuses a private repository on the Free plan its rules (gh 2.103.3, 2026-11-05). */
+const RULES_FEATURE_REFUSED = 'gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)';
+
+/**
+ * Required contexts enforced on `branch` by active rulesets and classic protection. A rules read
+ * the forge refuses in exactly `RULES_FEATURE_REFUSED`'s words fails with the code
+ * `EFFECTIVE_RULES_UNAVAILABLE`, and any other failure with none.
+ */
 async function effectiveRules(board, via, branch, addressed) {
   const checks = new Map();
   const requireCheck = (context, integration) => {
@@ -407,7 +419,9 @@ async function effectiveRules(board, via, branch, addressed) {
   };
   for (let page = 1;; page += 1) {
     const path = `rules/branches/${encodeURIComponent(branch)}?per_page=${PAGE}&page=${page}`;
-    const rules = JSON.parse(await restRead('readEffectiveRules', board, via, path, [], addressed));
+    const answered = await readRunner(['api', `repos/${board.repo}/${path}`, '-X', 'GET'], via);
+    if (answered.status !== 0) fail('readEffectiveRules', board, `${addressed}${firstLine(answered)}`, firstLine(answered) === RULES_FEATURE_REFUSED ? EFFECTIVE_RULES_UNAVAILABLE : undefined);
+    const rules = JSON.parse(answered.stdout);
     if (!Array.isArray(rules)) fail('readEffectiveRules', board, `${addressed}gh answered no rules`);
     for (const rule of rules) {
       if (rule.type !== 'required_status_checks') continue;

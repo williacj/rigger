@@ -10,6 +10,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { inspect, parseArgs } from 'node:util';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { runCommand } from '../src/substrate/process.mjs';
+import { realHost } from '../src/substrate/host.mjs';
 
 // Node copies Error getters before worker transport erases custom prototypes. A per-run key
 // carries the original instanceof result; application codes, names and fields are not evidence.
@@ -101,14 +102,35 @@ export async function runTests(tree, temporary, file, { timeout = 60, pattern } 
   const runTmp = mkdtempSync(join(temporary, 'run-'));
   const { NODE_TEST_CONTEXT, ...env } = gitEnvironment();
   const events = [];
-  const ran = await runCommand({ command: 'sh', args, cwd: tree,
+  let selectedProcess;
+  let selectedChild;
+  let native;
+  let nativeUnavailable = false;
+  const observedHost = Object.create(realHost, { spawn: { value: (command, args, options) => {
+    const child = realHost.spawn(command, args, options);
+    if (selectedChild !== undefined) nativeUnavailable = true;
+    selectedChild = child;
+    child.once('error', () => { nativeUnavailable = true; });
+    child.once('exit', (code, signal) => {
+      if (native !== undefined) nativeUnavailable = true;
+      native = { pid: child.pid, code, signal };
+    });
+    return child;
+  } } });
+  const ran = await runCommand({ command: 'sh', args, cwd: tree, host: observedHost,
+    onGroup: (group, started) => { selectedProcess = { group, started }; },
     env: { ...env, TMPDIR: runTmp, RIGGER_PROOF_ASSERTION_KEY: randomUUID() }, timeout: timeout * 1000,
     directory: tree, scratch: runTmp, emitter: { emit: (...event) => events.push(event) },
   });
+  const capture = Object.fromEntries(['stdout', 'stderr'].map((stream) => [stream, {
+    bytes: ran[stream].length, sha256: createHash('sha256').update(ran[stream]).digest('hex'),
+  }]));
   const stdout = ran.stdout.toString('utf8');
   const stderr = ran.stderr.toString('utf8');
+  for (const [stream, text] of Object.entries({ stdout, stderr })) capture[stream].faithful = Buffer.from(text, 'utf8').equals(ran[stream]);
   const stream = stdout.split('\n').filter((line) => line.startsWith('@@proof ')).map((line) => JSON.parse(line.slice(8)));
-  return { ...ran, stdout, stderr, command: ['sh', ...args], ...parseEvents(stream, tree, testFile), events };
+  return { ...ran, process: selectedProcess, native: !nativeUnavailable && native?.pid === selectedProcess?.group ? native : undefined,
+    capture, stdout, stderr, command: ['sh', ...args], ...parseEvents(stream, tree, testFile), events };
 }
 
 /**
@@ -184,6 +206,8 @@ export function mutationVerdict(report) {
     identities.push(keys.sort());
   }
   if (JSON.stringify(identities[0]) !== JSON.stringify(identities[1])) return { status: 'no verdict', reason: 'restored selected identities differ from original' };
+  const mutantReason = noVerdict(report.mutant);
+  if (mutantReason) return { status: 'no verdict', reason: `mutant: ${mutantReason}` };
   return { status: failures(report.mutant).length === 0 ? 'survived' : 'killed' };
 }
 
@@ -262,7 +286,15 @@ export function failures(run) {
 
 /** A completed named assertion or application error differs from an interrupted or refused run. */
 export function noVerdict(run) {
+  if (!Number.isSafeInteger(run.process?.group) || run.process.group <= 0 || !Number.isFinite(run.process.started)) return 'selected suite start unavailable';
+  if (!Number.isInteger(run.exit) || typeof run.timedOut !== 'boolean') return 'selected suite settled ending unavailable';
   if (run.timedOut) return 'run exceeded its timeout';
+  if (run.events?.some(([event]) => event === 'output.held')) return 'selected suite output incomplete: output.held';
+  if (run.capture?.stdout?.faithful !== true || run.capture?.stderr?.faithful !== true) return 'selected suite UTF8 text fidelity unavailable';
+  const native = run.native;
+  if (!Number.isSafeInteger(native?.pid) || native.pid !== run.process.group
+    || !Number.isInteger(native.code) || native.code !== run.exit
+    || native.signal !== null || Object.hasOwn(native, 'error')) return 'selected suite native ending unavailable';
   if (run.fileVerdicts.length > 0) return 'file verdict; no named tests reached a verdict';
   if (run.tests.length === 0) return 'no named tests reached a verdict';
   if (run.tests.some((test) => test.skip !== undefined || test.todo !== undefined)) return 'skipped or todo named test';

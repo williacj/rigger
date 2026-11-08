@@ -3,13 +3,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { constants as osConstants } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { forgeBody, invoke, mutationArgs, proofRepository } from './proof-repository.mjs';
 import { SETTLES_WITHIN } from './settles-within.mjs';
 import { gitIn, worktreeList, unlockWorktreeAt, removeWorktreeAt } from './git-repository.mjs';
 import { existsSync, readFileSync, realpathSync, writeFileSync, readdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { parseEvents, runTests } from '../scripts/mutation-receipt.mjs';
+import { noVerdict, parseEvents, runTests } from '../scripts/mutation-receipt.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
+import { until, shellQuote } from './process-fixtures.mjs';
 
 const script = fileURLToPath(new URL('../scripts/mutation-receipt.mjs', import.meta.url));
 
@@ -143,6 +146,13 @@ test('A3 a mutation all named tests pass is reported as survived', SETTLES_WITHI
   assert.equal(exit, 0);
   assert.equal(report.status, 'survived');
   assert.deepEqual(report.failures, []);
+  for (const [phase, exit] of [['unmutated', 0], ['mutant', 0], ['restored', 0]]) {
+    const selected = report[phase];
+    assert.equal(selected.exit, exit, `${phase}: retain the actual selected exit`);
+    assert.equal(selected.timedOut, false, `${phase}: retain the actual timeout answer`);
+    assert.ok(Number.isSafeInteger(selected.process?.group) && selected.process.group > 0, `${phase}: retain the selected group leader`);
+    assert.ok(Number.isFinite(selected.process.started), `${phase}: retain the OS start answer`);
+  }
 });
 
 // A thrown application error is evidence, but must never be labelled an assertion.
@@ -177,6 +187,13 @@ test('A1 a matching anchor produces a named assertion receipt', SETTLES_WITHIN[6
   assert.equal(report.failures[0].name, 'value stays one');
   assert.match(report.failures[0].error.message, /value must stay one/);
   assert.equal(report.failures[0].error.name, 'AssertionError');
+  for (const [phase, exit] of [['unmutated', 0], ['mutant', 1], ['restored', 0]]) {
+    const selected = report[phase];
+    assert.equal(selected.exit, exit, `${phase}: retain the actual selected exit`);
+    assert.equal(selected.timedOut, false, `${phase}: retain the actual timeout answer`);
+    assert.ok(Number.isSafeInteger(selected.process?.group) && selected.process.group > 0, `${phase}: retain the selected group leader`);
+    assert.ok(Number.isFinite(selected.process.started), `${phase}: retain the OS start answer`);
+  }
 });
 
 // A real pending test, with an active port rather than a sleep, exercises the run's deadline.
@@ -728,4 +745,282 @@ test('TQ diff refusal restores before cleanup', SETTLES_WITHIN[60_000], async (t
 // D29 reason: wiring. Ordinary counterpart: TQ restoration duty survives mutant launch refusal.
 test('TQ mutant launch refusal restores before cleanup', SETTLES_WITHIN[60_000], async (t) => {
   await faultRestorationWitness(t, 'F11d');
+});
+
+
+/** Inserts literal shell text before the real suite without interpreting its dollar characters. */
+function suiteWithPrelude(prelude) {
+  const suite = readFileSync(new URL('suite.sh', import.meta.url), 'utf8');
+  const selected = suite.replace('#!/bin/sh\n', () => '#!/bin/sh\n' + prelude);
+  assert.ok(selected.startsWith('#!/bin/sh\n' + prelude), 'the fixture must contain the exact shell prelude before execution');
+  return selected;
+}
+
+// D29 reason: wiring. Ordinary counterpart: TQ selected-suite evidence requires observed start and settled ending.
+// The shell and the worker identify themselves independently of the receipt's recorded start.
+test('TQ selected-suite start belongs to the shell leader rather than its worker', SETTLES_WITHIN[60_000], async (t) => {
+  const prelude = 'if [ "${1-}" != --list ]; then\n  printf "1232-leader %s " "$$" >&2\n  LC_ALL=C TZ=UTC ps -p "$$" -o lstart= >&2\nfi\n';
+  const fixture = proofRepository(t, {
+    body: "test('selected leader witness', () => { console.error('1232-worker ' + process.pid); assert.equal(3 * 7, 21); });\n",
+    headFiles: { 'test/suite.sh': suiteWithPrelude(prelude) },
+  });
+  const run = await runTests(fixture.root, fixture.tmp, fixture.file);
+  assert.equal(run.exit, 0, run.stderr);
+  assert.equal(run.timedOut, false);
+  assert.deepEqual(run.tests.map(({ name, outcome }) => [name, outcome]), [['selected leader witness', 'pass']]);
+  const leader = /^1232-leader (\d+) (.+)$/m.exec(run.stderr);
+  assert.ok(leader, 'the actual selected shell must print its PID and its own ps start answer');
+  const start = Date.parse(leader[2].trim() + ' UTC') / 1000;
+  assert.ok(Number.isFinite(start), 'the real ps start answer must be independently readable');
+  const events = run.stdout.split('\n').filter((line) => line.startsWith('@@proof ')).map((line) => JSON.parse(line.slice(8)));
+  const workers = events.filter((event) => event.type === 'test:stderr').flatMap((event) => {
+    const matched = /^1232-worker (\d+)\n$/.exec(event.data.message);
+    return matched ? [Number(matched[1])] : [];
+  });
+  assert.equal(workers.length, 1, 'the actual assertion worker must identify itself once');
+  assert.notEqual(workers[0], Number(leader[1]), 'the observed assertion worker is not the selected shell leader');
+  assert.deepEqual(run.process, { group: Number(leader[1]), started: start },
+    'the receipt must retain the actual shell/group leader and its OS start answer');
+});
+
+
+/** tee writes the same input bytes to the selected shell's captured stderr and its private mirror. */
+function suiteWithCapture(octal) {
+  return suiteWithPrelude([
+    'if [ "${1-}" != --list ]; then',
+    `  printf '${octal}\\n' | tee "$TMPDIR/1232-stream-bytes" >&2`,
+    'fi', '',
+  ].join('\n'));
+}
+
+// D29 reason: wiring. Ordinary counterpart: TQ selected-suite UTF8 fidelity is required for proof credit.
+test('TQ selected-suite capture retains actual bytes and refuses a lossy UTF8 pipe', SETTLES_WITHIN[60_000], async (t) => {
+  const rows = [
+    { octal: '\\101', bytes: [65, 10], text: 'A\n', sha256: '06f961b802bc46ee168555f066d28f4f0e9afdf3f88174c1ee6f9de004fc30a0', faithful: true },
+    { octal: '\\357\\277\\275', bytes: [239, 191, 189, 10], text: '\ufffd\n', sha256: '8d75cfafa290dea108e554948eae67ba5c418cad73059f9452ff6fc652d5c869', faithful: true },
+    { octal: '\\377', bytes: [255, 10], text: '\ufffd\n', sha256: 'e4688624e5f1ad0629505e6768e3bb36244f2f3e33e751215afa820334a76ed3', faithful: false },
+  ];
+  for (const row of rows) {
+    const fixture = proofRepository(t, {
+      body: "test('capture pipe witness', () => assert.equal(3 * 7, 21));\n",
+      headFiles: { 'test/suite.sh': suiteWithCapture(row.octal) },
+    });
+    const run = await runTests(fixture.root, fixture.tmp, fixture.file);
+    assert.equal(run.exit, 0, run.stderr);
+    assert.equal(run.timedOut, false);
+    assert.deepEqual(run.tests.map(({ name, outcome }) => [name, outcome]), [['capture pipe witness', 'pass']]);
+    const runs = readdirSync(fixture.tmp).filter((name) => name.startsWith('run-'));
+    assert.equal(runs.length, 1, 'the one selected invocation must own one scratch root');
+    const mirror = readFileSync(join(fixture.tmp, runs[0], '1232-stream-bytes'));
+    assert.deepEqual(mirror, Buffer.from(row.bytes), 'the actual selected shell must send the specified bytes through tee');
+    assert.equal(run.stderr, row.text, 'the returned text must expose the actual UTF8 decode');
+    assert.deepEqual(run.capture?.stderr, { bytes: row.bytes.length, sha256: row.sha256, faithful: row.faithful },
+      'capture metadata must identify the original selected-shell bytes separately from decoded text');
+    assert.equal(noVerdict(run), row.faithful ? undefined : 'selected suite UTF8 text fidelity unavailable');
+    t.diagnostic(JSON.stringify({ mirrorHex: mirror.toString('hex'), capture: run.capture.stderr }));
+  }
+});
+
+// D29 reason: wiring. Ordinary counterpart: TQ selected-suite UTF8 fidelity is required for proof credit.
+test('TQ proof diff refuses invalid UTF8 capture at both source sides', SETTLES_WITHIN[60_000], async (t) => {
+  const fixture = proofRepository(t, {
+    base: 'export const value = 2;\n', head: 'export const value = 1;\n',
+    headFiles: { 'test/suite.sh': suiteWithCapture('\\377') },
+  });
+  const { exit, report } = await invoke(fixture, 'proof-diff.mjs', [fixture.file]);
+  assert.equal(exit, 1);
+  for (const side of ['base', 'head']) {
+    assert.equal(report.runs[side].status, 'no verdict');
+    assert.equal(report.runs[side].reason, 'selected suite UTF8 text fidelity unavailable');
+    assert.deepEqual(report.runs[side].capture.stderr, {
+      bytes: 2, sha256: 'e4688624e5f1ad0629505e6768e3bb36244f2f3e33e751215afa820334a76ed3', faithful: false,
+    });
+  }
+  assert.deepEqual(report.tests.map(({ status }) => status), ['no verdict at the head']);
+});
+
+
+// D29 reason: wiring. Ordinary counterpart: native exit records distinguish ordinary and signalled endings.
+// D29 reason: wiring. Ordinary counterpart: native exit records refuse missing or ambiguous evidence.
+// Both selected shell leaders must be observed ready and live before their owned release.
+test('the selected suite retains natural 143 and SIGTERM as different native endings', SETTLES_WITHIN[60_000], async (t) => {
+  assert.ok(['linux', 'darwin'].includes(process.platform), 'fixture STOP: this witness requires a supported POSIX shell');
+  assert.equal(osConstants.signals.SIGTERM, 15, 'fixture STOP: the normalized-143 premise requires SIGTERM=15');
+  const rows = [
+    { tag: '1270-natural-ready', ending: 'exit 143', code: 143, signal: null },
+    { tag: '1270-term-ready', ending: 'kill -TERM "$$"', code: null, signal: 'SIGTERM' },
+  ];
+  let callsPending = false;
+  const control = temporaryDirectory('1270-native-barrier-', { context: t, beforeRemoval: () => {
+    if (callsPending) throw new Error('fixture STOP: readiness controls remain until both selected calls settle');
+  } });
+  const release = join(control, 'release');
+  const fixtures = rows.map((row) => proofRepository(t, {
+    headFiles: { 'test/suite.sh': suiteWithPrelude([
+      'if [ "${1-}" != --list ]; then',
+      `  printf '${row.tag} %s\\n' "$$" >&2`,
+      `  printf '${row.tag} %s\\n' "$$" > ${shellQuote(join(control, row.tag))}`,
+      `  while [ ! -e ${shellQuote(release)} ]; do :; done`,
+      `  ${row.ending}`,
+      'fi', '',
+    ].join('\n')) },
+  }));
+  const settled = [false, false];
+  callsPending = true;
+  const both = Promise.allSettled(fixtures.map((fixture, index) => runTests(fixture.root, fixture.tmp, fixture.file)
+    .finally(() => { settled[index] = true; })));
+  const barrierErrors = [];
+  const observedPids = [];
+  let outcomes;
+  try {
+    // The existing half-test-bound wait policy leaves headroom for release and settlement.
+    const readyBy = performance.now() + SETTLES_WITHIN[60_000].timeout / 2;
+    await until(() => {
+      if (settled.some(Boolean)) throw new Error('fixture STOP: a selected call settled before the overlap barrier');
+      if (performance.now() >= readyBy) throw new Error('fixture STOP: both selected shells did not become ready within the readiness guard');
+      return rows.every((row) => {
+        const path = join(control, row.tag);
+        if (!existsSync(path)) return false;
+        const ready = /^(1270-(?:natural|term)-ready) ([1-9]\d*)\n$/.exec(readFileSync(path, 'utf8'));
+        return ready !== null && ready[1] === row.tag;
+      });
+    }, t);
+    for (const row of rows) observedPids.push(Number(readFileSync(join(control, row.tag), 'utf8').trim().split(' ')[1]));
+    assert.ok(observedPids.every(Number.isSafeInteger), 'fixture STOP: ready shell PIDs must be readable positive integers');
+    assert.notEqual(observedPids[0], observedPids[1], 'fixture STOP: the two ready shells must be distinct');
+    assert.equal(existsSync(release), false, 'fixture STOP: no release may precede observing both leaders');
+    const ps = spawnSync('/bin/ps', ['-p', observedPids.join(','), '-o', 'pid=', '-o', 'ppid=', '-o', 'stat='], { encoding: 'utf8' });
+    t.diagnostic(JSON.stringify({ kind: '1270-overlap-ps', parentPID: process.pid, observedPids,
+      status: ps.status, signal: ps.signal, error: ps.error?.message, stdout: ps.stdout, stderr: ps.stderr,
+      releasePresent: existsSync(release), callsSettled: [...settled] }));
+    assert.equal(ps.error, undefined, 'fixture STOP: the real leader observation must start');
+    assert.equal(ps.status, 0, 'fixture STOP: the real leader observation must complete');
+    assert.equal(ps.signal, null, 'fixture STOP: the real leader observation must end normally');
+    assert.equal(ps.stderr, '', 'fixture STOP: the real leader observation must print no error');
+    const live = ps.stdout.trim().split('\n').map((line) => line.trim().split(/\s+/));
+    assert.equal(live.length, 2, 'fixture STOP: one observation must name both ready leaders');
+    assert.ok(live.every((fields) => fields.length === 3 && Number(fields[1]) === process.pid
+      && /^[A-Za-z]/.test(fields[2]) && !/^[ZX]/.test(fields[2])), 'fixture STOP: both leaders must be live children of this actual parent');
+    assert.deepEqual(live.map((fields) => Number(fields[0])).sort((a, b) => a - b), [...observedPids].sort((a, b) => a - b),
+      'fixture STOP: the two live child rows must match the independently ready shell PIDs');
+    assert.equal(existsSync(release), false, 'fixture STOP: release must remain absent through the positive observation');
+    assert.deepEqual(settled, [false, false], 'fixture STOP: both selected calls must remain pending through the positive observation');
+    t.diagnostic(JSON.stringify({ kind: '1270-overlap-observed-before-release', parentPID: process.pid,
+      rows: rows.map((row, index) => ({ tag: row.tag, pid: observedPids[index] })), releasePresent: false, callsSettled: [...settled] }));
+  } catch (error) {
+    barrierErrors.push(error);
+  } finally {
+    try { writeFileSync(release, 'release\n', { flag: 'wx' }); } catch (error) { barrierErrors.push(error); }
+    outcomes = await both;
+    callsPending = false;
+  }
+  t.diagnostic(JSON.stringify({ kind: '1270-overlap-settled', parentPID: process.pid, observedPids,
+    barrierErrors: barrierErrors.map((error) => ({ name: error.name, message: error.message, stack: error.stack })),
+    releasePresent: existsSync(release), callsSettled: [...settled] }));
+  for (const [index, outcome] of outcomes.entries()) {
+    const reason = outcome.status === 'rejected' ? outcome.reason : undefined;
+    t.diagnostic(JSON.stringify({ tag: rows[index].tag, outcome: outcome.status,
+      ...(outcome.status === 'fulfilled' ? { run: outcome.value, hasNative: Object.hasOwn(outcome.value, 'native') } : {
+        rejection: reason instanceof Error ? { name: reason.name, message: reason.message, code: reason.code, stack: reason.stack,
+          cause: reason.cause instanceof Error ? { name: reason.cause.name, message: reason.cause.message, stack: reason.cause.stack } : reason.cause } : reason,
+      }),
+    }));
+  }
+  const rejected = outcomes.filter((outcome) => outcome.status === 'rejected');
+  if (barrierErrors.length > 0) throw new AggregateError([...barrierErrors, ...rejected.map((outcome) => outcome.reason)],
+    'fixture STOP: overlap controls released and both selected calls settled before reporting the barrier failure');
+  if (rejected.length > 0) throw new AggregateError(rejected.map((outcome) => outcome.reason),
+    'fixture STOP: both selected-suite calls settled before propagating a refusal');
+  const runs = outcomes.map((outcome) => outcome.value);
+  const pids = [];
+  for (const [index, run] of runs.entries()) {
+    const { tag } = rows[index];
+    assert.equal(run.exit, 143, `${tag}: fixture STOP unless the independently specified ending normalizes to 143`);
+    assert.equal(run.timedOut, false, `${tag}: fixture STOP if the deadline supplied the ending`);
+    const ready = /^(1270-(?:natural|term)-ready) ([1-9]\d*)\n$/.exec(run.stderr);
+    assert.ok(ready, `${tag}: fixture STOP unless the selected shell identifies itself before ending`);
+    assert.equal(ready[1], tag, `${tag}: fixture STOP on another call's readiness message`);
+    const pid = Number(ready[2]);
+    assert.ok(Number.isSafeInteger(pid), `${tag}: fixture STOP on an unreadable shell PID`);
+    pids.push(pid);
+    assert.equal(pid, observedPids[index], `${tag}: captured shell readiness must match the live leader observed before release`);
+    assert.equal(run.process?.group, pid, `${tag}: fixture STOP unless the selected group is this shell`);
+    assert.ok(Number.isFinite(run.process?.started), `${tag}: fixture STOP without the OS start answer`);
+    assert.equal(run.stdout, '', `${tag}: fixture STOP if the prelude reached Node test selection`);
+    assert.equal(run.capture?.stdout?.faithful, true, `${tag}: fixture STOP on lost stdout fidelity`);
+    assert.equal(run.capture?.stdout?.bytes, 0, `${tag}: fixture STOP unless stdout is empty`);
+    assert.equal(run.capture?.stderr?.faithful, true, `${tag}: fixture STOP on lost readiness fidelity`);
+    assert.equal(run.capture?.stderr?.bytes, Buffer.byteLength(run.stderr, 'utf8'), `${tag}: fixture STOP on incomplete readiness capture`);
+    assert.equal(run.events.some(([event]) => event === 'output.held'), false, `${tag}: fixture STOP on a held output pipe`);
+    assert.equal(run.count, 0, `${tag}: this early-ending fixture earns no named-test verdict credit`);
+    assert.deepEqual(run.tests, []);
+    assert.deepEqual(run.fileVerdicts, []);
+  }
+  assert.notEqual(pids[0], pids[1], 'fixture STOP unless the two independent selected shells have distinct PIDs');
+  for (const [index, run] of runs.entries()) {
+    const { tag, code, signal } = rows[index];
+    assert.deepEqual(run.native, { pid: pids[index], code, signal },
+      `${tag}: retain the actual selected-shell native exit(code, signal) pair`);
+  }
+});
+
+
+// D29 reason: wiring. Ordinary counterpart: native records guard all mutation phases.
+// invoke.report is parsed actual tool stdout; invoke's normalized helper exit is not native-entry evidence.
+test('native phase records survive mutation and proof diff serialization', SETTLES_WITHIN[60_000], async (t) => {
+  const fixture = proofRepository(t, { base: 'export const value = 1;\n', head: 'export const value = 1;\n' });
+  const mutation = await invoke(fixture, 'mutation-receipt.mjs', mutationArgs(fixture));
+  assert.equal(mutation.exit, 0);
+  assert.equal(mutation.timedOut, false);
+  assert.ok(mutation.report, 'the actual mutation tool must serialize its receipt');
+  const receipt = mutation.report;
+  assert.equal(receipt.head, fixture.headSha);
+  assert.equal(receipt.base, fixture.baseSha);
+  assert.equal(receipt.mutated, true);
+  assert.equal(receipt.status, 'killed');
+  assert.equal(receipt.anchor.found, 1);
+  assert.equal(receipt.readBack, 'export const value = 2;\n');
+  assert.match(receipt.diff, /\+export const value = 2;/);
+  assert.deepEqual(receipt.failures.map(({ name, kind }) => ({ name, kind })), [{ name: 'value stays one', kind: 'assertion' }]);
+  assert.equal(receipt.failures[0].error.name, 'AssertionError');
+  assert.match(receipt.failures[0].error.message, /value must stay one/);
+  const originalHash = '5d8f65d2774e206bc9f7a7a4ad39ca2dc563b5c31e46ab57ef4874961237ce29';
+  assert.deepEqual([receipt.restoration.preimageHash, receipt.restoration.beforeRunHash, receipt.restoration.afterRunHash],
+    [originalHash, originalHash, originalHash], 'the literal original source must be restored before and after the final selection');
+  assert.equal(receipt.restoration.status, '');
+  const proof = await invoke(fixture, 'proof-diff.mjs', [fixture.file]);
+  assert.equal(proof.exit, 0);
+  assert.equal(proof.timedOut, false);
+  assert.ok(proof.report, 'the actual proof tool must serialize both source sides');
+  assert.equal(proof.report.head, fixture.headSha);
+  assert.equal(proof.report.base, fixture.baseSha);
+  assert.deepEqual(proof.report.tests.map(({ name, base, head, status }) => ({ name, base, head, status })), [
+    { name: 'value stays one', base: 'pass', head: 'pass', status: 'passes at the base: proves nothing new' },
+  ], 'the independent fixed value-one source at both refs must retain its original semantic status');
+  for (const side of ['base', 'head']) {
+    assert.equal(proof.report.runs[side].status, 'pass');
+    assert.equal(proof.report.runs[side].reason, undefined);
+  }
+  const selected = [
+    { phase: 'unmutated', run: receipt.unmutated, code: 0, outcome: 'pass' },
+    { phase: 'mutant', run: receipt.mutant, code: 1, outcome: 'fail' },
+    { phase: 'restored', run: receipt.restored, code: 0, outcome: 'pass' },
+    { phase: 'base', run: proof.report.runs.base, code: 0, outcome: 'pass' },
+    { phase: 'head', run: proof.report.runs.head, code: 0, outcome: 'pass' },
+  ];
+  t.diagnostic(JSON.stringify({ actualNativeSerialization: true,
+    selected: selected.map(({ phase, run }) => ({ phase, native: run.native, process: run.process, exit: run.exit, capture: run.capture })) }));
+  for (const { phase, run, code, outcome } of selected) {
+    assert.equal(run.exit, code, `${phase}: normalized ending remains separate`);
+    assert.equal(run.timedOut, false, `${phase}: the ordinary phase must not time out`);
+    assert.ok(Number.isSafeInteger(run.process?.group) && run.process.group > 0, `${phase}: actual selected group must survive serialization`);
+    assert.ok(Number.isFinite(run.process.started), `${phase}: actual selected start must survive serialization`);
+    assert.deepEqual(run.native, { pid: run.process.group, code, signal: null }, `${phase}: actual native ending must survive official tool JSON serialization`);
+    assert.equal(run.count, 1, `${phase}: the independent named equality remains selected`);
+    assert.deepEqual(run.tests.map(({ name, outcome }) => [name, outcome]), [['value stays one', outcome]]);
+    assert.deepEqual(run.fileVerdicts, []);
+    assert.equal(run.capture?.stdout?.faithful, true, `${phase}: named event text must remain faithful`);
+    assert.equal(run.capture?.stderr?.faithful, true, `${phase}: error text must remain faithful`);
+    assert.equal(noVerdict(run), undefined, `${phase}: serialized ordinary native evidence must preserve qualification`);
+  }
 });
