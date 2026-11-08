@@ -101,8 +101,8 @@ adds `ci:full` to an open, non-draft PR. Readiness and an existing label do not 
 another full run. After updating the head or base, remove and re-add the label only
 when the coherent batch is ready and hosted capacity is available.
 
-A full candidate run executes ordinary and host tiers concurrently on separate
-GitHub-hosted Macs at the same recorded source. Non-main constituent PRs and eligible
+A full candidate run executes ordinary and host tiers on the pool selected by its
+plan, at the same recorded source. Jobs on the single Mini wait their turn. Non-main constituent PRs and eligible
 direct regular journal additions/edits can receive fast feedback without that full
 run; this does not waive their cards' evidence obligations before indirect merge.
 Main pushes run portable smoke rather than repeating the full Mac proof.
@@ -115,16 +115,142 @@ Only regular additions/edits confined to direct journal files or to
 mixed impact requires the demo.
 
 Daily 03:00 UTC and explicit workflow dispatch run full regression of current
-protected main on the existing personal Mac, with hosted demo recording. Dispatch
-has no custom ref inputs; a non-main dispatch is rejected. No candidate PR is
-intentionally routed to the personal runner. An offline personal runner leaves
-regression queued; there is no automatic fallback or cancellation.
+protected main. Dispatch has no custom ref inputs; a non-main dispatch is rejected.
+Nightly and the candidate Mac jobs consume the same plan runner output.
 
-Candidate jobs use hosted machines and a minimal read token. Repository approval
-for external contributors remains the trust boundary: review workflow changes before
-approving fork runs. A PR can change workflow routing, so its conditions alone are
-not a security boundary protecting a persistent runner.
+Candidate jobs default to GitHub-hosted machines. Repository approval for external
+contributors remains the trust boundary: review workflow changes before approving
+fork runs. A PR can change workflow routing, so its conditions alone do not protect
+a persistent runner from a malicious workflow writer.
 
 Check the actual checkout SHA/tree, Node version, runner and selected required-check
 result in the run records. A synthetic PR checkout is not the literal PR head.
 Local controls and dispatch regression do not substitute for required candidate proof.
+
+## Owner-enabled Mac routing
+
+The owner sets the repository Actions variable `MACOS_RUNNER`. Enter the serialized
+value, including the quotation marks shown here. Only the owner changes it; Auto
+adds no delegation to a coordinator.
+
+Before merge, coordinate Auto proof within a full-Mac quiet window across older
+candidates and scheduled/dispatch consumers. The
+[pre-Auto workflow at `93a24132`](https://github.com/williacj/rigger/blob/93a24132c9272670473ed576aa5efd00f8759e20/.github/workflows/ci.yml)
+refuses `"auto"` for full/demo work. The repository variable affects those consumers
+too, so only the owner enables Auto for the proof window and restores Hosted outside
+it when proof is deferred or an older workflow needs CI. Coordinate the window
+before any full-Mac request; a workflow condition is no substitute for that procedure.
+
+After merge, inspect each candidate's actual workflow version before authorizing
+more full-Mac work. Cached merge refs and older heads can retain the earlier
+allowlist; merging this change does not update every candidate automatically.
+Keep the same owner-controlled quiet-window procedure while such consumers remain.
+
+| Value | Routing |
+|---|---|
+| Unset or empty | Hosted default. |
+| `"macos-latest"` | Explicit Hosted. |
+| `["self-hosted","macOS","ARM64","rigger-ci"]` | Explicit dedicated Mini; unavailable capacity leaves work queued. |
+| `"auto"` | Mini when the bounded runner read establishes eligibility and availability; otherwise Hosted. |
+
+Other values retain the workflow's refusal for trusted eligible Mac work. A fork or
+unknown PR head stays Hosted before lookup. Invalid source, no Mac work and explicit
+modes make no credentialed runners read. Routing never requests extra Mac work.
+The [workflow](../.github/workflows/ci.yml) owns eligibility and accepted response details.
+
+Auto reads the fixed repository runners endpoint once, with redirects refused and
+no retries. Its signal covers fetch and body with the requested 30,000 ms deadline;
+the response must be complete, unpaginated and within 2 MiB. Only the identified
+Mini with its dedicated labels, online and idle, qualifies. Missing credentials,
+busy/offline state, identity ambiguity and read errors choose Hosted with a fixed
+`runnerReason`. Plan logs contain the serialized `selectedRunner` and reason;
+`runner`, `runnerOS` and `runnerArch` still describe the executing machine.
+
+The plan emits one snapshot for `full_ordinary`, `full_host`, `demo` and `nightly`.
+A later busy/offline observation or network completion does not migrate queued jobs.
+An explicit Mini selection can therefore wait after its initial observation. Auto
+observes availability and does not reserve either pool or guarantee immediate service.
+
+### Owner setup
+
+Complete these private setup steps only after reviewing the concrete workflow.
+The [D32 proposal](spec/decisions.md#d32--the-owner-may-enable-automatic-macos-ci-routing)
+records the trust choice; `AGENTS.md` owns ratification and the protected-head marker.
+
+1. Confirm that only the owner and the owner's agents can write repository workflows.
+   Keep fork approval at `all_external_contributors`, approve no fork run, and verify
+   the existing job-started hook on each self-hosted runner before selecting it.
+2. In repository Settings → Actions → Runners, open `CJs-Mac-mini` and confirm its
+   identity against runner id 23. Preserve `self-hosted`, `macOS` and `ARM64`; add
+   custom label `rigger-ci` to that runner alone. Follow GitHub's
+   [runner-label procedure](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/apply-labels).
+3. In personal Settings → Developer settings → Personal access tokens → Fine-grained
+   tokens, create a dedicated token. Select resource owner `williacj`, repository
+   access **Only select repositories**, and only `rigger`. Choose a finite expiry and
+   repository **Administration: Read-only**, with unavoidable Metadata read and no
+   write permissions. GitHub's [token procedure](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
+   owns the UI; the [repository runners endpoint](https://docs.github.com/en/rest/actions/self-hosted-runners#list-self-hosted-runners-for-a-repository)
+   requires this read capability. Actions read alone does not supply it.
+4. Store the value privately as repository Actions secret `CI_RUNNER_READ_TOKEN`
+   under Settings → Secrets and variables → Actions → Secrets. Use GitHub's
+   [secret procedure](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-secrets).
+   Do not place it in chat, a journal, command arguments, traces or captured headers.
+   Do not reuse a registration token or the gate App key.
+5. In a private terminal, authenticate one GET to
+   `https://api.github.com/repos/williacj/rigger/actions/runners?per_page=100` with
+   that dedicated credential. Use private input rather than a token literal in
+   history; disable shell tracing and HTTP debug output. Retain the response and
+   date, HTTP success, selected repository, permission and expiry metadata only.
+   Confirm the complete runner list has id 23 with the expected identity and labels,
+   and `rigger-ci` appears on no other runner. A read using another credential does
+   not prove this credential's capability.
+6. Once the authorized candidate procedure is ready, the owner may set the repository
+   Actions variable to `"auto"`. Keep Hosted by removing the variable or selecting
+   `"macos-latest"` when that is the intended mode. No setup step above changes it.
+
+The dedicated secret reaches only the plan policy step under its own name. Ordinary
+source collection still uses `GH_TOKEN`; worker jobs receive no dedicated credential.
+Missing or withheld secrets choose Hosted. GitHub normally withholds repository
+secrets from fork PRs and Dependabot runs. A step environment limits routine
+propagation but does not isolate the secret from trusted repository workflow writers.
+
+### Submission and candidate proof
+
+Before an authorized label, dispatch or rerun submission, the coordinator records the
+mode, dated queued/running work in both pools, and the intended run or attempt.
+Observe current workflow runs and their jobs through the GitHub API; observe runner
+status through the complete repository runners GET. Stop further submissions to a
+pool observed backed up. Existing work finishes under the existing workflow policy.
+
+If Auto could fall back into an occupied Hosted pool, wait or obtain an owner-authorized
+explicit pool choice. The coordinator does not change `MACOS_RUNNER`. A Mini state
+change, an independent schedule or new hosted work can race the observation. Record
+performed submissions separately from the selector result; neither proves a global
+capacity limit or an atomic reservation. Add no cancellation or concurrency policy.
+
+For the card's final proof, retain separate Auto Mini and Auto Hosted full candidate
+runs at the reviewed head, including required demo and `check (26)`. Record each
+run's source SHA/tree, current candidate head, plan reason and actual API runner
+names. The runs need not share a synthetic merge SHA or freeze main. Observe a
+natural busy/read-unavailable fallback; do not shut down the runner or revoke a token
+to manufacture one. Local controls and main dispatch do not replace candidate proof.
+
+### Persistent state outside checkout
+
+For each Mac job, record the exact source, pool, runner name and measurement time.
+Run these path-only measurements before and after the job in an authorized runner
+session; do not dump the environment or credential files. Treat the commands below
+as a procedure, not a measurement already performed on the owner's Mac.
+
+| Job | Outside-checkout inventory commands | Later reads to record |
+|---|---|---|
+| `full_ordinary` | `npm config get cache`; `printf '%s\n' "$RUNNER_TOOL_CACHE" "$RUNNER_TEMP" "$RUNNER_WORKSPACE"`; bounded `find` listings of those paths | setup-node tool cache, npm cache and any retained workspace state on the next job. |
+| `full_host` | The same path inventory; inspect `$RUNNER_TEMP/containment-proof-26` and per-test temporary roots named by its output | Which host-test state survives teardown and whether a later job reads it; record missing paths as missing. |
+| `demo` | `brew --prefix`; `brew list --versions vhs ffmpeg ttyd`; the same tool/temp/workspace path inventory | Installed Homebrew tools and their later reuse; distinguish exported demo artifacts from external state. |
+| `nightly` | The ordinary and host inventories, plus package-budget temporary roots actually emitted by its commands | Tool/cache/workspace reuse and cleanup across the combined regression. |
+
+Bound each `find` to an observed directory, for example
+`find "$RUNNER_TEMP" -mindepth 1 -maxdepth 2 -type d -print`. Preserve the exact
+command, native result and path listing. A checkout cleanup alone says nothing
+about those caches, tool installations or temporary roots. Hosted images and a
+persistent Mini have different lifetimes; record what the actual run establishes.

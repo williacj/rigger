@@ -71,7 +71,8 @@ reused.
 | D28 | A per-user LaunchAgent re-launches the engine on an interval | Ratified. Amended in #1043. |
 | D29 | Rigger's suite runs in two tiers, and the hooks run one | Ratified. Amended in #1140. |
 | D30 | Until the conversion closes, two lists exempt files from D29's bounds | Ratified. Amended in #1140. |
-| D31 | macOS CI runs on hosted runners unless the owner selects the Mac mini | Ratified |
+| D31 | macOS CI runs on hosted runners unless the owner selects the Mac mini | Superseded by D32 |
+| D32 | The owner may enable automatic macOS CI routing | Ratified |
 
 ## D1 — Redo over resume
 
@@ -1207,37 +1208,36 @@ This decision holds one lifespan. It begins with the two lists, and it ends when
 
 One observation would reverse it: across a milestone, no entry leaves either list. The conversion would then have stalled, and the files still listed would go to the host list whole. That would take their claims out of the hooks, which is the owner's decision.
 
-## D31 — macOS CI runs on hosted runners unless the owner selects the Mac mini
+## D32 — The owner may enable automatic macOS CI routing
 
 **Status:** Ratified.
 
 ### Rule
 
-1. `full_ordinary`, `full_host` and `demo` run on GitHub's hosted macOS runner unless the repository
-   variable `MACOS_RUNNER` selects the owner's self-hosted runner. Only the owner sets it.
-2. A result from either runner counts alike for `check (26)`. Selecting the self-hosted runner is the
-   owner's trust in that machine's proof.
-3. No job from a fork runs on the self-hosted runner. Three things hold that:
+1. The owner sets `MACOS_RUNNER`. An absent or empty setting chooses GitHub-hosted macOS runners.
+2. The setting admits explicit hosted, explicit dedicated Mac mini, and automatic modes. Other values are refused where the existing Mac-work policy reads them.
+3. In automatic mode, the plan chooses the dedicated mini only after a complete authenticated runner read establishes its identity, labels, online status and idle state.
+4. An unavailable, ambiguous or unreadable mini chooses hosted. A missing runner-read credential chooses hosted.
+5. `full_ordinary`, `full_host`, `demo` and `nightly` use one plan runner choice. A queued job keeps that choice.
+6. Results from either pool count alike for `check (26)`. The owner's setting accepts the selected machine's proof.
+7. No job from a fork runs on the self-hosted runner. Three things hold that:
    - `plan` gives a fork head the hosted runner;
    - GitHub's setting for fork runs stays at `all_external_contributors`, and the owner approves no fork run;
    - the self-hosted runner's job-started hook refuses the job.
-4. Every runner carrying the self-hosted labels runs that hook, and the owner installs it before
-   selecting that runner.
-5. A job from a same-repository branch runs as the owner's user, with the owner's sign-ins, on the
-   self-hosted runner. Rigger accepts that, because only the owner and the owner's agents write
-   branches here, and agents already hold the owner's token (`D25` rule 3).
+8. The owner installs the hook on every runner carrying the self-hosted labels before selecting that runner.
+9. A job from a same-repository branch runs as the owner's user, with the owner's sign-ins, on the self-hosted runner. Only the owner and the owner's agents write branches here.
+10. A dedicated repository runner-read credential supplies only the read capability this lookup needs. The gate App's key remains subject to D25.
+11. Automatic lookup observes availability; it reserves no pool capacity. Coordinators retain the submission policy the owner authorizes.
 
 ### Deferred, and what returns it
 
 | Deferred | Returns when |
 |---|---|
-| A dedicated OS user for the self-hosted runner | `D28`'s row for a dedicated user returns, or anyone but the owner and the owner's agents gains write access |
-| A self-hosted runner in Rigger's shipped templates | A consumer asks for one |
+| A dedicated OS user for the self-hosted runner | D28's dedicated-user row returns, or another actor gains repository write access |
+| Self-hosted runners in the shipped templates | A consumer asks for one |
 
 ### Notes
 
-A condition in `.github/workflows/ci.yml` cannot bind a fork, because a `pull_request` run takes its workflow from the
-merge commit. So rule 3 names what holds outside the workflow.
+This supersedes D31. Automatic lookup serves unattended regression when the personal machine is unavailable. It introduces a runner-read credential available to trusted same-repository workflow writers.
 
-What reverses this: the repository accepting outside pull requests, which ends rule 3's reliance on
-approving none, or hosted capacity no longer failing, which removes the need for the variable.
+What reverses this is accepting outside pull requests, an additional repository writer, or credential access that violates the trusted-writer premise. Such evidence requires the owner to rule on isolation again.
