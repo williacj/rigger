@@ -124,7 +124,8 @@ function watchTimers(recordFile) {
   }
   createHook({
     init(_id, type, _trigger, resource) {
-      if (type === 'Test') tests.add(resource);
+      // Only Node's own Test has getCtx; a resource a test merely names 'Test' is not a test.
+      if (type === 'Test' && typeof resource.getCtx === 'function') tests.add(resource);
       const test = owner();
       if (test) owners.set(resource, test);
     },
@@ -138,19 +139,30 @@ function watchTimers(recordFile) {
       const delay = Number(given);
       if (coerces && given !== null && (typeof given === 'object' || typeof given === 'function')) args[delayIndex] = delay;
       if (delay > 0) {
-        const running = owner();
-        const test = (recordFile ? topLevel(running) : running)?.name ?? null;
+        // Attribution reads objects a test can reach. Any failure there gives no test, so the
+        // record is still written before anything else can throw.
+        let test = null;
+        let context = null;
+        try {
+          const running = owner();
+          const name = (recordFile ? topLevel(running) : running)?.name ?? null;
+          test = typeof name === 'string' ? name : null;
+          if (!recordFile) context = running?.getCtx() ?? null;
+        } catch {
+          test = null;
+          context = null;
+        }
         if (recordFile) {
           appendFileSync(recordFile, JSON.stringify({ file, test, api, delay }) + '\n');
         } else {
           const refusal = new Error(`deterministic tier: ${file}: ${test ?? '<module>'} cannot arm ${api} with delay ${delay}`);
-          refusals.set(running?.getCtx() ?? null, refusal);
           try {
             appendFileSync(timerRefusalFile, JSON.stringify({ file, test, api, delay }) + '\n');
           } catch {
             try { writeSync(2, refusal.message + '\n'); } catch {}
             kill.call(process, process.pid, 'SIGKILL');
           }
+          refusals.set(context, refusal);
           writeSync(2, refusal.message + '\n');
           throw refusal;
         }

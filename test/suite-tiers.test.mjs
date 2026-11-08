@@ -2135,3 +2135,38 @@ test('timer bound fails rather than hangs on an unowned refusal in a file with a
   assert.notEqual(probe.result.status, 0, output);
   assert.ok(output.includes(`deterministic tier: ${probe.file}: <module> cannot arm setTimeout with delay 5`), output);
 });
+
+// A resource a test merely names 'Test' is not a test: it neither earns attribution nor stops the record.
+test('timer bound refuses an arm inside a forged Test resource under the real test', (t) => {
+  const title = 'forges a test resource';
+  const probe = timerProbe(t, `import { AsyncResource } from 'node:async_hooks';
+    test(${JSON.stringify(title)}, () => {
+      const forged = new AsyncResource('Test');
+      forged.parent = {};
+      forged.name = 'forged';
+      try { forged.runInAsyncScope(() => observeArm(() => clearTimeout(setTimeout(timerCallback, 5)))); } catch {}
+    });`);
+  assertNoNativeTimers(probe);
+  const output = probe.result.stdout + probe.result.stderr;
+  assert.equal(probe.result.error, undefined, output);
+  assert.notEqual(probe.result.status, 0, output);
+  assert.deepEqual(printedTimerRefusals(probe), [{ file: probe.file, test: title, api: 'setTimeout', delay: 5 }]);
+});
+
+// Attribution that fails gives no test, and the refusal is recorded before anything can throw.
+test('timer bound records a refusal with no test when attribution throws', (t) => {
+  const probe = timerProbe(t, `import { AsyncResource } from 'node:async_hooks';
+    class Unreadable extends AsyncResource { getCtx() { throw new Error('no context'); } }
+    test('owns an unreadable resource', () => {
+      const resource = new Unreadable('Test');
+      resource.parent = {};
+      resource.name = 'unreadable';
+      try { resource.runInAsyncScope(() => observeArm(() => clearTimeout(setTimeout(timerCallback, 5)))); } catch {}
+    });`);
+  assertNoNativeTimers(probe);
+  const output = probe.result.stdout + probe.result.stderr;
+  assert.equal(probe.result.error, undefined, output);
+  assert.notEqual(probe.result.status, 0, output);
+  assert.deepEqual(printedTimerRefusals(probe), [{ file: probe.file, test: null, api: 'setTimeout', delay: 5 }]);
+  assert.ok(output.includes(`deterministic tier: ${probe.file}: <module> cannot arm setTimeout with delay 5`), output);
+});

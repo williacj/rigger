@@ -225,6 +225,16 @@ one of them closed kept the worker alive, and `npm test` hung instead of failing
 throw is removed: the record outside the worker already fails the run for such a
 refusal, and `afterEach` still names an owned one. A bounded test pins it.
 
+Round four's reviewer found that attribution could throw before the refusal was
+recorded: a test created `new AsyncResource('Test')`, set `parent` and `name`, and
+armed inside it, and the guard's call of the missing `getCtx()` threw first, so the
+suite passed. Following the architect's ruling, the guard now records first: any
+failure while attributing gives no test, and the record is appended before the
+in-worker refusal is set and thrown. Only a resource with Node's `getCtx` method
+counts as a test, and the `owners` entry still takes precedence. A test that forges
+the name deliberately is outside sight, a clause the owner is asked to add; the guard
+does not try to defeat it.
+
 Three behaviours need no change:
 
 - A delay of `Infinity` is above zero and is recorded as `delay: null`, because JSON
