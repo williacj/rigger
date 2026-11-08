@@ -244,8 +244,11 @@ appended, leaving status 0 and no record. Under
 guard now appends the refusal before any attribution runs. The record therefore holds
 the file, API and delay; the test is named in the worker's diagnostic and in
 `node:test`'s failure, which run after it. Where the record cannot be written, the
-diagnostic names the file and API and the worker ends by SIGKILL, still before any
-attribution. The conversion record keeps its four keys and its title.
+diagnostic names the file and API; the guard then reads the owning test from own data
+properties only, so no getter, method or prototype a test supplies runs, writes a
+second line naming it where it finds a string name, and ends the worker by SIGKILL.
+The architect ruled that the card's "Refused" naming covers that path too. The
+conversion record keeps its four keys and its title.
 
 Once `main` gained `test/maker-git.test.mjs` (#1239), whose tests armed real
 `setTimeout` timers through Rigger code, the bound failed 32 of its tests on the

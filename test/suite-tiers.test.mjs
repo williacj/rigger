@@ -1887,6 +1887,17 @@ test('timer refusal destination is removed before the module evaluates', (t) => 
 });
 
 // An unwritable record must end the worker before any catch or exit override can run.
+const refusalWriteFailure = `// ABOUTME: Supplies an observed EIO for the supervisor refusal file alone.
+if (process.env.NODE_TEST_CONTEXT === 'child-v8') {
+  const fs = require('node:fs');
+  const destination = process.env.RIGGER_SUITE_TIMER_REFUSALS;
+  const append = fs.appendFileSync;
+  fs.appendFileSync = function failingRefusalWrite(file, ...args) {
+    if (file === destination) throw Object.assign(new Error('refusal-write-control'), { code: 'EIO' });
+    return Reflect.apply(append, this, [file, ...args]);
+  };
+}
+`;
 for (const [ending, next] of [
   ['caught-return', "note('returned');"],
   ['caught-exit', "note('terminating'); process.exit(0);"],
@@ -1904,17 +1915,7 @@ for (const [ending, next] of [
           ${next}
         });`, {
         'src/clocked.mjs': refusalSource(api),
-        'refusal-write-failure.cjs': `// ABOUTME: Supplies an observed EIO for the supervisor refusal file alone.
-if (process.env.NODE_TEST_CONTEXT === 'child-v8') {
-  const fs = require('node:fs');
-  const destination = process.env.RIGGER_SUITE_TIMER_REFUSALS;
-  const append = fs.appendFileSync;
-  fs.appendFileSync = function failingRefusalWrite(file, ...args) {
-    if (file === destination) throw Object.assign(new Error('refusal-write-control'), { code: 'EIO' });
-    return Reflect.apply(append, this, [file, ...args]);
-  };
-}
-`,
+        'refusal-write-failure.cjs': refusalWriteFailure,
       }, { preload: 'refusal-write-failure.cjs', reporter: 'tap' });
       assertNoNativeTimers(probe);
       const events = readFileSync(probe.positionEvents, 'utf8').trim().split('\n').map(line => JSON.parse(line));
@@ -1923,13 +1924,50 @@ if (process.env.NODE_TEST_CONTEXT === 'child-v8') {
       assert.notEqual(probe.result.status, 0, 'an unwritable refusal must fail the suite');
       // The spec reporter drops the worker's signal; TAP keeps it, and a plain exit shows none.
       assert.match(probe.result.stdout, /^\s*signal: 'SIGKILL'$/m, 'an unwritable refusal must end its worker by SIGKILL');
-      assert.ok((probe.result.stdout + probe.result.stderr).includes(
-        `deterministic tier: ${probe.file}: cannot arm ${api[1]} with delay 5`),
-      probe.result.stdout + probe.result.stderr);
+      const output = probe.result.stdout + probe.result.stderr;
+      const unnamed = output.indexOf(`deterministic tier: ${probe.file}: cannot arm ${api[1]} with delay 5`);
+      const named = output.indexOf(`deterministic tier: ${probe.file}: ${title} cannot arm ${api[1]} with delay 5`);
+      assert.ok(unnamed !== -1 && named > unnamed, `the unnamed diagnostic, then the named one, must reach the output\n${output}`);
       assert.deepEqual(printedTimerRefusals(probe), []);
     });
   }
 }
+
+// Naming an unwritable refusal reads only own data properties, so no code a test supplies runs.
+const forgedResource = (members, own) => `import { AsyncResource } from 'node:async_hooks';
+  class Forged extends AsyncResource { getCtx() { return null; } ${members} }
+  const resource = new Forged('Test');
+  ${own}
+  test('arms inside a forged resource', () => {
+    resource.runInAsyncScope(() => observeArm(() => clearTimeout(setTimeout(timerCallback, 5))));
+  });`;
+const unwritableDiagnostics = (probe) => [...new Set((probe.result.stdout + probe.result.stderr)
+  .match(/deterministic tier: [^\n]*cannot arm [^\n]*/g) ?? [])];
+for (const [title, members, own] of [
+  ['never runs a forged name getter', 'get name() { process.exit(0); }', 'resource.parent = {};'],
+  ['never runs a forged parent getter', 'get parent() { process.exit(0); }', "resource.name = 'forged name';"],
+]) {
+  test(`timer refusal EIO ${title}`, (t) => {
+    const probe = timerProbe(t, forgedResource(members, own), { 'refusal-write-failure.cjs': refusalWriteFailure },
+      { preload: 'refusal-write-failure.cjs', reporter: 'tap' });
+    assertNoNativeTimers(probe);
+    assert.equal(probe.result.error, undefined, probe.result.stdout + probe.result.stderr);
+    assert.notEqual(probe.result.status, 0, 'a forged accessor must not exit before the worker ends');
+    assert.match(probe.result.stdout, /^\s*signal: 'SIGKILL'$/m, probe.result.stdout);
+    assert.deepEqual(unwritableDiagnostics(probe), [`deterministic tier: ${probe.file}: cannot arm setTimeout with delay 5`]);
+  });
+}
+
+test('timer refusal EIO names a forged data name', (t) => {
+  const probe = timerProbe(t, forgedResource('', "resource.parent = {};\n  resource.name = 'forged name';"),
+    { 'refusal-write-failure.cjs': refusalWriteFailure }, { preload: 'refusal-write-failure.cjs', reporter: 'tap' });
+  assertNoNativeTimers(probe);
+  assert.notEqual(probe.result.status, 0, probe.result.stdout + probe.result.stderr);
+  assert.deepEqual(unwritableDiagnostics(probe), [
+    `deterministic tier: ${probe.file}: cannot arm setTimeout with delay 5`,
+    `deterministic tier: ${probe.file}: forged name cannot arm setTimeout with delay 5`,
+  ]);
+});
 
 // Caller text is the test's own to choose, so it can never earn an exemption.
 const callerDisguises = [

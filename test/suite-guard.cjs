@@ -118,6 +118,23 @@ function watchTimers(recordFile) {
     const resource = executionAsyncResource();
     return tests.has(resource) && resource.parent ? resource : owners.get(resource) ?? null;
   }
+  // The test owning an unwritable refusal, read only from own data properties: no getter, method
+  // or prototype a test supplies runs before the worker ends. An accessor counts as absent.
+  function ownData(object, key) {
+    if (object === null || (typeof object !== 'object' && typeof object !== 'function')) return undefined;
+    const descriptor = Object.getOwnPropertyDescriptor(object, key);
+    return descriptor && 'value' in descriptor ? descriptor.value : undefined;
+  }
+  function unwritableName() {
+    try {
+      const resource = executionAsyncResource();
+      const test = tests.has(resource) && ownData(resource, 'parent') ? resource : owners.get(resource) ?? null;
+      const name = ownData(test, 'name');
+      return typeof name === 'string' ? name : null;
+    } catch {
+      return null;
+    }
+  }
   function topLevel(test) {
     while (test?.parent?.parent) test = test.parent;
     return test;
@@ -147,6 +164,10 @@ function watchTimers(recordFile) {
             appendFileSync(timerRefusalFile, JSON.stringify({ file, api, delay }) + '\n');
           } catch {
             try { writeSync(2, `deterministic tier: ${file}: cannot arm ${api} with delay ${delay}\n`); } catch {}
+            const name = unwritableName();
+            if (name !== null) {
+              try { writeSync(2, `deterministic tier: ${file}: ${name} cannot arm ${api} with delay ${delay}\n`); } catch {}
+            }
             kill.call(process, process.pid, 'SIGKILL');
           }
         }
