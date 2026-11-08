@@ -232,8 +232,17 @@ suite passed. Following the architect's ruling, the guard now records first: any
 failure while attributing gives no test, and the record is appended before the
 in-worker refusal is set and thrown. Only a resource with Node's `getCtx` method
 counts as a test, and the `owners` entry still takes precedence. A test that forges
-the name deliberately is outside sight, a clause the owner is asked to add; the guard
-does not try to defeat it.
+a test-runner object to change which test an arm is recorded under is outside sight,
+as the owner ruled at
+[M7-U60](https://github.com/williacj/rigger/issues/1009#issuecomment-6716271766);
+the guard does not try to defeat it, and the refusal itself stays in sight.
+
+Once `main` gained `test/maker-git.test.mjs` (#1239), whose tests armed real
+`setTimeout` timers through Rigger code, the bound failed 32 of its tests on the
+pull request's merge ref. Under the card's rule the maker stopped and named each
+test ([escalation](https://github.com/williacj/rigger/issues/1137#issuecomment-6717363922))
+without listing the file or narrowing the bound. Card #1279 made that file inject
+its clock, and this branch then merged `main`.
 
 Three behaviours need no change:
 
