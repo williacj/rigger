@@ -32,7 +32,7 @@ const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 // Deterministic wiring counterpart: test/macos-runner.test.mjs :: R8: unrelated jobs keep their literal base runners.
 test('CI assigns portable candidate, selected macOS and protected-main regression lanes with Node 26', () => {
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
-  assert.deepEqual(Object.keys(ci.jobs).sort(), ['cancel_superseded', 'check', 'demo', 'fast', 'full_host', 'full_ordinary', 'nightly', 'plan']);
+  assert.deepEqual(Object.keys(ci.jobs).sort(), ['cancel_superseded', 'check', 'demo', 'fast', 'full_host', 'full_ordinary', 'host-record', 'nightly', 'plan']);
   for (const name of ['plan', 'fast', 'check']) assert.equal(ci.jobs[name]['runs-on'], 'ubuntu-latest', name);
   for (const name of ['full_ordinary', 'full_host', 'demo']) assert.equal(ci.jobs[name]['runs-on'], '${{ fromJSON(needs.plan.outputs.runner) }}', name);
   assert.deepEqual(ci.jobs.nightly['runs-on'], ['self-hosted', 'macOS', 'ARM64']);

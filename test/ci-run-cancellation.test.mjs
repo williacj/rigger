@@ -15,7 +15,10 @@ test('cancellation controller isolates Node 26 and grants Actions write only to 
   assert.equal(job['runs-on'], 'ubuntu-latest');
   assert.deepEqual(job.permissions, { actions: 'write', 'pull-requests': 'read' });
   assert.deepEqual(ci.permissions, { contents: 'read', 'pull-requests': 'read' });
-  for (const [name, other] of Object.entries(ci.jobs)) if (name !== 'cancel_superseded') assert.ok(readOnlyPermissions(other.permissions), name);
+  for (const [name, other] of Object.entries(ci.jobs)) {
+    if (name === 'host-record') assert.deepEqual(other.permissions, { issues: 'write' });
+    else if (name !== 'cancel_superseded') assert.ok(readOnlyPermissions(other.permissions), name);
+  }
   assert.ok(job.if.includes("github.event_name == 'pull_request'"));
   assert.ok(job.if.includes('github.event.pull_request.head.repo.full_name == github.repository'));
   assert.ok(job.if.includes("needs.plan.outputs.snapshot != ''"));
@@ -25,7 +28,10 @@ test('cancellation controller isolates Node 26 and grants Actions write only to 
   assert.equal(job.steps[1].env.CI_EXPECTED_SOURCE, '${{ needs.plan.outputs.snapshot }}');
   assert.deepEqual(ci.jobs.check.needs, ['plan', 'fast', 'full_ordinary', 'full_host', 'demo', 'cancel_superseded']);
   assert.equal(ci.concurrency, undefined);
-  for (const j of Object.values(ci.jobs)) assert.equal(j.concurrency, undefined);
+  for (const [name, j] of Object.entries(ci.jobs)) {
+    if (name === 'host-record') assert.deepEqual(j.concurrency, { group: 'ci-host-record', 'cancel-in-progress': 'false', queue: 'max' });
+    else assert.equal(j.concurrency, undefined);
+  }
 });
 
 test('permission fence rejects GitHub write-all scalar and preserves read-only forms', () => {
