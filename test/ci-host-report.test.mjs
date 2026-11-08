@@ -4,29 +4,30 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { EventEmitter, once } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { ci, reportInvocation, captureHostScenario, observeHostStep, startupInspectionFixture, heldWriteDestination } from './ci-host-fixtures.mjs';
+import { ci, hostInvocationCommand, hostInvocationArgv, reportInvocation, captureHostScenario, observeHostStep, startupInspectionFixture, heldWriteDestination } from './ci-host-fixtures.mjs';
 
 // The successful command and printed key follow the retained Node26 existing-host qualification.
 // The missing-file double follows fs/promises.readFile's rejected ENOENT contract.
 // Break: host success must not pass when that invocation's JUnit report is absent (card #1115 AC2).
 test('successful host invocation without its JUnit report fails reporting and retains the host success', async () => {
   const { observed, commands, reads, outputWrites: writes } = await reportInvocation();
-  assert.deepEqual(commands, ['npm run test:host']);
+  assert.deepEqual(commands, [hostInvocationCommand]);
   assert.deepEqual(observed.host, { started: true, exitCode: 0, outcome: 'success' });
   assert.equal(observed.stepOutcome, 'failure', 'a successful host invocation with no JUnit report must fail reporting');
   assert.deepEqual(observed.reporting, { state: 'absent', outcome: 'failure', message: 'Host JUnit report is absent' });
   assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
   assert.deepEqual(writes, [['/step-output', 'host_outcome=success\nhost_exit_code=0\n']]);
-  const step = ci.jobs.full_host.steps.find(entry => entry.run === 'npm run test:host');
+  const step = ci.jobs.full_host.steps.find(entry => entry.id === 'host_tests');
   assert.equal(step.env.CI_HOST_REPORT_NAME, 'host-tests.junit.xml');
-  assert.equal(step.env.NODE_OPTIONS, '--test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination=${{ runner.temp }}/host-tests.junit.xml');
+  assert.equal(step.run, hostInvocationCommand);
+  assert.equal(Object.hasOwn(step.env, 'NODE_OPTIONS'), false);
 });
 
 // Break: a parser callback before an unclosed root cannot make the whole report usable.
 // Independent oracle: the literal XML below lacks </testsuites>; card #1115 rejects the entire report.
 test('successful host invocation rejects a truncated JUnit report without partial failed-test names', async () => {
   const { observed, commands, reads, outputWrites: writes } = await reportInvocation(Buffer.from('<testsuites><testcase name="reported before truncation"><failure/></testcase>', 'utf8'));
-  assert.deepEqual(commands, ['npm run test:host']);
+  assert.deepEqual(commands, [hostInvocationCommand]);
   assert.deepEqual(observed.host, { started: true, exitCode: 0, outcome: 'success' });
   assert.equal(observed.stepOutcome, 'failure', 'a truncated JUnit document must fail reporting after preserving host success');
   assert.deepEqual(observed.reporting, { state: 'unparsable', outcome: 'failure', message: 'Host JUnit report is unparsable' });
@@ -124,7 +125,7 @@ test('complete flat cases accept result text and whitespace while excluding skip
 test('failed host invocation summarizes every decoded repeated failed-case name', async () => {
   const xml = '<testsuites><testcase name="A &amp; B"><failure/></testcase><testcase name="A &amp; B"><error/></testcase></testsuites>';
   const { observed, commands, reads, outputWrites, summaryWrites } = await reportInvocation(Buffer.from(xml, 'utf8'), { exitCode: 1 });
-  assert.deepEqual(commands, ['npm run test:host']);
+  assert.deepEqual(commands, [hostInvocationCommand]);
   assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
   assert.deepEqual(observed.host, { started: true, exitCode: 1, outcome: 'failure' });
   assert.equal(observed.stepOutcome, 'failure');
@@ -159,7 +160,7 @@ for (const entry of fallbackSummaryCases) {
   test(entry.name, async () => {
     const report = entry.report === undefined ? undefined : Buffer.from(entry.report, 'utf8');
     const { observed, commands, reads, outputWrites, summaryWrites } = await reportInvocation(report, { exitCode: 1 });
-    assert.deepEqual(commands, ['npm run test:host']);
+    assert.deepEqual(commands, [hostInvocationCommand]);
     assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
     assert.deepEqual(observed.host, { started: true, exitCode: 1, outcome: 'failure' });
     assert.equal(observed.stepOutcome, 'failure');
@@ -177,7 +178,7 @@ test('qualified npm12 startup preserves the parent key despite later worker look
   const startup = { argv: ['npm', 'run', 'test:host'], npmVersion: '12.2.2', stdoutPrefix: '', capture: { state: 'complete' } };
   const { observed, commands, reads, outputWrites, summaryWrites } = await reportInvocation(
     Buffer.from('<testsuites><testcase name="pass"/></testsuites>', 'utf8'), { stdout, startup });
-  assert.deepEqual(commands, ['npm run test:host']);
+  assert.deepEqual(commands, [hostInvocationCommand]);
   assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
   assert.deepEqual(observed.host, { started: true, exitCode: 0, outcome: 'success' });
   assert.equal(observed.stepOutcome, 'success');
@@ -200,7 +201,7 @@ test('known incomplete stdout captures cannot publish a plausible parent key', a
     const { observed, commands, reads, outputWrites, summaryWrites } = await reportInvocation(
       Buffer.from('<testsuites><testcase name="pass"/></testsuites>', 'utf8'),
       { stdout: 'linux-6.18.54.1-microsoft-standard-WSL2-x86_64-node26\n', startup });
-    assert.deepEqual(commands, ['npm run test:host']);
+    assert.deepEqual(commands, [hostInvocationCommand]);
     assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
     assert.deepEqual(observed.host, { started: true, exitCode: 0, outcome: 'success' });
     assert.equal(observed.stepOutcome, 'success');
@@ -348,7 +349,7 @@ test('complete collector Buffers require fatal UTF8 before parent key selection'
         append: async (path, data) => { writes.push([path, data]); },
       });
     } catch (error) { errors.push({ name: error.name, message: error.message }); }
-    assert.deepEqual(commands, ['npm run test:host']);
+    assert.deepEqual(commands, [hostInvocationCommand]);
     assert.deepEqual(writes, [['/step-output', 'host_outcome=success\nhost_exit_code=0\n']]);
     assert.deepEqual(result.stdout, bytes, 'consumer must preserve the original captured Buffer');
     observations.push({ observed, reads });
@@ -371,7 +372,7 @@ test('empty or unterminated startup records leave the parent key unavailable', a
   for (const stdout of [Buffer.alloc(0), Buffer.from('linux-6.18.54.1-microsoft-standard-WSL2-x86_64-node26', 'utf8')]) {
     const startup = { argv: ['npm', 'run', 'test:host'], npmVersion: '12.2.2', stdoutPrefix: '', capture: { state: 'complete' } };
     const { observed, commands, reads, outputWrites, summaryWrites } = await reportInvocation(undefined, { exitCode: 1, stdout, startup });
-    assert.deepEqual(commands, ['npm run test:host']);
+    assert.deepEqual(commands, [hostInvocationCommand]);
     assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
     assert.deepEqual(observed.host, { started: true, exitCode: 1, outcome: 'failure' });
     assert.equal(observed.stepOutcome, 'failure');
@@ -405,7 +406,7 @@ test('runtime source qualification supplies the collector startup to invokeHost 
   assert.deepEqual(Buffer.concat(forwardedStderr), Buffer.from('7365706172617465207374646572720a', 'hex'));
   const { observed, commands, reads, outputWrites, summaryWrites } = await reportInvocation(
     Buffer.from('<testsuites><testcase name="pass"/></testsuites>', 'utf8'), { child: result });
-  assert.deepEqual(commands, ['npm run test:host']);
+  assert.deepEqual(commands, [hostInvocationCommand]);
   assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
   assert.deepEqual(observed.host, { started: true, exitCode: 0, outcome: 'success' });
   assert.equal(observed.stepOutcome, 'success');
@@ -414,7 +415,7 @@ test('runtime source qualification supplies the collector startup to invokeHost 
   assert.deepEqual(summaryWrites, []);
   assert.equal(observed.hostKey, 'linux-6.18.54.1-microsoft-standard-WSL2-x86_64-node26',
     'the runtime-qualified collector startup must reach invokeHost without a caller override');
-  assert.deepEqual(result.startup, { argv: ['npm', 'run', 'test:host'], npmVersion: '12.2.2', stdoutPrefix: '', capture: { state: 'complete' } });
+  assert.deepEqual(result.startup, { argv: hostInvocationArgv, npmVersion: '12.2.2', stdoutPrefix: '', capture: { state: 'complete' } });
   assert.deepEqual([...new Set(readPaths)].sort(), [scriptPath, join(cwd, 'package.json'), join(npmRoot, 'package.json'), ...absent].sort());
   assert.deepEqual([...new Set(fingerprintPaths)].sort(), [...fingerprints.keys()].sort());
   assert.deepEqual(executablePaths, ['/selected/bin/npm', '/selected/bin/node']);
@@ -425,7 +426,7 @@ test('runtime source qualification supplies the collector startup to invokeHost 
 // Equal reporter options preserve possible producer/report behavior while testing the explicit override refusal.
 test('npm node options override leaves the startup route unqualified', async () => {
   const { inspection } = startupInspectionFixture();
-  inspection.env.npm_config_node_options = inspection.env.NODE_OPTIONS;
+  inspection.env.npm_config_node_options = '--test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination=/runner-temp/host-tests.junit.xml';
   const { result, commands: spawned, forwardedStdout, forwardedStderr } = await captureHostScenario({
     stdout: new EventEmitter(), stderr: new EventEmitter(), inspection,
     produce: child => {
@@ -446,7 +447,7 @@ test('npm node options override leaves the startup route unqualified', async () 
   assert.deepEqual(Buffer.concat(forwardedStderr), result.stderr);
   const { observed, commands, reads, outputWrites, summaryWrites } = await reportInvocation(
     Buffer.from('<testsuites><testcase name="pass"/></testsuites>', 'utf8'), { child: result });
-  assert.deepEqual(commands, ['npm run test:host']);
+  assert.deepEqual(commands, [hostInvocationCommand]);
   assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
   assert.deepEqual(observed.host, { started: true, exitCode: 0, outcome: 'success' });
   assert.equal(observed.stepOutcome, 'success');
@@ -493,10 +494,10 @@ test('stderr read failure fails the invocation without changing host report or q
   assert.deepEqual(result.stderr, Buffer.from('7061727469616c207374646572720a', 'hex'));
   assert.deepEqual(Buffer.concat(forwardedStdout), Buffer.from('linux-6.18.54.1-microsoft-standard-WSL2-x86_64-node26\n', 'utf8'));
   assert.deepEqual(Buffer.concat(forwardedStderr), Buffer.from('7061727469616c207374646572720a', 'hex'));
-  assert.deepEqual(result.startup, { argv: ['npm', 'run', 'test:host'], npmVersion: '12.2.2', stdoutPrefix: '', capture: { state: 'complete' } });
+  assert.deepEqual(result.startup, { argv: hostInvocationArgv, npmVersion: '12.2.2', stdoutPrefix: '', capture: { state: 'complete' } });
   const { observed, commands, reads, outputWrites, summaryWrites } = await reportInvocation(
     Buffer.from('<testsuites><testcase name="pass"/></testsuites>', 'utf8'), { child: result });
-  assert.deepEqual(commands, ['npm run test:host']);
+  assert.deepEqual(commands, [hostInvocationCommand]);
   assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
   assert.deepEqual(observed.host, { started: true, exitCode: 0, outcome: 'success' });
   assert.deepEqual(observed.reporting, { state: 'valid', outcome: 'success', failedNames: [] });
@@ -544,10 +545,10 @@ test('stdout read failure fails the invocation without changing host or report o
   assert.deepEqual(result.stderr, Buffer.from('636f6d706c657465207374646572720a', 'hex'));
   assert.deepEqual(Buffer.concat(forwardedStdout), Buffer.from('linux-6.18.54.1-microsoft-standard-WSL2-x86_64-node26\n', 'utf8'));
   assert.deepEqual(Buffer.concat(forwardedStderr), Buffer.from('636f6d706c657465207374646572720a', 'hex'));
-  assert.deepEqual(result.startup, { argv: ['npm', 'run', 'test:host'], npmVersion: '12.2.2', stdoutPrefix: '', capture: { state: 'incomplete', reason: 'read-error' } });
+  assert.deepEqual(result.startup, { argv: hostInvocationArgv, npmVersion: '12.2.2', stdoutPrefix: '', capture: { state: 'incomplete', reason: 'read-error' } });
   const { observed, commands, reads, outputWrites, summaryWrites } = await reportInvocation(
     Buffer.from('<testsuites><testcase name="pass"/></testsuites>', 'utf8'), { child: result });
-  assert.deepEqual(commands, ['npm run test:host']);
+  assert.deepEqual(commands, [hostInvocationCommand]);
   assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
   assert.deepEqual(observed.host, { started: true, exitCode: 0, outcome: 'success' });
   assert.deepEqual(observed.reporting, { state: 'valid', outcome: 'success', failedNames: [] });
@@ -599,10 +600,10 @@ test('stdout forwarding callback failure fails the invocation while preserving h
   assert.deepEqual(Buffer.concat(received), Buffer.from('linux-6.18.54.1-microsoft-standard-WSL2-x86_64-node26\n', 'utf8'));
   assert.deepEqual(result.stderr, Buffer.from('636f6d706c657465207374646572720a', 'hex'));
   assert.deepEqual(Buffer.concat(forwardedStderr), Buffer.from('636f6d706c657465207374646572720a', 'hex'));
-  assert.deepEqual(result.startup, { argv: ['npm', 'run', 'test:host'], npmVersion: '12.2.2', stdoutPrefix: '', capture: { state: 'complete' } });
+  assert.deepEqual(result.startup, { argv: hostInvocationArgv, npmVersion: '12.2.2', stdoutPrefix: '', capture: { state: 'complete' } });
   const { observed, commands, reads, outputWrites, summaryWrites } = await reportInvocation(
     Buffer.from('<testsuites><testcase name="pass"/></testsuites>', 'utf8'), { child: result });
-  assert.deepEqual(commands, ['npm run test:host']); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
+  assert.deepEqual(commands, [hostInvocationCommand]); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
   assert.deepEqual(observed.host, { started: true, exitCode: 0, outcome: 'success' });
   assert.deepEqual(observed.reporting, { state: 'valid', outcome: 'success', failedNames: [] });
   assert.deepEqual(outputWrites, [['/step-output', 'host_outcome=success\nhost_exit_code=0\n']]);
@@ -667,7 +668,7 @@ test('stdout forwarding pauses on real backpressure until drain without changing
   assert.deepEqual(Buffer.concat(forwardedStderr), Buffer.from('636f6d706c657465207374646572720a', 'hex'));
   const { observed, commands, reads, outputWrites, summaryWrites } = await reportInvocation(
     Buffer.from('<testsuites><testcase name="pass"/></testsuites>', 'utf8'), { child: result });
-  assert.deepEqual(commands, ['npm run test:host']); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
+  assert.deepEqual(commands, [hostInvocationCommand]); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
   assert.deepEqual(observed.host, { started: true, exitCode: 0, outcome: 'success' });
   assert.deepEqual(observed.reporting, { state: 'valid', outcome: 'success', failedNames: [] });
   assert.deepEqual(outputWrites, [['/step-output', 'host_outcome=success\nhost_exit_code=0\n']]);
@@ -741,7 +742,7 @@ test('stdout capture resumes after a backpressured destination fails without wri
   assert.deepEqual(Buffer.concat(forwardedStderr), Buffer.from('636f6d706c657465207374646572720a', 'hex'));
   const { observed, commands, reads, outputWrites, summaryWrites } = await reportInvocation(
     Buffer.from('<testsuites><testcase name="pass"/></testsuites>', 'utf8'), { child: result });
-  assert.deepEqual(commands, ['npm run test:host']); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
+  assert.deepEqual(commands, [hostInvocationCommand]); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
   assert.deepEqual(observed.host, { started: true, exitCode: 0, outcome: 'success' });
   assert.deepEqual(observed.reporting, { state: 'valid', outcome: 'success', failedNames: [] });
   assert.deepEqual(outputWrites, [['/step-output', 'host_outcome=success\nhost_exit_code=0\n']]);
@@ -812,7 +813,7 @@ test('stdout capture resumes after a backpressured destination closes without an
   assert.deepEqual(Buffer.concat(forwardedStderr), Buffer.from('complete stderr\n', 'utf8'));
   const { observed, commands, reads, outputWrites, summaryWrites } = await reportInvocation(
     Buffer.from('<testsuites><testcase name="pass"/></testsuites>', 'utf8'), { child: result });
-  assert.deepEqual(commands, ['npm run test:host']); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
+  assert.deepEqual(commands, [hostInvocationCommand]); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
   assert.deepEqual(observed.host, { started: true, exitCode: 0, outcome: 'success' });
   assert.deepEqual(observed.reporting, { state: 'valid', outcome: 'success', failedNames: [] });
   assert.deepEqual(outputWrites, [['/step-output', 'host_outcome=success\nhost_exit_code=0\n']]);
@@ -890,7 +891,7 @@ test('pending stdout write failure after child close fails invocation while reta
   assert.deepEqual(Buffer.concat(forwardedStderr), Buffer.from('complete stderr\n', 'utf8'));
   const { observed, commands, reads, outputWrites, summaryWrites } = await reportInvocation(
     Buffer.from('<testsuites><testcase name="pass"/></testsuites>', 'utf8'), { child: result });
-  assert.deepEqual(commands, ['npm run test:host']); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
+  assert.deepEqual(commands, [hostInvocationCommand]); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
   assert.deepEqual(observed.host, { started: true, exitCode: 0, outcome: 'success' });
   assert.deepEqual(observed.reporting, { state: 'valid', outcome: 'success', failedNames: [] });
   assert.deepEqual(outputWrites, [['/step-output', 'host_outcome=success\nhost_exit_code=0\n']]);
@@ -976,7 +977,7 @@ test('successful pending stdout callback after child close preserves invocation 
   assert.deepEqual(Buffer.concat(forwardedStderr), Buffer.from('complete stderr\n', 'utf8'));
   const { observed, commands, reads, outputWrites, summaryWrites } = await reportInvocation(
     Buffer.from('<testsuites><testcase name="pass"/></testsuites>', 'utf8'), { child: result });
-  assert.deepEqual(commands, ['npm run test:host']); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
+  assert.deepEqual(commands, [hostInvocationCommand]); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
   assert.deepEqual(observed.host, { started: true, exitCode: 0, outcome: 'success' });
   assert.deepEqual(observed.reporting, { state: 'valid', outcome: 'success', failedNames: [] });
   assert.deepEqual(outputWrites, [['/step-output', 'host_outcome=success\nhost_exit_code=0\n']]);
@@ -1047,7 +1048,7 @@ test('stderr forwarding callback failure fails invocation while preserving host 
   assert.deepEqual(Buffer.concat(received), Buffer.from('complete stderr\n', 'utf8'));
   const { observed, commands, reads, outputWrites, summaryWrites } = await reportInvocation(
     Buffer.from('<testsuites><testcase name="pass"/></testsuites>', 'utf8'), { child: result });
-  assert.deepEqual(commands, ['npm run test:host']); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
+  assert.deepEqual(commands, [hostInvocationCommand]); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
   assert.deepEqual(observed.host, { started: true, exitCode: 0, outcome: 'success' });
   assert.deepEqual(observed.reporting, { state: 'valid', outcome: 'success', failedNames: [] });
   assert.deepEqual(outputWrites, [['/step-output', 'host_outcome=success\nhost_exit_code=0\n']]);
@@ -1134,7 +1135,7 @@ test('pending stderr write failure after child close fails invocation while reta
   assert.deepEqual(Buffer.concat(receivedStderr), Buffer.from('complete stderr\n', 'utf8'));
   const { observed, commands, reads, outputWrites, summaryWrites } = await reportInvocation(
     Buffer.from('<testsuites><testcase name="pass"/></testsuites>', 'utf8'), { child: result });
-  assert.deepEqual(commands, ['npm run test:host']); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
+  assert.deepEqual(commands, [hostInvocationCommand]); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
   assert.deepEqual(observed.host, { started: true, exitCode: 0, outcome: 'success' });
   assert.deepEqual(observed.reporting, { state: 'valid', outcome: 'success', failedNames: [] });
   assert.deepEqual(outputWrites, [['/step-output', 'host_outcome=success\nhost_exit_code=0\n']]);
@@ -1198,7 +1199,7 @@ test('stderr forwarding pauses on real backpressure until drain without changing
   assert.deepEqual(Buffer.concat(received), Buffer.from('complete stderr\n', 'utf8'));
   const { observed, commands, reads, outputWrites, summaryWrites } = await reportInvocation(
     Buffer.from('<testsuites><testcase name="pass"/></testsuites>', 'utf8'), { child: result });
-  assert.deepEqual(commands, ['npm run test:host']); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
+  assert.deepEqual(commands, [hostInvocationCommand]); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
   assert.deepEqual(observed.host, { started: true, exitCode: 0, outcome: 'success' });
   assert.deepEqual(observed.reporting, { state: 'valid', outcome: 'success', failedNames: [] });
   assert.deepEqual(outputWrites, [['/step-output', 'host_outcome=success\nhost_exit_code=0\n']]);
@@ -1274,7 +1275,7 @@ test('stderr capture resumes after a backpressured destination fails without wri
   assert.deepEqual(terminalWriteCalls, [Buffer.from('stderr head ', 'utf8')]);
   const { observed, commands, reads, outputWrites, summaryWrites } = await reportInvocation(
     Buffer.from('<testsuites><testcase name="pass"/></testsuites>', 'utf8'), { child: result });
-  assert.deepEqual(commands, ['npm run test:host']); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
+  assert.deepEqual(commands, [hostInvocationCommand]); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
   assert.deepEqual(observed.host, { started: true, exitCode: 0, outcome: 'success' });
   assert.deepEqual(observed.reporting, { state: 'valid', outcome: 'success', failedNames: [] });
   assert.deepEqual(outputWrites, [['/step-output', 'host_outcome=success\nhost_exit_code=0\n']]);
@@ -1363,7 +1364,7 @@ test('stderr capture resumes after a backpressured destination closes without an
   assert.deepEqual(Buffer.concat(received), Buffer.from('stderr head ', 'utf8'));
   const { observed, commands, reads, outputWrites, summaryWrites } = await reportInvocation(
     Buffer.from('<testsuites><testcase name="pass"/></testsuites>', 'utf8'), { child: result });
-  assert.deepEqual(commands, ['npm run test:host']); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
+  assert.deepEqual(commands, [hostInvocationCommand]); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
   assert.deepEqual(observed.host, { started: true, exitCode: 0, outcome: 'success' });
   assert.deepEqual(observed.reporting, { state: 'valid', outcome: 'success', failedNames: [] });
   assert.deepEqual(outputWrites, [['/step-output', 'host_outcome=success\nhost_exit_code=0\n']]);
@@ -1395,7 +1396,7 @@ test('valid host report refuses an oversized UTF8 summary while preserving host 
   const xml = '<testsuites><testcase name="' + failedName + '"><failure/></testcase></testsuites>';
   const startup = { argv: ['npm', 'run', 'test:host'], npmVersion: '12.2.2', stdoutPrefix: '', capture: { state: 'complete' } };
   const { observed, commands, reads, outputWrites, summaryWrites } = await reportInvocation(Buffer.from(xml, 'utf8'), { exitCode: 1, startup });
-  assert.deepEqual(commands, ['npm run test:host']); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
+  assert.deepEqual(commands, [hostInvocationCommand]); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
   assert.deepEqual(observed.host, { started: true, exitCode: 1, outcome: 'failure' });
   assert.equal(observed.hostKey, 'linux-6.18.54.1-microsoft-standard-WSL2-x86_64-node26');
   assert.deepEqual(observed.reporting, { state: 'valid', outcome: 'success', failedNames: [failedName] });
@@ -1418,7 +1419,7 @@ test('failed host report publishes its complete UTF8 summary exactly at the size
   const xml = '<testsuites><testcase name="' + failedName + '"><failure/></testcase></testsuites>';
   const startup = { argv: ['npm', 'run', 'test:host'], npmVersion: '12.2.2', stdoutPrefix: '', capture: { state: 'complete' } };
   const { observed, commands, reads, outputWrites, summaryWrites } = await reportInvocation(Buffer.from(xml, 'utf8'), { exitCode: 1, startup });
-  assert.deepEqual(commands, ['npm run test:host']); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
+  assert.deepEqual(commands, [hostInvocationCommand]); assert.deepEqual(reads, ['/runner-temp/host-tests.junit.xml']);
   assert.deepEqual(observed.host, { started: true, exitCode: 1, outcome: 'failure' });
   assert.equal(observed.hostKey, 'linux-6.18.54.1-microsoft-standard-WSL2-x86_64-node26');
   assert.deepEqual(observed.reporting, { state: 'valid', outcome: 'success', failedNames: [failedName] });
@@ -1442,7 +1443,7 @@ test('decoded failed names retain embedded LF and duplicates in the complete sum
 // The prior hosted log is supporting context only; this controlled case makes no Mac proof claim.
 test('qualified npm11 startup preserves the parent key despite later worker lookalikes', async () => {
   const { npm11StartupInspectionFixture } = await import('./ci-host-fixtures.mjs');
-  const prefix = '\n> @williacj/rigger@0.0.0 test:host\n> sh test/suite.sh --host\n\n';
+  const prefix = '\n> @williacj/rigger@0.0.0 test:host\n> sh test/suite.sh --host --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination=/runner-temp/host-tests.junit.xml\n\n';
   const parent = 'linux-6.18.54.1-microsoft-standard-WSL2-x86_64-node26';
   for (const variant of ['qualified', 'source drift', 'prefix mismatch']) {
     const { inspection, npmRoot, fingerprints } = npm11StartupInspectionFixture();
@@ -1460,11 +1461,30 @@ test('qualified npm11 startup preserves the parent key despite later worker look
     assert.equal(result.exitCode, 0);
     assert.deepEqual(result.stdout, Buffer.from(stdout, 'utf8'));
     if (variant === 'qualified') assert.deepEqual(result.startup, {
-      argv: ['npm', 'run', 'test:host'], npmVersion: '11.20.0', stdoutPrefix: prefix, capture: { state: 'complete' },
+      argv: hostInvocationArgv, npmVersion: '11.20.0', stdoutPrefix: prefix, capture: { state: 'complete' },
     }, 'actual npm11 source must qualify its observed banner');
     if (variant === 'source drift') assert.equal(result.startup, undefined);
     const { observed } = await reportInvocation(Buffer.from('<testsuites><testcase name="pass"/></testsuites>', 'utf8'), { child: result });
     assert.equal(observed.hostKey, variant === 'qualified' ? parent : undefined,
       'only the exact qualified npm11 prefix may expose the immediately following parent key');
   }
+});
+
+// Break: reporter NODE_OPTIONS leaks into nested Node commands that supply their own reporter.
+// The independent command literal keeps both reporter pairs on the outer suite invocation.
+test('host reporting keeps reporter options on the outer command only', async () => {
+  let command;
+  await observeHostStep({
+    runnerEnvironment: { RUNNER_TEMP: '/runner-temp', GITHUB_OUTPUT: '/step-output', GITHUB_STEP_SUMMARY: '/step-summary' },
+    execute: async observed => {
+      command = observed;
+      return { exitCode: 0, stdout: Buffer.from('linux-parent-node26\n', 'utf8'), stderr: Buffer.alloc(0) };
+    },
+    read: async () => Buffer.from('<testsuites/>', 'utf8'),
+    append: async () => {},
+  });
+  assert.equal(Object.hasOwn(command.env, 'NODE_OPTIONS'), false,
+    'host reporter options must not enter the inherited NODE_OPTIONS environment');
+  assert.equal(command.run, 'npm run test:host -- --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination="$RUNNER_TEMP/$CI_HOST_REPORT_NAME"',
+    'the outer host command must carry its exact paired reporter arguments');
 });

@@ -8,6 +8,10 @@ import { parseWorkflow } from './ci-policy-fixtures.mjs';
 
 export const ci = parseWorkflow(readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'));
 
+// Independent literal outer invocation expected by the reporter-isolation contract.
+export const hostInvocationCommand = "npm run test:host -- --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination=\"$RUNNER_TEMP/$CI_HOST_REPORT_NAME\"";
+export const hostInvocationArgv = ['npm', 'run', 'test:host', '--', '--test-reporter=spec', '--test-reporter=junit', '--test-reporter-destination=stdout', '--test-reporter-destination=/runner-temp/host-tests.junit.xml'];
+
 async function loadHostModule(source) {
   assert.equal(process.env.CI_HOST_ACTION, undefined, 'fixture imports must not run the CLI action');
   return import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
@@ -15,7 +19,7 @@ async function loadHostModule(source) {
 
 /** Actions' command exit is the default shell outcome; a custom shell executes its actual inline module. */
 export async function observeHostStep({ execute, read, append, runnerEnvironment, startup, publish = false, save }) {
-  const step = ci.jobs.full_host.steps.find(entry => entry.run === 'npm run test:host');
+  const step = ci.jobs.full_host.steps.find(entry => entry.id === 'host_tests');
   assert.ok(step, 'actual full_host host invocation must remain present');
   const env = { ...(ci.env ?? {}), ...(ci.jobs.full_host.env ?? {}), ...(step.env ?? {}), ...runnerEnvironment };
   const command = { run: step.run, env };
@@ -136,10 +140,10 @@ export function startupInspectionFixture() {
   const inspection = {
     cwd, scriptPath, execPath,
     env: { PATH: '/selected/bin:/usr/bin:/bin', HOME: '/selected/home', RUNNER_TEMP: '/runner-temp', CI_HOST_REPORT_NAME: 'host-tests.junit.xml',
-      NODE_OPTIONS: '--test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination=/runner-temp/host-tests.junit.xml' },
+    },
     read: async path => {
       readPaths.push(path);
-      if (path === scriptPath) return Buffer.from('npm run test:host', 'utf8');
+      if (path === scriptPath) return Buffer.from(hostInvocationCommand, 'utf8');
       if (path === join(cwd, 'package.json')) return readFileSync(new URL('../package.json', import.meta.url));
       if (path === join(npmRoot, 'package.json')) return Buffer.from('{"name":"npm","version":"12.2.2","bin":{"npm":"bin/npm-cli.js","npx":"bin/npx-cli.js"}}', 'utf8');
       if (absent.has(path)) throw Object.assign(new Error('controlled absent npm config'), { code: 'ENOENT' });

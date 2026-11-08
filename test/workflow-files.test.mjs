@@ -5,6 +5,7 @@
 import { test } from 'node:test';
 import { ciFacts, ciProof, ciFullFixture, ciCollectorFixture, parseWorkflow } from './ci-policy-fixtures.mjs';
 import { ciNodeVersionPrefix } from './ci-policy-fixtures.mjs';
+import { hostInvocationCommand } from './ci-host-fixtures.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -474,10 +475,10 @@ test('staged CI preserves finite events, independent full lanes, every command a
   assert.ok(commands('full_ordinary').includes('npm ci'));
   assert.ok(commands('full_ordinary').includes('npm test'));
   assert.ok(commands('full_host').includes('npm ci'));
-  assert.ok(commands('full_host').includes('npm run test:host'), 'full host command missing');
-  assert.equal(commands('full_ordinary').includes('npm run test:host'), false);
-  assert.equal(commands('fast').includes('npm run test:host'), false);
-  assert.ok(commands('nightly').includes('npm run test:host'));
+  assert.ok(commands('full_host').includes(hostInvocationCommand), 'full host command missing');
+  assert.equal(commands('full_ordinary').includes(hostInvocationCommand), false);
+  assert.equal(commands('fast').includes(hostInvocationCommand), false);
+  assert.ok(commands('nightly').includes(hostInvocationCommand));
   for (const name of ['full_host', 'nightly']) {
     assert.ok(commands(name).includes('node test/verify-mac-containment "$RUNNER_TEMP/containment-proof-26"'));
     const upload = ci.jobs[name].steps.find((step) => step.uses === 'actions/upload-artifact@v7');

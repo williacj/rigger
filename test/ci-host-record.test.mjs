@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { once } from 'node:events';
-import { ci, hostRecordInput, observeHostRecord, observeIssueTransport, publicationInvocation, reportInvocation, captureHostScenario, observeHostStep, observeWorkerTransport, observeRuntimeRecordInput, hostIssueStore, hostOutputFields } from './ci-host-fixtures.mjs';
+import { ci, hostInvocationCommand, hostRecordInput, observeHostRecord, observeIssueTransport, publicationInvocation, reportInvocation, captureHostScenario, observeHostStep, observeWorkerTransport, observeRuntimeRecordInput, hostIssueStore, hostOutputFields } from './ci-host-fixtures.mjs';
 
 // Break: no matching open labelled issue must create exactly one issue carrying the complete record.
 test('no matching open issue creates a body record once', async () => {
@@ -462,14 +462,15 @@ test('unavailable startup key fails artifact reporting without changing saved ho
 test('both actual host jobs bind JUnit artifacts and all ten outputs to their verified invocation', async () => {
   const names = ['host_outcome', 'host_exit_code', 'host_invoked', 'host_key', 'report_state', 'names_state', 'failed_names', 'source', 'invocation', 'eligible'];
   for (const name of ['full_host', 'nightly']) {
-    const job = ci.jobs[name], host = job.steps.find(step => step.run === 'npm run test:host');
+    const job = ci.jobs[name], host = job.steps.find(step => step.id === 'host_tests');
     const upload = job.steps.find(step => step.uses === 'actions/upload-artifact@v7' && step.with.name.startsWith('host-junit-'));
     assert.ok(upload, name + ' must upload that invocation JUnit with its exact printed host key');
     assert.equal(host.id, 'host_tests');
     assert.equal(host.env.CI_HOST_SOURCE, '${{ steps.host_source.outputs.host_source }}');
     assert.equal(host.env.CI_HOST_ELIGIBLE, '${{ steps.host_source.outputs.host_eligible }}');
     assert.equal(host.env.CI_HOST_REPORT_NAME, 'host-tests.junit.xml');
-    assert.equal(host.env.NODE_OPTIONS, '--test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination=${{ runner.temp }}/host-tests.junit.xml');
+    assert.equal(host.run, hostInvocationCommand);
+    assert.equal(Object.hasOwn(host.env, 'NODE_OPTIONS'), false);
     assert.equal(host.shell, "node --input-type=module -e \"await import('data:text/javascript;base64,' + Buffer.from(process.env.CI_HOST).toString('base64'))\" {0}");
     const source = job.steps.find(step => step.id === 'host_source');
     assert.equal(source.env.CI_POLICY_ACTION, 'worker');

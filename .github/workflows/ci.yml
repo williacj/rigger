@@ -213,8 +213,9 @@ env:
           if (['BASH_ENV', 'ENV', 'PREFIX', 'DESTDIR'].includes(key)) return;
           if (/^npm_config_/i.test(key) && routeOptions.has(key.slice('npm_config_'.length).replace(/(?!^)_/g, '-').toLowerCase())) return;
         }
-        const options = '--test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination=' + join(env.RUNNER_TEMP, env.CI_HOST_REPORT_NAME);
-        if (env.NODE_OPTIONS !== options || !(await read(scriptPath)).equals(Buffer.from('npm run test:host', 'utf8'))) return;
+        const argv = ['npm', 'run', 'test:host', '--', '--test-reporter=spec', '--test-reporter=junit', '--test-reporter-destination=stdout', '--test-reporter-destination=' + join(env.RUNNER_TEMP, env.CI_HOST_REPORT_NAME)];
+        const script = "npm run test:host -- --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination=\"$RUNNER_TEMP/$CI_HOST_REPORT_NAME\"";
+        if (env.NODE_OPTIONS || !(await read(scriptPath)).equals(Buffer.from(script, 'utf8'))) return;
         const project = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(await read(join(cwd, 'package.json'))));
         if (project.scripts?.['test:host'] !== 'sh test/suite.sh --host' || Object.hasOwn(project.scripts, 'pretest:host') || Object.hasOwn(project.scripts, 'posttest:host') || Object.hasOwn(project, 'workspaces')) return;
         const locate = async command => {
@@ -262,8 +263,8 @@ env:
           "node_modules/@npmcli/config/lib/definitions/definitions.js": "b352635a4b9ac0575a76e66dae679b16c67762030b1847564ea4b59e572f8372"
         };
         for (const [path, expected] of Object.entries(npmSources)) if (await fingerprint(join(npmRoot, path)) !== expected) return;
-        return { argv: ['npm', 'run', 'test:host'], npmVersion: npm.version,
-          stdoutPrefix: npm.version === '11.20.0' ? '\n> @williacj/rigger@0.0.0 test:host\n> sh test/suite.sh --host\n\n' : '' };
+        return { argv, npmVersion: npm.version,
+          stdoutPrefix: npm.version === '11.20.0' ? '\n> @williacj/rigger@0.0.0 test:host\n> sh test/suite.sh --host ' + argv.slice(4).join(' ') + '\n\n' : '' };
       } catch { return; }
     }
     export async function executeScript({ spawnChild = spawn, stdoutSink = process.stdout, stderrSink = process.stderr, inspection, onStart } = {}) {
@@ -274,7 +275,7 @@ env:
         let startDone = onStart === undefined, startFailure = false;
         if (onStart) {
           try {
-            Promise.resolve(onStart({ pid: child.pid, argv: ['bash', '-e', process.argv[1]] })).then(() => { startDone = true; finishHost(); }, () => { startFailure = true; startDone = true; finishHost(); });
+            Promise.resolve(onStart({ pid: child.pid, argv: ['bash', '-e', process.argv[1]] }, profile)).then(() => { startDone = true; finishHost(); }, () => { startFailure = true; startDone = true; finishHost(); });
           } catch { startFailure = true; startDone = true; }
         }
         let stdoutEnded = false, stdoutReadError = false, stderrReadError = false, stdoutWriteError = false, stderrWriteError = false;
@@ -442,8 +443,8 @@ env:
       const evidence = join(env.RUNNER_TEMP, 'host-report-evidence');
       let reportBytes, reportError;
       const result = await invokeHost({ ...options, execute: async () => {
-        const child = await (execute ? execute() : executeScript({ onStart: info => save(join(evidence, 'host-start.json'), JSON.stringify({
-          ...info, startedAt: new Date().toISOString(), node: process.version, execPath: process.execPath, cwd: process.cwd(),
+        const child = await (execute ? execute() : executeScript({ onStart: (info, startup) => save(join(evidence, 'host-start.json'), JSON.stringify({
+          ...info, startup: startup ?? null, startedAt: new Date().toISOString(), node: process.version, execPath: process.execPath, cwd: process.cwd(),
           env: Object.fromEntries(['PATH', 'HOME', 'NODE_OPTIONS', 'RUNNER_TEMP', 'GITHUB_EVENT_NAME', 'GITHUB_REF', 'GITHUB_SHA', 'GITHUB_REPOSITORY', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'GITHUB_JOB', 'CI_HOST_REPORT_NAME', 'CI_HOST_SOURCE', 'CI_HOST_ELIGIBLE'].map(name => [name, env[name] ?? null])),
         })) }));
         const native = { pid: child.pid, exitCode: child.exitCode, signal: child.signal ?? null,
@@ -695,13 +696,12 @@ jobs:
           CI_EXPECTED_MODE: ${{ needs.plan.outputs.mode }}
           CI_WORKER: ${{ github.job }}
       - run: npm ci
-      - run: npm run test:host
+      - run: npm run test:host -- --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination="$RUNNER_TEMP/$CI_HOST_REPORT_NAME"
         id: host_tests
         shell: node --input-type=module -e "await import('data:text/javascript;base64,' + Buffer.from(process.env.CI_HOST).toString('base64'))" {0}
         env:
           CI_HOST_ACTION: run
           CI_HOST_REPORT_NAME: host-tests.junit.xml
-          NODE_OPTIONS: --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination=${{ runner.temp }}/host-tests.junit.xml
           CI_HOST_SOURCE: ${{ steps.host_source.outputs.host_source }}
           CI_HOST_ELIGIBLE: ${{ steps.host_source.outputs.host_eligible }}
       - name: Verify Mac containment proof claims
@@ -1021,13 +1021,12 @@ jobs:
       - run: npm ci
       - run: node .github/scripts/check-test-list-growth.mjs
       - run: npm test
-      - run: npm run test:host
+      - run: npm run test:host -- --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination="$RUNNER_TEMP/$CI_HOST_REPORT_NAME"
         id: host_tests
         shell: node --input-type=module -e "await import('data:text/javascript;base64,' + Buffer.from(process.env.CI_HOST).toString('base64'))" {0}
         env:
           CI_HOST_ACTION: run
           CI_HOST_REPORT_NAME: host-tests.junit.xml
-          NODE_OPTIONS: --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination=${{ runner.temp }}/host-tests.junit.xml
           CI_HOST_SOURCE: ${{ steps.host_source.outputs.host_source }}
           CI_HOST_ELIGIBLE: ${{ steps.host_source.outputs.host_eligible }}
       - name: Verify Mac containment proof claims
