@@ -246,10 +246,10 @@ async function holding(held) {
  */
 const ran = (command, args) => execFileSync(command, args, { encoding: 'utf8', env: process.env, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
-/** Whether the working directory is a git worktree, as git answers; a plain directory is not. */
-function inWorktree() {
+/** Whether `git`'s working directory is a git worktree, as git answers; a plain directory is not. */
+function inWorktree(git) {
   try {
-    return ran('git', ['rev-parse', '--is-inside-work-tree']) === 'true';
+    return git.inside() === 'true';
   } catch {
     return false;
   }
@@ -426,17 +426,70 @@ export const TRACE = Symbol.for('rigger.stand-in.trace');
 /** This run's trace, where its act asks for one; `standInMain` sets it. */
 let tracing;
 
+/** The existing stand-in run record from explicit request values, without ambient process reads. */
+export function standInRecord({ executable, args, input, cwd, env, pid }) {
+  const agent = following(args, '--append-system-prompt-file');
+  const role = agent === undefined ? undefined : basename(agent, '.md');
+  const card = Number(/card #(\d+)/i.exec(input)?.[1]);
+  const recordedEnv = Object.fromEntries(Object.entries(env).filter(([key]) => key.startsWith(RECORDED)));
+  return { name: basename(executable), args, cwd, card, role, input, env: recordedEnv, pid };
+}
+
+/** The existing per-card/per-role lookup; an absent act is the existing empty act. */
+export const standInAct = (plan, { card, role }) => plan[card]?.[role] ?? {};
+
+/** Existing print/exit decisions, invoked at their original positions through explicit ports. */
+export function standInReply(act, { output, exit, keepAlive, registerCleanup }) {
+  return {
+    print: () => { if (act.print !== undefined) output(act.print); },
+    finish: () => {
+      if (!act.forever) return exit(act.exit ?? 0);
+      const resource = keepAlive();
+      if (registerCleanup !== undefined) registerCleanup(resource);
+      return resource;
+    },
+  };
+}
+
+/** Commits and pushes for a `pr` or `push` act through the `git` port, answering the `gh` arguments a `pr` still owes. */
+export function standInPush(act, card, git) {
+  if (!(act.pr || act.push) || !inWorktree(git)) return undefined;
+  const branch = git.branch();
+  git.commit(`The stand-in's work for card #${card}`);
+  git.push(branch);
+  return act.pr ? ['pr', 'create', '--title', `Card #${card}`, '--body', `The stand-in's pull request for card #${card}.`, '--head', branch] : undefined;
+}
+
+/** The stand-in's git work as the executable runs it, each operation's subcommand named. */
+const NATIVE_GIT = {
+  inside: () => ran('git', ['rev-parse', '--is-inside-work-tree']),
+  branch: () => ran('git', ['symbolic-ref', '--short', 'HEAD']),
+  commit: (message) => ran('git', ['commit', '-q', '--allow-empty', '-m', message]),
+  push: (branch) => ran('git', ['push', '-q', 'origin', branch]),
+};
+
+/** The `gh` arguments of a `findings` act, failing where the input holds no marker block. */
+export function standInFindings(act, { card, role, input }) {
+  if (!act.findings) return undefined;
+  const marker = instructedMarker(input);
+  if (marker === undefined) throw new Error(`the stand-in for card #${card} in ${role} was handed no marker block to fill in`);
+  return ['pr', 'comment', String(marker.pull), '--body', `${composeMarker(marker, `Sound, by ${marker.role}`)}\nThe stand-in's findings.`];
+}
+
 /** The stand-in agent's run, as `standInAgent` describes it, in the process its executable started. */
 export async function standInMain() {
   const dir = dirname(process.argv[1]);
   const args = process.argv.slice(2);
   const input = readFileSync(0, 'utf8');
-  const agent = following(args, '--append-system-prompt-file');
-  const role = agent === undefined ? undefined : basename(agent, '.md');
-  const card = Number(/card #(\d+)/i.exec(input)?.[1]);
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key.startsWith(RECORDED)));
-  appendFileSync(join(dir, RUNS), `${JSON.stringify({ name: basename(process.argv[1]), args, cwd: process.cwd(), card, role, input, env, pid: process.pid })}\n`);
-  const act = JSON.parse(readFileSync(join(dir, PLAN), 'utf8'))[card]?.[role] ?? {};
+  const run = standInRecord({ executable: process.argv[1], args, input, cwd: process.cwd(), env: process.env, pid: process.pid });
+  const { card, role } = run;
+  appendFileSync(join(dir, RUNS), `${JSON.stringify(run)}\n`);
+  const act = standInAct(JSON.parse(readFileSync(join(dir, PLAN), 'utf8')), run);
+  const reply = standInReply(act, {
+    output: (text) => process.stdout.write(text),
+    exit: (code) => { process.exitCode = code; },
+    keepAlive: () => setInterval(() => {}, 2 ** 30),
+  });
   if (act.trace !== undefined) {
     tracing = traceTo(act.trace, `${role}-${process.pid}`);
     globalThis[TRACE] = tracing;
@@ -446,29 +499,21 @@ export async function standInMain() {
   if (act.hold) {
     await holding(marker(dir, 'held', card, role));
   }
-  if (act.print !== undefined) process.stdout.write(act.print);
+  reply.print();
   if (act.write) recorded(tracing, 'the file write', () => writeFileSync(marker(dir, 'wrote', card, role), ''), { path: marker(dir, 'wrote', card, role) });
   if (act.write) announce(marker(dir, 'wrote', card, role));
   if (act.await !== undefined) await recorded(tracing, 'the wait', () => written(marker(dir, 'wrote', card, act.await)));
-  if ((act.pr || act.push) && inWorktree()) {
-    const branch = ran('git', ['symbolic-ref', '--short', 'HEAD']);
-    ran('git', ['commit', '-q', '--allow-empty', '-m', `The stand-in's work for card #${card}`]);
-    ran('git', ['push', '-q', 'origin', branch]);
-    if (act.pr) ran('gh', ['pr', 'create', '--title', `Card #${card}`, '--body', `The stand-in's pull request for card #${card}.`, '--head', branch]);
-  }
-  if (act.findings) {
-    const marker = instructedMarker(input);
-    if (marker === undefined) throw new Error(`the stand-in for card #${card} in ${role} was handed no marker block to fill in`);
-    ran('gh', ['pr', 'comment', String(marker.pull), '--body', `${composeMarker(marker, `Sound, by ${marker.role}`)}\nThe stand-in's findings.`]);
-  }
+  const opened = standInPush(act, card, NATIVE_GIT);
+  if (opened !== undefined) ran('gh', opened);
+  const finding = standInFindings(act, run);
+  if (finding !== undefined) ran('gh', finding);
   if (act.leave) {
     writeFileSync(join(dir, `left-${card}`), '');
     spawn('/usr/bin/tail', ['-f', join(dir, `left-${card}`)], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] }).unref();
   }
   if (act.leaveIn !== undefined) leaveTail(dir, card, role, act.leaveIn, { detached: true, stdio: ['ignore', 'inherit', 'inherit'] });
   if (act.leaveInGroup !== undefined) leaveTail(dir, card, role, act.leaveInGroup, { detached: false, stdio: 'ignore' });
-  if (act.forever) setInterval(() => {}, 2 ** 30);
-  else process.exitCode = act.exit ?? 0;
+  reply.finish();
 }
 
 /**
@@ -542,9 +587,24 @@ export function codexSkillAnswer(skills) {
  * session: it reads its standard input to its end, records itself as the stand-in agent's runs are
  * recorded, with `home` beside them, and exits 0.
  */
+/** What the stand-in `codex` answers its skill probe with. */
+export const codexProbed = ({ skills = [], answer, exit = 0, hang = false } = {}) => ({ text: answer ?? codexSkillAnswer(skills), exit, hang });
+
+/** Whether `args` are a skill probe: `debug` and `prompt-input` both among them, anywhere. */
+export const isCodexProbe = (args) => args.includes('debug') && args.includes('prompt-input');
+
+/** The reply act of a probe answering `probed`: a hang keeps running and prints nothing. */
+export const codexProbeAct = ({ text, exit, hang }) => (hang ? { forever: true } : { print: text, exit });
+
+/** What a probe records. */
+export const codexProbeRecord = ({ args, cwd, home, pid }) => ({ name: 'codex', probe: true, args, cwd, home, pid });
+
+/** What a session records. */
+export const codexSessionRecord = ({ args, cwd, input, home, pid }) => ({ name: 'codex', args, cwd, input, home, pid });
+
 export function standInCodex({ skills = [], answer, exit = 0, hang = false } = {}) {
   const agent = standInAgent();
-  writeFileSync(join(agent.dir, PROBED), JSON.stringify({ text: answer ?? codexSkillAnswer(skills), exit, hang }));
+  writeFileSync(join(agent.dir, PROBED), JSON.stringify(codexProbed({ skills, answer, exit, hang })));
   const entry = `import(${JSON.stringify(import.meta.url)}).then(({ standInCodexMain }) => standInCodexMain());\n`;
   writeFileSync(join(agent.dir, 'codex'), `#!${process.execPath}\n${entry}`);
   chmodSync(join(agent.dir, 'codex'), 0o755);
@@ -562,17 +622,18 @@ export async function standInCodexMain() {
   const dir = dirname(process.argv[1]);
   const args = process.argv.slice(2);
   const home = process.env.CODEX_HOME;
-  if (args.includes('debug') && args.includes('prompt-input')) {
+  if (isCodexProbe(args)) {
     const probed = JSON.parse(readFileSync(join(dir, PROBED), 'utf8'));
-    appendFileSync(join(dir, RUNS), `${JSON.stringify({ name: 'codex', probe: true, args, cwd: process.cwd(), home, pid: process.pid })}\n`);
-    if (probed.hang) {
-      setInterval(() => {}, 2 ** 30);
-      return;
-    }
-    process.stdout.write(probed.text);
-    process.exitCode = probed.exit;
+    appendFileSync(join(dir, RUNS), `${JSON.stringify(codexProbeRecord({ args, cwd: process.cwd(), home, pid: process.pid }))}\n`);
+    const reply = standInReply(codexProbeAct(probed), {
+      output: (text) => process.stdout.write(text),
+      exit: (code) => { process.exitCode = code; },
+      keepAlive: () => setInterval(() => {}, 2 ** 30),
+    });
+    reply.print();
+    reply.finish();
     return;
   }
   const input = readFileSync(0, 'utf8');
-  appendFileSync(join(dir, RUNS), `${JSON.stringify({ name: 'codex', args, cwd: process.cwd(), input, home, pid: process.pid })}\n`);
+  appendFileSync(join(dir, RUNS), `${JSON.stringify(codexSessionRecord({ args, cwd: process.cwd(), input, home, pid: process.pid }))}\n`);
 }

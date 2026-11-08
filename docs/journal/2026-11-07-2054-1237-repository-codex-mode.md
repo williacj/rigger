@@ -59,3 +59,19 @@ mode-reversion mutation and receipt belong in the PR evidence.
 
 No case outside Table S was met under S13 during implementation. Final-head verification and
 any failed or unavailable attempt remain explicitly accounted for in the PR's evidence ledger.
+
+
+## Continuation after the main-line fixture repair
+
+The affected live host run at the initial card commit stopped on the existing judge fixture's
+unstamped dispatch id. Its complete output and missing raw-rollout status remain in the attempt
+ledger. The coordinator routed that failure to #1277, whose PR #1278 merged as
+95b40c383b8b53ff06d51c1328d0ee9ca2386da9, then explicitly instructed this maker to continue.
+
+The branch incorporates that main line with a normal merge commit. Both sides added the same
+randomUUID import; the merge keeps the main line's import and removes this card's duplicate.
+The diagnostic's body and the declaration checks do not change. The merged main line also
+strengthens mutation receipts to retain the selected suite's native ending (#1270).
+Consequently, all seven mutation receipts are rerun at the merge head rather than carried
+forward as final-head proof. The original failing-test-first runs remain historical evidence.
+The affected live host file is rerun before S3 starts, then S3, S4, S5 and S6 follow in order.
