@@ -75,3 +75,39 @@ strengthens mutation receipts to retain the selected suite's native ending (#127
 Consequently, all seven mutation receipts are rerun at the merge head rather than carried
 forward as final-head proof. The original failing-test-first runs remain historical evidence.
 The affected live host file is rerun before S3 starts, then S3, S4, S5 and S6 follow in order.
+
+## Repository comparison retarget after full host verification
+
+Round one's `ci:full` host job found two self-comparison failures in `test/init.test.mjs`:
+the repository declaration differs intentionally from the consumer template, but the comparison
+still required identical contents. The card's literal-path search premise missed that comparison
+through `plan()` and `divergences()`. The complete failed job output remains in the evidence
+ledger; its two failures are repaired within this card rather than attributed to an unrelated
+flake.
+
+The normal merge of main 2fc7b909d55a7e953e82aef8814d02ac061b8ea1 completed as
+b81615039b55374b0c6d9f72100f3cc0229a09d6. Before any retarget edit, an independent scope check
+found that K83's filter-only exclusion would fail the reverse tracked-asset comparison.
+The maker stopped and escalated ambiguous. K84 explicitly grants a separate shipped plan,
+and the author revised acceptance to b9cd51cb2c69 with thirty items.
+
+At that merge head, the two existing self-comparison tests were run first and both failed on
+the repository declaration's content mismatch. Only then did the K84 retarget separate the
+forward compared files from the reverse check's full shipped list. The same two tests next
+passed. Consumers and the changed-byte fixture keep the default `shipped = files` behavior.
+The coverage expectation independently names exactly the config, hooks and repository Codex
+declaration as omissions. No product requirement or proves declaration changes.
+
+At merge base 2fc7b909, grant class 2 covers the changed existing lines 83, 96, 921, 924, 929,
+930, 974 and 1017. The added helper and the reverse-check documentation sentence are K84's
+permitted additions. Grant class 1 maps to maker-git lines 353, 354, 355 and 360 at that base.
+The new proof restores the reverse list to `files` in a guarded disposable worktree and must
+turn both self-comparisons red on the missing-shipped-asset assertion before byte-exact restore.
+
+Final-head verification follows this repair: affected init and provider files, the complete
+host tier with every skip reason retained, then the isolated fresh-clone S3/S4/S5 maker run
+and S6 judge run. S1/S2 must pass at that head before S3 starts. The PR supplies actual results,
+commands, loads, native endings and retained originals; this entry does not predict their result.
+Earlier receipt carry-over is justified individually there against unchanged behavior and files.
+No additional sandbox-behavior case was met under S13; the comparison repair and the grant hold
+are evidence/scope corrections to the existing rows.
