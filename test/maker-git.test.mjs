@@ -33,10 +33,12 @@ import { temporaryDirectory } from './temporary-directory.mjs';
 import { stepDispatch } from '../src/execution/step.mjs';
 import { dirname } from 'node:path';
 import { readdirSync } from 'node:fs';
+import { manualClock } from './clock-report-world.mjs';
 
 /** Real git exits naturally; the documented ps contract answers that its group is then absent. */
 function processTable(t) {
   const replacement = {
+    clock: { ...manualClock(), pause: async () => {} },
     signal() { throw Object.assign(new Error('no process'), { code: 'ESRCH' }); },
     execFile(_command, _args, _options, done) {
       queueMicrotask(() => done(Object.assign(new Error('no process'), { code: 1 }), '', ''));
@@ -50,6 +52,7 @@ function processTable(t) {
 
 /** A linked maker worktree and an in-memory sink with L1's public dispatch inputs. */
 function layout(t) {
+  const clock = realHost.clock;
   const root = realpathSync.native(temporaryDirectory('rigger-maker-git-', { context: t }));
   const repository = repositoryAt(join(root, 'repository'), { 'agent.md': '# Fixture agent\n' });
   const directory = worktreeAt(repository, join(root, 'rigger-42'), 'rigger-42');
@@ -62,6 +65,7 @@ function layout(t) {
   const events = [];
   const sink = { emitter: (context) => ({ emit: (event, fields) => events.push({ ...context, event, ...fields }) }) };
   processTable(t);
+  t.after(() => { assert.strictEqual(realHost.clock, clock, 'the fixture restores the original host clock after each test'); });
   return {
     root, events,
     request: { answer: { role: 'engineer', provider: 'capture', tier: 'standard', agent: 'agent.md', instruction: 'Make the change.\n', evidence: '', timeout: 1000 },
