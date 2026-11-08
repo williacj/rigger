@@ -196,39 +196,34 @@ New tests cover T17 to T21, R9 and R10, the documented call routes, an object de
 for each API, and the export lists the guard depends on.
 
 An independent attacker then swept that head and found no escape inside the line,
-but found an attribution defect the architect ruled against the record interface
-(row R11). An arm that a top-level test's run started was recorded with no test when
-it went through a server a root `before` hook started, or through a module-level
-`AsyncResource.bind` the test called. Async ownership still comes first, so R2 and
-R3 hold. Where the async owner is no test and the file has finished loading, the arm
-belongs to the one top-level test that is running; with none or several running it
-belongs to no test. Bounded refusals use the same owner, so they name that test.
+but found an attribution case the architect first ruled a defect (E2): an arm that a
+top-level test's run started was recorded with no test when it went through a server
+a root `before` hook started, or through a module-level `AsyncResource.bind` the test
+called. A fallback was built for it: where the async owner was no test and the file
+had finished loading, the arm went to the one top-level test running. Tests can run
+while a file still loads, so a load hook appended a marker call to the entry module
+to mark the end of loading, with a random key so no test could fire or delete it.
 
-Tests can run while a file still loads: they start as soon as the module first
-yields, including during a top-level await. The guard therefore marks the end of
-loading with the file's own last statement. A load hook registered in the preload
-appends one call to the entry module's source, which runs only after its body,
-top-level awaits included, completes. An earlier attempt that imported the entry
-from the preload settled after the first test had already started, so it was racy.
-
-The architect accepted that design with conditions. The marker's key carries a
-per-run random token, so a test cannot fire it early by a fixed name, crediting a
-load-time arm to a running test, or delete it, switching the fallback off; tests
-show both attempts change nothing. The hook decodes byte sources as UTF-8, since a
-byte view in a template string would print as numbers. The guard names `startTime`
-and `endTime`, the internal `Test` fields it reads, beside the code, as `D16` rule 3
-asks, and a receipt shows R11 depends on them.
-
-Measured under the guard, in both modes: a file whose last line is a comment with
-no trailing newline, or a source map comment, still marks its end; concurrent
-subtests' handler arms belong to their top-level test; an ownerless arm after the
-last test belongs to no test. A file that throws while loading, or whose top-level
-await never settles, never marks its end, so an ownerless arm in it belongs to no
-test and a bounded refusal names `<module>`. Such a file fails anyway.
+A second sweep showed the fallback was wrong in kind: timing does not carry causation.
+An awaited top-level test was recorded with no test, and a file declaring its own
+`Symbol` broke the marker. The architect withdrew E2 and the owner ruled at
+[M7-U59](https://github.com/williacj/rigger/issues/1009#issuecomment-6714924960)
+to drop it. The guard is back to ownership by async context alone, as at round
+three: the load hook, the marker, the running-test lookup and its tests are gone.
+The record interface now names the null case: no top-level test's run started the
+work, as while the file loads, or for a request a root hook's server handles. Tests
+pin that a root server's handler arm is recorded with no test and refused naming
+`<module>`. #1138 keeps `D30`'s null rule for such arms.
 
 A function captured with `AsyncLocalStorage.snapshot()` in test A and run in test B
-keeps A's context, so its arm is recorded under A, as the architect ruled. #1138
-needs to know this when it reads the record.
+keeps A's context, so its arm is recorded under A. A test pins it, and #1138 needs to
+know it when it reads the record.
+
+The second sweep also found F2. In a bounded file, a refusal with no owning test made
+the guard's root `after` throw, which stopped the file's own `after` hooks; a server
+one of them closed kept the worker alive, and `npm test` hung instead of failing. The
+throw is removed: the record outside the worker already fails the run for such a
+refusal, and `afterEach` still names an owned one. A bounded test pins it.
 
 Three behaviours need no change:
 
@@ -236,6 +231,6 @@ Three behaviours need no change:
   has no infinity. The line is still an arm line, marked by its non-null `api`.
 - A bounded file cannot `listen` with an HTTP server: Node arms
   `setInterval(30000)` for its connection check. A test can pass
-  `connectionsCheckingInterval: 0`, as R11's does.
+  `connectionsCheckingInterval: 0`, as this card's server tests do.
 - After a timer mock is reset, `scheduler.wait` throws `ERR_INVALID_THIS`. The
   attacker traced this to Node itself, not to the guard.

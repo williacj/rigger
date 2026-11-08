@@ -103,28 +103,10 @@ function watchTimers(recordFile) {
   const kill = process.kill;
   const owners = new WeakMap();
   const tests = new WeakSet();
-  const topLevelTests = [];
-  let loaded = false;
   const refusals = new Map();
   // node:test binds the timers its own timeouts use when it loads, so loading it before the
   // wrappers keeps those off them; no caller needs an exemption.
   const test = require('node:test');
-  // Tests can run while the file still loads, so the file's own last statement marks its end:
-  // a load hook appends a call that runs once the module body, top-level awaits included, is done.
-  const entry = require('node:url').pathToFileURL(realpathSync.native(process.argv[1])).href;
-  // The key carries a per-run random token, so no test can call or delete the marker by name.
-  const markerKey = `rigger.suite.timer-file-loaded.${require('node:crypto').randomUUID()}`;
-  const marker = Symbol.for(markerKey);
-  Object.defineProperty(globalThis, marker, { configurable: true, value: () => { loaded = true; delete globalThis[marker]; } });
-  require('node:module').registerHooks({
-    load(url, context, nextLoad) {
-      const result = nextLoad(url, context);
-      if (url !== entry || result.format !== 'module') return result;
-      // A hook may hand back a string, a Buffer or another byte view; decode bytes as UTF-8.
-      const source = typeof result.source === 'string' ? result.source : new TextDecoder().decode(result.source);
-      return { ...result, source: `${source}\n;globalThis[Symbol.for(${JSON.stringify(markerKey)})]?.();\n` };
-    },
-  });
   if (!recordFile) {
     test.afterEach((context) => {
       const refusal = refusals.get(context);
@@ -132,23 +114,9 @@ function watchTimers(recordFile) {
       if (refusal) throw refusal;
     });
   }
-  function asyncOwner() {
+  function owner() {
     const resource = executionAsyncResource();
     return tests.has(resource) && resource.parent ? resource : owners.get(resource) ?? null;
-  }
-  // Async ownership comes first. Work whose owner is no test, such as a server a root hook
-  // started, belongs to the one top-level test running once the file has loaded; with none or
-  // several running, it belongs to no test.
-  function owner() {
-    const found = asyncOwner();
-    if (found || !loaded) return found;
-    // startTime and endTime are fields of Node's internal Test, not a documented API (D16 rule 3).
-    // Measured on Node 26.13.0: startTime is set when a test starts running and endTime when it
-    // ends. Were Node to rename them, every ownerless arm would belong to no test; R11's test and
-    // its receipt fail on that.
-    const running = topLevelTests.filter((candidate) => candidate.parent && !candidate.parent.parent
-      && candidate.startTime != null && candidate.endTime == null);
-    return running.length === 1 ? running[0] : null;
   }
   function topLevel(test) {
     while (test?.parent?.parent) test = test.parent;
@@ -156,12 +124,8 @@ function watchTimers(recordFile) {
   }
   createHook({
     init(_id, type, _trigger, resource) {
-      if (type === 'Test') {
-        tests.add(resource);
-        // A test's parent is set after its async resource starts, so its depth is read later.
-        topLevelTests.push(resource);
-      }
-      const test = asyncOwner();
+      if (type === 'Test') tests.add(resource);
+      const test = owner();
       if (test) owners.set(resource, test);
     },
   }).enable();
