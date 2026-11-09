@@ -630,16 +630,17 @@ async function afterFile(path) {
 const starting = afterFile(go);
 process.send({ kind: 'ready' });
 await starting;
-const first = process.hrtime.bigint();
+let first;
 for (let index = 0; count === null || index < count; index += 1) {
   // The documented envelope fixes the padding; the parent independently checks actual bytes.
   const empty = { ts: '1970-01-01T00:00:00.000Z', run, layer: 'L3', event: 'integrity',
     card: 1298, dispatch: 'd-' + run, index, payload: '' };
   const payload = 'x'.repeat(size - Buffer.byteLength(JSON.stringify(empty) + '\n'));
+  // A rendezvous precedes the measured continuation, so it cannot force overlap.
+  if (index === (onward ? 1 : 0)) first = process.hrtime.bigint();
   emit('integrity', { index, payload });
   if (index === 0 && onward) {
-    // Both first emits must return before either writer continues, making overlap observable
-    // even where one process was scheduled much earlier than the other.
+    // Both emit-0 calls return before the measured continuation begins.
     const continuing = afterFile(onward);
     process.send({ kind: 'first-returned' });
     await continuing;
@@ -802,14 +803,15 @@ async function concurrentWriters(t, size) {
   writeFileSync(onward, '');
   const [aWindow, bWindow] = await Promise.all([written(a), written(b)]);
 
+  const bytes = statSync(join(directory, 'events.jsonl')).size;
+  t.diagnostic(`I4 line bytes ${size}; stream bytes ${bytes}; measured emits 1..999; A ${aWindow.first}..${aWindow.last}; B ${bWindow.first}..${bWindow.last}`);
+  assert.equal(bytes, 2000 * size, 'all exact-sized event lines must reach the shared stream');
   assert.ok(BigInt(aWindow.first) < BigInt(bWindow.last) && BigInt(bWindow.first) < BigInt(aWindow.last),
     'the two measured emit windows must overlap');
-  const bytes = statSync(join(directory, 'events.jsonl')).size;
-  assert.equal(bytes, 2000 * size, 'all exact-sized event lines must reach the shared stream');
-  t.diagnostic(`I4 line bytes ${size}; stream bytes ${bytes}; A ${aWindow.first}..${aWindow.last}; B ${bWindow.first}..${bWindow.last}; windows overlap`);
   let events;
   assert.doesNotThrow(() => { events = readEvents(directory); }, 'every complete event from both writers must be readable');
   assert.equal(events.length, 2000, 'every emitted event must be found exactly once');
+  t.diagnostic('I4 run switches: ' + events.slice(1).filter(({ run }, index) => run !== events[index].run).length);
   const indices = Array.from({ length: 1000 }, (_, index) => index);
   assertWriterEvents(events, 'A', size, indices);
   assertWriterEvents(events, 'B', size, indices);
