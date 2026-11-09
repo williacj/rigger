@@ -18,4 +18,6 @@ Paths under `scripts/` after: `doc-reference-check.mjs`, `gate-check.mjs`, `lib/
 
 The bump touched `.github/workflows/ci.yml`. Its host startup check qualifies the npm 11.20.0 banner only for the exact manifest version, so its two version literals now name `0.1.0`. The architect's pre-dispatch attack chose that over deriving the banner from the manifest, until a second bump hits the same file.
 
-The in-process fixtures' host test compares the installed package's code with the source tree's code under `scripts/`. Once `files` narrows, the installed tree holds four scripts and the source tree holds seventeen, so that comparison needed a line outside the card's grant classes. The owner was asked for it before it was pushed.
+The in-process fixtures' host test compares the installed package's code with the source tree's code under `scripts/`. Once `files` narrows, the installed tree holds four scripts and the source tree holds seventeen, so that comparison needed a line outside the card's first grant classes. The coordinator ruled it under M8-K12 as grant class G5 before it was pushed.
+
+The same ruling added `package-lock.json`'s two root `version` fields to the card, so the lockfile follows the bump and the next `npm install` leaves the tree clean. Nothing else in the lockfile changes.
