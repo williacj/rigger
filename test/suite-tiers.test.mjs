@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { reaped } from './process-fixtures.mjs';
 import { gitIn, repositoryAt } from './git-repository.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 
@@ -936,7 +937,8 @@ test('host runner reaps a process left behind by a test', (t) => {
   const pid = Number(readFileSync(marker, 'utf8'));
   assert.ok(Number.isSafeInteger(pid) && pid > 0, 'the fixture did not record its pid');
   const state = spawnSync('/bin/ps', ['-p', String(pid), '-o', 'stat='], { encoding: 'utf8' });
-  assert.ok(state.status !== 0 || state.stdout.trim().startsWith('Z'), 'the suite left the recorded process alive: ' + state.stdout);
+  t.diagnostic(JSON.stringify({ producer: '/bin/ps -p PID -o stat=', recordedPid: pid, ...state, error: state.error ? { ...state.error, message: state.error.message } : null }));
+  assert.ok(reaped(state), 'the suite left the recorded process alive: ' + state.stdout);
 });
 
 test('host runner runs two listed files with no overlap', (t) => {
