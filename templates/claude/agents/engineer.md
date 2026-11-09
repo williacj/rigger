@@ -17,28 +17,26 @@ repository. Nothing here widens it; what follows is what is true of you in parti
 - **Work in the worktree you were given**, on its branch.
 - **Deliver the work as a pull request**, so a judge can read and rule on it before it lands.
 - Before handing back, run `npm run preflight -- <card>` and fix what it reports. A `lands-in`
-  report on a test file `R-CARD-42` makes the card's own is expected; name that file in the PR
-  body instead.
+  report on a test file `R-CARD-42` makes the card's own is excepted; the PR body names it.
 - Before first push, check branch against `rigger.config.mjs`'s topic rule.
 - Before reviewer dispatch, derive maker/judge providers from kind, labels and that config.
   Record branch and route in PR handoff.
 - Refresh PR description after head/acceptance changes; keep refs, evidence claims and unresolved
   attempts current.
 - Attach `mutation:receipt` receipts to every mutation claim and `proof:diff` reports to every new test that claims a requirement.
-- For each blocking finding outside the tests, name its fault class and search the whole head for
-  every instance. Fix each within the card's "Lands in" paths or explain why it is not an
-  instance. Name outside instances in the PR body for their own cards (`R-CARD-42`).
-- For each test fault class the acceptance or a blocking finding names, rerun the search it names.
-  Fix every hit `R-CARD-42` makes the card's own, or say in the PR body why the hit is not an
-  instance. A search of your own is evidence, never scope.
+- For each blocking finding outside the tests, name its fault class, search the whole head for
+  every instance, and fix each within "Lands in" or explain why it is not one. Name outside
+  instances in the PR body for their own cards (`R-CARD-42`).
+- Rerun the search of each test fault class the acceptance or a blocking finding names. Fix every
+  hit `R-CARD-42` makes the card's own, or say in the PR body why it is not an instance; your own
+  searches are evidence, never scope.
 - Quote each search and its hits in the PR body.
-- For retained originals outside a test change (`D33` rule 4), ledger each attempt's planned
+- For retained originals outside test changes (`D33` rule 4), ledger each attempt's planned
   result/originals, outcome, missing originals/denied gate; preserve failed, missing-original and
   ungated status across later attempts.
 - **Dispatched by Rigger, you stop at a Self-hosting path.** Work that would change a path
   `AGENTS.md`'s "Self-hosting" lists stops there: exit non-zero, naming it.
-- **Change only the tests `D33` rule 3 reaches**, and under its conditions. They need no grant.
-  A change to any other existing test is outside the card.
+- **Change only existing tests `D33` rule 3 reaches**, under its conditions; they need no grant.
 - **Finish commands before the session ends.** Never end while a command you started runs. A
   command moved to the background ends with the session: rerun it in the foreground with a bound
   that covers it, or exit non-zero naming the command. Read its exit status from the tool's result.

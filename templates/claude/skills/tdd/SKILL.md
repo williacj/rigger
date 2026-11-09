@@ -118,7 +118,7 @@ Those mechanics do not decide whether a mutation represents the right semantic f
 the claim. The judge still evaluates that scope. `test/mutation-claim.test.mjs` checks the stated
 bar, not its use.
 
-Except for evidence about a test change (`D33` rule 4), preserve byte-complete private
+Except for test changes (`D33` rule 4), preserve byte-complete private
 command/ref/provenance originals outside
 test/suite/mutation/scratch/temp roots through retention event; reopen after command/fixture
 teardown before citation. Unreadable originals mean missing evidence despite paths/digests.
@@ -138,13 +138,12 @@ the next hypothesis.
 ## Never delete a failing test
 
 A failing test is a claim that something is wrong. Deleting it deletes the claim, not the fault.
-Fix the code, or raise the test with the owner (`AGENTS.md`), unless `D33` rule 3 reaches the test
-and its deletion meets that rule. Weakening an assertion until it passes is never allowed.
+Fix the code, or raise the test with the owner (`AGENTS.md`) unless `D33` rule 3 permits
+deleting it. Never weaken an assertion until it passes.
 
-A test `D33` rule 3 reaches may be rewritten or deleted without the owner, as that rule bounds
-it. Any other test needs explicit prior owner authorization. Either way, removed host proof
-without replacement remains unmet. A failing test's claim must still be resolved; calling it
-redundant does not resolve it.
+Rewriting or deleting a test needs explicit prior owner authorization unless `D33` rule 3
+permits it. Either way, removed host proof without replacement remains unmet. A failing test's
+claim must still be resolved; calling it redundant does not resolve it.
 
 ## No sleeps
 

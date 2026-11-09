@@ -124,9 +124,8 @@ and on what evidence, and what would reverse the recommendation.
 card, except a test fault `R-CARD-42` makes this card's own; follow-ups cover only outside work.
 An undone item leaves this card unfinished (`R-CARD-10`).
 
-**Name the class of a test fault.** Where the card fixes one, state the defect in one sentence and
-give the search that finds its instances, where one exists (`R-CARD-44`). The search sets how far
-the card reaches, so write it as narrow as the defect.
+**Name each test fault class the card fixes** as `R-CARD-44` defines one, with its search as
+narrow as the defect.
 
 **Split work into cards.** Map every part of the larger work to a card's acceptance item, not
 merely its title or description.
@@ -150,14 +149,13 @@ merge; `AGENTS.md`'s "Review and merge" still applies.
 Classify cited prior attempts as offered proof, context, or unresolved/noncredit; later
 results grant no retroactive credit.
 
-Outside a test change (`D33` rule 4), for required retained originals, predeclare finite offered
+Outside test changes (`D33` rule 4), for required retained originals, predeclare finite offered
 results before maker work: originals,
 private-safe access, exact ref, behavior scope and retention event through final independent ruling or
 longer card requirement.
 
-**Test edits need no grant.** The maker may change the tests `D33` rule 3 reaches, under its
-conditions. Where the card wants a test-line item, word it as: `git diff` against the base changes
-no existing line under `test/` outside a test `D33` rule 3 reaches.
+**Tests `D33` rule 3 reaches need no grant.** Word any test-line item as: `git diff` against the
+base changes no existing line under `test/` outside a test `D33` rule 3 reaches.
 
 **Admit harness diagnostics before work.** For a test without `// proves`, record the
 infrastructure behaviour, checked registered product requirements and why none applies, and
@@ -263,7 +261,7 @@ You revise the acceptance before any maker starts. This review is part of filing
     and unbounded absolutes, and did you revise before dispatch?
 20. Does the scope bullet cover every file an item or cited placement ruling requires?
 21. Is every cited proposal, ruling and grant posted and linked from the card?
-22. Where the card fixes a test fault, did you name its class and its search (`R-CARD-44`)?
+22. Did you name each test fault class the card fixes (`R-CARD-44`)?
 23. Before maker edits, did `npm run check:card` read the draft body, and did
     `npm run preflight -- --body-file <body-file>` run in a clean repository with origin/main
     and a merge base available? Resolve or report failures before maker admission.

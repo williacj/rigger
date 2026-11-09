@@ -9,16 +9,16 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (path) => readFileSync(join(root, path), 'utf8');
 
-test('the maker changes only the tests D33 rule 3 reaches, under its conditions, with no grant', () => {
+test('the maker changes only existing tests D33 rule 3 reaches, under its conditions, with no grant', () => {
   const prompt = read('.claude/agents/engineer.md');
-  assert.match(prompt, /\*\*Change only the tests `D33` rule 3 reaches\*\*, and under its conditions\.\s+They need no grant\./);
+  assert.match(prompt, /\*\*Change only existing tests `D33` rule 3 reaches\*\*, under its conditions; they need no grant\./);
   assert.doesNotMatch(prompt, /whole change locally|ask once|grant class/i);
 });
 
-test('test edits need no grant, and a card words its test-line item by D33 rule 3', () => {
+test('tests D33 rule 3 reaches need no grant, and a card words its test-line item by that rule', () => {
   const skill = read('.claude/skills/acceptance/SKILL.md');
-  assert.match(skill, /\*\*Test edits need no grant\.\*\* The maker may change the tests `D33` rule 3 reaches, under its\s+conditions\./);
-  assert.match(skill, /`git diff` against the base changes\s+no existing line under `test\/` outside a test `D33` rule 3 reaches\./);
+  assert.match(skill, /\*\*Tests `D33` rule 3 reaches need no grant\.\*\*/);
+  assert.match(skill, /Word any test-line item as: `git diff` against the\s+base changes no existing line under `test\/` outside a test `D33` rule 3 reaches\./);
   assert.doesNotMatch(skill, /grant class/i);
 });
 
@@ -29,10 +29,10 @@ test('a session ends only its own recorded process, by command', () => {
   assert.match(rules, /commands[\s\S]*?not code it writes/i);
 });
 
-test('a change to an existing test D33 rule 3 does not reach is outside the card, with no grant to ask for', () => {
+test('the D33 rule 3 bound reaches existing tests only, and no grant is asked for', () => {
   const prompt = read('.claude/agents/engineer.md');
-  assert.match(prompt, /They need no grant\.\s+A change to any other existing test is outside the card\./);
-  assert.doesNotMatch(prompt, /until granted/i);
+  assert.match(prompt, /Change only existing tests `D33` rule 3 reaches/);
+  assert.doesNotMatch(prompt, /Change only tests|until granted/i);
 });
 
 test('the acceptance reviewer checks that cited sources are posted and linked', () => {
