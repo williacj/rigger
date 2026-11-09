@@ -184,3 +184,14 @@ of that retained original, with offsets and SHA-256 digests in
 1300-r2-hook-log-provenance.json. No output was lost. Later action and inner-step log filenames
 are distinct. The first TDD driver released its slot at its idle bound between completed runs;
 no verification was interrupted, and the subsequent green ran after reacquiring the slot.
+
+
+N11's operand bindings also need their own pin. At head
+7d6025c6831e5f23317828d868bbde484abbc271, a local CONFIG or target, or a path parameter on
+an immediate arrow, kept the expected expression names while changing what they referenced.
+1300-r2-config-scope-binding-red.log records all three intended misses before the fix.
+N11 now compares the actual target/CONFIG/path reference bindings with the factory parameter,
+module import and constant path declaration. The whole guard then passed in
+1300-r2-config-scope-binding-green.log. These are ordinary local bindings at the same named
+import boundary, within N11; no reflective route or production file is added. The completed
+host run at that predecessor is retained separately, and final-head verification is repeated.
