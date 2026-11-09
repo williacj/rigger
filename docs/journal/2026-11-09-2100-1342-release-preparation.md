@@ -9,7 +9,7 @@ Measured with `npm pack --dry-run --json` under npm 11.20.0. The "before" column
 | | Before | After |
 |---|---|---|
 | Version | `0.0.0` | `0.1.0` |
-| Entries | 97 | 85 |
+| Entries | 97 | 84 |
 | Under `scripts/` | 17 | 4 |
 
 Paths under `scripts/` before: `aboutme-header-check.mjs`, `absorption-check.mjs`, `build-test-matrix.mjs`, `card-check.mjs`, `doc-reference-check.mjs`, `duplicate-id-check.mjs`, `gate-check.mjs`, `instruction-budget.mjs`, `lib/pack-result.mjs`, `mutation-receipt.mjs`, `package-budget.mjs`, `path-check.mjs`, `preflight.mjs`, `proof-diff.mjs`, `record-commit.mjs`, `ruled-out-word-check.mjs` and `spec-style-lint.mjs`.
