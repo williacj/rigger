@@ -155,6 +155,15 @@ test('T1: a test added to a conversion-list file whose title the record arms und
   assert.deepEqual(result.errors, [`${CONVERTING}: added test "added" armed node:timers.setInterval with delay 7`]);
 });
 
+test('T1: an added title is matched to the record as the string the runner registers, not as its source text', () => {
+  const result = rowOutcome({
+    base: { [CONVERTING]: header },
+    head: { [CONVERTING]: `${header}test('caf\\u00e9 // not a comment', () => {});\n// test('commented out', () => {});\nconst text = "test('in a string', () => {})";\n` },
+    record: { ran: [CONVERTING], arms: [arm(CONVERTING, 'café // not a comment'), arm(CONVERTING, 'commented out'), arm(CONVERTING, 'in a string')] },
+  });
+  assert.deepEqual(result.errors, [`${CONVERTING}: added test "café // not a comment" armed setTimeout with delay 5`]);
+});
+
 test('T2: no added test passes although an older test arms a timer', () => {
   const source = `${header}test('older', () => {});\n`;
   const result = rowOutcome({
