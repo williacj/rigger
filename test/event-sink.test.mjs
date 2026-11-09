@@ -14,6 +14,8 @@ import { openSink, readEvents } from '../src/observation/sink.mjs';
 import { UNDRAINED_BOUND } from '../src/substrate/standard-error.mjs';
 import { scratch, turn, undrained } from './process-fixtures.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { statSync } from 'node:fs';
+import { until } from './process-fixtures.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const sinkModule = pathToFileURL(join(root, 'src', 'observation', 'sink.mjs')).href;
@@ -142,6 +144,7 @@ test('an append leaves what is already on disk byte for byte, whoever opened the
   ]);
 });
 
+// proves R-RECORD-6
 test('an event recorded before the writing process is killed is still there afterwards', () => {
   const directory = stateDir();
   // The sink writes synchronously and never flushes a buffer of its own, and this is where
@@ -175,15 +178,15 @@ test('a reader recovers every event that was emitted, in the order they were emi
 });
 
 test('a torn line is refused rather than passed over, and the reader says which line', () => {
-  // What a machine that lost power mid-append would leave. The sink does not repair it, and
-  // the point of this test is that a reader does not quietly return the events either side of
-  // the damage as though the record were whole.
+  // A newline-terminated malformed line is damage. The reader refuses it rather than returning
+  // the events either side as though the record were whole. Bytes after the final newline
+  // have not yet become such a line.
   const directory = stateDir();
   openSink({ directory, run: 'r-8f21', now: clockOver([AT_14_14]) })
     .emitter({ layer: 'L3', card: 1412 })
     .emit('pull', { queueDepth: 7 });
   const whole = readFileSync(join(directory, 'events.jsonl'));
-  writeFileSync(join(directory, 'events.jsonl'), whole.subarray(0, whole.length - 8));
+  writeFileSync(join(directory, 'events.jsonl'), Buffer.concat([whole.subarray(0, whole.length - 8), Buffer.from('\n')]));
 
   assert.throws(() => readEvents(directory), /events\.jsonl line 1 is not a recorded event/);
 });
@@ -604,4 +607,223 @@ test('a reader that drains again after a write gave up on it gets every byte of 
   // sink's events are found by their own field rather than line by line.
   const seconds = [...stderr.matchAll(/"second":(\d+),/g)].map(([, index]) => Number(index));
   assert.deepEqual(seconds, Array.from({ length: 2000 }, (unused, index) => index));
+});
+
+/** A verb-shaped writer, controlled outside the state directory and cleaned up by its recorded pid. */
+async function verbWriter(t, options) {
+  const home = temporaryDirectory('rigger-record-writer-', { context: t });
+  const script = join(home, 'writer.mjs');
+  writeFileSync(script, String.raw`// ABOUTME: Appends exact-sized events in a separate verb-shaped process.
+import { openSink } from ${JSON.stringify(sinkModule)};
+import { existsSync, watch } from 'node:fs';
+import { dirname } from 'node:path';
+import { once } from 'node:events';
+const { directory, run, size, count, report, go, onward } = JSON.parse(process.argv[2]);
+const sink = openSink({ run, now: () => 0 });
+sink.name(directory);
+const { emit } = sink.emitter({ layer: 'L3', card: 1298, dispatch: 'd-' + run });
+async function afterFile(path) {
+  const watcher = watch(dirname(path));
+  try { while (!existsSync(path)) await once(watcher, 'change'); }
+  finally { watcher.close(); }
+}
+const starting = afterFile(go);
+process.send({ kind: 'ready' });
+await starting;
+const first = process.hrtime.bigint();
+for (let index = 0; count === null || index < count; index += 1) {
+  // The documented envelope fixes the padding; the parent independently checks actual bytes.
+  const empty = { ts: '1970-01-01T00:00:00.000Z', run, layer: 'L3', event: 'integrity',
+    card: 1298, dispatch: 'd-' + run, index, payload: '' };
+  const payload = 'x'.repeat(size - Buffer.byteLength(JSON.stringify(empty) + '\n'));
+  emit('integrity', { index, payload });
+  if (index === 0 && onward) {
+    // Both first emits must return before either writer continues, making overlap observable
+    // even where one process was scheduled much earlier than the other.
+    const continuing = afterFile(onward);
+    process.send({ kind: 'first-returned' });
+    await continuing;
+  }
+  if (report) await new Promise((resolve, reject) => {
+    process.stdout.write(String(index) + '\n', (error) => error ? reject(error) : resolve());
+  });
+}
+const last = process.hrtime.bigint();
+process.send({ kind: 'done', first: String(first), last: String(last) }, () => process.disconnect());
+`);
+  const child = spawn(process.execPath, [script, JSON.stringify(options)], {
+    cwd: home, env: { ...process.env, TMPDIR: home }, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+  });
+  const pid = child.pid;
+  const messages = [];
+  let output = '';
+  let error = '';
+  let closed = false;
+  child.stdout.on('data', (chunk) => { output += chunk; });
+  child.stderr.on('data', (chunk) => { error += chunk; });
+  child.on('message', (message) => messages.push(message));
+  const ended = once(child, 'close').then((result) => { closed = true; return result; });
+  t.after(async () => {
+    if (child.exitCode === null && child.signalCode === null) {
+      try { process.kill(pid, 'SIGKILL'); } catch (failure) { if (failure.code !== 'ESRCH') throw failure; }
+    }
+    await ended;
+  });
+  assert.ok(Number.isSafeInteger(pid), 'the writer must have a recorded pid');
+  t.diagnostic(`writer ${options.run} pid ${pid}`);
+  await until(() => closed || messages.some(({ kind }) => kind === 'ready'), t);
+  assert.ok(messages.some(({ kind }) => kind === 'ready'), `the writer must be ready: ${error}`);
+  return { pid, child, ended, messages, output: () => output, error: () => error };
+}
+
+/** A completed writer proves that each synchronous emit returned. */
+async function written(writer) {
+  const [code, signal] = await writer.ended;
+  assert.equal(code, 0, writer.error());
+  assert.equal(signal, null);
+  assert.equal(writer.error(), '');
+  const done = writer.messages.find(({ kind }) => kind === 'done');
+  assert.ok(done, 'the writer must report its first and last emit times');
+  return done;
+}
+
+/** Independent envelope, sequence and whole-payload assertions for one process's events. */
+function assertWriterEvents(events, run, size, indices) {
+  const own = events.filter((event) => event.run === run);
+  assert.deepEqual(own.map(({ index }) => index), indices, `every ${run} event must remain in its own emit order`);
+  for (const event of own) {
+    const { payload, ...envelope } = event;
+    assert.deepEqual(envelope, { ts: '1970-01-01T00:00:00.000Z', run, layer: 'L3',
+      event: 'integrity', card: 1298, dispatch: 'd-' + run, index: event.index });
+    assert.equal(typeof payload, 'string');
+    assert.ok(/^x+$/.test(payload), 'every payload must remain whole');
+    assert.equal(Buffer.byteLength(JSON.stringify(event) + '\n'), size, 'each actual event must have the required line size');
+  }
+}
+
+// OS behaviour: a later process must open and append without replacing the earlier process's bytes.
+// proves R-RECORD-5
+test('R4: a later verb process leaves every earlier byte unchanged', { timeout: 60_000 }, async (t) => {
+  const directory = join(stateDir(), '.rigger');
+  const control = temporaryDirectory('rigger-record-control-', { context: t });
+  const first = await verbWriter(t, { directory, run: 'A', size: 200, count: 2, go: join(control, 'first') });
+  writeFileSync(join(control, 'first'), '');
+  await written(first);
+  const before = readFileSync(join(directory, 'events.jsonl'));
+
+  const second = await verbWriter(t, { directory, run: 'B', size: 200, count: 2, go: join(control, 'second') });
+  writeFileSync(join(control, 'second'), '');
+  await written(second);
+
+  const after = readFileSync(join(directory, 'events.jsonl'));
+  assert.ok(after.length > before.length, 'a later process must grow the record');
+  assert.deepEqual(after.subarray(0, before.length), before, 'every earlier process byte must remain unchanged');
+  let events;
+  assert.doesNotThrow(() => { events = readEvents(directory); }, 'both processes must leave whole readable events');
+  assert.deepEqual(events.map(({ run }) => run), ['A', 'A', 'B', 'B']);
+  assertWriterEvents(events, 'A', 200, [0, 1]);
+  assertWriterEvents(events, 'B', 200, [0, 1]);
+  assert.deepEqual(readdirSync(directory), ['events.jsonl']);
+});
+
+// OS behaviour: separately opened writers must preserve each ordering at both physical line sizes.
+// proves R-RECORD-6
+test('I1 I2: ordered verb processes preserve both whole lines at 200 bytes and 1 MiB', { timeout: 60_000 }, async (t) => {
+  for (const size of [200, 1_048_576]) for (const runs of [['A', 'B'], ['B', 'A']]) {
+    await t.test(`${size} bytes, ${runs.join(' then ')}`, async (t) => {
+      const directory = join(stateDir(), '.rigger');
+      const control = temporaryDirectory('rigger-record-control-', { context: t });
+      const first = await verbWriter(t, { directory, run: runs[0], size, count: 1, go: join(control, 'first') });
+      const second = await verbWriter(t, { directory, run: runs[1], size, count: 1, go: join(control, 'second') });
+      writeFileSync(join(control, 'first'), '');
+      const firstWindow = await written(first);
+      writeFileSync(join(control, 'second'), '');
+      const secondWindow = await written(second);
+
+      assert.ok(BigInt(firstWindow.last) < BigInt(secondWindow.first), 'the first append must finish before the second starts');
+      assert.equal(statSync(join(directory, 'events.jsonl')).size, 2 * size, 'both exact-sized lines must be present');
+      let events;
+      assert.doesNotThrow(() => { events = readEvents(directory); }, 'both lines must remain whole');
+      assert.deepEqual(events.map(({ run }) => run), runs);
+      assertWriterEvents(events, 'A', size, [0]);
+      assertWriterEvents(events, 'B', size, [0]);
+      t.diagnostic(`${runs.join(' then ')}; line bytes ${size}; first ${firstWindow.first}..${firstWindow.last}; second ${secondWindow.first}..${secondWindow.last}`);
+    });
+  }
+});
+
+// OS behaviour: the running writer never waits for the parent to choose an internal kill point.
+// proves R-RECORD-6
+test('R7: SIGKILL during a running writer preserves its reported returns and every restarted event', { timeout: 60_000 }, async (t) => {
+  const directory = join(stateDir(), '.rigger');
+  const control = temporaryDirectory('rigger-record-control-', { context: t });
+  const writer = await verbWriter(t, { directory, run: 'A', size: 200, count: null, report: true, go: join(control, 'first') });
+  writeFileSync(join(control, 'first'), '');
+  await until(() => writer.output().split('\n').length > 32, t);
+  assert.equal(writer.child.exitCode, null, 'the writer must still be running at the kill');
+  process.kill(writer.pid, 'SIGKILL');
+  const [code, signal] = await writer.ended;
+  assert.equal(code, null);
+  assert.equal(signal, 'SIGKILL');
+  assert.equal(writer.error(), '');
+  // A kill may interrupt the report following the last returned emit. Only a complete report
+  // establishes that return; the next emit cannot start until that report's write completes.
+  const reports = writer.output().slice(0, writer.output().lastIndexOf('\n') + 1);
+  const returned = reports.trimEnd().split('\n').map(Number);
+  assert.deepEqual(returned, Array.from({ length: returned.length }, (_, index) => index));
+  const later = await verbWriter(t, { directory, run: 'B', size: 200, count: 2, go: join(control, 'second') });
+  writeFileSync(join(control, 'second'), '');
+  await written(later);
+
+  let events;
+  assert.doesNotThrow(() => { events = readEvents(directory); }, 'returned emits and the restarted writer must remain readable');
+  const killed = events.filter(({ run }) => run === 'A');
+  assert.ok(killed.length >= returned.length, 'every reported return must be found');
+  assert.ok(killed.length <= returned.length + 1, 'at most one emit may have returned without its report');
+  assert.deepEqual(killed.slice(0, returned.length).map(({ index }) => index), returned);
+  assertWriterEvents(events, 'A', 200, Array.from({ length: killed.length }, (_, index) => index));
+  assertWriterEvents(events, 'B', 200, [0, 1]);
+  assert.deepEqual(events.map(({ run }) => run), [...Array(killed.length).fill('A'), 'B', 'B']);
+  t.diagnostic(`SIGKILL pid ${writer.pid}; reported ${returned.length}; recovered ${killed.length}; restarted 2`);
+});
+
+/** Two live processes begin on one shared file signal, then each returns from 1000 emits. */
+async function concurrentWriters(t, size) {
+  const directory = join(stateDir(), '.rigger');
+  const control = temporaryDirectory('rigger-record-control-', { context: t });
+  const go = join(control, 'start');
+  const onward = join(control, 'continue');
+  const a = await verbWriter(t, { directory, run: 'A', size, count: 1000, go, onward });
+  const b = await verbWriter(t, { directory, run: 'B', size, count: 1000, go, onward });
+  assert.notEqual(a.pid, b.pid, 'both writers must be separate live processes');
+  writeFileSync(go, '');
+  await until(() => a.messages.some(({ kind }) => kind === 'first-returned')
+    && b.messages.some(({ kind }) => kind === 'first-returned'), t);
+  writeFileSync(onward, '');
+  const [aWindow, bWindow] = await Promise.all([written(a), written(b)]);
+
+  assert.ok(BigInt(aWindow.first) < BigInt(bWindow.last) && BigInt(bWindow.first) < BigInt(aWindow.last),
+    'the two measured emit windows must overlap');
+  const bytes = statSync(join(directory, 'events.jsonl')).size;
+  assert.equal(bytes, 2000 * size, 'all exact-sized event lines must reach the shared stream');
+  t.diagnostic(`I4 line bytes ${size}; stream bytes ${bytes}; A ${aWindow.first}..${aWindow.last}; B ${bWindow.first}..${bWindow.last}; windows overlap`);
+  let events;
+  assert.doesNotThrow(() => { events = readEvents(directory); }, 'every complete event from both writers must be readable');
+  assert.equal(events.length, 2000, 'every emitted event must be found exactly once');
+  const indices = Array.from({ length: 1000 }, (_, index) => index);
+  assertWriterEvents(events, 'A', size, indices);
+  assertWriterEvents(events, 'B', size, indices);
+  assert.deepEqual(readdirSync(directory), ['events.jsonl']);
+}
+
+// OS behaviour: shared-file appends and independently measured process windows need real processes.
+// proves R-RECORD-6
+test('I4: concurrent verb processes preserve 1000 whole 200-byte events each', { timeout: 180_000 }, async (t) => {
+  await concurrentWriters(t, 200);
+});
+
+// OS behaviour: the large-line case measures real shared-file writes and reads the full resulting stream.
+// proves R-RECORD-6
+test('I4: concurrent verb processes preserve 1000 whole 1 MiB events each', { timeout: 180_000 }, async (t) => {
+  await concurrentWriters(t, 1_048_576);
 });

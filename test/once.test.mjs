@@ -1890,3 +1890,42 @@ test('once keeps a Review peer verdict beside a real scratch refusal and escalat
   assert.equal(events.filter(({ event }) => event === 'transition').at(-1).to, 'owner');
   assert.equal(events.filter(({ event }) => event === 'dispatch.end').length, 1);
 });
+
+import { pathToFileURL } from 'node:url';
+
+/** The first actual maker dispatch, with its L1 start correlated to L3's dispatch id. */
+function assertFirstRecordedDispatch(ran) {
+  assert.equal(ran.agentRuns().length, 1, 'the fixture maker must actually run');
+  assert.equal(ran.code, 1, ran.out + ran.err);
+  assert.match(ran.err, /maker exited 0 and opened no pull request/);
+  assert.ok(existsSync(join(ran.consumer, '.rigger', 'events.jsonl')), 'recording requires no opt-in');
+  const events = eventsOf(ran);
+  const maker = events.find(({ event, role, card }) => event === 'dispatch' && role === 'engineer' && card === 10);
+  assert.ok(maker, 'L3 must identify the dispatched fixture maker');
+  assert.equal(typeof maker.dispatch, 'string');
+  const starts = events.filter(({ event, dispatch }) => event === 'dispatch.start' && dispatch === maker.dispatch);
+  assert.equal(starts.length, 1, 'the first dispatch must have its recorded dispatch.start');
+  assert.equal(starts[0].card, 10);
+}
+
+// Disabling the recording of dispatch.start must fail even when the telemetry key is absent.
+// proves R-RECORD-1
+test('R1: once records its first dispatch with no telemetry key', async () => {
+  const { telemetry, ...settings } = config();
+  const ran = once({ items: [card(10, 'Ready')] }, { settings });
+  const loaded = (await import(pathToFileURL(join(ran.consumer, 'rigger.config.mjs')).href)).default;
+
+  assert.equal(Object.hasOwn(loaded, 'telemetry'), false, 'the parsed consumer config must omit telemetry');
+  assertFirstRecordedDispatch(ran);
+});
+
+// Turning push off must leave the first dispatch recorded locally.
+// proves R-RECORD-1
+test('R2: once records its first dispatch with telemetry.push false', async () => {
+  const settings = { ...config(), telemetry: { push: false } };
+  const ran = once({ items: [card(10, 'Ready')] }, { settings });
+  const loaded = (await import(pathToFileURL(join(ran.consumer, 'rigger.config.mjs')).href)).default;
+
+  assert.deepEqual(loaded.telemetry, { push: false }, 'the parsed consumer config must turn push off');
+  assertFirstRecordedDispatch(ran);
+});
