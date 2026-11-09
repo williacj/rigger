@@ -1149,3 +1149,108 @@ test('P9a: plan over the refusal shows the non-merge answer and no merge, where 
     assert.match(preexisting(name, undefined, 'open').verb('plan').out, /merge pull request #70/, 'with the rules served plan shows the merge, so the refusal alone holds it');
   }
 });
+
+import { optionalRun, optionalUntil, optionalWorld } from './optional-config-world.mjs';
+
+/** Observe the natural return before cleanup's stop, so a kept-up mutant cannot hide behind it. */
+async function optionalDrain(t, key) {
+  const world = optionalWorld(t, key, { items: [] });
+  world.start(optionalRun);
+  try {
+    await optionalUntil(() => world.settled() || world.events().some(({ event, trigger }) => event === 'trigger' && trigger === 'drain'));
+    await optionalUntil(() => world.settled() || world.clock.pending() > 0);
+    assert.equal(world.settled(), true, key + ': run returns at drain without a stop or another wake');
+    assert.equal(world.failure(), undefined);
+    assert.equal(world.answer().code, 0, world.answer().text);
+    assert.equal(world.controller.signal.aborted, false, 'the natural return precedes cleanup');
+    assert.equal(world.clock.pending(), 0, 'the drained invocation retains no clock wake');
+  } finally {
+    await world.stop();
+  }
+}
+
+/** Closed admission prevents a newly opened clock card from becoming another dispatch fixture. */
+async function optionalFiring(t, key) {
+  const world = optionalWorld(t, key, { items: [] });
+  seed(join(world.consumer, '.rigger'), 'owner-a1.json', closerText());
+  world.start(optionalRun);
+  await optionalUntil(() => world.settled() || world.events().some(({ event, trigger }) => event === 'trigger' && trigger === 'drain'));
+  assert.equal(world.settled(), false, 'the declared triggers keep the invocation up');
+  await world.clock.advance(world.clock.now() + 1000);
+  assert.equal(world.failure(), undefined);
+  return world;
+}
+
+/** Decode the clock mark's JSON tuple, rather than searching for a trigger name in prose. */
+const optionalClockCards = (world) => world.state().repository.issues
+  .filter(({ body }) => body.startsWith('Rigger clock: '))
+  .map((issue) => ({ ...issue, mark: JSON.parse(issue.body.split('\n')[0].slice('Rigger clock: '.length)) }));
+
+// ARCHITECTURE.md, Engine settings: omitted N is three, observed through actual run claims.
+// proves R-OPTION-1
+test('Table O O1 concurrency: run holds three claims by default', { timeout: 60000 }, async (t) => {
+  const world = optionalWorld(t, 'concurrency', { items: [40, 20, 10, 30].map((number) =>
+    card(number, 'Ready', { labels: ['type:change', 'area:probe'] })) });
+  const answer = await world.start(optionalRun, { stopAtDrain: true });
+  assert.deepEqual(world.fixtureErrors, []);
+  assert.equal(answer.code, 0, answer.text);
+  assert.deepEqual(world.events().filter(({ event }) => event === 'run.start').map(({ concurrency }) => concurrency), [3]);
+  assert.equal(mostHeld(world.events()), 3, 'three actual pull/release pairs overlap');
+  assert.deepEqual(world.agent.runs().filter(({ role }) => role === 'engineer').map(({ card }) => card).sort((a, b) => a - b), [10, 20, 30, 40]);
+});
+
+// ARCHITECTURE.md, Triggers: no clock declaration means run ends once the board drains.
+// proves R-OPTION-1
+test('Table O O7 clock: run ends naturally at the board drain', { timeout: 60000 }, async (t) => {
+  await optionalDrain(t, 'clock');
+});
+
+// ARCHITECTURE.md, Triggers: poll alone declares no clock trigger that can keep run up.
+// proves R-OPTION-1
+test('Table O O7a clock.triggers: run ends naturally at the board drain', { timeout: 60000 }, async (t) => {
+  await optionalDrain(t, 'clock.triggers');
+});
+
+// ARCHITECTURE.md, Clock triggers; validate.mjs's exclusive card/job rule.
+// proves R-OPTION-1
+test('Table O O8a trigger.card: run fires the job without opening a card for it', { timeout: 60000 }, async (t) => {
+  const world = await optionalFiring(t, 'trigger.card');
+  try {
+    assert.deepEqual(world.events().filter(({ event, name }) => event === 'trigger.outcome' && name === 'report')
+      .map(({ outcome }) => outcome), ['job']);
+    assert.deepEqual(optionalClockCards(world).map(({ mark }) => mark[0]), ['audit'], 'only the separate card-shaped trigger opens a card');
+    assert.equal(world.state().repository.issues.length, 1, 'the job opens no additional unmarked issue either');
+    assert.equal(world.written.filter((text) => text.startsWith('rigger report:')).length, 1, 'the report job reaches the verb output');
+    assert.equal(world.agent.runs().length, 0);
+  } finally {
+    await world.stop();
+  }
+});
+
+// ARCHITECTURE.md, Clock triggers; validate.mjs's exclusive card/job rule.
+// proves R-OPTION-1
+test('Table O O8b trigger.job: run opens the card without running a job for it', { timeout: 60000 }, async (t) => {
+  const world = await optionalFiring(t, 'trigger.job');
+  try {
+    assert.deepEqual(world.events().filter(({ event, name }) => event === 'trigger.outcome' && name === 'audit')
+      .map(({ outcome }) => outcome), ['card']);
+    assert.deepEqual(optionalClockCards(world).map(({ mark }) => mark[0]), ['audit']);
+    assert.equal(world.events().filter(({ event, name, outcome }) => event === 'trigger.outcome' && name === 'audit' && outcome === 'job').length, 0);
+    assert.equal(world.written.filter((text) => text.startsWith('rigger report:')).length, 1, 'only the separate report trigger runs a job');
+  } finally {
+    await world.stop();
+  }
+});
+
+// R-CARD-41: an omitted clock-card author is the owner.
+// proves R-OPTION-1
+test('Table O O9 card.author: run names the owner as the clock card author', { timeout: 60000 }, async (t) => {
+  const world = await optionalFiring(t, 'card.author');
+  try {
+    const cards = optionalClockCards(world).filter(({ mark }) => mark[0] === 'audit');
+    assert.equal(cards.length, 1);
+    assert.match(cards[0].body, /^\*\*Author:\*\* owner$/m);
+  } finally {
+    await world.stop();
+  }
+});
