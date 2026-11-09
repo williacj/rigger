@@ -2,12 +2,13 @@
 // gh with: each case runs against the fake in the deterministic tier and against real gh on opt-in.
 
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
 
 import config from '../rigger.config.mjs';
 import { parseDocument } from '../src/substrate/forge/graphql.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
 import { FORGE_TIMEOUT, readRunner } from '../src/substrate/forge/runners.mjs';
+import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+import { runCommand } from '../src/substrate/process.mjs';
 
 /** What precedes the document in a GraphQL request, as the fake gh's `commandOf` writes one. */
 const GRAPHQL = 'gh api graphql -f query=';
@@ -634,18 +635,19 @@ export function contractAsk(name, { via, agent, ran = [], commandOf }) {
 
 /**
  * What the live side sends real gh with: `via`, the read runner's options, recording through
- * `emitter`, and `agent`, which runs an agent's read with `spawn`, Node's `spawnSync` by default.
- * Each real call is bounded by the read runner's own `FORGE_TIMEOUT`, a minute, so a hung gh is
- * ended and fails its case rather than stalling the host run; an agent read so ended throws the
- * spawn's error.
+ * `emitter`, and `agent`, which runs an agent's read as `gh`, or the executable at `gh`, through
+ * `run`, the process adapter's `runCommand`, as the read runner's own spawn does. Each real call is
+ * bounded by `timeout`, the read runner's `FORGE_TIMEOUT`, a minute, where none is given. At that
+ * bound the adapter kills the call's whole process group with `SIGKILL`, so a gh that ignores
+ * `SIGTERM` is ended too; its kill reaches `emitter`, which refuses it where it is `UNKILLED`, and
+ * the call rejects, so the case fails rather than stalling the host run.
  */
-export function liveSides({ emitter, spawn = spawnSync }) {
+export function liveSides({ emitter, run = runCommand, timeout = FORGE_TIMEOUT, gh = 'gh' }) {
   return {
-    via: { emitter, timeout: FORGE_TIMEOUT },
-    agent: (args) => {
-      const ran = spawn('gh', args, { encoding: 'utf8', timeout: FORGE_TIMEOUT });
-      if (ran.error) throw ran.error;
-      return { status: ran.status, stdout: ran.stdout, stderr: ran.stderr, timedOut: false };
+    via: { emitter, timeout },
+    agent: async (args) => {
+      const ran = await run({ command: gh, args, cwd: process.cwd(), env: gitEnvironment(), timeout, emitter });
+      return { status: ran.exit, stdout: ran.stdout.toString('utf8'), stderr: ran.stderr.toString('utf8'), timedOut: ran.timedOut };
     },
   };
 }

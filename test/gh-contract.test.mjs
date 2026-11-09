@@ -126,7 +126,7 @@ function fakeForge(t) {
   writeFileSync(statePath, JSON.stringify({ repo: BOARD.repo, project: BOARD.project, model: FAKE_BOARD, origin, writes: [], sent: [] }));
   seedRepositoryAt(statePath, FAKE_REPOSITORY);
   const answer = async (args) => ({ ...(await answerFakeGh(statePath, args, { now: () => NOW, cwd: directory, input: () => '' })), timedOut: false });
-  return { target: { ...BOARD, fileCommit: gitIn(origin, 'rev-parse', 'refs/heads/main').trim() }, via: { send: (_gh, args) => answer(args) }, agent: answer };
+  return { target: { ...BOARD, fileCommit: gitIn(origin, 'rev-parse', 'refs/heads/main').trim() }, via: { send: (_gh, args) => answer(args) }, agent: answer, statePath };
 }
 
 /** Runs gh case `ghCase` against the fake forge, recording the arguments of each command it sends in `ran`. */
@@ -202,22 +202,31 @@ test('an answer is read as recorded only where the comment block directly above 
   assert.deepEqual(entriesOf(source, 'AGENT_COMMANDS', /^ {2}\w+: async/).map(({ recorded }) => recorded), [false, true]);
 });
 
-/**
- * The live gh location the opt-in provides: the variable `test/suite.sh` sets only where a run opts
- * in for gh (rule 12.3), naming the directory of the real gh the suite's refusing gh (#276) stands
- * in front of. It is joined here from its parts, so this file, which looks for it, does not name it.
- * The opt-in itself, `RIGGER_LIVE_GH`, gives a test no gh, and a test may name it. The two routes
- * past the refusing gh that predate this one, `test/forge-runners.test.mjs`'s `D16` probe and
- * `test/fake-gh.test.mjs`'s `hasInstalledGh`, read the suite's refusing directory, not this.
- */
-const LIVE_GH = ['RIGGER', 'LIVE', 'GH', 'DIR'].join('_');
-
 /** The file that provides the live gh location, and the one file that may read it. */
 const PROVIDER = 'test/suite.sh';
 const READER = 'test/gh-contract-host.test.mjs';
 
+/**
+ * The live gh location the opt-in provides: the variable `test/suite.sh` sets only where a run opts
+ * in for gh (rule 12.3), naming the directory of the real gh the suite's refusing gh (#276) stands
+ * in front of. It is taken from the one environment read its reader makes, so this file, which
+ * looks for it, holds no part of it; the scan checks the provider exports the same name. The opt-in
+ * itself, `RIGGER_LIVE_GH`, gives a test no gh, and a test may name it. The two routes past the
+ * refusing gh that predate this one, `test/forge-runners.test.mjs`'s `D16` probe and
+ * `test/fake-gh.test.mjs`'s `hasInstalledGh`, read the suite's refusing directory, not this.
+ */
+const LIVE_GH = /process\.env\.(\w+)/.exec(readFileSync(new URL(`../${READER}`, import.meta.url), 'utf8'))?.[1];
+
+/**
+ * Whether `text` names the live gh location in any spelling a reader could build it from: its
+ * letters and digits in order, with whatever else between them, so a key joined from parts, spliced
+ * from strings or built in a template is found as the plain name is. Letter case is ignored, as a
+ * key can be upper-cased into being.
+ */
+const namesLiveGh = (text) => text.replace(/[^A-Za-z0-9]/g, '').toUpperCase().includes(LIVE_GH.replace(/[^A-Za-z0-9]/g, '').toUpperCase());
+
 /** The files among `files`, as `{ path, text }`, that read the live gh location and are neither its provider nor its reader. */
-const outsideTheOptIn = (files) => files.filter(({ path, text }) => text.includes(LIVE_GH) && ![PROVIDER, READER].includes(path)).map(({ path }) => path);
+const outsideTheOptIn = (files) => files.filter(({ path, text }) => namesLiveGh(text) && ![PROVIDER, READER].includes(path)).map(({ path }) => path);
 
 test('the host contract file is the only file under test/ that reads the live gh location the opt-in provides', () => {
   const root = new URL('..', import.meta.url);
@@ -227,39 +236,53 @@ test('the host contract file is the only file under test/ that reads the live gh
       const path = relative(fileURLToPath(root), join(entry.parentPath, entry.name)).split(sep).join('/');
       return { path, text: readFileSync(join(entry.parentPath, entry.name), 'utf8') };
     });
-  for (const path of [PROVIDER, READER]) {
-    assert.ok(files.find((file) => file.path === path)?.text.includes(LIVE_GH), `${path} does not name the live gh location, so the scan looked for the wrong name`);
-  }
+  assert.match(LIVE_GH ?? '', /^RIGGER_\w+_DIR$/, `${READER} reads no environment variable naming a directory, so the scan has no name to look for`);
+  assert.ok(files.find((file) => file.path === PROVIDER)?.text.includes(`export ${LIVE_GH}\n`), `${PROVIDER} does not export ${LIVE_GH}, so the reader reads something the opt-in does not provide`);
+  assert.equal(namesLiveGh(files.find((file) => file.path === 'test/gh-contract.test.mjs').text), false, 'the scan names the live gh location itself');
   assert.deepEqual(outsideTheOptIn(files), [], 'a file under test/ other than the host contract file reads the live gh location');
 });
 
-test('a file reading the live gh location is named, and its provider, its reader and the opt-in alone are not', () => {
+test('a file reading the live gh location is named however it spells the name, and its provider, its reader and the opt-in alone are not', () => {
+  const [prefix, ...rest] = LIVE_GH.split('_');
   assert.deepEqual(outsideTheOptIn([
     { path: PROVIDER, text: `${LIVE_GH}=x` },
     { path: READER, text: `process.env.${LIVE_GH}` },
-    { path: 'test/other.test.mjs', text: `process.env.${LIVE_GH}` },
+    { path: 'test/plain.test.mjs', text: `process.env.${LIVE_GH}` },
+    { path: 'test/joined.test.mjs', text: `process.env[[${[prefix, ...rest].map((part) => `'${part}'`).join(', ')}].join('_')]` },
+    { path: 'test/spliced.test.mjs', text: `process.env['${prefix}_' + '${rest.join('_')}']` },
+    { path: 'test/lowered.test.mjs', text: `process.env[\`${LIVE_GH.toLowerCase()}\`.toUpperCase()]` },
     { path: 'test/opting-in.test.mjs', text: 'env.RIGGER_LIVE_GH === \'1\'' },
     { path: 'test/forge-runners.test.mjs', text: 'process.env.RIGGER_REFUSING_GH_DIR' },
-  ]), ['test/other.test.mjs']);
+  ]), ['test/plain.test.mjs', 'test/joined.test.mjs', 'test/spliced.test.mjs', 'test/lowered.test.mjs']);
 });
 
 test('every real gh call the live side makes is bounded by at most 60 seconds, and a call it ends fails its case', async () => {
-  const spawned = [];
-  const timedOut = Object.assign(new Error('spawnSync gh ETIMEDOUT'), { code: 'ETIMEDOUT' });
-  const { via, agent } = liveSides({ emitter: null, spawn: (command, args, options) => {
-    spawned.push({ command, args, options });
-    return { status: null, signal: 'SIGTERM', stdout: '', stderr: '', error: timedOut };
+  const started = [];
+  // What the process adapter rejects with where its timeout ended the command and the emitter
+  // refused the kill: the bounded runner settles, and the case fails on it.
+  const ended = Object.assign(new Error('the timeout of 60000 ms ended gh, and the sink refused its kill'), { code: 'EVENT_REFUSED' });
+  const { via, agent } = liveSides({ emitter: null, run: async (call) => {
+    started.push(call);
+    throw ended;
   } });
   assert.ok(Number.isInteger(via.timeout) && via.timeout > 0 && via.timeout <= 60_000, `the read runner is given ${via.timeout} ms`);
   const diff = GH_CASES.find((ghCase) => ghCase.name === 'an agent\'s diff of a pull request');
-  await assert.rejects(diff.run(contractAsk(diff.name, { via, agent, commandOf }), BOARD), /ETIMEDOUT/);
-  assert.equal(spawned.length, 1);
-  assert.equal(spawned[0].command, 'gh');
-  assert.ok(spawned[0].options.timeout > 0 && spawned[0].options.timeout <= 60_000, `the agent's gh is given ${spawned[0].options.timeout} ms`);
+  await assert.rejects(diff.run(contractAsk(diff.name, { via, agent, commandOf }), BOARD), /the timeout of 60000 ms ended gh/);
+  assert.equal(started.length, 1);
+  assert.equal(started[0].command, 'gh');
+  assert.ok(started[0].timeout > 0 && started[0].timeout <= 60_000, `the agent's gh is given ${started[0].timeout} ms`);
 });
 
-test('a contract case whose command is a write fails naming the case, and sends nothing', async (t) => {
-  const { target, via, agent } = fakeForge(t);
+test('a contract case whose command is a write fails naming the case, and nothing reaches the fake forge', async (t) => {
+  const { target, via, agent, statePath } = fakeForge(t);
+  const before = readFileSync(statePath, 'utf8');
+  // The transports under the guard, observed apart from the guard's own record: what the read
+  // runner and the agent read runner were handed to send.
+  const transported = [];
+  const watched = {
+    via: { ...via, send: (gh, args, options) => { transported.push(args); return via.send(gh, args, options); } },
+    agent: (args) => { transported.push(args); return agent(args); },
+  };
   const ran = [];
   const writing = [
     ['closes an issue', ['api', `repos/${target.repo}/issues/${FACTS.issue.number}`, '-X', 'PATCH', '-f', 'state=closed']],
@@ -267,8 +290,11 @@ test('a contract case whose command is a write fails naming the case, and sends 
     ['comments as an agent', ['pr', 'comment', String(FACTS.pull.number), '--repo', target.repo, '--body', 'x']],
   ];
   for (const [name, args] of writing) {
-    const ask = contractAsk(name, { via, agent, ran, commandOf });
+    const ask = contractAsk(name, { ...watched, ran, commandOf });
     await assert.rejects(ask(args), new RegExp(`contract case "${name}" sends .* which is not a read`));
   }
+  assert.deepEqual(transported, [], 'a write reached a transport');
+  assert.deepEqual(JSON.parse(readFileSync(statePath, 'utf8')).sent, [], 'the fake forge recorded a command');
+  assert.equal(readFileSync(statePath, 'utf8'), before, 'the fake forge\'s state changed');
   assert.deepEqual(ran, []);
 });
