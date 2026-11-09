@@ -5,7 +5,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
 import { writeFileSync } from 'node:fs';
 import { mkdirSync, accessSync, constants } from 'node:fs';
 import { copyFileSync } from 'node:fs';
@@ -15,7 +16,7 @@ import { pathToFileURL } from 'node:url';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 
 import { scratch, sweep } from './process-fixtures.mjs';
-import { running } from './process-fixtures.mjs';
+import { literally, running } from './process-fixtures.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { fixture } from './process-fixtures.mjs';
 import { onPath } from './on-path.mjs';
@@ -132,47 +133,55 @@ test('given a process the teardown\'s pkill cannot kill, which pgrep lists howev
   });
 });
 
-test('control: a process-table read keeps raw status separate from its parsed list', () => {
+test('control: a process-table read preserves raw fields and refuses unqualified results', () => {
   for (const status of [0, 1, 2, 3, 255, null]) {
     for (const stdout of ['', '4242\n', 'not-a-pid\n']) {
       const result = processTableResult(status, stdout, status === null ? { signal: 'SIGTERM' } : {});
+      const before = { ...result };
       withProcessTableResults([result], (calls) => {
-        assert.deepEqual(running('rigger-779-absent'), stdout.split('\n').filter(Boolean));
+        if (status === 0 && stdout === '4242\n') assert.deepEqual(running('rigger-779-absent'), ['4242']);
+        else if (status === 1 && stdout === '') assert.deepEqual(running('rigger-779-absent'), []);
+        else assert.throws(() => running('rigger-779-absent'), /unqualified pgrep observation/);
         assert.deepEqual(calls.map(({ command }) => command), ['/usr/bin/pgrep']);
         assert.equal(result.status, status);
         assert.equal(result.stdout, stdout);
+        assert.deepEqual(result, before);
       });
     }
   }
   withProcessTableResults([processTableResult(null, undefined, { error: new Error('failed launch') })], (calls) => {
-    assert.throws(() => running('rigger-779-absent'), TypeError);
+    assert.throws(() => running('rigger-779-absent'), /unqualified pgrep observation/);
     assert.equal(calls.length, 1);
   });
 });
 
-test('control: sweep returns on a parsed empty read, including raw statuses that cannot prove no match', () => {
-  for (const status of [0, 1, 2, 3, 255, null]) {
-    withProcessTableResults([processTableResult(status, '', status === null ? { signal: 'SIGTERM' } : {})], (calls) => {
-      sweep('rigger-779-absent');
+test('control: sweep refuses unqualified initial reads and accepts qualified absence', () => {
+  for (const status of [2, 0, 1, 3, 255, null]) {
+    const result = processTableResult(status, '', status === null ? { signal: 'SIGTERM' } : {});
+    withProcessTableResults([result], (calls) => {
+      if (status === 1) sweep('rigger-779-absent');
+      else assert.throws(() => sweep('rigger-779-absent'), /unqualified pgrep observation/, 'an unknown initial read cannot prove owner absence');
       assert.deepEqual(calls.map(({ command }) => command), ['/usr/bin/pgrep']);
+      assert.equal(result.status, status);
+      assert.equal(result.stdout, '');
     });
   }
   withProcessTableResults([processTableResult(null, undefined, { error: new Error('failed launch') })], (calls) => {
-    assert.throws(() => sweep('rigger-779-absent'), TypeError);
+    assert.throws(() => sweep('rigger-779-absent'), /unqualified pgrep observation/);
     assert.deepEqual(calls.map(({ command }) => command), ['/usr/bin/pgrep']);
   });
 });
 
-test('control: sweep checks first, later and final reads after occupied lists despite failed pkill returns', () => {
+test('control: sweep checks first later and final qualified reads despite failed pkill returns', () => {
   for (const status of [0, 1, 2, 3, 255, null]) {
     for (const stdout of ['4242\n', 'not-a-pid\n']) {
-      withProcessTableResults([
-        processTableResult(status, stdout, status === null ? { signal: 'SIGTERM' } : {}),
-        processTableResult(0, ''),
-        processTableResult(1, ''),
-      ], (calls) => {
-        sweep('rigger-779-absent');
-        assert.deepEqual(calls.map(({ command }) => command), ['/usr/bin/pgrep', '/usr/bin/pkill', '/usr/bin/pgrep']);
+      const first = processTableResult(status, stdout, status === null ? { signal: 'SIGTERM' } : {});
+      const occupied = status === 0 && stdout === '4242\n';
+      withProcessTableResults(occupied ? [first, processTableResult(0, ''), processTableResult(1, '')] : [first], (calls) => {
+        if (occupied) sweep('rigger-779-absent');
+        else assert.throws(() => sweep('rigger-779-absent'), /unqualified pgrep observation/);
+        assert.deepEqual(calls.map(({ command }) => command), occupied
+          ? ['/usr/bin/pgrep', '/usr/bin/pkill', '/usr/bin/pgrep'] : ['/usr/bin/pgrep']);
       });
     }
   }
@@ -185,11 +194,12 @@ test('control: sweep checks first, later and final reads after occupied lists de
       assert.equal(calls.filter(({ command }) => command === '/usr/bin/pkill').length, occupied);
     });
   }
-  const answers = Array.from({ length: 10 }, () => [processTableResult(1, 'not-a-pid\n'), processTableResult(2, '')]).flat();
-  answers.push(processTableResult(3, 'not-a-pid\n'));
+  const answers = Array.from({ length: 10 }, () => [processTableResult(0, '4242\n'), processTableResult(2, '')]).flat();
+  answers.push(processTableResult(0, '4242\n'));
   withProcessTableResults(answers, (calls) => {
-    assert.throws(() => sweep('rigger-779-absent'), /not-a-pid/);
+    assert.throws(() => sweep('rigger-779-absent'), /4242/);
     assert.equal(calls.filter(({ command }) => command === '/usr/bin/pgrep').length, 11);
+    assert.equal(calls.filter(({ command }) => command === '/usr/bin/pkill').length, 10);
   });
   withProcessTableResults([
     processTableResult(0, '4242\n'),
@@ -199,6 +209,21 @@ test('control: sweep checks first, later and final reads after occupied lists de
     sweep('rigger-779-absent');
     assert.deepEqual(calls.map(({ command }) => command), ['/usr/bin/pgrep', '/usr/bin/pkill', '/usr/bin/pgrep']);
   });
+  for (const occupied of [2, 10]) {
+    for (const unknown of [
+      processTableResult(2, ''),
+      processTableResult(null, '', { signal: 'SIGTERM' }),
+      processTableResult(null, undefined, { error: new Error('pgrep failed to launch') }),
+    ]) {
+      const answers = Array.from({ length: occupied }, () => [processTableResult(0, '4242\n'), processTableResult(2, '')]).flat();
+      answers.push(unknown);
+      withProcessTableResults(answers, (calls) => {
+        assert.throws(() => sweep('rigger-779-absent'), /unqualified pgrep observation/, 'an unknown later or final read cannot prove owner absence');
+        assert.deepEqual(calls.map(({ command }) => command),
+          [...Array.from({ length: occupied }, () => ['/usr/bin/pgrep', '/usr/bin/pkill']).flat(), '/usr/bin/pgrep']);
+      });
+    }
+  }
 });
 
 test('PATH resolver skips an executable directory named like the command', (t) => {
@@ -335,4 +360,57 @@ test('PATH resolver preserves skip-directory selection for existing callers', (t
   writeFileSync(firstGit, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   writeFileSync(secondGit, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
   assert.equal(onPath('git', [first, second].join(delimiter), first), secondGit);
+});
+
+// Host reason: OS behaviour; the PS result for a reaped owned child depends on no Rigger decision.
+test('PS no-match result is qualified against an independently reaped owned child', (t) => {
+  const child = spawnSync(process.execPath, ['-e', ''], { encoding: 'utf8' });
+  assert.equal(child.status, 0, child.stderr);
+  assert.equal(child.error, undefined);
+  assert.equal(child.signal, null);
+  assert.ok(Number.isSafeInteger(child.pid) && child.pid > 0);
+  const state = spawnSync('/bin/ps', ['-p', String(child.pid), '-o', 'stat='], { encoding: 'utf8' });
+  t.diagnostic(JSON.stringify({ producer: '/bin/ps -p PID -o stat=', ownedPid: child.pid, ...state, error: state.error ? { ...state.error, message: state.error.message } : null }));
+  assert.equal(state.error, undefined);
+  assert.equal(state.signal, null);
+  assert.equal(state.status, 1, 'PS no-match convention changed for an independently reaped child');
+  assert.equal(state.stdout, '');
+  assert.equal(state.stderr, '');
+});
+
+// Host reason: OS behaviour.
+// Ordinary decision counterpart: test/fixture-lifetime.test.mjs :: pgrep observation preserves valid PID strings and only qualified no-match is empty.
+test('pgrep match and no-match results are qualified against an owned live then closed child', async (t) => {
+  const directory = scratch(t);
+  const hold = join(directory, 'hold');
+  writeFileSync(hold, '');
+  const child = spawn('/usr/bin/tail', ['-f', hold], { stdio: 'ignore' });
+  const closed = once(child, 'close');
+  closed.catch(() => {});
+  try {
+    await once(child, 'spawn');
+    assert.ok(Number.isSafeInteger(child.pid) && child.pid > 0);
+    const args = [...(process.platform === 'linux' ? ['-A'] : []), '-f', literally(directory)];
+    const matched = spawnSync('/usr/bin/pgrep', args, { encoding: 'utf8' });
+    t.diagnostic(JSON.stringify({ producer: '/usr/bin/pgrep', args, ownedPid: child.pid, ...matched, error: matched.error ? { ...matched.error, message: matched.error.message } : null }));
+    assert.equal(matched.error, undefined);
+    assert.equal(matched.signal, null);
+    assert.equal(matched.status, 0);
+    assert.equal(matched.stderr, '');
+    assert.equal(matched.stdout, String(child.pid) + '\n');
+    assert.deepEqual(running(directory), [String(child.pid)]);
+    child.kill('SIGKILL');
+    await closed;
+    const absent = spawnSync('/usr/bin/pgrep', args, { encoding: 'utf8' });
+    t.diagnostic(JSON.stringify({ producer: '/usr/bin/pgrep', args, ownedPid: child.pid, ...absent, error: absent.error ? { ...absent.error, message: absent.error.message } : null }));
+    assert.equal(absent.error, undefined);
+    assert.equal(absent.signal, null);
+    assert.equal(absent.status, 1);
+    assert.equal(absent.stdout, '');
+    assert.equal(absent.stderr, '');
+    assert.deepEqual(running(directory), []);
+  } finally {
+    if (child.exitCode === null && child.signalCode === null && child.pid !== undefined) child.kill('SIGKILL');
+    await closed;
+  }
 });
