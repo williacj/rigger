@@ -39,6 +39,7 @@ test/event-sink.test.mjs
 test/exit-cleanup.test.mjs
 test/forge-runners.test.mjs
 test/forge-spawn.test.mjs
+test/gh-contract-host.test.mjs
 test/guard-probe-kill.test.mjs
 test/hold-close-verbs.test.mjs
 test/in-process-fixtures-host.test.mjs
@@ -334,6 +335,20 @@ chmod 755 "$dir/launchctl"
 # alone: it asks the installed `gh` a question that reaches only its own local proxy.
 RIGGER_REFUSING_GH_DIR=$dir
 export RIGGER_REFUSING_GH_DIR
+
+# The live gh opt-in (`D29` rule 12.3). A run that sets RIGGER_LIVE_GH=1 is given, in
+# RIGGER_LIVE_GH_DIR, the directory of the gh its own PATH finds, for test/gh-contract-host.test.mjs
+# alone, which reads the forge read-only through it. Every other test still meets the refusing gh
+# first, and test/gh-contract.test.mjs fails naming any other test file that reads that directory.
+unset RIGGER_LIVE_GH_DIR
+if [ "${RIGGER_LIVE_GH-}" = 1 ]; then
+  live_gh=$(command -v gh) || {
+    printf '%s\n' 'npm test: RIGGER_LIVE_GH=1 opts in for gh, and no gh is on PATH' >&2
+    exit 1
+  }
+  RIGGER_LIVE_GH_DIR=$(cd "${live_gh%/*}" && pwd -P) || exit 1
+  export RIGGER_LIVE_GH_DIR
+fi
 
 # The directory holding the refusing `claude` and `codex`, for the tests that ask the installed
 # `claude` whether it is signed in, which starts no session, and for the gated live runs.

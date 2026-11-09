@@ -1029,6 +1029,7 @@ jobs:
           CI_HOST_REPORT_NAME: host-tests.junit.xml
           CI_HOST_SOURCE: ${{ steps.host_source.outputs.host_source }}
           CI_HOST_ELIGIBLE: ${{ steps.host_source.outputs.host_eligible }}
+          RIGGER_LIVE_GH: '1'
       - name: Verify Mac containment proof claims
         run: node test/verify-mac-containment "$RUNNER_TEMP/containment-proof-26"
       - name: Keep Mac containment proof evidence
