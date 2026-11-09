@@ -5,6 +5,7 @@
 import { test } from 'node:test';
 import { ciFacts, ciProof, ciFullFixture, ciCollectorFixture, parseWorkflow } from './ci-policy-fixtures.mjs';
 import { ciNodeVersionPrefix } from './ci-policy-fixtures.mjs';
+import { hostInvocationCommand } from './ci-host-fixtures.mjs';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:http';
@@ -32,7 +33,7 @@ const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 // Deterministic wiring counterpart: test/macos-runner.test.mjs :: R8: unrelated jobs keep their literal base runners.
 test('CI assigns portable candidate, selected macOS and protected-main regression lanes with Node 26', () => {
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
-  assert.deepEqual(Object.keys(ci.jobs).sort(), ['cancel_superseded', 'check', 'demo', 'fast', 'full_host', 'full_ordinary', 'nightly', 'plan']);
+  assert.deepEqual(Object.keys(ci.jobs).sort(), ['cancel_superseded', 'check', 'demo', 'fast', 'full_host', 'full_ordinary', 'host-record', 'nightly', 'plan']);
   for (const name of ['plan', 'fast', 'check']) assert.equal(ci.jobs[name]['runs-on'], 'ubuntu-latest', name);
   for (const name of ['full_ordinary', 'full_host', 'demo']) assert.equal(ci.jobs[name]['runs-on'], '${{ fromJSON(needs.plan.outputs.runner) }}', name);
   assert.deepEqual(ci.jobs.nightly['runs-on'], ['self-hosted', 'macOS', 'ARM64']);
@@ -474,10 +475,10 @@ test('staged CI preserves finite events, independent full lanes, every command a
   assert.ok(commands('full_ordinary').includes('npm ci'));
   assert.ok(commands('full_ordinary').includes('npm test'));
   assert.ok(commands('full_host').includes('npm ci'));
-  assert.ok(commands('full_host').includes('npm run test:host'), 'full host command missing');
-  assert.equal(commands('full_ordinary').includes('npm run test:host'), false);
-  assert.equal(commands('fast').includes('npm run test:host'), false);
-  assert.ok(commands('nightly').includes('npm run test:host'));
+  assert.ok(commands('full_host').includes(hostInvocationCommand), 'full host command missing');
+  assert.equal(commands('full_ordinary').includes(hostInvocationCommand), false);
+  assert.equal(commands('fast').includes(hostInvocationCommand), false);
+  assert.ok(commands('nightly').includes(hostInvocationCommand));
   for (const name of ['full_host', 'nightly']) {
     assert.ok(commands(name).includes('node test/verify-mac-containment "$RUNNER_TEMP/containment-proof-26"'));
     const upload = ci.jobs[name].steps.find((step) => step.uses === 'actions/upload-artifact@v7');

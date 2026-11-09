@@ -1,4 +1,4 @@
-# ABOUTME: Verifies main pushes, PR events, merge groups, schedules and main dispatch; guards older-head cancellation.
+# ABOUTME: Verifies staged CI, preserves invocation-bound host reports and records scheduled host failures.
 name: CI
 
 on:
@@ -175,6 +175,10 @@ env:
       if (action === 'aggregate') return { ok: verified && guard(facts, proof), source: fresh.sourceValid ? source(facts) : undefined, testedBase: fresh.sourceValid ? source(facts).base : undefined, ...(facts?.pr ? { eventBase: facts.pr.base } : {}), currentMain: facts?.main?.head, mainAdvanced: fresh.sourceValid && facts.pr?.baseRef === 'main' ? facts.main.head !== facts.pr.testedBase : null, reason: 'current source or required tier result did not verify' };
       return { ok: false, reason: 'unknown policy action' };
     }
+    export function workerHostOutputs(result, worker) {
+      if (!result?.ok || !result.source || !['nightly', 'full_host'].includes(worker)) return {};
+      return { host_source: JSON.stringify(result.source), host_eligible: String(worker === 'nightly' && result.source.event === 'schedule' && result.source.ref === 'refs/heads/main') };
+    }
     if (process.env.CI_POLICY_ACTION) {
       const facts = await collect();
       let expected;
@@ -185,6 +189,404 @@ env:
       console.log(JSON.stringify({ job: process.env.GITHUB_JOB, mode: policy(facts).mode, source: result.source, testedBase: result.testedBase, eventBase: result.eventBase, currentMain: result.currentMain, mainAdvanced: result.mainAdvanced, node: process.version, platform: process.platform, runner: process.env.RUNNER_NAME, runnerOS: process.env.RUNNER_OS, runnerArch: process.env.RUNNER_ARCH }));
       if (result.output) for (const [key, value] of Object.entries(result.output)) appendFileSync(process.env.GITHUB_OUTPUT, key + '=' + String(value) + '\n');
       if (!result.ok) throw new Error(result.reason);
+      if (process.env.CI_POLICY_ACTION === 'worker') for (const [key, value] of Object.entries(workerHostOutputs(result, process.env.CI_WORKER))) appendFileSync(process.env.GITHUB_OUTPUT, key + '=' + value + '\n');
+    }
+
+  CI_HOST: |
+    import { spawn } from 'node:child_process';
+    import { createRequire } from 'node:module';
+    import { readFile, appendFile, writeFile, mkdir, access as accessFile, realpath as resolveRealPath } from 'node:fs/promises';
+    import { constants } from 'node:fs';
+    import { createHash } from 'node:crypto';
+    import { homedir } from 'node:os';
+    import { basename, delimiter, dirname, join, resolve } from 'node:path';
+    const { SaxesParser } = createRequire(join(process.cwd(), 'package.json'))('saxes');
+    async function inspectStartup(inspection = {}) {
+      try {
+        const { env = process.env, cwd = process.cwd(), scriptPath = process.argv[1], execPath = process.execPath,
+          read = readFile, realpath = resolveRealPath, access = accessFile,
+          fingerprint = async path => createHash('sha256').update(await read(path)).digest('hex') } = inspection;
+        if (delimiter !== ':' || typeof env.PATH !== 'string' || !env.PATH) return;
+        const routeOptions = new Set(['script-shell', 'node-options', 'workspace', 'workspaces', 'include-workspace-root', 'global', 'location', 'prefix', 'userconfig', 'globalconfig']);
+        for (const [key, value] of Object.entries(env)) {
+          if (!value) continue;
+          if (['BASH_ENV', 'ENV', 'PREFIX', 'DESTDIR'].includes(key)) return;
+          if (/^npm_config_/i.test(key) && routeOptions.has(key.slice('npm_config_'.length).replace(/(?!^)_/g, '-').toLowerCase())) return;
+        }
+        const argv = ['npm', 'run', 'test:host', '--', '--test-reporter=spec', '--test-reporter=junit', '--test-reporter-destination=stdout', '--test-reporter-destination=' + join(env.RUNNER_TEMP, env.CI_HOST_REPORT_NAME)];
+        const script = "npm run test:host -- --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination=\"$RUNNER_TEMP/$CI_HOST_REPORT_NAME\"";
+        if (env.NODE_OPTIONS || !(await read(scriptPath)).equals(Buffer.from(script, 'utf8'))) return;
+        const project = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(await read(join(cwd, 'package.json'))));
+        if (project.scripts?.['test:host'] !== 'sh test/suite.sh --host' || Object.hasOwn(project.scripts, 'pretest:host') || Object.hasOwn(project.scripts, 'posttest:host') || Object.hasOwn(project, 'workspaces')) return;
+        const locate = async command => {
+          for (const directory of env.PATH.split(delimiter)) {
+            const candidate = resolve(cwd, directory || '.', command);
+            try { await access(candidate, constants.X_OK); }
+            catch (error) {
+              if (['ENOENT', 'EACCES', 'ENOTDIR'].includes(error.code)) continue;
+              throw error;
+            }
+            return realpath(candidate);
+          }
+        };
+        const npmCli = await locate('npm'), node = await locate('node');
+        if (!npmCli || basename(npmCli) !== 'npm-cli.js' || node !== await realpath(execPath)) return;
+        const npmRoot = dirname(dirname(npmCli));
+        const npm = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(await read(join(npmRoot, 'package.json'))));
+        if (npm.name !== 'npm' || !['11.20.0', '12.2.2'].includes(npm.version) || npm.bin?.npm !== 'bin/npm-cli.js') return;
+        if (npm.version === '11.20.0' && (project.name !== '@williacj/rigger' || project.version !== '0.0.0')) return;
+        for (const path of [join(npmRoot, 'npmrc'), join(env.HOME || homedir(), '.npmrc'), join(dirname(dirname(execPath)), 'etc/npmrc')]) {
+          try { await read(path); return; }
+          catch (error) { if (error.code !== 'ENOENT') return; }
+        }
+        const projectSources = {
+          ".npmrc": "2ab58d679ddb6c245446999a2ea5fb54783b9aa26c94ce663cb7db0be0a8f7f8",
+          "test/suite.sh": "51d1656050740bf7130c8ab8352cb027aa2831887ec7d09b168dcd4c87d21f46",
+          "test/suite-guard.cjs": "cd0fea139d9547bcb613dab0f8b6c87ec12f182b36409ae971083a7132761c31"
+        };
+        for (const [path, expected] of Object.entries(projectSources)) if (await fingerprint(join(cwd, path)) !== expected) return;
+        const npmSources = npm.version === '11.20.0' ? {
+          "bin/npm-cli.js": "8e5f6f3429f8cdbe693cdc29904e9d5a7b127a494bd15c804bd54c7403bfcbe7",
+          "lib/commands/run.js": "86080ad381490dd347b5cde5071a8d2444c1f471e795f4a88957e4726fca20ab",
+          "node_modules/@npmcli/run-script/lib/run-script-pkg.js": "94dea9ff50028869f4f88c4ec5e520d56fa7c2f6cc03422a9f06c44d291a0c34",
+          "lib/utils/display.js": "ec7af29eebcb43c362818ad2386518758a31692155f6363d8285182320972d8c",
+          "node_modules/@npmcli/run-script/lib/make-spawn-args.js": "d1647624f0ce227e5cff1c4570f3e754e0eaaf08041db354102ec2bdbbd721df",
+          "node_modules/@npmcli/config/lib/index.js": "938b85a17fde9f2355497fd4befc9bac45d406fb4afacd8af63322796697ff06",
+          "node_modules/@npmcli/config/lib/definitions/definitions.js": "701d85fcce4a266cc60e7273ac2d1ee7a3feec56b16f5e4705aad9f00844f58f"
+        } : {
+          "bin/npm-cli.js": "8e5f6f3429f8cdbe693cdc29904e9d5a7b127a494bd15c804bd54c7403bfcbe7",
+          "lib/commands/run.js": "b7acdea61c0886f048d2b8c5ecbce1599416eec6ba5553ee21d77687f50ccf8c",
+          "node_modules/@npmcli/run-script/lib/run-script-pkg.js": "1142ab865b1180409f0f3a93eb3bc01f9ca36fa9ead1c938b254eb6923de7886",
+          "lib/utils/display.js": "c6268a43166143f3a833b95be55080dfa44e370ae7bab39dbf943816d3a11450",
+          "node_modules/@npmcli/run-script/lib/make-spawn-args.js": "51ef6919950dc6e87dfa1b0824fe2f1dcd423f2e3a5b2632b8a076120b8bd7b4",
+          "node_modules/@npmcli/config/lib/index.js": "14e19ddd8378da6554aa6c84e420e14547db217f4d9759b4149b77f5dafa778a",
+          "node_modules/@npmcli/config/lib/definitions/definitions.js": "b352635a4b9ac0575a76e66dae679b16c67762030b1847564ea4b59e572f8372"
+        };
+        for (const [path, expected] of Object.entries(npmSources)) if (await fingerprint(join(npmRoot, path)) !== expected) return;
+        return { argv, npmVersion: npm.version,
+          stdoutPrefix: npm.version === '11.20.0' ? '\n> @williacj/rigger@0.0.0 test:host\n> sh test/suite.sh --host ' + argv.slice(4).join(' ') + '\n\n' : '' };
+      } catch { return; }
+    }
+    export async function executeScript({ spawnChild = spawn, stdoutSink = process.stdout, stderrSink = process.stderr, inspection, onStart } = {}) {
+      const profile = await inspectStartup(inspection);
+      return new Promise((resolve, reject) => {
+        const child = spawnChild('bash', ['-e', process.argv[1]], { stdio: ['inherit', 'pipe', 'pipe'] });
+        const stdout = [], stderr = [];
+        let startDone = onStart === undefined, startFailure = false;
+        if (onStart) {
+          try {
+            Promise.resolve(onStart({ pid: child.pid, argv: ['bash', '-e', process.argv[1]] }, profile)).then(() => { startDone = true; finishHost(); }, () => { startFailure = true; startDone = true; finishHost(); });
+          } catch { startFailure = true; startDone = true; }
+        }
+        let stdoutEnded = false, stdoutReadError = false, stderrReadError = false, stdoutWriteError = false, stderrWriteError = false;
+        let pendingStdoutWrites = 0, hostClosed = false, hostExitCode, hostSignal, stdoutCallbackError = false, stdoutErrorNotified = false, stdoutClosed = false;
+        let pendingStderrWrites = 0, stderrCallbackError = false, stderrErrorNotified = false, stderrClosed = false;
+        const resumeStdout = () => { child.stdout.resume(); };
+        const resumeStderr = () => { child.stderr.resume(); };
+        const failStdoutWrite = () => {
+          stdoutWriteError = true;
+          stdoutSink.removeListener?.('drain', resumeStdout);
+          resumeStdout();
+        };
+        const onStdoutWriteError = () => { stdoutErrorNotified = true; failStdoutWrite(); finishHost(); };
+        const onStdoutClose = () => {
+          stdoutClosed = true;
+          if (!stdoutSink.writableFinished) failStdoutWrite();
+          finishHost();
+        };
+        stdoutSink.on?.('error', onStdoutWriteError);
+        stdoutSink.on?.('close', onStdoutClose);
+        child.stdout.on('data', bytes => {
+          stdout.push(bytes);
+          if (stdoutWriteError) return;
+          pendingStdoutWrites += 1;
+          const accepted = stdoutSink.write(bytes, error => {
+            pendingStdoutWrites -= 1;
+            if (error) { stdoutCallbackError = true; failStdoutWrite(); }
+            finishHost();
+          });
+          if (accepted === false) {
+            child.stdout.pause();
+            stdoutSink.once('drain', resumeStdout);
+          }
+        });
+        child.stdout.on('end', () => { stdoutEnded = true; });
+        child.stdout.on('error', () => { stdoutReadError = true; });
+        const failStderrWrite = () => {
+          stderrWriteError = true;
+          stderrSink.removeListener?.('drain', resumeStderr);
+          resumeStderr();
+        };
+        const onStderrWriteError = () => { stderrErrorNotified = true; failStderrWrite(); finishHost(); };
+        const onStderrClose = () => {
+          stderrClosed = true;
+          if (!stderrSink.writableFinished) failStderrWrite();
+          finishHost();
+        };
+        stderrSink.on?.('error', onStderrWriteError);
+        stderrSink.on?.('close', onStderrClose);
+        child.stderr.on('data', bytes => {
+          stderr.push(bytes);
+          if (stderrWriteError) return;
+          pendingStderrWrites += 1;
+          const accepted = stderrSink.write(bytes, error => {
+            pendingStderrWrites -= 1;
+            if (error) { stderrCallbackError = true; failStderrWrite(); }
+            finishHost();
+          });
+          if (accepted === false) {
+            child.stderr.pause();
+            stderrSink.once('drain', resumeStderr);
+          }
+        });
+        child.stderr.on('error', () => { stderrReadError = true; });
+        child.on('error', reject);
+        child.on('close', (exitCode, signal) => { hostExitCode = exitCode; hostSignal = signal; hostClosed = true; finishHost(); });
+        function finishHost() {
+          if (!startDone || !hostClosed || pendingStdoutWrites > 0 || pendingStderrWrites > 0) return;
+          // A write callback can precede its error event; keep our listener until notification or actual close.
+          if (stdoutCallbackError && !stdoutErrorNotified && !stdoutClosed) return;
+          if (stderrCallbackError && !stderrErrorNotified && !stderrClosed) return;
+          stdoutSink.removeListener?.('error', onStdoutWriteError);
+          stdoutSink.removeListener?.('close', onStdoutClose);
+          stdoutSink.removeListener?.('drain', resumeStdout);
+          stderrSink.removeListener?.('error', onStderrWriteError);
+          stderrSink.removeListener?.('close', onStderrClose);
+          stderrSink.removeListener?.('drain', resumeStderr);
+          const stdoutCapture = stdoutReadError
+            ? { state: 'incomplete', reason: 'read-error' }
+            : stdoutEnded ? { state: 'complete' } : { state: 'incomplete', reason: 'truncated' };
+          resolve({ pid: child.pid, exitCode: hostExitCode, signal: hostSignal, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr), stdoutCapture,
+            ioFailures: [...(startFailure ? [{ stream: 'capture', operation: 'start' }] : []), ...(stdoutReadError ? [{ stream: 'stdout', operation: 'read' }] : []), ...(stderrReadError ? [{ stream: 'stderr', operation: 'read' }] : []), ...(stdoutWriteError ? [{ stream: 'stdout', operation: 'write' }] : []), ...(stderrWriteError ? [{ stream: 'stderr', operation: 'write' }] : [])],
+            ...(profile ? { startup: { ...profile, capture: stdoutCapture } } : {}) });
+        }
+      });
+    }
+    export async function invokeHost({ execute = executeScript, read = readFile, append = appendFile, env = process.env, startup } = {}) {
+      const child = await execute();
+      const host = { started: true, exitCode: child.exitCode, outcome: child.exitCode === 0 ? 'success' : 'failure' };
+      await append(env.GITHUB_OUTPUT, 'host_outcome=' + host.outcome + '\nhost_exit_code=' + host.exitCode + '\n');
+      startup ??= child.startup;
+      const ioFailures = child.ioFailures ?? [];
+      // A trusted capture descriptor identifies the qualified prefix of complete original stdout.
+      let hostKey;
+      if (startup?.capture?.state === 'complete') {
+        let stdout;
+        try { stdout = new TextDecoder('utf-8', { fatal: true }).decode(child.stdout); }
+        catch { /* Invalid stdout leaves the key unavailable; report parsing remains independent. */ }
+        const prefixBytes = Buffer.from(startup.stdoutPrefix, 'utf8');
+        if (stdout !== undefined && child.stdout.subarray(0, prefixBytes.length).equals(prefixBytes)) {
+          const start = startup.stdoutPrefix.length, end = stdout.indexOf('\n', start);
+          if (end > start) hostKey = stdout.slice(start, end);
+        }
+      }
+      const finish = async reporting => {
+        let summaryMessage;
+        if (host.outcome === 'failure') {
+          const summary = reporting.state === 'valid'
+            ? reporting.failedNames.length > 0
+              ? '## Failed host tests\n\n```json\n' + JSON.stringify(reporting.failedNames, null, 2) + '\n```\n'
+              : '## Host test report\n\nHost step failed without a reported test failure.\n'
+            : '## Host test report\n\nJUnit report is ' + reporting.state + '; failed-test names are unavailable.\n';
+          if (Buffer.byteLength(summary, 'utf8') > 1_048_576) summaryMessage = 'Host summary exceeds 1048576 UTF-8 bytes';
+          else await append(env.GITHUB_STEP_SUMMARY, summary);
+        }
+        return { host, hostKey, reporting, ioFailures,
+          stepOutcome: summaryMessage !== undefined || reporting.outcome === 'failure' || ioFailures.length > 0 ? 'failure' : host.outcome,
+          message: summaryMessage ?? (ioFailures.length > 0 ? 'Host ' + ioFailures[0].stream + ' ' + ioFailures[0].operation + ' failed' : undefined) };
+      };
+      let bytes;
+      try { bytes = await read(join(env.RUNNER_TEMP, env.CI_HOST_REPORT_NAME)); }
+      catch (error) {
+        if (error.code !== 'ENOENT') throw error;
+        return finish({ state: 'absent', outcome: 'failure', message: 'Host JUnit report is absent' });
+      }
+      let failedNames;
+      try {
+        const parser = new SaxesParser({ fragment: false });
+        parser.on('doctype', () => { throw new Error('JUnit DOCTYPE is forbidden'); });
+        const cases = [], parents = [];
+        const children = { testsuites: ['testsuite', 'testcase'], testsuite: ['testsuite', 'testcase'], testcase: ['failure', 'error', 'skipped'], failure: [], error: [], skipped: [] };
+        let current;
+        parser.on('opentag', tag => {
+          if (parents.length === 0 ? tag.name !== 'testsuites' : !children[parents.at(-1)]?.includes(tag.name)) throw new Error('Unexpected JUnit element');
+          parents.push(tag.name);
+          if (tag.name === 'testcase') {
+            if (typeof tag.attributes.name !== 'string') throw new Error('JUnit testcase name is missing');
+            current = { name: tag.attributes.name, failed: false }; cases.push(current);
+          }
+          if (current && (tag.name === 'failure' || tag.name === 'error')) current.failed = true;
+        });
+        parser.on('closetag', tag => { parents.pop(); if (tag.name === 'testcase') current = undefined; });
+        const textContent = value => {
+          if (['testsuites', 'testsuite', 'testcase'].includes(parents.at(-1)) && /[^\t\r\n ]/.test(value)) throw new Error('Unexpected JUnit text');
+        };
+        parser.on('text', textContent);
+        parser.on('cdata', textContent);
+        parser.write(new TextDecoder('utf-8', { fatal: true }).decode(bytes)).close();
+        failedNames = cases.filter(entry => entry.failed).map(entry => entry.name);
+      } catch {
+        return finish({ state: 'unparsable', outcome: 'failure', message: 'Host JUnit report is unparsable' });
+      }
+      return finish({ state: 'valid', outcome: 'success', failedNames });
+    }
+    const HOST_OUTPUT_FIELDS = ['host_outcome', 'host_exit_code', 'host_invoked', 'host_key', 'report_state', 'names_state', 'failed_names', 'source', 'invocation', 'eligible'];
+    export function hostOutputText(fields, names = HOST_OUTPUT_FIELDS) {
+      return names.map(name => {
+        if (typeof fields[name] !== 'string') throw new Error('Host transport field unavailable: ' + name);
+        return name + '=' + fields[name] + '\n';
+      }).join('');
+    }
+    export async function runHost(options = {}) {
+      const { env = process.env, append = appendFile, execute, read = readFile,
+        save = async (path, bytes) => { await mkdir(dirname(path), { recursive: true }); await writeFile(path, bytes); } } = options;
+      const evidence = join(env.RUNNER_TEMP, 'host-report-evidence');
+      let reportBytes, reportError;
+      const result = await invokeHost({ ...options, execute: async () => {
+        const child = await (execute ? execute() : executeScript({ onStart: (info, startup) => save(join(evidence, 'host-start.json'), JSON.stringify({
+          ...info, startup: startup ?? null, startedAt: new Date().toISOString(), node: process.version, execPath: process.execPath, cwd: process.cwd(),
+          env: Object.fromEntries(['PATH', 'HOME', 'NODE_OPTIONS', 'RUNNER_TEMP', 'GITHUB_EVENT_NAME', 'GITHUB_REF', 'GITHUB_SHA', 'GITHUB_REPOSITORY', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'GITHUB_JOB', 'CI_HOST_REPORT_NAME', 'CI_HOST_SOURCE', 'CI_HOST_ELIGIBLE'].map(name => [name, env[name] ?? null])),
+        })) }));
+        const native = { pid: child.pid, exitCode: child.exitCode, signal: child.signal ?? null,
+          stdoutCapture: child.stdoutCapture ?? options.startup?.capture, startup: child.startup ?? options.startup,
+          ioFailures: child.ioFailures ?? [], node: process.version, execPath: process.execPath, source: env.CI_HOST_SOURCE,
+          stdoutBytes: child.stdout.length, stderrBytes: child.stderr.length,
+          stdoutSHA256: createHash('sha256').update(child.stdout).digest('hex'), stderrSHA256: createHash('sha256').update(child.stderr).digest('hex') };
+        await save(join(evidence, 'host-native.json'), JSON.stringify(native));
+        await save(join(evidence, 'host.stdout'), child.stdout);
+        await save(join(evidence, 'host.stderr'), child.stderr);
+        try { reportBytes = await read(join(env.RUNNER_TEMP, env.CI_HOST_REPORT_NAME)); } catch (error) { reportError = error; }
+        if (reportBytes !== undefined) await save(join(evidence, 'host.junit.xml'), reportBytes);
+        return child;
+      }, read: async () => {
+        if (reportError) throw reportError;
+        return reportBytes;
+      } });
+      const fields = {
+        host_outcome: result.host.outcome, host_exit_code: String(result.host.exitCode), host_invoked: 'true',
+        host_key: JSON.stringify(result.hostKey ?? null), report_state: result.reporting.state,
+        names_state: result.reporting.state === 'valid' ? 'available' : 'unavailable',
+        failed_names: JSON.stringify(result.reporting.state === 'valid' ? result.reporting.failedNames : null),
+        source: env.CI_HOST_SOURCE,
+        invocation: JSON.stringify({ repository: env.GITHUB_REPOSITORY, runId: Number(env.GITHUB_RUN_ID), runAttempt: Number(env.GITHUB_RUN_ATTEMPT), job: env.GITHUB_JOB }),
+        eligible: env.CI_HOST_ELIGIBLE,
+      };
+      const estimate = 2 * hostOutputText(fields).length;
+      await append(env.GITHUB_OUTPUT, hostOutputText(fields, HOST_OUTPUT_FIELDS.filter(name => !['host_outcome', 'host_exit_code', 'names_state', 'failed_names'].includes(name))));
+      const unavailable = estimate > 1_000_000;
+      if (unavailable) {
+        fields.names_state = 'unavailable:output-size'; fields.failed_names = 'null';
+        result.stepOutcome = 'failure'; result.message = 'Host job outputs exceed 1000000 estimated UTF-16 bytes';
+      }
+      await append(env.GITHUB_OUTPUT, hostOutputText(fields, ['names_state', 'failed_names']));
+      if (result.hostKey === undefined) {
+        result.stepOutcome = 'failure'; result.message ??= 'Missing host key for host JUnit artifact';
+      }
+      return { ...result, transport: { state: unavailable ? 'unavailable' : 'available', estimate, fields } };
+    }
+    if (process.env.CI_HOST_ACTION === 'run') {
+      const result = await runHost();
+      if (result.stepOutcome !== 'success') {
+        console.error(result.reporting?.message ?? result.message ?? 'Host command failed');
+        process.exitCode = 1;
+      }
+    }
+
+  CI_RECORD: |
+    export async function issueRequest(path, { method = 'GET', body, token = process.env.GH_TOKEN, send = fetch, signal = AbortSignal.timeout(30_000), log = entry => console.log(JSON.stringify(entry)) } = {}) {
+      if (!token || !/^\/repos\/williacj\/(?:rigger|rigger-ci-fixture)\/issues(?:\/[1-9][0-9]*(?:\/comments)?)?(?:\?state=open&labels=host-tier&per_page=100|\?per_page=100)?$/.test(path) || !['GET', 'POST'].includes(method)) throw new Error('Issues API scope unavailable');
+      const response = await send('https://api.github.com' + path, {
+        method, redirect: 'error', signal,
+        headers: { authorization: 'Bearer ' + token, accept: 'application/vnd.github.raw+json', ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      log({ method, path, status: response.status, date: response.headers.get('date') });
+      if (response.redirected || response.url && new URL(response.url).origin !== 'https://api.github.com') throw new Error('Issues API redirect refused');
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      const length = response.headers.get('content-length'), encoding = response.headers.get('content-encoding');
+      if (length !== null && (!encoding || encoding === 'identity') && (!/^[0-9]+$/.test(length) || Number(length) !== bytes.length)) throw new Error('Issues API body incomplete');
+      return { status: response.status, body: JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)), link: response.headers.get('link') };
+    }
+    export async function recordHostFailure({ input, request = issueRequest }) {
+      if (input.event !== 'schedule' || input.ref !== 'refs/heads/main' || input.eligible === 'false' || input.host_invoked === 'false' || input.host_outcome === 'success') return { state: 'skipped' };
+      let key;
+      try { key = JSON.parse(input.host_key); } catch { throw new Error('Missing host key for scheduled host failure'); }
+      if (typeof key !== 'string' || key.length === 0) throw new Error('Missing host key for scheduled host failure');
+      const refuseTransport = () => { throw new Error('Host record transport missing, malformed, redacted or unavailable'); };
+      let source, names, invocation;
+      try { source = JSON.parse(input.source); names = JSON.parse(input.failed_names); invocation = JSON.parse(input.invocation); } catch { refuseTransport(); }
+      const sha = value => typeof value === 'string' && /^[a-f0-9]{40}$/.test(value);
+      const positive = value => Number.isSafeInteger(value) && value > 0;
+      if (!['williacj/rigger', 'williacj/rigger-ci-fixture'].includes(input.repository) || input.eligible !== 'true' || input.host_invoked !== 'true' || input.host_outcome !== 'failure'
+        || !(input.host_exit_code === 'null' || typeof input.host_exit_code === 'string' && /^[1-9][0-9]*$/.test(input.host_exit_code) && positive(Number(input.host_exit_code)))) refuseTransport();
+      if (!source || source.event !== 'schedule' || source.ref !== 'refs/heads/main' || !sha(source.sha) || !sha(source.tree)
+        || !Array.isArray(source.parents) || !source.parents.every(sha) || source.head !== source.sha || source.base !== source.sha || source.baseRef !== 'main') refuseTransport();
+      if (!invocation || !positive(input.runId) || !positive(input.runAttempt) || input.job !== 'nightly'
+        || invocation.repository !== input.repository || invocation.runId !== input.runId || invocation.runAttempt !== input.runAttempt || invocation.job !== input.job) refuseTransport();
+      if (!['valid', 'absent', 'unparsable'].includes(input.report_state)) refuseTransport();
+      if (input.report_state === 'valid'
+        ? input.names_state !== 'available' || !Array.isArray(names) || !names.every(name => typeof name === 'string')
+        : input.names_state !== 'unavailable' || names !== null) refuseTransport();
+      const marker = '<!-- t4-host-invocation ' + JSON.stringify(invocation) + ' -->';
+      const recorded = text => text.split('\n').filter(line => line.startsWith('<!-- t4-host-invocation ')).map(line => {
+        const match = /^<!-- t4-host-invocation (.*) -->$/.exec(line);
+        let previous;
+        try { previous = match && JSON.parse(match[1]); } catch { /* Refuse malformed reserved identity records below. */ }
+        if (!previous || typeof previous.repository !== 'string' || !positive(previous.runId) || !positive(previous.runAttempt) || previous.job !== 'nightly') throw new Error('Host issue lookup failed: malformed invocation identity');
+        return previous;
+      });
+
+
+      const root = '/repos/' + input.repository;
+      const get = async path => {
+        let reply;
+        try { reply = await request(path); } catch { throw new Error('Host issue lookup failed: transport'); }
+        if (reply?.status !== 200 || reply.link) throw new Error('Host issue lookup failed: status or incomplete pagination');
+        return reply.body;
+      };
+      const lookup = await get(root + '/issues?state=open&labels=host-tier&per_page=100');
+      const issueShape = issue => issue && Number.isSafeInteger(issue.number) && issue.number > 0 && typeof issue.title === 'string' && ['open', 'closed'].includes(issue.state) && Array.isArray(issue.labels) && issue.labels.every(label => typeof label?.name === 'string');
+      if (!Array.isArray(lookup) || lookup.length > 100 || !lookup.every(issueShape)) throw new Error('Host issue lookup failed: incomplete list');
+
+      const description = input.report_state === 'valid'
+        ? names.length ? 'Failed tests: ' + JSON.stringify(names) : 'Host step failed without a reported test failure.'
+        : 'JUnit report is ' + input.report_state + '; failed-test names are unavailable.';
+      const record = '## T4 host failure\n\nRun: https://github.com/' + input.repository + '/actions/runs/' + input.runId
+        + '\nCommit: ' + source.sha + '\nHost: ' + JSON.stringify(key) + '\n' + description + '\n\n' + marker + '\n';
+      const matches = lookup.filter(issue => !issue.pull_request && issue.state === 'open' && issue.title === 'Host tier: ' + key && issue.labels.some(label => label.name === 'host-tier'));
+      if (matches.length > 1) throw new Error('Host issue lookup found duplicate issues: ' + matches.map(issue => issue.number).join(', '));
+      if (matches.length > 0) {
+        const issue = matches[0];
+        const detail = await get(root + '/issues/' + issue.number);
+        const comments = await get(root + '/issues/' + issue.number + '/comments?per_page=100');
+        if (!issueShape(detail) || detail.number !== issue.number || detail.state !== 'open' || detail.title !== issue.title || !detail.labels.some(label => label.name === 'host-tier') || typeof detail.body !== 'string'
+          || !Number.isSafeInteger(detail.comments) || detail.comments < 0 || !Array.isArray(comments) || comments.length > 100 || comments.length !== detail.comments
+          || !comments.every(comment => positive(comment?.id) && typeof comment.body === 'string')) throw new Error('Host issue lookup failed: incomplete raw identity records');
+        const previous = [detail.body, ...comments.map(comment => comment.body)].flatMap(recorded);
+        if (previous.some(identity => ['repository', 'runId', 'runAttempt', 'job'].every(key => identity[key] === invocation[key]))) return { state: 'already-recorded', issue: issue.number };
+        let comment;
+        try { comment = await request(root + '/issues/' + issue.number + '/comments', { method: 'POST', body: { body: record } }); }
+        catch { throw new Error('Host issue #' + issue.number + ' comment response uncertain; reconcile by reading before replay'); }
+        if (comment?.status !== 201 || !Number.isSafeInteger(comment.body?.id) || comment.body.id <= 0) throw new Error('Host issue #' + issue.number + ' comment failed (HTTP ' + comment?.status + ')');
+        return { state: 'commented', issue: issue.number, comment: comment.body.id, url: comment.body.html_url };
+      }
+      let response;
+      try { response = await request(root + '/issues', { method: 'POST', body: { title: 'Host tier: ' + key, labels: ['host-tier'], body: record } }); }
+      catch { throw new Error('Host issue create response uncertain; reconcile by reading before replay'); }
+      if (response?.status !== 201 || !Number.isSafeInteger(response.body?.number) || response.body.number <= 0) throw new Error('Host issue create failed (HTTP ' + response?.status + ')');
+
+      return { state: 'created', issue: response.body.number, url: response.body.html_url };
+    }
+
+    export function runtimeRecordInput(env = process.env) {
+      let outputs;
+      try { outputs = JSON.parse(env.CI_RECORD_INPUT); } catch { throw new Error('Host record transport missing or malformed'); }
+      return { ...outputs, event: env.GITHUB_EVENT_NAME, ref: env.GITHUB_REF, repository: env.GITHUB_REPOSITORY,
+        runId: Number(env.GITHUB_RUN_ID), runAttempt: Number(env.GITHUB_RUN_ATTEMPT), job: 'nightly' };
+    }
+    if (process.env.CI_RECORD_ACTION === 'run') {
+      try { console.log(JSON.stringify(await recordHostFailure({ input: runtimeRecordInput() }))); }
+      catch (error) { console.error(error.message); process.exitCode = 1; }
     }
 
 jobs:
@@ -266,6 +668,17 @@ jobs:
     needs: [plan]
     if: ${{ needs.plan.outputs.mode == 'BROAD_EXECUTED' }}
     runs-on: ${{ fromJSON(needs.plan.outputs.runner) }}
+    outputs:
+      host_outcome: ${{ steps.host_tests.outputs.host_outcome }}
+      host_exit_code: ${{ steps.host_tests.outputs.host_exit_code }}
+      host_invoked: ${{ steps.host_tests.outcome != '' && steps.host_tests.outcome != 'skipped' }}
+      host_key: ${{ steps.host_tests.outputs.host_key }}
+      report_state: ${{ steps.host_tests.outputs.report_state }}
+      names_state: ${{ steps.host_tests.outputs.names_state }}
+      failed_names: ${{ steps.host_tests.outputs.failed_names }}
+      source: ${{ steps.host_tests.outputs.source }}
+      invocation: ${{ steps.host_tests.outputs.invocation }}
+      eligible: ${{ steps.host_tests.outputs.eligible }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -275,6 +688,7 @@ jobs:
         with:
           node-version: '26'
       - run: node --input-type=module -e "$CI_POLICY"
+        id: host_source
         env:
           GH_TOKEN: ${{ github.token }}
           CI_POLICY_ACTION: worker
@@ -282,7 +696,14 @@ jobs:
           CI_EXPECTED_MODE: ${{ needs.plan.outputs.mode }}
           CI_WORKER: ${{ github.job }}
       - run: npm ci
-      - run: npm run test:host
+      - run: npm run test:host -- --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination="$RUNNER_TEMP/$CI_HOST_REPORT_NAME"
+        id: host_tests
+        shell: node --input-type=module -e "await import('data:text/javascript;base64,' + Buffer.from(process.env.CI_HOST).toString('base64'))" {0}
+        env:
+          CI_HOST_ACTION: run
+          CI_HOST_REPORT_NAME: host-tests.junit.xml
+          CI_HOST_SOURCE: ${{ steps.host_source.outputs.host_source }}
+          CI_HOST_ELIGIBLE: ${{ steps.host_source.outputs.host_eligible }}
       - name: Verify Mac containment proof claims
         run: node test/verify-mac-containment "$RUNNER_TEMP/containment-proof-26"
       - name: Keep Mac containment proof evidence
@@ -292,6 +713,20 @@ jobs:
           name: containment-proof-26
           path: ${{ runner.temp }}/containment-proof-26
           if-no-files-found: ignore
+      - name: Keep invocation JUnit report
+        if: ${{ always() && steps.host_tests.outputs.report_state == 'valid' && steps.host_tests.outputs.host_key != 'null' && steps.host_tests.outputs.host_key != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: host-junit-${{ fromJSON(steps.host_tests.outputs.host_key) }}
+          path: ${{ runner.temp }}/host-tests.junit.xml
+          if-no-files-found: error
+      - name: Keep host invocation originals
+        if: ${{ always() && steps.host_tests.outcome != '' && steps.host_tests.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: host-invocation-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/host-report-evidence
+          if-no-files-found: error
   cancel_superseded:
     needs: [plan]
     if: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && needs.plan.outputs.snapshot != '' }}
@@ -556,6 +991,17 @@ jobs:
     needs: [plan]
     if: ${{ (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && needs.plan.result == 'success' && needs.plan.outputs.mode == 'MAIN_FULL' }}
     runs-on: [self-hosted, macOS, ARM64]
+    outputs:
+      host_outcome: ${{ steps.host_tests.outputs.host_outcome }}
+      host_exit_code: ${{ steps.host_tests.outputs.host_exit_code }}
+      host_invoked: ${{ steps.host_tests.outcome != '' && steps.host_tests.outcome != 'skipped' }}
+      host_key: ${{ steps.host_tests.outputs.host_key }}
+      report_state: ${{ steps.host_tests.outputs.report_state }}
+      names_state: ${{ steps.host_tests.outputs.names_state }}
+      failed_names: ${{ steps.host_tests.outputs.failed_names }}
+      source: ${{ steps.host_tests.outputs.source }}
+      invocation: ${{ steps.host_tests.outputs.invocation }}
+      eligible: ${{ steps.host_tests.outputs.eligible }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -565,6 +1011,7 @@ jobs:
         with:
           node-version: '26'
       - run: node --input-type=module -e "$CI_POLICY"
+        id: host_source
         env:
           GH_TOKEN: ${{ github.token }}
           CI_POLICY_ACTION: worker
@@ -574,7 +1021,14 @@ jobs:
       - run: npm ci
       - run: node .github/scripts/check-test-list-growth.mjs
       - run: npm test
-      - run: npm run test:host
+      - run: npm run test:host -- --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination="$RUNNER_TEMP/$CI_HOST_REPORT_NAME"
+        id: host_tests
+        shell: node --input-type=module -e "await import('data:text/javascript;base64,' + Buffer.from(process.env.CI_HOST).toString('base64'))" {0}
+        env:
+          CI_HOST_ACTION: run
+          CI_HOST_REPORT_NAME: host-tests.junit.xml
+          CI_HOST_SOURCE: ${{ steps.host_source.outputs.host_source }}
+          CI_HOST_ELIGIBLE: ${{ steps.host_source.outputs.host_eligible }}
       - name: Verify Mac containment proof claims
         run: node test/verify-mac-containment "$RUNNER_TEMP/containment-proof-26"
       - name: Keep Mac containment proof evidence
@@ -584,6 +1038,20 @@ jobs:
           name: containment-proof-26
           path: ${{ runner.temp }}/containment-proof-26
           if-no-files-found: ignore
+      - name: Keep invocation JUnit report
+        if: ${{ always() && steps.host_tests.outputs.report_state == 'valid' && steps.host_tests.outputs.host_key != 'null' && steps.host_tests.outputs.host_key != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: host-junit-${{ fromJSON(steps.host_tests.outputs.host_key) }}
+          path: ${{ runner.temp }}/host-tests.junit.xml
+          if-no-files-found: error
+      - name: Keep host invocation originals
+        if: ${{ always() && steps.host_tests.outcome != '' && steps.host_tests.outcome != 'skipped' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: host-invocation-${{ github.job }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/host-report-evidence
+          if-no-files-found: error
       - run: npm run budget:package
       - run: npm run budget:instructions
       - run: npm run lint:spec-style
@@ -593,3 +1061,22 @@ jobs:
       - run: npm run check:words
       - run: npm run check:headers
       - run: npm run matrix:check
+  host-record:
+    needs: [nightly]
+    if: ${{ always() && github.event_name == 'schedule' && needs.nightly.result == 'failure' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    concurrency:
+      group: ci-host-record
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '26'
+      - run: node --input-type=module -e "$CI_RECORD"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_RECORD_ACTION: run
+          CI_RECORD_INPUT: ${{ toJSON(needs.nightly.outputs) }}

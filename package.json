@@ -46,6 +46,7 @@
     "absorption-check:self-test": "node scripts/absorption-check.mjs --self-test"
   },
   "devDependencies": {
-    "acorn": "8.18.0"
+    "acorn": "8.18.0",
+    "saxes": "6.0.0"
   }
 }
