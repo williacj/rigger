@@ -263,8 +263,8 @@ You revise the acceptance before any maker starts. This review is part of filing
 20. Does the scope bullet cover every file an item or cited placement ruling requires?
 21. Is every cited proposal, ruling and grant posted and linked from the card?
 22. Did you name bounded grant classes for predictable existing test-line changes?
-23. Where the repository defines them, did `npm run check:card` read the draft body before maker
-    edits, and `npm run preflight -- --body-file <body-file>` run in a clean checkout with
+23. Where the repository defines them, before maker edits, did `npm run check:card` read the draft
+    body, and `npm run preflight -- --body-file <body-file>` run in a clean checkout with
     origin/main and a merge base? Resolve or report failures before maker admission.
 24. Before admitting claimless diagnostics, did you record behaviour, requirement applicability
     and bounded guarded discrimination?
