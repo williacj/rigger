@@ -37,11 +37,11 @@ export async function acceptanceFirst(t, verb, row, manual) {
   const consumer = repositoryAt(join(root, 'consumer'), { 'rigger.config.mjs': `export default ${JSON.stringify(settings)};\n` });
   gitIn(consumer, 'branch', '-M', 'main');
   withOrigin(consumer, join(root, 'origin.git'));
-  const fake = installFakeGh(temporaryDirectory('rigger-acceptance-gh-'), {
+  const fake = installFakeGh(temporaryDirectory('rigger-acceptance-gh-', { context: t }), {
     repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, items: acceptanceBoard(row) },
   });
-  // The documented stand-in plan exits without opening a pull request or starting a judge.
-  const agent = standInAgent({ '*': { engineer: { exit: 7 } } });
+  // Acts are keyed by card; the sibling's engineer exits 7 without opening a pull request.
+  const agent = standInAgent({ 12: { engineer: { exit: 7 } } });
   const refusedPath = join(settings.worktrees.root, 'rigger-11');
   assert.equal(existsSync(refusedPath), false, 'the refused workspace is absent before the verb');
   assert.deepEqual((await (await fake.model()).operations.readItems()).map(({ number, column }) => [number, column]), [[11, 'Ready'], [12, 'Ready']]);
@@ -78,7 +78,8 @@ export async function acceptanceFirst(t, verb, row, manual) {
   await t.test('valid sibling is claimed and dispatched on the same board', () => {
     assert.deepEqual({ code: ran.code, claimed: pulls(12).length > 0, dispatched: starts(12).length > 0,
       executed: agent.runs().some(({ card, role }) => card === 12 && role === 'engineer'),
+      makerExit: events.filter((event) => event.layer === 'L1' && event.event === 'dispatch.end' && event.card === 12).map(({ exit }) => exit),
       registered: registered.includes(join(settings.worktrees.root, 'rigger-12')) },
-    { code: 1, claimed: true, dispatched: true, executed: true, registered: true }, [ran.text, ...written].join('\n'));
+    { code: 1, claimed: true, dispatched: true, executed: true, makerExit: [7], registered: true }, [ran.text, ...written].join('\n'));
   });
 }

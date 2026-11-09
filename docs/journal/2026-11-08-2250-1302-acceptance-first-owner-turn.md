@@ -29,9 +29,16 @@ is retained as 1302-claiming-base.log. No production file changed.
 | E4 | Held; no source change needed | A judge's critical verdict on the same fixture adds one escalated card to that run's report. |
 
 Each once/run refusal has independent subtest verdicts for claims and board moves, workspace
-creation and registration, dispatch starts, and the valid sibling. The sibling's maker exits
-7 deliberately, so the verb's nonzero result is part of the fixture rather than a test failure.
+creation and registration, dispatch starts, and the valid sibling. The sibling's plan is keyed
+by card 12 so its maker exits 7 deliberately. The sibling assertion checks its L1 dispatch.end
+exit is exactly 7 as well as the verb's nonzero result.
 The invoking tests inject manualClock into L3 and L0; the assertion-only subtests drive no clock.
+
+At ee42c3ca, the wildcard plan did not select that exit act: the maker actually exited 0,
+and the verb returned 1 because no pull request was opened. K74 identified this false fixture
+premise. Before correcting the plan, the new exit assertion failed for C2 through both once
+and run, recording makerExit [0] instead of [7] in 1302-k74-red.log. The fake-forge directory
+also takes the invoking test's context for cleanup.
 
 The owner tests drive real L2 transitions and L3 pulls over the fake board and repository.
 Report reads their emitted stream. The critical control becomes eligible after the ordinary
