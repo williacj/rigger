@@ -54,11 +54,41 @@ tests: 5,487 passed, nine skipped and none failed (direct native PID645, exit0).
 The complete report file passed all 50 tests (direct native PID167858, exit0).
 Both captures observed stdout/stderr EOF, and before/after source, tracked-byte,
 Git-flag and staged-entry records agree. The ignored package record remained absent.
-The normal commit-hook result and official guarded control are recorded as they occur.
-The official control is currently unexecuted and awaits coordinator admission.
-Its proposed fault removes only repository inequality refusal, retaining all
-fingerprint calls and external checks. No transient workflow edit belongs in this
-card's delivered diff.
+The implementation commit `210210ef898bb8dbadf99feb230bbaf71998a475` passed
+its mandatory deterministic hook: 5,487 passed, nine skipped and none failed.
+The captured direct git process exited0 after the hook. A prior commit attempt
+exited128 for missing clone-local author identity before any hook ran; that was
+a configuration failure, never a test RED. The authorized local identity resolved it.
+
+Exactly one official control used the unmodified `npm run mutation:receipt` at
+that implementation head, with source tree `83d0321ad575d326873cf5e9ef04393a176b8f5b`.
+The literal repository loop anchor occurred once. Its disposable mutation replaced
+only the inequality refusal with the awaited fingerprint call, preserving all three
+repository calls, npm/config checks and collection/reporting behavior. Actual
+source readback and diff confirmed that effect. No workflow edit survived.
+
+The selected positive actual-byte test and changed-.npmrc test both passed before
+the fault (native selected-suite PID663, exit0). With the fault, the positive still
+passed and the new changed-.npmrc test failed its named startup-unavailable
+assertion: the actual value was a qualified npm12.2.2 descriptor rather than
+undefined (PID736, exit1). Restoration returned both named tests to GREEN
+(PID806, exit0). Each phase retained two named verdicts, faithful separate UTF8
+capture and no timeout, cancellation or file verdict. This is the diagnostic
+semantic RED/restored GREEN, not a claim that current production was defective.
+
+The receipt reported `killed`. Its workflow preimage, before-restored-run and
+after-restored-run SHA-256 all equal
+`99587184835c70f5e447b37d8755a496c50f33c4fe95047d10fa12c669008d56`,
+and restored source status was empty. Own source/ref/worktree and tracked-byte
+records also agree before/after. The receipt's direct native process PID623
+exited0 and c27 observed both output EOFs. Original separate outputs were reopened
+after disposable-worktree teardown; the complete receipt stdout SHA-256 is
+`717dae4d9753baa19deefd87197394bc40d6bc533f4c888e84467ad57ebe7a68`
+in `residual-official-control/direct/stdout` under the retained evidence root.
+
+Final deterministic and complete report-file verification accompanies handoff
+with its actual reviewed-head source/runtime attribution. The implementation-head
+control evidence remains attributed to that head; no official fault is replayed.
 
 This is ordinary deterministic repository-harness proof, not host-tier or product
 requirement coverage. The independently checked existing selected-main file bytes
