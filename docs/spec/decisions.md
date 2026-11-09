@@ -72,6 +72,7 @@ reused.
 | D29 | Rigger's suite runs in two tiers, and the hooks run one | Ratified. Amended in #1140. |
 | D30 | Until the conversion closes, two lists exempt files from D29's bounds | Ratified. Amended in #1140. |
 | D31 | macOS CI runs on hosted runners unless the owner selects the Mac mini | Ratified |
+| D33 | A release tags the commit its milestone's exit run tested | Ratified |
 
 ## D1 — Redo over resume
 
@@ -1241,3 +1242,45 @@ merge commit. So rule 3 names what holds outside the workflow.
 
 What reverses this: the repository accepting outside pull requests, which ends rule 3's reliance on
 approving none, or hosted capacity no longer failing, which removes the need for the variable.
+
+## D33 — A release tags the commit its milestone's exit run tested
+
+**Status:** Ratified.
+
+### Rule
+
+1. A release's tagged commit is the commit under test of its milestone's exit run (`D7` rule 4).
+   For the first release, that is the commit M8's exit run tested.
+2. A release's version is the `version` in `package.json` at the tagged commit. The first release
+   is `0.1.0`.
+3. A release's tag is `v` followed by its version, so the first tag is `v0.1.0`.
+4. The published tarball is the one `npm pack` produces at the tagged commit.
+5. A release's version bump merges before its milestone's exit run. For the first release, the bump
+   merges before M8's exit run.
+
+### Notes
+
+Rule 1 makes the tarball published the tarball the exit run tested. `D7` rule 4 has the exit run
+install the candidate engine from the tarball `npm pack` produces at the commit under test. Rule 4
+packs at that same commit, so what a consumer installs is what the exit run passed.
+
+Rule 1 names the commit under test rather than the commit that closed the milestone. Under `D7`
+rule 4, a commit after the exit run that changes the packed tarball's contents moves the closing
+commit. The closing commit is then neither known when the tag is written nor the commit the exit
+run tested.
+
+Rule 5 follows from `D7` rule 4's tarball-contents clause: only a commit that leaves the packed
+tarball's contents unchanged keeps the closing commit. `package.json` is packed, so a bump changes
+those contents. A bump merged after the exit run would publish a tarball no exit run tested.
+
+Rule 2 keeps one source for the version. The tag and the tarball both read it from the tagged
+commit, so they cannot name two versions.
+
+This is not a `D7` amendment. `D7`'s scope is promoting the installed engine that builds Rigger,
+and it never mentions a tag. The first version and tag answer the owner's ruling M8-U2 Q9 on #1293.
+
+Two observations would reverse this decision. First, the tarball the npm registry serves for a release
+differs in contents from the one `npm pack` produces at its tagged commit. That shows rule 4 does
+not make the published tarball the tested one. Second, a release is needed from a commit no
+milestone's exit run tested, such as a fix shipped between milestones. That shows rule 1 cannot
+name every release's commit.
