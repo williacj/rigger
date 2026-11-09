@@ -100,7 +100,30 @@ function roundLines(rounds) {
   ])];
 }
 
-/** The lines L2 prints: rates and escalations per run, then stream rates and rounds by kind. */
+/** A heading and its lines, or `none` beneath it where there are none. */
+const listed = (heading, lines) => [heading, ...(lines.length === 0 ? ['      none'] : lines)];
+
+/** The acceptance changes across the stream, as L2 prints them: changes, deleted content, growth, the maker's changes, and authors. */
+function acceptanceLines({ changes, deleted, grew, authors }) {
+  const by = (dispatches) => dispatches.map(({ dispatch, role }) => `, dispatch ${dispatch} (${role})`).join('');
+  return [
+    ...listed('    acceptance changes, each with who made it', changes.map(({ card, editedAt, editor, dispatches }) =>
+      `      card #${card} at ${editedAt}: editor ${JSON.stringify(editor)}${by(dispatches)}`)),
+    ...listed('    content deleted from a card\'s history', deleted.map(({ card, editedAt, editor }) =>
+      `      card #${card} at ${editedAt}: editor ${JSON.stringify(editor)}`)),
+    ...listed('    acceptances that grew after admission', grew.map(({ card, editedAt, items, admitted }) =>
+      `      card #${card} at ${editedAt}: ${items} items, over ${admitted} at its first pull`)),
+    ...listed('    acceptance changes made during the card\'s maker dispatch', changes.filter(({ duringMaker }) => duringMaker)
+      .map(({ card, editedAt }) => `      card #${card} at ${editedAt}`)),
+    ...listed('    each card\'s author', authors.map(({ card, source, names }) => {
+      if (source === 'author') return `      card #${card}: ${JSON.stringify(names[0])}, as its acceptance.history records`;
+      if (source === 'dispatches') return `      card #${card}: roles ${names.join(', ')}, whose dispatch windows hold its opening`;
+      return `      card #${card}: the owner, since no role dispatch window holds its opening`;
+    })),
+  ];
+}
+
+/** The lines L2 prints: rates and escalations per run, then stream rates, acceptance changes and rounds by kind. */
 function l2Lines({ runs, stream }) {
   const line = ({ faults, claims }, where) => rateLine('host-fault rate', 'host faults', 'work claims', { counted: faults, of: claims, none: `no work claim in ${where}` });
   return [
@@ -111,6 +134,7 @@ function l2Lines({ runs, stream }) {
     line(stream.hostFaults, 'the stream'),
     escalationLine(stream.escalations, 'the stream'),
     '    each escalation is listed under its run',
+    ...acceptanceLines(stream.acceptance),
     ...roundLines(stream.rounds),
   ];
 }
