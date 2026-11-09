@@ -50,13 +50,13 @@ const acceptance = (events) => derive(written(events)).l2.stream.acceptance;
 const changes = (events) => acceptance(events).changes;
 
 // proves R-CARD-6
-test('D1: two revisions whose digest differs are one change at the later edit time by its editor', () => {
+test('Table D row 1: two revisions whose digest differs are one change at the later edit time by its editor', () => {
   assert.deepEqual(changes([history(7, [revision(10, 'alice', 'd-1', 3), revision(20, 'bob', 'd-2', 3)])]),
     [{ card: 7, editedAt: at(20), editor: 'bob', dispatches: [], duringMaker: false }]);
 });
 
 // proves R-CARD-6
-test('D2: one revision carried by two acceptance.history events is one change', () => {
+test('Table D row 2: one revision carried by two acceptance.history events is one change', () => {
   const revisions = [revision(10, 'alice', 'd-1', 3), revision(20, 'bob', 'd-2', 3)];
   assert.deepEqual(changes([history(7, revisions.slice(0, 1), { ts: at(15) }), history(7, revisions, { ts: at(25) }),
     history(7, [...revisions, revision(30, 'carol', 'd-2', 3)], { ts: at(35) })]),
@@ -66,19 +66,19 @@ test('D2: one revision carried by two acceptance.history events is one change', 
     [{ card: 7, editedAt: at(20), editor: 'bob', dispatches: [], duringMaker: false }], 'one change per card and editedAt');
 });
 
-test('D3: two successive revisions with the same digest are no change', () => {
+test('Table D row 3: two successive revisions with the same digest are no change', () => {
   assert.deepEqual(changes([history(7, [revision(10, 'alice', 'd-1', 3), revision(20, 'bob', 'd-1', 3)])]), []);
 });
 
 // proves R-CARD-6
-test('D4: a deleted revision between two digests is content deleted, and the later revision a change', () => {
+test('Table D row 4: a deleted revision between two digests is content deleted, and the later revision a change', () => {
   const answer = acceptance([history(7, [revision(10, 'alice', 'd-1', 3), deleted(20, 'mallory'), revision(30, 'bob', 'd-2', 3)])]);
   assert.deepEqual(answer.deleted, [{ card: 7, editedAt: at(20), editor: 'mallory' }]);
   assert.deepEqual(answer.changes, [{ card: 7, editedAt: at(30), editor: 'bob', dispatches: [], duringMaker: false }]);
 });
 
 // proves R-CARD-6
-test('D4b: a deleted revision with no digest before it, or none after it, is content deleted and no change', () => {
+test('Table D row 4b: a deleted revision with no digest before it, or none after it, is content deleted and no change', () => {
   const first = acceptance([history(7, [deleted(10, 'mallory'), revision(20, 'bob', 'd-2', 3)])]);
   assert.deepEqual(first.deleted, [{ card: 7, editedAt: at(10), editor: 'mallory' }]);
   assert.deepEqual(first.changes, []);
@@ -91,7 +91,7 @@ test('D4b: a deleted revision with no digest before it, or none after it, is con
 const changedAt = (n, editor = 'owner') => history(7, [revision(1, 'owner', 'd-1', 3), revision(n, editor, 'd-2', 3)]);
 
 // proves R-CARD-5
-test('D5: a change in one role dispatch window, either end included, is made by its editor and that dispatch', () => {
+test('Table D row 5: a change in one role dispatch window, either end included, is made by its editor and that dispatch', () => {
   for (const n of [100, 150, 200]) {
     assert.deepEqual(changes([dispatch(7, 'd-pm', 'pm'), start('d-pm', 100), changedAt(n), end('d-pm', 200)]),
       [{ card: 7, editedAt: at(n), editor: 'owner', dispatches: [{ dispatch: 'd-pm', role: 'pm' }], duringMaker: false }], `edit at ${n}`);
@@ -99,13 +99,13 @@ test('D5: a change in one role dispatch window, either end included, is made by 
 });
 
 // proves R-CARD-5
-test('D5b: a role dispatch under another card is among who made a change in its window', () => {
+test('Table D row 5b: a role dispatch under another card is among who made a change in its window', () => {
   assert.deepEqual(changes([dispatch(99, 'd-pm', 'pm'), start('d-pm', 100), changedAt(150), end('d-pm', 200)]),
     [{ card: 7, editedAt: at(150), editor: 'owner', dispatches: [{ dispatch: 'd-pm', role: 'pm' }], duringMaker: false }]);
 });
 
 // proves R-CARD-5
-test('D6: a change in no role dispatch window is made by its editor alone', () => {
+test('Table D row 6: a change in no role dispatch window is made by its editor alone', () => {
   for (const n of [99, 201]) {
     assert.deepEqual(changes([dispatch(7, 'd-pm', 'pm'), start('d-pm', 100), end('d-pm', 200), changedAt(n)]),
       [{ card: 7, editedAt: at(n), editor: 'owner', dispatches: [], duringMaker: false }], `edit at ${n}`);
@@ -113,14 +113,14 @@ test('D6: a change in no role dispatch window is made by its editor alone', () =
 });
 
 // proves R-CARD-5
-test('D7: a change in two overlapping role dispatch windows is made by its editor and both dispatches', () => {
+test('Table D row 7: a change in two overlapping role dispatch windows is made by its editor and both dispatches', () => {
   assert.deepEqual(changes([dispatch(7, 'd-pm', 'pm'), dispatch(8, 'd-rev', 'reviewer'), start('d-pm', 100), start('d-rev', 140),
     changedAt(150), end('d-pm', 200), end('d-rev', 300)]),
   [{ card: 7, editedAt: at(150), editor: 'owner', dispatches: [{ dispatch: 'd-pm', role: 'pm' }, { dispatch: 'd-rev', role: 'reviewer' }], duringMaker: false }]);
 });
 
 // proves R-CARD-5
-test('D8: an L3 dispatch carrying step is not among who made a change in its window', () => {
+test('Table D row 8: an L3 dispatch carrying step is not among who made a change in its window', () => {
   assert.deepEqual(changes([dispatch(7, 'd-step', 'reviewer', { step: 'install' }), start('d-step', 100), changedAt(150), end('d-step', 200)]),
     [{ card: 7, editedAt: at(150), editor: 'owner', dispatches: [], duringMaker: false }]);
 });
@@ -129,13 +129,13 @@ test('D8: an L3 dispatch carrying step is not among who made a change in its win
 const unended = (n, ...after) => [dispatch(7, 'd-pm', 'pm'), start('d-pm', 100), ...after, changedAt(n)];
 
 // proves R-CARD-5
-test('D9: a dispatch with no end is among who made a change before the next run.start', () => {
+test('Table D row 9: a dispatch with no end is among who made a change before the next run.start', () => {
   assert.deepEqual(changes([...unended(150), runStart(200)]),
     [{ card: 7, editedAt: at(150), editor: 'owner', dispatches: [{ dispatch: 'd-pm', role: 'pm' }], duringMaker: false }]);
 });
 
 // proves R-CARD-5
-test('D10: a dispatch with no end is not among who made a change after the next run.start', () => {
+test('Table D row 10: a dispatch with no end is not among who made a change after the next run.start', () => {
   assert.deepEqual(changes(unended(250, runStart(200))),
     [{ card: 7, editedAt: at(250), editor: 'owner', dispatches: [], duringMaker: false }]);
   assert.deepEqual(changes([runStart(50, 'r-a'), ...unended(250)]),
@@ -144,7 +144,7 @@ test('D10: a dispatch with no end is not among who made a change after the next 
 });
 
 // proves R-CARD-5
-test('D11: a dispatch with no end and no later run.start is among who made a change to the stream\'s end', () => {
+test('Table D row 11: a dispatch with no end and no later run.start is among who made a change to the stream\'s end', () => {
   assert.deepEqual(changes(unended(9000)),
     [{ card: 7, editedAt: at(9000), editor: 'owner', dispatches: [{ dispatch: 'd-pm', role: 'pm' }], duringMaker: false }]);
 });
@@ -153,7 +153,7 @@ test('D11: a dispatch with no end and no later run.start is among who made a cha
 const grew = (events) => acceptance(events).grew;
 
 // proves R-CARD-11
-test('D12: a revision after the first pull holding more items than the one current at it grew the acceptance', () => {
+test('Table D row 12: a revision after the first pull holding more items than the one current at it grew the acceptance', () => {
   const answer = acceptance([pull(7, 50), history(7, [revision(10, 'owner', 'd-1', 3), revision(40, 'owner', 'd-2', 4), revision(60, 'owner', 'd-3', 5)]),
     pull(7, 70)]);
   assert.deepEqual(answer.grew, [{ card: 7, editedAt: at(60), items: 5, admitted: 4 }]);
@@ -163,20 +163,20 @@ test('D12: a revision after the first pull holding more items than the one curre
 });
 
 // proves R-CARD-11
-test('D12b: growth compares with the nearest revision carrying items at or before the pull, past a deleted one', () => {
+test('Table D row 12b: growth compares with the nearest revision carrying items at or before the pull, past a deleted one', () => {
   assert.deepEqual(grew([history(7, [revision(10, 'owner', 'd-1', 3), deleted(40, 'mallory'), revision(60, 'owner', 'd-2', 4)]), pull(7, 50)]),
     [{ card: 7, editedAt: at(60), items: 4, admitted: 3 }]);
 });
 
 // proves R-CARD-11
-test('D13: a revision after the first pull with the same items and another digest is a change and no growth', () => {
+test('Table D row 13: a revision after the first pull with the same items and another digest is a change and no growth', () => {
   const answer = acceptance([pull(7, 50), history(7, [revision(10, 'owner', 'd-1', 3), revision(60, 'owner', 'd-2', 3)])]);
   assert.deepEqual(answer.changes.map(({ editedAt }) => editedAt), [at(60)]);
   assert.deepEqual(answer.grew, []);
 });
 
 // proves R-CARD-11
-test('D14: a revision before the first pull holding more items is a change and no growth', () => {
+test('Table D row 14: a revision before the first pull holding more items is a change and no growth', () => {
   const answer = acceptance([history(7, [revision(10, 'owner', 'd-1', 3), revision(40, 'owner', 'd-2', 5)]), pull(7, 50)]);
   assert.deepEqual(answer.changes.map(({ editedAt }) => editedAt), [at(40)]);
   assert.deepEqual(answer.grew, []);
@@ -184,19 +184,19 @@ test('D14: a revision before the first pull holding more items is a change and n
 });
 
 // proves R-CARD-5
-test('D15: a change in the window of the card\'s maker dispatch is flagged as made during it', () => {
+test('Table D row 15: a change in the window of the card\'s maker dispatch is flagged as made during it', () => {
   assert.deepEqual(changes([dispatch(7, 'd-make', 'engineer', { attempt: 1 }), start('d-make', 100), changedAt(150), end('d-make', 200)]),
     [{ card: 7, editedAt: at(150), editor: 'owner', dispatches: [{ dispatch: 'd-make', role: 'engineer' }], duringMaker: true }]);
 });
 
 // proves R-CARD-5
-test('D15b: a change in another card\'s maker dispatch window only is not flagged, and that dispatch made it', () => {
+test('Table D row 15b: a change in another card\'s maker dispatch window only is not flagged, and that dispatch made it', () => {
   assert.deepEqual(changes([dispatch(8, 'd-make', 'engineer', { attempt: 1 }), start('d-make', 100), changedAt(150), end('d-make', 200)]),
     [{ card: 7, editedAt: at(150), editor: 'owner', dispatches: [{ dispatch: 'd-make', role: 'engineer' }], duringMaker: false }]);
 });
 
 // proves R-CARD-5
-test('D16: a change in a judge dispatch window only is not flagged as made during the maker\'s dispatch', () => {
+test('Table D row 16: a change in a judge dispatch window only is not flagged as made during the maker\'s dispatch', () => {
   assert.deepEqual(changes([dispatch(7, 'd-judge', 'reviewer'), start('d-judge', 100), changedAt(150), end('d-judge', 200),
     dispatch(7, 'd-make', 'engineer', { attempt: 1 }), start('d-make', 300), end('d-make', 400)]),
   [{ card: 7, editedAt: at(150), editor: 'owner', dispatches: [{ dispatch: 'd-judge', role: 'reviewer' }], duringMaker: false }]);
@@ -206,31 +206,31 @@ test('D16: a change in a judge dispatch window only is not flagged as made durin
 const authors = (events) => acceptance(events).authors;
 
 // proves R-CARD-5
-test('D17: a clock-opened card whose acceptance.history carries author has that author', () => {
+test('Table D row 17: a clock-opened card whose acceptance.history carries author has that author', () => {
   assert.deepEqual(authors([dispatch(7, 'd-pm', 'pm'), start('d-pm', 0), history(7, [revision(1, 'owner', 'd-1', 3)], { author: 'architect' }), end('d-pm', 9)]),
     [{ card: 7, source: 'author', names: ['architect'] }]);
 });
 
 // proves R-CARD-5
-test('D18: a card with no author opened in one role dispatch window has that dispatch\'s role as author', () => {
+test('Table D row 18: a card with no author opened in one role dispatch window has that dispatch\'s role as author', () => {
   assert.deepEqual(authors([dispatch(1, 'd-pm', 'pm'), start('d-pm', 0), history(7, [revision(5, 'owner', 'd-1', 3)], { opened: at(5) }), end('d-pm', 9)]),
     [{ card: 7, source: 'dispatches', names: ['pm'] }]);
 });
 
 // proves R-CARD-5
-test('D18b: a card with no author opened in two role dispatch windows has both roles as author', () => {
+test('Table D row 18b: a card with no author opened in two role dispatch windows has both roles as author', () => {
   assert.deepEqual(authors([dispatch(1, 'd-pm', 'pm'), dispatch(2, 'd-arch', 'architect'), start('d-pm', 0), start('d-arch', 2),
     history(7, [revision(5, 'owner', 'd-1', 3)], { opened: at(5) }), end('d-pm', 9), end('d-arch', 9)]),
   [{ card: 7, source: 'dispatches', names: ['pm', 'architect'] }]);
 });
 
 // proves R-CARD-5
-test('D19: a card with no author opened in no role dispatch window has the owner as author', () => {
+test('Table D row 19: a card with no author opened in no role dispatch window has the owner as author', () => {
   assert.deepEqual(authors([dispatch(1, 'd-pm', 'pm'), start('d-pm', 10), end('d-pm', 20), history(7, [revision(5, 'owner', 'd-1', 3)], { opened: at(5) })]),
     [{ card: 7, source: 'owner', names: [] }]);
 });
 
-/** A stream holding D1, D7, D12 and D15, with deleted content and each author kind. */
+/** A stream holding Table D rows 1, 7, 12 and 15, with deleted content and each author kind. */
 const mixed = () => [
   pull(12, 50), dispatch(7, 'd-pm', 'pm'), dispatch(8, 'd-rev', 'reviewer'), dispatch(15, 'd-make', 'engineer', { attempt: 1 }),
   start('d-pm', 100), start('d-rev', 140), end('d-pm', 200), end('d-rev', 300), start('d-make', 400), end('d-make', 500),
