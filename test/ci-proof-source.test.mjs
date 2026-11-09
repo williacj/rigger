@@ -771,3 +771,31 @@ test('Table A A29: check (26) stands at its head after main advances, and the la
   assert.deepEqual([answer.ok, answer.mainAdvanced], [true, true]);
   assert.equal((await requiredCheckAt([await fullRunAt(1)]))['check (26)'].state, 'passed');
 });
+
+test('the plan publishes journalOnly from the checkout change list it is given, and from collected facts only without one', async () => {
+  const journal = [{ status: 'A', oldMode: '000000', newMode: '100644', path: 'docs/journal/a.md' }];
+  const source = [{ status: 'M', oldMode: '100644', newMode: '100644', path: 'src/workflow/gate.mjs' }];
+  const plan = async (facts, changes) => (await evaluateCiPolicy('runPolicy', { action: 'plan', facts, changes })).output;
+  const incomplete = { complete: false, reason: 'unavailable API page' };
+  assert.deepEqual(await plan(ciFacts()).then((output) => [output.mode, output.journalOnly]), ['FAST_ELIGIBLE', true]);
+  assert.deepEqual(await plan(ciFacts(), source).then((output) => [output.mode, output.journalOnly]), ['FAST_ELIGIBLE', false]);
+  assert.deepEqual(await plan(incomplete, journal).then((output) => [output.mode, output.journalOnly]), ['INVALID', true]);
+  assert.deepEqual(await plan(incomplete).then((output) => [output.mode, output.journalOnly]), ['INVALID', false]);
+  assert.deepEqual(await plan(incomplete, [...journal, ...source]).then((output) => output.journalOnly), false);
+});
+
+test('localChanges reads the changes of a pull request merge against its first parent from Git alone, and nothing where Git cannot say', async () => {
+  const fixture = ciCollectorFixture();
+  const a = 'a'.repeat(40), c = 'c'.repeat(40), d = 'd'.repeat(40);
+  const { answer, calls } = await evaluateCiPolicy('localChanges', fixture);
+  assert.deepEqual(answer, [{ oldMode: '000000', newMode: '100644', status: 'A', path: 'docs/journal/a.md' }]);
+  assert.deepEqual(calls.at(-1), ['diff', '--raw', '-z', '--no-renames', c, a]);
+  for (const [name, parents] of [['one parent', c], ['three parents', [c, d, 'e'.repeat(40)].join(' ')], ['a malformed parent', c + ' not-a-sha']]) {
+    const altered = ciCollectorFixture();
+    altered.git[JSON.stringify(['show', '-s', '--format=%P', 'HEAD'])] = Buffer.from(parents + '\n').toString('base64');
+    assert.equal((await evaluateCiPolicy('localChanges', altered)).answer, undefined, name);
+  }
+  const unanswered = ciCollectorFixture();
+  delete unanswered.git[JSON.stringify(['diff', '--raw', '-z', '--no-renames', c, a])];
+  assert.equal((await evaluateCiPolicy('localChanges', unanswered)).answer, undefined, 'an unanswered diff');
+});

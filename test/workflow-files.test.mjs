@@ -509,6 +509,7 @@ const SMOKE_FILES = ['test/process-adapter.test.mjs', 'test/read-deadline.test.m
 const REQUIRED_CONTEXTS = ['check (26)', GATE_CONTEXT, 'self-hosting'];
 
 // Host reason: wiring; this process-free configuration check remains in an awaiting-split file (D30 rule 3).
+// Rigger decision: none; this check reads the smoke job's declared runner, Node, timeout and name without evaluating CI_POLICY.
 test('the macOS smoke job runs on the hosted macOS runner under Node 26 for at most ten minutes, under a name no required context shares', () => {
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
   const job = ci.jobs.mac_smoke;
@@ -522,6 +523,7 @@ test('the macOS smoke job runs on the hosted macOS runner under Node 26 for at m
 });
 
 // Host reason: wiring; this process-free configuration check remains in an awaiting-split file (D30 rule 3).
+// Rigger decision: none; this check evaluates the smoke job's declared condition over given plan outputs without evaluating CI_POLICY.
 test('the macOS smoke job starts for a pull request into main that is not journal-only, whatever the plan mode, and check (26) never waits on it', () => {
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
   const job = ci.jobs.mac_smoke;
@@ -546,6 +548,7 @@ test('the macOS smoke job starts for a pull request into main that is not journa
 });
 
 // Host reason: wiring; this process-free configuration check remains in an awaiting-split file (D30 rule 3).
+// Rigger decision: none; this check reads the smoke job's declared commands without evaluating CI_POLICY.
 test('the macOS smoke job runs exactly the smoke set in order, then the Mac containment proof as full_host runs it', () => {
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
   const commands = (name) => ci.jobs[name].steps.map((step) => step.run).filter(Boolean);
@@ -555,6 +558,7 @@ test('the macOS smoke job runs exactly the smoke set in order, then the Mac cont
 });
 
 // Host reason: wiring; runs the protected policy literal in a child, in an awaiting-split file (D30 rule 3).
+// Ordinary decision counterpart: test/ci-proof-source.test.mjs :: the plan publishes journalOnly from the checkout change list it is given, and from collected facts only without one.
 test('the plan publishes journalOnly true exactly where every change is a regular direct journal entry, whatever mode it plans', () => {
   const plan = (facts) => ciPolicy('runPolicy', { action: 'plan', facts }).output;
   const journal = ciFacts();
@@ -614,7 +618,9 @@ function plannedOutputs(ci, fixture, directory) {
   }));
 }
 
-// Host reason: wiring; runs the protected policy literal in a child, in an awaiting-split file (D30 rule 3).
+// Host reason: wiring; connects the plan step's child runtime, output file and job outputs to the smoke condition.
+// Ordinary decision counterpart: test/ci-proof-source.test.mjs :: the plan publishes journalOnly from the checkout change list it is given, and from collected facts only without one.
+// Ordinary decision counterpart: test/ci-proof-source.test.mjs :: localChanges reads the changes of a pull request merge against its first parent from Git alone, and nothing where Git cannot say.
 test('the macOS smoke job reads journalOnly through the actual plan step and job outputs, and a journal-only change skips it even where the forge API read fails', (t) => {
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
   const condition = new Function('github', 'needs', 'cancelled', 'return (' + ci.jobs.mac_smoke.if.slice(3, -2).trim() + ')');

@@ -189,6 +189,11 @@ export async function evaluateCiPolicy(operation, facts, extra = {}, major = ciN
       });
       return { answer, calls };
     }
+    if (operation === 'localChanges') {
+      const calls = [];
+      const answer = policy.localChanges((args) => { const key = JSON.stringify(args); calls.push(args); if (!Object.hasOwn(facts.git, key)) throw new Error('unexpected Git command ' + key); return Buffer.from(facts.git[key], 'base64'); });
+      return { answer, calls };
+    }
     if (['policy', 'guard', 'runPolicy'].includes(operation)) return await policy[operation](facts, extra);
     throw new Error('unsupported in-process CI operation ' + operation);
   } finally {
