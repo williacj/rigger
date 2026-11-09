@@ -1,21 +1,20 @@
 // ABOUTME: Tests the process fixtures' own bounds: a condition wait whose test has ended, failed or
 // timed out, no longer holds the test file's process open, and the teardown that kills a scratch
 // directory's processes ends, naming any it could not kill.
-// It also controls raw process-table outcomes and a warm runner under a path containing a space.
+// It also qualifies native process-table outcomes and a warm runner under a path containing a space.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdirSync, accessSync, constants } from 'node:fs';
 import { copyFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { delimiter } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { createRequire, syncBuiltinESMExports } from 'node:module';
 
-import { scratch, sweep } from './process-fixtures.mjs';
+import { ownedChild, scratch, sweep } from './process-fixtures.mjs';
 import { literally, running } from './process-fixtures.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { fixture } from './process-fixtures.mjs';
@@ -30,7 +29,6 @@ test('process fixtures execute the Bash file substitutions used by census contro
   assert.equal(result.stdout, 'tail');
 });
 
-const childProcess = createRequire(import.meta.url)('node:child_process');
 
 test('a process search excludes the caller whose command line contains the search text', () => {
   const code = `import { running } from ${JSON.stringify(new URL('./process-fixtures.mjs', import.meta.url).href)}; console.log(JSON.stringify({ pid: process.pid, found: running(process.argv[1]) }));`;
@@ -39,28 +37,6 @@ test('a process search excludes the caller whose command line contains the searc
   const { pid, found } = JSON.parse(result.stdout);
   assert.equal(found.includes(String(pid)), false, 'the process observer counted itself as a fixture');
 });
-
-function withProcessTableResults(results, check) {
-  const original = childProcess.spawnSync;
-  const calls = [];
-  childProcess.spawnSync = (command, args, options) => {
-    if (command !== '/usr/bin/pgrep' && command !== '/usr/bin/pkill') return original(command, args, options);
-    calls.push({ command, args, options });
-    const answer = results.shift();
-    assert.ok(answer, `unexpected ${command} after ${calls.length} commands`);
-    return answer;
-  };
-  syncBuiltinESMExports();
-  try {
-    check(calls);
-    assert.equal(results.length, 0, 'a process-table answer was not read');
-  } finally {
-    childProcess.spawnSync = original;
-    syncBuiltinESMExports();
-  }
-}
-
-const processTableResult = (status, stdout, extra = {}) => ({ status, stdout, stderr: '', signal: null, error: undefined, ...extra });
 
 test('warm runner resolves its module path when the checkout path contains a space', async (t) => {
   const directory = temporaryDirectory('rigger fixture space ', { context: t });
@@ -133,98 +109,8 @@ test('given a process the teardown\'s pkill cannot kill, which pgrep lists howev
   });
 });
 
-test('control: a process-table read preserves raw fields and refuses unqualified results', () => {
-  for (const status of [0, 1, 2, 3, 255, null]) {
-    for (const stdout of ['', '4242\n', 'not-a-pid\n']) {
-      const result = processTableResult(status, stdout, status === null ? { signal: 'SIGTERM' } : {});
-      const before = { ...result };
-      withProcessTableResults([result], (calls) => {
-        if (status === 0 && stdout === '4242\n') assert.deepEqual(running('rigger-779-absent'), ['4242']);
-        else if (status === 1 && stdout === '') assert.deepEqual(running('rigger-779-absent'), []);
-        else assert.throws(() => running('rigger-779-absent'), /unqualified pgrep observation/);
-        assert.deepEqual(calls.map(({ command }) => command), ['/usr/bin/pgrep']);
-        assert.equal(result.status, status);
-        assert.equal(result.stdout, stdout);
-        assert.deepEqual(result, before);
-      });
-    }
-  }
-  withProcessTableResults([processTableResult(null, undefined, { error: new Error('failed launch') })], (calls) => {
-    assert.throws(() => running('rigger-779-absent'), /unqualified pgrep observation/);
-    assert.equal(calls.length, 1);
-  });
-});
 
-test('control: sweep refuses unqualified initial reads and accepts qualified absence', () => {
-  for (const status of [2, 0, 1, 3, 255, null]) {
-    const result = processTableResult(status, '', status === null ? { signal: 'SIGTERM' } : {});
-    withProcessTableResults([result], (calls) => {
-      if (status === 1) sweep('rigger-779-absent');
-      else assert.throws(() => sweep('rigger-779-absent'), /unqualified pgrep observation/, 'an unknown initial read cannot prove owner absence');
-      assert.deepEqual(calls.map(({ command }) => command), ['/usr/bin/pgrep']);
-      assert.equal(result.status, status);
-      assert.equal(result.stdout, '');
-    });
-  }
-  withProcessTableResults([processTableResult(null, undefined, { error: new Error('failed launch') })], (calls) => {
-    assert.throws(() => sweep('rigger-779-absent'), /unqualified pgrep observation/);
-    assert.deepEqual(calls.map(({ command }) => command), ['/usr/bin/pgrep']);
-  });
-});
 
-test('control: sweep checks first later and final qualified reads despite failed pkill returns', () => {
-  for (const status of [0, 1, 2, 3, 255, null]) {
-    for (const stdout of ['4242\n', 'not-a-pid\n']) {
-      const first = processTableResult(status, stdout, status === null ? { signal: 'SIGTERM' } : {});
-      const occupied = status === 0 && stdout === '4242\n';
-      withProcessTableResults(occupied ? [first, processTableResult(0, ''), processTableResult(1, '')] : [first], (calls) => {
-        if (occupied) sweep('rigger-779-absent');
-        else assert.throws(() => sweep('rigger-779-absent'), /unqualified pgrep observation/);
-        assert.deepEqual(calls.map(({ command }) => command), occupied
-          ? ['/usr/bin/pgrep', '/usr/bin/pkill', '/usr/bin/pgrep'] : ['/usr/bin/pgrep']);
-      });
-    }
-  }
-  for (const occupied of [1, 2, 10]) {
-    const answers = Array.from({ length: occupied }, () => [processTableResult(0, '4242\n'), processTableResult(2, '')]).flat();
-    answers.push(processTableResult(1, ''));
-    withProcessTableResults(answers, (calls) => {
-      sweep('rigger-779-absent');
-      assert.equal(calls.filter(({ command }) => command === '/usr/bin/pgrep').length, occupied + 1);
-      assert.equal(calls.filter(({ command }) => command === '/usr/bin/pkill').length, occupied);
-    });
-  }
-  const answers = Array.from({ length: 10 }, () => [processTableResult(0, '4242\n'), processTableResult(2, '')]).flat();
-  answers.push(processTableResult(0, '4242\n'));
-  withProcessTableResults(answers, (calls) => {
-    assert.throws(() => sweep('rigger-779-absent'), /4242/);
-    assert.equal(calls.filter(({ command }) => command === '/usr/bin/pgrep').length, 11);
-    assert.equal(calls.filter(({ command }) => command === '/usr/bin/pkill').length, 10);
-  });
-  withProcessTableResults([
-    processTableResult(0, '4242\n'),
-    processTableResult(null, undefined, { error: new Error('pkill failed to launch') }),
-    processTableResult(1, ''),
-  ], (calls) => {
-    sweep('rigger-779-absent');
-    assert.deepEqual(calls.map(({ command }) => command), ['/usr/bin/pgrep', '/usr/bin/pkill', '/usr/bin/pgrep']);
-  });
-  for (const occupied of [2, 10]) {
-    for (const unknown of [
-      processTableResult(2, ''),
-      processTableResult(null, '', { signal: 'SIGTERM' }),
-      processTableResult(null, undefined, { error: new Error('pgrep failed to launch') }),
-    ]) {
-      const answers = Array.from({ length: occupied }, () => [processTableResult(0, '4242\n'), processTableResult(2, '')]).flat();
-      answers.push(unknown);
-      withProcessTableResults(answers, (calls) => {
-        assert.throws(() => sweep('rigger-779-absent'), /unqualified pgrep observation/, 'an unknown later or final read cannot prove owner absence');
-        assert.deepEqual(calls.map(({ command }) => command),
-          [...Array.from({ length: occupied }, () => ['/usr/bin/pgrep', '/usr/bin/pkill']).flat(), '/usr/bin/pgrep']);
-      });
-    }
-  }
-});
 
 test('PATH resolver skips an executable directory named like the command', (t) => {
   const directory = temporaryDirectory('rigger git path ', { context: t });
@@ -412,5 +298,155 @@ test('pgrep match and no-match results are qualified against an owned live then 
   } finally {
     if (child.exitCode === null && child.signalCode === null && child.pid !== undefined) child.kill('SIGKILL');
     await closed;
+  }
+});
+
+// Host reason: OS behaviour.
+// Ordinary decision counterpart: test/fixture-lifetime.test.mjs :: failed spawn retains its error and observes close without kill or an exit wait.
+test('owned failed-spawn teardown observes native close and preserves a late-consumed error', async (t) => {
+  const directory = scratch(t);
+  const child = spawn(join(directory, 'missing-cli'), [], { env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
+  const trace = [];
+  let spawnFailure;
+  let exits = 0;
+  let kills = 0;
+  const originalKill = child.kill;
+  child.kill = function (...args) { kills += 1; return originalKill.apply(this, args); };
+  child.once('error', (error) => { spawnFailure = error; trace.push('error'); });
+  child.once('exit', () => { exits += 1; });
+  const closed = new Promise((resolve) => child.once('close', (code, signal) => { trace.push('close'); resolve([code, signal]); }));
+  const hooks = [];
+  let ownerCalls = 0;
+  const result = ownedChild({ after: (hook) => hooks.push(hook) }, child, () => { ownerCalls += 1; });
+  const cleanup = hooks[0]();
+  cleanup.catch(() => {});
+  const unhandled = [];
+  const rejected = (error) => unhandled.push(error);
+  process.on('unhandledRejection', rejected);
+  try {
+    const ending = await closed;
+    // Let Node finish its rejection-observation turn before consuming the retained result.
+    await new Promise(setImmediate);
+    assert.deepEqual(unhandled, []);
+    assert.equal(spawnFailure?.code, 'ENOENT');
+    assert.equal(child.pid, undefined);
+    assert.equal(exits, 0);
+    assert.equal(kills, 0);
+    assert.equal(ownerCalls, 1);
+    assert.deepEqual(trace, ['error', 'close']);
+    await assert.rejects(result, (error) => error === spawnFailure);
+    await assert.rejects(cleanup, (error) => error === spawnFailure);
+    t.diagnostic(JSON.stringify({ attempted: child.spawnfile, pid: child.pid ?? null, error: { message: spawnFailure.message, code: spawnFailure.code }, close: ending, exits, kills, ownerCalls, unhandled: unhandled.length }));
+  } finally {
+    process.removeListener('unhandledRejection', rejected);
+    await closed;
+    await result.catch(() => {});
+    await cleanup.catch(() => {});
+  }
+});
+
+// Host reason: real deadline; the existing EXITS_WITHIN bounds the abnormal fixture runner.
+// Ordinary decision counterpart: test/fixture-lifetime.test.mjs :: owned teardown stays pending through exit and owner cleanup until recorded close.
+test('abnormal caller teardown observes native close and final stand-in cleanup before deferred removal', (t) => {
+  const directory = temporaryDirectory('rigger-owned-lifetime-', { context: t });
+  const report = join(directory, 'report.json');
+  writeFileSync(join(directory, 'owned-cli.mjs'), [
+    '// ABOUTME: A live owned CLI that launches fixture work only when teardown releases its input gate.',
+    "import { spawn } from 'node:child_process';",
+    "import { writeFileSync } from 'node:fs';",
+    "import { join } from 'node:path';",
+    'const owner = process.env.OWNER_DIRECTORY;',
+    'const control = process.env.PROOF_DIRECTORY;',
+    'process.stdin.resume();',
+    "process.stdin.once('data', () => {",
+    "  const child = spawn('/usr/bin/tail', ['-f', join(owner, 'hold')], { stdio: 'ignore', detached: true });",
+    "  child.once('spawn', () => writeFileSync(join(control, 'late-pid'), String(child.pid)));",
+    "  child.once('error', (error) => { process.stderr.write(error.stack); process.exitCode = 1; });",
+    '});',
+    "writeFileSync(join(control, 'cli-ready'), String(process.pid));",
+  ].join('\n'));
+  const file = join(directory, 'abnormal.test.mjs');
+  writeFileSync(file, [
+    '// ABOUTME: An abnormal real test caller whose registered teardown must observe owner cleanup and close.',
+    "import { test, after } from 'node:test';",
+    "import assert from 'node:assert/strict';",
+    "import { spawn } from 'node:child_process';",
+    "import { once } from 'node:events';",
+    "import { existsSync, readFileSync, writeFileSync } from 'node:fs';",
+    "import { join } from 'node:path';",
+    'import { ownedChild, running, sweep, until } from ' + JSON.stringify(new URL('./process-fixtures.mjs', import.meta.url).href) + ';',
+    'import { standInAgent } from ' + JSON.stringify(new URL('./stub-claude.mjs', import.meta.url).href) + ';',
+    'const control = process.env.PROOF_DIRECTORY;',
+    'const trace = [];',
+    'let agent, earlyPid, cliPid, latePid;',
+    "let cliOut = '', cliErr = '';",
+    "test('abnormal fixture caller', { timeout: " + EXITS_WITHIN + " }, async (t) => {",
+    '  agent = standInAgent();',
+    "  writeFileSync(join(agent.dir, 'hold'), '');",
+    "  const early = spawn('/usr/bin/tail', ['-f', join(agent.dir, 'hold')], { stdio: 'ignore' });",
+    '  earlyPid = early.pid;',
+    "  const earlyClosed = once(early, 'close');",
+    '  earlyClosed.catch(() => {});',
+    '  t.after(async () => {',
+    '    await earlyClosed;',
+    "    trace.push({ event: 'early-owner-cleanup', remaining: running(agent.dir) });",
+    '    assert.deepEqual(running(agent.dir), []);',
+    "    child.stdin.write('launch');",
+    "    await until(() => existsSync(join(control, 'late-pid')), t);",
+    "    latePid = Number(readFileSync(join(control, 'late-pid'), 'utf8'));",
+    '    assert.ok(Number.isSafeInteger(latePid) && latePid > 0);',
+    '    assert.ok(running(agent.dir).includes(String(latePid)));',
+    "    trace.push({ event: 'late-fixture', pid: latePid });",
+    '  });',
+    "  const child = spawn(process.execPath, [join(control, 'owned-cli.mjs')], { env: { ...process.env, OWNER_DIRECTORY: agent.dir }, stdio: ['pipe', 'pipe', 'pipe'] });",
+    '  cliPid = child.pid;',
+    "  child.once('exit', (code, signal) => trace.push({ event: 'exit', pid: child.pid, code, signal }));",
+    "  child.once('close', (code, signal) => trace.push({ event: 'close', pid: child.pid, code, signal }));",
+    "  ownedChild(t, child, () => { trace.push({ event: 'final-owner' }); sweep(agent.dir); trace.push({ event: 'final-owner-done' }); });",
+    "  child.stdout.on('data', (chunk) => { cliOut += chunk; });",
+    "  child.stderr.on('data', (chunk) => { cliErr += chunk; });",
+    '  t.after(() => {',
+    "    assert.ok(trace.some(({ event }) => event === 'exit'));",
+    "    assert.ok(trace.some(({ event }) => event === 'close'));",
+    '    assert.deepEqual(running(agent.dir), []);',
+    '    assert.equal(existsSync(agent.dir), true);',
+    "    trace.push({ event: 'cleanup-complete' });",
+    '  });',
+    "  writeFileSync(join(control, 'owner.json'), JSON.stringify({ agentDir: agent.dir, cliPid, earlyPid }));",
+    "  await once(early, 'spawn');",
+    "  await until(() => existsSync(join(control, 'cli-ready')), t);",
+    "  assert.equal(Number(readFileSync(join(control, 'cli-ready'), 'utf8')), cliPid);",
+    '  assert.ok(running(agent.dir).includes(String(earlyPid)));',
+    '  assert.equal(running(agent.dir).includes(String(cliPid)), false);',
+    "  throw new Error('abnormal caller ended');",
+    '});',
+    "after(() => { trace.push({ event: 'removed', absent: agent !== undefined && !existsSync(agent.dir) }); writeFileSync(join(control, 'report.json'), JSON.stringify({ agentDir: agent?.dir, cliPid, earlyPid, latePid, cliOut, cliErr, trace })); });",
+  ].join('\n'));
+  const { NODE_TEST_CONTEXT, ...env } = process.env;
+  try {
+    const ran = spawnSync(process.execPath, ['--test', '--test-reporter=tap', file], { encoding: 'utf8', env: { ...env, PROOF_DIRECTORY: directory }, timeout: EXITS_WITHIN });
+    t.diagnostic(JSON.stringify({ runnerPid: ran.pid, status: ran.status, signal: ran.signal, error: ran.error ? { ...ran.error, message: ran.error.message } : null, stdout: ran.stdout, stderr: ran.stderr }));
+    assert.equal(ran.error, undefined);
+    assert.equal(ran.signal, null);
+    assert.equal(ran.status, 1, ran.stdout + ran.stderr);
+    assert.match(ran.stdout, /abnormal caller ended/);
+    const proof = JSON.parse(readFileSync(report, 'utf8'));
+    t.diagnostic(JSON.stringify(proof));
+    for (const pid of [proof.earlyPid, proof.cliPid, proof.latePid]) assert.ok(Number.isSafeInteger(pid) && pid > 0);
+    const at = (name) => proof.trace.findIndex(({ event }) => event === name);
+    for (const event of ['early-owner-cleanup', 'late-fixture', 'exit', 'close', 'final-owner', 'final-owner-done', 'cleanup-complete', 'removed']) assert.ok(at(event) >= 0, event);
+    assert.ok(at('early-owner-cleanup') < at('late-fixture'));
+    assert.ok(at('late-fixture') < at('exit'));
+    assert.ok(at('exit') < at('final-owner'));
+    assert.ok(at('final-owner') < at('final-owner-done'));
+    assert.ok(at('final-owner-done') < at('cleanup-complete'));
+    assert.ok(at('close') < at('cleanup-complete'));
+    assert.ok(at('cleanup-complete') < at('removed'));
+    assert.deepEqual(proof.trace[at('early-owner-cleanup')].remaining, []);
+    assert.equal(proof.trace[at('removed')].absent, true);
+  } finally {
+    sweep(directory);
+    const owner = join(directory, 'owner.json');
+    if (existsSync(owner)) sweep(JSON.parse(readFileSync(owner, 'utf8')).agentDir);
   }
 });

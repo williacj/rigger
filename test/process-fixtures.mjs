@@ -669,6 +669,31 @@ export async function withoutLeader(t, started) {
 }
 
 /**
+ * Register immediately after spawn, retaining the normal close/error result and lifecycle facts.
+ * Successful teardown observes exit, the final synchronous owner cleanup, and actual close.
+ * A failed spawn supplies error then close without an exit; concrete failures remain failures.
+ */
+export function ownedChild(t, child, finalOwner) {
+  const result = once(child, 'close');
+  result.catch(() => {});
+  let failure;
+  const stopped = new Promise((resolve) => {
+    child.once('exit', resolve);
+    child.once('error', (error) => { failure = error; resolve(); });
+  });
+  const closed = new Promise((resolve) => child.once('close', resolve));
+  t.after(async () => {
+    if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await stopped;
+    if (failure && child.pid !== undefined) throw failure;
+    finalOwner();
+    await closed;
+    if (failure) throw failure;
+  });
+  return result;
+}
+
+/**
  * Settles once `child` has exited, killing it first where it has not: a process that has exited
  * spawns nothing more.
  */
