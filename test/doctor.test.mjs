@@ -1886,6 +1886,32 @@ async function policyReport(state = {}, environment = undefined) {
   return { ran, line: lines[0], sent, callers };
 }
 
+/** Every key path `value` holds, each written as `.key` or `[]` steps from its root. */
+function keyPaths(value, at = '', into = new Set()) {
+  if (Array.isArray(value)) for (const held of value) keyPaths(held, `${at}[]`, into);
+  else if (value !== null && typeof value === 'object') {
+    for (const [key, held] of Object.entries(value)) {
+      into.add(`${at}.${key}`);
+      keyPaths(held, `${at}.${key}`, into);
+    }
+  }
+  return into;
+}
+
+test('the event-policy fakes are shaped as gh printed the list, the detail and the visibility read on 2026-11-09', () => {
+  const printed = (file) => keyPaths(JSON.parse(readFileSync(join(root, 'test/fixtures', file), 'utf8')));
+  const unprinted = (answer, file) => [...keyPaths(JSON.parse(answer.stdout))].filter((path) => !printed(file).has(path));
+  const policies = [eventPolicy(), eventPolicy({ id: 2, conditions: undefined }), eventPolicy({ id: 3, conditions: workflowPath(['~ALL'], ['.github/workflows/ci.yml']) })];
+  const state = { policies };
+  const list = eventPolicyAnswer(['api', 'repos/acme/widgets/actions/policies?per_page=100&page=1', '-X', 'GET'], state);
+  assert.deepEqual(unprinted(list, 'rigger-actions-policies-2026-11-09.json'), []);
+  for (const { id } of policies) {
+    assert.deepEqual(unprinted(eventPolicyAnswer(['api', `repos/acme/widgets/actions/policies/${id}`, '-X', 'GET'], state), 'rigger-actions-policy-2026-11-09.json'), [], String(id));
+  }
+  const visibility = eventPolicyAnswer(['api', 'graphql', '-f', 'query=query { repository(owner: "acme", name: "widgets") { visibility owner { __typename } } }'], state);
+  assert.deepEqual(unprinted(visibility, 'rigger-visibility-2026-11-09.json'), []);
+});
+
 /** What the gate line says ahead of the event policy where every other gate setting passes. */
 const GATE_PASSES = '  ok         gate check required: rigger/gate is required on main; environment gate, GATE_APP_ID and GATE_APP_PRIVATE_KEY pass';
 
@@ -1952,6 +1978,7 @@ test('Table D: an active own policy covering the gate workflow and allowing ever
     ['empty include', workflowPath([])],
     ['~ALL include', workflowPath(['~ALL'])],
     ['~ALL include, another workflow excluded', workflowPath(['~ALL'], ['.github/workflows/ci.yml'])],
+    ['~ALL include beside another pattern', workflowPath(['~ALL', '.github/workflows/ci.yml'])],
   ]) {
     const { line, ran } = await policyReport({ policies: [eventPolicy({ conditions, rules: [eventRule([...GATE_EVENTS, 'push'])] })] });
     assert.equal(line, `${GATE_PASSES}; Actions event policy "rigger gate events" covers ${GATE_WORKFLOW} and allows its events`, title);

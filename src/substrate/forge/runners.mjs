@@ -79,12 +79,15 @@ const READ_SUBCOMMANDS = [['auth', 'status']];
 const oneOf = (args, lists) => lists.some((list) => list.length === args.length && list.every((word, i) => word === args[i]));
 
 /**
- * The header asking GitHub to serve a pull request as its diff: the one header a read sends, and
- * the one the read runner admits.
+ * The header asking GitHub to serve a pull request as its diff: one of the two headers a read
+ * sends, each of which the read runner admits after `-X GET` alone.
  */
 export const DIFF_HEADER = 'Accept: application/vnd.github.diff';
 
-/** The header asking for the API version GitHub serves the Actions policy endpoints at. */
+/**
+ * The header asking for the API version GitHub serves the Actions policy endpoints at: the other
+ * header a read sends, admitted as `DIFF_HEADER` is.
+ */
 export const API_VERSION_HEADER = 'X-GitHub-Api-Version: 2026-03-10';
 
 /**
@@ -99,7 +102,7 @@ export const API_VERSION_HEADER = 'X-GitHub-Api-Version: 2026-03-10';
  * named GET is admitted, and with no field at all, after a path that is not itself a flag. A
  * header can override the method, so no header is admitted but the diff's and the policy endpoints'
  * API version, each as a fixed literal.
- * `test/forge-runners.test.mjs` asks `gh` the same question each run, of the diff's form too.
+ * `test/forge-runners.test.mjs` asks `gh` the same question each run, of each header's form too.
  */
 const EXPLICIT_GET = [['-X', 'GET'], ['--method', 'GET'], ['-X', 'GET', '-H', DIFF_HEADER], ['-X', 'GET', '-H', API_VERSION_HEADER]];
 

@@ -15,7 +15,7 @@ import { launchdExitTimeout, validate } from '../config/validate.mjs';
 import { CONFIG } from './init.mjs';
 import { STATE, recording } from './recording.mjs';
 import { admission } from '../scheduling/admission.mjs';
-import { eventPolicyReads, repositoryReads } from '../substrate/forge/read.mjs';
+import { repositoryReads } from '../substrate/forge/read.mjs';
 import { GATE_CONTEXT } from '../workflow/gate.mjs';
 import { loadedJob } from '../substrate/launchd.mjs';
 
@@ -641,20 +641,20 @@ const GATE_WORKFLOW = '.github/workflows/rigger-gate.yml';
 /** The events the gate workflow declares under `on:`, in its order, guarded against the template in tests. */
 const GATE_EVENTS = ['pull_request_target', 'issue_comment', 'issues'];
 
-/** Whether a `workflow_path` pattern is one this check does not judge: a glob, or `~ALL` anywhere but alone in `include`. */
+/** Whether a `workflow_path` pattern is one this check does not judge: a glob, or `~ALL`, which only `include` may hold. */
 const unjudgedPattern = (pattern) => /[*?[\]{}!]/.test(pattern) || pattern === '~ALL';
 
 /**
  * Whether `policy` covers the gate workflow: true, false, or the patterns coverage turns on that
  * this check does not judge. No `workflow_path` condition targets every workflow, and so does an
- * empty `include` or one holding `~ALL` alone, less what `exclude` names (GitHub's REST page for
- * Actions policies, read 2026-11-09).
+ * empty `include` or one holding `~ALL`, less what `exclude` names (GitHub's REST page for Actions
+ * policies, read 2026-11-09).
  */
 function covers({ workflowPath }) {
   if (workflowPath === null) return true;
   const { include, exclude } = workflowPath;
   const unjudged = [];
-  const every = include.length === 0 || (include.length === 1 && include[0] === '~ALL');
+  const every = include.length === 0 || include.includes('~ALL');
   if (!every && !include.includes(GATE_WORKFLOW)) {
     unjudged.push(...include.filter(unjudgedPattern));
     if (unjudged.length === 0) return false;
@@ -731,8 +731,7 @@ export async function gateCheck({ target = process.cwd(), ask, emitter } = {}) {
   const valid = await configValidity({ target });
   if (valid.ok !== true) return { name, ok: null, detail: `the gate was not checked, because ${valid.detail}` };
   const { config } = await consumerConfig(target);
-  const board = { repo: config.repo, ...config.board };
-  const reads = { ...repositoryReads(board, { send: ask, emitter }), ...eventPolicyReads(board, { send: ask, emitter }) };
+  const reads = repositoryReads({ repo: config.repo, ...config.board }, { send: ask, emitter });
   const faults = [];
   const obtain = async (read, ...args) => {
     try { return await reads[read](...args); }
