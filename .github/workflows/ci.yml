@@ -241,8 +241,8 @@ env:
         }
         const projectSources = {
           ".npmrc": "2ab58d679ddb6c245446999a2ea5fb54783b9aa26c94ce663cb7db0be0a8f7f8",
-          "test/suite.sh": "51d1656050740bf7130c8ab8352cb027aa2831887ec7d09b168dcd4c87d21f46",
-          "test/suite-guard.cjs": "cd0fea139d9547bcb613dab0f8b6c87ec12f182b36409ae971083a7132761c31"
+          "test/suite.sh": "d9ea1addc140aca1a33ab06bfa91a52c655810f79f8771bf12a21b45d78b2b71",
+          "test/suite-guard.cjs": "11057fb99548ffdfb62cea550d6aa7fb99c310b232a544a9e809d0936ece5370"
         };
         for (const [path, expected] of Object.entries(projectSources)) if (await fingerprint(join(cwd, path)) !== expected) return;
         const npmSources = npm.version === '11.20.0' ? {
