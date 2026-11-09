@@ -42,5 +42,6 @@ Three choices the reviews left to the architect, and made here:
 - A window with no `dispatch.end` ends at the next `run.start`, because a start kills every
   recorded group before L3 records anything.
 
-The card's item on the digest cites "boundary rule 2" for the one digest function. The function is
-placed in "Markers", and the delta cites that.
+The card's item 4 originally cited "boundary rule 2" for the one digest function, which is placed in
+"Markers". After the reviewer's round-1 verdict, the PM revised item 4 to cite "Markers"
+(1297#6741657336, acceptance revision b8838b416ac6). The delta cites "Markers".
