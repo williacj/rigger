@@ -87,6 +87,8 @@ process.stdout.write(JSON.stringify({ pid: process.pid, emptyInput, answer }) + 
 
 const SOURCE_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+/** The scripts the manifest's `files` ships (card #1342, Table P rows P4 to P6); no other script is package code. */
+const SHIPPED_SCRIPTS = ['scripts/doc-reference-check.mjs', 'scripts/gate-check.mjs', 'scripts/record-commit.mjs', 'scripts/lib/pack-result.mjs'];
 
 /** Exact package code scopes; npm remains the authority on what the archive carries. */
 function packageCode(root) {
@@ -94,7 +96,7 @@ function packageCode(root) {
   const walk = (relative) => {
     for (const entry of readdirSync(join(root, relative), { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
       const named = `${relative}/${entry.name}`;
-      if (named === 'src/package-commit.json') continue;
+      if (named === 'src/package-commit.json' || (named.startsWith('scripts/') && entry.isFile() && !SHIPPED_SCRIPTS.includes(named))) continue;
       if (entry.isDirectory()) walk(named);
       else {
         assert.equal(entry.isFile(), true, `package input ${named} is a regular file`);
@@ -134,7 +136,7 @@ function installedPackage(t) {
     const stage = join(directory, 'package-source');
     mkdirSync(stage);
     const manifest = JSON.parse(readFileSync(join(SOURCE_ROOT, 'package.json'), 'utf8'));
-    assert.deepEqual(manifest.files, ['src/', 'templates/', 'scripts/']);
+    assert.deepEqual(manifest.files, ['src/', 'templates/', ...SHIPPED_SCRIPTS]);
     assert.deepEqual(manifest.dependencies ?? {}, {}, 'the canonical offline install needs no runtime network dependency');
     const before = packageCode(SOURCE_ROOT);
     const record = join(SOURCE_ROOT, 'src', 'package-commit.json');

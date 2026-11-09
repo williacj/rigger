@@ -1,6 +1,6 @@
 {
   "name": "@williacj/rigger",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "The engine that lets your AI agents deliver work you defined, to a standard you set, while you do something else.",
   "license": "MIT",
   "author": "CJ Williams",
@@ -16,8 +16,14 @@
   "files": [
     "src/",
     "templates/",
-    "scripts/"
+    "scripts/doc-reference-check.mjs",
+    "scripts/gate-check.mjs",
+    "scripts/record-commit.mjs",
+    "scripts/lib/pack-result.mjs"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "bin": {
     "rigger": "src/cli/rigger.mjs"
   },

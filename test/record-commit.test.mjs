@@ -86,9 +86,9 @@ test('the script writes no commit, and removes a record already there, where a p
       writeFileSync(join(root, 'templates/template.txt'), 'changed\n');
       gitIn(root, 'add', 'templates/template.txt');
     },
-    deleted: (root) => rmSync(join(root, 'scripts/other.mjs')),
+    deleted: (root) => rmSync(join(root, 'src/module.mjs')),
     untracked: (root) => writeFileSync(join(root, 'src/new.mjs'), 'export const three = 3;\n'),
-    manifest: (root) => writeFileSync(join(root, 'package.json'), manifest.replace('"version": "0.0.0"', '"version": "0.0.1"')),
+    manifest: (root) => writeFileSync(join(root, 'package.json'), manifest.replace('"version": "0.1.0"', '"version": "0.1.1"')),
   };
   for (const [name, change] of Object.entries(changes)) {
     const root = packageAt();

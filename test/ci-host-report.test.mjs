@@ -1443,7 +1443,7 @@ test('decoded failed names retain embedded LF and duplicates in the complete sum
 // The prior hosted log is supporting context only; this controlled case makes no Mac proof claim.
 test('qualified npm11 startup preserves the parent key despite later worker lookalikes', async () => {
   const { npm11StartupInspectionFixture } = await import('./ci-host-fixtures.mjs');
-  const prefix = '\n> @williacj/rigger@0.0.0 test:host\n> sh test/suite.sh --host --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination=/runner-temp/host-tests.junit.xml\n\n';
+  const prefix = '\n> @williacj/rigger@0.1.0 test:host\n> sh test/suite.sh --host --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination=/runner-temp/host-tests.junit.xml\n\n';
   const parent = 'linux-6.18.54.1-microsoft-standard-WSL2-x86_64-node26';
   for (const variant of ['qualified', 'source drift', 'prefix mismatch']) {
     const { inspection, npmRoot, fingerprints } = npm11StartupInspectionFixture();
