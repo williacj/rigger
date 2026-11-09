@@ -50,3 +50,17 @@ production. Committed-head proof comparisons and guarded mutation receipts accom
 Both existing test files retain their original bytes as a prefix, with new imports and tests
 appended. The matrix was regenerated with npm run matrix under D8. The diff touches no
 Self-hosting path.
+
+Current main later added Table O tests at both verb files’ ends. The K74 push was accepted,
+but GitHub initially retained the earlier PR head. Closing and reopening the same PR refreshed
+that record and exposed the concurrent append conflicts. The branch update retains main’s
+complete test prefixes and appends this card’s blocks after them; it changes no existing test
+line against the updated merge base, 1e7e3ce0aec4f40a018321c45f1afb4a93df5802.
+
+Every Table C and E row also held at that updated base: sh test/suite.sh over its production
+with the e9334d45 claiming-test overlay reported tests=48, pass=48, fail=0, skipped=0 in
+1302-sync-claiming-base.log. This is a measurement of the updated base plus that test-only
+overlay, separately from the original-base observations above. No production source changed
+between those bases. Updated-head proof and guarded mutation receipts verify the retained
+claims after the append resolution. Command/ref/provenance originals are retained privately
+under retained-evidence/1302, outside disposable suite and mutation roots.

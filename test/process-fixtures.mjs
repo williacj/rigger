@@ -112,8 +112,33 @@ export function undrained(t, directory) {
 const literally = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 export { literally };
 
+/**
+ * A raw PS observation of absence or one zombie row, never an observation failure.
+ * The same-form host witness qualifies no-match against a reaped child. STAT suffixes follow
+ * Linux ps(1) and Apple's adv_cmds/ps/print.c; native host evidence remains platform-specific.
+ */
+export const reaped = (result) => result?.signal === null && result.error == null
+  && typeof result.stdout === 'string' && result.stderr === ''
+  && ((result.status === 1 && result.stdout === '')
+    || (result.status === 0 && /^[ \t]*Z(?:[<N]?L?s?l?\+?|[<N]?X?V?L?s?\+?)[ \t]*\n?$/.test(result.stdout)));
+
 /** The pid of every matching fixture process, excluding the observer and its ancestors. */
-export const running = (text) => spawnSync('/usr/bin/pgrep', [...(process.platform === 'linux' ? ['-A'] : []), '-f', literally(text)], { encoding: 'utf8' }).stdout.split('\n').filter(Boolean);
+export const running = (text) => processIds(spawnSync('/usr/bin/pgrep', [...(process.platform === 'linux' ? ['-A'] : []), '-f', literally(text)], { encoding: 'utf8' }));
+
+/** PID rows from a qualified pgrep match, or an empty list only for its documented no-match. */
+export function processIds(result) {
+  if (result?.signal === null && result.error == null && result.stderr === '' && typeof result.stdout === 'string') {
+    if (result.status === 1 && result.stdout === '') return [];
+    if (result.status === 0 && /^[1-9]\d*(?:\n[1-9]\d*)*\n?$/.test(result.stdout)) {
+      const pids = result.stdout.split('\n').filter(Boolean);
+      if (pids.every((pid) => Number.isSafeInteger(Number(pid)))) return pids;
+    }
+  }
+  throw new Error('unqualified pgrep observation: ' + JSON.stringify({
+    status: result?.status, signal: result?.signal, error: result?.error?.message,
+    stdout: result?.stdout, stderr: result?.stderr,
+  }));
+}
 
 /**
  * The shell line a stand-in runs first, after its `#!` line, so that run with
@@ -641,6 +666,31 @@ export async function withoutLeader(t, started) {
   process.kill(started.leader, 'SIGKILL');
   await until(() => !alive(started.leader), t);
   return started;
+}
+
+/**
+ * Register immediately after spawn, retaining the normal close/error result and lifecycle facts.
+ * Successful teardown observes exit, the final synchronous owner cleanup, and actual close.
+ * A failed spawn supplies error then close without an exit; concrete failures remain failures.
+ */
+export function ownedChild(t, child, finalOwner) {
+  const result = once(child, 'close');
+  result.catch(() => {});
+  let failure;
+  const stopped = new Promise((resolve) => {
+    child.once('exit', resolve);
+    child.once('error', (error) => { failure = error; resolve(); });
+  });
+  const closed = new Promise((resolve) => child.once('close', resolve));
+  t.after(async () => {
+    if (child.pid !== undefined && child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await stopped;
+    if (failure && child.pid !== undefined) throw failure;
+    finalOwner();
+    await closed;
+    if (failure) throw failure;
+  });
+  return result;
 }
 
 /**
