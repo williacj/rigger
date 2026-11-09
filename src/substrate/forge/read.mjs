@@ -1,9 +1,9 @@
 // ABOUTME: The forge adapter's read side: the board's cards, columns and single-select fields, the
-// repository's labels, branches, default branch, issues, pull requests and files at a commit, and
-// the IDs a write names, each read through the read runner.
+// repository's labels, branches, default branch, visibility, Actions event policies, issues, pull
+// requests and files at a commit, and the IDs a write names, each read through the read runner.
 
 import { literal } from './graphql.mjs';
-import { COLUMNS, DIFF_HEADER, firstLine, graphqlRequest, readRunner } from './runners.mjs';
+import { API_VERSION_HEADER, COLUMNS, DIFF_HEADER, firstLine, graphqlRequest, readRunner } from './runners.mjs';
 
 /** The most nodes GitHub answers in one page of a connection. */
 const PAGE = 100;
@@ -760,6 +760,93 @@ const REPOSITORY_READS = {
   },
 };
 
+/** What a read of a GitHub enum answers for `said`, by `names`, or undefined for any other. */
+const named = (names, said) => (typeof said === 'string' && Object.hasOwn(names, said) ? names[said] : undefined);
+
+/** What the policy reads send after `-X GET`: the API version GitHub serves the policy endpoints at. */
+const POLICY_HEADERS = ['-H', API_VERSION_HEADER];
+
+/** Whether `value` is an array of strings, as a policy's patterns and events are answered. */
+const strings = (value) => Array.isArray(value) && value.every((each) => typeof each === 'string');
+
+/**
+ * One policy as its detail read answered it, as `{ id, name, enforcement, workflowPath, events }`:
+ * `workflowPath` null where it has no `workflow_path` condition, else its `include` and
+ * `exclude` patterns; `events` each `restrict_action_events` rule's allowed events. Any other
+ * rule is left out, and an answer of any other shape fails the read.
+ */
+function eventPolicyOf(board, held, id, addressed) {
+  const refuse = (why) => fail('readEventPolicies', board, `${addressed}policy ${id}, gh answered ${why}`);
+  if (held?.id !== id || typeof held.name !== 'string' || typeof held.enforcement !== 'string') refuse('no policy id, name or enforcement');
+  const path = held.conditions?.workflow_path ?? null;
+  if (path !== null && (!strings(path.include ?? []) || !strings(path.exclude ?? []))) refuse('a workflow_path that is not lists of patterns');
+  if (!Array.isArray(held.rules ?? [])) refuse('no list of rules');
+  const events = [];
+  for (const rule of held.rules ?? []) {
+    if (rule?.type !== 'restrict_action_events') continue;
+    if (!strings(rule.parameters?.allowed_events)) refuse('a restrict_action_events rule with no list of allowed events');
+    events.push([...rule.parameters.allowed_events]);
+  }
+  return {
+    id,
+    name: held.name,
+    enforcement: held.enforcement,
+    workflowPath: path === null ? null : { include: [...(path.include ?? [])], exclude: [...(path.exclude ?? [])] },
+    events,
+  };
+}
+
+/**
+ * The reads of the repository's Actions event policy settings, which `doctor` judges its gate line
+ * by: its visibility and owner, and its own policies. Each is built as `REPOSITORY_READS`'s are,
+ * and kept apart from them because no other caller reads these.
+ */
+const EVENT_POLICY_READS = {
+  /**
+   * The repository's visibility and the kind of account that owns it, as `{ visibility, owner }`:
+   * `public`, `private` or `internal`, and `user` or `organization`.
+   */
+  readVisibility: {
+    reading: () => 'the visibility',
+    read: async (board, via, target, addressed) => {
+      const repository = (await asked('readVisibility', board, repositoryQuery(board, 'visibility owner { __typename }'), via, addressed))?.repository;
+      const visibility = named({ PUBLIC: 'public', PRIVATE: 'private', INTERNAL: 'internal' }, repository?.visibility);
+      const owner = named({ User: 'user', Organization: 'organization' }, repository?.owner?.__typename);
+      if (!visibility || !owner) fail('readVisibility', board, `${addressed}gh answered no visibility or owner`);
+      return { visibility, owner };
+    },
+  },
+  /**
+   * The repository's own Actions policies, those whose `source_type` is `Repository`, each as
+   * `eventPolicyOf` answers its detail read, in the order the list answers them. Every page of the
+   * list is read, then each own policy's detail, which alone answers its conditions and rules
+   * (measured on williacj/rigger, 2026-11-09). A policy inherited from an organization or
+   * enterprise is never read past the list. A read that fails fails the whole read.
+   */
+  readEventPolicies: {
+    reading: () => 'the Actions event policies',
+    read: async (board, via, target, addressed) => {
+      const own = [];
+      for (let page = 1;; page += 1) {
+        const listed = JSON.parse(await restRead('readEventPolicies', board, via, `actions/policies?per_page=${PAGE}&page=${page}`, POLICY_HEADERS, addressed));
+        if (!Array.isArray(listed?.policies)) fail('readEventPolicies', board, `${addressed}gh answered no policies`);
+        for (const policy of listed.policies) {
+          if (policy?.source_type !== 'Repository') continue;
+          if (!Number.isSafeInteger(policy.id) || policy.id < 1) fail('readEventPolicies', board, `${addressed}gh answered a policy with no id`);
+          own.push(policy.id);
+        }
+        if (listed.policies.length < PAGE) break;
+      }
+      const policies = [];
+      for (const id of own) {
+        const held = JSON.parse(await restRead('readEventPolicies', board, via, `actions/policies/${id}`, POLICY_HEADERS, `${addressed}policy ${id}, `));
+        policies.push(eventPolicyOf(board, held, id, addressed));
+      }
+      return policies;
+    },
+  },
+};
+
 /** The git modes of a file whose text a read answers: a regular file, and an executable one. */
 const FILE_MODES = [0o100644, 0o100755];
 
@@ -806,18 +893,27 @@ async function fileAt(board, via, commit, path, addressed) {
 }
 
 /**
+ * Each read of `table` on `board`, taking what it reads and sent as `via` says, failing as
+ * `labelled` names a failure.
+ */
+const readsIn = (table, board, via) => Object.fromEntries(Object.entries(table).map(([operation, { reading: what, read }]) => [
+  operation,
+  (target) => {
+    const addressed = reading(board, what(target));
+    return labelled(operation, board, addressed, () => read(board, via, target, addressed));
+  },
+]));
+
+/** `EVENT_POLICY_READS` on `board`, each sent as `send`, `emitter` and `timeout` say. */
+export const eventPolicyReads = (board, { send, emitter, timeout } = {}) => readsIn(EVENT_POLICY_READS, board, { send, emitter, timeout });
+
+/**
  * `REPOSITORY_READS` on `board`, each taking what it reads, sent as `send`, `emitter` and
  * `timeout` say.
  */
 export function repositoryReads(board, { send, emitter, timeout } = {}) {
   const via = { send, emitter, timeout };
-  const reads = Object.fromEntries(Object.entries(REPOSITORY_READS).map(([operation, { reading: what, read }]) => [
-    operation,
-    (target) => {
-      const addressed = reading(board, what(target));
-      return labelled(operation, board, addressed, () => read(board, via, target, addressed));
-    },
-  ]));
+  const reads = readsIn(REPOSITORY_READS, board, via);
   reads.readCheckStates = (sha, required) => {
     const addressed = reading(board, `checks at ${sha}`);
     return labelled('readCheckStates', board, addressed, () => checkStates(board, via, sha, required, addressed));
