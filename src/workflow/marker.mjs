@@ -239,8 +239,8 @@ const before = (one, other) => {
  * or pull request counts as none.
  *
  * It answers `governing`, each role's governing marker, the latest by `createdAt` at `head` and
- * `digest`, and at one `createdAt` the later comment id: the parse's answer, with `edited` as its
- * comment's. An unreadable marker governs for the card, pull request, role, head and digest its
+ * `digest`, and at one `createdAt` the later comment id: the parse's answer, with `comment` as its
+ * source id and `edited` as its comment's. An unreadable marker governs for the card, pull request, role, head and digest its
  * block names, each read without surrounding whitespace, so whitespace that makes a field
  * unreadable does not also move the marker off its role. It also
  * answers `markers`, every readable marker counted, oldest first.
@@ -259,7 +259,7 @@ export function readMarkers(comments, { card, pull, head, digest, count }) {
   const governing = new Map();
   for (const { comment, parsed } of counted) {
     const named = namedBy(parsed);
-    if (named.head === head && named.digest === digest) governing.set(named.role, { ...parsed, edited: comment.edited === true });
+    if (named.head === head && named.digest === digest) governing.set(named.role, { ...parsed, comment: comment.id, edited: comment.edited === true });
   }
   return { governing, markers: counted.filter(({ parsed }) => parsed.state === 'marker').map(({ parsed }) => parsed.marker) };
 }

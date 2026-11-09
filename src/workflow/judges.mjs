@@ -5,13 +5,14 @@
 
 import { OWNER, judgeRole, roleTimeout, workRequires } from '../config/validate.mjs';
 import { SCRATCH_REFUSED, WORKSPACE_NOT_MADE, WORKSPACE_REFUSED } from '../execution/workspace.mjs';
+import { EFFECTIVE_RULES_UNAVAILABLE } from '../substrate/forge/read.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
 import { EVENT_REFUSED } from '../substrate/process.mjs';
 import { acceptanceItems, checkAcceptanceForm } from './form-check.mjs';
 import { GATE_CONTEXT, gateAnswer } from './gate.mjs';
 import { acceptanceDigest, evidenceDigest, markerInstruction, readMarkers, WRITERS } from './marker.mjs';
 import { failed, kindOf, panelOf, selectedSteps, stepAnswer, tierOf } from './next-action.mjs';
-import { failedAttempt } from './next-action.mjs';
+import { failedAttempt, recordingHalt } from './next-action.mjs';
 
 /** What each read of a Review card's facts the judge answer uses reads, as its failure names it. */
 const READS = {
@@ -21,6 +22,11 @@ const READS = {
   rules: 'the base branch\'s effective rules',
   checks: 'the pull request\'s check states',
 };
+
+/** The selected judge dispatch, identified by L2's evidence and role selection. */
+export function judgeIdentity({ role, provider, tier, facts, comment }) {
+  return JSON.stringify(['judge', facts.pull, facts.head, facts.revision, role, provider, tier, comment]);
+}
 
 /**
  * What the read named `read` answered for `card`, from its `forge` facts, each a read's outcome as
@@ -43,7 +49,7 @@ function record(sink, card, name, fields, what, dispatch) {
   try {
     sink.emitter({ layer: 'L2', card: card.number, ...(dispatch === undefined ? {} : { dispatch }) }).emit(name, fields);
   } catch (refusal) {
-    throw new Error(`card #${card.number}'s ${what}, and the event sink refused to record it, so L2 answers no action: ${refusal.message}`, { cause: refusal });
+    throw recordingHalt(`card #${card.number}'s ${what}, and the event sink refused to record it, so L2 answers no action: ${refusal.message}`, refusal);
   }
 }
 
@@ -143,7 +149,8 @@ export function judgeAnswer(card, kinds, epicLabel, { roles = {}, provisioning =
       if (missing) withheldRoles.push(role);
       return !missing;
     })
-    .map((role) => ({ ...judgeOf(role, roles[role] ?? {}, tiers.get(role).tier, required.get(role), pull, evidence, facts, items), steps: steps.map((name) => stepAnswer(name, provisioning)) }));
+    .map((role) => ({ ...judgeOf(role, roles[role] ?? {}, tiers.get(role).tier, required.get(role), pull, evidence, facts, items),
+      ...(governing.has(role) ? { comment: governing.get(role).comment } : {}), steps: steps.map((name) => stepAnswer(name, provisioning)) }));
   const withholding = withheldRoles.length > 0 ? { withheld: withheldRoles } : {};
   if (refusals.length > 0) return { action: 'escalate', category: 'ambiguous', raiser: 'loop', reason: refusals.join('\n'), pull: pull.number, head: pull.head, from: card.forge.stage, ...withholding };
   if (Object.values(directories).some(({ reason }) => reason?.code === EVENT_REFUSED || reason?.startCause?.kind === 'event-unrecorded')) return { action: 'judge', kind, judges, halt: true, ...withholding };
@@ -387,7 +394,7 @@ export function reviewAnswer(card, kinds, epicLabel, options = {}) {
     action: 'escalate', category: 'ambiguous', raiser: 'loop', pull: pull.number, head: pull.head,
     reason: [`${spent} of ${bound} rounds spent.`, ...revising.map((role) => markerReason(governing.get(role).marker, items))].join('\n'),
   };
-  if (revising.length > 0) return continued(pull, revising.map((role) => governing.get(role).marker), items);
+  if (revising.length > 0) return continued(pull, revising.map((role) => governing.get(role)), items);
   if (declared.judges.map(judgeRole).includes(OWNER)) return advanced(card, { action: 'move', to: 'owner' });
   return mergeAnswer(card, panel, pull, comments, round);
 }
@@ -417,10 +424,10 @@ function markerRead(sink, card, pull, round, role, governing) {
  */
 function codingAnswer(card, pull, states, governing, items) {
   const revising = governing.filter((held, at) => states[at] === 'revision');
-  if (revising.length > 0) return continued(pull, revising.map((held) => held.marker), items);
+  if (revising.length > 0) return continued(pull, revising, items);
   if (states.every((state) => state === 'sound')) {
     const mergeable = held(card, 'mergeable');
-    if (mergeable === 'conflicting') return continued(pull, [], items);
+    if (mergeable === 'conflicting') return continued(pull, [], items, governing.map(({ comment }) => comment));
     if (mergeable === 'unknown') return { action: 'ignore', reason: `the forge reads pull request #${pull.number}'s mergeability as unknown` };
   }
   return { action: 'refuse', card: card.number, reason: `the forge holds its line of work, ${card.forge.line}, so its work would not start from the beginning` };
@@ -450,7 +457,7 @@ function ownerAnswer(card, panel, pull, comments, round, owner, items) {
     reason: markerReason(owner.marker, items),
   };
   if (state === 'insufficient') return returned(card, pull, comments, owner.marker);
-  if (state === 'revision') return continued(pull, [owner.marker], items);
+  if (state === 'revision') return continued(pull, [owner], items);
   return mergeAnswer(card, panel, pull, comments, round);
 }
 
@@ -513,14 +520,15 @@ function roundsOf(comments, round, required) {
  * is handed each of `markers`, the governing markers that are not sound, as its role, its verdict,
  * each unmet item by its ordinal and its text among `items`, and its `toSound` where it gives one.
  */
-function continued(pull, markers, items) {
-  const handedOf = ({ role, verdict, items: ruled, toSound }) => ({
+function continued(pull, markers, items, comments) {
+  const handedOf = ({ comment, marker: { role, verdict, items: ruled, toSound } }) => ({
+    comment,
     role,
     verdict,
     unmet: ruled.flatMap((ruling, at) => (ruling === 'unmet' ? [{ item: at + 1, text: items[at] }] : [])),
     ...(toSound === undefined ? {} : { toSound }),
   });
-  return { action: 'continue', pull: pull.number, head: pull.head, markers: markers.map(handedOf) };
+  return { action: 'continue', pull: pull.number, head: pull.head, markers: markers.map(handedOf), ...(comments === undefined ? {} : { comments }) };
 }
 
 /** The actual reason and unmet acceptance text a governing marker contributes to an escalation. */
@@ -547,12 +555,24 @@ function stateOf(governing, provider) {
 }
 
 /**
+ * What the read named `read`, the rules or the check states they leave unread, answered for `card`,
+ * or null where it failed because L0 read the forge's refusal as the feature being unavailable.
+ * Any other failure is held.
+ */
+function policyFact(card, read) {
+  const outcome = card.forge?.[read];
+  return outcome?.status === 'rejected' && outcome.reason?.code === EFFECTIVE_RULES_UNAVAILABLE ? null : held(card, read);
+}
+
+/**
  * The forge facts every advance of a Review or Owner card rests on, `card`'s mergeability, its base
- * branch's effective rules and its check states, each held, so a failed read of any one answers no
- * action naming it, whatever the others answered (the answers table's failed-read row).
+ * branch's effective rules and its check states, so a failed read of any one answers no action
+ * naming it, whatever the others answered (the answers table's failed-read row). Rules the forge
+ * offers this repository no feature for are null, as `policyFact` says, and `mergeAnswer` alone
+ * reads what that means.
  */
 function forgeFacts(card) {
-  return { mergeable: held(card, 'mergeable'), rules: held(card, 'rules'), states: held(card, 'checks') };
+  return { mergeable: held(card, 'mergeable'), rules: policyFact(card, 'rules'), states: policyFact(card, 'checks') };
 }
 
 /** `answer`, L2's advance of `card`, once every read `forgeFacts` holds was served. */
@@ -573,12 +593,20 @@ function advanced(card, answer) {
  * "The engine's merge decision"): it answers `merge` where the gate admits, and `ignore` naming each
  * refusal where it does not. L2 judges no status's creator; the forge enforces the pin at the merge.
  * A failed read of the mergeability, the rules or the check states answers no action, naming it,
- * whatever the other reads answered.
+ * whatever the other reads answered. Rules the forge offers this repository no feature for leave
+ * nothing for the gate rule to take, so L2 refuses the merge, naming them, and never answers `merge`.
  */
 function mergeAnswer(card, panel, pull, comments, round) {
   const { mergeable, rules, states } = forgeFacts(card);
-  if (mergeable === 'conflicting') return continued(pull, [], []);
+  if (mergeable === 'conflicting') {
+    const { governing } = readMarkers(comments, round);
+    return continued(pull, [], [], panel.map(({ role }) => governing.get(role)?.comment).filter((id) => id !== undefined));
+  }
   if (mergeable !== 'mergeable') return { action: 'ignore', reason: `the forge reads pull request #${pull.number}'s mergeability as ${mergeable}`, ...(mergeable === 'unknown' ? { unknownMergeability: true } : {}) };
+  if (rules === null || states === null) {
+    const { reason } = [card.forge.rules, card.forge.checks].find(({ status }) => status === 'rejected');
+    return { action: 'refuse', card: card.number, reason: `pull request #${pull.number} is not merged, because the forge offers this repository no effective rules for its base branch, so the checks they require are unavailable evidence: ${reason.message}` };
+  }
   const required = new Set(rules.map((rule) => rule.context).filter((context) => context !== GATE_CONTEXT));
   const checks = Object.fromEntries([...required].map((context) => [context, states[context] ?? { state: 'absent', creator: null }]));
   const gate = gateAnswer({ comments, ...round, judges: panel, checks });

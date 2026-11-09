@@ -7,6 +7,7 @@ import { once } from 'node:events';
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PS, runCommand } from '../src/substrate/process.mjs';
+import { realHost } from '../src/substrate/host.mjs';
 import { TAIL, alive, fixture, shellQuote, heldOutput, holding, leave, read, until } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
@@ -26,7 +27,7 @@ function cutCensus(t) {
     ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
   const events = [];
-  const settled = runCommand({ command, args: [], cwd: directory, env: {}, timeout: 15_000, ps, readTimeout, emitter: { emit: (event, fields) => events.push({ event, ...fields }) } });
+  const settled = runCommand({ command, args: [], cwd: directory, env: {}, timeout: 15_000, host: { ...realHost, ps }, readTimeout, emitter: { emit: (event, fields) => events.push({ event, ...fields }) } });
   return { directory, cut, settled, events };
 }
 
@@ -64,7 +65,7 @@ test('run keeps before-deadline failures and a fired nonzero read distinct from 
     const command = fixture(directory, 'command', leave(TAIL, 'survivor'));
     const ps = fixture(directory, 'ps', `case "$*" in *lstart=*) exec ${shellQuote(PS)} "$@" ;; esac\n${body}`);
     const events = [];
-    await runCommand({ command, args: [], cwd: directory, env: {}, timeout: 15_000, ps, readTimeout: 300, onGroup: remove ? () => unlinkSync(ps) : undefined, emitter: { emit: (event, fields) => events.push({ event, ...fields }) } });
+    await runCommand({ command, args: [], cwd: directory, env: {}, timeout: 15_000, host: { ...realHost, ps }, readTimeout: 300, onGroup: remove ? () => unlinkSync(ps) : undefined, emitter: { emit: (event, fields) => events.push({ event, ...fields }) } });
     const unread = events.find(({ event }) => event === 'group.killed');
     assert.ok(unread, `${failure} did not fail the census: ${JSON.stringify(events)}`);
     assert.match(unread.census, new RegExp(failure));
@@ -81,7 +82,7 @@ test('run keeps before-deadline failures and a fired nonzero read distinct from 
     ("exec " + shellQuote(PS) + " \"$@\""),
   ].join('\n'));
   const nonzeroEvents = [];
-  const nonzeroSettled = runCommand({ command: nonzeroCommand, args: [], cwd: nonzeroDirectory, env: {}, timeout: 15_000, ps: nonzeroPs, readTimeout: 300, emitter: { emit: (event, fields) => nonzeroEvents.push({ event, ...fields }) } });
+  const nonzeroSettled = runCommand({ command: nonzeroCommand, args: [], cwd: nonzeroDirectory, env: {}, timeout: 15_000, host: { ...realHost, ps: nonzeroPs }, readTimeout: 300, emitter: { emit: (event, fields) => nonzeroEvents.push({ event, ...fields }) } });
   await nonzeroCut.started();
   await nonzeroSettled;
   const nonzeroUnread = nonzeroEvents.find(({ event }) => event === 'group.killed');
@@ -113,7 +114,7 @@ test('a read just before the group kill cut at its deadline records the kill as 
   ].join('\n'));
   const events = [];
 
-  const settled = runCommand({ command, args: [], cwd: directory, env: {}, timeout: 15_000, ps, readTimeout, emitter: { emit: (event, fields) => events.push({ event, ...fields }) } });
+  const settled = runCommand({ command, args: [], cwd: directory, env: {}, timeout: 15_000, host: { ...realHost, ps }, readTimeout, emitter: { emit: (event, fields) => events.push({ event, ...fields }) } });
   await cut.started();
   await settled;
 
@@ -137,7 +138,7 @@ test('a read that writes standard error before its deadline is still timed out o
   ].join('\n'));
   const events = [];
 
-  const settled = runCommand({ command, args: [], cwd: directory, env: {}, timeout: 15_000, ps, readTimeout, emitter: { emit: (event, fields) => events.push({ event, ...fields }) } });
+  const settled = runCommand({ command, args: [], cwd: directory, env: {}, timeout: 15_000, host: { ...realHost, ps }, readTimeout, emitter: { emit: (event, fields) => events.push({ event, ...fields }) } });
   await cut.started();
   await settled;
 
@@ -166,7 +167,7 @@ test('whole rows and the whole answer are timed out when their output closes aft
     ].join('\n'));
     const events = [];
 
-    const settled = runCommand({ command, args: [], cwd: directory, env: {}, timeout: 15_000, ps, readTimeout, emitter: { emit: (event, fields) => events.push({ event, ...fields }) } });
+    const settled = runCommand({ command, args: [], cwd: directory, env: {}, timeout: 15_000, host: { ...realHost, ps }, readTimeout, emitter: { emit: (event, fields) => events.push({ event, ...fields }) } });
     await cut.started();
     await settled;
 
@@ -193,7 +194,8 @@ test('startOf refuses an exit-0 read whose output stays open past the synchronou
     '// ABOUTME: Runs the synchronous start-time read in a process the test can observe.',
     `import { runCommand } from ${JSON.stringify(new URL('../src/substrate/process.mjs', import.meta.url).href)};`,
     "import { writeFileSync } from 'node:fs';",
-    `try { await runCommand({ command: '/usr/bin/tail', args: ['-f', ${JSON.stringify(join(directory, 'hold'))}], cwd: ${JSON.stringify(directory)}, env: {}, timeout: 15_000, ps: ${JSON.stringify(ps)}, readTimeout: ${readTimeout}, onGroup() {}, emitter: { emit() {} } }); writeFileSync(${JSON.stringify(join(directory, 'result'))}, 'resolved'); }`,
+    `import { realHost } from ${JSON.stringify(new URL('../src/substrate/host.mjs', import.meta.url).href)};`,
+    `try { await runCommand({ command: '/usr/bin/tail', args: ['-f', ${JSON.stringify(join(directory, 'hold'))}], cwd: ${JSON.stringify(directory)}, env: {}, timeout: 15_000, host: { ...realHost, ps: ${JSON.stringify(ps)} }, readTimeout: ${readTimeout}, onGroup() {}, emitter: { emit() {} } }); writeFileSync(${JSON.stringify(join(directory, 'result'))}, 'resolved'); }`,
     `catch (error) { writeFileSync(${JSON.stringify(join(directory, 'result'))}, error.message); }`,
   ].join('\n'));
   const child = spawn(process.execPath, [caller], { cwd: directory, stdio: 'ignore' });

@@ -3,14 +3,14 @@
 // commands from the fake repository. Test-only, and never named from src/.
 
 import { chmodSync, closeSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 
 import { createFakeBoard } from './fake-board.mjs';
 import { parseDocument } from '../src/substrate/forge/graphql.mjs';
 import { dirname } from 'node:path';
 import { branchesIn, checkedOut, commentOf, comparedIn, createFakeRepository, headIn } from './fake-repository.mjs';
 import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
-import { defaultBranchIn, entryIn, pullStateOf } from './fake-repository.mjs';
+import { defaultBranchIn, entryIn, pullStateOf, recordEvent, timelineNodes } from './fake-repository.mjs';
 
 /** How the fake `gh` names a command it was run with: as the command line itself. */
 const spelled = (args) => ['gh', ...args].join(' ');
@@ -396,6 +396,31 @@ async function issue(board, state, operation) {
   return { repository: { issue: { number, title: held.title, body: held.body, state: state.repository?.issueStates?.[number] === 'closed' ? 'CLOSED' : 'OPEN', author: { login: 'rigger-fake' }, repository: { nameWithOwner: held.repository ?? state.repo }, labels } } };
 }
 
+/** The held issue the read names in the repository the forge answers it in, or GitHub's not-found answer for it. */
+function heldIssue(state, operation) {
+  inTheRepository(state, operation);
+  const number = Number(valueOf(fieldIn(operation.selections, 'issue'), 'number'));
+  const held = repositoryOf(state).held().issues.find((candidate) => candidate.number === number);
+  if (!held) throw unresolved({ repository: { issue: null } }, ['repository', 'issue'], `Could not resolve to an Issue with the number of ${number}.`);
+  return held;
+}
+
+/** Answers the state of the issue the read names, and the repository the forge answers it in. */
+async function issueState(board, state, operation) {
+  const held = heldIssue(state, operation);
+  return { repository: { issue: { state: state.repository?.issueStates?.[held.number] === 'closed' ? 'CLOSED' : 'OPEN', repository: { nameWithOwner: held.repository ?? state.repo } } } };
+}
+
+/** What the timeline read selects of each entry. */
+const TIMELINE = 'pageInfo { hasNextPage endCursor } nodes { __typename ... on IssueComment { body createdAt id author { login } lastEditedAt includesCreatedEdit } ... on LabeledEvent { createdAt actor { login } label { name } } ... on UnlabeledEvent { createdAt actor { login } label { name } } ... on ClosedEvent { createdAt actor { login } } ... on ReopenedEvent { createdAt actor { login } } }';
+
+/** Answers a page of the timeline of the issue the read names, as `timelineNodes` holds it. */
+async function timeline(board, state, operation) {
+  const held = heldIssue(state, operation);
+  const field = fieldIn(fieldIn(operation.selections, 'issue').selections, 'timelineItems');
+  return { repository: { issue: { timelineItems: page(timelineNodes(held), field) } } };
+}
+
 /**
  * Answers a page of the repository's open issues carrying the label the read names, in number
  * order: the issues it holds, an issue closed through the fake `gh` left out, as GitHub's issues
@@ -565,6 +590,9 @@ const COMMANDS = {
     return { repository: { pullRequest: { number: pull.number, state: pullStateOf(pull), headRefOid: pull.sha, headRefName: pull.head, baseRefName: pull.base, headRepository: headRepositoryOf(state, pull) } } };
   },
   [graphql(repositoryShape(`issue(number: _) { ${ISSUE} labels(first: _) { ${LABELS} } }`))]: issue,
+  [graphql(repositoryShape('issue(number: _) { state repository { nameWithOwner } }'))]: issueState,
+  [graphql(repositoryShape(`issue(number: _) { timelineItems(itemTypes: [], first: _) { ${TIMELINE} } }`))]: timeline,
+  [graphql(repositoryShape(`issue(number: _) { timelineItems(itemTypes: [], first: _, after: _) { ${TIMELINE} } }`))]: timeline,
   [graphql(repositoryShape(`issue(number: _) { ${ISSUE} labels(first: _, after: _) { ${LABELS} } }`))]: issue,
   [graphql(repositoryShape(`issues(states: [], labels: [], first: _) { ${LABELS.replace('name', 'number')} }`))]: labelledIssues,
   [graphql(repositoryShape(`issues(states: [], labels: [], first: _, after: _) { ${LABELS.replace('name', 'number')} }`))]: labelledIssues,
@@ -693,6 +721,7 @@ const COMMANDS = {
     const issue = state.repository?.issues?.find((candidate) => candidate.number === number);
     if (!issue) throw notFound('https://docs.github.com/rest/issues/issues#update-an-issue');
     state.repository.issueStates ??= {};
+    if (state.repository.issueStates[number] !== 'closed') recordEvent(issue, 'closed');
     state.repository.issueStates[number] = 'closed';
     return JSON.stringify({ number, state: 'closed' });
   },
@@ -702,6 +731,7 @@ const COMMANDS = {
     if (!issue) throw notFound('https://docs.github.com/rest/issues/labels#remove-a-label-from-an-issue');
     const label = decodeURIComponent(encoded);
     if (!issue.labels?.includes(label)) throw notFound('https://docs.github.com/rest/issues/labels#remove-a-label-from-an-issue');
+    recordEvent(issue, 'unlabeled', { label });
     issue.labels = issue.labels.filter((held) => held !== label);
     return JSON.stringify(issue.labels.map((name) => ({ name })));
   },
@@ -718,7 +748,7 @@ const COMMANDS = {
     state.repository.mainSha = 'm'.repeat(40);
     return JSON.stringify({ sha: state.repository.mainSha, merged: true, message: 'Pull Request successfully merged' });
   },
-  [commandOf(['api', 'repos/_/_/issues/_/comments', '-X', 'POST', '-f', 'body=_'])]: async (board, state, args) => {
+  [commandOf(['api', 'repos/_/_/issues/_/comments', '-X', 'POST', '-f', 'body=_'])]: async (board, state, args, now) => {
     const number = Number(pathIn(state, args).split('/')[1]);
     const target = state.repository?.pullRequests?.find((candidate) => candidate.number === number)
       ?? state.repository?.issues?.find((candidate) => candidate.number === number && (candidate.repository == null || candidate.repository.toLowerCase() === state.repo.toLowerCase()));
@@ -739,6 +769,7 @@ const COMMANDS = {
     if (refused) throw new GhPrinted(`gh: ${refused.message} (HTTP ${refused.status})`, JSON.stringify(refused));
     const label = args[5].slice('labels[]='.length);
     target.labels ??= [];
+    if (!target.labels.includes(label) && state.repository.issues?.includes(target)) recordEvent(target, 'labeled', { label });
     if (!target.labels.includes(label)) target.labels.push(label);
     return JSON.stringify(target.labels.map((name) => ({ name })));
   },
@@ -790,7 +821,7 @@ function agentArgs(state, args) {
 }
 
 /** The body a `--body` or `--body-file` gives, reading standard input for a file named `-`. */
-const bodyOf = (flags) => flags.body ?? (flags.bodyFile === undefined ? undefined : readFileSync(flags.bodyFile === '-' ? 0 : flags.bodyFile, 'utf8'));
+const bodyOf = (flags, cwd, input) => flags.body ?? (flags.bodyFile === undefined ? undefined : (flags.bodyFile === '-' ? input() : readFileSync(isAbsolute(flags.bodyFile) ? flags.bodyFile : resolve(cwd, flags.bodyFile), 'utf8')));
 
 /** The time `gh` is answered at, to the second, as GitHub writes one. */
 const now = () => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -800,8 +831,8 @@ const now = () => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
  * whose open pull request it names before a merged one. With none, the branch checked out where
  * the command runs is the selector.
  */
-function selected(state, repository, selector) {
-  const named = selector ?? checkedOut(process.cwd());
+function selected(state, repository, selector, cwd) {
+  const named = selector ?? checkedOut(cwd);
   if (named === null) throw new GhFailure('could not determine current branch: not on any branch');
   const number = /^\d+$/.test(named) ? Number(named) : Number(new RegExp(`^${pullUrl(state, '(\\d+)').replace(/[./]/g, '\\$&')}$`, 'i').exec(named)?.[1]);
   if (Number.isInteger(number)) {
@@ -850,12 +881,12 @@ function changedLines(diff) {
 const AGENT_COMMANDS = {
   // A pull request from a branch the test's `origin` holds, at that branch's head, with the diff
   // and merge base git computes there, as the forge computes them.
-  create: async (board, state, args) => {
+  create: async (board, state, args, _now, cwd, input) => {
     const { flags } = agentArgs(state, args);
     if (!state.origin) throw new NotModelled(args);
-    const head = flags.head ?? checkedOut(process.cwd());
+    const head = flags.head ?? checkedOut(cwd);
     const base = flags.base ?? 'main';
-    const body = bodyOf(flags);
+    const body = bodyOf(flags, cwd, input);
     if (flags.title === undefined && !flags.fill) throw new GhFailure('must provide `--title` and `--body` (or `--fill` or `fill-first` or `--fillverbose`) when not running interactively');
     const sha = head && headIn(state.origin, head);
     if (!sha) throw new GhFailure('aborted: you must first push the current branch to a remote, or use the --head flag');
@@ -870,23 +901,23 @@ const AGENT_COMMANDS = {
     return `${pullUrl(state, number)}\n`;
   },
   // A comment on the pull request named, made now, and held with it.
-  comment: async (board, state, args) => {
+  comment: async (board, state, args, now, cwd, input) => {
     const { flags, words } = agentArgs(state, args);
-    const body = bodyOf(flags);
+    const body = bodyOf(flags, cwd, input);
     if (body === undefined) throw new NotModelled(args);
     const repository = repositoryOf(state);
-    const { number } = selected(state, repository, words[0]);
+    const { number } = selected(state, repository, words[0], cwd);
     repository.comment(number, body, now());
     state.repository = repository.held();
     return `${pullUrl(state, number)}#issuecomment-${repository.pull(number).comments.length}\n`;
   },
   // The pull request named, as `gh` prints it to a reader that is not a terminal, or the fields
   // `--json` names, in the order `gh` prints them.
-  view: async (board, state, args) => {
+  view: async (board, state, args, _now, cwd) => {
     const { flags, words } = agentArgs(state, args);
     const fields = flags.json?.split(',').sort();
     if (fields?.some((field) => !Object.hasOwn(VIEW_FIELDS, field))) throw new NotModelled(args);
-    const pull = selected(state, repositoryOf(state), words[0]);
+    const pull = selected(state, repositoryOf(state), words[0], cwd);
     if (fields) {
       return `${JSON.stringify(Object.fromEntries(fields.map((field) => [field, VIEW_FIELDS[field](state, pull)])))}\n`;
     }
@@ -895,9 +926,9 @@ const AGENT_COMMANDS = {
     return `${lines.map(([name, value]) => `${name}:\t${value}`).join('\n')}\n--\n${pull.body}\n`;
   },
   // The pull request's diff as the forge serves it, which `gh pr diff` prints byte for byte.
-  diff: async (board, state, args) => {
+  diff: async (board, state, args, _now, cwd) => {
     const { words } = agentArgs(state, args);
-    const pull = selected(state, repositoryOf(state), words[0]);
+    const pull = selected(state, repositoryOf(state), words[0], cwd);
     if (pull.declined) throw new GhFailure(`could not find pull request diff: HTTP 406: ${pull.declined} (https://api.github.com/repos/${state.repo}/pulls/${pull.number})`);
     return pull.diff;
   },
@@ -944,15 +975,24 @@ export async function main(statePath) {
 
 /** `main`'s answer, given while it holds the board's lock. */
 async function answering(statePath) {
-  const args = process.argv.slice(2);
+  const answer = await answerFakeGh(statePath, process.argv.slice(2), { now, cwd: process.cwd(), input: () => readFileSync(0, 'utf8') });
+  if (answer.stdout !== '') process.stdout.write(answer.stdout);
+  if (answer.stderr !== '') process.stderr.write(answer.stderr);
+  if (answer.status !== 0) process.exitCode = answer.status;
+}
+
+/**
+ * Answers one explicit request from the existing fixture state file; executable locking stays in main.
+ * `gate`, a test's, is awaited after the request is recorded and again before a success commits.
+ */
+export async function answerFakeGh(statePath, args, { now, cwd, input, gate } = {}) {
   const state = JSON.parse(readFileSync(statePath, 'utf8'));
   state.sent.push(args);
   writeFileSync(statePath, JSON.stringify(state));
+  if (gate) await gate('recorded');
   const answer = COMMANDS[commandOf(args)] ?? (args[0] === 'pr' && Object.hasOwn(AGENT_COMMANDS, args[1]) ? AGENT_COMMANDS[args[1]] : undefined);
   if (!answer) {
-    process.stderr.write(`the fake gh does not model \`${spelled(args)}\`\n`);
-    process.exitCode = 1;
-    return;
+    return { status: 1, stdout: '', stderr: `the fake gh does not model \`${spelled(args)}\`\n` };
   }
   const board = await boardOf(state);
   let data;
@@ -960,21 +1000,19 @@ async function answering(statePath) {
     // A REST read and an agent command are answered with what `gh` prints for each, and a GraphQL
     // request with its data, which `gh` prints as one line.
     if (args[1] !== 'graphql') {
-      const printed = await answer(board, state, args);
+      const printed = await answer(board, state, args, now, cwd, input);
+      if (gate) await gate('answered');
       writeFileSync(statePath, JSON.stringify({ ...state, writes: board.writes() }));
-      process.stdout.write(printed);
-      return;
+      return { status: 0, stdout: printed, stderr: '' };
     }
     data = await answer(board, state, parseDocument(args[3].slice('query='.length)).operations[0]);
   } catch (error) {
     if (!(error instanceof GhFailure)) throw error;
-    process.stdout.write(error.printed ?? '');
-    process.stderr.write(`${error.message}\n`);
-    process.exitCode = 1;
-    return;
+    return { status: 1, stdout: error.printed ?? '', stderr: `${error.message}\n` };
   }
+  if (gate) await gate('answered');
   writeFileSync(statePath, JSON.stringify({ ...state, writes: board.writes() }));
-  process.stdout.write(`${JSON.stringify({ data })}\n`);
+  return { status: 0, stdout: `${JSON.stringify({ data })}\n`, stderr: '' };
 }
 
 /** The one argument the warming run of the fake `gh` is given, which no `gh` command is. */
@@ -1016,7 +1054,11 @@ export function installFakeGh(dir, { repo, owner, project, board = {}, origin })
  * a diff and comments. Made before the fake `gh` is first run, it replaces what the repository held.
  */
 export function seedRepository(fake, seed) {
-  const statePath = join(dirname(fake.gh), 'board.json');
+  seedRepositoryAt(join(dirname(fake.gh), 'board.json'), seed);
+}
+
+/** Seeds the existing fake repository model at an explicit fixture state file. */
+export function seedRepositoryAt(statePath, seed) {
   const state = JSON.parse(readFileSync(statePath, 'utf8'));
   seed = { issues: createFakeBoard(state.model).issues(), ...seed };
   createFakeRepository(seed);

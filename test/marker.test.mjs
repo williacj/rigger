@@ -270,6 +270,20 @@ const markerComment = (role, changes = {}, commentChanges = {}) => comment(bodyO
 /** The governing markers on `comments`, read for card 7's pull request #70 at the head and digest above, by role, as their states. */
 const governing = (comments) => Object.fromEntries([...readMarkers(comments, { card: 7, pull: 70, head: HEAD, digest: DIGEST, count: 2 }).governing].map(([role, held]) => [role, held.state]));
 
+// The latest governing source must survive parsing so a new comment can select new work.
+// proves R-VERDICT-5
+test('a governing marker retains its source comment identity at the selected head and acceptance', () => {
+  const selected = markerComment('reviewer', {}, { id: 'IC_42' });
+  const otherHead = markerComment('reviewer', { head: EARLIER }, { id: 'IC_43', createdAt: '2026-10-02T11:00:00Z' });
+  const otherDigest = markerComment('reviewer', { digest: EVIDENCE }, { id: 'IC_44', createdAt: '2026-10-03T11:00:00Z' });
+  const read = readMarkers([selected, otherHead, otherDigest], { card: 7, pull: 70, head: HEAD, digest: DIGEST, count: 2 });
+
+  assert.equal(read.governing.get('reviewer').comment, 'IC_42');
+  assert.equal(read.governing.get('reviewer').marker.head, HEAD);
+  assert.equal(read.governing.get('reviewer').marker.digest, DIGEST);
+  assert.deepEqual(read.markers.map(({ head, digest }) => [head, digest]), [[HEAD, DIGEST], [EARLIER, DIGEST], [HEAD, EVIDENCE]], 'marker history retains its existing shape and order');
+});
+
 test('the governing marker for a role is the latest by createdAt at the head and current digest', () => {
   const earlier = markerComment('reviewer', { verdict: 'needs revision', toSound: 'Exit 0.' }, { createdAt: '2026-10-01T11:00:00Z', id: 'IC_1' });
   const later = markerComment('reviewer', {}, { createdAt: '2026-10-01T12:00:00Z', id: 'IC_2' });

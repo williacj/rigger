@@ -30,7 +30,7 @@ export function proofRepository(t, { base = source(1), head = base, body = "test
       files[path] = '// ABOUTME: Satisfies the real suite list validation in a proof fixture.\n';
     }
   }
-  for (const path of ['test/suite.sh', 'test/suite-reaper', 'test/suite-guard.cjs', 'test/suite-path.cjs', 'test/temporary-directory.mjs', 'test/process-fixtures.mjs', 'test/on-path.mjs']) {
+  for (const path of ['test/suite.sh', 'test/suite-reaper', 'test/suite-reaper-probe.mjs', 'test/suite-guard.cjs', 'test/suite-path.cjs', 'test/temporary-directory.mjs', 'test/process-fixtures.mjs', 'test/on-path.mjs']) {
     files[path] = readFileSync(join(ROOT, path));
   }
   repositoryAt(root, files);
@@ -66,7 +66,7 @@ function checkoutBytes(root) {
 }
 
 /** Every invocation, including a refusal, must leave the checkout and worktree inventory intact. */
-export async function invoke(fixture, script, args, env = {}) {
+export async function invoke(fixture, script, args, env = {}, { cleanupRefusal } = {}) {
   const { t, root, tmp, directory } = fixture;
   const before = checkoutBytes(root);
   const worktrees = worktreeList(root);
@@ -76,6 +76,8 @@ export async function invoke(fixture, script, args, env = {}) {
     env: { ...process.env, TMPDIR: tmp, ...env }, timeout: 15_000,
     directory, emitter: { emit() {} },
   });
+  if (cleanupRefusal) await cleanupRefusal(Object.freeze({ exit: ran.exit, timedOut: ran.timedOut,
+    stdout: Buffer.from(ran.stdout), stderr: Buffer.from(ran.stderr) }));
   t.diagnostic(`${script} ${JSON.stringify(args)}\n${ran.stdout}${ran.stderr}`);
   assert.deepEqual(checkoutBytes(root), before, 'the checkout files changed');
   assert.equal(worktreeList(root), worktrees, 'a temporary worktree remains');

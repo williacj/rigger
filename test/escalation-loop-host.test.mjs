@@ -294,11 +294,11 @@ test('a role whose outcome rejects with EVENT_REFUSED leaves its open pull in Co
 });
 
 // A freed slot must not pull a maker whose ambiguity the role just handled in this invocation.
-// proves R-LOOP-18
+// proves R-LOOP-19
 test('run leaves a handled card with nothing on the forge for a later maker invocation', { timeout: 20000 }, async () => {
   const here = await world();
   await here.runAll();
-  assert.deepEqual(here.agent.runs().map((run) => run.role), ['engineer', 'pm'], 'R-LOOP-18: the next maker belongs to a later invocation');
+  assert.deepEqual(here.agent.runs().map((run) => run.role), ['engineer', 'pm'], 'R-LOOP-19: the next maker belongs to a later invocation');
   assert.equal(here.workspaces.made.length, 1);
   assert.equal((await here.fake.operations.readItems())[0].column, here.settings.board.columns.coding);
   assert.deepEqual(here.repository.held().branches, []);
@@ -340,4 +340,170 @@ test('run leaves a handled pushed line in Coding and only the later invocation r
   assert.equal(escalation.raiser, 'loop');
   assert.equal(escalation.destination, 'owner');
   assert.match(escalation.reason, /forge holds its line of work/);
+});
+
+import { judgeWorld as relayJudgeWorld, cardIn as relayJudgeCard } from './judge-world.mjs';
+import { COLUMNS as relayColumns } from './loop-world.mjs';
+
+// Architecture boundary 4 identity: R-RECORD-9 and R-SCHED-23 concern reporting/reopening,
+// not original settlement facts or stdout Buffer identity.
+for (const verb of ['pull', 'run']) for (const mixed of [false, true]) {
+  // Host reason: wiring.
+  // Rigger decision: test/hold-notice-loop.test.mjs — controlled pull and run preserve settlement and sibling carriers.
+  test(`P2/P3 actual settlement F identity in ${verb}; failed sibling=${mixed}`, async (t) => {
+    let refused = false;
+    if (mixed) relayJudgeAppend(t, (record) => record.layer === 'L3' && record.event === 'dispatch' && record.role === 'reviewer' && record.attempt === undefined && record.card === 3 && !refused && (refused = true));
+    const built = relayJudgeWorld({ cards: [relayJudgeCard(3, relayColumns.ready), ...(mixed ? [relayJudgeCard(4, relayColumns.ready)] : [])], concurrency: mixed && verb === 'run' ? 1 : 2 });
+    const values = new Map(), outcomes = new Map();
+    const handed = { ...built.handed, l2: { ...built.handed.l2, settled: async (...args) => {
+      outcomes.set(args[0].number, args[1]);
+      const value = await built.handed.l2.settled(...args);
+      values.set(args[0].number, value);
+      return value;
+    } } };
+    const answer = await loop(handed)[verb]().then((value) => ({ value }), (failure) => ({ failure }));
+    const reached = mixed ? (verb === 'pull' ? answer.failure.reached : answer.failure.errors.find((failure) => failure.reached?.some(({ card }) => card === 3)).reached) : answer.value;
+    const maker = reached.find((card) => card.card === 3 && card.settled !== undefined);
+    assert.equal(maker.outcome.value.exit, 0, 'real stand-in maker completed');
+    assert.strictEqual(maker.settled.value, values.get(3), 'P2/P3 F must remain the actual settle facts');
+    assert.equal(maker.settled.value.pull.value.number, 1003);
+    assert.strictEqual(maker.outcome.value.stdout, outcomes.get(3).value.stdout, 'P2 actual L1 stdout Buffer reference retained');
+    if (mixed) {
+      assert.equal(maker.judges.find(({ role }) => role === 'architect').outcome.value.exit, 0, 'P3 successful sibling judge retained');
+      const sibling = (verb === 'pull' ? reached : answer.failure.reached).find((card) => card.card === 4 && card.settled !== undefined);
+      assert.equal(sibling.outcome.value.exit, 0, 'P3 successful sibling card retained');
+      assert.strictEqual(sibling.settled.value, values.get(4), 'P3 sibling original F');
+    }
+  });
+}
+
+import fs from 'node:fs';
+import config from '../rigger.config.mjs';
+import { syncBuiltinESMExports } from 'node:module';
+import { makeJudgeDirectory } from '../src/execution/workspace.mjs';
+import { createFakeRepository } from './fake-repository.mjs';
+import { boardOf, COLUMNS as relayBoardColumns } from './loop-world.mjs';
+import { KINDS as relayJudgeKinds, pullFor } from './judge-world.mjs';
+import { refusingWrites } from './notice-forge.mjs';
+import { openSink, readEvents } from '../src/observation/sink.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
+
+/** Actual Review-role dispatches, with no fixture completion counter treating a refused start as running. */
+function relayJudgeEntry() {
+  const scratch = temporaryDirectory('rigger-relay-judge-');
+  const directory = join(scratch, 'state');
+  const agent = standInAgent();
+  const fake = boardOf([relayJudgeCard(3, relayBoardColumns.review)]);
+  const repository = createFakeRepository({ pullRequests: [pullFor(3)] });
+  const settings = { ...config, kinds: relayJudgeKinds, concurrency: 1 };
+  const sink = openSink({ directory, run: 'r-relay-judge', now: () => 1 });
+  let observe = () => {};
+  const decide = (card, outcomes, options = {}) => {
+    observe(options);
+    return nextAction(card, relayJudgeKinds, undefined, { columns: relayBoardColumns, roles: settings.roles, provisioning: {}, outcomes, sink, ...options });
+  };
+  const handed = { config: settings, sink, board: handleOn(fake), decide, facts: factsCall({ config: settings, reads: repository.operations, decide }),
+    l2: columnChanges({ config: settings, sink, items: fake.operations, reads: repository.operations, repositoryWrites: refusingWrites() }),
+    kill: async () => {}, workspace: async () => { throw new Error('Review makes no maker workspace'); }, judgeDirectory: makingJudgeDirectories(join(scratch, 'workspaces')), removeDirectories: async () => {},
+    state: directory, environment: { ...process.env, PATH: agent.first() }, run: 'r-relay-judge', clock: { now: () => 1, pause: async () => {} } };
+  return { scratch, handed, events: () => readEvents(directory), agent, observe: (callback) => { observe = callback; } };
+}
+
+/** Refuses real sink append attempts while preserving unrelated filesystem writes. */
+function relayJudgeAppend(t, predicate) {
+  const original = fs.appendFileSync;
+  const refused = [];
+  fs.appendFileSync = (path, bytes, ...rest) => {
+    let record;
+    try { record = JSON.parse(String(bytes)); } catch {}
+    if (record && predicate(record)) {
+      const error = Object.assign(new Error(`EIO actual ${record.event} append`), { code: 'EIO' });
+      refused.push({ record, error });
+      throw error;
+    }
+    return original(path, bytes, ...rest);
+  };
+  syncBuiltinESMExports();
+  t.after(() => { fs.appendFileSync = original; syncBuiltinESMExports(); });
+  return refused;
+}
+
+// Host reason: wiring.
+// Rigger decision: test/hold-notice-loop.test.mjs — controlled judge refusals retain siblings without retry or hold.
+// Boundary rule 4 infrastructure identity: R-RECORD-9 does not require the same Error;
+// R-SCHED-23 concerns reopening rather than the J/noOutcome carrier.
+test('P10/P11/P12 actual judge-directory failure and successful sibling', async (t) => {
+  const built = relayJudgeEntry();
+  let original;
+  const handing = { ...built.handed, judgeDirectory: async (card, role, head) => {
+    if (role !== 'reviewer') return built.handed.judgeDirectory(card, role, head);
+    try { return await makeJudgeDirectory({ root: join(built.scratch, 'actual-directories'), topic: 'rigger-{number}', card, role, head, repository: join(built.scratch, 'absent-repository'), sink: built.handed.sink }); }
+    catch (reason) { original = reason; throw reason; }
+  } };
+  relayJudgeAppend(t, (record) => record.layer === 'L1' && record.event === 'workspace.failed' && record.role === 'reviewer');
+  const failure = await loop(handing).pull().then(() => assert.fail('actual judge failure was accepted'), (reason) => reason);
+  const judges = failure.reached.find(({ card }) => card === 3).judges;
+  assert.equal(judges.find(({ role }) => role === 'architect').outcome.value.exit, 0, 'P10 sibling judge retained');
+  const reviewer = judges.find(({ role }) => role === 'reviewer');
+  assert.equal(original.code, 'EVENT_REFUSED');
+  assert.strictEqual(reviewer.failure.cause, original, 'P10/P12 noOutcome retains J as cause');
+  assert.strictEqual(reviewer.failure.cause.unrecorded, original.unrecorded);
+  assert.strictEqual(reviewer.failure.cause.unrecorded[0], original.unrecorded[0]);
+  assert.strictEqual(reviewer.failure.cause.unrecorded.at(-1), original.unrecorded.at(-1));
+  assert.equal(built.events().filter(({ event }) => event === 'admission.close').length, 0);
+});
+
+for (const route of ['dispatch-result', 'dispatch-start', 'L3-start']) {
+  // Host reason: wiring.
+  // Rigger decision: test/hold-notice-loop.test.mjs — controlled judge refusals retain siblings without retry or hold.
+  test(`P10/P11/P12 actual ${route} failure and successful sibling`, async (t) => {
+    const built = relayJudgeEntry();
+    let actual;
+    built.observe((options) => { if (options.directories?.reviewer?.status === 'rejected') actual = options.directories.reviewer.reason; });
+    const originalDecide = built.handed.decide;
+    const handing = { ...built.handed, decide: (card, outcomes, options = {}) => {
+      const outcome = options.directories?.reviewer;
+      if (outcome?.status === 'rejected' && route !== 'L3-start') actual = outcome.reason;
+      return originalDecide(card, outcomes, options);
+    } };
+    const judgeIds = new Set();
+    const refused = relayJudgeAppend(t, (record) => {
+      if (record.layer === 'L3' && record.event === 'dispatch' && record.role === 'reviewer' && record.attempt === undefined) judgeIds.add(record.dispatch);
+      return route === 'L3-start' ? record.layer === 'L3' && record.event === 'dispatch' && judgeIds.has(record.dispatch)
+        : record.layer === 'L1' && record.event === (route === 'dispatch-start' ? 'dispatch.start' : 'dispatch.end') && judgeIds.has(record.dispatch);
+    });
+    const result = await loop(handing).pull().then((value) => ({ value }), (failure) => ({ failure }));
+    const reached = result.failure?.reached ?? result.value;
+    const judges = reached.find(({ card }) => card === 3).judges;
+    assert.equal(judges.find(({ role }) => role === 'architect').outcome.value.exit, 0, 'P11/P12 actual successful sibling');
+    const reviewer = judges.find(({ role }) => role === 'reviewer');
+    if (route === 'L3-start') {
+      assert.strictEqual(reviewer.failure.cause.cause, refused[0].error, 'P12 original actual start append cause');
+      assert.match(reviewer.failure.message, /not started/);
+    } else {
+      assert.equal(reviewer.halt, true);
+      assert.ok(actual.code === 'EVENT_REFUSED' || actual.startCause?.kind === 'event-unrecorded');
+      assert.strictEqual(reviewer.outcome.reason, actual, 'P11 actual D outcome.reason identity');
+    }
+    assert.equal(built.events().filter(({ event }) => event === 'admission.close').length, 0, 'P11/P12 no hold');
+    assert.ok(built.agent.runs().filter(({ role }) => role === 'reviewer').length <= 1, 'P11/P12 no reviewer retry');
+  });
+}
+
+// Host reason: wiring.
+// Rigger decision: test/hold-notice-loop.test.mjs — controlled pull and run preserve settlement and sibling carriers.
+test('one fulfilled pull retains actual settlement facts for two successful cards', async () => {
+  const built = relayJudgeWorld({ cards: [relayJudgeCard(3, relayColumns.ready), relayJudgeCard(4, relayColumns.ready)], concurrency: 2 });
+  const values = new Map();
+  const handed = { ...built.handed, l2: { ...built.handed.l2, settled: async (...args) => {
+    const value = await built.handed.l2.settled(...args); values.set(args[0].number, value); return value;
+  } } };
+  const reached = await loop(handed).pull();
+  assert.equal(reached.length, 2, 'SETTLE-TWO preserves exactly both cards');
+  assert.deepEqual(reached.map(({ card }) => card).sort(), [3, 4]);
+  for (const card of reached) {
+    assert.equal(card.outcome.value.exit, 0);
+    assert.strictEqual(card.settled.value, values.get(card.card), 'SETTLE-TWO original F');
+    for (const role of ['reviewer', 'architect']) assert.equal(card.judges.find((judge) => judge.role === role).outcome.value.exit, 0, 'SETTLE-TWO actual judges completed');
+  }
 });

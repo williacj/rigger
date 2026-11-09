@@ -1,5 +1,5 @@
 // ABOUTME: Tests `rigger run`: the real bin run in a consumer's repository with the fake `gh` first
-// on PATH, claiming through L3's single pull until the slots are full, making and provisioning each
+// on PATH, draining through L3's freed-slot pulls, making and provisioning each
 // claimed card's workspace, dispatching its maker, printing its outcome, and refusing its own source tree.
 
 import { test } from 'node:test';
@@ -11,9 +11,10 @@ import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { run as runVerb } from '../src/cli/run.mjs';
+import { repositoryReads } from '../src/substrate/forge/read.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
-import { installFakeGh, installGhRefusingStreamAfterMove } from './fake-gh.mjs';
+import { installFakeGh, installGhRefusingStreamAfterMove, seedRepository } from './fake-gh.mjs';
 import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { gitIn } from './git-repository.mjs';
@@ -23,6 +24,8 @@ import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 import { admissionOf, closerText, seed, TIME } from './admission-world.mjs';
 import { COLUMNS, FIELDS, KINDS, PROJECT, REFUSED, REPO, card, consumerConfig } from './verb-consumer.mjs';
 import { assertPushEnd, held as heldStream } from './push-fixtures.mjs';
+import { markerComment } from './fake-repository.mjs';
+import { fixture, shellQuote } from './process-fixtures.mjs';
 
 // A bound on a test that waits on the real bin and its maker, so one that never settles fails here.
 const { 60_000: SETTLES_WITHIN } = BOUNDS;
@@ -85,7 +88,7 @@ function run(board, { concurrency, record = 'accepting' }) {
   const env = { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), PATH: [...ahead, dir, process.env.PATH].join(delimiter) };
   // The board wrapper arms refusal; all reads finish before the pull start attempts its append.
   if (record === 'refusing-after-board-read') env.NODE_OPTIONS = refuseAfterBoardRead(temporaryDirectory('rigger-run-board-refusal-'), fake.gh, stream);
-  const shared = { consumer, model: fake.model, agentRuns: agent.runs };
+  const shared = { consumer, model: fake.model, agentRuns: agent.runs, fake };
   return { ...spawnRun(consumer, env), ...shared, again: () => ({ ...spawnRun(consumer, env), ...shared }) };
 }
 
@@ -104,15 +107,25 @@ const transitionsIn = (events) => events
   .map(({ card, from, to }) => ({ card, from, to }));
 
 /**
- * The most claims L3 held at once, derived from the events: each `pull` takes a slot and each
- * `slot.release` frees one, in the order recorded.
+ * The most slots L3 held at once: each release pairs with its card's latest pull, and a pull
+ * with no matching release contributes no held interval, as for a merge claim.
  */
 function mostHeld(events) {
+  const pulls = new Map();
+  const deltas = new Map();
+  for (const [at, event] of events.entries()) {
+    if (event.layer !== 'L3') continue;
+    if (event.event === 'pull') pulls.set(event.card, at);
+    if (event.event === 'slot.release' && pulls.has(event.card)) {
+      deltas.set(pulls.get(event.card), 1);
+      deltas.set(at, -1);
+      pulls.delete(event.card);
+    }
+  }
   let held = 0;
   let most = 0;
-  for (const event of events.filter((event) => event.layer === 'L3')) {
-    if (event.event === 'pull') held += 1;
-    if (event.event === 'slot.release') held -= 1;
+  for (const [at] of events.entries()) {
+    held += deltas.get(at) ?? 0;
     most = Math.max(most, held);
   }
   return most;
@@ -121,32 +134,32 @@ function mostHeld(events) {
 /** Four ready cards L2 would dispatch, oldest first #10, #20, #30, #40. */
 const FOUR_READY = { items: [card(30, 'Ready'), card(10, 'Ready'), card(40, 'Ready'), card(20, 'Ready')] };
 
-test('run, given N 1 and four pullable cards, claims exactly one card, which ends in the coding column', async () => {
+test('run, given N 1 and four pullable cards, drains all four into the coding column', async () => {
   const ran = run(FOUR_READY, { concurrency: 1 });
 
-  assert.deepEqual(await columnsOf(ran), { 10: 'Coding', 20: 'Ready', 30: 'Ready', 40: 'Ready' }, ran.err);
+  assert.deepEqual(await columnsOf(ran), { 10: 'Coding', 20: 'Coding', 30: 'Coding', 40: 'Coding' }, ran.err);
 });
 
-test('run, given N 1 and four pullable cards, exits non-zero naming the one card it claimed', () => {
+test('run, given N 1 and four pullable cards, exits non-zero naming all four claimed cards', () => {
   const ran = run(FOUR_READY, { concurrency: 1 });
 
   assert.notEqual(ran.code, 0, ran.out);
   assert.match(ran.err, /claimed #10\b/, ran.err);
-  for (const other of [20, 30, 40]) assert.doesNotMatch(ran.err, new RegExp(`#${other}\\b`), ran.err);
+  for (const other of [20, 30, 40]) assert.match(ran.err, new RegExp(`claimed #${other}\\b`), ran.err);
 });
 
-test('run, given N 3 and four pullable cards, claims exactly three cards, which end in the coding column', async () => {
+test('run, given N 3 and four pullable cards, drains all four into the coding column', async () => {
   const ran = run(FOUR_READY, { concurrency: 3 });
 
-  assert.deepEqual(await columnsOf(ran), { 10: 'Coding', 20: 'Coding', 30: 'Coding', 40: 'Ready' }, ran.err);
+  assert.deepEqual(await columnsOf(ran), { 10: 'Coding', 20: 'Coding', 30: 'Coding', 40: 'Coding' }, ran.err);
 });
 
-test('run, given N 3 and four pullable cards, exits non-zero naming the three cards it claimed', () => {
+test('run, given N 3 and four pullable cards, exits non-zero naming all four claimed cards', () => {
   const ran = run(FOUR_READY, { concurrency: 3 });
 
   assert.notEqual(ran.code, 0, ran.out);
   for (const claimed of [10, 20, 30]) assert.match(ran.err, new RegExp(`claimed #${claimed}\\b`), ran.err);
-  assert.doesNotMatch(ran.err, /#40\b/, ran.err);
+  assert.match(ran.err, /claimed #40\b/, ran.err);
 });
 
 /** Two ready cards L2 would dispatch, oldest first #10, #20. */
@@ -200,15 +213,16 @@ test('run under a hold closer names its reason and time, keeps L2 refusals and e
   const writes = (await first.model()).writes();
   const agents = first.agentRuns().length;
   seed(join(first.consumer, '.rigger'), 'hold-c3-issue-7.json', closerText({ reason: 'environment hold' }));
+  seedRepository(first.fake, { issues: [{ number: 7, title: 'Rigger closed admission', body: 'Why.\n\nHold: `c3`\n', labels: ['rigger:status'] }] });
   const ran = first.again();
 
   assert.equal(ran.code, 0, ran.err);
   assert.match(ran.out, new RegExp(`admission is closed by hold: environment hold; time ${TIME}`), ran.out);
   assert.match(ran.out, /#11.*missing acceptance/, ran.out);
   assert.doesNotMatch(ran.out, /no card was pullable/, ran.out);
-  assert.deepEqual((await ran.model()).writes(), writes);
+  assert.deepEqual((await ran.model()).writes(), [...writes, { operation: 'addIssue', args: [7, REPO] }, { operation: 'moveItem', args: ['item-3', 'Owner'] }]);
   assert.equal(ran.agentRuns().length, agents);
-  assert.deepEqual(await columnsOf(ran), { 11: 'Ready', 12: 'Coding' });
+  assert.deepEqual(await columnsOf(ran), { 7: 'Owner', 11: 'Ready', 12: 'Coding' });
 });
 
 // proves R-SCHED-3, R-SCHED-16
@@ -250,8 +264,8 @@ test('run, given a ready card L2 refuses, names the card and the reason', () => 
 test('run dispatches each card\'s selected steps and its maker: the agent CLI runs once per claimed card, and every L1 dispatch event is a step\'s or the maker\'s', async () => {
   const ran = run(FOUR_READY, { concurrency: 3 });
 
-  assert.deepEqual(await columnsOf(ran), { 10: 'Coding', 20: 'Coding', 30: 'Coding', 40: 'Ready' }, ran.err);
-  assert.deepEqual(ran.agentRuns().map((args) => /\/rigger-(\d+)\/\.claude\/agents\/engineer\.md$/.exec(args)?.[1]).sort(), ['10', '20', '30']);
+  assert.deepEqual(await columnsOf(ran), { 10: 'Coding', 20: 'Coding', 30: 'Coding', 40: 'Coding' }, ran.err);
+  assert.deepEqual(ran.agentRuns().map((args) => /\/rigger-(\d+)\/\.claude\/agents\/engineer\.md$/.exec(args)?.[1]).sort(), ['10', '20', '30', '40']);
   const events = eventsOf(ran);
   assert.ok(events.length > 0, 'the run recorded events');
   assert.deepEqual(events.filter((event) => event.layer === 'L1' && event.dispatch !== undefined && !events.some((named) => named.layer === 'L3' && named.event === 'dispatch' && named.dispatch === event.dispatch && (typeof named.step === 'string' || (named.role === 'engineer' && named.tier === 'standard')))), []);
@@ -275,6 +289,7 @@ test('each card run claims from the ready column has one L2 transition event fro
     { card: 10, from: 'ready', to: 'coding' },
     { card: 20, from: 'ready', to: 'coding' },
     { card: 30, from: 'ready', to: 'coding' },
+    { card: 40, from: 'ready', to: 'coding' },
   ], ran.err);
 });
 
@@ -423,13 +438,13 @@ test('given the board takes a claim move and the sink then refuses its transitio
   assert.match(line, /EISDIR/, 'the sink\'s own error is named');
 });
 
-test('--help\'s line for run says it claims cards, provisions their workspaces and dispatches their makers', () => {
+test('--help\'s line for run says it claims cards and dispatches their makers until the board drains, or, while a clock trigger is declared, until stopped', () => {
   const shown = spawnSync(process.execPath, [bin, '--help'], { encoding: 'utf8' });
 
   assert.equal(shown.status, 0, shown.stderr);
   const line = shown.stdout.split('\n').find((held) => /^\s*run\b/.test(held));
   assert.ok(line, shown.stdout);
-  assert.match(line, /claim cards until the slots are full, provision their workspaces and dispatch their makers, then exit/, line);
+  assert.match(line, /claim cards and dispatch their makers until the board drains, or, while a clock trigger is declared, until stopped/, line);
   assert.doesNotMatch(line, /before M4/, line);
 });
 
@@ -463,15 +478,15 @@ test('given run over a fake board with one ready card and a stand-in maker exiti
   assert.deepEqual(ran.err.split('\n').filter((line) => /#10\b/.test(line)), [makerLine(ran.consumer, 10, 'its maker exited 0 and opened no pull request from rigger-10')]);
 });
 
-test('given run where the stand-in maker exits 0 and opens a pull request on the fake forge, the card ends in Review, run prints that it is in review naming the pull request, and exits 0', SETTLES_WITHIN, async () => {
+test('given run where the stand-in maker opens a pull request with only an owner judge, run prints Review then Owner and exits 0', SETTLES_WITHIN, async () => {
   // The kind's only judge is the owner, so no later card's judges reach this card.
   const settings = { ...config(3), kinds: { change: { ...KINDS.change, judges: ['owner'] } } };
   const ran = runWithAgent(standInAgent({ 10: { engineer: { pr: true } } }), { items: [card(10, 'Ready')] }, { settings });
 
   assert.equal(ran.code, 0, ran.err);
   const columns = Object.fromEntries((await (await ran.fake.model()).operations.readItems()).map((item) => [item.number, item.column]));
-  assert.deepEqual(columns, { 10: 'Review' });
-  assert.deepEqual(ran.out.split('\n').filter((line) => /#10\b/.test(line)), [makerLine(ran.consumer, 10, 'its maker exited 0 and pull request #11 is open from rigger-10, so the card is in review')]);
+  assert.deepEqual(columns, { 10: 'Owner' });
+  assert.deepEqual(ran.out.split('\n').filter((line) => /#10\b/.test(line)), [makerLine(ran.consumer, 10, 'its maker exited 0 and pull request #11 is open from rigger-10, so the card is in review'), 'rigger run: card #10 moved to owner']);
 });
 
 test('given run where the maker exits non-zero, run exits non-zero, and prints the card and the exit code', SETTLES_WITHIN, () => {
@@ -528,15 +543,15 @@ test('given run over three cards where one card\'s required step fails twice, ru
   assert.ok(lines.some((line) => line.startsWith('rigger run: card #20 was held after 2 attempts, each failing before the maker:')), ran.err);
 });
 
-test('run claims no more than N cards, and dispatches roles for no more cards at once than N, derived from the events it wrote', SETTLES_WITHIN, () => {
+test('run drains three cards, dispatching roles for no more cards at once than N, derived from the events it wrote', SETTLES_WITHIN, () => {
   const board = { items: [card(10, 'Ready'), card(20, 'Ready'), card(30, 'Ready')] };
   const ran = runWithAgent(standInAgent(reviewed([10, 20, 30])), board, { settings: config(2) });
 
   assert.equal(ran.code, 0, ran.err);
   const events = eventsOf(ran);
-  assert.equal(events.filter((event) => event.layer === 'L3' && event.event === 'pull').length, 2, JSON.stringify(events));
+  assert.equal(events.filter((event) => event.layer === 'L3' && event.event === 'pull').length, 3, JSON.stringify(events));
   assert.equal(mostHeld(events), 2);
-  assert.deepEqual(events.filter((event) => event.layer === 'L3' && event.event === 'dispatch').map((event) => event.role).sort(), ['engineer', 'engineer', 'reviewer', 'reviewer'], 'no judge was dispatched, so the test proves nothing of the judges');
+  assert.deepEqual(events.filter((event) => event.layer === 'L3' && event.event === 'dispatch').map((event) => event.role).sort(), ['engineer', 'engineer', 'engineer', 'reviewer', 'reviewer', 'reviewer'], 'no judge was dispatched, so the test proves nothing of the judges');
   // Each L1 dispatch.start opens a dispatch for its card and each dispatch.end closes it, in the
   // order recorded; the cards with a dispatch open at once never number more than N.
   const open = new Map();
@@ -648,4 +663,489 @@ test('C9: run with telemetry.push true, whose board drains so run ends, pushes e
   const before = Buffer.from(events.slice(0, -1).map((event) => `${JSON.stringify(event)}\n`).join(''));
   assert.deepEqual(pushed, heldStream(before), said);
   assertPushEnd(ends[0], { outcome: 'pushed', bytes: pushed.length, commit: tip });
+});
+
+// A second Ready card must not be stranded by the CLI's initial slotful pull.
+// proves R-SCHED-6
+test('a no-clock real-bin run at N one claims the second Ready card after the first releases its slot', SETTLES_WITHIN, () => {
+  const agent = standInAgent({ 10: { engineer: { exit: 7 } }, 20: { engineer: { exit: 7 } } });
+  const ran = runWithAgent(agent, TWO_READY, { settings: config(1) });
+  const events = eventsOf(ran);
+  const pulls = events.filter(({ layer, event }) => layer === 'L3' && event === 'pull');
+
+  assert.deepEqual(pulls.map(({ card }) => card), [10, 20], ran.err);
+  const released = events.findIndex(({ event, card }) => event === 'slot.release' && card === 10);
+  assert.ok(released >= 0 && released < events.indexOf(pulls[1]), 'the second claim follows the first slot release');
+  assert.deepEqual(agent.runs().map(({ card }) => card), [10, 20]);
+  assert.equal(mostHeld(events), 1);
+  assert.equal(ran.code, 1, 'both nonzero maker outcomes remain failures');
+  assert.deepEqual([...ran.err.matchAll(/^rigger run: claimed #(\d+) /gm)].map((held) => Number(held[1])), [10, 20], 'outcomes retain claim order across freed-slot pulls');
+});
+
+/** Changes the documented stand-in plan after a role runs, keeping a duplicate-dispatch fault finite. */
+function afterAgentRun(agent, updates) {
+  const program = join(agent.dir, 'claude');
+  writeFileSync(program, [
+    `#!${process.execPath}`,
+    '// ABOUTME: Runs the documented stand-in and changes its next plan to bound a duplicate-dispatch fault.',
+    'if (!process.env.RIGGER_FIXTURE_WARMING) {',
+    `  const { standInMain } = await import(${JSON.stringify(new URL('./stub-claude.mjs', import.meta.url).href)});`,
+    '  await standInMain();',
+    "  const { readFileSync, writeFileSync } = await import('node:fs');",
+    `  const directory = ${JSON.stringify(agent.dir)};`,
+    "  const lines = readFileSync(directory + '/runs.jsonl', 'utf8').trim().split('\\n');",
+    '  const last = JSON.parse(lines.at(-1));',
+    `  const updates = ${JSON.stringify(updates)};`,
+    '  if (Object.hasOwn(updates, last.role)) {',
+    "    const plan = JSON.parse(readFileSync(directory + '/plan.json', 'utf8'));",
+    '    plan[last.card][last.role] = updates[last.role];',
+    "    writeFileSync(directory + '/plan.json', JSON.stringify(plan));",
+    '  }',
+    '}',
+    '',
+  ].join('\n'));
+  warmed(program);
+  return agent;
+}
+
+// A judge without a verdict must not occupy each freed slot ahead of a Ready card.
+// proves R-SCHED-6
+test('a no-clock real-bin run dispatches an unmarked judge once and reaches another Ready card', SETTLES_WITHIN, () => {
+  const agent = afterAgentRun(standInAgent({ 10: { engineer: { pr: true }, reviewer: {} }, 20: { engineer: { exit: 7 } } }), { reviewer: { findings: true } });
+  const settings = { ...config(1), kinds: { change: { ...KINDS.change, judges: ['reviewer'] } } };
+  const ran = runWithAgent(agent, TWO_READY, { settings });
+
+  assert.equal(agent.runs().filter(({ role }) => role === 'reviewer').length, 1, ran.out + ran.err);
+  assert.deepEqual(agent.runs().filter(({ role }) => role === 'engineer').map(({ card }) => card), [10, 20]);
+  assert.deepEqual(eventsOf(ran).filter(({ event }) => event === 'pull').map(({ card, queueDepth }) => [card, queueDepth]), [[10, 1], [20, 0]], 'the under-claim judge runs once and its repeated answer takes no claim or queue position');
+  assert.equal(ran.code, 1, 'the second maker failure is still presented');
+});
+
+// A zero-exit maker leaving no PR must not repeat ahead of the next Ready card.
+// proves R-SCHED-6
+test('a no-clock real-bin run dispatches an unchanged top-level maker once', SETTLES_WITHIN, () => {
+  const agent = afterAgentRun(standInAgent({ 10: { engineer: {}, reviewer: { findings: true } }, 20: { engineer: { exit: 7 } } }), { engineer: { pr: true } });
+  const settings = { ...config(1), kinds: { change: { ...KINDS.change, judges: ['reviewer'] } } };
+  const ran = runWithAgent(agent, TWO_READY, { settings });
+
+  assert.deepEqual(agent.runs().filter(({ role }) => role === 'engineer').map(({ card }) => card), [10, 20], ran.out + ran.err);
+  assert.deepEqual(eventsOf(ran).filter(({ event }) => event === 'pull').map(({ card, queueDepth }) => [card, queueDepth]), [[10, 1], [20, 0]], 'the repeated maker answer takes no claim or queue position');
+  assert.equal(ran.code, 1, 'the second maker failure is still presented');
+});
+
+// L3's merge-pull contract has no matching release; it must not inflate a real drain's slots.
+// proves R-SCHED-2, R-SCHED-6
+test('a no-clock real-bin run at N three drains four Ready cards and the slot counter pairs only released pulls', SETTLES_WITHIN, () => {
+  const numbers = [10, 20, 30, 40];
+  const agent = standInAgent(Object.fromEntries(numbers.map((number) => [number, { engineer: { exit: 7 } }])));
+  const ran = runWithAgent(agent, FOUR_READY, { settings: config(3) });
+  const events = eventsOf(ran);
+
+  assert.deepEqual(agent.runs().filter(({ role }) => role === 'engineer').map(({ card }) => card).sort((a, b) => a - b), numbers, ran.out + ran.err);
+  assert.equal(mostHeld(events), 3, 'only pulls paired with a slot release count as held slots');
+  // Independent literals from Architecture's L3 pull/slot.release contract: each of these is
+  // a merge claim after the maker's release, so none holds a slot despite sharing its card.
+  const mergePulls = numbers.map((card) => ({ layer: 'L3', event: 'pull', card, queueDepth: 0, inFlight: 0 }));
+  assert.equal(mostHeld([...events, ...mergePulls]), 3, 'slot-free merge pulls add no held interval');
+  assert.equal(ran.code, 1, 'the four nonzero maker outcomes remain failures');
+});
+
+// A CLI run must use the same single start boundary L3's held-kill controls establish.
+// proves R-SCHED-2, R-SCHED-6
+test('a no-clock real-bin run at N two records one run.start before its first pull', SETTLES_WITHIN, () => {
+  const agent = standInAgent({ 10: { engineer: { exit: 7 } }, 20: { engineer: { exit: 7 } } });
+  const ran = runWithAgent(agent, TWO_READY, { settings: config(2) });
+  const events = eventsOf(ran).filter(({ layer }) => layer === 'L3');
+  assert.deepEqual(events.filter(({ event }) => event === 'run.start').map(({ concurrency }) => concurrency), [2]);
+  assert.equal(events[0].event, 'run.start', 'the start precedes every pull trigger and claim');
+  assert.deepEqual(events.filter(({ event }) => event === 'pull').map(({ card }) => card), [10, 20]);
+  assert.equal(mostHeld(events), 2);
+  assert.equal(ran.code, 1);
+});
+
+// A nested pull's unrecorded release must retain its outcome beside earlier completed claims.
+// proves R-SCHED-6, R-RECORD-9
+test('a no-clock real-bin run retains nested failed and successful pull outcomes in claim order and fails despite delivered cards', SETTLES_WITHIN, () => {
+  const preload = join(temporaryDirectory('rigger-run-nested-release-'), 'refuse-release.mjs');
+  writeFileSync(preload, [
+    "// ABOUTME: Refuses one nested card's release record while keeping every other append live.",
+    "import fs from 'node:fs'; import { syncBuiltinESMExports } from 'node:module';",
+    'const append = fs.appendFileSync; let refused = false;',
+    "fs.appendFileSync = (path, bytes, ...rest) => { const row = String(path).endsWith('/.rigger/events.jsonl') ? JSON.parse(String(bytes)) : {};",
+    "if (!refused && row.layer === 'L3' && row.event === 'slot.release' && row.card === 20) { refused = true; throw new Error('nested release record refused'); }",
+    'return append(path, bytes, ...rest); }; syncBuiltinESMExports();',
+  ].join('\n'));
+  const previous = process.env.NODE_OPTIONS;
+  process.env.NODE_OPTIONS = [previous, `--import=${preload}`].filter(Boolean).join(' ');
+  let ran;
+  try {
+    ran = runWithAgent(standInAgent({ 10: { engineer: { pr: true } }, 20: { engineer: { pr: true } } }), TWO_READY, {
+      settings: { ...config(1), kinds: { change: { ...KINDS.change, judges: ['owner'] } } },
+    });
+  } finally {
+    if (previous === undefined) delete process.env.NODE_OPTIONS;
+    else process.env.NODE_OPTIONS = previous;
+  }
+  assert.equal(ran.code, 1, ran.out + ran.err);
+  const lines = ran.err.split('\n');
+  const outcomes = lines.filter((line) => /^rigger run: (claimed|card) #/.test(line) && !line.includes('slot was released'));
+  assert.equal(outcomes.length, 4, ran.err);
+  assert.ok(reviewLine(ran.consumer, 10).test(outcomes[0]), ran.err);
+  assert.equal(outcomes[1], 'rigger run: card #10 moved to owner', ran.err);
+  assert.ok(reviewLine(ran.consumer, 20).test(outcomes[2]), ran.err);
+  assert.equal(outcomes[3], 'rigger run: card #20 moved to owner', ran.err);
+  assert.equal(lines.filter((line) => line.includes('nested release record refused')).length, 1, ran.err);
+});
+
+// A board emptied over several claims is one idle period, whichever claim ended last.
+test('a no-clock real-bin run at N one records one drain trigger once the board drains after two claims', SETTLES_WITHIN, () => {
+  const settings = { ...config(1), kinds: { change: { ...KINDS.change, judges: ['owner'] } } };
+  const ran = runWithAgent(standInAgent({ 10: { engineer: { pr: true } }, 20: { engineer: { pr: true } } }), TWO_READY, { settings });
+  const events = eventsOf(ran).filter(({ layer }) => layer === 'L3');
+
+  assert.equal(ran.code, 0, ran.err);
+  assert.deepEqual([...new Set(events.filter(({ event }) => event === 'pull').map(({ card }) => card))], [10, 20], 'the run claimed both cards before its board drained');
+  assert.equal(events.filter(({ event, trigger }) => event === 'trigger' && trigger === 'drain').length, 1, JSON.stringify(events));
+});
+
+/** The engine's own forge reads, answered by `fake`'s `gh` as a `run` over its repository is answered. */
+const readsThrough = (fake) => repositoryReads({ repo: REPO, project: PROJECT }, { send: (_, args) => spawnSync(fake.gh, args, { encoding: 'utf8', env: gitEnvironment() }) });
+
+// A failed maker that left nothing must not take a second dispatch from the slot it freed.
+// proves R-LOOP-19
+test('a no-clock real-bin run dispatches a maker that exited non-zero and left nothing on the forge once', SETTLES_WITHIN, async () => {
+  const ran = runWithAgent(standInAgent({ 10: { engineer: { exit: 7 } } }), { items: [card(10, 'Ready')] });
+  const reads = readsThrough(ran.fake);
+  const { open, merged } = await reads.readPullRequests('rigger-10');
+  const events = eventsOf(ran);
+  const makers = events.filter((event) => event.layer === 'L3' && event.event === 'dispatch' && event.card === 10 && event.role === 'engineer' && event.attempt !== undefined);
+
+  assert.equal(ran.code, 1, ran.err);
+  assert.deepEqual(await reads.readBranches(['rigger-10']), { 'rigger-10': false }, 'the forge holds no branch of the card');
+  assert.deepEqual({ open, merged }, { open: [], merged: [] }, 'the forge holds no open or merged pull request from it');
+  assert.equal(makers.length, 1, JSON.stringify(events));
+  assert.equal(events.filter((event) => event.layer === 'L1' && event.event === 'dispatch.start' && event.dispatch === makers[0].dispatch).length, 1, JSON.stringify(events));
+});
+
+// Once keeps its literal single-card boundary even when run would drain the four-card board.
+// proves R-SCHED-2, R-SCHED-6
+test('real-bin once at N three with four Ready cards fires one pull claims one card and records no run.start', SETTLES_WITHIN, async () => {
+  const consumer = consumerRepository(3);
+  const dir = temporaryDirectory('rigger-once-four-gh-');
+  const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, ...FOUR_READY } });
+  const agent = installAgentCli(dir);
+  const ran = spawnSync(process.execPath, [bin, 'once'], { cwd: consumer, encoding: 'utf8', timeout: SETTLES_WITHIN.timeout,
+    env: { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), PATH: [dir, process.env.PATH].join(delimiter) },
+  });
+  assert.equal(ran.error, undefined);
+  const events = readEvents(join(consumer, '.rigger')).filter(({ layer }) => layer === 'L3');
+  assert.deepEqual(events.filter(({ event }) => event === 'trigger').map(({ trigger }) => trigger), ['pull']);
+  assert.deepEqual(events.filter(({ event }) => event === 'pull').map(({ card }) => card), [10]);
+  assert.equal(events.filter(({ event }) => event === 'run.start').length, 0);
+  assert.equal(agent.runs().length, 1);
+  assert.deepEqual((await (await fake.model()).operations.readItems()).map(({ number, column }) => [number, column]).sort((a, b) => a[0] - b[0]), [[10, 'Coding'], [20, 'Ready'], [30, 'Ready'], [40, 'Ready']]);
+});
+
+// The private-Free refusal of the effective rules, through the real bin and the fake `gh`. Each
+// test below is a wiring test, and its controlled counterpart is named above it.
+
+/** The first line `gh` prints for the refusal, as #1090 recorded it and the private fixture answered it on 2026-11-05. */
+const FEATURE_REFUSED = 'gh: Upgrade to GitHub Pro or make this repository public to enable this feature. (HTTP 403)';
+
+/** A kind that ends with the owner, `change`, and one that names no owner, `merged`, each under two agent judges. */
+const privateFreeSettings = () => ({ ...config(1), kinds: {
+  change: { ...KINDS.change, judges: ['reviewer', 'architect', 'owner'] },
+  merged: { ...KINDS.change, select: { labels: ['type:merged'] }, judges: ['reviewer', 'architect'] },
+} });
+
+/** A stand-in plan under which card `number`'s maker opens a pull request and both agent judges write sound markers. */
+const panelled = (number) => ({ [number]: { engineer: { pr: true }, reviewer: { findings: true }, architect: { findings: true } } });
+
+/** Has `agent`'s run as `role` end by running `source`, a function body given `consumer` and `node`'s spawn, before it exits. */
+function afterRole(agent, role, source) {
+  const program = join(agent.dir, 'claude');
+  writeFileSync(program, [
+    `#!${process.execPath}`,
+    '// ABOUTME: Runs the documented stand-in, then acts as the owner while that role is still running.',
+    'if (!process.env.RIGGER_FIXTURE_WARMING) {',
+    `  const { standInMain } = await import(${JSON.stringify(new URL('./stub-claude.mjs', import.meta.url).href)});`,
+    '  await standInMain();',
+    "  const { readFileSync } = await import('node:fs');",
+    `  const lines = readFileSync(${JSON.stringify(join(agent.dir, 'runs.jsonl'))}, 'utf8').trim().split('\\n');`,
+    `  if (JSON.parse(lines.at(-1)).role === ${JSON.stringify(role)}) {`,
+    `    ${source}`,
+    '  }',
+    '}',
+    '',
+  ].join('\n'));
+  warmed(program);
+  return agent;
+}
+
+/**
+ * A consumer of `privateFreeSettings` over a fake `gh` holding `items` and `agent`. A `gh` ahead of
+ * the fake refuses the rules read with the first line `rules`, and serves it where that is undefined,
+ * as a seed alone would not outlast the fake's next write. `verb(...)` runs the real bin in the
+ * consumer, each a process of its own, with its pid, and `answerRulesWith` changes the first line.
+ */
+function privateFree(items, agent, { seeded = {}, ...answers } = {}) {
+  const rules = Object.hasOwn(answers, 'rules') ? answers.rules : FEATURE_REFUSED;
+  const directory = temporaryDirectory('rigger-run-private-free-');
+  const consumer = repositoryAt(join(directory, 'consumer'), { 'rigger.config.mjs': `export default ${JSON.stringify(privateFreeSettings())};\n` });
+  gitIn(consumer, 'branch', '-M', 'main');
+  const origin = join(directory, 'origin.git');
+  withOrigin(consumer, origin);
+  const dir = temporaryDirectory('rigger-run-private-free-gh-');
+  const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, items }, origin });
+  seedRepository(fake, seeded);
+  const refusing = temporaryDirectory('rigger-run-private-free-rules-');
+  const answerRulesWith = (line) => writeFileSync(join(refusing, 'rules-line'), line === undefined ? '' : `${line}\n`);
+  answerRulesWith(rules);
+  fixture(refusing, 'gh', [
+    'case "$*" in *rules/branches/*) if [ -s "$here/rules-line" ]; then cat "$here/rules-line" >&2; exit 1; fi ;; esac',
+    `exec ${shellQuote(fake.gh)} "$@"`,
+  ].join('\n'));
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), PATH: [agent.dir, refusing, dir, process.env.PATH].join(delimiter) };
+  const verb = (...args) => {
+    const ran = spawnSync(process.execPath, [bin, ...args], { cwd: consumer, encoding: 'utf8', env });
+    assert.equal(ran.error, undefined);
+    return { out: ran.stdout, err: ran.stderr, code: ran.status, pid: ran.pid };
+  };
+  return { consumer, fake, verb, answerRulesWith, state: join(consumer, '.rigger') };
+}
+
+/** What the fake board holds and every merge sent: the facts each row's claim and write oracle reads. */
+const forgeOf = async ({ fake }) => {
+  const model = await fake.model();
+  return { columns: Object.fromEntries((await model.operations.readItems()).map(({ number, column }) => [number, column])), writes: model.writes(),
+    merges: fake.sent().filter((args) => args[1]?.endsWith('/merge')) };
+};
+
+/** The events a consumer's stream holds, as `eventsOf` reads them, for `run` alone where one is named. */
+const streamOf = ({ consumer }, run) => eventsOf({ consumer }).filter((event) => run === undefined || event.run === run);
+
+/** The run ids in order of their `run.start`. */
+const runsIn = (world) => streamOf(world).filter(({ event }) => event === 'run.start').map(({ run }) => run);
+
+/** The roles the stand-in ran for card `number`, in order. */
+const rolesRan = (agent, number) => agent.runs().filter(({ card }) => card === number).map(({ role }) => role);
+
+/** A Review card an earlier run left, stopped on a failed rules read, #1090's state: every role finished, no move to Owner. */
+async function leftInReview() {
+  const agent = standInAgent(panelled(10));
+  const world = privateFree([card(10, 'Ready')], agent, { rules: 'gh: Bad Gateway (HTTP 502)' });
+  const stopped = world.verb('run');
+  assert.notEqual(stopped.code, 0, stopped.out);
+  assert.match(stopped.err, /effective rules/, stopped.err);
+  assert.equal((await forgeOf(world)).columns[10], 'Review', stopped.err);
+  assert.deepEqual(rolesRan(agent, 10).sort(), ['architect', 'engineer', 'reviewer'], stopped.err);
+  world.answerRulesWith(FEATURE_REFUSED);
+  return { ...world, agent, stopped };
+}
+
+// Host reason: wiring. Controlled counterpart: 'L2 moves a Review card to Owner over the refusal,
+// where its kind ends with the owner or names the owner alone' in test/private-free-policy.test.mjs.
+test('P1: over the refusal a run paused during its maker finishes the claimed card\'s work, leaves it in Review, exits 0 naming the closer, claims nothing more and merges nothing', SETTLES_WITHIN, async () => {
+  const agent = standInAgent({ ...panelled(10), ...panelled(20) });
+  const world = privateFree([card(10, 'Ready'), card(20, 'Ready')], agent);
+  afterRole(agent, 'engineer', `(await import('node:child_process')).execFileSync(process.execPath, [${JSON.stringify(bin)}, 'pause'], { cwd: ${JSON.stringify(world.consumer)}, env: process.env });`);
+
+  const ran = world.verb('run');
+
+  assert.equal(ran.code, 0, ran.out + ran.err);
+  assert.match(ran.out, /admission is closed by owner/, ran.out);
+  const lines = ran.out.split('\n').filter((line) => /#10\b/.test(line));
+  assert.deepEqual(lines.slice(1), ['rigger run: card #10\'s judge `reviewer` exited 0', 'rigger run: card #10\'s judge `architect` exited 0', 'rigger run: card #10\'s judge `owner` judges last, once every agent judge is satisfied, and Rigger never dispatches it'], ran.out);
+  assert.equal(readdirSync(admissionOf(world.state)).filter((name) => /^owner-.*\.json$/.test(name)).length, 1, 'the closer is still present');
+  const forge = await forgeOf(world);
+  // The move to Owner is a pull's, and a closed admission claims nothing.
+  assert.deepEqual(forge.columns, { 10: 'Review', 20: 'Ready' });
+  assert.deepEqual(forge.merges, []);
+  assert.deepEqual(rolesRan(agent, 10).sort(), ['architect', 'engineer', 'reviewer'], 'each role ran once');
+  assert.deepEqual(rolesRan(agent, 20), []);
+  const events = streamOf(world);
+  const at = (matches) => events.findIndex(matches);
+  const order = [
+    at(({ layer, event, card: held }) => layer === 'L3' && event === 'pull' && held === 10),
+    at(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'engineer'),
+    at(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'reviewer'),
+    at(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'architect'),
+    at(({ layer, event, card: held }) => layer === 'L3' && event === 'slot.release' && held === 10),
+  ];
+  assert.ok(order.every((place) => place >= 0), JSON.stringify(order));
+  const [pulled, maker, reviewer, architect, released] = order;
+  assert.ok(pulled < maker && maker < Math.min(reviewer, architect) && Math.max(reviewer, architect) < released, JSON.stringify(order));
+  assert.equal(events.filter(({ layer, event, role }) => layer === 'L1' && event === 'dispatch.end' && role === undefined).length, 3, 'each of the three roles\' dispatches ended');
+  assert.deepEqual(events.filter(({ layer, event, to }) => layer === 'L2' && event === 'transition' && to === 'owner'), []);
+  assert.deepEqual(events.filter(({ layer, event }) => layer === 'L3' && event === 'pull').map(({ card: held }) => held), [10], 'no claim after the pause');
+});
+
+// Host reason: wiring. Controlled counterpart: 'L2 moves a Review card to Owner over the refusal,
+// where its kind ends with the owner or names the owner alone' in test/private-free-policy.test.mjs.
+test('P2: over the refusal a new run under a persisted closer exits 0 naming it and claims no Review card a stopped run left', SETTLES_WITHIN, async () => {
+  const world = await leftInReview();
+  assert.equal(world.verb('pause').code, 0);
+  const before = await forgeOf(world);
+  const roles = world.agent.runs().length;
+
+  const ran = world.verb('run');
+
+  assert.equal(ran.code, 0, ran.out + ran.err);
+  assert.match(ran.out, /admission is closed by owner/, ran.out);
+  assert.deepEqual(await forgeOf(world), before);
+  assert.equal(world.agent.runs().length, roles);
+  const [first, second, ...others] = runsIn(world);
+  assert.deepEqual(others, []);
+  assert.notEqual(first, second, 'a second run identity holds the restart');
+  assert.notEqual(ran.pid, world.stopped.pid, 'a second process holds the restart');
+  assert.deepEqual(streamOf(world, second).filter(({ layer, event }) => layer === 'L3' && ['pull', 'dispatch'].includes(event)), []);
+  assert.ok(streamOf(world, first).some(({ event, role }) => event === 'dispatch' && role === 'architect'), 'the first run\'s stream is whole');
+});
+
+// Host reason: wiring. Controlled counterpart: 'L2 moves a Review card to Owner over the refusal,
+// where its kind ends with the owner or names the owner alone' in test/private-free-policy.test.mjs.
+test('P3: over the refusal, after the owner resumes, a stopped run\'s Review card moves to Owner without a remake or a rejudging, and no merge follows', SETTLES_WITHIN, async () => {
+  const world = await leftInReview();
+  assert.equal(world.verb('pause').code, 0);
+  assert.equal(world.verb('run').code, 0);
+  assert.equal(world.verb('resume').code, 0);
+  const before = await forgeOf(world);
+  const roles = world.agent.runs().length;
+
+  const ran = world.verb('run');
+
+  assert.equal(ran.code, 0, ran.out + ran.err);
+  assert.ok(ran.out.split('\n').includes('rigger run: card #10 moved to owner'), ran.out);
+  const after = await forgeOf(world);
+  assert.deepEqual(after.columns, { 10: 'Owner' });
+  assert.deepEqual(after.writes.slice(0, before.writes.length), before.writes, 'no completed write was retried or rolled back');
+  assert.deepEqual(after.writes.slice(before.writes.length).map(({ operation, args }) => [operation, args[1]]), [['moveItem', 'Owner']]);
+  assert.deepEqual(after.merges, []);
+  assert.equal(world.agent.runs().length, roles, 'no maker or judge ran again');
+});
+
+// Host reason: wiring. Controlled counterpart: 'the pull over the refusal and an unreadable
+// admission rejects naming admission, no rules failure in its place, and claims nothing' in
+// test/private-free-policy.test.mjs.
+test('P7a: over the refusal and an admission that turns unreadable in flight, the claimed card finishes and the failure comes at the freed-slot pull', SETTLES_WITHIN, async () => {
+  const agent = standInAgent({ ...panelled(10), ...panelled(20) });
+  const world = privateFree([card(10, 'Ready'), card(20, 'Ready')], agent);
+  afterRole(agent, 'engineer', `const fs = await import('node:fs'); fs.mkdirSync(${JSON.stringify(admissionOf(world.state))}, { recursive: true }); fs.writeFileSync(${JSON.stringify(join(admissionOf(world.state), 'not-a-closer'))}, 'x');`);
+
+  const ran = world.verb('run');
+
+  assert.notEqual(ran.code, 0, ran.out);
+  assert.ok(ran.err.includes(`${join(admissionOf(world.state), 'not-a-closer')} (no closer form)`), ran.err);
+  assert.doesNotMatch(ran.err, /effective rules/, ran.err);
+  const forge = await forgeOf(world);
+  // Every role finished. The move to Owner needs a claim, and this pull claims nothing.
+  assert.deepEqual(forge.columns, { 10: 'Review', 20: 'Ready' }, ran.err);
+  assert.deepEqual(forge.merges, []);
+  assert.deepEqual(rolesRan(agent, 10).sort(), ['architect', 'engineer', 'reviewer']);
+  assert.deepEqual(rolesRan(agent, 20), []);
+  assert.deepEqual(streamOf(world).filter(({ layer, event }) => layer === 'L3' && event === 'pull').map(({ card: held }) => held), [10]);
+  const trigger = streamOf(world).map(({ event, trigger: fired }) => (event === 'trigger' ? fired : event));
+  assert.ok(trigger.lastIndexOf('pull') > trigger.indexOf('slot.release'), 'a pull fired on the freed slot');
+});
+
+/** The pull request a seeded card holds: #70 from rigger-10 at this head, its markers `comments`. */
+const SEEDED_HEAD = 'c'.repeat(40);
+const seededPull = (comments) => ({ branches: ['rigger-10'], mergeable: { 70: 'MERGEABLE' }, pullRequests: [{ number: 70, head: 'rigger-10', sha: SEEDED_HEAD, mergeBase: 'd'.repeat(40), comments }] });
+const soundMarkers = (...roles) => roles.map((role) => markerComment({ card: 10, pull: 70, head: SEEDED_HEAD, body: card(10, 'Review').body, role }));
+
+/** Each preexisting card a run can meet, by name: its column, labels and markers. */
+const PREEXISTING = {
+  'a Review card of a kind ending with the owner': { column: 'Review', labels: ['type:change'], roles: ['reviewer', 'architect'] },
+  'a Review card of a kind naming no owner': { column: 'Review', labels: ['type:merged'], roles: ['reviewer', 'architect'] },
+  'an Owner card with no owner verdict': { column: 'Owner', labels: ['type:change'], roles: ['reviewer', 'architect'] },
+  'an Owner card with a sound owner verdict': { column: 'Owner', labels: ['type:change'], roles: ['reviewer', 'architect', 'owner'] },
+};
+
+/** A consumer holding the preexisting card named `name`, under the rules answer `rules`, with `admission` open, closed or unreadable. */
+function preexisting(name, rules, admission) {
+  const { column, labels, roles } = PREEXISTING[name];
+  const world = privateFree([card(10, column, { labels })], standInAgent(), { rules, seeded: seededPull(soundMarkers(...roles)) });
+  if (admission === 'closed') seed(world.state, 'owner-c3.json', closerText({ reason: 'paused by the owner' }));
+  if (admission === 'unreadable') seed(world.state, 'not-a-closer');
+  return world;
+}
+
+/** What a run must do, each a claim, a write, an exit and an output oracle written by hand. */
+const ANSWERS = {
+  moved: { code: 0, column: 'Owner', moves: 1, out: 'rigger run: card #10 moved to owner' },
+  stays: { code: 0, moves: 0, out: 'no card was pullable' },
+  closed: { code: 0, moves: 0, out: `admission is closed by owner: paused by the owner; time ${TIME}` },
+  unreadable: { code: 1, moves: 0, err: '/not-a-closer (no closer form)' },
+  rulesFailed: { code: 1, moves: 0, err: 'read of the base branch\'s effective rules failed' },
+};
+
+/** The line `run` and `plan` print for a merge the refusal holds back, written out by hand. */
+const REFUSED_MERGE_LINE = `  refuse  #10  pull request #70 is not merged, because the forge offers this repository no effective rules for its base branch, so the checks they require are unavailable evidence: readEffectiveRules on board ${PROJECT} failed: reading effective rules for branch main in ${REPO}, ${FEATURE_REFUSED}`;
+
+/** `answer`, with the line a person reads for the refused merge beside its own output. */
+const refusing = (answer) => ({ ...answer, refusal: REFUSED_MERGE_LINE });
+
+/** Asserts run's output, exit, claims and writes over the preexisting card `name` meet `answer`. */
+async function runsAs(name, rules, admission, answer) {
+  const world = preexisting(name, rules, admission);
+  const at = `${name}, admission ${admission}`;
+  const before = await forgeOf(world);
+  const ran = world.verb('run');
+  const after = await forgeOf(world);
+  assert.equal(ran.code, answer.code, `${at}: ${ran.out}${ran.err}`);
+  if (answer.out !== undefined) assert.ok(ran.out.includes(answer.out), `${at}: ${ran.out}`);
+  if (answer.err !== undefined) assert.ok(ran.err.includes(answer.err), `${at}: ${ran.err}`);
+  if (answer.refusal !== undefined) assert.ok(`${ran.out}\n${ran.err}`.split('\n').includes(answer.refusal), `${at}: ${ran.out}${ran.err}`);
+  assert.deepEqual(after.columns, { 10: answer.column ?? PREEXISTING[name].column }, at);
+  assert.equal(after.writes.length - before.writes.length, answer.moves, at);
+  assert.deepEqual(after.merges, [], at);
+  assert.equal(streamOf(world).filter(({ layer, event }) => layer === 'L3' && event === 'dispatch').length, 0, at);
+  assert.equal(streamOf(world).filter(({ layer, event }) => layer === 'L3' && event === 'pull').length, answer.moves, at);
+}
+
+// Host reason: wiring. Controlled counterpart: 'L2 refuses a merge over the refusal, naming the
+// unavailable rules, for a Review card and an Owner card a served read would merge' in
+// test/private-free-policy.test.mjs. In-flight work is the P1 and P7a tests' above.
+test('P4, P7, P8: over the verified refusal, run answers each preexisting card under open, closed and unreadable admission', { timeout: 120_000 }, async () => {
+  const [owned, merged, waiting, verdict] = Object.keys(PREEXISTING);
+  for (const name of [owned, waiting]) {
+    await runsAs(name, FEATURE_REFUSED, 'open', name === owned ? ANSWERS.moved : ANSWERS.stays);
+    await runsAs(name, FEATURE_REFUSED, 'closed', ANSWERS.closed);
+    await runsAs(name, FEATURE_REFUSED, 'unreadable', ANSWERS.unreadable);
+  }
+  for (const name of [merged, verdict]) {
+    await runsAs(name, FEATURE_REFUSED, 'open', refusing(ANSWERS.stays));
+    await runsAs(name, FEATURE_REFUSED, 'closed', refusing(ANSWERS.closed));
+    await runsAs(name, FEATURE_REFUSED, 'unreadable', refusing(ANSWERS.unreadable));
+  }
+});
+
+// Host reason: wiring. Controlled counterpart: 'L2 answers no action, naming the rules read, for
+// an unverified 403 wherever the action needs the read' in test/private-free-policy.test.mjs.
+test('P5: over an unverified 403, run fails naming the rules read under every admission where the action needs it, and an Owner card with no verdict needs none', { timeout: 120_000 }, async () => {
+  const denied = 'gh: Resource not accessible by integration (HTTP 403)';
+  const [owned, merged, waiting, verdict] = Object.keys(PREEXISTING);
+  for (const name of [owned, merged, verdict]) {
+    for (const admission of ['open', 'closed', 'unreadable']) await runsAs(name, denied, admission, ANSWERS.rulesFailed);
+  }
+  await runsAs(waiting, denied, 'open', ANSWERS.stays);
+  await runsAs(waiting, denied, 'closed', ANSWERS.closed);
+  await runsAs(waiting, denied, 'unreadable', ANSWERS.unreadable);
+});
+
+// Host reason: wiring. Controlled counterpart: 'L2 moves a Review card to Owner over the refusal,
+// where its kind ends with the owner or names the owner alone' in test/private-free-policy.test.mjs.
+test('P9a: plan over the refusal shows the non-merge answer and no merge, where served rules would show the merge', SETTLES_WITHIN, () => {
+  const [owned, merged, , verdict] = Object.keys(PREEXISTING);
+  const moving = preexisting(owned, FEATURE_REFUSED, 'open').verb('plan');
+  assert.equal(moving.code, 0, moving.out + moving.err);
+  assert.match(moving.out, /pull {4}#10 {2}move to owner/, moving.out);
+  for (const name of [merged, verdict]) {
+    const planned = preexisting(name, FEATURE_REFUSED, 'open').verb('plan');
+    assert.equal(planned.code, 0, planned.out + planned.err);
+    assert.match(planned.out, /nothing would be pulled, and refuses 1 card/, planned.out);
+    assert.ok(planned.out.split('\n').includes(REFUSED_MERGE_LINE), planned.out);
+    assert.doesNotMatch(planned.out, /merge pull request #/, planned.out);
+    assert.match(preexisting(name, undefined, 'open').verb('plan').out, /merge pull request #70/, 'with the rules served plan shows the merge, so the refusal alone holds it');
+  }
 });

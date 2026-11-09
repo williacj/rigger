@@ -16,7 +16,9 @@ const SWEEP = join(process.env.CODEX_TOOLS_DIR || TOOLS, 'sweep.mjs');
 /** A sweep test's world: a root, a fixture config naming the repository and topic rule, and a local forge. */
 function setup(prefix, { topic = 'rigger-{number}' } = {}) {
   const w = world(prefix);
-  const root = join(w.base, 'root');
+  const fixtures = join(w.base, 'fixtures.noindex');
+  mkdirSync(fixtures);
+  const root = join(fixtures, 'root');
   mkdirSync(root);
   const config = join(w.base, 'rigger.config.mjs');
   writeFileSync(config, `export default { repo: 'williacj/rigger', worktrees: { topic: '${topic}' } };\n`);
@@ -694,5 +696,50 @@ test('a run of the sweep creates nothing under an empty HOME when the root and c
   assert.equal(listed.status, 0, listed.stderr);
   assert.equal(r.status, 0, r.stderr);
   assert.deepEqual(readdirSync(s.w.home), []);
+  assertToolingClean();
+});
+
+// D29 reason: wiring. Ordinary counterpart: actual setup places every fixture root under the U145 ancestor.
+test('setup roots and teardown use the U145 ancestor on the real filesystem', (t) => {
+  const s = setup('sweep-placement-');
+  const ancestor = join(s.w.base, 'fixtures.noindex');
+  const head = gitIn(join(TOOLS, '..', '..'), 'rev-parse', 'HEAD').trim();
+  assert.deepEqual(relative(s.w.base, s.root).split(sep), ['fixtures.noindex', 'root'], 'exactly one U145 ancestor separates world and root');
+  const stat = lstatSync(ancestor);
+  assert.ok(stat.isDirectory() && !stat.isSymbolicLink(), 'the ancestor is a real directory');
+  const resolved = realpathSync.native(s.root);
+  assert.equal(resolved, s.root, 'the root does not escape through a symlink');
+  const listed = sweep(s, ['--list']);
+  assert.equal(listed.status, 0, listed.stderr);
+  assert.deepEqual(listed.out, []);
+  assert.equal(listed.stderr, '');
+  assertToolingClean();
+  process.stdout.write('SWEEP_FIXTURE_LAYOUT ' + JSON.stringify({ head, source: import.meta.url,
+    world: s.w.base, ancestor, root: s.root, resolved, ancestorIsDirectory: stat.isDirectory(),
+    ancestorIsSymlink: stat.isSymbolicLink(), invocation: { command: process.execPath, args: [SWEEP, '--list'], status: listed.status } }) + '\n');
+  // Existing world teardown queues its removal after ordinary hooks; observe after that removal.
+  t.after(() => t.after(() => {
+    assert.equal(existsSync(s.w.base), false, 'existing teardown removes the owned world');
+    assert.equal(existsSync(ancestor), false, 'existing teardown removes its ancestor');
+    process.stdout.write('SWEEP_FIXTURE_CLEANUP ' + JSON.stringify({ head, world: s.w.base, ancestor,
+      worldRemoved: true, ancestorRemoved: true }) + '\n');
+  }));
+});
+
+// D29 reason: OS behaviour. Ordinary counterpart: completed holder answers win over status and stderr before later readers.
+test('a held maker clone keeps its holder reason before unreadable forge refs', (t) => {
+  const s = setup('sweep-held-refs-');
+  const work = maker(s, 1);
+  gitIn(work, 'remote', 'set-url', 'origin', join(s.w.base, 'gone.git'));
+  pull(s, 11, 'MERGED', 'rigger-1');
+  const pid = holder(t, s, work);
+  const before = tree(s.root);
+  const result = sweep(s);
+  assert.equal(result.status, 1, result.stderr);
+  assert.deepEqual(result.out, []);
+  assert.match(named(result, work), /kept.*in use by pid/);
+  assert.match(named(result, work), new RegExp(`\\bpid ${pid}\\b`), 'the reported holders include the ready intentional holder');
+  assert.ok(alive(pid), 'the sweep leaves the recorded holder alive');
+  assert.deepEqual(tree(s.root), before, 'a held clone is not changed');
   assertToolingClean();
 });

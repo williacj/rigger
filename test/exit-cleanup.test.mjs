@@ -11,14 +11,21 @@ import { readdirSync } from 'node:fs';
 import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { constants } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 
 import { readEvents, streamPath } from '../src/observation/sink.mjs';
 import { readGroups } from '../src/execution/groups.mjs';
 import { HANDLED, LEFT_OUT, PS } from '../src/substrate/process.mjs';
+import { killRecordedGroups } from '../src/execution/run.mjs';
+import { openSink } from '../src/observation/sink.mjs';
 import { UNDRAINED_BOUND } from '../src/substrate/standard-error.mjs';
 import { alive, fixture, read, running, scratch, shellQuote, turn, undrained } from './process-fixtures.mjs';
 import { beginFixtureWarmBatch, finishFixtureWarmBatch, literally } from './process-fixtures.mjs';
 import { warmed } from './process-fixtures.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
+import { EX_CAUSAL_CASES } from './process-proof-fixture.mjs';
+import { gone, tailIn } from './process-fixtures.mjs';
+import { BUDGET, assertAllEnded } from './exit-budget-world.mjs';
 
 // A bound on the test alone, so that a caller which never ends fails here rather than holding the
 // suite: nothing waits on it once the caller has ended.
@@ -86,6 +93,7 @@ const CALLER = [
   `import { openSink } from ${moduleAt('../src/observation/sink.mjs')};`,
   `import { dispatch } from ${moduleAt('../src/execution/run.mjs')};`,
   `import { atExit, runCommand } from ${moduleAt('../src/substrate/process.mjs')};`,
+  `import { realHost } from ${moduleAt('../src/substrate/host.mjs')};`,
   `import { readGroups } from ${moduleAt('../src/execution/groups.mjs')};`,
   "import { existsSync, readFileSync, writeFileSync } from 'node:fs';",
   "import { appendFileSync } from 'node:fs';",
@@ -132,7 +140,7 @@ const CALLER = [
   '  trace779("begin.start", { label });',
   "  const command = join(directory, options.commands?.[label] ?? 'command');",
   "  const args = options.filler === undefined ? [String(label)] : [String(label), options.filler];",
-  "  const call = { command, args, cwd: directory, env: {}, timeout: 600_000, ps: options.ps && join(directory, options.ps), readTimeout: options.readTimeout };",
+  "  const call = { command, args, cwd: directory, env: {}, timeout: 600_000, host: { ...realHost, ps: options.ps ? join(directory, options.ps) : realHost.ps }, readTimeout: options.readTimeout };",
   "  const started = options.dispatch?.includes(label)",
   "    ? dispatch({ id: `d-${label}`, card: label + 6, directory: state, sink, ...call })",
   "    : runCommand({ ...call, emitter: sink.emitter({ layer: 'L0' }), onExit: options.exits && ((group, ending) => writeFileSync(join(directory, `exit.${label}`), JSON.stringify(ending))) });",
@@ -1703,4 +1711,374 @@ test('given a record that refuses the entry\'s removal, after the caller receive
   const group = read(directory, 'group.1');
   assert.match(ends[0].kept ?? '', new RegExp(`kept the entry for group ${group}: .*EACCES`), JSON.stringify(ends[0]));
   assert.equal(readGroups(join(directory, 'state')).filter(({ dispatch }) => dispatch === 'd-1').length, 1, 'the record did not keep the entry, so this proves nothing');
+});
+
+// The selected F0 control fixes its response program before reading the subject.
+
+
+const EX_CAUSAL_WORKER = String.raw`// ABOUTME: One guarded fresh-process controlled EX call with synchronous lossless causal records.
+import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
+import { openSync, readFileSync, writeSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+const exit = process.exit.bind(process);
+const startedMs = Date.now();
+const [inputPath, tracePath, inputHash, workerHash, runtimeJson] = process.argv.slice(2);
+const trace = openSync(tracePath, 'wx', 0o600);
+const digest = bytes => createHash('sha256').update(bytes).digest('hex');
+const encode = value => value === undefined ? { $606: 'undefined' } : value === Infinity ? { $606: 'Infinity' } : Array.isArray(value) ? value.map(encode) : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, encode(item)])) : value;
+let serial = 0, terminalWritten = false, row;
+const record = (event, fields = {}) => writeSync(trace, JSON.stringify({ ordinal: ++serial, event, ...encode(fields) }) + '\n');
+const terminal = (classification, fields = {}) => {
+  if (!terminalWritten) { terminalWritten = true; record('terminal', { classification, ...fields }); }
+};
+const fail = reason => { terminal('GUARD_FAILED', { reason, case: row?.id, actionOrdinal: serial + 1 }); exit(86); };
+const guard = (condition, reason) => { if (!condition) fail(reason); };
+const equal = (one, other) => JSON.stringify(encode(one)) === JSON.stringify(encode(other));
+const MODULE = ${moduleAt('../src/substrate/process.mjs')};
+const FIXTURE_MODULE = ${moduleAt('./process-proof-fixture.mjs')};
+const HELPER_BOOTSTRAP = ${JSON.stringify(['./process-proof-fixture.mjs', './process-proof-fixture.test.mjs', './census-retention.test.mjs', './contain-now.test.mjs', './exit-cleanup.test.mjs'].map(relative => {
+  const url = new URL(relative, import.meta.url);
+  return { url: url.href, sha256: createHash('sha256').update(readFileSync(url)).digest('hex') };
+}))};
+const inputHashes = Object.freeze({ 'SITE-EX-F0-X-Z': 'dc82c1fca7a4821fed2608194ac77f29058b4dc61098362ebdd034b97e4a89a1', 'EDGE-EX-AQ-NEWPID-B0-omitted-reaped': 'c3dea75308f75c597d51d54d294cdf9797dff3bd7501cb94014ed5273eb1a400' });
+const checkHelperBootstrap = () => {
+  for (const file of HELPER_BOOTSTRAP) {
+    let hash;
+    try { hash = digest(readFileSync(new URL(file.url))); } catch { fail('helper bootstrap could not be read'); }
+    guard(hash === file.sha256, 'helper bootstrap fingerprint changed');
+  }
+};
+try {
+  guard(process.argv.length === 7, 'worker argv shape changed');
+  let runtime;
+  try { runtime = JSON.parse(runtimeJson); } catch { fail('runtime descriptor malformed'); }
+  guard(runtime && typeof runtime === 'object' && !Array.isArray(runtime), 'runtime descriptor shape changed');
+  guard(equal(Object.keys(runtime).sort(), ['path', 'version', 'platform', 'arch', 'binarySha256'].sort()), 'runtime descriptor shape changed');
+  guard(typeof runtime.path === 'string' && typeof runtime.version === 'string' && typeof runtime.platform === 'string' && typeof runtime.arch === 'string' && typeof runtime.binarySha256 === 'string' && /^[0-9a-f]{64}$/.test(runtime.binarySha256), 'runtime descriptor shape changed');
+  const major = /^v(\d+)\.\d+\.\d+$/.exec(runtime.version);
+  guard(major && Number(major[1]) >= 26, 'runtime version unsupported');
+  guard(runtime.path === process.execPath && runtime.version === process.version && runtime.platform === process.platform && runtime.arch === process.arch, 'runtime identity changed');
+  let binaryHash;
+  try { binaryHash = digest(readFileSync(process.execPath)); } catch { fail('runtime binary could not be read'); }
+  guard(binaryHash === runtime.binarySha256, 'runtime binary changed');
+  const bytes = readFileSync(inputPath); row = JSON.parse(bytes);
+  guard(inputHash === inputHashes[row.id] && digest(bytes) === inputHash, 'case input fingerprint changed');
+  guard(digest(readFileSync(fileURLToPath(import.meta.url))) === workerHash, 'worker fingerprint changed');
+  guard(process.pid !== 41001 && process.pid !== 41002, 'real worker PID collided with model');
+  checkHelperBootstrap();
+  const { bindProcessProof } = await import(FIXTURE_MODULE);
+  checkHelperBootstrap();
+  const { closure, checkSources, importProduct } = bindProcessProof(MODULE, { fail, guard });
+  checkHelperBootstrap();
+  const { containNow } = await importProduct();
+  checkHelperBootstrap();
+  let begun = false;
+  const { createExCausalModel } = await import(FIXTURE_MODULE);
+  checkHelperBootstrap();
+  const fixtureModel = createExCausalModel(row, { record, guard, equal, isBegun: () => begun });
+  const { model, raw, kill, now } = fixtureModel;
+  record('ready', { case: row.id, pid: process.pid, startedMs, workerHash, inputHash, runtime, closure, helperBootstrap: HELPER_BOOTSTRAP, model });
+  writeSync(1, JSON.stringify({ event: '606.ready', case: row.id, pid: process.pid, startedMs, workerHash, inputHash, runtime }) + '\n');
+  let command = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('end', () => { if (!begun) fail('stdin ended without go'); });
+  process.stdin.on('data', chunk => {
+    command += chunk;
+    guard(command.length <= 3 && !begun, 'go protocol received extra input');
+    if (!command.endsWith('\n')) return;
+    guard(command === 'go\n', 'go protocol token mismatch');
+    begun = true; process.stdin.pause();
+    try {
+      checkHelperBootstrap(); checkSources(); record('go', { case: row.id, command, runtime });
+      const actual = containNow(41001, {
+        readTimeout: 5000,
+        host: {
+          ps: '606-controlled-ps',
+          spawnSync: raw,
+          signal: kill,
+          clock: {
+            now,
+            pause: () => fail('unexpected synchronous EX host.clock.pause'),
+            schedule: () => fail('unexpected synchronous EX host.clock.schedule'),
+            cancel: () => fail('unexpected synchronous EX host.clock.cancel'),
+          },
+        },
+      });
+      const { expected, ...observedModel } = fixtureModel.complete(actual);
+      checkSources(); checkHelperBootstrap(); record('guard.success', observedModel);
+      try { assert.deepStrictEqual(actual, expected); }
+      catch { terminal('SEMANTIC_MISMATCH', { actual, expected }); exit(1); }
+      terminal(row.hypothesis ? 'HYPOTHESIS_PASS' : 'CONTROL_PASS', { actual, expected }); exit(0);
+    } catch (error) { terminal('FIXTURE_OR_SETUP_FAILURE', { name: error.name, message: error.message }); exit(2); }
+  });
+} catch (error) { terminal('FIXTURE_OR_SETUP_FAILURE', { name: error.name, message: error.message }); exit(2); }
+`;
+
+async function runExCausal(t, row, refusal) {
+  let child, closed = false, preserved = false, killSent = false, timedOut = false;
+  const directory = temporaryDirectory('rigger-606-ex-', { context: t, beforeRemoval: () => {
+    if (child && (!closed || !preserved)) throw new Error('INVALID_TEARDOWN: recorded worker not closed or originals not preserved');
+  } });
+  const workerPath = join(directory, 'worker.mjs'), inputPath = join(directory, 'input.json'), tracePath = join(directory, 'trace.ndjson'), ownershipPath = join(directory, 'ownership.json');
+  const input = Buffer.from(JSON.stringify(row) + '\n'), worker = Buffer.from(EX_CAUSAL_WORKER);
+  const digest = bytes => createHash('sha256').update(bytes).digest('hex');
+  const major = /^v(\d+)\.\d+\.\d+$/.exec(process.version);
+  assert.ok(major && Number(major[1]) >= 26, 'INVALID_GUARD: unsupported Node runtime');
+  const runtime = Object.freeze({ path: process.execPath, version: process.version, platform: process.platform, arch: process.arch, binarySha256: digest(readFileSync(process.execPath)) });
+  writeFileSync(workerPath, worker, { flag: 'wx', mode: 0o600 });
+  writeFileSync(inputPath, input, { flag: 'wx', mode: 0o600 });
+  const command = [process.execPath, workerPath, inputPath, tracePath, digest(input), digest(worker), refusal ? refusal.runtimeArgument(runtime) : JSON.stringify(runtime)];
+  const stdout = [], stderr = [];
+  let ownership, outcome, failure, deadline, reaper, resolveReady, rejectReady, rejectCeiling;
+  const ready = new Promise((resolve, reject) => { resolveReady = resolve; rejectReady = reject; });
+  const ceiling = new Promise((resolve, reject) => { rejectCeiling = reject; });
+  ceiling.catch(() => {}); ready.catch(() => {});
+  let closure;
+  const stop = () => {
+    if (child && !closed && !killSent) {
+      assert.equal(child.pid, ownership.pid, 'INVALID_GUARD: worker ownership changed');
+      killSent = true; child.kill('SIGKILL');
+      reaper = setTimeout(() => rejectCeiling(new Error('INVALID_TEARDOWN: recorded worker did not close within 5000 ms')), 5000);
+    }
+  };
+  try {
+    const beforeSpawnMs = Date.now();
+    child = spawn(process.execPath, command.slice(1), { cwd: new URL('..', import.meta.url), stdio: ['pipe', 'pipe', 'pipe'] });
+    closure = new Promise(resolve => child.once('close', (status, signal) => { closed = true; clearTimeout(deadline); clearTimeout(reaper); outcome = { status, signal }; resolve(outcome); }));
+    child.on('error', error => rejectReady(error));
+    child.stdin?.on('error', error => rejectReady(error));
+    let readyBytes = '';
+    child.stdout?.on('data', chunk => {
+      stdout.push(Buffer.from(chunk)); readyBytes += chunk.toString('utf8');
+      if (readyBytes.includes('\n')) {
+        try { resolveReady(JSON.parse(readyBytes.slice(0, readyBytes.indexOf('\n')))); }
+        catch { rejectReady(new Error('INVALID_GUARD: malformed readiness record')); }
+      }
+    });
+    child.stderr?.on('data', chunk => stderr.push(Buffer.from(chunk)));
+    ownership = { case: row.id, pid: child.pid, beforeSpawnMs, afterSpawnMs: Date.now(), command, cwd: new URL('..', import.meta.url).pathname, workerHash: digest(worker), inputHash: digest(input), runtime };
+    assert.ok(Number.isSafeInteger(child.pid) && child.pid > 0, 'FIXTURE_OR_SETUP_FAILURE: spawn supplied no worker PID');
+    writeFileSync(ownershipPath, JSON.stringify(ownership) + '\n', { flag: 'wx', mode: 0o600 });
+    process.stdout.write('606_EX_OWNERSHIP ' + JSON.stringify(ownership) + '\n');
+    deadline = setTimeout(() => { timedOut = true; stop(); }, Math.max(0, 30000 - (Date.now() - beforeSpawnMs)));
+    if (!refusal) {
+      const message = await Promise.race([ready, ceiling, closure.then(() => { throw new Error(timedOut ? 'INVALID_HARNESS_TIMEOUT' : 'INVALID_GUARD: worker closed before readiness'); })]);
+      assert.deepEqual({ event: message.event, case: message.case, pid: message.pid, workerHash: message.workerHash, inputHash: message.inputHash, runtime: message.runtime }, { event: '606.ready', case: row.id, pid: ownership.pid, workerHash: ownership.workerHash, inputHash: ownership.inputHash, runtime });
+      assert.ok(ownership.pid !== 41001 && ownership.pid !== 41002, 'INVALID_GUARD: PID collision');
+      assert.equal(digest(readFileSync(workerPath)), ownership.workerHash, 'INVALID_GUARD: worker changed before go');
+      assert.equal(digest(readFileSync(inputPath)), ownership.inputHash, 'INVALID_GUARD: input changed before go');
+      assert.deepEqual({ path: process.execPath, version: process.version, platform: process.platform, arch: process.arch, binarySha256: digest(readFileSync(process.execPath)) }, runtime, 'INVALID_GUARD: parent runtime changed before go');
+      assert.deepEqual(JSON.parse(command[6]), runtime, 'INVALID_GUARD: worker runtime argument changed before go');
+      ownership.workerStartupMs = message.startedMs; ownership.goRecordedMs = Date.now();
+      writeFileSync(ownershipPath, JSON.stringify(ownership) + '\n');
+      process.stdout.write('606_EX_GO ' + JSON.stringify(ownership) + '\n');
+      child.stdin.end('go\n');
+    }
+    await Promise.race([closure, ceiling]);
+    if (timedOut) throw new Error('INVALID_HARNESS_TIMEOUT');
+  } catch (error) {
+    failure = error;
+    if (child && !closed) {
+      if (ownership?.pid) stop();
+      else reaper = setTimeout(() => rejectCeiling(new Error('INVALID_TEARDOWN: failed spawn did not close within 5000 ms')), 5000);
+      try { await Promise.race([closure, ceiling]); } catch (teardown) { failure = teardown; }
+    }
+  } finally {
+    clearTimeout(deadline); clearTimeout(reaper);
+    const emit = (name, bytes) => {
+      const base64 = bytes.toString('base64');
+      assert.ok(Buffer.from(base64, 'base64').equals(bytes), 'INVALID_GUARD: attachment roundtrip failed');
+      process.stdout.write('606_EX_ORIGINAL ' + JSON.stringify({ case: row.id, name, bytes: bytes.length, sha256: digest(bytes), base64, closed }) + '\n');
+    };
+    for (const [name, path] of [['worker', workerPath], ['input', inputPath], ['ownership', ownershipPath], ['trace', tracePath]]) {
+      if (existsSync(path)) emit(name, readFileSync(path));
+      else process.stdout.write('606_EX_MISSING ' + JSON.stringify({ case: row.id, name, closed }) + '\n');
+    }
+    emit('stdout', Buffer.concat(stdout)); emit('stderr', Buffer.concat(stderr));
+    preserved = true;
+  }
+  if (failure) throw failure;
+  assert.ok(closed, 'INVALID_TEARDOWN: worker not closed');
+  const bytes = readFileSync(tracePath), text = bytes.toString('utf8');
+  assert.ok(text.endsWith('\n'), 'INVALID_GUARD: truncated trace');
+  const records = text.slice(0, -1).split('\n').map(line => JSON.parse(line));
+  records.forEach((record, index) => assert.equal(record.ordinal, index + 1, 'INVALID_GUARD: trace ordinal gap'));
+  const terminals = records.filter(record => record.event === 'terminal');
+  assert.equal(terminals.length, 1, 'INVALID_GUARD: missing or duplicate terminal');
+  const terminal = terminals[0]; assert.equal(records.at(-1), terminal, 'INVALID_GUARD: terminal is not final');
+  if (refusal) {
+    // One terminal record and empty streams show no readiness, go, import, model or product work.
+    assert.deepEqual({ outcome, classification: terminal.classification, reason: terminal.reason, records: records.length, stdout: Buffer.concat(stdout).length, stderr: Buffer.concat(stderr).length },
+      { outcome: { status: 86, signal: null }, classification: 'GUARD_FAILED', reason: refusal.reason, records: 1, stdout: 0, stderr: 0 }, 'runtime refusal must end the worker at its guard');
+    return;
+  }
+  if (terminal.classification === 'GUARD_FAILED' || outcome.status === 86 || outcome.signal !== null) assert.fail('INVALID_GUARD: ' + JSON.stringify({ outcome, terminal }));
+  if (terminal.classification === 'FIXTURE_OR_SETUP_FAILURE') { assert.equal(outcome.status, 2); assert.fail('FIXTURE_OR_SETUP_FAILURE: ' + JSON.stringify(terminal)); }
+  assert.ok(records.some(record => record.event === 'return') && records.some(record => record.event === 'guard.success'), 'INVALID_GUARD: no complete guarded return');
+  if (terminal.classification === 'SEMANTIC_MISMATCH') { assert.equal(outcome.status, 1); assert.fail('SEMANTIC_MISMATCH: ' + JSON.stringify(terminal)); }
+  assert.equal(terminal.classification, row.hypothesis ? 'HYPOTHESIS_PASS' : 'CONTROL_PASS', 'FIXTURE_OR_SETUP_FAILURE');
+  assert.deepEqual(outcome, { status: 0, signal: null }, JSON.stringify(terminal));
+}
+
+// D29 reason: real deadline. Ordinary counterpart: 606 containNow: SITE-EX-F0-X-Z in test/contain-now.test.mjs.
+test("606 B0 EX causal: SITE-EX-F0-X-Z", { timeout: 40000 }, async (t) => { await runExCausal(t, EX_CAUSAL_CASES[0]); });
+// D29 reason: real deadline. Ordinary counterpart: 606 containNow: EDGE-EX-AQ-NEWPID-B0-omitted-reaped in test/contain-now.test.mjs.
+test("606 B0 EX causal: EDGE-EX-AQ-NEWPID-B0-omitted-reaped", { timeout: 40000 }, async (t) => { await runExCausal(t, EX_CAUSAL_CASES[1]); });
+// D29 reason: real deadline. Ordinary counterpart: the worker's refusal decides no Rigger behaviour, so its claim depends on no decision Rigger makes.
+test("606 B0 EX causal: RUNTIME-MALFORMED", { timeout: 40000 }, async (t) => {
+  await runExCausal(t, EX_CAUSAL_CASES[0], { runtimeArgument: () => '{', reason: 'runtime descriptor malformed' });
+});
+// D29 reason: real deadline. Ordinary counterpart: the worker's refusal decides no Rigger behaviour, so its claim depends on no decision Rigger makes.
+test("606 B0 EX causal: RUNTIME-WRONG-BINARY", { timeout: 40000 }, async (t) => {
+  await runExCausal(t, EX_CAUSAL_CASES[0], { runtimeArgument: runtime => JSON.stringify({ ...runtime, binarySha256: '0'.repeat(64) }), reason: 'runtime binary changed' });
+});
+
+// Table X of #1240: exit cleanup against its fixed budget, ended by a real SIGTERM in a real Node
+// process. What it decides from a stand-in's answers is proved in `test/exit-budget.test.mjs`.
+
+/**
+ * The caller for the budget's tests: a Node process that sets up `budgetWorld` for the JSON `plan`
+ * and then receives SIGTERM, as launchd sends it. Its arguments are its scratch directory and
+ * `plan`. Its sink is never named, so every event reaches standard error only at the sink's end,
+ * and the test's reading them proves that end. It writes what the host saw to `report.json`, as
+ * the step after the sink's end.
+ *
+ * `plan.finished` runs one real command to its end first, and starts no group, so the cleanup holds
+ * none. `plan.real` runs each of `plan.real.labels` as a real `command` fixture, its clock
+ * `plan.real.ahead[label]` milliseconds ahead of the host's.
+ */
+const BUDGET_CALLER = String.raw`
+import { existsSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { openSink } from ${moduleAt('../src/observation/sink.mjs')};
+import { atExit } from ${moduleAt('../src/substrate/process.mjs')};
+import { realHost } from ${moduleAt('../src/substrate/host.mjs')};
+import { budgetWorld } from ${moduleAt('./exit-budget-world.mjs')};
+
+const [directory, given] = process.argv.slice(2);
+const plan = JSON.parse(given);
+const sink = openSink({ run: 'r-test', now: () => 0 });
+const turn = () => new Promise((resolve) => setImmediate(resolve));
+const world = budgetWorld(directory, plan, sink);
+
+atExit(sink.end);
+atExit(() => writeFileSync(join(directory, 'report.json'), JSON.stringify(world.report())));
+
+if (plan.finished) {
+  const counted = { ...realHost, spawnSync: (...input) => { world.logRead({ tool: 'any', args: input[1] }); return realHost.spawnSync(...input); } };
+  await world.start(1, { on: counted });
+  await turn();
+} else if (plan.real) {
+  const { labels, ahead } = plan.real;
+  const hosts = new Map(labels.map((label) => [label, { ...realHost, clock: { ...realHost.clock, now: () => Date.now() + (ahead[label] ?? 0) } }]));
+  for (const label of labels) world.start(label, { command: join(directory, 'command'), on: hosts.get(label) }).catch(() => {});
+  while (labels.some((label) => !existsSync(join(directory, 'child.' + label)))) await turn();
+} else {
+  await world.settled();
+}
+setInterval(() => {}, 1_000);
+world.exit();
+process.kill(process.pid, 'SIGTERM');
+`;
+
+/** Runs `plan` through the budget's caller to its end, and reads back what it left. */
+function budgeted(t, plan, directory = scratch(t)) {
+  const caller = join(directory, 'budget.mjs');
+  writeFileSync(caller, BUDGET_CALLER);
+  const ran = spawnSync(process.execPath, [caller, directory, JSON.stringify(plan)], { encoding: 'utf8', timeout: ENDS_WITHIN.timeout, killSignal: 'SIGKILL' });
+  assert.equal(ran.error, undefined, ran.stderr);
+  assert.equal(ran.signal, 'SIGTERM', `the caller ended with ${ran.status}: ${ran.stderr}`);
+  return { directory, stderr: ran.stderr, events: eventLines(ran.stderr), ...JSON.parse(read(directory, 'report.json')), record: readGroups(join(directory, 'state')) };
+}
+
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup in a Node process that has run a real command, and the sink's end reaches a real standard error.
+// Deterministic counterpart: test/exit-budget.test.mjs :: with no group held at the exit, the cleanup makes no read, sends no signal, and the sink still ends
+test('X1: with no group held, the exit cleanup makes no read, and the sink\'s end still writes what it held', ENDS_WITHIN, (t) => {
+  BUDGET.noGroup(budgeted(t, { finished: true }));
+});
+
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup, and each event of its census and sweep reaches a real standard error at the sink's end.
+// Deterministic counterpart: test/exit-budget.test.mjs :: nine ordinary groups at the exit each have their census and sweep inside EXIT_CARE_BOUND
+// proves R-STATE-9, R-STATE-17
+test('X2: nine ordinary groups are each ended with their census and sweep inside the budget, and no bare kill fires', ENDS_WITHIN, (t) => {
+  BUDGET.nineOrdinary((plan) => budgeted(t, plan));
+});
+
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup, and the record it leaves on disk is the one a real process exit left.
+// Deterministic counterpart: test/exit-budget.test.mjs :: past EXIT_CARE_BOUND a stuck group finishes its cleanup, and each remaining group has the bare kill, its record and a reason
+// proves R-STATE-28
+test('X3: a stuck group that spends the budget finishes its careful cleanup, and each remaining group has the bare kill, a group kill record and a reason', ENDS_WITHIN, (t) => {
+  BUDGET.stuckGroup((plan) => budgeted(t, plan));
+});
+
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup, and each group's record reaches a real standard error at the sink's end.
+// Deterministic counterpart: test/exit-budget.test.mjs :: a process table that hangs at the exit is waited on once, and each group is recorded in place of what it could not read
+// proves R-STATE-12, R-STATE-19
+test('X4: a process table that hangs is paid once, and the groups after it are ended as X2 gives', ENDS_WITHIN, (t) => {
+  BUDGET.hungOnce((plan) => budgeted(t, plan));
+});
+
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup, and the record it leaves on disk is the one a real process exit left.
+// Deterministic counterpart: test/exit-budget.test.mjs :: where the budget runs out during a hung read, the group that read began is finished and the next has the bare kill
+// proves R-STATE-28
+test('X4: a process table that hangs where the budget runs out during its wait has the groups after it ended as X3 gives', ENDS_WITHIN, (t) => {
+  BUDGET.hungPastBudget((plan) => budgeted(t, plan));
+});
+
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup, and the record it leaves on disk is the one a real process exit left.
+// Deterministic counterpart: test/exit-budget.test.mjs :: the budget is spent at EXIT_CARE_BOUND exactly, and a millisecond under it the next group has its census and sweep
+// proves R-STATE-28
+test('X10: the budget is spent at EXIT_CARE_BOUND exactly, and one millisecond under it the next group still has its census and sweep', ENDS_WITHIN, (t) => {
+  BUDGET.exactBound((plan) => budgeted(t, plan));
+});
+
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup, and the record it leaves on disk is the one a real process exit left.
+// Deterministic counterpart: test/exit-budget.test.mjs :: a group already empty past the budget has no kill, keeps its entry, and ends with its own exit code
+// proves R-STATE-28
+test('X10: a group already empty past the budget has no kill recorded, keeps its entry for its unswept directories, and ends with its own exit code', ENDS_WITHIN, (t) => {
+  BUDGET.alreadyEmpty((plan) => budgeted(t, plan));
+});
+
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup while a call waits on its output, and the record it leaves on disk is the one a real process exit left.
+// Deterministic counterpart: test/exit-budget.test.mjs :: a group its call already ended and swept, reached past the budget, has no kill and its entry goes
+// proves R-STATE-28
+test('X10: a group the call has already ended and swept, reached past the budget, has no kill and its entry goes', ENDS_WITHIN, (t) => {
+  BUDGET.alreadySwept((plan) => budgeted(t, plan));
+});
+
+// Host reason: OS behaviour; a real group kill ends real processes, real survivors outlive it in real directories, and a real `lsof` finds them at the next start.
+// Deterministic counterpart: test/exit-budget.test.mjs :: a group killed bare keeps its entry and its survivors, and the next start sweeps both its directories and removes the entry
+// proves R-STATE-28
+test('X6: a group that had the bare kill keeps its entry, its survivors outlive the exit, and the next start\'s kill sweeps both its directories', ENDS_WITHIN, async (t) => {
+  const directory = scratch(t);
+  fixtures(directory);
+  const inWork = await tailIn(t, directory, join(directory, 'work.2', 'sub'));
+  const inScratch = await tailIn(t, directory, join(directory, 'scratch.2'));
+  const state = join(directory, 'state');
+
+  const ran = budgeted(t, { real: { labels: [1, 2], ahead: { 2: 60_000 } } }, directory);
+
+  assertAllEnded(ran, [1, 2]);
+  await assertNoneAlive(directory);
+  const group = Number(read(directory, 'group.2'));
+  assert.equal(ran.events.filter(({ dispatch: id, event, group: killed }) => id === 'd-2' && event === 'group.killed' && killed === group).length, 1, ran.stderr);
+  assert.deepEqual(ran.events.filter(({ dispatch: id, event }) => id === 'd-2' && event === 'survivor.killed'), []);
+  assert.deepEqual(ran.record.map(({ dispatch: id, group: held }) => [id, held]), [['d-2', group]]);
+  assert.equal(alive(inWork) && alive(inScratch), true, 'the bare kill searched the directories');
+
+  const next = openSink({ directory: state, run: 'r-next', now: () => 0 });
+  await killRecordedGroups({ directory: state, sink: next });
+
+  assert.equal(await gone(inWork) && await gone(inScratch), true, 'the next start left a survivor alive');
+  assert.deepEqual(readGroups(state), []);
+  const killed = streamOf(directory).filter(({ event }) => event === 'recorded.killed').map(({ pid, dispatch: id }) => [pid, id]);
+  assert.deepEqual(killed.sort(), [[inWork, 'd-2'], [inScratch, 'd-2']].sort());
+});
+
+// Host reason: wiring; a real SIGTERM reaches L0's exit cleanup, and each kill's record reaches a real standard error at the sink's end.
+// Deterministic counterpart: test/exit-budget.test.mjs :: one dispatch whose every read answers at its last moment ends within EXIT_BOUND less EXIT_CARE_BOUND, recording what the kill did not end
+// proves R-STATE-19
+test('X11: one dispatch whose every read answers at the last moment, with a member the kill does not end and a survivor in both directories, ends within EXIT_BOUND less EXIT_CARE_BOUND', ENDS_WITHIN, (t) => {
+  BUDGET.lastMoment((plan) => budgeted(t, plan), (shown) => t.diagnostic(shown));
 });

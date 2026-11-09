@@ -1,0 +1,908 @@
+{
+  "card": 1213,
+  "measurement": {
+    "date": "2026-11-05",
+    "tools": "Python 3.14 hashlib/json/tarfile over reopened byte-identical copies",
+    "scope": "one sealed batch: four top-level producer invocations and two actual lifecycle inner invocations",
+    "host_scope": "Ubuntu on WSL; no supported-macOS result"
+  },
+  "source": {
+    "repository": "https://github.com/williacj/rigger",
+    "commit": "f6c2701139ee568020244aed31e52457d6c25a89",
+    "files": {
+      "README.md": {
+        "bytes": 21597,
+        "sha256": "359bcf3bc5c4ff99939c97b989fd9bbc12472eb4b8ac3432011614e192c61583"
+      },
+      "package.json": {
+        "bytes": 1762,
+        "sha256": "4868059f16a023b15004bf40144e502f6c0d7476bf561deb2ce0888fae28ed55"
+      },
+      "scripts/record-commit.mjs": {
+        "bytes": 3351,
+        "sha256": "65a6f75773262566e2fba1e7d13b0e10d0cf4e5123dec77e0f8ec2b97b2c46ef"
+      },
+      "src/substrate/git-environment.mjs": {
+        "bytes": 3281,
+        "sha256": "2536e70f9e05e1e6d8a28d26d80780d4b0fbc632427a7b806cc7f000246d43f3"
+      }
+    }
+  },
+  "fixture": {
+    "commit": "657aa99f3c7ada37d85aa2c1b9bc9a99b09d9434",
+    "held_files": [
+      {
+        "path": ".gitignore",
+        "mode": 420,
+        "bytes": 117,
+        "sha256": "1c5c8d8a01f84f74caf3d1d44806d631061cbffde15979588c66a994b138cd09"
+      },
+      {
+        "path": "package.json",
+        "mode": 420,
+        "bytes": 274,
+        "sha256": "cdec1bad9889e7ef31825a37d23c9a459600e332bc5de8e0063eff995032af09"
+      },
+      {
+        "path": "scripts/other.mjs",
+        "mode": 420,
+        "bytes": 83,
+        "sha256": "5f5fcc039f4dd6cdbc65baa56c3bb9d09d58b8cf41a882381b7e4a5cf22d158a"
+      },
+      {
+        "path": "scripts/record-commit.mjs",
+        "mode": 420,
+        "bytes": 3351,
+        "sha256": "65a6f75773262566e2fba1e7d13b0e10d0cf4e5123dec77e0f8ec2b97b2c46ef"
+      },
+      {
+        "path": "src/module.mjs",
+        "mode": 420,
+        "bytes": 83,
+        "sha256": "54836e3045b195bbf3c6b1ff4082732b87f8adedc81cbb5bc67e59f2bc5a4b0c"
+      },
+      {
+        "path": "src/substrate/git-environment.mjs",
+        "mode": 420,
+        "bytes": 3281,
+        "sha256": "2536e70f9e05e1e6d8a28d26d80780d4b0fbc632427a7b806cc7f000246d43f3"
+      },
+      {
+        "path": "templates/template.txt",
+        "mode": 420,
+        "bytes": 71,
+        "sha256": "7342e44f44c8c03e3952489879452c4e37ef4a8cbc84181ffa5bc3f2dee4ad87"
+      }
+    ],
+    "manifest": {
+      "name": "rigger-pack-output-fixture",
+      "version": "1.0.0",
+      "private": true,
+      "type": "module",
+      "engines": {
+        "node": ">=24"
+      },
+      "files": [
+        "src/",
+        "templates/",
+        "scripts/"
+      ],
+      "scripts": {
+        "prepack": "node scripts/record-commit.mjs"
+      }
+    },
+    "ordinary_payload_paths": [
+      "package.json",
+      "scripts/other.mjs",
+      "scripts/record-commit.mjs",
+      "src/module.mjs",
+      "src/substrate/git-environment.mjs",
+      "templates/template.txt"
+    ]
+  },
+  "admission": {
+    "acceptance_items": 10,
+    "manual_maker_provider": "codex",
+    "rigger_maker_dispatch": false,
+    "independent_reviewer_required": true
+  },
+  "custody": {
+    "root_transport_pid": 393,
+    "launcher_pid": 444,
+    "launcher_exit": 0,
+    "direct_git_guards": 37,
+    "direct_git_guard_exits_zero": true,
+    "launcher_source_sha256": "1a32a33e07b7eac160f0602b158c92ef6ebcdb485d70b74c465715a4b2ef377f",
+    "observer_source_sha256": "684232513db17b4c71c0a7aaf7e9a2fe107c804a0194f4cfc31c2229ce122a0a",
+    "fixture_seal_sha256": "c9a5ddb5b60b4e95dc06e1a4619358938870afff3d3507ae7dd4bf18954f4312",
+    "input_seal_sha256": "7490feefa627a1403864a5f90e77d2e8f0fbd65a77c93251dfb44a3b232a687f",
+    "private_access_receipt": "1213-private-access-01",
+    "private_audit_sha256": "ca6bfbae921c142f335d2a825168cabef4f798d27c00fcf9dffab1415a38c57c",
+    "retention": "all originals and fixture/tool roots retained through final independent ruling",
+    "limits": [
+      "no complete npm/execFileSync descendant PID registration or cleanup claim",
+      "separate streams establish no cross-stream causal order",
+      "raw private paths/logs withheld from public report"
+    ],
+    "private_access_mapping_sha256": "40ac2c5be02c317aebacd3fbe2ec449a271c387e8df9ad54ecd908175f5b68df",
+    "closed_batch_receipt_sha256": "be1bdd80b89294759ba4323e19f6ba47e67a97248a97ab3e58438164a0b9c209"
+  },
+  "artifacts": [
+    {
+      "version": "11.20.0",
+      "requests": [
+        {
+          "ordinal": 1,
+          "url": "https://registry.npmjs.org/npm/11.20.0",
+          "status": 200,
+          "bytes": 67251,
+          "sha256": "a999822f8164c733008d0a3c7f6b38c8a2a67181307cf6a293120586f6e76c54"
+        },
+        {
+          "ordinal": 2,
+          "url": "https://registry.npmjs.org/npm/-/npm-11.20.0.tgz",
+          "status": 200,
+          "bytes": 3004748,
+          "sha256": "d1a92f40e6c407b84c3a00c3cf978a10b24fd42f153c527e2016cef7bb34a483"
+        }
+      ],
+      "official_integrity": "sha512-dF3EDFwbYN+N5RUip+ZYDe0NeURK5BgqKOcvT1iNtUYhTMTl0FwWhBuXrS7KtXyduqyTMS5aaQaregnHDAxNgw==",
+      "archive_sha256": "d1a92f40e6c407b84c3a00c3cf978a10b24fd42f153c527e2016cef7bb34a483",
+      "expanded_tar_sha256": "dc914cf9608de422d058029b7f7da81432af24a17f908c1774f4ebb034760d45",
+      "expanded_tar_bytes": 13763072,
+      "member_count": 1943,
+      "file_count": 1943,
+      "directory_count": 460,
+      "tree_sha256": "a6687ee9f4a50c863f1ccf326b7d5f08e54014bf455ec577b1c25248a2a1a4bf",
+      "cli_sha256": "8e5f6f3429f8cdbe693cdc29904e9d5a7b127a494bd15c804bd54c7403bfcbe7",
+      "manifest_sha256": "61a7554a8e9eef42eca2ad2bee87ba3f34b3200368e2a681bdf186fb214cd780",
+      "engines": {
+        "node": "^20.17.0 || >=22.9.0"
+      },
+      "contract_files": {
+        "package/bin/npm-cli.js": {
+          "bytes": 54,
+          "sha256": "8e5f6f3429f8cdbe693cdc29904e9d5a7b127a494bd15c804bd54c7403bfcbe7"
+        },
+        "package/package.json": {
+          "bytes": 6597,
+          "sha256": "61a7554a8e9eef42eca2ad2bee87ba3f34b3200368e2a681bdf186fb214cd780"
+        },
+        "package/lib/commands/pack.js": {
+          "bytes": 3204,
+          "sha256": "f193c2e0c57251add3ce32dafe5166728fead5fe5b6041183198849145e7406c"
+        },
+        "package/lib/utils/tar.js": {
+          "bytes": 3611,
+          "sha256": "6d53ea7bf72553d9b96ab41eb2cbe7f2012ad786798f9f850dde9a1618e74fff"
+        },
+        "package/docs/content/commands/npm-pack.md": {
+          "bytes": 3832,
+          "sha256": "8e9ea80fbc2efc6631bb4290e44aa9b84e1ba56fc38abdc236f498a791568e92"
+        },
+        "package/node_modules/libnpmpack/lib/index.js": {
+          "bytes": 1773,
+          "sha256": "8b2c3c6361f9e6416c69af4a2243fb3612cbd2ace26752d2de6cf72f6b37324d"
+        },
+        "package/node_modules/@npmcli/run-script/lib/set-path.js": {
+          "bytes": 1856,
+          "sha256": "bc023d0c2d0840074c9e81ac0bda0fed0ef75e64623fa670437a7706d05d3542"
+        },
+        "package/node_modules/@npmcli/run-script/lib/run-script-pkg.js": {
+          "bytes": 2977,
+          "sha256": "94dea9ff50028869f4f88c4ec5e520d56fa7c2f6cc03422a9f06c44d291a0c34"
+        }
+      }
+    },
+    {
+      "version": "12.2.2",
+      "requests": [
+        {
+          "ordinal": 3,
+          "url": "https://registry.npmjs.org/npm/12.2.2",
+          "status": 200,
+          "bytes": 67500,
+          "sha256": "8cd696ef921ce55e52f3b268ed94bc3a1374f400fecd0ce773f0e3cf625cc673"
+        },
+        {
+          "ordinal": 4,
+          "url": "https://registry.npmjs.org/npm/-/npm-12.2.2.tgz",
+          "status": 200,
+          "bytes": 3069597,
+          "sha256": "07fecbf753e2c3bc10ebeb3e9ed8738f6a0cc1292998b79e2e9f1dd2a5525e0c"
+        }
+      ],
+      "official_integrity": "sha512-KglgbZyacf7jH+FHuNRqVuCzQi8VhI2a7J87Ix43FsPTuZoGWmIXXGdZtBUOA79vwL+IJREqURVzupA7PsQTcA==",
+      "archive_sha256": "07fecbf753e2c3bc10ebeb3e9ed8738f6a0cc1292998b79e2e9f1dd2a5525e0c",
+      "expanded_tar_sha256": "8cec4f5ac70e8ee1d4f1205630cfded723e18b186247c501db5d6a62664a8e41",
+      "expanded_tar_bytes": 13990400,
+      "member_count": 1943,
+      "file_count": 1943,
+      "directory_count": 473,
+      "tree_sha256": "48423b540832d98bf1f5989581265e34576c9f5a1c4ee637ba5345f0c5e32db9",
+      "cli_sha256": "8e5f6f3429f8cdbe693cdc29904e9d5a7b127a494bd15c804bd54c7403bfcbe7",
+      "manifest_sha256": "44c37a6a06ae01d4ad987bc4710031ae3a42d47173100316e4913ab2cd113cd3",
+      "engines": {
+        "node": "^22.22.2 || ^24.15.0 || >=26.0.0"
+      },
+      "contract_files": {
+        "package/bin/npm-cli.js": {
+          "bytes": 54,
+          "sha256": "8e5f6f3429f8cdbe693cdc29904e9d5a7b127a494bd15c804bd54c7403bfcbe7"
+        },
+        "package/package.json": {
+          "bytes": 6860,
+          "sha256": "44c37a6a06ae01d4ad987bc4710031ae3a42d47173100316e4913ab2cd113cd3"
+        },
+        "package/lib/commands/pack.js": {
+          "bytes": 3035,
+          "sha256": "01483e35200380c9ac3604cb83102009361c75722369a332b4acb204245ad8ab"
+        },
+        "package/lib/utils/tar.js": {
+          "bytes": 3587,
+          "sha256": "4e2b3f4dd2d35e3eb31fe27c91ca89798e832aa813db946c8773fffab50ceae6"
+        },
+        "package/docs/content/commands/npm-pack.md": {
+          "bytes": 3935,
+          "sha256": "2cdc1a993f475f0857b0413f31ad5526ba9beeab34ba20dfcb05f6b8048d6919"
+        },
+        "package/node_modules/libnpmpack/lib/index.js": {
+          "bytes": 4061,
+          "sha256": "a66a8c8c67cd3375e1a66fc79bcbdaa561faa234c4ed0f16686a07648bf9dab7"
+        },
+        "package/node_modules/@npmcli/run-script/lib/set-path.js": {
+          "bytes": 1856,
+          "sha256": "bc023d0c2d0840074c9e81ac0bda0fed0ef75e64623fa670437a7706d05d3542"
+        },
+        "package/node_modules/@npmcli/run-script/lib/run-script-pkg.js": {
+          "bytes": 2709,
+          "sha256": "1142ab865b1180409f0f3a93eb3bc01f9ca36fa9ead1c938b254eb6923de7886"
+        }
+      }
+    }
+  ],
+  "versioned_source_files": [
+    {
+      "version": "11.20.0",
+      "archive_path": "package/package.json",
+      "bytes": 6597,
+      "sha256": "61a7554a8e9eef42eca2ad2bee87ba3f34b3200368e2a681bdf186fb214cd780"
+    },
+    {
+      "version": "11.20.0",
+      "archive_path": "package/bin/npm-cli.js",
+      "bytes": 54,
+      "sha256": "8e5f6f3429f8cdbe693cdc29904e9d5a7b127a494bd15c804bd54c7403bfcbe7"
+    },
+    {
+      "version": "11.20.0",
+      "archive_path": "package/lib/commands/pack.js",
+      "bytes": 3204,
+      "sha256": "f193c2e0c57251add3ce32dafe5166728fead5fe5b6041183198849145e7406c"
+    },
+    {
+      "version": "11.20.0",
+      "archive_path": "package/lib/utils/tar.js",
+      "bytes": 3611,
+      "sha256": "6d53ea7bf72553d9b96ab41eb2cbe7f2012ad786798f9f850dde9a1618e74fff"
+    },
+    {
+      "version": "11.20.0",
+      "archive_path": "package/lib/utils/display.js",
+      "bytes": 17080,
+      "sha256": "ec7af29eebcb43c362818ad2386518758a31692155f6363d8285182320972d8c"
+    },
+    {
+      "version": "11.20.0",
+      "archive_path": "package/docs/content/commands/npm-pack.md",
+      "bytes": 3832,
+      "sha256": "8e9ea80fbc2efc6631bb4290e44aa9b84e1ba56fc38abdc236f498a791568e92"
+    },
+    {
+      "version": "11.20.0",
+      "archive_path": "package/node_modules/libnpmpack/lib/index.js",
+      "bytes": 1773,
+      "sha256": "8b2c3c6361f9e6416c69af4a2243fb3612cbd2ace26752d2de6cf72f6b37324d"
+    },
+    {
+      "version": "11.20.0",
+      "archive_path": "package/node_modules/@npmcli/run-script/lib/set-path.js",
+      "bytes": 1856,
+      "sha256": "bc023d0c2d0840074c9e81ac0bda0fed0ef75e64623fa670437a7706d05d3542"
+    },
+    {
+      "version": "12.2.2",
+      "archive_path": "package/package.json",
+      "bytes": 6860,
+      "sha256": "44c37a6a06ae01d4ad987bc4710031ae3a42d47173100316e4913ab2cd113cd3"
+    },
+    {
+      "version": "12.2.2",
+      "archive_path": "package/bin/npm-cli.js",
+      "bytes": 54,
+      "sha256": "8e5f6f3429f8cdbe693cdc29904e9d5a7b127a494bd15c804bd54c7403bfcbe7"
+    },
+    {
+      "version": "12.2.2",
+      "archive_path": "package/lib/commands/pack.js",
+      "bytes": 3035,
+      "sha256": "01483e35200380c9ac3604cb83102009361c75722369a332b4acb204245ad8ab"
+    },
+    {
+      "version": "12.2.2",
+      "archive_path": "package/lib/utils/tar.js",
+      "bytes": 3587,
+      "sha256": "4e2b3f4dd2d35e3eb31fe27c91ca89798e832aa813db946c8773fffab50ceae6"
+    },
+    {
+      "version": "12.2.2",
+      "archive_path": "package/lib/utils/display.js",
+      "bytes": 16233,
+      "sha256": "c6268a43166143f3a833b95be55080dfa44e370ae7bab39dbf943816d3a11450"
+    },
+    {
+      "version": "12.2.2",
+      "archive_path": "package/docs/content/commands/npm-pack.md",
+      "bytes": 3935,
+      "sha256": "2cdc1a993f475f0857b0413f31ad5526ba9beeab34ba20dfcb05f6b8048d6919"
+    },
+    {
+      "version": "12.2.2",
+      "archive_path": "package/node_modules/libnpmpack/lib/index.js",
+      "bytes": 4061,
+      "sha256": "a66a8c8c67cd3375e1a66fc79bcbdaa561faa234c4ed0f16686a07648bf9dab7"
+    },
+    {
+      "version": "12.2.2",
+      "archive_path": "package/node_modules/@npmcli/run-script/lib/set-path.js",
+      "bytes": 1856,
+      "sha256": "bc023d0c2d0840074c9e81ac0bda0fed0ef75e64623fa670437a7706d05d3542"
+    }
+  ],
+  "cells": [
+    {
+      "cell": "11-direct",
+      "version": "11.20.0",
+      "mode": "direct",
+      "outer_pid": 516,
+      "outer_exit": 0,
+      "outer_signal": null,
+      "deadline_observed": false,
+      "outer_streams": {
+        "stdout": {
+          "bytes": 1048,
+          "sha256": "289b499c6291b376ab5b88957ca7d3f28797fa7fc3abb1f3028da26318d702f7",
+          "receipt": "1213-private-access-01:experiment/11-direct/outer.stdout.raw"
+        },
+        "stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "receipt": "1213-private-access-01:experiment/11-direct/outer.stderr.raw",
+          "has_record_commit_files_typeerror": false
+        }
+      },
+      "outer_stdout_json": {
+        "type": "array",
+        "length": 1,
+        "packages": [
+          {
+            "name": "rigger-pack-output-fixture",
+            "version": "1.0.0",
+            "file_count": 6,
+            "files": [
+              {
+                "path": "package.json",
+                "size": 274,
+                "mode": 420
+              },
+              {
+                "path": "scripts/other.mjs",
+                "size": 83,
+                "mode": 420
+              },
+              {
+                "path": "scripts/record-commit.mjs",
+                "size": 3351,
+                "mode": 420
+              },
+              {
+                "path": "src/module.mjs",
+                "size": 83,
+                "mode": 420
+              },
+              {
+                "path": "src/substrate/git-environment.mjs",
+                "size": 3281,
+                "mode": 420
+              },
+              {
+                "path": "templates/template.txt",
+                "size": 71,
+                "mode": 420
+              }
+            ],
+            "entryCount": 6,
+            "filename": "rigger-pack-output-fixture-1.0.0.tgz",
+            "size": 3310,
+            "unpackedSize": 7143,
+            "shasum": "e34f3eb9b60a7d9f093dc706fef58cada70fc920",
+            "integrity": "sha512-eTki55OFmAroRfDFsUZYl0thDTJpOnUZ0UXyZKp9iIyqfvkZcfZ9YO9MAv98Hu1lzG+X5glAIi5Iyi5+PVRdBg=="
+          }
+        ]
+      },
+      "inner": null,
+      "generated": [
+        {
+          "role": "record",
+          "present": false
+        }
+      ]
+    },
+    {
+      "cell": "12-direct",
+      "version": "12.2.2",
+      "mode": "direct",
+      "outer_pid": 538,
+      "outer_exit": 0,
+      "outer_signal": null,
+      "deadline_observed": false,
+      "outer_streams": {
+        "stdout": {
+          "bytes": 1078,
+          "sha256": "46dfe2f7116d287f9b3ed40033f0e3ed55223761d386e1d1d9691613913234bf",
+          "receipt": "1213-private-access-01:experiment/12-direct/outer.stdout.raw"
+        },
+        "stderr": {
+          "bytes": 0,
+          "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "receipt": "1213-private-access-01:experiment/12-direct/outer.stderr.raw",
+          "has_record_commit_files_typeerror": false
+        }
+      },
+      "outer_stdout_json": {
+        "type": "object",
+        "keys": [
+          "rigger-pack-output-fixture"
+        ],
+        "packages": [
+          {
+            "name": "rigger-pack-output-fixture",
+            "version": "1.0.0",
+            "file_count": 6,
+            "files": [
+              {
+                "path": "package.json",
+                "size": 274,
+                "mode": 420
+              },
+              {
+                "path": "scripts/other.mjs",
+                "size": 83,
+                "mode": 420
+              },
+              {
+                "path": "scripts/record-commit.mjs",
+                "size": 3351,
+                "mode": 420
+              },
+              {
+                "path": "src/module.mjs",
+                "size": 83,
+                "mode": 420
+              },
+              {
+                "path": "src/substrate/git-environment.mjs",
+                "size": 3281,
+                "mode": 420
+              },
+              {
+                "path": "templates/template.txt",
+                "size": 71,
+                "mode": 420
+              }
+            ],
+            "entryCount": 6,
+            "filename": "rigger-pack-output-fixture-1.0.0.tgz",
+            "size": 3310,
+            "unpackedSize": 7143,
+            "shasum": "e34f3eb9b60a7d9f093dc706fef58cada70fc920",
+            "integrity": "sha512-eTki55OFmAroRfDFsUZYl0thDTJpOnUZ0UXyZKp9iIyqfvkZcfZ9YO9MAv98Hu1lzG+X5glAIi5Iyi5+PVRdBg=="
+          }
+        ]
+      },
+      "inner": null,
+      "generated": [
+        {
+          "role": "record",
+          "present": false
+        }
+      ]
+    },
+    {
+      "cell": "11-lifecycle",
+      "version": "11.20.0",
+      "mode": "lifecycle",
+      "outer_pid": 565,
+      "outer_exit": 0,
+      "outer_signal": null,
+      "deadline_observed": false,
+      "outer_streams": {
+        "stdout": {
+          "bytes": 1148,
+          "sha256": "a120d4c0dd83b5c9ef3aac5fa0315c12ec0a9b3c5d4685920fc2ee6f0b7d96c2",
+          "receipt": "1213-private-access-01:experiment/11-lifecycle/outer.stdout.raw"
+        },
+        "stderr": {
+          "bytes": 78,
+          "sha256": "018aa55850ec5e43ac66c9ef7b36ea2a66e6cf48a1b0058d96d164be48076b75",
+          "receipt": "1213-private-access-01:experiment/11-lifecycle/outer.stderr.raw",
+          "has_record_commit_files_typeerror": false
+        }
+      },
+      "outer_stdout_json": {
+        "type": "array",
+        "length": 1,
+        "packages": [
+          {
+            "name": "rigger-pack-output-fixture",
+            "version": "1.0.0",
+            "file_count": 7,
+            "files": [
+              {
+                "path": "package.json",
+                "size": 274,
+                "mode": 420
+              },
+              {
+                "path": "scripts/other.mjs",
+                "size": 83,
+                "mode": 420
+              },
+              {
+                "path": "scripts/record-commit.mjs",
+                "size": 3351,
+                "mode": 420
+              },
+              {
+                "path": "src/module.mjs",
+                "size": 83,
+                "mode": 420
+              },
+              {
+                "path": "src/package-commit.json",
+                "size": 54,
+                "mode": 420
+              },
+              {
+                "path": "src/substrate/git-environment.mjs",
+                "size": 3281,
+                "mode": 420
+              },
+              {
+                "path": "templates/template.txt",
+                "size": 71,
+                "mode": 420
+              }
+            ],
+            "entryCount": 7,
+            "filename": "rigger-pack-output-fixture-1.0.0.tgz",
+            "size": 3384,
+            "unpackedSize": 7197,
+            "shasum": "2db68655fcbc15363349d6d5cda51fabb014a3cc",
+            "integrity": "sha512-hrHDS3259EpdFKd2UxZGrLPB8x/Esnb/80BfonY+hFyT6VUUKw24EeyYW7eSU9n7B2s/trv36pfr55anN1W2Eg=="
+          }
+        ]
+      },
+      "inner": {
+        "calls": 1,
+        "wrapper_pid": 586,
+        "observed_parent_pid": 578,
+        "delegated_pid": 587,
+        "exit": 0,
+        "signal": null,
+        "observer_faults": [],
+        "streams": {
+          "stdout": {
+            "bytes": 1048,
+            "sha256": "289b499c6291b376ab5b88957ca7d3f28797fa7fc3abb1f3028da26318d702f7",
+            "receipt": "1213-private-access-01:experiment/11-lifecycle/inner/inner-586/stdout.raw"
+          },
+          "stderr": {
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "receipt": "1213-private-access-01:experiment/11-lifecycle/inner/inner-586/stderr.raw"
+          }
+        },
+        "stdout_json": {
+          "type": "array",
+          "length": 1,
+          "packages": [
+            {
+              "name": "rigger-pack-output-fixture",
+              "version": "1.0.0",
+              "file_count": 6,
+              "files": [
+                {
+                  "path": "package.json",
+                  "size": 274,
+                  "mode": 420
+                },
+                {
+                  "path": "scripts/other.mjs",
+                  "size": 83,
+                  "mode": 420
+                },
+                {
+                  "path": "scripts/record-commit.mjs",
+                  "size": 3351,
+                  "mode": 420
+                },
+                {
+                  "path": "src/module.mjs",
+                  "size": 83,
+                  "mode": 420
+                },
+                {
+                  "path": "src/substrate/git-environment.mjs",
+                  "size": 3281,
+                  "mode": 420
+                },
+                {
+                  "path": "templates/template.txt",
+                  "size": 71,
+                  "mode": 420
+                }
+              ],
+              "entryCount": 6,
+              "filename": "rigger-pack-output-fixture-1.0.0.tgz",
+              "size": 3310,
+              "unpackedSize": 7143,
+              "shasum": "e34f3eb9b60a7d9f093dc706fef58cada70fc920",
+              "integrity": "sha512-eTki55OFmAroRfDFsUZYl0thDTJpOnUZ0UXyZKp9iIyqfvkZcfZ9YO9MAv98Hu1lzG+X5glAIi5Iyi5+PVRdBg=="
+            }
+          ]
+        },
+        "routing": {
+          "absolute_fixed_node_and_versioned_cli": true,
+          "actual_cwd_matches_fixture": true,
+          "actual_lifecycle_path_matches_seal": true,
+          "json": "true",
+          "ignore_scripts_inner_argv": true,
+          "workspaces_input": "unset/no workspace manifest",
+          "prefix_role": "fixed Node installation prefix",
+          "cache_role": "cell-private",
+          "logs_role": "cell-private",
+          "userconfig_role": "cell-private empty",
+          "globalconfig_role": "cell-private empty",
+          "lifecycle_event": "prepack",
+          "lifecycle_script": "node scripts/record-commit.mjs"
+        }
+      },
+      "generated": [
+        {
+          "role": "record",
+          "present": true,
+          "bytes": 54,
+          "sha256": "565072e8dee600813726b9884b92573620278937c692c362b0b332096a40e42f",
+          "mode": 420,
+          "json": {
+            "commit": "657aa99f3c7ada37d85aa2c1b9bc9a99b09d9434"
+          }
+        },
+        {
+          "role": "destination",
+          "present": true,
+          "bytes": 3384,
+          "sha256": "5ef990d2b65db6b04c4ae441066f75ea77b897bada08f0d7121c92463cfa9bbf",
+          "mode": 420,
+          "members": [
+            {
+              "path": "src/package-commit.json",
+              "bytes": 54,
+              "mode": 420,
+              "sha256": "565072e8dee600813726b9884b92573620278937c692c362b0b332096a40e42f"
+            },
+            {
+              "path": "package.json",
+              "bytes": 274,
+              "mode": 420,
+              "sha256": "cdec1bad9889e7ef31825a37d23c9a459600e332bc5de8e0063eff995032af09"
+            },
+            {
+              "path": "src/substrate/git-environment.mjs",
+              "bytes": 3281,
+              "mode": 420,
+              "sha256": "2536e70f9e05e1e6d8a28d26d80780d4b0fbc632427a7b806cc7f000246d43f3"
+            },
+            {
+              "path": "src/module.mjs",
+              "bytes": 83,
+              "mode": 420,
+              "sha256": "54836e3045b195bbf3c6b1ff4082732b87f8adedc81cbb5bc67e59f2bc5a4b0c"
+            },
+            {
+              "path": "scripts/other.mjs",
+              "bytes": 83,
+              "mode": 420,
+              "sha256": "5f5fcc039f4dd6cdbc65baa56c3bb9d09d58b8cf41a882381b7e4a5cf22d158a"
+            },
+            {
+              "path": "scripts/record-commit.mjs",
+              "bytes": 3351,
+              "mode": 420,
+              "sha256": "65a6f75773262566e2fba1e7d13b0e10d0cf4e5123dec77e0f8ec2b97b2c46ef"
+            },
+            {
+              "path": "templates/template.txt",
+              "bytes": 71,
+              "mode": 420,
+              "sha256": "7342e44f44c8c03e3952489879452c4e37ef4a8cbc84181ffa5bc3f2dee4ad87"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "cell": "12-lifecycle",
+      "version": "12.2.2",
+      "mode": "lifecycle",
+      "outer_pid": 626,
+      "outer_exit": 1,
+      "outer_signal": null,
+      "deadline_observed": false,
+      "outer_streams": {
+        "stdout": {
+          "bytes": 122,
+          "sha256": "bdb0bab9fbfeaa40b7384912b5ed22034c264f05364f821a80e383cdcbfe48d1",
+          "receipt": "1213-private-access-01:experiment/12-lifecycle/outer.stdout.raw"
+        },
+        "stderr": {
+          "bytes": 1573,
+          "sha256": "37b77c9e1a11897b6ae9a7be54a6538af978de3d42cbd364297677c49d17afcd",
+          "receipt": "1213-private-access-01:experiment/12-lifecycle/outer.stderr.raw",
+          "has_record_commit_files_typeerror": true
+        }
+      },
+      "outer_stdout_json": {
+        "type": "object",
+        "keys": [
+          "error"
+        ],
+        "packages": [],
+        "error": {
+          "code": 1,
+          "summary": "command failed",
+          "detail": "sh -c node scripts/record-commit.mjs"
+        }
+      },
+      "inner": {
+        "calls": 1,
+        "wrapper_pid": 647,
+        "observed_parent_pid": 639,
+        "delegated_pid": 648,
+        "exit": 0,
+        "signal": null,
+        "observer_faults": [],
+        "streams": {
+          "stdout": {
+            "bytes": 1078,
+            "sha256": "46dfe2f7116d287f9b3ed40033f0e3ed55223761d386e1d1d9691613913234bf",
+            "receipt": "1213-private-access-01:experiment/12-lifecycle/inner/inner-647/stdout.raw"
+          },
+          "stderr": {
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "receipt": "1213-private-access-01:experiment/12-lifecycle/inner/inner-647/stderr.raw"
+          }
+        },
+        "stdout_json": {
+          "type": "object",
+          "keys": [
+            "rigger-pack-output-fixture"
+          ],
+          "packages": [
+            {
+              "name": "rigger-pack-output-fixture",
+              "version": "1.0.0",
+              "file_count": 6,
+              "files": [
+                {
+                  "path": "package.json",
+                  "size": 274,
+                  "mode": 420
+                },
+                {
+                  "path": "scripts/other.mjs",
+                  "size": 83,
+                  "mode": 420
+                },
+                {
+                  "path": "scripts/record-commit.mjs",
+                  "size": 3351,
+                  "mode": 420
+                },
+                {
+                  "path": "src/module.mjs",
+                  "size": 83,
+                  "mode": 420
+                },
+                {
+                  "path": "src/substrate/git-environment.mjs",
+                  "size": 3281,
+                  "mode": 420
+                },
+                {
+                  "path": "templates/template.txt",
+                  "size": 71,
+                  "mode": 420
+                }
+              ],
+              "entryCount": 6,
+              "filename": "rigger-pack-output-fixture-1.0.0.tgz",
+              "size": 3310,
+              "unpackedSize": 7143,
+              "shasum": "e34f3eb9b60a7d9f093dc706fef58cada70fc920",
+              "integrity": "sha512-eTki55OFmAroRfDFsUZYl0thDTJpOnUZ0UXyZKp9iIyqfvkZcfZ9YO9MAv98Hu1lzG+X5glAIi5Iyi5+PVRdBg=="
+            }
+          ]
+        },
+        "routing": {
+          "absolute_fixed_node_and_versioned_cli": true,
+          "actual_cwd_matches_fixture": true,
+          "actual_lifecycle_path_matches_seal": true,
+          "json": "true",
+          "ignore_scripts_inner_argv": true,
+          "workspaces_input": "unset/no workspace manifest",
+          "prefix_role": "fixed Node installation prefix",
+          "cache_role": "cell-private",
+          "logs_role": "cell-private",
+          "userconfig_role": "cell-private empty",
+          "globalconfig_role": "cell-private empty",
+          "lifecycle_event": "prepack",
+          "lifecycle_script": "node scripts/record-commit.mjs"
+        }
+      },
+      "generated": [
+        {
+          "role": "record",
+          "present": false
+        }
+      ]
+    }
+  ],
+  "comparisons": {
+    "npm11_direct_and_inner_stdout_identical": true,
+    "npm12_direct_and_inner_stdout_identical": true,
+    "direct_package_metadata_identical_after_representation_selection": true,
+    "inner_top_levels": {
+      "11-lifecycle": "array length 1",
+      "12-lifecycle": "object with package-name key"
+    },
+    "npm12_inner_has_numeric_zero_key": false,
+    "npm12_inner_files_count": 6,
+    "npm12_inner_is_empty_array": false
+  },
+  "conclusion": {
+    "kind": "bounded source-backed finding",
+    "value": "npm12.2.2 emits package-keyed JSON for the observed pack calls; the unchanged numeric-index parser fails during prepack",
+    "empty_array_hypothesis": "contradicted by the actual captured inner object, not inferred from the outer TypeError",
+    "historical_credit": "none: this batch does not retroactively establish any prior private run or replace card1132 final proof"
+  },
+  "recommendation": {
+    "kind": "judgment",
+    "premise": "same six-file metadata with different observed representation, plus unchanged parser source and actual failing lifecycle",
+    "action": "author a separate bounded producer-consumer compatibility repair; choose any npm support/pinning policy separately",
+    "implemented": false,
+    "reversal": "contradictory qualified original/source evidence or owner adoption of a separately approved narrower support contract",
+    "next_experiment": "none recommended or executed under this card"
+  },
+  "support_contract": {
+    "repository_node_engine": ">=24",
+    "repository_npm_engine": null,
+    "packageManager": null,
+    "devEngines": null,
+    "absence_of_pin_is_support_promise": false,
+    "repository_host_statement": "macOS today; experimental WSL development route; this batch proves no supported-macOS result",
+    "npm_documented_contract": "versioned bundled npm-pack docs describe JSON/dry-run/scripts/destination without specifying this exact array/object shape"
+  }
+}

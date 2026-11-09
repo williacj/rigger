@@ -24,6 +24,27 @@ The [README prerequisites](../README.md#prerequisites) own the Node floor and su
 
 The historical `gh` token held `gist`, `project`, `read:org`, `repo` and `workflow`. `repo` serves the forge, `workflow` permits workflow-file pushes, `project` serves the board, and `read:org` was requested by `gh auth login`. No step here needs `gist`. The minimum sufficient scope set was not measured. The owner signs in to `gh`, Claude Code and Codex CLI as the owner's account; do not put their credentials in the repository.
 
+## Turn off system sleep on AC power
+
+A host running CI, a suite or agents unattended must have system sleep off on AC power. Have the
+owner run:
+
+~~~sh
+sudo pmset -c sleep 0
+~~~
+
+`-c` sets the AC profile, so this setting does not cover battery. Read the setting back with
+`pmset -g custom`; a held host shows `sleep` 0 under "AC Power".
+
+The [owner's account on #1207](https://github.com/williacj/rigger/issues/1207) says the setting
+alone did not stop an existing DarkWake cycle on the Mini. Logging in at the machine with its
+keyboard and mouse ended that cycle ([M7-U34](https://github.com/williacj/rigger/issues/1009#issuecomment-6666909633)).
+That account does not establish which other actions would end the cycle.
+
+The Mini's `pmset -g log`, read on 2026-11-05 by the coordinator and PM and
+[recorded on #1207](https://github.com/williacj/rigger/issues/1207), shows only the cycle ending
+at a `Wake` line. A full wake shows in that log as a `Wake` line, not a `DarkWake` line.
+
 ## Lay out the checkout and local state
 
 The main checkout belongs at `~/GitHub/rigger` and is never a workspace (AGENTS.md, “Version control”). With that checkout, the engine's default worktrees.root is `../rigger-worktrees`, relative to the checkout, as [ARCHITECTURE.md, “Engine settings”](../ARCHITECTURE.md#extension-points) defines. The engine's worktree root must stay outside both the checkout and the installed package.
@@ -44,6 +65,7 @@ Set up only these host-local entries; the repository does not carry them:
 
 | Entry | Supplier |
 |---|---|
+| System sleep off on AC power | Owner |
 | User-level Codex configuration under `~/.codex/`, including project trust | Owner |
 | Suite slot directory beneath `$HOME/GitHub/rigger-worktrees` | `tools/coordinator/suite-slot.sh` on first use |
 | `gh` Git credential helper for HTTPS pushes | Host setup operator, by `gh auth setup-git` after owner sign-in |
@@ -69,10 +91,70 @@ git clone https://github.com/williacj/rigger.git "$HOME/GitHub/rigger-worktrees/
 cd "$HOME/GitHub/rigger-worktrees/bootstrap-check"
 git config core.hooksPath .githooks
 git remote set-head origin -a
-npm ci
-npm test
-npm run test:host
 ~~~
+
+### Retained verification receipts
+
+The shipped [TDD skill](../.claude/skills/tdd/SKILL.md) owns the mandatory reusable receipt
+procedure. This section is an optional worked example; using the shipped skill does not require
+this repository's bootstrap guide.
+
+Keep fixtures disposable and required receipts durable. Store byte-complete originals in a
+private directory outside the checkout, scratch clones, mutation worktrees, suite run roots and
+OS temporary directories. Choose storage whose cleanup policy preserves them through the final
+independent ruling on the claim, or the card's longer retention event. A path or digest without
+readable original bytes is not retention. These rules also apply to reviewer-owned verification.
+
+Run the following literal script setup in `sh` on macOS or WSL, from the test clone above.
+The private evidence directory is separate from that clone and its fixtures. The example retains
+command, executed ref, provenance, aggregate output and the actual tested-command exit for each
+step. Aggregate output does not establish ordering between stdout and stderr.
+
+~~~sh
+umask 077
+evidence_root="$HOME/.local/state/rigger/evidence/bootstrap-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+mkdir -p "$evidence_root"
+cat > "$evidence_root/verify.sh" <<'SH'
+#!/bin/sh
+# ABOUTME: Retains bootstrap command outputs and tested-command exits outside disposable roots.
+set -u
+evidence_root=$1
+git rev-parse HEAD > "$evidence_root/ref.txt" || exit 1
+pwd > "$evidence_root/source.txt" || exit 1
+node --version > "$evidence_root/node.txt" || exit 1
+for step in dependencies deterministic host; do
+  case "$step" in
+    dependencies) set -- npm ci ;;
+    deterministic) set -- npm test ;;
+    host) set -- npm run test:host ;;
+  esac
+  printf '%s\n' "$*" > "$evidence_root/$step.command" || exit 1
+  "$@" > "$evidence_root/$step.log" 2>&1
+  tested_status=$?
+  printf '%s\n' "$tested_status" > "$evidence_root/$step.exit" || exit 1
+  test "$tested_status" -eq 0 || exit "$tested_status"
+done
+SH
+sh "$evidence_root/verify.sh" "$evidence_root"
+launcher_status=$?
+printf '%s\n' "$launcher_status" > "$evidence_root/launcher.exit"
+cat "$evidence_root/ref.txt" "$evidence_root/source.txt" "$evidence_root/node.txt"
+cat "$evidence_root/"*.command "$evidence_root/"*.exit "$evidence_root/"*.log
+~~~
+
+Capture each tested-command status immediately, before another command overwrites it; retain it
+separately from the launcher, transport or tool status. Missing or ambiguous tested-child status
+earns no pass credit from green-looking text or wrapper success. The single-quoted heredoc keeps
+`$?`, `$@` and other child expressions intact until the child shell executes them. Cross-shell
+callers must pass the literal script file and its arguments directly, never interpolate its body
+through the outer shell.
+
+After the command and fixture teardown, reopen every required original before citing it as
+retained. Repeat readback after removing a scratch clone if that cleanup occurs before ruling.
+Keep receipts readable through the declared retention event. Report unreadable required originals
+as missing evidence, never reconstruct their result from a prior pass summary. Do not put secrets
+in receipts; give reviewers a private-safe access route and publish only permitted summaries,
+never raw private logs or private paths.
 
 The host key is the first line `sh test/suite.sh --host` prints. `npm run test:host` prints npm's own lines first, so its first line is not the key. The host tier uses real process and filesystem behavior; retain its actual outcome and test totals.
 

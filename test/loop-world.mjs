@@ -64,10 +64,10 @@ export const WAIT_WITHIN = 5_000;
  * rejects naming the condition and its bound once `within` milliseconds have passed without it.
  * The clock bounds the wait and is never what it waits on, and it sleeps for no time.
  */
-export async function waitFor(condition, within = WAIT_WITHIN) {
-  const began = performance.now();
+export async function waitFor(condition, within = WAIT_WITHIN, now = () => performance.now()) {
+  const began = now();
   while (!condition()) {
-    if (performance.now() - began >= within) throw new Error(`the condition ${condition} did not hold within ${within} ms`);
+    if (now() - began >= within) throw new Error(`the condition ${condition} did not hold within ${within} ms`);
     await oneTurn();
   }
 }
@@ -76,7 +76,7 @@ export async function waitFor(condition, within = WAIT_WITHIN) {
  * A positive wait: settles once `condition`, what the test next reads or acts on, holds, as
  * `waitFor` waits, within `within` milliseconds.
  */
-export const positive = (condition, within) => waitFor(condition, within);
+export const positive = (condition, within, now) => waitFor(condition, within, now);
 
 /**
  * A turn wait, for a test that counts the event loop's turns as its own measure while no maker
@@ -90,9 +90,9 @@ export const turnWait = (condition) => waitFor(condition);
  * wrong, has started and shows before the test reads. It looks first a turn after it is called, so
  * a pull or run fired just before it has recorded its trigger.
  */
-export async function settling(built, done, within) {
+export async function settling(built, done, within, now) {
   await oneTurn();
-  await waitFor(() => done() || built.settles(), within);
+  await waitFor(() => done() || built.settles(), within, now);
 }
 
 /** A function answering whether `promise` has settled, fulfilled or rejected, for a wait to read. */
@@ -323,11 +323,12 @@ export function readingLater(fake) {
  * again; the sink itself is the real one throughout, and what the two switch is whether an
  * append reaches it.
  */
+/** A supplied host reaches L3 unchanged; makerHold defaults to the held-maker fixture route. */
 export function world({
   cards = [1, 2, 3, 4], columns = COLUMNS, priority, fake = boardOf(cards, columns), concurrency, fresh = true, answer = () => ({ exit: 0, output: '' }), run = 'r-test',
   items = fake.operations, board = handleOn(fake, { columns, priority }), directory = temporaryDirectory('rigger-loop-'),
   kill = async () => {}, kinds = KINDS, provisioning = {}, forge = {}, scratch,
-  workspace, workspaceTip, judgeDirectory, removeDirectories = async () => {}, clock,
+  workspace, workspaceTip, judgeDirectory, removeDirectories = async () => {}, clock, host, makerHold = true,
 } = {}) {
   const phaseTrace = [{ phase: 'warm.start', at: performance.now() }];
   if (process.env.RIGGER_596_PHASE_ACTIVE) {
@@ -492,7 +493,7 @@ export function world({
       // in the same turn one that starts would.
       return (async () => ({ path: join(under, 'never-made', `rigger-${number}`) }))();
     }
-    agent.plan(number, role, { hold: true, exit: given.exit });
+    agent.plan(number, role, { hold: makerHold, exit: given.exit });
     return making(number);
   };
   /** What a maker's L3 `dispatch` attempt and L1 `dispatch.end` attempt record, whether or not the sink accepts them. */
@@ -588,7 +589,7 @@ export function world({
     events: recorded,
     /** The events L3 recorded so far, in order. */
     l3Events: () => recorded().filter((event) => event.layer === 'L3'),
-    loop: loop({ config: settings, board, decide, facts, l2, sink: l3Sink, kill, workspace, workspaceTip: workspaceTip ?? (async ({ card }) => repository.held().pullRequests.find((pull) => pull.head === topicFor(worktreeTopic(settings), card) && !pull.merged)?.sha), judgeDirectory: judgeDirectory ?? makingJudgeDirectories(join(under, 'workspaces')), removeDirectories, state: directory, environment: { ...process.env, PATH: agent.first() }, run, clock }),
+    loop: loop({ config: settings, board, decide, facts, l2, sink: l3Sink, kill, workspace, workspaceTip: workspaceTip ?? (async ({ card }) => repository.held().pullRequests.find((pull) => pull.head === topicFor(worktreeTopic(settings), card) && !pull.merged)?.sha), judgeDirectory: judgeDirectory ?? makingJudgeDirectories(join(under, 'workspaces')), removeDirectories, state: directory, environment: { ...process.env, PATH: agent.first() }, run, clock, host }),
   };
 }
 
@@ -685,7 +686,7 @@ export const DRIVEN_ROUNDS = 100;
  * so a run that fails rejects here with its failure unchanged. A run still going after
  * `DRIVEN_ROUNDS` rounds rejects here, naming the dispatches it started.
  */
-export async function drive(built) {
+export async function drive(built, now) {
   let ended = false;
   const run = built.loop.run().finally(() => {
     ended = true;
@@ -693,7 +694,7 @@ export async function drive(built) {
   run.catch(() => {});
   for (let round = 0; !ended; round += 1) {
     if (round === DRIVEN_ROUNDS) throw new Error(`the run had not ended after ${DRIVEN_ROUNDS} rounds, having started dispatches ${built.dispatches.started}`);
-    await settling(built, () => ended);
+    await settling(built, () => ended, undefined, now);
     built.dispatches.releaseAll();
   }
   return run;
@@ -708,12 +709,12 @@ export async function drive(built) {
  * `scratch` is given, `endStandIns`. Answers the board, the only thing a second engine is to share
  * with the first.
  */
-export async function stoppedRun({ directory, scratch } = {}) {
+export async function stoppedRun({ directory, scratch, now } = {}) {
   const fake = boardOf([1, 2, 3]);
   const first = world({ fake, concurrency: 2, directory, run: 'r-first', scratch });
   first.loop.run().catch(() => {});
   // Positive: until cards 1 and 2 are held.
-  await positive(() => first.dispatches.held() === 2);
+  await positive(() => first.dispatches.held() === 2, undefined, now);
   if (first.dispatches.holding().join() !== '1,2') throw new Error(`the first run was not stopped mid-dispatch of cards 1 and 2: ${first.dispatches.holding()}`);
   return fake;
 }

@@ -153,7 +153,7 @@ test('given a second card whose labels select two tiers for its maker role and w
 import { run } from '../src/cli/run.mjs';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 
-// proves R-WORK-36
+// proves R-WORK-41
 test('run cleans eligible closed history then reports the unchanged form refusal once and exits zero', async () => {
   const directory = temporaryDirectory('rigger-run-closed-refusal-');
   const settings = config();

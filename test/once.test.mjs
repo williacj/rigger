@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { refuseAfterBoardRead } from './call-event-fixtures.mjs';
-import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -176,7 +176,7 @@ test('once over a board with no pullable card exits 0', () => {
 
 // proves R-SCHED-3, R-SCHED-16
 test('once under owner and hold closers names both, keeps L2 refusals and exits 0 without claiming', async () => {
-  const ran = once({ items: [REFUSED, card(12, 'Ready')] }, { prepare: ({ consumer }) => {
+  const ran = once({ items: [REFUSED, card(12, 'Ready')] }, { seed: { issues: [{ number: 7, title: 'Rigger closed admission', body: 'Why.\n\nHold: `b2`\n', labels: ['rigger:status'] }] }, prepare: ({ consumer }) => {
     const state = join(consumer, '.rigger');
     seed(state, 'owner-a1.json', closerText({ reason: 'owner pause' }));
     seed(state, 'hold-b2-issue-7.json', closerText({ reason: 'environment hold' }));
@@ -189,8 +189,8 @@ test('once under owner and hold closers names both, keeps L2 refusals and exits 
   }
   assert.match(ran.out, /#11.*missing acceptance/, ran.out);
   assert.doesNotMatch(ran.out, /no card was pullable/, ran.out);
-  assert.deepEqual(await columnsOf(ran), { 11: 'Ready', 12: 'Ready' });
-  assert.deepEqual((await ran.model()).writes(), []);
+  assert.deepEqual(await columnsOf(ran), { 7: 'Owner', 11: 'Ready', 12: 'Ready' });
+  assert.deepEqual((await ran.model()).writes(), [{ operation: 'addIssue', args: [7, REPO] }, { operation: 'moveItem', args: ['item-3', 'Owner'] }]);
   assert.deepEqual(ran.agentRuns(), []);
 });
 
@@ -696,7 +696,7 @@ test('once exits non-zero when a continuing maker exits non-zero', SETTLES_WITHI
   assert.match(err, /exited 4/);
 });
 
-// proves R-WORK-34
+// proves R-WORK-43
 test('once names a continuing card whose maker left no checked-out line tip and keeps it in Coding', SETTLES_WITHIN, async (t) => {
   const script = join(temporaryDirectory('rigger-no-tip-'), 'detach.sh');
   writeFileSync(script, '#!/bin/sh\ngit checkout --detach -q HEAD\n');
@@ -1079,10 +1079,16 @@ test('given once where a judge is dispatched and its dispatch then fails, once p
 test('given once where a judge\'s directory cannot be made, once prints the judge\'s role and why, and exits non-zero', SETTLES_WITHIN, async (t) => {
   // A plain file where the judges' directories go, beside the workspaces under the default root.
   const agent = standInAgent({ 10: { engineer: { pr: true } } });
-  const { consumer, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] });
-  const root = join(dirname(consumer), 'widgets-worktrees');
-  mkdirSync(root, { recursive: true });
-  writeFileSync(join(root, 'judges'), 'not a directory');
+  const { consumer, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] }, {
+    prepare({ consumer }) {
+      const root = join(dirname(consumer), 'widgets-worktrees');
+      mkdirSync(root, { recursive: true });
+      writeFileSync(join(root, 'judges'), 'not a directory');
+      const blocker = join(dirname(consumer), 'widgets-worktrees', 'judges');
+      assert.ok(existsSync(blocker) && lstatSync(blocker).isFile(),
+        'judge-directory blocker is a regular file before CLI launch');
+    },
+  });
 
   const { code, out, err } = await ran;
 
@@ -1541,7 +1547,7 @@ test('the owner label control updates seeded issue facts by repository and issue
 });
 
 
-// proves R-WORK-36
+// proves R-WORK-41
 test('once reports the ordinary refusal after closed cleanup exactly once with the existing refusal exit status', async () => {
   const directory = temporaryDirectory('rigger-once-closed-refusal-');
   const settings = config();
@@ -1571,7 +1577,7 @@ test('once reports the ordinary refusal after closed cleanup exactly once with t
 
 import { lockWorktreeAt } from './git-repository.mjs';
 
-// proves R-WORK-36, R-WORK-38
+// proves R-WORK-41, R-WORK-38
 test('once and run report the ordinary Owner result plus every real remaining cleanup path and wait for label acknowledgement', SETTLES_WITHIN, async () => {
   const number = 92;
   const directory = temporaryDirectory('rigger-once-closed-remaining-');
@@ -1620,7 +1626,7 @@ test('once and run report the ordinary Owner result plus every real remaining cl
 });
 
 
-// proves R-WORK-36
+// proves R-WORK-41
 test('once removes closed history directories before Coding and a normal redo opens its new pull without removing that new workspace', SETTLES_WITHIN, async (t) => {
   const number = 93;
   const settings = { ...config(), kinds: { change: { ...KINDS.change, judges: ['owner'] } } };
@@ -1653,7 +1659,7 @@ test('once removes closed history directories before Coding and a normal redo op
 });
 
 
-// proves R-SCHED-11, R-WORK-36
+// proves R-SCHED-11, R-WORK-41
 test('once ignores closed cards without a kind or carrying the epic label while selected equivalents remove their old directories', SETTLES_WITHIN, async () => {
   for (const column of ['Review', 'Owner']) for (const branch of [false, true]) {
     for (const labels of [[], ['type:epic', 'type:change'], ['type:change']]) {
@@ -1689,13 +1695,13 @@ test('once after the bin\'s pause claims nothing, and after its resume claims as
   // The defect this catches is a `pause` that `take` does not read as closed, or a `resume` that
   // leaves admission closed, through the verbs the owner runs rather than closers seeded by hand.
   const items = [card(20, 'Ready'), card(10, 'Ready')];
-  const owner = (verb, consumer) => {
-    const done = spawnSync(process.execPath, [bin, verb], { cwd: consumer, encoding: 'utf8' });
+  const owner = (verb, consumer, fake) => {
+    const done = spawnSync(process.execPath, [bin, verb], { cwd: consumer, encoding: 'utf8', env: { ...process.env, PATH: [dirname(fake.gh), process.env.PATH].join(delimiter) } });
     assert.equal(done.status, 0, `${done.stdout}${done.stderr}`);
     assert.doesNotMatch(`${done.stdout}${done.stderr}`, /not yet implemented/);
   };
   const base = once({ items });
-  const paused = once({ items }, { prepare: ({ consumer }) => owner('pause', consumer) });
+  const paused = once({ items }, { prepare: ({ consumer, fake }) => owner('pause', consumer, fake) });
 
   assert.equal(paused.code, 0, paused.err);
   assert.match(paused.out, /admission is closed by owner: the owner's pause/, paused.out);
@@ -1703,7 +1709,7 @@ test('once after the bin\'s pause claims nothing, and after its resume claims as
   assert.deepEqual((await paused.model()).writes(), []);
   assert.deepEqual(paused.agentRuns(), []);
 
-  owner('resume', paused.consumer);
+  owner('resume', paused.consumer, paused.fake);
   const resumed = paused.rerun();
   assert.deepEqual(await columnsOf(resumed), await columnsOf(base), resumed.err);
   assert.deepEqual(await columnsOf(resumed), { 10: 'Coding', 20: 'Ready' });

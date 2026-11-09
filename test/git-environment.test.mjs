@@ -364,17 +364,23 @@ function spawnedBy(inside) {
 function everySpawn() {
   const calls = [];
   for (const { at, source } of everySource()) {
+    // A local `spawn` parameter is not a child-process call when the file imports no such API.
+    if (!/from 'node:child_process'/.test(source)) continue;
     const { tokens } = tokensIn(source, at);
     for (let i = 1; i < tokens.length; i++) {
       const open = tokens[i];
       const callee = tokens[i - 1];
       if (open.kind !== 'punct' || open.value !== '(') continue;
       if (callee.kind !== 'word' || !SPAWNERS.has(callee.value)) continue;
-      // A spawner is reached through the name the file imported, so a callee behind a dot is some
-      // other function of that name — `/re/.exec(text)` rather than `node:child_process`'s.
-      if (tokens[i - 2]?.value === '.') continue;
+      // L0 imports the API as a namespace. Its getter is not a call, but a later actual call
+      // through that namespace must enter this census. Other dotted methods are unrelated.
+      const hostCall = at === 'src/substrate/host.mjs' && tokens[i - 2]?.value === '.'
+        && tokens[i - 3]?.value === 'childProcess';
+      if (tokens[i - 2]?.value === '.' && !hostCall) continue;
       let end = i + 1;
       while (end < tokens.length && tokens[end].depth > open.depth) end++;
+      // A host's method or getter declares an answer; it does not start a child process.
+      if (tokens[end + 1]?.value === '{') continue;
       const inside = tokens.slice(i + 1, end);
       calls.push({
         where: `${at}:${open.line}`,
@@ -405,8 +411,9 @@ test('nothing spawns a process without the import that is the only way to spawn 
   // process can only be started through `node:child_process`, so the files that import it and
   // the files a spawner call was found in have to be the same set. A spawner reached another way
   // is a file in the first list and not the second.
+  // The L0 host exposes imported APIs as getters; no process starts in that module.
   const importers = everySource()
-    .filter(({ source }) => /from 'node:child_process'/.test(source))
+    .filter(({ at, source }) => at !== 'src/substrate/host.mjs' && /from 'node:child_process'/.test(source))
     .map(({ at }) => at);
   const spawners = [...new Set(everySpawn().map((call) => call.where.split(':')[0]))];
   assert.deepEqual(spawners.sort(), importers.sort());

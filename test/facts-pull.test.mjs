@@ -533,7 +533,7 @@ test('through L2\'s facts call, a Coding card\'s markers are read at the card\'s
 });
 
 
-// proves R-WORK-36
+// proves R-WORK-41
 test('closed history in Done null or Backlog causes neither workflow reads nor cleanup while an otherwise identical Owner card cleans', async () => {
   for (const column of [COLUMNS.done, null, 'Backlog', COLUMNS.owner]) {
     let removals = 0;
@@ -558,7 +558,7 @@ test('closed history in Done null or Backlog causes neither workflow reads nor c
   }
 });
 
-// proves R-WORK-36
+// proves R-WORK-41
 test('a failed branch or later closed-history pull read rejects the whole facts snapshot before any cleanup or claim', async () => {
   for (const operation of ['readBranches', 'readPullRequests']) for (const message of ['gh: HTTP 502', 'gh: request timed out']) {
     let removals = 0;
@@ -576,7 +576,9 @@ test('a failed branch or later closed-history pull read rejects the whole facts 
       return answer;
     };
     await assert.rejects(built.loop.pull(), (error) => {
-      assert.equal(error.cause, failure);
+      assert.equal(error.cause?.message, failure.message);
+      assert.equal(error.cause?.code, failure.code);
+      assert.deepEqual(error.cause?.unreadable, failure.unreadable);
       assert.match(error.message, /card #/);
       assert.ok(error.message.includes(operation));
       assert.ok(error.message.includes(message));

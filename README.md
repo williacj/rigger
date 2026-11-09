@@ -142,7 +142,8 @@ settings.
 repository. Rigger contains the process groups it creates, and the processes of your user that
 work in the directory it made for a dispatch or below it. When a dispatch ends, Rigger ends every
 process left in its group or working in its directory, unless Rigger itself is killed outright.
-Rigger ends a process of yours working in a running dispatch's directory, such as a shell, when
+Where Rigger's own exit runs past a fixed time, it ends each remaining group without searching that group's directories, and its next start ends what remains in them. Until that start, such a process keeps running.
+Otherwise, Rigger ends a process of yours working in a running dispatch's directory, such as a shell, when
 that dispatch ends. A process that leaves its group and works elsewhere is outside that
 containment. Rigger cannot make an agent more restricted than the account it runs under.
 An agent running as you can still post a verdict in your name with `gh`, or confirm one with
@@ -193,7 +194,7 @@ evidence that would bring it back.
   and labels.
 - [`gh`](https://cli.github.com/), authenticated with access to that repository and board.
 - One coding-agent CLI, authenticated. Claude Code is the default adapter; Codex is shipped beside it.
-- Node.js 26 or later.
+- Node.js 24 or later.
 - **macOS** today. **Windows** is planned through WSL2, pending a spike; native Windows is not in
   v0. Linux is untested as a host in its own right, though the WSL2 route runs on it.
 - The owner provisions the forge settings needed by the required check; see
@@ -216,9 +217,9 @@ npx @williacj/rigger doctor        # check Node, gh auth, agent CLI auth, config
 npx @williacj/rigger setup-board   # create the board columns, fields, and labels
 npx @williacj/rigger plan          # show what the next run would pull, and what it refuses
 npx @williacj/rigger once          # pull and finish one card, then exit
-npx @williacj/rigger run           # run until the board drains
+npx @williacj/rigger run           # run until the board drains, or, while a clock trigger is declared, until stopped
 npx @williacj/rigger pause         # stop admitting new cards; in-flight cards finish
-npx @williacj/rigger resume        # reopen admission
+npx @williacj/rigger resume        # reopen admission and close the status issue
 npx @williacj/rigger report        # derive the signals from the event stream
 npx @williacj/rigger verdict <pr> <verdict>  # post your verdict on a pull request, once you confirm it
 ```
@@ -247,7 +248,7 @@ changes your host, so you install it yourself. In these steps, `<uid>` is what `
    | `__PATH__` | a `PATH` that reaches `node`, `gh`, `claude` and `codex` (`ARCHITECTURE.md`, "Triggers", "The environment") |
    | `__HOME__` | your home directory |
    | `__START_INTERVAL__` | the seconds launchd waits, after a run exits, before starting the next |
-   | `__EXIT_TIMEOUT__` | the seconds launchd waits at the job's exit, at least the bound `ARCHITECTURE.md`'s "Triggers" sets |
+   | `__EXIT_TIMEOUT__` | the seconds launchd waits at the job's exit, at least the bound `ARCHITECTURE.md`'s "Triggers" sets; 60 is enough on every macOS Rigger supports |
 
 3. Install the job, re-install it, or apply an edit to the plist, with these two commands:
 

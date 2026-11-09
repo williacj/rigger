@@ -284,6 +284,12 @@ test('a config still holding a starter placeholder is refused, and the refusal n
     assert.ok(refused.includes(`\`${path}\``), `\`${path}\` holding its placeholder earned a refusal that does not name it: ${refused}`);
     assert.ok(refused.includes(placeholder), `\`${path}\` holding \`${placeholder}\` earned a refusal that does not name it: ${refused}`);
   }
+  // Pin the shipped repo value independently of the shape-driven scenarios above.
+  assert.deepEqual(validate(rigger), []);
+  const repoRefusals = validate({ ...rigger, repo: 'OWNER/REPOSITORY' });
+  assert.equal(repoRefusals.length, 1, 'literal starter repo OWNER/REPOSITORY must be refused');
+  assert.ok(repoRefusals[0].includes('`repo`'), repoRefusals[0]);
+  assert.ok(repoRefusals[0].includes('OWNER/REPOSITORY'), repoRefusals[0]);
 });
 
 test('a declaration that holds no declarations is refused wherever it sits, and the refusal names it', () => {

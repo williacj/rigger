@@ -1,5 +1,6 @@
 // ABOUTME: Executes the protected cancellation literal with independent bounded API scripts and checks its isolated job.
 import { test } from 'node:test';
+import { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseWorkflow, evaluateCiPolicy, ciFacts, ciProof } from './ci-policy-fixtures.mjs';
@@ -14,7 +15,10 @@ test('cancellation controller isolates Node 26 and grants Actions write only to 
   assert.equal(job['runs-on'], 'ubuntu-latest');
   assert.deepEqual(job.permissions, { actions: 'write', 'pull-requests': 'read' });
   assert.deepEqual(ci.permissions, { contents: 'read', 'pull-requests': 'read' });
-  for (const [name, other] of Object.entries(ci.jobs)) if (name !== 'cancel_superseded') assert.ok(readOnlyPermissions(other.permissions), name);
+  for (const [name, other] of Object.entries(ci.jobs)) {
+    if (name === 'host-record') assert.deepEqual(other.permissions, { issues: 'write' });
+    else if (name !== 'cancel_superseded') assert.ok(readOnlyPermissions(other.permissions), name);
+  }
   assert.ok(job.if.includes("github.event_name == 'pull_request'"));
   assert.ok(job.if.includes('github.event.pull_request.head.repo.full_name == github.repository'));
   assert.ok(job.if.includes("needs.plan.outputs.snapshot != ''"));
@@ -24,7 +28,10 @@ test('cancellation controller isolates Node 26 and grants Actions write only to 
   assert.equal(job.steps[1].env.CI_EXPECTED_SOURCE, '${{ needs.plan.outputs.snapshot }}');
   assert.deepEqual(ci.jobs.check.needs, ['plan', 'fast', 'full_ordinary', 'full_host', 'demo', 'cancel_superseded']);
   assert.equal(ci.concurrency, undefined);
-  for (const j of Object.values(ci.jobs)) assert.equal(j.concurrency, undefined);
+  for (const [name, j] of Object.entries(ci.jobs)) {
+    if (name === 'host-record') assert.deepEqual(j.concurrency, { group: 'ci-host-record', 'cancel-in-progress': 'false', queue: 'max' });
+    else assert.equal(j.concurrency, undefined);
+  }
 });
 
 test('permission fence rejects GitHub write-all scalar and preserves read-only forms', () => {
@@ -50,6 +57,25 @@ try {
 } finally {
   if (had) process.env.CI_CANCEL_ACTION = saved; else delete process.env.CI_CANCEL_ACTION;
 }
+
+// CI_CANCEL requestApi supplies AbortSignal.timeout's returned signal to send; its
+// configured delay is asserted while the test supplies a signal with no host deadline.
+async function requestWithAbort(path, { send, ...options }) {
+  const signal = new AbortController().signal;
+  const timeout = mock.method(AbortSignal, 'timeout', delay => {
+    assert.equal(delay, 30_000);
+    return signal;
+  });
+  try {
+    return await controller.requestApi(path, { ...options, send: (url, request) => {
+      assert.equal(request.signal, signal);
+      return send(url, request);
+    } });
+  } finally {
+    timeout.mock.restore();
+  }
+}
+
 const root = '/repos/williacj/rigger';
 const current = 'd'.repeat(40), old = 'a'.repeat(40);
 const repo = { id: 44, full_name: 'williacj/rigger' };
@@ -244,8 +270,11 @@ test('cancellation refuses incomplete discovery and malformed attribution before
   for (const corrupt of corruptions) {
     const f = input(), script = [...start(f), list('queued', [run(60, old, 10)]), ...pages().slice(1)];
     corrupt(script.at(-1)[2]);
-    const answer = await execute(f, script, true);
-    assert.match(answer.error, /discovery/); assert.ok(answer.calls.every(([method]) => method === 'GET'));
+    if (script.at(-1)[2].body?.total_count === 1) {
+      const repeated = list('queued'); repeated[2].body.total_count = 1; script.push(repeated);
+    }
+    const disagreed = script.at(-1)[2].body?.total_count === 1, answer = await execute(f, script, !disagreed);
+    if (!disagreed) assert.match(answer.error, /discovery/); assert.ok(answer.calls.every(([method]) => method === 'GET'));
   }
   for (const change of [t => { t.event = ''; }, t => { t.event = 'unknown-event'; }, t => { t.repository.full_name = ''; }, t => { t.path = 'unknown'; }, t => { t.id = 0; }, t => { t.head_sha = 'BAD'; }, t => { delete t.path; }, t => { t.workflow_id = '55'; }, t => { t.run_attempt = 0; }, t => { t.pull_requests.push(assoc()); }, t => { delete t.head_repository; }, t => { delete t.pull_requests[0].base.repo.id; }]) {
     const f = input(), target = run(60, old, 10); change(target);
@@ -361,12 +390,12 @@ test('cancellation treats 202 as acceptance only and handles 409 once without re
 test('cancellation HTTP adapter uses fixed scoped routes manual redirects and configured abort', async () => {
   const calls = [];
   const send = async (url, options) => { calls.push({ url, options }); return new Response('{"id":80}', { status: 200 }); };
-  assert.deepEqual(await controller.requestApi(root + '/actions/runs/80', { send, token: 'synthetic-token' }), { status: 200, body: { id: 80 }, link: null });
+  assert.deepEqual(await requestWithAbort(root + '/actions/runs/80', { send, token: 'synthetic-token' }), { status: 200, body: { id: 80 }, link: null });
   assert.equal(calls[0].url, 'https://api.github.com/repos/williacj/rigger/actions/runs/80');
   assert.equal(calls[0].options.method, 'GET'); assert.equal(calls[0].options.redirect, 'manual');
   assert.equal(calls[0].options.headers.authorization, 'Bearer synthetic-token');
   assert.ok(calls[0].options.signal instanceof AbortSignal); assert.equal(calls[0].options.signal.aborted, false);
-  const accepted = await controller.requestApi(root + '/actions/runs/60/cancel', { method: 'POST', token: 'synthetic-token', send: async () => new Response('', { status: 202 }) });
+  const accepted = await requestWithAbort(root + '/actions/runs/60/cancel', { method: 'POST', token: 'synthetic-token', send: async () => new Response('', { status: 202 }) });
   assert.deepEqual(accepted, { status: 202, body: null, link: null });
   for (const response of [
     () => new Response('{}', { status: 302, headers: { location: 'https://evil.test' } }),
@@ -374,11 +403,11 @@ test('cancellation HTTP adapter uses fixed scoped routes manual redirects and co
     () => new Response('{}', { status: 200, headers: { link: '<https://api.github.com/next>; rel="next"' } }),
     () => new Response('{}', { status: 200, headers: { 'content-length': '10' } }),
     () => new Response('{', { status: 200 }),
-  ]) await assert.rejects(controller.requestApi(root + '/actions/runs/80', { token: 'synthetic-token', send: async () => response() }));
+  ]) await assert.rejects(requestWithAbort(root + '/actions/runs/80', { token: 'synthetic-token', send: async () => response() }));
   for (const path of ['https://evil.test/run', root + '/actions/runs/60/force-cancel', '/repos/other/repo/actions/runs/60', root + '/actions/runs/0/cancel']) {
-    await assert.rejects(controller.requestApi(path, { method: 'POST', token: 'synthetic-token', send: async () => assert.fail('unsafe route reached transport') }), /API scope/);
+    await assert.rejects(requestWithAbort(path, { method: 'POST', token: 'synthetic-token', send: async () => assert.fail('unsafe route reached transport') }), /API scope/);
   }
-  await assert.rejects(controller.requestApi(root + '/actions/runs/80', { token: '', send }), /API scope/);
+  await assert.rejects(requestWithAbort(root + '/actions/runs/80', { token: '', send }), /API scope/);
   assert.ok(ci.jobs.cancel_superseded.env.CI_CANCEL.includes('AbortSignal.timeout(30_000)'));
 });
 
@@ -472,7 +501,7 @@ test('older-head cancellation composes its actual HTTP adapter and sends the exa
     assert.ok(options.signal instanceof AbortSignal); assert.equal(options.signal.aborted, false);
     return new Response(expected[3] === null ? '' : JSON.stringify(expected[3]), { status: expected[2] });
   };
-  const result = await controller.cancelSuperseded({ ...f, request: (path, options) => controller.requestApi(path, { ...options, send, token: 'synthetic-composed-token' }), log: () => {} });
+  const result = await controller.cancelSuperseded({ ...f, request: (path, options) => requestWithAbort(path, { ...options, send, token: 'synthetic-composed-token' }), log: () => {} });
   assert.deepEqual(result, { accepted: [60], completed: [] }); assert.deepEqual(script, []);
 });
 
@@ -484,18 +513,18 @@ test('decoded CI response budget accepts exact bound and rejects oversized valid
   assert.equal(Buffer.byteLength(oversized), limit + 1);
   assert.equal(JSON.parse(oversized).length, limit - 1, 'oversized fixture must remain valid JSON');
   const response = body => new Response(body, { status: 200, headers: { 'content-length': String(Buffer.byteLength(body)) } });
-  const accepted = await controller.requestApi(root + '/actions/runs/80', { token: 'synthetic-token', send: async () => response(exact) });
+  const accepted = await requestWithAbort(root + '/actions/runs/80', { token: 'synthetic-token', send: async () => response(exact) });
   assert.equal(accepted.status, 200); assert.equal(accepted.body.length, limit - 2);
-  await assert.rejects(controller.requestApi(root + '/actions/runs/80', { token: 'synthetic-token', send: async () => response(oversized) }), { message: 'API body incomplete' });
+  await assert.rejects(requestWithAbort(root + '/actions/runs/80', { token: 'synthetic-token', send: async () => response(oversized) }), { message: 'API body incomplete' });
 });
 
 test('CI response decoding rejects invalid UTF8 inside valid JSON syntax', async () => {
   const invalid = new Uint8Array([123, 34, 120, 34, 58, 34, 255, 34, 125]);
   assert.deepEqual(JSON.parse(new TextDecoder().decode(invalid)), { x: '\uFFFD' }, 'lossy decoding would leave valid JSON');
   const valid = JSON.stringify({ x: '\uFFFD' });
-  const accepted = await controller.requestApi(root + '/actions/runs/80', { token: 'synthetic-token', send: async () => new Response(valid, { status: 200 }) });
+  const accepted = await requestWithAbort(root + '/actions/runs/80', { token: 'synthetic-token', send: async () => new Response(valid, { status: 200 }) });
   assert.deepEqual(accepted.body, { x: '\uFFFD' });
-  await assert.rejects(controller.requestApi(root + '/actions/runs/80', { token: 'synthetic-token', send: async () => new Response(invalid, { status: 200 }) }), TypeError);
+  await assert.rejects(requestWithAbort(root + '/actions/runs/80', { token: 'synthetic-token', send: async () => new Response(invalid, { status: 200 }) }), TypeError);
 });
 
 async function diagnosed(f, script, failure = false) {
@@ -528,10 +557,11 @@ test('discovery page shape refusals explain the bounded count and list failure b
   for (const sample of cases) {
     const f = input(), page = list('waiting', []);
     sample.change(page[2]);
-    const answer = await diagnosed(f, [...start(f), list('queued', [run(60, old, 10)]), list('in_progress'), page], true);
-    assert.match(answer.error, /discovery incomplete/, sample.name);
+    const repeated = list('queued'); repeated[2].body.total_count = 1;
+    const answer = await diagnosed(f, [...start(f), list('queued', [run(60, old, 10)]), list('in_progress'), page, ...(sample.name === 'mismatched list' ? [repeated] : [])], sample.name !== 'mismatched list');
+    assert.equal(answer.error, sample.name === 'mismatched list' ? undefined : 'discovery incomplete', sample.name);
     assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), [], sample.name);
-    assert.deepEqual(answer.diagnostics, [{ action: 'discovery-refused', query: 'waiting', reason: sample.reason, ...(sample.count === undefined ? {} : { count: sample.count }), ...(sample.length === undefined ? {} : { length: sample.length }) }], sample.name);
+    assert.deepEqual(answer.diagnostics, [{ action: 'discovery-refused', query: 'waiting', reason: sample.reason, ...(sample.count === undefined ? {} : { count: sample.count }), ...(sample.length === undefined ? {} : { length: sample.length }) }, ...(sample.name === 'mismatched list' ? [{ action: 'discovery-recovering', epoch: 1 }, { action: 'discovery-refused', query: 'queued', reason: 'count/list mismatch', count: 1, length: 0 }] : [])], sample.name);
   }
 });
 
@@ -561,7 +591,7 @@ test('pre-page API failures name the active query and a safe refusal class once'
     { reason: 'pagination incomplete', response: async () => new Response('{}', { headers: { link: '<https://api.github.com/next>; rel="next"' } }) },
   ];
   for (const sample of samples) {
-    const f = input(), request = ['GET', route, () => controller.requestApi(route, { token: 'synthetic-token-secret', send: sample.response })];
+    const f = input(), request = ['GET', route, () => requestWithAbort(route, { token: 'synthetic-token-secret', send: sample.response })];
     const answer = await diagnosed(f, [...start(f), ...pages().slice(0, 4), request], true);
     assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), [], sample.reason);
     assert.deepEqual(answer.diagnostics, [{ action: 'discovery-refused', query: 'requested', reason: sample.reason }], sample.reason);
@@ -596,11 +626,285 @@ test('discovery records numeric redirect and malformed error statuses before par
   ];
   for (const response of samples) {
     const f = input();
-    const request = ['GET', route, () => controller.requestApi(route, { token: 'synthetic-token-secret', send: async () => response })];
+    const request = ['GET', route, () => requestWithAbort(route, { token: 'synthetic-token-secret', send: async () => response })];
     const answer = await diagnosed(f, [...start(f), list('queued', [run(60, old, 10)]), ...pages().slice(1, 4), request], true);
     assert.match(answer.error, /discovery incomplete/);
     assert.deepEqual(answer.diagnostics, [{ action: 'discovery-refused', query: 'requested', reason: 'HTTP status', httpStatus: response.status }]);
     assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), []);
     assert.doesNotMatch(JSON.stringify(answer.diagnostics) + answer.error, /synthetic-(redirect|location|error|token)/);
   }
+});
+
+// The queued 1/0 observation is retained in #1156 from run41145716306; the
+// replacement empty pages are controlled responses, not a GitHub convergence claim.
+// These literal routes independently bound the recovery to one complete fresh scan.
+test('discovery recovers from observed queued count one list zero with a complete fresh empty epoch', async () => {
+  const f = input(), calls = [], diagnostics = [], previous = console.error;
+  const script = [
+    ['GET', '/repos/williacj/rigger/actions/runs/80', { status: 200, body: run(), link: null }],
+    ['GET', '/repos/williacj/rigger/actions/workflows/ci.yml', { status: 200, body: { id: 55, path: '.github/workflows/ci.yml' }, link: null }],
+    ['GET', '/repos/williacj/rigger/pulls/7', { status: 200, body: f.pr, link: null }],
+    ['GET', '/repos/williacj/rigger/actions/workflows/55/runs?event=pull_request&exclude_pull_requests=false&status=queued&per_page=100&page=1', { status: 200, body: { total_count: 1, workflow_runs: [] }, link: null }],
+    ['GET', '/repos/williacj/rigger/actions/workflows/55/runs?event=pull_request&exclude_pull_requests=false&status=queued&per_page=100&page=1', { status: 200, body: { total_count: 0, workflow_runs: [] }, link: null }],
+    ['GET', '/repos/williacj/rigger/actions/workflows/55/runs?event=pull_request&exclude_pull_requests=false&status=in_progress&per_page=100&page=1', { status: 200, body: { total_count: 0, workflow_runs: [] }, link: null }],
+    ['GET', '/repos/williacj/rigger/actions/workflows/55/runs?event=pull_request&exclude_pull_requests=false&status=waiting&per_page=100&page=1', { status: 200, body: { total_count: 0, workflow_runs: [] }, link: null }],
+    ['GET', '/repos/williacj/rigger/actions/workflows/55/runs?event=pull_request&exclude_pull_requests=false&status=pending&per_page=100&page=1', { status: 200, body: { total_count: 0, workflow_runs: [] }, link: null }],
+    ['GET', '/repos/williacj/rigger/actions/workflows/55/runs?event=pull_request&exclude_pull_requests=false&status=requested&per_page=100&page=1', { status: 200, body: { total_count: 0, workflow_runs: [] }, link: null }],
+  ];
+  const expectedCalls = script.map(([method, path]) => [method, path]);
+  let result, error;
+  console.error = line => diagnostics.push(JSON.parse(line));
+  try {
+    result = await controller.cancelSuperseded({ ...f, request: async (path, options = {}) => {
+      const actual = [options.method ?? 'GET', path]; calls.push(actual);
+      const expected = script.shift(); assert.ok(expected, 'unexpected recovery request');
+      assert.deepEqual(actual, expected.slice(0, 2));
+      return structuredClone(expected[2]);
+    }, log: () => {} });
+  } catch (caught) { error = caught; }
+  finally { console.error = previous; }
+  assert.equal(error, undefined, 'one valid queued count/list disagreement must permit the fresh complete epoch');
+  assert.deepEqual(result, { accepted: [], completed: [] });
+  assert.deepEqual(calls, expectedCalls);
+  assert.equal(calls.length, 9);
+  assert.deepEqual(calls.filter(([method]) => method === 'POST'), []);
+  assert.deepEqual(script, []);
+  assert.deepEqual(diagnostics, [
+    { action: 'discovery-refused', query: 'queued', reason: 'count/list mismatch', count: 1, length: 0 },
+    { action: 'discovery-recovering', epoch: 1 },
+    { action: 'discovery-recovered', epoch: 2 },
+  ]);
+});
+
+// C2/C2a/C2b: fresh cancellation must never consult a discarded candidate or identity.
+test('fresh discovery discards earlier candidates and immutable identities before its sole cancellation', async () => {
+  const f = input(), absent = run(60, old, 10), discarded = run(61, old, 11);
+  const fresh = { ...run(61, 'b'.repeat(40), 11), run_attempt: 2 };
+  const script = [
+    ...start(f),
+    ['GET', '/repos/williacj/rigger/actions/workflows/55/runs?event=pull_request&exclude_pull_requests=false&status=queued&per_page=100&page=1', { status: 200, body: { total_count: 2, workflow_runs: [absent, discarded] }, link: null }],
+    ['GET', '/repos/williacj/rigger/actions/workflows/55/runs?event=pull_request&exclude_pull_requests=false&status=in_progress&per_page=100&page=1', { status: 200, body: { total_count: 1, workflow_runs: [] }, link: null }],
+    ['GET', '/repos/williacj/rigger/actions/workflows/55/runs?event=pull_request&exclude_pull_requests=false&status=queued&per_page=100&page=1', { status: 200, body: { total_count: 1, workflow_runs: [fresh] }, link: null }],
+    ['GET', '/repos/williacj/rigger/actions/workflows/55/runs?event=pull_request&exclude_pull_requests=false&status=in_progress&per_page=100&page=1', { status: 200, body: { total_count: 0, workflow_runs: [] }, link: null }],
+    ['GET', '/repos/williacj/rigger/actions/workflows/55/runs?event=pull_request&exclude_pull_requests=false&status=waiting&per_page=100&page=1', { status: 200, body: { total_count: 0, workflow_runs: [] }, link: null }],
+    ['GET', '/repos/williacj/rigger/actions/workflows/55/runs?event=pull_request&exclude_pull_requests=false&status=pending&per_page=100&page=1', { status: 200, body: { total_count: 0, workflow_runs: [] }, link: null }],
+    ['GET', '/repos/williacj/rigger/actions/workflows/55/runs?event=pull_request&exclude_pull_requests=false&status=requested&per_page=100&page=1', { status: 200, body: { total_count: 0, workflow_runs: [] }, link: null }],
+    ['GET', '/repos/williacj/rigger/actions/runs/61', { status: 200, body: fresh, link: null }],
+    ['GET', '/repos/williacj/rigger/pulls/7', { status: 200, body: f.pr, link: null }],
+    ['GET', '/repos/williacj/rigger/actions/runs/61', { status: 200, body: fresh, link: null }],
+    ['GET', '/repos/williacj/rigger/actions/runs/80', { status: 200, body: run(), link: null }],
+    ['POST', '/repos/williacj/rigger/actions/runs/61/cancel', { status: 202, body: null, link: null }],
+  ];
+  const expectedCalls = script.map(([method, path]) => [method, path]);
+  const answer = await diagnosed(f, script);
+  assert.deepEqual(answer.result, { accepted: [61], completed: [] });
+  assert.deepEqual(answer.calls, expectedCalls);
+  assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), [['POST', '/repos/williacj/rigger/actions/runs/61/cancel']]);
+  assert.ok(!answer.calls.some(([, path]) => path === '/repos/williacj/rigger/actions/runs/60'));
+  assert.deepEqual(answer.logs.filter(entry => entry.action === 'cancel-request').map(entry => [entry.target, entry.targetHead, entry.targetAttempt]), [[61, 'b'.repeat(40), 2]]);
+});
+
+const disagreement = (status = 'queued', count = 1, rows = []) => {
+  const page = list(status, rows); page[2].body.total_count = count; return page;
+};
+
+test('a second discovery disagreement cancels nothing and ends success after exactly ten listing reads without a third epoch', async () => {
+  const f = input();
+  const script = [...start(f), list('queued', [run(60, old, 10)]), ...pages().slice(1, 4), disagreement('requested'), ...pages().slice(0, 4), disagreement('requested')];
+  const expectedCalls = script.map(([method, path]) => [method, path]);
+  const answer = await diagnosed(f, script);
+  assert.equal(answer.error, undefined);
+  assert.deepEqual(answer.result, { accepted: [], completed: [] });
+  assert.deepEqual(answer.calls, expectedCalls);
+  assert.equal(answer.calls.length, 13);
+  assert.equal(answer.calls.filter(([, path]) => path.includes('/runs?')).length, 10);
+  assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), []);
+  assert.deepEqual(answer.logs, [{ action: 'cancelled-nothing', reason: 'count and list disagreed on a second discovery', query: 'requested', count: 1, length: 0 }]);
+  assert.deepEqual(answer.diagnostics, [
+    { action: 'discovery-refused', query: 'requested', reason: 'count/list mismatch', count: 1, length: 0 },
+    { action: 'discovery-recovering', epoch: 1 },
+    { action: 'discovery-refused', query: 'requested', reason: 'count/list mismatch', count: 1, length: 0 },
+  ]);
+});
+
+test('bounded cardinality disagreement recovers at every status for counts above and below list length', async () => {
+  const statuses = ['queued', 'in_progress', 'waiting', 'pending', 'requested'];
+  for (const [index, status] of statuses.entries()) {
+    for (const [count, rows] of [[1, []], [0, [run(60, old, 10)]], [2, []]]) {
+      const f = input(), script = [...start(f), ...pages().slice(0, index), disagreement(status, count, rows), ...pages()];
+      const expectedCalls = script.map(([method, path]) => [method, path]);
+      const answer = await diagnosed(f, script);
+      assert.deepEqual(answer.result, { accepted: [], completed: [] });
+      assert.deepEqual(answer.calls, expectedCalls);
+      assert.equal(answer.calls.filter(([, path]) => path.includes('/runs?')).length, index + 6);
+      assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), []);
+      assert.deepEqual(answer.logs, []);
+      assert.deepEqual(answer.diagnostics, [
+        { action: 'discovery-refused', query: status, reason: 'count/list mismatch', count, length: rows.length },
+        { action: 'discovery-recovering', epoch: 1 },
+        { action: 'discovery-recovered', epoch: 2 },
+      ]);
+    }
+  }
+});
+
+test('non-cardinality discovery failures remain immediate before and after the sole recovery opportunity', async () => {
+  const target = run(60, old, 10), conflict = { ...structuredClone(target), run_attempt: 2 };
+  const associationConflict = structuredClone(target); associationConflict.pull_requests[0].id = 71;
+  // Error doubles use requestApi's explicit refusal classes; abort remains a transport fault.
+  const samples = [
+    { response: { status: 403, body: { secret: 'synthetic-body-secret' }, link: null }, error: 'discovery incomplete', reason: 'HTTP status' },
+    ...['API transport failed', 'request aborted', 'API body incomplete', 'API decode failed', 'API JSON invalid'].map(message => ({ response: new Error(message), error: message })),
+    { response: { status: 200, body: { total_count: 1, workflow_runs: [] }, link: '<https://api.github.com/next>; rel="next"' }, error: 'API discovery pagination incomplete', reason: 'pagination incomplete' },
+    { response: { status: 200, body: { total_count: 1, workflow_runs: [] }, link: '<https://evil.test/page>; rel="last"' }, error: 'API discovery pagination incomplete', reason: 'pagination incomplete' },
+    { response: { status: 200, body: { total_count: 0.5, workflow_runs: [] }, link: null }, error: 'discovery incomplete', reason: 'count invalid' },
+    { response: { status: 200, body: { total_count: 101, workflow_runs: [] }, link: null }, error: 'discovery incomplete', reason: 'page limit reached' },
+    { response: { status: 200, body: { total_count: 1 }, link: null }, error: 'discovery incomplete', reason: 'list invalid' },
+    { response: { status: 200, body: { total_count: 1, workflow_runs: null }, link: null }, error: 'discovery incomplete', reason: 'list invalid' },
+    { response: { status: 200, body: { total_count: 0, workflow_runs: Array.from({ length: 101 }, () => target) }, link: null }, error: 'discovery incomplete', reason: 'list invalid' },
+    { response: { status: 200, body: { total_count: 0, workflow_runs: [{ ...target, head_sha: 'BAD' }] }, link: null }, error: 'run attribution invalid' },
+    { response: { status: 200, body: { total_count: 0, workflow_runs: [{ ...target, pull_requests: [{ id: 70, number: 7, head: { repo: { id: 0 } }, base: { repo: { id: 44 } } }] }] }, link: null }, error: 'run attribution invalid' },
+    { response: { status: 200, body: { total_count: 0, workflow_runs: [target, conflict] }, link: null }, error: 'conflicting run identity' },
+    { response: { status: 200, body: { total_count: 0, workflow_runs: [associationConflict] }, link: null }, error: 'conflicting run identity' },
+  ];
+  for (const recovered of [false, true]) {
+    for (const sample of samples) {
+      const f = input(), broken = ['GET', '/repos/williacj/rigger/actions/workflows/55/runs?event=pull_request&exclude_pull_requests=false&status=in_progress&per_page=100&page=1', sample.response];
+      const script = [...start(f), ...(recovered ? [disagreement()] : []), list('queued', [target]), broken];
+      const expectedCalls = script.map(([method, path]) => [method, path]);
+      const answer = await diagnosed(f, script, true);
+      assert.equal(answer.error, sample.error);
+      assert.deepEqual(answer.calls, expectedCalls);
+      assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), []);
+      assert.deepEqual(answer.logs, []);
+      assert.equal(answer.diagnostics.filter(entry => entry.action === 'discovery-recovering').length, recovered ? 1 : 0);
+      assert.equal(answer.diagnostics.filter(entry => entry.action === 'discovery-recovered').length, 0);
+      if (sample.reason) assert.equal(answer.diagnostics.at(-1).reason, sample.reason);
+      assert.doesNotMatch(JSON.stringify(answer.diagnostics) + answer.error, /synthetic-body-secret|evil\.test/);
+    }
+  }
+});
+
+test('fresh discovery preserves same-head profile self source order and completed exclusions', async () => {
+  const target = run(60, old, 10);
+  const samples = [
+    ...['ordinary', 'full', 'demo'].map(profile => [ { ...target, head_sha: current, profile }, false ]),
+    [run(), false], [{ ...target, run_number: 20 }, false], [{ ...target, run_number: 21 }, false],
+    [{ ...target, repository: { id: 45, full_name: 'other/repo' } }, true],
+    [{ ...target, workflow_id: 56, path: '.github/workflows/other.yml' }, true],
+    [{ ...target, pull_requests: [{ ...assoc(), id: 71, number: 8 }] }, true],
+    [{ ...target, event: 'push' }, true],
+    [{ ...target, head_repository: { id: 45, full_name: 'fork/rigger' } }, true],
+    [{ ...target, status: 'completed' }, true],
+  ];
+  for (const [excluded, needsDetail] of samples) {
+    const f = input(), script = [...start(f), disagreement(), list('queued', [excluded]), ...pages().slice(1), ...(needsDetail ? [get('/repos/williacj/rigger/actions/runs/60', excluded)] : [])];
+    const expectedCalls = script.map(([method, path]) => [method, path]);
+    const answer = await diagnosed(f, script);
+    assert.deepEqual(answer.result, { accepted: [], completed: [] });
+    assert.deepEqual(answer.calls, expectedCalls);
+    assert.equal(answer.calls.length, needsDetail ? 10 : 9);
+    assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), []);
+    assert.deepEqual(answer.logs, [{ action: 'exclude', target: excluded.id, reason: 'scope/order/head/status' }]);
+  }
+});
+
+test('fresh discovery still refuses final live PR target and own attempt changes before any POST', async () => {
+  const f = input(), target = run(60, old, 10);
+  const liveHead = structuredClone(f.pr); liveHead.head.sha = old;
+  const liveIdentity = { ...f.pr, id: 71 };
+  const samples = [
+    { final: [get('/repos/williacj/rigger/pulls/7', liveHead)], error: 'live PR identity changed' },
+    { final: [get('/repos/williacj/rigger/pulls/7', liveIdentity)], error: 'live PR identity changed' },
+    { final: [get('/repos/williacj/rigger/pulls/7', f.pr), get('/repos/williacj/rigger/actions/runs/60', { ...target, run_attempt: 2 })], error: 'target identity changed' },
+    { final: [get('/repos/williacj/rigger/pulls/7', f.pr), get('/repos/williacj/rigger/actions/runs/60', target), get('/repos/williacj/rigger/actions/runs/80', { ...run(), run_attempt: 2 })], error: 'own run identity changed' },
+  ];
+  for (const sample of samples) {
+    const script = [...start(f), disagreement(), list('queued', [target]), ...pages().slice(1), get('/repos/williacj/rigger/actions/runs/60', target), ...sample.final];
+    const expectedCalls = script.map(([method, path]) => [method, path]);
+    const answer = await diagnosed(f, script, true);
+    assert.equal(answer.error, sample.error);
+    assert.deepEqual(answer.calls, expectedCalls);
+    assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), []);
+    assert.deepEqual(answer.logs, []);
+    assert.deepEqual(answer.diagnostics.at(-1), { action: 'discovery-recovered', epoch: 2 });
+  }
+});
+
+test('fresh discovery resolves sparse agreeing status drift once before a single scoped POST', async () => {
+  const f = input(), target = { ...run(60, old, 10), status: 'in_progress' };
+  const queued = { ...run(60, old, 10), pull_requests: [] }, active = { ...target, pull_requests: [] };
+  const script = [...start(f), disagreement(), list('queued', [queued]), list('in_progress', [active]), ...pages().slice(2), get('/repos/williacj/rigger/actions/runs/60', target), ...recheck(f, target), ['POST', '/repos/williacj/rigger/actions/runs/60/cancel', { status: 202, body: null, link: null }]];
+  const expectedCalls = script.map(([method, path]) => [method, path]);
+  const answer = await diagnosed(f, script);
+  assert.deepEqual(answer.result, { accepted: [60], completed: [] });
+  assert.deepEqual(answer.calls, expectedCalls);
+  assert.equal(answer.calls.filter(([method, path]) => method === 'GET' && path === '/repos/williacj/rigger/actions/runs/60').length, 2);
+  assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), [['POST', '/repos/williacj/rigger/actions/runs/60/cancel']]);
+});
+
+test('fresh complete discovery accepts zero one and one hundred rows without target rechecks', async () => {
+  const f = input(), one = run(61, current, 10), hundred = Array.from({ length: 100 }, (_, index) => run(1000 + index, current, 10));
+  const script = [...start(f), disagreement(), list('queued'), list('in_progress', [one]), list('waiting', hundred), list('pending'), list('requested', [one])];
+  const expectedCalls = script.map(([method, path]) => [method, path]);
+  const answer = await diagnosed(f, script);
+  assert.deepEqual(answer.result, { accepted: [], completed: [] });
+  assert.deepEqual(answer.calls, expectedCalls);
+  assert.equal(answer.calls.length, 9);
+  assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), []);
+  assert.deepEqual(answer.diagnostics.at(-1), { action: 'discovery-recovered', epoch: 2 });
+});
+
+test('replacement discovery composes the timer-free HTTP adapter and refuses incomplete decode JSON and foreign pagination', async () => {
+  const route = '/repos/williacj/rigger/actions/workflows/55/runs?event=pull_request&exclude_pull_requests=false&status=queued&per_page=100&page=1';
+  const samples = [
+    { response: () => new Response('{"total_count":0,"workflow_runs":[]}', { headers: { 'content-length': '1' } }), error: 'API body incomplete', reason: 'body incomplete' },
+    { response: () => new Response(new Uint8Array([0x7b, 0x22, 0xff, 0x22, 0x7d])), error: 'API decode failed', reason: 'decode failed' },
+    { response: () => new Response('{"total_count":0,"workflow_runs":['), error: 'API JSON invalid', reason: 'JSON invalid' },
+    { response: () => new Response('{}', { headers: { link: '<https://evil.test/secret>; rel="last"' } }), error: 'API discovery pagination incomplete', reason: 'pagination incomplete' },
+  ];
+  for (const sample of samples) {
+    const f = input(), httpCalls = [];
+    const broken = ['GET', route, () => requestWithAbort(route, { token: 'synthetic-token-secret', send: async (url, options) => {
+      httpCalls.push([options.method, url]);
+      return sample.response();
+    } })];
+    const script = [...start(f), disagreement(), broken], expectedCalls = script.map(([method, path]) => [method, path]);
+    const answer = await diagnosed(f, script, true);
+    assert.equal(answer.error, sample.error);
+    assert.deepEqual(answer.calls, expectedCalls);
+    assert.deepEqual(httpCalls, [['GET', 'https://api.github.com/repos/williacj/rigger/actions/workflows/55/runs?event=pull_request&exclude_pull_requests=false&status=queued&per_page=100&page=1']]);
+    assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), []);
+    assert.deepEqual(answer.diagnostics.at(-1), { action: 'discovery-refused', query: 'queued', reason: sample.reason });
+    assert.doesNotMatch(JSON.stringify(answer.diagnostics) + answer.error, /secret|evil\.test/);
+  }
+});
+
+test('recovered cancellation preserves completion acceptance conflict and later-failure outcomes without write retry', async () => {
+  const f = input(), target = run(60, old, 10), done = { ...target, status: 'completed' };
+  const before = (...targets) => [...start(f), disagreement(), list('queued', targets), ...pages().slice(1), ...preflight(...targets)];
+  const conflict = ['POST', '/repos/williacj/rigger/actions/runs/60/cancel', { status: 409, body: {}, link: null }];
+  const samples = [
+    { final: recheck(f, done), result: { accepted: [], completed: [60] }, writes: [] },
+    { final: [...recheck(f, target), post(60)], result: { accepted: [60], completed: [] }, writes: [['POST', '/repos/williacj/rigger/actions/runs/60/cancel']] },
+    { final: [...recheck(f, target), conflict, get('/repos/williacj/rigger/actions/runs/60', done)], result: { accepted: [], completed: [60] }, writes: [['POST', '/repos/williacj/rigger/actions/runs/60/cancel']] },
+    { final: [...recheck(f, target), conflict, get('/repos/williacj/rigger/actions/runs/60', target)], error: 'cancel request conflict unresolved', writes: [['POST', '/repos/williacj/rigger/actions/runs/60/cancel']] },
+    { final: [...recheck(f, target), conflict, ['GET', '/repos/williacj/rigger/actions/runs/60', { status: 403, body: {}, link: null }]], error: 'API read failed', writes: [['POST', '/repos/williacj/rigger/actions/runs/60/cancel']] },
+  ];
+  for (const sample of samples) {
+    const script = [...before(target), ...sample.final], expectedCalls = script.map(([method, path]) => [method, path]);
+    const answer = await diagnosed(f, script, sample.error !== undefined);
+    assert.deepEqual(answer.calls, expectedCalls);
+    assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), sample.writes);
+    if (sample.error) assert.equal(answer.error, sample.error); else assert.deepEqual(answer.result, sample.result);
+    assert.deepEqual(answer.logs.filter(entry => entry.action === 'cancel-accepted'), sample.result?.accepted.length ? [{ action: 'cancel-accepted', target: 60, status: 202 }] : []);
+  }
+  const later = run(61, old, 11);
+  const script = [...before(target, later), ...recheck(f, target), post(60), ...recheck(f, later), ['POST', '/repos/williacj/rigger/actions/runs/61/cancel', { status: 403, body: {}, link: null }]];
+  const expectedCalls = script.map(([method, path]) => [method, path]);
+  const answer = await diagnosed(f, script, true);
+  assert.equal(answer.error, 'cancel request failed');
+  assert.deepEqual(answer.calls, expectedCalls);
+  assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), [['POST', '/repos/williacj/rigger/actions/runs/60/cancel'], ['POST', '/repos/williacj/rigger/actions/runs/61/cancel']]);
+  assert.deepEqual(answer.logs.filter(entry => entry.action === 'cancel-accepted'), [{ action: 'cancel-accepted', target: 60, status: 202 }]);
 });

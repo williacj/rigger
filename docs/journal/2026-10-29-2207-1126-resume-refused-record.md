@@ -1,0 +1,17 @@
+<!-- ABOUTME: Records why resume continues after a removal event is refused and what the focused tests observed. -->
+
+# Resume after a refused removal record
+
+At `origin/main` `4f43b740fa3078a0913c9483d0dab39f6e145722`, `admission.resume()` unlinked a closer and then threw when L5 refused its `admission.open` event. The verb stopped before closing status issues. The single-closer L3 test failed on that rejection; the first red run is retained in `1126-red-one.log` in the maker's scratch directory.
+
+L3 now collects each refused removal event after the unlink and continues through the other closers. It returns the refusals to the verb with the removals. The verb reports every refusal, still closes the issues when removal completed, and exits non-zero. A later unlink failure still stops step 2 and leaves the remaining closer; the accumulated refusal remains in the failure's report.
+
+The focused run at this worktree's uncommitted state passed the admission and resume cases, including a real L5 stream with accepted events on either side of a refused middle event. Its output is retained as `1126-real-record.log` and `1126-cells-value.log` in the maker's scratch directory. Full deterministic and host evidence will be recorded in the pull request at its final head.
+
+The resumed maker read U118 and confirmed the card's `acceptanceDigest()` as `80660375066d522e8cb136c01b5d18bd617ffef470347af9aaff9e2a6ac2c8e0`. G2 records CJ's U116 grant for the three existing resume-close test lines. The maker changed no acceptance text or authorship record.
+
+The one-closer and middle-of-three regression cases use real L5 append refusals so the merge-base comparison exercises the defect. The first resumed fixture attempt tried to chmod an absent stream after unlinking, which made the injected filesystem report ENOENT; `1126-focused-u118.log` preserves that invalid attempt. Creating the empty stream before the run establishes its premise. The corrected focused run, `1126-focused-u118-fixed.log`, passed all 90 cases at the uncommitted state.
+
+The full deterministic run on 2026-10-30 exited 1: tests=4227, pass=4218, fail=9. The output is retained as `1126-full-before-commit.log`. Its one-minute load was 2.61 at the start and 13.04 at the end. All failures are the parameterized resume cases at `test/hold-notice-loop.test.mjs:1062`, whose assertion at line 1070 reads `outcome.error`. The accepted behavior now returns `outcome.answer`; the directory assertion passes and the rejection-message assertion sees an empty string. G1 and G2 cover neither line in that file. The maker reported an `ambiguous` blocker on the card rather than changing those existing assertions or committing with a red suite.
+
+CJ's U125 and the PM's published G3 revision resolved that blocker. The maker confirmed the fresh live body at raw SHA-256 `d0d0210f6853c495f8681474610b14ae995620149c47591f7f215aa1fc3e31ff` and acceptance digest `99d6232d8de8fa88aa9e0977b6a114ef2337961a7e11c29e53e9fc24087ed9de`. The two existing assertions now inspect the returned refusal entries; all nine inputs, their fixture, removal assertion and sibling tests remain. Each case checks fulfillment, exactly one named refusal, string-valued fields, and text naming the closer and event. The focused run `1126-g3-focused.log` passed with tests=218, pass=218, fail=0. The earlier red run remains retained; the PR holds the committed-head deterministic, host and proof receipts.

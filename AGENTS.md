@@ -203,6 +203,7 @@ says how one merges. The paths:
 - The git hooks: `.githooks/`, and `templates/githooks/` with it, and what decides what they run:
   `test/suite.sh` and `package.json`, with any file the suite loads to place a test in a tier
   (`test/suite-guard.cjs` and `test/suite-path.cjs`), and the check that refuses growth in the two transitional lists: `.github/scripts/check-test-list-growth.mjs`.
+- The self-hosted runner's job guard: `.github/scripts/self-hosted-job-guard.cjs`.
 - The live config: `rigger.config.mjs`.
 - The live Codex configuration: `.codex/config.toml`, and the directory `templates/codex/` with it.
 - The CLI entry point: `src/cli/rigger.mjs`, which the package manifest declares as its bin.
@@ -213,7 +214,8 @@ says how one merges. The paths:
   `src/observation/sink.mjs`, `src/scheduling/admission.mjs`, `src/substrate/forge/assets.mjs`,
   `src/substrate/forge/graphql.mjs`, `src/substrate/forge/read.mjs`,
   `src/substrate/forge/runners.mjs`, `src/substrate/git-environment.mjs`,
-  `src/substrate/launchd.mjs`, `src/substrate/process.mjs`, `src/substrate/providers/adapters.mjs`,
+  `src/substrate/host.mjs`, `src/substrate/launchd.mjs`, `src/substrate/process.mjs`,
+  `src/substrate/providers/adapters.mjs`,
   `src/substrate/providers/claude.mjs`, `src/substrate/providers/codex.mjs`,
   `src/substrate/standard-error.mjs`, `src/substrate/worktrees.mjs`, `src/workflow/escalation.mjs`,
   `src/workflow/form-check.mjs`, `src/workflow/gate.mjs`, `src/workflow/judges.mjs`,

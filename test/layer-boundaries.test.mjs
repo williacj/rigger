@@ -231,9 +231,9 @@ test('rule 7: a module other than the process adapter importing cluster fails, s
   }
 });
 
-test('rule 7: the process adapter alone imports node:child_process', () => {
-  assert.deepEqual(messages({ 'src/substrate/process.mjs': 'import { spawnSync } from "node:child_process";' }), []);
-  assert.deepEqual(messages({ 'src/substrate/process.mjs': "import { spawnSync } from 'child_process';" }), []);
+test('rule 7: the real host alone imports node:child_process', () => {
+  assert.deepEqual(messages({ 'src/substrate/host.mjs': 'import { spawnSync } from "node:child_process";' }), []);
+  assert.deepEqual(messages({ 'src/substrate/host.mjs': "import { spawnSync } from 'child_process';" }), []);
 });
 
 /**
@@ -283,17 +283,17 @@ test('rule 7: a module other than the process adapter calling process.execve fai
   }
 });
 
-test('rule 7: the process adapter alone may call process.execve, however it spells the call', () => {
-  for (const source of EXECVE_SPELLINGS) assert.deepEqual(messages({ 'src/substrate/process.mjs': source }), [], source);
+test('rule 7: the real host alone may call process.execve, however it spells the call', () => {
+  for (const source of EXECVE_SPELLINGS) assert.deepEqual(messages({ 'src/substrate/host.mjs': source }), [], source);
 });
 
-test('rule 7: the process adapter alone may import cluster and call process.binding or process._linkedBinding, however it spells the call', () => {
+test('rule 7: the real host alone may import cluster and call process.binding or process._linkedBinding, however it spells the call', () => {
   const sources = [
     "import cluster from 'node:cluster';\nexport const go = () => cluster.fork();",
     "import cluster from 'cluster';\nexport const go = () => cluster.fork();",
     ...['binding', '_linkedBinding'].flatMap((method) => BINDING_SPELLINGS.map((template) => template.replaceAll('METHOD', method))),
   ];
-  for (const source of sources) assert.deepEqual(messages({ 'src/substrate/process.mjs': source }), []);
+  for (const source of sources) assert.deepEqual(messages({ 'src/substrate/host.mjs': source }), []);
 });
 
 /** The import forms of a module that bind nothing by name, or bind it whole, with SPEC for its specifier. */

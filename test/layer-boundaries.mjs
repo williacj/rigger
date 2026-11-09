@@ -77,8 +77,8 @@ const HELD = [
 ];
 
 /**
- * The modules that may spawn a process: L0's process adapter alone, through which every other
- * module spawns (the architect's ruling on #214, §5). Rule 7 refuses every other module each route
+ * The module that may spawn a process: L0's real host alone, through which the process adapter
+ * and every other module spawn (the architect's ruling on #214, §5). Rule 7 refuses every other module each route
  * to a spawn this test reads:
  * - importing `node:child_process` or `node:cluster`, whose `fork()` spawns, bare or prefixed, by
  *   any static form, a re-export or a dynamic `import()` of a fixed specifier (`SPAWN_MODULES`);
@@ -97,7 +97,7 @@ const HELD = [
  * The limit: a key the source does not fix, such as one built by joining strings, is outside both
  * lists, as #373 records for the code-generation rule beside `GENERATORS`.
  */
-const SPAWNERS = ['src/substrate/process.mjs'];
+const SPAWNERS = ['src/substrate/host.mjs'];
 const SPAWN_MODULES = ['node:child_process', 'child_process', 'node:cluster', 'cluster'];
 const BINDINGS = ['binding', '_linkedBinding'];
 const REPLACERS = ['execve'];
@@ -1424,7 +1424,7 @@ export function boundaryReport(tree) {
       }
       // Rule 7 names who may spawn; the refusal below still names what this test cannot follow.
       if (SPAWN_MODULES.includes(call.specifier) && !SPAWNERS.includes(file)) {
-        report(file, call.line, 'rule 7', `\`import(${call.argument})\` loads \`${call.specifier}\`, which only the process adapter may import`);
+        report(file, call.line, 'rule 7', `\`import(${call.argument})\` loads \`${call.specifier}\`, which only the real host may import`);
       }
       if (GENERATOR_MODULES.has(call.specifier)) {
         report(file, call.line, 'the code-generation rule', `\`import(${call.argument})\` loads \`${call.specifier}\`${GENERATOR_MODULES.get(call.specifier)}`);
@@ -1530,11 +1530,11 @@ export function boundaryReport(tree) {
     // Who may spawn a process, and who may name the forge's command.
     if (!SPAWNERS.includes(file)) {
       for (const entry of loaded) {
-        if (SPAWN_MODULES.includes(entry.from)) report(file, entry.line, 'rule 7', `it imports \`${entry.from}\`, which only the process adapter may`);
+        if (SPAWN_MODULES.includes(entry.from)) report(file, entry.line, 'rule 7', `it imports \`${entry.from}\`, which only the real host may`);
       }
       for (const { value, line, key } of [...module.names, ...module.strings]) {
-        if (BINDINGS.includes(value) && !key) report(file, line, 'rule 7', `it names \`${value}\`, a process method reaching Node's internal bindings and through them a spawn, and only the process adapter may spawn`);
-        if (REPLACERS.includes(value) && !key) report(file, line, 'rule 7', `it names \`${value}\`, a process method replacing the running process with another program, and only the process adapter may spawn`);
+        if (BINDINGS.includes(value) && !key) report(file, line, 'rule 7', `it names \`${value}\`, a process method reaching Node's internal bindings and through them a spawn, and only the real host may spawn`);
+        if (REPLACERS.includes(value) && !key) report(file, line, 'rule 7', `it names \`${value}\`, a process method replacing the running process with another program, and only the real host may spawn`);
       }
     }
     if (file !== RUNNERS) {

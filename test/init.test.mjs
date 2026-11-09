@@ -25,6 +25,7 @@ import { readEvents } from '../src/observation/sink.mjs';
 import { STATE } from '../src/cli/recording.mjs';
 import { NOT_STARTED } from '../src/substrate/process.mjs';
 import { runCommand } from '../src/substrate/process.mjs';
+import { realHost } from '../src/substrate/host.mjs';
 import riggerConfig from '../rigger.config.mjs';
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
@@ -78,8 +79,9 @@ const heldUnder = (repoRoot, directory) =>
  * or different here is a template edited alone; a file the repository holds under a provider's
  * directory that no template ships is an asset added alone, which would have this repository
  * building itself on something a consumer never receives.
+ * The reverse check uses the full shipped plan where the forward comparison omits a local file.
  */
-function divergences(repoRoot, files) {
+function divergences(repoRoot, files, shipped = files) {
   const fix = 'Templates are the source and these are the fork, so the two move together or not at all';
   const found = [];
   for (const file of files) {
@@ -92,7 +94,7 @@ function divergences(repoRoot, files) {
   }
   for (const directory of Object.values(PROVIDER_ASSETS)) {
     for (const path of heldUnder(repoRoot, directory)) {
-      if (!files.some((file) => file.path === path)) {
+      if (!shipped.some((file) => file.path === path)) {
         found.push(`\`${path}\` is an asset no template ships, so \`init\` would not produce it. ${fix}.`);
       }
     }
@@ -917,16 +919,21 @@ async function forThisRepository() {
     PLACEHOLDER.project,
     `this repository's \`${CONFIG}\` still holds \`${PLACEHOLDER.project}\`, so it names no board of its own`,
   );
-  return plan({ repo, project: riggerConfig.board.project }).filter(({ path }) => path !== CONFIG && !path.startsWith('.githooks/'));
+  return plan({ repo, project: riggerConfig.board.project }).filter(({ path }) => path !== CONFIG && !path.startsWith('.githooks/') && path !== '.codex/config.toml');
 }
 
-test('the repository comparison covers the full init plan except hooks and its local config', async () => {
+/** The complete plan, including shipped files whose repository copies deliberately differ. */
+async function shippedToThisRepository() {
+  return plan({ repo: await slugOf(root), project: riggerConfig.board.project });
+}
+
+test('the repository comparison covers the full init plan except hooks, its local config and its Codex declaration', async () => {
   const repo = await slugOf(root);
   const all = plan({ repo, project: riggerConfig.board.project });
   const compared = await forThisRepository();
   const omitted = all.filter((file) => !compared.some((held) => held.path === file.path)).map(({ path }) => path).sort();
-  assert.deepEqual(omitted, ['.githooks/pre-push', CONFIG]);
-  assert.deepEqual(compared.map(({ path }) => path), all.filter(({ path }) => path !== CONFIG && !path.startsWith('.githooks/')).map(({ path }) => path));
+  assert.deepEqual(omitted, ['.codex/config.toml', '.githooks/pre-push', CONFIG]);
+  assert.deepEqual(compared.map(({ path }) => path), all.filter(({ path }) => path !== CONFIG && !path.startsWith('.githooks/') && path !== '.codex/config.toml').map(({ path }) => path));
 });
 
 test('one changed byte in a planned .claude asset is named as a divergence', async () => {
@@ -970,7 +977,7 @@ test('this repository holds exactly what init produces for it, and nothing else'
   const files = await forThisRepository();
 
   assert.ok(files.length > 0, 'nothing is planned, so this compares nothing');
-  assert.deepEqual(divergences(root, files), []);
+  assert.deepEqual(divergences(root, files, await shippedToThisRepository()), []);
 });
 
 test('Rigger settings allow the measured maker edit and judge comment, and no other additions', () => {
@@ -1013,7 +1020,7 @@ test('a file under .claude that this repository does not hold is nobody\'s asset
       'git holds that file after all, so it is an asset and wants a template',
     );
 
-    assert.deepEqual(divergences(root, await forThisRepository()), []);
+    assert.deepEqual(divergences(root, await forThisRepository(), await shippedToThisRepository()), []);
   } finally {
     if (ours) rmSync(local, { force: true });
   }
@@ -1449,7 +1456,7 @@ async function cellOrigin(t, cell, { exitBeforeKill } = {}) {
   };
   const status = async (commandName, args, options) => {
     if (ps === undefined) return asked(commandName, args, options);
-    const result = await runCommand({ command: commandName, args, cwd: process.cwd(), env: gitEnvironment(), timeout: options.timeout, emitter: options.emitter, ps });
+    const result = await runCommand({ command: commandName, args, cwd: process.cwd(), env: gitEnvironment(), timeout: options.timeout, emitter: options.emitter, host: { ...realHost, ps } });
     if (exitBeforeKill !== undefined) note('origin.raw', { exit: result.exit, timedOut: result.timedOut, stdoutBase64: result.stdout.toString('base64'), stderrBase64: result.stderr.toString('base64') });
     return { status: result.exit, timedOut: result.timedOut, stdout: result.stdout.toString('utf8'), stderr: result.stderr.toString('utf8') };
   };

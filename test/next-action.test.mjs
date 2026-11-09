@@ -491,6 +491,23 @@ function withClosedLine(stage, { branch = false, closed = [{ number: 733, head: 
   return { ...given, forge: { ...given.forge, branch, closed, ...facts } };
 }
 
+// Removal identity follows the closed PR numbers and heads and the following maker, not page order.
+// proves R-WORK-41
+test('L2 identifies closed-card maker removal by stable closed numbers heads and its following action', () => {
+  const closed = [{ number: 9, head: 'b'.repeat(40), base: 'main' }, { number: 3, head: 'a'.repeat(40), base: 'release' }];
+  const answer = (closed, labels = ['type:change']) => nextAction({ ...withClosedLine('review', { closed }), labels }, KINDS);
+  const first = answer(closed);
+  const identity = nextActionModule.actionIdentity;
+
+  assert.deepEqual(first.closed, [{ number: 3, head: 'a'.repeat(40) }, { number: 9, head: 'b'.repeat(40) }]);
+  assert.deepEqual(first.following, { action: 'dispatch', kind: 'change' });
+  assert.equal(identity(first), identity(answer([...closed].reverse().map((pull) => ({ ...pull, base: 'another-base' })))), 'page order and unrelated base names do not create a removal');
+  assert.notEqual(identity(first), identity(answer([...closed, { number: 11, head: 'b'.repeat(40), base: 'main' }])), 'a new closed PR number is a new removal');
+  assert.notEqual(identity(first), identity(answer([{ ...closed[0], head: 'c'.repeat(40) }, closed[1]])), 'a changed closed head is a new removal');
+  assert.notEqual(identity(first), identity(answer(closed, ['type:spec'])), 'the following maker action participates in the identity');
+  assert.equal(nextAction(withClosedLine('owner', { closed }), KINDS, undefined, { sink: quiet }).closed, undefined, 'non-maker removals keep their existing shape');
+});
+
 // proves R-WORK-37, R-WORK-38, R-WORK-39
 test('L2 selects closed removal only for unlabelled Review or Owner cards with closed history and no open or merged pull', () => {
   for (const stage of ['review', 'owner']) for (const branch of [false, true]) {
@@ -585,7 +602,7 @@ test('closed history never wraps current attempt outcomes workspace failure make
     assert.equal(next.action, expected, JSON.stringify(options));
   }
   const ignoredInputs = nextAction(given, KINDS, undefined, { roles: PROVIDER_ROLES, sink: quiet, attempt: 2, workspace, outcomes: [{ unrelated: true }] });
-  assert.deepEqual(ignoredInputs, { action: 'remove', following: { action: 'dispatch', kind: 'change' } }, 'without provisioning the unrelated attempt inputs retain their old ignored meaning');
+  assert.deepEqual(ignoredInputs, { action: 'remove', closed: [{ number: 733, head: 'd6d079f3258e1b74aad7baf725895b8d74c5b315' }], following: { action: 'dispatch', kind: 'change' } }, 'without provisioning the unrelated attempt inputs retain their old ignored meaning');
 });
 
 // proves R-SCHED-27

@@ -12,6 +12,7 @@ const hostFiles = normalized(process.env.RIGGER_SUITE_HOST_FILES);
 const awaitingFiles = normalized(process.env.RIGGER_SUITE_AWAITING_FILES);
 const convertingFiles = normalized(process.env.RIGGER_SUITE_CONVERTING_FILES);
 const worker = process.env.NODE_TEST_CONTEXT === 'child-v8';
+const timerRefusalFile = process.env.RIGGER_SUITE_TIMER_REFUSALS;
 
 function globPattern(pattern) {
   let expression = '^';
@@ -95,7 +96,131 @@ if (worker && process.env.RIGGER_SUITE_MODE === 'host' && !awaitingFiles.has(fil
   };
 }
 
+function watchTimers(recordFile) {
+  const { createHook, executionAsyncResource } = require('node:async_hooks');
+  const { appendFileSync, writeSync } = require('node:fs');
+  const { promisify } = require('node:util');
+  const kill = process.kill;
+  const owners = new WeakMap();
+  const tests = new WeakSet();
+  const refusals = new Map();
+  // node:test binds the timers its own timeouts use when it loads, so loading it before the
+  // wrappers keeps those off them; no caller needs an exemption.
+  const test = require('node:test');
+  if (!recordFile) {
+    test.afterEach((context) => {
+      const refusal = refusals.get(context);
+      refusals.delete(context);
+      if (refusal) throw refusal;
+    });
+  }
+  function owner() {
+    const resource = executionAsyncResource();
+    return tests.has(resource) && resource.parent ? resource : owners.get(resource) ?? null;
+  }
+  // The test owning an unwritable refusal, read only from own data properties: no getter, method
+  // or prototype a test supplies runs before the worker ends. An accessor counts as absent.
+  function ownData(object, key) {
+    if (object === null || (typeof object !== 'object' && typeof object !== 'function')) return undefined;
+    const descriptor = Object.getOwnPropertyDescriptor(object, key);
+    return descriptor && 'value' in descriptor ? descriptor.value : undefined;
+  }
+  function unwritableName() {
+    try {
+      const resource = executionAsyncResource();
+      const test = tests.has(resource) && ownData(resource, 'parent') ? resource : owners.get(resource) ?? null;
+      const name = ownData(test, 'name');
+      return typeof name === 'string' ? name : null;
+    } catch {
+      return null;
+    }
+  }
+  function topLevel(test) {
+    while (test?.parent?.parent) test = test.parent;
+    return test;
+  }
+  createHook({
+    init(_id, type, _trigger, resource) {
+      // Only Node's own Test has getCtx; a resource a test merely names 'Test' is not a test.
+      if (type === 'Test' && typeof resource.getCtx === 'function') tests.add(resource);
+      const test = owner();
+      if (test) owners.set(resource, test);
+    },
+  }).enable();
+  // A delay is converted once. The callback timers coerce an object delay themselves, so they get
+  // the number the guard checked; the other APIs reject an object, so they get it unchanged.
+  function wrapTimer(object, name, api, delayIndex, { iterator = false, coerces = false } = {}) {
+    const original = object[name];
+    function boundedTimer(...args) {
+      const given = args[delayIndex];
+      const delay = Number(given);
+      if (coerces && given !== null && (typeof given === 'object' || typeof given === 'function')) args[delayIndex] = delay;
+      if (delay > 0) {
+        // The refusal is recorded before attribution runs: attribution reads objects a test can
+        // reach, and nothing they do, exiting included, may stop the record. The record names the
+        // file, API and delay; the test is named in the diagnostic and in node:test's failure.
+        if (!recordFile) {
+          try {
+            appendFileSync(timerRefusalFile, JSON.stringify({ file, api, delay }) + '\n');
+          } catch {
+            try { writeSync(2, `deterministic tier: ${file}: cannot arm ${api} with delay ${delay}\n`); } catch {}
+            const name = unwritableName();
+            if (name !== null) {
+              try { writeSync(2, `deterministic tier: ${file}: ${name} cannot arm ${api} with delay ${delay}\n`); } catch {}
+            }
+            kill.call(process, process.pid, 'SIGKILL');
+          }
+        }
+        // Any failure while attributing gives no test.
+        let test = null;
+        let context = null;
+        try {
+          const running = owner();
+          const name = (recordFile ? topLevel(running) : running)?.name ?? null;
+          test = typeof name === 'string' ? name : null;
+          if (!recordFile) context = running?.getCtx() ?? null;
+        } catch {
+          test = null;
+          context = null;
+        }
+        if (recordFile) {
+          appendFileSync(recordFile, JSON.stringify({ file, test, api, delay }) + '\n');
+        } else {
+          // A second line names the test, so the run's end names it even when the worker's stderr is
+          // gone; the unnamed line above is the refusal, whether or not this one follows.
+          if (test !== null) {
+            try { appendFileSync(timerRefusalFile, JSON.stringify({ file, test, api, delay }) + '\n'); } catch {}
+          }
+          const refusal = new Error(`deterministic tier: ${file}: ${test ?? '<module>'} cannot arm ${api} with delay ${delay}`);
+          refusals.set(context, refusal);
+          writeSync(2, refusal.message + '\n');
+          throw refusal;
+        }
+      }
+      return Reflect.apply(original, this, args);
+    }
+    object[name] = iterator ? async function* boundedInterval(...args) {
+      yield* Reflect.apply(boundedTimer, this, args);
+    } : boundedTimer;
+    const custom = Object.getOwnPropertyDescriptor(original, promisify.custom);
+    // Node's promisify cache may hold a self-reference; it must name the guarded function.
+    if (custom?.value === original) custom.value = object[name];
+    if (custom) Object.defineProperty(object[name], promisify.custom, custom);
+  }
+  wrapTimer(globalThis, 'setTimeout', 'setTimeout', 1, { coerces: true });
+  wrapTimer(globalThis, 'setInterval', 'setInterval', 1, { coerces: true });
+  wrapTimer(require('node:timers'), 'setTimeout', 'node:timers.setTimeout', 1, { coerces: true });
+  wrapTimer(require('node:timers'), 'setInterval', 'node:timers.setInterval', 1, { coerces: true });
+  wrapTimer(require('node:timers/promises'), 'setTimeout', 'node:timers/promises.setTimeout', 0);
+  // The scheduler's wait lives on its prototype, where every route to it looks it up.
+  wrapTimer(Object.getPrototypeOf(require('node:timers/promises').scheduler), 'wait', 'scheduler.wait', 0);
+  wrapTimer(require('node:timers/promises'), 'setInterval', 'node:timers/promises.setInterval', 0, { iterator: true });
+  wrapTimer(AbortSignal, 'timeout', 'AbortSignal.timeout', 0);
+  syncBuiltinESMExports();
+}
+
 if (worker && process.env.RIGGER_SUITE_MODE === 'deterministic' && file?.endsWith('.test.mjs') && !convertingFiles.has(file)) {
+  watchTimers();
   const allowedPath = process.env.RIGGER_SUITE_ALLOWED_PATH;
   const programs = new Map(['git', 'tar'].map((name) => [name, realpathSync.native(join(allowedPath, name))]));
   const gitVariables = new Set([
@@ -166,8 +291,19 @@ if (worker && process.env.RIGGER_SUITE_MODE === 'deterministic' && file?.endsWit
   syncBuiltinESMExports();
 }
 
+if (worker && process.env.RIGGER_SUITE_MODE === 'deterministic' && convertingFiles.has(file) && process.env.RIGGER_SUITE_TIMER_RECORD) {
+  const { appendFileSync, mkdirSync } = require('node:fs');
+  const directory = process.env.RIGGER_SUITE_TIMER_RECORD;
+  mkdirSync(directory, { recursive: true });
+  const recordFile = join(directory, `${process.pid}.jsonl`);
+  appendFileSync(recordFile, JSON.stringify({ file, test: null, api: null, delay: null }) + '\n');
+  watchTimers(recordFile);
+}
+
 // A test that starts its own node --test run gets a fresh tier decision from that run's script.
 if (worker) {
+  delete process.env.RIGGER_SUITE_TIMER_RECORD;
+  delete process.env.RIGGER_SUITE_TIMER_REFUSALS;
   for (const name of ['RIGGER_SUITE_MODE', 'RIGGER_SUITE_HOST_FILES', 'RIGGER_SUITE_AWAITING_FILES', 'RIGGER_SUITE_CONVERTING_FILES', 'RIGGER_SUITE_ALLOWED_PATH', 'RIGGER_SUITE_HOST_KEY']) {
     delete process.env[name];
   }

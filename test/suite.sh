@@ -41,15 +41,18 @@ test/forge-runners.test.mjs
 test/forge-spawn.test.mjs
 test/guard-probe-kill.test.mjs
 test/hold-close-verbs.test.mjs
+test/in-process-fixtures-host.test.mjs
 test/init.test.mjs
 test/judge-head-live.test.mjs
 test/kill-recorded.test.mjs
 test/launchd-host.test.mjs
 test/listing-stand-in.test.mjs
+test/loop-host.test.mjs
 test/maker-dispatch.test.mjs
 test/mutation-receipt.test.mjs
 test/never-stop.test.mjs
 test/package.test.mjs
+test/path-spelling.test.mjs
 test/printable-closer-verbs.test.mjs
 test/process-adapter.test.mjs
 test/process-fixtures.test.mjs
@@ -236,7 +239,7 @@ export RIGGER_SUITE_MODE RIGGER_SUITE_HOST_FILES RIGGER_SUITE_AWAITING_FILES RIG
 
 
 # Keep Mac control originals beside, not inside, the suite's disposable TMPDIR.
-suite_caller_tmpdir=$(cd "${TMPDIR:-/tmp}" && pwd -P) || exit 1
+suite_caller_tmpdir=$(node -p "require('node:fs').realpathSync.native(process.argv[1])" "${TMPDIR:-/tmp}") || exit 1
 suite_auto_evidence_root=
 cleanup_auto_evidence_root() {
   if [ -n "$suite_auto_evidence_root" ]; then
@@ -251,10 +254,13 @@ if [ "${C615_EVIDENCE_ROOT+x}" != x ]; then
   export C615_EVIDENCE_ROOT
 fi
 
-run=$(mktemp -d "${TMPDIR:-/tmp}/rigger-suite.XXXXXX") || exit 1
-run=$(cd "$run" && pwd -P) || exit 1
+run=$(mktemp -d "$suite_caller_tmpdir/rigger-suite.XXXXXX") || exit 1
+run=$(node -p "require('node:fs').realpathSync.native(process.argv[1])" "$run") || exit 1
 TMPDIR=$run
 export TMPDIR
+RIGGER_SUITE_TIMER_REFUSALS="$run/timer-refusals"
+: > "$RIGGER_SUITE_TIMER_REFUSALS" || exit 1
+export RIGGER_SUITE_TIMER_REFUSALS
 allowed="$run/allowed"
 mkdir "$allowed" || exit 1
 ln -s /usr/bin/git "$allowed/git" || exit 1
@@ -399,6 +405,12 @@ fi
 if [ -s "$run/unsafe-claude-homes" ]; then
   printf '%s\n' 'npm test: these dispatches named a Claude home outside the suite temporary directory:' >&2
   cat "$run/unsafe-claude-homes" >&2
+  status=1
+fi
+
+if [ -s "$RIGGER_SUITE_TIMER_REFUSALS" ]; then
+  printf '%s\n' 'npm test: these deterministic tests refused timer arms:' >&2
+  cat "$RIGGER_SUITE_TIMER_REFUSALS" >&2
   status=1
 fi
 
