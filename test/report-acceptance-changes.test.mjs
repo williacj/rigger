@@ -61,6 +61,9 @@ test('D2: one revision carried by two acceptance.history events is one change', 
   assert.deepEqual(changes([history(7, revisions.slice(0, 1), { ts: at(15) }), history(7, revisions, { ts: at(25) }),
     history(7, [...revisions, revision(30, 'carol', 'd-2', 3)], { ts: at(35) })]),
   [{ card: 7, editedAt: at(20), editor: 'bob', dispatches: [], duringMaker: false }]);
+  // Two saves within one second share an `editedAt` (W9, M8-U8 Q26 a): the key keeps the first event's revision.
+  assert.deepEqual(changes([history(7, revisions, { ts: at(25) }), history(7, [revisions[0], revision(20, 'bob', 'd-3', 3)], { ts: at(35) })]),
+    [{ card: 7, editedAt: at(20), editor: 'bob', dispatches: [], duringMaker: false }], 'one change per card and editedAt');
 });
 
 test('D3: two successive revisions with the same digest are no change', () => {
