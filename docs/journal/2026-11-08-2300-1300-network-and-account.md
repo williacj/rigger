@@ -164,3 +164,23 @@ cannot mask a package re-export. The whole guard passed after both changes. Thes
 ordinary named bindings in sight under N2/N8/A5, and require no additional write path.
 The initial correction's complete set of 23 guarded receipts was killed at that fix head;
 the PR records fresh receipts after the final merge for the enlarged counterexample set.
+
+
+The exported-input check at merge head 7735c56758329c47c2907116eac1f07ee30b0f20
+found two more instances of the same declaration-only premise. An importer could mutate the
+exported auth array, and init's filename could become a let with a conditional reassignment.
+The named reds are 1300-r2-imported-input-write-red.log and
+1300-r2-exported-filename-red.log. Program-origin identities are now protected across module
+bindings, including arrays and their containing objects; N11 separately checks that the
+producer's filename is an immutable literal. Both are ordinary input bindings in sight under
+N8/N11; no reflective call route or additional production path is introduced. The whole guard
+then passed in 1300-r2-exported-filename-green.log. The PR records receipts at the subsequent
+committed head, including these cases.
+
+The nested commit and merge loggers initially shared each action's output filename. Their
+complete unfiltered stdout was also teed, independently, to 1300-r2-tdd-session.log before any
+inspection. The cited commit-fix-complete and merge-main-complete files are exact byte ranges
+of that retained original, with offsets and SHA-256 digests in
+1300-r2-hook-log-provenance.json. No output was lost. Later action and inner-step log filenames
+are distinct. The first TDD driver released its slot at its idle bound between completed runs;
+no verification was interrupted, and the subsequent green ran after reacquiring the slot.

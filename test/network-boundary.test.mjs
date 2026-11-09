@@ -496,7 +496,7 @@ function processBindings(modules) {
       return objects.get(node);
     }
     if (node.type === 'CallExpression' && syntaxShape(node.callee) === expressionShape('Object.freeze') && !models.get(file).lookup(node.callee.object) && node.arguments.length === 1) return origin(file, node.arguments[0], seen);
-    if (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression', 'Literal'].includes(node.type)) return node;
+    if (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression', 'ArrayExpression', 'Literal'].includes(node.type)) return node;
   };
   return { origin, exported, models, named: (file, name) => bindingOrigin(file, models.get(file).root.names.get(name), new Set()) };
 }
@@ -556,6 +556,7 @@ function programReport(modules) {
   const expectedReferences = PROCESS_REFERENCES.flatMap(([file, owner, expression, count = 1]) => Array(count).fill(`${file}#${owner}#${expressionShape(expression)}`));
   if (syntaxShape(references.sort()) !== syntaxShape(expectedReferences.sort())) violations.push('N8 native process references differ (unreviewed alias or method)');
   const protectedByFile = new Map([...modules.keys()].map((file) => [file, new Set(['global:process#env'])]));
+  const protectedValues = new Set(reviewed);
   for (const [file, owner, kind, name, expression] of PROGRAM_ORIGINS) {
     const matches = [...nodes(modules.get(file).program)].filter(({ node, parent, owner: at }) => at === owner && (
       kind === 'binding' ? node.type === 'VariableDeclarator' && syntaxShape(node.id) === syntaxShape(parse(`const ${name} = null`, { ecmaVersion: 'latest' }).body[0].declarations[0].id) :
@@ -568,11 +569,16 @@ function programReport(modules) {
       const protectedBindings = protectedByFile.get(file) ?? new Set();
       protectedByFile.set(file, protectedBindings);
       const value = ['binding', 'variable'].includes(kind) ? node.init : kind === 'default' ? node.right : kind === 'function' ? { ...node, type: 'FunctionExpression' } : node.value;
+      if (kind === 'property') protectedValues.add(bindings.origin(file, parent));
       if (kind === 'property' && parent.properties.some((property) => property.type !== 'Property' || property.computed)) fail(file, node, 'a reviewed origin object may not spread or compute sibling keys');
       for (const root of [value, ...(['binding', 'variable'].includes(kind) ? [node.id] : kind === 'default' ? [node.left] : [])]) {
         if (root) for (const { node: part, parent } of nodes(root)) if (part.type === 'Identifier' && (model.bindings.has(part) || referenceIdentifier(part, parent, model.bindings))) {
           const binding = model.lookup(part);
-          if (binding) protectedBindings.add(binding);
+          if (binding) {
+            protectedBindings.add(binding);
+            const origin = bindings.origin(file, part);
+            if (origin !== undefined) protectedValues.add(origin);
+          }
         }
       }
       return value;
@@ -589,7 +595,8 @@ function programReport(modules) {
       const matches = [...nodes(program)].map(({ node }) => node).filter((node) => syntaxShape(node) === expressionShape(expression));
       if (matches.length === 1) admitted.add(matches[0]);
     }
-    for (const node of bindingWrites(program, bindings.models.get(file), protectedBindings, (node) => bindings.origin(file, node))) if (!admitted.has(node)) fail(file, node, 'rewrites a reviewed input binding or its member');
+    const protectedInputs = new Set([...protectedBindings, ...protectedValues]);
+    for (const node of bindingWrites(program, bindings.models.get(file), protectedInputs, (node) => bindings.origin(file, node))) if (!admitted.has(node)) fail(file, node, 'rewrites a reviewed input binding or its member');
   }
   return violations;
 }
@@ -600,7 +607,8 @@ function bindingWrites(program, model, protectedBindings, origin = () => undefin
   const writers = new Set(['Object.assign', 'Object.defineProperty', 'Object.defineProperties', 'Reflect.set', 'Reflect.deleteProperty'].map(expressionShape));
   const root = (node) => {
     while (node) {
-      if (origin(node) === 'global:process#env') return 'global:process#env';
+      const value = origin(node);
+      if (value !== undefined && protectedBindings.has(value)) return value;
       if (node.type !== 'MemberExpression') break;
       node = node.object;
     }
@@ -762,6 +770,7 @@ test('N8: bound process calls and program inputs reject ordinary code edits', ()
 
 /** Ordinary edits that must not escape the process inventory or its input provenance. */
 const PROCESS_COUNTEREXAMPLES = [
+  ["m2b-imported-origin-write", "src/cli/once.mjs", "import { NOT_STARTED } from '../substrate/process.mjs';", "import { NOT_STARTED } from '../substrate/process.mjs';\nimport { auth as providerAuth } from '../substrate/providers/claude.mjs';\nfunction unlistedProgramWrite() { if (process.env.RIGGER_AUTH_COMMAND) providerAuth[0] = process.env.RIGGER_AUTH_COMMAND; }"],
   ["m3-star-reexport-priority", "src/cli/once.mjs", "import { NOT_STARTED } from '../substrate/process.mjs';", "import { NOT_STARTED } from '../substrate/process.mjs';\nexport * from 'node:fs';\nexport * from '../execution/run.mjs';\nimport { dispatch as reexportedStart } from './once.mjs';\nfunction unlistedReexportedDispatch() { return reexportedStart({ command: 'curl', args: [] }); }"],
   ["m3-reexport-priority", "src/cli/once.mjs", "import { NOT_STARTED } from '../substrate/process.mjs';", "import { NOT_STARTED } from '../substrate/process.mjs';\nexport * from 'node:fs';\nexport { dispatch } from '../execution/run.mjs';\nimport { dispatch as reexportedStart } from './once.mjs';\nfunction unlistedReexportedDispatch() { return reexportedStart({ command: 'curl', args: [] }); }"],
   ["A5-aliased-mutator", "src/execution/role.mjs", "  Object.assign(environment, set);", "  Object.assign(environment, set);\n  const mergeEnvironment = Object.assign;\n  if (env.RIGGER_EXTRA) mergeEnvironment(environment, { EXTRA_TOKEN: 'injected' });"],
@@ -789,6 +798,7 @@ const PROCESS_COUNTEREXAMPLES = [
 
 /** Counterexamples to the target-only consumer import. */
 const CONFIG_COUNTEREXAMPLES = [
+  ["m6-exported-filename-write", "src/cli/init.mjs", "export const CONFIG = 'rigger.config.mjs';", "export let CONFIG = 'rigger.config.mjs';\nif (process.env.RIGGER_CONFIG) CONFIG = process.env.RIGGER_CONFIG;"],
   [
     "m5",
     "src/cli/doctor.mjs",
@@ -812,6 +822,13 @@ function configReport(modules) {
   const fail = (reason) => violations.push(`${file} N11 ${reason}`);
   const config = bindings.named(file, 'CONFIG');
   if (config?.type !== 'Literal' || config.value !== 'rigger.config.mjs' || config !== bindings.named('src/cli/init.mjs', 'CONFIG')) fail('CONFIG must resolve to the imported consumer filename');
+  const initFile = 'src/cli/init.mjs';
+  const init = modules.get(initFile);
+  const initModel = bindings.models.get(initFile);
+  const filenameBinding = initModel.root.names.get('CONFIG');
+  const filenames = [...nodes(init.program)].filter(({ node }) => node.type === 'VariableDeclarator' && node.id.name === 'CONFIG' && initModel.lookup(node.id) === filenameBinding);
+  if (filenames.length !== 1 || filenames[0].parent.kind !== 'const' || filenames[0].node.init?.type !== 'Literal' || filenames[0].node.init.value !== 'rigger.config.mjs') violations.push(`${initFile} N11 the exported filename must be a const literal`);
+  for (const node of bindingWrites(init.program, initModel, new Set([filenameBinding]))) violations.push(`${initFile}:${node.loc.start.line} N11 rewrites the exported filename`);
   const factory = bindings.named(file, 'consumerConfig');
   if (factory?.type !== 'FunctionDeclaration' || syntaxShape(factory.params) !== syntaxShape(parseExpressionAt('(target) => 0', 0, { ecmaVersion: 'latest' }).params)) {
     fail('consumerConfig must take only the target path');
