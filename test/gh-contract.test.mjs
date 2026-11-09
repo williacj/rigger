@@ -3,8 +3,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { AGENT_ANSWERED, ANSWERED, answerFakeGh, commandOf, seedRepositoryAt } from './fake-gh.mjs';
@@ -202,58 +202,68 @@ test('an answer is read as recorded only where the comment block directly above 
   assert.deepEqual(entriesOf(source, 'AGENT_COMMANDS', /^ {2}\w+: async/).map(({ recorded }) => recorded), [false, true]);
 });
 
-/** The file that provides the live gh location, and the one file that may read it. */
-const PROVIDER = 'test/suite.sh';
-const READER = 'test/gh-contract-host.test.mjs';
+/**
+ * The files under `test/` that may name the live gh opt-in, each with its role (#1315, item 12):
+ * the suite that provides it, the host contract file that reads it, this file, which holds the
+ * scan and its fixtures, and the workflow test that asserts `nightly`'s opt-in.
+ */
+const ADMITTED = ['test/suite.sh', 'test/gh-contract-host.test.mjs', 'test/gh-contract.test.mjs', 'test/workflow-files.test.mjs'];
 
 /**
- * The live gh location the opt-in provides: the variable `test/suite.sh` sets only where a run opts
- * in for gh (rule 12.3), naming the directory of the real gh the suite's refusing gh (#276) stands
- * in front of. It is taken from the one environment read its reader makes, so this file, which
- * looks for it, holds no part of it; the scan checks the provider exports the same name. The opt-in
- * itself, `RIGGER_LIVE_GH`, gives a test no gh, and a test may name it. The two routes past the
- * refusing gh that predate this one, `test/forge-runners.test.mjs`'s `D16` probe and
- * `test/fake-gh.test.mjs`'s `hasInstalledGh`, read the suite's refusing directory, not this.
+ * The fragments that name the live gh opt-in, `RIGGER_LIVE_GH` and the `RIGGER_LIVE_GH_DIR` it
+ * provides, as they read once a text is normalized. The check is lexical: a reader that never
+ * spells either fragment in sequence is outside it, and the item's text is its bar.
  */
-const LIVE_GH = /process\.env\.(\w+)/.exec(readFileSync(new URL(`../${READER}`, import.meta.url), 'utf8'))?.[1];
+const OPT_IN_FRAGMENTS = ['RIGGERLIVEGH', 'LIVEGHDIR'];
 
-/**
- * Whether `text` names the live gh location in any spelling a reader could build it from: its
- * letters and digits in order, with whatever else between them, so a key joined from parts, spliced
- * from strings or built in a template is found as the plain name is. Letter case is ignored, as a
- * key can be upper-cased into being.
- */
-const namesLiveGh = (text) => text.replace(/[^A-Za-z0-9]/g, '').toUpperCase().includes(LIVE_GH.replace(/[^A-Za-z0-9]/g, '').toUpperCase());
+/** `text` with every non-alphanumeric character removed and case folded to upper. */
+const normalized = (text) => text.replace(/[^A-Za-z0-9]/g, '').toUpperCase();
 
-/** The files among `files`, as `{ path, text }`, that read the live gh location and are neither its provider nor its reader. */
-const outsideTheOptIn = (files) => files.filter(({ path, text }) => namesLiveGh(text) && ![PROVIDER, READER].includes(path)).map(({ path }) => path);
+/** Whether `text` names the live gh opt-in: its normalized form holds either fragment. */
+const namesOptIn = (text) => OPT_IN_FRAGMENTS.some((fragment) => normalized(text).includes(fragment));
 
-test('the host contract file is the only file under test/ that reads the live gh location the opt-in provides', () => {
-  const root = new URL('..', import.meta.url);
-  const files = readdirSync(new URL('test/', root), { recursive: true, withFileTypes: true })
-    .filter((entry) => entry.isFile() && /\.(?:mjs|cjs|js|sh)$/.test(entry.name))
-    .map((entry) => {
-      const path = relative(fileURLToPath(root), join(entry.parentPath, entry.name)).split(sep).join('/');
-      return { path, text: readFileSync(join(entry.parentPath, entry.name), 'utf8') };
-    });
-  assert.match(LIVE_GH ?? '', /^RIGGER_\w+_DIR$/, `${READER} reads no environment variable naming a directory, so the scan has no name to look for`);
-  assert.ok(files.find((file) => file.path === PROVIDER)?.text.includes(`export ${LIVE_GH}\n`), `${PROVIDER} does not export ${LIVE_GH}, so the reader reads something the opt-in does not provide`);
-  assert.equal(namesLiveGh(files.find((file) => file.path === 'test/gh-contract.test.mjs').text), false, 'the scan names the live gh location itself');
-  assert.deepEqual(outsideTheOptIn(files), [], 'a file under test/ other than the host contract file reads the live gh location');
+/** The files among `files`, as `{ path, text }`, that name the live gh opt-in and are not admitted. */
+const outsideTheOptIn = (files) => files.filter(({ path, text }) => namesOptIn(text) && !ADMITTED.includes(path)).map(({ path }) => path);
+
+/** Every file git tracks under `test/`, as `{ path, text }`. */
+function trackedTestFiles() {
+  const root = fileURLToPath(new URL('..', import.meta.url));
+  return gitIn(root, 'ls-files', '-z', '--', 'test').split('\0').filter(Boolean)
+    .map((path) => ({ path, text: readFileSync(join(root, path), 'utf8') }));
+}
+
+test('no tracked file under test/ names the live gh opt-in but the four admitted', () => {
+  const files = trackedTestFiles();
+  assert.ok(files.length > 100, `git listed ${files.length} tracked files under test/, so the scan read the wrong tree`);
+  for (const path of ADMITTED) {
+    assert.ok(files.find((file) => file.path === path), `${path} is not tracked, so the admitted list names a file that is not there`);
+  }
+  assert.ok(namesOptIn(files.find((file) => file.path === 'test/suite.sh').text), 'test/suite.sh does not name the opt-in, so the scan looks for the wrong name');
+  assert.ok(namesOptIn(files.find((file) => file.path === 'test/gh-contract-host.test.mjs').text), 'the host contract file does not name the opt-in, so the scan looks for the wrong name');
+  assert.deepEqual(outsideTheOptIn(files), [], 'a tracked file under test/ other than the four admitted names the live gh opt-in');
 });
 
-test('a file reading the live gh location is named however it spells the name, and its provider, its reader and the opt-in alone are not', () => {
-  const [prefix, ...rest] = LIVE_GH.split('_');
+test('the two routes past the refusing gh that predate the opt-in do not name it', () => {
+  const files = trackedTestFiles();
+  for (const path of ['test/forge-runners.test.mjs', 'test/fake-gh.test.mjs']) {
+    const file = files.find((held) => held.path === path);
+    assert.ok(file && file.text.includes('RIGGER_REFUSING_GH_DIR'), `${path} no longer reads the refusing gh's directory`);
+    assert.equal(namesOptIn(file.text), false, `${path} names the live gh opt-in`);
+  }
+});
+
+test('a file naming the live gh opt-in is named wherever its pieces are written in sequence, and the admitted files are not', () => {
   assert.deepEqual(outsideTheOptIn([
-    { path: PROVIDER, text: `${LIVE_GH}=x` },
-    { path: READER, text: `process.env.${LIVE_GH}` },
-    { path: 'test/plain.test.mjs', text: `process.env.${LIVE_GH}` },
-    { path: 'test/joined.test.mjs', text: `process.env[[${[prefix, ...rest].map((part) => `'${part}'`).join(', ')}].join('_')]` },
-    { path: 'test/spliced.test.mjs', text: `process.env['${prefix}_' + '${rest.join('_')}']` },
-    { path: 'test/lowered.test.mjs', text: `process.env[\`${LIVE_GH.toLowerCase()}\`.toUpperCase()]` },
-    { path: 'test/opting-in.test.mjs', text: 'env.RIGGER_LIVE_GH === \'1\'' },
-    { path: 'test/forge-runners.test.mjs', text: 'process.env.RIGGER_REFUSING_GH_DIR' },
-  ]), ['test/plain.test.mjs', 'test/joined.test.mjs', 'test/spliced.test.mjs', 'test/lowered.test.mjs']);
+    ...ADMITTED.map((path) => ({ path, text: 'process.env.RIGGER_LIVE_GH_DIR' })),
+    { path: 'test/plain.test.mjs', text: 'process.env.RIGGER_LIVE_GH_DIR' },
+    { path: 'test/prefixed.test.mjs', text: "const k = 'RIGGER_LIVE_GH_'; const dir = process.env[k + 'DIR'];" },
+    { path: 'test/spliced.test.mjs', text: "process.env['RIGGER_LIVE_' + 'GH_DIR']" },
+    { path: 'test/joined.test.mjs', text: "process.env[['RIGGER', 'LIVE', 'GH', 'DIR'].join('_')]" },
+    { path: 'test/lowered.test.mjs', text: 'process.env[`rigger_live_gh_dir`.toUpperCase()]' },
+    { path: 'test/opting-in.test.mjs', text: "env.RIGGER_LIVE_GH === '1'" },
+    { path: 'test/refusing.test.mjs', text: 'process.env.RIGGER_REFUSING_GH_DIR' },
+    { path: 'test/other-live.test.mjs', text: "process.env.RIGGER_LIVE_CLAUDE === '1'" },
+  ]), ['test/plain.test.mjs', 'test/prefixed.test.mjs', 'test/spliced.test.mjs', 'test/joined.test.mjs', 'test/lowered.test.mjs', 'test/opting-in.test.mjs']);
 });
 
 test('every real gh call the live side makes is bounded by at most 60 seconds, and a call it ends fails its case', async () => {
