@@ -69,7 +69,7 @@ reused.
 | D26 | An escalation goes where the consumer sends it | Ratified |
 | D27 | An escalated card carries a label only the owner removes | Ratified. Amended in #868. |
 | D28 | A per-user LaunchAgent re-launches the engine on an interval | Ratified. Amended in #1043. |
-| D29 | Rigger's suite runs in two tiers, and the hooks run one | Ratified. Amended in #1140. |
+| D29 | Rigger's suite runs in two tiers, and the hooks run one | Ratified. Amended in #1140 and #1322. |
 | D30 | Until the conversion closes, two lists exempt files from D29's bounds | Ratified. Amended in #1140. |
 | D31 | macOS CI runs on hosted runners unless the owner selects the Mac mini | Ratified |
 
@@ -1094,7 +1094,7 @@ This decision adds no requirement row.
 
 ## D29 — Rigger's suite runs in two tiers, and the hooks run one
 
-**Status:** Ratified. Amended in #1140.
+**Status:** Ratified. Amended in #1140 and #1322.
 
 ### Rule
 
@@ -1136,6 +1136,12 @@ This decision adds no requirement row.
     - a top-level call that the change adds in a host-tier file, whose test the steps cannot identify: the line.
 
     A host test that a change adds names a real deadline as its reason where the test itself, not Rigger's code under it, arms a timer with a delay above zero, as rule 3.5 defines one. The judges rule whether the reason is true and whether the named test proves the decision.
+12. A shared fake under `test/` that stands for `gh`, `claude` or `codex` is tied to the real program by one contract test (`D16` rule 2).
+    1. The contract test runs the same cases against the fake in the deterministic tier and against the real program in the host tier.
+    2. It ties each answer's form. It ties the value too, where the case can create the state or reads a state that does not change.
+    3. Its real side runs only where the run opts in for that program. `nightly` opts in for `gh`. A run opts in for an agent CLI only under that CLI's live opt-in.
+    4. It ties no answer to a write on the forge.
+    5. Each answer that no contract case ties carries, beside it in the fake, a record of where the real program can differ (`D16` rule 3).
 
 ### Notes
 
@@ -1151,7 +1157,7 @@ Rule 2 admits `git` and `tar`, because each answers one input the same way under
 
 Rule 7 follows the staged CI policy approved in #921 and ratified through #906. Its required aggregate checks current-source evidence; a deferred broad profile is not host success. A card's own proof obligations remain independently binding. Rule 8 gives a red default branch an owner and adds no merge bar. Who may merge once checks are green stays `D25` rule 5's. A Self-hosting fix is never dispatched by the engine (`D25` rule 5), so priority orders only its dispatch by hand.
 
-Rule 9 promises only what a test can tie. A scripted fault, such as `EPERM` or a read that times out, cannot be asked of the real operating system on demand. Nor can an interleaving, such as a group still non-empty at the census after its kill. An in-process stand-in's answer is a copy rule 9 does not tie. It copies what the fake `gh` and the stand-in agent answered as processes before the split, and no rule tied those to the real programs either.
+Rule 9 promises only what a test can tie. A scripted fault, such as `EPERM` or a read that times out, cannot be asked of the real operating system on demand. Nor can an interleaving, such as a group still non-empty at the census after its kill. An in-process stand-in's answer is a copy rule 9 does not tie. Rule 12 ties the shared fakes of `gh` and the agent CLIs. Their real side runs on opt-in, because a default run would reach the forge or an agent's service on every push.
 
 Rule 3's fifth bound and rule 11 follow the owner's direction of 2026-10-29 on #740, to stop bad tests before they become debt. Rule 11's sentence on a real deadline follows the owner's ruling U103 of the same day, on #740, as `D30` rule 6 does. It binds the timers a host test arms itself, because Rigger's code under a wiring test arms timers the test never chose. Rule 3's runner sees a timer only in the test file's own process, as it sees a process start. Rule 11 binds the tests a change adds, so an older host test carries no declaration until a change adds it again. Its check compares the head with its merge base with the commit the list-growth steps resolve, never with a ref that moves. A deterministic test tied to the default branch's moving tip turned the default branch red in #1113. The three reasons are the ones `AGENTS.md` keeps host proof for, and whether a declared reason is true stays a judgment.
 
