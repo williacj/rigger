@@ -1911,7 +1911,7 @@ function noOptionalStep(world) {
 /** A stream exists even where the owner's push opt-in is absent. */
 function unpushedOptionalStream(world) {
   assert.ok(world.events().some(({ event }) => event === 'dispatch.start'), 'the stream holds the actual dispatch');
-  assert.deepEqual(world.pushes, [], 'no push-side call without the opt-in');
+  assert.equal(world.pushes.length, 0, 'no push-side call without the opt-in');
   assert.deepEqual(world.events().filter(({ event }) => event === 'push.end'), []);
 }
 
