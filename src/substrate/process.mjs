@@ -756,7 +756,7 @@ export function* census(group, kill, deadline, now = realHost.clock.now, trace) 
   let unseen;
   // What the last round held, kept where `deadline` passes before a round agrees.
   let last;
-  // Retain every pid a completed round showed, even where a later round settles without it.
+  // Retain every pid a fully parsed column showed, even where a later round settles without it.
   const sightings = new Map();
   const read = function* (args) {
     try {
@@ -766,7 +766,9 @@ export function* census(group, kill, deadline, now = realHost.clock.now, trace) 
     }
   };
   const column = function* (name) {
-    return rowsOf(yield* read(['-ww', '-g', String(group), '-o', `pid=,${name}=`]));
+    const rows = rowsOf(yield* read(['-ww', '-g', String(group), '-o', `pid=,${name}=`]));
+    for (const pid of rows.keys()) if (!sightings.has(pid)) sightings.set(pid, undefined);
+    return rows;
   };
   let took = 0;
   let serial = 0;
