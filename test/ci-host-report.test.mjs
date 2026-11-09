@@ -5,6 +5,48 @@ import { join } from 'node:path';
 import { EventEmitter, once } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { ci, hostInvocationCommand, hostInvocationArgv, reportInvocation, captureHostScenario, observeHostStep, startupInspectionFixture, heldWriteDestination } from './ci-host-fixtures.mjs';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { npm11StartupInspectionFixture } from './ci-host-fixtures.mjs';
+
+// The local reader changes only repository observations; retained npm/config facts still delegate unchanged.
+function repositoryByteInspection(fixture) {
+  const paths = new Set(['.npmrc', 'test/suite.sh', 'test/suite-guard.cjs'].map(path => join(fixture.cwd, path)));
+  const fingerprint = fixture.inspection.fingerprint;
+  return { ...fixture.inspection, fingerprint: async path => paths.has(path)
+    ? createHash('sha256').update(readFileSync(path)).digest('hex')
+    : fingerprint(path) };
+}
+
+// Break: copied repository fingerprints can qualify fixtures while actual unchanged checkout bytes are refused.
+// This repository-CI diagnostic uses retained external profiles; it certifies no installed npm or Mac invocation.
+test('actual repository bytes qualify supported npm startup profiles and retain the reporting parent key', async () => {
+  const parent = 'linux-6.18.54.1-microsoft-standard-WSL2-x86_64-node26';
+  const argv = ['npm', 'run', 'test:host', '--', '--test-reporter=spec', '--test-reporter=junit', '--test-reporter-destination=stdout', '--test-reporter-destination=/runner-temp/host-tests.junit.xml'];
+  for (const profile of [
+    { name: 'npm12', fixture: startupInspectionFixture, version: '12.2.2', prefix: '' },
+    { name: 'npm11', fixture: npm11StartupInspectionFixture, version: '11.20.0', prefix: '\n> @williacj/rigger@0.0.0 test:host\n> sh test/suite.sh --host --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination=/runner-temp/host-tests.junit.xml\n\n' },
+  ]) {
+    const stdout = profile.prefix + parent + '\nworker output\nmacos26-20261102.0473.1-ARM64-node26\n';
+    const { result } = await captureHostScenario({
+      stdout: new EventEmitter(), stderr: new EventEmitter(), inspection: repositoryByteInspection(profile.fixture()),
+      produce: child => {
+        child.emit('spawn'); child.stdout.emit('data', Buffer.from(stdout, 'utf8'));
+        child.stdout.emit('end'); child.stdout.emit('close');
+        child.stderr.emit('end'); child.stderr.emit('close');
+        child.emit('exit', 0, null); child.emit('close', 0, null);
+      },
+    });
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(result.stdout, Buffer.from(stdout, 'utf8'));
+    assert.deepEqual(result.startup, { argv, npmVersion: profile.version, stdoutPrefix: profile.prefix, capture: { state: 'complete' } },
+      'actual repository bytes must qualify the ' + profile.name + ' startup descriptor');
+    const { observed } = await reportInvocation(Buffer.from('<testsuites><testcase name="pass"/></testsuites>', 'utf8'), { child: result });
+    assert.equal(observed.hostKey, parent, 'qualified ' + profile.name + ' reporting must retain the parent key');
+    assert.equal(observed.stepOutcome, 'success');
+  }
+});
+
 
 // The successful command and printed key follow the retained Node26 existing-host qualification.
 // The missing-file double follows fs/promises.readFile's rejected ENOENT contract.

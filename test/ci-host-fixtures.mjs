@@ -125,8 +125,8 @@ export function startupInspectionFixture() {
   const npmCli = join(npmRoot, 'bin/npm-cli.js');
   const fingerprints = new Map([
     [join(cwd, '.npmrc'), '2ab58d679ddb6c245446999a2ea5fb54783b9aa26c94ce663cb7db0be0a8f7f8'],
-    [join(cwd, 'test/suite.sh'), '51d1656050740bf7130c8ab8352cb027aa2831887ec7d09b168dcd4c87d21f46'],
-    [join(cwd, 'test/suite-guard.cjs'), 'cd0fea139d9547bcb613dab0f8b6c87ec12f182b36409ae971083a7132761c31'],
+    [join(cwd, 'test/suite.sh'), 'a8396006c5c6b4c3f1892bf7287307e60176e17094f9455ec5396312d81925f1'],
+    [join(cwd, 'test/suite-guard.cjs'), '11057fb99548ffdfb62cea550d6aa7fb99c310b232a544a9e809d0936ece5370'],
     [join(npmRoot, 'bin/npm-cli.js'), '8e5f6f3429f8cdbe693cdc29904e9d5a7b127a494bd15c804bd54c7403bfcbe7'],
     [join(npmRoot, 'lib/commands/run.js'), 'b7acdea61c0886f048d2b8c5ecbce1599416eec6ba5553ee21d77687f50ccf8c'],
     [join(npmRoot, 'node_modules/@npmcli/run-script/lib/run-script-pkg.js'), '1142ab865b1180409f0f3a93eb3bc01f9ca36fa9ead1c938b254eb6923de7886'],
