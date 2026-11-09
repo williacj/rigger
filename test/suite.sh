@@ -258,6 +258,9 @@ run=$(mktemp -d "$suite_caller_tmpdir/rigger-suite.XXXXXX") || exit 1
 run=$(node -p "require('node:fs').realpathSync.native(process.argv[1])" "$run") || exit 1
 TMPDIR=$run
 export TMPDIR
+RIGGER_SUITE_TIMER_REFUSALS="$run/timer-refusals"
+: > "$RIGGER_SUITE_TIMER_REFUSALS" || exit 1
+export RIGGER_SUITE_TIMER_REFUSALS
 allowed="$run/allowed"
 mkdir "$allowed" || exit 1
 ln -s /usr/bin/git "$allowed/git" || exit 1
@@ -402,6 +405,12 @@ fi
 if [ -s "$run/unsafe-claude-homes" ]; then
   printf '%s\n' 'npm test: these dispatches named a Claude home outside the suite temporary directory:' >&2
   cat "$run/unsafe-claude-homes" >&2
+  status=1
+fi
+
+if [ -s "$RIGGER_SUITE_TIMER_REFUSALS" ]; then
+  printf '%s\n' 'npm test: these deterministic tests refused timer arms:' >&2
+  cat "$RIGGER_SUITE_TIMER_REFUSALS" >&2
   status=1
 fi
 
