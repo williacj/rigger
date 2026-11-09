@@ -1260,22 +1260,17 @@ approving none, or hosted capacity no longer failing, which removes the need for
 
 ### Notes
 
-Rule 1 makes the tarball published the tarball the exit run tested. `D7` rule 4 has the exit run
-install the candidate engine from the tarball `npm pack` produces at the commit under test. Rule 4
-packs at that same commit, so what a consumer installs is what the exit run passed.
+Rule 1 makes the tarball published the tarball the exit run tested. Rule 4 packs at the commit
+under test, which is where the exit run's candidate engine comes from (`D7` rule 4).
 
-Rule 1 names the commit under test rather than the commit that closed the milestone. `D7` rule 4
-says that "a commit that leaves the packed tarball's contents unchanged does not move the closing
-commit". It exempts no other commit, so under `D7` rule 1 a later commit that changes those
-contents moves the closing commit. The closing commit is then neither known when the tag is
-written nor the commit the exit run tested.
+Rule 1 names the commit under test, so the tag does not depend on which commit closes the
+milestone. Whether a commit merged after the publish moves the commit `D7` rule 1 promotes is left
+open here, and the tag stays on the tested commit either way.
 
-Rule 5 follows from `D7` rule 4's tarball-contents clause, the exemption quoted above.
-`package.json` is packed, so a version bump changes those contents and the clause does not exempt
-it. A bump merged after the exit run therefore moves the closing commit past the commit under test.
-`D7` rule 4's "The commit under test is the commit rule 1 promotes" then fails, and the milestone
-needs a new exit run. Without one, the release would tag the tested commit with its old version,
-so the first release could not be `0.1.0`.
+Rule 5 follows from `D7` rule 4's tarball-contents clause. `package.json` is packed, so a version
+bump changes the packed contents, and a bump merged after the exit run needs a new exit run.
+Without one, the tested commit carries the old version, and the first release could not be
+`0.1.0`.
 
 Rule 2 keeps one source for the version. The tag and the tarball both read it from the tagged
 commit, so they cannot name two versions.
