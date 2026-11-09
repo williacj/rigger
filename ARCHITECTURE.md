@@ -1862,10 +1862,18 @@ L2 records `class` at each of these sites, and at no other:
 | The second non-start of a dispatch of the role an escalation goes to, the fifth environment failure (`R-ESCALATE-26`) | `environment` |
 | A role's escalation directory refused under `R-WORK-32`, or that role's scratch directory under `R-WORK-26` | `card-local` |
 
-`R-FAIL-8`'s table classes the refusals of the first three sites card-local, as it does a role's
-scratch directory refused under `R-WORK-26`. It holds no row for `R-WORK-32`. That refusal takes `card-local` because "Failure model" sets it beside the `R-WORK-13`,
-`R-WORK-20` and `R-WORK-26` refusals, which the table classes so. What would reverse it: an owner
-ruling that a role's escalation directory is not the card's own.
+`R-FAIL-8`'s table classes the refusals of the first three sites card-local. It classes no
+refusal of the fifth site: its `R-WORK-26` row names only the maker's and a judge's scratch
+directory, and it holds no row for `R-WORK-32`. Both of the fifth site's refusals take
+`card-local` as this document's own placement:
+
+- "Failure model" sets the `R-WORK-32` refusal beside the `R-WORK-13`, `R-WORK-20` and `R-WORK-26`
+  refusals, which the table classes card-local.
+- `R-WORK-26` refuses the escalation role's scratch directory as it refuses any role's, the maker's
+  and a judge's included, and the table classes those two refusals card-local.
+
+What would reverse it: an owner ruling that a role's escalation directory, or that role's scratch
+directory, is not the card's own.
 
 **`merge.decided`.** At the lane's merge decision, L2 records one `merge.decided` under the card. It
 records it once its rule admits the merge, and before it makes the merge call:
