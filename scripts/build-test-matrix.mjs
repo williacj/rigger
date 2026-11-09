@@ -99,8 +99,9 @@ function lineOf(starts, index) {
  *
  * Each token carries `kind` — `word` for a run of name or number characters, `punct`, `string`,
  * `template` for one holding a `${}` substitution, or `regex` — the `line` it opens on, and the
- * `depth` of brackets open around it, and the `endLine` it reaches. A `string` also carries the
- * `value` between its quotes, with the escapes left as the source wrote them.
+ * `depth` of brackets open around it, the `endLine` it reaches, and the source indexes it spans
+ * from `start` to `end`. A `string` also carries the `value` between its quotes, with the escapes
+ * left as the source wrote them.
  *
  * The one thing it cannot tell apart is a `/` directly after a `}`, which is a division after an
  * object literal and a regular expression after a block. Both need the grammar above the token,
@@ -177,7 +178,7 @@ export function tokensIn(source, file) {
   };
 
   const push = (kind, end, rest = {}) => {
-    tokens.push({ kind, line: lineOf(starts, index), endLine: lineOf(starts, end - 1), depth: open.length, ...rest });
+    tokens.push({ kind, line: lineOf(starts, index), endLine: lineOf(starts, end - 1), depth: open.length, start: index, end, ...rest });
     index = end;
   };
 
@@ -503,6 +504,177 @@ export function declarationsIn(source, file) {
     });
   }
   return found;
+}
+
+// The `node:test` exports whose call registers a test or a suite, and the members of each that
+// register one too. A default import is `test` itself.
+const REGISTERS = new Set(['test', 'it', 'describe', 'suite']);
+const REGISTERING_MEMBERS = new Set(['skip', 'only', 'todo']);
+// Members of a registering binding that register nothing: hooks, the mock and the runner's own
+// helpers. Any other member call is one the scan cannot identify.
+const NOT_REGISTERING = new Set([
+  'before', 'after', 'beforeEach', 'afterEach', 'mock', 'snapshot', 'run', 'getTestContext', 'assert',
+]);
+// After one of these words a `{` opens a block of statements rather than an expression.
+const BLOCK_WORDS = new Set(['else', 'do', 'try', 'finally']);
+// A `(` after one of these words heads a statement whose `{` body is a block.
+const STATEMENT_HEADS = new Set(['if', 'while', 'for', 'with', 'catch', 'switch']);
+
+/** Which local names a source imports from `node:test`, each with the export it names. */
+function runnerImports(tokens) {
+  const imported = new Map();
+  for (let at = 0; at < tokens.length; at++) {
+    const token = tokens[at];
+    if (token.depth > 0 || token.kind !== 'word' || token.value !== 'import') continue;
+    const next = tokens[at + 1];
+    if (next?.kind === 'punct' && (next.value === '(' || next.value === '.')) continue;
+    let from = at + 1;
+    while (from < tokens.length && !(tokens[from].kind === 'word' && tokens[from].value === 'from')
+      && !(tokens[from].kind === 'punct' && tokens[from].value === ';')) from++;
+    const specifier = tokens[from]?.kind === 'word' ? tokens[from + 1] : null;
+    if (specifier?.kind !== 'string' || specifier.value !== RUNNER_MODULE) {
+      at = from;
+      continue;
+    }
+    // Each comma-separated group binds its last word. Inside braces its first piece, a word or a
+    // string, is the export it names; outside, `* as n` is the namespace and a lone word the default.
+    const groups = [{ pieces: [], braced: false, star: false }];
+    let braced = false;
+    for (const piece of tokens.slice(at + 1, from)) {
+      if (piece.kind === 'punct' && piece.value === '{') braced = true;
+      else if (piece.kind === 'punct' && piece.value === '}') braced = false;
+      else if (piece.kind === 'punct' && piece.value === ',') groups.push({ pieces: [], braced, star: false });
+      else if (piece.kind === 'punct' && piece.value === '*') groups.at(-1).star = true;
+      else if (piece.kind === 'word' || piece.kind === 'string') {
+        groups.at(-1).pieces.push(piece.value);
+        groups.at(-1).braced = braced;
+      }
+    }
+    for (const { pieces, braced: inBraces, star } of groups) {
+      const local = pieces.at(-1);
+      if (!local) continue;
+      imported.set(local, star ? '*' : inBraces ? pieces[0] : 'test');
+    }
+    at = from + 1;
+  }
+  return imported;
+}
+
+/** For each token, whether it stands among the module's top-level statements. */
+function topLevelTokens(tokens) {
+  // statements[k]: whether the bracket open at depth k holds top-level statements.
+  const statements = [];
+  const heads = [];
+  const headCloses = new Set();
+  return tokens.map((token, at) => {
+    const top = token.depth === 0 || statements[token.depth - 1] === true;
+    const previous = tokens[at - 1];
+    const opens = (tokens[at + 1]?.depth ?? 0) > token.depth;
+    if (token.kind === 'punct' && token.value === ')' && heads[token.depth]) headCloses.add(at);
+    if (opens && token.kind === 'punct' && token.value === '{') {
+      statements[token.depth] = top && (!previous
+        || (previous.kind === 'punct' && (previous.value === ';' || previous.value === '}' || headCloses.has(at - 1)))
+        || (previous.kind === 'word' && BLOCK_WORDS.has(previous.value)));
+    } else if (opens) statements[token.depth] = false;
+    if (token.kind === 'punct' && token.value === '(') {
+      heads[token.depth] = previous?.kind === 'word' && STATEMENT_HEADS.has(previous.value);
+    }
+    return top;
+  });
+}
+
+/** The span of a call's first argument: from just after its `(` to the `,` or `)` ending it. */
+function firstArgument(tokens, open) {
+  const depth = tokens[open].depth;
+  let end = open + 1;
+  while (end < tokens.length) {
+    const token = tokens[end];
+    if (token.kind === 'punct' && ((token.depth === depth + 1 && token.value === ',')
+      || (token.depth === depth && token.value === ')'))) break;
+    end++;
+  }
+  return { from: open + 1, to: end };
+}
+
+/**
+ * Every test a test file's source registers at its top level, by title and line, and every
+ * top-level call to the runner whose test the scan cannot identify, by line.
+ *
+ * A test is a call, among the module's top-level statements, to a name the file imports from
+ * `node:test` that registers a test or a suite — `test`, `it`, `describe` or `suite`, under any
+ * local name — or to their `skip`, `only` or `todo` member. Statements in a top-level block, an
+ * `if` or a loop body among them, are top-level; a function body is not, so a test nested in a
+ * suite is covered by the suite's call. A hook or the mock registers no test.
+ *
+ * A call is identified when its first argument is one quoted run the scan decodes. Any other
+ * call to the runner among those statements is listed as unidentified with its `key`: the source
+ * from the callee to the end of its first argument, so a body that changes keeps the key and a
+ * changed title expression does not.
+ */
+export function testsIn(source, file) {
+  const { tokens } = tokensIn(source, file);
+  const imported = runnerImports(tokens);
+  const { taken } = bindings(tokens);
+  const top = topLevelTokens(tokens);
+  const tests = [];
+  const unidentified = [];
+  const unknown = (from, open) => {
+    const { to } = firstArgument(tokens, open);
+    const end = (tokens[to - 1] ?? tokens[open]).end;
+    unidentified.push({ line: tokens[from].line, key: source.slice(tokens[from].start, end) });
+  };
+  for (let at = 0; at < tokens.length; at++) {
+    const token = tokens[at];
+    if (token.kind !== 'word' || !imported.has(token.value)) continue;
+    const previous = tokens[at - 1];
+    const name = imported.get(token.value);
+    // `(test)(...)`: the callee is an expression around the bound name.
+    if (previous?.kind === 'punct' && previous.value === '(' && top[at - 1]
+      && tokens[at + 1]?.value === ')' && tokens[at + 2]?.value === '(') {
+      if (REGISTERS.has(name) || name === '*') unknown(at - 1, at + 2);
+      continue;
+    }
+    if (!top[at] || (previous?.kind === 'punct' && previous.value === '.')) continue;
+    const conflicted = taken.has(token.value);
+    const from = at;
+    let next = at + 1;
+    let member = null;
+    let chained = false;
+    let namespaced = false;
+    if (name === '*') {
+      if (tokens[next]?.value !== '.' || tokens[next + 1]?.kind !== 'word') continue;
+      if (!REGISTERS.has(tokens[next + 1].value)) continue;
+      namespaced = true;
+      next += 2;
+    } else if (!REGISTERS.has(name)) continue;
+    if (tokens[next]?.value === '.' && tokens[next + 1]?.kind === 'word') {
+      member = tokens[next + 1].value;
+      next += 2;
+      // A hook's or the mock's chain is theirs; any other chain past the member is unidentified.
+      if (NOT_REGISTERING.has(member)) continue;
+      while (tokens[next]?.value === '.' && tokens[next + 1]?.kind === 'word') {
+        chained = true;
+        next += 2;
+      }
+    }
+    if (tokens[next]?.value === '?' && tokens[next + 1]?.value === '.') {
+      // An optional call can be skipped, so the scan cannot say it registers a test.
+      const open = tokens[next + 2]?.value === '(' ? next + 2
+        : tokens[next + 2]?.kind === 'word' && tokens[next + 3]?.value === '(' ? next + 3 : -1;
+      if (open !== -1) unknown(from, open);
+      continue;
+    }
+    if (tokens[next]?.value !== '(') continue;
+    if (namespaced || conflicted || chained || (member !== null && !REGISTERING_MEMBERS.has(member))) {
+      unknown(from, next);
+      continue;
+    }
+    const { from: first, to } = firstArgument(tokens, next);
+    const title = to - first === 1 && tokens[first].kind === 'string' ? decoded(tokens[first].value) : null;
+    if (title === null) unknown(from, next);
+    else tests.push({ title, line: token.line });
+  }
+  return { tests, unidentified };
 }
 
 const PREAMBLE = [

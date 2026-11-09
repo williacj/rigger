@@ -634,6 +634,11 @@ jobs:
       - run: npm ci
       - run: node .github/scripts/check-test-list-growth.mjs
       - run: npm test
+        env:
+          RIGGER_SUITE_TIMER_RECORD: ${{ runner.temp }}/rigger-timer-record
+      - run: node .github/scripts/check-host-declarations.mjs --added-timer
+        env:
+          RIGGER_SUITE_TIMER_RECORD: ${{ runner.temp }}/rigger-timer-record
       - run: npm run budget:package
       - run: npm run budget:instructions
       - run: npm run lint:spec-style
@@ -1021,6 +1026,11 @@ jobs:
       - run: npm ci
       - run: node .github/scripts/check-test-list-growth.mjs
       - run: npm test
+        env:
+          RIGGER_SUITE_TIMER_RECORD: ${{ runner.temp }}/rigger-timer-record
+      - run: node .github/scripts/check-host-declarations.mjs --added-timer
+        env:
+          RIGGER_SUITE_TIMER_RECORD: ${{ runner.temp }}/rigger-timer-record
       - run: npm run test:host -- --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination="$RUNNER_TEMP/$CI_HOST_REPORT_NAME"
         id: host_tests
         shell: node --input-type=module -e "await import('data:text/javascript;base64,' + Buffer.from(process.env.CI_HOST).toString('base64'))" {0}
