@@ -44,8 +44,12 @@ function written(events) {
   return directory;
 }
 
-/** `report`'s acceptance-change answer over `events`. */
-const acceptance = (events) => derive(written(events)).l2.stream.acceptance;
+/** `report`'s acceptance-change answer over `events`, which L2's answer across the stream must carry. */
+function acceptance(events) {
+  const { stream } = derive(written(events)).l2;
+  assert.ok(Object.hasOwn(stream, 'acceptance'), `report derives no acceptance changes: ${JSON.stringify(Object.keys(stream))}`);
+  return stream.acceptance;
+}
 /** The changes `report` derives over `events`, by card, edit time, editor, dispatches and whether the maker's. */
 const changes = (events) => acceptance(events).changes;
 
