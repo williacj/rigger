@@ -1149,3 +1149,18 @@ test('P9a: plan over the refusal shows the non-merge answer and no merge, where 
     assert.match(preexisting(name, undefined, 'open').verb('plan').out, /merge pull request #70/, 'with the rules served plan shows the merge, so the refusal alone holds it');
   }
 });
+
+import { acceptanceFirst } from './acceptance-world.mjs';
+import { manualClock } from './clock-report-world.mjs';
+
+// proves R-CARD-1
+test('acceptance-first: run C1 gives no work to a heading inside a fence', SETTLES_WITHIN, (t) => acceptanceFirst(t, runVerb, 'C1', manualClock()));
+
+// proves R-CARD-1
+test('acceptance-first: run C2 gives no work to only task-list items', SETTLES_WITHIN, (t) => acceptanceFirst(t, runVerb, 'C2', manualClock()));
+
+// proves R-CARD-1
+test('acceptance-first: run C3 gives no work to only fenced bullets', SETTLES_WITHIN, (t) => acceptanceFirst(t, runVerb, 'C3', manualClock()));
+
+// proves R-CARD-1
+test('acceptance-first: run C4 gives no work to every item comparing to the title', SETTLES_WITHIN, (t) => acceptanceFirst(t, runVerb, 'C4', manualClock()));

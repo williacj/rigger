@@ -1890,3 +1890,18 @@ test('once keeps a Review peer verdict beside a real scratch refusal and escalat
   assert.equal(events.filter(({ event }) => event === 'transition').at(-1).to, 'owner');
   assert.equal(events.filter(({ event }) => event === 'dispatch.end').length, 1);
 });
+
+import { acceptanceFirst } from './acceptance-world.mjs';
+import { manualClock } from './clock-report-world.mjs';
+
+// proves R-CARD-1
+test('acceptance-first: once C1 gives no work to a heading inside a fence', SETTLES_WITHIN, (t) => acceptanceFirst(t, onceVerb, 'C1', manualClock()));
+
+// proves R-CARD-1
+test('acceptance-first: once C2 gives no work to only task-list items', SETTLES_WITHIN, (t) => acceptanceFirst(t, onceVerb, 'C2', manualClock()));
+
+// proves R-CARD-1
+test('acceptance-first: once C3 gives no work to only fenced bullets', SETTLES_WITHIN, (t) => acceptanceFirst(t, onceVerb, 'C3', manualClock()));
+
+// proves R-CARD-1
+test('acceptance-first: once C4 gives no work to every item comparing to the title', SETTLES_WITHIN, (t) => acceptanceFirst(t, onceVerb, 'C4', manualClock()));
