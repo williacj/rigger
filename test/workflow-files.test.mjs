@@ -571,6 +571,71 @@ test('the plan publishes journalOnly true exactly where every change is a regula
   assert.deepEqual([plan(unavailable).mode, plan(unavailable).journalOnly], ['INVALID', false]);
 });
 
+/**
+ * Runs the actual plan step's command against recorded Git and API answers, then carries its
+ * GITHUB_OUTPUT through the plan job's declared outputs, as the runner does for `needs.plan.outputs`.
+ * An unrecorded Git or API call throws, as an unreachable collaborator would.
+ */
+function plannedOutputs(ci, fixture, directory) {
+  const step = ci.jobs.plan.steps.find((candidate) => candidate.id === 'policy');
+  assert.equal(step.run, 'node --input-type=module -e "$CI_POLICY"');
+  const eventPath = join(directory, 'event.json'), outputPath = join(directory, 'output');
+  writeFileSync(eventPath, JSON.stringify(fixture.event)); writeFileSync(outputPath, '');
+  const prefix = `import cp from 'node:child_process';
+    import { syncBuiltinESMExports } from 'node:module';
+    const fixture = JSON.parse(process.env.RUNNER_FIXTURE);
+    cp.execFileSync = (command, args) => {
+      const key = JSON.stringify(args);
+      if (command !== 'git' || !Object.hasOwn(fixture.git, key)) throw new Error('unrecorded Git call');
+      return Buffer.from(fixture.git[key], 'base64');
+    };
+    syncBuiltinESMExports();
+    globalThis.fetch = async (url, options) => {
+      const path = new URL(url).pathname + new URL(url).search;
+      if (options.method !== 'GET' || !Object.hasOwn(fixture.api, path)) throw new Error('unrecorded API call');
+      return new Response(JSON.stringify(fixture.api[path]), { status: 200 });
+    };\n`;
+  const ran = spawnSync(process.execPath, ['--input-type=module', '-e', prefix + ci.env.CI_POLICY], {
+    encoding: 'utf8', timeout: 5000,
+    env: { ...process.env, GH_TOKEN: 'fixture-token', GITHUB_API_URL: 'https://api.github.test',
+      GITHUB_EVENT_PATH: eventPath, GITHUB_EVENT_NAME: fixture.context.eventName, GITHUB_REF: fixture.context.ref,
+      GITHUB_SHA: fixture.context.sha, GITHUB_REPOSITORY: fixture.context.repository, GITHUB_REPOSITORY_OWNER: fixture.context.owner,
+      GITHUB_OUTPUT: outputPath, ...step.env, CI_MACOS_RUNNER: '', RUNNER_FIXTURE: JSON.stringify(fixture) },
+  });
+  assert.equal(ran.error, undefined);
+  assert.equal(ran.status, 0, ran.stdout + ran.stderr);
+  const stepOutputs = Object.fromEntries(readFileSync(outputPath, 'utf8').split('\n').filter(Boolean)
+    .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]));
+  // The runner resolves a job output naming a step output nobody wrote to the empty string.
+  return Object.fromEntries(Object.entries(ci.jobs.plan.outputs).map(([name, expression]) => {
+    const reference = /^\$\{\{ steps\.([A-Za-z0-9_-]+)\.outputs\.([A-Za-z0-9_-]+) \}\}$/.exec(expression);
+    assert.ok(reference, 'plan output ' + name + ' is not a plain step-output reference');
+    return [name, reference[1] === step.id ? stepOutputs[reference[2]] ?? '' : ''];
+  }));
+}
+
+// Host reason: wiring; runs the protected policy literal in a child, in an awaiting-split file (D30 rule 3).
+test('the macOS smoke job reads journalOnly through the actual plan step and job outputs, and a journal-only change skips it even where the forge API read fails', (t) => {
+  const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
+  const condition = new Function('github', 'needs', 'cancelled', 'return (' + ci.jobs.mac_smoke.if.slice(3, -2).trim() + ')');
+  const github = { event_name: 'pull_request', base_ref: 'main' };
+  const sourceDiff = JSON.stringify(['diff', '--raw', '-z', '--no-renames', 'c'.repeat(40), 'a'.repeat(40)]);
+  const source = Buffer.from(':100644 100644 1234567 89abcde M\0src/workflow/gate.mjs\0').toString('base64');
+  for (const [name, change, apiAnswers, mode, starts] of [
+    ['journal-only, API answered', 'journal', true, 'FAST_ELIGIBLE', false],
+    ['journal-only, API read failed', 'journal', false, 'INVALID', false],
+    ['source change, API answered', 'source', true, 'BROAD_DEFERRED', true],
+    ['source change, API read failed', 'source', false, 'INVALID', true],
+  ]) {
+    const fixture = ciCollectorFixture();
+    if (change === 'source') fixture.git[sourceDiff] = source;
+    if (!apiAnswers) delete fixture.api['/repos/williacj/rigger'];
+    const outputs = plannedOutputs(ci, fixture, temporaryDirectory('rigger-smoke-plan-', { context: t }));
+    assert.equal(outputs.mode, mode, name);
+    assert.equal(condition(github, { plan: { result: 'success', outputs } }, () => false), starts, name + ': smoke starts');
+  }
+});
+
 test('actual inline collector uses the complete current issue-label read rather than an embedded PR label snapshot', () => {
   // https://docs.github.com/en/rest/issues/labels#list-labels-for-an-issue owns the paginated label-array shape.
   const fixture = ciCollectorFixture();
