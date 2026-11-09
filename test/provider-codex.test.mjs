@@ -140,6 +140,71 @@ test('the invocation passes --disable plugins and --disable apps, and disables e
   for (const feature of ['plugins', 'apps', ...HOST_FEATURES]) assert.ok(off.includes(feature), `${feature} is not disabled: ${args.join(' ')}`);
 });
 
+/** Every `-c` override among `args` that sets a feature, a tool or web search, by its text. */
+const toolKeys = (args) => overrides(args).filter((each) => /^(features|tools|web_search)\b/.test(each));
+
+// proves R-SAFE-8
+test('given a declaration that withholds no built-in tool, the invocation withholds none either: it disables only plugins, apps and the host features, and sets no feature or tool key', async (t) => {
+  // Table T row T7 on #1301. A built-in such as `shell_tool` or `sleep_tool` is one
+  // `codex features list` shows at codex-cli 0.166.0; disabling one would withhold it.
+  const { directory, scratch: made, agent } = layout(t);
+  onPath({ skills: [] });
+
+  const { args } = await codex.invocation({ agent, tier: 'standard', prompt: 'p', directory, scratch: made, emitter: keeping() });
+
+  assert.deepEqual(following(args, '--disable').sort(), ['apps', 'plugins', ...HOST_FEATURES].sort());
+  assert.equal(args.includes('--enable'), false, args.join(' '));
+  assert.deepEqual(toolKeys(args), []);
+});
+
+// proves R-SAFE-8
+test('given a declaration that withholds a built-in by its feature key, the session\'s home carries the key as declared, and no flag or override turns the built-in back on', async (t) => {
+  // Table T row T8 on #1301: `[features] sleep_tool = false` in a session's home `config.toml`
+  // removed the `sleep` tool from its rollout at codex-cli 0.166.0 (the maker's probe, 2026-11-08).
+  const { directory, scratch: made, agent } = layout(t);
+  const declaration = `${DECLARATION}\n[features]\nsleep_tool = false\n`;
+  writeFileSync(join(directory, '.codex', 'config.toml'), declaration);
+  onPath({ skills: [] });
+
+  const { args, env } = await codex.invocation({ agent, tier: 'standard', prompt: 'p', directory, scratch: made, emitter: keeping() });
+
+  assert.equal(readFileSync(join(env.CODEX_HOME, 'config.toml'), 'utf8'), declaration);
+  assert.equal(args.includes('--enable'), false, args.join(' '));
+  assert.deepEqual(toolKeys(args), []);
+});
+
+// proves R-SAFE-9
+test('given a declaration naming no plugin, app or host feature, both the skill probe and the session disable plugins, apps and each host feature', async (t) => {
+  // Table T row T9 on #1301: each acts through the owner's account, browser or desktop, so each
+  // counts as declared only where the repository declares it.
+  const { directory, scratch: made, agent } = layout(t);
+  const stand = onPath({ skills: [] });
+
+  const { args } = await codex.invocation({ agent, tier: 'standard', prompt: 'p', directory, scratch: made, emitter: keeping() });
+
+  const [probe] = stand.probes();
+  for (const [name, given] of [['session', args], ['probe', probe.args]]) {
+    const off = following(given, '--disable');
+    for (const feature of ['plugins', 'apps', ...HOST_FEATURES]) assert.ok(off.includes(feature), `the ${name} leaves ${feature} on: ${given.join(' ')}`);
+  }
+});
+
+// proves R-SAFE-9
+test('given a declaration naming an MCP server, the session\'s home carries that server as declared, while plugins and apps stay disabled', async (t) => {
+  // Table T row T11 on #1301, beside its withheld half, row T9: the declared server is offered,
+  // and what the declaration does not name is not.
+  const { directory, scratch: made, agent } = layout(t);
+  const declaration = `${DECLARATION}\n[mcp_servers.c1301]\ncommand = "node"\nargs = ["server.cjs"]\n`;
+  writeFileSync(join(directory, '.codex', 'config.toml'), declaration);
+  onPath({ skills: [] });
+
+  const { args, env } = await codex.invocation({ agent, tier: 'standard', prompt: 'p', directory, scratch: made, emitter: keeping() });
+
+  assert.equal(readFileSync(join(env.CODEX_HOME, 'config.toml'), 'utf8'), declaration);
+  assert.deepEqual(overrides(args).filter((each) => each.startsWith('mcp_servers')), [], 'an override replaces the declared server');
+  for (const feature of ['plugins', 'apps']) assert.ok(following(args, '--disable').includes(feature), `${feature} is not disabled`);
+});
+
 test('the invocation sets CODEX_HOME to a directory in the dispatch\'s scratch directory holding the directory\'s declaration as its config.toml and a link to the owner\'s auth.json, and TMPDIR and TMPPREFIX to its temporary directory', async (t) => {
   const { directory, scratch: made, agent, owner } = layout(t);
   onPath({ skills: [] });
