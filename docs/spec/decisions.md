@@ -72,7 +72,7 @@ reused.
 | D29 | Rigger's suite runs in two tiers, and the hooks run one | Ratified. Amended in #1140. |
 | D30 | Until the conversion closes, two lists exempt files from D29's bounds | Ratified. Amended in #1140. |
 | D31 | macOS CI runs on hosted runners unless the owner selects the Mac mini | Ratified |
-| D33 | A release tags the commit its milestone's exit run tested | Ratified |
+| D34 | A release tags the commit its milestone's exit run tested | Ratified |
 
 ## D1 — Redo over resume
 
@@ -1243,7 +1243,7 @@ merge commit. So rule 3 names what holds outside the workflow.
 What reverses this: the repository accepting outside pull requests, which ends rule 3's reliance on
 approving none, or hosted capacity no longer failing, which removes the need for the variable.
 
-## D33 — A release tags the commit its milestone's exit run tested
+## D34 — A release tags the commit its milestone's exit run tested
 
 **Status:** Ratified.
 
