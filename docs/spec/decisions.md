@@ -1163,12 +1163,14 @@ Rule 3's fifth bound and rule 11 follow the owner's direction of 2026-10-29 on #
 
 This entry is permanent. `D30` covers rule 2.2's answer source and rules 3, 4 and 5; it ends when its two lists are empty.
 
-Four observations would reverse it:
+Six observations would reverse it:
 
 1. Over the 100 CI runs after `D30` ends, a CI worker's step that runs `npm test` fails in 4 or more first attempts whose rerun at the same head passes. The base is 17 in 198 first attempts of that step, taken over the whole suite. About half the flakes would then remain in the deterministic tier, so the tier boundary would not be where they came from. Each step's actual executed attempts are read with `gh run view --json jobs`; skipped or deferred work is not a passing execution. The threshold is a judgment.
 2. A defect reaches the default branch that a host test would have caught, while every required check was green. The rule then put a claim on the fake that only the real host could prove.
 3. Over 100 pull requests, a CI worker's step that runs `npm run test:host` fails more first attempts that pass on rerun than it fails for a defect, counting only actual executed attempts in that sample and read the same way. Rule 7 alone is then reversed, and the host tier moves to a check that is not required.
 4. Over the first 30 host tests added under rule 11, the judges find in more than half that the named deterministic test does not prove the decision. The declaration then costs a line and carries no evidence, and rule 11 alone is reversed. The threshold is a judgment.
+5. Over 30 `nightly` runs, rule 12's opted-in `gh` tie fails on the forge's availability more often than it finds drift. Rule 12.3 alone is then reversed for `gh`, and its opt-in moves to the owner's hand.
+6. A drift that a rule 12 tie would have caught reaches the default branch while that tie's opt-in sat unrun. Rule 12.3 alone is then reversed for that program, and its tie becomes a default run.
 
 
 ## D30 — Until the conversion closes, two lists exempt files from D29's bounds

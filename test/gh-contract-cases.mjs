@@ -2,11 +2,12 @@
 // gh with: each case runs against the fake in the deterministic tier and against real gh on opt-in.
 
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 
 import config from '../rigger.config.mjs';
 import { parseDocument } from '../src/substrate/forge/graphql.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
-import { readRunner } from '../src/substrate/forge/runners.mjs';
+import { FORGE_TIMEOUT, readRunner } from '../src/substrate/forge/runners.mjs';
 
 /** What precedes the document in a GraphQL request, as the fake gh's `commandOf` writes one. */
 const GRAPHQL = 'gh api graphql -f query=';
@@ -628,6 +629,24 @@ export function contractAsk(name, { via, agent, ran = [], commandOf }) {
     if (classify(commandOf(args)) !== 'read') throw new Error(`contract case "${name}" sends \`gh ${args.join(' ')}\`, which is not a read (D29 rule 12.4)`);
     ran.push(args);
     return args[0] === 'pr' ? agentReadRunner(args, agent) : readRunner(args, via);
+  };
+}
+
+/**
+ * What the live side sends real gh with: `via`, the read runner's options, recording through
+ * `emitter`, and `agent`, which runs an agent's read with `spawn`, Node's `spawnSync` by default.
+ * Each real call is bounded by the read runner's own `FORGE_TIMEOUT`, a minute, so a hung gh is
+ * ended and fails its case rather than stalling the host run; an agent read so ended throws the
+ * spawn's error.
+ */
+export function liveSides({ emitter, spawn = spawnSync }) {
+  return {
+    via: { emitter, timeout: FORGE_TIMEOUT },
+    agent: (args) => {
+      const ran = spawn('gh', args, { encoding: 'utf8', timeout: FORGE_TIMEOUT });
+      if (ran.error) throw ran.error;
+      return { status: ran.status, stdout: ran.stdout, stderr: ran.stderr, timedOut: false };
+    },
   };
 }
 

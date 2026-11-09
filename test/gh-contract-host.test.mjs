@@ -2,11 +2,10 @@
 // where the run opts in for gh (`D29` rule 12.3); every case skips in a run that does not.
 
 import { test } from 'node:test';
-import { spawnSync } from 'node:child_process';
 import { delimiter } from 'node:path';
 
 import { commandOf } from './fake-gh.mjs';
-import { BOARD, BOARD_CASES, FACTS, GH_CASES, contractAsk, runBoardCase } from './gh-contract-cases.mjs';
+import { BOARD, BOARD_CASES, FACTS, GH_CASES, contractAsk, liveSides, runBoardCase } from './gh-contract-cases.mjs';
 import { UNKILLED } from './process-fixtures.mjs';
 
 /**
@@ -22,15 +21,11 @@ const skip = live ? false : 'the run did not opt in for gh with RIGGER_LIVE_GH=1
 /** The live repository and board, with the commit whose file a case reads. */
 const target = { ...BOARD, fileCommit: FACTS.file.commit };
 
-/** The read runner's options for the live side: its own spawn of real gh, recorded through `UNKILLED`. */
-const via = { emitter: UNKILLED };
-
-/** Sends an agent's read as real gh answers it. */
-const agent = (args) => {
-  const ran = spawnSync('gh', args, { encoding: 'utf8' });
-  if (ran.error) throw ran.error;
-  return { status: ran.status, stdout: ran.stdout, stderr: ran.stderr, timedOut: false };
-};
+/**
+ * The read runner's options and the agent read for the live side, each real gh call bounded by a
+ * minute (`liveSides`), the read runner's spawn recording through `UNKILLED`.
+ */
+const { via, agent } = liveSides({ emitter: UNKILLED });
 
 // Host reason: wiring.
 // Ordinary decision counterpart: test/gh-contract.test.mjs :: every read command the fake gh answers is run by at least one contract case.
