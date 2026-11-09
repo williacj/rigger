@@ -1860,10 +1860,10 @@ L2 records `class` at each of these sites, and at no other:
 | A judge's directory refused under `R-WORK-20`, or a judge's scratch directory under `R-WORK-26` (`R-ESCALATE-12`) | `card-local` |
 | The forge's hold on the card's line of work, refused as `R-FAIL-8`'s card-local rows name it, and raised as a loop `ambiguous` on the removal path (`R-WORK-41`) | `card-local` |
 | The second non-start of a dispatch of the role an escalation goes to, the fifth environment failure (`R-ESCALATE-26`) | `environment` |
-| A role's escalation directory refused under `R-WORK-32` | `card-local` |
+| A role's escalation directory refused under `R-WORK-32`, or that role's scratch directory under `R-WORK-26` | `card-local` |
 
-`R-FAIL-8`'s table classes the refusals of the first three sites card-local, and holds no row for
-`R-WORK-32`. That refusal takes `card-local` because "Failure model" sets it beside the `R-WORK-13`,
+`R-FAIL-8`'s table classes the refusals of the first three sites card-local, as it does a role's
+scratch directory refused under `R-WORK-26`. It holds no row for `R-WORK-32`. That refusal takes `card-local` because "Failure model" sets it beside the `R-WORK-13`,
 `R-WORK-20` and `R-WORK-26` refusals, which the table classes so. What would reverse it: an owner
 ruling that a role's escalation directory is not the card's own.
 
