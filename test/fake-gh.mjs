@@ -294,6 +294,8 @@ const repositoryOf = (state) => createFakeRepository({ ...state.repository, repo
  * The repository a pull request's head is in, as GitHub answers it: the fork it is from, this
  * repository where it is from none, or null where that repository was deleted.
  */
+// Where real gh can differ (D29 rule 12.5): untied. A fork's pull request, answered with the fork's
+// name, and one whose head repository was deleted, answered as null, have no contract case.
 const headRepositoryOf = (state, pull) => (pull.headRepositoryDeleted ? null : { nameWithOwner: pull.from ?? state.repo });
 
 /** The address GitHub gives pull request `number` of the fake's repository. */
@@ -369,6 +371,8 @@ async function issueComments(board, state, operation) {
 const notFound = (documentation) => new GhPrinted('gh: Not Found (HTTP 404)', JSON.stringify({ message: 'Not Found', documentation_url: documentation, status: '404' }));
 
 /** The path a REST read asks for, below the repository, or a 404 where the repository is not the fake's. */
+// Where real gh can differ (D29 rule 12.5): untied. A REST read naming another repository answers
+// 404 here, whatever GitHub would answer for that repository.
 function pathIn(state, args) {
   const [, owner, name, ...rest] = args[1].split('/');
   if (`${owner}/${name}`.toLowerCase() !== state.repo.toLowerCase()) throw notFound('https://docs.github.com/rest');
@@ -407,6 +411,8 @@ const LABELS = 'pageInfo { hasNextPage endCursor } nodes { name }';
  */
 // Where real gh can differ (D29 rule 12.5): the author is always `rigger-fake` here, where GitHub answers
 // the issue's real author; the contract ties the author's form only.
+// Where real gh can differ (D29 rule 12.5): untied. An issue the fake holds as another repository's,
+// as one transferred out, answers that repository's name, which no contract case reads.
 async function issue(board, state, operation) {
   inTheRepository(state, operation);
   const field = fieldIn(operation.selections, 'issue');
@@ -418,6 +424,8 @@ async function issue(board, state, operation) {
 }
 
 /** The held issue the read names in the repository the forge answers it in, or GitHub's not-found answer for it. */
+// Where real gh can differ (D29 rule 12.5): untied. The not-found answer for the state read is
+// `unresolved`'s, which the contract ties only for the issue read.
 function heldIssue(state, operation) {
   inTheRepository(state, operation);
   const number = Number(valueOf(fieldIn(operation.selections, 'issue'), 'number'));
@@ -643,6 +651,9 @@ const COMMANDS = {
   [graphql(repositoryShape(`issues(states: [], labels: [], first: _) { ${LABELS.replace('name', 'number')} }`))]: labelledIssues,
   [graphql(repositoryShape(`issues(states: [], labels: [], first: _, after: _) { ${LABELS.replace('name', 'number')} }`))]: labelledIssues,
   // The newest issue or pull request, as the REST issues list answers its first, newest-created, entry.
+  // Where real gh can differ (D29 rule 12.5): untied. A repository holding no issue or pull request
+  // answers `[]` here; the contract's case reads the live repository, which holds both, and rejects an
+  // empty answer.
   [commandOf(['api', 'repos/_/_/issues?state=all&sort=created&direction=desc&per_page=1', '-X', 'GET'])]: async (board, state, args) => {
     pathIn(state, args);
     const { issues, pullRequests } = repositoryOf(state).held();
@@ -669,6 +680,8 @@ const COMMANDS = {
   },
   // A pull request's diff, or the forge's refusal to serve it, which GitHub gives as HTTP 406.
   // Where real gh can differ (D29 rule 12.5): a declined diff (HTTP 406) is scripted, and untied.
+  // Where real gh can differ (D29 rule 12.5): untied. A pull request the repository lacks answers
+  // `notFound`'s 404 here.
   [commandOf(['api', 'repos/_/_/pulls/_', '-X', 'GET', '-H', 'Accept: application/vnd.github.diff'])]: async (board, state, args) => {
     const pull = repositoryOf(state).pull(Number(pathIn(state, args).split('/')[1]));
     if (!pull) throw notFound('https://docs.github.com/rest/pulls/pulls#get-a-pull-request');
@@ -745,6 +758,9 @@ const COMMANDS = {
     const number = Number(new URLSearchParams(pathIn(state, args).split('?')[1]).get('page'));
     return JSON.stringify({ total_count: policies.length, branch_policies: policies.slice((number - 1) * 100, number * 100) });
   },
+  // Where real gh can differ (D29 rule 12.5): the value is the test's seed, and a variable the
+  // environment lacks answers `notFound`'s 404, untied; the contract ties a held variable's name and
+  // form.
   [commandOf(['api', 'repos/_/_/environments/_/variables/_', '-X', 'GET'])]: async (board, state, args) => {
     const name = decodeURIComponent(pathIn(state, args).split('/')[3]);
     const value = environmentIn(state, args).variables?.[name];
@@ -753,6 +769,8 @@ const COMMANDS = {
   },
   // Where real gh can differ (D29 rule 12.5): the times are fixed here; GitHub answers when the secret
   // was made and changed. The contract ties their form only.
+  // Where real gh can differ (D29 rule 12.5): untied. A secret the environment lacks answers `notFound`'s
+  // 404 here.
   [commandOf(['api', 'repos/_/_/environments/_/secrets/_', '-X', 'GET'])]: async (board, state, args) => {
     const name = decodeURIComponent(pathIn(state, args).split('/')[3]);
     if (!environmentIn(state, args).secrets?.includes(name)) throw notFound('https://docs.github.com/rest/actions/secrets');
@@ -760,6 +778,8 @@ const COMMANDS = {
   },
   // Where real gh can differ (D29 rule 12.5): `mergeable` is the test's seed, `true` where none is
   // given, and `merge_commit_sha` the seeded `mainSha`; GitHub computes both.
+  // Where real gh can differ (D29 rule 12.5): untied. A pull request the repository lacks answers
+  // `notFound`'s 404 here.
   [commandOf(['api', 'repos/_/_/pulls/_', '-X', 'GET'])]: async (board, state, args) => {
     const number = Number(pathIn(state, args).split('/')[1]);
     const pull = repositoryOf(state).pull(number);
@@ -767,6 +787,8 @@ const COMMANDS = {
     return JSON.stringify({ state: state.repository?.pullStates?.[number] ?? (pull.merged ? 'closed' : 'open'), merged: pull.merged, mergeable: state.repository?.mergeable && Object.hasOwn(state.repository.mergeable, number) ? state.repository.mergeable[number] : true, head: { sha: pull.sha }, merge_commit_sha: state.repository?.mainSha ?? null });
   },
   // Where real gh can differ (D29 rule 12.5): the node ID is `I_issue<number>` here; GitHub's is opaque.
+  // Where real gh can differ (D29 rule 12.5): untied. An issue the repository lacks answers `notFound`'s
+  // 404 here.
   [commandOf(['api', 'repos/_/_/issues/_', '-X', 'GET'])]: async (board, state, args) => {
     const number = Number(pathIn(state, args).split('/')[1]);
     const issue = state.repository?.issues?.find((candidate) => candidate.number === number);

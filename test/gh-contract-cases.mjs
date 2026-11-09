@@ -2,6 +2,7 @@
 // gh with: each case runs against the fake in the deterministic tier and against real gh on opt-in.
 
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 
 import config from '../rigger.config.mjs';
 import { parseDocument } from '../src/substrate/forge/graphql.mjs';
@@ -65,10 +66,19 @@ const LABEL = config.kinds.change.select.labels[0];
  * `d902e65c`, with merge commit `f3769f24`, and is the only pull request from that branch; issue
  * #1194 is closed; `.npmrc` at `52fb8a3d` is a 202-byte regular file; `williacj` holds `admin`;
  * environment `gate` holds variable `GATE_APP_ID` and secret `GATE_APP_PRIVATE_KEY`; `main` has no
- * classic branch protection.
+ * classic branch protection. Measured with gh 2.98.0 on 2026-11-09, read through `git apply
+ * --numstat`: #1202's diff, as `gh api` and `gh pr diff` both serve it, changes three files, adding
+ * 1023 lines and deleting 12, the totals the forge answers for the pull request too.
  */
 export const FACTS = {
-  pull: { number: 1202, branch: 'rigger-1194', head: 'd902e65cecf9ff58de29e48bb55d714704c885ae', base: 'main', mergeCommit: 'f3769f2482ef8cbffb573ee427fd112e68d2515f' },
+  pull: {
+    number: 1202, branch: 'rigger-1194', head: 'd902e65cecf9ff58de29e48bb55d714704c885ae', base: 'main', mergeCommit: 'f3769f2482ef8cbffb573ee427fd112e68d2515f',
+    numstat: [
+      { added: 49, deleted: 0, path: 'docs/journal/2026-11-02-1823-1194-nested-ownership.md' },
+      { added: 618, deleted: 0, path: 'test/never-stop-nested-ownership-decisions.test.mjs' },
+      { added: 356, deleted: 12, path: 'test/never-stop.test.mjs' },
+    ],
+  },
   issue: { number: 1194 },
   missing: 999999,
   file: {
@@ -253,6 +263,24 @@ const ISSUE = (number, labelPage) => `issue(number: ${number}) { number title bo
 /** A REST read under the repository, with an explicit GET, as the read runner admits one. */
 const restGet = (target, path, ...headers) => ['api', `repos/${target.repo}/${path}`, '-X', 'GET', ...headers];
 
+/**
+ * The files `diff` changes, each with the lines it adds and deletes, as `git apply --numstat`
+ * reads the patch: git is the authority on what a patch is (`D16` rule 1), so a diff it refuses,
+ * such as a truncated one, fails the case with git's own reason. Nothing is applied.
+ */
+export function numstatOf(diff) {
+  let printed;
+  try {
+    printed = execFileSync('git', ['apply', '--numstat', '-'], { input: diff, encoding: 'utf8', env: gitEnvironment() });
+  } catch (refused) {
+    throw new assert.AssertionError({ message: `git reads no patch in the diff: ${String(refused.stderr ?? refused.message).trim()}` });
+  }
+  return printed.split('\n').filter(Boolean).map((line) => {
+    const [added, deleted, path] = line.split('\t');
+    return { added: Number(added), deleted: Number(deleted), path };
+  });
+}
+
 /** The header asking GitHub for a pull request's diff. */
 const DIFF = 'Accept: application/vnd.github.diff';
 
@@ -423,7 +451,7 @@ export const GH_CASES = [
     run: async (ask, target) => {
       const answer = await ask(restGet(target, `pulls/${FACTS.pull.number}`, '-H', DIFF));
       assert.equal(answer.status, 0, answer.stderr);
-      assert.match(answer.stdout, /^diff --git a\//);
+      assert.deepEqual(numstatOf(answer.stdout), FACTS.pull.numstat);
     },
   },
   {
@@ -532,7 +560,8 @@ export const GH_CASES = [
       assert.deepEqual(lines.map(([name]) => name), VIEW_LINES.map((name) => `${name}:`));
       const value = Object.fromEntries(lines.map(([name, held]) => [name.slice(0, -1), held]));
       assert.deepEqual([value.state, value.number, value.url], ['MERGED', String(FACTS.pull.number), `https://github.com/${target.repo}/pull/${FACTS.pull.number}`]);
-      assert.match(`${value.additions} ${value.deletions}`, /^\d+ \d+$/);
+      const total = (key) => String(FACTS.pull.numstat.reduce((sum, file) => sum + file[key], 0));
+      assert.deepEqual([value.additions, value.deletions], [total('added'), total('deleted')]);
     },
   },
   {
@@ -540,7 +569,7 @@ export const GH_CASES = [
     run: async (ask, target) => {
       const answer = await ask(['pr', 'diff', String(FACTS.pull.number), '--repo', target.repo]);
       assert.equal(answer.status, 0, answer.stderr);
-      assert.match(answer.stdout, /^diff --git a\//);
+      assert.deepEqual(numstatOf(answer.stdout), FACTS.pull.numstat);
     },
   },
 ];

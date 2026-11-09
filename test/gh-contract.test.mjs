@@ -58,8 +58,18 @@ function recordBeside(source, command) {
 /** The time the fake gh is answered at; no case writes, so nothing it answers carries it. */
 const NOW = '2026-11-08T00:00:00Z';
 
-/** A diff of the form the forge serves one, which the fake holds as the pull request's. */
-const DIFF = 'diff --git a/README b/README\nindex 0000000..1111111 100644\n--- a/README\n+++ b/README\n@@ -1 +1,2 @@\n one\n+two\n';
+/**
+ * A diff of the form the forge serves one, which the fake holds as the pull request's: one file
+ * for each that #1202's diff changes, adding and deleting as many lines as it does
+ * (`FACTS.pull.numstat`). A file it only adds to is a new file; the lines are placeholders.
+ */
+const DIFF = FACTS.pull.numstat.map(({ added, deleted, path }) => {
+  const lines = (sign, count) => Array.from({ length: count }, (_, at) => `${sign}line ${at + 1}\n`).join('');
+  const header = deleted === 0
+    ? `diff --git a/${path} b/${path}\nnew file mode 100644\nindex 0000000..1111111\n--- /dev/null\n+++ b/${path}\n@@ -0,0 +1,${added} @@\n`
+    : `diff --git a/${path} b/${path}\nindex 2222222..3333333 100644\n--- a/${path}\n+++ b/${path}\n@@ -1,${deleted} +1,${added} @@\n`;
+  return `${header}${lines('-', deleted)}${lines('+', added)}`;
+}).join('');
 
 /** A comment as the fake holds one, by `login`, at `createdAt`. */
 const comment = (body, login, createdAt) => ({ body, createdAt, author: { login } });
