@@ -26,6 +26,7 @@ import { detachedWorktreeAt, gitIn, repositoryAt, worktreeAt } from './git-repos
 import { onPath } from './on-path.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { assertDelivered, liveMaker, MAKER_SESSION } from './maker-git-live.mjs';
+import { cpSync } from 'node:fs';
 
 /*
  * What these runs reach. Each session is one real `codex exec`, signed in as the host's owner
@@ -475,4 +476,70 @@ test('a live Codex maker commits and pushes through the shipped hook, denies com
   quote('maker git results', report);
   quote('maker summary', { head, commit: committed.exit, push: pushed.exit, tracking: head, hookRefusal: refused.exit, denied: report.denied, logsCreated: true, artifacts: made.artifacts });
   linkHolds(made.handed.env.CODEX_HOME, process.env.CODEX_HOME || join(homedir(), '.codex'));
+});
+
+// Host reason: OS behaviour; Codex's sandbox and the real process table decide this result,
+// with no decision Rigger makes. This repository's declaration is a harness diagnostic (#1237).
+test('a repository Codex declaration through L1 permits /bin/ps with the maker git roots present', { skip, timeout: 2 * SESSION }, async (t) => {
+  realCodex(t);
+  const base = scratch('rigger-codex-repository-mode-');
+  const declared = readFileSync(new URL('../.codex/config.toml', import.meta.url), 'utf8');
+  const mode = process.env.RIGGER_1237_SANDBOX_MODE ?? declared.match(/^sandbox_mode = "([^"]+)"$/m)?.[1];
+  assert.ok(['workspace-write', 'danger-full-access'].includes(mode), 'the diagnostic needs an explicit sandbox mode');
+  const configuration = process.env.RIGGER_1237_SANDBOX_MODE === undefined ? declared
+    : declared.replace(/^sandbox_mode = "[^"]+"$/m, `sandbox_mode = ${JSON.stringify(mode)}`);
+  const repository = repositoryAt(join(base, 'repository'), {
+    '.codex/config.toml': configuration,
+    'agent.md': '# ABOUTME: Runs only the process-table diagnostic.\nRun the requested command once, without retrying, changing settings or requesting broader permissions.\n',
+    '.c1237-ps.cjs': [
+      '// ABOUTME: Records the real process-table command and its child exit, independently of the agent reply.',
+      "const { spawnSync } = require('node:child_process');",
+      "const { writeFileSync } = require('node:fs');",
+      "const args = ['-p', String(process.pid), '-o', 'pid='];",
+      "const ran = spawnSync('/bin/ps', args, { encoding: 'utf8' });",
+      "const report = { command: '/bin/ps', args, pid: process.pid, exit: ran.status, signal: ran.signal, stdout: ran.stdout, stderr: ran.stderr, error: ran.error?.message };",
+      "writeFileSync('.c1237-ps.json', JSON.stringify(report, null, 2));",
+      'console.log(JSON.stringify(report));',
+      '',
+    ].join('\n'),
+  });
+  const directory = worktreeAt(repository, join(base, 'rigger-1237'), 'rigger-1237');
+  const state = join(base, 'state');
+  const sink = openSink({ directory: state, run: 'r-repository-mode', now: Date.now });
+  const id = 'd-repository-mode';
+  const handed = await roleDispatch({
+    answer: { role: 'engineer', provider: 'codex', agent: 'agent.md', tier: 'standard', instruction: 'Run exactly this command once: node .c1237-ps.cjs\nThen stop.\n', evidence: '', timeout: SESSION },
+    cwd: directory, directory, repository, scratch: join(base, 'scratch', 'rigger-1237'), maker: true, reach: [], env: process.env, sink, id, card: 1237,
+  });
+  assert.equal(readFileSync(join(handed.env.CODEX_HOME, 'config.toml'), 'utf8'), configuration, 'the dispatch home must hold the directory declaration');
+  const result = await dispatch({ id, card: 1237, directory: state, sink, ...handed });
+  const artifacts = join(process.env.RIGGER_1237_EVIDENCE_ROOT ?? join(homedir(), 'Library', 'Logs', 'rigger', '1237-evidence'), `process-table-${randomUUID()}`);
+  mkdirSync(artifacts, { recursive: true, mode: 0o700 });
+  writeFileSync(join(artifacts, 'stdout'), result.stdout, { mode: 0o600 });
+  writeFileSync(join(artifacts, 'stderr'), result.stderr, { mode: 0o600 });
+  writeFileSync(join(artifacts, 'invocation.json'), JSON.stringify({ command: handed.command, args: handed.args, input: handed.input.toString('utf8'), mode, exit: result.exit, timedOut: result.timedOut }, null, 2), { mode: 0o600 });
+  for (const file of ['.c1237-ps.cjs', '.c1237-ps.json', '.codex/config.toml']) {
+    if (existsSync(join(directory, file))) cpSync(join(directory, file), join(artifacts, file.split('/').at(-1)));
+  }
+  if (existsSync(join(handed.env.CODEX_HOME, 'sessions'))) cpSync(join(handed.env.CODEX_HOME, 'sessions'), join(artifacts, 'sessions'), { recursive: true });
+  quote('repository mode retained originals', artifacts);
+  assert.equal(result.exit, 0, result.stderr.toString('utf8'));
+  assert.equal(result.timedOut, false, 'the diagnostic session must end naturally');
+  const events = eventsOf(result.stdout);
+  const thread = events.find((event) => event.type === 'thread.started')?.thread_id;
+  const rollout = rolloutIn(handed.env.CODEX_HOME, thread);
+  const policy = rollout.lines.find((line) => line.type === 'turn_context').payload.sandbox_policy;
+  quote('repository sandbox_policy', policy);
+  quote('repository invocation args', handed.args);
+  assert.equal(policy.type, mode, 'Codex must honour the directory mode from the dispatch home');
+  const added = handed.args.flatMap((arg, index) => handed.args[index - 1] === '--add-dir' ? [arg] : []);
+  const common = join(repository, '.git');
+  assert.deepEqual(added, [join(common, 'worktrees', 'rigger-1237'), ...['objects', 'refs', 'logs'].map((name) => join(common, name)), handed.env.TMPDIR]);
+  assert.ok(existsSync(join(directory, '.c1237-ps.json')), 'the session must run the process-table diagnostic');
+  const report = JSON.parse(readFileSync(join(directory, '.c1237-ps.json'), 'utf8'));
+  quote('repository /bin/ps child result', report);
+  assert.equal(report.exit, 0, '/bin/ps must exit 0 under this repository declaration');
+  assert.equal(report.signal, null, '/bin/ps must end naturally');
+  assert.equal(report.stdout.trim(), String(report.pid), '/bin/ps must observe its live caller');
+  linkHolds(handed.env.CODEX_HOME, process.env.CODEX_HOME || join(homedir(), '.codex'));
 });
