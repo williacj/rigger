@@ -7,7 +7,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ci, startupInspectionFixture } from './ci-host-fixtures.mjs';
 
-// Harness diagnostics, so no `// proves`: no row of docs/spec/requirements.md describes ci.yml's host
+// Harness diagnostics, declaring no requirement: no row of docs/spec/requirements.md describes ci.yml's host
 // startup qualification (#1323). The pins are read from the check's own source, the CI_HOST module in
 // ci.yml, which holds their only copy.
 const declared = ci.env.CI_HOST.match(/const projectSources = (\{[^}]*\});/);
