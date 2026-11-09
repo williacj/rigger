@@ -402,7 +402,8 @@ function writtenBy(scratch, skip) {
 
 /**
  * A markdown text cut into passages: a paragraph, a list item with its continuation lines, or a
- * table row. Fenced blocks are dropped, since what they hold is no backticked span.
+ * table row, its whitespace runs collapsed to one space so a wrapped line reads as one sentence.
+ * Fenced blocks are dropped, since what they hold is no backticked span.
  */
 function passagesOf(text) {
   const passages = [];
@@ -417,14 +418,14 @@ function passagesOf(text) {
     }
     current.push(line);
   }
-  return passages.map((lines) => lines.join(' '));
+  return passages.map((lines) => lines.join(' ').replace(/\s+/g, ' '));
 }
 
 /** Every backticked span beginning `npm `, `npx ` or `node `, each with the passage it sits in. */
 function commandsIn(files) {
   return files.flatMap(({ path, text }) => passagesOf(text).flatMap((passage) =>
     [...passage.matchAll(/`([^`]+)`/g)]
-      .map((found) => found[1].replace(/\s+/g, ' ').trim())
+      .map((found) => found[1].trim())
       .filter((span) => /^(?:npm|npx|node) /.test(span))
       .map((command) => ({ path, command, passage }))));
 }
