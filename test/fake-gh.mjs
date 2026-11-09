@@ -125,6 +125,9 @@ const argument = (field, name) => (field.arguments ?? field.fields).find((held) 
 const valueOf = (field, name) => argument(field, name)?.value;
 
 /** The IDs the fake `gh` gives the board, its fields, their options and the repository. */
+// Where real gh can differ (D29 rule 12.5): these IDs are fixed strings here, where GitHub's are opaque
+// and its own. The contract ties their form, and that the board read's IDs are the ones the item-write
+// and schema-write reads resolve, never their values.
 const PROJECT_ID = 'PVT_fake';
 const REPOSITORY_ID = 'R_fake';
 const fieldId = (name) => `PVTSSF_${name}`;
@@ -137,6 +140,9 @@ const COLUMNS = 'Status';
  * The page of `nodes` a connection selected as `field` answers: `first` of them, after the cursor
  * `after` names. The cursor is the count of nodes before it, which the fake `gh` alone reads.
  */
+// Where real gh can differ (D29 rule 12.5): the cursor is a count of nodes here, where GitHub's is
+// opaque; an empty page answers a cursor here, where GitHub answers null. The contract ties a
+// cursor's form, and that the page after it is answered, never its value.
 function page(nodes, field) {
   const start = Number(valueOf(field, 'after') ?? 0);
   const end = start + Number(valueOf(field, 'first'));
@@ -181,6 +187,9 @@ async function fieldsOf(board) {
  * board holds an option's name alone, so every option is given the neutral grey and no
  * description, which is what the schema-write side gives an option it adds.
  */
+// Where real gh can differ (D29 rule 12.5): every option is `GRAY` with no description here, and its ID
+// `option-<index>`; GitHub answers each option's own colour, description and ID. The contract ties
+// their form and the options' names, never these values.
 const optionsOf = (field) => field.options.map((name, index) => ({ id: optionId(index), name, color: 'GRAY', description: '' }));
 
 /** The content of an item as the item read's selection answers it, by the item's type. */
@@ -202,6 +211,9 @@ function contentOf(item, operation) {
 }
 
 /** An item as the item read's selection answers it. */
+// Where real gh can differ (D29 rule 12.5): the field values start with the column here and hold only
+// single-select values; GitHub answers them in the board's field order, with an empty object for a
+// value of any other type. The contract ties their form only.
 function itemNode(item, operation) {
   const values = Object.entries({ ...(item.column ? { [COLUMNS]: item.column } : {}), ...(item.fieldValues ?? {}) })
     .map(([field, name]) => ({ name, field: { name: field } }));
@@ -238,6 +250,8 @@ const ITEM_TYPES = { issue: 'ISSUE', pullRequest: 'PULL_REQUEST', draftIssue: 'D
  * holds `REDACTED`, and no redacted item has been seen on a real board (the architect's ruling on
  * #285, comment 5835129833). Its content is answered as null, which the schema allows.
  */
+// Where real gh can differ (D29 rule 12.5): a draft's empty content and a redacted item's null are
+// tied in form only where the live board holds such an item when the contract runs.
 function ownedItemNode(item) {
   const content = { issue: { repository: { nameWithOwner: item.repository } }, draftIssue: {}, redacted: null };
   content.pullRequest = content.issue;
@@ -308,6 +322,8 @@ const PULLS = 'pageInfo { hasNextPage endCursor } nodes { number state headRefOi
  * Answers a page of the pull requests from the branch the read names, in the states the query
  * asks for, including closed requests when selected.
  */
+// Where real gh can differ (D29 rule 12.5): an open or closed pull request's state is the seed's
+// here; the contract ties a merged one's whole answer and the others' form only.
 async function pullRequests(board, state, operation) {
   inTheRepository(state, operation);
   const field = fieldIn(operation.selections, 'pullRequests');
@@ -325,6 +341,8 @@ const NAMES = 'pageInfo { hasNextPage endCursor } nodes { name }';
  * Answers a page of the repository's branches: those the test seeded, those an opened pull
  * request is from, and, where the fake was given the test's `origin`, every branch it holds.
  */
+// Where real gh can differ (D29 rule 12.5): the names come in seed and then `origin` order here, where
+// GitHub answers its own order; the contract ties their form only.
 async function branches(board, state, operation) {
   inTheRepository(state, operation);
   const names = [...new Set([...repositoryOf(state).held().branches, ...(state.origin ? branchesIn(state.origin) : [])])];
@@ -346,6 +364,9 @@ function pullNamed(state, operation) {
 const COMMENTS = 'pageInfo { hasNextPage endCursor } nodes { body createdAt id author { login } lastEditedAt includesCreatedEdit }';
 
 /** Answers a page of a pull request's comments, oldest first. */
+// Where real gh can differ (D29 rule 12.5): each comment's ID is `IC_<number>_<index>`, its author
+// `rigger-fake` where the seed names none, and its edit fields `null` and `false` where none are given
+// (`commentOf`); GitHub answers its own. The contract ties their form only.
 async function comments(board, state, operation) {
   inTheRepository(state, operation);
   const pull = pullNamed(state, operation);
@@ -355,6 +376,8 @@ async function comments(board, state, operation) {
 /** Answers a page of an issue's comments in the forge's order. */
 // Where real gh can differ (D29 rule 12.5): untied. An issue held only on the board answers its
 // comments here; GitHub answers what the repository holds, whatever the board does.
+// Where real gh can differ (D29 rule 12.5): untied. An issue neither the repository nor the board holds
+// answers `unresolved`'s not-found here, which the contract ties only for the issue read.
 async function issueComments(board, state, operation) {
   inTheRepository(state, operation);
   const number = Number(valueOf(fieldIn(operation.selections, 'issue'), 'number'));
@@ -446,6 +469,8 @@ const TIMELINE = 'pageInfo { hasNextPage endCursor } nodes { __typename ... on I
 /** Answers a page of the timeline of the issue the read names, as `timelineNodes` holds it. */
 // Where real gh can differ (D29 rule 12.5): an event's actor is `rigger-fake` and its time fixed here
 // (`timelineNodes`), where GitHub answers who made it and when; the contract ties their form only.
+// Where real gh can differ (D29 rule 12.5): a comment entry's ID, author and edit fields are
+// `commentOf`'s defaults, as for a pull request's comments; the contract ties their form only.
 async function timeline(board, state, operation) {
   const held = heldIssue(state, operation);
   const field = fieldIn(fieldIn(operation.selections, 'issue').selections, 'timelineItems');
@@ -457,6 +482,8 @@ async function timeline(board, state, operation) {
  * order: the issues it holds, an issue closed through the fake `gh` left out, as GitHub's issues
  * connection holds no pull request.
  */
+// Where real gh can differ (D29 rule 12.5): the numbers come in ascending order here, where GitHub
+// answers its own order; the contract ties their form only.
 async function labelledIssues(board, state, operation) {
   inTheRepository(state, operation);
   const field = fieldIn(operation.selections, 'issues');
@@ -480,6 +507,8 @@ const ENTRY = 'mode type object { ... on Blob { text isBinary isTruncated byteSi
  */
 // Where real gh can differ (D29 rule 12.5): untied. The answers for an object the repository lacks, an
 // object that is not a commit, and an entry that is not a blob have no contract case.
+// Where real gh can differ (D29 rule 12.5): untied. A binary blob answers `text: null` with
+// `isBinary: true` here, a tree entry an empty object, and no blob is ever answered truncated.
 async function fileAt(board, state, operation) {
   inTheRepository(state, operation);
   const commit = valueOf(fieldIn(operation.selections, 'object'), 'oid');
@@ -638,6 +667,8 @@ const COMMANDS = {
     return { repository: { pullRequest: { baseRefName: base, headRefOid: sha } } };
   },
   // The reads of one pull request or issue by its number, the default branch, and a file at a commit.
+  // Where real gh can differ (D29 rule 12.5): an open or closed pull request's state, and the head branch
+  // and repository, are the seed's here; the contract ties a merged one's whole answer.
   [graphql(repositoryShape('pullRequest(number: _) { number state headRefOid headRefName baseRefName headRepository { nameWithOwner } }'))]: async (board, state, operation) => {
     inTheRepository(state, operation);
     const pull = pullNamed(state, operation);
@@ -692,6 +723,8 @@ const COMMANDS = {
   // for that pull request, or, where the fake was given the test's `origin`, the one git finds there.
   // Where real gh can differ (D29 rule 12.5): untied. A comparison this holds no merge base for answers
   // 404 here; GitHub computes one for any two commits it holds.
+  // Where real gh can differ (D29 rule 12.5): untied. With no merge base seeded, this answers the one git
+  // computes in the test's `origin` (`comparedIn`).
   [commandOf(['api', 'repos/_/_/compare/_..._', '-X', 'GET'])]: async (board, state, args) => {
     const [base, head] = pathIn(state, args).slice('compare/'.length).split('...');
     const held = repositoryOf(state).held().pullRequests.find((pull) => pull.base === base && pull.sha === head && pull.mergeBase !== null);
@@ -713,6 +746,8 @@ const COMMANDS = {
   },
   // Where real gh can differ (D29 rule 12.5): each check run is the test's seed, and a scripted
   // `checkFailures` refusal is untied; the contract ties the fields the adapter reads.
+  // Where real gh can differ (D29 rule 12.5): untied. A commit with no check run seeded answers
+  // `total_count: 0` and no runs here.
   [commandOf(['api', 'repos/_/_/commits/_/check-runs?per_page=100&page=_', '-X', 'GET'])]: async (board, state, args) => {
     const path = pathIn(state, args);
     const [, sha, endpoint] = path.split('/');
@@ -724,6 +759,7 @@ const COMMANDS = {
   },
   // Where real gh can differ (D29 rule 12.5): each status is the test's seed; the contract ties the
   // fields the adapter reads.
+  // Where real gh can differ (D29 rule 12.5): untied. A commit with no status seeded answers `[]` here.
   [commandOf(['api', 'repos/_/_/commits/_/statuses?per_page=100&page=_', '-X', 'GET'])]: async (board, state, args) => {
     const path = pathIn(state, args);
     const [, sha, endpoint] = path.split('/');
@@ -732,6 +768,8 @@ const COMMANDS = {
   },
   // Where real gh can differ (D29 rule 12.5): each rule is the test's seed, and a scripted `ruleFailures`
   // refusal is untied; the contract ties a rule's type.
+  // Where real gh can differ (D29 rule 12.5): untied. A rule seeded with an `enforcement` other than
+  // `active` is left out here, and a branch with no rule seeded answers `[]`.
   [commandOf(['api', 'repos/_/_/rules/branches/_?per_page=100&page=_', '-X', 'GET'])]: async (board, state, args) => {
     const path = pathIn(state, args);
     const branch = decodeURIComponent(path.split('/')[2].split('?')[0]);
@@ -749,10 +787,14 @@ const COMMANDS = {
     if (protection === undefined) throw new GhPrinted('gh: Branch not protected (HTTP 404)', JSON.stringify({ message: 'Branch not protected', status: '404' }));
     return JSON.stringify(protection);
   },
+  // Where real gh can differ (D29 rule 12.5): the two fields are the seed's, a policy of null among them;
+  // GitHub answers the whole environment. The contract ties their form for the live `gate`.
   [commandOf(['api', 'repos/_/_/environments/_', '-X', 'GET'])]: async (board, state, args) => {
     const { can_admins_bypass, deployment_branch_policy } = environmentIn(state, args);
     return JSON.stringify({ can_admins_bypass, deployment_branch_policy });
   },
+  // Where real gh can differ (D29 rule 12.5): the policies are the seed's, `[]` with `total_count: 0`
+  // where none are seeded; the contract ties their form for the live `gate`.
   [commandOf(['api', 'repos/_/_/environments/_/deployment-branch-policies?per_page=100&page=_', '-X', 'GET'])]: async (board, state, args) => {
     const policies = environmentIn(state, args).branch_policies ?? [];
     const number = Number(new URLSearchParams(pathIn(state, args).split('?')[1]).get('page'));
@@ -780,6 +822,8 @@ const COMMANDS = {
   // given, and `merge_commit_sha` the seeded `mainSha`; GitHub computes both.
   // Where real gh can differ (D29 rule 12.5): untied. A pull request the repository lacks answers
   // `notFound`'s 404 here.
+  // Where real gh can differ (D29 rule 12.5): untied. An unmerged pull request answers `open`, or the
+  // seeded `pullStates` value; the contract ties a merged one's state.
   [commandOf(['api', 'repos/_/_/pulls/_', '-X', 'GET'])]: async (board, state, args) => {
     const number = Number(pathIn(state, args).split('/')[1]);
     const pull = repositoryOf(state).pull(number);
@@ -940,6 +984,9 @@ const now = () => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
  * the command runs is the selector.
  */
 // Where real gh can differ (D29 rule 12.5): the failures for no branch and no pull request are untied.
+// Where real gh can differ (D29 rule 12.5): untied. A branch or address selector names the branch's open
+// pull request before a merged one here, and the address of another repository fails; the contract
+// selects by number alone.
 function selected(state, repository, selector, cwd) {
   const named = selector ?? checkedOut(cwd);
   if (named === null) throw new GhFailure('could not determine current branch: not on any branch');
@@ -956,6 +1003,8 @@ function selected(state, repository, selector, cwd) {
 }
 
 /** How `gh pr view` names a pull request's state. */
+// Where real gh can differ (D29 rule 12.5): untied. An unmerged pull request is `OPEN` here, a closed
+// one included; the contract ties a merged one's `MERGED`.
 const stateOf = (pull) => (pull.merged ? 'MERGED' : 'OPEN');
 
 /** The fields `gh pr view --json` answers from the fake's model, each as `gh` prints it. */
@@ -1033,6 +1082,8 @@ const AGENT_COMMANDS = {
   // Where real gh can differ (D29 rule 12.5): as text, `author` is always `rigger-fake` and `labels`,
   // `assignees`, `reviewers`, `projects` and `milestone` blank; the contract ties the lines' names, and
   // the state, number and address.
+  // Where real gh can differ (D29 rule 12.5): the title and body, as text and as JSON, are the seed's; the
+  // contract ties their form.
   view: async (board, state, args, _now, cwd) => {
     const { flags, words } = agentArgs(state, args);
     const fields = flags.json?.split(',').sort();

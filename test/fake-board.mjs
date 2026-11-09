@@ -55,6 +55,9 @@ export function createFakeBoard({ columns = [], fields = [], items = [], labels 
     readItems: () => read(() => board.items),
     readColumns: () => read(() => board.columns),
     readFields: () => read(() => board.fields.filter((field) => field.type === undefined)),
+    // Where real gh can differ (D29 rule 12.5): the column field comes first here, and a field given no
+    // type is single-select; GitHub answers its board's own order and types. The contract ties the
+    // form, and that `Status` is a single-select field, through the forge adapter.
     readFieldTypes: () => read(() => [{ name: 'Status', type: 'SINGLE_SELECT' }, ...board.fields.map(({ name, type = 'SINGLE_SELECT' }) => ({ name, type }))]),
     readLabels: () => read(() => board.labels),
     /**
