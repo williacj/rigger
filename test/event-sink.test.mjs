@@ -615,17 +615,14 @@ async function verbWriter(t, options) {
   const script = join(home, 'writer.mjs');
   writeFileSync(script, String.raw`// ABOUTME: Appends exact-sized events in a separate verb-shaped process.
 import { openSink } from ${JSON.stringify(sinkModule)};
-import { existsSync, watch } from 'node:fs';
-import { dirname } from 'node:path';
-import { once } from 'node:events';
+import { existsSync } from 'node:fs';
 const { directory, run, size, count, report, go, onward } = JSON.parse(process.argv[2]);
 const sink = openSink({ run, now: () => 0 });
 sink.name(directory);
 const { emit } = sink.emitter({ layer: 'L3', card: 1298, dispatch: 'd-' + run });
 async function afterFile(path) {
-  const watcher = watch(dirname(path));
-  try { while (!existsSync(path)) await once(watcher, 'change'); }
-  finally { watcher.close(); }
+  // A signal is persistent state; recheck it without depending on a directory notification.
+  while (!existsSync(path)) await new Promise((resolve) => setImmediate(resolve));
 }
 const starting = afterFile(go);
 process.send({ kind: 'ready' });
@@ -652,7 +649,7 @@ for (let index = 0; count === null || index < count; index += 1) {
 const last = process.hrtime.bigint();
 process.send({ kind: 'done', first: String(first), last: String(last) }, () => process.disconnect());
 `);
-  const child = spawn(process.execPath, [script, JSON.stringify(options)], {
+  const child = spawn(process.execPath, [...(options.execArgv ?? []), script, JSON.stringify(options)], {
     cwd: home, env: { ...process.env, TMPDIR: home }, stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
   });
   const pid = child.pid;
@@ -756,36 +753,93 @@ test('I1 I2: ordered verb processes preserve both whole lines at 200 bytes and 1
 // OS behaviour: the running writer never waits for the parent to choose an internal kill point.
 // proves R-RECORD-6
 test('R7: SIGKILL during a running writer preserves its reported returns and every restarted event', { timeout: 60_000 }, async (t) => {
-  const directory = join(stateDir(), '.rigger');
-  const control = temporaryDirectory('rigger-record-control-', { context: t });
-  const writer = await verbWriter(t, { directory, run: 'A', size: 200, count: null, report: true, go: join(control, 'first') });
-  writeFileSync(join(control, 'first'), '');
-  await until(() => writer.output().split('\n').length > 32, t);
-  assert.equal(writer.child.exitCode, null, 'the writer must still be running at the kill');
-  process.kill(writer.pid, 'SIGKILL');
-  const [code, signal] = await writer.ended;
-  assert.equal(code, null);
-  assert.equal(signal, 'SIGKILL');
-  assert.equal(writer.error(), '');
-  // A kill may interrupt the report following the last returned emit. Only a complete report
-  // establishes that return; the next emit cannot start until that report's write completes.
-  const reports = writer.output().slice(0, writer.output().lastIndexOf('\n') + 1);
-  const returned = reports.trimEnd().split('\n').map(Number);
-  assert.deepEqual(returned, Array.from({ length: returned.length }, (_, index) => index));
-  const later = await verbWriter(t, { directory, run: 'B', size: 200, count: 2, go: join(control, 'second') });
-  writeFileSync(join(control, 'second'), '');
-  await written(later);
+  const observer = join(temporaryDirectory('rigger-record-observer-', { context: t }), 'observer.mjs');
+  writeFileSync(observer, String.raw`// ABOUTME: Withholds directory notifications and observes returned emits on the child's IPC channel.
+import fs from 'node:fs';
+import { EventEmitter } from 'node:events';
+import { syncBuiltinESMExports } from 'node:module';
+// A file's presence must release the writer even when its directory notification is lost.
+fs.watch = () => Object.assign(new EventEmitter(), { close() {} });
+syncBuiltinESMExports();
+let reported = -1;
+let observedSignal;
+let announced = false;
+const write = process.stdout.write.bind(process.stdout);
+process.stdout.write = (chunk, ...args) => {
+  if (typeof chunk === 'string' && /^\d+\n$/.test(chunk)) {
+    reported = Number(chunk.trim());
+    // The free-running writer need not service another IPC read before its parent's kill.
+    if (observedSignal && !announced) {
+      announced = true;
+      process.send({ kind: 'signal-observed', phase: 'after', present: fs.existsSync(observedSignal), reported });
+    }
+  }
+  return write(chunk, ...args);
+};
+process.on('message', (message) => {
+  if (message.kind !== 'observe-signal') return;
+  observedSignal = message.path;
+  // Cross a check phase so a queued predicate check and its continuation can run before observation.
+  setImmediate(() => setImmediate(() => {
+    process.send({ kind: 'signal-observed', phase: message.phase, present: fs.existsSync(message.path), reported });
+  }));
+});
+`);
+  for (const released of ['start', 'continuation']) {
+    await t.test(`${released} signal without directory notifications`, async (t) => {
+      const directory = join(stateDir(), '.rigger');
+      const control = temporaryDirectory('rigger-record-control-', { context: t });
+      const go = join(control, 'first');
+      const onward = join(control, 'continue');
+      const signalPath = released === 'start' ? go : onward;
+      writeFileSync(released === 'start' ? onward : go, '');
+      const writer = await verbWriter(t, { directory, run: 'A', size: 200, count: null,
+        report: true, go, onward, execArgv: ['--import', pathToFileURL(observer).href] });
+      if (released === 'continuation') {
+        await until(() => writer.messages.some(({ kind }) => kind === 'first-returned'), t);
+      }
+      const observe = async (phase) => {
+        writer.child.send({ kind: 'observe-signal', path: signalPath, phase });
+        await until(() => writer.messages.some((message) => message.kind === 'signal-observed' && message.phase === phase), t);
+        return writer.messages.find((message) => message.kind === 'signal-observed' && message.phase === phase);
+      };
+      const waiting = await observe('before');
+      assert.equal(waiting.present, false, 'the release file must not exist before the signal');
+      assert.equal(waiting.reported, -1, `${released} signal must hold the writer until its file exists`);
+      writeFileSync(signalPath, '');
+      const observed = await observe('after');
+      assert.equal(observed.present, true, 'the writer must see its persisted signal');
+      assert.ok(observed.reported >= 0,
+        `${released} signal must release a ready writer without a filesystem notification`);
+      t.diagnostic(`${released} signal present; last reported emit ${observed.reported}; directory notifications withheld`);
+      await until(() => writer.output().split('\n').length > 32, t);
+      assert.equal(writer.child.exitCode, null, 'the writer must still be running at the kill');
+      process.kill(writer.pid, 'SIGKILL');
+      const [code, signal] = await writer.ended;
+      assert.equal(code, null);
+      assert.equal(signal, 'SIGKILL');
+      assert.equal(writer.error(), '');
+      // A kill may interrupt the report following the last returned emit. Only a complete report
+      // establishes that return; the next emit cannot start until that report's write completes.
+      const reports = writer.output().slice(0, writer.output().lastIndexOf('\n') + 1);
+      const returned = reports.trimEnd().split('\n').map(Number);
+      assert.deepEqual(returned, Array.from({ length: returned.length }, (_, index) => index));
+      const later = await verbWriter(t, { directory, run: 'B', size: 200, count: 2, go: join(control, 'second') });
+      writeFileSync(join(control, 'second'), '');
+      await written(later);
 
-  let events;
-  assert.doesNotThrow(() => { events = readEvents(directory); }, 'returned emits and the restarted writer must remain readable');
-  const killed = events.filter(({ run }) => run === 'A');
-  assert.ok(killed.length >= returned.length, 'every reported return must be found');
-  assert.ok(killed.length <= returned.length + 1, 'at most one emit may have returned without its report');
-  assert.deepEqual(killed.slice(0, returned.length).map(({ index }) => index), returned);
-  assertWriterEvents(events, 'A', 200, Array.from({ length: killed.length }, (_, index) => index));
-  assertWriterEvents(events, 'B', 200, [0, 1]);
-  assert.deepEqual(events.map(({ run }) => run), [...Array(killed.length).fill('A'), 'B', 'B']);
-  t.diagnostic(`SIGKILL pid ${writer.pid}; reported ${returned.length}; recovered ${killed.length}; restarted 2`);
+      let events;
+      assert.doesNotThrow(() => { events = readEvents(directory); }, 'returned emits and the restarted writer must remain readable');
+      const killed = events.filter(({ run }) => run === 'A');
+      assert.ok(killed.length >= returned.length, 'every reported return must be found');
+      assert.ok(killed.length <= returned.length + 1, 'at most one emit may have returned without its report');
+      assert.deepEqual(killed.slice(0, returned.length).map(({ index }) => index), returned);
+      assertWriterEvents(events, 'A', 200, Array.from({ length: killed.length }, (_, index) => index));
+      assertWriterEvents(events, 'B', 200, [0, 1]);
+      assert.deepEqual(events.map(({ run }) => run), [...Array(killed.length).fill('A'), 'B', 'B']);
+      t.diagnostic(`SIGKILL pid ${writer.pid}; reported ${returned.length}; recovered ${killed.length}; restarted 2`);
+    });
+  }
 });
 
 /** Two live processes begin on one shared file signal, then each returns from 1000 emits. */
