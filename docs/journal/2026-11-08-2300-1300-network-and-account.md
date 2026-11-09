@@ -4,7 +4,8 @@ ABOUTME: Records card 1300's proof of the network and dispatched-account boundar
 
 The acceptance is issue #1300, revision `5ade1c5d2381`. The source at the merge base,
 `52fb8a3d15a7f6842436a7295edb52c4b7a4ad35`, already supplies the required behaviour.
-This work adds proof and a guard; it changes no production module. The card's test-first
+The initial revision added proof and a guard without changing a production module.
+The correction below strengthens that guard and makes native reader options explicit. The card's test-first
 exception admits those claiming tests that pass against that source, with guarded mutation
 receipts required for each.
 
@@ -24,7 +25,8 @@ The PR carries the commands, guarded counterexamples and completed verification 
 ## Table N at the merge base
 
 The in-scope base judgments below follow that inventory and the code it names. No row needs
-a production change. The guard checks the code as syntax; it does not execute its modules.
+a production change under the initial guard. The correction below records the stricter
+native-option rule and its two source edits. The guard checks the code as syntax; it does not execute its modules.
 
 | Row | Base outcome and proof boundary |
 |---|---|
@@ -69,7 +71,7 @@ workspace plus `.claude-tmp`; Codex's role scratch plus `codex-home`, plus `tmp`
 absent from its engine environment before observing the additions.
 
 The named tests and their claims are recorded by the generated matrix. Existing test lines,
-the runner's tier lists and the package manifest remain intact. No Self-hosting path changes.
+the runner's tier lists and the package manifest remain intact. The initial revision changed no Self-hosting path; the correction touches process.mjs.
 
 The second guard red is measured at the same source HEAD in `1300-network-routes-red.log`:
 its N3-to-N6 fixture test failed the assertion that an unknown nonliteral import must name
@@ -92,3 +94,60 @@ failed the inventory assertion because the new test attributed the yielded lsof 
 sweeping. The source holds it in sweeping's nested list generator. Correcting those two
 owner keys fixes the guard's inventory; no production change follows from this failed run.
 The run's measured load was 4.28 at both ends, with 626 header-free process rows at start.
+
+
+## Independent attack correction, 2026-11-09
+
+The coordinator's attack at the initial committed head, 211221cfced59d324fe8ef2cd36a56811562163b,
+found ordinary import/member and input-reassignment edits escaping N8. The correction resolves
+lexical import bindings through module exports, namespaces, destructuring and member reads.
+It inventories callers of reviewed process definitions regardless of the importer's local name.
+Pinned program and environment inputs now refuse reassignment and member mutations, including
+through ordinary local aliases. The one adapter invocation assignment and the documented
+inherited-environment copy/merge are explicitly admitted. Origins also refuse sibling spreads
+or computed keys that could override the pinned property.
+
+The TDD red for the five process-binding rows is 1300-r2-m14-red.log; the next green is
+1300-r2-call-bindings-green-1.log. Reassignment red/green is recorded in
+1300-r2-program-reassignment-{red,green}.log. All these measurements name head 211221cf and
+retain the exact uncommitted test diff beside each subsequent run. Each source counterexample
+is also submitted separately to the guarded mutation runner before handoff.
+
+N3/N11 now pins doctor's actual CONFIG binding to init's exported literal, the const target
+path and the imported path/URL helpers, and refuses writes to the filename, target or path.
+The behavioural case with an absent root file and a nested decoy must report absence. It runs
+before the static assertions, so a fallback mutation must fail on its actual parsed result.
+1300-r2-config-binding-red.log records both missed counterexamples before the fix;
+1300-r2-config-binding-green.log records their admission checks passing after it.
+
+The requested native-option rule rejects every spread and computed key, and any shell, uid or
+gid field. This made the two benign reader spreads fail at process.mjs:984 and :1024;
+1300-r2-native-reader-spreads-red.log preserves that result. Their fields are now destructured
+from the same reader and passed explicitly. The asynchronous timeout remains zero; the
+synchronous timeout retains reader's bound. This is the only production change, inside the
+card's permitted Self-hosting scope, so an owner marker is required. N8's programs and step
+input held at the base; its strengthened option shape needed this change.
+
+Conditional account options and environment additions are in sight under A4/A5. They are
+Rigger's own constructed values, unlike the consumer's excluded NODE_OPTIONS. The guard pins
+adapter keys and their path sources, the inherited-environment copier and dispatch handoffs,
+and refuses writes to the engine environment. The A5 conditional rows went red in
+1300-r2-conditional-environment-red-valid.log and green after the pinned-origin checks.
+A1/A2/A3/A6 and the out-of-sight rows retain the base outcomes in the tables above.
+
+The native observer now checks options in the two-argument overload as well as the three-
+argument form. Its premise starts a warming stand-in through spawn, spawnSync and execFile
+with the account's own uid/gid, observes both keys and clears those observations before real
+Claude/Codex role dispatch. 1300-r2-account-overload-red.log fails the spawn premise before
+the observer fix; 1300-r2-account-overload-green.log passes afterwards. The affected host files
+then passed 205 tests with zero failures or skips in 1300-r2-affected-process-and-account.log.
+These are measured results at head 211221cf with local changes; the PR records committed-head
+verification and its counts separately.
+
+Failed implementation attempts are retained: conditional-environment-green.log raised a
+ReferenceError in the guard's mapper before its corrected green-2 run; origin-container-red.log
+contained an invalid fixture before red-valid corrected it. The first conditional-environment
+red used an unbound Codex environment name; red-valid substitutes process.env before the fix.
+None of those malformed attempts is offered as a discriminating red. The valid return-wrapper
+counterexample was already refused by the origin inventory and gets a guarded receipt under
+the card's base-passing-test exception.

@@ -548,7 +548,7 @@ function accountSpawns(t) {
     const native = nativeProcesses[method];
     nativeProcesses[method] = (...args) => {
       const [program] = args;
-      const options = args[2] && typeof args[2] === 'object' ? args[2] : {};
+      const options = [args[2], args[1]].find((value) => value && typeof value === 'object' && !Array.isArray(value)) ?? {};
       calls.push({ method, program, uid: 'uid' in options, gid: 'gid' in options });
       return native(...args);
     };
@@ -581,6 +581,20 @@ test('R-SAFE-4: real Claude and Codex role dispatch preserve account access', SE
   t.after(() => { process.env = saved; });
   const engine = { ...process.env };
   const calls = accountSpawns(t);
+  // Establish that the observer sees the native no-args overload before trusting A4.
+  for (const method of ['spawn', 'spawnSync', 'execFile']) {
+    const executable = join(bin, 'claude');
+    const options = { uid: process.getuid(), gid: process.getgid(), env: { ...engine, RIGGER_FIXTURE_WARMING: '1' }, stdio: 'ignore' };
+    if (method === 'spawnSync') assert.equal(nativeProcesses.spawnSync(executable, options).status, 0, 'A4 observer premise: the synchronous no-args child exited');
+    else if (method === 'execFile') await new Promise((resolve, reject) => nativeProcesses.execFile(executable, options, (error) => error ? reject(error) : resolve()));
+    else await new Promise((resolve, reject) => {
+      const child = nativeProcesses.spawn(executable, options);
+      child.once('error', reject);
+      child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(`A4 observer premise: child exited ${code}`)));
+    });
+    assert.deepEqual(calls.at(-1), { method, program: executable, uid: true, gid: true }, `A4 observer premise: ${method}(command, options) records both account keys`);
+  }
+  calls.length = 0;
   const groups = (values) => [...new Set(values)].sort((left, right) => left - right);
   for (const provider of ['claude', 'codex']) {
     const workspace = realpathSync.native(repositoryAt(join(root, provider), {
