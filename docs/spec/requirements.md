@@ -93,7 +93,13 @@ under the test above.
 | R-CARD-8 | A card whose acceptance only restates the card's title is refused. Those two are the whole of the check on an acceptance's form. | the engine | the test suite | D2 |
 | R-CARD-9 | A spike card's acceptance states what a complete answer contains, never what the answer is. | the card's author | a judge, under R-LOOP-6 | D2 |
 | R-CARD-10 | A follow-up card may only cover work outside the filing card's acceptance. An acceptance item left undone means the card is not done, and never becomes a follow-up. | the role prompt | a judge, under R-LOOP-5 | D2 |
-| R-CARD-11 | Work found during a card and outside its acceptance becomes its own card, and is not added to the acceptance of the card that found it. | the role prompt | the event record, by an acceptance that grew after admission | D2 |
+| R-CARD-42 | Work found during a card and outside its acceptance becomes its own card, and never grows that card's acceptance. The one exception is a test fault that `R-CARD-43` to `R-CARD-48` make the card's own, and the card fixes it: | the role prompt | the event record, by an acceptance that grew after admission, for the first sentence only; a judge, under R-VERDICT-14, for the exception | D2, D33 |
+| R-CARD-43 | — the fault lies in a test file, meaning a file that nothing but tests runs or loads; | the role prompt | a judge, under R-VERDICT-14 | D33 |
+| R-CARD-44 | — a fault class is one sentence stating a defect, with a search a reader can rerun to find its instances where one exists; | the role prompt | a judge, under R-VERDICT-14 | D33 |
+| R-CARD-45 | — the fault's class is one the card's acceptance names, or one a judge's blocking finding on the card names; | the role prompt | a judge, under R-VERDICT-14 | D33 |
+| R-CARD-46 | — the fault lies in a test file holding an instance that acceptance or finding names, or the class's search returns it at the judged head; | the role prompt | a judge, under R-VERDICT-14 | D33 |
+| R-CARD-47 | — fixing the fault changes no file but test files; | the role prompt | a judge, under R-VERDICT-14 | D33 |
+| R-CARD-48 | — the file is not one the repository bars the engine from dispatching a change to, whoever runs the card. | the role prompt | a judge, under R-VERDICT-14 | D33 |
 | R-CARD-12 | Rigger reads a card's acceptance from the source text of the card's body, never from a rendering of it, as follows: | the engine | the test suite | D2 |
 | R-CARD-13 | — the body splits into lines at each line feed, and at each carriage return directly followed by a line feed, and nowhere else; | the engine | the test suite | D2 |
 | R-CARD-34 | — a space is the character U+0020, and no other character is one; | the engine | the test suite | D2 |
@@ -474,6 +480,7 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | R-VERDICT-11 | Nothing Rigger dispatches or runs, with the standard input Rigger started it with, posts the owner's verdict through `rigger verdict`. Rigger never runs that verb itself. A process under a dispatch that opens a terminal of its own lies outside this row (`D25` rule 2). | the engine | the test suite | D25 |
 | R-VERDICT-12 | `rigger verdict` posts each verdict as one new comment, at most once for each confirmation. It never edits or deletes a comment on the forge. | the engine | the test suite | D25 |
 | R-VERDICT-13 | `rigger verdict` posts nothing, and names the reason, where the owner's input or the forge's state cannot make a verdict the gate reads at the pull request's head. The cases are in `### R-VERDICT-13 — When the owner's verdict is posted`. | the engine | the test suite | D25 |
+| R-VERDICT-14 | Where a fault `R-CARD-42` makes the card's own is left unfixed, a judge returns a verdict that is not sound, naming the fault and its class. | the role prompt | nothing could: no observer but a judge reads the work for such a fault | D33 |
 
 ### R-VERDICT-10 — Who can confirm the owner's verdict
 

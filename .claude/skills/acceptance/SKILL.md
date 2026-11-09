@@ -121,8 +121,12 @@ and on what evidence, and what would reverse the recommendation.
 ## Scope, and what a change costs
 
 **Bound the card.** Put all requested work in acceptance. Found work outside it gets its own
-card (`R-CARD-11`); follow-ups cover only outside work. An undone item leaves this card unfinished
-(`R-CARD-10`).
+card, except a test fault `R-CARD-42` makes this card's own; follow-ups cover only outside work.
+An undone item leaves this card unfinished (`R-CARD-10`).
+
+**Name the class of a test fault.** Where the card fixes one, state the defect in one sentence and
+give the search that finds its instances, where one exists (`R-CARD-44`). The search sets how far
+the card reaches, so write it as narrow as the defect.
 
 **Split work into cards.** Map every part of the larger work to a card's acceptance item, not
 merely its title or description.
@@ -146,17 +150,14 @@ merge; `AGENTS.md`'s "Review and merge" still applies.
 Classify cited prior attempts as offered proof, context, or unresolved/noncredit; later
 results grant no retroactive credit.
 
-For required retained originals, predeclare finite offered results before maker work: originals,
+Outside a test change (`D33` rule 4), for required retained originals, predeclare finite offered
+results before maker work: originals,
 private-safe access, exact ref, behavior scope and retention event through final independent ruling or
 longer card requirement.
 
-**Name predictable test edits at filing.** An author may name bounded grant classes, each
-stating what it covers and the existing `test/` lines it can reach, checkable in `git diff`.
-Examples: assertion lines in a named test file may retarget the old result of this card's
-changed behaviour; fixture lines in a named test file may mirror the real error from a named
-layer. A class cannot admit deletion of a test or weaken what it proves; those go to the owner.
-With classes, word the test-line item as: `git diff` against the base changes no existing line under
-`test/` that the table does not list and no named class covers.
+**Test edits need no grant.** The maker may change the tests `D33` rule 3 reaches, under its
+conditions. Where the card wants a test-line item, word it as: `git diff` against the base changes
+no existing line under `test/` outside a test `D33` rule 3 reaches.
 
 **Admit harness diagnostics before work.** For a test without `// proves`, record the
 infrastructure behaviour, checked registered product requirements and why none applies, and
@@ -248,7 +249,7 @@ You revise the acceptance before any maker starts. This review is part of filing
 7. Does each say what done means rather than how to reach it?
 8. Where an item lists instances of a class, does it ask for the positive check instead?
 9. Where the card turns on a threshold, is the value named and its source cited?
-10. Does the set cover everything this card is asking for (`R-CARD-10`, `R-CARD-11`)?
+10. Does the set cover everything this card is asking for (`R-CARD-10`, `R-CARD-42`)?
 11. Does the set name every axis this card varies on, rather than exhausting one of them?
 12. For a spike: does it describe a complete answer rather than the answer (`R-CARD-9`)?
 13. When splitting work, is each part mapped to an acceptance item?
@@ -262,7 +263,7 @@ You revise the acceptance before any maker starts. This review is part of filing
     and unbounded absolutes, and did you revise before dispatch?
 20. Does the scope bullet cover every file an item or cited placement ruling requires?
 21. Is every cited proposal, ruling and grant posted and linked from the card?
-22. Did you name bounded grant classes for predictable existing test-line changes?
+22. Where the card fixes a test fault, did you name its class and its search (`R-CARD-44`)?
 23. Before maker edits, did `npm run check:card` read the draft body, and did
     `npm run preflight -- --body-file <body-file>` run in a clean repository with origin/main
     and a merge base available? Resolve or report failures before maker admission.

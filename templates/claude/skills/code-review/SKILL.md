@@ -104,7 +104,12 @@ Then the rules that bind every change in this repository, whatever it touches:
 - **Test-first evidence.** Is there a test, does it assert the behaviour rather than the
   implementation, does it truthfully declare each requirement it proves or meet the `tdd`
   skill's diagnostic admission, does it sleep, and was a failing test deleted or weakened
-  (`AGENTS.md`; the `tdd` skill)? Independent oracles and meaningful red/green apply to both.
+  (`AGENTS.md`; the `tdd` skill)? Was a test deleted or rewritten that `D33` rule 3 does not
+  reach, and does every requirement a removed test declared stay proved under "Proof
+  declarations"? Independent oracles and meaningful red/green apply to both.
+- **Found test faults.** For each class the acceptance or your own blocking findings name, rerun
+  its search at the head. An unfixed hit that exhibits the class's defect is a blocking finding
+  under `R-VERDICT-14`, unless `D33` rule 2 excludes it.
 - **Proof declarations.** For every `// proves R-GROUP-#` declaration in the work you read,
   remove the behaviour each named requirement describes in a disposable copy and run the
   declaring test. It must fail on an assertion about that behaviour. Show that the deletion
@@ -170,6 +175,9 @@ Give every blocking finding all of these:
 - **why it matters**;
 - **what binds it** — a requirement id, a `D#`, an `ARCHITECTURE.md` or `AGENTS.md` section — **or
   a plain statement that it is your judgement and binds nothing**;
+- **its fault class**, for a finding about a test: the defect in one sentence, and the search
+  that finds its instances where one exists (`R-CARD-44`). Write the search as narrow as the
+  defect, because it sets how far the card reaches;
 - **what would make it sound** (`R-VERDICT-3`).
 
 Say when you found a finding by reading alone.
