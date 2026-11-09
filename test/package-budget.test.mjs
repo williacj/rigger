@@ -253,9 +253,9 @@ test('a template, and a check Rigger ships for a consumer, are not counted', () 
 test('the templates this repository really ships are charged nothing', () => {
   // The test above proves the rule against a fixture. This asks it of the tree that exists:
   // `templates/` now holds a starter config and a provider's whole asset tree, and none of it
-  // runs a card, so the Budgets section puts every line of it outside the count. The defect this
-  // catches is the walk widened past `src/`, after which the figure a card reports would move
-  // with an edit to a role prompt.
+  // runs a card, so the Budgets section puts every line of it outside the count.
+  // This test checks that the charged paths exclude this repository's templates; it does not
+  // assert where traversal starts.
   const here = join(dirname(fileURLToPath(import.meta.url)), '..');
   const templates = join(here, 'templates');
   assert.ok(existsSync(templates), 'this repository ships no templates, so there is nothing to leave out');

@@ -19,7 +19,6 @@ import { headIn, markerComment } from './fake-repository.mjs';
 import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { spawn } from 'node:child_process';
-import { once as onceEvent } from 'node:events';
 import { readdirSync } from 'node:fs';
 import { parse } from 'acorn';
 import { gitIn } from './git-repository.mjs';
@@ -29,7 +28,7 @@ import { standInAgent } from './stub-claude.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 import { installStandInAgent } from './stub-claude.mjs';
-import { sweep } from './process-fixtures.mjs';
+import { ownedChild, sweep } from './process-fixtures.mjs';
 import { parseDocument } from '../src/substrate/forge/graphql.mjs';
 import { admissionOf, closerText, seed, TIME } from './admission-world.mjs';
 import { ADMITTED, COLUMNS, FIELDS, KINDS, PROJECT, REFUSED, REPO, card, consumerConfig } from './verb-consumer.mjs';
@@ -554,7 +553,8 @@ function consumerHolding(settings, files = {}) {
  * stand-in agent `agent` first on PATH, then a fake `gh` holding `board` over the consumer's
  * `origin`, ahead of the refusing ones `npm test` puts there. `env` is added to the bin's
  * environment. Answers the consumer, its origin, the fake, and `ran`, which settles on the bin's
- * status and what it printed; the bin is ended at the test's teardown if it is still running.
+ * status and what it printed. Teardown stops the bin where needed, sweeps its stand-in owner
+ * after exit, and requires recorded close before it succeeds.
  */
 function onceWithAgent(t, agent, board, { settings = config(), files = {}, env = {}, prepare = () => {} } = {}) {
   const { consumer, origin } = consumerHolding(settings, files);
@@ -562,12 +562,13 @@ function onceWithAgent(t, agent, board, { settings = config(), files = {}, env =
   const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, ...board }, origin });
   prepare({ consumer, origin, fake });
   const child = spawn(process.execPath, [bin, 'once'], { cwd: consumer, env: { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), ...env, PATH: [agent.dir, dir, process.env.PATH].join(delimiter) }, stdio: ['ignore', 'pipe', 'pipe'] });
-  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
+  const closed = ownedChild(t, child, () => sweep(agent.dir));
   let out = '';
   let err = '';
   child.stdout.on('data', (chunk) => { out += chunk; });
   child.stderr.on('data', (chunk) => { err += chunk; });
-  const ran = onceEvent(child, 'close').then(([code]) => ({ code, out, err }));
+  const ran = closed.then(([code]) => ({ code, out, err }));
+  ran.catch(() => {});
   return { consumer, origin, fake, ran };
 }
 

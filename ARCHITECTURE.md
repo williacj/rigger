@@ -65,7 +65,10 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
    other layer changes a card's column. The forge adapter has four sides. Each sends only through
    its own runner, which refuses any request outside its side:
 
-   - The read side changes nothing on the forge, and any layer or verb may use it.
+   - The read side changes nothing on the forge, and any layer or verb may use it. One of its
+     reads answers an issue's body-edit history: each revision's body, the time of its edit, its
+     editor's login, and whether it was deleted. The same read answers when the issue was opened,
+     and the login that opened it.
    - The item-write side changes a board item, and adds an issue to the board, and only L2 reaches
      it.
    - The schema-write side changes the board's fields and their options and the repository's
@@ -554,7 +557,9 @@ not a measurement, and its premise is the reads `take` and `facts.mjs` make:
 - for each card *r* counts, `readMergeBase`, `readDiff`, `readComments`, `readMergeable` and
   `readEffectiveRules`, then `readCheckStates`.
 
-The figure leaves out admission's reads, which read the state directory and not the forge. A card
+The figure leaves out admission's reads, which read the state directory and not the forge. It also
+leaves out the read of a card's body-edit history, which L2 makes at a column change, and which
+neither `take` nor `facts.mjs` makes ("L2's acceptance, escalation and merge events"). A card
 in Done costs nothing. M7-24 on #1009 measures the figure on a fake forge.
 
 ### How a clock trigger fires
@@ -1803,6 +1808,87 @@ Any one of these would reverse the placement:
   a `fetch.retried` follows, and a non-zero exit its caller reads as an answer, as `git ls-remote
   --exit-code` gives for a missing ref. The fix would leave those out of the numerator.
 
+### L2's acceptance, escalation and merge events
+
+The architect's r1 review on #1293 places these three (§1a, and §3 "Q-G"), and its r2 review adds
+the issue's opening. M8-U2 Q10 and Q11 on #1293 rule what they count.
+
+**`acceptance.history`.** At each column change L2 makes for a card, once the board accepted it,
+L2 reads the card's body-edit history through the read side (boundary rule 2). L2 then records one
+`acceptance.history` under the card, holding the card's whole revision history and its opening:
+
+| Field | What it holds | Absent from the line |
+|---|---|---|
+| `opened` | When the issue was opened, as `at`, and the login that opened it, as `by` | Never |
+| `revisions` | Each revision of the body, oldest first: `editedAt`, `editor` and `deleted`, and, unless `deleted`, `digest` and `items` | Never |
+| `author` | The author the body as opened names beside its mark line (`R-CARD-41`) | Where the body as opened carries no mark line |
+
+`digest` is the revision's acceptance digest, and `items` is the count of its acceptance items. L2
+computes both with the one function that computes the acceptance digest ("Markers"). A revision's
+`digest` is therefore the one a marker ruling at that revision names. Where the issue was never
+edited, the forge's history holds no revision, and `revisions` holds one: the body L2 read, at
+`opened`'s time and login. The module that parses the mark line reads `author`, as the entry point
+boundary rule 4 names.
+
+L2 still keeps no card state ("Failure model"). Recording the whole history at each column change
+is how it does without: no layer remembers what an earlier event held, and L5 de-duplicates. That a
+card's column changes stay few enough to bound the events is a judgment.
+
+Where the read fails or times out, L2 records no `acceptance.history` for that change, and the
+column change stands. The next column change's read carries the whole history again. A refused
+`acceptance.history` is a refused event, as "Telemetry" sets out.
+
+**The fallback.** M8-06b on #1293 establishes, as its first item, whether the forge's history
+answers each revision's full body. Where it does not, `revisions` holds one revision: the body L2
+read, at the time and editor of the issue's last edit, or at `opened`'s where none was made. L5 then
+finds a change where two successive `acceptance.history` events of one card differ in `digest`. The
+edits between two column changes, other than the last, are lost, and that loss is a residual
+("Acceptance changes and who made them").
+
+**`review.escalate`.** Beside the fields "Escalation rate, and why" reads, `review.escalate`
+carries one more:
+
+| Field | What it holds | Absent from the line |
+|---|---|---|
+| `class` | The class L2 gave the failure the escalation follows: `environment` or `card-local` | Where L2 raised the escalation from no failure it classed as not the work's, as for a maker's note or a judge's verdict |
+
+L2 records `class` at each of these sites, and at no other:
+
+| Site | `class` |
+|---|---|
+| A card-local refusal `failedAttempt` escalates, an attempt pair holding one included (`R-ESCALATE-12`) | `card-local` |
+| A judge's directory refused under `R-WORK-20`, or a judge's scratch directory under `R-WORK-26` (`R-ESCALATE-12`) | `card-local` |
+| The forge's hold on the card's line of work, refused as `R-FAIL-8`'s card-local rows name it, and raised as a loop `ambiguous` on the removal path (`R-WORK-41`) | `card-local` |
+| The second non-start of a dispatch of the role an escalation goes to, the fifth environment failure (`R-ESCALATE-26`) | `environment` |
+| A role's escalation directory refused under `R-WORK-32`, or that role's scratch directory under `R-WORK-26` | `card-local` |
+
+`R-FAIL-8`'s table classes the refusals of the first three sites card-local. It classes no
+refusal of the fifth site: its `R-WORK-26` row names only the maker's and a judge's scratch
+directory, and it holds no row for `R-WORK-32`. Both of the fifth site's refusals take
+`card-local` as this document's own placement:
+
+- "Failure model" sets the `R-WORK-32` refusal beside the `R-WORK-13`, `R-WORK-20` and `R-WORK-26`
+  refusals, which the table classes card-local.
+- `R-WORK-26` refuses the escalation role's scratch directory as it refuses any role's, the maker's
+  and a judge's included, and the table classes those two refusals card-local.
+
+What would reverse it: an owner ruling that a role's escalation directory, or that role's scratch
+directory, is not the card's own.
+
+**`merge.decided`.** At the lane's merge decision, L2 records one `merge.decided` under the card. It
+records it once its rule admits the merge, and before it makes the merge call:
+
+| Field | What it holds | Absent from the line |
+|---|---|---|
+| `pull` | The pull request's number | Never |
+| `head` | The head SHA the rule read | Never |
+| `digest` | The acceptance digest the rule read | Never |
+| `judges` | Each judge role the gate required of the card, as `role`, with the `verdict` of that role's governing marker ("Markers") | Never |
+
+L5 does not read the config, so the event names the required roles itself. Where the sink refuses
+`merge.decided`, L2 makes no merge call and reports the refusal. A merge the lane makes therefore
+always has its record. A person's merge runs no lane, and records none.
+
 ### Pushing the stream
 
 Once the owner turns telemetry push on, L5 copies the stream to the data ref in the consumer's
@@ -2106,6 +2192,19 @@ L2's section:
   the distinct pairs of `head` and `digest` among its `marker.read` events, since one round is one
   distinct pair of head and acceptance digest ("Markers"). Its kind is the `kind` of its latest
   `pull` that carries one. Only a pull L2 answered with a dispatch or with judges carries a `kind`.
+- **Escalations by cause**, per run and across the stream: the `review.escalate` events under each
+  card, counted by `class`. An escalation is **infrastructure-caused** where its `class` is
+  `environment` or `card-local` (M8-U2 Q10 on #1293), and every other escalation is not. It reads
+  `review.escalate` by `run`, `card` and `class`, and L5 never reads `reason` to derive it.
+- **Merges with fresh verdicts**, across the stream. Its denominator is the cards under which a
+  `transition` whose `cause` is `merged` or `mergedFromOwner` is recorded. Its numerator is those
+  cards with a `merge.decided` whose every `judges` entry is `sound`, at a `head` that a later L3
+  `merge.end` under the card names with `outcome` `merged`. `report` flags each card of the
+  denominator with no such `merge.decided`, as a person's merge leaves.
+  - It reads `transition` by `card` and `cause`, and `merge.decided` by `card`, `head` and `judges`.
+  - It reads L3's `merge.end` by `card`, `head` and `outcome`, and no other event or field.
+- **Acceptance changes**, across the stream: each change, who made it, and the card's author, as
+  "Acceptance changes and who made them" below defines them.
 
 L3's section, with throughput and utilization as `report.mjs`'s `l3Signals` derives them:
 
@@ -2118,6 +2217,12 @@ L3's section, with throughput and utilization as `report.mjs`'s `l3Signals` deri
   earlier L3 `pull` under the same card to that release. Its denominator is `n` times the run's
   span, where `n` is the `concurrency` of the run's `run.start`. It excludes a run with no
   `run.start` and a run whose span is zero, and neither has a utilization.
+- **Admission holds**, per run and across the stream: a count of the L3 `admission.close` events
+  whose `kind` is `hold`, with each one's `id` and `reason`. An `admission.close` whose `kind` is
+  `owner` is the owner's `pause` and no hold, because "Failure model" separates `hold-<id>.json`
+  from `owner-<id>.json`. Beside each hold, `report` shows the L3 `admission.open` carrying its
+  `id`, where one is recorded. It reads `admission.close` by `run`, `kind`, `id` and `reason`, and
+  `admission.open` by `id`, and no other event or field (M8-U2 Q11 on #1293).
 
 L4's section:
 
@@ -2178,6 +2283,59 @@ say what went unrecorded. Any one of these would reverse the derivation:
 
 The fix would then be a field on L1's `dispatch.end`, recorded by its exit-cleanup path in
 `src/execution/run.mjs`, and the redo derivation would read it.
+
+### Acceptance changes and who made them
+
+`R-CARD-6`, `R-CARD-11` and `R-CARD-5` ask what changed in a card's acceptance, and who changed it.
+`report` derives the answers across the stream, from L2's `acceptance.history` and the dispatch
+events that bound each dispatch's window. It reads these events by these fields, and no other:
+
+- L2's `acceptance.history`, by `card`, `opened`, `revisions` and `author`;
+- L1's `dispatch.start` and `dispatch.end`, by `ts` and `dispatch`;
+- L3's `dispatch`, by `card`, `dispatch`, `role`, `attempt` and `step`;
+- L3's `run.start` and `pull`, by `ts`, and `pull` also by `card`.
+
+The derivation's terms:
+
+- An **acceptance change** is a revision of a card whose `digest` differs from the revision before
+  it. `report` takes each once, de-duplicated by card and `editedAt`, whichever events carry it.
+- A **role dispatch** is an L3 `dispatch` carrying `role` and no `step`. A card's **maker
+  dispatch** is a role dispatch under that card that also carries `attempt`.
+- A dispatch's **window** runs from the `ts` of its L1 `dispatch.start` to the `ts` of its
+  `dispatch.end`.
+- **Who made a change** is the revision's `editor`, and each role dispatch whose window holds its
+  `editedAt`, by id and `role`. Those dispatches are `D20` rule 3's session.
+- An acceptance **grew after admission** (`R-CARD-11`) where a revision after the card's first
+  `pull` holds more `items` than the revision current at that pull. The revision current at a pull
+  is the newest whose `editedAt` is at or before the pull's `ts`.
+- An acceptance **changed during the maker's dispatch** (`R-CARD-5`) where a change's `editedAt`
+  falls in the window of one of the card's maker dispatches.
+- **The card's author** is the `author` its `acceptance.history` carries, for a card a clock
+  trigger opened. Otherwise it is the `role` of each role dispatch whose window holds `opened`'s
+  time, and the owner where no window does.
+
+**A window with no end.** An engine killed outright records no `dispatch.end` for the dispatches
+it was running. Such a window ends at the `ts` of the first L3 `run.start` after its
+`dispatch.start`, in line order. A later start kills every recorded group before L3 records
+anything ("Failure model"), so no process of that group outlives that point. With no later
+`run.start`, the window stays open to the stream's end. A window held open past its group's real end
+errs as an owner's edit inside a maker's window does.
+
+**Residuals.** The owner rules on each of these when M8-06b and M8-06c on #1293 are filed (M8-K3
+on #1293):
+
+- a revision a user deletes from the forge's history, which no `digest` records;
+- edits after the card's last column change, which no `acceptance.history` holds;
+- overlapping dispatches, which leave who made a change as a set of candidate sessions;
+- an owner's edit inside a maker's window, which `report` flags as the maker's, erring in the safe
+  direction;
+- a card filed outside any Rigger dispatch, as a coordinator session files one, which the author
+  rule attributes to the owner, because every agent edits under the owner's login (`README.md`,
+  "Agents run as you");
+- under the fallback, the edits between two column changes that the later one's read does not show.
+
+M8-06b's code carries `D16` rule 3's measured record of these residuals, beside the read and the
+event it adds.
 
 ### What `report` shows
 
