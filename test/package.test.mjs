@@ -384,3 +384,87 @@ test('the README badge points at that workflow', () => {
     ),
   );
 });
+
+/**
+ * The phrase a forked passage carries where it names a command the consumer may not define: it
+ * names the condition, that the repository defines the command, in so many words.
+ */
+const CONDITIONED = /\bwhere the repository defines\b/i;
+
+/** Every text file `init` wrote under `scratch`, as its path and content; `.git` and `skip` excluded. */
+function writtenBy(scratch, skip) {
+  return readdirSync(scratch, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(entry.parentPath, entry.name))
+    .filter((path) => !path.slice(scratch.length + 1).split('/').includes('.git') && !skip.includes(path))
+    .map((path) => ({ path: path.slice(scratch.length + 1), text: readFileSync(path, 'utf8') }));
+}
+
+/**
+ * A markdown text cut into passages: a paragraph, a list item with its continuation lines, or a
+ * table row, its whitespace runs collapsed to one space so a wrapped line reads as one sentence.
+ * Fenced blocks are dropped, since what they hold is no backticked span.
+ */
+function passagesOf(text) {
+  const passages = [];
+  let current = null;
+  let fenced = false;
+  for (const line of text.split('\n')) {
+    if (/^\s*(```|~~~)/.test(line)) { fenced = !fenced; current = null; continue; }
+    if (fenced || line.trim() === '') { current = null; continue; }
+    if (current === null || /^\s*(?:[-*+]|\d+\.)\s|^\s*\||^#/.test(line)) {
+      current = [];
+      passages.push(current);
+    }
+    current.push(line);
+  }
+  return passages.map((lines) => lines.join(' ').replace(/\s+/g, ' '));
+}
+
+/** Every backticked span beginning `npm `, `npx ` or `node `, each with the passage it sits in. */
+function commandsIn(files) {
+  return files.flatMap(({ path, text }) => passagesOf(text).flatMap((passage) =>
+    [...passage.matchAll(/`([^`]+)`/g)]
+      .map((found) => found[1].trim())
+      .filter((span) => /^(?:npm|npx|node) /.test(span))
+      .map((command) => ({ path, command, passage }))));
+}
+
+/** Whether `command` is defined in `scratch`, by the card's "Defined" rules (#1303). */
+function definedIn(scratch, command) {
+  const words = command.split(' ');
+  const manifestPath = join(scratch, 'package.json');
+  const scripts = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, 'utf8')).scripts ?? {} : null;
+  if (words[0] === 'node') {
+    // `node` is on PATH for every consumer (README, "Prerequisites"); a script it is handed must exist.
+    const operand = words.slice(1).find((word) => !word.startsWith('-'));
+    return operand === undefined || existsSync(join(scratch, operand));
+  }
+  if (words[0] === 'npx') return existsSync(join(scratch, 'node_modules', '.bin', words[1]));
+  if (words[1] === 'test') return scripts !== null && Object.hasOwn(scripts, 'test');
+  if (words[1] === 'run' || words[1] === 'run-script') return scripts !== null && Object.hasOwn(scripts, words[2]);
+  if (words[1] === 'ci') {
+    return scripts !== null && ['package-lock.json', 'npm-shrinkwrap.json'].some((lock) => existsSync(join(scratch, lock)));
+  }
+  return false;
+}
+
+for (const [row, consumer, files] of [
+  ['K1', 'a scratch repository with no package.json', {}],
+  ['K2', 'a scratch repository whose package.json holds only a name and a version',
+    { 'package.json': `${JSON.stringify({ name: 'consumer', version: '0.0.0' }, null, 2)}\n` }],
+]) {
+  test(`${row}: in ${consumer}, every npm, npx or node command the installed init forks is defined there or sits in a passage conditioned on the repository defining it`, () => {
+    const scratch = repositoryIn(`rigger-starter-commands-${row}-`, files);
+    const init = runInstalled(['init'], scratch);
+    assert.equal(init.status, 0, init.stderr);
+
+    const commands = commandsIn(writtenBy(scratch, Object.keys(files).map((path) => join(scratch, path))));
+    // The premise: init forked assets that name commands at all, so an empty set passes nothing by vacuum.
+    assert.ok(commands.some(({ command }) => command.startsWith('npm ')), `init forked no npm command into ${scratch}`);
+    const failing = commands
+      .filter(({ command, passage }) => !definedIn(scratch, command) && !CONDITIONED.test(passage))
+      .map(({ path, command }) => `${path}: ${command}`);
+    assert.deepEqual(failing, []);
+  });
+}

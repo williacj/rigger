@@ -420,7 +420,11 @@ function processBindings(modules) {
     const key = `${file}#${name}`;
     if (seen.has(key)) return;
     seen = new Set([...seen, key]);
-    for (const { node } of nodes(modules.get(file).program)) {
+    const declarations = [...nodes(modules.get(file).program)].map(({ node }) => node);
+    const star = (node) => node.type === 'ExportAllDeclaration' && !node.exported;
+    const ordered = [...declarations.filter((node) => !star(node)), ...declarations.filter(star)];
+    let builtin;
+    for (const node of ordered) {
       if (node.type === 'ExportNamedDeclaration') {
         if (node.declaration && models.get(file).root.names.has(name)) {
           const binding = models.get(file).root.names.get(name);
@@ -434,12 +438,18 @@ function processBindings(modules) {
       if (node.type === 'ExportAllDeclaration') {
         if (node.exported && (node.exported.name ?? node.exported.value) === name) return namespace(target(file, node.source.value));
         if (!node.exported) {
-          const found = exported(target(file, node.source.value), name, seen);
-          if (found !== undefined) return found;
+          const source = target(file, node.source.value);
+          const found = exported(source, name, seen);
+          if (found !== undefined) {
+            // A built-in's unknown export set must not mask a package re-export.
+            if (!modules.has(source)) { builtin ??= found; continue; }
+            return found;
+          }
         }
       }
       if (node.type === 'ExportDefaultDeclaration' && name === 'default') return origin(file, node.declaration, seen);
     }
+    return builtin;
   };
   const member = (base, name, seen) => {
     if (name === undefined) return;
@@ -476,6 +486,7 @@ function processBindings(modules) {
     if (node.type === 'Identifier') {
       const binding = models.get(file).lookup(node);
       if (!binding && node.name === 'process') return namespace('global:process');
+      if (!binding && ['Object', 'Reflect'].includes(node.name)) return namespace(`global:${node.name}`);
       if (!binding && ['globalThis', 'global'].includes(node.name)) return namespace('global');
       return bindingOrigin(file, binding, seen);
     }
@@ -609,7 +620,8 @@ function bindingWrites(program, model, protectedBindings, origin = () => undefin
     }
     if (node.type === 'UnaryExpression' && node.operator === 'delete') return protectedBindings.has(root(node.argument));
     if (node.type !== 'CallExpression') return false;
-    if (writers.has(syntaxShape(node.callee))) return protectedBindings.has(root(node.arguments[0]));
+    const writer = origin(node.callee);
+    if (writers.has(syntaxShape(node.callee)) || ['global:Object#assign', 'global:Object#defineProperty', 'global:Object#defineProperties', 'global:Reflect#set', 'global:Reflect#deleteProperty'].includes(writer)) return protectedBindings.has(root(node.arguments[0]));
     return ['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin', 'set', 'delete', 'clear'].includes(memberName(node.callee)) && protectedBindings.has(root(node.callee.object));
   });
 }
@@ -750,6 +762,9 @@ test('N8: bound process calls and program inputs reject ordinary code edits', ()
 
 /** Ordinary edits that must not escape the process inventory or its input provenance. */
 const PROCESS_COUNTEREXAMPLES = [
+  ["m3-star-reexport-priority", "src/cli/once.mjs", "import { NOT_STARTED } from '../substrate/process.mjs';", "import { NOT_STARTED } from '../substrate/process.mjs';\nexport * from 'node:fs';\nexport * from '../execution/run.mjs';\nimport { dispatch as reexportedStart } from './once.mjs';\nfunction unlistedReexportedDispatch() { return reexportedStart({ command: 'curl', args: [] }); }"],
+  ["m3-reexport-priority", "src/cli/once.mjs", "import { NOT_STARTED } from '../substrate/process.mjs';", "import { NOT_STARTED } from '../substrate/process.mjs';\nexport * from 'node:fs';\nexport { dispatch } from '../execution/run.mjs';\nimport { dispatch as reexportedStart } from './once.mjs';\nfunction unlistedReexportedDispatch() { return reexportedStart({ command: 'curl', args: [] }); }"],
+  ["A5-aliased-mutator", "src/execution/role.mjs", "  Object.assign(environment, set);", "  Object.assign(environment, set);\n  const mergeEnvironment = Object.assign;\n  if (env.RIGGER_EXTRA) mergeEnvironment(environment, { EXTRA_TOKEN: 'injected' });"],
   ["A5-engine-write", "src/cli/once.mjs", "import { NOT_STARTED } from '../substrate/process.mjs';", "import { NOT_STARTED } from '../substrate/process.mjs';\nfunction unlistedEnvironmentWrite() { if (process.env.RIGGER_EXTRA) process.env.EXTRA_TOKEN = 'injected'; }"],
   ["origin-return-wrapper", "src/execution/role.mjs", "return { provider, command, args, input, cwd, workspace: directory, scratch: made, env: environment, folder, timeout: answer.timeout, facts: answer.facts, digest: answer.digest };", "return Object.assign({ provider, command, args, input, cwd, workspace: directory, scratch: made, env: environment, folder, timeout: answer.timeout, facts: answer.facts, digest: answer.digest }, { command: 'curl' });"],
   ["A5-conditional-codex", "src/substrate/providers/codex.mjs", "env: { CODEX_HOME: home, TMPDIR: temporary, TMPPREFIX: join(temporary, 'zsh') }", "env: { ...(process.env.RIGGER_EXTRA ? { EXTRA_TOKEN: home } : {}), CODEX_HOME: home, TMPDIR: temporary, TMPPREFIX: join(temporary, 'zsh') }"],

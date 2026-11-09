@@ -151,3 +151,16 @@ red used an unbound Codex environment name; red-valid substitutes process.env be
 None of those malformed attempts is offered as a discriminating red. The valid return-wrapper
 counterexample was already refused by the origin inventory and gets a guarded receipt under
 the card's base-passing-test exception.
+
+
+The whole-class check at committed fix head 12a1339b6fd2709b6966d04480cd4458f0fe4df4
+added three ordinary binding variants. An Object.assign alias could mutate a pinned
+local environment without the direct callee spelling. A built-in star export encountered
+before an explicit or package star re-export could mask dispatch's actual origin. Each
+variant went red in 1300-r2-aliased-mutator-red.log or
+1300-r2-reexport-priority-red{-star}.log before its fix. Mutator aliases now resolve through
+their lexical binding; explicit exports take priority and a built-in's unknown export set
+cannot mask a package re-export. The whole guard passed after both changes. These are
+ordinary named bindings in sight under N2/N8/A5, and require no additional write path.
+The initial correction's complete set of 23 guarded receipts was killed at that fix head;
+the PR records fresh receipts after the final merge for the enlarged counterexample set.
