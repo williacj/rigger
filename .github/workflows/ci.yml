@@ -248,7 +248,7 @@ env:
         const npmRoot = dirname(dirname(npmCli));
         const npm = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(await read(join(npmRoot, 'package.json'))));
         if (npm.name !== 'npm' || !['11.20.0', '12.2.2'].includes(npm.version) || npm.bin?.npm !== 'bin/npm-cli.js') return;
-        if (npm.version === '11.20.0' && (project.name !== '@williacj/rigger' || project.version !== '0.0.0')) return;
+        if (npm.version === '11.20.0' && (project.name !== '@williacj/rigger' || project.version !== '0.1.0')) return;
         for (const path of [join(npmRoot, 'npmrc'), join(env.HOME || homedir(), '.npmrc'), join(dirname(dirname(execPath)), 'etc/npmrc')]) {
           try { await read(path); return; }
           catch (error) { if (error.code !== 'ENOENT') return; }
@@ -278,7 +278,7 @@ env:
         };
         for (const [path, expected] of Object.entries(npmSources)) if (await fingerprint(join(npmRoot, path)) !== expected) return;
         return { argv, npmVersion: npm.version,
-          stdoutPrefix: npm.version === '11.20.0' ? '\n> @williacj/rigger@0.0.0 test:host\n> sh test/suite.sh --host ' + argv.slice(4).join(' ') + '\n\n' : '' };
+          stdoutPrefix: npm.version === '11.20.0' ? '\n> @williacj/rigger@0.1.0 test:host\n> sh test/suite.sh --host ' + argv.slice(4).join(' ') + '\n\n' : '' };
       } catch { return; }
     }
     export async function executeScript({ spawnChild = spawn, stdoutSink = process.stdout, stderrSink = process.stderr, inspection, onStart } = {}) {
