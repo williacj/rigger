@@ -174,12 +174,14 @@ test('each preflight run records its npm test run in a new directory holding onl
   for (const { directory } of records) assert.equal(existsSync(directory), false, 'preflight removes its record directory');
 });
 
-test('the CI step refuses tests main added above a lagging pull request base, read from a real record', (t) => {
+test('the CI step compares a pull request with its merge head\'s first parent, so main\'s newer tests are not added, read from a real record', (t) => {
   const f = suiteFixture(t);
-  // The pull request branches at the base and changes nothing in the conversion list; main then
-  // gains a test arming a timer and one arming none; the merge head holds both above the event base.
+  // The pull request branches at the base and adds its own timer-arming test to one conversion
+  // file; main then gains a timer-arming test in the other. The merge head's first parent is
+  // main's tip, as for the merge ref CI checks out, while the event's base still names the base.
+  const other = 'test/other-converting.test.mjs';
   gitIn(f.root, 'switch', '-qc', 'topic');
-  const topic = commit(f.root, { 'test/host-stub.test.mjs': '// ABOUTME: Satisfies the host list in a fixture, changed.\n' });
+  const topic = commit(f.root, { [other]: header + older + arming.replace('arms a real timer', 'pull request arms') });
   gitIn(f.root, 'switch', '-q', '-');
   commit(f.root, { [CONVERTING]: header + older + arming + "test('main clean', () => {});\n" });
   gitIn(f.root, 'merge', '-q', '--no-edit', topic);
@@ -187,7 +189,7 @@ test('the CI step refuses tests main added above a lagging pull request base, re
   const record = join(f.directory, 'record');
   const env = { ...process.env, RIGGER_SUITE_TIMER_RECORD: record };
   delete env.NODE_TEST_CONTEXT;
-  const ran = spawnSync('npm', ['test', '--', CONVERTING], { cwd: f.root, encoding: 'utf8', env });
+  const ran = spawnSync('npm', ['test', '--', CONVERTING, other], { cwd: f.root, encoding: 'utf8', env });
   assert.equal(ran.status, 0, ran.stdout + ran.stderr);
   const event = join(f.directory, 'event.json');
   writeFileSync(event, JSON.stringify({ repository: { default_branch: 'main' }, pull_request: { base: { sha: f.base } } }));
@@ -196,7 +198,7 @@ test('the CI step refuses tests main added above a lagging pull request base, re
     env: { ...env, GITHUB_EVENT_NAME: 'pull_request', GITHUB_REF: 'refs/pull/7/merge', GITHUB_SHA: head, GITHUB_EVENT_PATH: event },
   });
   assert.equal(checked.status, 1, checked.stdout + checked.stderr);
-  assert.equal(checked.stderr, `${CONVERTING}: added test "arms a real timer" armed setTimeout with delay 5\n`);
+  assert.equal(checked.stderr, `${other}: added test "pull request arms" armed setTimeout with delay 5\n`);
 });
 
 // node:test is the authority on which top-level tests a module registers: each matrix case runs

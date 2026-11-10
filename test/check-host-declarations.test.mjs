@@ -292,20 +292,40 @@ test('T10: an added test passes when the arm under its title comes from another 
   assert.deepEqual(result, { ok: true, errors: [] });
 });
 
-test('T12: tests main added above a lagging event base count as added, each passing or refused as its row gives', () => {
-  // The pull request's event base predates main's newer tests; the merge head carries them, and
-  // the merge base of that head with the event base is the event base itself.
+test('T12: tests main gained above a lagging event base are the base\'s, not added, and only the pull request\'s own count', () => {
+  // The event's base predates main's newer tests. The merge head's first parent is main's tip,
+  // which holds them, so the pull request is compared with that tip and only its own test is added.
+  const MAIN = '9'.repeat(40);
+  const mainSource = `${header}test('main arms', () => {});\ntest('main clean', () => {});\n`;
   const facts = {
     ...treeFacts({
-      [BASE]: { [CONVERTING]: header, [OTHER]: header },
-      [HEAD]: { [CONVERTING]: `${header}test('main arms', () => {});\ntest('main clean', () => {});\n`, [OTHER]: header },
+      [MAIN]: { [CONVERTING]: mainSource, [OTHER]: header },
+      [HEAD]: { [CONVERTING]: `${mainSource}test('pull request arms', () => {});\n`, [OTHER]: header },
     }),
     present: () => true,
-    mergeBase: (head, base) => { assert.deepEqual([head, base], [HEAD, BASE]); return BASE; },
+    firstParent: (sha) => { assert.equal(sha, HEAD); return MAIN; },
+    mergeBase: (head, base) => { assert.deepEqual([head, base], [HEAD, MAIN]); return MAIN; },
   };
   const context = { eventName: 'pull_request', ref: 'refs/pull/7/merge', sha: HEAD, event: { pull_request: { base: { sha: BASE } } } };
-  const result = checkAddedTimers(context, facts, recordOf({ ran: [CONVERTING], arms: [arm(CONVERTING, 'main arms')] }));
-  assert.deepEqual(result, { ok: false, errors: [`${CONVERTING}: added test "main arms" armed setTimeout with delay 5`] });
+  const record = recordOf({ ran: [CONVERTING], arms: [arm(CONVERTING, 'main arms'), arm(CONVERTING, 'pull request arms')] });
+  assert.deepEqual(checkAddedTimers(context, facts, record),
+    { ok: false, errors: [`${CONVERTING}: added test "pull request arms" armed setTimeout with delay 5`] });
+});
+
+test('T13: a push to main whose landing added a timer-arming conversion-list test is refused against before', () => {
+  const facts = {
+    ...treeFacts({
+      [BASE]: { [CONVERTING]: `${header}test('older', () => {});\n`, [OTHER]: header },
+      [HEAD]: { [CONVERTING]: `${header}test('older', () => {});\ntest('landed', () => {});\n`, [OTHER]: header },
+    }),
+    present: () => true,
+    firstParent: () => assert.fail('a push with a before reads no first parent'),
+    mergeBase: (head, base) => { assert.deepEqual([head, base], [HEAD, BASE]); return BASE; },
+  };
+  const context = { eventName: 'push', ref: 'refs/heads/main', sha: HEAD, event: { before: BASE, repository: { default_branch: 'main' } } };
+  const record = recordOf({ ran: [CONVERTING], arms: [arm(CONVERTING, 'older'), arm(CONVERTING, 'landed')] });
+  assert.deepEqual(checkAddedTimers(context, facts, record),
+    { ok: false, errors: [`${CONVERTING}: added test "landed" armed setTimeout with delay 5`] });
 });
 
 // GitHub event fields below are literal examples of #823's event table, as test/test-list-growth.test.mjs uses them.
@@ -318,7 +338,7 @@ const EVENTS = [
   ['default-branch zero-before push', 'push', 'refs/heads/main', { before: '0'.repeat(40) }, PARENT],
   ['other-branch push', 'push', 'refs/heads/topic', { before: BEFORE }, BEFORE],
   ['other-branch zero-before push', 'push', 'refs/heads/topic', { before: '0'.repeat(40) }, ANCESTOR],
-  ['pull request', 'pull_request', 'refs/pull/7/merge', { pull_request: { base: { sha: BEFORE } } }, BEFORE],
+  ['pull request', 'pull_request', 'refs/pull/7/merge', { pull_request: { base: { sha: BEFORE } } }, PARENT],
   ['merge group', 'merge_group', 'refs/heads/gh-readonly-queue/main/batch', { merge_group: { base_sha: BEFORE } }, BEFORE],
   ['main schedule', 'schedule', 'refs/heads/main', {}, PARENT],
   ['main workflow dispatch', 'workflow_dispatch', 'refs/heads/main', {}, PARENT],
@@ -349,7 +369,7 @@ test('the added-timer mode refuses an unsupported event and a head with no merge
   const unsupported = checkAddedTimers({ eventName: 'release', ref: 'refs/tags/v1', sha: HEAD, event: {} }, facts, recordOf({}));
   assert.deepEqual(unsupported, { ok: false, errors: ['unsupported event release at ref refs/tags/v1'] });
   const unrelated = checkAddedTimers({ eventName: 'pull_request', ref: 'refs/pull/7/merge', sha: HEAD, event: { pull_request: { base: { sha: BEFORE } } } }, facts, recordOf({}));
-  assert.deepEqual(unrelated, { ok: false, errors: [`head ${HEAD} has no merge base with ${BEFORE}`] });
+  assert.deepEqual(unrelated, { ok: false, errors: [`head ${HEAD} has no merge base with ${PARENT}`] });
 });
 
 test('the record reader takes every worker file in its directory and refuses a malformed line', () => {

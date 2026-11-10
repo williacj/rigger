@@ -36,7 +36,9 @@ export function eventBase(context, facts) {
       ? facts.firstParent(context.sha)
       : facts.mergeBase(context.sha, 'refs/remotes/origin/' + context.event.repository.default_branch);
   }
-  if (context.eventName === 'pull_request') base = context.event.pull_request?.base?.sha;
+  // A pull request's merge head is built on its base branch's tip: its first parent is the base it
+  // was tested against, as ci.yml's collect reads it (checkout.parents[0]), whatever the payload says.
+  if (context.eventName === 'pull_request') base = facts.firstParent(context.sha);
   if (context.eventName === 'merge_group') base = context.event.merge_group?.base_sha;
   if (['schedule', 'workflow_dispatch'].includes(context.eventName) && context.ref === 'refs/heads/main') base = facts.firstParent(context.sha);
   if (!base && (context.eventName !== 'push' || context.ref === 'refs/heads/' + context.event.repository.default_branch)) {
