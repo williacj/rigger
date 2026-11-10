@@ -365,7 +365,7 @@ command line as it runs a step's. The adapter also names, from the directory a d
 the environment it runs under, the one folder its CLI keeps for that directory outside the
 dispatch's directories, or none. This document uses folder for that directory alone. The Codex
 adapter names none. The adapter passes the CLI no setting that widens what the
-consumer's own provider settings allow, with three exceptions:
+consumer's own provider settings allow, with four exceptions:
 
 - **A reached directory.** A directory a dispatch reaches is one Rigger gives the dispatch beside
   the directory it runs in, and today that is only a judge's `head`. For each such directory, the
@@ -378,6 +378,11 @@ consumer's own provider settings allow, with three exceptions:
   sweep of the scratch directory. It allows no command, and the consumer's deny rules still apply
   there.
 - **A maker's git directories.** For a maker's dispatch, an adapter whose CLI refuses writes to git metadata may let the agent write to the worktree's own git directory and to the `objects`, `refs` and `logs` of the common git directory, so that the maker can commit and push its line of work. It names neither the common git directory itself nor any other part of it. It allows no command, and the consumer's deny rules still apply there.
+- **A card's escalation note.** The Claude Code adapter allows each dispatch exactly one command:
+  `gh issue comment <card> --body-file .rigger-escalation.md`, for the dispatch's own card, as a
+  rule with no `:*`. It lets a role post the escalation note its instruction asks for
+  (`R-ESCALATE-27`). It is the only command an exception allows. It admits no other card,
+  repository, flag or file, and the consumer's deny rules still apply to it.
 
 A provisioning step's working directory is `cwd`, a relative path naming a directory under the
 card's workspace. Where it is absent the step runs in the workspace itself. A step's `timeout` is
