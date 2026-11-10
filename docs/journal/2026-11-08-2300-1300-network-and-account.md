@@ -36,7 +36,7 @@ native-option rule and its two source edits. The guard checks the code as syntax
 | N4 | Held: allowed globals have individual reasons; lexical bindings keep worktrees' local fetch distinct from a network global. |
 | N5 | Held: no hidden loader or process native-loader entry is used. The guard refuses named loader routes. |
 | N6 | Held: no named eval or Function route is used. |
-| N8 | Held: the reviewed process sites resolve to the closed program set; the shell line is the configured step.run. |
+| N8 | Failed at the base: the N8 guard rejected two reader option spreads in process.mjs. Expanding them to explicit fields was required; the reviewed process sites then resolve to the closed program set and the shell line is the configured step.run. |
 | N9 | Out of sight at base and head: the owner's credentialed tools' internals, as the card rules. |
 | N10 | Out of sight at base and head: consumer provisioning lines, under M8-U2 Q8 a. |
 | N11 | Held at the boundary: consumerConfig loads the target's rigger.config.mjs; that consumer module is out of the guard's sight under M8-U3 Q15 a. |
