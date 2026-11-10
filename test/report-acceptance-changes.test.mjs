@@ -284,9 +284,13 @@ async function printedL2(events) {
   return ran.text.split('\nL2\n')[1].split('\nL3\n')[0];
 }
 
-/** The lines of `l2` from the heading `heading` up to the next line indented as little as it. */
+/**
+ * The lines of `l2` from the heading `heading` up to the next line indented as little as it, split
+ * at every line terminator a reader's terminal or editor breaks at, the line and paragraph
+ * separators among them.
+ */
 function block(l2, heading) {
-  const lines = l2.split('\n');
+  const lines = l2.split(/\r\n|[\n\r\u2028\u2029]/);
   const from = lines.indexOf(heading);
   assert.ok(from >= 0, `L2 prints ${JSON.stringify(heading)}:\n${l2}`);
   const indent = heading.length - heading.trimStart().length;
@@ -329,4 +333,110 @@ test('report prints each card\'s author', async () => {
     '      card #12: the owner, since no role dispatch window holds its opening',
     '      card #15: the owner, since no role dispatch window holds its opening',
   ]);
+});
+
+/**
+ * Stream text that would print a forged card line of its own if printed raw: a newline and a line
+ * separator, each followed by a line reading as another card's. `SHOWN` is how `report` must print
+ * it: each break written as its escape, as `outsideText` (`src/cli/doctor.mjs`) writes them.
+ */
+const FORGED = 'x\n      card #999: forged\u2028      card #998: forged';
+const SHOWN = 'x\\n      card #999: forged\\u2028      card #998: forged';
+/** A time `Date.parse` reads as second 5, whose parenthesised comment starts a line of its own. */
+const FORGED_TIME = 'Thu, 01 Jan 2026 00:00:05 GMT\n      (card #999: forged)';
+const SHOWN_TIME = 'Thu, 01 Jan 2026 00:00:05 GMT\\n      (card #999: forged)';
+
+const CHANGES = '    acceptance changes, each with who made it';
+const DELETED = '    content deleted from a card\'s history';
+const GREW = '    acceptances that grew after admission';
+const MAKER = '    acceptance changes made during the card\'s maker dispatch';
+const AUTHORS = '    each card\'s author';
+
+test('a card id carrying line breaks prints as one acceptance change line', async () => {
+  assert.deepEqual(block(await printedL2([history(FORGED, [revision(1, 'a', 'd-1', 3), revision(2, 'b', 'd-2', 3)])]), CHANGES),
+    [`      card #${SHOWN} at ${at(2)}: editor "b"`]);
+});
+
+test('an edit time carrying line breaks prints as one acceptance change line', async () => {
+  const forged = { ...revision(2, 'b', 'd-2', 3), editedAt: FORGED };
+  assert.deepEqual(block(await printedL2([history(7, [revision(1, 'a', 'd-1', 3), forged])]), CHANGES),
+    [`      card #7 at ${SHOWN}: editor "b"`]);
+});
+
+test('an editor carrying line breaks prints as one acceptance change line', async () => {
+  assert.deepEqual(block(await printedL2([history(7, [revision(1, 'a', 'd-1', 3), revision(2, FORGED, 'd-2', 3)])]), CHANGES),
+    [`      card #7 at ${at(2)}: editor "${SHOWN}"`]);
+});
+
+test('a dispatch id carrying line breaks prints as one acceptance change line', async () => {
+  const l2 = await printedL2([dispatch(7, FORGED, 'pm'), start(FORGED, 0), history(7, [revision(1, 'a', 'd-1', 3), revision(2, 'b', 'd-2', 3)]), end(FORGED, 9)]);
+  assert.deepEqual(block(l2, CHANGES), [`      card #7 at ${at(2)}: editor "b", dispatch ${SHOWN} (pm)`]);
+});
+
+test('a role carrying line breaks prints as one acceptance change line', async () => {
+  const l2 = await printedL2([dispatch(7, 'd-pm', FORGED), start('d-pm', 0), history(7, [revision(1, 'a', 'd-1', 3), revision(2, 'b', 'd-2', 3)]), end('d-pm', 9)]);
+  assert.deepEqual(block(l2, CHANGES), [`      card #7 at ${at(2)}: editor "b", dispatch d-pm (${SHOWN})`]);
+});
+
+test('a card id carrying line breaks prints as one content-deleted line', async () => {
+  assert.deepEqual(block(await printedL2([history(FORGED, [deleted(2, 'm')])]), DELETED), [`      card #${SHOWN} at ${at(2)}: editor "m"`]);
+});
+
+test('an edit time carrying line breaks prints as one content-deleted line', async () => {
+  assert.deepEqual(block(await printedL2([history(7, [{ ...deleted(2, 'm'), editedAt: FORGED }])]), DELETED), [`      card #7 at ${SHOWN}: editor "m"`]);
+});
+
+test('an editor carrying line breaks prints as one content-deleted line', async () => {
+  assert.deepEqual(block(await printedL2([history(7, [deleted(2, FORGED)])]), DELETED), [`      card #7 at ${at(2)}: editor "${SHOWN}"`]);
+});
+
+test('a card id carrying line breaks prints as one growth line', async () => {
+  const l2 = await printedL2([pull(FORGED, 50), history(FORGED, [revision(10, 'a', 'd-1', 3), revision(60, 'b', 'd-2', 4)])]);
+  assert.deepEqual(block(l2, GREW), [`      card #${SHOWN} at ${at(60)}: 4 items, over 3 at its first pull`]);
+});
+
+test('an edit time carrying line breaks prints as one growth line', async () => {
+  const l2 = await printedL2([pull(7, 50), history(7, [revision(10, 'a', 'd-1', 3), { ...revision(60, 'b', 'd-2', 4), editedAt: FORGED }])]);
+  assert.deepEqual(block(l2, GREW), [`      card #7 at ${SHOWN}: 4 items, over 3 at its first pull`]);
+});
+
+test('an item count carrying a line break prints as one growth line', async () => {
+  // Number('4\n') is 4, so the count still compares as four.
+  const l2 = await printedL2([pull(7, 50), history(7, [revision(10, 'a', 'd-1', 3), revision(60, 'b', 'd-2', '4\n')])]);
+  assert.deepEqual(block(l2, GREW), [`      card #7 at ${at(60)}: 4\\n items, over 3 at its first pull`]);
+});
+
+test('an admitted item count carrying a line separator prints as one growth line', async () => {
+  // Number('3\u2028') is 3, so the count still compares as three.
+  const l2 = await printedL2([pull(7, 50), history(7, [revision(10, 'a', 'd-1', '3\u2028'), revision(60, 'b', 'd-2', 4)])]);
+  assert.deepEqual(block(l2, GREW), [`      card #7 at ${at(60)}: 4 items, over 3\\u2028 at its first pull`]);
+});
+
+test('a card id carrying line breaks prints as one maker-dispatch line', async () => {
+  const l2 = await printedL2([dispatch(FORGED, 'd-make', 'engineer', { attempt: 1 }), start('d-make', 0),
+    history(FORGED, [revision(1, 'a', 'd-1', 3), revision(2, 'b', 'd-2', 3)]), end('d-make', 9)]);
+  assert.deepEqual(block(l2, MAKER), [`      card #${SHOWN} at ${at(2)}`]);
+});
+
+test('an edit time carrying line breaks prints as one maker-dispatch line', async () => {
+  assert.equal(Date.parse(FORGED_TIME), Date.parse(at(5)), 'the forged time is second 5, in the maker\'s window');
+  const l2 = await printedL2([dispatch(7, 'd-make', 'engineer', { attempt: 1 }), start('d-make', 0),
+    history(7, [revision(1, 'a', 'd-1', 3), { ...revision(5, 'b', 'd-2', 3), editedAt: FORGED_TIME }]), end('d-make', 9)]);
+  assert.deepEqual(block(l2, MAKER), [`      card #7 at ${SHOWN_TIME}`]);
+});
+
+test('a card id carrying line breaks prints as one author line', async () => {
+  assert.deepEqual(block(await printedL2([history(FORGED, [revision(1, 'a', 'd-1', 3)], { opened: at(1) })]), AUTHORS),
+    [`      card #${SHOWN}: the owner, since no role dispatch window holds its opening`]);
+});
+
+test('a recorded author carrying line breaks prints as one author line', async () => {
+  assert.deepEqual(block(await printedL2([history(7, [revision(1, 'a', 'd-1', 3)], { author: FORGED })]), AUTHORS),
+    [`      card #7: "${SHOWN}", as its acceptance.history records`]);
+});
+
+test('an authoring role carrying line breaks prints as one author line', async () => {
+  const l2 = await printedL2([dispatch(1, 'd-pm', FORGED), dispatch(2, 'd-arch', 'architect'), start('d-pm', 0), start('d-arch', 0),
+    history(7, [revision(1, 'a', 'd-1', 3)], { opened: at(1) }), end('d-pm', 9), end('d-arch', 9)]);
+  assert.deepEqual(block(l2, AUTHORS), [`      card #7: roles ${SHOWN}, architect, whose dispatch windows hold its opening`]);
 });

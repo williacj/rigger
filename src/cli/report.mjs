@@ -4,7 +4,7 @@
 import { join } from 'node:path';
 
 import { HOUR, report as derive } from '../observation/report.mjs';
-import { PACKAGE, settled } from './doctor.mjs';
+import { PACKAGE, outsideText, settled } from './doctor.mjs';
 import { STATE, recording } from './recording.mjs';
 
 /** A figure as printed: to four decimal places at most, which states every value a test sets exactly. */
@@ -103,22 +103,30 @@ function roundLines(rounds) {
 /** A heading and its lines, or `none` beneath it where there are none. */
 const listed = (heading, lines) => [heading, ...(lines.length === 0 ? ['      none'] : lines)];
 
-/** The acceptance changes across the stream, as L2 prints them: changes, deleted content, growth, the maker's changes, and authors. */
+/**
+ * The acceptance changes across the stream, as L2 prints them: changes, deleted content, growth, the
+ * maker's changes, and authors. Every value here comes from the stream, where any string can stand
+ * (boundary rule 4), so each prints through `outsideText`, and an editor or a recorded author also
+ * quoted: none can break a line and print one reading as another card's.
+ */
 function acceptanceLines({ changes, deleted, grew, authors }) {
-  const by = (dispatches) => dispatches.map(({ dispatch, role }) => `, dispatch ${dispatch} (${role})`).join('');
+  const shown = outsideText;
+  const quoted = (text) => outsideText(JSON.stringify(text));
+  const by = (dispatches) => dispatches.map(({ dispatch, role }) => `, dispatch ${shown(dispatch)} (${shown(role)})`).join('');
+  const at = (card, editedAt) => `      card #${shown(card)} at ${shown(editedAt)}`;
   return [
     ...listed('    acceptance changes, each with who made it', changes.map(({ card, editedAt, editor, dispatches }) =>
-      `      card #${card} at ${editedAt}: editor ${JSON.stringify(editor)}${by(dispatches)}`)),
+      `${at(card, editedAt)}: editor ${quoted(editor)}${by(dispatches)}`)),
     ...listed('    content deleted from a card\'s history', deleted.map(({ card, editedAt, editor }) =>
-      `      card #${card} at ${editedAt}: editor ${JSON.stringify(editor)}`)),
+      `${at(card, editedAt)}: editor ${quoted(editor)}`)),
     ...listed('    acceptances that grew after admission', grew.map(({ card, editedAt, items, admitted }) =>
-      `      card #${card} at ${editedAt}: ${items} items, over ${admitted} at its first pull`)),
+      `${at(card, editedAt)}: ${shown(items)} items, over ${shown(admitted)} at its first pull`)),
     ...listed('    acceptance changes made during the card\'s maker dispatch', changes.filter(({ duringMaker }) => duringMaker)
-      .map(({ card, editedAt }) => `      card #${card} at ${editedAt}`)),
+      .map(({ card, editedAt }) => at(card, editedAt))),
     ...listed('    each card\'s author', authors.map(({ card, source, names }) => {
-      if (source === 'author') return `      card #${card}: ${JSON.stringify(names[0])}, as its acceptance.history records`;
-      if (source === 'dispatches') return `      card #${card}: roles ${names.join(', ')}, whose dispatch windows hold its opening`;
-      return `      card #${card}: the owner, since no role dispatch window holds its opening`;
+      if (source === 'author') return `      card #${shown(card)}: ${quoted(names[0])}, as its acceptance.history records`;
+      if (source === 'dispatches') return `      card #${shown(card)}: roles ${names.map(shown).join(', ')}, whose dispatch windows hold its opening`;
+      return `      card #${shown(card)}: the owner, since no role dispatch window holds its opening`;
     })),
   ];
 }
