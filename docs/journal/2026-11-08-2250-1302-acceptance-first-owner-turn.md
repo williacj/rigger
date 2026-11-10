@@ -64,3 +64,25 @@ overlay, separately from the original-base observations above. No production sou
 between those bases. Updated-head proof and guarded mutation receipts verify the retained
 claims after the append resolution. Command/ref/provenance originals are retained privately
 under retained-evidence/1302, outside disposable suite and mutation roots.
+
+The first integration candidate, fc7f9760, passed its deterministic hook but its whole host
+run failed the inherited abnormal-caller fixture before the intended fault: cli-ready was
+visible with empty content, parsed as PID zero. Complete output is retained in
+1302-sync-host.log; it reports tests=2779, pass=2750, fail=1, skipped=28, with uptime
+one-minute load 8.98 before and 3.80 after. The maker stopped and recorded the ambiguity
+on card 1302.
+
+The coordinator identified this as the known publication race repaired on main by #1290 /
+PR #1334 and directed a current-main merge. Main 76d33f169c180ee08abfde405ea05e16b59e57ae
+contains the staged write, close and rename. This integration has no conflict and preserves
+that source byte for byte. It changes no production source, claiming test or consumed claiming
+fixture relative to 1e7e3ce0, so the coordinator-directed verification retains the prior
+baseline and claiming-base identities and reruns the affected files, final whole host tier,
+hooks and fresh-clone verification. Each command acquires and releases the shared slot
+separately. The failed run remains historical evidence; a later pass does not relabel it.
+
+Every Held outcome in the Table C and E rows above also applies to the final merge base
+76d33f169c180ee08abfde405ea05e16b59e57ae: none of the production source or consumed claiming
+inputs changed from 1e7e3ce0, and no row required a product change. The execution measurement
+remains at 1e7e3ce0; applicability at 76d33f16 is a judgment based on those unchanged inputs.
+The final-head affected run verifies the retained assertions after integration.
