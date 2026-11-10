@@ -61,9 +61,10 @@ cannot prove an OS deadline. Identify any boundary left unproved; a fake pass ea
 behaviour's timer when readiness is its premise. Keep startup within the bound when startup
 itself is the contract. A readiness failure is not a failure of behaviour never exercised.
 
-**Keep the authority live.** Where a tool decides a fact (`D16`), assert the relation between its
-answer and the code's, rather than pinning today's answer. `test/package-budget.test.mjs` is a
-worked example: a fixed answer documents today; asking the tool catches a changed authority.
+**Keep the authority live.** Where a tool decides a fact (`D16`), assert the relation between
+its answer and the code's, rather than pinning today's answer. Where the repository defines it,
+`test/package-budget.test.mjs` is a worked example: a fixed answer documents today; asking the
+tool catches a changed authority.
 
 ## A mutation claim
 
@@ -112,11 +113,11 @@ Where the repository defines it, attach `npm run mutation:receipt` output to eac
 
 One mutation removes one behaviour. Batching several reports the union and hides the gap.
 
-`test/verify-mac-containment` guards its bounded Mac claims: anchors, readback/diff, named
-assertion verdicts without cancellation, observed effects, restoration and retained artifacts.
-Those mechanics do not decide whether a mutation represents the right semantic fault or covers
-the claim. The judge still evaluates that scope. `test/mutation-claim.test.mjs` checks the stated
-bar, not its use.
+Where the repository defines it, `test/verify-mac-containment` guards its bounded Mac claims:
+anchors, readback/diff, named assertion verdicts without cancellation, observed effects,
+restoration and retained artifacts. Those mechanics do not decide whether a mutation represents
+the right semantic fault or covers the claim. The judge still evaluates that scope.
+`test/mutation-claim.test.mjs` checks the stated bar, not its use.
 
 Preserve byte-complete private command/ref/provenance originals outside
 test/suite/mutation/scratch/temp roots through retention event; reopen after command/fixture
@@ -210,14 +211,14 @@ Shapes it refuses rather than claims, each naming the file and the line:
 | a quoted run or a comment the source leaves open | it is not source that parses |
 
 What it gets wrong: a declaration above a top-level call the module never finishes reaching is
-claimed all the same. A `throw`, a `process.exit`, a rejected top-level `await` and a hang all land
-there, because in each the source is complete and it is the run that stops. That is a question
-about running the module rather than reading it. A wrong claim is a defect; a source-decidable
-refusal in the table is a visible cost of keeping the reader bounded.
-`scripts/build-test-matrix.mjs` states the same set beside the code, in the block comment above
-`declarationsIn`. That copy governs where the two disagree, because it is the reader that refuses.
-The existing parser cases live in `test/build-test-matrix.test.mjs`; the added call shapes were
-measured with the runner and recorded in `docs/journal/2026-09-23-1638-119-matrix-refusals.md`.
+claimed all the same. A `throw`, a `process.exit`, a rejected top-level `await` and a hang all
+land there, because in each the source is complete and it is the run that stops. That is a
+question about running the module rather than reading it. A wrong claim is a defect; a
+source-decidable refusal in the table is a visible cost of keeping the reader bounded. Where
+the repository defines it, `scripts/build-test-matrix.mjs` states the same set beside the code,
+in the block comment above `declarationsIn`. That copy governs where the two disagree, because
+it is the reader that refuses. The existing parser cases live in
+`test/build-test-matrix.test.mjs`.
 
 So when you add a requirement, the test that claims it is part of the same work. Where your card
 is what makes an older requirement true, its test closes that requirement's counted gap in the
