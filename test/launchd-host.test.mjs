@@ -280,8 +280,8 @@ test('L1 launchd starts the shipped job once while its instance runs across thre
   try {
     const first = await loadAndObserveFirstStart(t, world, [testLabel()] /* L1 labels */);
     await holdThreePeriods(t, world, first);
-    assert.ok(Date.now() - first.at >= 3 * START_INTERVAL * 1000, 'the instance was held across three periods');
     assert.equal(world.starts().length, 1, 'exactly one start while the first instance runs');
+    assert.ok(Date.now() - first.at >= 3 * START_INTERVAL * 1000, 'the instance was held across three periods');
   } finally {
     await world.bootout();
   }
