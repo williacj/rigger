@@ -3,6 +3,7 @@
 // reasons and its exit status, read from the default branch's config through L0 alone.
 
 import { test } from 'node:test';
+import { importBindings } from './source-structure.mjs';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
@@ -474,16 +475,16 @@ test('every read the script sends goes through the read runner: the fake gh is s
 test('the script imports each L2 function it hands the rule, and copies none', () => {
   const source = readFileSync(SCRIPT, 'utf8');
   const imports = [
-    ["import { kindOf, panelOf } from '../src/workflow/next-action.mjs';"],
-    ["import { acceptanceItems, checkAcceptanceForm } from '../src/workflow/form-check.mjs';"],
-    ["import { GATE_CONTEXT, gateAnswer } from '../src/workflow/gate.mjs';"],
-    ["import { acceptanceDigest, undispatchedInstruction } from '../src/workflow/marker.mjs';"],
-    ["import { sameLabel, validate, worktreeTopic } from '../src/config/validate.mjs';"],
-    ["import { cardOfBranch, topicFor } from '../src/execution/workspace.mjs';"],
-    ["import { consumerConfig } from '../src/cli/doctor.mjs';"],
-    ["import { repositoryReads } from '../src/substrate/forge/read.mjs';"],
+    ['../src/workflow/next-action.mjs', ['kindOf', 'panelOf']],
+    ['../src/workflow/form-check.mjs', ['acceptanceItems', 'checkAcceptanceForm']],
+    ['../src/workflow/gate.mjs', ['GATE_CONTEXT', 'gateAnswer']],
+    ['../src/workflow/marker.mjs', ['acceptanceDigest', 'undispatchedInstruction']],
+    ['../src/config/validate.mjs', ['sameLabel', 'validate', 'worktreeTopic']],
+    ['../src/execution/workspace.mjs', ['cardOfBranch', 'topicFor']],
+    ['../src/cli/doctor.mjs', ['consumerConfig']],
+    ['../src/substrate/forge/read.mjs', ['repositoryReads']],
   ];
-  for (const [line] of imports) assert.ok(source.split('\n').includes(line), line);
+  assert.ok(importBindings(source, imports), 'the script must import each required module/export/local binding');
   for (const name of ['kindOf', 'panelOf', 'acceptanceItems', 'checkAcceptanceForm', 'acceptanceDigest', 'gateAnswer', 'validate', 'cardOfBranch']) {
     assert.doesNotMatch(source, new RegExp(`function ${name}\\b|const ${name}\\s*=`), name);
   }
