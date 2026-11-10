@@ -759,21 +759,13 @@ const REPOSITORY_READS = {
     reading: () => 'the Actions event policies',
     read: async (board, via, target, addressed) => {
       const own = [];
-      for (let page = 1;; page += 1) {
-        const listed = JSON.parse(await restRead('readEventPolicies', board, via, `actions/policies?per_page=${PAGE}&page=${page}`, POLICY_HEADERS, addressed));
-        if (!Array.isArray(listed?.policies)) fail('readEventPolicies', board, `${addressed}gh answered no policies`);
-        for (const policy of listed.policies) {
-          if (policy?.source_type !== 'Repository') continue;
-          if (!Number.isSafeInteger(policy.id) || policy.id < 1) fail('readEventPolicies', board, `${addressed}gh answered a policy with no id`);
-          own.push(policy.id);
-        }
-        if (listed.policies.length < PAGE) break;
+      for (let page = 1, listed = []; page === 1 || listed.length === PAGE; page += 1) {
+        listed = JSON.parse(await restRead('readEventPolicies', board, via, `actions/policies?per_page=${PAGE}&page=${page}`, POLICY_HEADERS, addressed))?.policies;
+        if (!Array.isArray(listed)) fail('readEventPolicies', board, `${addressed}gh answered no policies`);
+        own.push(...listed.filter((policy) => policy?.source_type === 'Repository').map(({ id }) => (Number.isSafeInteger(id) && id > 0 ? id : fail('readEventPolicies', board, `${addressed}gh answered a policy with no id`))));
       }
       const policies = [];
-      for (const id of own) {
-        const held = JSON.parse(await restRead('readEventPolicies', board, via, `actions/policies/${id}`, POLICY_HEADERS, `${addressed}policy ${id}, `));
-        policies.push(eventPolicyOf(board, held, id, addressed));
-      }
+      for (const id of own) policies.push(eventPolicyOf(board, JSON.parse(await restRead('readEventPolicies', board, via, `actions/policies/${id}`, POLICY_HEADERS, `${addressed}policy ${id}, `)), id, addressed));
       return policies;
     },
   },
@@ -820,23 +812,11 @@ const strings = (value) => Array.isArray(value) && value.every((each) => typeof 
  */
 function eventPolicyOf(board, held, id, addressed) {
   const refuse = (why) => fail('readEventPolicies', board, `${addressed}policy ${id}, gh answered ${why}`);
-  if (held?.id !== id || typeof held.name !== 'string' || typeof held.enforcement !== 'string') refuse('no policy id, name or enforcement');
+  if (held?.id !== id || typeof held.name !== 'string' || typeof held.enforcement !== 'string' || !Array.isArray(held.rules ?? [])) refuse('no policy id, name, enforcement or list of rules');
   const path = held.conditions?.workflow_path ?? null;
   if (path !== null && (!strings(path.include ?? []) || !strings(path.exclude ?? []))) refuse('a workflow_path that is not lists of patterns');
-  if (!Array.isArray(held.rules ?? [])) refuse('no list of rules');
-  const events = [];
-  for (const rule of held.rules ?? []) {
-    if (rule?.type !== 'restrict_action_events') continue;
-    if (!strings(rule.parameters?.allowed_events)) refuse('a restrict_action_events rule with no list of allowed events');
-    events.push([...rule.parameters.allowed_events]);
-  }
-  return {
-    id,
-    name: held.name,
-    enforcement: held.enforcement,
-    workflowPath: path === null ? null : { include: [...(path.include ?? [])], exclude: [...(path.exclude ?? [])] },
-    events,
-  };
+  const events = (held.rules ?? []).filter((rule) => rule?.type === 'restrict_action_events').map((rule) => (strings(rule.parameters?.allowed_events) ? [...rule.parameters.allowed_events] : refuse('a restrict_action_events rule with no list of allowed events')));
+  return { id, name: held.name, enforcement: held.enforcement, workflowPath: path && { include: [...(path.include ?? [])], exclude: [...(path.exclude ?? [])] }, events };
 }
 
 /** The git modes of a file whose text a read answers: a regular file, and an executable one. */

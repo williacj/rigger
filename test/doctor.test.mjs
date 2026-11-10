@@ -1815,12 +1815,19 @@ const GATE_EVENTS = ['pull_request_target', 'issue_comment', 'issues'];
 /** An event rule allowing `events`, as policy 12504's detail read answered it. */
 const eventRule = (events) => ({ type: 'restrict_action_events', parameters: { allowed_events: events } });
 
+/** What `eventPolicy` is given to answer a policy with no `conditions` key at all. */
+const NO_CONDITION = Symbol('no conditions key');
+
+/** Whether `policy` holds no `conditions` key, the premise of every no-condition case. */
+const unconditioned = (policy) => Object.hasOwn(policy, 'conditions') === false;
+
 /** A `workflow_path` condition, as policy 12504's detail read answered it. */
 const workflowPath = (include = [GATE_WORKFLOW], exclude = []) => ({ workflow_path: { exclude, include } });
 
 /**
  * A policy as its detail read answers it, shaped as policy 12504 on williacj/rigger answered on
- * 2026-11-09. `conditions: undefined` leaves the key out, which is a policy targeting every workflow.
+ * 2026-11-09. `conditions: NO_CONDITION` leaves the key out, which is a policy targeting every
+ * workflow. `undefined` would not: a destructuring default takes its place.
  */
 function eventPolicy({ id = 12504, name = 'rigger gate events', source_type = 'Repository', enforcement = 'active', conditions = workflowPath(), rules = [eventRule(GATE_EVENTS)] } = {}) {
   const policy = {
@@ -1828,7 +1835,7 @@ function eventPolicy({ id = 12504, name = 'rigger gate events', source_type = 'R
     node_id: 'MDE0OkFjdGlvbnNSdWxlc2V0MTI1MDQ=', created_at: '2026-11-09T12:42:08.683-06:00', updated_at: '2026-11-09T12:42:08.851-06:00',
     _links: { self: { href: `https://api.github.com/repos/acme/widgets/actions/policies/${id}` }, html: { href: `https://github.com/acme/widgets/settings/actions/rules/${id}` } },
   };
-  if (conditions === undefined) delete policy.conditions;
+  if (conditions === NO_CONDITION) delete policy.conditions;
   return policy;
 }
 
@@ -1901,7 +1908,8 @@ function keyPaths(value, at = '', into = new Set()) {
 test('the event-policy fakes are shaped as gh printed the list, the detail and the visibility read on 2026-11-09', () => {
   const printed = (file) => keyPaths(JSON.parse(readFileSync(join(root, 'test/fixtures', file), 'utf8')));
   const unprinted = (answer, file) => [...keyPaths(JSON.parse(answer.stdout))].filter((path) => !printed(file).has(path));
-  const policies = [eventPolicy(), eventPolicy({ id: 2, conditions: undefined }), eventPolicy({ id: 3, conditions: workflowPath(['~ALL'], ['.github/workflows/ci.yml']) })];
+  const policies = [eventPolicy(), eventPolicy({ id: 2, conditions: NO_CONDITION }), eventPolicy({ id: 3, conditions: workflowPath(['~ALL'], ['.github/workflows/ci.yml']) })];
+  assert.ok(unconditioned(policies[1]), 'premise: policy 2 holds no conditions key');
   const state = { policies };
   const list = eventPolicyAnswer(['api', 'repos/acme/widgets/actions/policies?per_page=100&page=1', '-X', 'GET'], state);
   assert.deepEqual(unprinted(list, 'rigger-actions-policies-2026-11-09.json'), []);
@@ -1974,13 +1982,15 @@ test('Table D: an active own policy covering the gate workflow and allowing ever
   for (const [title, conditions] of [
     ['literal include', workflowPath()],
     ['option 1', workflowPath([GATE_WORKFLOW, '.github/workflows/self-hosting.yml'])],
-    ['no condition', undefined],
+    ['no condition', NO_CONDITION],
     ['empty include', workflowPath([])],
     ['~ALL include', workflowPath(['~ALL'])],
     ['~ALL include, another workflow excluded', workflowPath(['~ALL'], ['.github/workflows/ci.yml'])],
     ['~ALL include beside another pattern', workflowPath(['~ALL', '.github/workflows/ci.yml'])],
   ]) {
-    const { line, ran } = await policyReport({ policies: [eventPolicy({ conditions, rules: [eventRule([...GATE_EVENTS, 'push'])] })] });
+    const policy = eventPolicy({ conditions, rules: [eventRule([...GATE_EVENTS, 'push'])] });
+    assert.equal(unconditioned(policy), conditions === NO_CONDITION, `premise: ${title}`);
+    const { line, ran } = await policyReport({ policies: [policy] });
     assert.equal(line, `${GATE_PASSES}; Actions event policy "rigger gate events" covers ${GATE_WORKFLOW} and allows its events`, title);
     assert.equal(ran.code, 0, title);
   }
@@ -2014,7 +2024,8 @@ test('Table D: a covering active own event rule lacking one of the gate\'s event
 });
 
 test('Table D: a covering active rule lacking events fails the gate line even beside a policy that allows them all, naming every missing event', async () => {
-  const policies = [eventPolicy({ id: 1 }), eventPolicy({ id: 2, name: 'narrow', conditions: undefined, rules: [eventRule(['push'])] })];
+  const policies = [eventPolicy({ id: 1 }), eventPolicy({ id: 2, name: 'narrow', conditions: NO_CONDITION, rules: [eventRule(['push'])] })];
+  assert.ok(unconditioned(policies[1]), 'premise: the narrow policy holds no conditions key');
   const { line } = await policyReport({ policies });
   assert.equal(line, `  failed     gate check required: Actions event policy "narrow" covers ${GATE_WORKFLOW} and does not allow pull_request_target, issue_comment, issues`);
 });
