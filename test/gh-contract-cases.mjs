@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import config from '../rigger.config.mjs';
 import { parseDocument } from '../src/substrate/forge/graphql.mjs';
 import { readSide } from '../src/substrate/forge/read.mjs';
-import { FORGE_TIMEOUT, readRunner } from '../src/substrate/forge/runners.mjs';
+import { API_VERSION_HEADER, FORGE_TIMEOUT, readRunner } from '../src/substrate/forge/runners.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { runCommand } from '../src/substrate/process.mjs';
 
@@ -281,6 +281,10 @@ export function numstatOf(diff) {
   });
 }
 
+/** What an Actions policy's list entry holds, and its form; its detail adds the conditions and rules. */
+const POLICY_FIELDS = { id: num, name: str, target: str, source_type: str, source: str, enforcement: str };
+const POLICY = rest(POLICY_FIELDS);
+
 /** The header asking GitHub for a pull request's diff. */
 const DIFF = 'Accept: application/vnd.github.diff';
 
@@ -535,6 +539,29 @@ export const GH_CASES = [
     name: 'an issue over REST',
     run: async (ask, target) => {
       printed(await ask(restGet(target, `issues/${FACTS.issue.number}`)), rest({ number: exactly(FACTS.issue.number), node_id: str }));
+    },
+  },
+  // The repository's visibility and its Actions policies are the owner's to change, so these three
+  // tie form alone (rule 12.2); the fake gh records beside each answer that its values are untied.
+  {
+    name: 'the repository\'s visibility and owner type',
+    run: async (ask, target) => {
+      data(await ask(graphql(repositoryQuery(target, 'visibility owner { __typename }'))),
+        onRepository({ visibility: either(exactly('PUBLIC'), exactly('PRIVATE'), exactly('INTERNAL')), owner: obj({ __typename: either(exactly('User'), exactly('Organization')) }) }));
+    },
+  },
+  {
+    name: 'the repository\'s Actions policies, listed',
+    run: async (ask, target) => {
+      printed(await ask(restGet(target, 'actions/policies?per_page=100&page=1', '-H', API_VERSION_HEADER)), rest({ total_count: num, policies: list(POLICY, { min: 1 }) }));
+    },
+  },
+  {
+    name: 'an Actions policy in detail, by the ID its list answers',
+    run: async (ask, target) => {
+      const { policies: [listed] } = printed(await ask(restGet(target, 'actions/policies?per_page=100&page=1', '-H', API_VERSION_HEADER)), rest({ total_count: num, policies: list(POLICY, { min: 1 }) }));
+      printed(await ask(restGet(target, `actions/policies/${listed.id}`, '-H', API_VERSION_HEADER)),
+        rest({ ...POLICY_FIELDS, id: exactly(listed.id), conditions: rest({}), rules: list(rest({ type: str }), { min: 1 }) }));
     },
   },
   {

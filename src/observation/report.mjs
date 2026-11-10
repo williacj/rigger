@@ -130,12 +130,100 @@ function roundsPerCard(events) {
 }
 
 /**
+ * Each role dispatch's window, in the line order of its L3 `dispatch`: `dispatch`, `role`, `card`,
+ * whether it is a maker dispatch, and `from` and `to` in epoch milliseconds. A role dispatch is an
+ * L3 `dispatch` carrying `role` and no `step`; a maker dispatch also carries `attempt`. A window runs
+ * from its L1 `dispatch.start`'s `ts` to its `dispatch.end`'s, both ends included. With no end it
+ * ends at the first L3 `run.start` after its start in line order, or stays open to the stream's end.
+ * A role dispatch with no `dispatch.start` has no window.
+ */
+function windows(events) {
+  const starts = new Map();
+  const ends = new Map();
+  for (const [index, event] of events.entries()) {
+    if (event.layer === 'L1' && event.event === 'dispatch.start' && !starts.has(event.dispatch)) starts.set(event.dispatch, { index, ts: Date.parse(event.ts) });
+    if (event.layer === 'L1' && event.event === 'dispatch.end' && !ends.has(event.dispatch)) ends.set(event.dispatch, Date.parse(event.ts));
+  }
+  const restarts = [...events.entries()].filter(([, event]) => event.layer === 'L3' && event.event === 'run.start');
+  return events.filter((event) => event.layer === 'L3' && event.event === 'dispatch' && event.role !== undefined && event.step === undefined
+    && starts.has(event.dispatch)).map(({ card, dispatch, role, attempt }) => {
+    const { index, ts } = starts.get(dispatch);
+    const restart = restarts.find(([at]) => at > index);
+    const to = ends.get(dispatch) ?? (restart ? Date.parse(restart[1].ts) : Infinity);
+    return { card, dispatch, role, maker: attempt !== undefined, from: ts, to };
+  });
+}
+
+/** Each card's `acceptance.history` revisions, de-duplicated by `editedAt` and oldest first, with its `opened` and `author`. */
+function histories(events) {
+  const cards = new Map();
+  for (const event of events) {
+    if (event.layer !== 'L2' || event.event !== 'acceptance.history' || event.card == null) continue;
+    if (!cards.has(event.card)) cards.set(event.card, { opened: event.opened, author: undefined, revisions: new Map() });
+    const card = cards.get(event.card);
+    card.author ??= event.author;
+    for (const revision of event.revisions ?? []) {
+      if (!card.revisions.has(revision.editedAt)) card.revisions.set(revision.editedAt, revision);
+    }
+  }
+  return [...cards].map(([card, { opened, author, revisions }]) => ({
+    card, opened, author, revisions: [...revisions.values()].sort((a, b) => Date.parse(a.editedAt) - Date.parse(b.editedAt)),
+  }));
+}
+
+/**
+ * L2's acceptance changes across the stream, as "Acceptance changes and who made them" defines
+ * them: each change, with its `editor`, the role dispatches whose window holds its `editedAt`, by id
+ * and `role`, and whether one is the card's maker dispatch; each deleted revision, as content
+ * deleted; each revision after the card's first `pull` holding more `items` than the nearest
+ * revision carrying `items` at or before it; and each card's author. A change is a revision whose
+ * `digest` differs from the nearest earlier revision carrying one, and a deleted revision is never
+ * one. It reads `acceptance.history` by `card`, `opened`, `revisions` and `author`, L1's
+ * `dispatch.start` and `dispatch.end` by `ts` and `dispatch`, L3's `dispatch` by `card`,
+ * `dispatch`, `role`, `attempt` and `step`, and L3's `run.start` and `pull` by `ts`, `pull` also by
+ * `card`, and no other event or field.
+ */
+function acceptanceChanges(events) {
+  const held = windows(events);
+  const holding = (time) => held.filter(({ from, to }) => from <= time && time <= to);
+  const pulled = new Map();
+  for (const event of events) {
+    if (event.layer === 'L3' && event.event === 'pull' && event.card != null && !pulled.has(event.card)) pulled.set(event.card, Date.parse(event.ts));
+  }
+  const answer = { changes: [], deleted: [], grew: [], authors: [] };
+  for (const { card, opened, author, revisions } of histories(events)) {
+    let digest;
+    let admitted;
+    for (const { editedAt, editor, deleted, digest: current, items } of revisions) {
+      const time = Date.parse(editedAt);
+      if (deleted) {
+        answer.deleted.push({ card, editedAt, editor });
+        continue;
+      }
+      if (digest !== undefined && current !== digest) {
+        const by = holding(time);
+        answer.changes.push({ card, editedAt, editor, dispatches: by.map(({ dispatch, role }) => ({ dispatch, role })),
+          duringMaker: by.some((window) => window.maker && window.card === card) });
+      }
+      digest = current;
+      if (!pulled.has(card) || time <= pulled.get(card)) admitted = items;
+      else if (admitted !== undefined && items > admitted) answer.grew.push({ card, editedAt, items, admitted });
+    }
+    const roles = [...new Set(holding(Date.parse(opened?.at)).map(({ role }) => role))];
+    answer.authors.push(author !== undefined ? { card, source: 'author', names: [author] }
+      : roles.length > 0 ? { card, source: 'dispatches', names: roles } : { card, source: 'owner', names: [] });
+  }
+  return answer;
+}
+
+/**
  * L2's host faults per run, in the order each run first appears, and across the stream: `faults`
  * of `claims`. `faults` counts each `maker.failed`, each `judge.withheld`, and each
  * `attempt.failed` carrying `class: 'environment'` and no `maker`, under a card; one carrying
  * `maker` records the fault its `maker.failed` already counts. `claims` is the work claims, by
  * `run` and `card`, so the stream's is the sum of its runs'. Escalations count distinct cards
- * independently in each span; rounds read the whole stream once through roundsPerCard.
+ * independently in each span; rounds read the whole stream once through roundsPerCard, and
+ * acceptance changes through acceptanceChanges.
  */
 function l2Signals(events) {
   const runs = [...byRun(events)].map(([run, recorded]) => ({
@@ -144,7 +232,7 @@ function l2Signals(events) {
   const claims = runs.reduce((sum, { hostFaults }) => sum + hostFaults.claims, 0);
   return { runs, stream: {
     hostFaults: { faults: events.filter(hostFault).length, claims },
-    escalations: escalationsIn(events), rounds: roundsPerCard(events),
+    escalations: escalationsIn(events), rounds: roundsPerCard(events), acceptance: acceptanceChanges(events),
   } };
 }
 

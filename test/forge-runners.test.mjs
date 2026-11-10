@@ -121,9 +121,9 @@ test("the read runner sends `gh api <path> -X GET` carrying the header that asks
   assert.deepEqual(send.sent, [['gh', ...args]]);
 });
 
-test('the read runner refuses `gh api <path>` carrying any header but the diff media type, or that header anywhere but after `-X GET`, and sends nothing', async () => {
+test('the read runner refuses `gh api <path>` carrying any header but the diff media type or the policy API version, or either header anywhere but alone after `-X GET`, and sends nothing', async () => {
   // The defect this catches is a runner admitting any `-H` once it admits one: a header can
-  // override the method, or ask for another media type than the diff.
+  // override the method, ask for another media type than the diff, or another policy API version.
   const refused = [
     ['api', 'rate_limit', '-X', 'GET', '-H', 'Accept: application/vnd.github.raw'],
     ['api', 'rate_limit', '-X', 'GET', '-H', 'accept: application/vnd.github.diff'],
@@ -131,12 +131,36 @@ test('the read runner refuses `gh api <path>` carrying any header but the diff m
     ['api', 'rate_limit', '--method', 'GET', '-H', 'Accept: application/vnd.github.diff'],
     ['api', 'rate_limit', '-H', 'Accept: application/vnd.github.diff', '-X', 'GET'],
     ['api', 'rate_limit', '-X', 'POST', '-H', 'Accept: application/vnd.github.diff'],
+    ['api', 'rate_limit', '-X', 'GET', '-H', 'X-GitHub-Api-Version: 2022-11-28'],
+    ['api', 'rate_limit', '-X', 'GET', '-H', 'X-GitHub-Api-Version: 2026-03-11'],
+    ['api', 'rate_limit', '-X', 'GET', '-H', 'X-GitHub-Api-Version: 2026-03-10 '],
+    ['api', 'rate_limit', '-X', 'GET', '-H', 'x-github-api-version: 2026-03-10'],
+    ['api', 'rate_limit', '-X', 'GET', '-H', 'X-GitHub-Api-Version:2026-03-10'],
+    ['api', 'rate_limit', '--method', 'GET', '-H', 'X-GitHub-Api-Version: 2026-03-10'],
+    ['api', 'rate_limit', '-X', 'GET', '-H', 'X-GitHub-Api-Version: 2026-03-10', '-H', 'Accept: application/vnd.github.diff'],
+    ['api', 'rate_limit', '-X', 'GET', '-H', 'Accept: application/vnd.github.diff', '-H', 'X-GitHub-Api-Version: 2026-03-10'],
+    ['api', 'rate_limit', '-X', 'GET', '-H', 'X-GitHub-Api-Version: 2026-03-10', '-H', 'X-HTTP-Method-Override: DELETE'],
+    ['api', 'rate_limit', '-X', 'GET', '-H', 'X-GitHub-Api-Version: 2026-03-10', '-f', 'a=b'],
+    ['api', 'rate_limit', '-X', 'GET', '-H', 'X-GitHub-Api-Version: 2026-03-10', '--paginate'],
+    ['api', 'rate_limit', '-H', 'X-GitHub-Api-Version: 2026-03-10', '-X', 'GET'],
+    ['api', 'rate_limit', '-X', 'POST', '-H', 'X-GitHub-Api-Version: 2026-03-10'],
   ];
   for (const args of refused) {
     const send = recording();
     await assert.rejects(readRunner(args, { send }), (error) => error.message.includes(args.join(' ')), args.join(' '));
     assert.deepEqual(send.sent, [], args.join(' '));
   }
+});
+
+test('the read runner sends `gh api <path> -X GET` carrying the API version the Actions policy endpoints are read at', async () => {
+  // GitHub serves the Actions policy endpoints at API version 2026-03-10 (docs.github.com, "REST
+  // API endpoints for GitHub Actions policies", read 2026-11-09), so `doctor`'s policy reads send it.
+  const args = ['api', 'repos/williacj/rigger/actions/policies?per_page=100&page=1', '-X', 'GET', '-H', 'X-GitHub-Api-Version: 2026-03-10'];
+  const send = recording();
+
+  await readRunner(args, { send });
+
+  assert.deepEqual(send.sent, [['gh', ...args]]);
 });
 
 /** Forms of `gh api <path>` the read runner refuses: every one but an explicit GET alone. */
@@ -324,6 +348,7 @@ test('the read runner admits a `gh api <path>` form only where gh itself sends i
     ['api', 'rate_limit', '-X', 'GET'],
     ['api', 'rate_limit', '--method', 'GET'],
     ['api', 'rate_limit', '-X', 'GET', '-H', 'Accept: application/vnd.github.diff'],
+    ['api', 'rate_limit', '-X', 'GET', '-H', 'X-GitHub-Api-Version: 2026-03-10'],
     ...REFUSED_PATH_FORMS.map((form) => form.map((word) => (word === 'body.json' ? body : word))),
     FLAG_IN_PATH_SLOT[0],
   ];

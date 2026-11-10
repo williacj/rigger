@@ -1,9 +1,9 @@
 // ABOUTME: The forge adapter's read side: the board's cards, columns and single-select fields, the
-// repository's labels, branches, default branch, issues, pull requests and files at a commit, and
-// the IDs a write names, each read through the read runner.
+// repository's labels, branches, default branch, visibility, Actions event policies, issues, pull
+// requests and files at a commit, and the IDs a write names, each read through the read runner.
 
 import { literal } from './graphql.mjs';
-import { COLUMNS, DIFF_HEADER, firstLine, graphqlRequest, readRunner } from './runners.mjs';
+import { API_VERSION_HEADER, COLUMNS, DIFF_HEADER, firstLine, graphqlRequest, readRunner } from './runners.mjs';
 
 /** The most nodes GitHub answers in one page of a connection. */
 const PAGE = 100;
@@ -734,6 +734,41 @@ const REPOSITORY_READS = {
       return newest?.number ?? 0;
     },
   },
+  /**
+   * The repository's visibility and the kind of account that owns it, as `{ visibility, owner }`:
+   * `public`, `private` or `internal`, and `user` or `organization`.
+   */
+  readVisibility: {
+    reading: () => 'the visibility',
+    read: async (board, via, target, addressed) => {
+      const repository = (await asked('readVisibility', board, repositoryQuery(board, 'visibility owner { __typename }'), via, addressed))?.repository;
+      const visibility = named({ PUBLIC: 'public', PRIVATE: 'private', INTERNAL: 'internal' }, repository?.visibility);
+      const owner = named({ User: 'user', Organization: 'organization' }, repository?.owner?.__typename);
+      if (!visibility || !owner) fail('readVisibility', board, `${addressed}gh answered no visibility or owner`);
+      return { visibility, owner };
+    },
+  },
+  /**
+   * The repository's own Actions policies, those whose `source_type` is `Repository`, each as
+   * `eventPolicyOf` answers its detail read, in the order the list answers them. Every page of the
+   * list is read, then each own policy's detail, which alone answers its conditions and rules
+   * (measured on williacj/rigger, 2026-11-09). A policy inherited from an organization or
+   * enterprise is never read past the list. A read that fails fails the whole read.
+   */
+  readEventPolicies: {
+    reading: () => 'the Actions event policies',
+    read: async (board, via, target, addressed) => {
+      const own = [];
+      for (let page = 1, listed = []; page === 1 || listed.length === PAGE; page += 1) {
+        listed = JSON.parse(await restRead('readEventPolicies', board, via, `actions/policies?per_page=${PAGE}&page=${page}`, POLICY_HEADERS, addressed))?.policies;
+        if (!Array.isArray(listed)) fail('readEventPolicies', board, `${addressed}gh answered no policies`);
+        own.push(...listed.filter((policy) => policy?.source_type === 'Repository').map(({ id }) => (Number.isSafeInteger(id) && id > 0 ? id : fail('readEventPolicies', board, `${addressed}gh answered a policy with no id`))));
+      }
+      const policies = [];
+      for (const id of own) policies.push(eventPolicyOf(board, JSON.parse(await restRead('readEventPolicies', board, via, `actions/policies/${id}`, POLICY_HEADERS, `${addressed}policy ${id}, `)), id, addressed));
+      return policies;
+    },
+  },
   /** The role account `login` holds on the repository, as `permissionOf` answers it. */
   readPermission: {
     reading: (login) => `${login}'s permission`,
@@ -759,6 +794,30 @@ const REPOSITORY_READS = {
     },
   },
 };
+
+/** What a read of a GitHub enum answers for `said`, by `names`, or undefined for any other. */
+const named = (names, said) => (typeof said === 'string' && Object.hasOwn(names, said) ? names[said] : undefined);
+
+/** What the policy reads send after `-X GET`: the API version GitHub serves the policy endpoints at. */
+const POLICY_HEADERS = ['-H', API_VERSION_HEADER];
+
+/** Whether `value` is an array of strings, as a policy's patterns and events are answered. */
+const strings = (value) => Array.isArray(value) && value.every((each) => typeof each === 'string');
+
+/**
+ * One policy as its detail read answered it, as `{ id, name, enforcement, workflowPath, events }`:
+ * `workflowPath` null where it has no `workflow_path` condition, else its `include` and
+ * `exclude` patterns; `events` each `restrict_action_events` rule's allowed events. Any other
+ * rule is left out, and an answer of any other shape fails the read.
+ */
+function eventPolicyOf(board, held, id, addressed) {
+  const refuse = (why) => fail('readEventPolicies', board, `${addressed}policy ${id}, gh answered ${why}`);
+  if (held?.id !== id || typeof held.name !== 'string' || typeof held.enforcement !== 'string' || !Array.isArray(held.rules ?? [])) refuse('no policy id, name, enforcement or list of rules');
+  const path = held.conditions?.workflow_path ?? null;
+  if (path !== null && (!strings(path.include ?? []) || !strings(path.exclude ?? []))) refuse('a workflow_path that is not lists of patterns');
+  const events = (held.rules ?? []).filter((rule) => rule?.type === 'restrict_action_events').map((rule) => (strings(rule.parameters?.allowed_events) ? [...rule.parameters.allowed_events] : refuse('a restrict_action_events rule with no list of allowed events')));
+  return { id, name: held.name, enforcement: held.enforcement, workflowPath: path && { include: [...(path.include ?? [])], exclude: [...(path.exclude ?? [])] }, events };
+}
 
 /** The git modes of a file whose text a read answers: a regular file, and an executable one. */
 const FILE_MODES = [0o100644, 0o100755];

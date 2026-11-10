@@ -476,6 +476,84 @@ export const FORGE_MANIFEST = {
  },
  "cases": [
   {
+   "id": "F1-59",
+   "key": 59,
+   "args": [
+    "api",
+    "graphql",
+    "-f",
+    "query=query { repository(owner: \"example\", name: \"widgets\") { visibility owner { __typename } } }"
+   ],
+   "status": 0,
+   "stdout": "{\"data\":{\"repository\":{\"visibility\":\"PUBLIC\",\"owner\":{\"__typename\":\"User\"}}}}\n",
+   "stderr": "",
+   "after": "unchanged"
+  },
+  {
+   "id": "F1-60",
+   "key": 60,
+   "args": [
+    "api",
+    "repos/example/widgets/actions/policies?per_page=100&page=1",
+    "-X",
+    "GET",
+    "-H",
+    "X-GitHub-Api-Version: 2026-03-10"
+   ],
+   "status": 0,
+   "stdout": "{\"total_count\":1,\"policies\":[{\"id\":12504,\"name\":\"rigger gate events\",\"target\":\"actions\",\"source_type\":\"Repository\",\"source\":\"example/widgets\",\"enforcement\":\"active\",\"node_id\":\"MDE0OkFjdGlvbnNSdWxlc2V0MTI1MDQ=\",\"created_at\":\"2026-11-09T12:42:08.683-06:00\",\"updated_at\":\"2026-11-09T12:42:08.851-06:00\",\"_links\":{\"self\":{\"href\":\"https://api.github.com/repos/example/widgets/actions/policies/12504\"},\"html\":{\"href\":\"https://github.com/example/widgets/settings/actions/rules/12504\"}}}]}",
+   "stderr": "",
+   "after": "unchanged"
+  },
+  {
+   "id": "F1-60b",
+   "key": 60,
+   "args": [
+    "api",
+    "repos/example/widgets/actions/policies?per_page=100&page=2",
+    "-X",
+    "GET",
+    "-H",
+    "X-GitHub-Api-Version: 2026-03-10"
+   ],
+   "status": 0,
+   "stdout": "{\"total_count\":1,\"policies\":[]}",
+   "stderr": "",
+   "after": "unchanged"
+  },
+  {
+   "id": "F1-61",
+   "key": 61,
+   "args": [
+    "api",
+    "repos/example/widgets/actions/policies/12504",
+    "-X",
+    "GET",
+    "-H",
+    "X-GitHub-Api-Version: 2026-03-10"
+   ],
+   "status": 0,
+   "stdout": "{\"id\":12504,\"name\":\"rigger gate events\",\"target\":\"actions\",\"source_type\":\"Repository\",\"source\":\"example/widgets\",\"enforcement\":\"active\",\"conditions\":{\"workflow_path\":{\"exclude\":[],\"include\":[\".github/workflows/rigger-gate.yml\",\".github/workflows/self-hosting.yml\"]}},\"rules\":[{\"type\":\"restrict_action_events\",\"parameters\":{\"allowed_events\":[\"pull_request_target\",\"issues\",\"issue_comment\"]}}],\"node_id\":\"MDE0OkFjdGlvbnNSdWxlc2V0MTI1MDQ=\",\"created_at\":\"2026-11-09T12:42:08.683-06:00\",\"updated_at\":\"2026-11-09T12:42:08.851-06:00\",\"_links\":{\"self\":{\"href\":\"https://api.github.com/repos/example/widgets/actions/policies/12504\"},\"html\":{\"href\":\"https://github.com/example/widgets/settings/actions/rules/12504\"}}}",
+   "stderr": "",
+   "after": "unchanged"
+  },
+  {
+   "id": "F3-61a",
+   "key": 61,
+   "args": [
+    "api",
+    "repos/example/widgets/actions/policies/1",
+    "-X",
+    "GET",
+    "-H",
+    "X-GitHub-Api-Version: 2026-03-10"
+   ],
+   "status": 1,
+   "stdout": "{\"message\":\"Not Found\",\"documentation_url\":\"https://docs.github.com/rest/actions/policies#get-a-repository-actions-policy\",\"status\":\"404\"}",
+   "stderr": "gh: Not Found (HTTP 404)\n",
+   "after": "unchanged"
+  },
+  {
    "id": "F1-01",
    "key": 1,
    "args": [

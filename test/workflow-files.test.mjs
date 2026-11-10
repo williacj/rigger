@@ -33,7 +33,7 @@ const manifest = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
 // Deterministic wiring counterpart: test/macos-runner.test.mjs :: R8: unrelated jobs keep their literal base runners.
 test('CI assigns portable candidate, selected macOS and protected-main regression lanes with Node 26', () => {
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
-  assert.deepEqual(Object.keys(ci.jobs).sort(), ['cancel_superseded', 'check', 'demo', 'fast', 'full_host', 'full_ordinary', 'host-record', 'nightly', 'plan']);
+  assert.deepEqual(Object.keys(ci.jobs).sort(), ['cancel_superseded', 'check', 'demo', 'fast', 'full_host', 'full_ordinary', 'host-record', 'mac_smoke', 'nightly', 'plan']);
   for (const name of ['plan', 'fast', 'check']) assert.equal(ci.jobs[name]['runs-on'], 'ubuntu-latest', name);
   for (const name of ['full_ordinary', 'full_host', 'demo']) assert.equal(ci.jobs[name]['runs-on'], '${{ fromJSON(needs.plan.outputs.runner) }}', name);
   assert.deepEqual(ci.jobs.nightly['runs-on'], ['self-hosted', 'macOS', 'ARM64']);
@@ -500,6 +500,146 @@ test('staged CI preserves finite events, independent full lanes, every command a
   for (const event_name of ['pull_request', 'merge_group', 'push']) assert.equal(condition({ event_name, ref: 'refs/heads/main' }, needs), false);
   assert.equal(condition({ event_name: 'schedule', ref: 'refs/heads/main' }, needs), true);
   assert.equal(condition({ event_name: 'workflow_dispatch', ref: 'refs/heads/feature' }, needs), false);
+});
+
+// The smoke set, in order, as card #1306 names it.
+const SMOKE_FILES = ['test/process-adapter.test.mjs', 'test/read-deadline.test.mjs', 'test/process-table.test.mjs',
+  'test/directory-census.test.mjs', 'test/exit-cleanup.test.mjs', 'test/kill-recorded.test.mjs', 'test/suite-reaper.test.mjs'];
+// The contexts the Main ruleset requires; the forge matches check runs by name alone.
+const REQUIRED_CONTEXTS = ['check (26)', GATE_CONTEXT, 'self-hosting'];
+
+// Host reason: wiring; this process-free configuration check remains in an awaiting-split file (D30 rule 3).
+// Rigger decision: none; this check reads the smoke job's declared runner, Node, timeout and name without evaluating CI_POLICY.
+test('the macOS smoke job runs on the hosted macOS runner under Node 26 for at most ten minutes, under a name no required context shares', () => {
+  const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
+  const job = ci.jobs.mac_smoke;
+  assert.ok(job, 'ci.yml has no mac_smoke job');
+  assert.equal(job['runs-on'], 'macos-latest');
+  assert.equal(job.steps.find((step) => step.uses === 'actions/setup-node@v5')?.with['node-version'], '26');
+  assert.equal(job['timeout-minutes'], '10');
+  assert.equal(typeof job.name, 'string', 'an unnamed job reports its id');
+  assert.doesNotMatch(job.name, /\$\{\{/, 'a computed name can become any context');
+  for (const context of REQUIRED_CONTEXTS) assert.notEqual(job.name, context);
+});
+
+// Host reason: wiring; this process-free configuration check remains in an awaiting-split file (D30 rule 3).
+// Rigger decision: none; this check evaluates the smoke job's declared condition over given plan outputs without evaluating CI_POLICY.
+test('the macOS smoke job starts for a pull request into main that is not journal-only, whatever the plan mode, and check (26) never waits on it', () => {
+  const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
+  const job = ci.jobs.mac_smoke;
+  assert.deepEqual(job.needs, ['plan']);
+  assert.match(job.if, /^\$\{\{ .* \}\}$/);
+  const condition = new Function('github', 'needs', 'cancelled', 'return (' + job.if.slice(3, -2).trim() + ')');
+  const notCancelled = () => false;
+  const planned = (result, mode, journalOnly) => ({ plan: { result, outputs: { mode, journalOnly } } });
+  for (const [result, mode] of [['success', 'FAST_ELIGIBLE'], ['success', 'BROAD_DEFERRED'], ['success', 'BROAD_EXECUTED'], ['success', 'INVALID'], ['failure', '']]) {
+    const where = result + ' ' + mode;
+    assert.equal(condition({ event_name: 'pull_request', base_ref: 'main' }, planned(result, mode, 'false'), notCancelled), true, 'into main: ' + where);
+    assert.equal(condition({ event_name: 'pull_request', base_ref: 'main' }, planned(result, mode, ''), notCancelled), true, 'into main, unplanned: ' + where);
+    assert.equal(condition({ event_name: 'pull_request', base_ref: 'main' }, planned(result, mode, 'true'), notCancelled), false, 'journal-only: ' + where);
+    assert.equal(condition({ event_name: 'pull_request', base_ref: 'batch' }, planned(result, mode, 'false'), notCancelled), false, 'into another branch: ' + where);
+  }
+  for (const event_name of ['push', 'merge_group', 'schedule', 'workflow_dispatch']) {
+    assert.equal(condition({ event_name, base_ref: '' }, planned('success', 'MAIN_SMOKE', 'false'), notCancelled), false, event_name);
+  }
+  assert.equal(condition({ event_name: 'pull_request', base_ref: 'main' }, planned('success', 'BROAD_DEFERRED', 'false'), () => true), false, 'a cancelled run');
+  for (const [name, other] of Object.entries(ci.jobs)) assert.equal([other.needs ?? []].flat().includes('mac_smoke'), false, name + ' needs the smoke job');
+  assert.doesNotMatch(JSON.stringify(ci.jobs.check), /mac_smoke/);
+});
+
+// Host reason: wiring; this process-free configuration check remains in an awaiting-split file (D30 rule 3).
+// Rigger decision: none; this check reads the smoke job's declared commands without evaluating CI_POLICY.
+test('the macOS smoke job runs exactly the smoke set in order, then the Mac containment proof as full_host runs it', () => {
+  const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
+  const commands = (name) => ci.jobs[name].steps.map((step) => step.run).filter(Boolean);
+  const containment = 'node test/verify-mac-containment "$RUNNER_TEMP/containment-proof-26"';
+  assert.ok(commands('full_host').includes(containment));
+  assert.deepEqual(commands('mac_smoke'), ['npm ci', 'npm run test:host -- ' + SMOKE_FILES.join(' '), containment]);
+});
+
+// Host reason: wiring; runs the protected policy literal in a child, in an awaiting-split file (D30 rule 3).
+// Ordinary decision counterpart: test/ci-proof-source.test.mjs :: the plan publishes journalOnly from the checkout change list it is given, and from collected facts only without one.
+test('the plan publishes journalOnly true exactly where every change is a regular direct journal entry, whatever mode it plans', () => {
+  const plan = (facts) => ciPolicy('runPolicy', { action: 'plan', facts }).output;
+  const journal = ciFacts();
+  assert.deepEqual([plan(journal).mode, plan(journal).journalOnly], ['FAST_ELIGIBLE', true]);
+  const full = ciFullFixture().facts; full.changes[0].path = 'docs/journal/a.md';
+  assert.deepEqual([plan(full).mode, plan(full).journalOnly], ['BROAD_EXECUTED', true]);
+  const mixed = ciFacts(); mixed.changes.push({ status: 'M', oldMode: '100644', newMode: '100644', path: 'src/workflow/gate.mjs' });
+  assert.deepEqual([plan(mixed).mode, plan(mixed).journalOnly], ['BROAD_DEFERRED', false]);
+  const executable = ciFacts(); executable.changes[0].newMode = '100755';
+  assert.deepEqual([plan(executable).mode, plan(executable).journalOnly], ['BROAD_DEFERRED', false]);
+  const empty = ciFacts(); empty.changes = [];
+  assert.deepEqual([plan(empty).mode, plan(empty).journalOnly], ['BROAD_DEFERRED', false]);
+  const unavailable = ciFacts(); delete unavailable.changes;
+  assert.deepEqual([plan(unavailable).mode, plan(unavailable).journalOnly], ['INVALID', false]);
+});
+
+/**
+ * Runs the actual plan step's command against recorded Git and API answers, then carries its
+ * GITHUB_OUTPUT through the plan job's declared outputs, as the runner does for `needs.plan.outputs`.
+ * An unrecorded Git or API call throws, as an unreachable collaborator would.
+ */
+function plannedOutputs(ci, fixture, directory) {
+  const step = ci.jobs.plan.steps.find((candidate) => candidate.id === 'policy');
+  assert.equal(step.run, 'node --input-type=module -e "$CI_POLICY"');
+  const eventPath = join(directory, 'event.json'), outputPath = join(directory, 'output');
+  writeFileSync(eventPath, JSON.stringify(fixture.event)); writeFileSync(outputPath, '');
+  const prefix = `import cp from 'node:child_process';
+    import { syncBuiltinESMExports } from 'node:module';
+    const fixture = JSON.parse(process.env.RUNNER_FIXTURE);
+    cp.execFileSync = (command, args) => {
+      const key = JSON.stringify(args);
+      if (command !== 'git' || !Object.hasOwn(fixture.git, key)) throw new Error('unrecorded Git call');
+      return Buffer.from(fixture.git[key], 'base64');
+    };
+    syncBuiltinESMExports();
+    globalThis.fetch = async (url, options) => {
+      const path = new URL(url).pathname + new URL(url).search;
+      if (options.method !== 'GET' || !Object.hasOwn(fixture.api, path)) throw new Error('unrecorded API call');
+      return new Response(JSON.stringify(fixture.api[path]), { status: 200 });
+    };\n`;
+  const ran = spawnSync(process.execPath, ['--input-type=module', '-e', prefix + ci.env.CI_POLICY], {
+    encoding: 'utf8', timeout: 5000,
+    env: { ...process.env, GH_TOKEN: 'fixture-token', GITHUB_API_URL: 'https://api.github.test',
+      GITHUB_EVENT_PATH: eventPath, GITHUB_EVENT_NAME: fixture.context.eventName, GITHUB_REF: fixture.context.ref,
+      GITHUB_SHA: fixture.context.sha, GITHUB_REPOSITORY: fixture.context.repository, GITHUB_REPOSITORY_OWNER: fixture.context.owner,
+      GITHUB_OUTPUT: outputPath, ...step.env, CI_MACOS_RUNNER: '', RUNNER_FIXTURE: JSON.stringify(fixture) },
+  });
+  assert.equal(ran.error, undefined);
+  assert.equal(ran.status, 0, ran.stdout + ran.stderr);
+  const stepOutputs = Object.fromEntries(readFileSync(outputPath, 'utf8').split('\n').filter(Boolean)
+    .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]));
+  // The runner resolves a job output naming a step output nobody wrote to the empty string.
+  return Object.fromEntries(Object.entries(ci.jobs.plan.outputs).map(([name, expression]) => {
+    const reference = /^\$\{\{ steps\.([A-Za-z0-9_-]+)\.outputs\.([A-Za-z0-9_-]+) \}\}$/.exec(expression);
+    assert.ok(reference, 'plan output ' + name + ' is not a plain step-output reference');
+    return [name, reference[1] === step.id ? stepOutputs[reference[2]] ?? '' : ''];
+  }));
+}
+
+// Host reason: wiring; connects the plan step's child runtime, output file and job outputs to the smoke condition.
+// Ordinary decision counterpart: test/ci-proof-source.test.mjs :: the plan publishes journalOnly from the checkout change list it is given, and from collected facts only without one.
+// Ordinary decision counterpart: test/ci-proof-source.test.mjs :: localChanges reads the changes of a pull request merge against its first parent from Git alone, and nothing where Git cannot say.
+test('the macOS smoke job reads journalOnly through the actual plan step and job outputs, and a journal-only change skips it even where the forge API read fails', (t) => {
+  const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
+  const condition = new Function('github', 'needs', 'cancelled', 'return (' + ci.jobs.mac_smoke.if.slice(3, -2).trim() + ')');
+  const github = { event_name: 'pull_request', base_ref: 'main' };
+  const sourceDiff = JSON.stringify(['diff', '--raw', '-z', '--no-renames', 'c'.repeat(40), 'a'.repeat(40)]);
+  const source = Buffer.from(':100644 100644 1234567 89abcde M\0src/workflow/gate.mjs\0').toString('base64');
+  for (const [name, change, apiAnswers, mode, starts] of [
+    ['journal-only, API answered', 'journal', true, 'FAST_ELIGIBLE', false],
+    ['journal-only, API read failed', 'journal', false, 'INVALID', false],
+    ['source change, API answered', 'source', true, 'BROAD_DEFERRED', true],
+    ['source change, API read failed', 'source', false, 'INVALID', true],
+  ]) {
+    const fixture = ciCollectorFixture();
+    if (change === 'source') fixture.git[sourceDiff] = source;
+    if (!apiAnswers) delete fixture.api['/repos/williacj/rigger'];
+    const outputs = plannedOutputs(ci, fixture, temporaryDirectory('rigger-smoke-plan-', { context: t }));
+    assert.equal(outputs.mode, mode, name);
+    assert.equal(condition(github, { plan: { result: 'success', outputs } }, () => false), starts, name + ': smoke starts');
+  }
 });
 
 test('actual inline collector uses the complete current issue-label read rather than an embedded PR label snapshot', () => {

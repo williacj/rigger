@@ -19,7 +19,6 @@ import { headIn, markerComment } from './fake-repository.mjs';
 import { repositoryAt, withOrigin } from './git-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { spawn } from 'node:child_process';
-import { once as onceEvent } from 'node:events';
 import { readdirSync } from 'node:fs';
 import { parse } from 'acorn';
 import { gitIn } from './git-repository.mjs';
@@ -29,7 +28,7 @@ import { standInAgent } from './stub-claude.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 import { installStandInAgent } from './stub-claude.mjs';
-import { sweep } from './process-fixtures.mjs';
+import { ownedChild, sweep } from './process-fixtures.mjs';
 import { parseDocument } from '../src/substrate/forge/graphql.mjs';
 import { admissionOf, closerText, seed, TIME } from './admission-world.mjs';
 import { ADMITTED, COLUMNS, FIELDS, KINDS, PROJECT, REFUSED, REPO, card, consumerConfig } from './verb-consumer.mjs';
@@ -554,7 +553,8 @@ function consumerHolding(settings, files = {}) {
  * stand-in agent `agent` first on PATH, then a fake `gh` holding `board` over the consumer's
  * `origin`, ahead of the refusing ones `npm test` puts there. `env` is added to the bin's
  * environment. Answers the consumer, its origin, the fake, and `ran`, which settles on the bin's
- * status and what it printed; the bin is ended at the test's teardown if it is still running.
+ * status and what it printed. Teardown stops the bin where needed, sweeps its stand-in owner
+ * after exit, and requires recorded close before it succeeds.
  */
 function onceWithAgent(t, agent, board, { settings = config(), files = {}, env = {}, prepare = () => {} } = {}) {
   const { consumer, origin } = consumerHolding(settings, files);
@@ -562,12 +562,13 @@ function onceWithAgent(t, agent, board, { settings = config(), files = {}, env =
   const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, ...board }, origin });
   prepare({ consumer, origin, fake });
   const child = spawn(process.execPath, [bin, 'once'], { cwd: consumer, env: { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), ...env, PATH: [agent.dir, dir, process.env.PATH].join(delimiter) }, stdio: ['ignore', 'pipe', 'pipe'] });
-  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
+  const closed = ownedChild(t, child, () => sweep(agent.dir));
   let out = '';
   let err = '';
   child.stdout.on('data', (chunk) => { out += chunk; });
   child.stderr.on('data', (chunk) => { err += chunk; });
-  const ran = onceEvent(child, 'close').then(([code]) => ({ code, out, err }));
+  const ran = closed.then(([code]) => ({ code, out, err }));
+  ran.catch(() => {});
   return { consumer, origin, fake, ran };
 }
 
@@ -1889,4 +1890,274 @@ test('once keeps a Review peer verdict beside a real scratch refusal and escalat
   assert.equal(events.filter(({ event }) => event === 'review.escalate').length, 1);
   assert.equal(events.filter(({ event }) => event === 'transition').at(-1).to, 'owner');
   assert.equal(events.filter(({ event }) => event === 'dispatch.end').length, 1);
+});
+
+import { pathToFileURL } from 'node:url';
+
+/** The first actual maker dispatch, with its L1 start correlated to L3's dispatch id. */
+function assertFirstRecordedDispatch(ran) {
+  assert.equal(ran.agentRuns().length, 1, 'the fixture maker must actually run');
+  assert.equal(ran.code, 1, ran.out + ran.err);
+  assert.match(ran.err, /maker exited 0 and opened no pull request/);
+  assert.ok(existsSync(join(ran.consumer, '.rigger', 'events.jsonl')), 'recording requires no opt-in');
+  const events = eventsOf(ran);
+  const maker = events.find(({ event, role, card }) => event === 'dispatch' && role === 'engineer' && card === 10);
+  assert.ok(maker, 'L3 must identify the dispatched fixture maker');
+  assert.equal(typeof maker.dispatch, 'string');
+  const starts = events.filter(({ event, dispatch }) => event === 'dispatch.start' && dispatch === maker.dispatch);
+  assert.equal(starts.length, 1, 'the first dispatch must have its recorded dispatch.start');
+  assert.equal(starts[0].card, 10);
+}
+
+// Disabling the recording of dispatch.start must fail even when the telemetry key is absent.
+// proves R-RECORD-1
+test('R1: once records its first dispatch with no telemetry key', async () => {
+  const { telemetry, ...settings } = config();
+  const ran = once({ items: [card(10, 'Ready')] }, { settings });
+  const loaded = (await import(pathToFileURL(join(ran.consumer, 'rigger.config.mjs')).href)).default;
+
+  assert.equal(Object.hasOwn(loaded, 'telemetry'), false, 'the parsed consumer config must omit telemetry');
+  assertFirstRecordedDispatch(ran);
+});
+
+// Turning push off must leave the first dispatch recorded locally.
+// proves R-RECORD-1
+test('R2: once records its first dispatch with telemetry.push false', async () => {
+  const settings = { ...config(), telemetry: { push: false } };
+  const ran = once({ items: [card(10, 'Ready')] }, { settings });
+  const loaded = (await import(pathToFileURL(join(ran.consumer, 'rigger.config.mjs')).href)).default;
+
+  assert.deepEqual(loaded.telemetry, { push: false }, 'the parsed consumer config must turn push off');
+  assertFirstRecordedDispatch(ran);
+});
+
+import { optionalDispatches, optionalOnce, optionalWorld } from './optional-config-world.mjs';
+import { seedRepositoryAt as seedOptionalRepository } from './fake-gh.mjs';
+
+/** Compare the workspace and actual git branch with the Engine settings literals each test supplies. */
+async function optionalWorkspace(t, key, directory, branch) {
+  const world = await optionalOnce(t, key);
+  const expected = join(dirname(world.consumer), directory, branch);
+  assert.equal(world.agent.runs().find(({ role }) => role === 'engineer')?.cwd, expected);
+  assert.equal(gitIn(expected, 'symbolic-ref', '--short', 'HEAD').trim(), branch);
+}
+
+/** Unconfigured provisioning must reach the maker without starting a step. */
+function noOptionalStep(world) {
+  assert.deepEqual(world.starts.filter(({ command }) => command === '/bin/sh'), []);
+  assert.equal(world.agent.runs().filter(({ role }) => role === 'engineer').length, 1);
+}
+
+/** A stream exists even where the owner's push opt-in is absent. */
+function unpushedOptionalStream(world) {
+  assert.ok(world.events().some(({ event }) => event === 'dispatch.start'), 'the stream holds the actual dispatch');
+  assert.equal(world.pushes.length, 0, 'no push-side call without the opt-in');
+  assert.deepEqual(world.events().filter(({ event }) => event === 'push.end'), []);
+}
+
+// ARCHITECTURE.md, Extension points: capabilities absent together still run.
+// proves R-OPTION-1
+test('Table O minimal: once dispatches the maker and exits zero with only required config keys', { timeout: 60000 }, async (t) => {
+  const world = await optionalOnce(t, 'minimal');
+  assert.deepEqual(world.agent.runs().map(({ card, role }) => [card, role]), [[10, 'engineer'], [10, 'reviewer']]);
+  assert.equal(world.state().repository.pullRequests.length, 1);
+  assert.equal(optionalDispatches(world, ({ role }) => role === 'engineer')[0].start.timeout, 14400000);
+  assert.equal(world.agent.runs()[0].cwd, join(dirname(world.consumer), 'widgets-worktrees', 'rigger-10'));
+  noOptionalStep(world);
+  unpushedOptionalStream(world);
+});
+
+// ARCHITECTURE.md, Engine settings: default root and topic.
+// proves R-OPTION-1
+test('Table O O2 worktrees: once uses the default workspace root and topic', { timeout: 60000 }, async (t) => {
+  await optionalWorkspace(t, 'worktrees', 'widgets-worktrees', 'rigger-10');
+});
+
+// ARCHITECTURE.md, Engine settings: only root takes its default.
+// proves R-OPTION-1
+test('Table O O2a worktrees.root: once uses the default root and the configured topic', { timeout: 60000 }, async (t) => {
+  await optionalWorkspace(t, 'worktrees.root', 'widgets-worktrees', 'task-10');
+});
+
+// ARCHITECTURE.md, Engine settings: only topic takes its default.
+// proves R-OPTION-1
+test('Table O O2b worktrees.topic: once uses the configured root and the default topic', { timeout: 60000 }, async (t) => {
+  await optionalWorkspace(t, 'worktrees.topic', 'configured-worktrees', 'rigger-10');
+});
+
+// SHAPES and ARCHITECTURE.md, Kinds of work: no undeclared label marks an epic.
+// proves R-OPTION-1
+test('Table O O3 epicLabel: once selects a type:epic card by its kind alone', { timeout: 60000 }, async (t) => {
+  const world = await optionalOnce(t, 'epicLabel', {
+    items: [card(10, 'Ready', { labels: ['type:change', 'type:epic', 'area:probe'] })],
+  });
+  assert.deepEqual(world.agent.runs().filter(({ role }) => role === 'engineer').map(({ card }) => card), [10]);
+});
+
+// ARCHITECTURE.md, Provisioning. O4 also drops kinds.change.provisioning, its dangling reference.
+// proves R-OPTION-1
+test('Table O O4 provisioning: once runs no step when the top-level capability is absent', { timeout: 60000 }, async (t) => {
+  const world = await optionalOnce(t, 'provisioning');
+  assert.equal(Object.hasOwn(world.settings.kinds.change, 'provisioning'), false);
+  noOptionalStep(world);
+});
+
+// ARCHITECTURE.md, Escalation destinations: the three fixed categories default to the owner.
+// proves R-OPTION-1
+test('Table O O5 escalate: once sends every maker escalation category to the owner', { timeout: 60000 }, async (t) => {
+  for (const category of ['recorded-decision', 'critical', 'ambiguous']) {
+    const world = await optionalOnce(t, 'escalate', {
+      plan: { 10: { engineer: {} } },
+      beforeAgent: async ({ input, cwd }, store, now) => {
+        const dispatch = /^dispatch: (d-[a-f0-9-]+)$/m.exec(input)?.[1];
+        assert.ok(dispatch, 'the maker received its dispatch identity');
+        const fence = String.fromCharCode(96).repeat(3);
+        const body = ['Cannot complete this item.', fence + 'rigger-escalation', 'category: ' + category,
+          'item: 1', 'reason: The fixture needs the owner.', 'dispatch: ' + dispatch, fence].join('\n');
+        const reply = await store.answer(['api', 'repos/acme/widgets/issues/10/comments', '-X', 'POST', '-f', 'body=' + body], { now, cwd });
+        assert.equal(reply.status, 0, reply.stderr);
+      },
+    });
+    const escalation = world.events().filter(({ event }) => event === 'review.escalate');
+    assert.deepEqual(escalation.map(({ category, raiser, destination }) => ({ category, raiser, destination })),
+      [{ category, raiser: 'maker', destination: 'owner' }]);
+    assert.equal(world.state().writes.filter(({ operation }) => operation === 'moveItem').at(-1).args[1], 'Owner', category);
+    assert.match(world.state().repository.issues[0].comments.at(-1).body, /to the owner/);
+  }
+});
+
+// R-SAFE-3; ARCHITECTURE.md, Telemetry: a missing block never opts in.
+// proves R-OPTION-1
+test('Table O O6 telemetry: once writes its stream without pushing it', { timeout: 60000 }, async (t) => {
+  unpushedOptionalStream(await optionalOnce(t, 'telemetry'));
+});
+
+// R-SAFE-3; ARCHITECTURE.md, Telemetry: a missing push key never opts in.
+// proves R-OPTION-1
+test('Table O O6a telemetry.push: once writes its stream without pushing it', { timeout: 60000 }, async (t) => {
+  unpushedOptionalStream(await optionalOnce(t, 'telemetry.push'));
+});
+
+// SHAPES, board.owner: the repository's owner supplies the absent board owner.
+// proves R-OPTION-1
+test('Table O O10 board.owner: once reads the board owned by the repository owner', { timeout: 60000 }, async (t) => {
+  const world = await optionalOnce(t, 'board.owner');
+  const owners = world.state().sent.filter(([command, endpoint]) => command === 'api' && endpoint === 'graphql')
+    .flatMap((args) => parseDocument(args[3].slice('query='.length)).operations.flatMap(({ selections }) => selections
+      .filter(({ name }) => name === 'repositoryOwner')
+      .map(({ arguments: values }) => values.find(({ name }) => name === 'login').value.value)));
+  assert.ok(owners.length > 0, 'the actual requests address a project owner');
+  assert.deepEqual([...new Set(owners)], ['acme'], 'compare parsed GraphQL values, not query text');
+});
+
+// SHAPES, board.priority: all cards share one rank, oldest first.
+// proves R-OPTION-1
+test('Table O O11 board.priority: once chooses the older card despite its lower field value', { timeout: 60000 }, async (t) => {
+  const world = await optionalOnce(t, 'board.priority', {
+    items: [
+      card(20, 'Ready', { labels: ['type:change', 'area:probe'], fieldValues: { Priority: 'High' } }),
+      card(10, 'Ready', { labels: ['type:change', 'area:probe'], fieldValues: { Priority: 'Low' } }),
+    ],
+  });
+  assert.deepEqual(world.agent.runs().filter(({ role }) => role === 'engineer').map(({ card }) => card), [10]);
+});
+
+// SHAPES; ARCHITECTURE.md below Extension points: absent labels leave the declared tier.
+// proves R-OPTION-1
+test('Table O O12 role.labels: once runs the maker at its declared tier', { timeout: 60000 }, async (t) => {
+  const world = await optionalOnce(t, 'role.labels', {
+    items: [card(10, 'Ready', { labels: ['type:change', 'area:probe', 'tier:high'] })],
+  });
+  assert.deepEqual(optionalDispatches(world, ({ role }) => role === 'engineer').map(({ tier }) => tier), ['standard']);
+});
+
+// SHAPES; ARCHITECTURE.md below Extension points: the default role budget is four hours.
+// proves R-OPTION-1
+test('Table O O12 role.timeout: once dispatches the maker for 14400000 milliseconds by default', { timeout: 60000 }, async (t) => {
+  const world = await optionalOnce(t, 'role.timeout');
+  assert.deepEqual(optionalDispatches(world, ({ role }) => role === 'engineer').map(({ start }) => start.timeout), [14400000]);
+});
+
+// SHAPES, role.providerLabels: no label map means the declared provider.
+// proves R-OPTION-1
+test('Table O O13 role.providerLabels: once runs the maker on its declared provider', { timeout: 60000 }, async (t) => {
+  const world = await optionalOnce(t, 'role.providerLabels', {
+    items: [card(10, 'Ready', { labels: ['type:change', 'area:probe', 'maker:codex'] })],
+  });
+  assert.deepEqual(optionalDispatches(world, ({ role }) => role === 'engineer').map(({ start }) => start.command), ['claude']);
+  assert.equal(world.starts.find(({ input }) => input?.startsWith('Rigger dispatched this session, unattended, as the maker'))?.command, 'claude');
+});
+
+// R-LOOP-9: two completed rounds still continue; the third exhausts the default.
+// proves R-OPTION-1
+test('Table O O14 kind.rounds: once continues at two rounds and escalates at three', { timeout: 60000 }, async (t) => {
+  for (const count of [2, 3]) {
+    const world = optionalWorld(t, 'kind.rounds', {
+      items: [card(10, 'Review', { labels: ['type:change', 'area:probe'] })],
+      plan: { 10: { engineer: { push: true }, reviewer: { findings: true } } },
+    });
+    const line = world.topic(10);
+    gitIn(world.consumer, 'push', '-q', 'origin', 'HEAD:refs/heads/' + line);
+    const head = gitIn(world.consumer, 'rev-parse', 'HEAD').trim();
+    const comments = Array.from({ length: count }, (_, at) => markerComment({
+      card: 10, pull: 11, head: at === count - 1 ? head : String(at + 1).repeat(40), body: ADMITTED,
+      role: 'reviewer', provider: 'claude', verdict: 'needs revision', items: ['unmet'], toSound: 'Make the widget blue.',
+      createdAt: '2026-10-28T12:00:0' + at + 'Z',
+    }));
+    seedOptionalRepository(world.statePath, { pullRequests: [
+      { number: 11, head: line, sha: head, mergeBase: head, diff: '', comments },
+    ], mergeable: { 11: 'MERGEABLE' } });
+    const result = await world.start();
+    assert.equal(result.code, 0, result.text);
+    assert.deepEqual(world.fixtureErrors, []);
+    const escalations = world.events().filter(({ event }) => event === 'review.escalate');
+    if (count === 2) {
+      assert.deepEqual(escalations, [], 'two rounds leave one round for revision');
+      assert.equal(world.agent.runs().filter(({ role }) => role === 'engineer').length, 1);
+      assert.match(result.text, /continued #10/);
+    } else {
+      assert.equal(world.agent.runs().length, 0, 'the exhausted card dispatches no further maker');
+      assert.equal(escalations.length, 1);
+      assert.equal(escalations[0].category, 'ambiguous');
+      assert.match(escalations[0].reason, /^3 of 3 rounds spent\./);
+    }
+  }
+});
+
+// SHAPES, kind.provisioning: a global step is unused until the kind names it.
+// proves R-OPTION-1
+test('Table O O15 kind.provisioning: once runs no step for the kind', { timeout: 60000 }, async (t) => {
+  noOptionalStep(await optionalOnce(t, 'kind.provisioning'));
+});
+
+// R-PROV-1 and D12: omission makes the step optional, so its failure does not stop the maker.
+// proves R-OPTION-1
+test('Table O O16 step.required: once proceeds after the undeclared requirement fails', { timeout: 60000 }, async (t) => {
+  const world = await optionalOnce(t, 'step.required', { stepExit: 1 });
+  assert.equal(world.starts.filter(({ command }) => command === '/bin/sh').length, 2, 'one optional step for the maker and one for the judge');
+  assert.equal(world.agent.runs().filter(({ role }) => role === 'engineer').length, 1);
+  assert.ok(world.events().some(({ event, exit }) => event === 'dispatch.end' && exit === 1));
+});
+
+// ARCHITECTURE.md, Provisioning: a kind-selected step needs no extra label selector.
+// proves R-OPTION-1
+test('Table O O17 step.select: once runs the step without a matching card label', { timeout: 60000 }, async (t) => {
+  const world = await optionalOnce(t, 'step.select', { items: [card(10, 'Ready')] });
+  assert.ok(world.starts.some(({ command }) => command === '/bin/sh'), 'the absence selects the kind-listed step');
+});
+
+// ARCHITECTURE.md, Provisioning: cwd defaults to the workspace itself.
+// proves R-OPTION-1
+test('Table O O17 step.cwd: once starts the step in the workspace itself', { timeout: 60000 }, async (t) => {
+  const world = await optionalOnce(t, 'step.cwd');
+  assert.equal(world.starts.find(({ command }) => command === '/bin/sh')?.cwd, join(world.workspaceRoot, 'task-10'));
+});
+
+// ARCHITECTURE.md, Provisioning: an omitted timeout gives the step thirty minutes.
+// proves R-OPTION-1
+test('Table O O17 step.timeout: once dispatches the step for 1800000 milliseconds by default', { timeout: 60000 }, async (t) => {
+  const world = await optionalOnce(t, 'step.timeout');
+  const dispatches = optionalDispatches(world, ({ step }) => step === 'probe');
+  assert.ok(dispatches.length > 0);
+  assert.ok(dispatches.every(({ start }) => start.timeout === 1800000));
 });

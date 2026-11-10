@@ -12,6 +12,7 @@ import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { pathToFileURL } from 'node:url';
 
 import template from '../templates/rigger.config.mjs';
 import { help } from '../src/cli/verbs.mjs';
@@ -30,6 +31,18 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (...parts) => readFileSync(join(root, ...parts), 'utf8');
 const manifest = JSON.parse(read('package.json'));
 const workflow = read('.github', 'workflows', 'ci.yml');
+
+/**
+ * Table P's rows P4 to P6 of card #1342: the resolver ("Document checking"), the gate script ("The
+ * required check on the forge"), and the prepack recorder `D7` rule 4 relies on with its import.
+ * Written out from the card, not read from `files`, so a `files` list that drifts is caught.
+ */
+const SANCTIONED_SCRIPTS = [
+  'scripts/doc-reference-check.mjs',
+  'scripts/gate-check.mjs',
+  'scripts/record-commit.mjs',
+  'scripts/lib/pack-result.mjs',
+];
 
 test('the Node floor is 20 or later, and the README states the same one', () => {
   // Read out of both documents and compared, rather than each asserted against a literal 20.
@@ -108,10 +121,11 @@ test('the refusal is printed however quiet the npm that launched the suite was t
   assert.match(said, /EBADENGINE|Unsupported engine/);
 });
 
-test('the package declares that it ships src/, templates/ and scripts/, and nothing else', () => {
-  // The owner's ruling U30, card #238: what npm always includes rides along, and nothing else of
-  // ours does. The listing test below asks npm what that declaration produces.
-  assert.deepEqual(manifest.files, ['src/', 'templates/', 'scripts/']);
+test('the package declares that it ships src/, templates/ and the four scripts ARCHITECTURE.md sanctions, and nothing else', () => {
+  // Card #1342's Table P, under M8-U2 Q14: what npm always includes rides along, and of ours only
+  // the engine, its templates, the resolver, the gate script and the prepack recorder with its
+  // import. The listing test below asks npm what that declaration produces.
+  assert.deepEqual(manifest.files, ['src/', 'templates/', ...SANCTIONED_SCRIPTS]);
 });
 
 /**
@@ -132,15 +146,18 @@ function packListing() {
 const heldUnder = (directory) =>
   gitIn(root, 'ls-files', '-z', '--', directory).split('\u0000').filter(Boolean);
 
-test('the tarball holds every file under src/, templates/ and scripts/, and of the rest only what npm always adds', () => {
+test('the tarball holds every file under src/ and templates/, of scripts/ only the sanctioned four, and of the rest only what npm always adds', () => {
   const { paths } = packListing();
 
-  for (const directory of ['src/', 'templates/', 'scripts/']) {
+  for (const directory of ['src/', 'templates/']) {
     const held = heldUnder(directory);
     assert.ok(held.length > 0, `git holds nothing under ${directory}`);
     const missing = held.filter((path) => !paths.includes(path));
     assert.deepEqual(missing, [], `the tarball leaves out what git holds under ${directory}`);
   }
+  // Table P's rows P4 to P6 are the only scripts that ship; any other path under scripts/ is P8.
+  const unsanctioned = paths.filter((path) => path.startsWith('scripts/') && !SANCTIONED_SCRIPTS.includes(path));
+  assert.deepEqual(unsanctioned, [], 'the tarball carries a script outside Table P\'s rows P4 to P6');
 
   // npm adds the manifest, the README and the licence to every tarball whatever `files` says, so
   // those three are the only paths outside the declared directories a pack may carry.
@@ -383,4 +400,129 @@ test('the README badge points at that workflow', () => {
       `\\(https://github\\.com/williacj/rigger/actions/workflows/${file}\\)`,
     ),
   );
+});
+
+/**
+ * The phrase a forked passage carries where it names a command the consumer may not define: it
+ * names the condition, that the repository defines the command, in so many words.
+ */
+const CONDITIONED = /\bwhere the repository defines\b/i;
+
+/** Every text file `init` wrote under `scratch`, as its path and content; `.git` and `skip` excluded. */
+function writtenBy(scratch, skip) {
+  return readdirSync(scratch, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => join(entry.parentPath, entry.name))
+    .filter((path) => !path.slice(scratch.length + 1).split('/').includes('.git') && !skip.includes(path))
+    .map((path) => ({ path: path.slice(scratch.length + 1), text: readFileSync(path, 'utf8') }));
+}
+
+/**
+ * A markdown text cut into passages: a paragraph, a list item with its continuation lines, or a
+ * table row, its whitespace runs collapsed to one space so a wrapped line reads as one sentence.
+ * Fenced blocks are dropped, since what they hold is no backticked span.
+ */
+function passagesOf(text) {
+  const passages = [];
+  let current = null;
+  let fenced = false;
+  for (const line of text.split('\n')) {
+    if (/^\s*(```|~~~)/.test(line)) { fenced = !fenced; current = null; continue; }
+    if (fenced || line.trim() === '') { current = null; continue; }
+    if (current === null || /^\s*(?:[-*+]|\d+\.)\s|^\s*\||^#/.test(line)) {
+      current = [];
+      passages.push(current);
+    }
+    current.push(line);
+  }
+  return passages.map((lines) => lines.join(' ').replace(/\s+/g, ' '));
+}
+
+/** Every backticked span beginning `npm `, `npx ` or `node `, each with the passage it sits in. */
+function commandsIn(files) {
+  return files.flatMap(({ path, text }) => passagesOf(text).flatMap((passage) =>
+    [...passage.matchAll(/`([^`]+)`/g)]
+      .map((found) => found[1].trim())
+      .filter((span) => /^(?:npm|npx|node) /.test(span))
+      .map((command) => ({ path, command, passage }))));
+}
+
+/** Whether `command` is defined in `scratch`, by the card's "Defined" rules (#1303). */
+function definedIn(scratch, command) {
+  const words = command.split(' ');
+  const manifestPath = join(scratch, 'package.json');
+  const scripts = existsSync(manifestPath) ? JSON.parse(readFileSync(manifestPath, 'utf8')).scripts ?? {} : null;
+  if (words[0] === 'node') {
+    // `node` is on PATH for every consumer (README, "Prerequisites"); a script it is handed must exist.
+    const operand = words.slice(1).find((word) => !word.startsWith('-'));
+    return operand === undefined || existsSync(join(scratch, operand));
+  }
+  if (words[0] === 'npx') return existsSync(join(scratch, 'node_modules', '.bin', words[1]));
+  if (words[1] === 'test') return scripts !== null && Object.hasOwn(scripts, 'test');
+  if (words[1] === 'run' || words[1] === 'run-script') return scripts !== null && Object.hasOwn(scripts, words[2]);
+  if (words[1] === 'ci') {
+    return scripts !== null && ['package-lock.json', 'npm-shrinkwrap.json'].some((lock) => existsSync(join(scratch, lock)));
+  }
+  return false;
+}
+
+for (const [row, consumer, files] of [
+  ['K1', 'a scratch repository with no package.json', {}],
+  ['K2', 'a scratch repository whose package.json holds only a name and a version',
+    { 'package.json': `${JSON.stringify({ name: 'consumer', version: '0.0.0' }, null, 2)}\n` }],
+]) {
+  test(`${row}: in ${consumer}, every npm, npx or node command the installed init forks is defined there or sits in a passage conditioned on the repository defining it`, () => {
+    const scratch = repositoryIn(`rigger-starter-commands-${row}-`, files);
+    const init = runInstalled(['init'], scratch);
+    assert.equal(init.status, 0, init.stderr);
+
+    const commands = commandsIn(writtenBy(scratch, Object.keys(files).map((path) => join(scratch, path))));
+    // The premise: init forked assets that name commands at all, so an empty set passes nothing by vacuum.
+    assert.ok(commands.some(({ command }) => command.startsWith('npm ')), `init forked no npm command into ${scratch}`);
+    const failing = commands
+      .filter(({ command, passage }) => !definedIn(scratch, command) && !CONDITIONED.test(passage))
+      .map(({ path, command }) => `${path}: ${command}`);
+    assert.deepEqual(failing, []);
+  });
+}
+
+test('the package is version 0.1.0, the first release M8-U2 Q9 a rules', () => {
+  assert.equal(manifest.version, '0.1.0');
+});
+
+test('the package publishes with public access, so npx can serve the scoped name', () => {
+  // README.md, "Install and usage", promises `npx @williacj/rigger`; a restricted scoped package
+  // cannot serve that, and the setting lives in the manifest rather than on a command line.
+  assert.equal(manifest.publishConfig?.access, 'public');
+});
+
+test('the tarball holds each of the four sanctioned scripts', () => {
+  const { paths } = packListing();
+  const absent = SANCTIONED_SCRIPTS.filter((path) => !paths.includes(path));
+  assert.deepEqual(absent, [], 'the tarball leaves out a script Table P\'s rows P4 to P6 ship');
+});
+
+test('a tarball packed from the head, installed outside the checkout, runs rigger --help and records the head commit', () => {
+  const ran = runInstalled(['--help'], tmpdir());
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.equal(ran.stdout, `${help()}\n`);
+
+  // The prepack recorder writes the record only where nothing the pack carries differs from HEAD,
+  // so this holds at a committed head and is what `D7` rule 4's recorded commit rests on.
+  const installedAt = join(installFromTarball().consumer, 'node_modules', '@williacj', 'rigger');
+  const record = join(installedAt, 'src', 'package-commit.json');
+  assert.ok(existsSync(record), 'the installed tarball holds no src/package-commit.json');
+  assert.equal(JSON.parse(readFileSync(record, 'utf8')).commit, gitIn(root, 'rev-parse', 'HEAD').trim());
+});
+
+test('the installed package resolves scripts/gate-check.mjs by the path src/cli/verdict.mjs imports it by', async () => {
+  const installedAt = join(installFromTarball().consumer, 'node_modules', '@williacj', 'rigger');
+  const verdict = join(installedAt, 'src', 'cli', 'verdict.mjs');
+  // The specifier is read out of the installed verb, so a move on either side of the import is caught.
+  const specifier = readFileSync(verdict, 'utf8').match(/import\('([^']*\/scripts\/gate-check\.mjs)'\)/)?.[1];
+  assert.ok(specifier, 'the installed verdict.mjs names no import of scripts/gate-check.mjs');
+
+  const imported = await import(new URL(specifier, pathToFileURL(verdict)).href);
+
+  assert.equal(typeof imported.defaultConfig, 'function');
 });
