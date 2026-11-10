@@ -347,3 +347,166 @@ test('the same hinted prose outside a pinned fence draws no hint', () => {
   assert.equal(status, 0, out);
   assert.doesNotMatch(out, /hint/);
 });
+
+
+test('a declared concrete spike report missing strict registration requires registry delivery scope', () => {
+  const root = repository({ 'doc-references.json': '{"documents":{}}' });
+  const { status, out } = cardCheck(lines('# A report', '', '- **Lands in:** `docs/spikes/answer.md`.', '', '## Acceptance', '', '- The report answers its question.'), root);
+  assert.equal(status, 1, out);
+  assert.match(out, /docs\/spikes\/answer\.md/);
+  assert.match(out, /doc-references\.json/);
+  assert.match(out, /strict/);
+  assert.match(out, /scope/);
+});
+
+test("direct and nested spike reports follow strict soft absent and covered registry states", () => {
+
+  for (const report of ['docs/spikes/answer.md', 'docs/spikes/nested/answer.md']) {
+    for (const [entry, value] of [['strict', 'strict'], ['soft', 'soft'], ['absent', undefined]]) {
+      for (const grant of [false, true]) {
+        const documents = entry === 'absent' ? {} : { [report]: value };
+        const root = repository({ 'doc-references.json': JSON.stringify({ documents }) });
+        const scope = `- **Lands in:** \`${report}\`${grant ? '; `doc-references.json`' : ''}.`;
+        const { status, out } = cardCheck(lines('# A report', '', scope), root);
+        const expected = entry === 'strict' || grant ? 0 : 1;
+        assert.equal(status, expected, `${report} ${entry} grant=${grant}: ${out}`);
+        if (expected === 1) {
+          assert.ok(out.includes(report), out);
+          assert.match(out, /doc-references\.json/);
+          assert.match(out, /strict.*scope/);
+        } else assert.doesNotMatch(out, /strict registration scope is missing/);
+      }
+    }
+  }
+});
+
+test("mentioning the registry outside Lands in does not grant its delivery scope", () => {
+
+  const root = repository({ 'doc-references.json': '{"documents":{}}' });
+  const { status, out } = cardCheck(lines('# A report', '', '- **Lands in:** `docs/spikes/nested/answer.md`.', '', 'The author should also consider `doc-references.json`.'), root);
+  assert.equal(status, 1, out);
+  assert.match(out, /docs\/spikes\/nested\/answer\.md/);
+  assert.match(out, /doc-references\.json/);
+});
+
+
+test('excluded spike declarations add no registry obligation for missing or malformed source', () => {
+  for (const report of [
+    'docs/spikes/', 'docs/spikes/nested/', 'docs/spikes/<report>.md',
+    'docs/spikes/*.md', 'docs/spikes/answer?.md', 'docs/spikes/two words.md',
+    'docs/spikes/./answer.md', 'docs/spikes/nested/../answer.md', 'docs/spikes//answer.md',
+    'docs/spikes\\answer.md', 'docs/spikes/.md', 'docs/spikes/answer.MD',
+  ]) {
+    for (const registry of [null, '{']) {
+      const root = repository({ 'doc-references.json': registry });
+      const { status, out } = cardCheck(lines('# A report', '', `- **Lands in:** \`${report}\`.`), root);
+      assert.equal(status, 0, `${report} registry=${registry}: ${out}`);
+      assert.match(out, /nothing found/);
+      assert.doesNotMatch(out, /registration/);
+    }
+  }
+  const root = repository({ 'doc-references.json': null });
+  const outside = cardCheck(lines('# A report', '', 'This mentions `docs/spikes/answer.md` outside any Lands-in declaration.'), root);
+  assert.equal(outside.status, 0, outside.out);
+});
+
+
+test('unavailable relevant registries name their source and reason even when its edit is granted', () => {
+  for (const report of ['docs/spikes/answer.md', 'docs/spikes/nested/answer.md']) {
+    for (const kind of ['missing', 'directory', 'malformed']) {
+      for (const grant of [false, true]) {
+        const root = repository({ 'doc-references.json': kind === 'malformed' ? '{' : null });
+        if (kind === 'directory') mkdirSync(join(root, 'doc-references.json'));
+        const scope = `- **Lands in:** \`${report}\`${grant ? '; `doc-references.json`' : ''}.`;
+        const { status, out } = cardCheck(lines('# A report', '', scope), root);
+        assert.equal(status, 2, `${kind} grant=${grant}: ${out}`);
+        assert.match(out, /cannot answer/);
+        assert.ok(out.includes(join(root, 'doc-references.json')), out);
+        assert.match(out, /ENOENT|EISDIR|JSON|property name|Unexpected/i);
+        assert.doesNotMatch(out, /strict registration scope is missing/);
+      }
+    }
+  }
+});
+
+
+test('a relevant policy must be an object even when registry delivery is granted', () => {
+  for (const report of ['docs/spikes/answer.md', 'docs/spikes/nested/answer.md']) {
+    for (const policy of [null, [], 'scalar', 7, true]) {
+      for (const grant of [false, true]) {
+        const root = repository({ 'doc-references.json': JSON.stringify(policy) });
+        const { status, out } = cardCheck(lines('# A report', '', `- **Lands in:** \`${report}\`${grant ? '; `doc-references.json`' : ''}.`), root);
+        assert.equal(status, 2, `policy=${JSON.stringify(policy)} grant=${grant}: ${out}`);
+        assert.ok(out.includes(join(root, 'doc-references.json')), out);
+        assert.match(out, /policy.*object/);
+        assert.doesNotMatch(out, /strict registration scope is missing/);
+      }
+    }
+  }
+});
+
+
+test('a relevant documents member must be an object even when registry delivery is granted', () => {
+  for (const report of ['docs/spikes/answer.md', 'docs/spikes/nested/answer.md']) {
+    for (const policy of [{}, { documents: null }, { documents: [] }, { documents: 'scalar' }, { documents: 7 }, { documents: true }]) {
+      for (const grant of [false, true]) {
+        const root = repository({ 'doc-references.json': JSON.stringify(policy) });
+        const { status, out } = cardCheck(lines('# A report', '', `- **Lands in:** \`${report}\`${grant ? '; `doc-references.json`' : ''}.`), root);
+        assert.equal(status, 2, `${JSON.stringify(policy)} grant=${grant}: ${out}`);
+        assert.ok(out.includes(join(root, 'doc-references.json')), out);
+        assert.match(out, /documents.*object/);
+        assert.doesNotMatch(out, /strict registration scope is missing/);
+      }
+    }
+  }
+});
+
+
+test('unrecognized relevant report entries refuse an answer before considering delivery scope', () => {
+  for (const report of ['docs/spikes/answer.md', 'docs/spikes/nested/answer.md']) {
+    for (const entry of [null, [], {}, 7, true, 'unrecognized']) {
+      for (const grant of [false, true]) {
+        const root = repository({ 'doc-references.json': JSON.stringify({ documents: { [report]: entry } }) });
+        const { status, out } = cardCheck(lines('# A report', '', `- **Lands in:** \`${report}\`${grant ? '; `doc-references.json`' : ''}.`), root);
+        assert.equal(status, 2, `${report} entry=${JSON.stringify(entry)} grant=${grant}: ${out}`);
+        assert.ok(out.includes(join(root, 'doc-references.json')), out);
+        assert.ok(out.includes(report), out);
+        assert.match(out, /unrecognized/);
+        assert.doesNotMatch(out, /strict registration scope is missing/);
+      }
+    }
+  }
+});
+
+test("unrecognized unrelated policy entries impose no new validation obligation", () => {
+
+  for (const entry of [null, [], {}, 7, true, 'unrecognized']) {
+    const root = repository({ 'doc-references.json': JSON.stringify({ documents: { 'docs/spikes/answer.md': 'strict', 'docs/spikes/unrelated.md': entry }, unrelatedPolicy: null }) });
+    const { status, out } = cardCheck(lines('# A report', '', '- **Lands in:** `docs/spikes/answer.md`.'), root);
+    assert.equal(status, 0, out);
+    assert.match(out, /nothing found/);
+  }
+});
+
+test("several report declarations identify exactly uncovered absent and soft entries", () => {
+
+  const root = repository({ 'doc-references.json': JSON.stringify({ documents: { 'docs/spikes/strict.md': 'strict', 'docs/spikes/nested/soft.md': 'soft' } }) });
+  const { status, out } = cardCheck(lines('# Reports', '', '- **Lands in:** `docs/spikes/strict.md`; `docs/spikes/absent.md`;', '  `docs/spikes/nested/soft.md`.'), root);
+  assert.equal(status, 1, out);
+  const reports = out.split('\n').filter((line) => line.includes('strict registration scope is missing')).map((line) => line.split(': ')[0]).sort();
+  assert.deepEqual(reports, ['docs/spikes/absent.md', 'docs/spikes/nested/soft.md']);
+  assert.doesNotMatch(out, /docs\/spikes\/strict\.md/);
+  assert.match(out, /2 findings/);
+});
+
+test("registration findings coexist with existing ID style findings and separate advisory hints", () => {
+
+  const root = repository({ 'doc-references.json': '{"documents":{}}' });
+  const { status, out } = cardCheck(lines('# A report', '', '- **Lands in:** `docs/spikes/answer.md`.', '', 'It adds R-NEW-1.', '', '```markdown', 'A card is never parked.', '', STEPS, '```'), root);
+  assert.equal(status, 1, out);
+  assert.match(out, /R-NEW-1.*no claiming test or exception/);
+  assert.match(out, /ruled-out term `parked`/);
+  assert.match(out, /docs\/spikes\/answer\.md: strict registration scope is missing/);
+  assert.match(out, /3 findings\nadvisory hints, for rules 4 and 5, which hold by judgment:/);
+  assert.match(out, /rule 4: The engine pulls/);
+});

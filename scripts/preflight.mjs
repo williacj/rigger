@@ -17,7 +17,7 @@ export const SCRIPT_CHECKS = [
 ];
 
 /** Backticked paths in the card's Lands in bullet, including its nested bullets. */
-function landsIn(body) {
+export function landsIn(body) {
   const lines = body.split('\n');
   const start = lines.findIndex((line) => /^- \*\*Lands in:\*\*/.test(line));
   if (start === -1) return [];
@@ -26,7 +26,7 @@ function landsIn(body) {
     .map((match) => match[1]).filter((path) => path.includes('/') || /\.[A-Za-z0-9]+$/.test(path));
 }
 
-function covers(named, path) {
+export function covers(named, path) {
   const expression = named.split(/(<[^/<>]+>)/).map((part) =>
     /^<[^/<>]+>$/.test(part) ? '[^/]+' : part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('');
   return new RegExp(`^${expression}${named.endsWith('/') ? '[\\s\\S]*' : ''}$`).test(path);
