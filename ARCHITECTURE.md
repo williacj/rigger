@@ -1704,6 +1704,102 @@ A derivation that groups by `card` or `dispatch` treats a null field and an abse
 derivation below reads the stream in line order. Every append is synchronous, so line order is the
 order of events within a run.
 
+### A torn tail
+
+An append that fails partway can leave bytes after the stream's last newline that no writer will
+finish. A disk that fills during the append is one way. This section calls that state a torn tail,
+and those bytes the fragment. Any torn tail, whatever tore it, is handled as this section sets out.
+
+Two causes stand apart. Power loss is outside `R-RECORD-6` (M8-U2 Q7 a on #1293; #1298's row R10),
+and this section places nothing for it. #1298's row R7 already claims that a writer killed outright
+leaves no torn tail. A killed writer that did leave one would leave this section's state, and the
+reader below would read it so.
+
+**What a later reader finds.** After a torn tail, a reader of the stream finds:
+
+- every event whose emit returned before the tear;
+- every event whose emit returns after it, from any writer, the writer whose write failed included.
+
+The writer whose write failed can append again. Its exit cleanup records its own kills and ends the
+sink ("Failure model"; "Telemetry"). Its next line, or another writer's, may land straight after the
+fragment.
+
+**The emit whose write failed.** The sink refuses it, and the refusal reaches the emitting layer as
+a failure, as for every append the sink refuses. "Failure model" states what L3 does with it. A
+later reader never finds that event, because the fragment is never returned.
+
+**No writer makes the call.** At one read, a fragment and another process's line still being
+appended are the same bytes, so no writer tells them apart. None needs to, because no writer acts
+on either. The sink's emit stays one append of one whole line, and reads nothing before it. What
+keeps a line still being appended whole is that no writer writes any byte but its own line's. No
+writer, reader or push truncates, terminates or rewrites bytes another append made. #1298's Table I
+measured two processes appending to one stream, at 200 bytes and 1 MiB per line, with every line
+left whole.
+
+**The reader separates the fragment.** L5's reader, `readEvents` in `src/observation/sink.mjs`, is
+the one code path that tells a fragment from an event. A line of the sink's form is one JSON object
+that begins with the envelope's `ts`, `run`, `layer` and `event`, in that order, then a newline. The
+reader reads the stream line by line, under four rules:
+
+1. The bytes after the last newline are not an event. The reader neither returns them nor refuses
+   the stream for them. A fragment sits there until the next append, as does a line still being
+   appended.
+2. A newline-terminated line that is one event is returned.
+3. A newline-terminated line that is not one event, but ends in one whole line of the sink's form,
+   holds fragments before that line. The bytes before it must be the beginnings of one or more
+   lines of the sink's form, each cut short before its newline. The reader returns the whole
+   line's event, and neither returns nor refuses those bytes.
+4. Any other newline-terminated line that is not one event is refused, and the refusal names its
+   line.
+
+Rule 1 is E1's first rule, as M8-K7 item 1 on #1293 states it. Rules 3 and 4 replace E1's second
+rule, which refuses every newline-terminated line that is not one event. Under that rule the first
+append after a tear makes the reader refuse the stream, so every event is lost to it. Rule 3 passes
+over only bytes a cut-short append leaves, which rule 1 already passes over while they are last.
+Damage of any other form is still refused, as E1 refused it.
+
+The separation rests on the sink's line form. A cut-short line followed by a whole line has one
+offset from which the rest of the line parses as one JSON value: where the whole line starts. That
+this holds for every line `JSON.stringify` writes is a judgment. The architect measured it on
+#1370's pull request with `node` v26.13.0, gluing each of 740 cut-short prefixes onto a whole line.
+Every one parsed from the whole line's start and from no earlier offset.
+
+**What becomes of the fragment.** Its bytes stay in the stream, byte for byte, and reach every
+pushed copy that holds the line ending after them. `R-RECORD-5` reads: "Rigger never rewrites what
+it already recorded." Keeping the fragment rewrites nothing. The recovery is a reading of bytes the
+stream already holds, and the stream only grows.
+
+**The pushed copy.** "The commit" keeps its rule: the copy holds the stream up to and including the
+last newline. A fragment still after the last newline is outside the copy, as it is outside what the
+local reader returns. Once a line ends after it, the copy holds that same line, and its reader
+applies the same four rules. A reader of the pushed copy therefore finds the same events as a
+reader of the local stream, read at the push's start, once the record has recovered.
+
+**What it adds nowhere.** `.rigger/` holds the same three things "Failure model" names, and the
+recovery writes no other state. It adds no lock. It places no recovery machinery in L1, since the
+reader is L5's.
+
+**What would reverse the placement.**
+
+| What is found | What Rigger would change |
+|---|---|
+| A host on which a failed append leaves bytes that do not begin its line, such as zero-filled bytes | rule 4 refuses that line; the sink would frame each line with a separator a whole line cannot hold, as RFC 7464's record separator does |
+| A line form other than one JSON object per line | the one offset rule 3 finds no longer exists; the placement is ruled again with that form |
+| A host on which two appends to one stream interleave, against #1298's Table I | a line still being appended no longer stays whole, and no reading recovers it; the record needs a lock or a stream per writer, which "Failure model" forbids without a delta |
+
+**The residuals.** The owner rules on each when M8-17 is filed:
+
+1. A line holding a fragment is not one JSON value, so a tool that reads the stream as plain JSONL
+   refuses it. `README.md`, "Telemetry", calls the stream "one JSONL event stream". The owner rules
+   whether that promise covers outside tools, or whether this reader's rules define the stream.
+2. No event records that a tear happened, and rule 3 passes over the fragment without naming it.
+   The refused emit was reported when it failed (`R-RECORD-9`). The owner rules whether the reader
+   should also name each fragment it passed over.
+3. Rule 3 would misread one form of damage as a fragment: a line whose last field is itself a
+   whole line of the sink's form, with the line's own closing brace lost. Rigger's sink writes no
+   such line. Another program's edit is out of sight under #1298's row R13. The owner rules
+   whether that form needs refusing.
+
 ### L0's call events
 
 L0 records one `call.end` as each forge call and each git call ends. A forge call is a `gh`
