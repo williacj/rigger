@@ -1,5 +1,8 @@
 // ABOUTME: L1 report fixtures and L2's real judge answer under one card and a recording sink.
 
+import assert from 'node:assert/strict';
+import { tmpdir } from 'node:os';
+
 import { NOT_STARTED } from '../src/substrate/process.mjs';
 import { judgeAnswer } from '../src/workflow/judges.mjs';
 import { EventEmitter } from 'node:events';
@@ -66,4 +69,22 @@ export function refuseSpawn(t, { command, code, before = () => {}, synchronous =
   });
   syncBuiltinESMExports();
   t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+}
+
+/**
+ * Checks metadata and prose, except independently expected counted identities and literal data.
+ * temporaryDirectory builds fixture paths under tmpdir(); callers may name other exact literals.
+ * Only file/path in startCause carry counted data: the same bytes elsewhere still get checked.
+ */
+export function noEditorialIds(reason, cause, verbatim = [tmpdir()]) {
+  const startCause = { ...reason.startCause };
+  for (const field of ['file', 'path']) {
+    if (cause[field] === undefined) continue;
+    assert.equal(startCause[field], cause[field], 'the counted identity must match the independent expectation');
+    startCause[field] = '<fixture-data>';
+  }
+  let message = reason.message;
+  const data = [...verbatim, ...(cause.path === undefined ? [] : [cause.path])];
+  for (const literal of data.sort((a, b) => b.length - a.length)) message = message.split(literal).join('<fixture-data>');
+  assert.doesNotMatch(JSON.stringify({ ...reason, startCause, message }), /R-FAIL-8|\bR\d+\b/);
 }
