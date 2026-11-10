@@ -403,6 +403,20 @@ const originVariants = (value) => value?.alternatives ? value.alternatives.flatM
 /** Resolve static module, namespace, destructured and defaulted bindings in their lexical scopes. */
 function processBindings(modules) {
   const models = new Map([...modules].map(([file, { program }]) => [file, lexical(program)]));
+  const assignments = new WeakMap();
+  const assigned = (file, pattern, value, path = []) => {
+    if (pattern.type === 'Identifier') {
+      const binding = models.get(file).lookup(pattern);
+      if (binding) assignments.set(binding, [...(assignments.get(binding) ?? []), { file, value, path }]);
+    } else if (pattern.type === 'ObjectPattern') {
+      for (const property of pattern.properties) assigned(file, property.type === 'RestElement' ? property.argument : property.value, value, property.type === 'RestElement' ? path : [...path, memberName(property)]);
+    } else if (pattern.type === 'ArrayPattern') {
+      pattern.elements.forEach((part, index) => { if (part) assigned(file, part.type === 'RestElement' ? part.argument : part, value, part.type === 'RestElement' ? path : [...path, String(index)]); });
+    } else if (pattern.type === 'AssignmentPattern') assigned(file, pattern.left, value, path);
+  };
+  for (const [file, { program }] of modules) for (const { node } of nodes(program)) {
+    if (node.type === 'AssignmentExpression' && ['=', '||=', '&&=', '??='].includes(node.operator)) assigned(file, node.left, node.right);
+  }
   const namespaces = new Map();
   const exports = new Map();
   const bindingValues = new WeakMap();
@@ -472,15 +486,17 @@ function processBindings(modules) {
     if (base?.namespace) return exported(base.namespace, name, seen);
     if (typeof base === 'string' && base.startsWith('global:') && base.includes('#')) return `${base}.${name}`;
     if (base?.object) {
-      if (base.object.properties.some((property) => property.type === 'SpreadElement' || property.computed)) return;
-      const matches = base.object.properties.filter((property) => memberName(property) === name);
-      if (matches.length !== 1) return;
-      const property = matches[0];
-      if (property.kind === 'get') {
-        const body = property.value.body.body;
-        return body.length === 1 && body[0].type === 'ReturnStatement' ? origin(base.file, body[0].argument, seen) : undefined;
-      }
-      return origin(base.file, property.value, seen);
+      if (seen.has(base)) return;
+      seen = new Set([...seen, base]);
+      return alternatives(base.object.properties.map((property) => {
+        if (property.type === 'SpreadElement') return member(origin(base.file, property.argument, seen), name, seen);
+        if (memberName(property) !== name) return;
+        if (property.kind === 'get') {
+          const body = property.value.body.body;
+          return body.length === 1 && body[0].type === 'ReturnStatement' ? origin(base.file, body[0].argument, seen) : undefined;
+        }
+        return origin(base.file, property.value, seen);
+      }));
     }
   };
   const bindingOrigin = (file, binding, seen) => {
@@ -491,7 +507,13 @@ function processBindings(modules) {
     for (const name of binding.path ?? []) value = member(value, name, seen);
     if (value?.namespace === 'global:undefined') value = undefined;
     value ??= origin(file, binding.fallback, seen);
-    if (value !== undefined) bindingValues.set(binding, value);
+    value = alternatives([value, ...(assignments.get(binding) ?? []).map((assignment) => {
+      let value = origin(assignment.file, assignment.value, seen);
+      for (const name of assignment.path) value = member(value, name, seen);
+      return value;
+    })]);
+    // An assigned ancestor can participate in an alias cycle; do not cache a partial traversal.
+    if (value !== undefined && ![...seen].some((binding) => assignments.has(binding))) bindingValues.set(binding, value);
     return value;
   };
   const origin = (file, node, seen = new Set()) => {
@@ -511,6 +533,7 @@ function processBindings(modules) {
     if (node.type === 'ConditionalExpression') return alternatives([origin(file, node.consequent, seen), origin(file, node.alternate, seen)]);
     if (node.type === 'LogicalExpression') return alternatives([origin(file, node.left, seen), origin(file, node.right, seen)]);
     if (node.type === 'SequenceExpression') return origin(file, node.expressions.at(-1), seen);
+    if (node.type === 'AssignmentExpression' && ['=', '||=', '&&=', '??='].includes(node.operator)) return alternatives([origin(file, node.left, seen), origin(file, node.right, seen)]);
     if (node.type === 'MemberExpression') return member(origin(file, node.object, seen), memberName(node), seen);
     if (['ObjectExpression', 'ArrayExpression'].includes(node.type)) {
       if (!objects.has(node)) objects.set(node, { [node.type === 'ObjectExpression' ? 'object' : 'array']: node, file });
@@ -568,7 +591,7 @@ function programReport(modules) {
   for (const [file, names] of PROGRAM_DEFINITIONS) for (const name of names) {
     const symbol = bindings.named(file, name);
     if (symbol === undefined) violations.push(`${file} N8 missing reviewed process definition ${name}`);
-    else reviewed.add(symbol);
+    else for (const value of originVariants(symbol)) reviewed.add(value);
   }
   const fail = (file, node, reason) => violations.push(`${file}:${node.loc.start.line} N8 ${reason}`);
   for (const [file, { program }] of modules) {
@@ -1020,6 +1043,15 @@ test('N8 static invocations: direct, call, apply, Reflect.apply and bound calls 
   ]) {
     const changed = changedPackage(report, file, anchor, `${anchor}\nimport { runCommand } from '../substrate/process.mjs'; function unlistedMethodReceiver() { ${call} }`, form);
     assert.ok(programReport(changed.modules).some((line) => line.includes(file) && line.includes('unlisted process site')), `N8: the actual method receiver determines ${form}`);
+  }
+  for (const [form, setup, name] of [
+    ['assigned alias', 'let start; start = runCommand;', 'start'],
+    ['destructuring-assigned alias', 'let start; ({ start } = { start: runCommand });', 'start'],
+    ['namespace spread alias', 'const holder = { ...processes };', 'holder.runCommand'],
+    ['object spread alias', 'const holder = { ...{ start: runCommand } };', 'holder.start'],
+  ]) {
+    const changed = changedPackage(report, file, anchor, `${anchor}\nimport { runCommand } from '../substrate/process.mjs'; import * as processes from '../substrate/process.mjs'; function unlistedStoredAlias() { ${setup} ${name}({ command: 'curl' }); }`, form);
+    assert.ok(programReport(changed.modules).some((line) => line.includes(file) && line.includes('unlisted process site')), `N8: static alias origins include ${form}`);
   }
   const rebound = changedPackage(report, 'src/substrate/data-ref.mjs', 'run = runCommand', "run = runCommand.bind(null, { command: 'curl', args: [] })", 'bound arguments at an existing site');
   assert.ok(programReport(rebound.modules).some((line) => line.includes('src/substrate/data-ref.mjs')), 'N8: bound prefix arguments must not replace the reviewed git input');

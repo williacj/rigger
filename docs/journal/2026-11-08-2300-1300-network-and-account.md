@@ -247,3 +247,13 @@ No additional production change or Lands-in path is needed. The final PR records
 receipts for each of the five in-sight survivors and a separate program-loop mutation for the
 write matrix's R-SAFE-2 claim, plus full deterministic/fresh-clone/host verification. All raw
 outputs, including failed attempts, are retained; no failure is erased by a later pass.
+
+The first correction commit, 3653977846739d512681e8406f87746b5ad7998b, passed its full
+hook. The subsequent ordinary-alias check, 1300-r3-alias-store-red.log, exposes the same
+static-origin class when a guarded function is assigned after declaration. The resolver now
+unions static assignment sources, projects destructuring-assignment paths and follows static
+object/namespace spreads. Its matrix includes all four forms and retains the effective-input
+checks. It does not cache an incomplete traversal beneath an assigned alias cycle. These are
+ordinary static alias origins under K13, within the same guard file; no new edge or production
+path is introduced. Additional assigned/spread alias receipts accompany the five supplied
+survivors at the final head.
