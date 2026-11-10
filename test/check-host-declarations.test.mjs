@@ -10,10 +10,12 @@ import lister, { addedTimers, checkAddedTimers, listing, parseRecord, readRecord
 import { parseWorkflow } from './ci-policy-fixtures.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
-// Events below are the shapes node:test v26 reports, read off a run of `node --test` with a
+// Events below are the shapes node:test v26.13.0 reports, read off runs of `node --test` with a
 // reporter printing each event's type and data: a top-level test is a test:pass or test:fail at
-// nesting 0, whatever file it reports (a helper's, or the mock's own); the file's own dequeue and
-// its per-file summary carry no test; the last summary has no file and holds the run's duration.
+// nesting 0, whatever file it reports (a helper's, or the mock's own). A file that loads and
+// registers a test reports its own summary, with its file; a file that throws while loading, or
+// registers no test, reports none, and is reported instead as one test named by its path. The
+// last summary has no file and holds the run's duration.
 async function* events(list) { yield* list; }
 async function reported(list) {
   const lines = [];
@@ -21,7 +23,7 @@ async function reported(list) {
   return lines.join('');
 }
 
-test('the lister reports each top-level test by title from whatever file names it, and the run\'s duration', async () => {
+test('the lister reports each top-level test by title from whatever file names it, the file\'s own summary, and the run\'s duration', async () => {
   const file = '/repository/test/converting.test.mjs';
   const output = await reported([
     { type: 'test:dequeue', data: { nesting: 0, name: 'test/converting.test.mjs', file } },
@@ -34,28 +36,26 @@ test('the lister reports each top-level test by title from whatever file names i
     { type: 'test:summary', data: { duration_ms: 93.5, counts: {} } },
   ]);
   assert.equal(output, [
-    { title: 'via helper' }, { title: 'outer' }, { title: 'via mock' }, { title: 'outer' }, { duration_ms: 93.5 },
+    { title: 'via helper' }, { title: 'outer' }, { title: 'via mock' }, { title: 'outer' }, { loaded: true }, { duration_ms: 93.5 },
   ].map((line) => JSON.stringify(line) + '\n').join(''));
 });
 
 const lines = (...entries) => entries.map((entry) => JSON.stringify(entry) + '\n').join('');
 
 test('a listing counts each title the lister reported, so a title registered twice counts twice', () => {
-  assert.deepEqual(listing(lines({ title: 'a' }, { title: 'b' }, { title: 'a' }, { duration_ms: 12.5 }), 'test/converting.test.mjs'),
+  assert.deepEqual(listing(lines({ title: 'a' }, { title: 'b' }, { title: 'a' }, { loaded: true }, { duration_ms: 12.5 })),
     { counts: new Map([['a', 2], ['b', 1]]), duration_ms: 12.5 });
 });
 
-test('a listing whose only test the runner named after the file is a file that fails to load or registers no test', () => {
-  // node:test reports a module that throws while loading, and one that registers no test, as one
-  // top-level test named by the path it was given.
-  assert.deepEqual(listing(lines({ title: 'test/converting.test.mjs' }, { duration_ms: 80 }), 'test/converting.test.mjs'),
+test('a listing with no summary of the file\'s own run is a file that fails to load or registers no test', () => {
+  // node:test reports such a file as one top-level test named by its path, and no file summary.
+  assert.deepEqual(listing(lines({ title: 'test/converting.test.mjs' }, { duration_ms: 80 })),
     { error: 'fails to load the file or registers no test' });
-  assert.deepEqual(listing(lines({ title: 'registered' }, { title: 'test/converting.test.mjs' }, { duration_ms: 80 }), 'test/converting.test.mjs'),
-    { error: 'fails to load the file or registers no test' });
+  assert.deepEqual(listing(lines({ duration_ms: 80 })), { error: 'fails to load the file or registers no test' });
 });
 
 test('a listing with no summary line is a run that ended before the runner finished', () => {
-  assert.deepEqual(listing(lines({ title: 'a' }), 'test/converting.test.mjs'), { error: 'ended before the runner reported its summary' });
+  assert.deepEqual(listing(lines({ title: 'a' }, { loaded: true })), { error: 'ended before the runner reported its summary' });
 });
 
 // The rows of #1138's "The added-timer cells". Each file is its source at a commit, which marks
@@ -72,7 +72,8 @@ const OTHER = 'test/other-converting.test.mjs';
 const BOUNDED = 'test/bounded.test.mjs';
 const ran = (file) => ({ file, test: null, api: null, delay: null });
 const arm = (file, title, api = 'setTimeout', delay = 5) => ({ file, test: title, api, delay });
-const at = (source, run) => ({ source, run });
+const at = (source, run, duration = 1) => ({ source, run, duration });
+const BOUND = 1000;
 
 function tally(titles) {
   const result = new Map();
@@ -93,10 +94,14 @@ function runFacts({ base = {}, head = {}, converting = [CONVERTING, OTHER] }) {
       calls.push(['worktree', sha]);
       try { return use(BASE_DIR); } finally { calls.push(['removed', sha]); }
     },
-    list: (dir, file) => {
+    // A run given a bound, as gitFacts' lister is, stops at it: a run longer than the bound gives
+    // the lister's bound error, and a run given none runs to its end.
+    bound: BOUND,
+    list: (dir, file, bound) => {
       calls.push(['list', dir, file]);
-      const { run } = runs[dir][file];
-      return Array.isArray(run) ? { counts: tally(run), duration_ms: 1 } : run;
+      const { run, duration } = runs[dir][file];
+      if (bound !== undefined && duration > bound) return { error: `ran past its bound of ${bound} ms` };
+      return Array.isArray(run) ? { counts: tally(run), duration_ms: duration } : run;
     },
   };
   return { facts, calls };
@@ -218,11 +223,21 @@ test('T16: a title that differs between runs counts as added under each run\'s v
 
 test('T18: a base run past its bound is refused naming the file and the bound', () => {
   const result = rowOutcome({
-    base: { [CONVERTING]: at('v1', { error: 'ran past its bound of 120000 ms' }) },
+    base: { [CONVERTING]: at('v1', ['older'], BOUND + 1) },
     head: { [CONVERTING]: at('v2', ['older']) },
     record: { ran: [CONVERTING] },
   });
-  assert.deepEqual(result, { ok: false, errors: [`${CONVERTING}: the base run ran past its bound of 120000 ms`] });
+  assert.deepEqual(result, { ok: false, errors: [`${CONVERTING}: the base run ran past its bound of 1000 ms`] });
+});
+
+test('T9: an added timer-free test whose file ran passes though its head run takes longer than the base-run bound', () => {
+  // T18 bounds the base run only: a head run as slow as the job's own run of the file is no refusal.
+  const result = rowOutcome({
+    base: { [CONVERTING]: at('v1', ['older']) },
+    head: { [CONVERTING]: at('v2', ['older', 'added'], BOUND * 600) },
+    record: { ran: [CONVERTING] },
+  });
+  assert.deepEqual(result, { ok: true, errors: [] });
 });
 
 test('base titles come from a run of each changed conversion-list file in one worktree at the base, and head titles from the head', () => {
@@ -247,9 +262,9 @@ test('a conversion-list file new at the head has no base run, so each test it re
 test('a head run that gives no titles is refused naming the file, and a listed file absent at the head is refused', () => {
   const failed = rowOutcome({
     base: { [CONVERTING]: at('v1', ['older']) },
-    head: { [CONVERTING]: at('v2', { error: 'ran past its bound of 120000 ms' }) },
+    head: { [CONVERTING]: at('v2', { error: 'fails to load the file or registers no test' }) },
   });
-  assert.deepEqual(failed, { ok: false, errors: [`${CONVERTING}: the head run ran past its bound of 120000 ms`] });
+  assert.deepEqual(failed, { ok: false, errors: [`${CONVERTING}: the head run fails to load the file or registers no test`] });
   const { facts } = runFacts({ base: { [CONVERTING]: at('v1', ['older']) } });
   assert.deepEqual(addedTimers({ base: BASE, head: HEAD, facts, record: recordOf({}) }),
     { ok: false, errors: [`${CONVERTING}: on the conversion list at ${HEAD} and not in that tree`] });

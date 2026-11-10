@@ -3,7 +3,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -257,6 +257,29 @@ test('the lister gives no titles for a file that fails to load, one that registe
   assert.deepEqual(listTitles(directory, 'test/hangs.test.mjs', 2_000), { error: 'ran past its bound of 2000 ms' });
 });
 
+test('the lister counts a test titled after its own file as a test, not as a file that registers none', (t) => {
+  const directory = temporaryDirectory('rigger-1138-named-', { context: t });
+  mkdirSync(join(directory, 'test'));
+  writeFileSync(join(directory, 'test/named.test.mjs'), `${header}test('test/named.test.mjs', () => {});\ntest('beside it', () => {});\n`);
+  const listed = listTitles(directory, 'test/named.test.mjs', BOUND);
+  assert.equal(listed.error, undefined, `the run was read as ${listed.error}`);
+  assert.deepEqual(listed.counts, new Map([['test/named.test.mjs', 1], ['beside it', 1]]));
+});
+
+test('T2: a changed conversion-list file whose older test is titled after the file passes, with an arm under that title', (t) => {
+  const older = `${header}test('test/converting.test.mjs', () => { clearTimeout(setTimeout(() => {}, 5)); });\n`;
+  const f = plainFixture(t, { 'test/suite.sh': listing(CONVERTING), [CONVERTING]: older });
+  writeFileSync(join(f.root, CONVERTING), `${older}// a comment\n`);
+  gitIn(f.root, 'commit', '-qam', 'comment only');
+  const head = gitIn(f.root, 'rev-parse', 'HEAD').trim();
+  const record = recordOf([
+    { file: CONVERTING, test: null, api: null, delay: null },
+    { file: CONVERTING, test: CONVERTING, api: 'setTimeout', delay: 5 },
+  ]);
+  assert.deepEqual(addedTimers({ base: f.base, head, facts: gitFacts(f.root, { bound: BOUND }), record }), { ok: true, errors: [] });
+  assert.deepEqual(worktrees(f.root), []);
+});
+
 test('the base worktree is a detached checkout of the base under a temporary directory, using the head\'s node_modules, removed and pruned after', (t) => {
   const f = plainFixture(t, { 'file.txt': 'base\n', 'node_modules/kept/index.js': 'export default 1;\n', '.gitignore': 'node_modules\n' });
   writeFileSync(join(f.root, 'file.txt'), 'head\n');
@@ -287,6 +310,34 @@ test('the base worktree is removed and pruned when the run inside it throws', (t
   assert.throws(() => gitFacts(f.root).atBase(f.base, (directory) => { seen = directory; throw new Error('the run failed'); }), /the run failed/);
   assert.equal(existsSync(dirname(seen)), false);
   assert.deepEqual(worktrees(f.root), []);
+});
+
+test('the base worktree is removed by git worktree remove --force and then git worktree prune, after a run that answers and after one that throws', (t) => {
+  const f = plainFixture(t, { 'file.txt': 'base\n' });
+  for (const ends of ['answers', 'throws']) {
+    // Every command atBase runs is recorded, then run for real, so the cleanup is both observed
+    // as git's commands in order and checked in the repository afterwards.
+    const commands = [];
+    const execute = (command, args, options) => {
+      commands.push([command, ...args]);
+      return execFileSync(command, args, { ...options, env: options.env });
+    };
+    let seen;
+    const use = (directory) => {
+      seen = directory;
+      if (ends === 'throws') throw new Error('the run failed');
+      return 'answered';
+    };
+    if (ends === 'throws') assert.throws(() => gitFacts(f.root, { execute }).atBase(f.base, use), /the run failed/);
+    else assert.equal(gitFacts(f.root, { execute }).atBase(f.base, use), 'answered');
+    assert.deepEqual(commands, [
+      ['git', 'worktree', 'add', '--detach', '--quiet', seen, f.base],
+      ['git', 'worktree', 'remove', '--force', seen],
+      ['git', 'worktree', 'prune'],
+    ], `after a run that ${ends}`);
+    assert.equal(existsSync(dirname(seen)), false);
+    assert.deepEqual(worktrees(f.root), []);
+  }
 });
 
 test('a conversion-list test registered through a helper in another file counts under the conversion-list file at the head and at the base', (t) => {
@@ -330,6 +381,22 @@ test('the base run loads the head\'s node_modules, and a base run that fails to 
   assert.deepEqual(addedTimers({ base: f.base, head, facts: gitFacts(f.root, { bound: BOUND }), record }), {
     ok: false, errors: ['test/other-converting.test.mjs: the base run fails to load the file or registers no test'],
   });
+  assert.deepEqual(worktrees(f.root), []);
+});
+
+test('T9: an added timer-free test whose file ran passes though the head run outlasts the base-run bound', (t) => {
+  const f = plainFixture(t, {
+    'test/suite.sh': listing(CONVERTING),
+    [CONVERTING]: `${header}test('older', () => {});\n`,
+  });
+  // The added test holds its run for three seconds, past the two-second bound, with no timer:
+  // Atomics.wait blocks the thread without arming one.
+  const slow = "test('added and slow', () => { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000); });\n";
+  writeFileSync(join(f.root, CONVERTING), `${header}test('older', () => {});\n${slow}`);
+  gitIn(f.root, 'commit', '-qam', 'add a slow test');
+  const head = gitIn(f.root, 'rev-parse', 'HEAD').trim();
+  const record = recordOf([{ file: CONVERTING, test: null, api: null, delay: null }]);
+  assert.deepEqual(addedTimers({ base: f.base, head, facts: gitFacts(f.root, { bound: 2_000 }), record }), { ok: true, errors: [] });
   assert.deepEqual(worktrees(f.root), []);
 });
 

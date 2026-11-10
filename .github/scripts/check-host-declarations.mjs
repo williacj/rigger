@@ -10,14 +10,16 @@ import { eventBase, gitFacts as listFacts } from './check-test-list-growth.mjs';
 
 /**
  * The lister: a `node --test` reporter naming, one JSON line each, every test the run reports at
- * nesting 0, which is every top-level test the file registers, and the run's duration from its
- * last summary. It never filters on `data.file`: a test registered through a helper reports the
- * helper's file, and one registered through the runner's mock reports the mock's.
+ * nesting 0, which is every top-level test the file registers; that the file's own run reported
+ * its summary; and the run's duration from its last summary. It never filters tests on
+ * `data.file`: a test registered through a helper reports the helper's file, and one registered
+ * through the runner's mock reports the mock's.
  */
 export default async function* lister(source) {
   for await (const { type, data } of source) {
     if ((type === 'test:pass' || type === 'test:fail') && data.nesting === 0) yield JSON.stringify({ title: data.name }) + '\n';
-    else if (type === 'test:summary' && data.file === undefined) yield JSON.stringify({ duration_ms: data.duration_ms }) + '\n';
+    else if (type === 'test:summary' && data.file !== undefined) yield JSON.stringify({ loaded: true }) + '\n';
+    else if (type === 'test:summary') yield JSON.stringify({ duration_ms: data.duration_ms }) + '\n';
   }
 }
 
@@ -30,15 +32,16 @@ function counts(values) {
 
 /**
  * A lister run's output for one file: how many top-level tests it registered under each title,
- * and the run's duration, or the reason the run gives no titles. node:test reports a file that
- * throws while loading, or registers no test, as a test named by the path it was given.
+ * and the run's duration, or the reason the run gives no titles. On node:test v26.13.0 a file that
+ * loads and registers a test reports its own summary; one that throws while loading, or registers
+ * no test, reports none, and appears instead as one test named by its path, which is no title.
  */
-export function listing(output, file) {
+export function listing(output) {
   const entries = output.split('\n').filter((line) => line !== '').map((line) => JSON.parse(line));
-  const titles = entries.filter((entry) => Object.hasOwn(entry, 'title')).map(({ title }) => title);
   const summary = entries.find((entry) => Object.hasOwn(entry, 'duration_ms'));
-  if (titles.includes(file)) return { error: 'fails to load the file or registers no test' };
   if (!summary) return { error: 'ended before the runner reported its summary' };
+  if (!entries.some((entry) => entry.loaded === true)) return { error: 'fails to load the file or registers no test' };
+  const titles = entries.filter((entry) => Object.hasOwn(entry, 'title')).map(({ title }) => title);
   return { counts: counts(titles), duration_ms: summary.duration_ms };
 }
 
@@ -90,7 +93,7 @@ export function modifiedConversionFiles({ base, head, facts }) {
 /**
  * The added-timer mode between a base and a head, given the record the head's `npm test` wrote
  * (D30 rule 6). Each modified conversion-list file F is run under the lister at the head and, in
- * one worktree at the base, at the base. An arm recorded from F under title X is refused where
+ * one worktree at the base, at the base; only the base run is held to `facts.bound` (T18). An arm recorded from F under title X is refused where
  * head(X) > base(X): base(X) is the base run's count of X, and head(X) the larger of the head
  * run's count and 1, since the arm proves the job's run registered X. A file whose run gives no
  * titles, and a file gaining a test the record never ran, are refused naming the file.
@@ -101,7 +104,7 @@ export function addedTimers({ base, head, facts, record }) {
   const runnable = files.filter(({ error }) => !error);
   const heads = new Map(runnable.map(({ file }) => [file, facts.list(facts.root, file)]));
   const bases = facts.atBase(base, (directory) => new Map(runnable
-    .map(({ file, atBase }) => [file, atBase ? facts.list(directory, file) : { counts: new Map() }])));
+    .map(({ file, atBase }) => [file, atBase ? facts.list(directory, file, facts.bound) : { counts: new Map() }])));
   const errors = [];
   for (const { file, error } of files) {
     if (error) { errors.push(`${file}: ${error}`); continue; }
@@ -141,7 +144,7 @@ export function checkAddedTimers(context, facts, record) {
   } catch (error) { return { ok: false, errors: [error.message] }; }
 }
 
-// How long one lister run of one file may take: four times the slowest base run measured. CI run
+// How long one base run of one file may take (T18): four times the slowest base run measured. CI run
 // 42895935883 (job 130109118574, ubuntu-latest, Node v26.13.0) ran every conversion-list file at
 // merge base cd181d6f under the lister; the slowest was test/loop.test.mjs, at 149012 ms. The
 // multiple of four is a judgment, leaving room for a slower runner and for the file's growth.
@@ -151,7 +154,8 @@ export const BASE_RUN_BOUND_MS = 4 * 149_012;
  * A lister run of one file in `directory`: a full `node --test` run of it, with no skip, name or
  * only pattern, since the runner reports nothing for a test such a pattern filters out. It runs
  * under the environment of this process less Git's, the runner's own context and the timer
- * record, so it neither writes the record nor reports into a runner that started this check.
+ * record, so it neither writes the record nor reports into a runner that started this check. A run
+ * given a bound in milliseconds is stopped there; one given none runs to its end.
  */
 export function listTitles(directory, file, bound) {
   const env = Object.fromEntries(Object.entries(process.env)
@@ -161,14 +165,15 @@ export function listTitles(directory, file, bound) {
   });
   if (ran.error?.code === 'ETIMEDOUT') return { error: `ran past its bound of ${bound} ms` };
   if (ran.error) return { error: `could not run: ${ran.error.message}` };
-  return listing(ran.stdout, file);
+  return listing(ran.stdout);
 }
 
 /**
  * The list-growth check's history reads, a file's text at a commit, or null where it is absent,
- * and the lister runs: at the head in `root`, and at a base in a worktree `atBase` makes.
+ * and the lister runs: at the head in `root`, and at a base in a worktree `atBase` makes. `execute`
+ * runs the worktree's git commands, as `execFileSync` does.
  */
-export function gitFacts(root = process.cwd(), { bound = BASE_RUN_BOUND_MS } = {}) {
+export function gitFacts(root = process.cwd(), { bound = BASE_RUN_BOUND_MS, execute = execFileSync } = {}) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
   return {
     ...listFacts(root),
@@ -189,7 +194,7 @@ export function gitFacts(root = process.cwd(), { bound = BASE_RUN_BOUND_MS } = {
      * `git worktree prune`, however `use` ends.
      */
     atBase(sha, use) {
-      const git = (...args) => execFileSync('git', args, { cwd: root, env, timeout: 120_000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      const git = (...args) => execute('git', args, { cwd: root, env, timeout: 120_000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
       const holder = mkdtempSync(join(tmpdir(), 'rigger-base-run-'));
       const directory = join(holder, 'base');
       try {
@@ -204,7 +209,8 @@ export function gitFacts(root = process.cwd(), { bound = BASE_RUN_BOUND_MS } = {
         }
       }
     },
-    list: (directory, file) => listTitles(directory, file, bound),
+    bound,
+    list: listTitles,
   };
 }
 
