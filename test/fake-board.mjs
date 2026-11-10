@@ -47,16 +47,25 @@ export function createFakeBoard({ columns = [], fields = [], items = [], labels 
     return gate.then(() => structuredClone(answer()));
   };
 
+  // Where real gh can differ (D29 rule 12.5): the board contract ties these answers as the fake gh gives
+  // them through the forge adapter's read side (`test/gh-contract.test.mjs`). Called directly, they
+  // answer in another form than that read side does: `readColumns` the column names rather than the
+  // declared columns by key, and `readItems` every item, with its type, rather than the cards alone.
   const answering = {
     readItems: () => read(() => board.items),
     readColumns: () => read(() => board.columns),
     readFields: () => read(() => board.fields.filter((field) => field.type === undefined)),
+    // Where real gh can differ (D29 rule 12.5): the column field comes first here, and a field given no
+    // type is single-select; GitHub answers its board's own order and types. The contract ties the
+    // form, and that `Status` is a single-select field, through the forge adapter.
     readFieldTypes: () => read(() => [{ name: 'Status', type: 'SINGLE_SELECT' }, ...board.fields.map(({ name, type = 'SINGLE_SELECT' }) => ({ name, type }))]),
     readLabels: () => read(() => board.labels),
     /**
      * Issue `number`'s state as `{ state }`, `open`, `closed` or `none`, from the states the board
      * was built with or `setIssueState` gave it, and `none` for a number it holds no state for.
      */
+    // Where real gh can differ (D29 rule 12.5): untied. The fake gh answers an issue's state from its
+    // repository, not from here, so no contract case reaches this answer.
     readIssueState: (number) => read(() => ({ state: board.issueStates[number] ?? 'none' })),
     /**
      * What L0 hands L3 for the priority declaration `priority`, a config's `board.priority`:
@@ -64,6 +73,9 @@ export function createFakeBoard({ columns = [], fields = [], items = [], labels 
      * field's options in board order. With no declaration, no item has a priority and there is
      * no order. The adapter's read takes its declaration from the config it was given.
      */
+    // Where real gh can differ (D29 rule 12.5): untied. No contract case reaches this answer, nor its
+    // failures for a missing field or one of another type; the fake gh answers the priority read from
+    // the items and fields instead.
     readPriority: (priority) => read(() => {
       if (!priority) return { items: board.items.map((item) => ({ ...item, priority: null })), declared: null, options: null };
       const field = board.fields.find(({ name }) => name === priority.field);
@@ -81,6 +93,8 @@ export function createFakeBoard({ columns = [], fields = [], items = [], labels 
      * first met, and how many redacted items it holds. The adapter's read takes `repo` from the
      * config it was given.
      */
+    // Where real gh can differ (D29 rule 12.5): untied. No contract case reaches this answer; the fake gh
+    // answers the other-repository read from the items instead.
     readOtherRepositories: (repo) => read(() => {
       const others = board.items
         .filter(({ type, repository }) => ['issue', 'pullRequest'].includes(type) && repository.toLowerCase() !== repo.toLowerCase())

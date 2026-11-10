@@ -255,7 +255,7 @@ env:
         }
         const projectSources = {
           ".npmrc": "2ab58d679ddb6c245446999a2ea5fb54783b9aa26c94ce663cb7db0be0a8f7f8",
-          "test/suite.sh": "a8396006c5c6b4c3f1892bf7287307e60176e17094f9455ec5396312d81925f1",
+          "test/suite.sh": "d9ea1addc140aca1a33ab06bfa91a52c655810f79f8771bf12a21b45d78b2b71",
           "test/suite-guard.cjs": "11057fb99548ffdfb62cea550d6aa7fb99c310b232a544a9e809d0936ece5370"
         };
         for (const [path, expected] of Object.entries(projectSources)) if (await fingerprint(join(cwd, path)) !== expected) return;
@@ -1064,6 +1064,7 @@ jobs:
           CI_HOST_REPORT_NAME: host-tests.junit.xml
           CI_HOST_SOURCE: ${{ steps.host_source.outputs.host_source }}
           CI_HOST_ELIGIBLE: ${{ steps.host_source.outputs.host_eligible }}
+          RIGGER_LIVE_GH: '1'
       - name: Verify Mac containment proof claims
         run: node test/verify-mac-containment "$RUNNER_TEMP/containment-proof-26"
       - name: Keep Mac containment proof evidence

@@ -1579,3 +1579,19 @@ test('opted-in refused hook ends only its controlled Worker ancestor before cont
     }
   }
 });
+
+// Host reason: wiring; this process-free configuration check remains in an awaiting-split file (D30 rule 3).
+// Rigger decision: none; this check reads the declared step environment without evaluating CI_HOST.
+// Deterministic wiring counterpart: test/gh-contract.test.mjs :: no tracked file under test/ names the live gh opt-in but the four admitted.
+test('nightly opts in for gh on its host run alone, and no other CI step does (D29 rule 12.3)', () => {
+  const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
+  const host = ci.jobs.nightly.steps.find((step) => step.id === 'host_tests');
+  assert.equal(host.run, hostInvocationCommand);
+  assert.equal(host.env.RIGGER_LIVE_GH, '1');
+  const optedIn = Object.entries(ci.jobs).flatMap(([name, job]) => (job.steps ?? [])
+    .filter((step) => Object.hasOwn(step.env ?? {}, 'RIGGER_LIVE_GH'))
+    .map((step) => `${name}: ${step.id ?? step.run ?? step.uses}`));
+  assert.deepEqual(optedIn, ['nightly: host_tests']);
+  assert.equal(Object.hasOwn(ci.env ?? {}, 'RIGGER_LIVE_GH'), false);
+  for (const job of Object.values(ci.jobs)) assert.equal(Object.hasOwn(job.env ?? {}, 'RIGGER_LIVE_GH'), false);
+});
