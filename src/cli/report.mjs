@@ -4,7 +4,7 @@
 import { join } from 'node:path';
 
 import { HOUR, report as derive } from '../observation/report.mjs';
-import { PACKAGE, settled } from './doctor.mjs';
+import { PACKAGE, outsideText, settled } from './doctor.mjs';
 import { STATE, recording } from './recording.mjs';
 
 /** A figure as printed: to four decimal places at most, which states every value a test sets exactly. */
@@ -100,7 +100,43 @@ function roundLines(rounds) {
   ])];
 }
 
-/** The lines L2 prints: rates and escalations per run, then stream rates and rounds by kind. */
+/** A heading and its lines, or `none` beneath it where there are none. */
+const listed = (heading, lines) => [heading, ...(lines.length === 0 ? ['      none'] : lines)];
+
+/**
+ * A value of the acceptance blocks as they print it. Any of them comes from the stream, where any
+ * string can stand (boundary rule 4), so a number prints as itself, -0 as `-0`, which `String`
+ * would print as `0`, and every other value as JSON, through `outsideText`. JSON quotes every string and escapes the quotes and backslashes in it, and
+ * `outsideText` the line breaks JSON leaves raw, so no value can print a boundary of the list or
+ * line it stands in: one dispatch, role or author never prints as two, and none breaks a line.
+ */
+const shown = (value) => {
+  if (Object.is(value, -0)) return '-0';
+  return typeof value === 'number' ? String(value) : outsideText(JSON.stringify(value) ?? String(value));
+};
+
+/** The acceptance changes across the stream, as L2 prints them: changes, deleted content, growth, the maker's changes, and authors. */
+function acceptanceLines({ changes, deleted, grew, authors }) {
+  const by = (dispatches) => dispatches.map(({ dispatch, role }) => `, dispatch ${shown(dispatch)} (role ${shown(role)})`).join('');
+  const at = (card, editedAt) => `      card #${shown(card)} at ${shown(editedAt)}`;
+  return [
+    ...listed('    acceptance changes, each with who made it', changes.map(({ card, editedAt, editor, dispatches }) =>
+      `${at(card, editedAt)}: editor ${shown(editor)}${by(dispatches)}`)),
+    ...listed('    content deleted from a card\'s history', deleted.map(({ card, editedAt, editor }) =>
+      `${at(card, editedAt)}: editor ${shown(editor)}`)),
+    ...listed('    acceptances that grew after admission', grew.map(({ card, editedAt, items, admitted }) =>
+      `${at(card, editedAt)}: ${shown(items)} items, over ${shown(admitted)} at its first pull`)),
+    ...listed('    acceptance changes made during the card\'s maker dispatch', changes.filter(({ duringMaker }) => duringMaker)
+      .map(({ card, editedAt }) => at(card, editedAt))),
+    ...listed('    each card\'s author', authors.map(({ card, source, names }) => {
+      if (source === 'author') return `      card #${shown(card)}: ${shown(names[0])}, as its acceptance.history records`;
+      if (source === 'dispatches') return `      card #${shown(card)}: roles ${names.map(shown).join(', ')}, whose dispatch windows hold its opening`;
+      return `      card #${shown(card)}: the owner, since no role dispatch window holds its opening`;
+    })),
+  ];
+}
+
+/** The lines L2 prints: rates and escalations per run, then stream rates, acceptance changes and rounds by kind. */
 function l2Lines({ runs, stream }) {
   const line = ({ faults, claims }, where) => rateLine('host-fault rate', 'host faults', 'work claims', { counted: faults, of: claims, none: `no work claim in ${where}` });
   return [
@@ -111,6 +147,7 @@ function l2Lines({ runs, stream }) {
     line(stream.hostFaults, 'the stream'),
     escalationLine(stream.escalations, 'the stream'),
     '    each escalation is listed under its run',
+    ...acceptanceLines(stream.acceptance),
     ...roundLines(stream.rounds),
   ];
 }
