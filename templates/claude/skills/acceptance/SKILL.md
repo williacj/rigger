@@ -233,7 +233,7 @@ another info string or none. That agent checks these defects:
 4. A request no item covers.
 5. Contradicting sibling cards.
 
-`check:card` checks defect 1 and spec-style rules 1 and 2, not scope.
+`check:card` checks new IDs, spec-style 1/2, spike-registration scope; humans judge wider scope.
 
 You revise the acceptance before any maker starts. This review is part of filing.
 
