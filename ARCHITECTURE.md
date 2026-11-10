@@ -2286,7 +2286,7 @@ The fix would then be a field on L1's `dispatch.end`, recorded by its exit-clean
 
 ### Acceptance changes and who made them
 
-`R-CARD-6`, `R-CARD-11` and `R-CARD-5` ask what changed in a card's acceptance, and who changed it.
+`R-CARD-6`, `R-CARD-42` and `R-CARD-5` ask what changed in a card's acceptance, and who changed it.
 `report` derives the answers across the stream, from L2's `acceptance.history` and the dispatch
 events that bound each dispatch's window. It reads these events by these fields, and no other:
 
@@ -2305,7 +2305,7 @@ The derivation's terms:
   `dispatch.end`.
 - **Who made a change** is the revision's `editor`, and each role dispatch whose window holds its
   `editedAt`, by id and `role`. Those dispatches are `D20` rule 3's session.
-- An acceptance **grew after admission** (`R-CARD-11`) where a revision after the card's first
+- An acceptance **grew after admission** (`R-CARD-42`) where a revision after the card's first
   `pull` holds more `items` than the revision current at that pull. The revision current at a pull
   is the newest whose `editedAt` is at or before the pull's `ts`.
 - An acceptance **changed during the maker's dispatch** (`R-CARD-5`) where a change's `editedAt`

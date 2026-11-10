@@ -252,8 +252,9 @@ function movedCopy(dir) {
 
 /**
  * The rebuilt source copy, launchers and prompts, each checked against the manifest's sha256 first.
- * The comparison below sets aside only the header and slot line; in the source wrapper line it
- * rewrites caffeinate -i to caffeinate -dims, keeping every other byte in the comparison.
+ * The comparison below sets aside only the header, the slot line and the test-edit and scope policy
+ * bullets; in the source wrapper line it rewrites caffeinate -i to caffeinate -dims, keeping every
+ * other byte in the comparison.
  */
 function sourceCopy(dir) {
   mkdirSync(dir);
@@ -262,6 +263,22 @@ function sourceCopy(dir) {
     assert.equal(createHash('sha256').update(text).digest('hex'), SOURCE[name].sha256, `${name} is the manifest's`);
     writeFileSync(join(dir, name), text, { mode: NAMES.includes(name) ? 0o755 : 0o644 });
   }
+}
+
+/**
+ * The prompts' test-edit and scope policy bullets, which `D33` rewrote after the source copy was
+ * taken. Each is set aside on both sides with its indented sub-items, so policy wording is no
+ * invariant of the launch.
+ */
+const POLICY = ['- **Grants, in one round:**', '- **Test edits:**', '- **Found test faults:**', "- Keep to the card's scope"];
+function withoutPolicy(lines) {
+  let inPolicy = false;
+  return lines.filter((line) => {
+    if (POLICY.some((bullet) => line.startsWith(bullet))) return !(inPolicy = true);
+    if (inPolicy && /^\s/.test(line)) return false;
+    inPolicy = false;
+    return true;
+  });
 }
 
 /** What one copy of a launcher handed the stub codex, with that run's own paths named generically. */
@@ -288,7 +305,7 @@ function invocation(w, copy, launch) {
   const result = run(w, join(tools, launch.name), launch.args(env.CODEX_LOG_DIR, tools), { env });
   assert.equal(result.status, 0, `${copy} ${launch.name}: ${result.stderr}`);
   const generic = (text) => text.replaceAll(tools, '<TOOLS>').replaceAll(home, '<HOME>');
-  const kept = (stdin) => stdin.split('\n').filter((line) => !line.startsWith('<!-- ABOUTME:') && !line.includes('**Load and the slot:**')).map((line) => copy === 'source' && line.includes('Wrap every suite run') ? line.replaceAll('caffeinate -i', 'caffeinate -dims') : line).join('\n').replace(/\n*$/, '');
+  const kept = (stdin) => withoutPolicy(stdin.split('\n')).filter((line) => !line.startsWith('<!-- ABOUTME:') && !line.includes('**Load and the slot:**')).map((line) => copy === 'source' && line.includes('Wrap every suite run') ? line.replaceAll('caffeinate -i', 'caffeinate -dims') : line).join('\n').replace(/\n*$/, '');
   return codexCalls({ stub }).map((call) => ({
     args: call.args.map(generic),
     cwd: generic(call.cwd),

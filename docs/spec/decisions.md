@@ -72,6 +72,7 @@ reused.
 | D29 | Rigger's suite runs in two tiers, and the hooks run one | Ratified. Amended in #1140. |
 | D30 | Until the conversion closes, two lists exempt files from D29's bounds | Ratified. Amended in #1140. |
 | D31 | macOS CI runs on hosted runners unless the owner selects the Mac mini | Ratified |
+| D33 | A test fault is fixed on the card that finds it | Ratified |
 | D34 | A release tags the commit its milestone's exit run tested | Ratified |
 
 ## D1 — Redo over resume
@@ -1242,6 +1243,78 @@ merge commit. So rule 3 names what holds outside the workflow.
 
 What reverses this: the repository accepting outside pull requests, which ends rule 3's reliance on
 approving none, or hosted capacity no longer failing, which removes the need for the variable.
+
+## D33 — A test fault is fixed on the card that finds it
+
+**Status:** Ratified.
+
+### Rule
+
+1. A test fault whose class the card's acceptance or a judge's blocking finding names is the
+   card's own work. `R-CARD-42` to `R-CARD-48` and `R-VERDICT-14` hold what must be true.
+2. Two kinds of search hit are not the card's own:
+   1. A hit a ratified decision permits at the judged head is not an instance. A real timer in a
+      file `D30`'s lists exempt from `D29`'s bounds is one.
+   2. A hit in a path `AGENTS.md`'s "Self-hosting" lists is an instance, and becomes its own
+      card whether the engine dispatched the card or it runs by hand. This is `R-CARD-48`'s case
+      here, and `D25` rule 5 governs how that card merges.
+3. A maker may rewrite or delete a test without the owner's permission or a test-line grant when
+   it is one of these:
+   1. a test the card's acceptance names;
+   2. a test `R-CARD-42` makes the card's own;
+   3. a test that passes at the base and fails at the judged head unless the card changes it.
+
+   Rule 3 also reaches a helper or fixture file that such a test loads, outside a path rule 2.2
+   names. A change there binds every test loading that file to the conditions below.
+
+   Each condition below binds that change:
+   1. Each requirement the test declares stays declared at the head by a test that passes the
+      judge's proof-declaration check for the behaviour the removed test proved.
+   2. For a test declaring no requirement, the pull request names the behaviour it checked and
+      the test that now checks it, or says why that behaviour no longer exists.
+   3. A rewrite never weakens what the test proves.
+4. Evidence about a change to a test carries no custody, private-original, digest or hash
+   requirement. The diff, the suite's result at the judged head, and the output of
+   `npm run mutation:receipt` and `npm run proof:diff` are the whole of it.
+5. A failing test joins an open card only when `R-CARD-42` to `R-CARD-48` make it that card's
+   own. Joining is one comment on that card naming the test and its failure. Any other failing
+   test gets a new card, and no card is filed per failing line or per assertion.
+6. A fix under rule 1 or rule 3 is not "Restructuring code" under `AGENTS.md`'s "Ask the owner
+   before". Extracting a helper or fake under the Rule of Three is not either. Moving, splitting
+   or merging test files still is. So is a shared harness, meaning one module that owns fixture
+   lifetime for every test.
+7. Rules 3 and 4 reach tests only. A file outside the tests keeps every permission and evidence
+   rule `AGENTS.md` and the skills set.
+
+### Notes
+
+The rule exists because the old one turned findings into cards. A classification of 118
+test-quality cards judged that 26 existed only because a finding became a card, and that at least
+17 more were per-line filings later folded together. Those figures are a reviewer's reading of
+each card, not a measurement.
+
+The class is fixed by whoever names it, never by the maker. That keeps the scope argument to one
+question per hit: does this hit exhibit the named defect? Whoever names a class writes its search
+as narrow as the defect, because the search sets how far the card reaches.
+
+A pattern-wide search can pull many files into one card. That is the point: a bad pattern found
+once is fixed everywhere a search finds it. The round bound (`R-LOOP-9`) still caps the card.
+
+A judge sees no other judge's findings (`R-EVIDENCE-4`). Each judge therefore reruns the searches
+the acceptance and its own findings name, and a class one judge named is checked by that judge.
+
+`R-CARD-43` to `R-CARD-48` and `R-VERDICT-14` land with no test claiming them. The owner excepted
+them from `AGENTS.md`'s claiming-test rule under its Rule #1, in owner ruling U182 (739#6731294541),
+because no test can observe a role following its prompt. A test asserting template text would
+claim a row without proving a behaviour, the second signal `D17`'s notes name. `R-CARD-42` is
+claimed by the tests of the acceptance-growth derivation its first sentence's `checked by` names,
+retargeted from `R-CARD-11` in the owner ruling at 1305#6768347106. The matrix marks the six other
+`R-CARD` rows as gaps, and `R-VERDICT-14` as `nothing could`. `D17`'s counted set does not gain
+them, because it holds only rows older than `D17`.
+
+Two signals would reverse it. One: a merged deletion under rule 3 is later found to have left a
+declared requirement unproved, twice. Two: three of the first ten cards whose scope grew by a
+class search escalate as ambiguous on exhausted rounds. Both thresholds are judgments.
 
 ## D34 — A release tags the commit its milestone's exit run tested
 

@@ -27,7 +27,8 @@ permission first.
   interactive session too: if you did the work, dispatch an independent reviewer rather than
   reading it back to yourself.
 - **Never delete or rewrite existing work without the owner's permission.** Ask unless you
-  added it in this same piece of work, or your change orphaned it.
+  added it in this same piece of work, your change orphaned it, or `D33` rule 3 lets your card
+  change it.
 - **Finished means finished.** Every piece of work states what done means before it starts, and
   you finish against that. A follow-up issue may only cover what falls outside it. Anything
   inside it that you left undone means the work is not done, and a defect you introduced is
@@ -39,7 +40,8 @@ permission first.
 - **Write the acceptance before the work.** A card states what done means before anything
   starts, and whoever files it writes that, loading the acceptance skill first. Only its author
   changes it afterwards — never the maker, who is judged against it. Work you find outside it
-  becomes its own card, with its own acceptance.
+  becomes its own card, with its own acceptance, except a test fault `R-CARD-42` makes the
+  card's own.
 - **Answer the question asked.** If the owner is asking rather than instructing, answer it and
   stop.
 - **Honest disagreement beats fake consensus.** Call out bad ideas — the owner depends on it.
@@ -106,7 +108,8 @@ third treatment.
 
 Before unrelated work, establish a green deterministic baseline. Before changing an external
 boundary, establish its affected host baseline too. An admitted baseline-repair card may work
-only on its specifically recorded red failure; unrelated maker work stops. That failure is the
+only on its specifically recorded red failure, and on the test faults `R-CARD-42` makes its own;
+unrelated maker work stops. That failure is the
 repair premise, never permission for new failures. Commit its repair separately. Full
 deterministic and full host baselines must pass before broader work resumes.
 
@@ -142,7 +145,10 @@ until CI supplies evidence. These checks do not replace the review and merge gat
   `.claude/skills/tdd/` skill before the first test body. Spike cards are exempt: throwaway
   work in a gitignored spikes directory, never merged.
 - **Every bug fix starts with the failing test.** Never delete a failing test — raise it with
-  the owner.
+  the owner — unless `D33` rule 3 lets your card delete it.
+- **File a flake once per failure family.** A failing test joins the open card `R-CARD-42`
+  makes it part of, as one comment naming the test and its failure (`D33` rule 5). File a new
+  card only when none does.
 - **Test behaviour at observable boundaries.** Derive expected values independently and doubles
   from observed or documented contracts. Use injected clocks for algorithmic time decisions;
   retain real-host proof for wiring, OS behaviour and real deadlines. Establish fixture premises
@@ -166,7 +172,8 @@ to guess.
 Ask before any of these.
 
 - Any architectural decision `D18` does not give the architect, or contradicting a recorded one.
-- Restructuring code, or adding backward compatibility.
+- Restructuring code, or adding backward compatibility. `D33` rule 6 says which test changes
+  are not restructuring.
 - Choosing between approaches where the choice matters.
 - Force-pushing, deleting a branch, or writing to an issue or pull request that is not your
   card's.

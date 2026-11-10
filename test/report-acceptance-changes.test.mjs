@@ -162,7 +162,7 @@ test('Table D row 11: a dispatch with no end and no later run.start is among who
 /** The acceptance growth `report` derives over `events`. */
 const grew = (events) => acceptance(events).grew;
 
-// proves R-CARD-11
+// proves R-CARD-42
 test('Table D row 12: a revision after the first pull holding more items than the one current at it grew the acceptance', () => {
   const answer = acceptance([pull(7, 50), history(7, [revision(10, 'owner', 'd-1', 3), revision(40, 'owner', 'd-2', 4), revision(60, 'owner', 'd-3', 5)]),
     pull(7, 70)]);
@@ -172,20 +172,20 @@ test('Table D row 12: a revision after the first pull holding more items than th
     'a revision at the pull\'s ts is current at it');
 });
 
-// proves R-CARD-11
+// proves R-CARD-42
 test('Table D row 12b: growth compares with the nearest revision carrying items at or before the pull, past a deleted one', () => {
   assert.deepEqual(grew([history(7, [revision(10, 'owner', 'd-1', 3), deleted(40, 'mallory'), revision(60, 'owner', 'd-2', 4)]), pull(7, 50)]),
     [{ card: 7, editedAt: at(60), items: 4, admitted: 3 }]);
 });
 
-// proves R-CARD-11
+// proves R-CARD-42
 test('Table D row 13: a revision after the first pull with the same items and another digest is a change and no growth', () => {
   const answer = acceptance([pull(7, 50), history(7, [revision(10, 'owner', 'd-1', 3), revision(60, 'owner', 'd-2', 3)])]);
   assert.deepEqual(answer.changes.map(({ editedAt }) => editedAt), [at(60)]);
   assert.deepEqual(answer.grew, []);
 });
 
-// proves R-CARD-11
+// proves R-CARD-42
 test('Table D row 14: a revision before the first pull holding more items is a change and no growth', () => {
   const answer = acceptance([history(7, [revision(10, 'owner', 'd-1', 3), revision(40, 'owner', 'd-2', 5)]), pull(7, 50)]);
   assert.deepEqual(answer.changes.map(({ editedAt }) => editedAt), [at(40)]);
@@ -319,7 +319,7 @@ test('report prints each acceptance change with its card, edit time, editor and 
   assert.deepEqual(block(injected, '    acceptance changes, each with who made it'), [`      card #3 at "${at(2)}": editor "b\\n    card #9 at x"`]);
 });
 
-// proves R-CARD-11, R-CARD-5
+// proves R-CARD-42, R-CARD-5
 test('report prints growth after admission and changes during the maker\'s dispatch, each naming its card', async () => {
   const l2 = await printedL2(mixed());
   assert.deepEqual(block(l2, '    acceptances that grew after admission'), [`      card #12 at "${at(60)}": 4 items, over 3 at its first pull`]);

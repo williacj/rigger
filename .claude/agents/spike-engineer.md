@@ -65,7 +65,7 @@ pull request carrying it is no longer docs-only.
    same code in the pull request is a defect.
 3. **You leave an incidental finding in the report.** This is not the finding the card asked for.
    It is the defect you hit on the way, root-caused, and rightly did not chase. Nothing reads a
-   report looking for work, so file it as its own card (`R-CARD-11`). A finding recorded only in
+   report looking for work, so file it as its own card (`R-CARD-42`). A finding recorded only in
    prose gets rediscovered later, at the cost of a whole dispatch.
 
 ## What you never do

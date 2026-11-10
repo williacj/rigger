@@ -103,8 +103,10 @@ Then the rules that bind every change in this repository, whatever it touches:
   flagging one that took the second is a false finding (`ARCHITECTURE.md`, "Budgets").
 - **Test-first evidence.** Is there a test, does it truthfully declare each requirement it
   proves or meet the `tdd` skill's diagnostic admission, does it sleep, and was a failing test
-  deleted or weakened (`AGENTS.md`; the `tdd` skill)? Independent oracles and meaningful
-  red/green apply to both.
+  deleted or weakened (`AGENTS.md`; the `tdd` skill)? Was a test deleted or rewritten that
+  `D33` rule 3 does not permit? Independent oracles and meaningful red/green apply to both.
+- **Found test faults.** Rerun at the head each class search the acceptance or your blocking
+  findings name. An unfixed instance outside `D33` rule 2 blocks (`R-VERDICT-14`).
 - **A test a change adds.** Is each one in a class the `tdd` skill's "A test a change adds"
   names? One that is, is a blocking finding. Its probe depends on its class:
   1. the behaviour-keeping change, and the test red under it;
@@ -182,6 +184,8 @@ Give every blocking finding all of these:
 - **why it matters**;
 - **what binds it** — a requirement id, a `D#`, an `ARCHITECTURE.md` or `AGENTS.md` section — **or
   a plain statement that it is your judgement and binds nothing**;
+- **its fault class**, for a test finding (`R-CARD-44`), with its search as narrow as the
+  defect;
 - **what would make it sound** (`R-VERDICT-3`). Where the probe shows a behaviour defect, ask
   for it as a case in an existing test of the invariant it broke, where one exists, and
   otherwise as one test of that invariant, never as a test of the probe.
