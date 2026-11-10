@@ -203,7 +203,7 @@ test('for a role\'s dispatch, anything the provider adapter reads it reads after
 
   const [run] = built.agent.runs();
   const settings = JSON.parse(run.args[run.args.indexOf('--settings') + 1]);
-  assert.deepEqual(settings.permissions.allow, ['Bash(npm test)']);
+  assert.deepEqual(settings.permissions.allow, ['Bash(npm test)', 'Bash(gh issue comment 1 --body-file .rigger-escalation.md)']);
 });
 
 test('given roleDispatch rejecting with NOT_STARTED, L3 hands that outcome to L2 unread, and the stream holds L3\'s dispatch event and no L1 dispatch.start for that dispatch', SETTLES_WITHIN, async () => {

@@ -989,7 +989,11 @@ the owner answers an escalation by removing it.
 
 A maker that cannot meet an acceptance item writes one escalation note and ends. The note is a
 comment on the card's issue holding a fenced block: the category, the item's ordinal, the reason,
-and the dispatch id its instruction names. `src/workflow/escalation.mjs` composes the instruction
+and the dispatch id its instruction names.
+
+The instruction names the one command that posts it, `gh issue comment <card> --body-file .rigger-escalation.md`, run from the role's working directory after the role writes the block to that file. The Claude Code adapter grants exactly that command for the dispatch's card, and nothing wider (`R-ESCALATE-27`). A Codex role posts it under the sandbox that lets it push (`R-WORK-42`).
+
+`src/workflow/escalation.mjs` composes the instruction
 for the note and parses the note back, so the two cannot drift, as `marker.mjs` does for markers.
 L2 reads notes when it answers the maker's outcome, through the forge adapter's read side. It reads
 only notes written by an account with write access to the repository. A note a session writes with

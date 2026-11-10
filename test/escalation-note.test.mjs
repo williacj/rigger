@@ -176,7 +176,7 @@ function instructionFor(provider) {
 test('Claude maker instruction gives the one-note block, ordinal rule, dispatch slot and stop rule', () => {
   const instruction = instructionFor('claude');
 
-  assert.match(instruction, /comment on card #12's issue/i);
+  assert.match(instruction, /write this block to `\.rigger-escalation\.md` in your working directory/i);
   assert.match(instruction, /```rigger-escalation\ncategory:.*\nitem:.*\nreason:.*\ndispatch: <the dispatch id>\n```/);
   assert.match(instruction, /count.*from 1.*acceptance items/i);
   assert.match(instruction, /write.*once.*never edit.*end/i);
@@ -187,7 +187,7 @@ test('Claude maker instruction gives the one-note block, ordinal rule, dispatch 
 test('Codex maker instruction gives the same one-note route as Claude', () => {
   const instruction = instructionFor('codex');
   assert.equal(instruction, instructionFor('claude'));
-  assert.match(instruction, /comment on card #12's issue with this block/);
+  assert.match(instruction, /run exactly `gh issue comment 12 --body-file \.rigger-escalation\.md`/);
   assert.match(instruction, /```rigger-escalation\ncategory:.*\nitem:.*\nreason:.*\ndispatch: <the dispatch id>\n```/);
 });
 

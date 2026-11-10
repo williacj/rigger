@@ -12,6 +12,12 @@ import { columnChanges } from '../src/workflow/transitions.mjs';
 import { createFakeBoard } from './fake-board.mjs';
 import { createFakeRepository } from './fake-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { dispatchedEscalation, escalationInstruction, escalationRoleInstruction } from '../src/workflow/escalation.mjs';
+import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { invocation as claudeInvocation } from '../src/substrate/providers/claude.mjs';
+import { readFileSync } from 'node:fs';
+import { answerFakeGh } from './fake-gh.mjs';
 
 const KIND = { maker: 'engineer', judges: ['reviewer', { role: 'architect', provider: 'codex' }, 'owner'] };
 const routing = (body = `${ROUTING_LINE}\n\nSent to pm.`, other = {}) => ({ body, author: 'someone', permission: 'none', edited: false, ...other });
@@ -155,4 +161,97 @@ test('an unreadable issue-comment read rejects the settle naming the card and an
   await assert.rejects(l2.settled(card, exited, { dispatch: DISPATCH }), /card #12's issue comments could not be read: timed out/);
   assert.deepEqual(fake.writes(), []);
   assert.deepEqual(repository.held().issues[0].comments, []);
+});
+
+// A role given a different card's command, or no writable note file, cannot use its dispatch grant.
+// proves R-ESCALATE-27
+test('makers and routed roles are instructed to write the note file and run exactly their own card command', () => {
+  for (const number of [12, 83]) {
+    const card = { number, title: 'Add a verb', body: BODY };
+    const instructions = [
+      escalationInstruction(card),
+      escalationRoleInstruction(card, { category: 'ambiguous', item: 1, reason: 'The author must choose.' }).instruction,
+    ];
+    for (const instruction of instructions) {
+      const stamped = dispatchedEscalation({ instruction }, DISPATCH).instruction;
+      assert.match(stamped, /write this block to `\.rigger-escalation\.md` in your working directory/i);
+      assert.ok(stamped.includes(`run exactly \`gh issue comment ${number} --body-file .rigger-escalation.md\``), 'the instruction must name the dispatch card and the exact command');
+      assert.match(stamped, /write the note once, never edit it,.*end your session after posting it/i);
+      assert.ok(stamped.includes(`dispatch: ${DISPATCH}`));
+    }
+  }
+});
+
+// A reach-only grant drops makers; a prefix grant admits other repositories or body files.
+// proves R-ESCALATE-27
+test('Claude dispatch settings append only the exact card escalation rule with and without reach', async () => {
+  const root = realpathSync.native(temporaryDirectory('rigger-escalation-settings-'));
+  const directory = join(root, 'main');
+  const head = join(root, 'head');
+  mkdirSync(join(directory, '.claude'), { recursive: true });
+  mkdirSync(head);
+  const declared = { allow: ['Bash(npm test)'], deny: ['WebFetch'], ask: ['Bash(git push:*)'] };
+  writeFileSync(join(directory, '.claude', 'settings.json'), JSON.stringify({ permissions: declared }));
+  const request = { agent: join(directory, 'agent.md'), tier: 'standard', prompt: 'Follow the escalation instruction.', directory };
+  for (const reach of [[], [head]]) {
+    for (const card of [12, 83]) {
+      const prior = await claudeInvocation({ ...request, reach });
+      const given = await claudeInvocation({ ...request, reach, card });
+      const at = given.args.indexOf('--settings') + 1;
+      const settings = JSON.parse(given.args[at]);
+      const paths = reach.flatMap((path) => [`Read(/${path}/**)`, `Edit(/${path}/**)`]);
+      assert.deepEqual(settings.permissions, {
+        ...declared,
+        allow: ['Bash(npm test)', ...paths, `Bash(gh issue comment ${card} --body-file .rigger-escalation.md)`],
+      }, 'only the dispatch card and fixed body file may be granted');
+      const withoutGrant = { ...settings, permissions: { ...settings.permissions, allow: settings.permissions.allow.slice(0, -1) } };
+      assert.deepEqual(withoutGrant, JSON.parse(prior.args[at]), 'all other settings must equal the invocation without a dispatch card');
+      assert.deepEqual(given.args.map((arg, index) => index === at ? '<settings>' : arg), prior.args.map((arg, index) => index === at ? '<settings>' : arg));
+      const { args: _given, ...rest } = given;
+      const { args: _prior, ...before } = prior;
+      assert.deepEqual(rest, before, 'the permission rule must not change another invocation field');
+    }
+  }
+});
+
+// The instructed file route must preserve note bytes, including shell characters and newlines.
+// proves R-ESCALATE-27
+test('the instructed file command posts its note bytes to the card through the shared forge', async () => {
+  const directory = temporaryDirectory('rigger-escalation-file-');
+  const file = join(directory, '.rigger-escalation.md');
+  const state = join(directory, 'board.json');
+  const reason = 'The author must choose: "blue", \'green\', $HOME, \\ and Δ; do not execute this.';
+  const body = ['```rigger-escalation', 'category: ambiguous', 'item: 1', `reason: ${reason}`, `dispatch: ${DISPATCH}`, '```', ''].join('\n');
+  const instruction = escalationInstruction({ number: 12 });
+  const matched = instruction.match(/`(gh issue comment \d+ --body-file \.rigger-escalation\.md)`/);
+  assert.ok(matched, 'the instruction must name the file command');
+  const command = matched[1];
+  writeFileSync(file, body);
+  writeFileSync(state, JSON.stringify({ repo: 'acme/widgets', project: 3, model: {}, writes: [], sent: [], repository: { issues: [{ number: 12, comments: [] }, { number: 13, comments: [] }] } }));
+  const result = await answerFakeGh(state, command.split(' ').slice(1), { cwd: directory, now: () => '2000-01-02T03:04:05Z' });
+  assert.equal(result.status, 0, result.stderr);
+  const held = JSON.parse(readFileSync(state, 'utf8'));
+  assert.deepEqual(held.repository.issues, [
+    { number: 12, comments: [{ body, createdAt: '2000-01-02T03:04:05Z' }] },
+    { number: 13, comments: [] },
+  ], 'only the instructed card receives the complete file contents');
+  assert.deepEqual(held.sent, [['issue', 'comment', '12', '--body-file', '.rigger-escalation.md']]);
+  assert.equal(readFileSync(file, 'utf8'), body, 'posting must leave the note file untouched');
+});
+
+// Guard the existing route: treating exit 0 as success before reading the note loses its category.
+// proves R-ESCALATE-27, R-LOOP-2
+test('a maker note keeps its category ahead of exit zero with no pull request', async () => {
+  for (const category of ['recorded-decision', 'critical', 'ambiguous']) {
+    let here;
+    here = await world(undefined, [], { readIssueComments: async () => here.repository.operations.readIssueComments(12) });
+    await here.repository.postIssueComment(12, note(category).body);
+    const answer = await here.l2.settled(here.card, { status: 'fulfilled', value: { exit: 0, stdout: '', stderr: '' } }, { dispatch: DISPATCH });
+    assert.deepEqual([answer.action, answer.category, answer.raiser, answer.item, answer.dispatch], ['escalate', category, 'maker', 1, DISPATCH]);
+    assert.equal(answer.pull, undefined, 'the fixture has no pull request');
+    await here.l2.escalated(here.card, answer);
+    const event = here.events().find(({ event }) => event === 'review.escalate');
+    assert.deepEqual([event.category, event.raiser], [category, 'maker']);
+    assert.equal(here.fake.writes().at(-1).args[1], rigger.board.columns.owner);
+  }
 });

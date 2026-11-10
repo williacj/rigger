@@ -559,6 +559,7 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | R-ESCALATE-24 | — the role writes an escalation note of its own, in any category; | the engine | the test suite | D26 |
 | R-ESCALATE-25 | — the role exits non-zero; | the engine | the test suite | D26 |
 | R-ESCALATE-26 | — the role's dispatch fails to start twice. A role's dispatch that fails to start never closes admission. | the engine | the test suite | D26 |
+| R-ESCALATE-27 | A maker, or a role an escalation goes to, that Rigger dispatches, on any provider Rigger ships and on each host Rigger supports, can write the escalation note its instruction asks for, under the settings `rigger init` gives a consumer. | the engine | the test suite | D26 |
 
 ### R-ESCALATE-9 — An escalation partly written
 
