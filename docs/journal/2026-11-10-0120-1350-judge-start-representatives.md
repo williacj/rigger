@@ -67,10 +67,20 @@ JS-P13/P14/P15 retain separate RED and GREEN originals with original/changed nam
 JS-V2 and JS-V3 retain separate old-source REDs and their corrected source records.
 No setup error, cancellation, file-only verdict or missing native ending is booked as meaningful RED.
 
-The one planned JS-FAULT changes only the selected hold's required `role` field at the actual panel
-selection return. It must fail the corrected payload assertion under `mutation:receipt`, with
-equal selected counts, exact restoration and subsequent GREEN. Its result and final head checks
-will be appended after execution; they are not claimed here.
+JS-FAULT ran against corrected implementation commit `afab070cc4a724f48a9a170e233bc8639da0928d`.
+The single guarded mutation changed only the selected hold's required `role` field to
+`corrupted`, preserving its hold action and remaining nested report payload. The actual panel
+test failed its deep payload assertion with `role: 'corrupted'` versus `role: 'reviewer'`.
+The receipt reports `killed`, with one selected named test in each control, mutant and restored
+run; mutant exit 1, control/restored exit 0, no skips/cancellations. The one anchor and applied
+readback are verified, restoration hashes match exactly, and restored product status is clean.
+JS-RESTORE includes this actual receipt's restored GREEN as well as the earlier complete
+310-test affected-file GREEN.
+
+JS-PRECOMMIT-D and the first normal pre-commit hook each measured 5,561 pass, 9 skip, 0 fail and
+0 cancelled at the implementation patch/tree. The final JS-H-D full deterministic and JS-H-A
+complete affected-file originals identify their actual reviewed head; their outcomes are supplied
+with the neutral handoff after the final journal commit. They are separate from these earlier runs.
 
 All three affected files use the actual deterministic suite route. `environment-retry` remains
 on the conversion list, preserving its full real-process runtime obligations. No affected
