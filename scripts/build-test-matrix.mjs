@@ -527,7 +527,9 @@ function runnerImports(tokens) {
     while (from < tokens.length && !(tokens[from].kind === 'word' && tokens[from].value === 'from')
       && !(tokens[from].kind === 'punct' && tokens[from].value === ';')) from++;
     const specifier = tokens[from]?.kind === 'word' ? tokens[from + 1] : null;
-    if (specifier?.kind !== 'string' || specifier.value !== RUNNER_MODULE) {
+    // A specifier is read as the string it decodes to; one the scan cannot decode may name the runner.
+    const module = specifier?.kind === 'string' ? decoded(specifier.value) : undefined;
+    if (module === undefined || (module !== null && module !== RUNNER_MODULE)) {
       at = from;
       continue;
     }
@@ -541,14 +543,16 @@ function runnerImports(tokens) {
       else if (piece.kind === 'punct' && piece.value === ',') groups.push({ pieces: [], braced, star: false });
       else if (piece.kind === 'punct' && piece.value === '*') groups.at(-1).star = true;
       else if (piece.kind === 'word' || piece.kind === 'string') {
-        groups.at(-1).pieces.push(piece.value);
+        // A string export name is read as it decodes; one that does not decode is taken as `test`.
+        groups.at(-1).pieces.push(piece.kind === 'string' ? decoded(piece.value) ?? 'test' : piece.value);
         groups.at(-1).braced = braced;
       }
     }
     for (const { pieces, braced: inBraces, star } of groups) {
       const local = pieces.at(-1);
       if (!local) continue;
-      imported.set(local, star ? '*' : inBraces ? pieces[0] : 'test');
+      // `default` is `test` itself, as an unbraced default import is.
+      imported.set(local, star ? '*' : inBraces && pieces[0] !== 'default' ? pieces[0] : 'test');
     }
     at = from + 1;
   }
@@ -608,7 +612,7 @@ function closing(tokens, open) {
  * The names a binding pattern or a list of declarators binds, from `from` up to `to`: every name
  * that is not an object key, a default value, an initialiser or a computed key.
  */
-function boundNames(source, tokens, from, to, places = new Set()) {
+function boundNames(source, tokens, from, to) {
   const names = [];
   const base = tokens[from]?.depth ?? 0;
   for (let at = from; at < to; at++) {
@@ -622,10 +626,7 @@ function boundNames(source, tokens, from, to, places = new Set()) {
       at = closing(tokens, at);
       continue;
     }
-    if (token.kind !== 'word') continue;
-    // A key names a property of the value, and a name binds it; neither reads a binding.
-    places.add(at);
-    if (punct(tokens[at + 1], ':')) continue;
+    if (token.kind !== 'word' || punct(tokens[at + 1], ':')) continue;
     names.push(token.value);
     // A declarator's own name is followed by its initialiser, or by `of` or `in` in a loop head.
     if (token.depth === base) at = expressionEnd(source, tokens, at + 1) - 1;
@@ -657,19 +658,15 @@ function memberWords(tokens, at) {
 }
 
 /**
- * For each token, whether the module's own evaluation reaches it, and the scopes round it.
+ * For each token, whether the module's own evaluation reaches it, and the bracket round it.
  *
  * A token is deferred inside a function body, however the function is written — a declaration,
- * an expression, a method, an arrow with a block or a concise body — and in a function's
- * parameters. Everything else runs as the module loads: statements, every kind of block, and the
- * expressions in them. Each token also carries the block scopes enclosing it, with the names each
- * declares, so a block-local binding can hide an imported name.
+ * an expression, a method, an arrow with a block or a concise body — in a function's parameters,
+ * and in a class instance field's initialiser. Everything else runs as the module loads:
+ * statements, every kind of block, and the expressions in them. The scan reads no scopes.
  */
 function moduleReach(source, tokens) {
   const reach = new Array(tokens.length);
-  // Where a declaration or a catch clause binds a name or names a pattern's key.
-  const bindingPlaces = new Set();
-  reach.bindingPlaces = bindingPlaces;
   const stack = [];
   const closedBy = new Map();
   const classes = new Set();
@@ -681,28 +678,15 @@ function moduleReach(source, tokens) {
   for (let at = 0; at < tokens.length; at++) {
     if (punct(tokens[at], '(') && arrowAt(tokens, closing(tokens, at) + 2)) arrowParameters.add(at);
   }
-  // Bindings a statement head (`for (const …)`, `catch (…)`) makes for the statement it heads.
-  const headScopes = [];
-  const owner = () => [...stack].reverse().find((frame) => frame.kind === 'block' || frame.head) ?? null;
   for (let at = 0; at < tokens.length; at++) {
     const token = tokens[at];
     while (stack.length > token.depth) closedBy.set(at, stack.pop());
     while (deferredEnds.length && deferredEnds.at(-1) <= at) deferredEnds.pop();
     const deferred = deferredEnds.length > 0 || stack.some((frame) => frame.kind === 'function' || frame.kind === 'parameters');
-    const scopes = [...stack.filter((frame) => frame.kind === 'block' || frame.head),
-      ...headScopes.filter((scope) => scope.from <= at && at < scope.to)];
-    reach[at] = { deferred, scopes, frame: stack.at(-1)?.kind ?? 'module' };
+    reach[at] = { deferred, frame: stack.at(-1)?.kind ?? 'module' };
     const previous = tokens[at - 1];
     const enclosing = stack.at(-1);
     if (word(token, 'class') && !punct(previous, '.')) classes.add(token.depth);
-    if (word(token) && DECLARES.has(token.value) && !punct(previous, '.')) {
-      const end = expressionEnd(source, tokens, at + 1);
-      owner()?.names.push(...boundNames(source, tokens, at + 1, end, bindingPlaces));
-    }
-    if (word(token, 'function') || (word(token, 'class') && !punct(previous, '.'))) {
-      const name = word(tokens[at + 1]) ? tokens[at + 1] : punct(tokens[at + 1], '*') && word(tokens[at + 2]) ? tokens[at + 2] : null;
-      if (name && !punct(previous, '=') && !punct(previous, '(') && !punct(previous, ',')) owner()?.names.push(name.value);
-    }
     if (arrowAt(tokens, at) && !punct(tokens[at + 1], '{')) deferredEnds.push(expressionEnd(source, tokens, at + 1));
     if (enclosing?.kind === 'class' && assignmentAt(tokens, at) && !memberWords(tokens, at).includes('static')) {
       deferredEnds.push(expressionEnd(source, tokens, at + 1));
@@ -710,7 +694,7 @@ function moduleReach(source, tokens) {
     const opens = token.kind === 'punct' ? ['(', '[', '{'].includes(token.value)
       : token.kind === 'template' && source.slice(token.end - 2, token.end) === '${';
     if (!opens) continue;
-    const frame = { kind: 'expression', head: false, names: [] };
+    const frame = { kind: 'expression', head: false };
     if (punct(token, '(')) {
       let before = at - 1;
       if (word(tokens[before]) && !STATEMENT_HEADS.has(tokens[before].value)) before--;
@@ -721,7 +705,6 @@ function moduleReach(source, tokens) {
         frame.kind = 'parameters';
       }
       frame.head = (word(previous) && STATEMENT_HEADS.has(previous.value)) || (word(previous, 'await') && word(tokens[at - 2], 'for'));
-      if (word(previous, 'catch')) frame.names.push(...boundNames(source, tokens, at + 1, closing(tokens, at), bindingPlaces));
     } else if (punct(token, '{')) {
       const closed = punct(previous, ')') ? closedBy.get(at - 1) : null;
       if (classes.has(token.depth)) {
@@ -732,7 +715,6 @@ function moduleReach(source, tokens) {
         // After a `)`: the body of a statement head, a method in an object or class, or a block
         // that automatic semicolon insertion separates from the call before it.
         frame.kind = closed.head || !(enclosing?.kind === 'object' || enclosing?.kind === 'class') ? 'block' : 'function';
-        if (closed.head) frame.names.push(...closed.names);
       } else if (word(previous) && BLOCK_WORDS.has(previous.value)) frame.kind = 'block';
       else if (punct(previous, ':')) frame.kind = enclosing?.kind === 'object' ? 'object' : 'block';
       else if ((previous?.kind === 'punct' && !['}', ';', ')'].includes(previous.value))
@@ -740,11 +722,6 @@ function moduleReach(source, tokens) {
       else frame.kind = 'block';
     }
     stack.push(frame);
-    if (frame.head) {
-      // An unbraced statement after the head is in the head's scope until it ends.
-      const after = closing(tokens, at) + 1;
-      if (!punct(tokens[after], '{')) headScopes.push({ from: after, to: expressionEnd(source, tokens, after), names: frame.names });
-    }
   }
   return reach;
 }
@@ -762,54 +739,164 @@ function firstArgument(tokens, open) {
   return { from: open + 1, to: end };
 }
 
-/** The places in an `import … from …` declaration at the top level, which bind names rather than read them. */
-function importPlaces(tokens) {
+/**
+ * The source with each identifier escape (`\u0074`, `\u{74}`) written as the character it
+ * stands for, so a name means what the language reads. Escapes in strings, templates and regular
+ * expressions are tokens of their own and stay as written; no line moves.
+ */
+function unescapedIdentifiers(source, file) {
+  const { tokens } = tokensIn(source, file);
+  let out = '';
+  let from = 0;
+  for (const token of tokens) {
+    if (!punct(token, '\\')) continue;
+    const escape = /^\\u(?:\{([0-9a-fA-F]{1,6})\}|([0-9a-fA-F]{4}))/.exec(source.slice(token.start));
+    if (!escape) continue;
+    out += source.slice(from, token.start) + String.fromCodePoint(parseInt(escape[1] ?? escape[2], 16));
+    from = token.start + escape[0].length;
+  }
+  return out + source.slice(from);
+}
+
+/** The places in a top-level `import` or `export … from` declaration: its specifiers bind names rather than read them. */
+function declarationPlaces(tokens) {
   const places = new Set();
   for (let at = 0; at < tokens.length; at++) {
-    if (tokens[at].depth > 0 || !word(tokens[at], 'import') || punct(tokens[at + 1], '(') || punct(tokens[at + 1], '.')) continue;
+    if (tokens[at].depth > 0 || !(word(tokens[at], 'import') || word(tokens[at], 'export'))) continue;
+    if (punct(tokens[at + 1], '(') || punct(tokens[at + 1], '.')) continue;
     let end = at + 1;
-    while (end < tokens.length && !word(tokens[end], 'from') && tokens[end].kind !== 'string') end++;
+    // A side-effect import's specifier follows `import` directly; otherwise it follows `from`.
+    if (!(word(tokens[at], 'import') && tokens[end]?.kind === 'string')) {
+      while (end < tokens.length && !(tokens[end].depth === 0 && (word(tokens[end], 'from') || punct(tokens[end], ';')))) end++;
+      if (!word(tokens[end], 'from')) continue;
+      end++;
+    }
     for (let place = at; place <= end; place++) places.add(place);
   }
   return places;
 }
 
+/** The module a call's first argument loads: its string, or null where it is not one string the scan decodes. */
+function loadedModule(tokens, open) {
+  if (!punct(tokens[open], '(')) return null;
+  const { from, to } = firstArgument(tokens, open);
+  return to - from === 1 && tokens[from].kind === 'string' ? decoded(tokens[from].value) : null;
+}
+
 /**
- * Every test a test file's source registers at its top level, by title and line, and every
- * other reference to the runner the module reaches, by line.
+ * Every route by which a source reaches `node:test` other than a static `import` declaration, by
+ * line, and the names a declaration binds from such a route.
+ *
+ * A route is a dynamic `import()`, a `require` (by that name, or one a declaration takes from
+ * `createRequire`), `createRequire(…)(…)`, `process.getBuiltinModule`, `eval`, or an
+ * `export … from` of `node:test`. It reaches the runner unless the module it loads is one string
+ * the scan decodes, naming another module; for `createRequire`, that is the specifier passed to
+ * the `require` it returns. Strings and comments are tokens of their own, so text in them is no route.
+ */
+function routesIn(source, tokens) {
+  const routes = [];
+  const requires = new Set(['require']);
+  const reaches = (module) => module === null || module === RUNNER_MODULE;
+  // A declaration whose initialiser is `createRequire(…)` names a `require` of its own.
+  for (let at = 0; at < tokens.length; at++) {
+    if (!word(tokens[at]) || !DECLARES.has(tokens[at].value)) continue;
+    const end = expressionEnd(source, tokens, at + 1);
+    const created = tokens.slice(at + 1, end).findIndex((token) => word(token, 'createRequire'));
+    if (created === -1) continue;
+    const call = at + 1 + created + 1;
+    if (punct(tokens[call], '(') && closing(tokens, call) + 1 === end) {
+      for (const name of boundNames(source, tokens, at + 1, end)) requires.add(name);
+    }
+  }
+  const declared = declarationPlaces(tokens);
+  for (let at = 0; at < tokens.length; at++) {
+    const token = tokens[at];
+    if (!word(token) || declared.has(at)) continue;
+    const next = tokens[at + 1];
+    const member = punct(tokens[at - 1], '.');
+    let route = false;
+    if (token.value === 'import' && punct(next, '(')) route = reaches(loadedModule(tokens, at + 1));
+    else if (requires.has(token.value) && !member && punct(next, '(')) route = reaches(loadedModule(tokens, at + 1));
+    else if (token.value === 'getBuiltinModule') route = !punct(next, '(') || reaches(loadedModule(tokens, at + 1));
+    else if (token.value === 'eval' && !member) route = true;
+    else if (token.value === 'createRequire' && !member) {
+      // Called at once, the module is the one its `require` is passed; held in a declaration, its
+      // calls are read as `require` calls; any other use is a route the scan cannot follow.
+      const call = at + 1;
+      if (punct(next, '(') && punct(tokens[closing(tokens, call) + 1], '(')) route = reaches(loadedModule(tokens, closing(tokens, call) + 1));
+      else if (!(punct(next, '(') && [...requires].some(() => true))) route = true;
+      else {
+        let declaration = at;
+        while (declaration > 0 && !(word(tokens[declaration]) && DECLARES.has(tokens[declaration].value) && tokens[declaration].depth <= token.depth)) declaration--;
+        const end = expressionEnd(source, tokens, declaration + 1);
+        route = !(word(tokens[declaration]) && DECLARES.has(tokens[declaration].value) && closing(tokens, call) + 1 === end);
+      }
+    }
+    if (route) routes.push({ line: token.line, at });
+  }
+  // A top-level `export … from` re-exports a module; of `node:test`, it is a route.
+  for (let at = 0; at < tokens.length; at++) {
+    if (tokens[at].depth > 0 || !word(tokens[at], 'export')) continue;
+    let end = at + 1;
+    while (end < tokens.length && !(tokens[end].depth === 0 && (word(tokens[end], 'from') || punct(tokens[end], ';')))) end++;
+    if (word(tokens[end], 'from') && tokens[end + 1]?.kind === 'string' && reaches(decoded(tokens[end + 1].value))) {
+      routes.push({ line: tokens[at].line, at });
+    }
+  }
+  routes.sort((a, b) => a.at - b.at);
+  // The names a declaration binds from a route are bindings obtained from `node:test`.
+  const obtained = new Set();
+  for (let at = 0; at < tokens.length; at++) {
+    if (!word(tokens[at]) || !DECLARES.has(tokens[at].value)) continue;
+    const end = expressionEnd(source, tokens, at + 1);
+    if (routes.some((route) => route.at > at && route.at < end)) for (const name of boundNames(source, tokens, at + 1, end)) obtained.add(name);
+  }
+  return { routes, obtained };
+}
+
+/**
+ * Every line on which a source reaches `node:test` other than by a static `import` declaration,
+ * each with the text of that line as the source holds it.
+ */
+export function runnerRoutes(source, file) {
+  const read = unescapedIdentifiers(source, file);
+  const lines = source.split(/\r\n|[\n\r\u2028\u2029]/);
+  const seen = new Set();
+  return routesIn(read, tokensIn(read, file).tokens).routes
+    .filter(({ line }) => !seen.has(line) && seen.add(line))
+    .map(({ line }) => ({ line, key: lines[line - 1] }));
+}
+
+/**
+ * Every test a test file's source registers by an identified top-level call, by title and line,
+ * and every line holding an unidentified runner reference, with that line's text as its `key`.
  *
  * A test is a call the module's own evaluation reaches — in a statement, any kind of block, or an
  * expression, but never in a function body, a parameter default or a class instance field — to a
  * name the file imports from `node:test` that registers a test or a suite: `test`, `it`,
  * `describe` or `suite`, under any local name, or their `skip`, `only` or `todo` member, written
- * with a dot or as a quoted computed member. A test nested in a suite's function is covered by the
- * suite's call. A name a block declares for itself is not the import, and a hook or the mock
- * registers no test.
+ * with a dot or as a quoted computed member, whose first argument is one quoted title the scan
+ * decodes. A reference inside such a call's own arguments is covered by it.
  *
- * The scan fails closed. Every reached reference to a registering import — or to the module's
- * namespace — that is not a call of one of those forms with one quoted title the scan decodes is
- * listed as unidentified with its `key`: for a call, the source from the callee to the end of its
- * first argument, so a body that changes keeps the key and a changed title expression does not;
- * for any other reference, the source of the expression it stands in.
+ * Every other reference to a registering binding — imported from `node:test`, or obtained from it
+ * by any route — is an unidentified runner reference, listed by line wherever it occurs, with no
+ * reasoning about whether the code holding it runs and with no scopes: a local binding of the
+ * same name is listed too, which refuses falsely rather than missing a test. A name is not a
+ * reference in an `import` or `export … from` declaration, after a `.`, as an object key or a
+ * pattern key before `:`, or as a method's name. Identifier escapes are read as the characters
+ * they stand for, and a specifier or export name the scan cannot decode is taken as the runner's.
  */
 export function testsIn(source, file) {
-  const { tokens } = tokensIn(source, file);
+  const read = unescapedIdentifiers(source, file);
+  const { tokens } = tokensIn(read, file);
+  const lines = source.split(/\r\n|[\n\r\u2028\u2029]/);
   const imported = runnerImports(tokens);
-  const { taken } = bindings(tokens);
-  const reach = moduleReach(source, tokens);
-  const imports = importPlaces(tokens);
+  for (const name of routesIn(read, tokens).obtained) if (!imported.has(name)) imported.set(name, '*');
+  const reach = moduleReach(read, tokens);
+  const declared = declarationPlaces(tokens);
   const tests = [];
-  const unidentified = [];
-  const listCall = (from, open) => {
-    const { to } = firstArgument(tokens, open);
-    const end = (tokens[to - 1] ?? tokens[open]).end;
-    unidentified.push({ line: tokens[from].line, key: source.slice(tokens[from].start, end) });
-  };
-  const listReference = (at) => {
-    const end = expressionEnd(source, tokens, at);
-    unidentified.push({ line: tokens[at].line, key: source.slice(tokens[at].start, tokens[Math.max(end - 1, at)].end) });
-  };
-  const hidden = (at) => reach[at].scopes.some((scope) => scope.names.includes(tokens[at].value));
+  const listed = new Set();
+  const list = (at) => listed.add(tokens[at].line);
   // The member a `.name` or a `['name']` after `next` names: its string, or null where it is computed.
   const memberAt = (next) => {
     if (punct(tokens[next], '.') && word(tokens[next + 1])) return { name: tokens[next + 1].value, after: next + 2 };
@@ -818,67 +905,50 @@ export function testsIn(source, file) {
     const only = close - next === 2 && tokens[next + 1].kind === 'string' ? decoded(tokens[next + 1].value) : null;
     return { name: only, after: close + 1 };
   };
-  // A name in an object literal's or a class body's member position names a property, a method or
-  // a field: it reads no binding. An object's shorthand `{ test }` does read one.
+  // A key before `:` at the start of a member, or a method's name, names a property: it reads no binding.
   const propertyName = (at) => {
-    const { frame } = reach[at];
-    if (frame !== 'object' && frame !== 'class') return false;
+    const previous = tokens[at - 1];
     const next = tokens[at + 1];
-    if (punct(next, ':')) return true;
-    if (punct(next, '(')) return punct(tokens[closing(tokens, at + 1) + 1], '{');
-    return frame === 'class' && (punct(next, '=') || punct(next, ';') || punct(next, '}') || next?.line > tokens[at].line);
+    if (punct(next, ':') && (punct(previous, '{') || punct(previous, ','))) return true;
+    const { frame } = reach[at];
+    return (frame === 'object' || frame === 'class') && punct(next, '(') && punct(tokens[closing(tokens, at + 1) + 1], '{');
   };
+  let coveredUntil = -1;
   for (let at = 0; at < tokens.length; at++) {
     const token = tokens[at];
-    if (token.kind !== 'word' || !imported.has(token.value)) continue;
+    if (at < coveredUntil || token.kind !== 'word' || !imported.has(token.value)) continue;
     const name = imported.get(token.value);
     if (!(REGISTERS.has(name) || REGISTERING_MEMBERS.has(name) || name === '*')) continue;
-    if (reach[at].deferred || imports.has(at) || reach.bindingPlaces.has(at) || hidden(at)
-      || punct(tokens[at - 1], '.') || propertyName(at)) continue;
+    if (declared.has(at) || punct(tokens[at - 1], '.') || propertyName(at)) continue;
     let next = at + 1;
     let member = null;
     let chained = false;
+    const first = memberAt(next);
+    // A hook's or the mock's member is theirs, through any chain after it.
+    if (first && NOT_REGISTERING.has(first.name)) continue;
     if (name === '*') {
-      // A namespace reaches the runner through a member: a hook's or the mock's is theirs.
-      const named = memberAt(next);
-      if (named && NOT_REGISTERING.has(named.name)) continue;
-      listReference(at);
+      list(at);
       continue;
     }
-    const first = memberAt(next);
     if (first) {
       member = first;
       next = first.after;
-      // A hook's or the mock's chain is theirs; any other chain past the member is unidentified.
-      if (NOT_REGISTERING.has(member.name)) continue;
       for (let more = memberAt(next); more; more = memberAt(next)) {
         chained = true;
         next = more.after;
       }
     }
-    if (punct(tokens[next], '?') && punct(tokens[next + 1], '.')) {
-      // An optional call can be skipped, so the scan cannot say it registers a test.
-      const open = punct(tokens[next + 2], '(') ? next + 2
-        : word(tokens[next + 2]) && punct(tokens[next + 3], '(') ? next + 3 : -1;
-      if (open !== -1) listCall(at, open);
-      else listReference(at);
+    const identified = !reach[at].deferred && REGISTERS.has(name) && punct(tokens[next], '(') && !chained
+      && !word(tokens[at - 1], 'new') && (!member || REGISTERING_MEMBERS.has(member.name));
+    const title = identified ? loadedModule(tokens, next) : null;
+    if (title === null) {
+      list(at);
       continue;
     }
-    if (!punct(tokens[next], '(')) {
-      listReference(at);
-      continue;
-    }
-    // `new test(…)` constructs rather than calls, so the scan cannot say what it registers.
-    if (!REGISTERS.has(name) || taken.has(token.value) || chained || word(tokens[at - 1], 'new')
-      || (member && !REGISTERING_MEMBERS.has(member.name))) {
-      listCall(at, next);
-      continue;
-    }
-    const { from: start, to } = firstArgument(tokens, next);
-    const title = to - start === 1 && tokens[start].kind === 'string' ? decoded(tokens[start].value) : null;
-    if (title === null) listCall(at, next);
-    else tests.push({ title, line: token.line });
+    tests.push({ title, line: token.line });
+    coveredUntil = closing(tokens, next);
   }
+  const unidentified = [...listed].sort((a, b) => a - b).map((line) => ({ line, key: lines[line - 1] }));
   return { tests, unidentified };
 }
 

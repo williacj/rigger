@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { testsIn } from '../scripts/build-test-matrix.mjs';
+import { runnerRoutes, testsIn } from '../scripts/build-test-matrix.mjs';
 import { addedTimers, checkAddedTimers, parseRecord, readRecord } from '../.github/scripts/check-host-declarations.mjs';
 import { parseWorkflow } from './ci-policy-fixtures.mjs';
 import { cases } from './runner-call-forms.mjs';
@@ -54,7 +54,7 @@ test('the scanner reads a default import as test and ignores names bound elsewhe
   });
 });
 
-test('the scanner counts calls in top-level blocks and none inside a function body', () => {
+test('the scanner counts calls in top-level blocks, and lists a call inside a function body as unidentified', () => {
   const source = [
     "import { test } from 'node:test';",
     'if (process.env.X) {',
@@ -70,7 +70,7 @@ test('the scanner counts calls in top-level blocks and none inside a function bo
   ].join('\n');
   const found = testsIn(source, 'test/c.test.mjs');
   assert.deepEqual(found.tests, [{ title: 'in an if block', line: 3 }]);
-  assert.deepEqual(found.unidentified.map(({ line }) => line), [10]);
+  assert.deepEqual(found.unidentified.map(({ line }) => line), [6, 10]);
 });
 
 test('the scanner names the line of each top-level call whose test it cannot identify', () => {
@@ -127,12 +127,33 @@ test('the scanner finds every runner call form in every statement, block and exp
   assert.deepEqual(misread('reached'), []);
 });
 
-test('the scanner finds no test in any function body, a concise arrow body included', () => {
+test('the scanner names no test in any function body, a concise arrow body included, and lists each runner reference there as unidentified', () => {
   assert.deepEqual(misread('deferred'), []);
 });
 
-test('the scanner finds no test where a block-scoped binding hides the runner name', () => {
-  assert.deepEqual(misread('shadowed'), []);
+// The scan reads no scopes, so a call a block-local binding may hide is still listed: a false
+// refusal fails closed, where a silent miss would not.
+function silent(group) {
+  return cases().filter((entry) => entry.group === group).flatMap(({ name, source, registers }) => {
+    const found = testsIn(source, 'test/forms.test.mjs');
+    const named = found.tests.map(({ title }) => title);
+    const unnamed = registers.filter((title) => !named.includes(title));
+    return unnamed.length <= found.unidentified.length && (registers.length > 0 || named.length + found.unidentified.length > 0)
+      ? [] : [`${name}: ${JSON.stringify({ tests: named, unidentified: found.unidentified.map(({ key }) => key) })}`];
+  });
+}
+
+test('the scanner fails closed where a block-scoped binding may hide the runner name, listing the call rather than staying silent', () => {
+  assert.deepEqual(silent('shadowed'), []);
+});
+
+test('the scanner leaves no test silent in any module of the round-2 attack, escapes, imports and class fields included', () => {
+  assert.deepEqual(silent('covered'), []);
+});
+
+test('the scanner lists no import specifier, a string import name included', () => {
+  const source = "import { 'test' as check, \\u0069t } from 'node:test';\ncheck('named', () => {});\nit('escaped', () => {});\n";
+  assert.deepEqual(testsIn(source, 'test/h.test.mjs'), { tests: [{ title: 'named', line: 2 }, { title: 'escaped', line: 3 }], unidentified: [] });
 });
 
 test('the scanner still finds a test beside bindings that leave the runner name alone', () => {
@@ -162,23 +183,42 @@ test('T6: an added comma-expression call to the runner is refused naming its lin
     record: { ran: [CONVERTING], arms: [arm(CONVERTING, 'arms')] },
   });
   assert.equal(result.ok, false);
-  assert.deepEqual(result.errors.map((error) => error.split(': added top-level call')[0]), [`${CONVERTING} line 3`]);
+  assert.deepEqual(result.errors, [`${CONVERTING} line 3: added unidentified runner reference: (0, test)('arms', () => { clearTimeout(setTimeout(() => {}, 5)); });`]);
 });
 
-test('T2: an added call in an arrow parameter default is no test, so the older test it shares a title with keeps its exemption', () => {
+test('T6: an added call in an arrow parameter default is an unidentified runner reference, refused naming its line', () => {
   const result = rowOutcome({
     base: { [CONVERTING]: `${header}test('older', () => {});\n` },
     head: { [CONVERTING]: `${header}test('older', () => {});\nconst later = (value = test('older', () => {})) => {};\n` },
     record: { ran: [CONVERTING], arms: [arm(CONVERTING, 'older')] },
   });
-  assert.deepEqual(result, { ok: true, errors: [] });
+  assert.deepEqual(result, { ok: false, errors: [`${CONVERTING} line 3: added unidentified runner reference: const later = (value = test('older', () => {})) => {};`] });
 });
 
-test('an unidentified call keeps its key when only its body changes, and changes it with its name', () => {
-  const at = (body) => testsIn(`import { test } from 'node:test';\nconst cases = [];\nfor (const c of cases) test(c.name, () => { ${body} });\n`, 'test/e.test.mjs');
-  assert.equal(at('one();').unidentified[0].key, at('two();').unidentified[0].key);
-  const renamed = testsIn("import { test } from 'node:test';\nconst cases = [];\nfor (const c of cases) test(c.title, () => {});\n", 'test/e.test.mjs');
-  assert.notEqual(renamed.unidentified[0].key, at('one();').unidentified[0].key);
+test('an unidentified runner reference is keyed by its whole line, so an edit elsewhere keeps the key and an edit on that line changes it', () => {
+  const at = (title, body) => testsIn(`import { test } from 'node:test';\nconst cases = [];\nfor (const c of cases) test(c.${title}, () => {\n  ${body}\n});\n`, 'test/e.test.mjs');
+  assert.equal(at('name', 'one();').unidentified[0].key, 'for (const c of cases) test(c.name, () => {');
+  assert.equal(at('name', 'two();').unidentified[0].key, at('name', 'one();').unidentified[0].key);
+  assert.notEqual(at('title', 'one();').unidentified[0].key, at('name', 'one();').unidentified[0].key);
+});
+
+// Every route below reaches node:test other than by a static import declaration, or may, because
+// its target is not one string literal naming another module. Each is listed by line.
+test('the scanner lists every route to node:test other than a static import, and none in strings, comments or to another module', () => {
+  const source = [
+    "import { test } from 'node:test';", // 1
+    "const { test: dynamic } = await import('node:test');", // 2
+    'const named = "node:test"; const unread = await import(named);', // 3
+    "import { createRequire } from 'node:module';", // 4
+    "const required = createRequire(import.meta.url)('node:test');", // 5
+    "const builtin = process.getBuiltinModule('node:test');", // 6
+    "eval(\"test('x', () => {})\");", // 7
+    "export { test as again } from 'node:test';", // 8
+    "const require = createRequire(import.meta.url); require('node:test');", // 9
+    "const text = \"await import('node:test')\"; // require('node:test')", // 10
+    "const other = await import('./other.mjs'); const fs = process.getBuiltinModule('node:fs');", // 11
+  ].join('\n');
+  assert.deepEqual(runnerRoutes(source, 'test/r.test.mjs').map(({ line }) => line), [2, 3, 5, 6, 7, 8, 9]);
 });
 
 // The rows below are card #1138's "The added-timer cells". Each change is two in-memory trees,
@@ -266,14 +306,14 @@ test('T5: a second test sharing an older title is added, and an arm under that t
   assert.deepEqual(result.errors, [`${CONVERTING}: added test "shared" armed setTimeout with delay 5`]);
 });
 
-test('T6: an added top-level call the scanner cannot identify is refused naming its line', () => {
+test('T6: an added unidentified runner reference is refused naming its line', () => {
   const result = rowOutcome({
     base: { [CONVERTING]: `${header}const name = 'x';\n` },
     head: { [CONVERTING]: `${header}const name = 'x';\ntest(name, () => {});\n` },
     record: { ran: [CONVERTING], arms: [] },
   });
   assert.equal(result.ok, false);
-  assert.deepEqual(result.errors, [`${CONVERTING} line 3: added top-level call whose test the scanner cannot identify: test(name`]);
+  assert.deepEqual(result.errors, [`${CONVERTING} line 3: added unidentified runner reference: test(name, () => {});`]);
 });
 
 test('T6: an unchanged unidentified call whose loop gains a case is not added', () => {
@@ -281,6 +321,45 @@ test('T6: an unchanged unidentified call whose loop gains a case is not added', 
   const result = rowOutcome({
     base: { [CONVERTING]: loop(['one']) }, head: { [CONVERTING]: loop(['one', 'two']) },
     record: { ran: [CONVERTING], arms: [arm(CONVERTING, 'two')] },
+  });
+  assert.deepEqual(result, { ok: true, errors: [] });
+});
+
+test('T6: an added test registered in a forEach callback is refused naming its line, though a function body holds it', () => {
+  const result = rowOutcome({
+    base: { [CONVERTING]: `${header}test('older', () => {});\n` },
+    head: { [CONVERTING]: `${header}test('older', () => {});\n['a', 'b'].forEach((name) => test(name, () => {}));\n` },
+    record: { ran: [CONVERTING], arms: [] },
+  });
+  assert.deepEqual(result.errors, [`${CONVERTING} line 3: added unidentified runner reference: ['a', 'b'].forEach((name) => test(name, () => {}));`]);
+});
+
+test('T6: an added call through a binding a dynamic import made is refused, though the import line is older', () => {
+  const route = "const { test: later } = await import('node:test');\n";
+  const result = rowOutcome({
+    base: { [CONVERTING]: header + route },
+    head: { [CONVERTING]: `${header}${route}later('through the route', () => {});\n` },
+    record: { ran: [CONVERTING], arms: [] },
+  });
+  assert.deepEqual(result.errors, [`${CONVERTING} line 3: added unidentified runner reference: later('through the route', () => {});`]);
+});
+
+test('T14: an added line reaching node:test by a dynamic import is refused naming the file and the line', () => {
+  const result = rowOutcome({
+    base: { [CONVERTING]: `${header}test('older', () => {});\n` },
+    head: { [CONVERTING]: `${header}test('older', () => {});\nconst runner = await import('node:test');\n` },
+    record: { ran: [CONVERTING], arms: [] },
+  });
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.includes(`${CONVERTING} line 3: added route to node:test other than a static import: const runner = await import('node:test');`), JSON.stringify(result.errors));
+});
+
+test('T14: an older route line in a changed file, a route named in a string and an import of another module are not refused', () => {
+  const route = "const runner = await import('node:test');\n";
+  const result = rowOutcome({
+    base: { [CONVERTING]: `${header}${route}test('older', () => {});\n` },
+    head: { [CONVERTING]: `${header}${route}test('older', () => {});\nconst text = "await import('node:test')";\nconst other = await import('./other.mjs');\n` },
+    record: { ran: [CONVERTING], arms: [] },
   });
   assert.deepEqual(result, { ok: true, errors: [] });
 });

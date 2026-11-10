@@ -205,7 +205,7 @@ test('the CI step compares a pull request with its merge head\'s first parent, s
 
 // node:test is the authority on which top-level tests a module registers: each matrix case runs
 // under `node --test`, and a reporter names every top-level test or suite with its file.
-test('every case of the runner-call matrix registers under node:test exactly the tests the scanner reads', (t) => {
+test('every test a case of the runner-call matrix registers under node:test is one the scanner identifies or lists', (t) => {
   // The runner names each file by its real path, so the cases are written under one.
   const directory = realpathSync.native(temporaryDirectory('rigger-1138-forms-', { context: t }));
   const all = cases();
@@ -225,24 +225,32 @@ test('every case of the runner-call matrix registers under node:test exactly the
     '',
   ].join('\n'));
   const { NODE_TEST_CONTEXT, ...environment } = process.env;
-  const ran = spawnSync(process.execPath, ['--test', `--test-reporter=${reporter}`, ...files], {
-    encoding: 'utf8', env: environment, maxBuffer: 64 * 1024 * 1024,
-  });
-  assert.equal(ran.status, 0, ran.stdout + ran.stderr);
+  const names = (paths) => {
+    const ran = spawnSync(process.execPath, ['--test', `--test-reporter=${reporter}`, ...paths], {
+      encoding: 'utf8', env: environment, maxBuffer: 64 * 1024 * 1024,
+    });
+    assert.equal(ran.status, 0, ran.stdout + ran.stderr);
+    return ran.stdout.split('\n').filter(Boolean).map((line) => JSON.parse(line));
+  };
   const registered = new Map(files.map((file) => [file, []]));
-  for (const line of ran.stdout.split('\n').filter(Boolean)) {
-    const [file, name] = JSON.parse(line);
+  // A test registered through the runner's mock is reported against the mock's own file, so each
+  // case of the attack runs alone and all it registers is its own; the rest run together.
+  const alone = new Set(files.filter((_, index) => all[index].group === 'covered'));
+  for (const [file, name] of names(files.filter((file) => !alone.has(file)))) {
     // A file that registers no test is reported as one test named by its own path.
     if (name !== file) registered.get(file)?.push(name);
   }
-  // The scanner names each test it identifies by the runner's own title, and lists each other
-  // reference to the runner as unidentified: so every identified title is one the runner
-  // registered, and no registered test is left out of the two counts together.
+  for (const file of alone) {
+    for (const [reported, name] of names([file])) if (name !== reported) registered.get(file).push(name);
+  }
+  // The scan fails closed: each test the runner registers is identified by its title or covered
+  // by an unidentified entry, so none is silent. Listing more than the runner registers is a
+  // false refusal, which the scan accepts.
   const wrong = all.flatMap((entry, index) => {
     const runtime = registered.get(files[index]);
     const found = testsIn(entry.source, `test/case-${index}.test.mjs`);
     const titles = found.tests.map(({ title }) => title);
-    const agrees = titles.every((title) => runtime.includes(title)) && runtime.length <= titles.length + found.unidentified.length;
+    const agrees = runtime.filter((title) => !titles.includes(title)).length <= found.unidentified.length;
     return JSON.stringify(runtime) === JSON.stringify(entry.registers) && agrees ? []
       : [`${entry.name}: runner ${JSON.stringify(runtime)}, matrix ${JSON.stringify(entry.registers)}, scanner ${JSON.stringify(titles)} and ${found.unidentified.length} unidentified`];
   });

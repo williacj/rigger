@@ -5,7 +5,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { testsIn } from '../../scripts/build-test-matrix.mjs';
+import { runnerRoutes, testsIn } from '../../scripts/build-test-matrix.mjs';
 import { eventBase, gitFacts as listFacts } from './check-test-list-growth.mjs';
 
 /** How many times each value occurs in a list. */
@@ -16,19 +16,20 @@ function counts(values) {
 }
 
 /**
- * The tests and unidentified top-level calls a change adds to one file: a title, or an
- * unidentified call's key, the head holds more times than the base does (D30 rule 2).
+ * What a change adds to one file: each test whose title the head holds more times than the base
+ * does (D30 rule 2), and each line holding an unidentified runner reference or a route to
+ * `node:test` other than a static import, where the base holds no byte-identical line in that file.
  */
 function additions(file, before, after) {
   const head = testsIn(after, file);
-  const base = before === null ? { tests: [], unidentified: [] } : testsIn(before, file);
+  const base = before === null ? { tests: [] } : testsIn(before, file);
   const baseTitles = counts(base.tests.map(({ title }) => title));
   const titles = [...counts(head.tests.map(({ title }) => title))]
     .filter(([title, count]) => count > (baseTitles.get(title) ?? 0)).map(([title]) => title);
-  const baseKeys = counts(base.unidentified.map(({ key }) => key));
-  const headKeys = counts(head.unidentified.map(({ key }) => key));
-  const calls = head.unidentified.filter(({ key }) => headKeys.get(key) > (baseKeys.get(key) ?? 0));
-  return { titles, calls };
+  const baseLines = new Set(before === null ? [] : before.split(/\r\n|[\n\r\u2028\u2029]/));
+  const calls = head.unidentified.filter(({ key }) => !baseLines.has(key));
+  const routes = runnerRoutes(after, file).filter(({ key }) => !baseLines.has(key));
+  return { titles, calls, routes };
 }
 
 /** The timer record's lines, from the text of its worker files: the files that ran, and each arm. */
@@ -65,7 +66,8 @@ export function readRecord(directory) {
 
 /**
  * What a change adds to each conversion-list file at its head that adds anything: the titles of
- * its added tests, its added unidentified calls, or the reason its tests cannot be read.
+ * its added tests, its added unidentified runner references and routes to `node:test`, or the
+ * reason its tests cannot be read.
  */
 export function conversionAdditions({ base, head, facts }) {
   return facts.readLists(head).converting.flatMap((file) => {
@@ -74,22 +76,22 @@ export function conversionAdditions({ base, head, facts }) {
     let added;
     try { added = additions(file, facts.show(base, file), after); }
     catch (error) { return [{ file, error: `its tests cannot be read: ${error.message}` }]; }
-    return added.titles.length || added.calls.length ? [{ file, ...added }] : [];
+    return added.titles.length || added.calls.length || added.routes.length ? [{ file, ...added }] : [];
   });
 }
 
 /**
  * The added-timer mode between a base and a head, given the record the head's `npm test` wrote.
  * It refuses, naming the file, an added test whose title the record arms under, an added
- * top-level call whose test cannot be identified, and a file gaining a test the record never ran.
+ * unidentified runner reference (T6) or route to `node:test` other than a static import (T14),
+ * each by its line, and a file gaining a test the record never ran.
  */
 export function addedTimers({ base, head, facts, record }) {
   const errors = [];
-  for (const { file, error, titles = [], calls = [] } of conversionAdditions({ base, head, facts })) {
+  for (const { file, error, titles = [], calls = [], routes = [] } of conversionAdditions({ base, head, facts })) {
     if (error) errors.push(`${file}: ${error}`);
-    for (const { line, key } of calls) {
-      errors.push(`${file} line ${line}: added top-level call whose test the scanner cannot identify: ${key}`);
-    }
+    for (const { line, key } of calls) errors.push(`${file} line ${line}: added unidentified runner reference: ${key.trim()}`);
+    for (const { line, key } of routes) errors.push(`${file} line ${line}: added route to node:test other than a static import: ${key.trim()}`);
     if (titles.length === 0) continue;
     if (!record.ran.has(file)) {
       errors.push(`${file}: tests were added and the timer record shows no run of the file`);

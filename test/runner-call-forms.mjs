@@ -59,7 +59,7 @@ export const REACHED = [
 ];
 
 // A place for a call that the module's evaluation does not reach on its own: a function body,
-// however written. A test there is not a top-level call.
+// however written. A call there is no identified test; it is an unidentified runner reference.
 export const DEFERRED = [
   ['a function declaration body', 'function later() { CALL; }'],
   ['a function expression body', 'const later = function () { CALL; };'],
@@ -81,7 +81,8 @@ export const DEFERRED = [
   ['a class instance field ended by a line break', 'class Holder {\n  later = CALL\n  other = 1\n}'],
 ];
 
-// A binding that hides the runner's name inside a block, so a call there reaches no runner.
+// A binding that hides the runner's name inside a block, so a call there reaches no runner. The
+// scan reads no scopes, so it lists these rather than staying silent: a false refusal fails closed.
 export const SHADOWED = [
   ['a block const', '{ const test = () => {}; CALL; }'],
   ['a block let', '{ let test = () => {}; CALL; }'],
@@ -96,10 +97,39 @@ export const SHADOWED = [
 
 // Bindings that leave the runner's name alone, so the call still registers its test.
 export const UNSHADOWED = [
-  ['a sibling block', '{ const test = () => {}; }\nCALL;'],
+  // The block's own declaration of the name is listed, with no scope analysis.
+  ['a sibling block', '{ const test = () => {}; }\nCALL;', { references: 1 }],
   ['a destructured key that binds another name', '{ const { test: other } = { test: () => {} }; CALL; }'],
   // The default reads the runner without calling it, so the scan lists it as unidentified too.
   ['a default inside a pattern', '{ const { other = test } = {}; CALL; }', { references: 1 }],
+];
+
+
+// Module sources from the round-2 attack on #1294, each registering the tests listed. The scan must
+// leave none of them silent: each is identified by its title or covered by an unidentified entry.
+export const COVERED = [
+  ["a default export imported by name", "import { default as t } from 'node:test';\nt('default-as', () => {});\n", ["default-as"]],
+  ["a string import name carrying an escape", "import { 'te\\u0073t' as t } from 'node:test';\nt('string-escape-name', () => {});\n", ["string-escape-name"]],
+  ["an identifier escape in the call", "import { test } from 'node:test';\nt\\u0065st('ident-escape-call', () => {});\n", ["ident-escape-call"]],
+  ["an identifier escape in the local name", "import { test as \\u0074 } from 'node:test';\nt('ident-escape-import', () => {});\n", ["ident-escape-import"]],
+  ["a static field read by a static block", "import { test } from 'node:test';\nclass H { static t = test; static { this.t('static-this', () => {}); } }\n", ["static-this"]],
+  ["an identifier escape in a default import", "import \\u0074 from 'node:test';\nt('ident-escape-default', () => {});\n", ["ident-escape-default"]],
+  ["a static field holding the runner", "import { test } from 'node:test';\nclass H { static t = test; }\nH.t('static-field', () => {});\n", ["static-field"]],
+  ["a block whose arrow declares the same name", "import { test } from 'node:test';\n{\n  const f = () => { const test = 1; return test; };\n  test('arrow-local-hides-outer', () => {});\n}\n", ["arrow-local-hides-outer"]],
+  ["a named function expression of the same name", "import { test } from 'node:test';\n{\n  void function test() {};\n  test('named-fn-expression-hides', () => {});\n}\n", ["named-fn-expression-hides"]],
+  ["an object key spelled as a keyword", "import { test } from 'node:test';\nconst o = { const: test };\no.const('const-key', () => {});\n", ["const-key"]],
+  ["a namespace import, by member, computed member and destructuring", "import * as nt from 'node:test';\nnt.test('ns-test', () => {});\nnt['it']('ns-it', () => {});\nconst { describe: d } = nt;\nd('ns-destructured', () => {});\n", ["ns-test", "ns-it", "ns-destructured"]],
+  ["a default import's suite and test members", "import t from 'node:test';\nt.describe('default-describe-member', () => {});\nt.test('default-test-member', () => {});\n", ["default-describe-member", "default-test-member"]],
+  ["the runner passed to the mock", "import { test, mock } from 'node:test';\nmock.fn(test)('via-mock', () => {});\n", ["via-mock"]],
+  ["a member passed through the runner's mock", "import { test } from 'node:test';\ntest.mock.fn(test.skip)('via-hook-chain', () => {});\n", ["via-hook-chain"]],
+  ["a runner passed through its own mock", "import { it } from 'node:test';\nit.mock.fn(it)('mock-of-it', () => {});\n", ["mock-of-it"]],
+  ["a block holding a function whose parameter has the same name", "import { test } from 'node:test';\nif (true) {\n  function helper(test) { return test; }\n  test('fn-decl-param-or-body', () => {});\n}\n", ["fn-decl-param-or-body"]],
+  ["a loop block holding a function whose body declares the same name", "import { test } from 'node:test';\nfor (const x of [1]) {\n  function helper() { let test; return test; }\n  test('fn-body-let-hides-outer-block', () => {});\n}\n", ["fn-body-let-hides-outer-block"]],
+  ["a static field ended by a line break", "import { test } from 'node:test';\nclass H {\n  static t = test\n}\nH.t('static-field-newline', () => {});\n", ["static-field-newline"]],
+  ["a class expression of the same name", "import { test } from 'node:test';\n{\n  [class test {}];\n  test('class-expr-hides', () => {});\n}\n", ["class-expr-hides"]],
+  ["an object value holding the runner", "import { test } from 'node:test';\nconst holder = { t: test };\nholder.t('object-value', () => {});\n", ["object-value"]],
+  ["a specifier carrying a unicode escape", "import { test } from \"node:t\\u0065st\";\ntest(\"specifier-escape\", () => {});\n", ["specifier-escape"]],
+  ["a specifier carrying a hex escape", "import test from \"node\\x3atest\";\ntest(\"specifier-hex-escape\", () => {});\n", ["specifier-hex-escape"]],
 ];
 
 /** One module source: the header, then the place with the call written into it. */
@@ -120,10 +150,14 @@ export function cases() {
     }
   }
   for (const [where, place] of DEFERRED) {
-    for (const [how, call] of CALLS) all.push({ group: 'deferred', name: `${how} in ${where}`, source: source(place, call), registers: [], identified: true });
+    // A reference in a function body is listed, with no reasoning about whether the body runs.
+    for (const [how, call] of CALLS) all.push({ group: 'deferred', name: `${how} in ${where}`, source: source(place, call), registers: [], identified: true, references: 1 });
   }
   for (const [where, place] of SHADOWED) {
     all.push({ group: 'shadowed', name: `a shadowed test in ${where}`, source: source(place, `test('t', ${body})`), registers: [], identified: true });
+  }
+  for (const [where, text, registers] of COVERED) {
+    all.push({ group: 'covered', name: `the attack's module with ${where}`, source: text, registers, identified: false });
   }
   for (const [where, place, { references = 0 } = {}] of UNSHADOWED) {
     all.push({ group: 'unshadowed', name: `an unshadowed test beside ${where}`, source: source(place, `test('t', ${body})`), registers: ['t'], identified: true, references });
