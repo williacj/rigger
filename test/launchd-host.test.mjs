@@ -289,7 +289,7 @@ test('L1 launchd starts the shipped job once while its instance runs across thre
 
 // Host reason: a real deadline; the second start must come within StartInterval plus launchd's
 // ThrottleInterval of the first instance's exit, on the real clock.
-// Ordinary decision counterpart: test/launchd-template.test.mjs :: the shipped job does not use KeepAlive
+// Ordinary decision counterpart: test/launchd-template.test.mjs :: the shipped job relaunches after the selected interval
 // proves R-WORK-4
 test('L2 launchd starts the shipped job again no earlier than its released instance exits', { skip: launchdSkip, timeout: 120_000 }, async (t) => {
   const world = launchdWorld(t);
@@ -336,7 +336,7 @@ test('L3 a second bootstrap of the loaded shipped job is refused', { skip: launc
 
 // Host reason: a real deadline; the test waits, on the real clock, for any start the second
 // bootstrap might cause.
-// Ordinary decision counterpart: test/launchd-template.test.mjs :: the shipped job starts on load
+// Ordinary decision counterpart: test/launchd-template.test.mjs :: the shipped LaunchAgent has the fixed label
 test('L3 after a refused second bootstrap the shipped job still has one running instance', { skip: launchdSkip, timeout: 120_000 }, async (t) => {
   const world = launchdWorld(t);
   try {
