@@ -1,12 +1,25 @@
 // ABOUTME: Checks the tests a change adds against the rules for added tests; its added-timer mode
 // refuses an added conversion-list test whose run armed a real timer (D30 rule 6).
-import { execFileSync } from 'node:child_process';
-import { readdirSync, readFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { runnerRoutes, testsIn } from '../../scripts/build-test-matrix.mjs';
 import { eventBase, gitFacts as listFacts } from './check-test-list-growth.mjs';
+
+/**
+ * The lister: a `node --test` reporter naming, one JSON line each, every test the run reports at
+ * nesting 0, which is every top-level test the file registers, and the run's duration from its
+ * last summary. It never filters on `data.file`: a test registered through a helper reports the
+ * helper's file, and one registered through the runner's mock reports the mock's.
+ */
+export default async function* lister(source) {
+  for await (const { type, data } of source) {
+    if ((type === 'test:pass' || type === 'test:fail') && data.nesting === 0) yield JSON.stringify({ title: data.name }) + '\n';
+    else if (type === 'test:summary' && data.file === undefined) yield JSON.stringify({ duration_ms: data.duration_ms }) + '\n';
+  }
+}
 
 /** How many times each value occurs in a list. */
 function counts(values) {
@@ -16,20 +29,17 @@ function counts(values) {
 }
 
 /**
- * What a change adds to one file: each test whose title the head holds more times than the base
- * does (D30 rule 2), and each line holding an unidentified runner reference or a route to
- * `node:test` other than a static import, where the base holds no byte-identical line in that file.
+ * A lister run's output for one file: how many top-level tests it registered under each title,
+ * and the run's duration, or the reason the run gives no titles. node:test reports a file that
+ * throws while loading, or registers no test, as a test named by the path it was given.
  */
-function additions(file, before, after) {
-  const head = testsIn(after, file);
-  const base = before === null ? { tests: [] } : testsIn(before, file);
-  const baseTitles = counts(base.tests.map(({ title }) => title));
-  const titles = [...counts(head.tests.map(({ title }) => title))]
-    .filter(([title, count]) => count > (baseTitles.get(title) ?? 0)).map(([title]) => title);
-  const baseLines = new Set(before === null ? [] : before.split(/\r\n|[\n\r\u2028\u2029]/));
-  const calls = head.unidentified.filter(({ key }) => !baseLines.has(key));
-  const routes = runnerRoutes(after, file).filter(({ key }) => !baseLines.has(key));
-  return { titles, calls, routes };
+export function listing(output, file) {
+  const entries = output.split('\n').filter((line) => line !== '').map((line) => JSON.parse(line));
+  const titles = entries.filter((entry) => Object.hasOwn(entry, 'title')).map(({ title }) => title);
+  const summary = entries.find((entry) => Object.hasOwn(entry, 'duration_ms'));
+  if (titles.includes(file)) return { error: 'fails to load the file or registers no test' };
+  if (!summary) return { error: 'ended before the runner reported its summary' };
+  return { counts: counts(titles), duration_ms: summary.duration_ms };
 }
 
 /** The timer record's lines, from the text of its worker files: the files that ran, and each arm. */
@@ -65,44 +75,54 @@ export function readRecord(directory) {
 }
 
 /**
- * What a change adds to each conversion-list file at its head that adds anything: the titles of
- * its added tests, its added unidentified runner references and routes to `node:test`, or the
- * reason its tests cannot be read.
+ * The conversion-list files at the head whose text the change modifies, a file new at the head
+ * included, or the reason a listed file cannot be read.
  */
-export function conversionAdditions({ base, head, facts }) {
+export function modifiedConversionFiles({ base, head, facts }) {
   return facts.readLists(head).converting.flatMap((file) => {
     const after = facts.show(head, file);
     if (after === null) return [{ file, error: `on the conversion list at ${head} and not in that tree` }];
-    let added;
-    try { added = additions(file, facts.show(base, file), after); }
-    catch (error) { return [{ file, error: `its tests cannot be read: ${error.message}` }]; }
-    return added.titles.length || added.calls.length || added.routes.length ? [{ file, ...added }] : [];
+    const before = facts.show(base, file);
+    return before === after ? [] : [{ file, atBase: before !== null }];
   });
 }
 
 /**
- * The added-timer mode between a base and a head, given the record the head's `npm test` wrote.
- * It refuses, naming the file, an added test whose title the record arms under, an added
- * unidentified runner reference (T6) or route to `node:test` other than a static import (T14),
- * each by its line, and a file gaining a test the record never ran.
+ * The added-timer mode between a base and a head, given the record the head's `npm test` wrote
+ * (D30 rule 6). Each modified conversion-list file F is run under the lister at the head and, in
+ * one worktree at the base, at the base. An arm recorded from F under title X is refused where
+ * head(X) > base(X): base(X) is the base run's count of X, and head(X) the larger of the head
+ * run's count and 1, since the arm proves the job's run registered X. A file whose run gives no
+ * titles, and a file gaining a test the record never ran, are refused naming the file.
  */
 export function addedTimers({ base, head, facts, record }) {
+  const files = modifiedConversionFiles({ base, head, facts });
+  if (files.length === 0) return { ok: true, errors: [] };
+  const runnable = files.filter(({ error }) => !error);
+  const heads = new Map(runnable.map(({ file }) => [file, facts.list(facts.root, file)]));
+  const bases = facts.atBase(base, (directory) => new Map(runnable
+    .map(({ file, atBase }) => [file, atBase ? facts.list(directory, file) : { counts: new Map() }])));
   const errors = [];
-  for (const { file, error, titles = [], calls = [], routes = [] } of conversionAdditions({ base, head, facts })) {
-    if (error) errors.push(`${file}: ${error}`);
-    for (const { line, key } of calls) errors.push(`${file} line ${line}: added unidentified runner reference: ${key.trim()}`);
-    for (const { line, key } of routes) errors.push(`${file} line ${line}: added route to node:test other than a static import: ${key.trim()}`);
-    if (titles.length === 0) continue;
-    if (!record.ran.has(file)) {
+  for (const { file, error } of files) {
+    if (error) { errors.push(`${file}: ${error}`); continue; }
+    const after = heads.get(file);
+    const before = bases.get(file);
+    if (after.error) errors.push(`${file}: the head run ${after.error}`);
+    if (before.error) errors.push(`${file}: the base run ${before.error}`);
+    if (after.error || before.error) continue;
+    const baseCount = (title) => before.counts.get(title) ?? 0;
+    const added = [...after.counts].some(([title, count]) => count > baseCount(title));
+    if (added && !record.ran.has(file)) {
       errors.push(`${file}: tests were added and the timer record shows no run of the file`);
       continue;
     }
-    for (const title of titles) {
-      const armed = record.arms.filter((entry) => entry.file === file && entry.test === title);
-      if (armed.length === 0) continue;
-      const what = [...new Set(armed.map(({ api, delay }) => `${api} with delay ${delay}`))].join(', ');
-      errors.push(`${file}: added test ${JSON.stringify(title)} armed ${what}`);
+    const armed = new Map();
+    for (const entry of record.arms) {
+      if (entry.file !== file || entry.test === null) continue;
+      if (Math.max(after.counts.get(entry.test) ?? 0, 1) <= baseCount(entry.test)) continue;
+      armed.set(entry.test, [...(armed.get(entry.test) ?? []), `${entry.api} with delay ${entry.delay}`]);
     }
+    for (const [title, arms] of armed) errors.push(`${file}: added test ${JSON.stringify(title)} armed ${[...new Set(arms)].join(', ')}`);
   }
   return { ok: errors.length === 0, errors };
 }
@@ -121,11 +141,36 @@ export function checkAddedTimers(context, facts, record) {
   } catch (error) { return { ok: false, errors: [error.message] }; }
 }
 
-/** The list-growth check's history reads, and a file's text at a commit, or null where it is absent. */
-export function gitFacts(root = process.cwd()) {
+// How long one lister run of one file may take. Ten minutes is a judgment, made before the CI
+// measurement of every conversion-list file's base run sets it.
+export const BASE_RUN_BOUND_MS = 600_000;
+
+/**
+ * A lister run of one file in `directory`: a full `node --test` run of it, with no skip, name or
+ * only pattern, since the runner reports nothing for a test such a pattern filters out. It runs
+ * under the environment of this process less Git's, the runner's own context and the timer
+ * record, so it neither writes the record nor reports into a runner that started this check.
+ */
+export function listTitles(directory, file, bound) {
+  const env = Object.fromEntries(Object.entries(process.env)
+    .filter(([key]) => !key.startsWith('GIT_') && key !== 'NODE_TEST_CONTEXT' && key !== 'RIGGER_SUITE_TIMER_RECORD'));
+  const ran = spawnSync(process.execPath, ['--test', `--test-reporter=${import.meta.url}`, '--test-reporter-destination=stdout', file], {
+    cwd: directory, env, encoding: 'utf8', timeout: bound, maxBuffer: 64 * 1024 * 1024,
+  });
+  if (ran.error?.code === 'ETIMEDOUT') return { error: `ran past its bound of ${bound} ms` };
+  if (ran.error) return { error: `could not run: ${ran.error.message}` };
+  return listing(ran.stdout, file);
+}
+
+/**
+ * The list-growth check's history reads, a file's text at a commit, or null where it is absent,
+ * and the lister runs: at the head in `root`, and at a base in a worktree `atBase` makes.
+ */
+export function gitFacts(root = process.cwd(), { bound = BASE_RUN_BOUND_MS } = {}) {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_')));
   return {
     ...listFacts(root),
+    root,
     show(sha, path) {
       if (!/^[a-f0-9]{40}$/.test(sha ?? '')) throw new Error('invalid commit ' + sha);
       const listed = execFileSync('git', ['ls-tree', '-z', sha, '--', path], {
@@ -136,6 +181,28 @@ export function gitFacts(root = process.cwd()) {
         cwd: root, env, timeout: 30_000, maxBuffer: 32 * 1024 * 1024, encoding: 'utf8',
       });
     },
+    /**
+     * Runs `use` in a detached worktree at `sha`, made under a temporary directory and linked to
+     * the head checkout's `node_modules`, then removes it, `git worktree remove --force` then
+     * `git worktree prune`, however `use` ends.
+     */
+    atBase(sha, use) {
+      const git = (...args) => execFileSync('git', args, { cwd: root, env, timeout: 120_000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      const holder = mkdtempSync(join(tmpdir(), 'rigger-base-run-'));
+      const directory = join(holder, 'base');
+      try {
+        git('worktree', 'add', '--detach', '--quiet', directory, sha);
+        symlinkSync(join(root, 'node_modules'), join(directory, 'node_modules'));
+        return use(directory);
+      } finally {
+        try { git('worktree', 'remove', '--force', directory); }
+        finally {
+          rmSync(holder, { recursive: true, force: true });
+          git('worktree', 'prune');
+        }
+      }
+    },
+    list: (directory, file) => listTitles(directory, file, bound),
   };
 }
 

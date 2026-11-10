@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { retiredIds } from './duplicate-id-check.mjs';
 import { documentChecking } from './doc-reference-check.mjs';
-import { addedTimers, conversionAdditions, gitFacts, readRecord } from '../.github/scripts/check-host-declarations.mjs';
+import { addedTimers, gitFacts, modifiedConversionFiles, readRecord } from '../.github/scripts/check-host-declarations.mjs';
 
 export const SCRIPT_CHECKS = [
   { name: 'matrix', command: ['npm', 'run', 'matrix:check'] },
@@ -143,7 +143,7 @@ export function preflight(argv, { root = process.cwd(), scriptChecks = SCRIPT_CH
     return 1;
   }
   let failing = false;
-  // The added-timer step: an npm test run of the conversion-list files the change adds to, with a
+  // The added-timer step: an npm test run of the conversion-list files the change modifies, with a
   // record directory of its own, then the mode over that record. A failed run stops it there.
   const addedTimerStep = (command) => {
     if (git('ls-tree', '-z', head, '--', 'test/suite.sh') === '') {
@@ -151,14 +151,16 @@ export function preflight(argv, { root = process.cwd(), scriptChecks = SCRIPT_CH
       return true;
     }
     const facts = gitFacts(root);
-    const files = conversionAdditions({ base, head, facts }).map(({ file }) => file);
-    if (files.length === 0) {
-      write('added-timer: passed (no conversion-list test added)');
+    const modified = modifiedConversionFiles({ base, head, facts });
+    const files = modified.filter(({ error }) => !error).map(({ file }) => file);
+    if (modified.length === 0) {
+      write('added-timer: passed (no conversion-list file modified)');
       return true;
     }
     const record = mkdtempSync(join(tmpdir(), 'rigger-timer-record-'));
     try {
-      const result = run([...command, ...files], { env: { ...gitEnvironment(env), GIT_OPTIONAL_LOCKS: '0', RIGGER_SUITE_TIMER_RECORD: record } });
+      const result = files.length === 0 ? { status: 0 }
+        : run([...command, ...files], { env: { ...gitEnvironment(env), GIT_OPTIONAL_LOCKS: '0', RIGGER_SUITE_TIMER_RECORD: record } });
       if (result.status !== 0) {
         write(`added-timer: failed (${[...command, ...files].join(' ')} exited ${result.status})`);
         if (result.stdout) write(result.stdout.trimEnd());

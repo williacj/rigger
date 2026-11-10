@@ -1,17 +1,18 @@
-// ABOUTME: Runs the added-timer mode and preflight's conversion-list step over real Git fixture
-// repositories whose tests run under the real suite, so the timer record is the guard's own.
+// ABOUTME: Runs the added-timer mode, its lister and its base worktree, and preflight's
+// conversion-list step, over real Git fixture repositories and real node:test runs.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, readlinkSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { testsIn } from '../scripts/build-test-matrix.mjs';
+import { addedTimers, gitFacts, listTitles, parseRecord } from '../.github/scripts/check-host-declarations.mjs';
+import { CASES, HELPERS } from './added-timer-oracle-cases.mjs';
 import { gitIn, repositoryAt } from './git-repository.mjs';
-import { cases } from './runner-call-forms.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 const subject = await import('../scripts/preflight.mjs');
@@ -21,12 +22,25 @@ const CONVERTING = 'test/converting.test.mjs';
 const header = "import { test } from 'node:test';\n";
 const older = "test('older', () => {});\n";
 const arming = "test('arms a real timer', () => { clearTimeout(setTimeout(() => {}, 5)); });\n";
+// A bound for runs that should end at once: far above a one-file run's start-up, which the
+// lister's own runs here take well under a second for.
+const BOUND = 60_000;
+
+function tally(titles) {
+  const result = new Map();
+  for (const title of titles) result.set(title, (result.get(title) ?? 0) + 1);
+  return result;
+}
 
 /**
- * A repository whose suite is the real `test/suite.sh` with its lists narrowed to one host stub
- * and two conversion-list files, and whose guard, path helper and reaper are the real ones,
- * linked. Its `npm test` therefore runs the conversion-list file under the real guard.
+ * The linked worktrees git registers for a repository, by the names of their administrative
+ * directories under `.git/worktrees`, which `git worktree prune` removes with the registration.
  */
+function worktrees(root) {
+  const registered = join(root, '.git', 'worktrees');
+  return existsSync(registered) ? readdirSync(registered).sort() : [];
+}
+
 function suiteFixture(t) {
   const directory = temporaryDirectory('rigger-1138-host-', { context: t });
   const suite = readFileSync(join(SOURCE, 'test/suite.sh'), 'utf8')
@@ -62,8 +76,8 @@ function commit(root, files, message = 'fixture change') {
 }
 
 /**
- * What a preflight run must leave as it found it: the fixture's head, its status, and the bytes of
- * every file in its working tree, its tests among them.
+ * What a preflight run must leave as it found it: the fixture's head, its status, the bytes of
+ * every file in its working tree, its tests among them, and the worktrees git registers.
  */
 function repositoryState(root) {
   const files = readdirSync(root, { recursive: true, withFileTypes: true })
@@ -71,7 +85,10 @@ function repositoryState(root) {
     .map((entry) => join(entry.parentPath, entry.name))
     .map((path) => [path.slice(root.length + 1), createHash('sha256').update(readFileSync(path)).digest('hex')])
     .sort(([a], [b]) => a.localeCompare(b));
-  return { head: gitIn(root, 'rev-parse', 'HEAD').trim(), status: gitIn(root, 'status', '--porcelain'), files };
+  return {
+    head: gitIn(root, 'rev-parse', 'HEAD').trim(), status: gitIn(root, 'status', '--porcelain'), files,
+    worktrees: worktrees(root),
+  };
 }
 
 /**
@@ -203,56 +220,129 @@ test('the CI step compares a pull request with its merge head\'s first parent, s
   assert.equal(checked.stderr, `${other}: added test "pull request arms" armed setTimeout with delay 5\n`);
 });
 
-// node:test is the authority on which top-level tests a module registers: each matrix case runs
-// under `node --test`, and a reporter names every top-level test or suite with its file.
-test('every test a case of the runner-call matrix registers under node:test is one the scanner identifies or lists', (t) => {
-  // The runner names each file by its real path, so the cases are written under one.
-  const directory = realpathSync.native(temporaryDirectory('rigger-1138-forms-', { context: t }));
-  const all = cases();
-  const files = all.map((entry, index) => {
-    const file = join(directory, `case-${index}.test.mjs`);
-    writeFileSync(file, entry.source);
-    return file;
-  });
-  const reporter = join(directory, 'names.mjs');
-  writeFileSync(reporter, [
-    '// ABOUTME: Names each top-level test or suite a run registers, with its file.',
-    'export default async function* names(source) {',
-    '  for await (const event of source) {',
-    "    if ((event.type === 'test:pass' || event.type === 'test:fail') && event.data.nesting === 0) yield JSON.stringify([event.data.file, event.data.name]) + '\\n';",
-    '  }',
-    '}',
-    '',
-  ].join('\n'));
-  const { NODE_TEST_CONTEXT, ...environment } = process.env;
-  const names = (paths) => {
-    const ran = spawnSync(process.execPath, ['--test', `--test-reporter=${reporter}`, ...paths], {
-      encoding: 'utf8', env: environment, maxBuffer: 64 * 1024 * 1024,
-    });
-    assert.equal(ran.status, 0, ran.stdout + ran.stderr);
-    return ran.stdout.split('\n').filter(Boolean).map((line) => JSON.parse(line));
-  };
-  const registered = new Map(files.map((file) => [file, []]));
-  // A test registered through the runner's mock is reported against the mock's own file, so each
-  // case of the attack runs alone and all it registers is its own; the rest run together.
-  const alone = new Set(files.filter((_, index) => all[index].group === 'covered'));
-  for (const [file, name] of names(files.filter((file) => !alone.has(file)))) {
-    // A file that registers no test is reported as one test named by its own path.
-    if (name !== file) registered.get(file)?.push(name);
-  }
-  for (const file of alone) {
-    for (const [reported, name] of names([file])) if (name !== reported) registered.get(file).push(name);
-  }
-  // The scan fails closed: each test the runner registers is identified by its title or covered
-  // by an unidentified entry, so none is silent. Listing more than the runner registers is a
-  // false refusal, which the scan accepts.
-  const wrong = all.flatMap((entry, index) => {
-    const runtime = registered.get(files[index]);
-    const found = testsIn(entry.source, `test/case-${index}.test.mjs`);
-    const titles = found.tests.map(({ title }) => title);
-    const agrees = runtime.filter((title) => !titles.includes(title)).length <= found.unidentified.length;
-    return JSON.stringify(runtime) === JSON.stringify(entry.registers) && agrees ? []
-      : [`${entry.name}: runner ${JSON.stringify(runtime)}, matrix ${JSON.stringify(entry.registers)}, scanner ${JSON.stringify(titles)} and ${found.unidentified.length} unidentified`];
+
+/** A repository at `root` holding `files`, committed, with each later commit made by `commit`. */
+function plainFixture(t, files) {
+  const directory = temporaryDirectory('rigger-1138-base-', { context: t });
+  const root = repositoryAt(join(directory, 'repository'), files);
+  return { directory, root, base: gitIn(root, 'rev-parse', 'HEAD').trim() };
+}
+
+/** A suite script that answers `--list converting` with `files` and every other list with none. */
+const listing = (...files) => `# ABOUTME: Lists a fixture's conversion list.\nif [ "$2" = converting ]; then printf '%s\\n' ${files.join(' ')}; fi\n`;
+
+const recordOf = (lines) => parseRecord(lines.map((line) => JSON.stringify(line)).join('\n'));
+
+test('the lister lists every top-level test each module of the scanner attacks registers, however it registers it', (t) => {
+  const directory = temporaryDirectory('rigger-1138-oracle-', { context: t });
+  mkdirSync(join(directory, 'test'));
+  for (const [name, source] of Object.entries(HELPERS)) writeFileSync(join(directory, 'test', name), source);
+  for (const [name, source] of CASES) writeFileSync(join(directory, 'test', name), source);
+  const wrong = CASES.flatMap(([name, , titles]) => {
+    const listed = listTitles(directory, `test/${name}`, BOUND);
+    return listed.error || JSON.stringify([...listed.counts]) !== JSON.stringify([...tally(titles)])
+      ? [`${name}: listed ${JSON.stringify(listed.error ?? [...listed.counts])}, registers ${JSON.stringify(titles)}`] : [];
   });
   assert.deepEqual(wrong, []);
+});
+
+test('the lister gives no titles for a file that fails to load, one that registers no test, and a run past its bound', (t) => {
+  const directory = temporaryDirectory('rigger-1138-lister-', { context: t });
+  mkdirSync(join(directory, 'test'));
+  writeFileSync(join(directory, 'test/throws.test.mjs'), `${header}test('registered first', () => {});\nthrow new Error('load fails');\n`);
+  writeFileSync(join(directory, 'test/none.test.mjs'), 'export const nothing = 1;\n');
+  writeFileSync(join(directory, 'test/hangs.test.mjs'), `${header}test('never ends', () => { setInterval(() => {}, 1000); return new Promise(() => {}); });\n`);
+  assert.deepEqual(listTitles(directory, 'test/throws.test.mjs', BOUND), { error: 'fails to load the file or registers no test' });
+  assert.deepEqual(listTitles(directory, 'test/none.test.mjs', BOUND), { error: 'fails to load the file or registers no test' });
+  assert.deepEqual(listTitles(directory, 'test/hangs.test.mjs', 2_000), { error: 'ran past its bound of 2000 ms' });
+});
+
+test('the base worktree is a detached checkout of the base under a temporary directory, using the head\'s node_modules, removed and pruned after', (t) => {
+  const f = plainFixture(t, { 'file.txt': 'base\n', 'node_modules/kept/index.js': 'export default 1;\n', '.gitignore': 'node_modules\n' });
+  writeFileSync(join(f.root, 'file.txt'), 'head\n');
+  gitIn(f.root, 'commit', '-qam', 'head');
+  const facts = gitFacts(f.root);
+  let seen;
+  const answer = facts.atBase(f.base, (directory) => {
+    seen = directory;
+    assert.ok(realpathSync(directory).startsWith(realpathSync(tmpdir()) + '/'), `${directory} is not under the temporary directory`);
+    assert.equal(gitIn(directory, 'rev-parse', 'HEAD').trim(), f.base);
+    assert.throws(() => gitIn(directory, 'symbolic-ref', '-q', 'HEAD'), /symbolic-ref -q HEAD/, 'the worktree is not detached');
+    assert.equal(readFileSync(join(directory, 'file.txt'), 'utf8'), 'base\n');
+    assert.ok(lstatSync(join(directory, 'node_modules')).isSymbolicLink());
+    assert.equal(readlinkSync(join(directory, 'node_modules')), join(f.root, 'node_modules'));
+    assert.equal(worktrees(f.root).length, 1);
+    return 'answered';
+  });
+  assert.equal(answer, 'answered');
+  assert.equal(existsSync(seen), false, 'the worktree is removed');
+  assert.equal(existsSync(dirname(seen)), false, 'its temporary directory is removed');
+  assert.deepEqual(worktrees(f.root), []);
+  assert.equal(readFileSync(join(f.root, 'node_modules/kept/index.js'), 'utf8'), 'export default 1;\n', 'the head\'s node_modules is kept');
+});
+
+test('the base worktree is removed and pruned when the run inside it throws', (t) => {
+  const f = plainFixture(t, { 'file.txt': 'base\n' });
+  let seen;
+  assert.throws(() => gitFacts(f.root).atBase(f.base, (directory) => { seen = directory; throw new Error('the run failed'); }), /the run failed/);
+  assert.equal(existsSync(dirname(seen)), false);
+  assert.deepEqual(worktrees(f.root), []);
+});
+
+test('a conversion-list test registered through a helper in another file counts under the conversion-list file at the head and at the base', (t) => {
+  const helper = "import { test } from 'node:test';\nexport function register(title) { test(title, () => {}); }\n";
+  const f = plainFixture(t, {
+    'test/suite.sh': listing(CONVERTING),
+    'test/register.mjs': helper,
+    [CONVERTING]: "import { register } from './register.mjs';\nregister('via helper');\n",
+  });
+  writeFileSync(join(f.root, CONVERTING), "import { register } from './register.mjs';\nregister('via helper');\nregister('added via helper');\n");
+  gitIn(f.root, 'commit', '-qam', 'add a test through the helper');
+  const head = gitIn(f.root, 'rev-parse', 'HEAD').trim();
+  const record = recordOf([
+    { file: CONVERTING, test: null, api: null, delay: null },
+    { file: CONVERTING, test: 'via helper', api: 'setTimeout', delay: 5 },
+    { file: CONVERTING, test: 'added via helper', api: 'setTimeout', delay: 5 },
+  ]);
+  assert.deepEqual(addedTimers({ base: f.base, head, facts: gitFacts(f.root, { bound: BOUND }), record }),
+    { ok: false, errors: [`${CONVERTING}: added test "added via helper" armed setTimeout with delay 5`] });
+  assert.deepEqual(worktrees(f.root), []);
+});
+
+test('the base run loads the head\'s node_modules, and a base run that fails to load a package the head no longer installs is refused naming the file', (t) => {
+  const f = plainFixture(t, {
+    '.gitignore': 'node_modules\n',
+    'node_modules/installed/package.json': JSON.stringify({ name: 'installed', type: 'module', main: 'index.js' }),
+    'node_modules/installed/index.js': 'export const title = \'from the installed package\';\n',
+    'test/suite.sh': listing(CONVERTING, 'test/other-converting.test.mjs'),
+    [CONVERTING]: `${header}import { title } from 'installed';\ntest(title, () => {});\n`,
+    'test/other-converting.test.mjs': `${header}import { title } from 'removed';\ntest(title, () => {});\n`,
+  });
+  writeFileSync(join(f.root, CONVERTING), `${header}import { title } from 'installed';\ntest(title, () => {});\ntest('added', () => {});\n`);
+  writeFileSync(join(f.root, 'test/other-converting.test.mjs'), `${header}test('rewritten', () => {});\n`);
+  gitIn(f.root, 'commit', '-qam', 'drop the removed package');
+  const head = gitIn(f.root, 'rev-parse', 'HEAD').trim();
+  const record = recordOf([
+    { file: CONVERTING, test: null, api: null, delay: null },
+    { file: 'test/other-converting.test.mjs', test: null, api: null, delay: null },
+    { file: CONVERTING, test: 'from the installed package', api: 'setTimeout', delay: 5 },
+  ]);
+  assert.deepEqual(addedTimers({ base: f.base, head, facts: gitFacts(f.root, { bound: BOUND }), record }), {
+    ok: false, errors: ['test/other-converting.test.mjs: the base run fails to load the file or registers no test'],
+  });
+  assert.deepEqual(worktrees(f.root), []);
+});
+
+test('a base run past the mode\'s bound is refused naming the file and the bound, and its worktree is removed', (t) => {
+  const f = plainFixture(t, {
+    'test/suite.sh': listing(CONVERTING),
+    [CONVERTING]: `${header}test('never ends', () => { setInterval(() => {}, 1000); return new Promise(() => {}); });\n`,
+  });
+  writeFileSync(join(f.root, CONVERTING), `${header}test('ends', () => {});\n`);
+  gitIn(f.root, 'commit', '-qam', 'end the test');
+  const head = gitIn(f.root, 'rev-parse', 'HEAD').trim();
+  const record = recordOf([{ file: CONVERTING, test: null, api: null, delay: null }]);
+  assert.deepEqual(addedTimers({ base: f.base, head, facts: gitFacts(f.root, { bound: 2_000 }), record }),
+    { ok: false, errors: [`${CONVERTING}: the base run ran past its bound of 2000 ms`] });
+  assert.deepEqual(worktrees(f.root), []);
 });
