@@ -439,7 +439,7 @@ function processBindings(modules) {
     return value;
   };
   const readExport = (file, name, seen) => {
-    if (file === 'node:child_process' && name === 'default') return namespace(file);
+    if (BUILTINS.has(file) && name === 'default') return namespace(file);
     // node:url exports the same constructor as the admitted global URL (checked by the matrix).
     if (file === 'node:url' && name === 'URL') return namespace('global:URL');
     if (!modules.has(file)) return `${file}#${name}`;
@@ -1121,12 +1121,18 @@ test('N8 and A5 writes: assignment, update, for-of, for-in and destructuring pro
 });
 
 import { URL as URLExport } from 'node:url';
+import urlModule from 'node:url';
 
 // proves R-SAFE-2
 test('N11 global writes: admitted globals, prototypes and aliases reject static writes and mutators', () => {
   assert.equal(URLExport, globalThis.URL, 'N11: node:url exports the admitted global URL constructor');
+  assert.equal(urlModule.URL, globalThis.URL, 'N11: the builtin default export reaches the same admitted URL constructor');
   const forms = [
     ['prototype assignment', 'URL.prototype.toString = () => process.env.RIGGER_PLUGIN;'],
+    ['builtin default import', "import urls from 'node:url'; urls.URL.prototype.toString = () => process.env.RIGGER_PLUGIN;"],
+    ['named default import', "import { default as urls } from 'node:url'; urls.URL.prototype.toString = () => process.env.RIGGER_PLUGIN;"],
+    ['literal default import namespace', "const { default: urls } = await import('node:url'); urls.URL.prototype.toString = () => process.env.RIGGER_PLUGIN;"],
+    ['nested literal default import destructure', "const { default: { URL: ConfigURL } } = await import('node:url'); ConfigURL.prototype.toString = () => process.env.RIGGER_PLUGIN;"],
     ['imported constructor alias', "import { URL as ConfigURL } from 'node:url'; ConfigURL.prototype.toString = () => process.env.RIGGER_PLUGIN;"],
     ['imported constructor namespace', "import * as urls from 'node:url'; urls.URL.prototype.toString = () => process.env.RIGGER_PLUGIN;"],
     ['literal imported constructor', "const { URL: ConfigURL } = await import('node:url'); ConfigURL.prototype.toString = () => process.env.RIGGER_PLUGIN;"],

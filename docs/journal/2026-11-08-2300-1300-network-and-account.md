@@ -257,3 +257,16 @@ checks. It does not cache an incomplete traversal beneath an assigned alias cycl
 ordinary static alias origins under K13, within the same guard file; no new edge or production
 path is introduced. Additional assigned/spread alias receipts accompany the five supplied
 survivors at the final head.
+
+The complete host tier at 860472911190cb4d43391c558483e134f0820629 then passed:
+measured by npm run test:host in 1300-r3-host-final.log, tests 2780, pass 2752, fail 0,
+skipped 28. That output is retained as a predecessor-head result. Before publication, the
+same alias class needs the builtin default-export namespace too: Node v26.13.0 observes
+node:url's default export URL equal to globalThis.URL. The matrix checks that identity live.
+1300-r3-r4-default-red.log records four misses: default import, named default import,
+literal-import default namespace and nested literal-import destructure. The matching green
+is 1300-r3-r4-default-green.log. The existing builtin-default rule now applies to each
+already-admitted builtin namespace, preserving the canonical URL member identity through
+all four forms; it admits no additional builtin or global. No production default import
+exists in the measured closure. This stays within K13's static-alias/global-member class.
+The PR repeats all required verification and guarded receipts at the subsequent head.
