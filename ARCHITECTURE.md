@@ -1728,13 +1728,21 @@ fragment.
 a failure, as for every append the sink refuses. "Failure model" states what L3 does with it. A
 later reader never finds that event, because the fragment is never returned.
 
+**A held event's write.** A held event's emit returned when the sink held it, and the sink writes
+it only when the verb names the state directory ("Telemetry"). Where that write tears, the naming
+fails, and no emit is refused. The failure carries every held event the naming left unrecorded,
+the torn one included, and reaches the verb that named the directory. A later reader finds none of
+those held events. Every event emitted after the naming is appended, and a later reader finds it
+under the rules below. This is the one case in which an event whose emit returned before the tear
+is lost, and the fourth residual names it.
+
 **No writer makes the call.** At one read, a fragment and another process's line still being
 appended are the same bytes, so no writer tells them apart. None needs to, because no writer acts
 on either. The sink's emit stays one append of one whole line, and reads nothing before it. What
 keeps a line still being appended whole is that no writer writes any byte but its own line's. No
 writer, reader or push truncates, terminates or rewrites bytes another append made. #1298's Table I
-measured two processes appending to one stream, at 200 bytes and 1 MiB per line, with every line
-left whole.
+tests in `test/event-sink.test.mjs` claim that two processes appending to one stream leave every
+line whole, at 200 bytes and 1 MiB per line.
 
 **The reader separates the fragment.** L5's reader, `readEvents` in `src/observation/sink.mjs`, is
 the one code path that tells a fragment from an event. A line of the sink's form is one JSON object
@@ -1758,11 +1766,16 @@ append after a tear makes the reader refuse the stream, so every event is lost t
 over only bytes a cut-short append leaves, which rule 1 already passes over while they are last.
 Damage of any other form is still refused, as E1 refused it.
 
-The separation rests on the sink's line form. A cut-short line followed by a whole line has one
-offset from which the rest of the line parses as one JSON value: where the whole line starts. That
-this holds for every line `JSON.stringify` writes is a judgment. The architect measured it on
-#1370's pull request with `node` v26.13.0, gluing each of 740 cut-short prefixes onto a whole line.
-Every one parsed from the whole line's start and from no earlier offset.
+The separation rests on the sink's line form. One or more cut-short lines followed by a whole line
+leave one offset from which the rest of the line parses as one JSON value: where the whole line
+starts. That this holds for every line `JSON.stringify` writes is a judgment. The architect measured
+it on #1370's pull request with `node` v26.13.0, from 741 cut-short prefixes of five lines:
+
+- each prefix glued onto a whole line, 741 cases;
+- every ordered pair of prefixes glued onto a whole line, 549,081 cases;
+- 20,000 seeded triples of prefixes glued onto a whole line.
+
+In every case the rest parsed from the whole line's start and from no earlier offset.
 
 **What becomes of the fragment.** Its bytes stay in the stream, byte for byte, and reach every
 pushed copy that holds the line ending after them. `R-RECORD-5` reads: "Rigger never rewrites what
@@ -1799,6 +1812,9 @@ reader is L5's.
    whole line of the sink's form, with the line's own closing brace lost. Rigger's sink writes no
    such line. Another program's edit is out of sight under #1298's row R13. The owner rules
    whether that form needs refusing.
+4. A torn write of a held event loses that event and every held event after it, though each emit
+   returned ("A held event's write"). The naming's failure names each one (`R-RECORD-9`). The owner
+   rules whether that suffices, or whether a later card makes held events survive a torn naming.
 
 ### L0's call events
 
