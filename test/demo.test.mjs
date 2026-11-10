@@ -161,6 +161,6 @@ test('rigger once in the demo world claims a card, names its workspace, says its
   const ran = inTheWorld('rigger once');
 
   assert.match(ran.err, /^rigger once: claimed #\d+ from board 3\b/m, ran.err);
-  assert.match(ran.err, /; its maker exited 0 and opened no pull request from rigger-12, in its workspace, \/\S*\/widgets-worktrees\/rigger-12$/m, ran.err);
+  assert.match(ran.err, /; Rigger escalated it as ambiguous: card #12's maker started its work from the beginning and exited 0, and the forge holds no open pull request from its line of work rigger-12, in its workspace, \/\S*\/widgets-worktrees\/rigger-12$/m, ran.err);
   assert.notEqual(ran.code, 0, ran.out);
 });

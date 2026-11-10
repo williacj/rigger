@@ -281,7 +281,7 @@ In this table, "the labels" are the labels a clock trigger's card template carri
 | R-WORK-15 | — the line of work the worktree holds is exactly the card's; | the engine | the test suite | |
 | R-WORK-16 | — it is not the worktree Rigger was handed as the repository, whatever line of work that worktree holds; | the engine | the test suite | |
 | R-WORK-17 | — no other worktree of the repository, the handed one included, lies inside it. | the engine | the test suite | |
-| R-WORK-18 | Rigger moves a card to review only once its maker has exited successfully and the forge holds an open pull request from the card's line of work. A maker that exits successfully with no such pull request leaves the card where it was, and Rigger names the card and why. | the engine | the test suite | |
+| R-WORK-18 | Rigger moves a card to review only once its maker has exited successfully and the forge holds an open pull request from the card's line of work. Except as `R-LOOP-21` to `R-LOOP-24` give, a maker that exits successfully with no such pull request leaves the card where it was, and Rigger names the card and why. | the engine | the test suite | |
 | R-WORK-19 | Rigger never starts a card's work from the beginning while the forge holds the card's line of work, or a merged pull request from it. It refuses the card, naming it and what the forge holds. | the engine | the test suite | D10 |
 | R-WORK-20 | Where a directory is at the path of the directory Rigger makes for a judge's dispatch, and any condition below does not hold, Rigger dispatches no judge there, names the path, and changes nothing. Rigger replaces that directory only when all of these hold: | the engine | the test suite | |
 | R-WORK-21 | — everything in it is a worktree added to the repository Rigger works, each at a detached commit; | the engine | the test suite | |
@@ -445,6 +445,10 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | R-LOOP-17 | An agent judge whose entry carries a provider rule runs on the provider that rule gives: the fixed provider, or the one the rule names for the provider its maker runs on. | the engine | the test suite | D24 |
 | R-LOOP-19 | Rigger dispatches no maker again, in the invocation that ran it, for a card whose maker exited non-zero and left the forge holding nothing of the card's line of work. The forge holds nothing of it where it holds no branch of it and no open or merged pull request from it. A card whose skip `R-SCHED-43` ends is the exception, and Rigger then dispatches it as it would any other. The next invocation dispatches the card as it would any other. | the engine | the test suite | |
 | R-LOOP-20 | A maker continuing a card that exits successfully and leaves its head as it found it answers nothing. Rigger then escalates the card as ambiguous, whatever rounds remain, and dispatches no maker for it until the owner answers. | the engine | the test suite | D3 |
+| R-LOOP-21 | Rigger escalates a card as ambiguous, naming why, where its maker has delivered nothing, and dispatches no maker for it until the owner answers. A maker has delivered nothing where all of these hold: | the engine | the test suite | D3 |
+| R-LOOP-22 | — the maker started the card's work from the beginning; | the engine | the test suite | |
+| R-LOOP-23 | — the maker exited successfully; | the engine | the test suite | |
+| R-LOOP-24 | — the forge then holds no open pull request from the card's line of work, or Rigger cannot read whether it does. | the engine | the test suite | |
 
 ## R-EVIDENCE — what a judge is given
 

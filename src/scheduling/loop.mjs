@@ -470,8 +470,9 @@ function triggerRecord(readRecord) {
  * the maker's settle, L3 asks it again with the facts the settle answered as `forge`, and, while
  * the judges it names are made and run, with `directories` and `judged`, as `attempt` and `judged`
  * say. `l2` is L2's column changes, whose `claimed` takes each claim and whose `settled` takes the
- * maker's outcome and, for a continuing maker that exited 0, L1's workspace tip, the head and
- * rulings L2 handed that maker, unread, and the read measure. It answers what it read of the forge, which L3 reads nothing of. The
+ * maker's outcome and, for a maker that exited 0, L1's workspace tip, and for a continuing one the
+ * head and rulings L2 handed that maker, unread, and the read measure, or for a fresh one the
+ * workspace's path. It answers what it read of the forge, which L3 reads nothing of. The
  * maker is always the role L2's maker answer names, dispatched through L1, as `dispatchRole` says
  * (the architect's ruling 1, Q1, on #467). `environment` is the environment L3 hands
  * every dispatch it makes, each step's, the maker's and each judge's (ruling 2, AQ1). `ps` and
@@ -481,8 +482,8 @@ function triggerRecord(readRecord) {
  * workspace handle, injected, and
  * answers the attempt's workspace as `{ path, branch }`, with the card's scratch base as `scratch`
  * and the repository it made from as `repository` (ruling 5, P4; the architect's rulings 19 and
- * 21 on #467). `workspaceTip` is L1's read of the branch's tip in that workspace after a continuing
- * maker exits 0. `clock` supplies the time and pause for a repeated forge read.
+ * 21 on #467). `workspaceTip` is L1's read of the branch's tip in that workspace after a maker
+ * exits 0. `clock` supplies the time and pause for a repeated forge read.
  * `escalationDirectory(card, role, head)` makes an escalation role's detached directory before
  * dispatch, and its retry makes both directories fresh under the same routing comment.
  * `judgeDirectory(card, role, head)` is L1's make of a judge's directory, injected, as
@@ -927,9 +928,11 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       let settled;
       // Every settle of this maker hands L2 `placed`, so the column its move left the card in reaches the memory.
       const settling = (options) => Promise.allSettled([l2.settled(card, outcome, { dispatch, placed, ...options })]);
-      if (continuing !== undefined && outcome.status === 'fulfilled' && outcome.value.exit === 0) {
-        let expectedHead;
-        let tipFailure;
+      const exitedZero = outcome.status === 'fulfilled' && outcome.value.exit === 0;
+      let expectedHead;
+      let tipFailure;
+      // Every maker that exits 0 has L1 read its workspace's tip, which L2 compares for a continuing one and names in a fresh one's escalation.
+      if (exitedZero) {
         try {
           if (typeof workspaceTip !== 'function') throw new Error('L3 was handed no L1 workspace-tip reader');
           expectedHead = await workspaceTip({ card: card.number, dispatch, path, branch, repository });
@@ -938,6 +941,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
           if (failure.code === EVENT_REFUSED) throw failure;
           tipFailure = failure;
         }
+      }
+      if (continuing !== undefined && exitedZero) {
         const first = now();
         let reads = 0;
         let lastForgeHead;
@@ -953,7 +958,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
           await pause(5_000);
         }
       } else {
-        [settled] = await settling({ continuing: continuing !== undefined, ...(scope === undefined ? {} : { noClock: true }) });
+        [settled] = await settling({ continuing: continuing !== undefined, ...(scope === undefined ? {} : { noClock: true }),
+          ...(exitedZero ? { tip: expectedHead, tipUnread: tipFailure, workspace: path } : {}) });
       }
       // Only L2's settlement answer supplies this halt; a generic L1 failure is not terminal.
       if (scope !== undefined && settled.status === 'rejected' && settled.reason?.halt === true) defer(scope, card, actionIdentity(next));

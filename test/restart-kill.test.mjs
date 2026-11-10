@@ -213,11 +213,11 @@ function assertKillsFirst(world, pids) {
 function assertOneMakerOfItsOwn(world, verb, ran) {
   const { restarted } = restartRecord(world);
   const own = restarted.filter((event) => event.dispatch !== undefined && event.event !== 'recorded.killed');
-  assert.deepEqual(own.map(({ layer, event }) => `${layer} ${event}`), ['L3 dispatch', 'L0 call.end', 'L1 workspace.made', 'L1 dispatch.start', 'L1 dispatch.end', 'L0 call.end', 'L0 call.end', 'L2 review.withheld'], JSON.stringify(own));
-  assert.equal(new Set(own.map(({ dispatch }) => dispatch)).size, 1, JSON.stringify(own));
+  assert.deepEqual(own.map(({ layer, event }) => `${layer} ${event}`), ['L3 dispatch', 'L0 call.end', 'L1 workspace.made', 'L1 dispatch.start', 'L1 dispatch.end', 'L0 call.end', 'L0 call.end', 'L0 call.end', 'L0 call.end', 'L0 call.end', 'L0 call.end', 'L2 review.escalate', 'L0 call.end'], JSON.stringify(own));
+  assert.equal(new Set(own.filter(({ dispatch }) => dispatch !== null).map(({ dispatch }) => dispatch)).size, 1, JSON.stringify(own));
   assert.equal(ran.stdout, '');
   const workspace = join(realpathSync(world.directory), 'widgets-worktrees', 'rigger-10');
-  assert.equal(ran.stderr, `rigger ${verb}: claimed #10 from board ${PROJECT}; its maker exited 0 and opened no pull request from rigger-10, in its workspace, ${workspace}\n`);
+  assert.equal(ran.stderr, `rigger ${verb}: claimed #10 from board ${PROJECT}; Rigger escalated it as ambiguous: card #10's maker started its work from the beginning and exited 0, and the forge holds no open pull request from its line of work rigger-10, in its workspace, ${workspace}\nrigger ${verb}: card #10's escalation issue comment was refused: postIssueComment on issue #10 failed: gh: Not Found (HTTP 404)\n`);
 }
 
 /**

@@ -1443,6 +1443,8 @@ L3 owns the pause, the clock and the bound, and L2 owns what each read shows.
 
 Where a continuing maker exits 0 at the head L2 gave it, L2 answers a loop-raised `ambiguous` escalation in place of the move to Review (`R-LOOP-20`). L3 hands L2 that head unread. The comparison lies within one settle, so it needs no memory.
 
+Where a maker that started a card's work from the beginning exits 0 and L2 reads no open pull request from its line of work, L2 answers a loop-raised `ambiguous` escalation in place of leaving the card in Coding. `R-LOOP-21` to `R-LOOP-24` require it. L3 hands L2 the tip L1 read of the workspace, and the workspace's path, unread. The answer lies within one settle, so it needs no memory.
+
 L1's directory-removal operation lives in `src/execution/workspace.mjs`. L2 selects it, and L3 invokes it under the card's claim. It serves both `R-WORK-35` and `R-WORK-41`.
 
 Once L2 reads a card's pull request as merged, whoever merged it, L3 has L1 remove the card's
