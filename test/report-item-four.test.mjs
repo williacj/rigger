@@ -47,7 +47,21 @@ test('causes count events per run and stream, ignore reason and preserve the dis
     stream: { classes: [{ class: 'environment', count: 3 }, { class: 'card-local', count: 2 },
       { class: null, count: 1 }, { class: 'out', count: 1 }, { class: 'policy', count: 1 }], infrastructure: 5 },
   });
-  const changedReasons = events.map((event, at) => ({ ...event, reason: `environment card-local \"reason\"\n${at} \\ literal` }));
+  const changedReasons = events.map((event, at) => event.event === 'review.escalate'
+    ? { ...event, reason: `environment card-local \"reason\"\n${at} \\ literal` }
+    : event);
+  assert.equal(changedReasons.length, events.length);
+  for (const [at, before] of events.entries()) {
+    const after = changedReasons[at];
+    if (before.event !== 'review.escalate') {
+      assert.deepEqual(after, before, `event ${at + 1} (${before.event}) must be identical`);
+    } else {
+      const { reason: beforeReason, ...beforeOther } = before;
+      const { reason: afterReason, ...afterOther } = after;
+      assert.notEqual(afterReason, beforeReason, `event ${at + 1} must change reason`);
+      assert.deepEqual(afterOther, beforeOther, `event ${at + 1} changes only reason`);
+    }
+  }
   assert.deepEqual(report(stream(t, changedReasons)).l2.escalationCauses, derived.l2.escalationCauses);
   assert.deepEqual(report(stream(t, [...events, { layer: 'L2', event: 'unread', run: 'unread-run', card: 7 }])).l2.escalationCauses,
     derived.l2.escalationCauses, 'an unrelated event cannot add a cause run');
