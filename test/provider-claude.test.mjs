@@ -103,7 +103,7 @@ test('the invocation passes no flag or setting that skips or widens the CLI\'s p
   assert.equal(given.additionalDirectories, undefined);
 });
 
-// proves R-SAFE-7
+// proves R-SAFE-7, R-SAFE-9
 test('given a directory holding .mcp.json, the session loads that file\'s servers and no other MCP configuration', async (t) => {
   // Report, "One MCP server declared": `--strict-mcp-config` withholds every connector and plugin
   // server, and the directory's own file with them, which `--mcp-config` has to name again (c2,
@@ -115,7 +115,7 @@ test('given a directory holding .mcp.json, the session loads that file\'s server
   assert.equal(after(args, '--mcp-config'), join(repo.directory, '.mcp.json'));
 });
 
-// proves R-SAFE-7
+// proves R-SAFE-7, R-SAFE-9
 test('given a directory holding no .mcp.json, the session loads no MCP server', async (t) => {
   const { args } = await invoked(consumer(t));
   assert.ok(args.includes('--strict-mcp-config'));
@@ -368,7 +368,7 @@ test('a settings file that is no JSON object is refused, naming the file, since 
  */
 const OWNERS = ['ListAgents', 'SendMessage', 'PushNotification', 'RemoteTrigger', 'DesignSync'];
 
-// proves R-SAFE-7
+// proves R-SAFE-7, R-SAFE-9
 test('the invocation withholds every tool that acts through the owner\'s own sessions or login', async (t) => {
   // `R-SAFE-9`: such a tool counts as declared only where the repository declares it. #519's report
   // found a `-p` session calling `ListAgents` and listing four of the owner's interactive sessions.
@@ -402,7 +402,7 @@ test('the invocation withholds every built-in plugin the directory does not enab
   assert.equal(enabled['cc-plugin-plugin-authoring@builtin'], false);
 });
 
-// proves R-SAFE-7
+// proves R-SAFE-7, R-SAFE-9
 test('the invocation withholds the agent tool, whose remote isolation acts through the owner\'s account, unless the directory\'s own settings allow it', async (t) => {
   // O45 on #467: the agent tool's `isolation: "remote"` "launches the agent in a remote cloud
   // environment" on the owner's account, and no flag withholds that form alone, so dispatched
@@ -433,6 +433,36 @@ test('Workflow is not withheld where the directory\'s own settings allow it, and
   const withheld = after((await invoked(repo)).args, '--disallowedTools').split(',');
   assert.equal(withheld.includes('Workflow'), false);
   for (const tool of ['Task', ...OWNERS, 'EnterWorktree', 'ExitWorktree']) assert.ok(withheld.includes(tool), tool);
+});
+
+/**
+ * Built-in tools that act within the session or on its host as its own user, each listed in the
+ * `init` record of a session this adapter started under Claude Code 2.1.319 on 2026-11-08, with a
+ * directory declaring nothing (#1301's maker probe).
+ */
+const HOST_BUILTINS = ['Bash', 'Read', 'Edit', 'Write', 'NotebookEdit', 'WebFetch', 'WebSearch', 'Monitor', 'ToolSearch'];
+
+// proves R-SAFE-8
+test('given a directory that withholds nothing, the invocation withholds no built-in tool that acts within the session or on its host, and narrows the offered set by no flag or rule', async (t) => {
+  // Table T row T1 on #1301: a built-in the repository does not withhold, and not one `R-SAFE-9`
+  // names, counts as declared, so the invocation offers it.
+  const { args } = await invoked(consumer(t));
+  const withheld = after(args, '--disallowedTools').split(',');
+  for (const tool of HOST_BUILTINS) assert.equal(withheld.includes(tool), false, `${tool} is withheld`);
+  assert.deepEqual(args.filter((arg) => ['--tools', '--allowedTools', '--allowed-tools'].includes(arg.split('=')[0])), [], 'a flag narrows the offered set');
+  assert.equal(settings(args).permissions, undefined, 'the settings carry a rule the directory never declared');
+});
+
+// proves R-SAFE-8
+test('given a directory whose own settings deny a built-in tool by a whole-tool rule, the session is handed that deny rule, and the other built-ins stay offered', async (t) => {
+  // Table T row T2 on #1301: a `-p` session ignores an untrusted directory's own rules (#473's
+  // report, c38, c42), so the withholding reaches it only as the invocation carries it across.
+  const repo = consumer(t);
+  put(repo.directory, '.claude/settings.json', { permissions: { deny: ['WebFetch'] } });
+  const { args } = await invoked(repo);
+  assert.deepEqual(settings(args).permissions, { deny: ['WebFetch'] });
+  const withheld = after(args, '--disallowedTools').split(',');
+  for (const tool of HOST_BUILTINS.filter((each) => each !== 'WebFetch')) assert.equal(withheld.includes(tool), false, `${tool} is withheld`);
 });
 
 test('the invocation keeps the session\'s transcript off disk', async (t) => {
