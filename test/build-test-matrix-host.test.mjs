@@ -37,20 +37,21 @@ test('native file trace keeps Node counts when hooks are bypassed', SETTLES_WITH
     const body = join(root, 'body.called');
     const queued = join(root, 'queued.called');
     const passed = join(root, 'passed.called');
+    const after = join(root, 'after.called');
     const output = join(root, 'runner.log');
     const source = [
       '// ABOUTME: Exercises native Node cancellation and abrupt exit.',
-      "import { test, beforeEach } from 'node:test';",
+      "import { test, beforeEach, after } from 'node:test';",
       "import { writeFileSync } from 'node:fs';",
       `import { traceFile } from ${JSON.stringify(new URL('./file-trace.mjs', import.meta.url).href)};`,
       `traceFile(${JSON.stringify(file)});`,
       `beforeEach((context) => writeFileSync(${JSON.stringify(hook)}, context.name));`,
+      `after(() => writeFileSync(${JSON.stringify(after)}, 'called'));`,
       ...(exiting ? [
         'let first;',
         "beforeEach((context) => { if (context.name === 'passing') first = context; });",
-        `await test('passing', () => writeFileSync(${JSON.stringify(body)}, 'called'));`,
-        `writeFileSync(${JSON.stringify(passed)}, String(first.passed));`,
-        "test('exit', () => process.exit(17));",
+        `test('passing', () => writeFileSync(${JSON.stringify(body)}, 'called'));`,
+        `test('exit', () => { writeFileSync(${JSON.stringify(passed)}, String(first.passed)); process.exit(17); });`,
       ] : pending ? [
         'const controller = new AbortController();',
         "test('container', { concurrency: 1, signal: controller.signal }, async (t) => {",
@@ -78,7 +79,7 @@ test('native file trace keeps Node counts when hooks are bypassed', SETTLES_WITH
     t.diagnostic(JSON.stringify({ nativeTraceCancellation: true, mode, command, source,
       pid: result.pid, status: result.status, signal: result.signal,
       outputBase64: bytes.toString('base64'), stderrBase64: result.stderr.toString('base64'),
-      witnesses: Object.fromEntries([hook, body, queued, passed].map((path) =>
+      witnesses: Object.fromEntries([hook, body, queued, passed, after].map((path) =>
         [path, existsSync(path) ? readFileSync(path).toString('base64') : null])),
       helperSHA256: createHash('sha256').update(readFileSync(new URL('./file-trace.mjs', import.meta.url))).digest('hex') }));
     assert.equal(result.error, undefined);
@@ -95,6 +96,7 @@ test('native file trace keeps Node counts when hooks are bypassed', SETTLES_WITH
     if (pending || exiting) assert.equal(readFileSync(hook, 'utf8'), exiting ? 'exit' : 'pending', 'the last entered hook is known');
     assert.equal(existsSync(body), pending || exiting, 'the known running body entered');
     assert.equal(existsSync(queued), false, 'the queued body never ran');
+    assert.equal(existsSync(after), !exiting, 'explicit process exit bypassed the global after hook');
     const lines = events.filter((event) => event.type === 'test:stdout').flatMap((event) => event.data.message.split('\n'));
     const line = lines.find((line) => line.startsWith('RIGGER_TEST_EXIT '));
     assert.ok(line, 'the native worker emitted its exit trace');

@@ -70,7 +70,8 @@ test('a trace finishes top-level tests with the final outcome after teardown and
 test('the exit trace reports code duration and completed counts without changing process state or hooks', async (t) => {
   // Node also counts a cancellation that never supplied a beforeEach context.
   const totals = { tests: 0, passed: 0, failed: 0, cancelled: 0, skipped: 0, todo: 0, topLevel: 0, suites: 0 };
-  const seen = world({ readTotals: () => totals });
+  let time = STAMP;
+  const seen = world({ readTotals: () => totals, now: () => time });
   const processCode = process.exitCode;
   t.after(() => { process.exitCode = processCode; });
   let code = 17;
@@ -104,6 +105,7 @@ test('the exit trace reports code duration and completed counts without changing
   seen.runtime.uptime = () => 71.25;
   // An explicit process exit can bypass the global after hook.
   Object.assign(totals, { tests: 5, passed: 2, failed: 1, cancelled: 2, topLevel: 4 });
+  time = '2026-11-10T12:01:11.250Z';
   seen.runtime.emit('exit', 17);
   t.diagnostic(JSON.stringify({ exitCode: code, assignments: writes, exitCalls: exits,
     processExitCode: process.exitCode ?? null, originalProcessExitCode: processCode ?? null }));
@@ -111,7 +113,7 @@ test('the exit trace reports code duration and completed counts without changing
   assert.equal(code, 17, 'the trace changed the process exitCode');
   assert.deepEqual(writes, [], 'the trace assigned exitCode');
   assert.deepEqual(exits, [], 'the trace called a process exit method');
-  assert.deepEqual(seen.rows('EXIT'), [{ name: 'test/subject.mjs', time: STAMP,
+  assert.deepEqual(seen.rows('EXIT'), [{ name: 'test/subject.mjs', time: '2026-11-10T12:01:11.250Z',
     exitCode: 17, duration: 71.25, passed: 2, failed: 1, cancelled: 2 }]);
   assert.deepEqual(seen.rows('FINISH').map(({ name, outcome }) => [name, outcome]), [
     ['outer', 'passed'], ['failure', 'failed'], ['cancelled', 'cancelled'],
