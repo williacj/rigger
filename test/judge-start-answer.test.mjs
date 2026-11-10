@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { answer, report } from './judge-start-fixture.mjs';
-import { HOST_REPORTS } from './judge-start-fixture.mjs';
+import { HOST_REPORTS, changedCountedIdentity } from './judge-start-fixture.mjs';
 import { failedAttempt } from '../src/workflow/next-action.mjs';
 
 // The counterexample treats a missing provider CLI as a completed judge or a withheld directory.
@@ -42,7 +42,7 @@ test('L2 answers a panel hold ahead of a stop in either order without recording 
   for (const decisions of [[hold, stop], [stop, hold]]) {
     const result = answer({}, { decisions });
     assert.equal(result.next.action, 'hold');
-    assert.equal(result.next, hold);
+    assert.deepEqual(result.next, hold);
     assert.deepEqual(result.events, []);
   }
 });
@@ -71,9 +71,8 @@ test('each of the ten identity-counted rows stops for another provider file path
   const counted = HOST_REPORTS.filter(([, , identity]) => identity !== undefined);
   assert.equal(counted.length, 10);
   for (const [row, kind, identity] of counted) await t.test(row, () => {
-    const [key, value] = Object.entries(identity)[0];
     const first = report({ kind, ...identity });
-    const next = report({ kind, [key]: `${value}-another` });
+    const next = report({ kind, ...changedCountedIdentity(identity) });
     const result = answer({ reviewer: next }, { firstFailures: { reviewer: first } });
     assert.equal(result.next.action, 'stop');
     assert.equal(result.next.failure.row, row);

@@ -1,5 +1,8 @@
 // ABOUTME: L1 report fixtures and L2's real judge answer under one card and a recording sink.
 
+import assert from 'node:assert/strict';
+import { tmpdir } from 'node:os';
+
 import { NOT_STARTED } from '../src/substrate/process.mjs';
 import { judgeAnswer } from '../src/workflow/judges.mjs';
 import { EventEmitter } from 'node:events';
@@ -44,8 +47,8 @@ export const HOST_REPORTS = [
   ['R4', 'command-too-long'], ['R5', 'command-character'],
   ['R6', 'agent-outside', { file: 'agent.md' }], ['R7', 'agent-unresolved', { file: 'agent.md' }], ['R8', 'agent-unreadable', { file: 'agent.md' }],
   ['R9', 'claude-settings-unreadable'], ['R10', 'claude-compound-rule'], ['R11', 'codex-config-unreadable'],
-  ['R12', 'claude-exclusion-path', { path: '/work/parent' }], ['R13', 'claude-reached-path', { path: '/work/head' }],
-  ['R14', 'directory-illegible', { path: '/work/judge' }], ['R15', 'scratch-illegible', { path: '/work/scratch' }],
+  ['R12', 'claude-exclusion-path', { path: '/work/parent' }], ['R13', 'claude-reached-path', { path: '/work/head[host]' }],
+  ['R14', 'directory-illegible', { path: '/work/judge^' }], ['R15', 'scratch-illegible', { path: '/work/scratch^' }],
   ['R16', 'codex-probe-exit'], ['R17', 'codex-probe-answer'], ['R18', 'codex-skill-unresolved'], ['R19', 'codex-probe-timeout'],
   ['R20', 'adapter-variable', { variable: 'TMPDIR' }], ['R21', 'dispatch-location'], ['R22', 'dispatch-identity'], ['R23', 'dispatch-timeout'],
   ['R24', 'event-emitter-missing'], ['R25', 'groups-unwritable'], ['R26', 'codex-directory-unmade'], ['R27', 'codex-home-file-unwritten'],
@@ -53,6 +56,13 @@ export const HOST_REPORTS = [
   ['R32', 'groups-unreadable'], ['R33', 'claude-rule-unreadable'], ['R34', 'owner-home-missing'], ['R35', 'agent-name-invalid'],
   ['R36', 'file-descriptors'], ['R37', 'host-error'],
 ];
+
+/** The distinct one-field identity used by the counted policy cases. */
+export function changedCountedIdentity(identity) {
+  const [key, value] = Object.entries(identity)[0];
+  if (key === 'provider') return { provider: value === 'claude' ? 'codex' : 'claude' };
+  return { [key]: `${value}-another` };
+}
 
 /** Runs before the selected spawn, raising a supplied errno or letting the host decide its result. */
 export function refuseSpawn(t, { command, code, before = () => {}, synchronous = false }) {
@@ -66,4 +76,22 @@ export function refuseSpawn(t, { command, code, before = () => {}, synchronous =
   });
   syncBuiltinESMExports();
   t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+}
+
+/**
+ * Checks metadata and prose, except independently expected counted identities and literal data.
+ * temporaryDirectory builds fixture paths under tmpdir(); callers may name other exact literals.
+ * Only file/path in startCause carry counted data: the same bytes elsewhere still get checked.
+ */
+export function noEditorialIds(reason, cause, verbatim = [tmpdir()]) {
+  const startCause = { ...reason.startCause };
+  for (const field of ['file', 'path']) {
+    if (cause[field] === undefined) continue;
+    assert.equal(startCause[field], cause[field], 'the counted identity must match the independent expectation');
+    startCause[field] = '<fixture-data>';
+  }
+  let message = reason.message;
+  const data = [...verbatim, ...(cause.path === undefined ? [] : [cause.path])];
+  for (const literal of data.sort((a, b) => b.length - a.length)) message = message.split(literal).join('<fixture-data>');
+  assert.doesNotMatch(JSON.stringify({ ...reason, startCause, message }), /R-FAIL-8|\bR\d+\b/);
 }

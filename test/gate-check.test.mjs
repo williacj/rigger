@@ -15,6 +15,7 @@ import { GATE_CONTEXT, gateAnswer } from '../src/workflow/gate.mjs';
 import { installFakeGh, seedRepository } from './fake-gh.mjs';
 import { gitIn, repositoryIn } from './git-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { gateEventPairs } from './gate-event-pairs.mjs';
 import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -497,8 +498,7 @@ test('the gate rule gives the same answer for every mapped workflow event and ac
   const workflow = readFileSync(join(ROOT, '.github', 'workflows', 'rigger-gate.yml'), 'utf8');
   assert.match(workflow, /^  NUMBER: \$\{\{ github\.event\.pull_request\.number \|\| github\.event\.issue\.number \}\}$/m);
   assert.match(workflow, /^  IS_PULL: \$\{\{ github\.event\.pull_request != null \|\| github\.event\.issue\.pull_request != null \}\}$/m);
-  const triggers = [...workflow.matchAll(/^  ([a-z_]+):\n    types: \[([^\]]+)\]$/gm)]
-    .flatMap(([, event, types]) => types.split(', ').map((type) => [event, type]));
+  const triggers = gateEventPairs(workflow);
   assert.deepEqual(triggers, [
     ['pull_request_target', 'opened'],
     ['pull_request_target', 'synchronize'],
