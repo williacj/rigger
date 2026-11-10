@@ -38,7 +38,7 @@ import os from 'node:os';
 import { syncBuiltinESMExports } from 'node:module';
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
 import { standInCodex } from './stub-claude.mjs';
-import { refuseSpawn } from './judge-start-fixture.mjs';
+import { noEditorialIds, refuseSpawn, HOST_REPORTS, changedCountedIdentity } from './judge-start-fixture.mjs';
 import { dispatch as judgeDispatchOnL1 } from '../src/execution/run.mjs';
 
 const { 60_000: SETTLES_WITHIN } = BOUNDS;
@@ -1080,7 +1080,7 @@ function judgeStartClass(outcome, cause, row) {
   assert.deepEqual(outcome.reason.startCause, cause);
   assert.equal(judgeStartAnswer({ reviewer: outcome }).next.failure.row, row);
   assert.equal(judgeStartAnswer({ reviewer: outcome }, { firstFailures: { reviewer: outcome } }).next.action, 'hold');
-  assert.doesNotMatch(JSON.stringify({ ...outcome.reason, message: outcome.reason.message }), /R-FAIL-8|\bR\d+\b/);
+  noEditorialIds(outcome.reason, cause);
 }
 
 /** Installs a controlled builtin refusal across ESM imports for one source-cause test. */
@@ -2242,4 +2242,87 @@ test('all spawn errors recheck an actually missing cwd through synchronous and a
 // proves R-FAIL-8
 test('native cwd ENOENT remains R29 and holds its earlier R29 pair', SETTLES_WITHIN, async (t) => {
   await judgeCwdPair(t, 'ENOENT', () => {});
+});
+
+
+// Plain paths pass Claude preparation and cannot represent the contract's reached-path refusal.
+// proves R-FAIL-8
+test('representative-R13 original and changed reached paths retain their real refusal identity', SETTLES_WITHIN, async (t) => {
+  const [, kind, identity] = HOST_REPORTS.find(([row]) => row === 'R13');
+  const representatives = [identity, changedCountedIdentity(identity)];
+  assert.notDeepEqual(representatives[0], representatives[1]);
+  for (const [at, representative] of representatives.entries()) await t.test(at === 0 ? 'original' : 'changed', async (t) => {
+    const { request } = judgeStartRequest(t, 'claude');
+    const head = join(request.directory, representative.path.split('/').at(-1));
+    mkdirSync(head);
+    request.reach = [head];
+    // The existing failed-spawn contract keeps any unexpected continuation offline.
+    refuseSpawn(t, { command: 'claude', code: 'ENOENT' });
+    const [outcome] = await Promise.allSettled([roleDispatch(request)]);
+    t.diagnostic(JSON.stringify({ representative, actualPath: realpathSync.native(head), status: outcome.status, cause: outcome.reason?.startCause ?? null }));
+    assert.equal(kind, 'claude-reached-path');
+    judgeStartClass(outcome, { kind: 'claude-reached-path', path: realpathSync.native(head) }, 'R13');
+  });
+});
+
+
+// A provider outside the shipped map fails before it can report this host cause.
+// proves R-FAIL-8
+test('representative-R2 original and changed admitted providers retain missing-command identity and stop when different', SETTLES_WITHIN, async (t) => {
+  const [, kind, identity] = HOST_REPORTS.find(([row]) => row === 'R2');
+  const representatives = [identity, changedCountedIdentity(identity)];
+  assert.deepEqual(Object.keys(ADAPTERS).sort(), ['claude', 'codex']);
+  assert.notDeepEqual(representatives[0], representatives[1]);
+  let first;
+  for (const [at, { provider }] of representatives.entries()) await t.test(at === 0 ? 'original' : 'changed', async (t) => {
+    const { placed, request } = judgeStartRequest(t, provider);
+    // Node's no-pid ENOENT contract is observed at the Codex probe or the Claude dispatch.
+    refuseSpawn(t, { command: provider, code: 'ENOENT' });
+    const [outcome] = await Promise.allSettled([(async () => {
+      const handed = await roleDispatch(request);
+      return judgeDispatchOnL1({ ...handed, id: request.id, card: 7, directory: join(placed.root, '.rigger'), sink: placed.sink });
+    })()]);
+    t.diagnostic(JSON.stringify({ provider, admitted: Object.hasOwn(ADAPTERS, provider), status: outcome.status, cause: outcome.reason?.startCause ?? null }));
+    assert.equal(kind, 'command-missing');
+    judgeStartClass(outcome, { kind: 'command-missing', provider }, 'R2');
+    assert.ok(Object.hasOwn(ADAPTERS, provider));
+    if (at === 0) first = outcome;
+    else {
+      const result = judgeStartAnswer({ reviewer: outcome }, { firstFailures: { reviewer: first } });
+      assert.equal(result.next.action, 'stop');
+      assert.equal(result.next.failure.row, 'R2');
+      assert.equal(result.events.at(-1).decision, 'stop');
+    }
+  });
+});
+
+
+// Unsupported-provider refusal is not a nonexecutable CLI report for either admitted provider.
+// proves R-FAIL-8
+test('representative-R3 original and changed admitted providers retain nonexecutable-command identity and stop when different', SETTLES_WITHIN, async (t) => {
+  const [, kind, identity] = HOST_REPORTS.find(([row]) => row === 'R3');
+  const representatives = [identity, changedCountedIdentity(identity)];
+  assert.deepEqual(Object.keys(ADAPTERS).sort(), ['claude', 'codex']);
+  assert.notDeepEqual(representatives[0], representatives[1]);
+  let first;
+  for (const [at, { provider }] of representatives.entries()) await t.test(at === 0 ? 'original' : 'changed', async (t) => {
+    const { placed, request } = judgeStartRequest(t, provider);
+    // The existing no-pid EACCES seam reaches the actual provider-reporting boundary.
+    refuseSpawn(t, { command: provider, code: 'EACCES' });
+    const [outcome] = await Promise.allSettled([(async () => {
+      const handed = await roleDispatch(request);
+      return judgeDispatchOnL1({ ...handed, id: request.id, card: 7, directory: join(placed.root, '.rigger'), sink: placed.sink });
+    })()]);
+    t.diagnostic(JSON.stringify({ provider, admitted: Object.hasOwn(ADAPTERS, provider), status: outcome.status, cause: outcome.reason?.startCause ?? null }));
+    assert.equal(kind, 'command-not-executable');
+    judgeStartClass(outcome, { kind: 'command-not-executable', provider }, 'R3');
+    assert.ok(Object.hasOwn(ADAPTERS, provider));
+    if (at === 0) first = outcome;
+    else {
+      const result = judgeStartAnswer({ reviewer: outcome }, { firstFailures: { reviewer: first } });
+      assert.equal(result.next.action, 'stop');
+      assert.equal(result.next.failure.row, 'R3');
+      assert.equal(result.events.at(-1).decision, 'stop');
+    }
+  });
 });
