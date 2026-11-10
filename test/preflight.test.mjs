@@ -854,3 +854,278 @@ test('P7 nearby derived path spellings still report added retired citations', ()
     paths.sort().map((path) => `${JSON.stringify(path)}:2 D713`),
     'only the docs/derived directory subtree receives the added exemption');
 });
+
+// Card #1358 covers complete committed-patch reads in this repository diagnostic.
+// Its acceptance explains why deployed product requirements describe none of these assertions.
+function measuredCommittedPatch(f, path, minimumBytes = 2_516_423) {
+  const output = join(f.directory, 'measured.patch');
+  const result = nativeExecute('git', ['--no-pager', '-c', 'color.ui=false',
+    '--no-optional-locks', '--literal-pathspecs', 'diff', '--no-color', '--no-renames',
+    '--no-ext-diff', '--no-textconv', '--unified=0', '--output', output,
+    `${f.base}..HEAD`, '--', path], { cwd: f.root, encoding: 'utf8', env: process.env });
+  assert.ifError(result.error);
+  assert.equal(result.signal, null);
+  assert.equal(result.status, 0, result.stderr);
+  const patch = readFileSync(output);
+  assert.ok(patch.length > minimumBytes, `complete measured patch has only ${patch.length} bytes`);
+  console.log('complete committed patch bytes:', patch.length);
+  return patch;
+}
+
+function patchSpoolPath(path) {
+  return typeof path === 'string' && path.endsWith('evidence.blob')
+    && dirname(path).includes('rigger-preflight-');
+}
+
+function runWithPatchResources(f, options) {
+  const nativeOpen = fs.openSync;
+  const resources = new Set();
+  fs.openSync = (path, ...args) => {
+    if (patchSpoolPath(path)) resources.add(dirname(path));
+    return nativeOpen(path, ...args);
+  };
+  syncBuiltinESMExports();
+  try {
+    return run(f, options);
+  } finally {
+    fs.openSync = nativeOpen;
+    syncBuiltinESMExports();
+    for (const directory of resources) {
+      assert.equal(fs.existsSync(directory), false, `temporary patch resource remains: ${directory}`);
+    }
+    console.log('owned patch resources removed:', resources.size);
+  }
+}
+
+test('V complete large committed safe patch passes', () => {
+  const f = fixture();
+  const path = 'allowed/large.mjs';
+  const text = 'safe text input\n'.repeat(196_608);
+  assert.equal(Buffer.byteLength(text), 3 * 1024 * 1024);
+  commit(f, { [path]: text });
+  measuredCommittedPatch(f, path);
+  let result;
+  assert.doesNotThrow(() => { result = runWithPatchResources(f); },
+    'the complete large committed patch must be readable');
+  assert.equal(result.status, 0, result.output);
+});
+
+function largeCitationFixture(token) {
+  const f = fixture();
+  const path = 'allowed/large.mjs';
+  commit(f, { [path]: `${'safe text input\n'.repeat(196_608)}${token}\n` });
+  const patch = measuredCommittedPatch(f, path);
+  const offset = patch.indexOf(Buffer.from(`+${token}\n`));
+  assert.ok(offset > 2_516_423, `retired token begins at patch byte ${offset}`);
+  console.log('late token patch byte:', offset);
+  return { ...f, path, patch };
+}
+
+function runWithControlledPatches(f, patches) {
+  const seen = [];
+  const result = runWithPatchResources(f, { execute: (command, args, options) => {
+    if (command !== 'git' || !args.includes('--unified=0')) return nativeExecute(command, args, options);
+    const path = args.at(-1);
+    assert.ok(patches.has(path), `missing independently measured patch for ${path}`);
+    // Node v26.12.0 spawnSync documents fd stdout as null and successful status 0/signal null.
+    // The bytes come from the real committed Git patch, never a production parsing helper.
+    writeFileSync(options.stdio[1], patches.get(path));
+    seen.push(path);
+    return { status: 0, signal: null, stdout: null, stderr: '' };
+  } });
+  assert.deepEqual(seen.sort(), [...patches.keys()].sort());
+  return result;
+}
+
+test('R complete large patch reports late requirement', () => {
+  const f = largeCitationFixture('R-EXAMPLE-7');
+  const expected = ['"allowed/large.mjs":196609 R-EXAMPLE-7'];
+  for (const result of [runWithPatchResources(f), runWithControlledPatches(f, new Map([[f.path, f.patch]]))]) {
+    assert.equal(result.status, 1, result.output);
+    assert.match(result.output, /retired ids: failed/);
+    assert.deepEqual(result.output.split('\n').filter((line) => line.startsWith('"allowed/')), expected);
+  }
+});
+
+test('D complete large patch reports late decision', () => {
+  const f = largeCitationFixture('D713');
+  const expected = ['"allowed/large.mjs":196609 D713'];
+  for (const result of [runWithPatchResources(f), runWithControlledPatches(f, new Map([[f.path, f.patch]]))]) {
+    assert.equal(result.status, 1, result.output);
+    assert.match(result.output, /retired ids: failed/);
+    assert.deepEqual(result.output.split('\n').filter((line) => line.startsWith('"allowed/')), expected);
+  }
+});
+
+test('M multiple committed hunks preserve exact added citation locations', () => {
+  const f = fixture();
+  const path = 'allowed/mixed.mjs';
+  const old = `unchanged D713\nremoved R-EXAMPLE-7\nanchor one\n${'untouched line\n'.repeat(20)}anchor two\n`;
+  commit(f, { [path]: old, 'allowed/more.mjs': 'old\n' });
+  f.base = gitIn(f.root, 'rev-parse', 'HEAD').trim();
+  gitIn(f.root, 'update-ref', 'refs/remotes/origin/main', f.base);
+  const text = `unchanged D713\nreplacement \u00e9\nanchor one\n${'untouched line\n'.repeat(20)}anchor two\n`;
+  commit(f, {
+    [path]: `${text}${'safe text input\n'.repeat(196_608)}D713 and R-EXAMPLE-7\ntail \u00e9 R-EXAMPLE-7`,
+    'allowed/more.mjs': '\u00e9 D713\n',
+  });
+  const large = measuredCommittedPatch(f, path);
+  const small = measuredCommittedPatch(f, 'allowed/more.mjs', 0);
+  assert.ok(large.indexOf(Buffer.from('+D713 and R-EXAMPLE-7')) > 2_516_423);
+  assert.ok(large.includes(Buffer.from('-removed R-EXAMPLE-7\n')));
+  assert.ok(large.includes(Buffer.from('\\ No newline at end of file')));
+  assert.ok(!readFileSync(join(f.root, path)).subarray(-1).equals(Buffer.from('\n')));
+  const expected = [
+    '"allowed/mixed.mjs":196633 D713',
+    '"allowed/mixed.mjs":196633 R-EXAMPLE-7',
+    '"allowed/mixed.mjs":196634 R-EXAMPLE-7',
+    '"allowed/more.mjs":1 D713',
+  ];
+  for (const result of [runWithPatchResources(f),
+    runWithControlledPatches(f, new Map([[path, large], ['allowed/more.mjs', small]]))]) {
+    assert.equal(result.status, 1, result.output);
+    assert.deepEqual(result.output.split('\n').filter((line) => line.startsWith('"allowed/')), expected);
+  }
+});
+
+test('E empty and deleted committed patches add no citations', () => {
+  const f = fixture();
+  assert.equal(runWithPatchResources(f).status, 0);
+  commit(f, { 'allowed/empty.mjs': '', 'allowed/deleted.mjs': 'D713 and R-EXAMPLE-7\n' });
+  f.base = gitIn(f.root, 'rev-parse', 'HEAD').trim();
+  gitIn(f.root, 'update-ref', 'refs/remotes/origin/main', f.base);
+  gitIn(f.root, 'rm', '--', 'allowed/deleted.mjs');
+  gitIn(f.root, 'commit', '-qm', 'delete retired fixture lines');
+  const deleted = runWithPatchResources(f);
+  assert.equal(deleted.status, 0, deleted.output);
+  assert.match(deleted.output, /retired ids: passed/);
+  assert.deepEqual(deleted.output.split('\n').filter((line) => line.startsWith('"allowed/')), []);
+  commit(f, { 'allowed/another-empty.mjs': '' });
+  const empty = runWithPatchResources(f);
+  assert.equal(empty.status, 0, empty.output);
+  assert.match(empty.output, /retired ids: passed/);
+});
+
+function patchFailureFixture() {
+  const f = fixture();
+  commit(f, { 'allowed/current.mjs': 'safe\n' });
+  return f;
+}
+
+const SAFE_PARTIAL_PATCH = 'diff --git a/allowed/current.mjs b/allowed/current.mjs\n'
+  + '--- /dev/null\n+++ b/allowed/current.mjs\n@@ -0,0 +1 @@\n+safe\n';
+
+test('F1 partial patch with failed Git acquisition reports cause', () => {
+  for (const actualGit of [false, true]) {
+    const f = patchFailureFixture();
+    let exercised = false;
+    const result = runWithPatchResources(f, { execute: (command, args, options) => {
+      if (command !== 'git' || !args.includes('--unified=0')) return nativeExecute(command, args, options);
+      writeFileSync(options.stdio[1], SAFE_PARTIAL_PATCH);
+      exercised = true;
+      if (!actualGit) {
+        // spawnSync's documented nonzero exit and fd-redirected stdout result.
+        return { status: 7, signal: null, stdout: null, stderr: 'fixture Git acquisition failure' };
+      }
+      const delimiter = args.indexOf('--');
+      const answer = nativeExecute(command,
+        [...args.slice(0, delimiter - 1), 'refs/heads/1358-no-such-ref', ...args.slice(delimiter)], options);
+      assert.equal(answer.status, 128, answer.stderr);
+      assert.equal(answer.signal, null);
+      assert.match(answer.stderr, /bad revision/);
+      return answer;
+    } });
+    assert.ok(exercised);
+    assert.equal(result.status, 1, result.output);
+    assert.match(result.output, /retired ids: failed/);
+    assert.match(result.output, actualGit ? /bad revision/ : /fixture Git acquisition failure/);
+  }
+});
+
+test('F2 patch error and signal reject partial output', () => {
+  // Contract: https://nodejs.org/download/release/v26.12.0/docs/api/child_process.html#child_processspawnsynccommand-args-options
+  // spawnSync reports error on failure to spawn and signal/null status on signal termination.
+  for (const fault of ['error', 'signal']) {
+    const f = patchFailureFixture();
+    let exercised = false;
+    const result = runWithPatchResources(f, { execute: (command, args, options) => {
+      if (command !== 'git' || !args.includes('--unified=0')) return nativeExecute(command, args, options);
+      writeFileSync(options.stdio[1], SAFE_PARTIAL_PATCH);
+      exercised = true;
+      return fault === 'error'
+        ? { status: null, signal: null, stdout: null, stderr: '', error: new Error('fixture spawn failure') }
+        : { status: null, signal: 'SIGTERM', stdout: null, stderr: '' };
+    } });
+    assert.ok(exercised);
+    assert.equal(result.status, 1, result.output);
+    assert.match(result.output, /retired ids: failed/);
+    assert.match(result.output, fault === 'error' ? /fixture spawn failure/ : /SIGTERM/);
+  }
+});
+
+test('F3 patch storage failures report their causes', () => {
+  for (const fault of ['spool', 'directory', 'open', 'read', 'close', 'cleanup']) {
+    const f = patchFailureFixture();
+    const originals = Object.fromEntries(['openSync', 'readFileSync', 'closeSync', 'rmSync']
+      .map((name) => [name, fs[name]]));
+    const temporary = process.env.TMPDIR;
+    const resources = [];
+    let descriptor;
+    let exercised = false;
+    const fail = () => {
+      exercised = true;
+      throw new Error(`fixture patch ${fault} failure`);
+    };
+    const ownedPath = (path) => typeof path === 'string'
+      && resources.some((directory) => path === join(directory, 'evidence.blob'));
+    try {
+      if (fault === 'spool') process.env.TMPDIR = f.root;
+      if (fault === 'directory') {
+        const file = join(f.directory, 'temporary-file');
+        writeFileSync(file, 'not a directory');
+        process.env.TMPDIR = file;
+      }
+      fs.openSync = (path, ...options) => {
+        if (!patchSpoolPath(path)) return originals.openSync(path, ...options);
+        resources.push(dirname(path));
+        if (fault === 'open') fail();
+        descriptor = originals.openSync(path, ...options);
+        return descriptor;
+      };
+      fs.readFileSync = (path, ...options) => {
+        if (fault === 'read' && ownedPath(path)) fail();
+        return originals.readFileSync(path, ...options);
+      };
+      fs.closeSync = (closed) => {
+        if (closed !== descriptor) return originals.closeSync(closed);
+        descriptor = undefined;
+        originals.closeSync(closed);
+        if (fault === 'close') fail();
+      };
+      fs.rmSync = (path, ...options) => {
+        if (fault === 'cleanup' && resources.includes(path)) fail();
+        return originals.rmSync(path, ...options);
+      };
+      syncBuiltinESMExports();
+      const result = run(f);
+      assert.equal(result.status, 1, result.output);
+      assert.match(result.output, /retired ids: failed/);
+      if (fault === 'spool') {
+        assert.match(result.output, /spool must be outside the repository and checker source/);
+        exercised = true;
+      } else if (fault === 'directory') {
+        assert.match(result.output, /ENOTDIR/);
+        exercised = true;
+      } else assert.ok(result.output.includes(`fixture patch ${fault} failure`), result.output);
+      assert.ok(exercised, `the ${fault} branch must be reached`);
+      console.log('patch storage fault retained:', fault);
+    } finally {
+      Object.assign(fs, originals);
+      syncBuiltinESMExports();
+      if (temporary === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = temporary;
+      for (const directory of resources) originals.rmSync(directory, { recursive: true, force: true });
+    }
+    for (const directory of resources) assert.equal(fs.existsSync(directory), false);
+  }
+});

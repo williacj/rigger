@@ -64,17 +64,7 @@ function qualifyCommittedEvidence(root, head, policy, git, readBlob) {
     || mode !== policy.gitMode || type !== 'blob' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(oid ?? '')) {
     throw new Error('committed evidence is missing or is not mode 100644');
   }
-  const temporary = realpathSync.native(tmpdir());
-  const source = realpathSync.native(fileURLToPath(new URL('../', import.meta.url)));
-  const inside = (parent) => {
-    const path = relative(parent, temporary);
-    return path === '' || (path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path));
-  };
-  if ([root, source].some(inside)) throw new Error('evidence spool must be outside the repository and checker source');
-  let directory, descriptor, failure;
-  try {
-    directory = mkdtempSync(join(temporary, 'rigger-preflight-'));
-    descriptor = openSync(join(directory, 'evidence.blob'), 'wx+', 0o600);
+  withCommittedFile(root, (descriptor) => {
     const result = readBlob(oid, descriptor);
     if (result.status !== 0 || result.error) {
       throw new Error((result.error?.message ?? result.stderr?.trim()) || `blob read exited ${result.status}`);
@@ -87,6 +77,24 @@ function qualifyCommittedEvidence(root, head, policy, git, readBlob) {
       position += length;
     }
     if (hash.digest('hex') !== policy.sha256) throw new Error('committed evidence SHA-256 does not match qualification');
+  });
+}
+
+/** Own the external spool, preserving the first failure while closing and removing it. */
+function withCommittedFile(root, consume) {
+  const temporary = realpathSync.native(tmpdir());
+  const source = realpathSync.native(fileURLToPath(new URL('../', import.meta.url)));
+  const inside = (parent) => {
+    const path = relative(parent, temporary);
+    return path === '' || (path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path));
+  };
+  if ([root, source].some(inside)) throw new Error('evidence spool must be outside the repository and checker source');
+  let directory, descriptor, failure, value;
+  try {
+    directory = mkdtempSync(join(temporary, 'rigger-preflight-'));
+    const path = join(directory, 'evidence.blob');
+    descriptor = openSync(path, 'wx+', 0o600);
+    value = consume(descriptor, path);
   } catch (error) {
     failure = error;
   } finally {
@@ -98,6 +106,20 @@ function qualifyCommittedEvidence(root, head, policy, git, readBlob) {
     }
   }
   if (failure) throw failure;
+  return value;
+}
+
+/** Consume a complete successful Git patch without capturing stdout in a child-process pipe. */
+function readCommittedPatch(root, acquire) {
+  return withCommittedFile(root, (descriptor, path) => {
+    const result = acquire(descriptor);
+    if (result.error || result.signal || result.status !== 0) {
+      throw new Error(result.error?.message
+        ?? (result.signal ? `git patch interrupted by ${result.signal}`
+          : result.stderr?.trim() || `git patch exited ${result.status}`));
+    }
+    return readFileSync(path, 'utf8');
+  });
 }
 
 export function preflight(argv, { root = process.cwd(), scriptChecks = SCRIPT_CHECKS, env = process.env, write = console.log, execute } = {}) {
@@ -185,7 +207,14 @@ export function preflight(argv, { root = process.cwd(), scriptChecks = SCRIPT_CH
   const retired = retiredIds(root);
   const citations = changed.flatMap((path) => {
     if ((omitEvidencePatch && path === HISTORICAL_AUDIT) || path.startsWith('docs/spec/') || path.startsWith('docs/journal/') || path.startsWith('docs/derived/')) return [];
-    const diff = git('diff', '--no-color', '--no-renames', '--no-ext-diff', '--no-textconv', '--unified=0', `${base}..${head}`, '--', path);
+    let diff;
+    try {
+      diff = readCommittedPatch(root, (descriptor) =>
+        run(gitCommand('diff', '--no-color', '--no-renames', '--no-ext-diff', '--no-textconv',
+          '--unified=0', `${base}..${head}`, '--', path), { stdio: ['ignore', descriptor, 'pipe'] }));
+    } catch (error) {
+      return [`${JSON.stringify(path)} patch read failed: ${error.message}`];
+    }
     return addedLines(diff).flatMap(({ number, text }) =>
       [...text.matchAll(/\b(?:R-[A-Z][A-Z0-9]*-\d+|D\d+)\b/g)]
         .filter((match) => retired.has(match[0]))
