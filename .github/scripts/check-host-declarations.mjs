@@ -141,9 +141,11 @@ export function checkAddedTimers(context, facts, record) {
   } catch (error) { return { ok: false, errors: [error.message] }; }
 }
 
-// How long one lister run of one file may take. Ten minutes is a judgment, made before the CI
-// measurement of every conversion-list file's base run sets it.
-export const BASE_RUN_BOUND_MS = 600_000;
+// How long one lister run of one file may take: four times the slowest base run measured. CI run
+// 42895935883 (job 130109118574, ubuntu-latest, Node v26.13.0) ran every conversion-list file at
+// merge base cd181d6f under the lister; the slowest was test/loop.test.mjs, at 149012 ms. The
+// multiple of four is a judgment, leaving room for a slower runner and for the file's growth.
+export const BASE_RUN_BOUND_MS = 4 * 149_012;
 
 /**
  * A lister run of one file in `directory`: a full `node --test` run of it, with no skip, name or

@@ -350,3 +350,18 @@ test('the record reader takes every worker file in its directory and refuses a m
   assert.throws(() => readRecord(directory), /103\.jsonl line 1/);
 });
 
+
+test('fast and nightly set the timer record on npm test and run the added-timer mode as the next step', () => {
+  const ci = parseWorkflow(readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'));
+  for (const name of ['fast', 'nightly']) {
+    const { steps } = ci.jobs[name];
+    const at = steps.findIndex((step) => step.run === 'npm test');
+    assert.notEqual(at, -1, `${name} runs no npm test step`);
+    const record = steps[at].env?.RIGGER_SUITE_TIMER_RECORD;
+    assert.match(record ?? '', /^\$\{\{ runner\.temp \}\}\/\S+$/, `${name} npm test sets no record under the runner's temporary directory`);
+    assert.deepEqual(steps[at + 1], {
+      run: 'node .github/scripts/check-host-declarations.mjs --added-timer',
+      env: { RIGGER_SUITE_TIMER_RECORD: record },
+    }, `${name} runs the added-timer mode directly after npm test`);
+  }
+});

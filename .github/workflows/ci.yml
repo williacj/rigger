@@ -651,38 +651,9 @@ jobs:
       - run: npm test
         env:
           RIGGER_SUITE_TIMER_RECORD: ${{ runner.temp }}/rigger-timer-record
-      - run: node --input-type=module -e "$ADDED_TIMER_MEASURE"
+      - run: node .github/scripts/check-host-declarations.mjs --added-timer
         env:
-          ADDED_TIMER_MEASURE: |
-            // Measures each conversion-list file's base run at the merge base, before the
-            // added-timer step gates a job, so its bound is set from this run (#1138).
-            import { readFileSync } from 'node:fs';
-            import { pathToFileURL } from 'node:url';
-            const from = (path) => import(pathToFileURL(process.cwd() + '/' + path).href);
-            const { gitFacts } = await from('.github/scripts/check-host-declarations.mjs');
-            const { eventBase } = await from('.github/scripts/check-test-list-growth.mjs');
-            const context = {
-              eventName: process.env.GITHUB_EVENT_NAME, ref: process.env.GITHUB_REF, sha: process.env.GITHUB_SHA,
-              event: JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8')),
-            };
-            const facts = gitFacts(process.cwd(), { bound: 1_800_000 });
-            const resolved = eventBase(context, facts);
-            const base = facts.mergeBase(context.sha, resolved.base);
-            const files = facts.readLists(base).converting;
-            console.log(JSON.stringify({ head: context.sha, event_base: resolved.base, merge_base: base, files: files.length }));
-            const rows = facts.atBase(base, (directory) => files.map((file) => {
-              const started = performance.now();
-              const listed = facts.list(directory, file);
-              const row = {
-                file, duration_ms: listed.duration_ms ?? null, wall_ms: Math.round(performance.now() - started),
-                tests: listed.counts ? [...listed.counts.values()].reduce((sum, count) => sum + count, 0) : null,
-                error: listed.error ?? null,
-              };
-              console.log(JSON.stringify(row));
-              return row;
-            }));
-            const slowest = rows.reduce((top, row) => (row.duration_ms ?? Infinity) > (top.duration_ms ?? -1) ? row : top);
-            console.log(JSON.stringify({ slowest: slowest.file, duration_ms: slowest.duration_ms }));
+          RIGGER_SUITE_TIMER_RECORD: ${{ runner.temp }}/rigger-timer-record
       - run: npm run budget:package
       - run: npm run budget:instructions
       - run: npm run lint:spec-style
@@ -1090,6 +1061,9 @@ jobs:
       - run: npm ci
       - run: node .github/scripts/check-test-list-growth.mjs
       - run: npm test
+        env:
+          RIGGER_SUITE_TIMER_RECORD: ${{ runner.temp }}/rigger-timer-record
+      - run: node .github/scripts/check-host-declarations.mjs --added-timer
         env:
           RIGGER_SUITE_TIMER_RECORD: ${{ runner.temp }}/rigger-timer-record
       - run: npm run test:host -- --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination="$RUNNER_TEMP/$CI_HOST_REPORT_NAME"
