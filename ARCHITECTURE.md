@@ -1717,7 +1717,8 @@ reader below would read it so.
 
 **What a later reader finds.** After a torn tail, a reader of the stream finds:
 
-- every event whose emit returned before the tear;
+- every event whose emit returned before the tear, except a held event in the two cases "A held
+  event's write" names, which M8-U14 and M8-U15 on #1293 put out of scope;
 - every event whose emit returns after it, from any writer, the writer whose write failed included.
 
 The writer whose write failed can append again. Its exit cleanup records its own kills and ends the
@@ -1725,28 +1726,32 @@ sink ("Failure model"; "Telemetry"). Its next line, or another writer's, may lan
 fragment.
 
 **The emit whose write failed.** The sink refuses it, and the refusal reaches the emitting layer as
-a failure, as for every append the sink refuses. "Failure model" states what L3 does with it. A
-later reader never finds that event, because the fragment is never returned.
+a failure, as for every append the sink refuses. "Failure model" states what L3 does with it. Where
+the write left a fragment, a later reader never finds that event, because the fragment is never
+returned.
 
 **A held event's write.** A held event's emit returned when the sink held it, and the sink writes
 it only when the verb names the state directory ("Telemetry"). An event leaves the sink's hold only
-once the append of its whole line returns. Where a write at naming tears or fails, the naming fails,
+once the append of its whole line returns. An append that wrote the whole line and still reported
+an error leaves the event held, so its line is written twice; the fourth residual names that case.
+Where a write at naming tears or fails, the naming fails,
 and no emit is refused. The failure names every event still held, the torn one included, and reaches
 the verb that named the directory. The sink keeps holding each of those events.
 
 Every later append of that sink first appends what it still holds, in emit order, each as one whole
 line. Whichever whole line lands first after the fragment, this sink's or another writer's, rule 3
-below separates it from the fragment. Where one of those
-appends is refused, the emit that made it is refused too, and its own event is not written. A later
+below separates it from the fragment. Where one of those appends is refused, the emit that made it is refused too, and its own event is not written. A later
 reader therefore finds each held event whose emit returned before the tear, once a later append of
 its line returns. Until then the sink still holds it.
 
 The sink's end appends what it still holds, as any later append does. Where that append is refused
-too, the end writes what it still holds to standard error, as a sink never named does. A process
-killed outright loses whatever its sink holds, whether or not a tear came first. Apart from that
-kill, the end's write to standard error is the one path on which a returned emit's event reaches no
-stream. Whether `R-RECORD-6` excludes that path, as M8-U2 Q7 a excludes the standard-error path, is
-the owner's ruling, asked on #1370.
+too, the end writes what it still holds to standard error, as a sink never named does. M8-U14 on
+#1293 rules that path outside `R-RECORD-6`, under M8-U2 Q7 a's exclusion of the standard-error path.
+
+A process that ends without exit cleanup loses whatever its sink holds, whether or not a tear came
+first. A kill outright is one such ending, and a fatal abort that runs no exit cleanup is another.
+M8-U15 on #1293 puts that loss out of scope. These two cases are the only ones in which a held
+event whose emit returned reaches no stream.
 
 **No writer makes the call.** At one read, a fragment and another process's line still being
 appended are the same bytes, so no writer tells them apart. None needs to, because no writer acts
@@ -1835,6 +1840,10 @@ naming. It adds no lock. It places no recovery machinery in L1, since the reader
    sink-form line, with its own closing brace lost, is one such line. Rigger's sink writes no such
    line except by a tear. Another program's edit is out of sight under #1298's row R13. The owner
    rules whether that form needs refusing.
+4. An append can write the whole line and still report an error, as a write error deferred to the
+   file's close can. The event then stays held, its line is appended again, and a reader returns
+   it twice. For an emit that is not held, the emit is refused while its line stands whole. The
+   owner rules whether M8-17 must tell that case apart from a short write.
 
 ### L0's call events
 
