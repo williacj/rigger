@@ -2,12 +2,10 @@
 // stream in the consumer's state directory, holding events until the verb names that directory,
 // and reads the stream back.
 
-// What this buys, and what it does not. One event is one synchronous append of one line, so the
-// stream only ever grows and a process killed outright loses no event whose call had already
-// returned; `test/event-sink.test.mjs` kills one and reads the stream back. Nothing is flushed
-// to the disk, so a machine that loses power can still lose the tail, and a torn line is then
-// refused by the reader rather than repaired here. Two processes appending to one stream at once
-// is not measured, and nothing emits yet, so nothing has needed either.
+// One event is one synchronous append of one line. The host tests read back returned emits
+// after SIGKILL, and check separate writers sharing a stream at 200 bytes and 1 MiB per line.
+// There is no explicit disk flush, so power loss can still lose the tail. A reader ignores
+// bytes after the last newline and refuses malformed newline-terminated JSON.
 
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -121,22 +119,25 @@ export function openSink({ directory, run, now }) {
 /**
  * Every event in a state directory's stream, in the order it was recorded.
  *
- * Anything that is not one event on one line is refused, named by the line it sits on. A reader
- * that passed over it would return the events either side of the damage as though the record
- * were whole, and R-RECORD-6 is the claim that it is.
+ * The bytes after the last newline have not yet become an event. Every complete line is read
+ * separately, so the whole stream needs no single JavaScript string. A malformed complete line
+ * is refused by its line number: passing over damage would contradict R-RECORD-6.
  */
 export function readEvents(directory) {
   const path = streamPath(directory);
-  const lines = readFileSync(path, 'utf8').split('\n');
+  const stream = readFileSync(path);
   const events = [];
-  for (const [index, line] of lines.entries()) {
-    // Every event ends in a newline, so the split's last piece is empty on a whole stream.
-    if (line === '' && index === lines.length - 1) continue;
+  let start = 0;
+  let index = 0;
+  for (let end = stream.indexOf(0x0a); end !== -1; end = stream.indexOf(0x0a, start)) {
+    const line = stream.toString('utf8', start, end);
+    start = end + 1;
     try {
       events.push(JSON.parse(line));
     } catch (cause) {
       throw new Error(`${path} line ${index + 1} is not a recorded event`, { cause });
     }
+    index += 1;
   }
   return events;
 }

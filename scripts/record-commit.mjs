@@ -35,7 +35,8 @@ function answer(command, args, env = command === 'git' ? gitEnvironment() : proc
  * carries (`D16`), with scripts off so this script does not run again; git is asked what `HEAD`
  * holds. The pack holds `HEAD`'s files where:
  * 1. every path the pack carries is a file `HEAD` holds, whatever git's ignore rules say of it;
- * 2. every file `HEAD` holds under a directory `files` names is one the pack carries;
+ * 2. every file `HEAD` holds that `files` names, or holds under a directory `files` names, is one the
+ *    pack carries;
  * 3. no path the pack carries differs from `HEAD` in the tree.
  */
 function commitToRecord() {
@@ -49,7 +50,7 @@ function commitToRecord() {
   const atHead = new Set(held.split('\0').filter(Boolean));
   if (!packed.every((path) => atHead.has(path))) return null;
   const declared = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).files ?? [];
-  const under = [...atHead].filter((path) => declared.some((directory) => path.startsWith(directory.endsWith('/') ? directory : `${directory}/`)));
+  const under = [...atHead].filter((path) => declared.some((entry) => path === entry || path.startsWith(entry.endsWith('/') ? entry : `${entry}/`)));
   if (!under.every((path) => packed.includes(path))) return null;
   return answer('git', ['diff', '--quiet', head, '--', ...packed]) === null ? null : head;
 }

@@ -399,3 +399,76 @@ test('D20: a throwing verb ends its sink and makes no return push while the exis
   assert.deepEqual(copied, w.events().slice(0, -1), 'the in-flight copy held every event at its start');
   assertCopies(w);
 });
+
+import { appendFileSync } from 'node:fs';
+import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+
+/** Read git's actual blob as bytes, without decoding or normalizing the pushed stream. */
+async function recordCopy(w, commit) {
+  const read = await realGit({ command: 'git', args: ['cat-file', 'blob', `${commit}:events.jsonl`],
+    cwd: w.origin, env: gitEnvironment() });
+  assert.equal(read.exit, 0, read.stderr.toString());
+  return read.stdout;
+}
+
+// Including an unfinished final segment must change the actual blob, even when it splits UTF-8.
+// proves R-RECORD-6
+test('R11: a push copies the complete prefix read by L5 while a writer is finishing its tail', async (t) => {
+  let finishTail;
+  const w = drainWorld(t, { side: async (given) => {
+    const answer = await pushStream(given);
+    // Complete the fixture's in-progress append before L5 emits push.end. This is no recovery
+    // from a failed write: the writer supplies the remaining bytes of its original line.
+    finishTail();
+    return answer;
+  } });
+  const emitter = w.context.sink.emitter({ layer: 'L3', card: 1298, dispatch: 'd-copy' });
+  emitter.emit('first', { value: 'first\n"quoted"\\☃' });
+  emitter.emit('second', { value: 'second' });
+  const complete = readFileSync(streamPath(w.context.directory));
+  const later = { ts: '2026-10-29T12:00:00.000Z', run: 'other-writer', layer: 'L3',
+    event: 'during', card: 1298, dispatch: 'd-other', value: 'ongoing ☃\n"tail"' };
+  const tail = Buffer.from(`${JSON.stringify(later)}\n`);
+  const cut = tail.indexOf(Buffer.from('☃')) + 1;
+  assert.ok(cut > 0 && cut < tail.length, 'the fixture must stop inside a UTF-8 character');
+  appendFileSync(streamPath(w.context.directory), tail.subarray(0, cut));
+  const snapshot = readFileSync(streamPath(w.context.directory));
+  finishTail = () => appendFileSync(streamPath(w.context.directory), tail.subarray(cut));
+
+  await w.push({ ...w.context, answer: { text: 'done', code: 0 } });
+
+  const end = w.events().at(-1);
+  assert.equal(end.outcome, 'pushed', end.reason);
+  assert.deepEqual(w.calls, [snapshot], 'L5 must hand its actual starting bytes to the push side');
+  assert.deepEqual(await recordCopy(w, end.commit), complete, 'the data ref must hold exactly the complete prefix');
+  assert.equal(end.bytes, complete.length);
+  assert.deepEqual(w.events().filter(({ run }) => run === 'other-writer'), [later], 'the in-progress writer finished after the copy');
+});
+
+// Dropping earlier lines only on an update must fail on the first copy's unchanged prefix.
+// proves R-RECORD-5
+test('R12: a later push preserves every byte of the first pushed stream', async (t) => {
+  const w = drainWorld(t);
+  const emitter = w.context.sink.emitter({ layer: 'L3', card: 1298, dispatch: 'd-copy' });
+  const answer = { text: 'done', code: 0 };
+  emitter.emit('first', { value: 'first\n"quoted"\\☃' });
+  const firstSnapshot = readFileSync(streamPath(w.context.directory));
+  await w.push({ ...w.context, answer });
+  const firstEnd = w.events().at(-1);
+  assert.equal(firstEnd.outcome, 'pushed', firstEnd.reason);
+  const first = await recordCopy(w, firstEnd.commit);
+  assert.deepEqual(first, firstSnapshot);
+  emitter.emit('second', { value: 'second' });
+  const secondSnapshot = readFileSync(streamPath(w.context.directory));
+
+  await w.push({ ...w.context, answer });
+
+  const secondEnd = w.events().at(-1);
+  assert.equal(secondEnd.outcome, 'pushed', secondEnd.reason);
+  const second = await recordCopy(w, secondEnd.commit);
+  assert.ok(second.length > first.length, 'the second copy must include later events');
+  assert.deepEqual(second.subarray(0, first.length), first, 'the first pushed bytes must remain unchanged');
+  assert.deepEqual(second, secondSnapshot, 'the second copy must also hold every later event');
+  assert.deepEqual(await recordCopy(w, firstEnd.commit), first, 'the original pushed blob remains unchanged');
+  assert.equal(gitIn(w.origin, 'rev-parse', `${secondEnd.commit}^`).trim(), firstEnd.commit);
+});
