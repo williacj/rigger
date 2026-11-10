@@ -195,3 +195,55 @@ module import and constant path declaration. The whole guard then passed in
 1300-r2-config-scope-binding-green.log. These are ordinary local bindings at the same named
 import boundary, within N11; no reflective route or production file is added. The completed
 host run at that predecessor is retained separately, and final-head verification is repeated.
+
+
+## Static invocation and write correction, 2026-11-09
+
+[M8-K13 on #1293](https://github.com/williacj/rigger/issues/1293#issuecomment-6754371451)
+places n02/n08, n17, n15 and n20 in sight at acceptance revision 5ade1c5d2381.
+It leaves n21's caller-selected target directory outside this guard. The requested merge of
+origin/main at 76d33f169c180ee08abfde405ea05e16b59e57ae applied without conflict;
+its hooked commit is 9ad24711818ae8012d1994140224aa266aa03c48. The following TDD runs name
+that head and retain the complete uncommitted diff beside each output in the maker's scratch.
+
+1300-r3-invocation-red.log names the missing call/apply/Reflect.apply/bind forms and literal
+import/alias origins. Static origins now include literal import namespaces, destructuring,
+arrays, objects and conditional/logical/sequence aliases. Invocation normalization follows
+the actual Function.prototype method receiver, bound this/prefix arguments and static apply
+arrays. Effective arguments still have to match the reviewed program input. The first green
+attempt missed the native literal-import default namespace; green-2 passes after canonicalizing
+it to the same child_process namespace. invocation-receiver-red.log then exposes nested call
+receivers; invocation-receiver-green.log passes with cycle detection on the entire invocation
+state instead of rejecting a repeated method alone. An uncalled bound function is not booked
+as an invocation.
+
+1300-r3-shadow-red.log misses all twelve parameter/catch/inner-declaration shadow cells at
+the four native sites. shadow-green.log passes after comparing the actual program argument's
+lexical binding with the reviewed function parameter, including runCommand's command field.
+A closure retaining that binding remains admitted. Native program parameters are also protected
+against writes. 1300-r3-writes-red.log exposes loop heads and destructuring targets;
+writes-green-2.log passes after walking assignment targets, rather than arbitrary pattern
+expressions. The first implementation attempt wrongly treated a fresh lexical loop declaration
+as a write to an existing input; writes-green.log retains that positive-control failure.
+A loop's var head can write an existing function binding; its let/const head declares a fresh
+binding. Native shadows remain checked independently by identity.
+
+1300-r3-globals-red.log exposes admitted-global/prototype writes and their aliases.
+globals-green.log passes after protecting their static origin identities, including node:url's
+URL export, whose identity with the real global constructor the matrix observes directly.
+The shared write walker handles loop heads, destructuring, delete and resolved Object/Reflect
+mutators, including call/apply/bound invocations. It preserves member origins across module
+exports. Locally shadowed globals remain local; caller-selected config targets remain admitted.
+The only existing direct global-member write found in the production search is the gate's
+complete conditional process.exitCode statement. Exactly that reviewed statement is admitted;
+a changed or duplicated copy fails. No new global or built-in is admitted.
+
+The pre-code coupling searches, complete call arguments and static-write inventory are retained
+in 1300-r3-lands-in-search.log, 1300-r3-static-forms-search.log,
+1300-r3-global-writes-search.log and 1300-r3-inventory-precode.json. Acorn measured 57 modules,
+6015 call/new expressions, 618 static write forms and 277 import/re-export sites in the two-root
+production closure, before guard implementation at 7f515453 with the pending main merge.
+No additional production change or Lands-in path is needed. The final PR records committed-head
+receipts for each of the five in-sight survivors and a separate program-loop mutation for the
+write matrix's R-SAFE-2 claim, plus full deterministic/fresh-clone/host verification. All raw
+outputs, including failed attempts, are retained; no failure is erased by a later pass.

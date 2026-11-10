@@ -99,6 +99,7 @@ function networkReport(read, roots) {
     }
   };
   for (const root of roots) visit(root);
+  violations.push(...globalWrites(modules));
   return { violations, modules, dynamic };
 }
 
@@ -396,6 +397,9 @@ test('N8: every process site has a reviewed program and shell input', () => {
   }
 });
 
+/** All statically possible origins; unknown branches never hide a known guarded function. */
+const originVariants = (value) => value?.alternatives ? value.alternatives.flatMap(originVariants) : value === undefined ? [] : [value];
+
 /** Resolve static module, namespace, destructured and defaulted bindings in their lexical scopes. */
 function processBindings(modules) {
   const models = new Map([...modules].map(([file, { program }]) => [file, lexical(program)]));
@@ -403,6 +407,11 @@ function processBindings(modules) {
   const exports = new Map();
   const bindingValues = new WeakMap();
   const objects = new WeakMap();
+  const operations = new Map(['call', 'apply', 'bind'].map((operation) => [operation, { operation }]));
+  const alternatives = (values) => {
+    const found = [...new Set(values.flatMap(originVariants))];
+    return found.length === 1 ? found[0] : found.length ? { alternatives: found } : undefined;
+  };
   const namespace = (file) => {
     if (!namespaces.has(file)) namespaces.set(file, { namespace: file });
     return namespaces.get(file);
@@ -416,6 +425,9 @@ function processBindings(modules) {
     return value;
   };
   const readExport = (file, name, seen) => {
+    if (file === 'node:child_process' && name === 'default') return namespace(file);
+    // node:url exports the same constructor as the admitted global URL (checked by the matrix).
+    if (file === 'node:url' && name === 'URL') return namespace('global:URL');
     if (!modules.has(file)) return `${file}#${name}`;
     const key = `${file}#${name}`;
     if (seen.has(key)) return;
@@ -453,8 +465,12 @@ function processBindings(modules) {
   };
   const member = (base, name, seen) => {
     if (name === undefined) return;
-    if (base?.namespace === 'global' && name === 'process') return namespace('global:process');
+    if (base?.alternatives) return alternatives(base.alternatives.map((value) => member(value, name, seen)));
+    if (operations.has(name) && (typeof base === 'string' || base?.bound || base?.operation || ['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(base?.type))) return operations.get(name);
+    if (base?.array && /^(0|[1-9][0-9]*)$/.test(name)) return origin(base.file, base.array.elements[Number(name)], seen);
+    if (base?.namespace === 'global' && GLOBALS.has(name)) return namespace(`global:${name}`);
     if (base?.namespace) return exported(base.namespace, name, seen);
+    if (typeof base === 'string' && base.startsWith('global:') && base.includes('#')) return `${base}.${name}`;
     if (base?.object) {
       if (base.object.properties.some((property) => property.type === 'SpreadElement' || property.computed)) return;
       const matches = base.object.properties.filter((property) => memberName(property) === name);
@@ -473,6 +489,7 @@ function processBindings(modules) {
     seen = new Set([...seen, binding]);
     let value = origin(file, binding.value, seen);
     for (const name of binding.path ?? []) value = member(value, name, seen);
+    if (value?.namespace === 'global:undefined') value = undefined;
     value ??= origin(file, binding.fallback, seen);
     if (value !== undefined) bindingValues.set(binding, value);
     return value;
@@ -485,20 +502,56 @@ function processBindings(modules) {
     }
     if (node.type === 'Identifier') {
       const binding = models.get(file).lookup(node);
-      if (!binding && node.name === 'process') return namespace('global:process');
-      if (!binding && ['Object', 'Reflect'].includes(node.name)) return namespace(`global:${node.name}`);
+      if (!binding && (GLOBALS.has(node.name) || node.name === 'Reflect')) return namespace(`global:${node.name}`);
       if (!binding && ['globalThis', 'global'].includes(node.name)) return namespace('global');
       return bindingOrigin(file, binding, seen);
     }
+    if (node.type === 'AwaitExpression') return origin(file, node.argument, seen);
+    if (node.type === 'ImportExpression' && typeof node.source.value === 'string') return namespace(target(file, node.source.value));
+    if (node.type === 'ConditionalExpression') return alternatives([origin(file, node.consequent, seen), origin(file, node.alternate, seen)]);
+    if (node.type === 'LogicalExpression') return alternatives([origin(file, node.left, seen), origin(file, node.right, seen)]);
+    if (node.type === 'SequenceExpression') return origin(file, node.expressions.at(-1), seen);
     if (node.type === 'MemberExpression') return member(origin(file, node.object, seen), memberName(node), seen);
-    if (node.type === 'ObjectExpression') {
-      if (!objects.has(node)) objects.set(node, { object: node, file });
+    if (['ObjectExpression', 'ArrayExpression'].includes(node.type)) {
+      if (!objects.has(node)) objects.set(node, { [node.type === 'ObjectExpression' ? 'object' : 'array']: node, file });
       return objects.get(node);
     }
     if (node.type === 'CallExpression' && syntaxShape(node.callee) === expressionShape('Object.freeze') && !models.get(file).lookup(node.callee.object) && node.arguments.length === 1) return origin(file, node.arguments[0], seen);
-    if (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression', 'ArrayExpression', 'Literal'].includes(node.type)) return node;
+    if (node.type === 'CallExpression') {
+      if (seen.has(node)) return;
+      if (!objects.has(node)) {
+        const values = invocation(file, node, new Set([...seen, node])).filter((call) => call.created).map(({ created }) => created);
+        const value = alternatives(values);
+        if (value !== undefined) objects.set(node, value);
+      }
+      return objects.get(node);
+    }
+    if (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression', 'Literal'].includes(node.type)) return node;
   };
-  return { origin, exported, models, named: (file, name) => bindingOrigin(file, models.get(file).root.names.get(name), new Set()) };
+  const argument = (file, node) => ({ file, node });
+  const valueOf = (value, seen) => value && origin(value.file, value.node, seen);
+  const arrayArguments = (value, seen) => {
+    const array = valueOf(value, seen);
+    if (!array?.array || array.array.elements.some((part) => !part || part.type === 'SpreadElement')) return;
+    return array.array.elements.map((node) => argument(array.file, node));
+  };
+  // Function.prototype methods use their actual receiver, including when the method is aliased.
+  const sameArgument = (left, right) => left?.file === right?.file && left?.node === right?.node;
+  const invoke = (symbol, receiver, args, seen, active = []) => {
+    if (active.some((call) => call.symbol === symbol && sameArgument(call.receiver, receiver) && call.args?.length === args?.length && (args ?? []).every((arg, index) => sameArgument(arg, call.args[index])))) return [];
+    active = [...active, { symbol, receiver, args }];
+    if (symbol?.alternatives) return symbol.alternatives.flatMap((value) => invoke(value, receiver, args, seen, active));
+    if (symbol?.bound) return invoke(symbol.bound.target, symbol.bound.receiver, args && [...symbol.bound.prefix, ...args], seen, active);
+    if (symbol?.operation) {
+      const target = valueOf(receiver, seen);
+      if (symbol.operation === 'bind') return args ? [{ created: { bound: { target, receiver: args[0], prefix: args.slice(1) } } }] : [];
+      return invoke(target, args?.[0], symbol.operation === 'call' ? args?.slice(1) : arrayArguments(args?.[1], seen), seen, active);
+    }
+    if (symbol === 'global:Reflect#apply') return invoke(valueOf(args?.[0], seen), args?.[1], arrayArguments(args?.[2], seen), seen, active);
+    return [{ symbol, args }];
+  };
+  const invocation = (file, node, seen = new Set()) => invoke(origin(file, node.callee, seen), node.callee.type === 'MemberExpression' ? argument(file, node.callee.object) : undefined, node.arguments.map((node) => argument(file, node)), seen);
+  return { origin, exported, models, invocation, named: (file, name) => bindingOrigin(file, models.get(file).root.names.get(name), new Set()) };
 }
 
 /** Native starts remain starts through aliases and namespace/member access. */
@@ -509,6 +562,7 @@ function programReport(modules) {
   const violations = [];
   const calls = [];
   const references = [];
+  const nativeBindings = new Map([...modules.keys()].map((file) => [file, new Set()]));
   const bindings = processBindings(modules);
   const reviewed = new Set();
   for (const [file, names] of PROGRAM_DEFINITIONS) for (const name of names) {
@@ -534,28 +588,39 @@ function programReport(modules) {
       }
       if (node.type !== 'CallExpression') continue;
       const callee = node.callee;
-      const symbol = bindings.origin(file, callee);
-      if (reviewed.has(symbol) || nativeProgram(symbol) || processMember(callee)) {
+      const invocations = bindings.invocation(file, node).filter((call) => !call.created);
+      const guarded = invocations.filter(({ symbol }) => reviewed.has(symbol) || nativeProgram(symbol));
+      if (guarded.length || processMember(callee)) {
         const key = `${file}#${owner}#${syntaxShape(callee)}`;
         const expected = PROGRAM_CALLS.find((entry) => entry[0] === file && entry[1] === owner && expressionShape(entry[2]) === syntaxShape(callee));
         calls.push(key);
         if (!expected) { fail(file, node, `unlisted process site ${owner}: ${modules.get(file).source.slice(callee.start, callee.end)}`); continue; }
-        const value = expected[3] === 'command' ? objectValue(node.arguments[0], 'command') : expected[3] === 'all' ? node.arguments : node.arguments[expected[3] === 'second' ? 1 : 0];
-        const parsed = parseExpressionAt(`[${expected[4]}]`, 0, { ecmaVersion: 'latest', sourceType: 'module' }).elements;
-        const wanted = expected[3] === 'all' ? parsed : parsed[0];
-        if (syntaxShape(value) !== syntaxShape(wanted)) fail(file, node, `program/input differs at ${owner}`);
-        if (nativeProgram(symbol) || processMember(callee)) {
-          if (node.arguments[2]?.type !== 'ObjectExpression' || node.arguments[2].properties.some((property) => property.type !== 'Property' || property.computed || ['shell', 'uid', 'gid'].includes(memberName(property)))) fail(file, node, 'native start options may not spread, compute keys, or set shell/uid/gid');
+        for (const call of guarded.length ? guarded : invocations) {
+          const args = call.args?.map(({ node }) => node);
+          const value = expected[3] === 'command' ? objectValue(args?.[0], 'command') : expected[3] === 'all' ? args : args?.[expected[3] === 'second' ? 1 : 0];
+          const parsed = parseExpressionAt(`[${expected[4]}]`, 0, { ecmaVersion: 'latest', sourceType: 'module' }).elements;
+          const wanted = expected[3] === 'all' ? parsed : parsed[0];
+          if (syntaxShape(value) !== syntaxShape(wanted)) fail(file, node, `program/input differs at ${owner}`);
+          if (nativeProgram(call.symbol) || processMember(callee)) {
+            const functions = entries.filter(({ node }) => node.type === 'FunctionDeclaration' && node.id.name === owner);
+            const parameter = functions.length === 1 ? functions[0].node.params[0] : undefined;
+            const fields = parameter?.type === 'ObjectPattern' ? parameter.properties.filter((property) => !property.computed && memberName(property) === 'command') : [];
+            const declared = owner === 'runCommand' ? (fields.length === 1 ? fields[0].value : undefined) : parameter;
+            const model = bindings.models.get(file);
+            if (declared?.type === 'Identifier') nativeBindings.get(file).add(model.lookup(declared));
+            if (declared?.type !== 'Identifier' || declared.name !== wanted.name || value?.type !== 'Identifier' || call.args[0].file !== file || model.lookup(value) !== model.lookup(declared)) fail(file, node, `program binding differs at ${owner}`);
+            if (args?.[2]?.type !== 'ObjectExpression' || args[2].properties.some((property) => property.type !== 'Property' || property.computed || ['shell', 'uid', 'gid'].includes(memberName(property)))) fail(file, node, 'native start options may not spread, compute keys, or set shell/uid/gid');
+          }
         }
       }
-      if ((callee.name === 'workspaces' || (bindings.exported('src/substrate/worktrees.mjs', 'workspaces') !== undefined && symbol === bindings.exported('src/substrate/worktrees.mjs', 'workspaces'))) && (node.arguments[0]?.type !== 'ObjectExpression' || node.arguments[0].properties.some((property) => property.type === 'SpreadElement' || memberName(property) === 'git'))) fail(file, node, 'workspaces overrides the default git program');
+      if ((callee.name === 'workspaces' || (bindings.exported('src/substrate/worktrees.mjs', 'workspaces') !== undefined && invocations.some(({ symbol }) => symbol === bindings.exported('src/substrate/worktrees.mjs', 'workspaces')))) && (node.arguments[0]?.type !== 'ObjectExpression' || node.arguments[0].properties.some((property) => property.type === 'SpreadElement' || memberName(property) === 'git'))) fail(file, node, 'workspaces overrides the default git program');
     }
   }
   const expectedCalls = PROGRAM_CALLS.flatMap(([file, owner, callee, , , count = 1]) => Array(count).fill(`${file}#${owner}#${expressionShape(callee)}`));
   if (syntaxShape(calls.sort()) !== syntaxShape(expectedCalls.sort())) violations.push('N8 process-site inventory differs (missing, duplicate or unlisted site)');
   const expectedReferences = PROCESS_REFERENCES.flatMap(([file, owner, expression, count = 1]) => Array(count).fill(`${file}#${owner}#${expressionShape(expression)}`));
   if (syntaxShape(references.sort()) !== syntaxShape(expectedReferences.sort())) violations.push('N8 native process references differ (unreviewed alias or method)');
-  const protectedByFile = new Map([...modules.keys()].map((file) => [file, new Set(['global:process#env'])]));
+  const protectedByFile = new Map([...modules.keys()].map((file) => [file, new Set(['global:process#env', ...nativeBindings.get(file)])]));
   const protectedValues = new Set(reviewed);
   for (const [file, owner, kind, name, expression] of PROGRAM_ORIGINS) {
     const matches = [...nodes(modules.get(file).program)].filter(({ node, parent, owner: at }) => at === owner && (
@@ -596,42 +661,79 @@ function programReport(modules) {
       if (matches.length === 1) admitted.add(matches[0]);
     }
     const protectedInputs = new Set([...protectedBindings, ...protectedValues]);
-    for (const node of bindingWrites(program, bindings.models.get(file), protectedInputs, (node) => bindings.origin(file, node))) if (!admitted.has(node)) fail(file, node, 'rewrites a reviewed input binding or its member');
+    for (const node of bindingWrites(program, bindings.models.get(file), protectedInputs, (node) => bindings.origin(file, node), { bindings, file })) if (!admitted.has(node)) fail(file, node, 'rewrites a reviewed input binding or its member');
   }
   return violations;
 }
 
 /** Follow ordinary local aliases when refusing writes to a pinned input, including member mutations. */
-function bindingWrites(program, model, protectedBindings, origin = () => undefined) {
+function bindingWrites(program, model, protectedBindings, origin = () => undefined, context) {
   const entries = [...nodes(program)];
   const writers = new Set(['Object.assign', 'Object.defineProperty', 'Object.defineProperties', 'Reflect.set', 'Reflect.deleteProperty'].map(expressionShape));
-  const root = (node) => {
+  const protectedValue = (value) => protectedBindings.has(value) || context?.protectedOrigin?.(value);
+  const root = (node, file = context?.file) => {
     while (node) {
-      const value = origin(node);
-      if (value !== undefined && protectedBindings.has(value)) return value;
+      const value = context ? context.bindings.origin(file, node) : origin(node);
+      const found = originVariants(value).find(protectedValue);
+      if (found !== undefined) return found;
       if (node.type !== 'MemberExpression') break;
       node = node.object;
     }
-    return node?.type === 'Identifier' ? model.lookup(node) : undefined;
+    return node?.type === 'Identifier' ? (context ? context.bindings.models.get(file) : model).lookup(node) : undefined;
   };
   let previous;
   do {
     previous = protectedBindings.size;
-    for (const { node } of entries) if (node.type === 'VariableDeclarator' && protectedBindings.has(root(node.init))) {
+    for (const { node } of entries) if (node.type === 'VariableDeclarator' && protectedValue(root(node.init))) {
       for (const { node: identifier } of nodes(node.id)) if (model.bindings.has(identifier)) protectedBindings.add(model.lookup(identifier));
     }
   } while (previous !== protectedBindings.size);
   return entries.map(({ node }) => node).filter((node) => {
-    if (['AssignmentExpression', 'UpdateExpression'].includes(node.type)) {
+    if (['AssignmentExpression', 'UpdateExpression', 'ForOfStatement', 'ForInStatement'].includes(node.type)) {
       const target = node.left ?? node.argument;
-      return [...nodes(target)].some(({ node: part }) => protectedBindings.has(root(part)));
+      return [...writeTargets(target)].some((part) => protectedValue(root(part)));
     }
-    if (node.type === 'UnaryExpression' && node.operator === 'delete') return protectedBindings.has(root(node.argument));
+    if (node.type === 'UnaryExpression' && node.operator === 'delete') return protectedValue(root(node.argument));
     if (node.type !== 'CallExpression') return false;
-    const writer = origin(node.callee);
-    if (writers.has(syntaxShape(node.callee)) || ['global:Object#assign', 'global:Object#defineProperty', 'global:Object#defineProperties', 'global:Reflect#set', 'global:Reflect#deleteProperty'].includes(writer)) return protectedBindings.has(root(node.arguments[0]));
-    return ['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin', 'set', 'delete', 'clear'].includes(memberName(node.callee)) && protectedBindings.has(root(node.callee.object));
+    const calls = context ? context.bindings.invocation(context.file, node) : [{ symbol: origin(node.callee), args: node.arguments.map((node) => ({ node })) }];
+    if (calls.some(({ symbol, args }) => ((!context && writers.has(syntaxShape(node.callee))) || ['global:Object#assign', 'global:Object#defineProperty', 'global:Object#defineProperties', 'global:Reflect#set', 'global:Reflect#deleteProperty'].includes(symbol)) && protectedValue(root(args?.[0]?.node, args?.[0]?.file)))) return true;
+    return ['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin', 'set', 'delete', 'clear'].includes(memberName(node.callee)) && protectedValue(root(node.callee.object));
   });
+}
+
+/** Static writes cannot replace admitted global members, including prototypes and imported aliases. */
+function globalWrites(modules) {
+  const bindings = processBindings(modules);
+  const violations = [];
+  const protectedOrigin = (value) => {
+    if (value?.namespace === 'global') return true;
+    const name = (value?.namespace?.startsWith('global:') ? value.namespace.slice('global:'.length) : undefined) ?? (typeof value === 'string' && value.startsWith('global:') ? value.slice('global:'.length).split('#')[0] : undefined);
+    if (!GLOBALS.has(name)) return false;
+    // Primitive sentinels are values, while even a write syntactically naming their member is refused.
+    return typeof value === 'string' || !['undefined', 'NaN', 'Infinity'].includes(name);
+  };
+  for (const [file, { program }] of modules) {
+    const statements = [...nodes(program)].filter(({ node, owner }) => file === 'scripts/gate-check.mjs' && owner === '<module>' && node.type === 'IfStatement' && syntaxShape(node) === statementShape('if (ranDirectly) process.exitCode = await main(process.argv.slice(2), process.env);'));
+    const admitted = statements.length === 1 ? statements[0].node.consequent.expression : undefined;
+    const context = { bindings, file, protectedOrigin };
+    for (const node of bindingWrites(program, bindings.models.get(file), new Set(), undefined, context)) if (node !== admitted) violations.push(`${file}:${node.loc.start.line} N11 protected global write`);
+  }
+  return violations;
+}
+
+/** Parse a complete reviewed statement, including its condition and surrounding syntax. */
+const statementShape = (source) => syntaxShape(parse(source, { ecmaVersion: 'latest', sourceType: 'module' }).body[0]);
+
+/** Assignment patterns write their targets, never their keys, defaults or computed operands. */
+function* writeTargets(node) {
+  if (!node) return;
+  if (['Identifier', 'MemberExpression'].includes(node.type)) yield node;
+  else if (node.type === 'AssignmentPattern') yield* writeTargets(node.left);
+  else if (node.type === 'RestElement') yield* writeTargets(node.argument);
+  else if (node.type === 'ArrayPattern') for (const part of node.elements) yield* writeTargets(part);
+  else if (node.type === 'ObjectPattern') for (const property of node.properties) yield* writeTargets(property.type === 'RestElement' ? property.argument : property.value);
+  // A loop's let/const declares a fresh binding; var can write an existing function binding.
+  else if (node.type === 'VariableDeclaration' && node.kind === 'var') for (const declaration of node.declarations) yield* writeTargets(declaration.id);
 }
 
 /** One explicit command property, with no spread or duplicate that could override it. */
@@ -846,3 +948,200 @@ function configReport(modules) {
   for (const node of bindingWrites(modules.get(file).program, model, protectedBindings)) fail(`rewrites the filename or target path at line ${node.loc.start.line}`);
   return violations;
 }
+
+/** Parse one independently specified source edit without executing the counterexample. */
+function changedPackage(report, file, before, after, reason) {
+  const sources = new Map([...report.modules].map(([path, { source }]) => [path, source]));
+  assert.equal(sources.get(file).split(before).length - 1, 1, `${reason}: the counterexample anchor is unique`);
+  sources.set(file, sources.get(file).replace(before, after));
+  return networkReport((path) => sources.get(path), ENTRY_POINTS);
+}
+
+// proves R-SAFE-2
+test('N8 static invocations: direct, call, apply, Reflect.apply and bound calls follow every static import origin', () => {
+  const report = packageReport();
+  assert.deepEqual(programReport(report.modules), [], 'N8 static invocation control: the real sites pass');
+  const origins = [
+    ['named import', "import { runCommand } from '../substrate/process.mjs';", '', 'runCommand'],
+    ['namespace import', "import * as processes from '../substrate/process.mjs';", '', 'processes.runCommand'],
+    ['literal import destructure', '', "const { runCommand: start } = await import('../substrate/process.mjs');", 'start'],
+    ['import alias', "import { runCommand as imported } from '../substrate/process.mjs';", 'const start = imported;', 'start'],
+    ['array alias', "import { runCommand as imported } from '../substrate/process.mjs';", 'const [start] = [imported];', 'start'],
+    ['object alias', "import { runCommand as imported } from '../substrate/process.mjs';", 'const holder = { start: imported }; const start = holder.start;', 'start'],
+    ['literal import namespace alias', '', "const processes = await import('../substrate/process.mjs'); const start = processes.runCommand;", 'start'],
+  ];
+  const forms = [
+    ['direct', (name) => `${name}({ command: 'curl', args: [] });`],
+    ['call', (name) => `${name}.call(null, { command: 'curl', args: [] });`],
+    ['apply', (name) => `${name}.apply(null, [{ command: 'curl', args: [] }]);`],
+    ['Reflect.apply', (name) => `Reflect.apply(${name}, null, [{ command: 'curl', args: [] }]);`],
+    ['bind then call', (name) => `const bound = ${name}.bind(null); bound({ command: 'curl', args: [] });`],
+    ['bind arguments then call', (name) => `const bound = ${name}.bind(null, { command: 'curl', args: [] }); bound();`],
+    ['call method alias', (name) => `const invoke = ${name}.call.bind(${name}); invoke(null, { command: 'curl', args: [] });`],
+    ['apply method alias', (name) => `const invoke = ${name}.apply.bind(${name}); invoke(null, [{ command: 'curl', args: [] }]);`],
+    ['Reflect.apply alias', (name) => `const invoke = Reflect.apply; invoke(${name}, null, [{ command: 'curl', args: [] }]);`],
+  ];
+  const file = 'src/cli/once.mjs';
+  const anchor = "import { NOT_STARTED } from '../substrate/process.mjs';";
+  const missed = [];
+  for (const [origin, imported, setup, name] of origins) for (const [form, invoke] of forms) {
+    const label = `${origin} / ${form}`;
+    const source = `${anchor}\n${imported}\nasync function unlistedStaticInvocation() { ${setup} ${invoke(name)} }`;
+    const changed = changedPackage(report, file, anchor, source, label);
+    if (!programReport(changed.modules).some((line) => line.includes(file) && line.includes('unlisted process site'))) missed.push(label);
+  }
+
+  for (const [form, invoke] of forms) {
+    const label = `literal native default namespace / ${form}`;
+    const file = 'src/substrate/host.mjs';
+    const anchor = 'export const realHost = {';
+    const call = invoke('native.execFile').replaceAll("{ command: 'curl', args: [] }", "'curl', ['https://example.invalid']");
+    const source = `async function unlistedStaticInvocation() { const { default: native } = await import('node:child_process'); ${call} }\n${anchor}`;
+    const changed = changedPackage(report, file, anchor, source, label);
+    if (!programReport(changed.modules).some((line) => line.includes(file) && line.includes('unlisted process site'))) missed.push(label);
+  }
+
+  for (const [form, setup] of [
+    ['conditional first branch', 'const start = process.env.RIGGER_SELECT ? imported : (() => 0);'],
+    ['conditional second branch', 'const start = process.env.RIGGER_SELECT ? (() => 0) : imported;'],
+    ['logical alias', 'const start = imported || (() => 0);'],
+    ['sequence alias', 'const start = (0, imported);'],
+    ['undefined destructuring default', 'const { start = imported } = { start: undefined };'],
+  ]) {
+    const source = `${anchor}\nimport { runCommand as imported } from '../substrate/process.mjs'; function unlistedAlias() { ${setup} start({ command: 'curl', args: [] }); }`;
+    const changed = changedPackage(report, file, anchor, source, form);
+    if (!programReport(changed.modules).some((line) => line.includes(file) && line.includes('unlisted process site'))) missed.push(form);
+  }
+  assert.deepEqual(missed, [], 'N8: every static invocation form and binding origin must enter the process inventory');
+  for (const [form, call] of [
+    ['nested call method', "runCommand.call.call(runCommand, null, { command: 'curl' });"],
+    ['nested Reflect.apply', "Reflect.apply(Reflect.apply, null, [runCommand, null, [{ command: 'curl' }]]);"],
+    ['method with a different receiver', "const local = () => 0; const call = local.call.bind(runCommand); call(null, { command: 'curl' });"],
+  ]) {
+    const changed = changedPackage(report, file, anchor, `${anchor}\nimport { runCommand } from '../substrate/process.mjs'; function unlistedMethodReceiver() { ${call} }`, form);
+    assert.ok(programReport(changed.modules).some((line) => line.includes(file) && line.includes('unlisted process site')), `N8: the actual method receiver determines ${form}`);
+  }
+  const rebound = changedPackage(report, 'src/substrate/data-ref.mjs', 'run = runCommand', "run = runCommand.bind(null, { command: 'curl', args: [] })", 'bound arguments at an existing site');
+  assert.ok(programReport(rebound.modules).some((line) => line.includes('src/substrate/data-ref.mjs')), 'N8: bound prefix arguments must not replace the reviewed git input');
+  const uncalled = changedPackage(report, file, anchor, `${anchor}\nimport { runCommand } from '../substrate/process.mjs'; function configuredLater() { const bound = runCommand.bind(null); return bound; }`, 'bind without a call');
+  assert.deepEqual(programReport(uncalled.modules), [], 'N8: creating an uncalled bound function is not an invocation');
+});
+
+// proves R-SAFE-2
+test('N8 native bindings: parameter, catch and inner declaration shadows change the reviewed program', () => {
+  const report = packageReport();
+  assert.deepEqual(programReport(report.modules), [], 'N8 native binding control: the real sites pass');
+  const file = 'src/substrate/process.mjs';
+  const model = report.modules.get(file);
+  const sites = [['run', 'host.execFile', 'ps'], ['runCommand', 'host.spawn', 'command'], ['startOf', 'host.spawnSync', 'ps'], ['runOnce', 'spawn', 'ps']];
+  const shadows = [
+    ['parameter', (name, call) => `((${name}) => ${call})(process.env.RIGGER_COMMAND ?? ${name})`],
+    ['catch', (name, call) => `(() => { try { throw process.env.RIGGER_COMMAND ?? ${name}; } catch (${name}) { return ${call}; } })()`],
+    ['inner declaration', (name, call) => `((original) => { const ${name} = process.env.RIGGER_COMMAND ?? original; return ${call}; })(${name})`],
+  ];
+  const missed = [];
+  for (const [owner, callee, name] of sites) {
+    const calls = [...nodes(model.program)].filter(({ node, owner: at }) => at === owner && node.type === 'CallExpression' && syntaxShape(node.callee) === expressionShape(callee));
+    assert.equal(calls.length, 1, `${owner}: exactly one native start establishes the fixture`);
+    const call = model.source.slice(calls[0].node.start, calls[0].node.end);
+    const sameBinding = changedPackage(report, file, call, `(() => ${call})()`, `${owner} retains its binding`);
+    assert.deepEqual(programReport(sameBinding.modules), [], 'N8: a closure retaining the reviewed binding remains admitted');
+    for (const [form, rewrite] of shadows) {
+      const label = `${owner} / ${form}`;
+      const changed = changedPackage(report, file, call, rewrite(name, call), label);
+      if (!programReport(changed.modules).some((line) => line.includes(file) && line.includes('program binding differs'))) missed.push(label);
+    }
+  }
+  assert.deepEqual(missed, [], 'N8: native program arguments must keep the reviewed binding identity under every shadow form');
+});
+
+// proves R-SAFE-2, R-SAFE-4
+test('N8 and A5 writes: assignment, update, for-of, for-in and destructuring protect programs and environments', () => {
+  const report = packageReport();
+  assert.deepEqual(programReport(report.modules), [], 'protected write control: the real program and environment construction passes');
+  const forms = [
+    ['assignment', (target, value) => `${target} = ${value};`],
+    ['update', (target) => `${target}++;`],
+    ['for-of', (target, value) => `for (${target} of [${value}]);`],
+    ['for-in', (target) => `for (${target} in { proxy: true });`],
+    ['object assignment', (target, value) => `({ proxy: ${target} } = { proxy: ${value} });`],
+    ['array assignment', (target, value) => `[${target}] = [${value}];`],
+    ['nested assignment', (target, value) => `({ outer: [${target}] } = { outer: [${value}] });`],
+    ['default assignment', (target, value) => `[${target} = ${value}] = [];`],
+    ['array rest assignment', (target, value) => `[...${target}] = [${value}];`],
+    ['object rest assignment', (target, value) => `({ ...${target} } = { proxy: ${value} });`],
+    ['for-of destructuring', (target, value) => `for ([${target}] of [[${value}]]);`],
+    ['for-in destructuring', (target) => `for ([${target}] in { proxy: true });`],
+  ];
+  const importLine = "import { NOT_STARTED } from '../substrate/process.mjs';";
+  const startLine = "  const stdin = input === undefined ? 'ignore' : 'pipe';";
+  const targets = [
+    ['engine environment', 'src/cli/once.mjs', importLine, 'process.env.HTTPS_PROXY', 'process.env.RIGGER_PROXY', (write) => `${importLine}\nfunction unlistedProtectedWrite() { ${write} }`],
+    ['native program parameter', 'src/substrate/process.mjs', startLine, 'command', "'curl'", (write) => `  ${write}\n${startLine}`],
+  ];
+  const missed = [];
+  for (const [name, file, anchor, target, value, source] of targets) for (const [form, write] of forms) {
+    const label = `${name} / ${form}`;
+    const changed = changedPackage(report, file, anchor, source(write(target, value)), label);
+    if (!programReport(changed.modules).some((line) => line.includes(file) && line.includes('rewrites a reviewed'))) missed.push(label);
+  }
+  assert.deepEqual(missed, [], 'N8/A5: every static write target must protect the reviewed program and engine environment');
+});
+
+import { URL as URLExport } from 'node:url';
+
+// proves R-SAFE-2
+test('N11 global writes: admitted globals, prototypes and aliases reject static writes and mutators', () => {
+  assert.equal(URLExport, globalThis.URL, 'N11: node:url exports the admitted global URL constructor');
+  const forms = [
+    ['prototype assignment', 'URL.prototype.toString = () => process.env.RIGGER_PLUGIN;'],
+    ['imported constructor alias', "import { URL as ConfigURL } from 'node:url'; ConfigURL.prototype.toString = () => process.env.RIGGER_PLUGIN;"],
+    ['imported constructor namespace', "import * as urls from 'node:url'; urls.URL.prototype.toString = () => process.env.RIGGER_PLUGIN;"],
+    ['literal imported constructor', "const { URL: ConfigURL } = await import('node:url'); ConfigURL.prototype.toString = () => process.env.RIGGER_PLUGIN;"],
+    ['globalThis member', 'globalThis.URL.prototype.toString = () => process.env.RIGGER_PLUGIN;'],
+    ['global member', 'global.URL.prototype.toString = () => process.env.RIGGER_PLUGIN;'],
+    ['constructor alias', 'const ConfigURL = URL; ConfigURL.prototype.toString = () => process.env.RIGGER_PLUGIN;'],
+    ['conditional constructor alias', 'const ConfigURL = process.env.RIGGER_USE_URL ? URL : Object; ConfigURL.prototype.toString = () => process.env.RIGGER_PLUGIN;'],
+    ['prototype alias', 'const prototype = URL.prototype; prototype.toString = () => process.env.RIGGER_PLUGIN;'],
+    ['prototype destructure', 'const { prototype } = URL; prototype.toString = () => process.env.RIGGER_PLUGIN;'],
+    ['update', 'URL.prototype.toString++;'],
+    ['for-of', 'for (URL.prototype.toString of [() => process.env.RIGGER_PLUGIN]);'],
+    ['for-in', 'for (URL.prototype.toString in { plugin: true });'],
+    ['destructuring assignment', '[URL.prototype.toString] = [() => process.env.RIGGER_PLUGIN];'],
+    ['delete', 'delete URL.prototype.toString;'],
+    ['Object.assign', 'Object.assign(URL.prototype, { toString: () => process.env.RIGGER_PLUGIN });'],
+    ['Object.assign.call', 'Object.assign.call(null, URL.prototype, { toString: () => process.env.RIGGER_PLUGIN });'],
+    ['Object.assign.apply', 'Object.assign.apply(null, [URL.prototype, { toString: () => process.env.RIGGER_PLUGIN }]);'],
+    ['Reflect.apply mutator', 'Reflect.apply(Object.assign, null, [URL.prototype, { toString: () => process.env.RIGGER_PLUGIN }]);'],
+    ['bound mutator', 'const write = Object.assign.bind(null, URL.prototype); write({ toString: () => process.env.RIGGER_PLUGIN });'],
+    ['Object.defineProperty', "Object.defineProperty(URL.prototype, 'toString', { value: () => process.env.RIGGER_PLUGIN });"],
+    ['Reflect.set', "Reflect.set(URL.prototype, 'toString', () => process.env.RIGGER_PLUGIN);"],
+    ...[...GLOBALS.keys()].map((name) => [`admitted ${name}`, `${name}.guardedMember = 0;`]),
+  ];
+  const missed = [];
+  for (const [form, source] of forms) {
+    const report = networkReport(() => source, ['fixture.mjs']);
+    if (!report.violations.some((line) => line.startsWith('fixture.mjs:1 N11') && line.includes('protected global write'))) missed.push(form);
+  }
+  assert.deepEqual(missed, [], 'N11: every admitted global and statically reached prototype must reject protected writes');
+  for (const [exported, write] of [['URL.prototype', 'shared.toString = () => process.env.RIGGER_PLUGIN;'], ['URL.prototype.toString', 'shared.plugin = process.env.RIGGER_PLUGIN;']]) {
+    const sources = new Map([['entry.mjs', `import { shared } from './origin.mjs'; ${write}`], ['origin.mjs', `export const shared = ${exported};`]]);
+    const crossed = networkReport((file) => sources.get(file), ['entry.mjs']);
+    assert.ok(crossed.violations.some((line) => line.startsWith('entry.mjs:1 N11') && line.includes('protected global write')), 'N11: static global-member aliases remain protected across imports');
+  }
+  for (const source of ['const URL = { prototype: {} }; URL.prototype.toString = () => 0;', 'function local(URL) { URL.prototype.toString = () => 0; }']) {
+    assert.deepEqual(networkReport(() => source, ['fixture.mjs']).violations, [], 'N11: a local object sharing a global name remains local');
+  }
+  const report = packageReport();
+  assert.deepEqual(report.violations, [], 'N11: real package reads and the reviewed exit-status write remain admitted');
+  const exitWrite = 'if (ranDirectly) process.exitCode = await main(process.argv.slice(2), process.env);';
+  for (const rewrite of ['if (ranDirectly) process.exitCode = 0;', `${exitWrite}\n${exitWrite}`]) {
+    const changed = changedPackage(report, 'scripts/gate-check.mjs', exitWrite, rewrite, 'reviewed global write');
+    assert.ok(changed.violations.some((line) => line.startsWith('scripts/gate-check.mjs:') && line.includes('N11 protected global write')), 'N11: the reviewed exit-status statement may neither change nor duplicate');
+  }
+
+  const anchor = "import { NOT_STARTED } from '../substrate/process.mjs';";
+  const changed = changedPackage(report, 'src/cli/once.mjs', anchor, `${anchor}\nasync function selectedConfig(named) { return consumerConfig(process.env.RIGGER_TARGET ?? named); }`, 'n21 remains out of scope');
+  assert.deepEqual(changed.violations, [], 'M8-K13: selecting a consumer target is outside this guard');
+  assert.deepEqual(configReport(changed.modules), [], 'M8-K13: the admitted import still resolves within its supplied target');
+});
