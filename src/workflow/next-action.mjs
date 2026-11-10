@@ -107,7 +107,7 @@ export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTop
   const removing = (ordinary, forgeRefusal = false) => {
     const facts = card.forge;
     const following = forgeRefusal && escalation === undefined
-      ? routed({ action: 'escalate', category: 'ambiguous', raiser: 'loop', reason: ordinary.reason, line: facts.line })
+      ? routed({ action: 'escalate', class: 'card-local', category: 'ambiguous', raiser: 'loop', reason: ordinary.reason, line: facts.line })
       : ordinary;
     if (!betweenAttempts || ordinary.action === 'ignore' || escalation !== undefined
         || !['review', 'owner'].includes(facts?.stage) || facts.closed.length === 0
@@ -284,7 +284,7 @@ export function failedAttempt(card, attempt, firstFailure, what, sink) {
   } catch (refusal) {
     throw recordingHalt(`card #${card.number}'s attempt ${attempt} failed, and the event sink refused to record it, so L2 answers no action: ${refusal.message}`, refusal);
   }
-  if (refusals.length > 0) return routed({ action: 'escalate', category: 'ambiguous', raiser: 'loop', reason: refusals.map((each) => each.reason).join('\n'), card: card.number, failure, from: 'coding' });
+  if (refusals.length > 0) return routed({ action: 'escalate', class: 'card-local', category: 'ambiguous', raiser: 'loop', reason: refusals.map((each) => each.reason).join('\n'), card: card.number, failure, from: 'coding' });
   return again ? { action: 'again', card: card.number, attempt: attempt + 1, failure }
     : hold ? { action: 'hold', card: card.number, firstFailure, failure } : { action: 'stop', card: card.number, failure };
 }

@@ -175,7 +175,7 @@ export function columnChanges({
     const evidence = {
       category: next.category, reason: next.reason, raiser: next.raiser ?? 'loop',
       ...(next.item === undefined ? {} : { item: next.item }),
-      ...Object.fromEntries(['pull', 'head', 'line', 'destination', 'reads', 'elapsedMs'].filter((key) => next[key] !== undefined).map((key) => [key, next[key]])),
+      ...Object.fromEntries(['class', 'pull', 'head', 'line', 'destination', 'reads', 'elapsedMs'].filter((key) => next[key] !== undefined).map((key) => [key, next[key]])),
     };
     try {
       sink.emitter({ layer: 'L2', card: card.number, dispatch: next.dispatch ?? null }).emit('review.escalate', evidence);
@@ -299,11 +299,13 @@ export function columnChanges({
 
     /**
      * L3's lane hands over `next`, L2's `merge` answer for `card` from its rule run again at the
-     * lane: L2 merges the pull request it names at the head it names through the repository-write
+     * lane: L2 records its digest and governing verdicts before merging the pull request it names
+     * at the head it names through the repository-write
      * side, and marks an unknown-mergeability refusal for L3's full re-read. Other answers pass
      * through unread, and a failed call rejects as it did.
      */
     merge: async (card, next) => {
+      note(card, 'merge.decided', { pull: next.pull, head: next.head, digest: next.digest, judges: next.verdicts });
       const answer = await repositoryFor(card).mergePullRequest(next.pull, next.head);
       return answer.outcome === 'refused' && answer.reason === 'unknown' ? { ...answer, unknownMergeability: true } : answer;
     },
@@ -363,10 +365,10 @@ export function columnChanges({
 
     /** Settles the escalation role against the forge under the card's existing claim; a handled move answers its `column`. */
     roleSettled: async (card, next, outcome, { dispatch, firstFailure } = {}) => {
-      if (outcome.status === 'rejected' && [WORKSPACE_REFUSED, SCRATCH_REFUSED].includes(outcome.reason?.code)) return ownerEscalation(next, { category: 'ambiguous', reason: outcome.reason.message, dispatch });
+      if (outcome.status === 'rejected' && [WORKSPACE_REFUSED, SCRATCH_REFUSED].includes(outcome.reason?.code)) return ownerEscalation(next, { class: 'card-local', category: 'ambiguous', reason: outcome.reason.message, dispatch });
       if (outcome.status === 'rejected' && outcome.reason?.code === NOT_STARTED) {
         if (firstFailure === undefined) return { action: 'again' };
-        return ownerEscalation(next, { category: 'ambiguous', reason: `role ${next.destination} did not start twice: ${firstFailure.reason.message}; ${outcome.reason.message}`, dispatch });
+        return ownerEscalation(next, { class: 'environment', category: 'ambiguous', reason: `role ${next.destination} did not start twice: ${firstFailure.reason.message}; ${outcome.reason.message}`, dispatch });
       }
       if (outcome.status === 'rejected') return undefined;
       const reading = roleReads(card.number, dispatch);

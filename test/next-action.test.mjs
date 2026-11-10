@@ -520,7 +520,7 @@ test('L2 selects closed removal only for unlabelled Review or Owner cards with c
         assert.deepEqual(next.following, { action: 'dispatch', kind: 'change' });
       } else {
         assert.deepEqual(next.following, {
-          action: 'escalate', category: 'ambiguous', raiser: 'loop', destination: 'owner', line: 'rigger-87',
+          action: 'escalate', class: 'card-local', category: 'ambiguous', raiser: 'loop', destination: 'owner', line: 'rigger-87',
           reason: branch
             ? stage === 'owner' ? 'the forge holds its line of work rigger-87 with no pull request from it' : 'the forge holds its line of work, rigger-87, so its work would not start from the beginning'
             : 'the forge holds no pull request from its line of work rigger-87, open or merged',
@@ -574,7 +574,7 @@ test('closed removal preserves every nonforge refusal and converts only the forg
     assert.equal(malformed.action, 'remove');
     assert.deepEqual(malformed.following, held === undefined
       ? { action: 'refuse', card: 87, reason: 'missing acceptance' }
-      : { action: 'escalate', category: 'ambiguous', raiser: 'loop', destination: 'owner', reason: held, line: 'rigger-87' });
+      : { action: 'escalate', class: 'card-local', category: 'ambiguous', raiser: 'loop', destination: 'owner', reason: held, line: 'rigger-87' });
     const multiple = nextAction({ ...original, labels: ['type:change', 'type:spec'], body: 'No acceptance.' }, KINDS, undefined, { roles, sink: quiet });
     assert.deepEqual(multiple, { action: 'remove', following: { action: 'refuse', card: 87, reason: 'selected by more than one kind: change, spec' } });
     for (const labels of [[], ['type:epic', 'type:change']]) {

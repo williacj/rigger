@@ -152,7 +152,7 @@ export function judgeAnswer(card, kinds, epicLabel, { roles = {}, provisioning =
     .map((role) => ({ ...judgeOf(role, roles[role] ?? {}, tiers.get(role).tier, required.get(role), pull, evidence, facts, items),
       ...(governing.has(role) ? { comment: governing.get(role).comment } : {}), steps: steps.map((name) => stepAnswer(name, provisioning)) }));
   const withholding = withheldRoles.length > 0 ? { withheld: withheldRoles } : {};
-  if (refusals.length > 0) return { action: 'escalate', category: 'ambiguous', raiser: 'loop', reason: refusals.join('\n'), pull: pull.number, head: pull.head, from: card.forge.stage, ...withholding };
+  if (refusals.length > 0) return { action: 'escalate', class: 'card-local', category: 'ambiguous', raiser: 'loop', reason: refusals.join('\n'), pull: pull.number, head: pull.head, from: card.forge.stage, ...withholding };
   if (Object.values(directories).some(({ reason }) => reason?.code === EVENT_REFUSED || reason?.startCause?.kind === 'event-unrecorded')) return { action: 'judge', kind, judges, halt: true, ...withholding };
   const retry = owed.find((role) => judgeFailure(role, directories[role]) !== undefined);
   if (retry !== undefined) {
@@ -348,7 +348,7 @@ function judgeOf(role, declared, tier, provider, pull, evidence, facts, items) {
  *
  * Each answer is one of `{ action: 'judge', kind, judges }`, `{ action: 'refuse', card, reason }`,
  * `{ action: 'move', to }`, `{ action: 'continue', pull, head, markers }`, `{ action: 'return',
- * pull, comment }`, `{ action: 'escalate', category, raiser, reason, pull, head }`, `{ action: 'merge', pull, head }` and
+ * pull, comment }`, `{ action: 'escalate', category, raiser, reason, pull, head }`, `{ action: 'merge', pull, head, digest, verdicts }` and
  * `{ action: 'ignore', reason }`, which L3 carries out.
  */
 export function reviewAnswer(card, kinds, epicLabel, options = {}) {
@@ -610,6 +610,10 @@ function mergeAnswer(card, panel, pull, comments, round) {
   const required = new Set(rules.map((rule) => rule.context).filter((context) => context !== GATE_CONTEXT));
   const checks = Object.fromEntries([...required].map((context) => [context, states[context] ?? { state: 'absent', creator: null }]));
   const gate = gateAnswer({ comments, ...round, judges: panel, checks });
-  if (gate.admit) return { action: 'merge', pull: pull.number, head: pull.head };
+  if (gate.admit) {
+    const { governing } = readMarkers(comments, round);
+    return { action: 'merge', pull: pull.number, head: pull.head, digest: round.digest,
+      verdicts: panel.map(({ role }) => ({ role, verdict: governing.get(role).marker.verdict })) };
+  }
   return { action: 'ignore', reason: gate.refusals.map((refusal) => `${refusal.judge ?? refusal.check}: ${refusal.reason}`).join('; ') };
 }

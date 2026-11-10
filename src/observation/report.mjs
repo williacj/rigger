@@ -116,6 +116,39 @@ function escalationsIn(recorded) {
   };
 }
 
+/** Escalation events grouped only by their recorded run and class, with absent classes named null. */
+function escalationCauses(events) {
+  const recorded = events.filter((event) => event.layer === 'L2' && event.event === 'review.escalate' && event.card != null);
+  const counts = (entries) => {
+    const classes = new Map();
+    for (const event of entries) {
+      const cause = event.class ?? null;
+      classes.set(cause, (classes.get(cause) ?? 0) + 1);
+    }
+    return { classes: [...classes].map(([cause, count]) => ({ class: cause, count })),
+      infrastructure: (classes.get('environment') ?? 0) + (classes.get('card-local') ?? 0) };
+  };
+  return { runs: [...byRun(recorded)].map(([run, entries]) => ({ run, ...counts(entries) })), stream: counts(recorded) };
+}
+
+/** Distinct merged cards with an all-sound decision before a successful end at that card/head. */
+function freshMerges(events) {
+  const merged = new Set();
+  const decisions = new Map();
+  const fresh = new Set();
+  for (const event of events) {
+    if (event.card == null) continue;
+    if (event.layer === 'L2' && event.event === 'transition' && ['merged', 'mergedFromOwner'].includes(event.cause)) merged.add(event.card);
+    if (event.layer === 'L2' && event.event === 'merge.decided' && event.judges?.every(({ verdict }) => verdict === 'sound')) {
+      if (!decisions.has(event.card)) decisions.set(event.card, new Set());
+      decisions.get(event.card).add(event.head);
+    }
+    if (event.layer === 'L3' && event.event === 'merge.end' && event.outcome === 'merged' && decisions.get(event.card)?.has(event.head)) fresh.add(event.card);
+  }
+  const flagged = [...merged].filter((card) => !fresh.has(card));
+  return { fresh: merged.size - flagged.length, of: merged.size, flagged };
+}
+
 /** The one rounds derivation: distinct head/digest pairs per card over all L2 marker reads. */
 function roundsPerCard(events) {
   const cards = new Map();
@@ -142,9 +175,9 @@ function l2Signals(events) {
     run, hostFaults: { faults: recorded.filter(hostFault).length, claims: workClaims(recorded).length }, escalations: escalationsIn(recorded),
   }));
   const claims = runs.reduce((sum, { hostFaults }) => sum + hostFaults.claims, 0);
-  return { runs, stream: {
+  return { runs, escalationCauses: escalationCauses(events), stream: {
     hostFaults: { faults: events.filter(hostFault).length, claims },
-    escalations: escalationsIn(events), rounds: roundsPerCard(events),
+    escalations: escalationsIn(events), rounds: roundsPerCard(events), freshMerges: freshMerges(events),
   } };
 }
 
@@ -189,6 +222,17 @@ function l3Signals(events) {
       utilization: span === 0 || n === undefined ? null : pulled / (n * span),
     };
   });
+}
+
+/** Admission hold closes per recorded close-run and across the stream, joined to opens by id alone. */
+function admissionHolds(events) {
+  const closes = events.filter((event) => event.layer === 'L3' && event.event === 'admission.close');
+  const opened = new Set(events.filter((event) => event.layer === 'L3' && event.event === 'admission.open').map(({ id }) => id));
+  const counts = (recorded) => {
+    const entries = recorded.filter(({ kind }) => kind === 'hold').map(({ id, reason }) => ({ id, reason, opened: opened.has(id) }));
+    return { count: entries.length, entries };
+  };
+  return { runs: [...byRun(closes)].map(([run, recorded]) => ({ run, ...counts(recorded) })), stream: counts(closes) };
 }
 
 /** The four `transition` causes that send a card back for more work: L4's rework. */
@@ -269,14 +313,15 @@ function unwrittenMarkers(events) {
 
 /**
  * The report over the state directory `directory`: its stream's `path`, L0's, L1's and L2's
- * signals per run and across the stream, L3's signals per run, L4's rework per run and its signals
+ * signals per run and across the stream, L3's signals per run and admission holds per run and
+ * across the stream, L4's rework per run and its signals
  * across the stream, and agent markers with no unique matching recorded dispatch. The latter joins
  * the whole stream, across runs. It reads through the sink and writes nothing; an unreadable line throws as the
  * reader does, naming that line.
  */
 export function report(directory) {
   const path = streamPath(directory);
-  if (!existsSync(path)) return { path, l0: null, l1: null, l2: null, runs: null, l4: null, markers: null };
+  if (!existsSync(path)) return { path, l0: null, l1: null, l2: null, runs: null, holds: null, l4: null, markers: null };
   const events = readEvents(directory);
-  return { path, l0: l0Signals(events), l1: l1Signals(events), l2: l2Signals(events), runs: l3Signals(events), l4: l4Signals(events), markers: unwrittenMarkers(events) };
+  return { path, l0: l0Signals(events), l1: l1Signals(events), l2: l2Signals(events), runs: l3Signals(events), holds: admissionHolds(events), l4: l4Signals(events), markers: unwrittenMarkers(events) };
 }
