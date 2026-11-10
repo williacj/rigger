@@ -1,7 +1,7 @@
 // ABOUTME: Tests the demo tape's world without vhs: the shell `docs/demo.tape` records is left in a
 // consumer repository outside the checkout, running a `rigger` installed from the tarball, with
 // the fake `gh` and the stand-in agent as the only `gh` and `claude` on PATH, and `rigger once`
-// there claims the card, dispatches its maker, and exits non-zero saying it opened no pull request.
+// there claims the card, dispatches its maker, and exits non-zero saying Rigger escalated the card.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -85,7 +85,8 @@ const runCommands = (text = workflow) => [...text.matchAll(/^\s*-\s*run:\s*(\S.*
  */
 const SCREEN = [
   '> rigger once',
-  'rigger once: claimed #12 from board 3; its maker exited 0 and opened no pull request from rigger-12, in its workspace, /private/var/folders/rigger-demo.a1B2c3/widgets-worktrees/rigger-12',
+  'rigger once: claimed #12 from board 3; Rigger escalated it as ambiguous: card #12\'s maker started its work from the beginning and exited 0, and the forge holds no open pull request from its line of work rigger-12, in its workspace, /private/var/folders/rigger-demo.a1B2c3/widgets-worktrees/rigger-12',
+  'rigger once: card #12\'s escalation issue comment was refused: postIssueComment on issue #12 failed: gh: Not Found (HTTP 404)',
   '> echo exit $?',
   'exit 1',
   '> ',
@@ -118,7 +119,7 @@ test('a CI check fails on a screen where rigger once exited zero after printing 
   // The status is what the tape's echo prints, so a line of the verb's own output reading
   // `exit 1` must not stand in for it.
   const screen = SCREEN
-    .replace(/^(rigger once: .*)$/m, '$1\nexit 1')
+    .replace(/^(rigger once: .*)$(?![\s\S]*^rigger once: )/m, '$1\nexit 1')
     .replace(/^exit 1$(?![\s\S]*^exit 1$)/m, 'exit 0');
   assert.match(screen, /^exit 1\n> echo exit \$\?\nexit 0$/m, `the screen is not the one meant:\n${screen}`);
   const statuses = ciChecksOver('docs/demo.txt', screen);
@@ -157,7 +158,7 @@ test('a CI check fails when the tape writes an empty GIF, or none beside the com
   assert.equal(gifStepsWhenTheTapeRuns('printf GIF89a > docs/demo.gif'), 0);
 });
 
-test('rigger once in the demo world claims a card, names its workspace, says its maker opened no pull request, and exits non-zero', () => {
+test('rigger once in the demo world claims a card, names its workspace, says Rigger escalated it as its maker opened no pull request, and exits non-zero', () => {
   const ran = inTheWorld('rigger once');
 
   assert.match(ran.err, /^rigger once: claimed #\d+ from board 3\b/m, ran.err);

@@ -3,7 +3,7 @@ ABOUTME: #1379 (M7-88): a fresh maker's exit 0 with no open pull request escalat
 # Maker with no pull request
 
 Done means the acceptance of [#1379](https://github.com/williacj/rigger/issues/1379) at revision
-`a13d3128dbef`. L2's `settled` answers a loop-raised `ambiguous` escalation where a maker that
+`6ff714e07704`. L2's `settled` answers a loop-raised `ambiguous` escalation where a maker that
 started the card from the beginning exits 0 and L2 reads no open pull request, or cannot read
 whether there is one. L3 now reads the workspace's tip for every maker that exits 0 and hands it to
 L2 with the workspace's path, so the escalation comment names both.
@@ -27,11 +27,10 @@ Cases met that no acceptance item decides:
 - **The issue-comment read fails after a fresh exit 0.** L2 reads the comments before the pull
   requests, to find a maker note. Its failure still rejects, as at the merge base, so the card
   stays in Coding and a later pull dispatches its maker again. No row of Table N names it.
-- **The demo's recorded screen.** The demo world seeds no issue, so its card's escalation comment
-  is refused and `rigger once` there now says "Rigger escalated it as ambiguous: …". The CI demo
-  job's grep in `.github/workflows/ci.yml` still matches the old line, and `test/demo.test.mjs`'s
-  `SCREEN` and `docs/demo.gif` still show it. The workflow is a Self-hosting path and the GIF is
-  outside this card, so neither changed here.
+- **The demo's world seeds no issue.** Its card's escalation comment is therefore refused, and the
+  demo's screen shows that refusal beneath the hand-over line, with `rigger once` still exiting 1.
+  The owner's M7-U72 widened this card to the demo job's grep, the demo GIF, its README alt text
+  and the tape's opening comment. `test/demo-world.sh` is unchanged.
 
 `src/cli/once.mjs`'s `makerOutcome` and the verb's escalation line now write a loop-raised
 escalation at a maker's settle as Rigger's, with its reason on one line and no acceptance item.
