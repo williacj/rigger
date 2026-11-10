@@ -558,10 +558,14 @@ export const GH_CASES = [
       const [head] = answer.stdout.split('\n--\n');
       const lines = head.split('\n').map((line) => line.split('\t'));
       assert.deepEqual(lines.map(([name]) => name), VIEW_LINES.map((name) => `${name}:`));
+      // Each line is a name, one tab and a value, an empty one included: a line with no tab holds no value.
+      assert.deepEqual(lines.filter((parts) => parts.length !== 2).map(([name]) => name), [], 'a line is not a name, a tab and a value');
       const value = Object.fromEntries(lines.map(([name, held]) => [name.slice(0, -1), held]));
       assert.deepEqual([value.state, value.number, value.url], ['MERGED', String(FACTS.pull.number), `https://github.com/${target.repo}/pull/${FACTS.pull.number}`]);
       const total = (key) => String(FACTS.pull.numstat.reduce((sum, file) => sum + file[key], 0));
       assert.deepEqual([value.additions, value.deletions], [total('added'), total('deleted')]);
+      // A merged pull request is merged without auto-merge (measured with gh 2.98.0 on #1202, 2026-11-08).
+      assert.equal(value['auto-merge'], 'disabled');
     },
   },
   {
