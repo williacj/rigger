@@ -19,10 +19,10 @@ declares about the requirement it proves, and the rules on sleeps, deleted tests
 fail, and read the failure. A test that has never failed has proved nothing — it may be
 asserting on the wrong thing, or on nothing.
 
-Red counts only when the test you meant to write actually ran, or reached the compile-time check
+Red counts only when the test you meant to write ran, or reached the compile-time check
 you meant it to reach, and failed because the behaviour you asked for is missing or wrong. A
 syntax error, a broken fixture, a missing dependency or an unrelated failure is not red: it is a
-test you have not managed to run yet. Clear it, then go and get the failure you meant.
+test you have not managed to run yet. Clear it, then get the failure you meant.
 
 **Green.** Write the minimal code that makes it pass, then rerun that same target and watch it
 pass. Minimal is not a style note: anything beyond what the test demands is code no test asked
@@ -34,7 +34,7 @@ each step. Extract rather than copy-paste, by the Rule of Three (`AGENTS.md`, "A
 before handoff; a focused pass alone does not meet those obligations.
 
 Then the next test, and one slice at a time: finish red, green and refactor for one behaviour
-before you write the next test. Never batch the tests and then batch the implementation —
+before writing the next test. Never batch the tests and then batch the implementation —
 test-first means one test ahead of the code, not the whole suite ahead of it. Small steps, often:
 the loop's value is the failure you saw, and a large step throws it away.
 
@@ -81,7 +81,7 @@ truth, and neither way it lies is visible in the output.
 
 A green suite after a mutation that never landed looks exactly like a green suite after one that
 landed uncaught, and a run that never reached a verdict looks exactly like a test failing for the
-reason you wanted. So show all of these, for each mutation, before you say what it proved:
+reason you wanted. So show all of these, for each mutation, before saying what it proved:
 
 1. **The anchor was there.** The pattern you replaced occurred the number of times you expected.
    Zero occurrences is a write that changed nothing and a run that reports green. An anchor from
@@ -108,7 +108,7 @@ reason you wanted. So show all of these, for each mutation, before you say what 
 7. **A failed guard exits non-zero.** A guard that reports a result it could not vouch for is
    itself the defect.
 
-Attach `npm run mutation:receipt` output to each mutation claim.
+Where the repository defines it, attach `npm run mutation:receipt` output to each mutation claim.
 
 One mutation removes one behaviour. Batching several reports the union and hides the gap.
 
@@ -132,7 +132,7 @@ Reproduce the bug as a test first (`AGENTS.md`, "When you write code"), watch it
 reason you think it fails, and only then fix it. If the test passes before you touch the code,
 you have not reproduced the bug and you do not yet know what it is.
 
-Root cause only (`AGENTS.md`, "Any role"). Where a fix did not work, revert it before you test
+Root cause only (`AGENTS.md`, "Any role"). Where a fix did not work, revert it before testing
 the next hypothesis.
 
 ## Never delete a failing test
@@ -170,9 +170,9 @@ under "A mutation claim"; declarations retain every proof obligation. Omission a
 matrix claim.
 
 A declaration is a `// proves R-GROUP-#` comment on the line directly above the test it speaks
-for, naming as many ids as that test proves, separated by commas. `npm run matrix` rebuilds the
-matrix and `npm run matrix:check` refuses one that has gone stale, so the declarations a piece of
-work adds are regenerated and committed with it. A declaration naming an id
+for, naming as many ids as that test proves, separated by commas. Where the repository defines
+them, `npm run matrix` rebuilds the matrix and `npm run matrix:check` refuses a stale one, so work
+regenerates and commits it with its declarations. A declaration naming an id
 `docs/spec/requirements.md` does not hold is refused by name, and so is one standing above no
 test — a call that is commented out is not a test.
 
@@ -224,7 +224,7 @@ is what makes an older requirement true, its test closes that requirement's coun
 same work (`D17` rule 6). Name each requirement a test actually proves; the diagnostic admission
 above never reclassifies existing tests or waives those obligations.
 
-Tests do not count toward the package line budget (`ARCHITECTURE.md`, "Budgets"). That is not a
+Tests do not count toward the package line budget (`ARCHITECTURE.md`, "Budgets"). That is no
 licence to write more of them: every test costs execution time and maintenance, so each one
 still has to protect a concrete behaviour.
 

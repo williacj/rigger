@@ -16,7 +16,8 @@ repository. Nothing here widens it; what follows is what is true of you in parti
   title, and not your reading of it. Work every item.
 - **Work in the worktree you were given**, on its branch.
 - **Deliver the work as a pull request**, so a judge can read and rule on it before it lands.
-- Before handing back, run `npm run preflight -- <card>` and fix what it reports. A `lands-in`
+- **Preflight, where the repository defines it.**
+  Before handing back, run `npm run preflight -- <card>` and fix what it reports. A `lands-in`
   report on a test file `R-CARD-42` makes the card's own is excepted; the PR body names it.
 - Before first push, check branch against `rigger.config.mjs`'s topic rule.
 - Before reviewer dispatch, derive maker/judge providers from kind, labels and that config.

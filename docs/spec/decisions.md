@@ -73,6 +73,7 @@ reused.
 | D30 | Until the conversion closes, two lists exempt files from D29's bounds | Ratified. Amended in #1140. |
 | D31 | macOS CI runs on hosted runners unless the owner selects the Mac mini | Ratified |
 | D33 | A test fault is fixed on the card that finds it | Ratified |
+| D34 | A release tags the commit its milestone's exit run tested | Ratified |
 
 ## D1 — Redo over resume
 
@@ -1312,3 +1313,44 @@ not gain them, because it holds only rows older than `D17`.
 Two signals would reverse it. One: a merged deletion under rule 3 is later found to have left a
 declared requirement unproved, twice. Two: three of the first ten cards whose scope grew by a
 class search escalate as ambiguous on exhausted rounds. Both thresholds are judgments.
+
+## D34 — A release tags the commit its milestone's exit run tested
+
+**Status:** Ratified.
+
+### Rule
+
+1. A release's tagged commit is the commit under test of its milestone's exit run (`D7` rule 4).
+   For the first release, that is the commit M8's exit run tested.
+2. A release's version is the `version` in `package.json` at the tagged commit. The first release
+   is `0.1.0`.
+3. A release's tag is `v` followed by its version, so the first tag is `v0.1.0`.
+4. The published tarball is the one `npm pack` produces at the tagged commit.
+5. A release's version bump merges before its milestone's exit run. For the first release, the bump
+   merges before M8's exit run.
+
+### Notes
+
+Rule 1 makes the tarball published the tarball the exit run tested. Rule 4 packs at the commit
+under test, which is where the exit run's candidate engine comes from (`D7` rule 4).
+
+Rule 1 names the commit under test, so the tag does not depend on which commit closes the
+milestone. Whether a commit merged after the publish moves the commit `D7` rule 1 promotes is left
+open here, and the tag stays on the tested commit either way.
+
+Rule 5 follows from `D7` rule 4's tarball-contents clause. `package.json` is packed, so a version
+bump changes the packed contents, and a bump merged after the exit run needs a new exit run.
+Without one, the tested commit carries the old version, and the first release could not be
+`0.1.0`.
+
+Rule 2 keeps one source for the version. The tag and the tarball both read it from the tagged
+commit, so they cannot name two versions.
+
+This is not a `D7` amendment. `D7`'s scope is promoting the installed engine that builds Rigger,
+and it never mentions a tag. The first version and tag answer the owner's ruling M8-U2 Q9 on #1293.
+
+Two observations would reverse this decision. First, the tarball the npm registry serves for a release
+differs in contents from the one `npm pack` produces at its tagged commit. That shows rule 4 does
+not make the published tarball the tested one. Second, a release is needed from a commit no
+milestone's exit run tested, such as a fix shipped between milestones. That shows rule 1 cannot
+name every release's commit.

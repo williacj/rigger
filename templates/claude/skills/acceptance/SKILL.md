@@ -197,9 +197,9 @@ governs independent review.
 
 ## What is checked, and what is not
 
-The form check reads acceptance as `R-CARD-12` states. It refuses a card with no items it counts,
-by name and reason (`R-CARD-7`), or one whose counted items only restate the card's title
-(`R-CARD-8`). Those are the whole of the form check's refusal reasons (`R-CARD-8`).
+The form check reads acceptance as `R-CARD-12` states. It refuses only a card with no items it
+counts, by name and reason (`R-CARD-7`), or one whose counted items only restate the card's title
+(`R-CARD-8`).
 
 So the bar being right is yours. `D2`'s notes say what that buys and what it does not: no check
 proves an acceptance adequate, and a green marker is never a warranty that the card asked for
@@ -262,8 +262,8 @@ You revise the acceptance before any maker starts. This review is part of filing
 20. Does the scope bullet cover every file an item or cited placement ruling requires?
 21. Is every cited proposal, ruling and grant posted and linked from the card?
 22. Did you name each test fault class the card fixes (`R-CARD-44`)?
-23. Before maker edits, did `npm run check:card` read the draft body, and did
-    `npm run preflight -- --body-file <body-file>` run in a clean repository with origin/main
-    and a merge base available? Resolve or report failures before maker admission.
+23. Where the repository defines them, before maker edits, did `npm run check:card` read the draft
+    body, and `npm run preflight -- --body-file <body-file>` run in a clean checkout with
+    origin/main and a merge base? Resolve or report failures before maker admission.
 24. Before admitting claimless diagnostics, did you record behaviour, requirement applicability
     and bounded guarded discrimination?
