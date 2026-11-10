@@ -220,12 +220,13 @@ Three values, and Rigger fixes them (`R-VERDICT-1`, `R-VERDICT-2`):
 - **sound** — the work meets the acceptance and you found nothing that must change.
 - **needs revision** — something must change before this merges.
 - **critical** — the work has a fault that must not merge. The loop escalates the card in that
-  category rather than spending its rounds (`R-ESCALATE-6`), so keep it for a fault that must
-  not merge and never use it for a preference.
+  category rather than spending its rounds (`R-ESCALATE-6`).
+
+Use `critical` only for a fault no maker revision could resolve without an owner decision;
+a fault a maker revision could resolve is `needs revision`.
 
 A verdict that is not sound names what would make it sound (`R-VERDICT-3`). A verdict leaving
-any acceptance item unmet is not sound (`R-VERDICT-4`) — that rule is absolute, and no amount
-of good work elsewhere in the diff outranks it.
+any acceptance item unmet is not sound (`R-VERDICT-4`).
 
 Bind your verdict to the work you read and to the acceptance revision you read it against, so a
 later reader can tell what it covered (`R-VERDICT-5`). `ARCHITECTURE.md`'s gate section holds
