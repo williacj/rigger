@@ -99,7 +99,7 @@ test('the scanner names the line of each top-level call whose test it cannot ide
   }
 });
 
-test('the scanner reads an optional member as no call and a chain past a registering member as unidentified', () => {
+test('the scanner lists an optional member, read or called, and a chain past a registering member as unidentified', () => {
   const source = [
     "import { test } from 'node:test';",
     'const present = test?.skip;',
@@ -108,16 +108,18 @@ test('the scanner reads an optional member as no call and a chain past a registe
   ].join('\n');
   const found = testsIn(source, 'test/f.test.mjs');
   assert.deepEqual(found.tests, []);
-  assert.deepEqual(found.unidentified.map(({ line }) => line), [3, 4]);
+  // Reading `test?.skip` without calling it is still a reference the scan cannot name, so it is listed.
+  assert.deepEqual(found.unidentified.map(({ line }) => line), [2, 3, 4]);
 });
 
 // The matrix's expected titles are what node:test registers from each source; the host file
 // test/check-host-declarations-host.test.mjs runs every case under the runner to hold them to it.
 function misread(group) {
-  return cases().filter((entry) => entry.group === group).flatMap(({ name, source, registers }) => {
+  return cases().filter((entry) => entry.group === group).flatMap(({ name, source, registers, identified, references = 0 }) => {
     const found = testsIn(source, 'test/forms.test.mjs');
     const read = { tests: found.tests.map(({ title }) => title), unidentified: found.unidentified.length };
-    return JSON.stringify(read) === JSON.stringify({ tests: registers, unidentified: 0 }) ? [] : [`${name}: ${JSON.stringify(read)}`];
+    const expected = identified ? { tests: registers, unidentified: references } : { tests: [], unidentified: registers.length + references };
+    return JSON.stringify(read) === JSON.stringify(expected) ? [] : [`${name}: ${JSON.stringify(read)}`];
   });
 }
 
@@ -135,6 +137,41 @@ test('the scanner finds no test where a block-scoped binding hides the runner na
 
 test('the scanner still finds a test beside bindings that leave the runner name alone', () => {
   assert.deepEqual(misread('unshadowed'), []);
+});
+
+test('the scanner lists every reached reference to the runner that is no known call form as unidentified, naming its line', () => {
+  const source = [
+    "import { test } from 'node:test';", // 1
+    'const alias = test;', // 2
+    'export { test as runner };', // 3
+    "const holder = { test };", // 4
+    'void typeof test;', // 5
+    "const keyed = { test: 1 }; keyed.test('a property, not the runner');", // 6
+    "new test('constructed');", // 7
+  ].join('\n');
+  const found = testsIn(source, 'test/g.test.mjs');
+  assert.deepEqual(found.tests, []);
+  assert.deepEqual(found.unidentified.map(({ line }) => line), [2, 3, 4, 5, 7]);
+});
+
+test('T6: an added comma-expression call to the runner is refused naming its line, and its arm cannot pass unchecked', () => {
+  const added = "(0, test)('arms', () => { clearTimeout(setTimeout(() => {}, 5)); });\n";
+  const result = rowOutcome({
+    base: { [CONVERTING]: `${header}test('older', () => {});\n` },
+    head: { [CONVERTING]: `${header}test('older', () => {});\n${added}` },
+    record: { ran: [CONVERTING], arms: [arm(CONVERTING, 'arms')] },
+  });
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.errors.map((error) => error.split(': added top-level call')[0]), [`${CONVERTING} line 3`]);
+});
+
+test('T2: an added call in an arrow parameter default is no test, so the older test it shares a title with keeps its exemption', () => {
+  const result = rowOutcome({
+    base: { [CONVERTING]: `${header}test('older', () => {});\n` },
+    head: { [CONVERTING]: `${header}test('older', () => {});\nconst later = (value = test('older', () => {})) => {};\n` },
+    record: { ran: [CONVERTING], arms: [arm(CONVERTING, 'older')] },
+  });
+  assert.deepEqual(result, { ok: true, errors: [] });
 });
 
 test('an unidentified call keeps its key when only its body changes, and changes it with its name', () => {

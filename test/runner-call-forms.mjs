@@ -4,7 +4,8 @@
 const header = "import { test, it, describe, suite } from 'node:test';\nimport check from 'node:test';\n";
 const body = '() => {}';
 
-// A call form: how the runner is called, and the title the call registers.
+// A call form: how the runner is called, and the title the call registers. A form the scanner
+// cannot name is still a registered test, so the scanner must list it as unidentified.
 export const CALLS = [
   ['test', `test('t', ${body})`],
   ['it', `it('t', ${body})`],
@@ -16,6 +17,11 @@ export const CALLS = [
   ['todo member', `describe.todo('t', ${body})`],
   ['computed only member', `test['only']('t', ${body})`],
   ['computed skip member', `suite["skip"]('t', ${body})`],
+  ['comma-expression callee', `(0, test)('t', ${body})`, { identified: false }],
+  ['parenthesised member callee', `(test.skip)('t', ${body})`, { identified: false }],
+  ['tagged template', 'test`t`', { identified: false, title: '<anonymous>' }],
+  ['array-held callee', `[test][0]('t', ${body})`, { identified: false }],
+  ['call member', `test.call(null, 't', ${body})`, { identified: false }],
 ];
 
 // A place for a call that node:test reaches while the module evaluates, so the call registers its
@@ -47,6 +53,9 @@ export const REACHED = [
   ['a parenthesised expression', 'void (CALL);'],
   ['a declaration initialiser', 'export const registered = CALL;'],
   ['a block nested in a block', '{ { CALL; } }'],
+  ['a static class field', 'class Holder { static registered = CALL; }'],
+  ['a static class block', 'class Holder { static { CALL; } }'],
+  ['a computed class member key', 'class Holder { [CALL]() {} }'],
 ];
 
 // A place for a call that the module's evaluation does not reach on its own: a function body,
@@ -63,6 +72,13 @@ export const DEFERRED = [
   ['a class method body', 'class Holder { later() { CALL; } }'],
   ['a function in a block', '{ function later() { CALL; } }'],
   ['a function declared after a call with no semicolon', 'const noop = () => {}\nnoop()\nfunction later() { CALL }'],
+  ['an arrow parameter default', 'const later = (value = CALL) => {};'],
+  ['an async arrow parameter default', 'const later = async (value = CALL) => 1;'],
+  ['a function parameter default', 'function later(value = CALL) {}'],
+  ['an object method parameter default', 'const holder = { later(value = CALL) {} };'],
+  ['a class method parameter default', 'class Holder { later(value = CALL) {} }'],
+  ['a class instance field', 'class Holder { later = CALL; }'],
+  ['a class instance field ended by a line break', 'class Holder {\n  later = CALL\n  other = 1\n}'],
 ];
 
 // A binding that hides the runner's name inside a block, so a call there reaches no runner.
@@ -82,7 +98,8 @@ export const SHADOWED = [
 export const UNSHADOWED = [
   ['a sibling block', '{ const test = () => {}; }\nCALL;'],
   ['a destructured key that binds another name', '{ const { test: other } = { test: () => {} }; CALL; }'],
-  ['a default inside a pattern', '{ const { other = test } = {}; CALL; }'],
+  // The default reads the runner without calling it, so the scan lists it as unidentified too.
+  ['a default inside a pattern', '{ const { other = test } = {}; CALL; }', { references: 1 }],
 ];
 
 /** One module source: the header, then the place with the call written into it. */
@@ -91,22 +108,25 @@ export function source(place, call, { header: own } = {}) {
 }
 
 /**
- * Every case of the matrix: its group, its name, its source, and the titles of the top-level tests node:test
+ * Every case of the matrix: its group, its name, its source, whether the scanner must name its
+ * test rather than list it as unidentified, how many other references to the runner it reads, and the titles of the top-level tests node:test
  * registers from it. A call the scanner may refuse to name instead is still a registered test.
  */
 export function cases() {
   const all = [];
   for (const [where, place, options] of REACHED) {
-    for (const [how, call] of CALLS) all.push({ group: 'reached', name: `${how} in ${where}`, source: source(place, call, options), registers: ['t'] });
+    for (const [how, call, { identified = true, title = 't' } = {}] of CALLS) {
+      all.push({ group: 'reached', name: `${how} in ${where}`, source: source(place, call, options), registers: [title], identified });
+    }
   }
   for (const [where, place] of DEFERRED) {
-    for (const [how, call] of CALLS) all.push({ group: 'deferred', name: `${how} in ${where}`, source: source(place, call), registers: [] });
+    for (const [how, call] of CALLS) all.push({ group: 'deferred', name: `${how} in ${where}`, source: source(place, call), registers: [], identified: true });
   }
   for (const [where, place] of SHADOWED) {
-    all.push({ group: 'shadowed', name: `a shadowed test in ${where}`, source: source(place, `test('t', ${body})`), registers: [] });
+    all.push({ group: 'shadowed', name: `a shadowed test in ${where}`, source: source(place, `test('t', ${body})`), registers: [], identified: true });
   }
-  for (const [where, place] of UNSHADOWED) {
-    all.push({ group: 'unshadowed', name: `an unshadowed test beside ${where}`, source: source(place, `test('t', ${body})`), registers: ['t'] });
+  for (const [where, place, { references = 0 } = {}] of UNSHADOWED) {
+    all.push({ group: 'unshadowed', name: `an unshadowed test beside ${where}`, source: source(place, `test('t', ${body})`), registers: ['t'], identified: true, references });
   }
   return all;
 }

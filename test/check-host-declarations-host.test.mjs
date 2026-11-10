@@ -193,10 +193,12 @@ test('the CI step compares a pull request with its merge head\'s first parent, s
   assert.equal(ran.status, 0, ran.stdout + ran.stderr);
   const event = join(f.directory, 'event.json');
   writeFileSync(event, JSON.stringify({ repository: { default_branch: 'main' }, pull_request: { base: { sha: f.base } } }));
+  const before = repositoryState(f.root);
   const checked = spawnSync(process.execPath, [CHECK, '--added-timer'], {
     cwd: f.root, encoding: 'utf8',
     env: { ...env, GITHUB_EVENT_NAME: 'pull_request', GITHUB_REF: 'refs/pull/7/merge', GITHUB_SHA: head, GITHUB_EVENT_PATH: event },
   });
+  assert.deepEqual(repositoryState(f.root), before, 'the check must leave the fixture repository unchanged');
   assert.equal(checked.status, 1, checked.stdout + checked.stderr);
   assert.equal(checked.stderr, `${other}: added test "pull request arms" armed setTimeout with delay 5\n`);
 });
@@ -233,12 +235,16 @@ test('every case of the runner-call matrix registers under node:test exactly the
     // A file that registers no test is reported as one test named by its own path.
     if (name !== file) registered.get(file)?.push(name);
   }
+  // The scanner names each test it identifies by the runner's own title, and lists each other
+  // reference to the runner as unidentified: so every identified title is one the runner
+  // registered, and no registered test is left out of the two counts together.
   const wrong = all.flatMap((entry, index) => {
     const runtime = registered.get(files[index]);
     const found = testsIn(entry.source, `test/case-${index}.test.mjs`);
-    const read = [...found.tests.map(({ title }) => title), ...found.unidentified.map(() => '<unidentified>')];
-    return JSON.stringify(runtime) === JSON.stringify(entry.registers) && JSON.stringify(read) === JSON.stringify(runtime)
-      ? [] : [`${entry.name}: runner ${JSON.stringify(runtime)}, matrix ${JSON.stringify(entry.registers)}, scanner ${JSON.stringify(read)}`];
+    const titles = found.tests.map(({ title }) => title);
+    const agrees = titles.every((title) => runtime.includes(title)) && runtime.length <= titles.length + found.unidentified.length;
+    return JSON.stringify(runtime) === JSON.stringify(entry.registers) && agrees ? []
+      : [`${entry.name}: runner ${JSON.stringify(runtime)}, matrix ${JSON.stringify(entry.registers)}, scanner ${JSON.stringify(titles)} and ${found.unidentified.length} unidentified`];
   });
   assert.deepEqual(wrong, []);
 });
