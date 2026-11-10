@@ -37,16 +37,22 @@ const runStart = (n, run = 'r-b') => ({ ts: at(n), run, layer: 'L3', event: 'run
 const pull = (card, n) => ({ ts: at(n), run: 'r-a', layer: 'L3', event: 'pull', card, kind: 'change', queueDepth: 0 });
 
 /** Writes `events` in line order as a new state directory's stream, and answers the directory. */
-function written(events) {
+function written(events, rewrite) {
   const directory = join(temporaryDirectory('rigger-acceptance-'), '.rigger');
   mkdirSync(directory);
-  writeFileSync(streamPath(directory), events.map((event) => JSON.stringify(event)).join('\n') + '\n');
+  writeFileSync(streamPath(directory), streamText(events, rewrite));
   return directory;
 }
 
+/**
+ * `events` as stream lines, each JSON, with `rewrite` applied to the whole text: a numeral such as
+ * `-0` that `JSON.stringify` never writes reaches the stream only that way.
+ */
+const streamText = (events, rewrite = (text) => text) => rewrite(events.map((event) => JSON.stringify(event)).join('\n') + '\n');
+
 /** `report`'s acceptance-change answer over `events`, which L2's answer across the stream must carry. */
-function acceptance(events) {
-  const { stream } = derive(written(events)).l2;
+function acceptance(events, rewrite) {
+  const { stream } = derive(written(events, rewrite)).l2;
   assert.ok(Object.hasOwn(stream, 'acceptance'), `report derives no acceptance changes: ${JSON.stringify(Object.keys(stream))}`);
   return stream.acceptance;
 }
@@ -270,11 +276,11 @@ test('the derivation spans the stream: a change in one run and the window holdin
 });
 
 /** Runs the `report` verb in process over `events` written into a new consumer, and answers L2's text. */
-async function printedL2(events) {
+async function printedL2(events, rewrite) {
   const consumer = realpathSync.native(repositoryIn('rigger-report-acceptance-'));
   const directory = join(consumer, '.rigger');
   mkdirSync(directory);
-  writeFileSync(streamPath(directory), events.map((event) => JSON.stringify(event)).join('\n') + '\n');
+  writeFileSync(streamPath(directory), streamText(events, rewrite));
   const ran = await report({ target: consumer, ask: (command, args) => {
     assert.equal(command, 'git');
     assert.deepEqual(args, ['-C', consumer, 'rev-parse', '--show-toplevel']);
@@ -531,4 +537,27 @@ test('an authoring role holding any list boundary never prints as two authors', 
     pair: [...window(1, 'd-one', 'pm'), ...window(2, 'd-two', 'reviewer'), opened],
     count: (events) => authors(events).find(({ card }) => card === 7).names.length, heading: AUTHORS,
   });
+});
+
+/** A numeral the tests below rewrite in the stream text to `0` or to `-0`. */
+const MARK = 424242;
+
+test('a value of -0 never prints as 0 in the acceptance blocks', async () => {
+  const window = [start('d-pm', 100), end('d-pm', 200)];
+  const fields = [
+    ['dispatch id', [dispatch(7, MARK, 'pm'), start(MARK, 100), end(MARK, 200), changedAt(150)], CHANGES,
+      (answer) => answer.changes[0].dispatches[0].dispatch],
+    ['change role', [dispatch(7, 'd-pm', MARK), ...window, changedAt(150)], CHANGES, (answer) => answer.changes[0].dispatches[0].role],
+    ['editor', [changedAt(150, MARK)], CHANGES, (answer) => answer.changes[0].editor],
+    ['recorded author', [history(7, [revision(1, 'a', 'd-1', 3)], { author: MARK })], AUTHORS, (answer) => answer.authors[0].names[0]],
+    ['item count', [pull(7, 50), history(7, [revision(10, 'a', 'd-1', -1), revision(60, 'b', 'd-2', MARK)])], GREW,
+      (answer) => answer.grew[0].items],
+  ];
+  for (const [field, events, heading, value] of fields) {
+    const as = (numeral) => (text) => text.replaceAll(String(MARK), numeral);
+    const [zero, negative] = [value(acceptance(events, as('0'))), value(acceptance(events, as('-0')))];
+    assert.ok(Object.is(zero, 0) && Object.is(negative, -0), `the ${field} derives 0 and -0, which differ by Object.is`);
+    assert.notDeepEqual(block(await printedL2(events, as('-0')), heading), block(await printedL2(events, as('0')), heading),
+      `a ${field} of -0 prints as 0`);
+  }
 });

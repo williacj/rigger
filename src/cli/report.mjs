@@ -105,12 +105,15 @@ const listed = (heading, lines) => [heading, ...(lines.length === 0 ? ['      no
 
 /**
  * A value of the acceptance blocks as they print it. Any of them comes from the stream, where any
- * string can stand (boundary rule 4), so a number prints as itself and every other value as JSON,
- * through `outsideText`. JSON quotes every string and escapes the quotes and backslashes in it, and
+ * string can stand (boundary rule 4), so a number prints as itself, -0 as `-0`, which `String`
+ * would print as `0`, and every other value as JSON, through `outsideText`. JSON quotes every string and escapes the quotes and backslashes in it, and
  * `outsideText` the line breaks JSON leaves raw, so no value can print a boundary of the list or
  * line it stands in: one dispatch, role or author never prints as two, and none breaks a line.
  */
-const shown = (value) => (typeof value === 'number' ? String(value) : outsideText(JSON.stringify(value) ?? String(value)));
+const shown = (value) => {
+  if (Object.is(value, -0)) return '-0';
+  return typeof value === 'number' ? String(value) : outsideText(JSON.stringify(value) ?? String(value));
+};
 
 /** The acceptance changes across the stream, as L2 prints them: changes, deleted content, growth, the maker's changes, and authors. */
 function acceptanceLines({ changes, deleted, grew, authors }) {

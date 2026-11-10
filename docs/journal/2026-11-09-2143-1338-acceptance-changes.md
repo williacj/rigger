@@ -21,12 +21,18 @@ stale matrix.
 
 The test file as committed at this card's head, run against the merge base's `src/` with
 `sh test/suite.sh test/report-acceptance-changes.test.mjs` through the suite slot, exits 1 with
-tests 29, pass 0, fail 29. The 26 derivation tests each fail on
-`AssertionError [ERR_ASSERTION]: report derives no acceptance changes: ["hostFaults","escalations","rounds"]`.
-The three printed-section tests fail on
-`AssertionError [ERR_ASSERTION]: L2 prints "    acceptance changes, each with who made it":`,
-`AssertionError [ERR_ASSERTION]: L2 prints "    acceptances that grew after admission":` and
-`AssertionError [ERR_ASSERTION]: L2 prints "    each card's author":`.
+tests 53, pass 0, fail 53, every failure an assertion:
+
+| Failing assertion | Tests |
+|---|---|
+| `report derives no acceptance changes: ["hostFaults","escalations","rounds"]` | 33 |
+| `L2 prints "    acceptance changes, each with who made it":` | 6 |
+| `L2 prints "    acceptances that grew after admission":` | 5 |
+| `L2 prints "    each card's author":` | 4 |
+| `L2 prints "    content deleted from a card's history":` | 3 |
+| `L2 prints "    acceptance changes made during the card's maker dispatch":` | 2 |
+
+Each row's text follows `AssertionError [ERR_ASSERTION]: `.
 
 | Row | At the merge base |
 |---|---|
