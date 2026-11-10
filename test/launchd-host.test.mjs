@@ -270,32 +270,18 @@ async function releaseAndObserveSecondStart(t, world) {
   return { exited, second, bound };
 }
 
-// Host reason: a real deadline; launchd's StartInterval firings arrive on the real clock, and the
-// test holds its instance across three of them.
+// Host reason: a real deadline; launchd's StartInterval firings arrive on the real clock, the test
+// holds its instance across three of them, and then waits for the next start after its exit.
 // Ordinary decision counterpart: test/launchd-template.test.mjs :: the shipped job relaunches after the selected interval
 // proves R-WORK-4
-test('L1 launchd starts the shipped job once while its instance runs across three StartInterval periods', { skip: launchdSkip, timeout: 120_000 }, async (t) => {
+test('L1 and L2 launchd starts the shipped job once while its instance runs across three StartInterval periods, and again no earlier than that instance exits', { skip: launchdSkip, timeout: 120_000 }, async (t) => {
   const world = await launchdWorld(t);
   try {
-    const first = await loadAndObserveFirstStart(t, world, [testLabel()] /* L1 labels */);
+    const first = await loadAndObserveFirstStart(t, world, [testLabel()] /* L1 and L2 labels */);
     await holdThreePeriods(t, world, first);
     assert.equal(world.starts().length, 1, 'exactly one start while the first instance runs');
     assert.ok(Date.now() - first.at >= 3 * START_INTERVAL * 1000, 'the instance was held across three periods');
-  } finally {
-    await world.bootout();
-  }
-});
-
-// Host reason: a real deadline; the second start must come within StartInterval plus launchd's
-// ThrottleInterval of the first instance's exit, on the real clock.
-// Ordinary decision counterpart: test/launchd-template.test.mjs :: the shipped job relaunches after the selected interval
-// proves R-WORK-4
-test('L2 launchd starts the shipped job again no earlier than its released instance exits', { skip: launchdSkip, timeout: 120_000 }, async (t) => {
-  const world = await launchdWorld(t);
-  try {
-    const first = await loadAndObserveFirstStart(t, world, [testLabel()] /* L2 order labels */);
-    await holdThreePeriods(t, world, first);
-    const { exited, second, bound } = await releaseAndObserveSecondStart(t, world);
+    const { exited, second } = await releaseAndObserveSecondStart(t, world); // L1 and L2 release
     assert.ok(second.at >= exited.at, `the second start (${second.at}) is no earlier than the first instance's exit (${exited.at})`);
   } finally {
     await world.bootout();
