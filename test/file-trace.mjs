@@ -1,13 +1,22 @@
 // ABOUTME: Emits test progress and process completion records for flake diagnosis.
 
-import { beforeEach as registerBeforeEach } from 'node:test';
+import { beforeEach as registerBeforeEach, after as registerAfter } from 'node:test';
+import { executionAsyncResource } from 'node:async_hooks';
 import { writeSync } from 'node:fs';
 import { tracingChannel } from 'node:diagnostics_channel';
 
-export function traceFile(file, { beforeEach = registerBeforeEach, completed = tracingChannel('node.test').end, runtime = process,
+// Node v26.13.0's TestHook carries its parent's harness (internal/test_runner/test.js).
+// Keep the live counters: Node also finalizes tests that never enter a beforeEach hook.
+function nodeTotals() {
+  return executionAsyncResource().harness.counters;
+}
+
+export function traceFile(file, { beforeEach = registerBeforeEach, after = registerAfter, readTotals = nodeTotals,
+  completed = tracingChannel('node.test').end, runtime = process,
   now = () => new Date().toISOString(), write = (line) => writeSync(1, line) } = {}) {
   const pending = new Map();
-  const counts = { passed: 0, failed: 0, cancelled: 0 };
+  let totals = { passed: 0, failed: 0, cancelled: 0 };
+  after(() => { totals = readTotals(); });
   const cancelled = new Set(['testAborted', 'cancelledByParent', 'testTimeoutFailure']);
   const record = (kind, fields) => {
     const line = 'RIGGER_TEST_' + kind + ' ' + JSON.stringify({ ...fields, time: now() }) + '\n';
@@ -15,6 +24,7 @@ export function traceFile(file, { beforeEach = registerBeforeEach, completed = t
     try { write(line); } catch {}
   };
   beforeEach((context) => {
+    totals = readTotals();
     const sameName = pending.get(context.name) ?? [];
     sameName.push(context);
     pending.set(context.name, sameName);
@@ -31,13 +41,13 @@ export function traceFile(file, { beforeEach = registerBeforeEach, completed = t
     // Node publishes end after teardown, then finalizes nested failures in postRun.
     queueMicrotask(() => {
       const outcome = context.passed ? 'passed' : cancelled.has(context.error?.failureType) ? 'cancelled' : 'failed';
-      counts[outcome] += 1;
       if (nesting === 0) {
         record('FINISH', { name, outcome });
       }
     });
   });
   runtime.once('exit', (exitCode) => {
-    record('EXIT', { name: file, exitCode, duration: runtime.uptime(), ...counts });
+    const { passed, failed, cancelled } = totals;
+    record('EXIT', { name: file, exitCode, duration: runtime.uptime(), passed, failed, cancelled });
   });
 }
