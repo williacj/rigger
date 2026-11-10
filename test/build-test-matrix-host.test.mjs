@@ -1,4 +1,7 @@
 // ABOUTME: Proves the matrix generator's native suite-list launch, exit, signal, deadline and output limits.
+import { traceFile } from './file-trace.mjs';
+traceFile('test/build-test-matrix-host.test.mjs');
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
