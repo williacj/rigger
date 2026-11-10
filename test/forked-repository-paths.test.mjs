@@ -47,7 +47,7 @@ test('every repository implementation path init forks sits in a conditioned pass
 
 // A condition in another paragraph, list item or table row must not excuse a missing path.
 test('the forked-path check rejects unconditioned members in each passage form', () => {
-  const forked = consumerFiles().find(({ path }) => path === '.claude/skills/spec-style/SKILL.md');
+  const forked = consumerFiles().find(({ path }) => path.startsWith('.claude/skills/'));
   assert.ok(forked, 'init must plan the skill used by this counterexample');
   const content = [
     'Where the repository defines it, read `scripts/conditioned.mjs`.',
@@ -68,10 +68,10 @@ test('the forked-path check rejects unconditioned members in each passage form',
   assert.throws(() => assertConditionedPaths([{ ...forked, content }]), {
     code: 'ERR_ASSERTION',
     actual: [
-      '.claude/skills/spec-style/SKILL.md: scripts/consumer-check.mjs',
-      '.claude/skills/spec-style/SKILL.md: test/consumer-check.mjs',
-      '.claude/skills/spec-style/SKILL.md: docs/journal/consumer-note.md',
-      '.claude/skills/spec-style/SKILL.md: docs/v0-build-plan.md',
+      `${forked.path}: scripts/consumer-check.mjs`,
+      `${forked.path}: test/consumer-check.mjs`,
+      `${forked.path}: docs/journal/consumer-note.md`,
+      `${forked.path}: docs/v0-build-plan.md`,
     ],
     expected: [],
   });
@@ -79,7 +79,7 @@ test('the forked-path check rejects unconditioned members in each passage form',
 
 // Treating a convention as an implementation reference would reject valid consumer instructions.
 test('the forked-path check permits the three bare directory conventions', () => {
-  const forked = consumerFiles().find(({ path }) => path === '.claude/skills/spec-style/SKILL.md');
+  const forked = consumerFiles().find(({ path }) => path.startsWith('.claude/skills/'));
   assert.ok(forked, 'init must plan the skill used by this counterexample');
   assertConditionedPaths([{ ...forked,
     content: 'Use `scripts/`, `test/` and `docs/journal/` for repository conventions.\n',
