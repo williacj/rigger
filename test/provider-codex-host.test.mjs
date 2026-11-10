@@ -8,6 +8,8 @@ import * as codex from '../src/substrate/providers/codex.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { keeping, DECLARATION, layout, onPath, following, answerOf, dispatchLayout, throughL1 } from './provider-codex-fixtures.mjs';
 
+// Host reason: wiring; the default process adapter must resolve and start the stand-in codex executable from PATH.
+// Ordinary decision counterpart: test/provider-codex.test.mjs :: the skill probe runs `codex -C <directory> debug prompt-input` in the directory, under the session's CODEX_HOME, with --disable plugins and --disable apps, and the two skills it lists outside the directory arrive disabled
 test('H1: omitting the host starts the skill probe with the stand-in codex found on PATH', async (t) => {
   const { directory, scratch: made, agent } = layout(t);
   const stand = onPath({ skills: [] });
@@ -17,6 +19,8 @@ test('H1: omitting the host starts the skill probe with the stand-in codex found
   assert.equal(realpathSync.native(stand.probes()[0].cwd), realpathSync.native(directory));
 });
 
+// Host reason: OS behaviour; a real session process must write under the TMPDIR supplied in its environment.
+// Ordinary decision counterpart: test/provider-codex.test.mjs :: given a Codex role dispatch through L1, L1 hands the stand-in codex TMPDIR and TMPPREFIX in the role's own scratch directory, and the session's --add-dir names that directory
 test('given a Codex role dispatch through L1, a file the session writes under its TMPDIR lands in the role\'s temporary directory (O93)', async (t) => {
   const { root, directory, base, repository, state, sink } = dispatchLayout(t);
   const stand = onPath({ skills: [] });
@@ -33,6 +37,8 @@ test('given a Codex role dispatch through L1, a file the session writes under it
   assert.equal(existsSync(join(root, 'handed-tmp', 'landed-by-the-session')), false, 'the file landed under the TMPDIR the caller handed');
 });
 
+// Host reason: wiring; a real judge session must receive -C for main and --add-dir for head through L1.
+// Ordinary decision counterpart: test/provider-codex.test.mjs :: given reach naming a directory, the invocation passes it as --add-dir beside -C naming the working directory, and does not throw
 test('given a Codex judge dispatch through L1 against the fake forge, the stand-in codex receives -C naming main and --add-dir naming head', async (t) => {
   const { root, base, repository, state, sink } = dispatchLayout(t);
   const judge = join(root, 'judges', 'rigger-1412', 'reviewer');
