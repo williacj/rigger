@@ -912,13 +912,14 @@ ruleset is (`D23`):
 - the required contexts: `rigger/gate` and, in this repository, `self-hosting`, each pinned to
   the App's id; and, in this repository, `check (26)`, pinned to GitHub Actions' integration,
   15368.
+- in a public repository, an Actions event policy of the repository's own, with `enforcement: active`, that covers the gate's workflow and allows each event that workflow declares; in this repository, it also covers `.github/workflows/self-hosting.yml` and allows each event that workflow declares.
 
 Of the gate's forge-side pieces, `init` forks only the workflow.
 
 `doctor` reads each of those settings through L0's read side but the App and its installation,
 which a user's token cannot read (#659). Of the required contexts it checks only `rigger/gate`:
 that the rules require it, and, in the App's place, that its pin matches the variable
-`GATE_APP_ID`. No verb writes any of them.
+`GATE_APP_ID`. Of the event policies, it reads only the repository's own, and judges only whether one covers the gate's workflow and allows its events. A policy the repository inherits from its organization or enterprise is outside that read. No verb writes any of them.
 
 ### The engine's merge decision
 
