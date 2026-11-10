@@ -12,7 +12,7 @@ import { dispatch } from '../src/execution/run.mjs';
 import { NOT_STARTED } from '../src/substrate/process.mjs';
 import { runCommand } from '../src/substrate/process.mjs';
 import { answer } from './judge-start-fixture.mjs';
-import { refuseSpawn } from './judge-start-fixture.mjs';
+import { noEditorialIds, refuseSpawn } from './judge-start-fixture.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
@@ -32,7 +32,7 @@ function classed(outcome, cause, row) {
   assert.equal(answer({ reviewer: outcome }).next.failure.row, row);
   const second = answer({ reviewer: outcome }, { firstFailures: { reviewer: outcome } }).next;
   assert.equal(second.action, 'hold');
-  assert.doesNotMatch(JSON.stringify({ ...outcome.reason, message: outcome.reason.message }), /R-FAIL-8|\bR\d+\b/);
+  noEditorialIds(outcome.reason, cause);
 }
 
 /** Runs an errno through L0's failed spawn and L1's report, under Node's independent contract. */
@@ -69,7 +69,7 @@ test('a missing CLI with an existing working directory is tagged in L0, carried 
   assert.equal(outcome.reason?.code, NOT_STARTED);
   assert.deepEqual(outcome.reason.startCause, { kind: 'command-missing', provider: 'claude' });
   assert.equal(answer({ reviewer: outcome }).next.failure.row, 'R2');
-  assert.doesNotMatch(JSON.stringify({ ...outcome.reason, message: outcome.reason.message }), /R-FAIL-8|\bR\d+\b/);
+  noEditorialIds(outcome.reason, { kind: 'command-missing', provider: 'claude' });
 });
 
 // The counterexample calls every ENOENT a missing CLI, including the check-to-spawn directory race.

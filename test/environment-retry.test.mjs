@@ -38,7 +38,7 @@ import os from 'node:os';
 import { syncBuiltinESMExports } from 'node:module';
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
 import { standInCodex } from './stub-claude.mjs';
-import { refuseSpawn } from './judge-start-fixture.mjs';
+import { noEditorialIds, refuseSpawn } from './judge-start-fixture.mjs';
 import { dispatch as judgeDispatchOnL1 } from '../src/execution/run.mjs';
 
 const { 60_000: SETTLES_WITHIN } = BOUNDS;
@@ -1080,7 +1080,7 @@ function judgeStartClass(outcome, cause, row) {
   assert.deepEqual(outcome.reason.startCause, cause);
   assert.equal(judgeStartAnswer({ reviewer: outcome }).next.failure.row, row);
   assert.equal(judgeStartAnswer({ reviewer: outcome }, { firstFailures: { reviewer: outcome } }).next.action, 'hold');
-  assert.doesNotMatch(JSON.stringify({ ...outcome.reason, message: outcome.reason.message }), /R-FAIL-8|\bR\d+\b/);
+  noEditorialIds(outcome.reason, cause);
 }
 
 /** Installs a controlled builtin refusal across ESM imports for one source-cause test. */
