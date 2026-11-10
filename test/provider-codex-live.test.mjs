@@ -543,3 +543,126 @@ test('a repository Codex declaration through L1 permits /bin/ps with the maker g
   assert.equal(report.stdout.trim(), String(report.pid), '/bin/ps must observe its live caller');
   linkHolds(handed.env.CODEX_HOME, process.env.CODEX_HOME || join(homedir(), '.codex'));
 });
+
+/** The consumer's shipped Codex declaration, which each declared-tools fixture starts from. */
+const TEMPLATE = () => readFileSync(new URL('../templates/codex/config.toml', import.meta.url), 'utf8');
+
+/** A prompt that asks for no tool, so a session's rollout is all it is run for. */
+const QUIET = 'Reply with the single word OK. Run no shell command and use no tool.\n';
+
+/** The script that prints, through the session's own `exec` tool, the name of every tool it may call. */
+const LISTING_SCRIPT = 'for (const tool of ALL_TOOLS) text(tool.name);';
+
+/** A prompt asking the session to run `LISTING_SCRIPT` once, so its rollout records the full tool set. */
+const LISTING = `Call your exec tool exactly once, with exactly this script and nothing else:\n${LISTING_SCRIPT}\nThen reply DONE. Run no other tool.\n`;
+
+/** The tools a rollout's `additional_tools` record offers the session, each as `<namespace>.<name>`. */
+const offeredIn = (rollout) => rollout.lines.filter((line) => line.payload?.type === 'additional_tools')
+  .flatMap((line) => line.payload.tools.flatMap((space) => (Array.isArray(space.tools) ? space.tools : [space]).map((tool) => `${space.name}.${tool.name}`)));
+
+/** The tool names the session's one `LISTING_SCRIPT` call printed, as its rollout recorded them. */
+function listedIn(rollout) {
+  const calls = rollout.lines.filter((line) => line.payload?.type === 'custom_tool_call' && line.payload.name === 'exec');
+  assert.deepEqual(calls.map((line) => line.payload.input.trim()), [LISTING_SCRIPT], 'the session did not run the listing script exactly once');
+  const output = rollout.lines.find((line) => line.payload?.type === 'custom_tool_call_output' && line.payload.call_id === calls[0].payload.call_id);
+  assert.ok(output, 'the rollout holds no output for the listing script');
+  const parts = Array.isArray(output.payload.output) ? output.payload.output : [];
+  assert.match(parts[0]?.text ?? '', /^Script completed/, 'the listing script did not complete');
+  return parts.slice(1).flatMap((part) => (part.text ?? '').split('\n')).map((name) => name.trim()).filter(Boolean);
+}
+
+/** `args` less each `--disable <feature>` pair naming one of `features`: a control the adapter never runs. */
+const enabling = (features) => (args) => args.filter((arg, at) => !(arg === '--disable' && features.includes(args[at + 1])) && !(features.includes(arg) && args[at - 1] === '--disable'));
+
+/** Gives the test a stand-in owner's Codex home holding only a link to the owner's `auth.json`, and answers it. */
+function ownerStandIn(t) {
+  const owner = scratch('rigger-codex-live-1301-owner-');
+  symlinkSync(join(homedir(), '.codex', 'auth.json'), join(owner, 'auth.json'));
+  setFor(t, 'CODEX_HOME', owner);
+  return owner;
+}
+
+/**
+ * Runs one session in a fresh repository whose `.codex/config.toml` is `TEMPLATE` plus `lines`, the
+ * row's own declaration, with `edit` applied to the adapter's arguments. It asserts the session's
+ * home `config.toml` equals that file as the session starts, and that the home's `auth.json` is
+ * still a link to `owner`'s, and answers the run and its rollout.
+ */
+async function declaredSession(t, owner, { label, lines = () => '', prompt = QUIET, edit = (args) => args }) {
+  const base = scratch(`rigger-codex-live-1301-${label}-`);
+  const directory = join(base, 'repo');
+  const made = join(base, 'scratch', 'live');
+  mkdirSync(made, { recursive: true });
+  const declaration = `${TEMPLATE()}${lines(directory)}`;
+  put(directory, '.codex/config.toml', declaration);
+  put(directory, '.claude/agents/live.md', '# Live\n\nDo exactly what the prompt asks, and nothing else.\n');
+  repositoryAt(directory);
+  let home;
+  const ran = await session({ agent: join(directory, '.claude', 'agents', 'live.md'), tier: 'standard', directory, scratch: made, prompt }, {
+    args: (args) => {
+      home = readFileSync(join(realpathSync.native(made), 'codex-home', 'config.toml'), 'utf8');
+      return edit(args);
+    },
+  });
+  assert.equal(ran.result.exit, 0, ran.result.stderr.toString('utf8'));
+  assert.equal(home, declaration, `the ${label} session's home config.toml is not its directory's declaration`);
+  const rollout = rolloutIn(ran.home, ran.thread);
+  quote(`1301 ${label} session args`, ran.args.map((arg) => (arg.startsWith('developer_instructions=') ? 'developer_instructions=<the agent file>' : arg)));
+  quote(`1301 ${label} offered tools`, offeredIn(rollout));
+  linkHolds(ran.home, owner);
+  return { ran, rollout };
+}
+
+// proves R-SAFE-8
+test('a live Codex session is offered each built-in tool its declaration does not withhold, and one whose declaration turns a built-in\'s feature off is not offered that one', { skip, timeout: 3 * SESSION }, async (t) => {
+  // Table T rows T7 and T8 on #1301. The withholding key is `[features] sleep_tool = false`, a
+  // feature `codex features list` shows stable and on at codex-cli 0.166.0, whose tool is `sleep`.
+  realCodex(t);
+  const owner = ownerStandIn(t);
+  const open = await declaredSession(t, owner, { label: 'open' });
+  const offered = offeredIn(open.rollout);
+  for (const tool of ['functions.exec', 'clock.sleep']) assert.ok(offered.includes(tool), `${tool} was not offered (T7): ${offered}`);
+  const sleepless = await declaredSession(t, owner, { label: 'sleepless', lines: () => '\n[features]\nsleep_tool = false\n' });
+  const left = offeredIn(sleepless.rollout);
+  assert.equal(left.includes('clock.sleep'), false, `sleep was offered under sleep_tool = false (T8): ${left}`);
+  assert.ok(left.includes('functions.exec'), `exec was not offered beside the withheld built-in: ${left}`);
+});
+
+// proves R-SAFE-9
+test('a live Codex session is offered no plugin and none of the owner\'s apps it does not declare, each shown offered first in a control without the withholding, and is offered the MCP server it declares', { skip, timeout: 5 * SESSION }, async (t) => {
+  // Table T rows T9, T10 and T11 on #1301. The controls drop the adapter's `--disable` flags, which
+  // no dispatch does, so that the withheld cell's absence is shown to be the adapter's doing.
+  realCodex(t);
+  const owner = ownerStandIn(t);
+  const apps = (names) => names.filter((name) => name.startsWith('mcp__codex_apps__'));
+
+  const neither = await declaredSession(t, owner, { label: 'control-no-disable-plugins-or-apps', prompt: LISTING, edit: enabling(['plugins', 'apps']) });
+  const unwithheld = listedIn(neither.rollout);
+  quote('1301 premise, plugins and apps on: tools listed', unwithheld);
+  assert.ok(unwithheld.includes('request_plugin_install'), 'the control with plugins and apps on offered no plugin tool, so its absence below proves nothing (T9)');
+
+  const appsOn = await declaredSession(t, owner, { label: 'control-no-disable-apps', prompt: LISTING, edit: enabling(['apps']) });
+  const premise = apps(listedIn(appsOn.rollout));
+  quote('1301 premise, apps on: app tools listed', premise);
+  assert.ok(premise.some((name) => name.startsWith('mcp__codex_apps__gmail_')), 'the control with apps on offered no Gmail app tool, so its absence below proves nothing (T10)');
+
+  const cell = await declaredSession(t, owner, { label: 'withheld', prompt: LISTING });
+  const listed = listedIn(cell.rollout);
+  quote('1301 withheld: tools listed', listed);
+  assert.deepEqual(apps(listed), [], 'an app the declaration does not name was offered (T9, T10)');
+  assert.equal(listed.includes('request_plugin_install'), false, 'a plugin tool was offered (T9)');
+
+  const server = await declaredSession(t, owner, {
+    label: 'declared-server',
+    prompt: LISTING,
+    lines: (directory) => {
+      put(directory, 'server/server.cjs', SERVER('HERON-c1301-mcp'));
+      return `\n[mcp_servers.c1301live]\ncommand = ${JSON.stringify(process.execPath)}\nargs = [${JSON.stringify(join(directory, 'server', 'server.cjs'))}]\n`;
+    },
+  });
+  const declared = listedIn(server.rollout);
+  quote('1301 declared server: tools listed', declared);
+  assert.ok(declared.includes('mcp__c1301live__echo'), `the declared server's tool was not offered (T11): ${declared}`);
+  assert.deepEqual(apps(declared), [], 'an app was offered beside the declared server');
+  assert.equal(declared.includes('request_plugin_install'), false, 'a plugin tool was offered beside the declared server');
+});
