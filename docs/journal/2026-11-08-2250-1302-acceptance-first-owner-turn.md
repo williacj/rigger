@@ -86,3 +86,5 @@ Every Held outcome in the Table C and E rows above also applies to the final mer
 inputs changed from 1e7e3ce0, and no row required a product change. The execution measurement
 remains at 1e7e3ce0; applicability at 76d33f16 is a judgment based on those unchanged inputs.
 The final-head affected run verifies the retained assertions after integration.
+
+Every Held outcome above also applies at merge base a65cad18e772aaca149501024b6817eecc476e0d; this applicability is a judgment because production and the consumed claiming inputs are unchanged from 1e7e3ce0.
