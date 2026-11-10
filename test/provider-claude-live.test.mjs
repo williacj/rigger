@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { userInfo } from 'node:os';
 
 import { AGENT, SERVER, SESSION, callsOf, forgetting, pastRefusing, transcriptsOf, unclassified, withheldBy, put, scratch, session, skip, textOf } from './claude-live.mjs';
+import { ownerClaudeEnvironment } from './claude-live.mjs';
 import { onPath } from './on-path.mjs';
 import { assertDelivered, liveMaker, MAKER_SESSION } from './maker-git-live.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
@@ -84,6 +85,84 @@ test('a live claude session started from the invocation loads exactly the direct
   assert.match(run.answer, /HERON-agentend-480/);
   assert.doesNotMatch(run.answer, /HERON-parent-480/);
   assert.match(run.answer, /ABSENT/);
+});
+
+/** A prompt that asks for no tool, so a session's start record is all it is run for. */
+const QUIET = 'Reply with the single word OK. Use no tool.';
+
+/** Built-in tools that act within a session or on its host, offered unless a directory withholds them. */
+const HOST_BUILTINS = ['Bash', 'Read', 'Edit', 'Write', 'WebFetch', 'WebSearch'];
+
+/** Every tool Claude Code offers that acts through the owner's own sessions or login (`R-SAFE-9`). */
+const OWNER_TOOLS = ['Task', 'Agent', 'Workflow', 'ListAgents', 'SendMessage', 'PushNotification', 'RemoteTrigger', 'DesignSync'];
+
+/** Runs one session in a fresh directory holding `files`, and checks it left no transcript in the owner's home. */
+async function quietSession(t, label, files) {
+  const directory = join(scratch(), 'repo');
+  forgetting(t, directory);
+  put(directory, '.claude/agents/live.md', AGENT(`HERON-agentend-1301-${label}`));
+  for (const [path, content] of Object.entries(files(directory))) put(directory, path, content);
+  const run = await session(await fromCheckout(), { agent: join(directory, '.claude', 'agents', 'live.md'), tier: 'standard', prompt: QUIET, directory });
+  t.diagnostic(`${label} args: ${JSON.stringify(run.args)}`);
+  t.diagnostic(`${label} init: ${JSON.stringify({ tools: run.init?.tools, mcp_servers: run.init?.mcp_servers })}`);
+  t.diagnostic(`${label} calls: ${JSON.stringify(callsOf(run.events))}`);
+  assert.equal(run.result.exit, 0, run.result.stderr.toString('utf8'));
+  assert.ok(run.init, `the ${label} run printed no init record`);
+  assert.equal(existsSync(transcriptsOf(directory)), false, `the ${label} session left a transcript under the owner's ~/.claude/projects/`);
+  return { directory, run };
+}
+
+// proves R-SAFE-8
+test('a live claude session is offered each built-in tool its directory does not withhold, and a session whose directory denies one by a whole-tool rule is not offered that one', { skip, timeout: 4 * SESSION }, async (t) => {
+  // Table T rows T1 and T2 on #1301. Measured first, on Claude Code 2.1.319 on 2026-11-08: a
+  // whole-tool `permissions.deny` rule removes the tool from `init.tools`, so "withheld" here is
+  // its absence there.
+  assert.ok(onPath('claude', pastRefusing()), 'no claude is installed on this PATH past the refusing one');
+  const open = await quietSession(t, 'open', () => ({}));
+  for (const tool of HOST_BUILTINS) assert.ok(open.run.init.tools.includes(tool), `${tool} was not offered (T1)`);
+  const denied = await quietSession(t, 'denied', () => ({ '.claude/settings.json': JSON.stringify({ permissions: { deny: ['WebFetch'] } }) }));
+  assert.equal(denied.run.init.tools.includes('WebFetch'), false, 'WebFetch was offered under a whole-tool deny rule (T2)');
+  for (const tool of HOST_BUILTINS.filter((each) => each !== 'WebFetch')) assert.ok(denied.run.init.tools.includes(tool), `${tool} was not offered beside the deny rule`);
+  assert.deepEqual(callsOf(denied.run.events).filter(({ name }) => name === 'WebFetch'), []);
+});
+
+/** Each connector `claude mcp list` names under the owner's configuration home, run in `directory`. */
+async function ownerConnectors(directory) {
+  const { runCommand } = await fromCheckout();
+  const env = ownerClaudeEnvironment({ ...process.env, PATH: pastRefusing() });
+  const listed = await runCommand({ command: 'claude', args: ['mcp', 'list'], cwd: directory, env, timeout: SESSION, emitter: { emit: () => {} } });
+  const text = listed.stdout.toString('utf8');
+  return { text, exit: listed.exit, connectors: [...text.matchAll(/^(claude\.ai [^:]+):/gm)].map(([, name]) => name) };
+}
+
+/** The tool-name prefix Claude Code gives the tools of the MCP server `name`. */
+const toolPrefix = (name) => `mcp__${name.replace(/[^A-Za-z0-9]/g, '_')}__`;
+
+// proves R-SAFE-9
+test('a live claude session is offered no tool acting through the owner\'s login and none of the owner\'s connectors unless its directory declares it, and is offered the one it declares and its declared MCP server', { skip, timeout: 5 * SESSION }, async (t) => {
+  // Table T rows T3 to T6 on #1301, each withheld half beside its declared half. Row T5's premise
+  // comes first, from the same owner's home: `claude mcp list` names the connectors that account holds.
+  assert.ok(onPath('claude', pastRefusing()), 'no claude is installed on this PATH past the refusing one');
+  const premise = await ownerConnectors(scratch());
+  t.diagnostic(`premise, claude mcp list under the owner's home: ${JSON.stringify(premise)}`);
+  assert.equal(premise.exit, 0);
+  assert.ok(premise.connectors.length > 0, 'the owner\'s home lists no claude.ai connector, so its absence below proves nothing');
+
+  const undeclared = await quietSession(t, 'undeclared', () => ({}));
+  assert.deepEqual(undeclared.run.init.tools.filter((tool) => OWNER_TOOLS.includes(tool)), [], 'an undeclared tool acting through the owner\'s login was offered (T3)');
+  assert.deepEqual(undeclared.run.init.mcp_servers, [], 'an undeclared MCP server reached the session (T5)');
+  for (const name of premise.connectors) assert.deepEqual(undeclared.run.init.tools.filter((tool) => tool.startsWith(toolPrefix(name))), [], `${name} reached the session (T5)`);
+
+  const declared = await quietSession(t, 'declared', (directory) => ({
+    'server/server.cjs': SERVER('HERON-mcpcall-1301'),
+    '.mcp.json': JSON.stringify({ mcpServers: { c1301live: { type: 'stdio', command: process.execPath, args: [join(directory, 'server', 'server.cjs')] } } }),
+    '.claude/settings.json': JSON.stringify({ permissions: { allow: ['ListAgents', 'mcp__c1301live__echo'] } }),
+  }));
+  assert.ok(declared.run.init.tools.includes('ListAgents'), 'the declared ListAgents was not offered (T4)');
+  assert.deepEqual(declared.run.init.tools.filter((tool) => OWNER_TOOLS.includes(tool) && tool !== 'ListAgents'), [], 'an undeclared tool acting through the owner\'s login was offered beside the declared one');
+  assert.deepEqual(declared.run.init.mcp_servers.map(({ name, status }) => [name, status]), [['c1301live', 'connected']], 'the declared server was not the one server offered (T6)');
+  assert.deepEqual(declared.run.init.tools.filter((tool) => tool.startsWith('mcp__')), ['mcp__c1301live__echo']);
+  assert.deepEqual(callsOf(declared.run.events), [], 'the session made a tool call');
 });
 
 /** Every file under `directory`, by its path, or none where it does not exist. */
