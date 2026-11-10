@@ -11,6 +11,7 @@ import { isBuiltin } from 'node:module';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { parse } from 'acorn';
+import { nodesOf, verdictInputs, environmentReads } from './source-structure.mjs';
 
 import { boundaryReport, sourceTree } from './layer-boundaries.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
@@ -20,15 +21,6 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const VERB = 'src/cli/verdict.mjs';
 const BOUND = { timeout: 120_000 };
 
-/** The syntax nodes under `node`, `node` first. */
-function* nodesOf(node) {
-  if (!node || typeof node.type !== 'string') return;
-  yield node;
-  for (const [key, value] of Object.entries(node)) {
-    if (key === 'loc') continue;
-    for (const held of Array.isArray(value) ? value : [value]) if (held && typeof held === 'object') yield* nodesOf(held);
-  }
-}
 
 /**
  * The string `node` always evaluates to, where the source fixes it: a string literal, a template
@@ -546,14 +538,13 @@ test('`rigger verdict` no longer answers "not yet implemented"', () => {
 });
 
 /** The verb's module, parsed. */
-const verbProgram = () => parse(readFileSync(join(ROOT, VERB), 'utf8'), { ecmaVersion: 'latest', sourceType: 'module' });
+const verbSource = () => readFileSync(join(ROOT, VERB), 'utf8');
+const verbProgram = () => parse(verbSource(), { ecmaVersion: 'latest', sourceType: 'module' });
 
 // proves R-VERDICT-9
 test('src/cli/verdict.mjs reads no environment variable', () => {
   const nodes = [...nodesOf(verbProgram())];
-  const env = nodes.filter((node) => (node.type === 'Identifier' && node.name === 'env') || (node.type === 'Literal' && node.value === 'env')
-    || (node.type === 'MemberExpression' && node.property.type === 'Identifier' && node.property.name === 'env'));
-  assert.deepEqual(env.map((node) => node.start), []);
+  assert.equal(environmentReads(verbSource()), false, 'verdict must read no process environment');
   // `process` is reached for its working directory and its standard input and output alone.
   const reached = nodes.filter((node) => node.type === 'MemberExpression' && node.object.type === 'Identifier' && node.object.name === 'process').map((node) => node.property.name);
   assert.deepEqual([...new Set(reached)].sort(), ['cwd', 'stdin', 'stdout']);
@@ -562,10 +553,7 @@ test('src/cli/verdict.mjs reads no environment variable', () => {
 // proves R-VERDICT-9
 test('src/cli/verdict.mjs takes no option but the words after the verb, and reads no config key but the repository', () => {
   const nodes = [...nodesOf(verbProgram())];
-  const exported = nodes.find((node) => node.type === 'ExportNamedDeclaration' && node.declaration?.id?.name === 'verdict').declaration;
-  const [parameter] = exported.params;
-  assert.equal(exported.params.length, 1);
-  assert.deepEqual(parameter.left.properties.map((property) => property.key.name), ['args', 'push']);
+  assert.ok(verdictInputs(verbSource()), 'verdict must retain exactly args = [] and push with the outer {} default');
   // A config is read as `config` or as the default branch's `main.config`; only `repo` is read of
   // either here, and the topic rule through `worktreeTopic`, as the gate reads it.
   const keys = nodes.filter((node) => node.type === 'MemberExpression' && ((node.object.type === 'Identifier' && node.object.name === 'config')

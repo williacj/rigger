@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { parse } from 'acorn';
+import { moduleLoads, gateDependency, clockReads } from './source-structure.mjs';
 
 import { composeMarker, parseMarker } from '../src/workflow/marker.mjs';
 import { gateAnswer, GATE_CONTEXT } from '../src/workflow/gate.mjs';
@@ -273,23 +273,9 @@ test('an owner sound marker does not offset an agent revision marker', () => {
 test('the gate context is fixed and the rule imports only the marker reader and reads no clock', () => {
   assert.equal(GATE_CONTEXT, 'rigger/gate');
   const source = readFileSync(new URL('../src/workflow/gate.mjs', import.meta.url), 'utf8');
-  const loads = [];
-  function visit(node) {
-    if (!node || typeof node !== 'object') return;
-    if (node.type === 'ImportDeclaration') loads.push(['import', node.source.value]);
-    if (node.type === 'ImportExpression') loads.push(['dynamic import']);
-    if ((node.type === 'ExportNamedDeclaration' || node.type === 'ExportAllDeclaration') && node.source) loads.push(['re-export', node.source.value]);
-    if (node.type === 'CallExpression' && (
-      node.callee.name === 'require' || node.callee.name === 'createRequire' ||
-      (node.callee.type === 'MemberExpression' && (node.callee.property.name === 'require' || node.callee.property.value === 'require'))
-    )) loads.push(['require']);
-    for (const child of Object.values(node)) {
-      for (const held of Array.isArray(child) ? child : [child]) visit(held);
-    }
-  }
-  visit(parse(source, { ecmaVersion: 'latest', sourceType: 'module' }));
+  const loads = moduleLoads(source);
   assert.deepEqual(loads, [['import', './marker.mjs']]);
-  assert.doesNotMatch(source, /\b(?:Date|performance)\b/);
+  assert.equal(clockReads(source), false, 'the gate must read no clock');
 });
 
 // proves R-GATE-3
@@ -390,7 +376,6 @@ test('the owner\'s name the gate rule spells equals OWNER as the config validato
 // proves R-GATE-3
 test('the gate rule reads no config: it imports only the marker reader and names no process, file or config module', () => {
   const source = readFileSync(new URL('../src/workflow/gate.mjs', import.meta.url), 'utf8');
-  const imports = [...source.matchAll(/^import .* from '([^']+)';$/gm)].map(([, from]) => from);
-  assert.deepEqual(imports, ['./marker.mjs']);
+  assert.ok(gateDependency(source), 'the gate must import only the named marker reader');
   assert.doesNotMatch(source, /\bprocess\b|readFileSync|rigger\.config|validate\.mjs/);
 });
