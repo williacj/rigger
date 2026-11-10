@@ -135,12 +135,12 @@ const filesUnder = (directory, root = directory) => readdirSync(directory, { wit
 });
 
 /**
- * What `R-STATE-4` permits the state directory to hold, by file: the record, which is L5's event
+ * What `R-STATE-4`, except as `R-RECORD-19` gives, permits by file: the record, L5's event
  * stream, and the processes Rigger must still clean up, which is L1's record of each dispatch's
- * process group. Whether admission is open is the third, and no code writes it yet, so no file
+ * process group, and each dispatch's stdout and stderr. Admission is another, and no code writes it yet, so no file
  * stands for it.
  */
-const PERMITTED = ['events.jsonl', 'groups.json'];
+const PERMITTED = ['events.jsonl', 'groups.json', /^output\/d-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\/(?:stdout|stderr)$/];
 
 // proves R-STATE-1
 test('after a run, every file under the state directory is one R-STATE-4 permits, and the directory holds the run\'s event stream', async () => {
@@ -151,7 +151,7 @@ test('after a run, every file under the state directory is one R-STATE-4 permits
   await drive(restarted);
 
   const files = filesUnder(directory);
-  assert.deepEqual(files.filter((file) => !PERMITTED.includes(file)), []);
+  assert.deepEqual(files.filter((file) => !PERMITTED.some((permitted) => typeof permitted === 'string' ? permitted === file : permitted.test(file))), []);
   assert.ok(readEvents(directory).some((event) => event.run === 'r-restart' && event.event === 'run.start'), 'the stream holds the run');
 });
 

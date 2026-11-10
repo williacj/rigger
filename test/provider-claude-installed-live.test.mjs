@@ -62,3 +62,48 @@ test('a live dispatch through the installed package loads the consumer\'s skill 
   assert.doesNotMatch(run.answer, /HERON-packageskill-480/);
   assert.equal(readFileSync(join(installed, 'templates', 'claude', 'skills', 'marker-skill', 'SKILL.md'), 'utf8').includes('HERON-packageskill-480'), true);
 });
+
+// Host reason: wiring; an installed Claude Code session must traverse installed L3 and L1.
+// Rigger decision: test/kept-output.test.mjs — O1: a completed maker keeps both streams byte for byte under its recorded dispatch id
+// proves R-RECORD-19
+test('a live L3 role dispatch keeps Claude Code final result output under its recorded id', { skip, timeout: 2 * SESSION }, async (t) => {
+  const { mkdirSync } = await import('node:fs');
+  const { repositoryAt, worktreeAt } = await import('./git-repository.mjs');
+  const { createFakeBoard } = await import('./fake-board.mjs');
+  assert.ok(onPath('claude', pastRefusing()), 'no live Claude Code is installed');
+  const base = scratch();
+  const { consumer } = installFromTarball(root, base);
+  const installed = join(consumer, 'node_modules', '@williacj', 'rigger');
+  const { loop } = await import(pathToFileURL(join(installed, 'src/scheduling/loop.mjs')).href);
+  const { openSink, readEvents } = await import(pathToFileURL(join(installed, 'src/observation/sink.mjs')).href);
+  const repository = repositoryAt(join(base, 'repository'), { 'agent.md': '# Live output fixture\nAnswer exactly as instructed. Use no tool.\n' });
+  const workspace = worktreeAt(repository, join(base, 'rigger-1380'), 'rigger-1380');
+  const home = join(base, 'claude-home');
+  mkdirSync(home);
+  const state = join(repository, '.rigger');
+  const sink = openSink({ directory: state, run: 'r-1380-live', now: Date.now });
+  const columns = { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Owner', done: 'Done' };
+  const fake = createFakeBoard({ columns: Object.values(columns), items: [{ type: 'issue', repository: 'acme/widgets', number: 1380, title: 'Live output', body: '', labels: [], column: 'Ready' }] });
+  // ARCHITECTURE.md's role answer and L3 board-handle contracts; this live test claims wiring only.
+  const maker = { role: 'engineer', agent: 'agent.md', provider: 'claude', tier: 'standard', timeout: SESSION,
+    instruction: 'Reply with HERON-1380-LIVE-RESULT. Use no tool.\n', evidence: '' };
+  const built = loop({ config: { concurrency: 1, board: { columns } },
+    board: { readColumns: async () => columns, readPriority: async () => ({ items: await fake.operations.readItems(), declared: null, options: null }) },
+    facts: async () => () => ({ action: 'dispatch', kind: 'change', maker }), decide: () => ({ action: 'ignore' }),
+    l2: { claimed: async () => {}, settled: async () => undefined }, sink,
+    kill: async () => {}, workspace: async () => ({ path: workspace, branch: 'rigger-1380', scratch: join(base, 'scratch', 'rigger-1380'), repository }),
+    judgeDirectory: async () => { throw new Error('this wiring fixture has no judge'); }, removeDirectories: async () => {},
+    state, environment: { ...process.env, PATH: pastRefusing(), CLAUDE_CONFIG_DIR: home }, run: 'r-1380-live' });
+  const [ended] = await built.pull();
+  assert.equal(ended.outcome.status, 'fulfilled', ended.outcome.reason?.message);
+  assert.equal(ended.outcome.value.exit, 0, `${ended.outcome.value.stderr.toString('utf8')}\n${ended.outcome.value.stdout.toString('utf8')}`);
+  const start = readEvents(state).find((event) => event.event === 'dispatch.start');
+  const path = join(state, 'output', start.dispatch, 'stdout');
+  assert.ok(existsSync(path), 'the live L3 dispatch has no kept stdout');
+  const bytes = readFileSync(path);
+  assert.deepEqual(bytes, ended.outcome.value.stdout, 'the kept stream differs from the real CLI result');
+  assert.deepEqual(readFileSync(join(state, 'output', start.dispatch, 'stderr')), ended.outcome.value.stderr);
+  const final = bytes.toString('utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line)).findLast((event) => event.type === 'result');
+  assert.ok(final && final.result.includes('HERON-1380-LIVE-RESULT'), 'the kept stdout has no final result event');
+  t.diagnostic(`live output: ${JSON.stringify({ dispatch: start.dispatch, path, home, final })}`);
+});

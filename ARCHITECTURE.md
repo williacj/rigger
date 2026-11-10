@@ -1046,6 +1046,8 @@ cannot record runs no command. Each entry names:
 - the dispatch's directory, where it has one, and what L0 needs to tell that directory from a
   later one at the same path.
 
+L1 keeps what each role dispatch's agent CLI wrote to its standard output and standard error, byte for byte, under `<state directory>/output/<dispatch id>/` (`R-RECORD-19`). L3 invokes it once L1's dispatch settles, for a maker, a judge or an escalation's role, and never for a step. L5's push reads only its stream, so the kept output never leaves the machine.
+
 L1 removes an entry once its group is empty, and on Rigger's own exit. Past exit cleanup's budget, it keeps each remaining group's entry, so that the next start sweeps that group's directories. On start, L3 has L1 kill
 every group it recorded, before L3 records or reads anything. L0 kills a recorded group only once it
 has confirmed that the group is the one recorded. A start that cannot confirm a recorded group kills
@@ -1066,8 +1068,16 @@ and the last transition the board shows. They also include
 the escalation label the card carries, the escalation notes on its issue, and L2's routing comment
 where it sent the card to a role. L2 derives card actions on each read and keeps no card state. L3 keeps the invocation-local direct set-asides and no-clock action memory described below; neither is persisted.
 
-`.rigger/` holds three things and no others: the process groups L1 must read back to kill, each with
-its dispatch and card, whether admission is open and why it closed, and L5's event stream. Each record's
+`.rigger/` holds four things and no others:
+
+- the process groups L1 must read back to kill, each with its dispatch and card;
+- whether admission is open and why it closed;
+- L5's event stream;
+- under `.rigger/output/<dispatch id>/`, what each role dispatch's agent CLI wrote to its standard output and standard error (`R-RECORD-19`).
+
+Nothing in Rigger reads that output back: it is kept for a person, and it is never the record.
+
+Each record's
 temporary file, which a write renames or links into place, belongs to its record. Two more things
 outlive a restart outside it: a card's workspace, and the markers on its pull request, which
 the forge holds. Nothing reads a workspace back once its attempt has ended. An attempt that starts
