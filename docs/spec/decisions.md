@@ -1303,12 +1303,14 @@ once is fixed everywhere a search finds it. The round bound (`R-LOOP-9`) still c
 A judge sees no other judge's findings (`R-EVIDENCE-4`). Each judge therefore reruns the searches
 the acceptance and its own findings name, and a class one judge named is checked by that judge.
 
-`R-CARD-42` to `R-CARD-48` and `R-VERDICT-14` land with no test claiming them. The owner excepted
+`R-CARD-43` to `R-CARD-48` and `R-VERDICT-14` land with no test claiming them. The owner excepted
 them from `AGENTS.md`'s claiming-test rule under its Rule #1, in owner ruling U182 (739#6731294541),
 because no test can observe a role following its prompt. A test asserting template text would
-claim a row without proving a behaviour, the second signal `D17`'s notes name. The matrix marks
-the seven `R-CARD` rows as gaps, and `R-VERDICT-14` as `nothing could`. `D17`'s counted set does
-not gain them, because it holds only rows older than `D17`.
+claim a row without proving a behaviour, the second signal `D17`'s notes name. `R-CARD-42` is
+claimed by the tests of the acceptance-growth derivation its first sentence's `checked by` names,
+retargeted from `R-CARD-11` in the owner ruling at 1305#6768347106. The matrix marks the six other
+`R-CARD` rows as gaps, and `R-VERDICT-14` as `nothing could`. `D17`'s counted set does not gain
+them, because it holds only rows older than `D17`.
 
 Two signals would reverse it. One: a merged deletion under rule 3 is later found to have left a
 declared requirement unproved, twice. Two: three of the first ten cards whose scope grew by a
