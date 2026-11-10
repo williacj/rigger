@@ -20,4 +20,6 @@ The bump touched `.github/workflows/ci.yml`. Its host startup check qualifies th
 
 The in-process fixtures' host test compares the installed package's code with the source tree's code under `scripts/`. Once `files` narrows, the installed tree holds four scripts and the source tree holds seventeen, so that comparison needed a line outside the card's first grant classes. The coordinator ruled it under M8-K12 as grant class G5 before it was pushed.
 
-The same ruling added `package-lock.json`'s two root `version` fields to the card, so the lockfile follows the bump and the next `npm install` leaves the tree clean. Nothing else in the lockfile changes.
+The PM, as the card's author, added `package-lock.json`'s two root `version` fields to the card's "Lands in". M8-K12 did not rule that point; it sent it to the PM. The lockfile follows the bump so that the next `npm install` leaves the tree clean, and nothing else in the lockfile changes.
+
+The reviewer's first round found that narrowing `files` broke the prepack recorder's completeness check. That check took every `files` entry as a directory, so a file named on its own never entered it. A deleted shipped script then dropped silently out of the pack, and the recorder still wrote `HEAD`. The PM widened the card to the recorder's completeness check: an entry now also covers the one path it names exactly. A test appended to `test/record-commit.test.mjs` commits an exactly named file and deletes it, and the recorder now writes no commit.
