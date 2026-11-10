@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { testsIn } from '../scripts/build-test-matrix.mjs';
 import { addedTimers, checkAddedTimers, parseRecord, readRecord } from '../.github/scripts/check-host-declarations.mjs';
 import { parseWorkflow } from './ci-policy-fixtures.mjs';
+import { cases } from './runner-call-forms.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 // Each expected value below is read off the fixture source by hand: the title a quoted run holds,
@@ -108,6 +109,32 @@ test('the scanner reads an optional member as no call and a chain past a registe
   const found = testsIn(source, 'test/f.test.mjs');
   assert.deepEqual(found.tests, []);
   assert.deepEqual(found.unidentified.map(({ line }) => line), [3, 4]);
+});
+
+// The matrix's expected titles are what node:test registers from each source; the host file
+// test/check-host-declarations-host.test.mjs runs every case under the runner to hold them to it.
+function misread(group) {
+  return cases().filter((entry) => entry.group === group).flatMap(({ name, source, registers }) => {
+    const found = testsIn(source, 'test/forms.test.mjs');
+    const read = { tests: found.tests.map(({ title }) => title), unidentified: found.unidentified.length };
+    return JSON.stringify(read) === JSON.stringify({ tests: registers, unidentified: 0 }) ? [] : [`${name}: ${JSON.stringify(read)}`];
+  });
+}
+
+test('the scanner finds every runner call form in every statement, block and expression the module reaches while it loads', () => {
+  assert.deepEqual(misread('reached'), []);
+});
+
+test('the scanner finds no test in any function body, a concise arrow body included', () => {
+  assert.deepEqual(misread('deferred'), []);
+});
+
+test('the scanner finds no test where a block-scoped binding hides the runner name', () => {
+  assert.deepEqual(misread('shadowed'), []);
+});
+
+test('the scanner still finds a test beside bindings that leave the runner name alone', () => {
+  assert.deepEqual(misread('unshadowed'), []);
 });
 
 test('an unidentified call keeps its key when only its body changes, and changes it with its name', () => {

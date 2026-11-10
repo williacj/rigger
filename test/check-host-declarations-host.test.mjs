@@ -4,11 +4,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, readdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { testsIn } from '../scripts/build-test-matrix.mjs';
 import { gitIn, repositoryAt } from './git-repository.mjs';
+import { cases } from './runner-call-forms.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 const subject = await import('../scripts/preflight.mjs');
@@ -58,14 +61,33 @@ function commit(root, files, message = 'fixture change') {
   return gitIn(root, 'rev-parse', 'HEAD').trim();
 }
 
-/** Preflight with the real added-timer step and stand-ins answering for the other script checks. */
+/**
+ * What a preflight run must leave as it found it: the fixture's head, its status, and the bytes of
+ * every file in its working tree, its tests among them.
+ */
+function repositoryState(root) {
+  const files = readdirSync(root, { recursive: true, withFileTypes: true })
+    .filter((entry) => entry.isFile() && !join(entry.parentPath, entry.name).startsWith(join(root, '.git')))
+    .map((entry) => join(entry.parentPath, entry.name))
+    .map((path) => [path.slice(root.length + 1), createHash('sha256').update(readFileSync(path)).digest('hex')])
+    .sort(([a], [b]) => a.localeCompare(b));
+  return { head: gitIn(root, 'rev-parse', 'HEAD').trim(), status: gitIn(root, 'status', '--porcelain'), files };
+}
+
+/**
+ * Preflight with the real added-timer step and stand-ins answering for the other script checks.
+ * Every run, passing or refusing, must leave the fixture repository exactly as it found it.
+ */
 function preflight(f, { execute } = {}) {
   const lines = [];
   const scriptChecks = subject.SCRIPT_CHECKS.map((check) => check.name === 'added-timer' ? check
     : { name: check.name, command: ['git', 'rev-parse', 'HEAD'] });
+  const before = repositoryState(f.root);
+  assert.ok(before.files.some(([path]) => path === CONVERTING), 'the fixture must hold the conversion-list file');
   const status = subject.preflight(['1138', '--body-file', f.bodyFile], {
     root: f.root, scriptChecks, write: (line) => lines.push(line), execute,
   });
+  assert.deepEqual(repositoryState(f.root), before, 'preflight must leave the fixture repository unchanged');
   return { status, output: lines.join('\n') };
 }
 
@@ -80,7 +102,27 @@ test('preflight refuses an added conversion-list test that arms the global setTi
   assert.ok(result.output.includes(`${CONVERTING}: added test "arms a real timer" armed setTimeout with delay 5`), result.output);
 });
 
-test('preflight passes an added conversion-list test that arms no timer', (t) => {
+// Each place below hides an added test from a scanner that reads only plain statements; the
+// refusal must name the file and the title whatever statement or call form holds the test.
+const hiddenArms = [
+  ['a for-await block', `for await (const value of [0]) {\n  ${arming.trim()}\n}\n`],
+  ['a labelled block', `registration: {\n  ${arming.trim()}\n}\n`],
+  ['a block after a declaration with no semicolon', `const value = 1\n{\n  ${arming.trim()}\n}\n`],
+  ['a quoted computed member', arming.replace("test(", "test['only'](")],
+];
+for (const [where, added] of hiddenArms) {
+  test(`preflight refuses an added conversion-list test that arms a timer in ${where}, naming file and title`, (t) => {
+    const f = suiteFixture(t);
+    commit(f.root, { [CONVERTING]: header + older + added });
+    const result = preflight(f);
+    assert.equal(result.status, 1, result.output);
+    assert.match(result.output, /^added-timer: failed$/m);
+    assert.ok(result.output.includes(`${CONVERTING}: added test "arms a real timer" armed setTimeout with delay 5`), result.output);
+  });
+}
+
+test('preflight passes an added conversion-list test that arms no timer'
+, (t) => {
   const f = suiteFixture(t);
   commit(f.root, { [CONVERTING]: header + older + "test('arms nothing', () => {});\n" });
   const result = preflight(f);
@@ -155,4 +197,46 @@ test('the CI step refuses tests main added above a lagging pull request base, re
   });
   assert.equal(checked.status, 1, checked.stdout + checked.stderr);
   assert.equal(checked.stderr, `${CONVERTING}: added test "arms a real timer" armed setTimeout with delay 5\n`);
+});
+
+// node:test is the authority on which top-level tests a module registers: each matrix case runs
+// under `node --test`, and a reporter names every top-level test or suite with its file.
+test('every case of the runner-call matrix registers under node:test exactly the tests the scanner reads', (t) => {
+  // The runner names each file by its real path, so the cases are written under one.
+  const directory = realpathSync.native(temporaryDirectory('rigger-1138-forms-', { context: t }));
+  const all = cases();
+  const files = all.map((entry, index) => {
+    const file = join(directory, `case-${index}.test.mjs`);
+    writeFileSync(file, entry.source);
+    return file;
+  });
+  const reporter = join(directory, 'names.mjs');
+  writeFileSync(reporter, [
+    '// ABOUTME: Names each top-level test or suite a run registers, with its file.',
+    'export default async function* names(source) {',
+    '  for await (const event of source) {',
+    "    if ((event.type === 'test:pass' || event.type === 'test:fail') && event.data.nesting === 0) yield JSON.stringify([event.data.file, event.data.name]) + '\\n';",
+    '  }',
+    '}',
+    '',
+  ].join('\n'));
+  const { NODE_TEST_CONTEXT, ...environment } = process.env;
+  const ran = spawnSync(process.execPath, ['--test', `--test-reporter=${reporter}`, ...files], {
+    encoding: 'utf8', env: environment, maxBuffer: 64 * 1024 * 1024,
+  });
+  assert.equal(ran.status, 0, ran.stdout + ran.stderr);
+  const registered = new Map(files.map((file) => [file, []]));
+  for (const line of ran.stdout.split('\n').filter(Boolean)) {
+    const [file, name] = JSON.parse(line);
+    // A file that registers no test is reported as one test named by its own path.
+    if (name !== file) registered.get(file)?.push(name);
+  }
+  const wrong = all.flatMap((entry, index) => {
+    const runtime = registered.get(files[index]);
+    const found = testsIn(entry.source, `test/case-${index}.test.mjs`);
+    const read = [...found.tests.map(({ title }) => title), ...found.unidentified.map(() => '<unidentified>')];
+    return JSON.stringify(runtime) === JSON.stringify(entry.registers) && JSON.stringify(read) === JSON.stringify(runtime)
+      ? [] : [`${entry.name}: runner ${JSON.stringify(runtime)}, matrix ${JSON.stringify(entry.registers)}, scanner ${JSON.stringify(read)}`];
+  });
+  assert.deepEqual(wrong, []);
 });

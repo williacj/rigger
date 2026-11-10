@@ -515,11 +515,6 @@ const REGISTERING_MEMBERS = new Set(['skip', 'only', 'todo']);
 const NOT_REGISTERING = new Set([
   'before', 'after', 'beforeEach', 'afterEach', 'mock', 'snapshot', 'run', 'getTestContext', 'assert',
 ]);
-// After one of these words a `{` opens a block of statements rather than an expression.
-const BLOCK_WORDS = new Set(['else', 'do', 'try', 'finally']);
-// A `(` after one of these words heads a statement whose `{` body is a block.
-const STATEMENT_HEADS = new Set(['if', 'while', 'for', 'with', 'catch', 'switch']);
-
 /** Which local names a source imports from `node:test`, each with the export it names. */
 function runnerImports(tokens) {
   const imported = new Map();
@@ -560,27 +555,155 @@ function runnerImports(tokens) {
   return imported;
 }
 
-/** For each token, whether it stands among the module's top-level statements. */
-function topLevelTokens(tokens) {
-  // statements[k]: whether the bracket open at depth k holds top-level statements.
-  const statements = [];
-  const heads = [];
-  const headCloses = new Set();
-  return tokens.map((token, at) => {
-    const top = token.depth === 0 || statements[token.depth - 1] === true;
-    const previous = tokens[at - 1];
-    const opens = (tokens[at + 1]?.depth ?? 0) > token.depth;
-    if (token.kind === 'punct' && token.value === ')' && heads[token.depth]) headCloses.add(at);
-    if (opens && token.kind === 'punct' && token.value === '{') {
-      statements[token.depth] = top && (!previous
-        || (previous.kind === 'punct' && (previous.value === ';' || previous.value === '}' || headCloses.has(at - 1)))
-        || (previous.kind === 'word' && BLOCK_WORDS.has(previous.value)));
-    } else if (opens) statements[token.depth] = false;
-    if (token.kind === 'punct' && token.value === '(') {
-      heads[token.depth] = previous?.kind === 'word' && STATEMENT_HEADS.has(previous.value);
+// After one of these words a `{` opens a block of statements rather than an expression.
+const BLOCK_WORDS = new Set(['else', 'do', 'try', 'finally', 'catch', 'static']);
+// A `(` after one of these words heads a statement whose `{` body is a block.
+const STATEMENT_HEADS = new Set(['if', 'while', 'for', 'with', 'catch', 'switch']);
+// Before a `{`, one of these leaves an expression to finish, so the `{` opens an object.
+const BEFORE_AN_OBJECT = new Set([...BEFORE_AN_EXPRESSION, 'default', 'export', 'import', 'extends']);
+// A token that can continue an expression from the line before, so no semicolon is inserted
+// before it (ECMA-262, automatic semicolon insertion): an operator, a call, a member or a tag.
+const CONTINUES = new Set([...'([.?,+-*/%=<>&|^:']);
+const DECLARES = new Set(['const', 'let', 'var']);
+
+const punct = (token, value) => token?.kind === 'punct' && token.value === value;
+const word = (token, value) => token?.kind === 'word' && (value === undefined || token.value === value);
+/** Whether `=` and `>` at these two places spell one `=>`. */
+const arrowAt = (tokens, at) => punct(tokens[at], '>') && punct(tokens[at - 1], '=') && tokens[at - 1].end === tokens[at].start;
+
+/** Whether a line break between two tokens ends the statement, as automatic semicolon insertion reads it. */
+function lineEnds(source, before, after) {
+  if (!before || after.line <= before.endLine) return false;
+  const ends = before.kind !== 'punct' ? !(before.kind === 'word' && BEFORE_AN_EXPRESSION.has(before.value))
+    : [')', ']', '}', '++', '--'].includes(before.value);
+  const continues = (after.kind === 'punct' && CONTINUES.has(after.value))
+    || (after.kind === 'word' && (after.value === 'in' || after.value === 'instanceof'))
+    || ((after.kind === 'string' || after.kind === 'template') && source[after.start] === '`');
+  return ends && !continues;
+}
+
+/**
+ * Where the expression or statement starting at a token ends: before the first `,` or `;` at its
+ * own depth, a bracket closing round it, or a line break that ends it.
+ */
+function expressionEnd(source, tokens, start) {
+  const depth = tokens[start]?.depth ?? 0;
+  for (let at = start; at < tokens.length; at++) {
+    const token = tokens[at];
+    if (token.depth < depth) return at;
+    if (token.depth === depth && at > start
+      && (punct(token, ',') || punct(token, ';') || lineEnds(source, tokens[at - 1], token))) return at;
+  }
+  return tokens.length;
+}
+
+/** The index of the bracket closing the one opened at `open`. */
+function closing(tokens, open) {
+  let at = open + 1;
+  while (at < tokens.length && tokens[at].depth > tokens[open].depth) at++;
+  return at;
+}
+
+/**
+ * The names a binding pattern or a list of declarators binds, from `from` up to `to`: every name
+ * that is not an object key, a default value, an initialiser or a computed key.
+ */
+function boundNames(source, tokens, from, to) {
+  const names = [];
+  const base = tokens[from]?.depth ?? 0;
+  for (let at = from; at < to; at++) {
+    const token = tokens[at];
+    if (punct(token, '=')) {
+      // A default value or an initialiser runs to the next `,` at its depth or the bracket round it.
+      at = expressionEnd(source, tokens, at + 1) - 1;
+      continue;
     }
-    return top;
-  });
+    if (punct(token, '[') && punct(tokens[closing(tokens, at) + 1], ':')) {
+      at = closing(tokens, at);
+      continue;
+    }
+    if (token.kind !== 'word' || punct(tokens[at + 1], ':')) continue;
+    names.push(token.value);
+    // A declarator's own name is followed by its initialiser, or by `of` or `in` in a loop head.
+    if (token.depth === base) at = expressionEnd(source, tokens, at + 1) - 1;
+  }
+  return names;
+}
+
+/**
+ * For each token, whether the module's own evaluation reaches it, and the scopes round it.
+ *
+ * A token is deferred inside a function body, however the function is written — a declaration,
+ * an expression, a method, an arrow with a block or a concise body — and in a function's
+ * parameters. Everything else runs as the module loads: statements, every kind of block, and the
+ * expressions in them. Each token also carries the block scopes enclosing it, with the names each
+ * declares, so a block-local binding can hide an imported name.
+ */
+function moduleReach(source, tokens) {
+  const reach = new Array(tokens.length);
+  const stack = [];
+  const closedBy = new Map();
+  const classes = new Set();
+  const conciseEnds = [];
+  // Bindings a statement head (`for (const …)`, `catch (…)`) makes for the statement it heads.
+  const headScopes = [];
+  const owner = () => [...stack].reverse().find((frame) => frame.kind === 'block' || frame.head) ?? null;
+  for (let at = 0; at < tokens.length; at++) {
+    const token = tokens[at];
+    while (stack.length > token.depth) closedBy.set(at, stack.pop());
+    while (conciseEnds.length && conciseEnds.at(-1) <= at) conciseEnds.pop();
+    const deferred = conciseEnds.length > 0 || stack.some((frame) => frame.kind === 'function' || frame.kind === 'parameters');
+    const scopes = [...stack.filter((frame) => frame.kind === 'block' || frame.head),
+      ...headScopes.filter((scope) => scope.from <= at && at < scope.to)];
+    reach[at] = { deferred, scopes };
+    const previous = tokens[at - 1];
+    const enclosing = stack.at(-1);
+    if (word(token, 'class') && !punct(previous, '.')) classes.add(token.depth);
+    if (word(token) && DECLARES.has(token.value) && !punct(previous, '.')) {
+      const end = expressionEnd(source, tokens, at + 1);
+      owner()?.names.push(...boundNames(source, tokens, at + 1, end));
+    }
+    if (word(token, 'function') || (word(token, 'class') && !punct(previous, '.'))) {
+      const name = word(tokens[at + 1]) ? tokens[at + 1] : punct(tokens[at + 1], '*') && word(tokens[at + 2]) ? tokens[at + 2] : null;
+      if (name && !punct(previous, '=') && !punct(previous, '(') && !punct(previous, ',')) owner()?.names.push(name.value);
+    }
+    if (arrowAt(tokens, at) && !punct(tokens[at + 1], '{')) conciseEnds.push(expressionEnd(source, tokens, at + 1));
+    const opens = token.kind === 'punct' ? ['(', '[', '{'].includes(token.value)
+      : token.kind === 'template' && source.slice(token.end - 2, token.end) === '${';
+    if (!opens) continue;
+    const frame = { kind: 'expression', head: false, names: [] };
+    if (punct(token, '(')) {
+      let before = at - 1;
+      if (word(tokens[before]) && !STATEMENT_HEADS.has(tokens[before].value)) before--;
+      if (punct(tokens[before], '*')) before--;
+      if (word(tokens[before], 'function') || word(tokens[at - 1], 'function')) frame.kind = 'parameters';
+      frame.head = (word(previous) && STATEMENT_HEADS.has(previous.value)) || (word(previous, 'await') && word(tokens[at - 2], 'for'));
+      if (word(previous, 'catch')) frame.names.push(...boundNames(source, tokens, at + 1, closing(tokens, at)));
+    } else if (punct(token, '{')) {
+      const closed = punct(previous, ')') ? closedBy.get(at - 1) : null;
+      if (classes.has(token.depth)) {
+        classes.delete(token.depth);
+        frame.kind = 'class';
+      } else if (arrowAt(tokens, at - 1) || closed?.kind === 'parameters') frame.kind = 'function';
+      else if (closed) {
+        // After a `)`: the body of a statement head, a method in an object or class, or a block
+        // that automatic semicolon insertion separates from the call before it.
+        frame.kind = closed.head || !(enclosing?.kind === 'object' || enclosing?.kind === 'class') ? 'block' : 'function';
+        if (closed.head) frame.names.push(...closed.names);
+      } else if (word(previous) && BLOCK_WORDS.has(previous.value)) frame.kind = 'block';
+      else if (punct(previous, ':')) frame.kind = enclosing?.kind === 'object' ? 'object' : 'block';
+      else if ((previous?.kind === 'punct' && !['}', ';', ')'].includes(previous.value))
+        || (word(previous) && BEFORE_AN_OBJECT.has(previous.value)) || previous?.kind === 'template') frame.kind = 'object';
+      else frame.kind = 'block';
+    }
+    stack.push(frame);
+    if (frame.head) {
+      // An unbraced statement after the head is in the head's scope until it ends.
+      const after = closing(tokens, at) + 1;
+      if (!punct(tokens[after], '{')) headScopes.push({ from: after, to: expressionEnd(source, tokens, after), names: frame.names });
+    }
+  }
+  return reach;
 }
 
 /** The span of a call's first argument: from just after its `(` to the `,` or `)` ending it. */
@@ -600,22 +723,23 @@ function firstArgument(tokens, open) {
  * Every test a test file's source registers at its top level, by title and line, and every
  * top-level call to the runner whose test the scan cannot identify, by line.
  *
- * A test is a call, among the module's top-level statements, to a name the file imports from
- * `node:test` that registers a test or a suite — `test`, `it`, `describe` or `suite`, under any
- * local name — or to their `skip`, `only` or `todo` member. Statements in a top-level block, an
- * `if` or a loop body among them, are top-level; a function body is not, so a test nested in a
- * suite is covered by the suite's call. A hook or the mock registers no test.
+ * A test is a call the module's own evaluation reaches — in a statement, any kind of block, or an
+ * expression, but never in a function body — to a name the file imports from `node:test` that
+ * registers a test or a suite: `test`, `it`, `describe` or `suite`, under any local name, or their
+ * `skip`, `only` or `todo` member, written with a dot or as a quoted computed member. A test nested
+ * in a suite's function is covered by the suite's call. A name a block declares for itself is not
+ * the import, and a hook or the mock registers no test.
  *
  * A call is identified when its first argument is one quoted run the scan decodes. Any other
- * call to the runner among those statements is listed as unidentified with its `key`: the source
- * from the callee to the end of its first argument, so a body that changes keeps the key and a
- * changed title expression does not.
+ * call to the runner is listed as unidentified with its `key`: the source from the callee to the
+ * end of its first argument, so a body that changes keeps the key and a changed title expression
+ * does not.
  */
 export function testsIn(source, file) {
   const { tokens } = tokensIn(source, file);
   const imported = runnerImports(tokens);
   const { taken } = bindings(tokens);
-  const top = topLevelTokens(tokens);
+  const reach = moduleReach(source, tokens);
   const tests = [];
   const unidentified = [];
   const unknown = (from, open) => {
@@ -623,54 +747,63 @@ export function testsIn(source, file) {
     const end = (tokens[to - 1] ?? tokens[open]).end;
     unidentified.push({ line: tokens[from].line, key: source.slice(tokens[from].start, end) });
   };
+  const hidden = (at) => reach[at].scopes.some((scope) => scope.names.includes(tokens[at].value));
+  // The member a `.name` or a `['name']` after `next` names: its string, or null where it is computed.
+  const memberAt = (next) => {
+    if (punct(tokens[next], '.') && word(tokens[next + 1])) return { name: tokens[next + 1].value, after: next + 2 };
+    if (!punct(tokens[next], '[')) return null;
+    const close = closing(tokens, next);
+    const only = close - next === 2 && tokens[next + 1].kind === 'string' ? decoded(tokens[next + 1].value) : null;
+    return { name: only, after: close + 1 };
+  };
   for (let at = 0; at < tokens.length; at++) {
     const token = tokens[at];
-    if (token.kind !== 'word' || !imported.has(token.value)) continue;
+    if (token.kind !== 'word' || !imported.has(token.value) || hidden(at)) continue;
     const previous = tokens[at - 1];
     const name = imported.get(token.value);
     // `(test)(...)`: the callee is an expression around the bound name.
-    if (previous?.kind === 'punct' && previous.value === '(' && top[at - 1]
-      && tokens[at + 1]?.value === ')' && tokens[at + 2]?.value === '(') {
+    if (punct(previous, '(') && !reach[at - 1].deferred && punct(tokens[at + 1], ')') && punct(tokens[at + 2], '(')) {
       if (REGISTERS.has(name) || name === '*') unknown(at - 1, at + 2);
       continue;
     }
-    if (!top[at] || (previous?.kind === 'punct' && previous.value === '.')) continue;
+    if (reach[at].deferred || punct(previous, '.')) continue;
     const conflicted = taken.has(token.value);
     const from = at;
     let next = at + 1;
-    let member = null;
+    let member;
     let chained = false;
     let namespaced = false;
     if (name === '*') {
-      if (tokens[next]?.value !== '.' || tokens[next + 1]?.kind !== 'word') continue;
-      if (!REGISTERS.has(tokens[next + 1].value)) continue;
+      const named = memberAt(next);
+      if (!named || (named.name !== null && !REGISTERS.has(named.name))) continue;
       namespaced = true;
-      next += 2;
+      next = named.after;
     } else if (!REGISTERS.has(name)) continue;
-    if (tokens[next]?.value === '.' && tokens[next + 1]?.kind === 'word') {
-      member = tokens[next + 1].value;
-      next += 2;
+    const first = memberAt(next);
+    if (first) {
+      member = first;
+      next = first.after;
       // A hook's or the mock's chain is theirs; any other chain past the member is unidentified.
-      if (NOT_REGISTERING.has(member)) continue;
-      while (tokens[next]?.value === '.' && tokens[next + 1]?.kind === 'word') {
+      if (NOT_REGISTERING.has(member.name)) continue;
+      for (let more = memberAt(next); more; more = memberAt(next)) {
         chained = true;
-        next += 2;
+        next = more.after;
       }
     }
-    if (tokens[next]?.value === '?' && tokens[next + 1]?.value === '.') {
+    if (punct(tokens[next], '?') && punct(tokens[next + 1], '.')) {
       // An optional call can be skipped, so the scan cannot say it registers a test.
-      const open = tokens[next + 2]?.value === '(' ? next + 2
-        : tokens[next + 2]?.kind === 'word' && tokens[next + 3]?.value === '(' ? next + 3 : -1;
+      const open = punct(tokens[next + 2], '(') ? next + 2
+        : word(tokens[next + 2]) && punct(tokens[next + 3], '(') ? next + 3 : -1;
       if (open !== -1) unknown(from, open);
       continue;
     }
-    if (tokens[next]?.value !== '(') continue;
-    if (namespaced || conflicted || chained || (member !== null && !REGISTERING_MEMBERS.has(member))) {
+    if (!punct(tokens[next], '(')) continue;
+    if (namespaced || conflicted || chained || (member && !REGISTERING_MEMBERS.has(member.name))) {
       unknown(from, next);
       continue;
     }
-    const { from: first, to } = firstArgument(tokens, next);
-    const title = to - first === 1 && tokens[first].kind === 'string' ? decoded(tokens[first].value) : null;
+    const { from: start, to } = firstArgument(tokens, next);
+    const title = to - start === 1 && tokens[start].kind === 'string' ? decoded(tokens[start].value) : null;
     if (title === null) unknown(from, next);
     else tests.push({ title, line: token.line });
   }
