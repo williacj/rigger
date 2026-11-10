@@ -483,7 +483,7 @@ test('through L2\'s facts call, an Owner card\'s markers are read at the card\'s
   const owner = { ...reviewerMarker(61, 611, sha), body: reviewerMarker(61, 611, sha).body.replace('role: reviewer\nprovider: claude', 'role: owner'), createdAt: '2026-10-01T11:05:00Z' };
   const card = cardIn(61, COLUMNS.owner);
 
-  assert.deepEqual(await answeredFromTheForge(card, opened([reviewer, owner]), OWNED), { action: 'merge', pull: 611, head: sha });
+  assert.deepEqual(await answeredFromTheForge(card, opened([reviewer, owner]), OWNED), { action: 'merge', pull: 611, head: sha, digest: 'e8328625667a5f466d3cae9f480e1f4b22b17b98d8d0736d99ad445226be38e5', verdicts: [{ role: 'reviewer', verdict: 'sound' }, { role: 'owner', verdict: 'sound' }] });
   const olderOwner = await answeredFromTheForge(card, opened([reviewer, atDigest(owner, OLD_DIGEST)]), OWNED);
   assert.equal(olderOwner.action, 'ignore', JSON.stringify(olderOwner));
   assert.deepEqual(await answeredFromTheForge(card, opened([atDigest(reviewer, OLD_DIGEST), owner]), OWNED), { action: 'move', to: 'review' });
