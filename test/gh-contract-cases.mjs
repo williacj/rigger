@@ -555,7 +555,12 @@ export const GH_CASES = [
     run: async (ask, target) => {
       const answer = await ask(['pr', 'view', String(FACTS.pull.number), '--repo', target.repo]);
       assert.equal(answer.status, 0, answer.stderr);
-      const [head] = answer.stdout.split('\n--\n');
+      // The header lines, one `--` separator, and the body (#1202's held one, measured with gh 2.98.0 on
+      // 2026-11-08). The body's form is tied, never its value: a merged pull request's body can still be edited.
+      const sections = answer.stdout.split('\n--\n');
+      assert.equal(sections.length, 2, `gh printed ${sections.length - 1} \`--\` separators, not one between the header and the body`);
+      const [head, body] = sections;
+      assert.notEqual(body.trim(), '', 'gh printed no body after the separator');
       const lines = head.split('\n').map((line) => line.split('\t'));
       assert.deepEqual(lines.map(([name]) => name), VIEW_LINES.map((name) => `${name}:`));
       // Each line is a name, one tab and a value, an empty one included: a line with no tab holds no value.

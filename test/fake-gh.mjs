@@ -1082,8 +1082,9 @@ const AGENT_COMMANDS = {
   // Where real gh can differ (D29 rule 12.5): as text, `author` is always `rigger-fake` and `labels`,
   // `assignees`, `reviewers`, `projects` and `milestone` blank; the contract ties the lines' names, and
   // the state, number and address.
-  // Where real gh can differ (D29 rule 12.5): the title and body, as text and as JSON, are the seed's; the
-  // contract ties their form.
+  // Where real gh can differ (D29 rule 12.5): the title and body, as text and as JSON, are the seed's. The
+  // contract ties their form, the text's one `--` separator and non-empty body included, and never their
+  // value, as a merged pull request's title and body can still be edited.
   view: async (board, state, args, _now, cwd) => {
     const { flags, words } = agentArgs(state, args);
     const fields = flags.json?.split(',').sort();
