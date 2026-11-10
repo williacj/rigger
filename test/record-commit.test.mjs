@@ -86,9 +86,9 @@ test('the script writes no commit, and removes a record already there, where a p
       writeFileSync(join(root, 'templates/template.txt'), 'changed\n');
       gitIn(root, 'add', 'templates/template.txt');
     },
-    deleted: (root) => rmSync(join(root, 'scripts/other.mjs')),
+    deleted: (root) => rmSync(join(root, 'src/module.mjs')),
     untracked: (root) => writeFileSync(join(root, 'src/new.mjs'), 'export const three = 3;\n'),
-    manifest: (root) => writeFileSync(join(root, 'package.json'), manifest.replace('"version": "0.0.0"', '"version": "0.0.1"')),
+    manifest: (root) => writeFileSync(join(root, 'package.json'), manifest.replace('"version": "0.1.0"', '"version": "0.1.1"')),
   };
   for (const [name, change] of Object.entries(changes)) {
     const root = packageAt();
@@ -147,4 +147,22 @@ test('where the script recorded a commit, the tarball npm pack makes holds src/p
   const held = execFileSync('tar', ['-xzOf', join(into, filename), `package/${RECORD}`], { encoding: 'utf8' });
 
   assert.equal(JSON.parse(held).commit, gitIn(root, 'rev-parse', 'HEAD').trim());
+});
+
+test('a file a files entry names exactly, committed and then deleted, removes the record', () => {
+  // `files` names each shipped script on its own (card #1342, Table P rows P4 to P6), and npm packs
+  // a named file that is missing without complaint, so the pack drops it and holds only the rest.
+  const root = packageAt();
+  const named = 'scripts/gate-check.mjs';
+  assert.ok(JSON.parse(manifest).files.includes(named), `the manifest names ${named} exactly`);
+  writeFileSync(join(root, named), 'export const gate = 1;\n');
+  gitIn(root, 'add', named);
+  gitIn(root, 'commit', '-qm', 'a file the manifest names');
+  record(root);
+  assert.equal(recorded(root), gitIn(root, 'rev-parse', 'HEAD').trim());
+  rmSync(join(root, named));
+
+  record(root);
+
+  assert.equal(recorded(root), null);
 });
