@@ -1,4 +1,4 @@
-// ABOUTME: Exercises the suite's launchctl stand-in and launchd's process-adapter wiring without the host job.
+// ABOUTME: Exercises the suite's launchctl stand-in, launchd's process-adapter wiring and, behind RIGGER_LIVE_LAUNCHD, the shipped job loaded under test labels.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,8 +9,7 @@ import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
 import { loadedJob } from '../src/substrate/launchd.mjs';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
-import { mkdirSync, realpathSync } from 'node:fs';
-import { open } from 'node:fs/promises';
+import { mkdir, open, realpath } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 
 test('the suite launchctl stand-in answers print with 113 and refuses every other operation', () => {
@@ -130,15 +129,15 @@ function plutilRead(path) {
  * exit in one record and holds until released, a repository, a home holding the log directory,
  * and the shipped template's plist rendered for each label asked for.
  */
-function launchdWorld(t) {
-  const root = realpathSync(temporaryDirectory('1341-launchd-'));
+async function launchdWorld(t) {
+  const root = await realpath(temporaryDirectory('1341-launchd-'));
   const home = join(root, 'home');
   const repository = join(root, 'repository');
   const record = join(root, 'record.jsonl');
   const fifo = join(root, 'hold');
   const rigger = join(root, 'rigger');
-  mkdirSync(join(home, 'Library', 'Logs', 'rigger'), { recursive: true });
-  mkdirSync(repository);
+  await mkdir(join(home, 'Library', 'Logs', 'rigger'), { recursive: true });
+  await mkdir(repository);
   writeFileSync(record, '');
   const made = spawnSync('/usr/bin/mkfifo', [fifo], { encoding: 'utf8' });
   assert.equal(made.status, 0, made.stderr);
@@ -276,7 +275,7 @@ async function releaseAndObserveSecondStart(t, world) {
 // Ordinary decision counterpart: test/launchd-template.test.mjs :: the shipped job relaunches after the selected interval
 // proves R-WORK-4
 test('L1 launchd starts the shipped job once while its instance runs across three StartInterval periods', { skip: launchdSkip, timeout: 120_000 }, async (t) => {
-  const world = launchdWorld(t);
+  const world = await launchdWorld(t);
   try {
     const first = await loadAndObserveFirstStart(t, world, [testLabel()] /* L1 labels */);
     await holdThreePeriods(t, world, first);
@@ -292,7 +291,7 @@ test('L1 launchd starts the shipped job once while its instance runs across thre
 // Ordinary decision counterpart: test/launchd-template.test.mjs :: the shipped job relaunches after the selected interval
 // proves R-WORK-4
 test('L2 launchd starts the shipped job again no earlier than its released instance exits', { skip: launchdSkip, timeout: 120_000 }, async (t) => {
-  const world = launchdWorld(t);
+  const world = await launchdWorld(t);
   try {
     const first = await loadAndObserveFirstStart(t, world, [testLabel()] /* L2 order labels */);
     await holdThreePeriods(t, world, first);
@@ -307,7 +306,7 @@ test('L2 launchd starts the shipped job again no earlier than its released insta
 // ThrottleInterval on the real clock.
 // Ordinary decision counterpart: test/launchd-template.test.mjs :: the shipped job relaunches after the selected interval
 test('L2 launchd starts the shipped job again within StartInterval plus 10 s of its instance\'s exit', { skip: launchdSkip, timeout: 120_000 }, async (t) => {
-  const world = launchdWorld(t);
+  const world = await launchdWorld(t);
   try {
     const first = await loadAndObserveFirstStart(t, world, [testLabel()] /* L2 bound labels */);
     await holdThreePeriods(t, world, first);
@@ -322,7 +321,7 @@ test('L2 launchd starts the shipped job again within StartInterval plus 10 s of 
 // Ordinary decision counterpart: test/launchd-template.test.mjs :: the shipped LaunchAgent has the fixed label
 // proves R-WORK-4
 test('L3 a second bootstrap of the loaded shipped job is refused', { skip: launchdSkip, timeout: 120_000 }, async (t) => {
-  const world = launchdWorld(t);
+  const world = await launchdWorld(t);
   try {
     const label = testLabel();
     await loadAndObserveFirstStart(t, world, [label]);
@@ -338,7 +337,7 @@ test('L3 a second bootstrap of the loaded shipped job is refused', { skip: launc
 // bootstrap might cause.
 // Ordinary decision counterpart: test/launchd-template.test.mjs :: the shipped LaunchAgent has the fixed label
 test('L3 after a refused second bootstrap the shipped job still has one running instance', { skip: launchdSkip, timeout: 120_000 }, async (t) => {
-  const world = launchdWorld(t);
+  const world = await launchdWorld(t);
   try {
     const label = testLabel();
     const first = await loadAndObserveFirstStart(t, world, [label]);
