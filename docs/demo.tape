@@ -1,7 +1,8 @@
 # ABOUTME: The demo tape: `rigger once` claiming a card from a fake board, in a world
 # test/demo-world.sh builds outside the checkout, making and provisioning the card's workspace,
-# dispatching its maker, a stand-in that opens no pull request, and exiting non-zero naming that
-# outcome and the workspace. Run from the checkout root as `vhs docs/demo.tape`; CI does.
+# dispatching its maker, a stand-in that opens no pull request, so Rigger escalates the card, and
+# exiting non-zero naming that escalation and the workspace. Run from the checkout root as
+# `vhs docs/demo.tape`; CI does.
 
 Output docs/demo.gif
 # The screen as the recording ends, as text: what CI reads the claim, the message and the exit from.

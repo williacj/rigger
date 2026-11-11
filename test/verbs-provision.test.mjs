@@ -287,7 +287,7 @@ test('given that world, rigger once prints a line naming the card, its workspace
   const line = ran.err.split('\n').find((held) => /#10\b/.test(held));
   assert.ok(line, ran.said);
   assert.ok(line.includes(derived(here, 10)), line);
-  assert.match(line, /; its maker exited 0 and opened no pull request from rigger-10, in its workspace, /, line);
+  assert.match(line, /; Rigger escalated it as ambiguous: card #10's maker started its work from the beginning and exited 0, and the forge holds no open pull request from its line of work rigger-10, in its workspace, /, line);
 });
 
 test('given that world, rigger once exits non-zero', (t) => {
@@ -612,7 +612,7 @@ test('given that world, rigger run prints a line for each claimed card naming th
     const line = ran.err.split('\n').find((held) => new RegExp(`^rigger run: claimed #${number} from board 3\\b`).test(held));
     assert.ok(line, ran.said);
     assert.ok(line.includes(derived(here, number)), line);
-    assert.match(line, new RegExp(`; its maker exited 0 and opened no pull request from rigger-${number}, in its workspace, `), line);
+    assert.match(line, new RegExp(`; Rigger escalated it as ambiguous: card #${number}'s maker started its work from the beginning and exited 0, and the forge holds no open pull request from its line of work rigger-${number}, in its workspace, `), line);
   }
 });
 
@@ -695,7 +695,7 @@ test('given a pull claiming #10, #20 and #30, where #20\'s required step exits n
 
   const line = claimedLine(ran.err, 10, ran.said);
   assert.ok(line.includes(derived(here, 10)), line);
-  assert.match(line, /; its maker exited 0 and opened no pull request from rigger-10, in its workspace, /, line);
+  assert.match(line, /; Rigger escalated it as ambiguous: card #10's maker started its work from the beginning and exited 0, and the forge holds no open pull request from its line of work rigger-10, in its workspace, /, line);
 });
 
 test('given that world, rigger run prints a line for #30 naming its workspace\'s path and its maker\'s outcome', (t) => {
@@ -705,7 +705,7 @@ test('given that world, rigger run prints a line for #30 naming its workspace\'s
 
   const line = claimedLine(ran.err, 30, ran.said);
   assert.ok(line.includes(derived(here, 30)), line);
-  assert.match(line, /; its maker exited 0 and opened no pull request from rigger-30, in its workspace, /, line);
+  assert.match(line, /; Rigger escalated it as ambiguous: card #30's maker started its work from the beginning and exited 0, and the forge holds no open pull request from its line of work rigger-30, in its workspace, /, line);
 });
 
 test('given that world, rigger run prints #20\'s two attempts\' failures, each naming the step and its exit code', (t) => {
@@ -727,7 +727,8 @@ test('given that world, rigger run prints each claimed card\'s line, or its fail
   const lines = ran.err.split('\n');
   for (const number of [10, 30]) {
     assert.equal(lines.filter((held) => held.startsWith(`rigger run: claimed #${number} `)).length, 1, ran.said);
-    assert.equal(lines.filter((held) => new RegExp(`#${number}\\b`).test(held)).length, 1, ran.said);
+    assert.equal(lines.filter((held) => new RegExp(`#${number}\\b`).test(held) && !held.startsWith(`rigger run: card #${number}'s escalation `)).length, 1, ran.said);
+    assert.equal(lines.filter((held) => held.startsWith(`rigger run: card #${number}'s escalation `)).length, 1, ran.said);
   }
   assert.equal(lines.filter((held) => held.startsWith('rigger run: card #20 was held')).length, 1, ran.said);
   assert.equal(lines.filter((held) => /#20\b/.test(held) && !held.startsWith('rigger run: admission is closed by hold: ')).length, 1, ran.said);

@@ -318,7 +318,7 @@ test('the installed rigger once, run against a fixture repository and a fake boa
   const ran = spawnSync(rigger, ['once'], { cwd: fixture, encoding: 'utf8', env: { ...gitEnvironment(), PATH: `${join(directory, 'fake')}:${path}` } });
 
   const said = `exited ${ran.status}: ${ran.stdout}${ran.stderr}`;
-  const workspace = ran.stderr.match(/^rigger once: claimed #10 from board 3; its maker exited 0 and opened no pull request from rigger-10, in its workspace, (\/.*)$/m)?.[1];
+  const workspace = ran.stderr.match(/^rigger once: claimed #10 from board 3; Rigger escalated it as ambiguous: card #10's maker started its work from the beginning and exited 0, and the forge holds no open pull request from its line of work rigger-10, in its workspace, (\/.*)$/m)?.[1];
   assert.ok(workspace && existsSync(workspace), said);
   const outside = (tree) => !`${realpathSync(workspace)}/`.startsWith(`${realpathSync(tree)}/`);
   assert.ok(outside(fixture), `${workspace} lies inside the fixture's checkout, ${fixture}`);

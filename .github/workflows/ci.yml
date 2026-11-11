@@ -1010,7 +1010,7 @@ jobs:
       - run: test -s docs/demo.gif
       # Double-quoted for YAML, whose plain scalars can carry neither `: ` nor ` #`.
       # The screen wraps at the tape's width, so the pattern ends where the line fits its first row.
-      - run: "grep -E '^rigger once: claimed #[0-9]+ from board [0-9]+; its maker exited 0 and opened no pull request from rigger-[0-9]+,' docs/demo.txt"
+      - run: "grep -E '^rigger once: claimed #[0-9]+ from board [0-9]+; Rigger escalated it as ambiguous: card #[0-9]+' docs/demo.txt"
       # The status is the line after the last `echo exit $?` the tape typed, which comes after
       # anything the verb printed, so no line of its output can stand in for it.
       - run: awk '$0 == "> echo exit $?" { getline status } END { exit status !~ /^exit [1-9][0-9]*$/ }' docs/demo.txt
