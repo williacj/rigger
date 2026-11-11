@@ -9,7 +9,7 @@ decision proposed and not yet ratified lives in its pull request, never here.
 reasoning.
 
 The owner ratifies a proposed decision by writing a sound owner marker on its pull request, and
-the entry binds from that pull request's merge (`D25` rule 4). A proposal is therefore written as
+the entry binds from that pull request's merge (`D35` rule 4). A proposal is therefore written as
 it will read once ratified, and the pull request body is what says it is a proposal.
 
 Rigger allocates its own `D#` numbers here. One id names one decision. An id is never reused, and
@@ -953,7 +953,7 @@ The owner ruled rule 2 in U1 Q1 on #740, and rule 1's exception in U4.7 on #740.
 
 | Deferred | Returns when |
 |---|---|
-| A dedicated OS user, and a credential separate from the owner's, for the job. Under rule 1 the job runs as the owner's own user, with the owner's sign-ins. | `D25` rule 2 is reversed. |
+| A dedicated OS user, and a credential separate from the owner's, for the job. Under rule 1 the job runs as the owner's own user, with the owner's sign-ins. | `D35` rule 2 is reversed. |
 
 ### Notes
 
@@ -964,7 +964,7 @@ ruled the deferred row in U1 Q8 on #740, and that "across a reboot" means the ow
 in U1 Q5.
 
 Rule 1 keeps the job on the owner's account, the account Rigger's sessions already act through
-(`D25` rule 3). Under a LaunchAgent with `PATH` set, `gh`, `claude` and `codex` each reported the
+(`D35` rule 3). Under a LaunchAgent with `PATH` set, `gh`, `claude` and `codex` each reported the
 owner signed in (Q-g to Q-i). A daemon runs outside the owner's login, so it would need a user and
 sign-ins of its own, which the deferred row defers. That is a judgment: the spike ran no daemon,
 because Q-p was out of its scope.
@@ -1045,7 +1045,7 @@ The split follows a line the code already draws. L0 owns the process model (`ARC
 
 Rule 2 admits `git` and `tar`, because each answers one input the same way under any load. That is a judgment, not a measurement. Git is also the authority on the repository facts Rigger reads (`D16` rule 1), and a fake git would be a copy of that authority that nothing ties back. Rule 3's restricted `PATH` keeps a hook from running a suite inside a deterministic test, as `test/command-gate-hook.test.mjs` does at `96a4caf`. Its isolated configuration keeps a host's own helpers, such as a credential helper named by absolute path, out of the tier's answers. Rule 3's runner sees only what the test file's own process does through `node:child_process` and its signals. A hook or helper a test itself configures by absolute path still runs. So does a process started by a child of the test's process, or through `worker_threads`, `node:cluster` or `process.binding`, and so does a helper module under `test/` that `node --test` runs as a file of its own. The bounds still bind those routes, and the judges read for them.
 
-Rule 7 follows the staged CI policy approved in #921 and ratified through #906. Its required aggregate checks current-source evidence; a deferred broad profile is not host success. A card's own proof obligations remain independently binding. Rule 8 gives a red default branch an owner and adds no merge bar. Who may merge once checks are green stays `D25` rule 5's. A Self-hosting fix is never dispatched by the engine (`D25` rule 5), so priority orders only its dispatch by hand.
+Rule 7 follows the staged CI policy approved in #921 and ratified through #906. Its required aggregate checks current-source evidence; a deferred broad profile is not host success. A card's own proof obligations remain independently binding. Rule 8 gives a red default branch an owner and adds no merge bar. Who may merge once checks are green stays `D35` rule 5's. A Self-hosting fix is never dispatched by the engine (`D35` rule 5), so priority orders only its dispatch by hand.
 
 Rule 9 promises only what a test can tie. A scripted fault, such as `EPERM` or a read that times out, cannot be asked of the real operating system on demand. Nor can an interleaving, such as a group still non-empty at the census after its kill. An in-process stand-in's answer is a copy rule 9 does not tie. It copies what the fake `gh` and the stand-in agent answered as processes before the split, and no rule tied those to the real programs either.
 
@@ -1121,7 +1121,7 @@ One observation would reverse it: across a milestone, no entry leaves either lis
    selecting that runner.
 5. A job from a same-repository branch runs as the owner's user, with the owner's sign-ins, on the
    self-hosted runner. Rigger accepts that, because only the owner and the owner's agents write
-   branches here, and agents already hold the owner's token (`D25` rule 3).
+   branches here, and agents already hold the owner's token (`D35` rule 3).
 
 ### Deferred, and what returns it
 

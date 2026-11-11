@@ -1,10 +1,12 @@
 // ABOUTME: Checks the gate import closure for its supported import forms.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { measure, main } from '../.github/scripts/gate-closure.mjs';
+import { gitIn } from './git-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -115,4 +117,34 @@ test('literal file imports use Node URL decoding and follow absolute paths and f
   const result = measure(root, ['entry.mjs']);
   assert.deepEqual(result.paths, ['absolute.mjs', 'entry.mjs', 'special #\n.mjs', 'url.mjs']);
   assert.deepEqual(result.bare, []);
+});
+
+/** The commit `.github/workflows/self-hosting.yml` pins for the check's code, as its env names it. */
+function checkPin() {
+  const workflow = readFileSync(join(ROOT, '.github/workflows/self-hosting.yml'), 'utf8');
+  const pins = [...workflow.matchAll(/^ {2}SELF_HOSTING_COMMIT: '([0-9a-f]{40})'$/gm)].map((match) => match[1]);
+  assert.equal(pins.length, 1, `one SELF_HOSTING_COMMIT pin, found ${pins.length}`);
+  return pins[0];
+}
+
+// A pin the default branch does not reach, such as a squash-merged pull request's own head
+// commit, still fetches through codeload (D35 rule 6's reversal names such a move).
+test('the self-hosting check pins a commit HEAD reaches', () => {
+  const pin = checkPin();
+  assert.equal(gitIn(ROOT, 'merge-base', pin, 'HEAD').trim(), pin, `${pin} is no ancestor of HEAD`);
+});
+
+// The check runs the pinned tree with no install, so a package or CommonJS call there fails live.
+test('the closure the self-hosting check runs at its pin has only the named config import', () => {
+  const pin = checkPin();
+  const scratch = temporaryDirectory('rigger-gate-closure-pin-');
+  const archive = join(scratch, 'pin.tar');
+  const tree = join(scratch, 'tree');
+  mkdirSync(tree);
+  gitIn(ROOT, 'archive', '--output', archive, pin);
+  execFileSync('tar', ['-xf', archive, '-C', tree]);
+  const result = measure(tree, ['.github/scripts/self-hosting-check.mjs']);
+  assert.deepEqual(result.bare, []);
+  assert.deepEqual(result.commonjs, []);
+  assert.deepEqual(result.computed, [{ file: 'src/cli/doctor.mjs', call: 'import(pathToFileURL(path))' }]);
 });

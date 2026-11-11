@@ -56,7 +56,7 @@ const isContent = (content) => typeof content === 'object' && content !== null &
  * One printable line for `thrown`, whatever value was thrown, never itself a throw: an Error's
  * message, a string, a Symbol's description, or the value's own string, and otherwise the kind of
  * value thrown. It stands apart from `causeOf` in `src/workflow/status-issue.mjs` because this
- * module is in the gate's import closure (`AGENTS.md`, "Self-hosting"), which that one is not.
+ * module is in the gate's import closure (as `.github/scripts/gate-closure.mjs` measures it), which that one is not.
  */
 const printable = (thrown) => {
   try {

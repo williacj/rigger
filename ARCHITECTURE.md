@@ -842,7 +842,7 @@ verdict, naming why.
 
 The verb asks for its confirmation only on a terminal at its standard input, and reads the answer
 there. No process L0 starts has a terminal at its standard input. A process under one that opens a
-terminal of its own can still confirm, which `D25` rule 2 accepts.
+terminal of its own can still confirm, which `D35` rule 2 accepts.
 
 ### The required check on the forge
 
@@ -956,7 +956,7 @@ where it is.
 - A card's maker provider changed by relabelling, or a label that does not match the maker a
   person dispatched.
 
-The App design's named residual, and what reverses the design, are `D25` rule 3's.
+The App design's named residual, and what reverses the design, are `D35` rule 3's.
 
 The forge check carries three residuals of its own:
 
@@ -1013,7 +1013,7 @@ the owner's token is the same residual a marker carries ("What the gate cannot t
 a note can halt a card. Where a maker's `ambiguous` may go to a role, it can also dispatch that
 role, which may change the acceptance, and the card's judges then rule again. L2 ignores an edited
 note, because the forge answers only a comment's current body and keeps no first version to read.
-That keeps each note as its writer wrote it, as `D25` rule 2 keeps each verdict. Of the notes the
+That keeps each note as its writer wrote it, as `D35` rule 2 keeps each verdict. Of the notes the
 filters below leave, L2 reads the earliest in the read's oldest-first order, and keeps the forge's
 order between notes that tie. A maker writes one note and ends, so the earliest is the one written
 when it stopped. The event record showing escalations lost to a maker editing its note, or makers
