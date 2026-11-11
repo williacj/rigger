@@ -556,7 +556,7 @@ function standingRuling({ role, verdict, toSound, unmet }) {
  */
 function deliveredNothing(card, line, held, { dispatch, tip, tipUnread, workspace }) {
   return ownerEscalation({}, {
-    category: 'ambiguous', line, ...(dispatch === undefined ? {} : { dispatch }),
+    category: 'ambiguous', dispatch, line,
     reason: `card #${card.number}'s maker started its work from the beginning and exited 0, and ${held}`,
     ...(workspace === undefined ? {} : { workspace, ...(tipUnread === undefined ? { tip } : { tipUnread: tipUnread.message }) }),
   });

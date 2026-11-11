@@ -62,9 +62,9 @@ test('maker settle without a dispatch omits the dispatch key on failed and withh
   const failed = eventWorld();
   await failed.l2.settled(CARD, { status: 'rejected', reason: Object.assign(new Error('adapter refused'), { code: 'NOT_STARTED' }) });
   const withheld = eventWorld();
-  assert.equal(Object.hasOwn(await withheld.l2.settled(CARD, EXITED), 'dispatch'), false);
-  const events = failed.events();
-  assert.deepEqual(events.map((event) => event.event), ['maker.failed']);
+  await assert.rejects(withheld.l2.settled(CARD, EXITED, { expectedHead: 'b'.repeat(40) }), { code: 'REVIEW_WITHHELD' });
+  const events = [...failed.events(), ...withheld.events()];
+  assert.deepEqual(events.map((event) => event.event), ['maker.failed', 'review.withheld']);
   for (const event of events) {
     assert.equal(event.card, 12);
     assert.equal(Object.hasOwn(event, 'dispatch'), false);

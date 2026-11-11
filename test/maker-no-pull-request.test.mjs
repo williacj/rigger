@@ -9,7 +9,9 @@ import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
 
 import { createFakeBoard } from './fake-board.mjs';
-import { optionalWorld } from './optional-config-world.mjs';
+import { optionalRun, optionalWorld } from './optional-config-world.mjs';
+import { minimalConfig } from './optional-config.mjs';
+import { START } from './clock-report-world.mjs';
 import { postedNote } from './escalation-world.mjs';
 import { markerComment } from './fake-repository.mjs';
 import { gitIn } from './git-repository.mjs';
@@ -23,9 +25,10 @@ const LINE = `rigger-${CARD}`;
  * Card 10 in Ready over the minimal config, its maker acting as `engineer` says (an act the
  * stand-in agent takes) after `beforeMaker({ world, cwd })` has run in its workspace.
  */
-function makerWorld(t, { engineer = {}, beforeMaker = () => {}, column = 'Ready' } = {}) {
+function makerWorld(t, { engineer = {}, beforeMaker = () => {}, column = 'Ready', settings } = {}) {
   let world;
   world = optionalWorld(t, 'minimal', {
+    ...(settings === undefined ? {} : { settings }),
     items: [card(CARD, column)],
     plan: { [CARD]: { engineer } },
     beforeAgent: async (request) => { await beforeMaker({ world, cwd: request.cwd }); },
@@ -377,11 +380,15 @@ test('the verb\'s hand-over line for an R-LOOP-20 escalation names Rigger as rai
 
 // proves R-LOOP-23
 test('a fresh maker that exits non-zero with nothing of its line of work on the forge is not escalated under R-LOOP-21, and is set aside under R-LOOP-19', async (t) => {
-  const world = makerWorld(t, { engineer: { exit: 3 } });
+  // A clock-held run, its one trigger an hour away, so its slot release fires a later pull in the same invocation.
+  const settings = { ...minimalConfig(), clock: { poll: 1000, triggers: { report: { interval: 3_600_000, anchor: new Date(START + 3_600_000).toISOString(), catchUp: 'skip', job: 'report' } } } };
+  const world = makerWorld(t, { engineer: { exit: 3 }, settings });
 
-  await world.start();
+  await world.start(optionalRun, { stopAtDrain: true });
 
-  assert.equal(makersRan(world), 1);
+  const pulls = world.events().filter(({ event, trigger }) => event === 'trigger' && trigger === 'pull');
+  assert.ok(pulls.length >= 2, `a later pull ran in the invocation: ${pulls.length}`);
+  assert.equal(makersRan(world), 1, 'the later pull dispatched no maker for the set-aside card');
   assert.equal((await cardOf(world)).column, 'Coding');
   assert.equal(world.events().some(({ event }) => event === 'review.escalate' || event === 'review.withheld'), false);
 });
