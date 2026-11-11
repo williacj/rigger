@@ -116,6 +116,87 @@ export function openSink({ directory, run, now }) {
   return { emitter, name, end };
 }
 
+/** The envelope checked at L5's read boundary, before any derivation receives the event. */
+function checkEventEnvelope(event) {
+  const describe = (value) => {
+    const maximumDepth = 4;
+    const maximumLength = 256;
+    const elision = '…';
+    // Quote only a bounded string, never an entire input object or an unbounded key/value.
+    const quote = (text) => JSON.stringify(text.slice(0, maximumLength));
+    function* members(container) {
+      if (Array.isArray(container)) {
+        for (let index = 0; index < container.length; index += 1) yield [undefined, container[index]];
+      } else {
+        for (const key in container) if (Object.hasOwn(container, key)) yield [key, container[key]];
+      }
+    }
+    const pending = [{ value, depth: 0 }];
+    let shown = '';
+    while (pending.length > 0 && shown.length < maximumLength) {
+      const part = pending.pop();
+      if (typeof part === 'string') {
+        shown += part;
+      } else if (part.iterator) {
+        const next = part.iterator.next();
+        if (next.done) {
+          shown += part.close;
+          continue;
+        }
+        if (!part.first) shown += ',';
+        part.first = false;
+        pending.push(part);
+        const [key, member] = next.value;
+        pending.push({ value: member, depth: part.depth });
+        if (key !== undefined) pending.push(`${quote(key)}:`);
+      } else {
+        const { value, depth } = part;
+        if (value !== null && typeof value === 'object') {
+          if (depth >= maximumDepth) {
+            shown += elision;
+            continue;
+          }
+          const array = Array.isArray(value);
+          shown += array ? '[' : '{';
+          pending.push({ iterator: members(value), first: true, depth: depth + 1, close: array ? ']' : '}' });
+        } else if (typeof value === 'string') {
+          shown += quote(value);
+        } else if (typeof value === 'number') {
+          shown += Object.is(value, -0) ? '-0' : String(value);
+        } else {
+          shown += JSON.stringify(value) ?? 'missing';
+        }
+      }
+    }
+    return pending.length > 0 || shown.length > maximumLength ? shown.slice(0, maximumLength - elision.length) + elision : shown;
+  };
+  if (event === null || typeof event !== 'object' || Array.isArray(event)) {
+    throw new Error(`its envelope is ${describe(event)}, not a plain object`);
+  }
+  const refuse = (field, contract) => {
+    throw new Error(`its \`${field}\` is ${describe(event[field])}, not ${contract}`);
+  };
+  const ts = event.ts;
+  if (typeof ts !== 'string' || !Number.isFinite(Date.parse(ts)) || new Date(ts).toISOString() !== ts) {
+    refuse('ts', 'an instant in UTC');
+  }
+  for (const field of ['run', 'event']) {
+    if (typeof event[field] !== 'string' || event[field] === '') {
+      refuse(field, 'a non-empty string');
+    }
+  }
+  if (!['L0', 'L1', 'L2', 'L3', 'L4', 'L5', 'L6'].includes(event.layer)) {
+    refuse('layer', 'L0 through L6');
+  }
+  if (Object.hasOwn(event, 'card') && !(Number.isSafeInteger(event.card) && event.card > 0)) {
+    refuse('card', 'a safe integer above zero');
+  }
+  if (Object.hasOwn(event, 'dispatch') && event.dispatch !== null && (typeof event.dispatch !== 'string' || event.dispatch === '')) {
+    refuse('dispatch', 'null or a non-empty string');
+  }
+  return event;
+}
+
 /**
  * Every event in a state directory's stream, in the order it was recorded.
  *
@@ -133,7 +214,7 @@ export function readEvents(directory) {
     const line = stream.toString('utf8', start, end);
     start = end + 1;
     try {
-      events.push(JSON.parse(line));
+      events.push(checkEventEnvelope(JSON.parse(line)));
     } catch (cause) {
       throw new Error(`${path} line ${index + 1} is not a recorded event`, { cause });
     }
