@@ -1,4 +1,7 @@
 // ABOUTME: Proves the matrix generator's native suite-list launch, exit, signal, deadline and output limits.
+import { traceFile } from './file-trace.mjs';
+traceFile('test/build-test-matrix-host.test.mjs');
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -20,6 +23,104 @@ import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 const { 20_000: SETTLES_WITHIN } = BOUNDS;
 const generator = fileURLToPath(new URL('../scripts/build-test-matrix.mjs', import.meta.url));
 const original = Buffer.from('preserve these matrix bytes\n');
+
+// Native cancellation can precede test hooks; explicit process exit can bypass after hooks.
+// Host reason: wiring; the native npm child must end within the existing bound and exposes Node's hook lifecycle.
+// Rigger decision: test/file-trace.test.mjs — the exit trace reports code duration and completed counts without changing process state or hooks.
+test('native file trace keeps Node counts when hooks are bypassed', SETTLES_WITHIN, (t) => {
+  for (const mode of ['aborted', 'pending', 'exit']) {
+    const pending = mode === 'pending';
+    const exiting = mode === 'exit';
+    const root = temporaryDirectory('rigger-trace-cancel-', { context: t });
+    const file = join(root, 'cancelled.test.mjs');
+    const hook = join(root, 'hook.called');
+    const body = join(root, 'body.called');
+    const queued = join(root, 'queued.called');
+    const passed = join(root, 'passed.called');
+    const after = join(root, 'after.called');
+    const output = join(root, 'runner.log');
+    const source = [
+      '// ABOUTME: Exercises native Node cancellation and abrupt exit.',
+      "import { test, beforeEach, after } from 'node:test';",
+      "import { writeFileSync } from 'node:fs';",
+      `import { traceFile } from ${JSON.stringify(new URL('./file-trace.mjs', import.meta.url).href)};`,
+      `traceFile(${JSON.stringify(file)});`,
+      `beforeEach((context) => writeFileSync(${JSON.stringify(hook)}, context.name));`,
+      `after(() => writeFileSync(${JSON.stringify(after)}, 'called'));`,
+      ...(exiting ? [
+        'let first;',
+        "beforeEach((context) => { if (context.name === 'passing') first = context; });",
+        `test('passing', () => writeFileSync(${JSON.stringify(body)}, 'called'));`,
+        `test('exit', () => { writeFileSync(${JSON.stringify(passed)}, String(first.passed)); process.exit(17); });`,
+      ] : pending ? [
+        'const controller = new AbortController();',
+        "test('container', { concurrency: 1, signal: controller.signal }, async (t) => {",
+        `  const running = t.test('pending', () => { writeFileSync(${JSON.stringify(body)}, 'called'); controller.abort(); return new Promise(() => {}); });`,
+        `  const queued = t.test('queued', () => writeFileSync(${JSON.stringify(queued)}, 'called'));`,
+        '  await Promise.all([running, queued]);',
+        '});',
+      ] : [`test('cancelled before hooks', { signal: AbortSignal.abort() }, () => writeFileSync(${JSON.stringify(body)}, 'called'));`]),
+    ].join('\n') + '\n';
+    writeFileSync(file, source);
+    const reporter = fileURLToPath(new URL('../scripts/mutation-receipt.mjs', import.meta.url));
+    const command = ['npm', 'test', '--', `--test-reporter=${reporter}`, file];
+    const script = [
+      'sh -c \'printf "NPM_CHILD_PID=%s\\n" "$$"; exec "$@"\' trace-npm "$@" 2>&1 | tee "$TRACE_RUN_LOG"',
+      'statuses=("${PIPESTATUS[@]}")',
+      'printf "NPM_CHILD_EXIT=%s\\nTEE_EXIT=%s\\n" "${statuses[0]}" "${statuses[1]}" >&2',
+      'exit "${statuses[0]}"',
+    ].join('\n');
+    const { NODE_TEST_CONTEXT, ...env } = process.env;
+    const result = spawnSync('bash', ['-o', 'pipefail', '-c', script, 'trace-child', ...command], {
+      cwd: fileURLToPath(new URL('../', import.meta.url)),
+      env: { ...env, TRACE_RUN_LOG: output }, timeout: SETTLES_WITHIN.timeout,
+    });
+    const bytes = existsSync(output) ? readFileSync(output) : Buffer.alloc(0);
+    t.diagnostic(JSON.stringify({ nativeTraceCancellation: true, mode, command, source,
+      pid: result.pid, status: result.status, signal: result.signal,
+      outputBase64: bytes.toString('base64'), stderrBase64: result.stderr.toString('base64'),
+      witnesses: Object.fromEntries([hook, body, queued, passed, after].map((path) =>
+        [path, existsSync(path) ? readFileSync(path).toString('base64') : null])),
+      helperSHA256: createHash('sha256').update(readFileSync(new URL('./file-trace.mjs', import.meta.url))).digest('hex') }));
+    assert.equal(result.error, undefined);
+    assert.equal(result.signal, null);
+    assert.equal(result.status, 1);
+    assert.match(result.stderr.toString(), /^NPM_CHILD_EXIT=1\nTEE_EXIT=0\n$/);
+    assert.deepEqual(result.stdout, bytes, 'tee retained the complete child output');
+    assert.match(bytes.toString('utf8'), /^NPM_CHILD_PID=[1-9]\d*\n/, 'the child pid was recorded before npm started');
+    const events = bytes.toString('utf8').split('\n').filter((line) => line.startsWith('@@proof '))
+      .map((line) => JSON.parse(line.slice(8)));
+    const summary = events.find((event) => event.type === 'test:summary' && event.data.file === file);
+    if (!exiting) assert.equal(summary?.data.counts.cancelled, pending ? 3 : 1, 'the native runner cancelled the declared tests');
+    assert.equal(existsSync(hook), pending || exiting, 'hooks only ran for tests that entered');
+    if (pending || exiting) assert.equal(readFileSync(hook, 'utf8'), exiting ? 'exit' : 'pending', 'the last entered hook is known');
+    assert.equal(existsSync(body), pending || exiting, 'the known running body entered');
+    assert.equal(existsSync(queued), false, 'the queued body never ran');
+    assert.equal(existsSync(after), !exiting, 'explicit process exit bypassed the global after hook');
+    const lines = events.filter((event) => event.type === 'test:stdout').flatMap((event) => event.data.message.split('\n'));
+    const line = lines.find((line) => line.startsWith('RIGGER_TEST_EXIT '));
+    assert.ok(line, 'the native worker emitted its exit trace');
+    const trace = JSON.parse(line.slice('RIGGER_TEST_EXIT '.length));
+    assert.deepEqual(Object.keys(trace).sort(), ['cancelled', 'duration', 'exitCode', 'failed', 'name', 'passed', 'time']);
+    if (pending) {
+      const finishes = lines.filter((line) => line.startsWith('RIGGER_TEST_FINISH '))
+        .map((line) => JSON.parse(line.slice('RIGGER_TEST_FINISH '.length)));
+      assert.deepEqual(finishes.map(({ name, outcome }) => [name, outcome]), [['container', 'cancelled']],
+        'the running top-level test finishes with its native cancellation outcome');
+    }
+    if (exiting) {
+      assert.equal(trace.exitCode, 17, 'the trace preserves the explicit native process exit');
+      assert.equal(readFileSync(passed, 'utf8'), 'true',
+        'Node independently finalized the completed passing context before process exit');
+      assert.deepEqual([trace.passed, trace.failed, trace.cancelled], [1, 0, 0],
+        'completed counts survive an exit that bypasses the global after hook');
+    } else {
+      assert.deepEqual([trace.passed, trace.failed, trace.cancelled],
+        [summary.data.counts.passed, summary.data.counts.failed, summary.data.counts.cancelled],
+        'the trace includes cancellations that never supplied hook contexts');
+    }
+  }
+});
 
 function replyComplete(path) {
   return existsSync(path) && readFileSync(path, 'utf8') === 'survived';
