@@ -2,6 +2,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { basename, relative, resolve } from 'node:path';
 import { plan } from '../src/cli/init.mjs';
 
 const CONDITIONED = /\bwhere the repository defines it\b/i;
@@ -33,7 +34,7 @@ function assertConditionedPaths(files) {
   const missing = files.flatMap(({ path, content }) => passagesOf(content).flatMap((passage) =>
     [...passage.matchAll(/`([^`]+)`/g)]
       .map(([, span]) => span.trim())
-      .filter((span) => MEMBER.test(span) && !CONDITIONED.test(passage))
+      .filter((span) => MEMBER.test(relative(process.cwd(), resolve(span))) && !CONDITIONED.test(passage))
       .map((span) => `${path}: ${span}`)));
   assert.deepEqual(missing, [], 'forked repository implementation paths must sit in conditioned passages');
 }
@@ -49,17 +50,34 @@ test('every repository implementation path init forks sits in a conditioned pass
 test('the forked-path check rejects unconditioned members in each passage form', () => {
   const forked = consumerFiles().find(({ path }) => path.startsWith('.claude/skills/'));
   assert.ok(forked, 'init must plan the skill used by this counterexample');
-  const contexts = [
-    ['Where the repository defines it, read `scripts/conditioned.mjs`.', '',
-      'Read `scripts/consumer-check.mjs` before handing off.'],
-    ['- Where the repository defines it, read `test/conditioned.mjs`.',
-      '- Read `test/consumer-check.mjs` before handing off.'],
-    ['| Where the repository defines it, read `docs/journal/conditioned.md`. |',
-      '| Read `docs/journal/consumer-note.md` before handing off. |'],
-    ['Read `docs/v0-build-plan.md` before handing off.'],
+  const repository = basename(process.cwd());
+  const matrix = [
+    ['plain', ['scripts/consumer-check.mjs', 'test/consumer-check.mjs',
+      'docs/journal/consumer-note.md', 'docs/v0-build-plan.md']],
+    ['./ prefix', ['./scripts/consumer-check.mjs', './test/consumer-check.mjs',
+      './docs/journal/consumer-note.md', './docs/v0-build-plan.md']],
+    ['../ return', [`../${repository}/scripts/consumer-check.mjs`,
+      `../${repository}/test/consumer-check.mjs`, `../${repository}/docs/journal/consumer-note.md`,
+      `../${repository}/docs/v0-build-plan.md`]],
+    ['repeated slashes', ['scripts//consumer-check.mjs', 'test//consumer-check.mjs',
+      'docs//journal//consumer-note.md', 'docs//v0-build-plan.md']],
+    ['subdirectory slash', ['scripts/generated/', 'test/fixtures/', 'docs/journal/notes/']],
   ];
-  for (const lines of contexts) {
-    assert.throws(() => assertConditionedPaths([{ ...forked, content: lines.join('\n') }]));
+  for (const [spelling, spans] of matrix) {
+    for (const span of spans) {
+      const contexts = [
+        ['Where the repository defines it, read `scripts/conditioned.mjs`.', '',
+          `Read \`${span}\` before handing off.`],
+        ['- Where the repository defines it, read `test/conditioned.mjs`.',
+          `- Read \`${span}\` before handing off.`],
+        ['| Where the repository defines it, read `docs/journal/conditioned.md`. |',
+          `| Read \`${span}\` before handing off. |`],
+      ];
+      for (const lines of contexts) {
+        assert.throws(() => assertConditionedPaths([{ ...forked, content: lines.join('\n') }]),
+          undefined, `${spelling}: ${span}: ${lines.at(-1)}`);
+      }
+    }
   }
   assert.doesNotThrow(() => assertConditionedPaths([{ ...forked, content: [
     'Where the repository defines it, read `scripts/conditioned.mjs`, `test/conditioned.mjs` and',
