@@ -249,10 +249,10 @@ function skillsIn(answer) {
  * run. A Codex release that drops the command or changes its answer, or a documented switch that
  * turns off the user's and the bundled skill roots, replaces the probe.
  */
-async function probed({ directory, home, emitter, timeout }) {
+async function probed({ directory, home, emitter, timeout, host }) {
   const args = ['-C', directory, ...WITHHELD, 'debug', 'prompt-input'];
   const spelled = `\`codex ${args.join(' ')}\``;
-  const { exit, timedOut, stdout, stderr } = await runCommand({ command: 'codex', args, cwd: directory, env: { ...gitEnvironment(), CODEX_HOME: home }, timeout, emitter });
+  const { exit, timedOut, stdout, stderr } = await runCommand({ command: 'codex', args, cwd: directory, env: { ...gitEnvironment(), CODEX_HOME: home }, timeout, emitter, host });
   if (timedOut) throw startFailure(new Error(`the skill probe ${spelled} outlived its bound of ${timeout} ms, and L0 killed it`), 'codex-probe-timeout');
   if (exit !== 0) throw startFailure(new Error(`the skill probe ${spelled} exited ${exit}: ${stderr.toString('utf8').trim().split('\n')[0] || stdout.toString('utf8').trim().split('\n')[0] || 'it said nothing'}`), 'codex-probe-exit');
   let skills;
@@ -296,8 +296,8 @@ function homeFor(directory, scratch) {
  * `scratch` writable too (O93): the CLI by its command name, its arguments, the prompt's bytes for
  * its standard input, no variable to unset, `CODEX_HOME`, the dispatch's own home in `scratch`
  * (ruling 18), and `TMPDIR` and `TMPPREFIX`, the temporary directory and a prefix inside it. It runs the skill probe first, through `emitter`, bounded by
- * `probeTimeout`, and disables, by a `skills.config` entry per `SKILL.md` path, every skill the
- * probe reports from outside `directory`.
+ * `probeTimeout`, using the optional `host`'s processes and clock. It disables each outside
+ * `SKILL.md` path the probe reports, with one `skills.config` entry per skill.
  * A maker's optional `gitDirectories` thunk supplies its git metadata roots, read before the home
  * or probe is made; an unreadable answer refuses the invocation under its own preparation kind.
  *
@@ -306,7 +306,7 @@ function homeFor(directory, scratch) {
  * cannot be read; a home or temporary directory that cannot be made; and a probe that fails,
  * outlives its bound, or answers nothing it can read.
  */
-export async function invocation({ agent, tier, prompt, directory, scratch, reach = [], gitDirectories, emitter, probeTimeout = PROBE_TIMEOUT }) {
+export async function invocation({ agent, tier, prompt, directory, scratch, reach = [], gitDirectories, emitter, host, probeTimeout = PROBE_TIMEOUT }) {
   if (!Object.hasOwn(tiers, tier)) {
     throw new Error(`the Codex adapter maps no model to the tier \`${tier}\`, only to \`standard\` and \`high\``);
   }
@@ -322,7 +322,7 @@ export async function invocation({ agent, tier, prompt, directory, scratch, reac
   const home = homeFor(directory, scratch);
   const temporary = join(atStart('directory-unusable', () => realpathSync.native(scratch)), TEMPORARY);
   atStart('codex-directory-unmade', () => mkdirSync(temporary));
-  const outside = await probed({ directory, home, emitter, timeout: probeTimeout });
+  const outside = await probed({ directory, home, emitter, timeout: probeTimeout, host });
   const toggles = `[${outside.map((path) => `{path = ${toml(path)}, enabled = false}`).join(', ')}]`;
   return {
     command: 'codex',
