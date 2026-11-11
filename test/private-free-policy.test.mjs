@@ -176,7 +176,7 @@ test('L2 refuses a merge over the refusal, naming the unavailable rules, for a R
   const merging = [{ kind: 'merged' }, { column: 'owner', comments: sound({ owner: true }) }];
   for (const facts of merging) {
     assert.deepEqual(await answered(facts), REFUSED_MERGE, JSON.stringify(facts));
-    assert.deepEqual(await answered({ ...facts, rules: ok([]) }), { action: 'merge', pull: 70, head: SHA }, 'with the rules served the card merges, so the refusal alone holds it');
+    assert.deepEqual(await answered({ ...facts, rules: ok([]) }), { action: 'merge', pull: 70, head: SHA, digest: 'e8328625667a5f466d3cae9f480e1f4b22b17b98d8d0736d99ad445226be38e5', verdicts: ['reviewer', 'architect', ...(facts.column === 'owner' ? ['owner'] : [])].map((role) => ({ role, verdict: 'sound' })) }, 'with the rules served the card merges, so the refusal alone holds it');
   }
 });
 

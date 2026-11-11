@@ -616,7 +616,7 @@ test('a merge answer takes a claim, records its pull and holds no slot, leaving 
     const fired = mode === 'pull' ? built.loop.pull() : built.loop.run();
     await settling(built, settledOf(fired));
 
-    assert.deepEqual(built.decisions.find(({ card }) => card === 82)?.action, { action: 'merge', pull: 182, head });
+    assert.deepEqual(built.decisions.find(({ card }) => card === 82)?.action, { action: 'merge', pull: 182, head, digest: 'e8328625667a5f466d3cae9f480e1f4b22b17b98d8d0736d99ad445226be38e5', verdicts: [{ role: 'owner', verdict: 'sound' }] });
     assert.deepEqual(built.dispatches.started, [95], `${mode} starts the Ready maker past merge`);
     assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card, inFlight }) => ({ card, inFlight })), [{ card: 82, inFlight: 0 }, { card: 95, inFlight: 1 }]);
     assert.deepEqual(cardsOf(built, 'slot.release').filter((card) => card === 82), []);
@@ -2825,7 +2825,7 @@ test('after `loop`\'s single pull returns, the state directory holds nothing but
     await release();
 
     assert.ok(claimed.length > 0, String(limit));
-    assert.deepEqual(readdirSync(built.directory, { recursive: true }), ['events.jsonl', 'groups.json'], String(limit));
+    assert.deepEqual(readdirSync(built.directory, { recursive: true }).filter((path) => !/^output(?:\/d-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?:\/(?:stdout|stderr))?)?$/.test(path)), ['events.jsonl', 'groups.json'], String(limit));
     built.phaseTrace.push({ phase: 'directory.asserted', at: performance.now(), files: readdirSync(built.directory, { recursive: true }) });
   }
   bodyEnd = performance.now();
@@ -3565,7 +3565,7 @@ test('after a `loop`\'s single pull the sink refused, followed by one it accepte
   built.dispatches.releaseAll();
   await next;
 
-  assert.deepEqual(readdirSync(built.directory, { recursive: true }), ['events.jsonl', 'groups.json']);
+  assert.deepEqual(readdirSync(built.directory, { recursive: true }).filter((path) => !/^output(?:\/d-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?:\/(?:stdout|stderr))?)?$/.test(path)), ['events.jsonl', 'groups.json']);
 });
 
 test('a start whose pull event the sink refused writes no release event once the sink accepts again, so no release event lacks its pull', async () => {

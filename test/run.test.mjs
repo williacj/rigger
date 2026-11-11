@@ -326,7 +326,7 @@ test('after run exits, the state directory holds the event stream and L1\'s reco
   const ran = run(FOUR_READY, { concurrency: 3 });
 
   assert.match(ran.err, /claimed #10\b/, ran.err);
-  assert.deepEqual(readdirSync(join(ran.consumer, '.rigger')).sort(), ['events.jsonl', 'groups.json']);
+  assert.deepEqual(readdirSync(join(ran.consumer, '.rigger')).sort(), ['events.jsonl', 'groups.json', 'output']);
 });
 
 test('given a board with no ready card, a second run claims the cards the first left in the coding column', async () => {
@@ -1254,3 +1254,18 @@ test('Table O O9 card.author: run names the owner as the clock card author', { t
     await world.stop();
   }
 });
+
+import { acceptanceFirst } from './acceptance-world.mjs';
+import { manualClock } from './clock-report-world.mjs';
+
+// proves R-CARD-1
+test('acceptance-first: run C1 gives no work to a heading inside a fence', SETTLES_WITHIN, (t) => acceptanceFirst(t, runVerb, 'C1', manualClock()));
+
+// proves R-CARD-1
+test('acceptance-first: run C2 gives no work to only task-list items', SETTLES_WITHIN, (t) => acceptanceFirst(t, runVerb, 'C2', manualClock()));
+
+// proves R-CARD-1
+test('acceptance-first: run C3 gives no work to only fenced bullets', SETTLES_WITHIN, (t) => acceptanceFirst(t, runVerb, 'C3', manualClock()));
+
+// proves R-CARD-1
+test('acceptance-first: run C4 gives no work to every item comparing to the title', SETTLES_WITHIN, (t) => acceptanceFirst(t, runVerb, 'C4', manualClock()));

@@ -33,6 +33,9 @@ const DIFF = 'diff --git a/src/verb.mjs b/src/verb.mjs\n+export const verb = 1;\
 /** The acceptance digest of `BODY`, from `shasum -a 256` over its two items, each followed by LF. */
 const DIGEST = 'e083e751931787e01f4710d2a5068c3a4eaaf329fa3d50ceaca815c71b5cf525';
 
+/** Expected whole merge-answer evidence, independent of the marker reader. */
+const mergeEvidence = (roles) => ({ digest: DIGEST, verdicts: roles.map((role) => ({ role, verdict: 'sound' })) });
+
 /** The kinds: `spec`, judged by three agent judges and the owner, and `decision`, by the owner alone. */
 const KINDS = {
   spec: { select: { labels: ['type:spec'] }, maker: 'pm', judges: ['reviewer', 'engineer', 'architect', 'owner'], provisioning: ['npm-ci', 'vhs'] },
@@ -646,7 +649,7 @@ test('given a Review or Owner card whose pull request the forge holds as merged,
 });
 
 test('given every agent judge\'s marker sound at the head and digest, the gate admitting and the pull request mergeable, L2 answers merge for a Review card whose kind does not name the owner', () => {
-  assert.deepEqual(loopAnswer(loopCard({ comments: allSound() })), { action: 'merge', pull: 70, head: HEAD });
+  assert.deepEqual(loopAnswer(loopCard({ comments: allSound() })), { action: 'merge', pull: 70, head: HEAD, ...mergeEvidence(AGENTS) });
 });
 
 /** The effective rules requiring `context`, unpinned, as `readEffectiveRules` answers them. */
@@ -672,7 +675,7 @@ test('given every agent judge sound and a required check the facts hold no state
 test('L2 hands the gate rule the checks the base branch\'s effective rules require less rigger/gate: with rigger/gate required and failing and every agent judge sound, it answers merge', () => {
   const checks = { 'rigger/gate': { state: 'failed', creator: null }, ci: { state: 'passed', creator: null } };
 
-  assert.deepEqual(loopAnswer(loopCard({ comments: allSound(), rules: requiring('rigger/gate', 'ci'), checks })), { action: 'merge', pull: 70, head: HEAD });
+  assert.deepEqual(loopAnswer(loopCard({ comments: allSound(), rules: requiring('rigger/gate', 'ci'), checks })), { action: 'merge', pull: 70, head: HEAD, ...mergeEvidence(AGENTS) });
 });
 
 test('given every agent judge sound, the gate admitting and the forge reading the pull request\'s mergeability as unknown, L2 answers ignore for a Review card, naming the unknown mergeability', () => {
@@ -1000,7 +1003,7 @@ const ownerCard = (owner = [], facts = {}) => loopCard({ label: 'type:spec', sta
 const ownerMarker = (ruling = {}) => markerOf({ role: 'owner', at: 9, ...ruling });
 
 test('given every agent judge and the owner sound, the gate admitting and the pull request mergeable, L2 answers merge for an Owner card', () => {
-  assert.deepEqual(loopAnswer(ownerCard([ownerMarker()])), { action: 'merge', pull: 70, head: HEAD });
+  assert.deepEqual(loopAnswer(ownerCard([ownerMarker()])), { action: 'merge', pull: 70, head: HEAD, ...mergeEvidence([...AGENTS, 'owner']) });
 });
 
 // proves R-LOOP-11
@@ -1240,8 +1243,8 @@ test('given a failed read of the merge base, which only a judge\'s evidence need
   const failed = { pull: failedRead('the fake repository holds no merge base for pull request #70') };
 
   assert.equal(loopAnswer(codingCard(markersFor(['m1', 'm9', 'm1']), failed)).action, 'continue');
-  assert.deepEqual(loopAnswer(loopCard({ comments: allSound(), ...failed })), { action: 'merge', pull: 70, head: HEAD });
-  assert.deepEqual(loopAnswer(ownerCard([ownerMarker()], failed)), { action: 'merge', pull: 70, head: HEAD });
+  assert.deepEqual(loopAnswer(loopCard({ comments: allSound(), ...failed })), { action: 'merge', pull: 70, head: HEAD, ...mergeEvidence(AGENTS) });
+  assert.deepEqual(loopAnswer(ownerCard([ownerMarker()], failed)), { action: 'merge', pull: 70, head: HEAD, ...mergeEvidence([...AGENTS, 'owner']) });
 });
 
 // proves R-LOOP-8, R-LOOP-9
@@ -1421,7 +1424,7 @@ test('the provider in a judge\'s role answer, in its marker instruction and hand
     }
     // Markers on the providers the instruction named are what the gate rule admits.
     const comments = panel.map(({ role, provider }, at) => markerOf({ role, provider, at: at + 1 }));
-    assert.deepEqual(panelAnswer(labelled(labels, { comments })), { action: 'merge', pull: 70, head: HEAD }, String(labels));
+    assert.deepEqual(panelAnswer(labelled(labels, { comments })), { action: 'merge', pull: 70, head: HEAD, ...mergeEvidence(['reviewer', 'architect']) }, String(labels));
   }
 });
 
@@ -1522,9 +1525,9 @@ test('marker.read records the provider each governing marker names, null where i
 
 // proves R-GATE-9
 test('under a kind whose judges are objects, L2 reads each judge\'s role through judgeRole and hands the owner\'s answer, the merge decision and the gate rule the panel function\'s entries', () => {
-  assert.deepEqual(panelAnswer(labelled([], { comments: panelSound('codex') })), { action: 'merge', pull: 70, head: HEAD });
+  assert.deepEqual(panelAnswer(labelled([], { comments: panelSound('codex') })), { action: 'merge', pull: 70, head: HEAD, ...mergeEvidence(['reviewer', 'architect']) });
   assert.deepEqual(panelAnswer(labelled([], { label: 'type:spec', comments: panelSound('codex') })), { action: 'move', to: 'owner' });
-  assert.deepEqual(panelAnswer(panelOwnerCard([unnamed(markerOf({ role: 'owner', provider: 'codex', at: 9 }))])), { action: 'merge', pull: 70, head: HEAD });
+  assert.deepEqual(panelAnswer(panelOwnerCard([unnamed(markerOf({ role: 'owner', provider: 'codex', at: 9 }))])), { action: 'merge', pull: 70, head: HEAD, ...mergeEvidence(['reviewer', 'architect', 'owner']) });
   const failing = panelAnswer(labelled([], { comments: panelSound('codex'), rules: requiring('ci'), checks: { ci: { state: 'failed', creator: null } } }));
   assert.equal(failing.action, 'ignore', JSON.stringify(failing));
   assert.equal(failing.reason, 'ci: failed');

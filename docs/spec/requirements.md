@@ -593,7 +593,7 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | R-STATE-1 | The board is the truth for a card's workflow state. Rigger persists no card workflow state of its own. | the engine | the test suite | D1 |
 | R-STATE-2 | A restart loses no card and completes no partial one. A card interrupted mid-flight is done again from the beginning, except where `R-WORK-19` refuses to start that card's work again. | the engine | the test suite | D1, D10 |
 | R-STATE-3 | A card done again after an interruption is distinguishable afterwards from one done at the first attempt. | the engine | the event record | D1 |
-| R-STATE-4 | Rigger persists only what it cannot rebuild from the board: whether admission is open and why it closed, the processes it must still clean up, and the record. Each survives a restart. | the engine | the test suite | D1 |
+| R-STATE-4 | Except as `R-RECORD-19` gives, Rigger persists only what it cannot rebuild from the board: whether admission is open and why it closed, the processes it must still clean up, and the record. Each survives a restart. | the engine | the test suite | D1 |
 | R-STATE-17 | A process works in a directory when its working directory is that directory or lies under it. A process outside every process group Rigger created, and working in no directory Rigger made for a dispatch, is outside this rule. Except as `R-STATE-19` and `R-STATE-28` allow, Rigger ends every process in a process group it created, and every process of its own user working in a dispatch's directory, whenever any of these holds: | the engine | the test suite | |
 | R-STATE-7 | — the command Rigger ran in that group returns; | the engine | the test suite | |
 | R-STATE-8 | — that command runs past its time; | the engine | the test suite | |
@@ -730,6 +730,7 @@ Each failure is one of three classes:
 | R-RECORD-16 | After a push of the record that did not succeed, Rigger tries the push again at its next push, however many pushes before it did not succeed. | the engine | the test suite | |
 | R-RECORD-17 | Every push of the record has a time limit, and a push that runs past it has not succeeded. | the engine | the test suite | |
 | R-RECORD-18 | A push of the record that does not succeed leaves the exit status of the verb that made it as that verb would otherwise have had it. | the engine | the test suite | |
+| R-RECORD-19 | Rigger keeps what each dispatch's agent CLI wrote to its standard output and its standard error, as `R-STATE-14` defines its output, on the consumer's machine, under the dispatch's id. It never places that output in the record, or anywhere beyond that machine. Where it cannot keep it, it names the dispatch and why, and the dispatch's outcome is as it would have been. | the engine | the test suite | |
 
 ### R-RECORD-13 — Push states
 

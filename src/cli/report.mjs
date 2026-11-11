@@ -100,6 +100,34 @@ function roundLines(rounds) {
   ])];
 }
 
+/** Event counts by recorded class, with infrastructure totals beside each run and stream count. */
+function causeLines({ runs, stream }) {
+  const counted = (where, { classes, infrastructure }) => [
+    `    escalations by cause ${where}: ${classes.map(({ class: cause, count }) => `${cause === null ? 'unclassified' : JSON.stringify(cause)} ${count}`).join(', ') || 'none'}`,
+    `    infrastructure-caused escalations ${where}: ${infrastructure}`,
+  ];
+  return [...runs.flatMap((each) => counted(`in run ${JSON.stringify(each.run)}`, each)), ...counted('across the stream', stream)];
+}
+
+/** Fresh-verdict proof's card rate, and each merged card without qualifying proof. */
+function freshLines({ fresh, of, flagged }) {
+  return [
+    rateLine('merges with fresh verdicts', 'proved cards', 'merged cards', { counted: fresh, of, none: 'no card merged in the stream' }),
+    ...flagged.map((card) => `    flagged merged card #${card}: no qualifying merge decision and later merged end`),
+  ];
+}
+
+/** Admission hold counts, with literal ids and reasons and any matching open beside each hold. */
+function holdLines({ runs, stream }) {
+  return [
+    `  admission holds across the stream: ${stream.count}`,
+    ...runs.flatMap(({ run, count, entries }) => [
+      `  admission holds in run ${JSON.stringify(run)}: ${count}`,
+      ...entries.map(({ id, reason, opened }) => `    hold ${JSON.stringify(id)}: ${JSON.stringify(reason)}${opened ? `; admission.open ${JSON.stringify(id)}` : ''}`),
+    ]),
+  ];
+}
+
 /** A heading and its lines, or `none` beneath it where there are none. */
 const listed = (heading, lines) => [heading, ...(lines.length === 0 ? ['      none'] : lines)];
 
@@ -137,7 +165,7 @@ function acceptanceLines({ changes, deleted, grew, authors }) {
 }
 
 /** The lines L2 prints: rates and escalations per run, then stream rates, acceptance changes and rounds by kind. */
-function l2Lines({ runs, stream }) {
+function l2Lines({ runs, escalationCauses, stream }) {
   const line = ({ faults, claims }, where) => rateLine('host-fault rate', 'host faults', 'work claims', { counted: faults, of: claims, none: `no work claim in ${where}` });
   return [
     ...runs.flatMap(({ run, hostFaults, escalations }) => [
@@ -147,6 +175,8 @@ function l2Lines({ runs, stream }) {
     line(stream.hostFaults, 'the stream'),
     escalationLine(stream.escalations, 'the stream'),
     '    each escalation is listed under its run',
+    ...causeLines(escalationCauses),
+    ...freshLines(stream.freshMerges),
     ...acceptanceLines(stream.acceptance),
     ...roundLines(stream.rounds),
   ];
@@ -185,7 +215,7 @@ async function reporting(opened, { target = process.cwd(), packageRoot = PACKAGE
 }
 
 /** The report lines shared by the report verb and a clock firing handed to run. */
-export function reportText({ path, l0, l1, l2, runs, l4, markers }) {
+export function reportText({ path, l0, l1, l2, runs, holds, l4, markers }) {
   if (runs === null) return `rigger report: no events are recorded; there is no stream at ${path}`;
   const markerLines = markers.map(({ card, role, head, dispatch, reason }) =>
     `  card #${card}, ${role}, head ${head}, dispatch ${dispatch}${reason === undefined ? '' : `: ${reason}`}`);
@@ -198,6 +228,7 @@ export function reportText({ path, l0, l1, l2, runs, l4, markers }) {
     'L2',
     ...l2Lines(l2),
     'L3',
+    ...holdLines(holds),
     ...runs.flatMap(runLines),
     'L4',
     ...l4Lines(l4),

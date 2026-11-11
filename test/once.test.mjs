@@ -2161,3 +2161,18 @@ test('Table O O17 step.timeout: once dispatches the step for 1800000 millisecond
   assert.ok(dispatches.length > 0);
   assert.ok(dispatches.every(({ start }) => start.timeout === 1800000));
 });
+
+import { acceptanceFirst } from './acceptance-world.mjs';
+import { manualClock } from './clock-report-world.mjs';
+
+// proves R-CARD-1
+test('acceptance-first: once C1 gives no work to a heading inside a fence', SETTLES_WITHIN, (t) => acceptanceFirst(t, onceVerb, 'C1', manualClock()));
+
+// proves R-CARD-1
+test('acceptance-first: once C2 gives no work to only task-list items', SETTLES_WITHIN, (t) => acceptanceFirst(t, onceVerb, 'C2', manualClock()));
+
+// proves R-CARD-1
+test('acceptance-first: once C3 gives no work to only fenced bullets', SETTLES_WITHIN, (t) => acceptanceFirst(t, onceVerb, 'C3', manualClock()));
+
+// proves R-CARD-1
+test('acceptance-first: once C4 gives no work to every item comparing to the title', SETTLES_WITHIN, (t) => acceptanceFirst(t, onceVerb, 'C4', manualClock()));
