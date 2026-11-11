@@ -2547,12 +2547,18 @@ Four things are not counted. Tests, the templates under `templates/`, and the ch
 for a consumer's own CI are outside the budget, because none of them runs a card. Blank lines and
 comment lines are outside it too: a comment cannot carry a bug.
 
+L0's row is the largest layer row, because L0 holds one adapter for each external system the other
+layers reach: the forge, git, the OS process model and each agent CLI. The forge adapter carries
+every read that L2's records rest on, the read of a card's body-edit history among them ("L2's
+acceptance, escalation and merge events"). The gate's row is the smallest, because the gate is one
+rule that holds no opinion ("The gate").
+
 | Budget | Production lines |
 |---|---|
-| L0 | 3,000 |
+| L0 | 3,200 |
 | L1 | 1,200 |
 | L2 | 1,600 |
-| The gate | 300 |
+| The gate | 100 |
 | L3 | 1,700 |
 | L5 | 800 |
 | L6 | 1,100 |
