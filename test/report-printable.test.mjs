@@ -58,6 +58,11 @@ const deep = (value, change) => {
  * A stream reaching every line `report` prints a recorded value on, each such value made by
  * `value(head)`, and the escalation's `reason` by `reason(head)`. Every field that selects or times
  * an event stays valid: `ts`, `layer`, `event`, `system`, `outcome`, `cause` and admission's `kind`.
+ *
+ * Its `acceptance.history` fills each of L2's five acceptance lists. A revision's `editedAt` times
+ * it against the pull and the dispatch windows, so it stays valid on the two revisions a window
+ * holds, and is made by `value` on the deleted revision and on the change no window holds, which
+ * print it but are timed by nothing. `digest`, `deleted` and `attempt` select and stay valid.
  */
 function everyValue(value, reason = value) {
   const [first, second] = [value('r1'), value('r2')];
@@ -66,8 +71,13 @@ function everyValue(value, reason = value) {
     event(first, 0, 'L3', 'run.start', { concurrency: value('2') }),
     event(first, 0, 'L3', 'pull', { card, queueDepth: value('3'), kind: value('change') }),
     event(first, 0, 'L3', 'pull', { card: [value('8')], queueDepth: value('1') }),
+    event(first, 0, 'L3', 'dispatch', { card, dispatch: value('d3'), role: value('engineer'), attempt: 1 }),
+    event(first, 0, 'L1', 'dispatch.start', { dispatch: value('d3') }),
+    event(first, 0, 'L3', 'dispatch', { card: value('23'), dispatch: value('d4'), role: value('architect') }),
+    event(first, 0, 'L1', 'dispatch.start', { dispatch: value('d4') }),
     event(first, 1, 'L3', 'dispatch', { card }),
     event(first, 2, 'L1', 'dispatch.end', { dispatch: value('d1'), card, ms: value('5') }),
+    event(first, 2, 'L1', 'dispatch.end', { dispatch: value('d3'), card, ms: value('6') }),
     event(first, 3, 'L2', 'review.escalate', { card, category: value('ambiguous'), raiser: value('loop'),
       reason: reason('refused'), destination: value('owner'), class: value('environment') }),
     event(first, 4, 'L2', 'marker.read', { card, role: value('reviewer'), head: value('h1'), digest: 'g1',
@@ -75,6 +85,14 @@ function everyValue(value, reason = value) {
     event(first, 5, 'L2', 'transition', { card: [value('14')], cause: 'merged' }),
     event(first, 6, 'L3', 'admission.open', { id: value('hold-1') }),
     event(first, 7, 'L3', 'admission.close', { kind: 'hold', id: value('hold-1'), reason: value('paused') }),
+    event(first, 8, 'L2', 'acceptance.history', { card, opened: { at: at(-10) }, author: value('pm'), revisions: [
+      { editedAt: at(0), editor: value('pm'), digest: 'a', items: value('3') },
+      { editedAt: at(1), editor: value('engineer'), digest: 'b', items: value('5') },
+      { editedAt: value('2026-01-01T00:02:00.000Z'), editor: value('owner'), deleted: true },
+      { editedAt: value('2026-01-01T00:03:00.000Z'), editor: value('architect'), digest: 'c' },
+    ] }),
+    event(first, 8, 'L2', 'acceptance.history', { card: value('21'), opened: { at: at(1) } }),
+    event(first, 8, 'L2', 'acceptance.history', { card: value('22'), opened: { at: at(-100) } }),
     event(first, 60, 'L0', 'call.end', { system: 'git', outcome: 'ok' }),
     event(second, 61, 'L3', 'pull', { card, queueDepth: value('0') }),
     event(second, 62, 'L3', 'dispatch', { card }),
@@ -192,12 +210,13 @@ const BASE = [
   'L1',
   '  run r1 "q" \\ $x',
   '    dispatch d1 "q" \\ $x, card #7 "q" \\ $x: 5 "q" \\ $x ms',
-  '    survivor rate: 0 (dispatches with a survivor or group killed 0, over dispatches that ended with a result 1)',
+  '    dispatch d3 "q" \\ $x, card #7 "q" \\ $x: 6 "q" \\ $x ms',
+  '    survivor rate: 0 (dispatches with a survivor or group killed 0, over dispatches that ended with a result 2)',
   '  run r2 "q" \\ $x',
   '    no survivor rate: no dispatch in this run ended with a result',
   '  across the stream',
-  '    dispatch.end events: 1, each listed under its run',
-  '    survivor rate: 0 (dispatches with a survivor or group killed 0, over dispatches that ended with a result 1)',
+  '    dispatch.end events: 2, each listed under its run',
+  '    survivor rate: 0 (dispatches with a survivor or group killed 0, over dispatches that ended with a result 2)',
   '    redos after an interruption: 1, first attempts: 1',
   '    redo after an interruption: card #7 "q" \\ $x, run r2 "q" \\ $x',
   'L2',
@@ -219,15 +238,18 @@ const BASE = [
   '    merges with fresh verdicts: 0 (proved cards 0, over merged cards 1)',
   '    flagged merged card #14 "q" \\ $x: no qualifying merge decision and later merged end',
   '    acceptance changes, each with who made it',
-  '      none',
+  '      card #"7 \\"q\\" \\\\ $x" at "2026-01-01T00:01:00.000Z": editor "engineer \\"q\\" \\\\ $x", dispatch "d3 \\"q\\" \\\\ $x" (role "engineer \\"q\\" \\\\ $x"), dispatch "d4 \\"q\\" \\\\ $x" (role "architect \\"q\\" \\\\ $x")',
+  '      card #"7 \\"q\\" \\\\ $x" at "2026-01-01T00:03:00.000Z \\"q\\" \\\\ $x": editor "architect \\"q\\" \\\\ $x"',
   '    content deleted from a card\'s history',
-  '      none',
+  '      card #"7 \\"q\\" \\\\ $x" at "2026-01-01T00:02:00.000Z \\"q\\" \\\\ $x": editor "owner \\"q\\" \\\\ $x"',
   '    acceptances that grew after admission',
-  '      none',
+  '      card #"7 \\"q\\" \\\\ $x" at "2026-01-01T00:01:00.000Z": "5 \\"q\\" \\\\ $x" items, over "3 \\"q\\" \\\\ $x" at its first pull',
   '    acceptance changes made during the card\'s maker dispatch',
-  '      none',
+  '      card #"7 \\"q\\" \\\\ $x" at "2026-01-01T00:01:00.000Z"',
   '    each card\'s author',
-  '      none',
+  '      card #"7 \\"q\\" \\\\ $x": "pm \\"q\\" \\\\ $x", as its acceptance.history records',
+  '      card #"21 \\"q\\" \\\\ $x": roles "engineer \\"q\\" \\\\ $x", "architect \\"q\\" \\\\ $x", whose dispatch windows hold its opening',
+  '      card #"22 \\"q\\" \\\\ $x": the owner, since no role dispatch window holds its opening',
   '    rounds per card, by kind of work',
   '      kind "change \\"q\\" \\\\ $x"',
   '        card #7 "q" \\ $x: 1 round',
