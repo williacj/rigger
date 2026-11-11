@@ -181,6 +181,7 @@ expectedLists.host.push('test/launchd-host.test.mjs');
 expectedLists.host.push('test/hold-close-verbs.test.mjs');
 expectedLists.host.push('test/loop-host.test.mjs');
 expectedLists.host.push('test/in-process-fixtures-host.test.mjs');
+expectedLists.host.push('test/check-host-declarations-host.test.mjs');
 expectedLists.host.push('test/provider-codex-host.test.mjs');
 expectedLists.host.sort();
 expectedLists.awaiting.push('test/claude-folder-live.test.mjs');

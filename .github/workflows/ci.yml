@@ -255,7 +255,7 @@ env:
         }
         const projectSources = {
           ".npmrc": "2ab58d679ddb6c245446999a2ea5fb54783b9aa26c94ce663cb7db0be0a8f7f8",
-          "test/suite.sh": "91e3f3ea060240a3f60b1bd11e1744689431095f8ff9e28648e11dbba5dee962",
+          "test/suite.sh": "9125d21b35c2640ca9f19c971c8c20b17a61cab85832e4ea9157b4371839e1ba",
           "test/suite-guard.cjs": "11057fb99548ffdfb62cea550d6aa7fb99c310b232a544a9e809d0936ece5370"
         };
         for (const [path, expected] of Object.entries(projectSources)) if (await fingerprint(join(cwd, path)) !== expected) return;
@@ -649,6 +649,11 @@ jobs:
       - run: npm ci
       - run: node .github/scripts/check-test-list-growth.mjs
       - run: npm test
+        env:
+          RIGGER_SUITE_TIMER_RECORD: ${{ runner.temp }}/rigger-timer-record
+      - run: node .github/scripts/check-host-declarations.mjs --added-timer
+        env:
+          RIGGER_SUITE_TIMER_RECORD: ${{ runner.temp }}/rigger-timer-record
       - run: npm run budget:package
       - run: npm run budget:instructions
       - run: npm run lint:spec-style
@@ -1056,6 +1061,11 @@ jobs:
       - run: npm ci
       - run: node .github/scripts/check-test-list-growth.mjs
       - run: npm test
+        env:
+          RIGGER_SUITE_TIMER_RECORD: ${{ runner.temp }}/rigger-timer-record
+      - run: node .github/scripts/check-host-declarations.mjs --added-timer
+        env:
+          RIGGER_SUITE_TIMER_RECORD: ${{ runner.temp }}/rigger-timer-record
       - run: npm run test:host -- --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination="$RUNNER_TEMP/$CI_HOST_REPORT_NAME"
         id: host_tests
         shell: node --input-type=module -e "await import('data:text/javascript;base64,' + Buffer.from(process.env.CI_HOST).toString('base64'))" {0}
