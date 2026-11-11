@@ -382,7 +382,8 @@ test('the verb\'s hand-over line for an R-LOOP-20 escalation names Rigger as rai
 test('a fresh maker that exits non-zero with nothing of its line of work on the forge is not escalated under R-LOOP-21, and is set aside under R-LOOP-19', async (t) => {
   // A clock-held run, its one trigger an hour away, so its slot release fires a later pull in the same invocation.
   const settings = { ...minimalConfig(), clock: { poll: 1000, triggers: { report: { interval: 3_600_000, anchor: new Date(START + 3_600_000).toISOString(), catchUp: 'skip', job: 'report' } } } };
-  const world = makerWorld(t, { engineer: { exit: 3 }, settings });
+  // A second maker start stops the run, so a lost set-aside ends in a verdict rather than a run that never drains.
+  const world = makerWorld(t, { engineer: { exit: 3 }, settings, beforeMaker: ({ world: here }) => { if (makersRan(here) > 0) here.controller.abort(); } });
 
   await world.start(optionalRun, { stopAtDrain: true });
 
