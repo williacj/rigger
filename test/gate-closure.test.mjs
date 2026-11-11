@@ -120,310 +120,83 @@ test('literal file imports use Node URL decoding and follow absolute paths and f
   assert.deepEqual(result.bare, []);
 });
 
-const unsupported = (form) => new Error(`unsupported YAML form for SELF_HOSTING_COMMIT: ${form}`);
-
-/** YAML's double-quoted escapes (YAML 1.2, section 5.7), the escaped line break excepted. */
-const ESCAPES = { 0: '\0', a: '\x07', b: '\b', t: '\t', '\t': '\t', n: '\n', v: '\v', f: '\f', r: '\r', e: '\x1b',
-  ' ': ' ', '"': '"', '/': '/', '\\': '\\', N: '\x85', _: '\xa0', L: '\u2028', P: '\u2029' };
-const HEX = { x: 2, u: 4, U: 8 };
-/** The indicators that open a form other than a plain or quoted scalar, by the form each opens. */
-const FORMS = { '{': 'flow mapping', '[': 'flow sequence', '&': 'anchor', '*': 'alias', '!': 'tag',
-  '|': 'block scalar', '>': 'block scalar', '%': 'directive', '@': 'reserved indicator', '`': 'reserved indicator' };
-/** YAML's white space is the space and the tab, and nothing else (YAML 1.2, section 5.5). */
-const space = (character) => character === ' ' || character === '\t';
-const blank = (text) => /^[ \t]*(#.*)?$/.test(text);
-const trimEnd = (text) => text.replace(/[ \t]+$/, '');
-
-/** The value of the quoted scalar opening `text`, and the text after it; null if it does not close on this line. */
-function quoted(text) {
-  let value = '', at = 1;
-  while (at < text.length) {
-    if (text[0] === "'") {
-      if (text[at] === "'" && text[at + 1] === "'") { value += "'"; at += 2; continue; }
-      if (text[at] === "'") return { value, rest: text.slice(at + 1) };
-      value += text[at++];
-      continue;
-    }
-    if (text[at] === '"') return { value, rest: text.slice(at + 1) };
-    if (text[at] !== '\\') { value += text[at++]; continue; }
-    const code = text[at + 1];
-    if (code === undefined) return null;
-    if (code === '\n') { at += 2; continue; }
-    if (code in ESCAPES) { value += ESCAPES[code]; at += 2; continue; }
-    const digits = text.slice(at + 2, at + 2 + (HEX[code] ?? 0));
-    if (!HEX[code] || !/^[0-9a-fA-F]+$/.test(digits) || digits.length !== HEX[code]) throw unsupported('invalid escape');
-    value += String.fromCodePoint(parseInt(digits, 16));
-    at += 2 + HEX[code];
-  }
-  return null;
-}
-
-/** The key of a `key: value` line and the text after its colon, or null where the line holds no such key. */
-function keyOf(text) {
-  if (text[0] === "'" || text[0] === '"') {
-    const key = quoted(text);
-    const colon = key?.rest.match(/^[ \t]*:([ \t]|$)/);
-    return colon ? { key: key.value, after: key.rest.slice(colon[0].length) } : null;
-  }
-  for (let at = 0; at < text.length; at++) {
-    if (text[at] === '#' && at > 0 && space(text[at - 1])) return null;
-    if (text[at] === ':' && (at + 1 === text.length || space(text[at + 1]))) {
-      return { key: trimEnd(text.slice(0, at)), after: text.slice(at + 1) };
-    }
-  }
-  return null;
-}
-
-/** Throws if `rest`, after a scalar or a flow collection closes, holds more than space and a comment. */
-function lineEnd(rest) {
-  if (!/^([ \t]*|[ \t]+#.*)$/.test(rest)) throw unsupported('content after a closed value');
-}
+const WORKFLOW = '.github/workflows/self-hosting.yml';
+/** The one line that pins the check's code: two spaces, the key, and the commit single-quoted. */
+const CANONICAL = /^  SELF_HOSTING_COMMIT: '([0-9a-f]{40})'$/;
 
 /**
- * The line after the end of a value that may run past its line: a quoted scalar or a flow
- * collection. It scans quotes, escapes, brackets and comments only far enough to find that end.
+ * The commit a workflow pins for the check's code, from its one canonical line. Any other line
+ * naming `SELF_HOSTING_COMMIT`, except as the shell reference `${SELF_HOSTING_COMMIT}`, is refused
+ * by its line number, and so is a workflow with no canonical line or with two.
  */
-function valueEnd(lines, index, text) {
-  if (text[0] === "'" || text[0] === '"') {
-    let open = text, line = index;
-    for (;;) {
-      const closed = quoted(open);
-      if (closed) { lineEnd(closed.rest); return line; }
-      if (++line >= lines.length) throw unsupported('unclosed quoted scalar');
-      open = `${open}\n${lines[line]}`;
+function canonicalPin(workflow) {
+  const lines = workflow.split('\n');
+  const canonical = [];
+  lines.forEach((line, index) => {
+    if (CANONICAL.test(line)) canonical.push(index + 1);
+    else if (line.replaceAll('${SELF_HOSTING_COMMIT}', '').includes('SELF_HOSTING_COMMIT')) {
+      throw new Error(`${WORKFLOW} line ${index + 1} holds SELF_HOSTING_COMMIT outside its canonical line: ${JSON.stringify(line)}`);
     }
-  }
-  let depth = 0, line = index, at = 0, current = text;
-  for (;;) {
-    if (at >= current.length) {
-      if (++line >= lines.length) throw unsupported('unclosed flow collection');
-      current = lines[line]; at = 0;
-      continue;
-    }
-    const character = current[at];
-    if (character === '#' && (at === 0 || space(current[at - 1]))) { at = current.length; continue; }
-    if ((character === "'" || character === '"') && (at === 0 || /[ \t[{,:]/.test(current[at - 1]))) {
-      let open = current.slice(at);
-      while (!quoted(open)) {
-        if (++line >= lines.length) throw unsupported('unclosed quoted scalar');
-        open = `${open}\n${lines[line]}`;
-      }
-      const rest = quoted(open).rest;
-      current = rest.slice(rest.lastIndexOf('\n') + 1); at = 0;
-      continue;
-    }
-    if (character === '{' || character === '[') depth++;
-    if (character === '}' || character === ']') depth--;
-    at++;
-    if (depth === 0) { lineEnd(current.slice(at)); return line; }
-  }
-}
-
-/** The pin a `SELF_HOSTING_COMMIT: <value>` entry holds, from the text after its colon; null where none follows on the line. */
-function pinValue(after) {
-  const text = after.replace(/^[ \t]+/, '');
-  if (blank(text)) return null;
-  if (FORMS[text[0]]) throw unsupported(FORMS[text[0]]);
-  let value;
-  if (text[0] === "'" || text[0] === '"') {
-    const closed = quoted(text);
-    if (!closed) throw unsupported('multi-line scalar');
-    lineEnd(closed.rest);
-    value = closed.value;
-  } else {
-    const comment = text.search(/[ \t]#/);
-    value = trimEnd(comment === -1 ? text : text.slice(0, comment));
-  }
-  if (!/^[0-9a-f]{40}$/.test(value)) throw unsupported('value not a commit');
-  return value;
-}
-
-/**
- * The values `SELF_HOSTING_COMMIT` takes in a workflow's top-level `env` block mapping.
- *
- * It reads the key and the value plain, single- or double-quoted, at any indentation, around blank
- * lines and comments, with a byte-order mark at the very start and CRLF line ends. It skips every
- * other key's value, a block scalar, a quoted scalar or a flow collection running past its line
- * included, so a value never reads as a key. Any other form for the `env` map, its keys or the
- * pin throws `unsupported YAML form for SELF_HOSTING_COMMIT: <form>`, and so does a pin that is not
- * 40 lowercase hex characters, so it never returns a value the workflow does not hold.
- */
-function pinsIn(workflow) {
-  const source = workflow.startsWith('\uFEFF') ? workflow.slice(1) : workflow;
-  if (/\r(?!\n)/.test(source)) throw unsupported('lone CR line ending');
-  const lines = source.split(/\r?\n/);
-  const pins = [];
-  let started = false, ended = false, env = 'none', indent = null;
-  // Lines deeper than `skip` belong to the value before them; lines deeper than `pin.column` are refused.
-  let skip = null, pin = null;
-  for (let index = 0; index < lines.length; index++) {
-    const line = lines[index];
-    if (blank(line)) continue;
-    const depth = line.match(/^ */)[0].length;
-    if (pin) {
-      if (depth > pin.column) throw unsupported(pin.value === null ? 'value on next line' : 'multi-line scalar');
-      if (pin.value === null) throw unsupported('value not a commit');
-      pin = null;
-    }
-    if (skip !== null && depth > skip) continue;
-    skip = null;
-    if (line[depth] === '\t') throw unsupported('tab indentation');
-    if (depth === 0 && /^(---|\.\.\.)([ \t]|$)/.test(line)) {
-      if (!blank(line.slice(3))) throw unsupported('content on a document marker');
-      if (ended || (line.startsWith('---') && started)) throw unsupported('second document');
-      if (line.startsWith('...')) ended = true;
-      continue;
-    }
-    if (ended) throw unsupported('second document');
-    started = true;
-    if (depth === 0 && env === 'open') env = 'closed';
-    if (env === 'open') {
-      indent ??= depth;
-      if (depth < indent) throw unsupported('irregular indentation');
-    }
-    // Where the line is a key of the document or of the env map, a form there is a form of that map.
-    const mapped = depth === 0 || (env === 'open' && depth === indent);
-    let column = depth;
-    while (line[column] === '-' && (column + 1 === line.length || space(line[column + 1]))) {
-      if (mapped) throw unsupported('sequence');
-      column++;
-      while (space(line[column] ?? '')) column++;
-    }
-    let text = line.slice(column);
-    if (blank(text)) continue;
-    if (mapped) {
-      if (/^<<[ \t]*:/.test(text)) throw unsupported('merge key');
-      if (/^\?([ \t]|$)/.test(text)) throw unsupported('explicit key');
-      if (FORMS[text[0]]) throw unsupported(FORMS[text[0]]);
-    } else {
-      while (/^[&!][^ \t]*[ \t]+/.test(text)) text = text.replace(/^[&!][^ \t]*[ \t]+/, '');
-    }
-    if (!mapped && (text[0] === '{' || text[0] === '[')) {
-      index = valueEnd(lines, index, text);
-      skip = depth;
-      continue;
-    }
-    const entry = keyOf(text);
-    if (!entry) {
-      if (mapped) throw unsupported('line that is not a key');
-      // A scalar or a flow collection in a sequence item: skip what it spans.
-      if (text[0] === "'" || text[0] === '"') index = valueEnd(lines, index, text);
-      skip = depth;
-      continue;
-    }
-    if (depth === 0 && entry.key === 'env') {
-      const after = entry.after.replace(/^[ \t]+/, '');
-      if (!blank(after)) throw unsupported(FORMS[after[0]] ?? 'scalar env');
-      if (env !== 'none') throw unsupported('duplicate env key');
-      env = 'open';
-      continue;
-    }
-    if (env === 'open' && depth === indent && entry.key === 'SELF_HOSTING_COMMIT') {
-      const value = pinValue(entry.after);
-      if (value !== null) pins.push(value);
-      pin = { column, value };
-      continue;
-    }
-    let value = entry.after.replace(/^[ \t]+/, '');
-    while (/^[&!][^ \t]*([ \t]+|$)/.test(value)) value = value.replace(/^[&!][^ \t]*([ \t]+|$)/, '');
-    if (blank(value)) continue;
-    if ('\'"{['.includes(value[0])) index = valueEnd(lines, index, value);
-    skip = column;
-  }
-  if (pin?.value === null) throw unsupported('value not a commit');
-  return pins;
-}
-
-/** The one commit a workflow pins for the check's code; zero pins or several are refused. */
-function onePin(workflow) {
-  const pins = pinsIn(workflow);
-  assert.equal(pins.length, 1, `one SELF_HOSTING_COMMIT pin, found ${pins.length}`);
-  return pins[0];
+  });
+  if (canonical.length === 0) throw new Error(`${WORKFLOW} holds no canonical SELF_HOSTING_COMMIT line`);
+  if (canonical.length > 1) throw new Error(`${WORKFLOW} holds the canonical SELF_HOSTING_COMMIT line twice, at lines ${canonical.join(' and ')}`);
+  return lines[canonical[0] - 1].match(CANONICAL)[1];
 }
 
 /** The commit `.github/workflows/self-hosting.yml` pins for the check's code. */
-const checkPin = () => onePin(readFileSync(join(ROOT, '.github/workflows/self-hosting.yml'), 'utf8'));
+const checkPin = () => canonicalPin(readFileSync(join(ROOT, WORKFLOW), 'utf8'));
+/** The message prefix that refuses the workflow at `line`. */
+const atLine = (line) => new RegExp(`^${WORKFLOW.replace(/\./g, '\\.')} line ${line} `);
 
-// A reader tied to one spelling of the env block fails both pin tests on an equivalent workflow, and
-// one that reads zero pins from a form it does not parse hides the pin instead of naming the form.
-test('the pin reader reads the same commit from each YAML spelling and refuses zero or two pins', () => {
+// The ancestor and closure tests read the pin from one canonical line. A pin spelled any other way,
+// even as YAML that means the same, would be read wrongly or not at all, so this refuses it by line.
+test('the self-hosting workflow holds its pin in one canonical line and refuses any other spelling by line', () => {
   const sha = 'c1e4833fd3bfdafef68590c48ad88571a3d3c885';
-  const other = '0'.repeat(40);
-  // Each body is the top-level env block; a job's own env names another value and must not count.
-  const workflow = (env, { head = '', tail = '', end = '' } = {}) =>
-    `${head}name: self-hosting\non:\n  push:\n${env}\n${tail}jobs:\n  check:\n    env:\n      SELF_HOSTING_COMMIT: 'other'\n${end}`;
-  const block = (entry) => `env:\n  NODE_MAJOR: '24'\n${entry}\n  TREE: tree`;
-  const equivalent = {
-    'key and value unquoted': block(`  SELF_HOSTING_COMMIT: ${sha}`),
-    'value single-quoted': block(`  SELF_HOSTING_COMMIT: '${sha}'`),
-    'value double-quoted': block(`  SELF_HOSTING_COMMIT: "${sha}"`),
-    'value double-quoted with escapes': block(`  SELF_HOSTING_COMMIT: "\\x63\\u0031\\U00000065${sha.slice(3)}"`),
-    'key single-quoted': block(`  'SELF_HOSTING_COMMIT': '${sha}'`),
-    'key double-quoted': block(`  "SELF_HOSTING_COMMIT": '${sha}'`),
-    'key double-quoted with an escape': block(`  "SELF\\x5FHOSTING_COMMIT": ${sha}`),
-    'key single-quoted, value double-quoted': block(`  'SELF_HOSTING_COMMIT': "${sha}"`),
-    'four-space indentation': `env:\n    NODE_MAJOR: '24'\n    SELF_HOSTING_COMMIT: "${sha}"`,
-    'one-space indentation': `env:\n NODE_MAJOR: '24'\n SELF_HOSTING_COMMIT: ${sha}`,
-    'blank lines in the block': `env:\n\n  NODE_MAJOR: '24'\n\n  SELF_HOSTING_COMMIT: '${sha}'\n\n  TREE: tree`,
-    'full-line comments': `# the environment\nenv:\n  # the pin\n  SELF_HOSTING_COMMIT: '${sha}'\n    # an indented comment\n  TREE: tree`,
-    'trailing comments': `env: # the environment\n  SELF_HOSTING_COMMIT: '${sha}' # the pin\n  TREE: tree # the tree`,
-    'unquoted value with a trailing comment': block(`  SELF_HOSTING_COMMIT: ${sha}  # the pin`),
-    'spaces after the colon': block(`  SELF_HOSTING_COMMIT:     '${sha}'`),
-    'env key double-quoted': `"env":\n  SELF_HOSTING_COMMIT: '${sha}'`,
-    'env key single-quoted': `'env':\n  SELF_HOSTING_COMMIT: '${sha}'`,
-    'pin after a nested value': `env:\n  OTHER:\n    nested: 1\n  SELF_HOSTING_COMMIT: '${sha}'`,
-    'spaces before the colon': block(`  SELF_HOSTING_COMMIT  : ${sha}`),
-    'a tab after the colon': block(`  SELF_HOSTING_COMMIT:\t'${sha}'`),
-    'a flow sequence in another entry running over lines': block(`  LIST: [a,\n  SELF_HOSTING_COMMIT: ${other}]\n  SELF_HOSTING_COMMIT: ${sha}`),
+  assert.match(canonicalPin(readFileSync(join(ROOT, WORKFLOW), 'utf8')), /^[0-9a-f]{40}$/);
+  const workflow = (env, rest = '') => `name: self-hosting\non:\n  push:\nenv:\n  NODE_MAJOR: '24'\n${env}\n  TREE: tree\n`
+    + 'jobs:\n  check:\n    steps:\n      - run: curl "https://codeload.github.com/${GITHUB_REPOSITORY}/tar.gz/${SELF_HOSTING_COMMIT}"\n'
+    + rest;
+  assert.equal(canonicalPin(workflow(`  SELF_HOSTING_COMMIT: '${sha}'`)), sha, 'the canonical line beside shell references');
+  // Each spelling rounds 1 to 3 and the attack found, as the line it puts in the workflow.
+  const refused = {
+    'value double-quoted': `  SELF_HOSTING_COMMIT: "${sha}"`,
+    'value unquoted': `  SELF_HOSTING_COMMIT: ${sha}`,
+    'value with escapes': `  SELF_HOSTING_COMMIT: "\\x63${sha.slice(1)}"`,
+    'key single-quoted': `  'SELF_HOSTING_COMMIT': '${sha}'`,
+    'key double-quoted': `  "SELF_HOSTING_COMMIT": '${sha}'`,
+    'four-space indentation': `    SELF_HOSTING_COMMIT: '${sha}'`,
+    'root indentation': `SELF_HOSTING_COMMIT: '${sha}'`,
+    'a trailing comment': `  SELF_HOSTING_COMMIT: '${sha}' # the pin`,
+    'a no-break space before a comment': `  SELF_HOSTING_COMMIT: ${sha}\u00a0# the pin`,
+    'a no-break space in the key': `  SELF_HOSTING_COMMIT\u00a0: '${sha}'`,
+    'spaces before the colon': `  SELF_HOSTING_COMMIT  : '${sha}'`,
+    'an upper-case commit': `  SELF_HOSTING_COMMIT: '${sha.toUpperCase()}'`,
+    'a short commit': `  SELF_HOSTING_COMMIT: '${sha.slice(0, 12)}'`,
+    'a value on the next line': `  SELF_HOSTING_COMMIT:\n    '${sha}'`,
+    'a block scalar': `  SELF_HOSTING_COMMIT: |\n    ${sha}`,
+    'an anchor': `  SELF_HOSTING_COMMIT: &pin '${sha}'`,
+    'a flow mapping': `  { SELF_HOSTING_COMMIT: '${sha}' }`,
+    'a commented-out pin': `  # SELF_HOSTING_COMMIT: '${sha}'`,
+    'a bare shell reference': `  NOTE: $SELF_HOSTING_COMMIT`,
   };
-  for (const [name, env] of Object.entries(equivalent)) assert.equal(onePin(workflow(env)), sha, name);
-  const plain = workflow(block(`  SELF_HOSTING_COMMIT: '${sha}'`));
-  assert.equal(onePin(`\uFEFF${block(`  SELF_HOSTING_COMMIT: '${sha}'`)}`), sha, 'a byte-order mark at the start, before env');
-  assert.equal(onePin(plain.replace(/\n/g, '\r\n')), sha, 'CRLF line ends');
-  assert.equal(onePin(workflow(block(`  SELF_HOSTING_COMMIT: '${sha}'`), { head: 'description: >-\n  folded\n  text\n' })), sha,
-    'a block scalar on another top-level key');
-  assert.equal(onePin(workflow(block(`  SELF_HOSTING_COMMIT: '${sha}'`), { head: `title: "a\nenv:\n  SELF_HOSTING_COMMIT: ${other}\nz"\n` })), sha,
-    'a quoted value running over lines that read as an env map');
-  assert.equal(onePin(workflow(block(`  SELF_HOSTING_COMMIT: '${sha}'`), { head: '---\n' })), sha, 'one explicit document');
-  assert.equal(onePin(workflow(block(`  SELF_HOSTING_COMMIT: '${sha}'`), { head: '---\n', end: '...\n' })), sha, 'one document with its end marker');
-
-  const unsupported = {
-    'flow mapping for the env map': ['flow mapping', workflow(`env: { SELF_HOSTING_COMMIT: '${sha}' }`)],
-    'flow mapping value': ['flow mapping', workflow(block(`  SELF_HOSTING_COMMIT: { sha: '${sha}' }`))],
-    'flow mapping document': ['flow mapping', `{ env: { SELF_HOSTING_COMMIT: '${sha}' } }\n`],
-    'anchor on the env map': ['anchor', workflow(`env: &environment\n  SELF_HOSTING_COMMIT: '${sha}'`)],
-    'anchor on the pin': ['anchor', workflow(block(`  SELF_HOSTING_COMMIT: &pin '${sha}'`))],
-    'anchor on the key': ['anchor', workflow(block(`  &key SELF_HOSTING_COMMIT: '${sha}'`))],
-    'alias for the pin': ['alias', workflow(block(`  SELF_HOSTING_COMMIT: *pin`))],
-    'alias for the env map': ['alias', workflow('env: *environment')],
-    'literal block scalar': ['block scalar', workflow(block(`  SELF_HOSTING_COMMIT: |\n    ${sha}`))],
-    'folded block scalar': ['block scalar', workflow(block(`  SELF_HOSTING_COMMIT: >-\n    ${sha}`))],
-    'merge key': ['merge key', workflow(block('  <<: *base'))],
-    'second document': ['second document', workflow(block(`  SELF_HOSTING_COMMIT: '${sha}'`), { tail: `---\nenv:\n  SELF_HOSTING_COMMIT: '${sha}'\n` })],
-    'document after an end marker': ['second document', workflow(block(`  SELF_HOSTING_COMMIT: '${sha}'`), { end: `...\n---\nenv:\n  SELF_HOSTING_COMMIT: '${sha}'\n` })],
-    'a plain value continued on a deeper line': ['multi-line scalar', workflow(block(`  SELF_HOSTING_COMMIT: ${sha}\n    extra`))],
-    'a quoted value running past its line': ['multi-line scalar', workflow(block(`  SELF_HOSTING_COMMIT: "${sha}\n    "`))],
-    'a value on the next line': ['value on next line', workflow(block(`  SELF_HOSTING_COMMIT:\n    ${sha}`))],
-    'an empty value': ['value not a commit', workflow(block('  SELF_HOSTING_COMMIT:'))],
-    'a no-break space before the comment': ['value not a commit', workflow(block(`  SELF_HOSTING_COMMIT: ${sha}\u00a0# the pin`))],
-    'a null value': ['value not a commit', workflow(block('  SELF_HOSTING_COMMIT: ~'))],
-    'a value holding a colon': ['value not a commit', workflow(block(`  SELF_HOSTING_COMMIT: ${sha}: x`))],
-    'an upper-case commit': ['value not a commit', workflow(block(`  SELF_HOSTING_COMMIT: ${sha.toUpperCase()}`))],
-    'a short commit': ['value not a commit', workflow(block(`  SELF_HOSTING_COMMIT: '${sha.slice(0, 12)}'`))],
-    'a tag on the pin': ['tag', workflow(block(`  SELF_HOSTING_COMMIT: !!str ${sha}`))],
-    'content after a quoted pin': ['content after a closed value', workflow(block(`  SELF_HOSTING_COMMIT: '${sha}' x`))],
-    'lone CR line ends': ['lone CR line ending', workflow(block(`  SELF_HOSTING_COMMIT: '${sha}'`)).replace(/\n/g, '\r')],
-  };
-  for (const [name, [form, text]] of Object.entries(unsupported)) {
-    assert.throws(() => onePin(text), { message: `unsupported YAML form for SELF_HOSTING_COMMIT: ${form}` }, name);
+  for (const [name, line] of Object.entries(refused)) {
+    const text = workflow(line);
+    const at = text.split('\n').findIndex((each) => each.includes('SELF_HOSTING_COMMIT') && !each.includes('${SELF_HOSTING_COMMIT}')) + 1;
+    assert.throws(() => canonicalPin(text), { message: atLine(at) }, name);
   }
-
-  assert.throws(() => onePin(workflow(block(`  # SELF_HOSTING_COMMIT: '${sha}'`))), /found 0/);
-  // A no-break space is no YAML white space, so these name another key, and the workflow holds no pin.
-  assert.throws(() => onePin(workflow(block(`  SELF_HOSTING_COMMIT\u00a0: ${sha}`))), /found 0/);
-  // A byte-order mark is stripped only at the very start; elsewhere it is part of the key it precedes.
-  assert.throws(() => onePin(workflow(`\uFEFF${block(`  SELF_HOSTING_COMMIT: '${sha}'`)}`)), /found 0/);
-  assert.throws(() => onePin(workflow(block(`  SELF_HOSTING_COMMIT: '${sha}'\n  "SELF_HOSTING_COMMIT": "${sha}"`))), /found 2/);
+  // A canonical line beside a re-spelled one is refused by the re-spelled line.
+  const beside = workflow(`  SELF_HOSTING_COMMIT: '${sha}'`, `    env:\n      SELF_HOSTING_COMMIT: 'other'\n`);
+  assert.throws(() => canonicalPin(beside), { message: atLine(beside.split('\n').length - 1) }, 'a job-level pin');
+  // CR line ends, which YAML reads as the same file, leave no canonical line; a byte-order mark
+  // before the first line leaves the canonical line as it was.
+  const canonical = workflow(`  SELF_HOSTING_COMMIT: '${sha}'`);
+  assert.equal(canonicalPin(`\uFEFF${canonical}`), sha, 'a byte-order mark before the first line');
+  const pinLine = canonical.split('\n').findIndex((each) => each.startsWith('  SELF_HOSTING_COMMIT')) + 1;
+  assert.throws(() => canonicalPin(canonical.replace(/\n/g, '\r\n')), { message: atLine(pinLine) }, 'CRLF line ends');
+  assert.throws(() => canonicalPin(canonical.replace(/\n/g, '\r')), { message: atLine(1) }, 'lone CR line ends');
+  assert.throws(() => canonicalPin(workflow('')), { message: `${WORKFLOW} holds no canonical SELF_HOSTING_COMMIT line` }, 'absent');
+  assert.throws(() => canonicalPin(workflow(`  SELF_HOSTING_COMMIT: '${sha}'\n  SELF_HOSTING_COMMIT: '${sha}'`)),
+    { message: `${WORKFLOW} holds the canonical SELF_HOSTING_COMMIT line twice, at lines 6 and 7` }, 'twice');
 });
 
 // A pin the default branch does not reach, such as a squash-merged pull request's own head
