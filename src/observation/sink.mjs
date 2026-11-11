@@ -9,7 +9,6 @@
 
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { inspect } from 'node:util';
 
 import { writeWhole } from '../substrate/standard-error.mjs';
 
@@ -120,12 +119,56 @@ export function openSink({ directory, run, now }) {
 /** The envelope checked at L5's read boundary, before any derivation receives the event. */
 function checkEventEnvelope(event) {
   const describe = (value) => {
-    let lossy = false;
-    const json = JSON.stringify(value, (_key, nested) => {
-      if (typeof nested === 'number' && (!Number.isFinite(nested) || Object.is(nested, -0))) lossy = true;
-      return nested;
-    });
-    return lossy ? inspect(value, { depth: null, maxArrayLength: null, maxStringLength: null, breakLength: Infinity, compact: true }) : json ?? 'missing';
+    const maximumDepth = 4;
+    const maximumLength = 256;
+    const elision = '…';
+    // Quote only a bounded string, never an entire input object or an unbounded key/value.
+    const quote = (text) => JSON.stringify(text.slice(0, maximumLength));
+    function* members(container) {
+      if (Array.isArray(container)) {
+        for (let index = 0; index < container.length; index += 1) yield [undefined, container[index]];
+      } else {
+        for (const key in container) if (Object.hasOwn(container, key)) yield [key, container[key]];
+      }
+    }
+    const pending = [{ value, depth: 0 }];
+    let shown = '';
+    while (pending.length > 0 && shown.length < maximumLength) {
+      const part = pending.pop();
+      if (typeof part === 'string') {
+        shown += part;
+      } else if (part.iterator) {
+        const next = part.iterator.next();
+        if (next.done) {
+          shown += part.close;
+          continue;
+        }
+        if (!part.first) shown += ',';
+        part.first = false;
+        pending.push(part);
+        const [key, member] = next.value;
+        pending.push({ value: member, depth: part.depth });
+        if (key !== undefined) pending.push(`${quote(key)}:`);
+      } else {
+        const { value, depth } = part;
+        if (value !== null && typeof value === 'object') {
+          if (depth >= maximumDepth) {
+            shown += elision;
+            continue;
+          }
+          const array = Array.isArray(value);
+          shown += array ? '[' : '{';
+          pending.push({ iterator: members(value), first: true, depth: depth + 1, close: array ? ']' : '}' });
+        } else if (typeof value === 'string') {
+          shown += quote(value);
+        } else if (typeof value === 'number') {
+          shown += Object.is(value, -0) ? '-0' : String(value);
+        } else {
+          shown += JSON.stringify(value) ?? 'missing';
+        }
+      }
+    }
+    return pending.length > 0 || shown.length > maximumLength ? shown.slice(0, maximumLength - elision.length) + elision : shown;
   };
   if (event === null || typeof event !== 'object' || Array.isArray(event)) {
     throw new Error(`its envelope is ${describe(event)}, not a plain object`);

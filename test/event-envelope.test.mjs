@@ -28,7 +28,7 @@ function clockIn(t) {
 function refuses(cases) {
   const directory = temporaryDirectory('rigger-envelope-');
   const path = streamPath(directory);
-  for (const [event, field, value] of cases) {
+  for (const [event, field, value, checkCause] of cases) {
     const middle = Buffer.isBuffer(event) ? event.toString('utf8') : JSON.stringify(event);
     const bytes = `${text([VALID])}${middle}\n${text([VALID])}`;
     writeFileSync(path, bytes);
@@ -37,6 +37,7 @@ function refuses(cases) {
       assert.ok(failure.cause instanceof Error, 'the refusal carries its own cause');
       assert.ok(failure.cause.message.includes(field), `cause names ${field}: ${failure.cause.message}`);
       assert.ok(failure.cause.message.includes(value), `cause names ${value}: ${failure.cause.message}`);
+      checkCause?.(failure.cause.message);
       return true;
     }, `${field} ${value} must refuse the second line`);
     assert.equal(readFileSync(path, 'utf8'), bytes, 'a refusal preserves the entire stream');
@@ -102,14 +103,17 @@ test('E1: invalid timestamps are refused by the reader, report verb and kept-up 
 
 // A parsed primitive or array is not an event, even though its JSON is well formed.
 // proves R-RECORD-6
-test('E6: parsed values other than plain objects refuse the stream by line and value', (t) => {
+test('E6: parsed values other than plain objects refuse the stream by line and value', async (t) => {
   clockIn(t);
-  refuses([null, true, false, 0, 1, 'text', [], [VALID]].map((value) => [value, 'envelope', JSON.stringify(value)]));
-  for (const [numeral, expected] of [['1e400', Infinity], ['-1e400', -Infinity], ['-0', -0]]) {
-    assert.ok(Object.is(JSON.parse(numeral), expected), 'the root numeric fixture must retain its parsed value');
-    const shown = Object.is(expected, -0) ? '-0' : String(expected);
-    refuses([[Buffer.from(numeral), 'envelope', shown]]);
-  }
+  await t.test('envelope: ordinary and parsed numeric refusals', () => {
+    refuses([null, true, false, 0, 1, 'text', [], [VALID]].map((value) => [value, 'envelope', JSON.stringify(value)]));
+    for (const [numeral, expected] of [['1e400', Infinity], ['-1e400', -Infinity], ['-0', -0]]) {
+      assert.ok(Object.is(JSON.parse(numeral), expected), 'the root numeric fixture must retain its parsed value');
+      const shown = Object.is(expected, -0) ? '-0' : String(expected);
+      refuses([[Buffer.from(numeral), 'envelope', shown]]);
+    }
+  });
+  await boundedRefusals(t, 'envelope');
 });
 
 // Truthiness or coercion would admit an empty name or a value that is not a string.
@@ -132,19 +136,22 @@ test('E3: only layer names L0 through L6 enter the record', (t) => {
 
 // Present card ids are issue numbers, never null, coerced strings or unsafe/fractional numbers.
 // proves R-RECORD-6
-test('E4: a present card must be a safe integer above zero', (t) => {
+test('E4: a present card must be a safe integer above zero', async (t) => {
   clockIn(t);
-  refuses([null, 0, -1, 1.5, 9007199254740992, '7', true, {}, [], '7\ncard #999']
-    .map((card) => [{ ...VALID, card }, 'card', JSON.stringify(card)]));
-  for (const [numeral, expected] of [['1e400', Infinity], ['-1e400', -Infinity], ['-0', -0]]) {
-    const prefix = '{"ts":"2026-10-29T12:00:00.000Z","run":"r-envelope","layer":"L3","event":"pull","card":';
-    const direct = Buffer.from(`${prefix}${numeral}}`);
-    const nested = Buffer.from(`${prefix}{"nested":${numeral}}}`);
-    assert.ok(Object.is(JSON.parse(direct.toString('utf8')).card, expected), 'the fixture must preserve the parsed numeric value');
-    assert.ok(Object.is(JSON.parse(nested.toString('utf8')).card.nested, expected), 'the nested fixture must preserve the parsed numeric value');
-    const shown = Object.is(expected, -0) ? '-0' : String(expected);
-    refuses([[direct, 'card', shown], [nested, 'card', shown]]);
-  }
+  await t.test('card: ordinary and parsed numeric refusals', () => {
+    refuses([null, 0, -1, 1.5, 9007199254740992, '7', true, {}, [], '7\ncard #999']
+      .map((card) => [{ ...VALID, card }, 'card', JSON.stringify(card)]));
+    for (const [numeral, expected] of [['1e400', Infinity], ['-1e400', -Infinity], ['-0', -0]]) {
+      const prefix = '{"ts":"2026-10-29T12:00:00.000Z","run":"r-envelope","layer":"L3","event":"pull","card":';
+      const direct = Buffer.from(`${prefix}${numeral}}`);
+      const nested = Buffer.from(`${prefix}{"nested":${numeral}}}`);
+      assert.ok(Object.is(JSON.parse(direct.toString('utf8')).card, expected), 'the fixture must preserve the parsed numeric value');
+      assert.ok(Object.is(JSON.parse(nested.toString('utf8')).card.nested, expected), 'the nested fixture must preserve the parsed numeric value');
+      const shown = Object.is(expected, -0) ? '-0' : String(expected);
+      refuses([[direct, 'card', shown], [nested, 'card', shown]]);
+    }
+  });
+  await boundedRefusals(t, 'card');
 });
 
 // Null is admitted explicitly; every other present dispatch must remain a non-empty string.
@@ -180,3 +187,45 @@ test('E7 E9: valid envelopes round-trip unchanged and every unterminated tail is
     assert.deepEqual(readFileSync(path), bytes, 'reading preserves every stream byte');
   }
 });
+
+/** Parser-admitted values need a bounded preview, even where their complete form cannot be serialized. */
+async function boundedRefusals(t, field) {
+  const arrays = '['.repeat(10000) + '7' + ']'.repeat(10000);
+  const objects = '{"nested":'.repeat(10000) + '7' + '}'.repeat(10000);
+  const long = JSON.stringify('long-' + 'x'.repeat(100000) + '\nend');
+  const wide = '[' + Array(50000).fill('7').join(',') + ']';
+  const cases = [
+    ['deep arrays', arrays, '[[[[…]]]]', '[[[[…]]]]', (value) => {
+      for (let depth = 0; depth < 10000; depth += 1) { assert.ok(Array.isArray(value)); value = value[0]; }
+      assert.equal(value, 7);
+    }],
+    ['deep objects', objects, '{"nested":{"nested":{"nested":{"nested":…}}}}', '[{"nested":{"nested":{"nested":…}}}]', (value) => {
+      for (let depth = 0; depth < 10000; depth += 1) { assert.equal(typeof value, 'object'); value = value.nested; }
+      assert.equal(value, 7);
+    }],
+    ['long string', long, '"long-', '"long-', (value) => { assert.equal(value.length, 100009); }],
+    ['wide array', wide, '[7,7,7,7,', '[7,7,7,7,', (value) => { assert.equal(value.length, 50000); }],
+    ['wide object', '{' + Array.from({ length: 20000 }, (_,index) => `"key${index}":7`).join(',') + '}',
+      '{"key0":7,"key1":7,', '[{"key0":7,"key1":7,', (value) => { assert.equal(Object.keys(value).length, 20000); }],
+    ['long key', '{' + JSON.stringify('long-' + 'x'.repeat(100000)) + ':7}', '{"long-', '[{"long-',
+      (value) => { assert.equal(Object.keys(value)[0].length, 100005); }],
+    ['mixed values', `[-0,1e400,${objects},${long},${wide}]`, '[-0,Infinity,{"nested":', '[-0,Infinity,{"nested":', (value) => {
+      assert.ok(Object.is(value[0], -0));
+      assert.equal(value[1], Infinity);
+      assert.equal(value.length, 5);
+      assert.equal(value[4].length, 50000);
+    }],
+  ];
+  for (const [name, json, cardPreview, rootPreview, establish] of cases) {
+    await t.test(`${field}: bounded diagnostic for ${name}`, () => {
+      const parsed = JSON.parse(json);
+      establish(parsed);
+      const raw = field === 'card' ? `${JSON.stringify(VALID).slice(0, -1)},"card":${json}}`
+        : json.startsWith('{') ? `[${json}]` : json;
+      refuses([[Buffer.from(raw), field, field === 'card' ? cardPreview : rootPreview, (cause) => {
+        assert.ok(cause.length <= 320, `${name}: cause including the value preview must stay within 320 characters`);
+        assert.ok(cause.includes('…'), `${name}: the value preview names its elision`);
+      }]]);
+    });
+  }
+}
