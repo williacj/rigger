@@ -65,7 +65,7 @@ function everyValue(value, reason = value) {
   return [
     event(first, 0, 'L3', 'run.start', { concurrency: value('2') }),
     event(first, 0, 'L3', 'pull', { card, queueDepth: value('3'), kind: value('change') }),
-    event(first, 0, 'L3', 'pull', { card: [value('8')], queueDepth: 1 }),
+    event(first, 0, 'L3', 'pull', { card: [value('8')], queueDepth: value('1') }),
     event(first, 1, 'L3', 'dispatch', { card }),
     event(first, 2, 'L1', 'dispatch.end', { dispatch: value('d1'), card, ms: value('5') }),
     event(first, 3, 'L2', 'review.escalate', { card, category: value('ambiguous'), raiser: value('loop'),
@@ -76,7 +76,7 @@ function everyValue(value, reason = value) {
     event(first, 6, 'L3', 'admission.open', { id: value('hold-1') }),
     event(first, 7, 'L3', 'admission.close', { kind: 'hold', id: value('hold-1'), reason: value('paused') }),
     event(first, 60, 'L0', 'call.end', { system: 'git', outcome: 'ok' }),
-    event(second, 61, 'L3', 'pull', { card, queueDepth: 0 }),
+    event(second, 61, 'L3', 'pull', { card, queueDepth: value('0') }),
     event(second, 62, 'L3', 'dispatch', { card }),
   ];
 }
@@ -239,11 +239,11 @@ const BASE = [
   '    L3 throughput: 0 slot releases per hour (0 slot releases over 1 h)',
   '    L3 utilization: NaN (0 h from pull to release, over N 2 "q" \\ $x x 1 h)',
   '    queue carried at the pull of card #7 "q" \\ $x: 3 "q" \\ $x',
-  '    queue carried at the pull of card #8 "q" \\ $x: 1',
+  '    queue carried at the pull of card #8 "q" \\ $x: 1 "q" \\ $x',
   '  run r2 "q" \\ $x: from 2026-01-01T01:01:00.000Z to 2026-01-01T01:02:00.000Z, a span of 0.0167 h',
   '    L3 throughput: 0 slot releases per hour (0 slot releases over 0.0167 h)',
   '    the run recorded no N, so L3 has no utilization for it',
-  '    queue carried at the pull of card #7 "q" \\ $x: 0',
+  '    queue carried at the pull of card #7 "q" \\ $x: 0 "q" \\ $x',
   'L4',
   '  run r1 "q" \\ $x',
   '    rework: 0',
