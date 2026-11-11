@@ -21,7 +21,7 @@ function refused(records, line) {
     assert.equal(failure.message, `${path} line ${line} is not a recorded event`);
     assert.match(failure.cause.message, /`card`/);
     return true;
-  }, 'report must refuse a forged card rather than derive its text');
+  }, `report must refuse a forged card on line ${line} rather than derive its text`);
   assert.equal(readFileSync(path, 'utf8'), bytes, 'refusal preserves all stream bytes');
 }
 
@@ -313,4 +313,13 @@ const BASE = [
 test('report prints a stream with no break, control character or -0 as it did before values were escaped', () => {
   const plain = (head) => `${head} "q" \\ $x`;
   assert.equal(printed(everyValue(plain)), BASE);
+  for (const [index, card] of [
+    [1, plain('7')], [2, [plain('8')]], [3, plain('7')], [5, plain('23')], [7, plain('7')],
+    [8, plain('7')], [9, plain('7')], [10, plain('7')], [11, plain('7')], [12, [plain('14')]],
+    [15, plain('7')], [16, plain('21')], [17, plain('22')], [19, plain('7')], [20, plain('7')],
+  ]) {
+    const records = everyValue(plain);
+    records[index] = { ...records[index], card };
+    refused(records, index + 1);
+  }
 });
