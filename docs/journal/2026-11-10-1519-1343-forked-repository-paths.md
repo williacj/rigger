@@ -37,3 +37,10 @@ pool at 15,284. Removing the repeated paragraph/cell phrase and spike history, a
 the already-changed review passage without dropping its instructions, pays for the conditions.
 Verification receipts belong in the PR: run metadata, guarded mutations, final-head checks,
 per-test defect records, and the base/head text of each changed passage.
+
+A guarded reporting probe at intermediate commit `507ab6d1239f8aa1713f6cd1c2e4974b12842d5b`
+used `mutation:receipt` to replace the helper's list assertion with a count assertion while
+keeping the same rejection rule and missing-path names. Only the rejection fixture failed,
+on the assertion error's metadata fields. Its four invalid passage contexts are now checked
+separately, with a valid/fenced control, without pinning those fields. Final-head receipts
+include that reporting control and the independent semantic fault for each added test.

@@ -49,32 +49,26 @@ test('every repository implementation path init forks sits in a conditioned pass
 test('the forked-path check rejects unconditioned members in each passage form', () => {
   const forked = consumerFiles().find(({ path }) => path.startsWith('.claude/skills/'));
   assert.ok(forked, 'init must plan the skill used by this counterexample');
-  const content = [
-    'Where the repository defines it, read `scripts/conditioned.mjs`.',
-    '',
-    'Read `scripts/consumer-check.mjs` before handing off.',
-    '',
-    '- Where the repository defines it, read `test/conditioned.mjs`.',
-    '- Read `test/consumer-check.mjs` before handing off.',
-    '| Where the repository defines it, read `docs/journal/conditioned.md`. |',
-    '| Read `docs/journal/consumer-note.md` before handing off. |',
-    '',
-    'Read `docs/v0-build-plan.md` before handing off.',
+  const contexts = [
+    ['Where the repository defines it, read `scripts/conditioned.mjs`.', '',
+      'Read `scripts/consumer-check.mjs` before handing off.'],
+    ['- Where the repository defines it, read `test/conditioned.mjs`.',
+      '- Read `test/consumer-check.mjs` before handing off.'],
+    ['| Where the repository defines it, read `docs/journal/conditioned.md`. |',
+      '| Read `docs/journal/consumer-note.md` before handing off. |'],
+    ['Read `docs/v0-build-plan.md` before handing off.'],
+  ];
+  for (const lines of contexts) {
+    assert.throws(() => assertConditionedPaths([{ ...forked, content: lines.join('\n') }]));
+  }
+  assert.doesNotThrow(() => assertConditionedPaths([{ ...forked, content: [
+    'Where the repository defines it, read `scripts/conditioned.mjs`, `test/conditioned.mjs` and',
+    '`docs/journal/conditioned.md`.',
     '',
     '```text',
     'Read `scripts/fenced.mjs`.',
     '```',
-  ].join('\n');
-  assert.throws(() => assertConditionedPaths([{ ...forked, content }]), {
-    code: 'ERR_ASSERTION',
-    actual: [
-      `${forked.path}: scripts/consumer-check.mjs`,
-      `${forked.path}: test/consumer-check.mjs`,
-      `${forked.path}: docs/journal/consumer-note.md`,
-      `${forked.path}: docs/v0-build-plan.md`,
-    ],
-    expected: [],
-  });
+  ].join('\n') }]));
 });
 
 // Treating a convention as an implementation reference would reject valid consumer instructions.
