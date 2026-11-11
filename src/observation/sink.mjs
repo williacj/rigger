@@ -9,6 +9,7 @@
 
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { inspect } from 'node:util';
 
 import { writeWhole } from '../substrate/standard-error.mjs';
 
@@ -118,11 +119,19 @@ export function openSink({ directory, run, now }) {
 
 /** The envelope checked at L5's read boundary, before any derivation receives the event. */
 function checkEventEnvelope(event) {
+  const describe = (value) => {
+    let lossy = false;
+    const json = JSON.stringify(value, (_key, nested) => {
+      if (typeof nested === 'number' && (!Number.isFinite(nested) || Object.is(nested, -0))) lossy = true;
+      return nested;
+    });
+    return lossy ? inspect(value, { depth: null, maxArrayLength: null, maxStringLength: null, breakLength: Infinity, compact: true }) : json ?? 'missing';
+  };
   if (event === null || typeof event !== 'object' || Array.isArray(event)) {
-    throw new Error(`its envelope is ${JSON.stringify(event)}, not a plain object`);
+    throw new Error(`its envelope is ${describe(event)}, not a plain object`);
   }
   const refuse = (field, contract) => {
-    throw new Error(`its \`${field}\` is ${JSON.stringify(event[field]) ?? 'missing'}, not ${contract}`);
+    throw new Error(`its \`${field}\` is ${describe(event[field])}, not ${contract}`);
   };
   const ts = event.ts;
   if (typeof ts !== 'string' || !Number.isFinite(Date.parse(ts)) || new Date(ts).toISOString() !== ts) {

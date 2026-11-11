@@ -29,7 +29,8 @@ function refuses(cases) {
   const directory = temporaryDirectory('rigger-envelope-');
   const path = streamPath(directory);
   for (const [event, field, value] of cases) {
-    const bytes = text([VALID, event, VALID]);
+    const middle = Buffer.isBuffer(event) ? event.toString('utf8') : JSON.stringify(event);
+    const bytes = `${text([VALID])}${middle}\n${text([VALID])}`;
     writeFileSync(path, bytes);
     assert.throws(() => readEvents(directory), (failure) => {
       assert.equal(failure.message, `${path} line 2 is not a recorded event`);
@@ -104,6 +105,11 @@ test('E1: invalid timestamps are refused by the reader, report verb and kept-up 
 test('E6: parsed values other than plain objects refuse the stream by line and value', (t) => {
   clockIn(t);
   refuses([null, true, false, 0, 1, 'text', [], [VALID]].map((value) => [value, 'envelope', JSON.stringify(value)]));
+  for (const [numeral, expected] of [['1e400', Infinity], ['-1e400', -Infinity], ['-0', -0]]) {
+    assert.ok(Object.is(JSON.parse(numeral), expected), 'the root numeric fixture must retain its parsed value');
+    const shown = Object.is(expected, -0) ? '-0' : String(expected);
+    refuses([[Buffer.from(numeral), 'envelope', shown]]);
+  }
 });
 
 // Truthiness or coercion would admit an empty name or a value that is not a string.
@@ -130,6 +136,15 @@ test('E4: a present card must be a safe integer above zero', (t) => {
   clockIn(t);
   refuses([null, 0, -1, 1.5, 9007199254740992, '7', true, {}, [], '7\ncard #999']
     .map((card) => [{ ...VALID, card }, 'card', JSON.stringify(card)]));
+  for (const [numeral, expected] of [['1e400', Infinity], ['-1e400', -Infinity], ['-0', -0]]) {
+    const prefix = '{"ts":"2026-10-29T12:00:00.000Z","run":"r-envelope","layer":"L3","event":"pull","card":';
+    const direct = Buffer.from(`${prefix}${numeral}}`);
+    const nested = Buffer.from(`${prefix}{"nested":${numeral}}}`);
+    assert.ok(Object.is(JSON.parse(direct.toString('utf8')).card, expected), 'the fixture must preserve the parsed numeric value');
+    assert.ok(Object.is(JSON.parse(nested.toString('utf8')).card.nested, expected), 'the nested fixture must preserve the parsed numeric value');
+    const shown = Object.is(expected, -0) ? '-0' : String(expected);
+    refuses([[direct, 'card', shown], [nested, 'card', shown]]);
+  }
 });
 
 // Null is admitted explicitly; every other present dispatch must remain a non-empty string.
