@@ -115,7 +115,7 @@ function makerWorld({
     const open = agent.act(number, 'engineer')?.pr && ran(number) ? [{ number: 500 + number, head: String(number).padStart(40, 'a'), base: 'main' }] : [];
     return { open, merged: [], closed: [] };
   };
-  const l2 = columnChanges({ config: settings, sink, items: fake.operations, reads: readsServing(pullRequests), repositoryWrites: refusingWrites() });
+  const l2 = columnChanges({ config: settings, sink, items: fake.operations, reads: readsServing(pullRequests), repositoryWrites: { ...refusingWrites(), postIssueComment: async () => {}, addIssueLabel: async () => [] } });
   const kinds = { change: { ...KINDS.change, provisioning: steps } };
   const decide = (card, outcomes, attempt) => nextAction(card, kinds, undefined, { columns: COLUMNS, roles, provisioning, outcomes, sink, ...attempt });
   const workspaces = join(directory, 'workspaces');
@@ -203,7 +203,7 @@ test('for a role\'s dispatch, anything the provider adapter reads it reads after
 
   const [run] = built.agent.runs();
   const settings = JSON.parse(run.args[run.args.indexOf('--settings') + 1]);
-  assert.deepEqual(settings.permissions.allow, ['Bash(npm test)']);
+  assert.deepEqual(settings.permissions.allow, ['Bash(npm test)', 'Bash(gh issue comment 1 --body-file .rigger-escalation.md)']);
 });
 
 test('given roleDispatch rejecting with NOT_STARTED, L3 hands that outcome to L2 unread, and the stream holds L3\'s dispatch event and no L1 dispatch.start for that dispatch', SETTLES_WITHIN, async () => {
@@ -235,15 +235,16 @@ test('given a card whose maker stand-in exits 0 and the fake forge holds an open
   assert.deepEqual(await columnsOf(built.fake), { 1: COLUMNS.review });
 });
 
-test('given a card whose maker stand-in exits 0 and the fake forge holds no pull request, the card ends in Coding, and the pull\'s answer names the card and that no pull request was found', SETTLES_WITHIN, async () => {
+test('given a card whose maker stand-in exits 0 and the fake forge holds no pull request, the card ends in Owner, and the pull\'s answer escalates it naming the card and that no pull request was found', SETTLES_WITHIN, async () => {
   const built = makerWorld();
 
   const reached = await built.loop.pull();
 
-  assert.deepEqual(await columnsOf(built.fake), { 1: COLUMNS.coding });
+  assert.deepEqual(await columnsOf(built.fake), { 1: COLUMNS.owner });
   assert.deepEqual(reached.map(({ card, workspace }) => ({ card, workspace })), [{ card: 1, workspace: built.workspace(1) }]);
   assert.equal(reached[0].outcome.value.exit, 0);
-  assert.match(reached[0].settled.reason.message, /no open pull request from its line of work rigger-1\b/);
+  assert.equal(reached[0].settled.value.action, 'escalate');
+  assert.match(reached[0].settled.value.reason, /card #1's maker .*no open pull request from its line of work rigger-1\b/);
 });
 
 test('given a card whose maker stand-in exits non-zero, the card ends in Coding, and the pull\'s answer names the card and the exit code', SETTLES_WITHIN, async () => {

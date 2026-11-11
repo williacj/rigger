@@ -161,6 +161,16 @@ export function createFakeRepository({ branches = [], pullRequests = [], issues 
     },
     readEnvironmentVariable: async (name, variable) => environments[name]?.variables?.[variable] ?? null,
     readEnvironmentSecret: async (name, secret) => environments[name]?.secrets?.includes(secret) ?? false,
+    /** Public and owned by a user, as the executable fake answers every repository. */
+    readVisibility: async () => ({ visibility: 'public', owner: 'user' }),
+    /** The one policy the executable fake holds, option 1 of #1336, as the read side answers it. */
+    readEventPolicies: async () => [{
+      id: 12504,
+      name: 'rigger gate events',
+      enforcement: 'active',
+      workflowPath: { include: ['.github/workflows/rigger-gate.yml', '.github/workflows/self-hosting.yml'], exclude: [] },
+      events: [['pull_request_target', 'issues', 'issue_comment']],
+    }],
     readPullRequests: async (branch) => {
       const from = held.pullRequests.filter((candidate) => candidate.head === branch && candidate.from === null && !candidate.headRepositoryDeleted);
       const inState = (state) => from.filter((candidate) => pullStateOf(candidate) === state).map(asAnswered);

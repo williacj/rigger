@@ -367,7 +367,7 @@ function above(directory) {
  * `directory` that is no JSON object; and, given `reach`, a reached directory with no real path, one
  * whose real path holds a character outside `PLAIN`, or a declared Bash rule for a compound line.
  */
-export async function invocation({ agent, tier, prompt, directory, reach = [], emitter, environment = process.env }) {
+export async function invocation({ agent, tier, prompt, directory, card, reach = [], emitter, environment = process.env }) {
   if (!Object.hasOwn(tiers, tier)) {
     throw new Error(`the Claude Code adapter maps no model to the tier \`${tier}\`, only to \`standard\` and \`high\``);
   }
@@ -389,7 +389,9 @@ export async function invocation({ agent, tier, prompt, directory, reach = [], e
   const declares = (tool) => [tool, ...(ALIASES[tool] ?? [])].some((each) => allowed.includes(each));
   const withheld = [...WORKTREE, ...OWNERS.filter((tool) => !declares(tool))];
   const enabledPlugins = Object.fromEntries(BUILTINS.filter((id) => declared.enabledPlugins?.[id] !== true).map((id) => [id, false]));
-  const settings = { autoMemoryEnabled: false, claudeMdExcludes: excludes, enabledPlugins, permissions: granting(rulesOf(declared), reach, real) };
+  let permissions = granting(rulesOf(declared), reach, real);
+  if (card !== undefined) permissions = { ...permissions, allow: [...(permissions?.allow ?? []), `Bash(gh issue comment ${card} --body-file .rigger-escalation.md)`] };
+  const settings = { autoMemoryEnabled: false, claudeMdExcludes: excludes, enabledPlugins, permissions };
   return {
     command: 'claude',
     args: [

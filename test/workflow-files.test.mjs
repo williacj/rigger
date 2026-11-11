@@ -1036,7 +1036,7 @@ test('the post goes on the SHA the script read, whatever the head is by the time
 });
 
 // This repository's own self-hosting workflow, which posts `self-hosting` as the gate workflow
-// posts `rigger/gate`, from the tree fetched at the commit its own file was read from.
+// posts `rigger/gate`, from the tree fetched at the commit its workflow pins.
 
 const SELF_HOSTING = join(ROOT, '.github', 'workflows', 'self-hosting.yml');
 
@@ -1095,7 +1095,7 @@ test('every gate and self-hosting job refuses a cache without Node 24', () => {
 const TREE_SCRIPTS = /node "\$\{RUNNER_TEMP\}\/\$\{TREE\}\/(scripts\/gate-check\.mjs|\.github\/scripts\/self-hosting-check\.mjs)"/;
 
 /** The self-hosting workflow's step names, which the tests below find its steps by. */
-const FETCH = 'Fetch the tree this workflow was read from';
+const FETCH = 'Fetch the pinned tree';
 const CHECK = 'Run the self-hosting check on each pull request';
 const MINT = 'Mint the gate App\'s token';
 const POST = 'Post self-hosting on each head the check read';
@@ -1138,33 +1138,54 @@ test('the self-hosting workflow runs the self-hosting script and the gate script
   assert.deepEqual([...ran].sort(), ['.github/scripts/self-hosting-check.mjs', 'scripts/gate-check.mjs']);
 });
 
-test('the fetch step names GITHUB_WORKFLOW_SHA as the commit it fetches, and never GITHUB_SHA, github.sha, a github.event field or a branch name, and nothing redefines GITHUB_WORKFLOW_SHA', () => {
+/** The workflow's one fixed commit, read as parsed environment data rather than source text. */
+function selfHostingPin(workflow) {
+  const pins = Object.entries(workflow.env).filter(([, value]) => /^[0-9a-f]{40}$/i.test(value));
+  assert.equal(pins.length, 1, 'the workflow declares one fixed commit in its own environment');
+  const [name, value] = pins[0];
+  assert.notEqual(name, 'RIGGER_COMMIT', 'the check owns its pin separately from the gate');
+  return { name, value };
+}
+
+// Host reason: wiring; this process-free configuration check remains in an awaiting-split file (D30 rule 3).
+// Rigger decision: none; this check reads the workflow pin and its fetch wiring.
+test('both fetch steps use the workflow fixed commit with no job or step override, event SHA or branch', () => {
   const workflow = selfHosting();
+  const { name } = selfHostingPin(workflow);
   for (const job of jobsOf(workflow)) {
     const fetch = stepNamed(job, FETCH);
-    assert.match(fetch.run, /"https:\/\/codeload\.github\.com\/\$\{GITHUB_REPOSITORY\}\/tar\.gz\/\$\{GITHUB_WORKFLOW_SHA\}"/);
-    assert.doesNotMatch(fetch.run, /\bGITHUB_SHA\b|github\.sha|github\.event|GITHUB_REF|GITHUB_HEAD_REF|GITHUB_BASE_REF|github\.ref|refs\/|\bmain\b|\$\{\{/, job.id);
-    assert.equal(fetch.env, undefined, job.id);
+    assert.ok(fetch.run.includes(`"https://codeload.github.com/\${GITHUB_REPOSITORY}/tar.gz/\${${name}}"`), job.id);
+    assert.doesNotMatch(fetch.run, /\bGITHUB_WORKFLOW_SHA\b|\bGITHUB_SHA\b|github\.sha|github\.event|GITHUB_REF|GITHUB_HEAD_REF|GITHUB_BASE_REF|github\.ref|refs\/|\bmain\b|\$\{\{/, job.id);
+    for (const env of [job.env, ...job.steps.map((step) => step.env)]) {
+      assert.ok(!Object.hasOwn(env ?? {}, name), `${job.id} overrides ${name}`);
+    }
   }
-  const envs = [workflow.env, ...jobsOf(workflow).flatMap((job) => [job.env, ...job.steps.map((step) => step.env)])];
-  for (const env of envs) assert.ok(!Object.hasOwn(env ?? {}, 'GITHUB_WORKFLOW_SHA'), JSON.stringify(env));
 });
 
-test('run as the runner runs it, the fetch step unpacks the tarball the forge serves for that commit into the tree the scripts run from', () => {
-  const fetch = stepNamed(posting(selfHosting()), FETCH);
-  const runner = temporaryDirectory('rigger-workflow-runner-');
-  const source = join(runner, 'source', 'rigger-0123456');
-  mkdirSync(join(source, '.github', 'scripts'), { recursive: true });
-  writeFileSync(join(source, '.github', 'scripts', 'self-hosting-check.mjs'), 'the script\n');
-  const tarball = join(runner, 'tree.tar.gz');
-  assert.equal(spawnSync('tar', ['-czf', tarball, '-C', join(runner, 'source'), 'rigger-0123456']).status, 0);
-  const curl = `#!/bin/sh\nprintf '%s\\n' "$@" > ${JSON.stringify(join(runner, 'curl-args'))}\ncat ${JSON.stringify(tarball)}\n`;
-
-  const ran = runStep(fetch, { TREE: selfHosting().env.TREE, GITHUB_WORKFLOW_SHA: '0123456789abcdef0123456789abcdef01234567', GITHUB_SHA: 'f'.repeat(40) }, { curl }, runner);
-
-  assert.equal(ran.status, 0, ran.stdout + ran.stderr);
-  assert.ok(readFileSync(join(runner, 'curl-args'), 'utf8').split('\n').includes('https://codeload.github.com/acme/widgets/tar.gz/0123456789abcdef0123456789abcdef01234567'));
-  assert.equal(readFileSync(join(ran.RUNNER_TEMP, selfHosting().env.TREE, '.github', 'scripts', 'self-hosting-check.mjs'), 'utf8'), 'the script\n');
+// Host reason: wiring; executes each inline fetch with a real tarball and a stand-in curl.
+// Rigger decision: none; this check observes the runner command's URL and extracted bytes.
+test('run as the runner runs it, both fetch steps unpack the pinned commit rather than either event SHA', () => {
+  const workflow = selfHosting();
+  const { name } = selfHostingPin(workflow);
+  const commit = '0123456789abcdef0123456789abcdef01234567';
+  for (const job of jobsOf(workflow)) {
+    const runner = temporaryDirectory('rigger-workflow-runner-');
+    const source = join(runner, 'source', 'rigger-0123456');
+    mkdirSync(join(source, '.github', 'scripts'), { recursive: true });
+    writeFileSync(join(source, '.github', 'scripts', 'self-hosting-check.mjs'), 'the script\n');
+    const tarball = join(runner, 'tree.tar.gz');
+    assert.equal(spawnSync('tar', ['-czf', tarball, '-C', join(runner, 'source'), 'rigger-0123456']).status, 0);
+    const curl = `#!/bin/sh\nprintf '%s\\n' "$@" > ${JSON.stringify(join(runner, 'curl-args'))}\ncat ${JSON.stringify(tarball)}\n`;
+    const ran = runStep(stepNamed(job, FETCH), {
+      TREE: workflow.env.TREE, [name]: commit, GITHUB_WORKFLOW_SHA: 'e'.repeat(40), GITHUB_SHA: 'f'.repeat(40),
+    }, { curl }, runner);
+    assert.equal(ran.status, 0, `${job.id}: ${ran.stdout}${ran.stderr}`);
+    const urls = readFileSync(join(runner, 'curl-args'), 'utf8').split('\n').filter((arg) => arg.startsWith('https://codeload.github.com/'));
+    assert.deepEqual(urls, [`https://codeload.github.com/acme/widgets/tar.gz/${commit}`], `${job.id} fetches the pinned commit`);
+    const installed = join(ran.RUNNER_TEMP, workflow.env.TREE, '.github', 'scripts', 'self-hosting-check.mjs');
+    assert.ok(existsSync(installed), `${job.id} installs the check in the executed tree`);
+    assert.equal(readFileSync(installed, 'utf8'), 'the script\n', job.id);
+  }
 });
 
 test('no step of the self-hosting workflow checks out, or runs code from, the pull request\'s head', () => {
@@ -1316,7 +1337,7 @@ test('the self-hosting workflow posts self-hosting on the SHA the script printed
  * holding `pull`'s facts beside.
  */
 function selfHostingForge(pull) {
-  const agents = '## What binds\n\n| Document | Authority |\n|---|---|\n| `README.md` | The CLI contract |\n\n## Self-hosting\n\n- The live gate: `.githooks/`.\n';
+  const agents = "## What binds\n\n| Document | Authority |\n|---|---|\n| `README.md` | The CLI contract |\n\n## Self-hosting\n\n### Paths needing the owner's marker\n\n- The live gate: `.githooks/`.\n";
   const origin = repositoryIn('rigger-workflow-origin-', { 'rigger.config.mjs': `export default ${JSON.stringify(rigger)};\n`, 'AGENTS.md': agents });
   gitIn(origin, 'branch', '-M', 'main');
   gitIn(origin, 'switch', '--quiet', '-c', 'rigger-7');

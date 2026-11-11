@@ -134,7 +134,6 @@ const originalConverting = [
   'test/once.test.mjs',
   'test/package-budget.test.mjs',
   'test/plan.test.mjs',
-  'test/provider-codex.test.mjs',
   'test/provider-contract.test.mjs',
   'test/pull-outcomes.test.mjs',
   'test/redo-settle.test.mjs',
@@ -183,6 +182,7 @@ expectedLists.host.push('test/hold-close-verbs.test.mjs');
 expectedLists.host.push('test/loop-host.test.mjs');
 expectedLists.host.push('test/in-process-fixtures-host.test.mjs');
 expectedLists.host.push('test/check-host-declarations-host.test.mjs');
+expectedLists.host.push('test/provider-codex-host.test.mjs');
 expectedLists.host.sort();
 expectedLists.awaiting.push('test/claude-folder-live.test.mjs');
 expectedLists.awaiting.sort();

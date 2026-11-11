@@ -39,11 +39,11 @@ An early bounded source review is preliminary and head-bound; name outstanding p
 final verdict.
 
 **3. Find the documents that own what changed.** For every changed behaviour, name the document
-that owns it, and read them in the order `AGENTS.md`'s "What binds" table sets — the README's CLI
-contract, then `docs/spec/requirements.md`, then `ARCHITECTURE.md`, then `docs/spec/decisions.md`.
-That order is the argument, and taking it out of order costs you. While v0 is still being built,
-`docs/v0-build-plan.md` carries the milestone this work belongs to and its exit conditions; read
-those too.
+that owns it, and read them in the order `AGENTS.md`'s "What binds" table sets — the README's
+CLI contract, then `docs/spec/requirements.md`, then `ARCHITECTURE.md`, then
+`docs/spec/decisions.md`. That order is the argument; reordering it costs you. While building
+v0, and where the repository defines it, `docs/v0-build-plan.md` carries this work's milestone
+and its exit conditions; read those too.
 
 **4. Verify yourself.** Independently run required/relevant checks; apply [TDD](../tdd/SKILL.md)
 to exact commands/results. Maker reports are context, never proof; read acceptance/implementation.
@@ -101,10 +101,23 @@ Then the rules that bind every change in this repository, whatever it touches:
 - **Budget.** Does the change push the package past its line budget? A change that would must
   delete as much as it adds, **or** carry a ratified budget change — either route is sound, and
   flagging one that took the second is a false finding (`ARCHITECTURE.md`, "Budgets").
-- **Test-first evidence.** Is there a test, does it assert the behaviour rather than the
-  implementation, does it truthfully declare each requirement it proves or meet the `tdd`
-  skill's diagnostic admission, does it sleep, and was a failing test deleted or weakened
-  (`AGENTS.md`; the `tdd` skill)? Independent oracles and meaningful red/green apply to both.
+- **Test-first evidence.** Is there a test, does it truthfully declare each requirement it
+  proves or meet the `tdd` skill's diagnostic admission, does it sleep, and was a failing test
+  deleted or weakened (`AGENTS.md`; the `tdd` skill)? Independent oracles and meaningful
+  red/green apply to both.
+- **A test a change adds.** Is each one in a class the `tdd` skill's "A test a change adds"
+  names? One that is, is a blocking finding. Its probe depends on its class:
+  1. the behaviour-keeping change, and the test red under it;
+  2. for each recorded defect, a guarded mutation introducing it, with the other test red on
+     an assertion; or the pull request body recording no defect for it;
+  3. the existing module's path;
+  4. the answer's line;
+  5. the answer's line, its source, and the request the source admits;
+  6. the contradicting assertion, or a guarded mutation removing the decision with the named
+     test still green;
+  7. the route and the call.
+
+  For a class whose probe is no command or mutation, that probe is the one "Findings" asks for.
 - **Proof declarations.** For every `// proves R-GROUP-#` declaration in the work you read,
   remove the behaviour each named requirement describes in a disposable copy and run the
   declaring test. It must fail on an assertion about that behaviour. Show that the deletion
@@ -152,8 +165,7 @@ is.
   micro-optimization is not a finding.
 - **Compatibility** — supported platforms, runtimes, configuration defaults, and serialized or
   persisted formats.
-- **Tests** — meaningful assertions, the failure and boundary cases that matter here,
-  deterministic execution, and coupling to behaviour rather than to implementation.
+- **Tests** — meaningful assertions, and the failure and boundary cases that matter here.
 - **Documentation** — an externally visible change reaches the document that owns it. How that
   document must then be written is the binding rule above, not this sweep.
 
@@ -170,7 +182,9 @@ Give every blocking finding all of these:
 - **why it matters**;
 - **what binds it** — a requirement id, a `D#`, an `ARCHITECTURE.md` or `AGENTS.md` section — **or
   a plain statement that it is your judgement and binds nothing**;
-- **what would make it sound** (`R-VERDICT-3`).
+- **what would make it sound** (`R-VERDICT-3`). Where the probe shows a behaviour defect, ask
+  for it as a case in an existing test of the invariant it broke, where one exists, and
+  otherwise as one test of that invariant, never as a test of the probe.
 
 Say when you found a finding by reading alone.
 
@@ -215,12 +229,13 @@ Three values, and Rigger fixes them (`R-VERDICT-1`, `R-VERDICT-2`):
 - **sound** — the work meets the acceptance and you found nothing that must change.
 - **needs revision** — something must change before this merges.
 - **critical** — the work has a fault that must not merge. The loop escalates the card in that
-  category rather than spending its rounds (`R-ESCALATE-6`), so keep it for a fault that must
-  not merge and never use it for a preference.
+  category rather than spending its rounds (`R-ESCALATE-6`).
+
+Use `critical` only for a fault no maker revision could resolve without an owner decision;
+a fault a maker revision could resolve is `needs revision`.
 
 A verdict that is not sound names what would make it sound (`R-VERDICT-3`). A verdict leaving
-any acceptance item unmet is not sound (`R-VERDICT-4`) — that rule is absolute, and no amount
-of good work elsewhere in the diff outranks it.
+any acceptance item unmet is not sound (`R-VERDICT-4`).
 
 Bind your verdict to the work you read and to the acceptance revision you read it against, so a
 later reader can tell what it covered (`R-VERDICT-5`). `ARCHITECTURE.md`'s gate section holds

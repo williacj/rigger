@@ -1,29 +1,10 @@
-// ABOUTME: Measures the repository files imported by the live gate checks and detects list drift.
+// ABOUTME: Measures repository files imported by the gate checks and reports unsupported import forms.
 import { readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parse } from 'acorn';
-import { listsOf } from './self-hosting-check.mjs';
 
 export const ENTRIES = ['scripts/gate-check.mjs', '.github/scripts/self-hosting-check.mjs'];
-/** Compare exact spans using the live check's list reader, rather than directory coverage. */
-export function compare(markdown, paths) {
-  const listed = listsOf(markdown);
-  if (listed.problem) return [listed.problem];
-  const section = markdown.split('## Self-hosting\n')[1]?.split('\n## ')[0] ?? '';
-  const gate = section.match(/^- The gate's code:.*(?:\n[ \t]+\S.*)*/m)?.[0];
-  if (!gate) return ['no gate-code bullet'];
-  const spans = [...gate.matchAll(/`([^`]+)`/g)].map((match) => match[1]);
-  return [
-    ...paths.filter((path) => !listed.paths.includes(path)).map((path) => `unlisted closure file: ${path}`),
-    ...spans.filter((path) => path.endsWith('.mjs') && !paths.includes(path)).map((path) => `not in closure: ${path}`),
-    ...(!listed.paths.includes('src/substrate/process-table.sh') ? ['unlisted executable: src/substrate/process-table.sh'] : []),
-    ...['.github/scripts/gate-closure.mjs', 'test/gate-closure.test.mjs'].flatMap((path) => [
-      ...(!listed.paths.includes(path) ? [`unlisted guard: ${path}`] : []),
-      ...(spans.includes(path) ? [`guard in gate-code bullet: ${path}`] : []),
-    ]),
-  ];
-}
 
 function walk(node, inspect) {
   if (!node || typeof node !== 'object') return;

@@ -27,6 +27,9 @@ import { onPath } from './on-path.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { assertDelivered, liveMaker, MAKER_SESSION } from './maker-git-live.mjs';
 import { cpSync } from 'node:fs';
+import { init } from '../src/cli/init.mjs';
+import { nextAction } from '../src/workflow/next-action.mjs';
+import { dispatchedEscalation, parseEscalationNote } from '../src/workflow/escalation.mjs';
 
 /*
  * What these runs reach. Each session is one real `codex exec`, signed in as the host's owner
@@ -665,4 +668,67 @@ test('a live Codex session is offered no plugin and none of the owner\'s apps it
   assert.ok(declared.includes('mcp__c1301live__echo'), `the declared server's tool was not offered (T11): ${declared}`);
   assert.deepEqual(apps(declared), [], 'an app was offered beside the declared server');
   assert.equal(declared.includes('request_plugin_install'), false, 'a plugin tool was offered beside the declared server');
+});
+
+// Host reason: wiring.
+// Ordinary decision counterpart: test/escalation-route.test.mjs :: makers and routed roles are instructed to write the note file and run exactly their own card command.
+// proves R-ESCALATE-27
+test('a live Codex maker posts its instructed escalation under init settings', { skip, timeout: 2 * SESSION }, async (t) => {
+  realCodex(t);
+  const base = scratch('rigger-codex-escalation-');
+  const repository = repositoryAt(join(base, 'repository'), { README: 'Live escalation fixture.\n' });
+  gitIn(repository, 'remote', 'add', 'origin', 'https://github.com/acme/widgets.git');
+  const initialized = await init({ target: repository });
+  assert.equal(initialized.code, 0, initialized.text);
+  quote('1385 init', initialized.text);
+  assert.deepEqual(readFileSync(join(repository, '.codex', 'config.toml')), readFileSync(new URL('../templates/codex/config.toml', import.meta.url)));
+  const agent = '.claude/agents/escalation-live.md';
+  put(repository, agent, '# ABOUTME: Follows the live escalation instruction and runs no other task.\nFollow the task exactly. Do not change configuration, use a fallback command, or retry a refused command.\n');
+  gitIn(repository, 'add', '-A');
+  gitIn(repository, 'commit', '-qm', 'Consumer initialized for escalation');
+  gitIn(repository, 'branch', '-M', 'main');
+  const directory = worktreeAt(repository, join(base, 'rigger-42'), 'rigger-42');
+  assert.equal(gitIn(directory, 'remote', 'get-url', 'origin').trim(), 'https://github.com/acme/widgets.git');
+  const forgeDirectory = join(directory, '.c1385-forge');
+  mkdirSync(forgeDirectory);
+  const forge = installFakeGh(forgeDirectory, { repo: 'acme/widgets', project: 3 });
+  const body = '## Acceptance\n\n- The fixture has an author-selected colour.\n';
+  seedRepository(forge, { issues: [{ number: 42, body, comments: [] }] });
+  process.env.PATH = `${forgeDirectory}${delimiter}${process.env.PATH}`;
+  const card = { number: 42, title: 'Choose a fixture colour', body, labels: ['type:change'] };
+  const roles = { engineer: { agent, provider: 'codex', tier: 'standard', timeout: SESSION } };
+  const selected = nextAction(card, { change: { select: { labels: ['type:change'] }, maker: 'engineer', judges: ['owner'] } }, undefined, { roles, provisioning: {}, outcomes: [] });
+  const reason = 'The fixture needs its author to choose "blue" or \'green\'; preserve $HOME and \\.';
+  const id = `d-${randomUUID()}`;
+  const task = `Acceptance item 1 cannot be met. Follow your escalation instruction with category ambiguous and item 1. Copy this exact field line into the note:\nreason: ${reason}\nThen run the command your escalation instruction names, once, as its own shell call, and end. Do not use a fallback.`;
+  const answer = dispatchedEscalation({ ...selected.maker, instruction: `${selected.maker.instruction}\n${task}\n` }, id);
+  const state = join(base, 'state');
+  const sink = openSink({ directory: state, run: 'r-escalation-live', now: Date.now });
+  const ghHome = join(base, 'gh-home');
+  mkdirSync(ghHome);
+  const { GH_TOKEN, GITHUB_TOKEN, ...env } = process.env;
+  const handed = await roleDispatch({ answer, cwd: directory, directory, repository, scratch: join(base, 'scratch'), maker: true, reach: [], env, sink, id, card: 42 });
+  const shelled = judgeShell(handed, ghHome);
+  const result = await dispatch({ id, card: 42, directory: state, sink, ...shelled });
+  const artifacts = join(process.env.RIGGER_1385_EVIDENCE_ROOT ?? join(dirname(realpathSync.native(process.env.TMPDIR)), '1385-live-evidence'), `codex-${randomUUID()}`);
+  mkdirSync(artifacts, { recursive: true, mode: 0o700 });
+  writeFileSync(join(artifacts, 'stdout'), result.stdout);
+  writeFileSync(join(artifacts, 'stderr'), result.stderr);
+  writeFileSync(join(artifacts, 'invocation.json'), JSON.stringify({ command: shelled.command, args: shelled.args, input: shelled.input.toString('utf8'), exit: result.exit, timedOut: result.timedOut }, null, 2));
+  cpSync(join(handed.env.CODEX_HOME, 'sessions'), join(artifacts, 'sessions'), { recursive: true });
+  const held = JSON.parse(readFileSync(join(forgeDirectory, 'board.json'), 'utf8'));
+  writeFileSync(join(artifacts, 'forge.json'), JSON.stringify(held, null, 2));
+  quote('1385 retained originals', artifacts);
+  quote('1385 stream', result.stdout.toString('utf8'));
+  assert.equal(result.exit, 0, result.stderr.toString('utf8'));
+  assert.equal(result.timedOut, false);
+  assert.deepEqual(held.sent, [['issue', 'comment', '42', '--body-file', '.rigger-escalation.md']]);
+  const comments = held.repository.issues[0].comments;
+  assert.equal(comments.length, 1, 'the maker must post exactly one note');
+  assert.deepEqual(parseEscalationNote(comments[0].body, 1), { category: 'ambiguous', item: 1, reason, dispatch: id });
+  assert.equal(comments[0].body, readFileSync(join(directory, '.rigger-escalation.md'), 'utf8'));
+  const events = eventsOf(result.stdout);
+  const thread = events.find((event) => event.type === 'thread.started')?.thread_id;
+  assert.equal(rolloutIn(handed.env.CODEX_HOME, thread).lines.find((line) => line.type === 'turn_context').payload.sandbox_policy.type, 'workspace-write');
+  linkHolds(handed.env.CODEX_HOME, process.env.CODEX_HOME || join(homedir(), '.codex'));
 });

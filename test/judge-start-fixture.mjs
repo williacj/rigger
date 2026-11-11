@@ -47,8 +47,8 @@ export const HOST_REPORTS = [
   ['R4', 'command-too-long'], ['R5', 'command-character'],
   ['R6', 'agent-outside', { file: 'agent.md' }], ['R7', 'agent-unresolved', { file: 'agent.md' }], ['R8', 'agent-unreadable', { file: 'agent.md' }],
   ['R9', 'claude-settings-unreadable'], ['R10', 'claude-compound-rule'], ['R11', 'codex-config-unreadable'],
-  ['R12', 'claude-exclusion-path', { path: '/work/parent' }], ['R13', 'claude-reached-path', { path: '/work/head' }],
-  ['R14', 'directory-illegible', { path: '/work/judge' }], ['R15', 'scratch-illegible', { path: '/work/scratch' }],
+  ['R12', 'claude-exclusion-path', { path: '/work/parent' }], ['R13', 'claude-reached-path', { path: '/work/head[host]' }],
+  ['R14', 'directory-illegible', { path: '/work/judge^' }], ['R15', 'scratch-illegible', { path: '/work/scratch^' }],
   ['R16', 'codex-probe-exit'], ['R17', 'codex-probe-answer'], ['R18', 'codex-skill-unresolved'], ['R19', 'codex-probe-timeout'],
   ['R20', 'adapter-variable', { variable: 'TMPDIR' }], ['R21', 'dispatch-location'], ['R22', 'dispatch-identity'], ['R23', 'dispatch-timeout'],
   ['R24', 'event-emitter-missing'], ['R25', 'groups-unwritable'], ['R26', 'codex-directory-unmade'], ['R27', 'codex-home-file-unwritten'],
@@ -56,6 +56,13 @@ export const HOST_REPORTS = [
   ['R32', 'groups-unreadable'], ['R33', 'claude-rule-unreadable'], ['R34', 'owner-home-missing'], ['R35', 'agent-name-invalid'],
   ['R36', 'file-descriptors'], ['R37', 'host-error'],
 ];
+
+/** The distinct one-field identity used by the counted policy cases. */
+export function changedCountedIdentity(identity) {
+  const [key, value] = Object.entries(identity)[0];
+  if (key === 'provider') return { provider: value === 'claude' ? 'codex' : 'claude' };
+  return { [key]: `${value}-another` };
+}
 
 /** Runs before the selected spawn, raising a supplied errno or letting the host decide its result. */
 export function refuseSpawn(t, { command, code, before = () => {}, synchronous = false }) {

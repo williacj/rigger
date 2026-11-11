@@ -65,7 +65,7 @@ reused.
 | D22 | Binding edits need the owner's merge before M5 | Superseded by D25 |
 | D23 | The forge refuses a push to the main line | Ratified |
 | D24 | A judge's provider is configured and enforced | Ratified |
-| D25 | The owner ratifies by marker, and the gate admits the merge | Ratified |
+| D25 | The owner ratifies by marker, and the gate admits the merge | Superseded by D35 |
 | D26 | An escalation goes where the consumer sends it | Ratified |
 | D27 | An escalated card carries a label only the owner removes | Ratified. Amended in #868. |
 | D28 | A per-user LaunchAgent re-launches the engine on an interval | Ratified. Amended in #1043. |
@@ -73,6 +73,7 @@ reused.
 | D30 | Until the conversion closes, two lists exempt files from D29's bounds | Ratified. Amended in #1140. |
 | D31 | macOS CI runs on hosted runners unless the owner selects the Mac mini | Ratified |
 | D34 | A release tags the commit its milestone's exit run tested | Ratified |
+| D35 | The owner's marker guards the binding documents and its own enforcer | Ratified |
 
 ## D1 — Redo over resume
 
@@ -836,112 +837,6 @@ across cards, and that memory is not among what `ARCHITECTURE.md`'s "Failure mod
 keep. Should that requirement come, a stateless rule, such as the parity of the card's number, would serve
 without new state.
 
-## D25 — The owner ratifies by marker, and the gate admits the merge
-
-**Status:** Ratified.
-
-### Rule
-
-1. A judge's verdict, the owner's included, is a marker in the schema `ARCHITECTURE.md`'s "The
-   gate" names. The owner's marker carries the role `owner`.
-2. The gate cannot tell the owner's marker from one a session wrote with the owner's token, and
-   Rigger accepts that. The gate refuses an edited marker, and `report` flags an agent marker no
-   dispatch wrote. `report`'s detection has two edges:
-   - it reads only the markers L2 recorded in the state directory it reads;
-   - it never checks a marker of role `owner`.
-3. A dedicated GitHub App posts the gate's statuses, "rigger/gate" and "self-hosting". Its private
-   key is reachable only from the mint and post steps of each posting job: the gate workflow's,
-   and this repository's "self-hosting" check's. Both jobs run from `main` through the `gate`
-   environment, whose deployment-branch policy admits only the default branch. Agents keep the
-   owner's token for everything else. The design carries one named residual: it is not tested
-   against forging.
-4. In this repository the owner ratifies a proposal by writing a sound owner marker on its pull
-   request. The entry binds from the merge.
-5. Once the gate's checks, "rigger/gate" and "self-hosting", are green, anyone may merge: the
-   engine's lane or a person. A card changing a Self-hosting path or an authored "What binds"
-   document merges only under rule 7. The engine still never dispatches a maker for a card
-   changing a Self-hosting path.
-6. The gate's code runs from Rigger at a pinned, promoted commit (`D7` rule 1). Changing the pin
-   changes the live gate.
-7. A pull request changing an authored document in `AGENTS.md`'s "What binds", or a Self-hosting
-   path, merges only with a sound owner marker at its head. This repository's "self-hosting"
-   check enforces it.
-
-A Self-hosting path is one `AGENTS.md`'s "Self-hosting" lists.
-
-**Reversed by:**
-
-- **Rule 1:** owner markers refused for their form often enough that another record of the
-  owner's verdict costs less than writing a marker.
-- **Rule 2:** a session's marker, written with the owner's token, that admitted a merge; or a
-  credential that lets the gate tell the owner's marker from a session's.
-- **Rule 3:** any run off `main` obtaining the App's secret, or a job on a ref other than the
-  default branch admitted to the `gate` environment. The residual returns if a later incident or
-  review shows a forging route.
-- **Rule 4:** an owner marker that proves to be a session's, or Rigger ceasing to ship the owner's
-  marker as a consumer's record of ratification.
-- **Rule 5:** a merge the checks admitted that a judge later shows the gate should have refused.
-- **Rule 6:** a fault in the live gate whose fix the promotion step delays long enough to block
-  merges the fault refuses.
-- **Rule 7:** a record of the owner's verdict on these pull requests that no session can write,
-  which the check would read in the marker's place.
-
-### Notes
-
-The owner ruled each rule on #642: rule 1 is P1, rule 2 is P2, rule 3 is P26 narrowing P3, rule 4
-is P4, rule 5 is P5 with P13, rule 6 is P6, and rule 7 is P15. P29 named rule 3's residual. P14
-adds that every pull request into `main` comes from its card's branch, which `AGENTS.md`'s
-"Version control" holds.
-
-Rule 1 holds because Rigger promises a consumer that the owner's verdict is a marker. One schema
-lets the gate read every verdict the same way, and tell the owner apart by the role alone. The
-owner's merge is not a verdict, because the gate reads no merge.
-
-Rule 2 accepts what the forge cannot show. Sessions here act through the owner's account, so the
-author of a marker proves nothing about its writer. Refusing an edited marker keeps each verdict
-as its judge wrote it. Flagging an undispatched agent marker detects a forgery after the fact,
-which is as far as v0 goes.
-
-Rule 3 narrows P3, under which M5 added no separate agent credential. A status any Actions run
-could post would let a workflow on another branch satisfy the check (#643, Q-a). An App whose key
-only `main`'s jobs reach closes that route for the status alone. It rests on two GitHub
-behaviours. Environment secrets go only to jobs the deployment-branch policy admits, which GitHub
-documents. `pull_request_target` and `issue_comment` runs execute `main`'s workflow, which #643's
-Q-e measured. No agent ran a forging trial (P28, P29), so the residual stays named.
-
-Rule 4 has this repository ratify the way Rigger ships, so Rigger exercises its own gate on
-itself. The gate reads no merge, so ratifying by merge would leave the gate unable to tell a
-ratified proposal from an unratified one.
-
-Rule 5 lets the lane and a person merge on the same evidence, because the required checks bind
-every route to `main` alike (`ARCHITECTURE.md`, "The gate").
-
-Rule 6 keeps a change under review from altering the gate that judges it. A gate run from the base
-branch would take effect the moment a change to it merged, before anyone promoted it.
-
-Rule 7 replaces `D22` rule 2. A change to a "What binds" document is a ratification, which is the
-owner's alone. A change to a Self-hosting path changes what the gate or the engine runs under. In
-both cases the check reads the owner's marker, where `D22` relied on sessions honouring the rule
-(`D22`, notes).
-
-`D21`'s deferred table named four things M5 must settle. Each is settled here:
-
-| `D21` deferred row | Settled by |
-|---|---|
-| Which record the gate reads as the owner's verdict | Rule 1 |
-| Whether the gate can tell the owner's merge from a session's | Rule 2, and rule 3 for the gate's statuses |
-| Whether this repository ratifies the way Rigger ships | Rule 4 |
-| Who merges an owner-judged card, and what "Review and merge" and `D22`'s replacement say | Rules 5 and 7 |
-
-`D24` holds which provider each agent judge runs on, and what its marker names. This decision
-holds no rule on it.
-
-`D23` stands unchanged. Rule 3 meets `D23`'s second reversal for the gate's status alone. Merges
-still use the owner's token (rule 3), so the ruleset still cannot tell the owner's merge from a
-session's.
-
-This decision adds no requirement row.
-
 ## D26 — An escalation goes where the consumer sends it
 
 **Status:** Ratified.
@@ -1283,3 +1178,94 @@ differs in contents from the one `npm pack` produces at its tagged commit. That 
 not make the published tarball the tested one. Second, a release is needed from a commit no
 milestone's exit run tested, such as a fix shipped between milestones. That shows rule 1 cannot
 name every release's commit.
+
+## D35 — The owner's marker guards the binding documents and its own enforcer
+
+**Status:** Ratified.
+
+### Rule
+
+1. A judge's verdict, the owner's included, is a marker in the schema `ARCHITECTURE.md`'s "The
+   gate" names. The owner's marker carries the role `owner`.
+2. The gate cannot tell the owner's marker from one a session wrote with the owner's token, and
+   Rigger accepts that. The gate refuses an edited marker, and `report` flags an agent marker no
+   dispatch wrote. `report`'s detection has two edges:
+   - it reads only the markers L2 recorded in the state directory it reads;
+   - it never checks a marker of role `owner`.
+3. A dedicated GitHub App posts the gate's statuses, "rigger/gate" and "self-hosting". Its private
+   key is reachable only from the mint and post steps of each posting job: the gate workflow's,
+   and this repository's "self-hosting" check's. Both jobs run from `main` through the `gate`
+   environment, whose deployment-branch policy admits only the default branch. Agents keep the
+   owner's token for everything else. The design carries one named residual: it is not tested
+   against forging.
+4. In this repository the owner ratifies a proposal by writing a sound owner marker on its pull
+   request. The entry binds from the merge.
+5. Once the gate's checks, "rigger/gate" and "self-hosting", are green, anyone may merge: the
+   engine's lane or a person. A pull request rule 7 names merges only under rule 7. No maker is
+   dispatched for a card changing a live-on-merge path; a maker may be dispatched for a card
+   changing only the source of the next version.
+6. The gate's code runs from Rigger at a pinned, promoted commit (`D7` rule 1). In this
+   repository the "self-hosting" check's code runs from a commit its own workflow pins, which the
+   owner promotes by marking the pull request that moves it. Changing either pin changes that
+   live check.
+7. A pull request changing an authored document in `AGENTS.md`'s "What binds", or a path
+   `AGENTS.md`'s "Self-hosting" lists as needing the owner's marker, merges only with a sound owner
+   marker at its head. Those paths are the workflows, among them the one that runs this rule's
+   check and pins its code, and the config that check runs. This
+   repository's "self-hosting" check enforces it. Every other path merges on its judges alone.
+
+A live-on-merge path is one the forge, the hooks, the engine or its makers read from the
+repository or its default branch, so that a merge changes the running system. The source of the
+next version takes effect only when the installed tarball is reinstalled (`R-SAFE-5`) or the
+gate's pin moves (rule 6). `AGENTS.md`'s "Self-hosting" lists the live-on-merge paths, and among
+them the ones rule 7 names.
+
+**Reversed by:**
+
+- **Rule 1:** owner markers refused for their form often enough that another record of the
+  owner's verdict costs less than writing a marker.
+- **Rule 2:** a session's marker, written with the owner's token, that admitted a merge; or a
+  credential that lets the gate tell the owner's marker from a session's.
+- **Rule 3:** any run off `main` obtaining the App's secret, or a job on a ref other than the
+  default branch admitted to the `gate` environment. The residual returns if a later incident or
+  review shows a forging route.
+- **Rule 4:** an owner marker that proves to be a session's, or Rigger ceasing to ship the owner's
+  marker as a consumer's record of ratification.
+- **Rule 5:** a merge the checks admitted that a judge later shows the gate should have refused;
+  or a maker's change to a live-on-merge path reaching `main`, which would show the dispatch rule
+  needs a mechanism.
+- **Rule 6:** a fault in the live gate whose fix the promotion step delays long enough to block
+  merges the fault refuses; or a move of the check's pin to a commit the default branch does not
+  reach.
+- **Rule 7:** a change to a path that merged on its judges alone and stopped the "self-hosting"
+  check requiring a marker; or a record of the owner's verdict on these pull requests that no
+  session can write, which the check would read in the marker's place.
+
+### Notes
+
+This decision supersedes `D25`. Rules 1 to 4 are `D25`'s, unchanged and under the same numbers,
+and `D25`'s notes in `docs/spec/decisions-retired.md` hold their reasoning. Rules 5 and 7 narrow
+`D25`'s, as the owner ruled in M8-U9 on #1293, and rule 6 adds the check's own pin, as the owner
+ruled in M8-U10.
+
+Rule 7 keeps the marker where an unmarked change could remove the marker rule itself: the binding
+documents, `AGENTS.md`'s list among them, the workflows, and the config the check imports and runs
+as code. Any job on the default branch that names the `gate` environment receives the App's key
+(rule 3), so an unmarked change to any workflow could post "self-hosting" itself, as the owner
+ruled in M8-U12. The "self-hosting" check runs its code from a commit its own
+workflow pins (rule 6), so that code is source of the next version, and moving the pin is the
+change to the enforcer.
+Every other listed path changes what the gate or the engine runs under, and its judges rule on it as
+they rule on any other change.
+
+Rule 6 keeps the check's pin apart from the gate's. Each lives in its own workflow, so moving
+either needs the owner's marker (rule 7). The gate's pin moves on `D7` rule 1's boundary; the
+check's pin moves when the check's code or the lists' form must change, and the owner promotes it
+by marking that move. Rule 6 still keeps a change under review from altering the check that rules
+on it.
+
+Rule 5's dispatch rule binds whoever dispatches: the engine's lane, the coordinator's tooling, or a
+person. No engine code reads the list, because a maker is dispatched before its diff exists. The
+architect ruled this placement on #1373 for M8-U9.
+
+This decision adds no requirement row.

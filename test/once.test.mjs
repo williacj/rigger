@@ -116,7 +116,7 @@ test('once names the card it claimed, its workspace and its maker\'s outcome', (
   const line = ran.err.split('\n').find((held) => /#10\b/.test(held));
   assert.ok(line, ran.err);
   assert.ok(line.includes(join(dirname(realpathSync(ran.consumer)), 'widgets-worktrees', 'rigger-10')), line);
-  assert.match(line, /; its maker exited 0 and opened no pull request from rigger-10, in its workspace, /, line);
+  assert.match(line, /; Rigger escalated it as ambiguous: card #10's maker started its work from the beginning and exited 0, and the forge holds no open pull request from its line of work rigger-10, in its workspace, /, line);
 });
 
 // proves R-LOOP-2, R-ESCALATE-4
@@ -445,7 +445,7 @@ test('once, given N 3, an unclaimed review card L2 would dispatch and a ready ca
   const events = eventsOf(ran);
   assert.ok(events.some((event) => event.layer === 'L3' && event.event === 'pull' && event.card === 40), JSON.stringify(events));
   assert.deepEqual(events.filter((event) => event.layer === 'L2' && event.event === 'transition').map(({ event, card, from, to }) => ({ event, card, from, to })), [{ event: 'transition', card: 40, from: 'review', to: 'coding' }]);
-  assert.deepEqual(events.filter((event) => event.layer === 'L2' && event.event !== 'transition').map(({ event, card }) => ({ event, card })), [{ event: 'review.withheld', card: 40 }]);
+  assert.deepEqual(events.filter((event) => event.layer === 'L2' && event.event !== 'transition').map(({ event, card }) => ({ event, card })), [{ event: 'review.escalate', card: 40 }]);
 });
 
 // proves R-SAFE-5
@@ -575,14 +575,14 @@ function onceWithAgent(t, agent, board, { settings = config(), files = {}, env =
 /** The line `once` prints for card `number` claimed from the consumer's board, with `outcome` and the workspace at its end. */
 const makerLine = (consumer, number, outcome) => `rigger once: claimed #${number} from board ${PROJECT}; ${outcome}, in its workspace, ${join(dirname(realpathSync(consumer)), 'widgets-worktrees', `rigger-${number}`)}`;
 
-test('given once over a fake board with one ready card and a stand-in maker exiting 0 with no pull request, once prints one line for the card in the verbs\' form, and exits non-zero', SETTLES_WITHIN, async (t) => {
+test('given once over a fake board with one ready card and a stand-in maker exiting 0 with no pull request, once prints one line for the card in the verbs\' form, escalating it', SETTLES_WITHIN, async (t) => {
   const agent = standInAgent();
-  const { consumer, ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] });
+  const { ran } = onceWithAgent(t, agent, { items: [card(10, 'Ready')] }, { prepare: ({ fake }) => seedRepository(fake, {}) });
 
   const { code, out, err } = await ran;
 
-  assert.notEqual(code, 0, out);
-  assert.deepEqual(err.split('\n').filter((line) => /#10\b/.test(line)), [makerLine(consumer, 10, 'its maker exited 0 and opened no pull request from rigger-10')]);
+  assert.equal(code, 0, err);
+  assert.deepEqual(out.split('\n').filter((line) => /#10\b/.test(line)), ['rigger once: card #10 escalated ambiguous by Rigger: card #10\'s maker started its work from the beginning and exited 0, and the forge holds no open pull request from its line of work rigger-10']);
 });
 
 // proves R-WORK-6
@@ -1275,7 +1275,7 @@ test('once reads the owner removing an escalation label before its next invocati
   const resumed = ran.rerun();
 
   assert.equal(resumed.code, 1, `${resumed.out}\n${resumed.err}`);
-  assert.match(resumed.err, /claimed #151.*maker exited 0 and opened no pull request/, resumed.err);
+  assert.match(resumed.err, /claimed #151.*Rigger escalated it as ambiguous: card #151's maker started its work from the beginning and exited 0, and the forge holds no open pull request/, resumed.err);
   assert.equal(resumed.agentRuns().length, 1);
   assert.deepEqual(await columnsOf(resumed), { 151: 'Coding' });
   assert.equal(existsSync(join(dirname(realpathSync(resumed.consumer)), 'widgets-worktrees', 'rigger-151')), true);
@@ -1365,7 +1365,7 @@ async function withheldDispatch(column) {
       const resumed = ran.rerun();
 
       assert.equal(resumed.code, 1, `${column}: ${resumed.out}\n${resumed.err}`);
-      assert.match(resumed.err, /claimed #181.*maker exited 0 and opened no pull request/);
+      assert.match(resumed.err, /claimed #181.*Rigger escalated it as ambiguous: card #181's maker started its work from the beginning and exited 0, and the forge holds no open pull request/);
       assert.equal(resumed.agentRuns().length, 1);
       assert.deepEqual(await columnsOf(resumed), { 181: 'Coding' });
       assert.equal(existsSync(join(dirname(realpathSync(resumed.consumer)), 'widgets-worktrees', 'rigger-181')), true);
@@ -1675,11 +1675,11 @@ test('once ignores closed cards without a kind or carrying the epic label while 
         },
       });
       const redo = selected && column === 'Review' && !branch;
-      assert.equal(ran.code, redo ? 1 : 0, ran.out + ran.err);
+      assert.equal(ran.code, 0, ran.out + ran.err);
       if (selected) {
         assert.equal(existsSync(marker), false, JSON.stringify({ column, branch, labels }));
         assert.equal(ran.agentRuns().length, redo ? 1 : 0);
-        assert.equal((await columnsOf(ran))[95], redo ? 'Coding' : 'Owner');
+        assert.equal((await columnsOf(ran))[95], 'Owner');
       } else {
         assert.match(ran.out, /no card was pullable/, ran.out + ran.err);
         assert.equal(readFileSync(marker, 'utf8'), 'closed card content');
@@ -1815,7 +1815,7 @@ test('once works a Ready issue on its next read after the status label is remove
   const resumed = ran.rerun();
 
   assert.equal(resumed.code, 1, `${resumed.out}\n${resumed.err}`);
-  assert.match(resumed.err, /claimed #980.*maker exited 0 and opened no pull request/);
+  assert.match(resumed.err, /claimed #980.*Rigger escalated it as ambiguous: card #980's maker started its work from the beginning and exited 0, and the forge holds no open pull request/);
   assert.equal(resumed.agentRuns().length, 1);
   assert.deepEqual(await columnsOf(resumed), { 980: 'Coding' });
   assert.deepEqual((await (await resumed.model()).operations.readItems())[0].labels, ['type:change']);
@@ -1890,6 +1890,45 @@ test('once keeps a Review peer verdict beside a real scratch refusal and escalat
   assert.equal(events.filter(({ event }) => event === 'review.escalate').length, 1);
   assert.equal(events.filter(({ event }) => event === 'transition').at(-1).to, 'owner');
   assert.equal(events.filter(({ event }) => event === 'dispatch.end').length, 1);
+});
+
+import { pathToFileURL } from 'node:url';
+
+/** The first actual maker dispatch, with its L1 start correlated to L3's dispatch id. */
+function assertFirstRecordedDispatch(ran) {
+  assert.equal(ran.agentRuns().length, 1, 'the fixture maker must actually run');
+  assert.equal(ran.code, 1, ran.out + ran.err);
+  assert.match(ran.err, /Rigger escalated it as ambiguous: card #10's maker started its work from the beginning and exited 0, and the forge holds no open pull request/);
+  assert.ok(existsSync(join(ran.consumer, '.rigger', 'events.jsonl')), 'recording requires no opt-in');
+  const events = eventsOf(ran);
+  const maker = events.find(({ event, role, card }) => event === 'dispatch' && role === 'engineer' && card === 10);
+  assert.ok(maker, 'L3 must identify the dispatched fixture maker');
+  assert.equal(typeof maker.dispatch, 'string');
+  const starts = events.filter(({ event, dispatch }) => event === 'dispatch.start' && dispatch === maker.dispatch);
+  assert.equal(starts.length, 1, 'the first dispatch must have its recorded dispatch.start');
+  assert.equal(starts[0].card, 10);
+}
+
+// Disabling the recording of dispatch.start must fail even when the telemetry key is absent.
+// proves R-RECORD-1
+test('R1: once records its first dispatch with no telemetry key', async () => {
+  const { telemetry, ...settings } = config();
+  const ran = once({ items: [card(10, 'Ready')] }, { settings });
+  const loaded = (await import(pathToFileURL(join(ran.consumer, 'rigger.config.mjs')).href)).default;
+
+  assert.equal(Object.hasOwn(loaded, 'telemetry'), false, 'the parsed consumer config must omit telemetry');
+  assertFirstRecordedDispatch(ran);
+});
+
+// Turning push off must leave the first dispatch recorded locally.
+// proves R-RECORD-1
+test('R2: once records its first dispatch with telemetry.push false', async () => {
+  const settings = { ...config(), telemetry: { push: false } };
+  const ran = once({ items: [card(10, 'Ready')] }, { settings });
+  const loaded = (await import(pathToFileURL(join(ran.consumer, 'rigger.config.mjs')).href)).default;
+
+  assert.deepEqual(loaded.telemetry, { push: false }, 'the parsed consumer config must turn push off');
+  assertFirstRecordedDispatch(ran);
 });
 
 import { optionalDispatches, optionalOnce, optionalWorld } from './optional-config-world.mjs';
@@ -2122,3 +2161,18 @@ test('Table O O17 step.timeout: once dispatches the step for 1800000 millisecond
   assert.ok(dispatches.length > 0);
   assert.ok(dispatches.every(({ start }) => start.timeout === 1800000));
 });
+
+import { acceptanceFirst } from './acceptance-world.mjs';
+import { manualClock } from './clock-report-world.mjs';
+
+// proves R-CARD-1
+test('acceptance-first: once C1 gives no work to a heading inside a fence', SETTLES_WITHIN, (t) => acceptanceFirst(t, onceVerb, 'C1', manualClock()));
+
+// proves R-CARD-1
+test('acceptance-first: once C2 gives no work to only task-list items', SETTLES_WITHIN, (t) => acceptanceFirst(t, onceVerb, 'C2', manualClock()));
+
+// proves R-CARD-1
+test('acceptance-first: once C3 gives no work to only fenced bullets', SETTLES_WITHIN, (t) => acceptanceFirst(t, onceVerb, 'C3', manualClock()));
+
+// proves R-CARD-1
+test('acceptance-first: once C4 gives no work to every item comparing to the title', SETTLES_WITHIN, (t) => acceptanceFirst(t, onceVerb, 'C4', manualClock()));

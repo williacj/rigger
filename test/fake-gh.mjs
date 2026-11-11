@@ -81,6 +81,7 @@ function pathShapeOf(path) {
   if (/^branches\/[^/]+\/protection$/.test(tail)) return 'repos/_/_/branches/_/protection';
   if (/^commits\/[^/]+\/(check-runs|statuses)\?per_page=100&page=\d+$/.test(tail)) return `repos/_/_/commits/_/${tail.split('/')[2].replace(/page=\d+$/, 'page=_')}`;
   if (/^collaborators\/[^/]+\/permission$/.test(tail)) return 'repos/_/_/collaborators/_/permission';
+  if (/^actions\/policies\?per_page=100&page=\d+$/.test(tail)) return 'repos/_/_/actions/policies?per_page=100&page=_';
   if (tail.startsWith('compare/') && tail.includes('...')) return 'repos/_/_/compare/_..._';
   return `repos/_/_/${tail.split('/').map((segment) => (/^\d+$/.test(segment) ? '_' : segment)).join('/')}`;
 }
@@ -350,6 +351,22 @@ async function issueComments(board, state, operation) {
 
 /** What GitHub answers over REST for a path it holds nothing at, as `gh` reports it. */
 const notFound = (documentation) => new GhPrinted('gh: Not Found (HTTP 404)', JSON.stringify({ message: 'Not Found', documentation_url: documentation, status: '404' }));
+
+/** The API version the Actions policy endpoints are read at, the one header those reads send. */
+const POLICY_API_VERSION = 'X-GitHub-Api-Version: 2026-03-10';
+
+/**
+ * The one Actions policy every fake repository holds, its own, shaped as gh printed policy 12504's
+ * detail on williacj/rigger on 2026-11-09 (`test/fixtures/rigger-actions-policy-2026-11-09.json`):
+ * option 1 of #1336, covering the gate workflows and allowing their events.
+ */
+const actionsPolicy = (repo) => ({
+  id: 12504, name: 'rigger gate events', target: 'actions', source_type: 'Repository', source: repo, enforcement: 'active',
+  conditions: { workflow_path: { exclude: [], include: ['.github/workflows/rigger-gate.yml', '.github/workflows/self-hosting.yml'] } },
+  rules: [{ type: 'restrict_action_events', parameters: { allowed_events: ['pull_request_target', 'issues', 'issue_comment'] } }],
+  node_id: 'MDE0OkFjdGlvbnNSdWxlc2V0MTI1MDQ=', created_at: '2026-11-09T12:42:08.683-06:00', updated_at: '2026-11-09T12:42:08.851-06:00',
+  _links: { self: { href: `https://api.github.com/repos/${repo}/actions/policies/12504` }, html: { href: `https://github.com/${repo}/settings/actions/rules/12504` } },
+});
 
 /** The path a REST read asks for, below the repository, or a 404 where the repository is not the fake's. */
 function pathIn(state, args) {
@@ -692,6 +709,23 @@ const COMMANDS = {
     if (!environmentIn(state, args).secrets?.includes(name)) throw notFound('https://docs.github.com/rest/actions/secrets');
     return JSON.stringify({ name, created_at: '2026-10-13T12:00:00Z', updated_at: '2026-10-13T12:00:00Z' });
   },
+  // Every fake repository is public, owned by a user, as gh answered for williacj/rigger on
+  // 2026-11-09 (`test/fixtures/rigger-visibility-2026-11-09.json`), and holds `actionsPolicy` alone.
+  [graphql(repositoryShape('visibility owner { __typename }'))]: async (board, state, operation) => {
+    inTheRepository(state, operation);
+    return { repository: { visibility: 'PUBLIC', owner: { __typename: 'User' } } };
+  },
+  // The list answers each policy without its conditions and rules, which only its detail holds.
+  [commandOf(['api', 'repos/_/_/actions/policies?per_page=100&page=_', '-X', 'GET', '-H', POLICY_API_VERSION])]: async (board, state, args) => {
+    const number = Number(new URLSearchParams(pathIn(state, args).split('?')[1]).get('page'));
+    const listed = [actionsPolicy(state.repo)].map(({ conditions, rules, ...policy }) => policy);
+    return JSON.stringify({ total_count: listed.length, policies: listed.slice((number - 1) * 100, number * 100) });
+  },
+  [commandOf(['api', 'repos/_/_/actions/policies/_', '-X', 'GET', '-H', POLICY_API_VERSION])]: async (board, state, args) => {
+    const policy = actionsPolicy(state.repo);
+    if (Number(pathIn(state, args).split('/')[2]) !== policy.id) throw notFound('https://docs.github.com/rest/actions/policies#get-a-repository-actions-policy');
+    return JSON.stringify(policy);
+  },
   [commandOf(['api', 'repos/_/_/pulls/_', '-X', 'GET'])]: async (board, state, args) => {
     const number = Number(pathIn(state, args).split('/')[1]);
     const pull = repositoryOf(state).pull(number);
@@ -822,6 +856,18 @@ function agentArgs(state, args) {
 
 /** The body a `--body` or `--body-file` gives, reading standard input for a file named `-`. */
 const bodyOf = (flags, cwd, input) => flags.body ?? (flags.bodyFile === undefined ? undefined : (flags.bodyFile === '-' ? input() : readFileSync(isAbsolute(flags.bodyFile) ? flags.bodyFile : resolve(cwd, flags.bodyFile), 'utf8')));
+
+/**
+ * `gh issue comment --help` (read 2026-11-10) names --body-file as the body text's source.
+ * The existing REST writer owns the issue model and its refusals for this CLI route too.
+ */
+async function issueComment(board, state, args, now, cwd, input) {
+  if (args.length !== 5 || !/^[1-9][0-9]*$/.test(args[2]) || args[3] !== '--body-file') throw new NotModelled(args);
+  const body = bodyOf({ bodyFile: args[4] }, cwd, input);
+  const rest = ['api', `repos/${state.repo}/issues/${args[2]}/comments`, '-X', 'POST', '-f', `body=${body}`];
+  const made = JSON.parse(await COMMANDS[commandOf(rest)](board, state, rest, now));
+  return `https://github.com/${state.repo}/issues/${args[2]}#issuecomment-${made.id}\n`;
+}
 
 /** The time `gh` is answered at, to the second, as GitHub writes one. */
 const now = () => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -990,7 +1036,7 @@ export async function answerFakeGh(statePath, args, { now, cwd, input, gate } = 
   state.sent.push(args);
   writeFileSync(statePath, JSON.stringify(state));
   if (gate) await gate('recorded');
-  const answer = COMMANDS[commandOf(args)] ?? (args[0] === 'pr' && Object.hasOwn(AGENT_COMMANDS, args[1]) ? AGENT_COMMANDS[args[1]] : undefined);
+  const answer = COMMANDS[commandOf(args)] ?? (args[0] === 'issue' && args[1] === 'comment' ? issueComment : args[0] === 'pr' && Object.hasOwn(AGENT_COMMANDS, args[1]) ? AGENT_COMMANDS[args[1]] : undefined);
   if (!answer) {
     return { status: 1, stdout: '', stderr: `the fake gh does not model \`${spelled(args)}\`\n` };
   }

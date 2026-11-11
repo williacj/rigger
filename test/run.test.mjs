@@ -203,7 +203,7 @@ test('run names each claimed card, its workspace and its maker\'s outcome', () =
     const line = ran.err.split('\n').find((held) => new RegExp(`#${claimed}\\b`).test(held));
     assert.ok(line, ran.err);
     assert.ok(line.includes(join(dirname(realpathSync(ran.consumer)), 'widgets-worktrees', `rigger-${claimed}`)), line);
-    assert.match(line, new RegExp(`; its maker exited 0 and opened no pull request from rigger-${claimed}, in its workspace, `), ran.err);
+    assert.match(line, new RegExp(`; Rigger escalated it as ambiguous: card #${claimed}'s maker started its work from the beginning and exited 0, and the forge holds no open pull request from its line of work rigger-${claimed}, in its workspace, `), ran.err);
   }
 });
 
@@ -319,14 +319,14 @@ test('run, given N 3, no ready card, and an unclaimed coding card and an unclaim
   const events = eventsOf(ran);
   for (const redo of [50, 60]) assert.ok(events.some((event) => event.layer === 'L3' && event.event === 'pull' && event.card === redo), JSON.stringify(events));
   assert.deepEqual(events.filter((event) => event.layer === 'L2' && event.event === 'transition').map(({ card, from, to }) => ({ card, from, to })), [{ card: 60, from: 'review', to: 'coding' }]);
-  assert.deepEqual(events.filter((event) => event.layer === 'L2' && event.event !== 'transition').map(({ event, card }) => ({ event, card })).sort((one, other) => one.card - other.card), [{ event: 'review.withheld', card: 50 }, { event: 'review.withheld', card: 60 }]);
+  assert.deepEqual(events.filter((event) => event.layer === 'L2' && event.event !== 'transition').map(({ event, card }) => ({ event, card })).sort((one, other) => one.card - other.card), [{ event: 'review.escalate', card: 50 }, { event: 'review.escalate', card: 60 }]);
 });
 
 test('after run exits, the state directory holds the event stream and L1\'s record of process groups', () => {
   const ran = run(FOUR_READY, { concurrency: 3 });
 
   assert.match(ran.err, /claimed #10\b/, ran.err);
-  assert.deepEqual(readdirSync(join(ran.consumer, '.rigger')).sort(), ['events.jsonl', 'groups.json']);
+  assert.deepEqual(readdirSync(join(ran.consumer, '.rigger')).sort(), ['events.jsonl', 'groups.json', 'output']);
 });
 
 test('given a board with no ready card, a second run claims the cards the first left in the coding column', async () => {
@@ -456,7 +456,7 @@ test('--help\'s line for run says it claims cards and dispatches their makers un
  * then a fake `gh` holding `board` over that `origin`. Answers what `run` printed and exited, the
  * consumer, and the fake.
  */
-function runWithAgent(agent, board, { settings = config(3), files = {} } = {}) {
+function runWithAgent(agent, board, { settings = config(3), files = {}, seeded = false } = {}) {
   const directory = temporaryDirectory('rigger-run-maker-');
   const consumer = repositoryAt(join(directory, 'consumer'), { 'rigger.config.mjs': `export default ${JSON.stringify(settings)};\n`, ...files });
   gitIn(consumer, 'branch', '-M', 'main');
@@ -464,6 +464,7 @@ function runWithAgent(agent, board, { settings = config(3), files = {} } = {}) {
   withOrigin(consumer, origin);
   const dir = temporaryDirectory('rigger-run-maker-gh-');
   const fake = installFakeGh(dir, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, ...board }, origin });
+  if (seeded) seedRepository(fake, {});
   const ran = spawnRun(consumer, { ...process.env, CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-claude-home-'), PATH: [agent.dir, dir, process.env.PATH].join(delimiter) });
   return { ...ran, consumer, fake };
 }
@@ -471,11 +472,11 @@ function runWithAgent(agent, board, { settings = config(3), files = {} } = {}) {
 /** The line `run` prints for card `number` claimed from the consumer's board, with `outcome` and the workspace at its end. */
 const makerLine = (consumer, number, outcome) => `rigger run: claimed #${number} from board ${PROJECT}; ${outcome}, in its workspace, ${join(dirname(realpathSync(consumer)), 'widgets-worktrees', `rigger-${number}`)}`;
 
-test('given run over a fake board with one ready card and a stand-in maker exiting 0 with no pull request, run prints one line for the card in the verbs\' form, and exits non-zero', SETTLES_WITHIN, () => {
-  const ran = runWithAgent(standInAgent(), { items: [card(10, 'Ready')] });
+test('given run over a fake board with one ready card and a stand-in maker exiting 0 with no pull request, run prints one line for the card in the verbs\' form, escalating it', SETTLES_WITHIN, () => {
+  const ran = runWithAgent(standInAgent(), { items: [card(10, 'Ready')] }, { seeded: true });
 
-  assert.notEqual(ran.code, 0, ran.out);
-  assert.deepEqual(ran.err.split('\n').filter((line) => /#10\b/.test(line)), [makerLine(ran.consumer, 10, 'its maker exited 0 and opened no pull request from rigger-10')]);
+  assert.equal(ran.code, 0, ran.err);
+  assert.deepEqual(ran.out.split('\n').filter((line) => /#10\b/.test(line)), ['rigger run: card #10 escalated ambiguous by Rigger: card #10\'s maker started its work from the beginning and exited 0, and the forge holds no open pull request from its line of work rigger-10']);
 });
 
 test('given run where the stand-in maker opens a pull request with only an owner judge, run prints Review then Owner and exits 0', SETTLES_WITHIN, async () => {
@@ -1254,3 +1255,18 @@ test('Table O O9 card.author: run names the owner as the clock card author', { t
     await world.stop();
   }
 });
+
+import { acceptanceFirst } from './acceptance-world.mjs';
+import { manualClock } from './clock-report-world.mjs';
+
+// proves R-CARD-1
+test('acceptance-first: run C1 gives no work to a heading inside a fence', SETTLES_WITHIN, (t) => acceptanceFirst(t, runVerb, 'C1', manualClock()));
+
+// proves R-CARD-1
+test('acceptance-first: run C2 gives no work to only task-list items', SETTLES_WITHIN, (t) => acceptanceFirst(t, runVerb, 'C2', manualClock()));
+
+// proves R-CARD-1
+test('acceptance-first: run C3 gives no work to only fenced bullets', SETTLES_WITHIN, (t) => acceptanceFirst(t, runVerb, 'C3', manualClock()));
+
+// proves R-CARD-1
+test('acceptance-first: run C4 gives no work to every item comparing to the title', SETTLES_WITHIN, (t) => acceptanceFirst(t, runVerb, 'C4', manualClock()));
