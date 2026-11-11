@@ -319,7 +319,7 @@ test('run, given N 3, no ready card, and an unclaimed coding card and an unclaim
   const events = eventsOf(ran);
   for (const redo of [50, 60]) assert.ok(events.some((event) => event.layer === 'L3' && event.event === 'pull' && event.card === redo), JSON.stringify(events));
   assert.deepEqual(events.filter((event) => event.layer === 'L2' && event.event === 'transition').map(({ card, from, to }) => ({ card, from, to })), [{ card: 60, from: 'review', to: 'coding' }]);
-  assert.deepEqual(events.filter((event) => event.layer === 'L2' && event.event !== 'transition').map(({ event, card }) => ({ event, card })).sort((one, other) => one.card - other.card), [{ event: 'review.escalate', card: 50 }, { event: 'review.escalate', card: 60 }]);
+  assert.deepEqual(events.filter((event) => event.layer === 'L2' && event.event !== 'transition').map(({ event, card }) => ({ event, card })).sort((one, other) => one.card - other.card), [{ event: 'review.escalate', card: 50 }, { event: 'acceptance.history', card: 60 }, { event: 'review.escalate', card: 60 }]);
 });
 
 test('after run exits, the state directory holds the event stream and L1\'s record of process groups', () => {

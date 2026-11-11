@@ -8,12 +8,15 @@ import { readSide, repositoryReads } from '../substrate/forge/read.mjs';
 import { itemWriteSide } from '../substrate/forge/item-write.mjs';
 import { repositoryWriteSide } from '../substrate/forge/repository-write.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
+import { EVENT_REFUSED } from '../substrate/process.mjs';
 import { escalationDestination, makerEscalation, makerNote, routingComment, escalationRoleInstruction } from './escalation.mjs';
 import { acceptanceItems } from './form-check.mjs';
+import { acceptanceDigest } from './marker.mjs';
 import { pullRequestsFrom } from './facts.mjs';
 import { statusNotice } from './status-issue.mjs';
 import { kindOf, providerOf, tierOf, recordingHalt } from './next-action.mjs';
 import { composeClockMark, carriesClockMark } from './clock-mark.mjs';
+import { clockAuthor } from './clock-mark.mjs';
 import { firstAbove } from './first-above.mjs';
 
 /**
@@ -129,6 +132,22 @@ export function columnChanges({
     }
     try {
       record(card, transitionFields, context);
+      let history;
+      try {
+        history = await cardReads(card.number, context.dispatch).readIssueHistory(card.number);
+      } catch (failure) {
+        if (failure.code === EVENT_REFUSED) throw failure;
+        return columns[to];
+      }
+      const revisions = history.revisions.length === 0
+        ? [{ editedAt: history.opened.at, editor: history.opened.by, deleted: false, body: history.body }] : history.revisions;
+      const author = revisions[0].deleted ? undefined : clockAuthor(revisions[0].body);
+      note(card, 'acceptance.history', {
+        opened: history.opened,
+        revisions: revisions.map(({ editedAt, editor, deleted, body }) => ({ editedAt, editor, deleted,
+          ...(!deleted && { digest: acceptanceDigest(body), items: acceptanceItems(body).length }) })),
+        ...(author === undefined ? {} : { author }),
+      }, context);
     } catch (unrecorded) {
       throw Object.assign(unrecorded, { column: columns[to] });
     }

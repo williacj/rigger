@@ -18,6 +18,7 @@ import { installFakeGh, seedRepository } from './fake-gh.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { spawnSync } from 'node:child_process';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+import { isHistoryRequest } from './acceptance-history-world.mjs';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
@@ -754,6 +755,8 @@ const PRINTED_REPOSITORY = Object.fromEntries(
     ['file', 'rigger-file-at-commit-2026-10-11.json'],
     // Captured with gh 2.103.2 on 2026-10-28, for the timeline read of #794.
     ['timeline', 'rigger-issue-timeline-2026-10-28.json'],
+    // Captured with gh api graphql on 2026-11-10 for #1337's history read.
+    ['history', 'rigger-issue-history-2026-11-10.json'],
     // Captured with gh 2.98.0 on 2026-11-09 at API version 2026-03-10, for the event-policy reads of #1336.
     ['visibility', 'rigger-visibility-2026-11-09.json'],
     ['policies', 'rigger-actions-policies-2026-11-09.json'],
@@ -812,6 +815,7 @@ function repositoryForge(answers = {}) {
     if (document.includes('headRepository')) return answer('pull request', document);
     if (document.includes('issues(states:')) return ok({ repository: { issues: { pageInfo: { hasNextPage: false, endCursor: 'MQ' }, nodes: [] } } });
     if (document.includes('timelineItems(')) return answer('timeline', document);
+    if (isHistoryRequest(args)) return answer('history', document);
     if (document.includes('issue(')) return answer('issue', document);
     if (document.includes('object(oid:')) return answer('file', document);
     if (document.includes('mergeable')) return answer('mergeable', document);
@@ -1249,6 +1253,7 @@ const REPOSITORY_READS = {
   readDefaultBranch: { call: (reads) => reads.readDefaultBranch(), names: 'the default branch' },
   readPullRequestByNumber: { call: (reads) => reads.readPullRequestByNumber(12), names: 'pull request #12' },
   readIssue: { call: (reads) => reads.readIssue(214), names: 'issue #214' },
+  readIssueHistory: { call: (reads) => reads.readIssueHistory(1302), names: 'issue #1302' },
   readIssueTimeline: { call: (reads) => reads.readIssueTimeline(214), names: 'issue #214\'s timeline' },
   readFileAt: { call: (reads) => reads.readFileAt('a'.repeat(40), 'rigger.config.mjs'), names: `rigger.config.mjs at ${'a'.repeat(40)}` },
   readPermission: { call: (reads) => reads.readPermission('rigger-bot'), names: 'rigger-bot\'s permission' },
@@ -1319,6 +1324,7 @@ test('every request a full repository read issues reaches the spawn through the 
     'default branch': { repository: { defaultBranchRef: { name: 'main', target: { oid: head } } } },
     'pull request': { repository: { pullRequest: pullNode({ number: 12 }) } },
     issue: { paged: { null: { repository: { issue: issueNode({ number: 214 }) } } } },
+    history: JSON.parse(readFileSync(join(FIXTURES, 'rigger-issue-history-2026-11-10.json'), 'utf8')).data,
     // Two pages, so the timeline's request for a page after the first is among those recorded.
     timeline: { paged: {
       null: { repository: { issue: { timelineItems: { pageInfo: { hasNextPage: true, endCursor: 'MQ' }, nodes: [] } } } },

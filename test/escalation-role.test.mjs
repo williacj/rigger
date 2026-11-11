@@ -338,11 +338,11 @@ test('handled role move retains its role dispatch on item transport and transiti
     const answer = await l2.roleSettled({ ...here.card, id: 'PVTI_lADOBzomGc4Bkn7fzgd' }, here.next,
       { status: 'fulfilled', value: { exit: 0 } }, { dispatch });
     assert.equal(answer.action, 'handled');
-    assert.equal(requests.length, 3, 'the real item writer reads the board and field before its mutation');
+    assert.equal(requests.length, 4, 'the real item writer reads the board and field before its mutation');
     assert.match(requests[2], /updateProjectV2ItemFieldValue/);
     assert.match(requests[2], /review-option/);
     const events = here.events().filter((event) => ['survivor.killed', 'transition'].includes(event.event));
-    assert.equal(events.length, 4);
+    assert.equal(events.length, 5);
     for (const event of events) {
       assert.equal(event.card, 12);
       assert.equal(event.dispatch, dispatch ?? null, 'R-RECORD-7: the handled role move must retain its role dispatch');

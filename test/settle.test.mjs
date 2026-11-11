@@ -150,7 +150,7 @@ test('given a maker outcome of exit 0 and an open pull request from the card\'s 
   await w.l2.settled(w.card, exited(0));
 
   assert.equal(await columnOf(w.fake), columns.review);
-  assert.deepEqual(w.l2Events().map(({ event, from, to, cause }) => ({ event, from, to, cause })), [{ event: 'transition', from: 'coding', to: 'review', cause: 'returned' }]);
+  assert.deepEqual(w.l2Events().map(({ event, from, to, cause }) => ({ event, from, to, cause })), [{ event: 'transition', from: 'coding', to: 'review', cause: 'returned' }, { event: 'acceptance.history', from: undefined, to: undefined, cause: undefined }]);
 });
 
 /**
@@ -251,7 +251,7 @@ test('a Review card L3 claims to do again from the beginning moves from review t
 
   assert.equal(await columnOf(w.fake), columns.coding);
   assert.deepEqual(w.fake.writes(), [{ operation: 'moveItem', args: [w.card.id, columns.coding] }]);
-  assert.deepEqual(w.l2Events().map(({ event, card, from, to, cause }) => ({ event, card, from, to, cause })), [{ event: 'transition', card: 12, from: 'review', to: 'coding', cause: 'redone' }]);
+  assert.deepEqual(w.l2Events().map(({ event, card, from, to, cause }) => ({ event, card, from, to, cause })), [{ event: 'transition', card: 12, from: 'review', to: 'coding', cause: 'redone' }, { event: 'acceptance.history', card: 12, from: undefined, to: undefined, cause: undefined }]);
 });
 
 test('a Coding card L3 claims is not moved, and no transition is recorded for it', async () => {
@@ -278,7 +278,7 @@ test('L2\'s settle reads, in its one read for the card it settles, its one open 
 
   const facts = await l2.settled(card, exited(0));
 
-  assert.deepEqual(made.sort(), [['readCheckStates', pullFrom(13, 130).sha], ['readComments', 130], ['readDiff', 130], ['readEffectiveRules', 'main'], ['readIssueComments', 13], ['readMergeBase', 130], ['readMergeable', 130], ['readPullRequests', 'rigger-13']]);
+  assert.deepEqual(made.sort(), [['readCheckStates', pullFrom(13, 130).sha], ['readComments', 130], ['readDiff', 130], ['readEffectiveRules', 'main'], ['readIssueComments', 13], ['readIssueHistory', 13], ['readMergeBase', 130], ['readMergeable', 130], ['readPullRequests', 'rigger-13']]);
   assert.deepEqual(facts, {
     line: 'rigger-13',
     open: [{ number: 130, head: pullFrom(13, 130).sha, base: 'main' }],

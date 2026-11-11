@@ -1,4 +1,4 @@
-// ABOUTME: Composes and parses a clock firing's mark and finds its exact line in a card body.
+// ABOUTME: Composes and reads a clock firing's mark and author in a card body.
 
 const PREFIX = 'Rigger clock: ';
 
@@ -27,4 +27,14 @@ export function parseClockMark(line) {
 /** Whether any LF/CRLF-delimited body line is exactly this pair's composed mark. */
 export function carriesClockMark(body, name, occurrence) {
   return body.split(/\r?\n/).includes(composeClockMark(name, occurrence));
+}
+
+/** The author on the next nonempty line after a valid mark, preserved exactly as written. */
+export function clockAuthor(body) {
+  const lines = body.split(/\r?\n/);
+  const mark = lines.findIndex((line) => parseClockMark(line) !== null);
+  if (mark < 0) return undefined;
+  const author = lines.slice(mark + 1).find((line) => line !== '');
+  const prefix = '**Author:** ';
+  return author?.startsWith(prefix) ? author.slice(prefix.length) : undefined;
 }
