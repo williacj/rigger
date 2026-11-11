@@ -172,7 +172,13 @@ test('each column change writes one L2 event naming the card, the column left, t
 
   assert.deepEqual(events(), [
     { ts: '1970-01-01T00:00:00.000Z', run: 'r-test', layer: 'L2', event: 'transition', card: 12, from: 'ready', to: 'coding', cause: 'claimed' },
+    { ts: '1970-01-01T00:00:00.000Z', run: 'r-test', layer: 'L2', event: 'acceptance.history', card: 12,
+      opened: { at: '2026-10-01T00:00:00Z', by: 'rigger-fake' },
+      revisions: [{ editedAt: '2026-10-01T00:00:00Z', editor: 'rigger-fake', deleted: false, digest: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', items: 0 }] },
     { ts: '1970-01-01T00:00:00.000Z', run: 'r-test', layer: 'L2', event: 'transition', card: 12, from: 'coding', to: 'review', cause: 'returned' },
+    { ts: '1970-01-01T00:00:00.000Z', run: 'r-test', layer: 'L2', event: 'acceptance.history', card: 12,
+      opened: { at: '2026-10-01T00:00:00Z', by: 'rigger-fake' },
+      revisions: [{ editedAt: '2026-10-01T00:00:00Z', editor: 'rigger-fake', deleted: false, digest: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', items: 0 }] },
   ]);
 });
 
@@ -248,7 +254,7 @@ test('once the sink accepts again, no transition event for the refused move is e
   assert.equal(moved.column, 'Review', 'the run never reached a later append');
   assert.deepEqual(
     events().map(({ card: number, from, to, cause }) => ({ number, from, to, cause })),
-    [{ number: 12, from: 'coding', to: 'review', cause: 'returned' }],
+    [{ number: 12, from: 'coding', to: 'review', cause: 'returned' }, { number: 12, from: undefined, to: undefined, cause: undefined }],
   );
 });
 
@@ -408,7 +414,7 @@ async function escalationWorld({ columns = config.board.columns, source = 'revie
   const trace = [];
   const items = { ...fake.operations, moveItem: async (...args) => { trace.push(['moveItem', ...args.slice(0, 2)]); return fake.operations.moveItem(...args); } };
   const repositoryWrites = Object.fromEntries(['postIssueComment', 'addIssueLabel', 'postComment'].map((operation) => [operation, async (...args) => { trace.push([operation, ...args]); return repository[operation](...args); }]));
-  const l2 = columnChanges({ config: { ...config, board: { ...config.board, columns } }, sink, items, repositoryWrites });
+  const l2 = columnChanges({ config: { ...config, board: { ...config.board, columns } }, sink, items, repositoryWrites, reads: repository.operations });
   const [card] = await itemsOf(fake);
   return { fake, repository, trace, l2, card, directory, events: () => existsSync(streamPath(directory)) ? readEvents(directory) : [] };
 }
@@ -436,7 +442,7 @@ test('owner escalation preserves payload data and orders issue comment then actu
           ]);
           assert.deepEqual(repository.pull(300).comments, [{ body: 'Existing PR comment.' }]);
           const recorded = events();
-          assert.deepEqual(recorded.map(({ event }) => event), ['review.escalate', 'transition']);
+          assert.deepEqual(recorded.map(({ event }) => event), ['review.escalate', 'transition', 'acceptance.history']);
           const intent = recorded[0];
           assert.deepEqual(Object.fromEntries(Object.entries(intent).filter(([key]) => !['ts', 'run', 'layer', 'card', 'dispatch', 'event'].includes(key))), { category, reason, raiser: 'loop', ...fields });
           assert.deepEqual(recorded[1], { ts: '1970-01-01T00:00:00.000Z', run: 'r-owner', layer: 'L2', card: 30, dispatch: null, event: 'transition', from: source, to: 'owner', cause: 'escalated' });
@@ -507,9 +513,9 @@ test('default owner issue writes and item move bind every L0 request to the real
   const l2 = columnChanges({ config, sink, send });
   await l2.escalated({ number: 30, id: 'PVTI_lADOBzomGc4Bkn7fzgd', column: 'Review' }, { action: 'escalate', category: 'critical', reason: 'Keep the files.', pull: 300, head: '3'.repeat(40) });
   assert.deepEqual(sent.filter((args) => args[1] !== 'graphql' || args[3].startsWith('query=mutation')).map((args) => args[1]), [`repos/${config.repo}/issues/30/comments`, 'graphql', `repos/${config.repo}/issues/30/labels`]);
-  assert.equal(sent.length, 5, 'the real adapters read the board and Status field before the mutation');
+  assert.equal(sent.length, 6, 'the real adapters read the board and Status field before the mutation');
   const requests = readEvents(directory).filter(({ event }) => event === 'test.escalation.request');
-  assert.equal(requests.length, 5);
+  assert.equal(requests.length, 6);
   for (const { layer, run, card, dispatch } of requests) assert.deepEqual({ layer, run, card, dispatch }, { layer: 'L0', run: 'r-real-owner-action', card: 30, dispatch: null });
 });
 

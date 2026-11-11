@@ -397,6 +397,7 @@ test('the fake gh does not model an options write that changes a held option\'s 
  * the board reads'; and of #289, the report of the other repositories a board holds.
  */
 const ADAPTER_TESTS = ['forge-read.test.mjs', 'forge-adapter.test.mjs', 'forge-runners.test.mjs', 'forge-board-owner.test.mjs', 'forge-priority.test.mjs', 'forge-board-sharing.test.mjs'];
+ADAPTER_TESTS.push('acceptance-history.test.mjs');
 
 /**
  * The arguments of every `gh` request the forge adapter issues while `file` runs, recorded by

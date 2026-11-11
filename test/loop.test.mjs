@@ -2763,7 +2763,7 @@ test('given concurrency 3, no ready card, and one dispatchable card each in codi
   const { claimed, built, release } = await claimOnce({ cards: REDOS_ONLY, concurrency: 3 }, t);
 
   assert.equal(claimed.length, 2);
-  assert.deepEqual(built.events().filter((event) => event.layer === 'L2').map(({ event, card, from, to }) => ({ event, card, from, to })), [{ event: 'transition', card: 6, from: 'review', to: 'coding' }]);
+  assert.deepEqual(built.events().filter((event) => event.layer === 'L2').map(({ event, card, from, to }) => ({ event, card, from, to })), [{ event: 'transition', card: 6, from: 'review', to: 'coding' }, { event: 'acceptance.history', card: 6, from: undefined, to: undefined }]);
   await release();
 });
 
@@ -3551,6 +3551,7 @@ test('across a `loop`\'s single pull the sink refused and a later one it accepte
   // infrastructure failure change admission, and the halt is neither.
   const pulled = new Set(['L3 trigger', 'L3 pull', 'L2 transition', 'L3 slot.release', 'L3 dispatch', 'L1 workspace.made', 'L1 dispatch.start', 'L1 dispatch.end']);
   pulled.add('L0 call.end');
+  pulled.add('L2 acceptance.history');
   assert.deepEqual(built.events().map(({ layer, event }) => `${layer} ${event}`).filter((name) => !pulled.has(name)), []);
 });
 

@@ -693,6 +693,51 @@ const REPOSITORY_READS = {
     },
   },
   /**
+   * The issue's opening, current body and body revisions, oldest first.
+   *
+   * D16 rule 3 measurements:
+   * A, 2026-11-10: gh api graphql -f query='query { repository(owner: "williacj", name: "rigger") { issue(number: 1302) { createdAt author { login } body userContentEdits(first: 100) { pageInfo { hasNextPage endCursor } nodes { editedAt editor { login } deletedAt diff } } } } }'
+   * A returned four full bodies (10021, 9926, 8192, 8209 characters); newest diff byte-equal
+   * to body, oldest editedAt equal to createdAt. The fallback is inactive for that capture (W7).
+   * A's edit times have second precision; the record cannot supply finer edit times (W9).
+   * B, 2026-11-10: gh api graphql -f query='query { __type(name: "UserContentEdit") { name fields { name type { kind name ofType { kind name ofType { kind name } } } } } }'
+   * B declares nullable deletedAt, deletedBy and diff. C's null deleted snapshot kept its
+   * flag and identity, without digest/items (W1, W13).
+   * C, 2026-11-11 UTC: npm test -- --test-timeout=120000 test/acceptance-history.test.mjs
+   * C's edit after the last move produced no further read or history after manual time advanced
+   * a minute: edits beyond the last column change remain outside its snapshots (W2).
+   * C's failed first/continuation page, deadline and unavailable undeleted body left only the
+   * accepted transition; an L0 write-record or transition refusal sent no history read (W8).
+   * C's null opener/editor, including a deleted revision's editor, refused the whole read with
+   * issue/revision context; L2 retained its accepted transition without history (M15).
+   * C retained all 201 same-second revisions in connection order, without inventing precision (W9).
+   */
+  readIssueHistory: {
+    reading: (number) => `issue #${number}'s body history`,
+    read: async (board, via, number, addressed) => {
+      const loginOf = (actor, revision) => {
+        if (typeof actor?.login !== 'string' || actor.login === '') fail('readIssueHistory', board, `${addressed}${revision} has no login`);
+        return actor.login;
+      };
+      const query = (page) => repositoryQuery(board, `issue(number: ${numbered('readIssueHistory', board, number)}) { createdAt author { login } body userContentEdits(${page}) { pageInfo { hasNextPage endCursor } nodes { editedAt editor { login } deletedAt diff } } }`);
+      let opened, body;
+      const nodes = await everyPage('readIssueHistory', board, via, query, (data) => {
+        const found = heldIn('readIssueHistory', board, data, 'issue', addressed);
+        const by = loginOf(found.author, 'opening revision');
+        opened ??= { at: found.createdAt, by };
+        body ??= found.body;
+        return found.userContentEdits;
+      }, addressed);
+      return {
+        opened, body,
+        revisions: nodes.toReversed().map(({ editedAt, editor, deletedAt, diff }, index) => {
+          if (deletedAt === null && typeof diff !== 'string') fail('readIssueHistory', board, `${addressed}revision ${index + 1} at ${editedAt} has no available body`);
+          return { editedAt, editor: loginOf(editor, `revision ${index + 1} at ${editedAt}`), deleted: deletedAt !== null, body: diff };
+        }),
+      };
+    },
+  },
+  /**
    * Issue `number`'s timeline of comments, label changes, closes and reopens, oldest first, across
    * every page, as `TIMELINE_ENTRIES` answers each entry. A page that fails fails the whole read.
    */

@@ -476,6 +476,34 @@ export const FORGE_MANIFEST = {
  },
  "cases": [
   {
+   "id": "F1-62",
+   "key": 62,
+   "args": [
+    "api",
+    "graphql",
+    "-f",
+    "query=query { repository(owner: \"example\", name: \"widgets\") { issue(number: 12) { createdAt author { login } body userContentEdits(first: 100) { pageInfo { hasNextPage endCursor } nodes { editedAt editor { login } deletedAt diff } } } } }"
+   ],
+   "status": 0,
+   "stdout": "{\"data\":{\"repository\":{\"issue\":{\"createdAt\":\"2026-10-01T00:00:00Z\",\"author\":{\"login\":\"rigger-fake\"},\"body\":\"Body twelve\",\"userContentEdits\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"100\"},\"nodes\":[]}}}}}\n",
+   "stderr": "",
+   "after": "unchanged"
+  },
+  {
+   "id": "F1-63",
+   "key": 63,
+   "args": [
+    "api",
+    "graphql",
+    "-f",
+    "query=query { repository(owner: \"example\", name: \"widgets\") { issue(number: 12) { createdAt author { login } body userContentEdits(first: 100, after: \"100\") { pageInfo { hasNextPage endCursor } nodes { editedAt editor { login } deletedAt diff } } } } }"
+   ],
+   "status": 0,
+   "stdout": "{\"data\":{\"repository\":{\"issue\":{\"createdAt\":\"2026-10-01T00:00:00Z\",\"author\":{\"login\":\"rigger-fake\"},\"body\":\"Body twelve\",\"userContentEdits\":{\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":\"200\"},\"nodes\":[]}}}}}\n",
+   "stderr": "",
+   "after": "unchanged"
+  },
+  {
    "id": "F1-59",
    "key": 59,
    "args": [
