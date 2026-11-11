@@ -310,19 +310,24 @@ test('L3 a second bootstrap of the loaded shipped job is refused', { skip: launc
   const world = await launchdWorld(t);
   try {
     const label = testLabel();
-    await loadAndObserveFirstStart(t, world, [label]);
+    const first = await loadAndObserveFirstStart(t, world, [label]);
     const again = world.bootstrap(label); // L3 refused bootstrap
     t.diagnostic(`second bootstrap of ${label}: exit ${again.status} ${again.stderr.trim()}`);
     assert.notEqual(again.status, 0, 'a second bootstrap of the loaded label exits non-zero');
+    // The refusal left the job as it was: read at once, the record holds the one held instance.
+    t.diagnostic(`record at the refusal: ${JSON.stringify(world.entries())}`);
+    assert.equal(world.starts().length, 1, 'one start at the refused bootstrap');
+    assert.equal(world.exits().length, 0, 'the first instance has not exited at the refused bootstrap');
+    assert.ok(running(first.pid), `the first instance, pid ${first.pid}, is still running at the refused bootstrap`);
   } finally {
     await world.bootout();
   }
 });
 
 // Host reason: a real deadline; the test waits, on the real clock, for any start the second
-// bootstrap might cause.
+// bootstrap might cause later, which the refusal test above reads only at once.
 // Ordinary decision counterpart: test/launchd-template.test.mjs :: the shipped LaunchAgent has the fixed label
-test('L3 after a refused second bootstrap the shipped job still has one running instance', { skip: launchdSkip, timeout: 120_000 }, async (t) => {
+test('L3 ten seconds after a refused second bootstrap the shipped job still has one running instance', { skip: launchdSkip, timeout: 120_000 }, async (t) => {
   const world = await launchdWorld(t);
   try {
     const label = testLabel();
