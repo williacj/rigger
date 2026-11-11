@@ -365,7 +365,7 @@ command line as it runs a step's. The adapter also names, from the directory a d
 the environment it runs under, the one folder its CLI keeps for that directory outside the
 dispatch's directories, or none. This document uses folder for that directory alone. The Codex
 adapter names none. The adapter passes the CLI no setting that widens what the
-consumer's own provider settings allow, with three exceptions:
+consumer's own provider settings allow, with four exceptions:
 
 - **A reached directory.** A directory a dispatch reaches is one Rigger gives the dispatch beside
   the directory it runs in, and today that is only a judge's `head`. For each such directory, the
@@ -378,6 +378,11 @@ consumer's own provider settings allow, with three exceptions:
   sweep of the scratch directory. It allows no command, and the consumer's deny rules still apply
   there.
 - **A maker's git directories.** For a maker's dispatch, an adapter whose CLI refuses writes to git metadata may let the agent write to the worktree's own git directory and to the `objects`, `refs` and `logs` of the common git directory, so that the maker can commit and push its line of work. It names neither the common git directory itself nor any other part of it. It allows no command, and the consumer's deny rules still apply there.
+- **A card's escalation note.** The Claude Code adapter allows each dispatch exactly one command:
+  `gh issue comment <card> --body-file .rigger-escalation.md`, for the dispatch's own card, as a
+  rule with no `:*`. It lets a role post the escalation note its instruction asks for
+  (`R-ESCALATE-27`). It is the only command an exception allows. It admits no other card,
+  repository, flag or file, and the consumer's deny rules still apply to it.
 
 A provisioning step's working directory is `cwd`, a relative path naming a directory under the
 card's workspace. Where it is absent the step runs in the workspace itself. A step's `timeout` is
@@ -989,7 +994,11 @@ the owner answers an escalation by removing it.
 
 A maker that cannot meet an acceptance item writes one escalation note and ends. The note is a
 comment on the card's issue holding a fenced block: the category, the item's ordinal, the reason,
-and the dispatch id its instruction names. `src/workflow/escalation.mjs` composes the instruction
+and the dispatch id its instruction names.
+
+The instruction names the one command that posts it, `gh issue comment <card> --body-file .rigger-escalation.md`, run from the role's working directory after the role writes the block to that file. The Claude Code adapter grants exactly that command for the dispatch's card, and nothing wider (`R-ESCALATE-27`). A Codex role posts it under the sandbox that lets it push (`R-WORK-42`).
+
+`src/workflow/escalation.mjs` composes the instruction
 for the note and parses the note back, so the two cannot drift, as `marker.mjs` does for markers.
 L2 reads notes when it answers the maker's outcome, through the forge adapter's read side. It reads
 only notes written by an account with write access to the repository. A note a session writes with
