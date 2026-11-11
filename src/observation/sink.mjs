@@ -116,6 +116,35 @@ export function openSink({ directory, run, now }) {
   return { emitter, name, end };
 }
 
+/** The envelope checked at L5's read boundary, before any derivation receives the event. */
+function checkEventEnvelope(event) {
+  if (event === null || typeof event !== 'object' || Array.isArray(event)) {
+    throw new Error(`its envelope is ${JSON.stringify(event)}, not a plain object`);
+  }
+  const refuse = (field, contract) => {
+    throw new Error(`its \`${field}\` is ${JSON.stringify(event[field]) ?? 'missing'}, not ${contract}`);
+  };
+  const ts = event.ts;
+  if (typeof ts !== 'string' || !Number.isFinite(Date.parse(ts)) || new Date(ts).toISOString() !== ts) {
+    refuse('ts', 'an instant in UTC');
+  }
+  for (const field of ['run', 'event']) {
+    if (typeof event[field] !== 'string' || event[field] === '') {
+      refuse(field, 'a non-empty string');
+    }
+  }
+  if (!['L0', 'L1', 'L2', 'L3', 'L4', 'L5', 'L6'].includes(event.layer)) {
+    refuse('layer', 'L0 through L6');
+  }
+  if (Object.hasOwn(event, 'card') && !(Number.isSafeInteger(event.card) && event.card > 0)) {
+    refuse('card', 'a safe integer above zero');
+  }
+  if (Object.hasOwn(event, 'dispatch') && event.dispatch !== null && (typeof event.dispatch !== 'string' || event.dispatch === '')) {
+    refuse('dispatch', 'null or a non-empty string');
+  }
+  return event;
+}
+
 /**
  * Every event in a state directory's stream, in the order it was recorded.
  *
@@ -133,7 +162,7 @@ export function readEvents(directory) {
     const line = stream.toString('utf8', start, end);
     start = end + 1;
     try {
-      events.push(JSON.parse(line));
+      events.push(checkEventEnvelope(JSON.parse(line)));
     } catch (cause) {
       throw new Error(`${path} line ${index + 1} is not a recorded event`, { cause });
     }
