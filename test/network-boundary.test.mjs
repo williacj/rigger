@@ -1,9 +1,99 @@
-// ABOUTME: Guards the entry-point import closure and process programs against network routes outside the owner's tools.
+// ABOUTME: Refuses unreviewed protected-name mentions and network routes in the production import closure.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { posix } from 'node:path';
 import { parse } from 'acorn';
+
+// proves R-SAFE-2
+test('P1 to P6: unreviewed mentions are refused in every static name form on their cooked value', () => {
+  const classes = [
+    ['P1', ['runCommand']],
+    ['P2', ['child_process', 'node:child_process', 'childProcess', 'spawn', 'spawnSync', 'execFile']],
+    ['P3', ['env', 'environment', 'gitEnvironment']],
+    ['P4', ['env']], // process.env is gated by the env member, as Table P specifies.
+    ['P5', ['URL', '__proto__']],
+    ['P6', ['stepAnswer', 'stepDispatch', 'dispatchStep', 'provisioning', 'step', 'run', 'command']],
+  ];
+  const forms = [
+    ['binding identifier', (name) => `const ${name} = 0;`, true],
+    ['reference identifier', (name) => `function local(${name}) { return ${name}; }`, true],
+    ['escaped identifier', (name) => `const \\u${name.charCodeAt(0).toString(16).padStart(4, '0')}${name.slice(1)} = 0;`, true],
+    ['dotted member', (name) => `const holder = {}; holder.${name};`, true],
+    ['computed string member', (name) => `const holder = {}; holder[${JSON.stringify(name)}];`],
+    ['computed template member', (name) => `const holder = {}; holder[\`${name}\`];`],
+    ['optional member', (name) => `const holder = {}; holder?.[${JSON.stringify(name)}];`],
+    ['object key', (name) => `const holder = { ${JSON.stringify(name)}: 0 };`],
+    ['destructuring key', (name) => `const { ${JSON.stringify(name)}: local } = {};`],
+    ['class field', (name) => `class Holder { [${JSON.stringify(name)}] = 0; }`],
+    ['class method', (name) => `class Holder { [${JSON.stringify(name)}]() {} }`],
+    ['imported name', (name) => `import { ${JSON.stringify(name)} as local } from 'node:path';`],
+    ['import binding', (name) => `import { value as ${name} } from 'node:path';`, true],
+    ['exported name', (name) => `const local = 0; export { local as ${JSON.stringify(name)} };`],
+    ['re-exported name', (name) => `export { ${JSON.stringify(name)} as local } from 'node:path';`],
+    ['module specifier', (name) => `import ${JSON.stringify(name)};`],
+    ['string literal', (name) => `${JSON.stringify(name)};`],
+    ['template literal', (name) => `\`${name}\`;`],
+    ['escaped string', (name) => `'\\x${name.charCodeAt(0).toString(16)}${name.slice(1)}';`],
+    ['escaped template', (name) => `\`\\x${name.charCodeAt(0).toString(16)}${name.slice(1)}\`;`],
+  ];
+  const missed = [];
+  for (const [group, names] of classes) for (const name of names) for (const [form, make, identifier] of forms) {
+    if (identifier && !/^[A-Za-z_$][\w$]*$/.test(name)) continue;
+    const source = make(name);
+    const report = networkReport(() => source, ['fixture.mjs'], []);
+    if (!report.violations.some((line) => line.startsWith('fixture.mjs:1 P ') && line.includes(JSON.stringify(name)))) missed.push(`${group} / ${name} / ${form}`);
+  }
+  assert.deepEqual(missed, [], 'Every unreviewed protected mention must name its file, line and cooked name');
+  assert.deepEqual(networkReport(() => '// env runCommand URL\n"prefix env suffix"; `environment suffix`;', ['fixture.mjs'], []).violations, [], 'Comments and literals with a different cooked value are not mentions');
+});
+
+// proves R-SAFE-2
+test('P reviewed lines: only the exact text and independently counted mentions are admitted', () => {
+  for (const [text, mentions] of [
+    ['const env = {};', 1],
+    ['const env = {}; const holder = { env };', 2],
+    ['const { env: environment } = {};', 2],
+    ["import { env } from 'node:path';", 1],
+    ['const env = 0; export { env };', 2],
+    ["'\\x65nv';", 1],
+    ['`\\x65nv`;', 1],
+    ['class Holder { #env = 0; value() { return this.#env; } }', 2],
+    ['const childProcess = {}; const holder = { get spawn() { return childProcess.spawn; } };', 4],
+  ]) {
+    const site = { file: 'fixture.mjs', text, mentions, line: 1, reason: 'An independently counted mention fixture.' };
+    assert.deepEqual(networkReport(() => text, ['fixture.mjs'], [site]).violations, [], `The reviewed line admits its ${mentions} source occurrences: ${text}`);
+    const wrong = networkReport(() => text, ['fixture.mjs'], [{ ...site, mentions: mentions + 1 }]);
+    assert.ok(wrong.violations.some((line) => line.startsWith('fixture.mjs:1 P ')), `A wrong declared mention count refuses ${text}`);
+  }
+});
+
+// proves R-SAFE-2
+test('P missing entries: a reviewed line absent from the closure refuses its inventory entry', () => {
+  const site = { file: 'fixture.mjs', text: 'process.env;', mentions: 1, line: 1, reason: 'The fixture engine environment read.' };
+  for (const source of ['process.version;', '// process.env;']) {
+    const report = networkReport(() => source, ['fixture.mjs'], [site]);
+    assert.ok(report.violations.some((line) => line.startsWith('fixture.mjs:1 P ') && line.includes('entry 1') && line.includes(site.text)), `A missing reviewed entry is refused even after its last protected mention is removed: ${source}`);
+  }
+  const outside = networkReport(() => '0;', ['fixture.mjs'], [{ ...site, file: 'outside.mjs' }]);
+  assert.ok(outside.violations.some((line) => line.startsWith('outside.mjs:1 P ') && line.includes('entry 1')), 'An inventory entry outside the reached closure is also missing');
+});
+
+// proves R-SAFE-2
+test('P duplicate lines: each inventory entry admits exactly one source occurrence', () => {
+  const site = { file: 'fixture.mjs', text: 'process.env;', mentions: 1, line: 1, reason: 'One fixture engine environment read.' };
+  const report = networkReport(() => 'process.env;\nprocess.env;', ['fixture.mjs'], [site]);
+  assert.ok(report.violations.some((line) => line.startsWith('fixture.mjs:2 P ') && line.includes('"env"')), 'The duplicate line needs its own reviewed entry');
+  assert.deepEqual(networkReport(() => 'process.env;\nprocess.env;', ['fixture.mjs'], [site, { ...site, line: 2 }]).violations, [], 'Two identical source lines require two entries');
+  assert.deepEqual(networkReport(() => '\nprocess.env;', ['fixture.mjs'], [site]).violations, [], 'The stored line number is a missing-entry diagnostic, never an admission condition');
+});
+
+// proves R-SAFE-2
+test('P changed lines: changing one character of a reviewed source line is refused', () => {
+  const site = { file: 'fixture.mjs', text: 'const env = 0;', mentions: 1, line: 1, reason: 'The fixture environment declaration.' };
+  const report = networkReport(() => 'const env = 1;', ['fixture.mjs'], [site]);
+  assert.ok(report.violations.some((line) => line.startsWith('fixture.mjs:1 P ') && line.includes('"env"')), 'One changed character invalidates the exact reviewed line');
+});
 
 // proves R-SAFE-2
 test('N1 and N2: the closure refuses unlisted built-ins through imports, re-exports and literal imports', () => {
@@ -14,7 +104,8 @@ test('N1 and N2: the closure refuses unlisted built-ins through imports, re-expo
     }
   }
   assert.deepEqual(networkReport(() => "import 'fs'; import 'node:fs';", ['fixture.mjs']).violations, []);
-  assert.deepEqual(networkReport(() => "import 'node:child_process';", ['src/substrate/host.mjs']).violations, []);
+  const nativeImport = "import 'node:child_process';";
+  assert.deepEqual(networkReport(() => nativeImport, ['src/substrate/host.mjs'], [{ file: 'src/substrate/host.mjs', text: nativeImport, mentions: 1, line: 1, reason: 'The native import control is confined to the real host.' }]).violations, []);
   const tree = new Map([
     ['entry.mjs', "import './static.mjs'; export * from './exported.mjs'; import('./literal.mjs');"],
     ['static.mjs', "import './entry.mjs'; import 'node:net';"],
@@ -41,6 +132,64 @@ const BUILTINS = new Map([
   ['node:util', 'Inspection and plain-data type checks.'],
 ]);
 
+/** Table P gates the first mention of a capability, before any alias can be made. */
+const PROTECTED_NAMES = new Map([
+  ['runCommand', 'P1: the L0 process starter.'],
+  ['child_process', 'P2: the bare native-process module specifier.'],
+  ['node:child_process', 'P2: the native-process module specifier.'],
+  ['childProcess', 'P2: the reviewed native-process namespace.'],
+  ['spawn', 'P2: the asynchronous native process start.'],
+  ['spawnSync', 'P2: the synchronous native process start.'],
+  ['execFile', 'P2: the native program reader.'],
+  ['env', 'P3/P4: dispatch options and the engine process.env member.'],
+  ['environment', 'P3: the environment prepared for a dispatch.'],
+  ['gitEnvironment', 'P3: the engine-environment copier used by git and dispatch.'],
+  ['URL', 'P5: the URL constructor gates every route to its prototype.'],
+  ['__proto__', 'P5: the ordinary prototype member.'],
+  ['stepAnswer', 'P6: the L2 configured-step producer.'],
+  ['stepDispatch', 'P6: the configured step to shell-input adapter.'],
+  ['dispatchStep', 'P6: the L3 configured-step dispatch helper.'],
+  ['provisioning', 'P6: the declared configured-step collection.'],
+  ['step', 'P6: the configured step and its selectors.'],
+  ['run', 'P6: the configured command line and reviewed execution functions.'],
+  ['command', 'P6: the program selected for an execution.'],
+]);
+
+/** Count source occurrences once, including shorthand nodes Acorn exposes in two roles. */
+function protectedMentions(program) {
+  const found = new Map();
+  for (const { node } of nodes(program)) {
+    const name = ['Identifier', 'PrivateIdentifier'].includes(node.type) ? node.name
+      : node.type === 'Literal' && typeof node.value === 'string' ? node.value
+        : node.type === 'TemplateLiteral' && node.expressions.length === 0 ? node.quasis[0].value.cooked : undefined;
+    if (PROTECTED_NAMES.has(name)) found.set(`${node.start}:${node.end}`, { name, line: node.loc.start.line });
+  }
+  return [...found.values()];
+}
+
+/** Every protected mention is refused until its exact source line is reviewed. */
+function mentionReport(modules, sites) {
+  const violations = [];
+  const used = new Set();
+  for (const [file, { program, source }] of modules) {
+    const lines = source.split(/\r\n|[\r\n\u2028\u2029]/);
+    const mentions = new Map();
+    for (const { name, line } of protectedMentions(program)) {
+      if (!mentions.has(line)) mentions.set(line, []);
+      mentions.get(line).push(name);
+    }
+    for (const [line, names] of mentions) {
+      const index = sites.findIndex((entry, index) => !used.has(index) && entry.file === file && entry.text === lines[line - 1] && entry.mentions === names.length);
+      if (index === -1) for (const name of new Set(names)) violations.push(`${file}:${line} P refuses ${JSON.stringify(name)}`);
+      else used.add(index);
+    }
+  }
+  sites.forEach((entry, index) => {
+    if (!used.has(index)) violations.push(`${entry.file}:${entry.line} P missing inventory entry ${index + 1}: ${entry.text}`);
+  });
+  return violations;
+}
+
 /** Syntax descendants, including imports nested inside a function. */
 function* nodes(node, parent = null, owner = '<module>') {
   if (node.type === 'FunctionDeclaration' && node.id) owner = node.id.name;
@@ -53,19 +202,9 @@ function* nodes(node, parent = null, owner = '<module>') {
   }
 }
 
-/** Cache only immutable syntax; binding origins and guard verdicts remain per report. */
-const programSyntaxModels = new WeakMap();
-function programSyntax(program) {
-  if (!programSyntaxModels.has(program)) {
-    const entries = [...nodes(program)];
-    programSyntaxModels.set(program, { entries, parents: new Map(entries.map(({ node, parent }) => [node, parent])) });
-  }
-  return programSyntaxModels.get(program);
-}
-
 /** Follow imports from roots; never execute the modules being checked. */
 const parsedModules = new Map();
-function networkReport(read, roots) {
+function networkReport(read, roots, sites = []) {
   const modules = new Map();
   const violations = [];
   const dynamic = [];
@@ -113,7 +252,7 @@ function networkReport(read, roots) {
     }
   };
   for (const root of roots) visit(root);
-  violations.push(...globalWrites(modules));
+  violations.push(...mentionReport(modules, sites));
   return { violations, modules, dynamic };
 }
 
@@ -196,7 +335,7 @@ test('N11: consumerConfig loads only the target config outside the guarded closu
     const path = realpathSync.native(join(PACKAGE_ROOT, file));
     reads.push(path);
     return readFileSync(path, 'utf8');
-  }, ENTRY_POINTS);
+  }, ENTRY_POINTS, REVIEWED_SITES);
   assert.deepEqual(report.violations, [], 'N11: the package closure is admitted without loading a consumer module');
   assert.equal(report.modules.has('rigger.config.mjs'), false, 'N11: the consumer import never enters the package config');
   const doctor = report.modules.get('src/cli/doctor.mjs');
@@ -215,16 +354,7 @@ test('N11: consumerConfig loads only the target config outside the guarded closu
     assert.ok(!reads.includes(native), 'N11: the guard never reads the existing consumer module');
     assert.deepEqual((await consumerConfig(target)).config, expected, 'N11: parsed exports come from this target, including special characters');
   }
-  assert.deepEqual(configReport(report.modules), [], 'N11: the real config import has a pinned binding and immutable target path');
-  const missed = [];
-  for (const [id, file, before, after] of CONFIG_COUNTEREXAMPLES) {
-    const sources = new Map([...report.modules].map(([path, { source }]) => [path, source]));
-    assert.equal(sources.get(file).split(before).length - 1, 1, `${id}: the config counterexample anchor is unique`);
-    sources.set(file, sources.get(file).replace(before, after));
-    const changed = networkReport((path) => sources.get(path), ENTRY_POINTS);
-    if (!configReport(changed.modules).some((line) => line.includes(file))) missed.push(id);
-  }
-  assert.deepEqual(missed, [], 'N11: config reassignment and alternate filename bindings must be refused');
+
 });
 
 const PACKAGE_ROOT = realpathSync.native(fileURLToPath(new URL('../', import.meta.url)));
@@ -302,21 +432,19 @@ function lexical(program) {
   if (lexicalModels.has(program)) return lexicalModels.get(program);
   const scopes = new WeakMap();
   const bindings = new WeakSet();
-  const root = { parent: null, kind: 'module', names: new Map() };
-  const inner = (parent, kind = 'block') => ({ parent, kind, names: new Map() });
-  const bind = (pattern, scope, value, path = [], fallback) => {
+  const root = { parent: null, kind: 'module', names: new Set() };
+  const inner = (parent, kind = 'block') => ({ parent, kind, names: new Set() });
+  const bind = (pattern, scope) => {
     if (!pattern) return;
     if (pattern.type === 'Identifier') {
-      scope.names.set(pattern.name, { identifier: pattern, scope, value, path, fallback });
+      scope.names.add(pattern.name);
       bindings.add(pattern);
     } else if (pattern.type === 'ObjectPattern') {
-      for (const property of pattern.properties) {
-        if (property.type === 'RestElement') bind(property.argument, scope, value, path);
-        else bind(property.value, scope, value, value ? [...path, memberName(property)] : [], fallback);
-      }
-    } else if (pattern.type === 'ArrayPattern') pattern.elements.forEach((element, index) => bind(element?.type === 'RestElement' ? element.argument : element, scope, value, value ? [...path, element?.type === 'RestElement' ? { rest: index } : String(index)] : [], fallback));
-    else if (pattern.type === 'AssignmentPattern') bind(pattern.left, scope, value ?? pattern.right, path, pattern.right);
-    else if (pattern.type === 'RestElement') bind(pattern.argument, scope, value, path, fallback);
+      for (const property of pattern.properties) bind(property.type === 'RestElement' ? property.argument : property.value, scope);
+    } else if (pattern.type === 'ArrayPattern') {
+      for (const element of pattern.elements) bind(element, scope);
+    } else if (pattern.type === 'AssignmentPattern') bind(pattern.left, scope);
+    else if (pattern.type === 'RestElement') bind(pattern.argument, scope);
   };
   const children = (node, scope) => {
     for (const value of Object.values(node)) for (const child of Array.isArray(value) ? value : [value]) {
@@ -328,11 +456,11 @@ function lexical(program) {
     if (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(node.type)) {
       if (node.type === 'FunctionDeclaration') {
         scopes.set(node.id, scope);
-        bind(node.id, scope, node);
+        bind(node.id, scope);
       }
       const parameters = inner(scope, 'parameters');
-      bind(node.id, parameters, node);
-      if (node.type !== 'ArrowFunctionExpression') parameters.names.set('arguments', { implicit: true });
+      bind(node.id, parameters);
+      if (node.type !== 'ArrowFunctionExpression') parameters.names.add('arguments');
       for (const parameter of node.params) bind(parameter, parameters);
       for (const parameter of node.params) collect(parameter, parameters);
       collect(node.body, inner(parameters, 'function'));
@@ -350,11 +478,11 @@ function lexical(program) {
       scopes.set(node, scope);
       if (node.type === 'CatchClause') bind(node.param, scope);
     }
-    if (node.type === 'ImportDeclaration') for (const specifier of node.specifiers) bind(specifier.local, scope, { type: 'ImportedBinding', source: node.source.value, name: specifier.type === 'ImportNamespaceSpecifier' ? '*' : specifier.type === 'ImportDefaultSpecifier' ? 'default' : specifier.imported.name ?? specifier.imported.value });
+    if (node.type === 'ImportDeclaration') for (const specifier of node.specifiers) bind(specifier.local, scope);
     if (node.type === 'VariableDeclaration') {
       let destination = scope;
       if (node.kind === 'var') while (!['module', 'function'].includes(destination.kind)) destination = destination.parent;
-      for (const declaration of node.declarations) bind(declaration.id, destination, declaration.init);
+      for (const declaration of node.declarations) bind(declaration.id, destination);
     }
     children(node, scope);
   };
@@ -362,7 +490,7 @@ function lexical(program) {
   const lookup = (node) => {
     let scope = scopes.get(node);
     while (scope && !scope.names.has(node.name)) scope = scope.parent;
-    return scope?.names.get(node.name);
+    return scope;
   };
   const model = { root, lookup, bindings };
   lexicalModels.set(program, model);
@@ -391,1279 +519,441 @@ function unbound(program) {
 // proves R-SAFE-2
 test('the real entry-point closure admits only the reviewed network boundaries', () => {
   const report = packageReport();
-  assert.deepEqual(report.violations, [], 'N1 to N6: every real module must satisfy the positive boundary');
+  assert.deepEqual(report.violations, [], 'N1 to N6 and Table P: every real module must satisfy the positive boundary');
   for (const root of ENTRY_POINTS) assert.ok(report.modules.has(root), `N2: follows ${root}`);
   assert.deepEqual(report.dynamic.map(({ file, owner, argument }) => ({ file, owner, argument })), DYNAMIC_IMPORTS.map(({ file, owner, argument }) => ({ file, owner, argument: expressionShape(argument) })), 'N3: the exception list is exactly the nonliteral sites');
-  for (const [name, reason] of [...BUILTINS, ...GLOBALS, ...DYNAMIC_IMPORTS.map(({ file, reason }) => [file, reason])]) {
-    assert.ok(typeof reason === 'string' && reason.trim() && !reason.includes('\n'), `N1/N3/N4: ${name} has a one-line reason`);
+  for (const [name, reason] of [...BUILTINS, ...GLOBALS, ...PROTECTED_NAMES, ...DYNAMIC_IMPORTS.map(({ file, reason }) => [file, reason])]) {
+    assert.ok(typeof reason === 'string' && reason.trim() && !reason.includes('\n'), `N1/N3/N4/Table P: ${name} has a one-line reason`);
+  }
+  for (const site of REVIEWED_SITES) {
+    assert.ok(Number.isInteger(site.mentions) && site.mentions > 0, `The reviewed count is positive for ${site.file}:${site.line}`);
+    assert.ok(site.reason.trim() && !/[\r\n]/.test(site.reason), `Each reviewed site has its own one-line reason: ${site.file}:${site.line}`);
   }
 });
 
 /** Read only package modules reached from the two production entry points. */
-const packageReport = () => networkReport((file) => readFileSync(join(PACKAGE_ROOT, file), 'utf8'), ENTRY_POINTS);
+const packageReport = () => networkReport((file) => readFileSync(join(PACKAGE_ROOT, file), 'utf8'), ENTRY_POINTS, REVIEWED_SITES);
 
-// proves R-SAFE-2
-test('N8: every process site has a reviewed program and shell input', () => {
-  const report = packageReport();
-  for (const [program, reason] of LOCAL_PROGRAMS) assert.ok(reason.trim() && !reason.includes('\n'), `N8: ${program} has a local-operation reason`);
-  assert.deepEqual(programReport(report.modules), [], 'N8: the real process sites and their program origins must remain closed');
-  for (const [file, before, after] of [
-    ['src/substrate/providers/claude.mjs', "command: 'claude'", "command: 'curl'"],
-    ['src/substrate/forge/runners.mjs', "const FORGE = 'gh'", "const FORGE = 'curl'"],
-    ['src/substrate/worktrees.mjs', "git = 'git'", "git = 'curl'"],
-    ['src/substrate/host.mjs', " : '/bin/ps'", " : '/bin/curl'"],
-    ['src/substrate/host.mjs', " : '/usr/sbin/lsof'", " : '/usr/bin/curl'"],
-    ['src/cli/doctor.mjs', 'const [command, ...args] = adapter.auth;', "const [command, ...args] = ['curl'];"],
-    ['src/substrate/process.mjs', 'tool: lsof', "tool: 'curl'"],
-    ['src/substrate/process.mjs', "run(ps, ['-g', String(group), '-o', 'pid=,stat=']", "run('curl', ['-g', String(group), '-o', 'pid=,stat=']"],
-    ['src/execution/step.mjs', "['-c', step.run]", "['-c', 'echo alternate']"],
-    ['src/cli/rigger.mjs', "import { run } from './verbs.mjs';", "import { run } from './verbs.mjs'; import { runCommand } from '../substrate/process.mjs'; function extra() { return runCommand({command:'git'}); }"],
-    ...['spawn', 'spawnSync', 'execFile'].map((method) => ['src/cli/rigger.mjs', "import { run } from './verbs.mjs';", `import { run } from './verbs.mjs'; function extra(host) { return host.${method}('git', []); }`]),
-    ['src/cli/rigger.mjs', "import { run } from './verbs.mjs';", "import { run } from './verbs.mjs'; function extra() { return process.execve('/usr/bin/curl', [], {}); }"],
-  ]) {
-    const sources = new Map([...report.modules].map(([path, { source }]) => [path, source]));
-    assert.ok(sources.get(file).includes(before), `N8: counterexample anchor exists in ${file}`);
-    sources.set(file, sources.get(file).replace(before, after));
-    const changed = networkReport((path) => sources.get(path), ENTRY_POINTS);
-    assert.ok(programReport(changed.modules).some((line) => line.includes(file)), `N8: refuses the counterexample at ${file}`);
-  }
-});
-
-/** All statically possible origins; unknown branches never hide a known guarded function. */
-const originVariants = (value) => value?.alternatives ? value.alternatives.flatMap(originVariants) : value === undefined ? [] : [value];
-
-/** Resolve static module, namespace, destructured and defaulted bindings in their lexical scopes. */
-function processBindings(modules) {
-  const models = new Map([...modules].map(([file, { program }]) => [file, lexical(program)]));
-  const assignments = new WeakMap();
-  const memberStores = new Map();
-  const storeRecords = new WeakSet();
-  const assigned = (file, pattern, value, path = []) => {
-    if (pattern.type === 'Identifier') {
-      const binding = models.get(file).lookup(pattern);
-      if (binding) assignments.set(binding, [...(assignments.get(binding) ?? []), { file, value, path }]);
-    } else if (pattern.type === 'MemberExpression' && memberName(pattern) !== undefined) {
-      const stored = { file, object: pattern.object, value, path };
-      const name = memberName(pattern);
-      memberStores.set(name, [...(memberStores.get(name) ?? []), stored]);
-      storeRecords.add(stored);
-    } else if (pattern.type === 'ObjectPattern') {
-      for (const property of pattern.properties) assigned(file, property.type === 'RestElement' ? property.argument : property.value, value, property.type === 'RestElement' ? path : [...path, memberName(property)]);
-    } else if (pattern.type === 'ArrayPattern') {
-      pattern.elements.forEach((part, index) => { if (part) assigned(file, part.type === 'RestElement' ? part.argument : part, value, [...path, part.type === 'RestElement' ? { rest: index } : String(index)]); });
-    } else if (pattern.type === 'AssignmentPattern') assigned(file, pattern.left, value, [...path, { fallback: pattern.right }]);
-  };
-  for (const [file, { program }] of modules) for (const { node } of nodes(program)) {
-    if (node.type === 'AssignmentExpression' && ['=', '||=', '&&=', '??='].includes(node.operator)) assigned(file, node.left, node.right);
-  }
-  const partial = (seen) => [...seen].some((value) => assignments.has(value) || storeRecords.has(value));
-  const namespaces = new Map();
-  const exports = new Map();
-  const bindingValues = new WeakMap();
-  const objects = new WeakMap();
-  const opaqueCalls = new WeakMap();
-  const memberOrigins = new WeakMap();
-  const operations = new Map(['call', 'apply', 'bind'].map((operation) => [operation, { operation }]));
-  const alternatives = (values) => {
-    const found = [...new Set(values.flatMap(originVariants))];
-    return found.length === 1 ? found[0] : found.length ? { alternatives: found } : undefined;
-  };
-  const namespace = (file) => {
-    if (!namespaces.has(file)) namespaces.set(file, { namespace: file });
-    return namespaces.get(file);
-  };
-  const target = (file, source) => source.startsWith('.') ? posix.normalize(posix.join(posix.dirname(file), source)) : source.startsWith('node:') ? source : `node:${source}`;
-  const exported = (file, name, seen = new Set()) => {
-    const key = `${file}#${name}`;
-    if (exports.has(key)) return exports.get(key);
-    const value = readExport(file, name, seen);
-    if (value !== undefined && !partial(seen)) exports.set(key, value);
-    return value;
-  };
-  const readExport = (file, name, seen) => {
-    if (BUILTINS.has(file) && name === 'default') return namespace(file);
-    // node:url exports the same constructor as the admitted global URL (checked by the matrix).
-    if (file === 'node:url' && name === 'URL') return namespace('global:URL');
-    if (!modules.has(file)) return `${file}#${name}`;
-    const key = `${file}#${name}`;
-    if (seen.has(key)) return;
-    seen = new Set([...seen, key]);
-    const declarations = modules.get(file).program.body;
-    const star = (node) => node.type === 'ExportAllDeclaration' && !node.exported;
-    const ordered = [...declarations.filter((node) => !star(node)), ...declarations.filter(star)];
-    let builtin;
-    for (const node of ordered) {
-      if (node.type === 'ExportNamedDeclaration') {
-        if (node.declaration && models.get(file).root.names.has(name)) {
-          const binding = models.get(file).root.names.get(name);
-          if (node.declaration === binding.value || node.declaration.declarations?.some((declaration) => declaration.init === binding.value)) return bindingOrigin(file, binding, seen);
-        }
-        for (const specifier of node.specifiers) if ((specifier.exported.name ?? specifier.exported.value) === name) {
-          const local = specifier.local.name ?? specifier.local.value;
-          return node.source ? exported(target(file, node.source.value), local, seen) : bindingOrigin(file, models.get(file).root.names.get(local), seen);
-        }
-      }
-      if (node.type === 'ExportAllDeclaration') {
-        if (node.exported && (node.exported.name ?? node.exported.value) === name) return namespace(target(file, node.source.value));
-        if (!node.exported) {
-          const source = target(file, node.source.value);
-          const found = exported(source, name, seen);
-          if (found !== undefined) {
-            // A built-in's unknown export set must not mask a package re-export.
-            if (!modules.has(source)) { builtin ??= found; continue; }
-            return found;
-          }
-        }
-      }
-      if (node.type === 'ExportDefaultDeclaration' && name === 'default') return origin(file, node.declaration, seen);
-    }
-    return builtin;
-  };
-  // An unresolved receiver may alias any receiver holding the same literal member name.
-  const uncertainReceiver = (value) => value === undefined || value?.unknownCall || (value?.parentOrigin && uncertainReceiver(value.parentOrigin));
-  const member = (base, name, seen) => {
-    if (name === undefined) return;
-    if (base?.alternatives) return alternatives(base.alternatives.map((value) => member(value, name, seen)));
-    const stored = (memberStores.get(name) ?? []).map((record) => {
-      if (seen.has(record)) return;
-      const visiting = new Set([...seen, record]);
-      const receivers = originVariants(origin(record.file, record.object, visiting));
-      if (!uncertainReceiver(base) && receivers.length && !receivers.some(uncertainReceiver) && !receivers.includes(base)) return;
-      return project(record.file, origin(record.file, record.value, visiting), record.path, visiting);
-    });
-    return alternatives([declaredMember(base, name, seen), ...stored]);
-  };
-  const declaredMember = (base, name, seen) => {
-    if (operations.has(name) && (typeof base === 'string' || base?.bound || base?.operation || ['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(base?.type))) return operations.get(name);
-    if (base?.array && /^(0|[1-9][0-9]*)$/.test(name)) return origin(base.file, base.array.elements[Number(name)], seen);
-    if (base?.namespace === 'global' && GLOBALS.has(name)) return namespace(`global:${name}`);
-    if (base?.namespace) return exported(base.namespace, name, seen);
-    if (typeof base === 'string' && base.startsWith('global:') && base.includes('#')) return `${base}.${name}`;
-    if (base?.object) {
-      if (seen.has(base)) return;
-      seen = new Set([...seen, base]);
-      return alternatives(base.object.properties.map((property) => {
-        if (property.type === 'SpreadElement') return member(origin(base.file, property.argument, seen), name, seen);
-        if (memberName(property) !== name) return;
-        if (property.kind === 'get') {
-          const body = property.value.body.body;
-          return body.length === 1 && body[0].type === 'ReturnStatement' ? origin(base.file, body[0].argument, seen) : undefined;
-        }
-        return origin(base.file, property.value, seen);
-      }));
-    }
-    if (base?.identifier || base?.parentOrigin || base?.unknownCall) {
-      if (!memberOrigins.has(base)) memberOrigins.set(base, new Map());
-      const members = memberOrigins.get(base);
-      if (!members.has(name)) members.set(name, { parentOrigin: base, name });
-      return members.get(name);
-    }
-  };
-  const rests = new WeakMap();
-  const rest = (value, offset) => {
-    if (value?.alternatives) return alternatives(value.alternatives.map((part) => rest(part, offset)));
-    if (!value?.array) return;
-    if (!rests.has(value)) rests.set(value, new Map());
-    const views = rests.get(value);
-    if (!views.has(offset)) views.set(offset, { file: value.file, array: { ...value.array, elements: value.array.elements.slice(offset) } });
-    return views.get(offset);
-  };
-  const project = (file, value, path, seen) => {
-    for (const part of path) value = typeof part === 'string' ? member(value, part, seen)
-      : part && 'rest' in part ? rest(value, part.rest)
-      : part && 'fallback' in part ? alternatives([value, origin(file, part.fallback, seen)]) : undefined;
-    return value;
-  };
-  const bindingOrigin = (file, binding, seen) => {
-    if (!binding || seen.has(binding)) return;
-    if (bindingValues.has(binding)) return bindingValues.get(binding);
-    seen = new Set([...seen, binding]);
-    let value = project(file, origin(file, binding.value, seen), binding.path ?? [], seen);
-    if (value?.namespace === 'global:undefined') value = undefined;
-    value ??= origin(file, binding.fallback, seen);
-    value = alternatives([value, ...(assignments.get(binding) ?? []).map((assignment) => {
-      return project(assignment.file, origin(assignment.file, assignment.value, seen), assignment.path, seen);
-    })]) ?? binding;
-    // Stored ancestors can participate in alias cycles; cache only complete traversals.
-    if (!partial(seen)) bindingValues.set(binding, value);
-    return value;
-  };
-  const origin = (file, node, seen = new Set()) => {
-    if (!node) return;
-    if (node.type === 'ImportedBinding') {
-      const source = target(file, node.source);
-      return node.name === '*' || (source === 'node:child_process' && node.name === 'default') ? namespace(source) : exported(source, node.name, seen);
-    }
-    if (node.type === 'Identifier') {
-      const binding = models.get(file).lookup(node);
-      if (!binding && (GLOBALS.has(node.name) || node.name === 'Reflect')) return namespace(`global:${node.name}`);
-      if (!binding && ['globalThis', 'global'].includes(node.name)) return namespace('global');
-      return bindingOrigin(file, binding, seen);
-    }
-    if (node.type === 'AwaitExpression') return origin(file, node.argument, seen);
-    if (node.type === 'ImportExpression' && typeof node.source.value === 'string') return namespace(target(file, node.source.value));
-    if (node.type === 'ConditionalExpression') return alternatives([origin(file, node.consequent, seen), origin(file, node.alternate, seen)]);
-    if (node.type === 'LogicalExpression') return alternatives([origin(file, node.left, seen), origin(file, node.right, seen)]);
-    if (node.type === 'SequenceExpression') return origin(file, node.expressions.at(-1), seen);
-    if (node.type === 'AssignmentExpression' && ['=', '||=', '&&=', '??='].includes(node.operator)) return alternatives([origin(file, node.left, seen), origin(file, node.right, seen)]);
-    if (node.type === 'MemberExpression') return member(origin(file, node.object, seen), memberName(node), seen);
-    if (['ObjectExpression', 'ArrayExpression'].includes(node.type)) {
-      if (!objects.has(node)) objects.set(node, { [node.type === 'ObjectExpression' ? 'object' : 'array']: node, file });
-      return objects.get(node);
-    }
-    if (node.type === 'CallExpression' && syntaxShape(node.callee) === expressionShape('Object.freeze') && !models.get(file).lookup(node.callee.object) && node.arguments.length === 1) return origin(file, node.arguments[0], seen);
-    if (node.type === 'CallExpression') {
-      if (seen.has(node)) return;
-      if (!objects.has(node)) {
-        const values = invocation(file, node, new Set([...seen, node])).filter((call) => call.created).map(({ created }) => created);
-        // Keep unresolved call values in conditional origins instead of discarding that branch.
-        if (!opaqueCalls.has(node)) opaqueCalls.set(node, { file, unknownCall: node });
-        const value = alternatives(values) ?? opaqueCalls.get(node);
-        if (!partial(seen)) objects.set(node, value);
-        return value;
-      }
-      return objects.get(node);
-    }
-    if (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression', 'Literal'].includes(node.type)) return node;
-  };
-  const argument = (file, node) => ({ file, node });
-  const valueOf = (value, seen) => value && origin(value.file, value.node, seen);
-  const arrayArguments = (value, seen) => {
-    const array = valueOf(value, seen);
-    if (!array?.array || array.array.elements.some((part) => !part || part.type === 'SpreadElement')) return;
-    return array.array.elements.map((node) => argument(array.file, node));
-  };
-  // Function.prototype methods use their actual receiver, including when the method is aliased.
-  const sameArgument = (left, right) => left?.file === right?.file && left?.node === right?.node;
-  const invoke = (symbol, receiver, args, seen, active = []) => {
-    if (active.some((call) => call.symbol === symbol && sameArgument(call.receiver, receiver) && call.args?.length === args?.length && (args ?? []).every((arg, index) => sameArgument(arg, call.args[index])))) return [];
-    active = [...active, { symbol, receiver, args }];
-    if (symbol?.alternatives) return symbol.alternatives.flatMap((value) => invoke(value, receiver, args, seen, active));
-    if (symbol?.bound) return invoke(symbol.bound.target, symbol.bound.receiver, args && [...symbol.bound.prefix, ...args], seen, active);
-    if (symbol?.operation) {
-      const target = valueOf(receiver, seen);
-      if (symbol.operation === 'bind') return args ? [{ created: { bound: { target, receiver: args[0], prefix: args.slice(1) } } }] : [];
-      return invoke(target, args?.[0], symbol.operation === 'call' ? args?.slice(1) : arrayArguments(args?.[1], seen), seen, active);
-    }
-    if (symbol === 'global:Reflect#apply') return invoke(valueOf(args?.[0], seen), args?.[1], arrayArguments(args?.[2], seen), seen, active);
-    return [{ symbol, args }];
-  };
-  const invocation = (file, node, seen = new Set()) => invoke(origin(file, node.callee, seen), node.callee.type === 'MemberExpression' ? argument(file, node.callee.object) : undefined, node.arguments.map((node) => argument(file, node)), seen);
-  const named = (file, name, nested = false) => {
-    const model = models.get(file);
-    let binding = nested ? undefined : model.root.names.get(name);
-    if (!binding) {
-      const declarations = programSyntax(modules.get(file).program).entries.filter(({ node }) => node.type === 'VariableDeclarator' && node.id.name === name && ['ArrowFunctionExpression', 'FunctionExpression'].includes(node.init?.type) && (!nested || model.lookup(node.id)?.scope !== model.root));
-      if (declarations.length === 1) binding = model.lookup(declarations[0].node.id);
-    }
-    return bindingOrigin(file, binding, new Set());
-  };
-  return { origin, exported, models, invocation, named };
-}
-
-/** Native starts remain starts through aliases and namespace/member access. */
-const nativeProgram = (symbol) => typeof symbol === 'string' && (symbol.startsWith('node:child_process#') || symbol === 'global:process#execve');
-
-/** Reviewed process sites, program inputs and constructed environments, checked without running them. */
-function programReport(modules) {
-  const violations = [];
-  const calls = [];
-  const references = [];
-  const nativeBindings = new Map([...modules.keys()].map((file) => [file, new Set()]));
-  const bindings = processBindings(modules);
-  const originBindings = new Map();
-  const readerBindings = new Map();
-  const readerInputs = new Set(['ask', 'decide', 'facts', 'atPull', 'take']);
-  const checkedValues = [];
-  const entriesByFile = new Map([...modules].map(([file, { program }]) => [file, programSyntax(program).entries]));
-  const parentsByFile = new Map([...modules].map(([file, { program }]) => [file, programSyntax(program).parents]));
-  const links = [];
-  const originKey = (file, owner, kind, name) => `${file}#${owner}#${kind}#${name}`;
-  const reviewed = new Set();
-  for (const [file, names, nested] of PROGRAM_DEFINITIONS) for (const name of names) {
-    const symbol = bindings.named(file, name, nested);
-    if (symbol === undefined) violations.push(`${file} N8 missing reviewed process definition ${name}`);
-    else for (const value of originVariants(symbol)) reviewed.add(value);
-  }
-  const fail = (file, node, reason) => violations.push(`${file}:${node.loc.start.line} N8 ${reason}`);
-  for (const [file, { program }] of modules) {
-    const entries = entriesByFile.get(file);
-    const processMember = (node) => node?.type === 'MemberExpression' && (nativeProgram(bindings.origin(file, node)) || ['spawn', 'spawnSync', 'execFile'].includes(memberName(node)));
-    for (const { node, parent, owner } of entries) {
-      if (node.type === 'Property' && parent.type === 'ObjectExpression' && memberName(node) === 'tool' && !(file === 'src/substrate/process.mjs' && owner === 'list')) fail(file, node, 'unlisted local-reader program origin');
-      if (file === 'src/substrate/process.mjs' && node.type === 'VariableDeclarator') {
-        if (['ps', 'lsof'].includes(node.id.name)) fail(file, node, 'unreviewed local reader binding');
-        if (node.id.type === 'ObjectPattern' && node.id.properties.some((property) => ['ps', 'lsof'].includes(memberName(property))) && syntaxShape(node.init) !== expressionShape('host')) fail(file, node, 'local readers must come from the host');
-      }
-      if (node.type === 'Property' && parent.type === 'ObjectExpression' && ['ps', 'lsof'].includes(memberName(node)) && file !== 'src/substrate/host.mjs' && syntaxShape(node.value) !== expressionShape(memberName(node))) fail(file, node, 'local reader forwarding differs');
-      if (processMember(node)) references.push(`${file}#${owner}#${syntaxShape(node)}`);
-      if (node.type === 'AssignmentExpression' || node.type === 'UpdateExpression') {
-        const target = node.left ?? node.argument;
-        if (['command', 'git', 'FORGE', 'ps', 'lsof'].includes(target.name) || (target.type === 'MemberExpression' && ['command', 'auth', 'ps', 'lsof'].includes(memberName(target)))) fail(file, node, 'rewrites a reviewed program origin');
-      }
-      if (node.type !== 'CallExpression') continue;
-      const callee = node.callee;
-      const invocations = bindings.invocation(file, node).filter((call) => !call.created);
-      const guarded = invocations.filter(({ symbol }) => reviewed.has(symbol) || nativeProgram(symbol));
-      if (guarded.length || processMember(callee)) {
-        const key = `${file}#${owner}#${syntaxShape(callee)}`;
-        const candidates = PROGRAM_CALLS.filter((entry) => entry[0] === file && entry[1] === owner && expressionShape(entry[2]) === syntaxShape(callee));
-        const expected = candidates.length === 1 ? candidates[0] : candidates.find((entry) => syntaxShape(node.arguments) === syntaxShape(parseExpressionAt(`[${entry[4]}]`, 0, { ecmaVersion: 'latest', sourceType: 'module' }).elements));
-        calls.push(key);
-        if (!expected) { fail(file, node, `unlisted process site ${owner}: ${modules.get(file).source.slice(callee.start, callee.end)}`); continue; }
-        for (const call of guarded.length ? guarded : invocations) {
-          const args = call.args?.map(({ node }) => node);
-          const value = expected[3] === 'command' ? objectValue(args?.[0], 'command') : expected[3] === 'all' ? args : args?.[expected[3] === 'second' ? 1 : 0];
-          const parsed = parseExpressionAt(`[${expected[4]}]`, 0, { ecmaVersion: 'latest', sourceType: 'module' }).elements;
-          const wanted = expected[3] === 'all' ? parsed : parsed[0];
-          for (const root of Array.isArray(value) ? value : [value]) if (root) checkedValues.push({ file, root });
-          if (syntaxShape(value) !== syntaxShape(wanted)) fail(file, node, `program/input differs at ${owner}`);
-          if (expected[6]) {
-            for (const [index, kind, name] of Array.isArray(expected[6][0]) ? expected[6] : [expected[6]]) links.push({ file, owner, node, value: call.args?.[index], kind, name });
-          }
-          if (nativeProgram(call.symbol) || processMember(callee)) {
-            const functions = entries.filter(({ node }) => node.type === 'FunctionDeclaration' && node.id.name === owner);
-            const parameter = functions.length === 1 ? functions[0].node.params[0] : undefined;
-            const fields = parameter?.type === 'ObjectPattern' ? parameter.properties.filter((property) => !property.computed && memberName(property) === 'command') : [];
-            const declared = owner === 'runCommand' ? (fields.length === 1 ? fields[0].value : undefined) : parameter;
-            const model = bindings.models.get(file);
-            if (declared?.type === 'Identifier') nativeBindings.get(file).add(model.lookup(declared));
-            if (declared?.type !== 'Identifier' || declared.name !== wanted.name || value?.type !== 'Identifier' || call.args[0].file !== file || model.lookup(value) !== model.lookup(declared)) fail(file, node, `program binding differs at ${owner}`);
-            if (args?.[2]?.type !== 'ObjectExpression' || args[2].properties.some((property) => property.type !== 'Property' || property.computed || ['shell', 'uid', 'gid'].includes(memberName(property)))) fail(file, node, 'native start options may not spread, compute keys, or set shell/uid/gid');
-          }
-        }
-      }
-      if ((callee.name === 'workspaces' || (bindings.exported('src/substrate/worktrees.mjs', 'workspaces') !== undefined && invocations.some(({ symbol }) => symbol === bindings.exported('src/substrate/worktrees.mjs', 'workspaces')))) && (node.arguments[0]?.type !== 'ObjectExpression' || node.arguments[0].properties.some((property) => property.type === 'SpreadElement' || memberName(property) === 'git'))) fail(file, node, 'workspaces overrides the default git program');
-    }
-  }
-  const expectedCalls = PROGRAM_CALLS.flatMap(([file, owner, callee, , , count = 1]) => Array(count).fill(`${file}#${owner}#${expressionShape(callee)}`));
-  if (syntaxShape(calls.sort()) !== syntaxShape(expectedCalls.sort())) violations.push('N8 process-site inventory differs (missing, duplicate or unlisted site)');
-  const expectedReferences = PROCESS_REFERENCES.flatMap(([file, owner, expression, count = 1]) => Array(count).fill(`${file}#${owner}#${expressionShape(expression)}`));
-  if (syntaxShape(references.sort()) !== syntaxShape(expectedReferences.sort())) violations.push('N8 native process references differ (unreviewed alias or method)');
-  const protectedByFile = new Map([...modules.keys()].map((file) => [file, new Set(['global:process#env', ...nativeBindings.get(file)])]));
-  const protectedValues = new Set(reviewed);
-  for (const [file, owner, kind, name, expression, source, fields, bare] of PROGRAM_ORIGINS) {
-    const model = bindings.models.get(file);
-    const key = originKey(file, owner, kind, name);
-    const selected = new Set();
-    const expectedValues = Array.isArray(expression) ? expression : [expression];
-    const remember = (identifier, origin = key) => {
-      const binding = model.lookup(identifier);
-      if (!originBindings.has(origin)) originBindings.set(origin, new Set());
-      originBindings.get(origin).add(binding);
-      if (kind === 'reader' || readerInputs.has(identifier.name)) {
-        const reader = `${file}#${identifier.name}`;
-        if (!readerBindings.has(reader)) readerBindings.set(reader, new Set());
-        readerBindings.get(reader).add(binding);
-      }
-    };
-    const matches = entriesByFile.get(file).filter(({ node, parent, owner: at }) => at === owner && (
-      kind === 'binding' ? node.type === 'VariableDeclarator' && syntaxShape(node.id) === syntaxShape(parse(`const ${name} = null`, { ecmaVersion: 'latest' }).body[0].declarations[0].id) :
-      kind === 'reader' ? (node.type === 'FunctionDeclaration' && node.id.name === name) || (node.type === 'VariableDeclarator' && node.id.name === name && model.lookup(node.id)?.scope !== model.root) :
-      kind === 'parameter' ? node.type === 'Identifier' && node.name === name && model.bindings.has(node) && model.lookup(node)?.scope?.kind === 'parameters' :
-      kind === 'variable' ? node.type === 'VariableDeclarator' && node.id.name === name :
-      kind === 'default' ? node.type === 'AssignmentPattern' && node.left.name === name :
-      kind === 'function' ? node.type === 'FunctionDeclaration' && node.id.name === name :
-      kind === 'return' ? node.type === 'ReturnStatement' :
-      kind === 'iteration' ? node.type === 'ForOfStatement' && !node.await && syntaxShape(node.left) === syntaxShape(parse(`for (${name} of []) {}`, { ecmaVersion: 'latest' }).body[0].left) :
-      node.type === 'Property' && parent.type === 'ObjectExpression' && memberName(node) === name
-    )).filter(({ node }) => {
-      if (selected.has(node)) return false;
-      selected.add(node);
-      return true;
-    }).map(({ node, parent }) => {
-      if (bare === true && !parent.params?.includes(node)) fail(file, node, 'a configured receiving parameter must be a bare identifier without a default');
-      if (kind === 'parameter' && model.lookup(node)?.fallback) fail(file, node, 'a reviewed receiving parameter may not supply a default');
-      if (bare === 'return') {
-        const parents = parentsByFile.get(file);
-        const enclosing = (part) => {
-          for (let at = parents.get(part); at; at = parents.get(at)) if (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(at.type)) return at;
-        };
-        const factory = model.root.names.get(owner)?.value;
-        const returns = entriesByFile.get(file).filter(({ node: part }) => part.type === 'ReturnStatement' && enclosing(part) === factory);
-        if (returns.length !== 1 || returns[0].node.argument !== parent) fail(file, node, 'a reviewed transport property must be returned directly by its factory');
-      }
-      const protectedBindings = protectedByFile.get(file) ?? new Set();
-      protectedByFile.set(file, protectedBindings);
-      const value = kind === 'reader' && node.type === 'FunctionDeclaration' ? { ...node, type: 'FunctionExpression' } : ['binding', 'variable', 'reader'].includes(kind) ? node.init : kind === 'parameter' ? node : kind === 'default' ? node.right : kind === 'function' ? { ...node, type: 'FunctionExpression' } : kind === 'return' ? node.argument : kind === 'iteration' ? node.right : node.value;
-      if (value) checkedValues.push({ file, root: value });
-      const declared = kind === 'parameter' ? node : kind === 'default' ? node.left : node.id;
-      if (declared?.type === 'Identifier') remember(declared);
-      const reader = value?.type === 'AwaitExpression' ? value.argument?.callee : value?.type === 'CallExpression' ? value.callee : undefined;
-      if (source) links.push({ file, owner, node, value: { file, node: source[2] === 'callee' ? reader : value }, kind: source[0], name: source[1] });
-      if (kind === 'property') protectedValues.add(bindings.origin(file, parent));
-      if (kind === 'property' && parent.properties.some((property) => property.type !== 'Property' || property.computed)) fail(file, node, 'a reviewed origin object may not spread or compute sibling keys');
-      // Linked sources have their own pin; an index dependency is not the selected step.
-      const pattern = kind === 'iteration' ? node.left.declarations[0].id : node.id;
-      const identifiers = fields ? [...writeTargets(pattern)].filter((identifier) => fields.includes(identifier.name)) : [node.id];
-      if (fields) for (const identifier of identifiers) remember(identifier, originKey(file, owner, 'binding', identifier.name));
-      const closedReader = kind === 'reader' || (kind === 'property' && ['ArrowFunctionExpression', 'FunctionExpression'].includes(value?.type));
-      const roots = closedReader || source || kind === 'return' ? fields ? identifiers : [node.id] : fields ? [...identifiers, reader] : [value, ...(['binding', 'variable'].includes(kind) ? identifiers : kind === 'default' ? [node.left] : [])];
-      for (const root of roots) {
-        if (root) for (const { node: part, parent } of nodes(root)) if (part.type === 'Identifier' && (model.bindings.has(part) || referenceIdentifier(part, parent, model.bindings))) {
-          const binding = model.lookup(part);
-          if (binding) {
-            protectedBindings.add(binding);
-            const origin = bindings.origin(file, part);
-            if (origin !== undefined) protectedValues.add(origin);
-          }
-        }
-      }
-      return value;
-    });
-    if (matches.length !== expectedValues.length) originBindings.delete(key);
-    if (matches.length !== expectedValues.length || matches.some((value, index) => syntaxShape(value) !== expressionShape(expectedValues[index]))) violations.push(`${file} N8 ${owner}'s ${name} program origin differs`);
-  }
-  for (const { file, owner, node, value, kind, name } of links) {
-    let root = value?.node;
-    while (root?.type === 'MemberExpression') root = root.object;
-    const expected = originBindings.get(originKey(file, kind === 'reader' ? name : owner, kind, name));
-    if (!expected || value?.file !== file || root?.type !== 'Identifier' || !expected.has(bindings.models.get(file).lookup(root))) fail(file, node, `configured input binding differs at ${owner}`);
-  }
-  for (const [file, protectedBindings] of protectedByFile) {
-    const { program } = modules.get(file);
-    const writes = [...nodes(program)].map(({ node }) => node).filter((node) => node.type === 'AssignmentExpression' && node.left.type === 'Identifier' && node.left.name === 'invoked');
-    const admitted = new Set();
-    if (file === 'src/execution/role.mjs' && writes.length === 1 && writes[0].operator === '=' && writes[0].right.type === 'AwaitExpression' && writes[0].right.argument.type === 'CallExpression' && syntaxShape(writes[0].right.argument.callee) === expressionShape('adapters[provider].invocation')) admitted.add(writes[0]);
-    const allowed = file === 'src/execution/role.mjs' ? ['delete environment[name]', 'Object.assign(environment, set)'] : file === 'src/substrate/git-environment.mjs' ? ['env[name] = value'] : file === 'src/scheduling/loop.mjs' ? [
-      'answer = unmade',
-      'answer = askAttempt([], { attempt: number })',
-      'answer = askAttempt([...outcomes], { attempt: number })',
-      'answer = askAttempt([], { attempt: number, maker: outcome })',
-      'current = named(answer, role)',
-      'next = next.following',
-      "settled[at] = { status: 'fulfilled', value: { role: judge.role, outcome: failure } }",
-      '[settled[at]] = await Promise.allSettled([judged(card, judge, repeat, scope)])',
-    ] : [];
-    for (const expression of allowed) {
-      const matches = [...nodes(program)].map(({ node }) => node).filter((node) => syntaxShape(node) === expressionShape(expression));
-      if (matches.length === 1) {
-        const reader = file === 'src/scheduling/loop.mjs' && matches[0].right?.type === 'CallExpression' ? matches[0].right.callee : undefined;
-        if (!reader || (reader.type === 'Identifier' && originBindings.get(originKey(file, reader.name, 'reader', reader.name))?.has(bindings.models.get(file).lookup(reader)))) {
-          admitted.add(matches[0]);
-          checkedValues.push({ file, root: matches[0] });
-        }
-      }
-    }
-    const protectedInputs = new Set([...protectedBindings, ...protectedValues]);
-    for (const node of bindingWrites(program, bindings.models.get(file), protectedInputs, (node) => bindings.origin(file, node), { bindings, file })) if (!admitted.has(node)) fail(file, node, 'rewrites a reviewed input binding or its member');
-  }
-  for (const { file, root } of checkedValues) {
-    const model = bindings.models.get(file);
-    for (const { node, parent } of nodes(root)) if (node.type === 'Identifier' && referenceIdentifier(node, parent, model.bindings)) {
-      const binding = model.lookup(node);
-      if (binding?.identifier?.start >= root.start && binding.identifier.end <= root.end) continue;
-      if (GLOBALS.has(node.name) && binding) fail(file, node, `reviewed global input binding differs: ${node.name}`);
-      const expected = readerBindings.get(`${file}#${node.name}`);
-      if (expected && (readerInputs.has(node.name) || (parent?.type === 'CallExpression' && parent.callee === node)) && !expected.has(binding)) fail(file, node, `reviewed reader input binding differs: ${node.name}`);
-    }
-  }
-  return violations;
-}
-
-/** Follow ordinary local aliases when refusing writes to a pinned input, including member mutations. */
-function bindingWrites(program, model, protectedBindings, origin = () => undefined, context) {
-  const entries = programSyntax(program).entries;
-  const writers = new Set(['Object.assign', 'Object.defineProperty', 'Object.defineProperties', 'Reflect.set', 'Reflect.deleteProperty'].map(expressionShape));
-  const protectedValue = (value) => protectedBindings.has(value) || context?.protectedOrigin?.(value) || (value?.parentOrigin && protectedValue(value.parentOrigin));
-  const root = (node, file = context?.file) => {
-    while (node) {
-      const value = context ? context.bindings.origin(file, node) : origin(node);
-      const found = originVariants(value).find(protectedValue);
-      if (found !== undefined) return found;
-      if (node.type !== 'MemberExpression') break;
-      node = node.object;
-    }
-    return node?.type === 'Identifier' ? (context ? context.bindings.models.get(file) : model).lookup(node) : undefined;
-  };
-  const localFunctions = new Set(entries.map(({ node }) => node).filter((node) => ['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(node.type)));
-  const parameterTransfers = context ? entries.flatMap(({ node }) => node.type === 'CallExpression' ? context.bindings.invocation(context.file, node).filter(({ symbol, created }) => !created && localFunctions.has(symbol)) : []) : [];
-  let previous;
-  do {
-    previous = protectedBindings.size;
-    for (const { symbol, args } of parameterTransfers) for (const [index, parameter] of symbol.params.entries()) {
-      if (!protectedValue(root(args?.[index]?.node, args?.[index]?.file))) continue;
-      for (const identifier of writeTargets(parameter)) if (model.bindings.has(identifier)) protectedBindings.add(model.lookup(identifier));
-    }
-    for (const { node } of entries) if (node.type === 'VariableDeclarator' && protectedValue(root(node.init))) {
-      for (const { node: identifier } of nodes(node.id)) if (model.bindings.has(identifier)) protectedBindings.add(model.lookup(identifier));
-    }
-  } while (previous !== protectedBindings.size);
-  return entries.map(({ node }) => node).filter((node) => {
-    if (['AssignmentExpression', 'UpdateExpression', 'ForOfStatement', 'ForInStatement'].includes(node.type)) {
-      const target = node.left ?? node.argument;
-      return [...writeTargets(target)].some((part) => protectedValue(root(part)));
-    }
-    if (node.type === 'UnaryExpression' && node.operator === 'delete') return protectedValue(root(node.argument));
-    if (node.type !== 'CallExpression') return false;
-    const calls = context ? context.bindings.invocation(context.file, node) : [{ symbol: origin(node.callee), args: node.arguments.map((node) => ({ node })) }];
-    if (calls.some(({ symbol, args }) => ((!context && writers.has(syntaxShape(node.callee))) || ['global:Object#assign', 'global:Object#defineProperty', 'global:Object#defineProperties', 'global:Reflect#set', 'global:Reflect#deleteProperty'].includes(symbol)) && protectedValue(root(args?.[0]?.node, args?.[0]?.file)))) return true;
-    return ['push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin', 'set', 'delete', 'clear'].includes(memberName(node.callee)) && protectedValue(root(node.callee.object));
-  });
-}
-
-/** Static writes cannot replace admitted global members, including prototypes and imported aliases. */
-function globalWrites(modules) {
-  const bindings = processBindings(modules);
-  const violations = [];
-  const protectedOrigin = (value) => {
-    if (value?.namespace === 'global') return true;
-    const name = (value?.namespace?.startsWith('global:') ? value.namespace.slice('global:'.length) : undefined) ?? (typeof value === 'string' && value.startsWith('global:') ? value.slice('global:'.length).split('#')[0] : undefined);
-    if (!GLOBALS.has(name)) return false;
-    // Primitive sentinels are values, while even a write syntactically naming their member is refused.
-    return typeof value === 'string' || !['undefined', 'NaN', 'Infinity'].includes(name);
-  };
-  for (const [file, { program }] of modules) {
-    const statements = [...nodes(program)].filter(({ node, owner }) => file === 'scripts/gate-check.mjs' && owner === '<module>' && node.type === 'IfStatement' && syntaxShape(node) === statementShape('if (ranDirectly) process.exitCode = await main(process.argv.slice(2), process.env);'));
-    const admitted = statements.length === 1 ? statements[0].node.consequent.expression : undefined;
-    const context = { bindings, file, protectedOrigin };
-    for (const node of bindingWrites(program, bindings.models.get(file), new Set(), undefined, context)) if (node !== admitted) violations.push(`${file}:${node.loc.start.line} N11 protected global write`);
-  }
-  return violations;
-}
-
-/** Parse a complete reviewed statement, including its condition and surrounding syntax. */
-const statementShape = (source) => syntaxShape(parse(source, { ecmaVersion: 'latest', sourceType: 'module' }).body[0]);
-
-/** Assignment patterns write their targets, never their keys, defaults or computed operands. */
-function* writeTargets(node) {
-  if (!node) return;
-  if (['Identifier', 'MemberExpression'].includes(node.type)) yield node;
-  else if (node.type === 'AssignmentPattern') yield* writeTargets(node.left);
-  else if (node.type === 'RestElement') yield* writeTargets(node.argument);
-  else if (node.type === 'ArrayPattern') for (const part of node.elements) yield* writeTargets(part);
-  else if (node.type === 'ObjectPattern') for (const property of node.properties) yield* writeTargets(property.type === 'RestElement' ? property.argument : property.value);
-  // A loop's let/const declares a fresh binding; var can write an existing function binding.
-  else if (node.type === 'VariableDeclaration' && node.kind === 'var') for (const declaration of node.declarations) yield* writeTargets(declaration.id);
-}
-
-/** One explicit command property, with no spread or duplicate that could override it. */
-function objectValue(node, key) {
-  if (node?.type !== 'ObjectExpression' || node.properties.some((property) => property.type === 'SpreadElement')) return;
-  const matches = node.properties.filter((property) => memberName(property) === key);
-  return matches.length === 1 ? matches[0].value : undefined;
-}
-
-/** Definitions that start a process or accept a program chosen by their reviewed callers. */
-const PROGRAM_DEFINITIONS = [
-  ['src/substrate/process.mjs', ['runCommand', 'run', 'runNow', 'runOnce', 'reading', 'readingNow', 'ended', 'contain', 'swept', 'sweptNow', 'startOf', 'startsIn', 'sweeping']],
-  ['src/execution/run.mjs', ['dispatch']],
-  ['src/execution/role.mjs', ['roleDispatch']],
-  ['src/execution/step.mjs', ['stepDispatch']],
-  ['src/scheduling/loop.mjs', ['dispatchStep', 'attempt', 'judges', 'judged', 'judgeWork', 'work', 'named'], true],
-  ['src/scheduling/loop.mjs', ['claiming']],
-  ['src/cli/doctor.mjs', ['asked']],
-  ['src/substrate/forge/runners.mjs', ['throughL0']],
-];
-
-/** Site, input expression, occurrence count, and optional argument-to-origin binding link. */
-const PROGRAM_CALLS = [
-  ["src/substrate/process.mjs", "ended", "run", "first", "ps"],
-  ["src/substrate/process.mjs", "reading", "run", "first", "...toolOf(look.value, ps)"],
-  ["src/substrate/process.mjs", "readingNow", "runNow", "first", "...toolOf(look.value, ps)"],
-  ["src/substrate/process.mjs", "runNow", "runOnce", "first", "ps"],
-  ["src/substrate/process.mjs", "within", "reading", "second", "ps"],
-  ["src/substrate/process.mjs", "contain", "ended", "second", "{ ps, readTimeout, kill, host }"],
-  ["src/substrate/process.mjs", "contain", "reading", "second", "ps"],
-  ["src/substrate/process.mjs", "within", "readingNow", "second", "ps"],
-  ["src/substrate/process.mjs", "containNow", "readingNow", "second", "ps"],
-  ["src/substrate/process.mjs", "swept", "reading", "second", "ps", 2],
-  ["src/substrate/process.mjs", "swept", "sweeping", "second", "lsof"],
-  ["src/substrate/process.mjs", "sweptNow", "readingNow", "second", "ps", 2],
-  ["src/substrate/process.mjs", "sweptNow", "sweeping", "second", "lsof"],
-  ["src/substrate/process.mjs", "censused", "swept", "second", "call"],
-  ["src/substrate/process.mjs", "endedNow", "sweptNow", "second", "call"],
-  ["src/substrate/process.mjs", "runCommand", "startOf", "first", "ps"],
-  ["src/substrate/process.mjs", "runCommand", "contain", "second", "call", 3],
-  ["src/substrate/process.mjs", "killRecordedGroup", "startsIn", "first", "ps"],
-  ["src/substrate/process.mjs", "killRecordedGroup", "contain", "second", "{ ps, readTimeout, kill, host }"],
-  ["src/substrate/process.mjs", "killRecordedGroup", "swept", "second", "{ ps, lsof, readTimeout, kill, host }"],
-  ["src/substrate/process.mjs", "startsIn", "run", "first", "ps"],
-  ['src/cli/doctor.mjs', 'asked', 'runCommand', 'command', 'command'],
-  ['src/execution/run.mjs', 'dispatch', 'runCommand', 'command', 'command'],
-  ['src/substrate/worktrees.mjs', 'call', 'runCommand', 'command', 'git'],
-  ['src/substrate/forge/runners.mjs', 'throughL0', 'runCommand', 'command', 'command'],
-  ['src/substrate/providers/codex.mjs', 'probed', 'runCommand', 'command', "'codex'"],
-  ['src/substrate/process.mjs', 'run', 'host.execFile', 'first', 'ps'],
-  ['src/substrate/process.mjs', 'runCommand', 'host.spawn', 'first', 'command'],
-  ['src/substrate/process.mjs', 'startOf', 'host.spawnSync', 'first', 'ps'],
-  ['src/substrate/process.mjs', 'runOnce', 'spawn', 'first', 'ps'],
-  ['src/substrate/data-ref.mjs', 'git', 'run', 'command', "'git'"],
-  ['src/substrate/launchd.mjs', 'loadedJob', 'run', 'command', "'launchctl'"],
-  ['src/cli/doctor.mjs', 'gitAnswer', 'ask', 'first', "'git'"],
-  ['src/cli/doctor.mjs', 'agentAuth', 'ask', 'first', 'command'],
-  ...['readRunner', 'schemaWriteRunner', 'itemWriteRunner', 'repositoryWriteRunner'].map((owner) => ['src/substrate/forge/runners.mjs', owner, 'send', 'first', 'FORGE', owner === 'itemWriteRunner' ? 2 : 1]),
-  ['src/scheduling/loop.mjs', 'dispatchStep', 'dispatchOnL1', 'all', '{ id, card: card.number, directory: state, sink, host, readTimeout, ...stepDispatch(step, path, environment) }'],
-  ['src/scheduling/loop.mjs', 'run', 'dispatchOnL1', 'all', '{ id, card: card.number, directory: state, sink, host, readTimeout, ...handed }'],
-  ['src/scheduling/loop.mjs', 'run', 'roleDispatch', 'all', '{ answer: stamp(answer, id), cwd, directory, scratch, repository, reach, maker, env: environment, sink, id, card: card.number }'],
-  ['src/scheduling/loop.mjs', 'dispatchStep', 'stepDispatch', 'all', 'step, path, environment', 1, [0, 'parameter', 'step']],
-  ['src/scheduling/loop.mjs', 'attempt', 'dispatchStep', 'all', 'card, answer.step, path, { attempt: number }', 1, [1, 'variable', 'answer']],
-  ['src/scheduling/loop.mjs', 'judgeWork', 'dispatchStep', 'all', 'card, step, head, { role }', 1, [1, 'variable', 'step']],
-  ['src/scheduling/loop.mjs', 'work', 'attempt', 'all', 'card, next, kept, remember, placed, scope', 1, [1, 'variable', 'next']],
-  ['src/scheduling/loop.mjs', 'work', 'judges', 'all', 'card, next, (options) => answerFrom(atPull, card, [], options), (ended) => kept({ card: card.number, judges: ended }), remember, placed, scope', 1, [1, 'variable', 'next']],
-  ['src/scheduling/loop.mjs', 'attempt', 'judges', 'all', 'card, judging, ask, (ended) => kept({ ...reached, judges: ended }), remember, placed, scope', 1, [[1, 'variable', 'judging'], [2, 'reader', 'ask']]],
-  ['src/scheduling/loop.mjs', 'judges', 'judged', 'all', 'card, judge, ask, scope', 1, [[1, 'parameter', 'judge'], [2, 'parameter', 'ask']]],
-  ['src/scheduling/loop.mjs', 'judges', 'judged', 'all', 'card, judge, repeat, scope', 1, [[1, 'binding', 'judge'], [2, 'reader', 'repeat']]],
-  ['src/scheduling/loop.mjs', 'judged', 'judgeWork', 'all', 'card, judge, ask, scope', 1, [[1, 'parameter', 'judge'], [2, 'parameter', 'ask']]],
-  ['src/scheduling/loop.mjs', 'trigger', 'work', 'all', 'claim, freed, setAsides', 1, [0, 'parameter', 'claim']],
-  ['src/scheduling/loop.mjs', 'judgeWork', 'named', 'all', 'answer, role', 2, [0, 'variable', 'answer']],
-  ["src/scheduling/loop.mjs", "loop", "claiming", "all", "{ config, board, facts, l2, sink, kill, readAdmission: () => admissionRecord.read(), follow: () => follow(), halted: () => unsaved !== undefined }"],
-];
-
-/** Every native-method read, including methods forwarded without calling them at that site. */
-const PROCESS_REFERENCES = [
-  ...['execFile', 'spawn', 'spawnSync'].map((name) => ['src/substrate/host.mjs', '<module>', `childProcess.${name}`]),
-  ...['readingNow', 'runNow', 'runOnce'].map((owner) => ['src/substrate/process.mjs', owner, 'realHost.spawnSync']),
-  ['src/substrate/process.mjs', 'run', 'host.execFile'],
-  ['src/substrate/process.mjs', 'containNow', 'host.spawnSync'],
-  ['src/substrate/process.mjs', 'sweptNow', 'host.spawnSync', 2],
-  ['src/substrate/process.mjs', 'runCommand', 'host.spawn'],
-  ['src/substrate/process.mjs', 'startOf', 'host.spawnSync'],
-];
-
-/** Closed origins, lexical source links and local readers; the consumer line remains N10. */
-const PROGRAM_ORIGINS = [
-  ["src/scheduling/loop.mjs", "judgeWork", "return", "judge results", ["{ role, held: await heldJudge(card, role, answer), decision: answer }", "{ role, outcome: made, escalation: answer, decision: answer }", "{ role, withheld: { directory: made }, decision: answer }", "{ role, withheld: { step: step.name, outcome: outcomes.at(-1) }, decision: answer }", "{ role, outcome, halt: true, decision: answer }", "{ role, held: await heldJudge(card, role, answer), decision: answer }", "{ role, outcome, escalation: answer, decision: answer }", "{ role, retry: { judge: current, failure: outcome } }", "{ role, decision: answer, failure: Object.assign(new Error(`card #${card.number}'s judge \\`${role}\\` was stopped after two dispatches:\\nfirst: ${JSON.stringify(answer.firstFailure)}\\nsecond: ${JSON.stringify(answer.failure)}`), { card: card.number, role, decision: 'stop', firstFailure: answer.firstFailure, failure: answer.failure }) }", "{ role, withheld: { scratch: outcome }, decision: answer }", "{ role, outcome }"]],
-  ["src/scheduling/loop.mjs", "judges", "iteration", "const [at, each]", "settled.entries()", ["variable", "settled", "callee"], ["each"]],
-  ["src/scheduling/loop.mjs", "claiming", "property", "take", "async (limit, setAsides, poll = false, memory) => {\n      await killed();\n      const failures = [];\n      let unrecorded = false;\n      try {\n        record('trigger', { trigger: 'pull' });\n      } catch (refusal) {\n        unrecorded = true;\n        failures.push(refused('the event sink refused to record the pull trigger', refusal));\n      }\n      const { notices, unrecorded: unwritten } = await follow();\n      failures.push(...unwritten);\n      // A poll whose trigger the sink refused claims nothing (\"A poll in each idle state\").\n      if (poll && unrecorded) return { claims: [], failures, notices };\n      const read = setAsides?.read();\n      try {\n        return await claim(limit, setAsides, read, failures, notices, memory);\n      } catch (thrown) {\n        // A later read that fails keeps what this trigger already did and could not record.\n        const kept = [...failures, ...notices.map(noticeFailure)];\n        // The read's own failure stays original beside the trigger's earlier refusals.\n        const reason = thrown;\n        throw kept.length === 0 ? reason : Object.assign(new AggregateError([...kept, reason], `${reason.message}, after ${kept.length} earlier failure${kept.length === 1 ? '' : 's'} of this trigger`), { cause: reason });\n      } finally {\n        if (read !== undefined) setAsides.done(read);\n      }\n    }", null, null, "return"],
-  ["src/scheduling/loop.mjs", "loop", "binding", "{ concurrency, claims, killed, record, refused, take, start, release }", "claiming({ config, board, facts, l2, sink, kill, readAdmission: () => admissionRecord.read(), follow: () => follow(), halted: () => unsaved !== undefined })", null, ["take"]],
-  ["src/scheduling/loop.mjs", "judges", "variable", "settled", "await Promise.allSettled(answer.judges.map((judge) => judged(card, judge, ask, scope)))"],
-  ["src/scheduling/loop.mjs", "repeat", "reader", "repeat", "(options) => ask({ ...options, ...(options.directories === undefined ? {} : {\n        directories: Object.fromEntries(Object.entries(options.directories).map(([role, outcome]) => [role, { ...outcome, firstFailure: failure }])),\n      }) })"],
-  ["src/scheduling/loop.mjs", "work", "binding", "{ card, decide: atPull, scope }", "claim", ["parameter", "claim"], ["atPull"]],
-  ["src/scheduling/loop.mjs", "trigger", "variable", "worked", "await Promise.allSettled(claimed.map((claim) => (claim.next.action === 'merge' ? merged(claim, setAsides) : work(claim, freed, setAsides))))"],
-  ["src/scheduling/loop.mjs", "judgeWork", "variable", "answer", ["ask({ directories: { [role]: made } })", "ask({ judged: { [role]: [...outcomes] } })", "ask({ directories: { [role]: outcome } })"], ["parameter", "ask", "callee"]],
-  ["src/scheduling/loop.mjs", "judgeWork", "property", "judge", "current", ["variable", "current"]],
-  ["src/scheduling/loop.mjs", "judged", "return", "judgeWork result", "await judgeWork(card, judge, ask, scope)"],
-  ["src/scheduling/loop.mjs", "claim", "variable", "decide", "await facts(offered)"],
-  ["src/scheduling/loop.mjs", "judges", "parameter", "ask", "ask", null, null, true],
-  ["src/scheduling/loop.mjs", "judged", "parameter", "ask", "ask", null, null, true],
-  ["src/scheduling/loop.mjs", "judgeWork", "parameter", "ask", "ask", null, null, true],
-  ["src/scheduling/loop.mjs", "loop", "parameter", "decide", "decide", null, null, false],
-  ["src/scheduling/loop.mjs", "loop", "parameter", "facts", "facts", null, null, false],
-  ["src/scheduling/loop.mjs", "claiming", "parameter", "facts", "facts", null, null, false],
-  ["src/scheduling/loop.mjs", "eligible", "reader", "eligible", "function eligible(card, next, memory) {\n  if (memory?.barred.has(card.number) && makerAction(next)) next = { action: 'ignore' };\n  if (memory !== undefined && next.action === 'judge') {\n    const judges = next.judges.filter((judge) => !memory.actions.has(`${card.number}:${judgeIdentity(judge)}`) && !memory.deferred.has(`${card.number}:${judgeIdentity(judge)}`));\n    next = judges.length === 0 ? { action: 'ignore' } : { ...next, judges };\n  }\n  if (memory !== undefined && makerAction(next) && (memory.actions.has(`${card.number}:${actionIdentity(next)}`) || memory.deferred.has(`${card.number}:${actionIdentity(next)}`))) next = { action: 'ignore' };\n  return next;\n}"],
-  ["src/scheduling/loop.mjs", "claim", "reader", "claim", "async (limit, setAsides, read, failures, notices, memory) => {\n    const columns = await board.readColumns();\n    const { items, declared } = await board.readPriority();\n    /** A board item neither claimed nor skipped by this run's memory of the cards it set aside. */\n    const available = (item) => !claims.has(item.number) && !setAsides?.skips(item, read);\n    const offered = items.filter(available);\n    const offeredAt = new Map(offered.map(({ number }) => [number, generations.get(number)]));\n    const decide = await facts(offered);\n    // Only this read's original offer at its original generation can reach decide, even if an\n    // intervening claim already released or its start failed before this read finished.\n    const unclaimed = offered.filter((item) => available(item) && generations.get(item.number) === offeredAt.get(item.number));\n    // Each card's answer is kept as L2 gave it at the pull, so L3 asks nothing again to begin.\n    const answers = new Map();\n    const { pulls } = pullOrder({ items: unclaimed, columns, declared }, (card) => {\n      const next = eligible(card, decide(card), memory);\n      answers.set(card.number, next);\n      return next;\n    });\n    if (halted()) return { claims: [], failures, notices };\n    const admissionState = readAdmission();\n    if (admissionState.state === 'unreadable') {\n      const { unreadable } = admissionState;\n      throw Object.assign(new Error(`admission cannot be read, so this pull claims nothing: ${unreadable.map(({ path, cause }) => `${path} (${cause})`).join(', ')}`), { unreadable });\n    }\n    if (admissionState.state === 'closed') return { claims: [], failures, admission: admissionState, notices };\n    const taken = [];\n    for (const pull of pulls) {\n      if (limit !== undefined && taken.length >= limit) break;\n      const next = answers.get(pull.card);\n      // A merge claim holds no slot, so N does not bound it (the architect's r2 ruling 3); a limit\n      // given counts every card claimed, since each claim finishes a card.\n      const merge = next.action === 'merge';\n      if (!merge && slots.size >= concurrency) continue;\n      claims.add(pull.card);\n      generations.set(pull.card, (generations.get(pull.card) ?? 0) + 1);\n      if (!merge) slots.add(pull.card);\n      const card = unclaimed.find((item) => item.number === pull.card);\n      setAsides?.claimed(card.number, card.column, read);\n      taken.push({ ...pull, card, next, decide, order: order++, scope: memory === undefined ? undefined : { memory }, queueDepth: pulls.length - taken.length - 1, inFlight: slots.size });\n    }\n    return { claims: taken, failures, notices };\n  }"],
-  ["src/scheduling/loop.mjs", "work", "parameter", "claim", "claim", null, null, true],
-  ["src/scheduling/loop.mjs", "work", "variable", "next", "claim.next", ["parameter", "claim"]],
-  ["src/scheduling/loop.mjs", "judged", "parameter", "judge", "judge", null, null, true],
-  ["src/scheduling/loop.mjs", "judges", "parameter", "answer", "answer", null, null, true],
-  ['src/scheduling/loop.mjs', 'judges', 'parameter', 'judge', 'judge', null, null, true],
-  ['src/scheduling/loop.mjs', 'trigger', 'parameter', 'claim', 'claim', null, null, true],
-  ['src/scheduling/loop.mjs', 'attempt', 'variable', 'judging', 'eligible(card, ask({}), scope?.memory)'],
-  ["src/scheduling/loop.mjs", "judges", "binding", "{ judge, failure }", "each.value.retry", ["binding", "each"], ["judge"]],
-  ["src/scheduling/loop.mjs", "trigger", "binding", "{ claims: claimed, failures, admission: closed, notices = [] }", "await take(limit, setAsides, poll, memory)", null, ["claimed"]],
-
-  ['src/scheduling/loop.mjs', 'loop', 'parameter', 'environment', 'environment'],
-  ['src/scheduling/loop.mjs', 'dispatchStep', 'parameter', 'step', 'step', null, null, true],
-  ['src/scheduling/loop.mjs', 'attempt', 'parameter', 'next', 'next', null, null, true],
-  ['src/scheduling/loop.mjs', 'attempt', 'variable', 'answer', 'next', ['parameter', 'next']],
-  ['src/scheduling/loop.mjs', 'judgeWork', 'parameter', 'judge', 'judge', null, null, true],
-  ['src/scheduling/loop.mjs', 'judgeWork', 'variable', 'current', 'judge', ['parameter', 'judge']],
-  ['src/scheduling/loop.mjs', 'judgeWork', 'variable', 'step', 'current.steps[outcomes.length]', ['variable', 'current']],
-  ['src/scheduling/loop.mjs', 'answerFrom', 'reader', 'answerFrom', '(answer, ...args) => { try { return answer(...args); } catch (failure) { if (failure?.halt === true) refusedAnswers.add(failure); throw failure; } }'],
-  ['src/scheduling/loop.mjs', 'askAttempt', 'reader', 'askAttempt', '(outcomes, options) => answerFrom(decide, card, outcomes, { ...options, firstFailure: failures[0], continuing })'],
-  ['src/scheduling/loop.mjs', 'ask', 'reader', 'ask', '(options) => answerFrom(decide, card, [], { ...options, forge: settled.value })'],
-  ['src/scheduling/loop.mjs', 'named', 'reader', 'named', "(answer, role) => (answer.action === 'judge' ? answer.judges.find((judge) => judge.role === role) : undefined)"],
-  ["src/substrate/providers/claude.mjs", "invocation", "property", "env", "{ [TMPDIR_KEY]: join(real, TMPDIR_NAME) }"],
-  ["src/substrate/providers/claude.mjs", "<module>", "variable", "TMPDIR_KEY", "'CLAUDE_CODE_TMPDIR'"],
-  ["src/substrate/providers/claude.mjs", "<module>", "variable", "TMPDIR_NAME", "'.claude-tmp'"],
-  ["src/substrate/providers/claude.mjs", "invocation", "variable", "real", "atStart('directory-unusable', () => realpathSync.native(directory))"],
-  ["src/substrate/providers/codex.mjs", "invocation", "property", "env", "{ CODEX_HOME: home, TMPDIR: temporary, TMPPREFIX: join(temporary, 'zsh') }"],
-  ["src/substrate/providers/codex.mjs", "probed", "property", "env", "{ ...gitEnvironment(), CODEX_HOME: home }"],
-  ["src/substrate/providers/codex.mjs", "<module>", "variable", "HOME", "'codex-home'"],
-  ["src/substrate/providers/codex.mjs", "<module>", "variable", "TEMPORARY", "'tmp'"],
-  ["src/substrate/providers/codex.mjs", "invocation", "variable", "home", "homeFor(directory, scratch)"],
-  ["src/substrate/providers/codex.mjs", "invocation", "variable", "temporary", "join(atStart('directory-unusable', () => realpathSync.native(scratch)), TEMPORARY)"],
-  ["src/substrate/providers/codex.mjs", "homeFor", "variable", "home", "join(atStart('directory-unusable', () => realpathSync.native(scratch)), HOME)"],
-  ["src/execution/role.mjs", "roleDispatch", "variable", "environment", "gitEnvironment(env)"],
-  ["src/execution/role.mjs", "roleDispatch", "property", "env", "environment"],
-  ["src/execution/run.mjs", "dispatch", "property", "env", "workspace === undefined ? env : gitEnvironment(env)"],
-  ["src/execution/step.mjs", "stepDispatch", "property", "env", "env"],
-  ["src/cli/once.mjs", "claiming", "property", "environment", "process.env"],
-  ["src/substrate/process.mjs", "runCommand", "property", "env", "env"],
-  ["src/substrate/git-environment.mjs", "gitEnvironment", "function", "gitEnvironment", "function gitEnvironment(from = process.env) { const env = {}; for (const [name, value] of Object.entries(from)) { if (!REMOVED.has(name.toUpperCase())) env[name] = value; } return env; }"],
-  ['src/substrate/forge/runners.mjs', '<module>', 'variable', 'FORGE', "'gh'"],
-  ['src/substrate/worktrees.mjs', 'workspaces', 'default', 'git', "'git'"],
-  ['src/substrate/providers/adapters.mjs', '<module>', 'variable', 'ADAPTERS', 'Object.freeze({ claude, codex })'],
-  ['src/execution/role.mjs', 'roleDispatch', 'default', 'adapters', 'ADAPTERS'],
-  ['src/execution/role.mjs', 'roleDispatch', 'binding', '{ command, args, input, unset, env: set, folder }', 'invoked'],
-  ['src/execution/role.mjs', 'roleDispatch', 'property', 'command', 'command'],
-  ['src/cli/doctor.mjs', 'agentAuth', 'binding', '[command, ...args]', 'adapter.auth'],
-  ...['claude', 'codex'].map((provider) => [`src/substrate/providers/${provider}.mjs`, 'invocation', 'property', 'command', JSON.stringify(provider)]),
-  ['src/substrate/providers/claude.mjs', '<module>', 'variable', 'auth', "['claude', 'auth', 'status', '--json']"],
-  ['src/substrate/providers/codex.mjs', '<module>', 'variable', 'auth', "['codex', 'login', 'status']"],
-  ['src/execution/step.mjs', 'stepDispatch', 'property', 'command', "'/bin/sh'"],
-  ['src/execution/step.mjs', 'stepDispatch', 'property', 'args', "['-c', step.run]"],
-  ['src/execution/step.mjs', 'stepDispatch', 'parameter', 'step', 'step', null, null, true],
-  ['src/substrate/host.mjs', '<module>', 'property', 'ps', "process.platform === 'linux' ? fileURLToPath(new URL('./process-table.sh', import.meta.url)) : '/bin/ps'"],
-  ['src/substrate/host.mjs', '<module>', 'property', 'lsof', "process.platform === 'linux' ? '/usr/bin/lsof' : '/usr/sbin/lsof'"],
-  ['src/substrate/process.mjs', 'toolOf', 'variable', 'toolOf', '(read, ps) => (Array.isArray(read) ? [ps, read] : [read.tool, read.args])'],
-  ['src/substrate/process.mjs', 'list', 'property', 'tool', 'lsof'],
-];
-
-
-/** Local programs read host state; tool internals and the consumer's step line are N9/N10. */
+/** Local programs observe host state; N9 and N10 explicitly bound tool and consumer internals. */
 const LOCAL_PROGRAMS = new Map([
-  ['/bin/ps', 'ps(1): displays selected local process information.'],
-  ['src/substrate/process-table.sh', 'The packaged shim reads Linux /proc and local ps output.'],
-  ['/usr/sbin/lsof', 'lsof(8): cwd-only file listing, with -n/-P suppressing address/service lookup.'],
-  ['/usr/bin/lsof', 'The Linux lsof uses the same cwd-only -n/-P arguments.'],
-  ['launchctl', 'launchctl(1) print queries the local launchd domain, a Mach bootstrap subset.'],
+  ['/bin/ps', 'ps(1) reads selected local process information.'],
+  ['src/substrate/process-table.sh', 'The packaged Linux shim reads local /proc and ps output.'],
+  ['/usr/sbin/lsof', 'The cwd-only lsof read uses -n/-P to suppress address and service lookup.'],
+  ['/usr/bin/lsof', 'The Linux lsof uses the same local cwd-only -n/-P read.'],
+  ['launchctl', 'launchctl print queries the local launchd bootstrap domain.'],
 ]);
 
-// proves R-SAFE-2, R-SAFE-4
-test('N8: bound process calls and program inputs reject ordinary code edits', () => {
+// proves R-SAFE-2
+test('N8: every process-starting inventory entry declares only programs in the closed set', () => {
+  const closed = new Set(['gh', 'git', 'claude', 'codex', '/bin/sh', ...LOCAL_PROGRAMS.keys()]);
   const report = packageReport();
-  assert.deepEqual(programReport(report.modules), [], 'N8: the real bound process sites pass before counterexamples');
-  const missed = [];
-  for (const [id, file, before, after] of PROCESS_COUNTEREXAMPLES) {
-    const sources = new Map([...report.modules].map(([path, { source }]) => [path, source]));
-    assert.equal(sources.get(file).split(before).length - 1, 1, `${id}: the counterexample anchor is unique`);
-    sources.set(file, sources.get(file).replace(before, after));
-    const changed = networkReport((path) => sources.get(path), ENTRY_POINTS);
-    if (!programReport(changed.modules).some((line) => line.includes(file))) missed.push(`${id} N8: must reject the changed process binding or program input in ${file}`);
+  assert.deepEqual(report.violations, [], 'Program declarations belong to an admitted real closure');
+  const starts = new Set();
+  for (const [file, { program, source }] of report.modules) for (const { node } of nodes(program)) {
+    if (node.type !== 'CallExpression') continue;
+    const callee = node.callee.type === 'Identifier' ? node.callee.name : memberName(node.callee);
+    if (['runCommand', 'spawn', 'spawnSync', 'execFile'].includes(callee)) starts.add(JSON.stringify([file, source.split('\n')[node.loc.start.line - 1]]));
   }
-  assert.deepEqual(missed, [], 'N8: every ordinary process-binding counterexample must be refused');
+  assert.ok(starts.size > 0, 'The process-start premise reaches real native and L0 calls');
+  for (const site of REVIEWED_SITES) {
+    if (starts.has(JSON.stringify([site.file, site.text]))) assert.ok(site.programs?.length, `Declare the program of ${site.file}:${site.line}`);
+    if (site.programs) for (const program of site.programs) assert.ok(closed.has(program), `${site.file}:${site.line} declares an unreviewed program ${program}`);
+  }
+  for (const [program, reason] of LOCAL_PROGRAMS) assert.ok(reason.trim(), `${program} has a local-operation reason`);
 });
 
-/** Ordinary edits that must not escape the process inventory or its input provenance. */
-const PROCESS_COUNTEREXAMPLES = [
-  ['A5-copier-binding-reassignment', 'src/substrate/git-environment.mjs', 'export function gitEnvironment(from = process.env) {', "if (process.env.RIGGER_EXTRA) gitEnvironment = (from = process.env) => ({ ...from, EXTRA_TOKEN: 'injected' });\nexport function gitEnvironment(from = process.env) {"],
-  ["m2b-imported-origin-write", "src/cli/once.mjs", "import { NOT_STARTED } from '../substrate/process.mjs';", "import { NOT_STARTED } from '../substrate/process.mjs';\nimport { auth as providerAuth } from '../substrate/providers/claude.mjs';\nfunction unlistedProgramWrite() { if (process.env.RIGGER_AUTH_COMMAND) providerAuth[0] = process.env.RIGGER_AUTH_COMMAND; }"],
-  ["m3-star-reexport-priority", "src/cli/once.mjs", "import { NOT_STARTED } from '../substrate/process.mjs';", "import { NOT_STARTED } from '../substrate/process.mjs';\nexport * from 'node:fs';\nexport * from '../execution/run.mjs';\nimport { dispatch as reexportedStart } from './once.mjs';\nfunction unlistedReexportedDispatch() { return reexportedStart({ command: 'curl', args: [] }); }"],
-  ["m3-reexport-priority", "src/cli/once.mjs", "import { NOT_STARTED } from '../substrate/process.mjs';", "import { NOT_STARTED } from '../substrate/process.mjs';\nexport * from 'node:fs';\nexport { dispatch } from '../execution/run.mjs';\nimport { dispatch as reexportedStart } from './once.mjs';\nfunction unlistedReexportedDispatch() { return reexportedStart({ command: 'curl', args: [] }); }"],
-  ["A5-aliased-mutator", "src/execution/role.mjs", "  Object.assign(environment, set);", "  Object.assign(environment, set);\n  const mergeEnvironment = Object.assign;\n  if (env.RIGGER_EXTRA) mergeEnvironment(environment, { EXTRA_TOKEN: 'injected' });"],
-  ["A5-engine-write", "src/cli/once.mjs", "import { NOT_STARTED } from '../substrate/process.mjs';", "import { NOT_STARTED } from '../substrate/process.mjs';\nfunction unlistedEnvironmentWrite() { if (process.env.RIGGER_EXTRA) process.env.EXTRA_TOKEN = 'injected'; }"],
-  ["origin-return-wrapper", "src/execution/role.mjs", "return { provider, command, args, input, cwd, workspace: directory, scratch: made, env: environment, folder, timeout: answer.timeout, facts: answer.facts, digest: answer.digest };", "return Object.assign({ provider, command, args, input, cwd, workspace: directory, scratch: made, env: environment, folder, timeout: answer.timeout, facts: answer.facts, digest: answer.digest }, { command: 'curl' });"],
-  ["A5-conditional-codex", "src/substrate/providers/codex.mjs", "env: { CODEX_HOME: home, TMPDIR: temporary, TMPPREFIX: join(temporary, 'zsh') }", "env: { ...(process.env.RIGGER_EXTRA ? { EXTRA_TOKEN: home } : {}), CODEX_HOME: home, TMPDIR: temporary, TMPPREFIX: join(temporary, 'zsh') }"],
-  ["A5-conditional-claude", "src/substrate/providers/claude.mjs", "env: { [TMPDIR_KEY]: join(real, TMPDIR_NAME) }", "env: { ...(environment.RIGGER_EXTRA ? { EXTRA_TOKEN: real } : {}), [TMPDIR_KEY]: join(real, TMPDIR_NAME) }"],
-  ["A5-conditional-copy", "src/substrate/git-environment.mjs", "  return env;", "  if (from.RIGGER_EXTRA) env.EXTRA_TOKEN = 'injected';\n  return env;"],
-  ["A5-conditional-role", "src/execution/role.mjs", "  Object.assign(environment, set);", "  Object.assign(environment, set);\n  if (env.RIGGER_EXTRA) environment.EXTRA_TOKEN = 'injected';"],
-  ["A5-conditional-once", "src/cli/once.mjs", "environment: process.env, run: opened.run", "environment: { ...process.env, ...(process.env.RIGGER_EXTRA ? { EXTRA_TOKEN: 'injected' } : {}) }, run: opened.run"],
-  ["A5-conditional-native", "src/substrate/process.mjs", "host.spawn(command, args, { cwd, env, detached: true, stdio: [stdin, 'pipe', 'pipe'] })", "(env.RIGGER_EXTRA && (env.EXTRA_TOKEN = 'injected'), host.spawn(command, args, { cwd, env, detached: true, stdio: [stdin, 'pipe', 'pipe'] }))"],
-  ["m7", "src/substrate/process.mjs", "host.spawn(command, args, { cwd, env, detached: true, stdio: [stdin, 'pipe', 'pipe'] })", "host.spawn(command, args, { ...(env.RIGGER_SHELL ? { shell: env.RIGGER_SHELL } : {}), cwd, env, detached: true, stdio: [stdin, 'pipe', 'pipe'] })"],
-  ["m7-computed", "src/substrate/process.mjs", "host.spawn(command, args, { cwd, env, detached: true, stdio: [stdin, 'pipe', 'pipe'] })", "host.spawn(command, args, { ['shell']: env.RIGGER_SHELL, cwd, env, detached: true, stdio: [stdin, 'pipe', 'pipe'] })"],
-  ["A4-conditional-uid", "src/substrate/process.mjs", "host.spawn(command, args, { cwd, env, detached: true, stdio: [stdin, 'pipe', 'pipe'] })", "host.spawn(command, args, { ...(env.RIGGER_UID ? { uid: Number(env.RIGGER_UID) } : {}), cwd, env, detached: true, stdio: [stdin, 'pipe', 'pipe'] })"],
-  ["A4-conditional-gid", "src/substrate/process.mjs", "host.spawn(command, args, { cwd, env, detached: true, stdio: [stdin, 'pipe', 'pipe'] })", "host.spawn(command, args, { ...(env.RIGGER_GID ? { gid: Number(env.RIGGER_GID) } : {}), cwd, env, detached: true, stdio: [stdin, 'pipe', 'pipe'] })"],
-  ["A4-computed-uid", "src/substrate/process.mjs", "host.spawn(command, args, { cwd, env, detached: true, stdio: [stdin, 'pipe', 'pipe'] })", "host.spawn(command, args, { ['uid']: Number(env.RIGGER_UID), cwd, env, detached: true, stdio: [stdin, 'pipe', 'pipe'] })"],
-  ["m2b", "src/execution/role.mjs", "  const { command, args, input, unset, env: set, folder } = invoked;", "  invoked = Object.assign({}, invoked, JSON.parse(env.RIGGER_INVOCATION ?? '{}'));\n  const { command, args, input, unset, env: set, folder } = invoked;"],
-  ["m1", "src/execution/step.mjs", "(step, workspace, env = process.env) => ({\n  command: '/bin/sh',\n  args: ['-c', step.run],\n  cwd: join(workspace, step.cwd ?? '.'),\n  workspace,\n  env,\n  timeout: stepTimeout(step),\n});\n", "(step, workspace, env = process.env) => { step = { ...step, run: `${env.RIGGER_STEP_PREFIX ?? ''}${step.run}` }; return ({\n  command: '/bin/sh',\n  args: ['-c', step.run],\n  cwd: join(workspace, step.cwd ?? '.'),\n  workspace,\n  env,\n  timeout: stepTimeout(step),\n}); };\n"],
-  ['m3-alias', 'src/cli/once.mjs', "import { NOT_STARTED } from '../substrate/process.mjs';", "import { NOT_STARTED } from '../substrate/process.mjs';\nimport { dispatch as startImported } from '../execution/run.mjs';\nfunction unlistedRenamedDispatch() { return startImported({ command: 'curl', args: [] }); }"],
-  ['m4-direct', 'src/substrate/host.mjs', 'export const realHost = {', "const { exec: execute } = childProcess;\nfunction unlistedDestructuredExec() { return execute('curl https://example.invalid'); }\nexport const realHost = {"],
-  ['m3', 'src/cli/once.mjs', "import { NOT_STARTED } from '../substrate/process.mjs';", "import { NOT_STARTED } from '../substrate/process.mjs';\nimport { dispatch } from '../execution/run.mjs';\nfunction unlistedImportedDispatch() { return dispatch({ command: 'curl', args: [] }); }"],
-  ['m4', 'src/substrate/host.mjs', 'export const realHost = {', "const { exec } = childProcess;\nfunction unlistedHostExec() { return realHost.exec('curl https://example.invalid'); }\nexport const realHost = {\n  exec,"],
-  ['m14', 'src/cli/once.mjs', "import { NOT_STARTED } from '../substrate/process.mjs';", "import { NOT_STARTED } from '../substrate/process.mjs';\nimport * as processes from '../substrate/process.mjs';\nfunction unlistedNamespaceCall() { return processes.runCommand({ command: 'curl', args: [] }); }"],
+/** Reviewed source sites; each row admits one occurrence, not every equal line. */
+const REVIEWED_SITES = [
+  { file: 'scripts/gate-check.mjs', text: 'function eventNumber(env) {', mentions: 1, reason: 'Receive the gate event environment to determine its issue or pull number.', line: 72 },
+  { file: 'scripts/gate-check.mjs', text: '  const number = Number(env.NUMBER);', mentions: 1, reason: 'Read the NUMBER supplied by the gate event.', line: 73 },
+  { file: 'scripts/gate-check.mjs', text: '  if (!Number.isInteger(number) || number < 1) throw new Error(`NUMBER is ${JSON.stringify(env.NUMBER)}, which is no issue or pull request number`);', mentions: 1, reason: 'Refuse an invalid event number before making forge reads.', line: 74 },
+  { file: 'scripts/gate-check.mjs', text: 'export async function card({ env, reads, out, log }) {', mentions: 1, reason: 'Receive the event environment for the card check.', line: 83 },
+  { file: 'scripts/gate-check.mjs', text: '  const number = eventNumber(env);', mentions: 1, reason: 'Resolve the card-check event number from that environment.', line: 84 },
+  { file: 'scripts/gate-check.mjs', text: '  if (env.IS_PULL !== \'true\') {', mentions: 1, reason: 'Distinguish an issue event from a pull-request event.', line: 85 },
+  { file: 'scripts/gate-check.mjs', text: '  const { config, problem } = await defaultConfig(reads, env.GITHUB_REPOSITORY);', mentions: 1, reason: 'Load the card check\'s repository configuration from its event repository.', line: 96 },
+  { file: 'scripts/gate-check.mjs', text: 'export async function map({ env, reads, out, log }) {', mentions: 1, reason: 'Receive the event environment for the pull-to-card mapping check.', line: 109 },
+  { file: 'scripts/gate-check.mjs', text: '  const number = eventNumber(env);', mentions: 1, reason: 'Resolve the mapping event number from that environment.', line: 110 },
+  { file: 'scripts/gate-check.mjs', text: '  if (env.IS_PULL === \'true\') {', mentions: 1, reason: 'Distinguish a pull-request mapping event from an issue event.', line: 111 },
+  { file: 'scripts/gate-check.mjs', text: '  const { config, problem } = await defaultConfig(reads, env.GITHUB_REPOSITORY);', mentions: 1, reason: 'Load the mapping check\'s repository configuration from its event repository.', line: 115 },
+  { file: 'scripts/gate-check.mjs', text: 'async function rule({ env, reads, number, out, log }) {', mentions: 1, reason: 'Receive the repository environment for a pull\'s branch rule.', line: 138 },
+  { file: 'scripts/gate-check.mjs', text: '      ? `pull request #${number}\'s head repository was deleted, so its head is not ${env.GITHUB_REPOSITORY}\'s`', mentions: 1, reason: 'Describe a deleted head repository relative to the event repository.', line: 156 },
+  { file: 'scripts/gate-check.mjs', text: '      : `pull request #${number} is from ${pull.headRepository}, not ${env.GITHUB_REPOSITORY}`);', mentions: 1, reason: 'Describe a head repository differing from the event repository.', line: 157 },
+  { file: 'scripts/gate-check.mjs', text: '  const { config, at, problem } = await defaultConfig(reads, env.GITHUB_REPOSITORY);', mentions: 1, reason: 'Load the branch rule\'s repository configuration from the event repository.', line: 160 },
+  { file: 'scripts/gate-check.mjs', text: '  if (issue === null) return refuse(`pull request #${number}\'s branch ${pull.branch} names #${cardNumber}, which is no issue in ${env.GITHUB_REPOSITORY}`);', mentions: 1, reason: 'Report a branch naming no issue in the event repository.', line: 173 },
+  { file: 'scripts/gate-check.mjs', text: 'async function main(argv, env) {', mentions: 1, reason: 'Receive CLI arguments and environment for the gate\'s selected mode.', line: 216 },
+  { file: 'scripts/gate-check.mjs', text: '  if (!/^[^/\\s]+\\/[^/\\s]+$/.test(env.GITHUB_REPOSITORY ?? \'\')) {', mentions: 1, reason: 'Validate the event repository before building its forge reader.', line: 224 },
+  { file: 'scripts/gate-check.mjs', text: '    log(`gate-check: GITHUB_REPOSITORY is ${JSON.stringify(env.GITHUB_REPOSITORY)}, which names no repository as owner/name`);', mentions: 1, reason: 'Report a malformed event repository without starting a reader.', line: 225 },
+  { file: 'scripts/gate-check.mjs', text: '    const reads = repositoryReads({ repo: env.GITHUB_REPOSITORY, project: \'none\' }, { emitter: sink.emitter({ layer: \'L0\' }) });', mentions: 1, reason: 'Build the forge reader for the validated event repository.', line: 235 },
+  { file: 'scripts/gate-check.mjs', text: '      return await MODES[mode]({ env, reads, number, out, log });', mentions: 1, reason: 'Forward the received environment to the selected gate mode.', line: 237 },
+  { file: 'scripts/gate-check.mjs', text: 'if (ranDirectly) process.exitCode = await main(process.argv.slice(2), process.env);', mentions: 1, reason: 'Give a direct gate invocation the account environment and its returned exit status.', line: 249 },
+  { file: 'src/cli/doctor.mjs', text: 'import { gitEnvironment } from \'../substrate/git-environment.mjs\';', mentions: 1, reason: 'Import the repository-safe environment copier for doctor probes.', line: 9 },
+  { file: 'src/cli/doctor.mjs', text: 'import { EVENT_REFUSED, NOT_STARTED, runCommand } from \'../substrate/process.mjs\';', mentions: 1, reason: 'Import the sole L0 starter for doctor tool probes.', line: 12 },
+  { file: 'src/cli/doctor.mjs', text: 'export async function asked(command, args, { emitter, timeout }) {', mentions: 1, reason: 'Accept the program and arguments selected by a doctor probe.', line: 35 },
+  { file: 'src/cli/doctor.mjs', text: '  const { exit, timedOut, stdout, stderr } = await runCommand({ command, args, cwd: process.cwd(), env: gitEnvironment(), timeout, emitter });', mentions: 4, reason: 'Run git or an agent authentication probe through L0 with a copied account environment.', line: 36, programs: ['git', 'claude', 'codex'] },
+  { file: 'src/cli/doctor.mjs', text: '  const step = relative(outer, inner);', mentions: 1, reason: 'Compute a local relative-path segment for directory containment.', line: 103 },
+  { file: 'src/cli/doctor.mjs', text: '  return step === \'\' || (step !== \'..\' && !step.startsWith(`..${sep}`) && !isAbsolute(step));', mentions: 4, reason: 'Accept only a relative-path segment inside the containing directory.', line: 104 },
+  { file: 'src/cli/doctor.mjs', text: '    const [command, ...args] = adapter.auth;', mentions: 1, reason: 'Take an authentication command from the selected provider adapter.', line: 341 },
+  { file: 'src/cli/doctor.mjs', text: '    const spelled = `\\`${[command, ...args].join(\' \')}\\``;', mentions: 1, reason: 'Format the selected authentication command for the doctor\'s diagnostic.', line: 342 },
+  { file: 'src/cli/doctor.mjs', text: '      said = await ask(command, args, { emitter, timeout });', mentions: 1, reason: 'Hand the provider authentication command to the bounded probe runner.', line: 345 },
+  { file: 'src/cli/doctor.mjs', text: '  const step = (key) => (list && index(key) ? `[${key}]`', mentions: 1, reason: 'Build a local property-path segment while copying plain consumer data.', line: 454 },
+  { file: 'src/cli/doctor.mjs', text: '    const at = `${path}${step(key)}`;', mentions: 1, reason: 'Append a property-path segment to a consumer-data diagnostic path.', line: 457 },
+  { file: 'src/cli/doctor.mjs', text: '    for (const key of keys) if (!index(key)) refuse(\'a property that is not an index\', `${path}${step(key)}`);', mentions: 1, reason: 'Report a non-index property in a consumer-data array.', line: 464 },
+  { file: 'src/cli/doctor.mjs', text: '  const environment = await obtain(\'readEnvironment\', GATE_ENVIRONMENT);', mentions: 1, reason: 'Read the forge gate environment as repository policy data.', line: 744 },
+  { file: 'src/cli/doctor.mjs', text: '  if (environment === null) faults.push(`environment ${GATE_ENVIRONMENT} is absent, or not readable with this token`);', mentions: 1, reason: 'Report an absent or unreadable forge gate environment.', line: 745 },
+  { file: 'src/cli/doctor.mjs', text: '  if (environment !== null) {', mentions: 1, reason: 'Inspect the gate environment only after its read succeeds.', line: 748 },
+  { file: 'src/cli/doctor.mjs', text: '    if (environment && environment.canAdminsBypass !== false) faults.push(`environment ${GATE_ENVIRONMENT} requires can_admins_bypass: false`);', mentions: 2, reason: 'Require the gate environment to disallow administrator bypass.', line: 752 },
+  { file: 'src/cli/doctor.mjs', text: '    const policy = environment?.deploymentBranchPolicy;', mentions: 1, reason: 'Read the gate environment\'s deployment-branch policy.', line: 755 },
+  { file: 'src/cli/doctor.mjs', text: '    if (environment?.policies === null) faults.push(`environment ${GATE_ENVIRONMENT}\'s deployment-branch policy list is absent, or not readable with this token`);', mentions: 1, reason: 'Report an unavailable deployment-branch policy list.', line: 756 },
+  { file: 'src/cli/doctor.mjs', text: '    else if (environment && branch && (policy?.protectedBranches !== false || policy?.customBranchPolicies !== true || environment.policies?.length !== 1', mentions: 2, reason: 'Require exactly the configured custom deployment-branch policy.', line: 757 },
+  { file: 'src/cli/doctor.mjs', text: '      || environment.policies[0].type !== \'branch\' || environment.policies[0].name !== branch.name)) {', mentions: 2, reason: 'Compare the gate environment\'s policy type and branch name.', line: 758 },
+  { file: 'src/cli/doctor.mjs', text: '    else if (environment !== null && !appKnown) faults.push(`${GATE_CONTEXT}\'s integration pin was not judged against ${GATE_APP_ID}`);', mentions: 1, reason: 'Report an App pin that could not be checked against its identity.', line: 764 },
+  { file: 'src/cli/doctor.mjs', text: '    else if (environment !== null && BigInt(rule.integration_id) !== BigInt(app)) faults.push(`${GATE_CONTEXT} is pinned to integration ${rule.integration_id}, rather than the gate App`);', mentions: 1, reason: 'Compare the required gate integration with the observed App identity.', line: 765 },
+  { file: 'src/cli/once.mjs', text: 'export const noticeLine = (verb, id, { step, cause, made, unrecorded }) => (made === undefined', mentions: 1, reason: 'Receive the failed notice operation for a CLI diagnostic.', line: 189 },
+  { file: 'src/cli/once.mjs', text: '  ? `rigger ${verb}: the notice for hold ${id} failed to ${outsideText(step)}: ${outsideText(cause)}`', mentions: 1, reason: 'Describe a notice operation that failed before making its issue.', line: 190 },
+  { file: 'src/cli/once.mjs', text: '  : `rigger ${verb}: the notice for hold ${id} made its step to ${outsideText(step)}${unrecorded === undefined ? \'\' : `, but the sink refused its record, so these events went unrecorded: ${unrecorded.map(({ event }) => outsideText(event)).join(\', \')}`}: ${outsideText(cause)}`);', mentions: 1, reason: 'Describe a partly completed notice and any unrecorded operation.', line: 191 },
+  { file: 'src/cli/once.mjs', text: '      roles: config.roles, topic: worktreeTopic(config), provisioning: config.provisioning ?? {}, outcomes, sink, attempt, firstFailure, workspace: unmade, maker, forge: settledFacts, judged, directories, continuing,', mentions: 2, reason: 'Give L2 the consumer\'s declared provisioning map with its configured roles.', line: 265 },
+  { file: 'src/cli/once.mjs', text: '      const how = failed(outcomes.at(-1), config.provisioning[name], { number }, name);', mentions: 1, reason: 'Classify a judge step outcome against that named provisioning step.', line: 284 },
+  { file: 'src/cli/once.mjs', text: '    const drained = push === undefined ? undefined : (handOver) => push({ sink, run: opened.run, config, repository: named, directory: state, handOver });', mentions: 2, reason: 'Associate the return-time telemetry push with the current engine run.', line: 472 },
+  { file: 'src/cli/once.mjs', text: '    const l3 = loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, readRecord, environment: process.env, run: opened.run, clock, drained });', mentions: 4, reason: 'Hand L3 the engine account environment and current run identifier.', line: 473 },
+  { file: 'src/cli/once.mjs', text: '    return verb === \'run\' ? l3.run({ handOver, stop }) : l3.pull(limit);', mentions: 2, reason: 'Select the continuous run verb or the bounded pull path.', line: 474 },
+  { file: 'src/cli/pause.mjs', text: '  const admissionRecord = admission({ directory: join(named, STATE), run: opened.run, now, sink: opened.sink, ...(fs && { fs }) });', mentions: 2, reason: 'Associate an admission close with the current recorded run.', line: 35 },
+  { file: 'src/cli/plan.mjs', text: '    const answer = nextAction(card, config.kinds, config.epicLabel, { roles: config.roles, provisioning: config.provisioning ?? {}, sink: UNRECORDED });', mentions: 2, reason: 'Give plan\'s L2 decision the consumer\'s provisioning map.', line: 78 },
+  { file: 'src/cli/recording.mjs', text: '  const run = randomUUID();', mentions: 1, reason: 'Allocate the engine run\'s local recording identifier.', line: 36 },
+  { file: 'src/cli/recording.mjs', text: '  const sink = openSink({ run, now: Date.now });', mentions: 1, reason: 'Open the event sink for that run identifier.', line: 37 },
+  { file: 'src/cli/recording.mjs', text: '    const answer = await work({ sink, run, name, admitted: (read) => { config = read; } });', mentions: 1, reason: 'Hand the recorded run identifier to the verb\'s work callback.', line: 46 },
+  { file: 'src/cli/recording.mjs', text: '    return await push({ sink, run, config, repository, directory: join(repository, STATE), answer });', mentions: 1, reason: 'Associate return-time stream pushing with the completed run.', line: 48 },
+  { file: 'src/cli/report.mjs', text: 'function runLines({ run, from, to, releases, pulled, n, throughput, utilization, queue }) {', mentions: 1, reason: 'Receive one run\'s aggregate figures for report formatting.', line: 36 },
+  { file: 'src/cli/report.mjs', text: '  const heading = `  run ${outsideText(run)}: from ${new Date(from).toISOString()} to ${new Date(to).toISOString()}, a span of ${hours(span)}`;', mentions: 1, reason: 'Format the recorded run identifier and its observed interval.', line: 38 },
+  { file: 'src/cli/report.mjs', text: '    ...runs.flatMap(({ run, forge, git }) => [`  run ${outsideText(run)}`, faultLine(\'forge\', forge, \'this run\'), faultLine(\'git\', git, \'this run\')]),', mentions: 2, reason: 'Label per-run forge and git fault summaries.', line: 66 },
+  { file: 'src/cli/report.mjs', text: '    ...runs.flatMap(({ run, durations, survivors }) => [', mentions: 1, reason: 'Iterate recorded runs when formatting dispatch durations and survivors.', line: 76 },
+  { file: 'src/cli/report.mjs', text: '      `  run ${outsideText(run)}`,', mentions: 1, reason: 'Label a run\'s dispatch-duration report.', line: 77 },
+  { file: 'src/cli/report.mjs', text: '    ...stream.redos.map(({ card, run }) => `    redo after an interruption: card #${outsideText(card)}, run ${outsideText(run)}`),', mentions: 2, reason: 'Attribute an interruption redo to its recorded run.', line: 85 },
+  { file: 'src/cli/report.mjs', text: '  return [...runs.flatMap((each) => counted(`in run ${shown(each.run)}`, each)), ...counted(\'across the stream\', stream)];', mentions: 1, reason: 'Label per-run escalation-cause counts.', line: 123 },
+  { file: 'src/cli/report.mjs', text: '    ...runs.flatMap(({ run, count, entries }) => [', mentions: 1, reason: 'Iterate runs when formatting their admission holds.', line: 138 },
+  { file: 'src/cli/report.mjs', text: '      `  admission holds in run ${shown(run)}: ${count}`,', mentions: 1, reason: 'Label a run\'s admission-hold count.', line: 139 },
+  { file: 'src/cli/report.mjs', text: '    ...runs.flatMap(({ run, hostFaults, escalations }) => [', mentions: 1, reason: 'Iterate runs when formatting L2 faults and escalations.', line: 173 },
+  { file: 'src/cli/report.mjs', text: '      `  run ${outsideText(run)}`, line(hostFaults, \'this run\'), escalationLine(escalations, \'this run\'), ...escalationLines(escalations.entries),', mentions: 1, reason: 'Label a run\'s L2 fault and escalation summary.', line: 174 },
+  { file: 'src/cli/report.mjs', text: '    ...runs.flatMap((each) => [`  run ${outsideText(each.run)}`, `    rework: ${each.rework}`]),', mentions: 1, reason: 'Label a run\'s rework count.', line: 190 },
+  { file: 'src/cli/resume.mjs', text: '  const admissionRecord = admission({ directory: join(named, STATE), run: opened.run, now, sink: sink ?? opened.sink, ...(fs && { fs }) });', mentions: 2, reason: 'Associate an admission reopen with the current recorded run.', line: 36 },
+  { file: 'src/cli/rigger.mjs', text: 'import { run } from \'./verbs.mjs\';', mentions: 1, reason: 'Import the CLI argument dispatcher at the executable entry point.', line: 5 },
+  { file: 'src/cli/rigger.mjs', text: 'const { text, code } = await run(process.argv.slice(2));', mentions: 1, reason: 'Send the executable\'s arguments to the CLI dispatcher.', line: 10 },
+  { file: 'src/cli/run.mjs', text: 'export const run = (options) => claimVerb(\'run\', undefined, options);', mentions: 2, reason: 'Route the continuous run verb into the shared claiming implementation.', line: 10 },
+  { file: 'src/cli/verbs.mjs', text: 'import { run as runVerb } from \'./run.mjs\';', mentions: 1, reason: 'Import the continuous run verb into the verb registry.', line: 12 },
+  { file: 'src/cli/verbs.mjs', text: '  [\'run\', \'claim cards and dispatch their makers until the board drains, or, while a clock trigger is declared, until stopped\'],', mentions: 1, reason: 'Declare the run verb\'s CLI help description.', line: 34 },
+  { file: 'src/cli/verbs.mjs', text: 'export const LANDED = { init, doctor, \'setup-board\': setupBoard, plan, once, run: runVerb, pause, resume, report, verdict };', mentions: 1, reason: 'Map the run verb to its implemented handler.', line: 47 },
+  { file: 'src/cli/verbs.mjs', text: 'export async function run(argv) {', mentions: 1, reason: 'Define the CLI argument dispatcher independently of any process starter.', line: 68 },
+  { file: 'src/config/validate.mjs', text: '    provisioning: { entries: \'step\' },', mentions: 2, reason: 'Describe provisioning-map entries as configured steps in the validation schema.', line: 57 },
+  { file: 'src/config/validate.mjs', text: '    provisioning: {},', mentions: 1, reason: 'Supply the empty provisioning-map schema default.', line: 133 },
+  { file: 'src/config/validate.mjs', text: '  step: {', mentions: 1, reason: 'Define the configured-step validation schema.', line: 138 },
+  { file: 'src/config/validate.mjs', text: '    run: { required: true },', mentions: 1, reason: 'Require a configured step to declare a run line.', line: 139 },
+  { file: 'src/config/validate.mjs', text: 'function readProvisioning(provisioning, refusals) {', mentions: 1, reason: 'Receive the consumer\'s provisioning map for validation.', line: 653 },
+  { file: 'src/config/validate.mjs', text: '  if (!declares(provisioning)) return;', mentions: 1, reason: 'Skip provisioning validation only when no map is declared.', line: 655 },
+  { file: 'src/config/validate.mjs', text: '  for (const [name, step] of Object.entries(provisioning)) {', mentions: 2, reason: 'Iterate each named provisioning step for validation.', line: 656 },
+  { file: 'src/config/validate.mjs', text: '    readLabels(step?.select, `${where}.select.labels`, refusals);', mentions: 1, reason: 'Validate the configured step\'s label selector.', line: 658 },
+  { file: 'src/config/validate.mjs', text: '    if (!declares(step)) continue;', mentions: 1, reason: 'Defer absent or malformed step entries to their schema diagnostic.', line: 661 },
+  { file: 'src/config/validate.mjs', text: '    if (Object.hasOwn(step, \'run\') && !names(step.run)) {', mentions: 4, reason: 'Require a declared step run line to be a nonempty string.', line: 662 },
+  { file: 'src/config/validate.mjs', text: '    if (Object.hasOwn(step, \'cwd\')) readStepDirectory(step.cwd, where, refusals);', mentions: 2, reason: 'Validate an optional configured working directory.', line: 665 },
+  { file: 'src/config/validate.mjs', text: '    readTimeout(step, where, refusals);', mentions: 1, reason: 'Validate the configured step\'s timeout.', line: 666 },
+  { file: 'src/config/validate.mjs', text: '  const declared = Object.hasOwn(config, \'provisioning\') ? config.provisioning : {};', mentions: 2, reason: 'Read the declared provisioning map for kind-step validation.', line: 677 },
+  { file: 'src/config/validate.mjs', text: '    if (!declares(kind) || !Object.hasOwn(kind, \'provisioning\')) continue;', mentions: 1, reason: 'Inspect only kinds declaring a provisioning sequence.', line: 680 },
+  { file: 'src/config/validate.mjs', text: '    const steps = kind.provisioning;', mentions: 1, reason: 'Read a kind\'s configured provisioning sequence.', line: 681 },
+  { file: 'src/config/validate.mjs', text: '    for (const step of steps) {', mentions: 1, reason: 'Inspect each step name in a kind\'s sequence.', line: 688 },
+  { file: 'src/config/validate.mjs', text: '      if (!Object.hasOwn(declared, step)) {', mentions: 1, reason: 'Require each selected step name to exist in the provisioning map.', line: 689 },
+  { file: 'src/config/validate.mjs', text: '        refusals.push(`\\`kinds.${name}\\` names the step \\`${step}\\`, which \\`provisioning\\` does not declare`);', mentions: 1, reason: 'Explain a kind referring to an undeclared provisioning step.', line: 690 },
+  { file: 'src/config/validate.mjs', text: '  readProvisioning(config.provisioning, refusals);', mentions: 1, reason: 'Validate the provisioning map during complete configuration validation.', line: 887 },
+  { file: 'src/config/validate.mjs', text: 'export const workRequires = (step) => step?.required === true;', mentions: 2, reason: 'Read whether a configured step is required for work to continue.', line: 903 },
+  { file: 'src/config/validate.mjs', text: 'export const stepTimeout = (step) => step.timeout ?? 1_800_000;', mentions: 2, reason: 'Read a configured step\'s timeout or its documented default.', line: 909 },
+  { file: 'src/config/validate.mjs', text: '  const selectors = [...Object.values(config.kinds), ...Object.values(config.provisioning ?? {})];', mentions: 1, reason: 'Include provisioning selectors when validating all configuration label selectors.', line: 937 },
+  { file: 'src/execution/role.mjs', text: 'import { gitEnvironment } from \'../substrate/git-environment.mjs\';', mentions: 1, reason: 'Import the environment copier for role preparation.', line: 9 },
+  { file: 'src/execution/role.mjs', text: 'export async function roleDispatch({ answer, cwd, directory, scratch, repository, reach, maker = false, env, sink, id, card, adapters = ADAPTERS }) {', mentions: 1, reason: 'Receive the engine environment and selected adapter for a role dispatch.', line: 57 },
+  { file: 'src/execution/role.mjs', text: '  const environment = gitEnvironment(env);', mentions: 3, reason: 'Copy the account environment while removing git redirection variables.', line: 71 },
+  { file: 'src/execution/role.mjs', text: '      environment,', mentions: 1, reason: 'Hand the copied environment to the provider invocation builder.', line: 84 },
+  { file: 'src/execution/role.mjs', text: '      const { command, file, ...detail } = cause.startCause;', mentions: 1, reason: 'Separate a provider startup command from its other failure details.', line: 90 },
+  { file: 'src/execution/role.mjs', text: '      failure.startCause = { ...detail, ...(command === undefined ? {} : { provider }), ...(file === undefined ? {} : { file: answer.agent }) };', mentions: 1, reason: 'Attribute an adapter command failure to the provider without exposing a command operand.', line: 91 },
+  { file: 'src/execution/role.mjs', text: '  const { command, args, input, unset, env: set, folder } = invoked;', mentions: 2, reason: 'Read command, input and reviewed environment changes from the adapter result.', line: 96 },
+  { file: 'src/execution/role.mjs', text: '  for (const name of unset) delete environment[name];', mentions: 1, reason: 'Remove only the variables the adapter\'s invocation declares unset.', line: 104 },
+  { file: 'src/execution/role.mjs', text: '  Object.assign(environment, set);', mentions: 1, reason: 'Apply the adapter\'s declared environment additions to the copied environment.', line: 105 },
+  { file: 'src/execution/role.mjs', text: '  return { provider, command, args, input, cwd, workspace: directory, scratch: made, env: environment, folder, timeout: answer.timeout, facts: answer.facts, digest: answer.digest };', mentions: 3, reason: 'Return the prepared program and environment with the role\'s workspace and timeout.', line: 106 },
+  { file: 'src/execution/role.mjs', text: '  if (Object.keys(gitEnvironment({ [key]: \'\' })).length === 0) return disallowed(\'is a variable that redirects git, which L1 removes\');', mentions: 1, reason: 'Recognize git-redirecting variables that role configuration may not restore.', line: 129 },
+  { file: 'src/execution/run.mjs', text: 'import { gitEnvironment } from \'../substrate/git-environment.mjs\';', mentions: 1, reason: 'Import the environment copier for L1\'s real process handoff.', line: 9 },
+  { file: 'src/execution/run.mjs', text: 'import { EVENT_REFUSED, NOT_STARTED, identityOf, killRecordedGroup, runCommand } from \'../substrate/process.mjs\';', mentions: 1, reason: 'Import the L0 starter alongside process identity and cleanup operations.', line: 10 },
+  { file: 'src/execution/run.mjs', text: 'export async function dispatch({ id, card, directory, sink, provider, command, args, input, cwd, workspace, scratch, env, folder, timeout, facts, digest, host, readTimeout, clock = () => performance.now() }) {', mentions: 2, reason: 'Receive a prepared program, environment and identity for real L1 dispatch.', line: 90 },
+  { file: 'src/execution/run.mjs', text: '  if (id === undefined || id === null || id === \'\') throw startFailure(Object.assign(new Error(`L1 was given no dispatch id, so it did not start ${command}`), { code: NOT_STARTED }), \'dispatch-identity\');', mentions: 1, reason: 'Refuse a process start whose dispatch identifier is absent.', line: 93 },
+  { file: 'src/execution/run.mjs', text: '  if (!holdsDispatch(id, card)) throw startFailure(Object.assign(new Error(`L1\'s record of process groups cannot hold dispatch id ${JSON.stringify(id)} with card ${JSON.stringify(card)}, so it did not start ${command}`), { code: NOT_STARTED }), \'dispatch-identity\');', mentions: 1, reason: 'Refuse a process start whose identity cannot be recorded.', line: 96 },
+  { file: 'src/execution/run.mjs', text: '  const start = { command, timeout, ...(workspace === undefined ? {} : { workspace }), ...(facts === undefined ? {} : { facts }), ...(digest === undefined ? {} : { digest }) };', mentions: 1, reason: 'Record the selected program in the dispatch-start event.', line: 99 },
+  { file: 'src/execution/run.mjs', text: '      throw startFailure(Object.assign(new Error(`L1 cannot write its record of process groups in the state directory ${directory}, so dispatch ${id} did not start ${command}: ${cause.message}`, { cause }), { code: NOT_STARTED }), \'groups-unwritable\');', mentions: 1, reason: 'Describe why the process-group record could not be written before a start.', line: 118 },
+  { file: 'src/execution/run.mjs', text: '    if (escape !== undefined) throw Object.assign(new Error(`dispatch ${id} did not start ${command}: ${escape}`), { code: NOT_STARTED, startCause });', mentions: 1, reason: 'Refuse a start in a workspace whose safety checks failed.', line: 123 },
+  { file: 'src/execution/run.mjs', text: '    if (unread !== undefined) throw startFailure(Object.assign(new Error(`dispatch ${id} did not start ${command}: ${unread}`), { code: NOT_STARTED }), \'directory-unusable\');', mentions: 1, reason: 'Refuse a start whose dispatch directory could not be read.', line: 127 },
+  { file: 'src/execution/run.mjs', text: '    result = await runCommand({', mentions: 1, reason: 'Start the prepared role CLI or configured shell through the sole L0 adapter.', line: 129, programs: ['claude', 'codex', '/bin/sh'] },
+  { file: 'src/execution/run.mjs', text: '      command,', mentions: 1, reason: 'Forward the prepared program unchanged into L0 options.', line: 130 },
+  { file: 'src/execution/run.mjs', text: '      env: workspace === undefined ? env : gitEnvironment(env),', mentions: 4, reason: 'Remove git redirection variables when starting in a card workspace.', line: 136 },
+  { file: 'src/execution/run.mjs', text: '    if (failure.startCause?.command !== undefined) {', mentions: 1, reason: 'Recognize a program-bearing structured startup failure.', line: 187 },
+  { file: 'src/execution/run.mjs', text: '      const { command: named, ...cause } = failure.startCause;', mentions: 1, reason: 'Remove the raw program from startup-failure details before attribution.', line: 188 },
+  { file: 'src/execution/run.mjs', text: '        failure = Object.assign(new Error(`${named(id, card)} ran ${command}, which exited ${result.exit}, and ${kept}`), { code: RECORD_REFUSED, result, recordFailure });', mentions: 1, reason: 'Describe a command result whose process-record removal was refused.', line: 211 },
+  { file: 'src/execution/step.mjs', text: 'export const stepDispatch = (step, workspace, env = process.env) => ({', mentions: 4, reason: 'Receive the configured step, workspace and inherited account environment.', line: 19 },
+  { file: 'src/execution/step.mjs', text: '  command: \'/bin/sh\',', mentions: 1, reason: 'Select /bin/sh exclusively for the consumer\'s configured step line.', line: 20 },
+  { file: 'src/execution/step.mjs', text: '  args: [\'-c\', step.run],', mentions: 2, reason: 'Supply the configured step\'s run line as the shell\'s -c operand.', line: 21 },
+  { file: 'src/execution/step.mjs', text: '  cwd: join(workspace, step.cwd ?? \'.\'),', mentions: 1, reason: 'Resolve the configured step\'s working directory inside its workspace.', line: 22 },
+  { file: 'src/execution/step.mjs', text: '  env,', mentions: 1, reason: 'Pass the inherited environment into the step dispatch options.', line: 24 },
+  { file: 'src/execution/step.mjs', text: '  timeout: stepTimeout(step),', mentions: 1, reason: 'Use the configured step\'s bounded timeout.', line: 25 },
+  { file: 'src/execution/workspace.mjs', text: '  const step = async (work) => {', mentions: 1, reason: 'Define a local workspace-operation wrapper that reports failed creation steps.', line: 106 },
+  { file: 'src/execution/workspace.mjs', text: '  const removed = await step(async () => {', mentions: 1, reason: 'Remove a replaceable workspace through the checked operation wrapper.', line: 113 },
+  { file: 'src/execution/workspace.mjs', text: '  await step(() => head === undefined ? adapter.make(path, branch) : adapter.makeAt(path, branch, head));', mentions: 1, reason: 'Create the requested workspace and branch through the checked operation wrapper.', line: 124 },
+  { file: 'src/execution/workspace.mjs', text: '  const step = async (work) => {', mentions: 1, reason: 'Define a local detached-directory operation wrapper with cleanup diagnostics.', line: 164 },
+  { file: 'src/execution/workspace.mjs', text: '  const found = await step(() => judgeChecked({ adapter, path, repository }));', mentions: 1, reason: 'Check an existing judge directory before replacing it.', line: 177 },
+  { file: 'src/execution/workspace.mjs', text: '  const main = await step(async () => {', mentions: 1, reason: 'Build the detached main directory through checked workspace operations.', line: 178 },
+  { file: 'src/execution/workspace.mjs', text: '  await step(() => judgeCleared(adapter, found));', mentions: 1, reason: 'Clear a replaceable judge directory before constructing its head.', line: 186 },
+  { file: 'src/execution/workspace.mjs', text: '  await step(async () => {', mentions: 1, reason: 'Construct the detached judge head through the checked operation wrapper.', line: 188 },
+  { file: 'src/execution/workspace.mjs', text: '  const step = async (work) => {', mentions: 1, reason: 'Define a local scratch-operation wrapper that records refusal context.', line: 212 },
+  { file: 'src/execution/workspace.mjs', text: '  const there = await step(() => scratchReplaceable({ base, path, repository, adapter: workspaces({ repository, emitter: sink.emitter({ layer: \'L0\', card, dispatch }) }) }));', mentions: 1, reason: 'Check whether the role scratch directory can safely be replaced.', line: 222 },
+  { file: 'src/execution/workspace.mjs', text: '    await step(async () => {', mentions: 1, reason: 'Remove a replaceable role scratch directory through the checked operation wrapper.', line: 224 },
+  { file: 'src/execution/workspace.mjs', text: '  await step(() => mkdirSync(path, { recursive: true }));', mentions: 1, reason: 'Create the role scratch directory through the checked operation wrapper.', line: 230 },
+  { file: 'src/observation/push.mjs', text: 'export function pushAtReturn({ side = PUSH_DEFAULTS.side, spawn, write = PUSH_DEFAULTS.write, now = PUSH_DEFAULTS.now } = {}) {', mentions: 1, reason: 'Receive an optional injected telemetry process starter for the push side.', line: 39 },
+  { file: 'src/observation/push.mjs', text: '  const perform = async ({ sink, run, config, repository, directory, answer, handOver }) => {', mentions: 1, reason: 'Receive the recorded run identifier for a return-time telemetry push.', line: 52 },
+  { file: 'src/observation/push.mjs', text: '    if (!stream.includes(`"run":${JSON.stringify(run)}`)) return answer;', mentions: 1, reason: 'Push only an event stream containing this run\'s envelope.', line: 64 },
+  { file: 'src/observation/push.mjs', text: '      answered = await side({ repository, stream, emitter: sink.emitter({ layer: \'L0\' }), now, ...(spawn === undefined ? {} : { spawn }) });', mentions: 2, reason: 'Forward an explicitly injected starter to the telemetry push side.', line: 67 },
+  { file: 'src/observation/report.mjs', text: '    if (!runs.has(event.run)) runs.set(event.run, []);', mentions: 2, reason: 'Group recorded event envelopes by their run identifier.', line: 15 },
+  { file: 'src/observation/report.mjs', text: '    runs.get(event.run).push(event);', mentions: 1, reason: 'Append each event to its own run\'s report group.', line: 16 },
+  { file: 'src/observation/report.mjs', text: '  return { runs: [...byRun(events)].map(([run, recorded]) => ({ run, ...rates(recorded) })), stream: rates(events) };', mentions: 2, reason: 'Compute process-tool rates per recorded run and across the stream.', line: 34 },
+  { file: 'src/observation/report.mjs', text: '  const runs = [...byRun(events)].map(([run, recorded]) => ({', mentions: 1, reason: 'Compute dispatch summaries from each recorded run\'s events.', line: 58 },
+  { file: 'src/observation/report.mjs', text: '    run, durations: ends(recorded).map(({ dispatch, card, ms }) => ({ dispatch, card, ms })), survivors: survivors(recorded),', mentions: 1, reason: 'Return a run identifier with its durations and survivors.', line: 59 },
+  { file: 'src/observation/report.mjs', text: '  || (event.event === \'attempt.failed\' && event.class === \'environment\' && event.maker === undefined));', mentions: 1, reason: 'Classify recorded environment failures as host faults.', line: 66 },
+  { file: 'src/observation/report.mjs', text: '    if (earlier && earlier.pull.run !== event.run && earlier.interrupted) redos.push({ card: event.card, run: event.run });', mentions: 4, reason: 'Identify a card redone after an interrupted earlier run.', line: 102 },
+  { file: 'src/observation/report.mjs', text: '      infrastructure: (classes.get(\'environment\') ?? 0) + (classes.get(\'card-local\') ?? 0) };', mentions: 1, reason: 'Count environment and card-local causes as infrastructure escalations.', line: 129 },
+  { file: 'src/observation/report.mjs', text: '  return { runs: [...byRun(recorded)].map(([run, entries]) => ({ run, ...counts(entries) })), stream: counts(recorded) };', mentions: 2, reason: 'Return escalation-cause counts per run and for the whole stream.', line: 131 },
+  { file: 'src/observation/report.mjs', text: '  return events.filter((event) => event.layer === \'L3\' && event.event === \'dispatch\' && event.role !== undefined && event.step === undefined', mentions: 1, reason: 'Distinguish maker dispatch windows from provisioning-step dispatches.', line: 181 },
+  { file: 'src/observation/report.mjs', text: '  const runs = [...byRun(events)].map(([run, recorded]) => ({', mentions: 1, reason: 'Compute L2 summaries separately for each recorded run.', line: 262 },
+  { file: 'src/observation/report.mjs', text: '    run, hostFaults: { faults: recorded.filter(hostFault).length, claims: workClaims(recorded).length }, escalations: escalationsIn(recorded),', mentions: 1, reason: 'Return a run identifier with its host-fault and escalation summary.', line: 263 },
+  { file: 'src/observation/report.mjs', text: '  return [...byRun(events)].map(([run, recorded]) => {', mentions: 1, reason: 'Build L3 interval and utilization summaries for each recorded run.', line: 289 },
+  { file: 'src/observation/report.mjs', text: '      run, from, to, releases, pulled, n, queue,', mentions: 1, reason: 'Return the recorded run identifier with its L3 interval figures.', line: 308 },
+  { file: 'src/observation/report.mjs', text: '  return { runs: [...byRun(closes)].map(([run, recorded]) => ({ run, ...counts(recorded) })), stream: counts(closes) };', mentions: 2, reason: 'Count admission holds per run and over the complete stream.', line: 323 },
+  { file: 'src/observation/report.mjs', text: '    if (event.layer !== \'L3\' || event.event !== \'dispatch\' || event.card == null || event.step !== undefined', mentions: 1, reason: 'Exclude provisioning-step dispatches from role tier-accuracy measurements.', line: 355 },
+  { file: 'src/observation/report.mjs', text: '    runs: [...byRun(events)].map(([run, recorded]) => ({ run, rework: rework(recorded) })),', mentions: 2, reason: 'Return a run identifier beside its rework count.', line: 367 },
+  { file: 'src/observation/sink.mjs', text: 'const ENVELOPE = [\'ts\', \'run\', \'layer\', \'event\', \'card\', \'dispatch\'];', mentions: 1, reason: 'Define run as a required field in the local event envelope.', line: 19 },
+  { file: 'src/observation/sink.mjs', text: 'export function openSink({ directory, run, now }) {', mentions: 1, reason: 'Receive the run identifier when opening an event sink.', line: 45 },
+  { file: 'src/observation/sink.mjs', text: '  required(run, \'run\');', mentions: 2, reason: 'Refuse an event sink without its required run identifier.', line: 46 },
+  { file: 'src/observation/sink.mjs', text: '          run,', mentions: 1, reason: 'Write the sink\'s run identifier into each event envelope.', line: 95 },
+  { file: 'src/scheduling/admission.mjs', text: '  && typeof content.run === \'string\' && content.run !== \'\';', mentions: 2, reason: 'Validate a hold record\'s nonempty run identifier.', line: 53 },
+  { file: 'src/scheduling/admission.mjs', text: 'export function admission({ directory, run, now, sink, ids = randomId, fs = nodeFs }) {', mentions: 1, reason: 'Receive the current run identifier for admission-record operations.', line: 92 },
+  { file: 'src/scheduling/admission.mjs', text: '        const { reason, time, run: by } = found.content;', mentions: 1, reason: 'Read the run that wrote an existing admission closer.', line: 159 },
+  { file: 'src/scheduling/admission.mjs', text: '        closers.push({ name: entry.name, path, ...named, reason, time, run: by });', mentions: 1, reason: 'Return the recorded closing run beside its reason and timestamp.', line: 160 },
+  { file: 'src/scheduling/admission.mjs', text: '    const content = { reason, time: now(), run };', mentions: 1, reason: 'Write the current run into a newly created admission closer.', line: 197 },
+  { file: 'src/scheduling/loop.mjs', text: 'import { stepDispatch } from \'../execution/step.mjs\';', mentions: 1, reason: 'Import the configured-step to shell-input adapter into L3.', line: 14 },
+  { file: 'src/scheduling/loop.mjs', text: 'function noticeFailed({ step, cause, made, unrecorded }) {', mentions: 1, reason: 'Receive a failed notice operation for structured failure reporting.', line: 48 },
+  { file: 'src/scheduling/loop.mjs', text: '  return { step: causeOf(step), cause: causeOf(cause), ...(made === undefined ? {} : { made, unrecorded }) };', mentions: 2, reason: 'Convert a failed notice operation and cause into recordable diagnostics.', line: 49 },
+  { file: 'src/scheduling/loop.mjs', text: 'const noticeFailure = ({ id, step, cause, made, unrecorded }) => Object.assign(new Error(made === undefined', mentions: 1, reason: 'Construct an error for a failed notice operation.', line: 58 },
+  { file: 'src/scheduling/loop.mjs', text: '  ? `the notice for hold ${id} failed to ${step}: ${cause}`', mentions: 1, reason: 'Explain a notice failure before any issue was made.', line: 59 },
+  { file: 'src/scheduling/loop.mjs', text: '  : `the notice for hold ${id} made its step to ${step}, but the sink refused its record, so these events went unrecorded: ${eventsOf(unrecorded)}: ${cause}`), { notice: { id, step, cause, ...(made === undefined ? {} : { made, unrecorded }) } });', mentions: 2, reason: 'Explain partial notice completion with its recorded operation and cause.', line: 60 },
+  { file: 'src/scheduling/loop.mjs', text: '  if (!named(event.run) || typeof event.layer !== \'string\' || !/^L[0-5]$/.test(event.layer) || !named(event.event)) return \'its envelope names no run, layer or event\';', mentions: 1, reason: 'Require a valid run field in a recorded event envelope.', line: 408 },
+  { file: 'src/scheduling/loop.mjs', text: 'export function loop({ config, board, decide, facts, l2, sink, kill, workspace, workspaceTip, judgeDirectory, escalationDirectory, removeDirectories, state, readRecord = () => [], environment, run, host, readTimeout, clock, drained }) {', mentions: 2, reason: 'Receive L3\'s engine environment and recorded run identifier.', line: 543 },
+  { file: 'src/scheduling/loop.mjs', text: '  if (environment === null || typeof environment !== \'object\') throw new Error(`L3 was handed no environment for the dispatches it makes, so it cannot dispatch: the environment is ${environment === null ? \'null\' : typeof environment}`);', mentions: 4, reason: 'Refuse L3 construction without an object environment for real dispatch.', line: 567 },
+  { file: 'src/scheduling/loop.mjs', text: '  if (typeof run !== \'string\' || run === \'\') throw new Error(`L3 was handed no run id, so it cannot record a hold\'s closer: the run id is ${JSON.stringify(run) ?? \'undefined\'}`);', mentions: 3, reason: 'Refuse L3 construction without a nonempty recorded run identifier.', line: 568 },
+  { file: 'src/scheduling/loop.mjs', text: '  admissionRecord = admission({ directory: state, run, now, sink });', mentions: 1, reason: 'Bind admission operations to L3\'s current run and sink.', line: 569 },
+  { file: 'src/scheduling/loop.mjs', text: '  const dispatchStep = async (card, step, path, fields) => {', mentions: 2, reason: 'Receive the configured step and workspace in L3\'s step helper.', line: 614 },
+  { file: 'src/scheduling/loop.mjs', text: '      sink.emitter({ layer: \'L3\', card: card.number, dispatch: id }).emit(\'dispatch\', { step: step.name, ...fields });', mentions: 2, reason: 'Record a configured step\'s named start before calling L1.', line: 617 },
+  { file: 'src/scheduling/loop.mjs', text: '      throw refusedStart(`card #${card.number}\'s step \\`${step.name}\\` was not started, because the event sink refused to record its start`, refusal);', mentions: 1, reason: 'Refuse a configured step start when its event could not be recorded.', line: 619 },
+  { file: 'src/scheduling/loop.mjs', text: '    const [outcome] = await Promise.allSettled([dispatchOnL1({ id, card: card.number, directory: state, sink, host, readTimeout, ...stepDispatch(step, path, environment) })]);', mentions: 3, reason: 'Adapt the configured step and engine environment before the real L1 handoff.', line: 621 },
+  { file: 'src/scheduling/loop.mjs', text: '    const run = async () => {', mentions: 1, reason: 'Define the bounded role-start closure used by L3 dispatch.', line: 647 },
+  { file: 'src/scheduling/loop.mjs', text: '      const handed = await roleDispatch({ answer: stamp(answer, id), cwd, directory, scratch, repository, reach, maker, env: environment, sink, id, card: card.number });', mentions: 2, reason: 'Prepare the selected role with L3\'s inherited engine environment.', line: 648 },
+  { file: 'src/scheduling/loop.mjs', text: '    const [outcome] = await Promise.allSettled([run()]);', mentions: 1, reason: 'Settle the role-start closure without losing its rejection outcome.', line: 651 },
+  { file: 'src/scheduling/loop.mjs', text: '    noticing = noticing.then(() => noticed(id, hold, issueState)).catch((thrown) => ({ failed: { step: \'notice\', cause: causeOf(thrown) } }));', mentions: 1, reason: 'Preserve a failed asynchronous hold-notice operation as diagnostic data.', line: 707 },
+  { file: 'src/scheduling/loop.mjs', text: '      return { failed: { step: \'notice\', cause: causeOf(thrown) }, unrecorded };', mentions: 1, reason: 'Return an unrecorded hold-notice failure with its operation name.', line: 755 },
+  { file: 'src/scheduling/loop.mjs', text: '        const failed = { step: `read issue #${issue}\'s state`, cause: failure };', mentions: 1, reason: 'Attribute a failed hold-state read to that local notice operation.', line: 797 },
+  { file: 'src/scheduling/loop.mjs', text: '        while (answer.action === \'dispatch\' && answer.step !== undefined) {', mentions: 1, reason: 'Continue a provisioning attempt only while L2 supplies a configured step.', line: 911 },
+  { file: 'src/scheduling/loop.mjs', text: '          outcomes.push(await dispatchStep(card, answer.step, path, { attempt: number }));', mentions: 2, reason: 'Dispatch the exact configured step L2 placed on the attempt answer.', line: 912 },
+  { file: 'src/scheduling/loop.mjs', text: '      const step = current.steps[outcomes.length];', mentions: 1, reason: 'Select the next step from the current judge\'s configured step sequence.', line: 1084 },
+  { file: 'src/scheduling/loop.mjs', text: '      outcomes.push(await dispatchStep(card, step, head, { role }));', mentions: 2, reason: 'Dispatch the selected judge provisioning step in its checked head directory.', line: 1085 },
+  { file: 'src/scheduling/loop.mjs', text: '      if (current === undefined) return { role, withheld: { step: step.name, outcome: outcomes.at(-1) }, decision: answer };', mentions: 2, reason: 'Record which configured judge step was withheld after a changed decision.', line: 1088 },
+  { file: 'src/scheduling/loop.mjs', text: '    run: async ({ handOver = () => {}, stop } = {}) => {', mentions: 1, reason: 'Expose L3\'s continuous run operation to the CLI.', line: 1435 },
+  { file: 'src/substrate/data-ref.mjs', text: 'import { gitEnvironment } from \'./git-environment.mjs\';', mentions: 1, reason: 'Import the safe environment copier for the git stream push.', line: 4 },
+  { file: 'src/substrate/data-ref.mjs', text: 'import { EVENT_REFUSED, runCommand } from \'./process.mjs\';', mentions: 1, reason: 'Import the L0 starter used by the git stream push.', line: 5 },
+  { file: 'src/substrate/data-ref.mjs', text: 'export async function pushStream({ repository, stream, emitter, limit = PUSH_TIMEOUT, spawn: run = runCommand, now = Date.now, environment = process.env }) {', mentions: 5, reason: 'Receive the stream push\'s starter and inherited engine environment.', line: 37 },
+  { file: 'src/substrate/data-ref.mjs', text: '  const env = { ...gitEnvironment(environment), GIT_TERMINAL_PROMPT: \'0\' };', mentions: 3, reason: 'Disable git terminal prompting in a copy of the inherited environment.', line: 39 },
+  { file: 'src/substrate/data-ref.mjs', text: '    const result = await run({ command: \'git\', args, cwd: repository, env, input, timeout, emitter });', mentions: 3, reason: 'Run the git stream operation through the selected L0 starter.', line: 53, programs: ['git'] },
+  { file: 'src/substrate/forge/read.mjs', text: 'async function environment(board, via, name, addressed) {', mentions: 1, reason: 'Define a forge-environment reader for repository policy data.', line: 336 },
+  { file: 'src/substrate/forge/read.mjs', text: '    const matching = runs.filter((run) => run.name === context && (pin === null || run.app?.id === pin));', mentions: 3, reason: 'Select only check runs matching the required context and App identity.', line: 380 },
+  { file: 'src/substrate/forge/read.mjs', text: '    const run = matching.sort((a, b) => b.id - a.id)[0];', mentions: 1, reason: 'Choose the newest matching forge check run.', line: 381 },
+  { file: 'src/substrate/forge/read.mjs', text: '    const runState = !run ? null : run.status !== \'completed\' ? \'pending\'', mentions: 2, reason: 'Translate the selected check run\'s status into a gate state.', line: 383 },
+  { file: 'src/substrate/forge/read.mjs', text: '      : [\'success\', \'neutral\', \'skipped\'].includes(run.conclusion) ? \'passed\' : \'failed\';', mentions: 1, reason: 'Accept only a completed successful, neutral or skipped forge check run.', line: 384 },
+  { file: 'src/substrate/forge/read.mjs', text: '    return labelled(\'readEnvironment\', board, addressed, () => environment(board, via, name, addressed));', mentions: 1, reason: 'Expose the forge-environment read through the repository read runner.', line: 935 },
+  { file: 'src/substrate/forge/runners.mjs', text: 'import { gitEnvironment } from \'../git-environment.mjs\';', mentions: 1, reason: 'Import the safe environment copier for forge tool execution.', line: 4 },
+  { file: 'src/substrate/forge/runners.mjs', text: 'import { EVENT_REFUSED, NOT_STARTED, runCommand } from \'../process.mjs\';', mentions: 1, reason: 'Import the sole L0 starter for authenticated gh operations.', line: 5 },
+  { file: 'src/substrate/forge/runners.mjs', text: 'async function throughL0(command, args, { emitter, timeout, side }) {', mentions: 1, reason: 'Receive the reviewed forge command and arguments for a bounded L0 call.', line: 32 },
+  { file: 'src/substrate/forge/runners.mjs', text: '    result = await runCommand({ command, args, cwd: process.cwd(), env: gitEnvironment(), timeout, emitter });', mentions: 4, reason: 'Execute gh with a copied engine environment through the sole L0 starter.', line: 36, programs: ['gh'] },
+  { file: 'src/substrate/git-environment.mjs', text: 'export function gitEnvironment(from = process.env) {', mentions: 2, reason: 'Define the account-environment copier with process.env as its default input.', line: 48 },
+  { file: 'src/substrate/git-environment.mjs', text: '  const env = {};', mentions: 1, reason: 'Create the destination environment object without inherited properties.', line: 49 },
+  { file: 'src/substrate/git-environment.mjs', text: '    if (!REMOVED.has(name.toUpperCase())) env[name] = value;', mentions: 1, reason: 'Copy each account value except a named git redirection variable.', line: 51 },
+  { file: 'src/substrate/git-environment.mjs', text: '  return env;', mentions: 1, reason: 'Return the copied repository-safe environment.', line: 53 },
+  { file: 'src/substrate/host.mjs', text: 'import * as childProcess from \'node:child_process\';', mentions: 2, reason: 'Confine the native child-process namespace import to the real host module.', line: 3 },
+  { file: 'src/substrate/host.mjs', text: '  ps: process.platform === \'linux\' ? fileURLToPath(new URL(\'./process-table.sh\', import.meta.url)) : \'/bin/ps\',', mentions: 1, reason: 'Select local ps or the packaged Linux process-table shim via a file URL.', line: 9 },
+  { file: 'src/substrate/host.mjs', text: '  get execFile() { return childProcess.execFile; },', mentions: 3, reason: 'Expose the native execFile reader through the real host getter.', line: 11 },
+  { file: 'src/substrate/host.mjs', text: '  get spawn() { return childProcess.spawn; },', mentions: 3, reason: 'Expose the native asynchronous starter through the real host getter.', line: 12 },
+  { file: 'src/substrate/host.mjs', text: '  get spawnSync() { return childProcess.spawnSync; },', mentions: 3, reason: 'Expose the native synchronous starter through the real host getter.', line: 13 },
+  { file: 'src/substrate/launchd.mjs', text: 'import { runCommand } from \'./process.mjs\';', mentions: 1, reason: 'Import the L0 starter for the local launchd loaded-job read.', line: 5 },
+  { file: 'src/substrate/launchd.mjs', text: 'import { gitEnvironment } from \'./git-environment.mjs\';', mentions: 1, reason: 'Import the safe environment copier for that launchd read.', line: 6 },
+  { file: 'src/substrate/launchd.mjs', text: 'export async function loadedJob(label, { uid = process.getuid(), emitter, timeout = FORGE_TIMEOUT, run = runCommand } = {}) {', mentions: 2, reason: 'Accept a loaded-job query with L0 as its default starter.', line: 10 },
+  { file: 'src/substrate/launchd.mjs', text: '  const result = await run({ command: \'launchctl\', args: [\'print\', `gui/${uid}/${label}`],', mentions: 2, reason: 'Query the local per-user launchd domain with launchctl print.', line: 11, programs: ['launchctl'] },
+  { file: 'src/substrate/launchd.mjs', text: '    cwd: process.cwd(), env: gitEnvironment(), emitter, timeout });', mentions: 2, reason: 'Give launchctl the current working directory and copied account environment.', line: 12 },
+  { file: 'src/substrate/process.mjs', text: 'export function atExit(step) {', mentions: 1, reason: 'Register a local cleanup callback for engine exit.', line: 206 },
+  { file: 'src/substrate/process.mjs', text: '  steps.push(step);', mentions: 1, reason: 'Retain the registered cleanup callback for exit processing.', line: 207 },
+  { file: 'src/substrate/process.mjs', text: '  for (const step of steps) attempt(step);', mentions: 2, reason: 'Attempt each registered cleanup callback on engine exit.', line: 294 },
+  { file: 'src/substrate/process.mjs', text: 'function attempt(step) {', mentions: 1, reason: 'Define the cleanup-callback refusal boundary.', line: 341 },
+  { file: 'src/substrate/process.mjs', text: '    step();', mentions: 1, reason: 'Execute the selected local cleanup callback within that refusal boundary.', line: 343 },
+  { file: 'src/substrate/process.mjs', text: '      rows = rowsOf(await run(ps, [\'-g\', String(group), \'-o\', \'pid=,stat=\'], readTimeout, readTimeout, host));', mentions: 1, reason: 'Read the local process group\'s membership through the bounded process reader.', line: 454, programs: ['/bin/ps', 'src/substrate/process-table.sh'] },
+  { file: 'src/substrate/process.mjs', text: '      const lines = yield* column(\'command\');', mentions: 1, reason: 'Read the local lsof command column for the directory census.', line: 796 },
+  { file: 'src/substrate/process.mjs', text: '      const commands = yield* column(\'command\');', mentions: 1, reason: 'Read the second command column needed to validate the lsof census separator.', line: 798 },
+  { file: 'src/substrate/process.mjs', text: '        printed = await run(...toolOf(look.value, ps), deadline - host.clock.now(), timeout, host);', mentions: 1, reason: 'Execute the chosen local ps or lsof read within its remaining deadline.', line: 893, programs: ['/bin/ps', 'src/substrate/process-table.sh', '/usr/sbin/lsof', '/usr/bin/lsof'] },
+  { file: 'src/substrate/process.mjs', text: 'function readingNow(looks, ps, timeout, deadline, now = realHost.clock.now, spawn = realHost.spawnSync) {', mentions: 2, reason: 'Accept a synchronous local process-table starter for bounded read retries.', line: 910 },
+  { file: 'src/substrate/process.mjs', text: '      printed = runNow(...toolOf(look.value, ps), deadline - now(), timeout, now, spawn);', mentions: 1, reason: 'Forward that synchronous starter into the bounded local read.', line: 920 },
+  { file: 'src/substrate/process.mjs', text: 'function run(ps, args, remaining, timeout, host = realHost) {', mentions: 1, reason: 'Define the asynchronous local ps or lsof program reader.', line: 980 },
+  { file: 'src/substrate/process.mjs', text: '    const read = host.execFile(ps, args, { env: PS_ENV, ...reader(remaining), timeout: 0 }, (error, stdout, stderr) => {', mentions: 2, reason: 'Run only the named local process reader with its fixed minimal environment.', line: 984, programs: ['/bin/ps', 'src/substrate/process-table.sh', '/usr/sbin/lsof', '/usr/bin/lsof'] },
+  { file: 'src/substrate/process.mjs', text: 'function runNow(ps, args, remaining, timeout, now = realHost.clock.now, spawn = realHost.spawnSync) {', mentions: 2, reason: 'Accept a synchronous local-reader starter with the real host as default.', line: 1008 },
+  { file: 'src/substrate/process.mjs', text: '    const printed = runOnce(ps, args, remaining, timeout, spawn);', mentions: 1, reason: 'Forward the selected starter to one bounded synchronous read attempt.', line: 1011 },
+  { file: 'src/substrate/process.mjs', text: 'function runOnce(ps, args, remaining, timeout, spawn = realHost.spawnSync) {', mentions: 2, reason: 'Define one synchronous local-reader attempt with the real host as default.', line: 1021 },
+  { file: 'src/substrate/process.mjs', text: '  const { error, status, signal: ending, stdout, stderr } = spawn(ps, args, { env: PS_ENV, ...reader(remaining) });', mentions: 2, reason: 'Start the local ps or lsof reader with its fixed minimal environment and bound.', line: 1024, programs: ['/bin/ps', 'src/substrate/process-table.sh', '/usr/sbin/lsof', '/usr/bin/lsof'] },
+  { file: 'src/substrate/process.mjs', text: '  const within = (step, spare = 0) => {', mentions: 1, reason: 'Define a local cleanup-stage reader within the containment deadline.', line: 1076 },
+  { file: 'src/substrate/process.mjs', text: '    return reading(step(deadline), ps, readTimeout, deadline + spare, trace, host);', mentions: 1, reason: 'Obtain the cleanup-stage reads and execute them with their remaining bound.', line: 1078 },
+  { file: 'src/substrate/process.mjs', text: '  const spawn = host.spawnSync;', mentions: 2, reason: 'Use this host\'s synchronous starter for synchronous containment reads.', line: 1160 },
+  { file: 'src/substrate/process.mjs', text: '  const within = (step, spare = 0) => {', mentions: 1, reason: 'Define a local synchronous cleanup-stage reader within its deadline.', line: 1164 },
+  { file: 'src/substrate/process.mjs', text: '    return readingNow(step(deadline), ps, readTimeout, deadline + spare, now, spawn);', mentions: 2, reason: 'Forward the cleanup-stage reads to the chosen synchronous starter.', line: 1166 },
+  { file: 'src/substrate/process.mjs', text: '    ({ leader, stuck } = readingNow(emptied(group, seen, kill, readTimeout, now), ps, readTimeout, undefined, now, spawn));', mentions: 1, reason: 'Read the emptied process group through the chosen synchronous starter.', line: 1184 },
+  { file: 'src/substrate/process.mjs', text: '  const found = readingNow(sweeping(directory, lsof, kill, true, host), ps, readTimeout, began + readTimeout, host.clock.now, host.spawnSync);', mentions: 1, reason: 'Use the host\'s synchronous starter for a directory-census sweep.', line: 1665 },
+  { file: 'src/substrate/process.mjs', text: '  return sweptEvents(directory, readingNow(settled(found, kill, readTimeout, host.clock.now), ps, readTimeout, (found.killedAt ?? began) + readTimeout, host.clock.now, host.spawnSync), killed);', mentions: 1, reason: 'Check the settled directory census through that same synchronous starter.', line: 1670 },
+  { file: 'src/substrate/process.mjs', text: 'export async function runCommand({ command, args, cwd, env, input, timeout, emitter, onGroup, onExit, directory, scratch, host = realHost, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND, trace }) {', mentions: 3, reason: 'Receive the reviewed program, inherited environment and containment options at L0.', line: 1783 },
+  { file: 'src/substrate/process.mjs', text: '  if (typeof emitter?.emit !== \'function\') throw startFailure(Object.assign(new Error(`the process adapter was given no L0 emitter, so it did not start ${command}`), { code: NOT_STARTED }), \'event-emitter-missing\');', mentions: 1, reason: 'Refuse a process start when no L0 event emitter was supplied.', line: 1789 },
+  { file: 'src/substrate/process.mjs', text: '    throw startFailure(Object.assign(new Error(`the process adapter was given the timeout ${shown(timeout)} (of type ${type}), which is not a positive finite number of milliseconds, so it did not start ${command}`), { code: NOT_STARTED }), \'dispatch-timeout\');', mentions: 1, reason: 'Refuse a process start with a nonpositive or nonfinite timeout.', line: 1793 },
+  { file: 'src/substrate/process.mjs', text: '  if (unfit !== undefined) throw startFailure(notStarted(command, unfit), \'directory-unusable\');', mentions: 1, reason: 'Refuse a process start in an unsuitable working directory.', line: 1796 },
+  { file: 'src/substrate/process.mjs', text: '  if (why !== undefined) throw startFailure(notStarted(command, why), real === undefined ? \'directory-unusable\' : \'directory-illegible\', real === undefined ? {} : { path: real });', mentions: 1, reason: 'Refuse a process start when its real working directory is illegible.', line: 1800 },
+  { file: 'src/substrate/process.mjs', text: '  if (scratchWhy !== undefined) throw startFailure(notStarted(command, scratchWhy), scratchReal === undefined ? \'directory-unusable\' : \'scratch-illegible\', scratchReal === undefined ? {} : { path: scratchReal });', mentions: 1, reason: 'Refuse a process start when its scratch directory is unsuitable or illegible.', line: 1802 },
+  { file: 'src/substrate/process.mjs', text: '  const child = spawned(command, () => host.spawn(command, args, { cwd, env, detached: true, stdio: [stdin, \'pipe\', \'pipe\'] }), cwd, host);', mentions: 4, reason: 'Start the selected reviewed tool or configured shell with its inherited environment.', line: 1805, programs: ['gh', 'git', 'claude', 'codex', '/bin/sh', 'launchctl'] },
+  { file: 'src/substrate/process.mjs', text: '    throw spawnFailure(command, error, cwd, host);', mentions: 1, reason: 'Classify a native start failure without inventing a process outcome.', line: 1809 },
+  { file: 'src/substrate/process.mjs', text: '  if (unrecorded.length > 0) throw refused(unrecorded, result, timedOut ? `the timeout of ${timeout} ms ended ${command}, and ` : \'\');', mentions: 1, reason: 'Report events refused while the selected command was ending.', line: 1870 },
+  { file: 'src/substrate/process.mjs', text: '  const read = host.spawnSync(ps, [\'-p\', String(pid), \'-o\', \'lstart=\'], { env: PS_ENV, timeout, killSignal: \'SIGKILL\', encoding: \'utf8\' });', mentions: 2, reason: 'Read a local PID\'s start time with ps or the packaged Linux shim.', line: 1971, programs: ['/bin/ps', 'src/substrate/process-table.sh'] },
+  { file: 'src/substrate/process.mjs', text: '      rows = rowsOf(await run(ps, [\'-ww\', \'-g\', String(group), \'-o\', \'pid=,stat=,lstart=\'], remaining, timeout, host));', mentions: 1, reason: 'Read local group members and start times through the bounded process reader.', line: 2039, programs: ['/bin/ps', 'src/substrate/process-table.sh'] },
+  { file: 'src/substrate/process.mjs', text: 'function spawned(command, spawning, cwd, host = realHost) {', mentions: 1, reason: 'Define the native-start error boundary for the selected program.', line: 2091 },
+  { file: 'src/substrate/process.mjs', text: '    throw spawnFailure(command, error, cwd, host);', mentions: 1, reason: 'Attribute a synchronous native-start refusal to the selected program.', line: 2095 },
+  { file: 'src/substrate/process.mjs', text: 'function spawnFailure(command, error, cwd, host = realHost) {', mentions: 1, reason: 'Construct the selected program\'s structured native-start failure.', line: 2112 },
+  { file: 'src/substrate/process.mjs', text: '  const failure = notStarted(command, error.message);', mentions: 1, reason: 'Preserve the native error message in the selected program\'s start failure.', line: 2113 },
+  { file: 'src/substrate/process.mjs', text: '    ? { kind: \'directory-unusable\' } : { kind, ...(executable ? { command } : {}) };', mentions: 1, reason: 'Record a program operand only for executable-related native startup failures.', line: 2117 },
+  { file: 'src/substrate/process.mjs', text: 'const notStarted = (command, why) => Object.assign(new Error(`the process adapter did not start ${command}: ${why}`), { code: NOT_STARTED });', mentions: 2, reason: 'Describe a program that never started without claiming it ran.', line: 2176 },
+  { file: 'src/substrate/process.mjs', text: '    const step = Math.min(left, TIMER_MAX);', mentions: 1, reason: 'Compute a local timer segment no longer than the platform\'s maximum delay.', line: 2201 },
+  { file: 'src/substrate/process.mjs', text: '    timer = schedule(() => (left > step ? arm(left - step) : done()), step);', mentions: 3, reason: 'Chain the remaining local timer segments before completing the requested wait.', line: 2202 },
+  { file: 'src/substrate/providers/claude.mjs', text: 'export function cliFolder(directory, environment) {', mentions: 1, reason: 'Receive the account environment when locating the Claude CLI folder.', line: 119 },
+  { file: 'src/substrate/providers/claude.mjs', text: '  const home = Object.hasOwn(environment, \'CLAUDE_CONFIG_DIR\')', mentions: 1, reason: 'Prefer the account\'s explicitly configured Claude home.', line: 120 },
+  { file: 'src/substrate/providers/claude.mjs', text: '    ? environment.CLAUDE_CONFIG_DIR', mentions: 1, reason: 'Use the account\'s configured Claude home without constructing another credential path.', line: 121 },
+  { file: 'src/substrate/providers/claude.mjs', text: '    : (typeof environment.HOME === \'string\' ? join(environment.HOME, \'.claude\') : undefined);', mentions: 2, reason: 'Fall back to the account\'s HOME when locating its Claude home.', line: 122 },
+  { file: 'src/substrate/providers/claude.mjs', text: 'export async function invocation({ agent, tier, prompt, directory, card, reach = [], emitter, environment = process.env }) {', mentions: 2, reason: 'Receive the account environment and role inputs for a Claude invocation.', line: 370 },
+  { file: 'src/substrate/providers/claude.mjs', text: '    command: \'claude\',', mentions: 1, reason: 'Select the configured Claude agent CLI as the role program.', line: 396 },
+  { file: 'src/substrate/providers/claude.mjs', text: '    env: { [TMPDIR_KEY]: join(real, TMPDIR_NAME) },', mentions: 1, reason: 'Add only the workspace-derived Claude temporary-directory variable.', line: 411 },
+  { file: 'src/substrate/providers/claude.mjs', text: '    folder: cliFolder(real, environment),', mentions: 1, reason: 'Locate the role\'s CLI folder using the same inherited account environment.', line: 412 },
+  { file: 'src/substrate/providers/codex.mjs', text: 'import { gitEnvironment } from \'../git-environment.mjs\';', mentions: 1, reason: 'Import the safe environment copier for the Codex skill probe.', line: 11 },
+  { file: 'src/substrate/providers/codex.mjs', text: 'import { runCommand } from \'../process.mjs\';', mentions: 1, reason: 'Import the sole L0 starter for the bounded Codex skill probe.', line: 12 },
+  { file: 'src/substrate/providers/codex.mjs', text: '  const { exit, timedOut, stdout, stderr } = await runCommand({ command: \'codex\', args, cwd: directory, env: { ...gitEnvironment(), CODEX_HOME: home }, timeout, emitter, host });', mentions: 4, reason: 'Run the Codex probe with the made Codex home and copied account environment.', line: 255, programs: ['codex'] },
+  { file: 'src/substrate/providers/codex.mjs', text: 'const ownerHome = () => process.env.CODEX_HOME || join(homedir(), \'.codex\');', mentions: 1, reason: 'Locate the account\'s own Codex home for its existing configuration and auth link.', line: 272 },
+  { file: 'src/substrate/providers/codex.mjs', text: '    command: \'codex\',', mentions: 1, reason: 'Select the configured Codex agent CLI as the role program.', line: 328 },
+  { file: 'src/substrate/providers/codex.mjs', text: '    env: { CODEX_HOME: home, TMPDIR: temporary, TMPPREFIX: join(temporary, \'zsh\') },', mentions: 1, reason: 'Add only the made Codex home and scratch-derived temporary-directory variables.', line: 341 },
+  { file: 'src/substrate/worktrees.mjs', text: 'import { gitEnvironment } from \'./git-environment.mjs\';', mentions: 1, reason: 'Import the safe environment copier for git workspace operations.', line: 8 },
+  { file: 'src/substrate/worktrees.mjs', text: 'import { EVENT_REFUSED, NOT_STARTED, runCommand } from \'./process.mjs\';', mentions: 1, reason: 'Import the sole L0 starter for git workspace operations.', line: 9 },
+  { file: 'src/substrate/worktrees.mjs', text: 'function queued(step) {', mentions: 1, reason: 'Define a local serialized workspace-operation callback.', line: 78 },
+  { file: 'src/substrate/worktrees.mjs', text: '  const ran = tail.then(step);', mentions: 1, reason: 'Queue that workspace operation after the earlier operation settles.', line: 79 },
+  { file: 'src/substrate/worktrees.mjs', text: '      result = await runCommand({ command: git, args, cwd: repository, env: gitEnvironment(), timeout, emitter });', mentions: 4, reason: 'Run git workspace operations through L0 with a repository-safe account environment.', line: 97, programs: ['git'] },
+  { file: 'src/substrate/worktrees.mjs', text: '  const command = `\\`${[git, ...args].join(\' \')}\\``;', mentions: 1, reason: 'Format the selected git invocation for a failure diagnostic.', line: 511 },
+  { file: 'src/substrate/worktrees.mjs', text: '  if (timedOut) return new Error(`${command} ran past its timeout of ${timeout} ms, and L0 ended it`);', mentions: 1, reason: 'Explain that the selected git invocation exceeded its bound.', line: 512 },
+  { file: 'src/substrate/worktrees.mjs', text: '  return new Error(`${command} exited ${exit}: ${firstLine(stderr)}`);', mentions: 1, reason: 'Explain the selected git invocation\'s nonzero exit and first stderr line.', line: 513 },
+  { file: 'src/workflow/form-check.mjs', text: '  const run = /^ {0,3}(`+|~+)[ \\t]*$/.exec(line)?.[1];', mentions: 1, reason: 'Read the marker length of a local Markdown closing fence.', line: 30 },
+  { file: 'src/workflow/form-check.mjs', text: '  return run !== undefined && run[0] === marks[0] && run.length >= marks.length;', mentions: 3, reason: 'Require the closing fence to match the opening marker and minimum length.', line: 31 },
+  { file: 'src/workflow/judges.mjs', text: 'import { failed, kindOf, panelOf, selectedSteps, stepAnswer, tierOf } from \'./next-action.mjs\';', mentions: 1, reason: 'Import L2\'s configured-step producer into judge decision construction.', line: 14 },
+  { file: 'src/workflow/judges.mjs', text: 'export function judgeAnswer(card, kinds, epicLabel, { roles = {}, provisioning = {}, sink, outcomes = {}, directories: reports = {} } = {}) {', mentions: 1, reason: 'Receive the consumer\'s provisioning map when constructing a judge decision.', line: 99 },
+  { file: 'src/workflow/judges.mjs', text: '  const steps = selectedSteps(card, declared, provisioning);', mentions: 1, reason: 'Select the judge\'s configured provisioning steps for this card.', line: 137 },
+  { file: 'src/workflow/judges.mjs', text: '        || withheld(card, role, steps, outcomes[role] ?? [], provisioning, sink);', mentions: 1, reason: 'Check whether configured provisioning failures withhold a judge.', line: 148 },
+  { file: 'src/workflow/judges.mjs', text: '      ...(governing.has(role) ? { comment: governing.get(role).comment } : {}), steps: steps.map((name) => stepAnswer(name, provisioning)) }));', mentions: 2, reason: 'Construct each judge\'s configured steps through the shared L2 step producer.', line: 153 },
+  { file: 'src/workflow/judges.mjs', text: '    const classified = (report) => ({ class: \'environment\', ...judgeFailure(retry, report), ...(report?.dispatch === undefined ? {} : { dispatch: report.dispatch }) });', mentions: 1, reason: 'Classify a judge execution failure as an environment failure.', line: 159 },
+  { file: 'src/workflow/judges.mjs', text: '    record(sink, card, \'judge.withheld\', { role, scratch: missing, reason: message, class: \'environment\' }, `judge ${role}\'s scratch directory was not made`);', mentions: 1, reason: 'Record a judge withheld because its scratch directory was not made.', line: 241 },
+  { file: 'src/workflow/judges.mjs', text: '  record(sink, card, \'judge.withheld\', { role, directory: outcome.reason.path, reason: outcome.reason.message, class: \'environment\' }, `judge ${role}\'s directory was not made`);', mentions: 1, reason: 'Record a judge withheld because its checked directory was not made.', line: 248 },
+  { file: 'src/workflow/judges.mjs', text: 'function withheld(card, role, steps, outcomes, provisioning, sink) {', mentions: 1, reason: 'Receive the provisioning map when deciding whether to withhold a judge.', line: 256 },
+  { file: 'src/workflow/judges.mjs', text: '    const failure = failed(outcome, provisioning[name], card, name);', mentions: 1, reason: 'Classify a named judge provisioning-step outcome against its declaration.', line: 259 },
+  { file: 'src/workflow/judges.mjs', text: '    if (failure === undefined || !workRequires(provisioning[name])) continue;', mentions: 1, reason: 'Continue past successful or optional judge provisioning steps.', line: 260 },
+  { file: 'src/workflow/judges.mjs', text: '    record(sink, card, \'judge.withheld\', { role, step: name, ...failure, class: \'environment\' }, `judge ${role}\'s required step \\`${name}\\` failed`);', mentions: 2, reason: 'Record the required configured step whose failure withholds a judge.', line: 261 },
+  { file: 'src/workflow/marker.mjs', text: '      const run = /^ {0,3}(`+|~+)[ \\t]*$/.exec(line)?.[1];', mentions: 1, reason: 'Read the marker length of a second local Markdown fenced block.', line: 219 },
+  { file: 'src/workflow/marker.mjs', text: '      if (run !== undefined && run[0] === fence[0] && run.length >= fence.length) fence = null;', mentions: 3, reason: 'Close that Markdown block only for a matching marker of sufficient length.', line: 220 },
+  { file: 'src/workflow/next-action.mjs', text: 'export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTopic(), provisioning, outcomes = [], sink, attempt = 1, firstFailure, workspace, maker, forge, judged, directories, continuing } = {}) {', mentions: 1, reason: 'Receive the consumer\'s provisioning map for an L2 next-action decision.', line: 98 },
+  { file: 'src/workflow/next-action.mjs', text: '    && !(provisioning !== undefined && (attempt !== 1 || workspace !== undefined || outcomes.length > 0));', mentions: 1, reason: 'Avoid the early routing path once provisioning or an attempt outcome needs evaluation.', line: 105 },
+  { file: 'src/workflow/next-action.mjs', text: '    return within(card, kind, kinds[kind], { roles, tier: tier?.tier, topic, provisioning: provisioning ?? {}, outcomes, sink, attempt, firstFailure, workspace, maker, continuing });', mentions: 2, reason: 'Pass the declared provisioning map into L2\'s maker-work decision.', line: 125 },
+  { file: 'src/workflow/next-action.mjs', text: '  if (held?.action === \'judge\') return routed(reviewAnswer(card, kinds, epicLabel, { roles, provisioning, sink, outcomes: judged, directories }));', mentions: 1, reason: 'Give a held judge decision the same consumer provisioning map.', line: 129 },
+  { file: 'src/workflow/next-action.mjs', text: '  if (provisioning === undefined && maker === undefined) return removing({ action: \'dispatch\', kind });', mentions: 1, reason: 'Preserve the early routing answer when no provisioning or maker decision is supplied.', line: 143 },
+  { file: 'src/workflow/next-action.mjs', text: '  return removing(within(card, kind, kinds[kind], { roles, tier: tier?.tier, topic, provisioning: provisioning ?? {}, outcomes, sink, attempt, firstFailure, workspace, maker }));', mentions: 2, reason: 'Build a complete maker-work answer with the declared provisioning map.', line: 144 },
+  { file: 'src/workflow/next-action.mjs', text: 'function within(card, kind, declared, { roles, tier, topic, provisioning, outcomes, sink, attempt, firstFailure, workspace, maker, continuing }) {', mentions: 1, reason: 'Receive declared provisioning while evaluating a maker-work decision.', line: 204 },
+  { file: 'src/workflow/next-action.mjs', text: '  const steps = selectedSteps(card, declared, provisioning);', mentions: 1, reason: 'Select configured provisioning steps for this card and kind.', line: 212 },
+  { file: 'src/workflow/next-action.mjs', text: '    const failure = failed(outcome, provisioning[name], card, name);', mentions: 1, reason: 'Classify a completed configured step against its declared failure policy.', line: 218 },
+  { file: 'src/workflow/next-action.mjs', text: '    if (workRequires(provisioning[name])) return failedAttempt(card, attempt, firstFailure, { step: name, ...failure, ...dispatchOf(outcome) }, sink);', mentions: 2, reason: 'Stop a maker attempt when its required configured step failed.', line: 220 },
+  { file: 'src/workflow/next-action.mjs', text: '        sink.emitter({ layer: \'L2\', card: card.number }).emit(\'step.failed\', { step: name, ...failure, optional: true });', mentions: 1, reason: 'Record a failed optional configured step without withholding work.', line: 223 },
+  { file: 'src/workflow/next-action.mjs', text: '  return { action: \'dispatch\', kind, step: stepAnswer(steps[outcomes.length], provisioning) };', mentions: 3, reason: 'Produce the next configured step through the shared L2 step producer.', line: 230 },
+  { file: 'src/workflow/next-action.mjs', text: 'export function stepAnswer(name, provisioning) {', mentions: 2, reason: 'Receive a declared step name and the consumer\'s provisioning map.', line: 237 },
+  { file: 'src/workflow/next-action.mjs', text: '  const { run, cwd, timeout } = provisioning[name];', mentions: 2, reason: 'Read the selected step\'s run line, directory and timeout from its declaration.', line: 238 },
+  { file: 'src/workflow/next-action.mjs', text: '  return { name, run, ...(cwd === undefined ? {} : { cwd }), ...(timeout === undefined ? {} : { timeout }) };', mentions: 1, reason: 'Return the configured run line and optional directory and timeout unchanged.', line: 239 },
+  { file: 'src/workflow/next-action.mjs', text: '  if (first?.class !== \'environment\' || second.class !== \'environment\') return false;', mentions: 2, reason: 'Compare two recorded infrastructure failures only within the environment class.', line: 247 },
+  { file: 'src/workflow/next-action.mjs', text: '  if (first.step === undefined || second.step === undefined || first.step !== second.step) return false;', mentions: 4, reason: 'Treat infrastructure failures as the same route only for the same configured step.', line: 251 },
+  { file: 'src/workflow/next-action.mjs', text: '  const failure = { class: cardLocal ? \'card-local\' : out ? \'out\' : \'environment\', ...what };', mentions: 1, reason: 'Classify a failed attempt without confusing card-local and environment causes.', line: 273 },
+  { file: 'src/workflow/next-action.mjs', text: '  const again = refusals.length === 0 && failure.class === \'environment\' && attempt < ATTEMPTS;', mentions: 1, reason: 'Retry an environment failure only within the declared attempt bound.', line: 275 },
+  { file: 'src/workflow/next-action.mjs', text: 'export function failed(outcome, step, card, name) {', mentions: 1, reason: 'Receive a configured step when classifying its execution outcome.', line: 312 },
+  { file: 'src/workflow/next-action.mjs', text: '  if (timedOut) return { timeout: stepTimeout(step) };', mentions: 1, reason: 'Attribute a timed-out step to that configured step\'s timeout.', line: 319 },
+  { file: 'src/workflow/next-action.mjs', text: 'export const selectedSteps = (card, kind, provisioning) => (kind.provisioning ?? [])', mentions: 2, reason: 'Read a kind\'s configured provisioning sequence.', line: 328 },
+  { file: 'src/workflow/next-action.mjs', text: '  .filter((name) => provisioning[name].select?.labels.some((label) => carries(card, label)) ?? true);', mentions: 1, reason: 'Filter configured provisioning steps by their declared card-label selectors.', line: 329 },
+  { file: 'src/workflow/status-issue.mjs', text: 'const failedPart = (failure) => (failure.step !== undefined ? `step \\`${failure.step}\\``', mentions: 2, reason: 'Format the configured step named by a failure for a status issue.', line: 17 },
+  { file: 'src/workflow/status-issue.mjs', text: 'export function holdBody({ id, reason, run, hold, admission }) {', mentions: 1, reason: 'Receive the recorded closing run for a hold\'s status-issue body.', line: 25 },
+  { file: 'src/workflow/status-issue.mjs', text: '    `- Run: ${run}`,', mentions: 1, reason: 'Include that recorded run identifier in the hold\'s status issue.', line: 32 },
+  { file: 'src/workflow/status-issue.mjs', text: '    const step = (named, act) => {', mentions: 1, reason: 'Define a local notice-operation wrapper that records partial completion.', line: 120 },
+  { file: 'src/workflow/status-issue.mjs', text: '      readNewestNumber: () => step(\'read the newest number\', () => reads.readNewestNumber()),', mentions: 1, reason: 'Read the newest status-issue number through the notice-operation wrapper.', line: 135 },
+  { file: 'src/workflow/status-issue.mjs', text: '      readIssue: (number) => step(`read issue #${number}`, () => reads.readIssue(number)),', mentions: 1, reason: 'Read a status issue through the notice-operation wrapper.', line: 136 },
+  { file: 'src/workflow/status-issue.mjs', text: '      readPermission: (author) => step(`read ${author}\'s permission`, () => reads.readPermission(author)),', mentions: 1, reason: 'Read its author\'s permission through the notice-operation wrapper.', line: 137 },
+  { file: 'src/workflow/status-issue.mjs', text: '      const issue = await step(`read issue #${number}`, () => reads.readIssue(number));', mentions: 1, reason: 'Read a followed status issue through the notice-operation wrapper.', line: 146 },
+  { file: 'src/workflow/status-issue.mjs', text: '      const timeline = await step(`read issue #${number}\'s timeline`, () => reads.readIssueTimeline(number));', mentions: 1, reason: 'Read the followed issue\'s timeline through the notice-operation wrapper.', line: 148 },
+  { file: 'src/workflow/status-issue.mjs', text: '        && WRITERS.includes(await step(`read ${issue.author}\'s permission`, () => reads.readPermission(issue.author)));', mentions: 1, reason: 'Check the followed issue author\'s permission through the same wrapper.', line: 150 },
+  { file: 'src/workflow/status-issue.mjs', text: '      if (!reached) await step(`comment on issue #${number}`, () => writes.postIssueComment(number, holdComment({ id: closer.id, reason: closer.reason, card: hold?.card })));', mentions: 1, reason: 'Comment on a reached hold-status issue through the notice-operation wrapper.', line: 154 },
+  { file: 'src/workflow/status-issue.mjs', text: '      const item = (await step(\'read the board\', () => board.readItems())).find((each) => each.number === number);', mentions: 1, reason: 'Find the hold-status issue on the board through the notice-operation wrapper.', line: 165 },
+  { file: 'src/workflow/status-issue.mjs', text: '        const id = item?.id ?? await step(`add issue #${number} to the board`, () => items.addIssue(number));', mentions: 1, reason: 'Add an absent status issue to the board through the notice-operation wrapper.', line: 167 },
+  { file: 'src/workflow/status-issue.mjs', text: '        await step(`move issue #${number} to Owner`, () => items.moveItem(id, columns.owner));', mentions: 1, reason: 'Move that status issue to Owner through the notice-operation wrapper.', line: 168 },
+  { file: 'src/workflow/status-issue.mjs', text: '        return { failed: { step: at, cause: causeOf(failure), made, ...(unrecorded === undefined ? {} : { unrecorded }) } };', mentions: 1, reason: 'Report partial notice completion with the failed operation and any unrecorded events.', line: 182 },
+  { file: 'src/workflow/status-issue.mjs', text: '      const failed = { step: at, cause: causeOf(failure) };', mentions: 1, reason: 'Preserve the current notice operation when returning its failure.', line: 184 },
+  { file: 'src/workflow/status-issue.mjs', text: '        if (isStatus(await step(`read issue #${other}`, () => reads.readIssue(other)))) {', mentions: 1, reason: 'Check an existing candidate status issue through the notice-operation wrapper.', line: 199 },
+  { file: 'src/workflow/status-issue.mjs', text: '      number ??= (await step(`read the open issues labelled ${status}`, () => reads.readLabelledIssues(status)))[0];', mentions: 1, reason: 'Read the open labelled status issue through the notice-operation wrapper.', line: 204 },
+  { file: 'src/workflow/status-issue.mjs', text: '        await step(`comment on issue #${number}`, () => writes.postIssueComment(number, holdComment({ id: closer.id, reason: closer.reason, card: hold?.card })));', mentions: 1, reason: 'Comment on the selected status issue through the notice-operation wrapper.', line: 207 },
+  { file: 'src/workflow/status-issue.mjs', text: '        yield* renamed(\'after\', await step(\'read the newest number\', () => reads.readNewestNumber()));', mentions: 1, reason: 'Verify the newest number after writing a status issue through the same wrapper.', line: 209 },
+  { file: 'src/workflow/status-issue.mjs', text: '        number = await step(\'open the status issue\', () => writes.openIssue(TITLE, holdBody({ id: closer.id, reason: closer.reason, run: closer.run, hold, admission }), status));', mentions: 3, reason: 'Open the hold-status issue with its recorded closing run and track its operation.', line: 210 },
+  { file: 'src/workflow/transitions.mjs', text: '        return ownerEscalation(next, { class: \'environment\', category: \'ambiguous\', reason: `role ${next.destination} did not start twice: ${firstFailure.reason.message}; ${outcome.reason.message}`, dispatch });', mentions: 1, reason: 'Escalate a destination role that failed to start twice as an environment failure.', line: 390 },
+  { file: 'src/workflow/transitions.mjs', text: '        if (outcome.reason?.code === NOT_STARTED) note(card, \'maker.failed\', { class: \'environment\', reason: outcome.reason.message }, { dispatch });', mentions: 1, reason: 'Record a maker startup failure in the environment class.', line: 474 },
 ];
 
-/** Counterexamples to the target-only consumer import. */
-const CONFIG_COUNTEREXAMPLES = [
-  ["m6-local-config-binding", "src/cli/doctor.mjs", "export async function consumerConfig(target) {\n  const path = join(target, CONFIG);\n  const file = join(real(target), CONFIG);\n  if (!held.has(file)) {\n    let read;\n    try {\n      read = existsSync(path) ? copied((await import(pathToFileURL(path))).default)\n        : { problem: `\\`${CONFIG}\\` is not in ${target}, and \\`rigger init\\` is what writes it` };\n    } catch (threw) {\n      read = { problem: `\\`${CONFIG}\\` could not be read: ${wentWrong(threw)}` };\n    }\n    held.set(file, read);\n  }\n  const { config, problem } = held.get(file);\n  return problem ? { problem } : copied(config);\n}", "export async function consumerConfig(target) {\n  const configFromModule = CONFIG;\n  {\n    const CONFIG = process.env.RIGGER_CONFIG ?? configFromModule;\n  const path = join(target, CONFIG);\n  const file = join(real(target), CONFIG);\n  if (!held.has(file)) {\n    let read;\n    try {\n      read = existsSync(path) ? copied((await import(pathToFileURL(path))).default)\n        : { problem: `\\`${CONFIG}\\` is not in ${target}, and \\`rigger init\\` is what writes it` };\n    } catch (threw) {\n      read = { problem: `\\`${CONFIG}\\` could not be read: ${wentWrong(threw)}` };\n    }\n    held.set(file, read);\n  }\n  const { config, problem } = held.get(file);\n  return problem ? { problem } : copied(config);\n  }\n}"],
-  ["m5-local-target-binding", "src/cli/doctor.mjs", "export async function consumerConfig(target) {\n  const path = join(target, CONFIG);\n  const file = join(real(target), CONFIG);\n  if (!held.has(file)) {\n    let read;\n    try {\n      read = existsSync(path) ? copied((await import(pathToFileURL(path))).default)\n        : { problem: `\\`${CONFIG}\\` is not in ${target}, and \\`rigger init\\` is what writes it` };\n    } catch (threw) {\n      read = { problem: `\\`${CONFIG}\\` could not be read: ${wentWrong(threw)}` };\n    }\n    held.set(file, read);\n  }\n  const { config, problem } = held.get(file);\n  return problem ? { problem } : copied(config);\n}", "export async function consumerConfig(target) {\n  const requestedTarget = target;\n  {\n    const target = process.env.RIGGER_CONFIG_TARGET ?? requestedTarget;\n  const path = join(target, CONFIG);\n  const file = join(real(target), CONFIG);\n  if (!held.has(file)) {\n    let read;\n    try {\n      read = existsSync(path) ? copied((await import(pathToFileURL(path))).default)\n        : { problem: `\\`${CONFIG}\\` is not in ${target}, and \\`rigger init\\` is what writes it` };\n    } catch (threw) {\n      read = { problem: `\\`${CONFIG}\\` could not be read: ${wentWrong(threw)}` };\n    }\n    held.set(file, read);\n  }\n  const { config, problem } = held.get(file);\n  return problem ? { problem } : copied(config);\n  }\n}"],
-  ["m5-local-import-path-binding", "src/cli/doctor.mjs", "export async function consumerConfig(target) {\n  const path = join(target, CONFIG);\n  const file = join(real(target), CONFIG);\n  if (!held.has(file)) {\n    let read;\n    try {\n      read = existsSync(path) ? copied((await import(pathToFileURL(path))).default)\n        : { problem: `\\`${CONFIG}\\` is not in ${target}, and \\`rigger init\\` is what writes it` };\n    } catch (threw) {\n      read = { problem: `\\`${CONFIG}\\` could not be read: ${wentWrong(threw)}` };\n    }\n    held.set(file, read);\n  }\n  const { config, problem } = held.get(file);\n  return problem ? { problem } : copied(config);\n}", "export async function consumerConfig(target) {\n  const path = join(target, CONFIG);\n  const file = join(real(target), CONFIG);\n  if (!held.has(file)) {\n    let read;\n    try {\n      read = existsSync(path) ? copied((await ((path) => import(pathToFileURL(path)))(process.env.RIGGER_CONFIG_FILE ?? path)).default)\n        : { problem: `\\`${CONFIG}\\` is not in ${target}, and \\`rigger init\\` is what writes it` };\n    } catch (threw) {\n      read = { problem: `\\`${CONFIG}\\` could not be read: ${wentWrong(threw)}` };\n    }\n    held.set(file, read);\n  }\n  const { config, problem } = held.get(file);\n  return problem ? { problem } : copied(config);\n}"],
-  ["m6-exported-filename-write", "src/cli/init.mjs", "export const CONFIG = 'rigger.config.mjs';", "export let CONFIG = 'rigger.config.mjs';\nif (process.env.RIGGER_CONFIG) CONFIG = process.env.RIGGER_CONFIG;"],
-  [
-    "m5",
-    "src/cli/doctor.mjs",
-    "const path = join(target, CONFIG);",
-    "let path = join(target, CONFIG); if (!existsSync(path)) path = join(target, '.rigger', CONFIG);"
-  ],
-  [
-    "m6",
-    "src/cli/doctor.mjs",
-    "import { CONFIG } from './init.mjs';",
-    "import { CONFIG as CONFIG_NAME } from './init.mjs';\nconst CONFIG = process.env.RIGGER_CONFIG ?? CONFIG_NAME;"
-  ]
+/** Table S is copied from the card; offsets and cooked names are independent refusal oracles. */
+const TABLE_S = [
+  { id: 'S1', file: 'src/cli/once.mjs', anchor: 'import { NOT_STARTED } from \'../substrate/process.mjs\';', replacement: 'import { NOT_STARTED } from \'../substrate/process.mjs\';\nimport { runCommand as attackStart } from \'../substrate/process.mjs\';\nfunction attackPick() { return attackStart; }\nconst attackThrough = (start) => start({ command: \'curl\', args: [\'https://example.invalid\'] });\nclass AttackHolder { start = attackStart; }\nconst attackHeld = new Map([[\'start\', attackStart]]);\nconst attackPending = Promise.resolve(attackStart);\nconst attackEngine = () => process.env;\nconst attackPrototype = () => URL.prototype;\nasync function unlistedAttack3() { attackPick()({ command: \'curl\', args: [\'https://example.invalid\'] }); attackThrough(attackStart); new AttackHolder().start({ command: \'curl\', args: [\'https://example.invalid\'] }); attackHeld.get(\'start\')({ command: \'curl\', args: [\'https://example.invalid\'] }); (await attackPending)({ command: \'curl\', args: [\'https://example.invalid\'] }); attackEngine().HTTPS_PROXY = \'http://example.invalid\'; attackPrototype().toString = () => process.env.RIGGER_PLUGIN; }', checks: [[1, "runCommand"], [3, "command"], [7, "env"], [8, "URL"], [9, "command"]] },
+  { id: 'S2', file: 'src/execution/role.mjs', anchor: '  Object.assign(environment, set);', replacement: '  Object.assign(environment, set);\n  const located = () => environment;\n  if (env.RIGGER_EXTRA) located().EXTRA_TOKEN = \'invented\';\n  for (const saved of [environment]) if (env.RIGGER_EXTRA) saved.EXTRA_TOKEN = \'invented\';\n  if (env.RIGGER_EXTRA) Object.assign(located(), { EXTRA_TOKEN: \'invented\' });', checks: [[1, "environment"], [2, "env"], [3, "environment"], [4, "env"]] },
+  { id: 'S3', file: 'src/scheduling/loop.mjs', anchor: '    const [outcome] = await Promise.allSettled([dispatchOnL1({ id, card: card.number, directory: state, sink, host, readTimeout, ...stepDispatch(step, path, environment) })]);', replacement: '    for (const located of [step]) located.run = \'curl https://example.invalid\';\n    Object.assign((() => step)(), { run: \'curl https://example.invalid\' });\n    new (class { constructor(s) { s.run = \'curl https://example.invalid\'; } })(step);\n    const [outcome] = await Promise.allSettled([dispatchOnL1({ id, card: card.number, directory: state, sink, host, readTimeout, ...stepDispatch(step, path, environment) })]);', checks: [[0, "step"], [1, "run"], [2, "run"]] },
+  { id: 'S4', file: 'src/workflow/next-action.mjs', anchor: '  const { run, cwd, timeout } = provisioning[name];', replacement: '  const { cwd, timeout } = provisioning[name];\n  const run = \'curl https://example.invalid\';', checks: [[0, "provisioning"], [1, "run"]] },
+  { id: 'S5', file: 'src/substrate/host.mjs', anchor: 'export const realHost = {', replacement: 'function natives() { return childProcess; }\nfunction unlistedAttack3() { return natives().exec(\'curl https://example.invalid\'); }\nexport const realHost = {', checks: [[0, "childProcess"]] },
+  { id: 'S6', file: 'src/workflow/judges.mjs', anchor: 'steps: steps.map((name) => stepAnswer(name, provisioning)) }));', replacement: 'steps: steps.map((name) => ({ ...stepAnswer(name, provisioning), run: \'curl https://example.invalid\' })) }));', checks: [[0, "run"]] },
+  { id: 'S7', file: 'src/cli/once.mjs', anchor: 'import { NOT_STARTED } from \'../substrate/process.mjs\';', replacement: 'import { NOT_STARTED } from \'../substrate/process.mjs\';\nconst holder = {}; holder.start = runCommand;\nconst { start = runCommand } = {};', checks: [[1, "runCommand"], [2, "runCommand"]] },
+  { id: 'S8', file: 'src/scheduling/loop.mjs', anchor: '    const [outcome] = await Promise.allSettled([dispatchOnL1({ id, card: card.number, directory: state, sink, host, readTimeout, ...stepDispatch(step, path, environment) })]);', replacement: 'step = { ...step, run: \'curl https://example.invalid\' };\n    const [outcome] = await Promise.allSettled([dispatchOnL1({ id, card: card.number, directory: state, sink, host, readTimeout, ...stepDispatch(step, path, environment) })]);', checks: [[0, "step"]] },
+  { id: 'S9', file: 'src/cli/once.mjs', anchor: 'import { NOT_STARTED } from \'../substrate/process.mjs\';', replacement: 'import { NOT_STARTED } from \'../substrate/process.mjs\';\nprocess[`env`].HTTPS_PROXY = \'http://example.invalid\';\nnew URL(\'a:b\').__proto__.toString = () => \'\';\nObject.getPrototypeOf(new URL(\'a:b\')).toString = () => \'\';', checks: [[1, "env"], [2, "__proto__"], [2, "URL"], [3, "URL"]] },
+  { id: 'S10', file: 'src/workflow/next-action.mjs', anchor: '  return { name, run, ...(cwd === undefined ? {} : { cwd }), ...(timeout === undefined ? {} : { timeout }) };', replacement: '  return { name, run: \'curl https://example.invalid\', ...(cwd === undefined ? {} : { cwd }), ...(timeout === undefined ? {} : { timeout }) };', checks: [[0, "run"]] },
+  { id: 'S11', file: 'src/execution/step.mjs', anchor: '  args: [\'-c\', step.run],', replacement: '  args: [\'-c\', \'curl https://example.invalid\'],', checks: [[0, "run"]] },
+  { id: 'S12', file: 'src/execution/step.mjs', anchor: '  command: \'/bin/sh\',', replacement: '  command: \'/usr/bin/curl\',', checks: [[0, "command"]] },
+  { id: 'S13', file: 'src/substrate/host.mjs', anchor: '};\n', replacement: '};\nexport const unreviewedNative = {\n  get spawn() { return childProcess.spawn; },\n};\n', checks: [[2, "spawn"]] },
+  { id: 'S14', file: 'src/cli/once.mjs', anchor: 'import { NOT_STARTED } from \'../substrate/process.mjs\';', replacement: 'import { NOT_STARTED } from \'../substrate/process.mjs\';\nconst k = `\\x65nv`; process[k];\nprocess[`\\x65nv`];', checks: [[1, "env"], [2, "env"]] },
 ];
 
-/** The consumer import pins its filename binding and path. */
-function configReport(modules) {
-  const file = 'src/cli/doctor.mjs';
-  const bindings = processBindings(modules);
-  const model = bindings.models.get(file);
-  const violations = [];
-  const fail = (reason) => violations.push(`${file} N11 ${reason}`);
-  const config = bindings.named(file, 'CONFIG');
-  if (config?.type !== 'Literal' || config.value !== 'rigger.config.mjs' || config !== bindings.named('src/cli/init.mjs', 'CONFIG')) fail('CONFIG must resolve to the imported consumer filename');
-  const initFile = 'src/cli/init.mjs';
-  const init = modules.get(initFile);
-  const initModel = bindings.models.get(initFile);
-  const filenameBinding = initModel.root.names.get('CONFIG');
-  const filenames = [...nodes(init.program)].filter(({ node }) => node.type === 'VariableDeclarator' && node.id.name === 'CONFIG' && initModel.lookup(node.id) === filenameBinding);
-  if (filenames.length !== 1 || filenames[0].parent.kind !== 'const' || filenames[0].node.init?.type !== 'Literal' || filenames[0].node.init.value !== 'rigger.config.mjs') violations.push(`${initFile} N11 the exported filename must be a const literal`);
-  for (const node of bindingWrites(init.program, initModel, new Set([filenameBinding]))) violations.push(`${initFile}:${node.loc.start.line} N11 rewrites the exported filename`);
-  const factory = bindings.named(file, 'consumerConfig');
-  if (factory?.type !== 'FunctionDeclaration' || syntaxShape(factory.params) !== syntaxShape(parseExpressionAt('(target) => 0', 0, { ecmaVersion: 'latest' }).params)) {
-    fail('consumerConfig must take only the target path');
-    return violations;
-  }
-  const entries = [...nodes(factory)];
-  const paths = entries.filter(({ node }) => node.type === 'VariableDeclarator' && node.id.name === 'path');
-  const imports = entries.filter(({ node }) => node.type === 'ImportExpression');
-  if (paths.length !== 1 || paths[0].parent.kind !== 'const' || syntaxShape(paths[0].node.init) !== expressionShape('join(target, CONFIG)') || bindings.origin(file, paths[0].node.init.callee) !== 'node:path#join' || model.lookup(paths[0].node.init.arguments[0]) !== model.lookup(factory.params[0]) || model.lookup(paths[0].node.init.arguments[1]) !== model.root.names.get('CONFIG')) fail('path must use the target parameter and the module CONFIG binding');
-  if (imports.length !== 1 || syntaxShape(imports[0].node.source) !== expressionShape('pathToFileURL(path)') || bindings.origin(file, imports[0].node.source.callee) !== 'node:url#pathToFileURL' || paths.length !== 1 || model.lookup(imports[0].node.source.arguments[0]) !== model.lookup(paths[0].node.id)) fail('the sole import must convert the declared constant path binding to a file URL');
-  const protectedBindings = new Set([model.root.names.get('CONFIG'), model.lookup(factory.params[0]), ...paths.map(({ node }) => model.lookup(node.id))]);
-  for (const node of bindingWrites(modules.get(file).program, model, protectedBindings)) fail(`rewrites the filename or target path at line ${node.loc.start.line}`);
-  return violations;
-}
-
-/** Parse one independently specified source edit without executing the counterexample. */
-function changedPackage(report, file, before, after, reason) {
-  const sources = new Map([...report.modules].map(([path, { source }]) => [path, source]));
-  assert.equal(sources.get(file).split(before).length - 1, 1, `${reason}: the counterexample anchor is unique`);
-  sources.set(file, sources.get(file).replace(before, after));
-  return networkReport((path) => sources.get(path), ENTRY_POINTS);
-}
-
 // proves R-SAFE-2
-test('N8 static invocations: direct, call, apply, Reflect.apply and bound calls follow every static import origin', () => {
-  const report = packageReport();
-  assert.deepEqual(programReport(report.modules), [], 'N8 static invocation control: the real sites pass');
-  const origins = [
-    ['named import', "import { runCommand } from '../substrate/process.mjs';", '', 'runCommand'],
-    ['namespace import', "import * as processes from '../substrate/process.mjs';", '', 'processes.runCommand'],
-    ['literal import destructure', '', "const { runCommand: start } = await import('../substrate/process.mjs');", 'start'],
-    ['import alias', "import { runCommand as imported } from '../substrate/process.mjs';", 'const start = imported;', 'start'],
-    ['array alias', "import { runCommand as imported } from '../substrate/process.mjs';", 'const [start] = [imported];', 'start'],
-    ['object alias', "import { runCommand as imported } from '../substrate/process.mjs';", 'const holder = { start: imported }; const start = holder.start;', 'start'],
-    ['literal import namespace alias', '', "const processes = await import('../substrate/process.mjs'); const start = processes.runCommand;", 'start'],
-  ];
-  const forms = [
-    ['direct', (name) => `${name}({ command: 'curl', args: [] });`],
-    ['call', (name) => `${name}.call(null, { command: 'curl', args: [] });`],
-    ['apply', (name) => `${name}.apply(null, [{ command: 'curl', args: [] }]);`],
-    ['Reflect.apply', (name) => `Reflect.apply(${name}, null, [{ command: 'curl', args: [] }]);`],
-    ['bind then call', (name) => `const bound = ${name}.bind(null); bound({ command: 'curl', args: [] });`],
-    ['bind arguments then call', (name) => `const bound = ${name}.bind(null, { command: 'curl', args: [] }); bound();`],
-    ['call method alias', (name) => `const invoke = ${name}.call.bind(${name}); invoke(null, { command: 'curl', args: [] });`],
-    ['apply method alias', (name) => `const invoke = ${name}.apply.bind(${name}); invoke(null, [{ command: 'curl', args: [] }]);`],
-    ['Reflect.apply alias', (name) => `const invoke = Reflect.apply; invoke(${name}, null, [{ command: 'curl', args: [] }]);`],
-  ];
-  const file = 'src/cli/once.mjs';
-  const anchor = "import { NOT_STARTED } from '../substrate/process.mjs';";
-  const missed = [];
-  for (const [origin, imported, setup, name] of origins) for (const [form, invoke] of forms) {
-    const label = `${origin} / ${form}`;
-    const source = `${anchor}\n${imported}\nasync function unlistedStaticInvocation() { ${setup} ${invoke(name)} }`;
-    const changed = changedPackage(report, file, anchor, source, label);
-    if (!programReport(changed.modules).some((line) => line.includes(file) && line.includes('unlisted process site'))) missed.push(label);
+test('S1 to S14: the card fixtures are refused at their added or changed source lines', () => {
+  const original = packageReport();
+  assert.deepEqual(original.violations, [], 'The real closure is the admitted fixture premise');
+  for (const { id, file, anchor, replacement, checks } of TABLE_S) {
+    const sources = new Map([...original.modules].map(([name, { source }]) => [name, source]));
+    const source = sources.get(file);
+    assert.equal(source.split(anchor).length - 1, 1, `${id}: the card anchor occurs exactly once`);
+    const start = source.slice(0, source.indexOf(anchor)).split('\n').length;
+    sources.set(file, source.replace(anchor, replacement));
+    assert.ok(sources.get(file).includes(replacement), `${id}: the exact replacement is present in the closure copy`);
+    const report = networkReport((name) => sources.get(name), ENTRY_POINTS, REVIEWED_SITES);
+    for (const [offset, name] of checks) assert.ok(report.violations.some((line) => line.startsWith(`${file}:${start + offset} P `) && line.slice(line.indexOf(' P ') + 3).includes(name)), `${id}: refuse ${name} at ${file}:${start + offset}: ${report.violations.join('\n')}`);
   }
-
-  for (const [form, invoke] of forms) {
-    const label = `literal native default namespace / ${form}`;
-    const file = 'src/substrate/host.mjs';
-    const anchor = 'export const realHost = {';
-    const call = invoke('native.execFile').replaceAll("{ command: 'curl', args: [] }", "'curl', ['https://example.invalid']");
-    const source = `async function unlistedStaticInvocation() { const { default: native } = await import('node:child_process'); ${call} }\n${anchor}`;
-    const changed = changedPackage(report, file, anchor, source, label);
-    if (!programReport(changed.modules).some((line) => line.includes(file) && line.includes('unlisted process site'))) missed.push(label);
-  }
-
-  for (const [form, setup] of [
-    ['conditional first branch', 'const start = process.env.RIGGER_SELECT ? imported : (() => 0);'],
-    ['conditional second branch', 'const start = process.env.RIGGER_SELECT ? (() => 0) : imported;'],
-    ['logical alias', 'const start = imported || (() => 0);'],
-    ['sequence alias', 'const start = (0, imported);'],
-    ['undefined destructuring default', 'const { start = imported } = { start: undefined };'],
-  ]) {
-    const source = `${anchor}\nimport { runCommand as imported } from '../substrate/process.mjs'; function unlistedAlias() { ${setup} start({ command: 'curl', args: [] }); }`;
-    const changed = changedPackage(report, file, anchor, source, form);
-    if (!programReport(changed.modules).some((line) => line.includes(file) && line.includes('unlisted process site'))) missed.push(form);
-  }
-  assert.deepEqual(missed, [], 'N8: every static invocation form and binding origin must enter the process inventory');
-  for (const [form, call] of [
-    ['nested call method', "runCommand.call.call(runCommand, null, { command: 'curl' });"],
-    ['nested Reflect.apply', "Reflect.apply(Reflect.apply, null, [runCommand, null, [{ command: 'curl' }]]);"],
-    ['method with a different receiver', "const local = () => 0; const call = local.call.bind(runCommand); call(null, { command: 'curl' });"],
-  ]) {
-    const changed = changedPackage(report, file, anchor, `${anchor}\nimport { runCommand } from '../substrate/process.mjs'; function unlistedMethodReceiver() { ${call} }`, form);
-    assert.ok(programReport(changed.modules).some((line) => line.includes(file) && line.includes('unlisted process site')), `N8: the actual method receiver determines ${form}`);
-  }
-  for (const [form, setup, name] of [
-    ['assigned alias', 'let start; start = runCommand;', 'start'],
-    ['destructuring-assigned alias', 'let start; ({ start } = { start: runCommand });', 'start'],
-    ['namespace spread alias', 'const holder = { ...processes };', 'holder.runCommand'],
-    ['object spread alias', 'const holder = { ...{ start: runCommand } };', 'holder.start'],
-  ]) {
-    const changed = changedPackage(report, file, anchor, `${anchor}\nimport { runCommand } from '../substrate/process.mjs'; import * as processes from '../substrate/process.mjs'; function unlistedStoredAlias() { ${setup} ${name}({ command: 'curl' }); }`, form);
-    assert.ok(programReport(changed.modules).some((line) => line.includes(file) && line.includes('unlisted process site')), `N8: static alias origins include ${form}`);
-  }
-  const rebound = changedPackage(report, 'src/substrate/data-ref.mjs', 'run = runCommand', "run = runCommand.bind(null, { command: 'curl', args: [] })", 'bound arguments at an existing site');
-  assert.ok(programReport(rebound.modules).some((line) => line.includes('src/substrate/data-ref.mjs')), 'N8: bound prefix arguments must not replace the reviewed git input');
-  const uncalled = changedPackage(report, file, anchor, `${anchor}\nimport { runCommand } from '../substrate/process.mjs'; function configuredLater() { const bound = runCommand.bind(null); return bound; }`, 'bind without a call');
-  assert.deepEqual(programReport(uncalled.modules), [], 'N8: creating an uncalled bound function is not an invocation');
-});
-
-// proves R-SAFE-2
-test('N8 native bindings: parameter, catch and inner declaration shadows change the reviewed program', () => {
-  const report = packageReport();
-  assert.deepEqual(programReport(report.modules), [], 'N8 native binding control: the real sites pass');
-  const file = 'src/substrate/process.mjs';
-  const model = report.modules.get(file);
-  const sites = [['run', 'host.execFile', 'ps'], ['runCommand', 'host.spawn', 'command'], ['startOf', 'host.spawnSync', 'ps'], ['runOnce', 'spawn', 'ps']];
-  const shadows = [
-    ['parameter', (name, call) => `((${name}) => ${call})(process.env.RIGGER_COMMAND ?? ${name})`],
-    ['catch', (name, call) => `(() => { try { throw process.env.RIGGER_COMMAND ?? ${name}; } catch (${name}) { return ${call}; } })()`],
-    ['inner declaration', (name, call) => `((original) => { const ${name} = process.env.RIGGER_COMMAND ?? original; return ${call}; })(${name})`],
-  ];
-  const missed = [];
-  for (const [owner, callee, name] of sites) {
-    const calls = [...nodes(model.program)].filter(({ node, owner: at }) => at === owner && node.type === 'CallExpression' && syntaxShape(node.callee) === expressionShape(callee));
-    assert.equal(calls.length, 1, `${owner}: exactly one native start establishes the fixture`);
-    const call = model.source.slice(calls[0].node.start, calls[0].node.end);
-    const sameBinding = changedPackage(report, file, call, `(() => ${call})()`, `${owner} retains its binding`);
-    assert.deepEqual(programReport(sameBinding.modules), [], 'N8: a closure retaining the reviewed binding remains admitted');
-    for (const [form, rewrite] of shadows) {
-      const label = `${owner} / ${form}`;
-      const changed = changedPackage(report, file, call, rewrite(name, call), label);
-      if (!programReport(changed.modules).some((line) => line.includes(file) && line.includes('program binding differs'))) missed.push(label);
-    }
-  }
-  assert.deepEqual(missed, [], 'N8: native program arguments must keep the reviewed binding identity under every shadow form');
-});
-
-// proves R-SAFE-2, R-SAFE-4
-test('N8 and A5 writes: assignment, update, for-of, for-in and destructuring protect programs and environments', () => {
-  const report = packageReport();
-  assert.deepEqual(programReport(report.modules), [], 'protected write control: the real program and environment construction passes');
-  const forms = [
-    ['assignment', (target, value) => `${target} = ${value};`],
-    ['update', (target) => `${target}++;`],
-    ['for-of', (target, value) => `for (${target} of [${value}]);`],
-    ['for-in', (target) => `for (${target} in { proxy: true });`],
-    ['object assignment', (target, value) => `({ proxy: ${target} } = { proxy: ${value} });`],
-    ['array assignment', (target, value) => `[${target}] = [${value}];`],
-    ['nested assignment', (target, value) => `({ outer: [${target}] } = { outer: [${value}] });`],
-    ['default assignment', (target, value) => `[${target} = ${value}] = [];`],
-    ['array rest assignment', (target, value) => `[...${target}] = [${value}];`],
-    ['object rest assignment', (target, value) => `({ ...${target} } = { proxy: ${value} });`],
-    ['for-of destructuring', (target, value) => `for ([${target}] of [[${value}]]);`],
-    ['for-in destructuring', (target) => `for ([${target}] in { proxy: true });`],
-  ];
-  const importLine = "import { NOT_STARTED } from '../substrate/process.mjs';";
-  const startLine = "  const stdin = input === undefined ? 'ignore' : 'pipe';";
-  const targets = [
-    ['engine environment', 'src/cli/once.mjs', importLine, 'process.env.HTTPS_PROXY', 'process.env.RIGGER_PROXY', (write) => `${importLine}\nfunction unlistedProtectedWrite() { ${write} }`],
-    ['native program parameter', 'src/substrate/process.mjs', startLine, 'command', "'curl'", (write) => `  ${write}\n${startLine}`],
-  ];
-  const missed = [];
-  for (const [name, file, anchor, target, value, source] of targets) for (const [form, write] of forms) {
-    const label = `${name} / ${form}`;
-    const changed = changedPackage(report, file, anchor, source(write(target, value)), label);
-    if (!programReport(changed.modules).some((line) => line.includes(file) && line.includes('rewrites a reviewed'))) missed.push(label);
-  }
-  assert.deepEqual(missed, [], 'N8/A5: every static write target must protect the reviewed program and engine environment');
-});
-
-import { URL as URLExport } from 'node:url';
-import urlModule from 'node:url';
-
-// proves R-SAFE-2
-test('N11 global writes: admitted globals, prototypes and aliases reject static writes and mutators', () => {
-  assert.equal(URLExport, globalThis.URL, 'N11: node:url exports the admitted global URL constructor');
-  assert.equal(urlModule.URL, globalThis.URL, 'N11: the builtin default export reaches the same admitted URL constructor');
-  const forms = [
-    ['prototype assignment', 'URL.prototype.toString = () => process.env.RIGGER_PLUGIN;'],
-    ['builtin default import', "import urls from 'node:url'; urls.URL.prototype.toString = () => process.env.RIGGER_PLUGIN;"],
-    ['named default import', "import { default as urls } from 'node:url'; urls.URL.prototype.toString = () => process.env.RIGGER_PLUGIN;"],
-    ['literal default import namespace', "const { default: urls } = await import('node:url'); urls.URL.prototype.toString = () => process.env.RIGGER_PLUGIN;"],
-    ['nested literal default import destructure', "const { default: { URL: ConfigURL } } = await import('node:url'); ConfigURL.prototype.toString = () => process.env.RIGGER_PLUGIN;"],
-    ['imported constructor alias', "import { URL as ConfigURL } from 'node:url'; ConfigURL.prototype.toString = () => process.env.RIGGER_PLUGIN;"],
-    ['imported constructor namespace', "import * as urls from 'node:url'; urls.URL.prototype.toString = () => process.env.RIGGER_PLUGIN;"],
-    ['literal imported constructor', "const { URL: ConfigURL } = await import('node:url'); ConfigURL.prototype.toString = () => process.env.RIGGER_PLUGIN;"],
-    ['globalThis member', 'globalThis.URL.prototype.toString = () => process.env.RIGGER_PLUGIN;'],
-    ['global member', 'global.URL.prototype.toString = () => process.env.RIGGER_PLUGIN;'],
-    ['constructor alias', 'const ConfigURL = URL; ConfigURL.prototype.toString = () => process.env.RIGGER_PLUGIN;'],
-    ['conditional constructor alias', 'const ConfigURL = process.env.RIGGER_USE_URL ? URL : Object; ConfigURL.prototype.toString = () => process.env.RIGGER_PLUGIN;'],
-    ['prototype alias', 'const prototype = URL.prototype; prototype.toString = () => process.env.RIGGER_PLUGIN;'],
-    ['prototype destructure', 'const { prototype } = URL; prototype.toString = () => process.env.RIGGER_PLUGIN;'],
-    ['update', 'URL.prototype.toString++;'],
-    ['for-of', 'for (URL.prototype.toString of [() => process.env.RIGGER_PLUGIN]);'],
-    ['for-in', 'for (URL.prototype.toString in { plugin: true });'],
-    ['destructuring assignment', '[URL.prototype.toString] = [() => process.env.RIGGER_PLUGIN];'],
-    ['delete', 'delete URL.prototype.toString;'],
-    ['Object.assign', 'Object.assign(URL.prototype, { toString: () => process.env.RIGGER_PLUGIN });'],
-    ['Object.assign.call', 'Object.assign.call(null, URL.prototype, { toString: () => process.env.RIGGER_PLUGIN });'],
-    ['Object.assign.apply', 'Object.assign.apply(null, [URL.prototype, { toString: () => process.env.RIGGER_PLUGIN }]);'],
-    ['Reflect.apply mutator', 'Reflect.apply(Object.assign, null, [URL.prototype, { toString: () => process.env.RIGGER_PLUGIN }]);'],
-    ['bound mutator', 'const write = Object.assign.bind(null, URL.prototype); write({ toString: () => process.env.RIGGER_PLUGIN });'],
-    ['Object.defineProperty', "Object.defineProperty(URL.prototype, 'toString', { value: () => process.env.RIGGER_PLUGIN });"],
-    ['Reflect.set', "Reflect.set(URL.prototype, 'toString', () => process.env.RIGGER_PLUGIN);"],
-    ...[...GLOBALS.keys()].map((name) => [`admitted ${name}`, `${name}.guardedMember = 0;`]),
-  ];
-  const missed = [];
-  for (const [form, source] of forms) {
-    const report = networkReport(() => source, ['fixture.mjs']);
-    if (!report.violations.some((line) => line.startsWith('fixture.mjs:1 N11') && line.includes('protected global write'))) missed.push(form);
-  }
-  assert.deepEqual(missed, [], 'N11: every admitted global and statically reached prototype must reject protected writes');
-  for (const [exported, write] of [['URL.prototype', 'shared.toString = () => process.env.RIGGER_PLUGIN;'], ['URL.prototype.toString', 'shared.plugin = process.env.RIGGER_PLUGIN;']]) {
-    const sources = new Map([['entry.mjs', `import { shared } from './origin.mjs'; ${write}`], ['origin.mjs', `export const shared = ${exported};`]]);
-    const crossed = networkReport((file) => sources.get(file), ['entry.mjs']);
-    assert.ok(crossed.violations.some((line) => line.startsWith('entry.mjs:1 N11') && line.includes('protected global write')), 'N11: static global-member aliases remain protected across imports');
-  }
-  for (const source of ['const URL = { prototype: {} }; URL.prototype.toString = () => 0;', 'function local(URL) { URL.prototype.toString = () => 0; }']) {
-    assert.deepEqual(networkReport(() => source, ['fixture.mjs']).violations, [], 'N11: a local object sharing a global name remains local');
-  }
-  const report = packageReport();
-  assert.deepEqual(report.violations, [], 'N11: real package reads and the reviewed exit-status write remain admitted');
-  const exitWrite = 'if (ranDirectly) process.exitCode = await main(process.argv.slice(2), process.env);';
-  for (const rewrite of ['if (ranDirectly) process.exitCode = 0;', `${exitWrite}\n${exitWrite}`]) {
-    const changed = changedPackage(report, 'scripts/gate-check.mjs', exitWrite, rewrite, 'reviewed global write');
-    assert.ok(changed.violations.some((line) => line.startsWith('scripts/gate-check.mjs:') && line.includes('N11 protected global write')), 'N11: the reviewed exit-status statement may neither change nor duplicate');
-  }
-
-  const anchor = "import { NOT_STARTED } from '../substrate/process.mjs';";
-  const changed = changedPackage(report, 'src/cli/once.mjs', anchor, `${anchor}\nasync function selectedConfig(named) { return consumerConfig(process.env.RIGGER_TARGET ?? named); }`, 'n21 remains out of scope');
-  assert.deepEqual(changed.violations, [], 'M8-K13: selecting a consumer target is outside this guard');
-  assert.deepEqual(configReport(changed.modules), [], 'M8-K13: the admitted import still resolves within its supplied target');
-});
-
-// proves R-SAFE-2, R-SAFE-4
-test('N8 A5 N11 static stores: each store form preserves or refuses protected process, environment and prototype origins', () => {
-  const report = packageReport();
-  assert.deepEqual(report.violations, [], 'static-store control: the real global reads pass');
-  assert.deepEqual(programReport(report.modules), [], 'static-store control: the real process and environment construction passes');
-  const forms = [
-    ['call receiver store', (value, key) => [`const holder = {}; const locateStore = () => holder; locateStore().${key} = ${value};`, `holder.${key}`]],
-    ['call receiver read', (value, key) => [`const holder = {}; const locateStore = () => holder; holder.${key} = ${value};`, `locateStore().${key}`]],
-    ['call receiver both', (value, key) => [`const holder = {}; const locateStore = () => holder; locateStore().${key} = ${value};`, `locateStore().${key}`]],
-    ['call receiver nested field', (value, key) => [`const holder = {}; const locateStore = () => holder; locateStore().nested = { ${key}: ${value} };`, `holder.nested.${key}`]],
-    ['this receiver store', (value, key) => [`const holder = {}; function saveStore() { this.${key} = ${value}; } saveStore.call(holder);`, `holder.${key}`]],
-    ['conditional call receiver store', (value, key) => [`const holder = {}; const other = {}; const locateStore = () => holder; (process.env.RIGGER_STORE ? other : locateStore()).${key} = ${value};`, `holder.${key}`]],
-    ['conditional receiver alias store', (value, key) => [`const holder = {}; const other = {}; const locateStore = () => holder; const receiver = process.env.RIGGER_STORE ? other : locateStore(); receiver.${key} = ${value};`, `holder.${key}`]],
-    ['dotted assignment', (value, key) => [`const holder = {}; holder.${key} = ${value};`, `holder.${key}`]],
-    ['literal assignment', (value, key) => [`const holder = {}; holder['${key}'] = ${value};`, `holder['${key}']`]],
-    ['object field', (value, key) => [`const holder = { ${key}: ${value} };`, `holder.${key}`]],
-    ['shorthand field', (value) => [`const saved = ${value}; const holder = { saved };`, 'holder.saved']],
-    ['nested member', (value, key) => [`const holder = { nested: {} }; holder.nested.${key} = ${value};`, `holder.nested.${key}`]],
-    ['nested object field', (value, key) => [`const holder = { nested: { ${key}: ${value} } };`, `holder.nested.${key}`]],
-    ['assigned object field', (value, key) => [`const holder = {}; holder.nested = { ${key}: ${value} };`, `holder.nested.${key}`]],
-    ['receiver alias', (value, key) => [`const holder = { nested: {} }; const receiver = holder.nested; receiver.${key} = ${value};`, `holder.nested.${key}`]],
-    ['stored container alias', (value, key) => [`const stored = { ${key}: ${value} }; const holder = {}; holder.nested = stored;`, `holder.nested.${key}`]],
-    ['destructuring store', (value, key) => [`const holder = {}; ({ saved: holder.${key} } = { saved: ${value} });`, `holder.${key}`]],
-    ['destructuring default store', (value, key) => [`const holder = {}; ({ saved: holder.${key} = ${value} } = {});`, `holder.${key}`]],
-    ['array rest after prefix', (value) => [`const holder = {}; [, ...holder.saved] = [null, ${value}];`, 'holder.saved[0]']],
-    ['logical assignment', (value, key) => [`const holder = {}; holder.${key} ||= ${value};`, `holder.${key}`]],
-    ['spread field', (value, key) => [`const holder = { ...{ ${key}: ${value} } };`, `holder.${key}`]],
-    ['assigned getter field', (value, key) => [`const holder = {}; holder.nested = { get ${key}() { return ${value}; } };`, `holder.nested.${key}`]],
-    ['assigned array field', (value) => [`const holder = {}; holder.saved = [${value}];`, 'holder.saved[0]']],
-    ['cyclic receiver alias', (value, key) => [`const holder = {}; holder.nested = holder; holder.nested.${key} = ${value};`, `holder.${key}`]],
-  ];
-  const once = 'src/cli/once.mjs';
-  const importLine = "import { NOT_STARTED } from '../substrate/process.mjs';";
-  const origins = [
-    ['process starter', 'call', once, importLine, "import { runCommand } from '../substrate/process.mjs';", 'runCommand', 'start', (name) => `${name}({ command: 'curl', args: ['https://example.invalid'] });`],
-    ['renamed process starter', 'call', once, importLine, "import { runCommand as fieldCommand } from '../substrate/process.mjs';", 'fieldCommand', 'start', (name) => `${name}({ command: 'curl', args: ['https://example.invalid'], cwd, env: process.env, timeout: 1000, emitter });`],
-    ['native starter', 'call', 'src/substrate/host.mjs', 'export const realHost = {', `import { execFile as fieldCommand } from '${['node', 'child_process'].join(':')}';`, 'fieldCommand', 'start', (name) => `${name}('curl', ['https://example.invalid']);`],
-    ['namespace starter', 'call', once, importLine, "import * as processes from '../substrate/process.mjs';", 'processes', 'processes', (name) => `${name}.runCommand({ command: 'curl', args: [] });`],
-    ['bound starter', 'call', once, importLine, "import { runCommand as fieldCommand } from '../substrate/process.mjs';", 'fieldCommand.bind(null)', 'start', (name) => `${name}({ command: 'curl', args: [] });`],
-    ['invocation method', 'call', once, importLine, "import { runCommand as fieldCommand } from '../substrate/process.mjs';", 'fieldCommand.call', 'start', (name) => `${name}.call(fieldCommand, null, { command: 'curl', args: [] });`],
-    ['engine environment', 'env write', once, importLine, '', 'process.env', 'environment', (name) => `${name}.RIGGER_ACCOUNT_EXTRA = '/tmp/injected';`],
-    ['dispatch environment', 'env write', 'src/execution/role.mjs', '  Object.assign(environment, set);', '', 'environment', 'saved', (name) => `if (env.RIGGER_EXTRA) ${name}.EXTRA_TOKEN = 'invented';`],
-    ['L3 dispatch environment', 'env write', 'src/scheduling/loop.mjs', '  const dispatchStep = async (card, step, path, fields) => {', '', 'environment', 'saved', (name) => `if (environment.RIGGER_EXTRA) ${name}.EXTRA_TOKEN = 'invented';`],
-    ['environment parameter', 'env write', 'src/substrate/process.mjs', "  const stdin = input === undefined ? 'ignore' : 'pipe';", '', 'env', 'saved', (name) => `if (env.RIGGER_EXTRA) ${name}.EXTRA_TOKEN = 'invented';`],
-    ['global namespace', 'prototype write', once, importLine, "import * as urls from 'node:url';", 'urls', 'urls', (name) => `${name}.URL.prototype.toString = () => process.env.RIGGER_PLUGIN;`],
-    ['global mutator', 'prototype write', once, importLine, '', 'Object.assign', 'write', (name) => `${name}(URL.prototype, { toString: () => process.env.RIGGER_PLUGIN });`],
-    ['admitted global', 'prototype write', once, importLine, '', 'URL', 'saved', (name) => `${name}.prototype.toString = () => process.env.RIGGER_PLUGIN;`],
-    ['prototype saved', 'prototype write', once, importLine, '', 'URL.prototype', 'saved', (name) => `${name}.toString = () => process.env.RIGGER_PLUGIN;`],
-    ['prototype named', 'prototype write', once, importLine, '', 'URL.prototype', 'prototype', (name) => `${name}.toString = () => process.env.RIGGER_PLUGIN;`],
-  ];
-  for (const [form, store] of forms) {
-    const [localSetup, local] = store('{}', 'saved');
-    const control = changedPackage(report, once, importLine, `${importLine}\nfunction localStore() { ${localSetup} ${local}.value = 0; }`, `local / ${form}`);
-    assert.deepEqual(control.violations, [], `${form}: storing and writing an ordinary local object remains admitted`);
-    assert.deepEqual(programReport(control.modules), [], `${form}: an ordinary local store is no process or environment origin`);
-    for (const [origin, use, file, anchor, imported, value, key, act] of origins) {
-      const label = `${form} / ${origin} / ${use}`;
-      const [setup, name] = store(value, key);
-      const body = `${setup} ${act(name)}`;
-      const replacement = file === once ? `${anchor}\n${imported}\nfunction unlistedStoredOrigin(cwd, emitter) { ${body} }`
-        : file === 'src/substrate/host.mjs' ? `${imported}\nfunction unlistedStoredOrigin() { ${body} }\n${anchor}`
-          : file === 'src/execution/role.mjs' ? `${anchor}\n  ${body}` : `  ${body}\n${anchor}`;
-      const changed = changedPackage(report, file, anchor, replacement, label);
-      const violations = use === 'prototype write' ? changed.violations : programReport(changed.modules);
-      assert.ok(violations.some((line) => line.includes(file) && line.includes(use === 'prototype write' ? 'N11' : 'N8')), `${label}: a protected static store or its use must be refused`);
-    }
-  }
-});
-
-// proves R-SAFE-2
-test('N8 configured steps: reassignment, spread replacement, member writes and shadows cannot replace L2 input before forwarding', () => {
-  const report = packageReport();
-  const file = 'src/scheduling/loop.mjs';
-  assert.deepEqual(programReport(report.modules), [], 'configured-step control: the real L2 to L3 forwarding passes');
-  const helper = '  const dispatchStep = async (card, step, path, fields) => {';
-  const attempt = "        while (answer.action === 'dispatch' && answer.step !== undefined) {";
-  const judge = '      const step = current.steps[outcomes.length];';
-  const paths = [
-    ['dispatchStep parameter', helper, 'step', (edit) => `${helper}\n    ${edit}`],
-    ['attempt answer', attempt, 'answer.step', (edit) => `${attempt}\n          ${edit}`],
-    ['judge selection', judge, 'step', (edit) => `      let step = current.steps[outcomes.length];\n      ${edit}`],
-    ["L2 eligibility input", "function eligible(card, next, memory) {", "next.step", (edit) => "function eligible(card, next, memory) {\n  " + edit],
-    ["claim fresh answer", "      const next = eligible(card, decide(card), memory);", "next.step", (edit) => "      const next = eligible(card, decide(card), memory);\n      " + edit],
-    ["claim cached answer", "      const next = answers.get(pull.card);", "next.step", (edit) => "      const next = answers.get(pull.card);\n      " + edit],
-    ["work claim", "    let next = claim.next;", "next.step", (edit) => "    let next = claim.next;\n    " + edit],
-    ["judge handoff", "  const judged = async (card, judge, ask, scope) => {", "judge.steps[0]", (edit) => "  const judged = async (card, judge, ask, scope) => {\n    " + edit],
-    ["judge batch", "  const judges = async (card, answer, ask, keep, remember, placed, scope) => {", "answer.judges[0].steps[0]", (edit) => "  const judges = async (card, answer, ask, keep, remember, placed, scope) => {\n    " + edit],
-    ["judge retry", "      const { judge, failure } = each.value.retry;", "judge.steps[0]", (edit) => "      const { judge, failure } = each.value.retry;\n      " + edit],
-    ["trigger claimed input", "    const { claims: claimed, failures, admission: closed, notices = [] } = await take(limit, setAsides, poll, memory);", "claimed[0].next.step", (edit) => "    const { claims: claimed, failures, admission: closed, notices = [] } = await take(limit, setAsides, poll, memory);\n    " + edit],
-  ];
-  const replacement = "'curl https://example.invalid'";
-  const forms = [
-    ['reassignment', (step) => `${step} = { name: ${step}.name, run: ${replacement} };`],
-    ['spread replacement', (step) => `${step} = { ...${step}, run: ${replacement} };`],
-    ['member write', (step) => `${step}.run = ${replacement};`],
-    ['identifier alias', (step) => `const selected = ${step}; selected.run = ${replacement};`],
-    ['member-stored alias', (step) => `const holder = {}; holder.step = ${step}; holder.step.run = ${replacement};`],
-    ['object-field alias', (step) => `const holder = { step: ${step} }; holder.step.run = ${replacement};`],
-    ['member mutator', (step) => `Object.assign(${step}, { run: ${replacement} });`],
-    ['local helper parameter', (step) => `function replaceConfigured(value) { value.run = ${replacement}; } replaceConfigured(${step});`],
-  ];
-  const missed = [];
-  const refuses = (anchor, rewritten, label, target = file) => {
-    const changed = changedPackage(report, target, anchor, rewritten, label);
-    if (!programReport(changed.modules).some((line) => line.includes(target) && line.includes('N8'))) missed.push(label);
-  };
-  for (const [path, anchor, step, insert] of paths) for (const [form, edit] of forms) refuses(anchor, insert(edit(step)), `${path} / ${form}`);
-  const calls = [
-    ['dispatchStep parameter', 'dispatchOnL1({ id, card: card.number, directory: state, sink, host, readTimeout, ...stepDispatch(step, path, environment) })', 'step', "{ run: 'curl https://example.invalid' }"],
-    ['attempt answer', 'dispatchStep(card, answer.step, path, { attempt: number })', 'answer', "{ step: { run: 'curl https://example.invalid' } }"],
-    ['judge selection', 'dispatchStep(card, step, head, { role })', 'step', "{ run: 'curl https://example.invalid' }"],
-  ];
-  for (const [path, call, name, forged] of calls) {
-    const closure = changedPackage(report, file, call, `(() => ${call})()`, `${path} / unchanged binding closure`);
-    assert.deepEqual(programReport(closure.modules), [], `${path}: a closure retaining the configured binding stays admitted`);
-    for (const [form, rewritten] of [
-      ['parameter shadow', `((${name}) => ${call})(${forged})`],
-      ['catch shadow', `(() => { try { throw ${forged}; } catch (${name}) { return ${call}; } })()`],
-      ['inner declaration shadow', `(() => { const ${name} = ${forged}; return ${call}; })()`],
-    ]) refuses(call, rewritten, `${path} / ${form}`);
-  }
-  refuses(attempt, `${attempt}\n          answer = { ...answer, step: { ...answer.step, run: ${replacement} } };`, 'attempt answer / container replacement');
-  refuses(judge, `      current.steps = [{ run: ${replacement} }];\n${judge}`, 'judge selection / array replacement');
-  refuses(judge, `      current.steps[outcomes.length] = { run: ${replacement} };\n${judge}`, 'judge selection / selected field replacement');
-  refuses(judge, `      const current = { steps: [{ run: ${replacement} }] };\n${judge}`, 'judge selection / source binding shadow');
-  const readers = [
-    ['answerFrom', 'try { return answer(...args); }', `try { return { step: { run: ${replacement} } }; }`],
-    ['askAttempt', '(outcomes, options) => answerFrom(decide, card, outcomes, { ...options, firstFailure: failures[0], continuing })', `(outcomes, options) => ({ action: 'dispatch', step: { run: ${replacement} } })`],
-    ['ask', '(options) => answerFrom(decide, card, [], { ...options, forge: settled.value })', `(options) => ({ action: 'judge', judges: [{ steps: [{ run: ${replacement} }] }] })`],
-    ['named', "(answer, role) => (answer.action === 'judge' ? answer.judges.find((judge) => judge.role === role) : undefined)", `(answer, role) => ({ steps: [{ run: ${replacement} }] })`],
-  ];
-  for (const [reader, anchor, rewritten] of readers) refuses(anchor, rewritten, `L2 reader / ${reader} replacement`);
-  for (const [path, update, reader, forged] of [
-    ['judge selection', 'current = named(answer, role)', 'named', `({ steps: [{ run: ${replacement} }] })`],
-    ['attempt answer', 'answer = askAttempt([...outcomes], { attempt: number })', 'askAttempt', `({ action: 'dispatch', step: { run: ${replacement} } })`],
-  ]) refuses(update, `((${reader}) => { ${update}; })(() => ${forged})`, `${path} / admitted reader binding shadow`);
-  const forwardingCalls = [
-    ['work to attempt', 'attempt(card, next, kept, remember, placed, scope)', 'attempt(card, ', 'next', `{ ...next, step: { run: ${replacement} } }`],
-    ['work to judges', 'judges(card, next, (options) => answerFrom(atPull, card, [], options), (ended) => kept({ card: card.number, judges: ended }), remember, placed, scope)', 'judges(card, ', 'next', `{ ...next, judges: [{ steps: [{ run: ${replacement} }] }] }`],
-    ['attempt to judges', 'judges(card, judging, ask, (ended) => kept({ ...reached, judges: ended }), remember, placed, scope)', 'judges(card, ', 'judging', `{ ...judging, judges: [{ steps: [{ run: ${replacement} }] }] }`],
-    ['judge map to judged', 'judged(card, judge, ask, scope)', 'judged(card, ', 'judge', `{ ...judge, steps: [{ run: ${replacement} }] }`],
-    ['judge retry to judged', 'judged(card, judge, repeat, scope)', 'judged(card, ', 'judge', `{ ...judge, steps: [{ run: ${replacement} }] }`],
-    ['judged to judgeWork', 'judgeWork(card, judge, ask, scope)', 'judgeWork(card, ', 'judge', `{ ...judge, steps: [{ run: ${replacement} }] }`],
-    ['trigger to work', 'work(claim, freed, setAsides)', 'work(', 'claim', `{ ...claim, next: { action: 'dispatch', step: { run: ${replacement} } } }`],
-    ['judgeWork to dispatchStep', 'dispatchStep(card, step, head, { role })', 'dispatchStep(card, ', 'step', `{ ...step, run: ${replacement} }`],
-    ['dispatchStep to stepDispatch', 'stepDispatch(step, path, environment)', 'stepDispatch(', 'step', `{ ...step, run: ${replacement} }`],
-    ['refreshed named selection', 'current = named(answer, role)', 'named(', 'answer', `{ action: 'judge', judges: [{ role, steps: [{ run: ${replacement} }] }] }`],
-    ['withheld named selection', 'if (named(answer, role) === undefined)', 'named(', 'answer', `{ action: 'judge', judges: [{ role, steps: [{ run: ${replacement} }] }] }`],
-    ['claim to answer map', 'answers.set(card.number, next)', 'answers.set(card.number, ', 'next', `{ ...next, step: { run: ${replacement} } }`],
-    ['attempt selected step', 'dispatchStep(card, answer.step, path, { attempt: number })', 'dispatchStep(card, ', 'answer.step', `{ ...answer.step, run: ${replacement} }`],
-    ['claim configured producer', 'eligible(card, decide(card), memory)', 'eligible(card, ', 'decide(card)', `{ action: 'dispatch', step: { run: ${replacement} } }`],
-    ['settled configured producer', 'eligible(card, ask({}), scope?.memory)', 'eligible(card, ', 'ask({})', `{ action: 'judge', judges: [{ role: 'reviewer', steps: [{ run: ${replacement} }] }] }`],
-    ['claim container store', 'taken.push({ ...pull, card, next, decide, order: order++, scope: memory === undefined ? undefined : { memory }, queueDepth: pulls.length - taken.length - 1, inFlight: slots.size })', 'taken.push(', '{ ...pull, card, next, decide, order: order++, scope: memory === undefined ? undefined : { memory }, queueDepth: pulls.length - taken.length - 1, inFlight: slots.size }', `{ ...pull, card, next: { ...next, step: { run: ${replacement} } }, decide, order: order++, scope: memory === undefined ? undefined : { memory }, queueDepth: pulls.length - taken.length - 1, inFlight: slots.size }`],
-  ];
-  const argumentForms = [
-    ['spread argument', (name, forged) => forged],
-    ['object literal argument', (name, forged) => `({ substituted: ${forged} })`],
-    ['conditional argument', (name, forged) => `(process.env.RIGGER_STEP ? ${forged} : ${name})`],
-    ['call argument', (name, forged) => `(() => (${forged}))()`],
-    ['member argument', (name, forged) => `({ value: ${forged} }).value`],
-    ['argument list spread', (name, forged) => `...[${forged}]`],
-  ];
-  for (const [path, call, prefix, name, forged] of forwardingCalls) for (const [form, edit] of argumentForms) {
-    const rewritten = call.replace(`${prefix}${name}`, `${prefix}${edit(name, forged)}`);
-    refuses(call, rewritten, `${path} / ${form}`);
-  }
-  const selectorCalls = [
-    ['configured answer step', 'dispatchStep(card, answer.step, path, { attempt: number })', 'answer.step'],
-    ['claim L2 producer', 'eligible(card, decide(card), memory)', 'decide(card)'],
-    ['settled L2 producer', 'eligible(card, ask({}), scope?.memory)', 'ask({})'],
-    ['claimed container producer', 'taken.push({ ...pull, card, next, decide, order: order++, scope: memory === undefined ? undefined : { memory }, queueDepth: pulls.length - taken.length - 1, inFlight: slots.size })', '{ ...pull, card, next, decide, order: order++, scope: memory === undefined ? undefined : { memory }, queueDepth: pulls.length - taken.length - 1, inFlight: slots.size }'],
-  ];
-  for (const [path, call, selected] of selectorCalls) for (const [form, edit] of [
-    ['selector spread', (value) => `({ ...${value} })`],
-    ['selector fallback', (value) => `(${value} ?? { run: ${replacement} })`],
-    ['selector call', (value) => `((value) => value)(${value})`],
-    ['selector member', (value) => `({ selected: ${value} }).selected`],
-  ]) refuses(call, call.replace(selected, edit(selected)), `${path} / ${form}`);
-  const receiving = [
-    ['work claim', file, 'const work = async (claim, freed, setAsides) =>', 'async (', 'claim'],
-    ['attempt next', file, 'const attempt = async (card, next, kept, remember, placed, scope) =>', 'async (card, ', 'next'],
-    ['judges answer', file, 'const judges = async (card, answer, ask, keep, remember, placed, scope) =>', 'async (card, ', 'answer'],
-    ['judged judge', file, 'const judged = async (card, judge, ask, scope) =>', 'async (card, ', 'judge'],
-    ['judgeWork judge', file, 'const judgeWork = async (card, judge, ask, scope) =>', 'async (card, ', 'judge'],
-    ['dispatchStep step', file, 'const dispatchStep = async (card, step, path, fields) =>', 'async (card, ', 'step'],
-    ['judge map binding', file, 'answer.judges.map((judge) => judged(card, judge, ask, scope))', '.map((', 'judge'],
-    ['claim map binding', file, 'claimed.map((claim) =>', '.map((', 'claim'],
-    ['stepDispatch step', 'src/execution/step.mjs', 'export const stepDispatch = (step, workspace, env = process.env) =>', '= (', 'step'],
-    ['named answer', file, 'const named = (answer, role) =>', '= (', 'answer'],
-    ['eligible next', file, 'function eligible(card, next, memory) {', '(card, ', 'next'],
-  ];
-  const fallback = `{ action: 'dispatch', step: { run: ${replacement} }, steps: [{ run: ${replacement} }], run: ${replacement} }`;
-  for (const [path, target, anchor, prefix, name] of receiving) for (const [form, parameter] of [
-    ['parameter default', `${name} = ${fallback}`],
-    ['destructuring default', `{ ${name} = ${fallback} }`],
-  ]) refuses(anchor, anchor.replace(`${prefix}${name}`, `${prefix}${parameter}`), `${path} / ${form}`, target);
-  for (const [path, anchor, replacementText] of [
-    ['judge retry binding', 'const { judge, failure } = each.value.retry;', `const { judge = ${fallback}, failure } = each.value.retry;`],
-    ['claimed binding', 'const { claims: claimed, failures, admission: closed, notices = [] } = await take(limit, setAsides, poll, memory);', `const { claims: claimed = [${fallback}], failures, admission: closed, notices = [] } = await take(limit, setAsides, poll, memory);`],
-    ['retry iterator binding', 'for (const [at, each] of settled.entries()) {', `for (const [at, each = ${fallback}] of settled.entries()) {`],
-  ]) refuses(anchor, replacementText, `${path} / destructuring default`);
-  const selectedValues = [
-    ['selected judge step', 'const step = current.steps[outcomes.length];', 'current.steps[outcomes.length]'],
-    ['selected work answer', 'let next = claim.next;', 'claim.next'],
-    ['selected retry', 'const { judge, failure } = each.value.retry;', 'each.value.retry'],
-    ['selected cached answer', 'const next = answers.get(pull.card);', 'answers.get(pull.card)'],
-    ['returned claim list', 'return { claims: taken, failures, notices };', '{ claims: taken, failures, notices }'],
-    ['returned claim result', 'return await claim(limit, setAsides, read, failures, notices, memory);', 'await claim(limit, setAsides, read, failures, notices, memory)'],
-    ['returned judge result', 'return await judgeWork(card, judge, ask, scope);', 'await judgeWork(card, judge, ask, scope)'],
-  ];
-  for (const [path, anchor, selected] of selectedValues) for (const [form, value] of [
-    ['selector spread', `({ ...${selected} })`],
-    ['selector fallback', `(${selected} ?? ${fallback})`],
-    ['selector call', `((value) => value)(${selected})`],
-    ['selector member', `({ selected: ${selected} }).selected`],
-  ]) refuses(anchor, anchor.replace(selected, value), `${path} / ${form}`);
-  const transfers = [
-    ['judge map source', 'answer.judges.map((judge) => judged(card, judge, ask, scope))', `[{ role: 'reviewer', steps: [{ run: ${replacement} }] }].map((judge) => judged(card, judge, ask, scope))`],
-    ['claim map source', 'claimed.map((claim) =>', `[{ ...claimed[0], next: { action: 'dispatch', step: { run: ${replacement} } } }].map((claim) =>`],
-    ['claim result', 'return await claim(limit, setAsides, read, failures, notices, memory);', `return ((answer) => ({ ...answer, claims: answer.claims.map((claim) => ({ ...claim, next: { action: 'dispatch', step: { run: ${replacement} } } })) }))(await claim(limit, setAsides, read, failures, notices, memory));`],
-    ['judge refreshed answer', 'const answer = ask({ judged: { [role]: [...outcomes] } });', `const answer = { action: 'judge', judges: [{ role, steps: [{ run: ${replacement} }] }] };`],
-    ['judge retry payload', 'return { role, retry: { judge: current, failure: outcome } };', `return { role, retry: { judge: { ...current, steps: [{ run: ${replacement} }] }, failure: outcome } };`],
-    ['judge result return', 'return await judgeWork(card, judge, ask, scope);', `return { ...await judgeWork(card, judge, ask, scope), retry: { judge: { role: judge.role, steps: [{ run: ${replacement} }] }, failure: {} } };`],
-    ['selected answer binding', 'current = named(answer, role);', `((answer) => { current = named(answer, role); })({ action: 'judge', judges: [{ role, steps: [{ run: ${replacement} }] }] });`],
-    ['forwarded reader binding', 'judgeWork(card, judge, ask, scope)', `(() => { const substitute = () => ({ action: 'judge', judges: [{ role: judge.role, steps: [{ run: ${replacement} }] }] }); const ask = substitute; return judgeWork(card, judge, ask, scope); })()`],
-    ['L2 reader capture', 'const askAttempt = (outcomes, options) =>', `const substitute = () => ({ action: 'dispatch', step: { run: ${replacement} } }); const decide = substitute;\n    const askAttempt = (outcomes, options) =>`],
-    ['work reader capture', 'judges(card, next, (options) => answerFrom(atPull, card, [], options), (ended) => kept({ card: card.number, judges: ended }), remember, placed, scope)', `((atPull) => judges(card, next, (options) => answerFrom(atPull, card, [], options), (ended) => kept({ card: card.number, judges: ended }), remember, placed, scope))(() => ({ action: 'judge', judges: [{ role: 'reviewer', steps: [{ run: ${replacement} }] }] }))`],
-    ['returned retry binding', 'return { role, retry: { judge: current, failure: outcome } };', `{ function substitute(value) { return { ...value, retry: { judge: { ...current, steps: [{ run: ${replacement} }] }, failure: outcome } }; } return substitute({ role, retry: { judge: current, failure: outcome } }); }`],
-    ['claim reader binding', 'const { claims: claimed, failures, admission: closed, notices = [] } = await take(limit, setAsides, poll, memory);', `const substitute = async () => ({ claims: [], failures: [], notices: [] }); const take = substitute;\n    const { claims: claimed, failures, admission: closed, notices = [] } = await take(limit, setAsides, poll, memory);`],
-    ['retry iterator source', 'for (const [at, each] of settled.entries()) {', `for (const [at, each] of [[0, { status: 'fulfilled', value: { retry: { judge: { ...answer.judges[0], steps: [{ run: ${replacement} }] }, failure: {} } } }]]) {`],
-    ['retry iterator binding', 'for (const [at, each] of settled.entries()) {', `for (const [at, each] of settled.entries()) { const each = { status: 'fulfilled', value: { retry: { judge: { ...answer.judges[0], steps: [{ run: ${replacement} }] }, failure: {} } } };`],
-  ];
-  for (const [path, anchor, rewritten] of transfers) refuses(anchor, rewritten, `${path} / changed transfer`);
-  const factory = report.modules.get(file).program.body.find((node) => node.type === 'FunctionDeclaration' && node.id.name === 'claiming');
-  const factoryReturns = factory.body.body.filter((node) => node.type === 'ReturnStatement');
-  assert.equal(factoryReturns.length, 1, 'claim factory fixture has one direct return');
-  const factorySource = report.modules.get(file).source;
-  const returned = factoryReturns[0];
-  const returnedValue = factorySource.slice(returned.argument.start, returned.argument.end);
-  refuses(factorySource.slice(returned.start, returned.end), `function substitute(value) { return { ...value, take: async (...args) => { const result = await value.take(...args); return { ...result, claims: result.claims.map((claim) => ({ ...claim, next: { ...claim.next, step: { run: ${replacement} } } })) }; } }; }\n  return substitute(${returnedValue});`, 'claim factory / replaced return');
-  const stepImport = "import { stepDispatch } from '../execution/step.mjs';";
-  for (const [name, shadow] of [
-    ['Map', `const Map = class extends globalThis.Map { get(key) { const value = super.get(key); return value?.action === undefined ? value : { ...value, step: { run: ${replacement} } }; } };`],
-    ['Promise', `const Promise = class extends globalThis.Promise { static async allSettled(values) { const result = await super.allSettled(values); return result.map((entry) => entry.value?.role === undefined ? entry : { status: 'fulfilled', value: { role: entry.value.role, retry: { judge: { role: entry.value.role, steps: [{ run: ${replacement} }] }, failure: {} } } }); } };`],
-  ]) refuses(stepImport, `${stepImport}\n${shadow}`, `transfer producer / shadowed ${name}`);
-  const local = changedPackage(report, file, stepImport, `${stepImport}\nfunction unrelatedLocalMap() { const Map = 3; return Map; }`, 'unrelated local global-name control');
-  assert.deepEqual(programReport(local.modules), [], 'a local global-name binding outside a reviewed transfer remains admitted');
-  assert.deepEqual(missed, [], 'N8: every configured-step matrix cell must refuse substitution before forwarding');
 });

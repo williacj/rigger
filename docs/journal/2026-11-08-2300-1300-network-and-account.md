@@ -2,7 +2,7 @@ ABOUTME: Records card 1300's proof of the network and dispatched-account boundar
 
 # Network and account boundaries
 
-The acceptance is issue #1300, revision `5ade1c5d2381`. The source at the merge base,
+The historical sections below record issue #1300 at revision `5ade1c5d2381`, before its value-tracking guard was retired. The current acceptance is `124f2c3a8c06`; its deny-by-default revision and current-base outcomes are recorded at the end. The earlier source at the merge base,
 `52fb8a3d15a7f6842436a7295edb52c4b7a4ad35`, already supplies the required behaviour.
 The initial revision added proof and a guard without changing a production module.
 The correction below strengthens that guard and makes native reader options explicit. The card's test-first
@@ -434,3 +434,133 @@ Immutable AST entries and parent links are cached by parsed-tree identity. Chang
 still gets its own tree, origin computation and policy verdict. The final-head receipts,
 proof comparison, hooks, host, fresh clone and CI are evidence owned by the PR; predecessor
 verification is never relabeled as verification of the corrective commit.
+
+
+## Deny by default, acceptance 124f2c3a8c06
+
+[M8-U21](https://github.com/williacj/rigger/issues/1293#issuecomment-6802068956)
+retires value tracking after six static alias and producer edits escaped it.
+[M8-U22](https://github.com/williacj/rigger/issues/1293#issuecomment-6802465097)
+sets the protected-name floor and the future inventory-row grant class. The rewritten card
+supersedes K19 and K21 where they differ. Historical origin and forwarding tables, models,
+matrices and their evidence above describe the retired implementation; none is retained as a
+second admission route.
+
+The merge of current main, e53b07ef, applied without conflicts. The ordinary pre-merge hook
+measured tests 5893, pass 5893, fail 0, skipped 0 before committing b33b0c03. Its unfiltered
+output is 1300-r6-deny-merge-main.log; uptime measured one-minute load 5.19 at start and
+6.90 at end. npm ci then passed. Those are baseline measurements, not final-head figures.
+
+The independent source scan at that merged input measured 58 closure modules and 499 Table P
+mentions on 358 source lines. The earlier estimate of about 386 rows was a judgment from the
+attack prototype. This inventory uses the final trimmed Table P and counts each source token
+once, including shorthand/import/export nodes exposed twice by Acorn. Every row now holds its
+exact decoded source-line text, mention count and a reviewed purpose. Identical lines use
+separate rows. The line-number field is only a missing-entry diagnostic: it never admits a
+mention, and a relocation control proves that unchanged text can move. An unlisted occurrence
+is reported at its actual line. A missing entry reports its last reviewed position and text;
+S11 removes its final protected mention without moving the line, and the fixture asserts that
+changed position explicitly.
+
+There is one literal reviewed-site table. Admission reads only file, exact line text, actual
+mention count and an unused matching row. All identifiers, static property names, module names
+and cooked string/no-substitution template values enter the same scan. No alias, invocation,
+assignment, return or member-origin value is followed. N4 retains lexical scope analysis solely
+to distinguish bound identifiers from unbound globals. The process-program fields are reviewed
+declarations in N8's closed set, not inferred provenance claims.
+
+The two process.mjs reader-option expansions belonged to the retired spread check. They are
+removed: the revised N8 row needs no production repair, so production source now equals main.
+The inventory pins the existing reader calls with their original option spreads. Ordinary
+edits introducing protected mentions or changing reviewed lines still require visible rows.
+The host observer and its real boundary proof remain unchanged.
+
+### Table N at the current merge base e53b07ef
+
+| Row | Held or needed a change under the revised card |
+|---|---|
+| N1 | Held: reviewed local built-ins only; native child_process is confined to host.mjs. Needed a new deterministic tripwire, not a source repair. |
+| N2 | Held: static, re-export and literal-import closure is traversable from the two roots. Needed guard proof only. |
+| N3 | Held: the sole nonliteral site is consumerConfig. Needed its named exception proof only. |
+| N4 | Held: globals have the reviewed local purposes; lexical local bindings remain distinct. Needed guard proof only. |
+| N5 | Held: no named hidden loader is used. Needed refusal fixtures only. |
+| N6 | Held: no named eval or Function constructor is used. Needed refusal fixtures only. |
+| N8 | Held under deny by default: the existing programs and configured shell input need no source change. The earlier reader expansions are obsolete and removed. Needed the literal inventory and closed-declaration check. |
+| N9 | Out at base and head: credentialed tool internals, as the card states. No change. |
+| N10 | Out at base and head: consumer provisioning contents under M8-U2 Q8 a. No change. |
+| N11 | Held at the boundary: only the target config is loaded, and it is not traversed. Needed parsed-value, absent-root and special-path proof only. |
+| N12 | Out at base and head: native addons; the card's package bound applies. No change. |
+| N13 | Out at base and head: the card's runtime-computed, reflective and data-driven replacements. No value tracker is reintroduced. |
+| N14 | Out at base and head: the account's NODE_OPTIONS under M8-U3. No change. |
+
+### Table P at the current merge base e53b07ef
+
+Each source row is reviewed, but the base has no protected-mention guard. Each class needed
+the new deny-by-default proof and inventory; no class needed a production change.
+
+| Row | Held or needed a change |
+|---|---|
+| P1 | Needed the runCommand mention gate, independent of its binding or later invocation. |
+| P2 | Needed the native namespace/specifier/member mention gates; exec and its removed noise names are not protected. |
+| P3 | Needed the env, environment and gitEnvironment mention gates. |
+| P4 | Needed the engine environment gate through its env member, including cooked literal access. |
+| P5 | Needed URL and __proto__ gates; prototype and the reflective helper names are not protected. |
+| P6 | Needed configured producer, provisioning, step, run and command gates, including otherwise unrelated uses of those names. |
+
+### Table S at the current merge base e53b07ef
+
+All rows needed deterministic refusal proof: the base has no such guard. The fixtures are
+copied literally from the revised card; each works on a copy of the actual closure. Checks use
+independently specified changed-line offsets and names, including the missing-entry refusal
+when S11 removes a line's last protected name. The guard never executes an attack's program.
+
+| Row | Needed change and controlled counterexample |
+|---|---|
+| S1 | New refusal proof for the exact RA return/callback/class/Map/promise/environment/prototype fixture. |
+| S2 | New refusal proof for the exact RB environment-return, for-of and Object.assign fixture. |
+| S3 | New refusal proof for the exact RC step for-of, Object.assign and constructor fixture. |
+| S4 | New refusal proof for the exact RD configured run declaration replacement. |
+| S5 | New refusal proof for the exact RE native namespace returned by a function. |
+| S6 | New refusal proof for the exact RF judge step-producer replacement. |
+| S7 | New refusal proof for both given member-store and destructuring-default statements. |
+| S8 | New refusal proof for the given spread step replacement before dispatch. |
+| S9 | New refusal proof for the given template-member and both URL prototype routes. |
+| S10 | New refusal proof for the given step producer return-line replacement. |
+| S11 | New refusal proof for the given shell argument replacement, leaving no protected name on that line. |
+| S12 | New refusal proof for the given shell program replacement. |
+| S13 | New refusal proof for an exact native getter duplicated in a second exported object. |
+| S14 | New refusal proof for both given escaped templates, matched on cooked env. |
+
+### Table A at the current merge base e53b07ef
+
+The real-dispatch observer is retained without changing its existing body. The final PR owns
+the measured current-head host runs and guarded mutation receipts for that observer.
+
+| Row | Held or needed a change |
+|---|---|
+| A1 | Held: both real/effective uid values come from the engine account. No source change. |
+| A2 | Held: both real/effective gid values come from the engine account. No source change. |
+| A3 | Held: supplementary groups equal the engine set. No source change. |
+| A4 | Held: real native start options have no uid or gid. No source change. |
+| A5 | Held: the four adapter path variables have the sources documented in the PR; other values are inherited. No source change. |
+| A6 | Held: observed written work/scratch files have neither permission bit. No source change. |
+| A7 | Out at base and head: the account's own grants. No change. |
+| A8 | Out at base and head: the account's existing Codex auth link. No change. |
+
+The first mention matrix red at command-start head b33b0c03 is
+1300-r6-deny-mentions-red-2.log: all 395 in-scope name/form cells lacked the required P
+refusal. The first invocation, deny-mentions-red.log, put a runner flag after the filename;
+it was refused before a verdict and earns no red credit. Exact-count admission, missing-entry
+refusal and one-occurrence capacity each have their own named red and matching green, in
+1300-r6-deny-reviewed-, deny-missing- and deny-duplicate-{red,green}.log. The real-closure
+positive test also failed while the inventory was empty in deny-real-closure-red.log, then
+passed with the literal reviewed rows. These are dirty-input measurements at b33b0c03, not
+final-head receipts. Exact input bytes, diffs, commands and producer/tee exits are retained.
+
+The full affected-file run, 1300-r6-deny-affected-green.log, measured 29 named verdicts with
+zero failures or skips, covering all eleven guard cases and the unchanged git spawn census.
+No existing test line at e53b07ef is altered. The native import's literal uses ordinary
+JavaScript quote escapes, so its decoded line is exact without the census's raw-text pattern
+mistaking the fixture for a real import. No census or runner edit is required. The final PR
+records the head-bound receipts, proof comparison, hook, whole-host, named-host, fresh-clone,
+CI and body-check results. Earlier receipts keep their original heads and revised acceptance.

@@ -981,8 +981,7 @@ function run(ps, args, remaining, timeout, host = realHost) {
   return new Promise((resolve, reject) => {
     if (remaining <= 0) return reject(late(timeout));
     let expired = false;
-    const { killSignal, maxBuffer, encoding, cwd } = reader(remaining);
-    const read = host.execFile(ps, args, { env: PS_ENV, killSignal, maxBuffer, encoding, cwd, timeout: 0 }, (error, stdout, stderr) => {
+    const read = host.execFile(ps, args, { env: PS_ENV, ...reader(remaining), timeout: 0 }, (error, stdout, stderr) => {
       host.clock.cancel(deadline);
       reads.delete(read);
       if (expired) return reject(timedOut(timeout));
@@ -1022,8 +1021,7 @@ function runNow(ps, args, remaining, timeout, now = realHost.clock.now, spawn = 
 function runOnce(ps, args, remaining, timeout, spawn = realHost.spawnSync) {
   if (remaining <= 0) throw late(timeout);
   if (unanswered.has(ps)) throw new Error(`${timedOut(unanswered.get(ps)).message} earlier in the exit cleanup, which does not wait on it again`);
-  const { timeout: readTimeout, killSignal, maxBuffer, encoding, cwd } = reader(remaining);
-  const { error, status, signal: ending, stdout, stderr } = spawn(ps, args, { env: PS_ENV, timeout: readTimeout, killSignal, maxBuffer, encoding, cwd });
+  const { error, status, signal: ending, stdout, stderr } = spawn(ps, args, { env: PS_ENV, ...reader(remaining) });
   if (error?.code === 'ETIMEDOUT') {
     unanswered.set(ps, timeout);
     throw timedOut(timeout);
