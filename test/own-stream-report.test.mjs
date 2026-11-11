@@ -120,8 +120,17 @@ test('report over the own stream prints a line for every landed signal at each s
     /^ {4}redos after an interruption: \d+, first attempts: \d+$/]);
 
   perRun('L2', [/^ {4}(no )?host-fault rate: /, /^ {4}(no )?escalation rate: /]);
-  stream('L2', [/^ {4}(no )?host-fault rate: /, /^ {4}(no )?escalation rate: /,
-    /^ {4}acceptance changes, each with who made it$/, /^ {4}rounds per card, by kind of work$/]);
+  stream('L2', [/^ {4}(no )?host-fault rate: /, /^ {4}(no )?escalation rate: /, /^ {4}rounds per card, by kind of work$/]);
+  // The fixture holds no L2 `acceptance.history`, so each of the five acceptance-change lists prints its `none` form.
+  const l2 = spans(found.get('L2')).stream;
+  const opened = l2.indexOf('    acceptance changes, each with who made it');
+  assert.deepEqual(l2.slice(opened, opened + 10), [
+    '    acceptance changes, each with who made it', '      none',
+    '    content deleted from a card\'s history', '      none',
+    '    acceptances that grew after admission', '      none',
+    '    acceptance changes made during the card\'s maker dispatch', '      none',
+    '    each card\'s author', '      none',
+  ], 'L2 across the stream prints every acceptance-change list, each empty');
 
   perRun('L3', [/^ {4}(L3 throughput: |the span is zero, so L3 has no throughput)/,
     /^ {4}(L3 utilization: |the run recorded no N, so L3 has no utilization|the span is zero, so L3 has no throughput and no utilization)/,
@@ -130,7 +139,10 @@ test('report over the own stream prints a line for every landed signal at each s
   perRun('L4', [/^ {4}rework: \d+$/]);
   stream('L4', [/^ {4}rework: \d+$/, /^ {4}(no )?first-pass rate: /, /^ {4}(no )?tier accuracy: /]);
 
-  holds(found.get('markers no dispatch wrote'), [/^ {2}only markers L2 recorded in this state directory are named$/], 'the marker check');
+  // The fixture holds no L2 `marker.read`, so the marker check names no marker and prints only its two notes.
+  assert.deepEqual(found.get('markers no dispatch wrote'), [
+    '  only markers L2 recorded in this state directory are named', '  markers of role owner are never checked',
+  ], 'the marker check');
 });
 
 /** Every run but the worked one, with the lines `lines` gives it, and the worked one with `worked`. */
