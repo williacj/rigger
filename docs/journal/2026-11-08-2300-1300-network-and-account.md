@@ -391,3 +391,46 @@ module specifier from parts. An independent syntax check confirms the emitted im
 byte-identical: native execFile from node:child_process, locally named fieldCommand. The
 [affected-file run](https://github.com/williacj/rigger/issues/1300#issuecomment-6788651753) passes the unchanged census and all guard cases. This spelling
 change preserves the native-origin matrix column; it admits no additional process boundary.
+
+## Configured-step forwarding revision, 2026-11-11
+
+The [argument-boundary counterexample](https://github.com/williacj/rigger/issues/1300#issuecomment-6790718404)
+kept the reviewed carrier declaration but replaced its value in the call to attempt. The
+[M8-K21 ruling](https://github.com/williacj/rigger/issues/1293#issuecomment-6792414299)
+admits each existing bare carrier or exact reviewed selector at its forwarding position.
+The dispatch also admits the exact existing producer expressions. Neither ruling changes
+loop.mjs or puts it in Lands in. The correction remains in the guard introduced by this card.
+
+The guard now inventories the upstream work, attempt, judge and claim forwarding calls,
+including retry, callback and return transports. Each argument keeps its exact reviewed
+expression and canonical source binding. Receiving parameters and destructures cannot supply
+replacement defaults. The returned claim factory, mapped collections, retry iterator, local
+L2 readers and their captured input bindings retain their reviewed forms and identities.
+These are pins on the existing configured-value path, not additional production behavior.
+
+The existing configured-step matrix crosses each forwarding site with replacement arguments
+and modifies each admitted selector or producer. It also exercises parameter/destructuring
+defaults, changed collection sources, returned transports and shadows of the reviewed reader
+and built-in producers. A closure retaining its original binding and unrelated local Map
+remain positive controls. The PR carries the complete source-hop inventory with file lines;
+the search examines arguments and return expressions as well as callee names.
+
+The precommit TDD runs name c96e6812e5faf0a32480c9e8bc571cce321e2011 and retain each
+uncommitted input and its SHA-256. The forwarding red is 1300-r6-r8-forwarding-red.log;
+the receiving-default red is 1300-r6-r9-defaults-red.log. The further transfer reds are
+1300-r6-r9-transfers-red.log, transfer-bindings-red.log, factory-return-red.log,
+return-boundary-red-2.log and iterator-return-red.log, with the same 1300-r6-r9 prefix.
+The corresponding valid greens and full affected-file run are linked in the PR evidence
+ledger. A failed implementation lookup, a positive-control failure and the first malformed
+return-boundary fixture remain in that ledger without missing-behavior red credit.
+
+The adjacent local-helper probe, 1300-r6-r9-helper-red.log, shows that a carrier passed to
+a statically resolved local function could be rewritten through its parameter. The shared
+write walker now propagates protection into that function's parameter bindings before
+checking writes. This uses the existing invocation and binding models. Its matrix cells and
+matching green belong to this correction; no reflective route or production helper is added.
+
+Immutable AST entries and parent links are cached by parsed-tree identity. Changed source
+still gets its own tree, origin computation and policy verdict. The final-head receipts,
+proof comparison, hooks, host, fresh clone and CI are evidence owned by the PR; predecessor
+verification is never relabeled as verification of the corrective commit.

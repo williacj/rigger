@@ -53,6 +53,16 @@ function* nodes(node, parent = null, owner = '<module>') {
   }
 }
 
+/** Cache only immutable syntax; binding origins and guard verdicts remain per report. */
+const programSyntaxModels = new WeakMap();
+function programSyntax(program) {
+  if (!programSyntaxModels.has(program)) {
+    const entries = [...nodes(program)];
+    programSyntaxModels.set(program, { entries, parents: new Map(entries.map(({ node, parent }) => [node, parent])) });
+  }
+  return programSyntaxModels.get(program);
+}
+
 /** Follow imports from roots; never execute the modules being checked. */
 const parsedModules = new Map();
 function networkReport(read, roots) {
@@ -639,11 +649,11 @@ function processBindings(modules) {
     return [{ symbol, args }];
   };
   const invocation = (file, node, seen = new Set()) => invoke(origin(file, node.callee, seen), node.callee.type === 'MemberExpression' ? argument(file, node.callee.object) : undefined, node.arguments.map((node) => argument(file, node)), seen);
-  const named = (file, name) => {
+  const named = (file, name, nested = false) => {
     const model = models.get(file);
-    let binding = model.root.names.get(name);
+    let binding = nested ? undefined : model.root.names.get(name);
     if (!binding) {
-      const declarations = [...nodes(modules.get(file).program)].filter(({ node }) => node.type === 'VariableDeclarator' && node.id.name === name);
+      const declarations = programSyntax(modules.get(file).program).entries.filter(({ node }) => node.type === 'VariableDeclarator' && node.id.name === name && ['ArrowFunctionExpression', 'FunctionExpression'].includes(node.init?.type) && (!nested || model.lookup(node.id)?.scope !== model.root));
       if (declarations.length === 1) binding = model.lookup(declarations[0].node.id);
     }
     return bindingOrigin(file, binding, new Set());
@@ -662,17 +672,22 @@ function programReport(modules) {
   const nativeBindings = new Map([...modules.keys()].map((file) => [file, new Set()]));
   const bindings = processBindings(modules);
   const originBindings = new Map();
+  const readerBindings = new Map();
+  const readerInputs = new Set(['ask', 'decide', 'facts', 'atPull', 'take']);
+  const checkedValues = [];
+  const entriesByFile = new Map([...modules].map(([file, { program }]) => [file, programSyntax(program).entries]));
+  const parentsByFile = new Map([...modules].map(([file, { program }]) => [file, programSyntax(program).parents]));
   const links = [];
   const originKey = (file, owner, kind, name) => `${file}#${owner}#${kind}#${name}`;
   const reviewed = new Set();
-  for (const [file, names] of PROGRAM_DEFINITIONS) for (const name of names) {
-    const symbol = bindings.named(file, name);
+  for (const [file, names, nested] of PROGRAM_DEFINITIONS) for (const name of names) {
+    const symbol = bindings.named(file, name, nested);
     if (symbol === undefined) violations.push(`${file} N8 missing reviewed process definition ${name}`);
     else for (const value of originVariants(symbol)) reviewed.add(value);
   }
   const fail = (file, node, reason) => violations.push(`${file}:${node.loc.start.line} N8 ${reason}`);
   for (const [file, { program }] of modules) {
-    const entries = [...nodes(program)];
+    const entries = entriesByFile.get(file);
     const processMember = (node) => node?.type === 'MemberExpression' && (nativeProgram(bindings.origin(file, node)) || ['spawn', 'spawnSync', 'execFile'].includes(memberName(node)));
     for (const { node, parent, owner } of entries) {
       if (node.type === 'Property' && parent.type === 'ObjectExpression' && memberName(node) === 'tool' && !(file === 'src/substrate/process.mjs' && owner === 'list')) fail(file, node, 'unlisted local-reader program origin');
@@ -692,7 +707,8 @@ function programReport(modules) {
       const guarded = invocations.filter(({ symbol }) => reviewed.has(symbol) || nativeProgram(symbol));
       if (guarded.length || processMember(callee)) {
         const key = `${file}#${owner}#${syntaxShape(callee)}`;
-        const expected = PROGRAM_CALLS.find((entry) => entry[0] === file && entry[1] === owner && expressionShape(entry[2]) === syntaxShape(callee));
+        const candidates = PROGRAM_CALLS.filter((entry) => entry[0] === file && entry[1] === owner && expressionShape(entry[2]) === syntaxShape(callee));
+        const expected = candidates.length === 1 ? candidates[0] : candidates.find((entry) => syntaxShape(node.arguments) === syntaxShape(parseExpressionAt(`[${entry[4]}]`, 0, { ecmaVersion: 'latest', sourceType: 'module' }).elements));
         calls.push(key);
         if (!expected) { fail(file, node, `unlisted process site ${owner}: ${modules.get(file).source.slice(callee.start, callee.end)}`); continue; }
         for (const call of guarded.length ? guarded : invocations) {
@@ -700,10 +716,10 @@ function programReport(modules) {
           const value = expected[3] === 'command' ? objectValue(args?.[0], 'command') : expected[3] === 'all' ? args : args?.[expected[3] === 'second' ? 1 : 0];
           const parsed = parseExpressionAt(`[${expected[4]}]`, 0, { ecmaVersion: 'latest', sourceType: 'module' }).elements;
           const wanted = expected[3] === 'all' ? parsed : parsed[0];
+          for (const root of Array.isArray(value) ? value : [value]) if (root) checkedValues.push({ file, root });
           if (syntaxShape(value) !== syntaxShape(wanted)) fail(file, node, `program/input differs at ${owner}`);
           if (expected[6]) {
-            const [index, kind, name] = expected[6];
-            links.push({ file, owner, node, value: call.args?.[index], kind, name });
+            for (const [index, kind, name] of Array.isArray(expected[6][0]) ? expected[6] : [expected[6]]) links.push({ file, owner, node, value: call.args?.[index], kind, name });
           }
           if (nativeProgram(call.symbol) || processMember(callee)) {
             const functions = entries.filter(({ node }) => node.type === 'FunctionDeclaration' && node.id.name === owner);
@@ -726,35 +742,63 @@ function programReport(modules) {
   if (syntaxShape(references.sort()) !== syntaxShape(expectedReferences.sort())) violations.push('N8 native process references differ (unreviewed alias or method)');
   const protectedByFile = new Map([...modules.keys()].map((file) => [file, new Set(['global:process#env', ...nativeBindings.get(file)])]));
   const protectedValues = new Set(reviewed);
-  for (const [file, owner, kind, name, expression, source, fields] of PROGRAM_ORIGINS) {
+  for (const [file, owner, kind, name, expression, source, fields, bare] of PROGRAM_ORIGINS) {
     const model = bindings.models.get(file);
     const key = originKey(file, owner, kind, name);
     const selected = new Set();
-    const matches = [...nodes(modules.get(file).program)].filter(({ node, parent, owner: at }) => at === owner && (
+    const expectedValues = Array.isArray(expression) ? expression : [expression];
+    const remember = (identifier, origin = key) => {
+      const binding = model.lookup(identifier);
+      if (!originBindings.has(origin)) originBindings.set(origin, new Set());
+      originBindings.get(origin).add(binding);
+      if (kind === 'reader' || readerInputs.has(identifier.name)) {
+        const reader = `${file}#${identifier.name}`;
+        if (!readerBindings.has(reader)) readerBindings.set(reader, new Set());
+        readerBindings.get(reader).add(binding);
+      }
+    };
+    const matches = entriesByFile.get(file).filter(({ node, parent, owner: at }) => at === owner && (
       kind === 'binding' ? node.type === 'VariableDeclarator' && syntaxShape(node.id) === syntaxShape(parse(`const ${name} = null`, { ecmaVersion: 'latest' }).body[0].declarations[0].id) :
       kind === 'reader' ? (node.type === 'FunctionDeclaration' && node.id.name === name) || (node.type === 'VariableDeclarator' && node.id.name === name && model.lookup(node.id)?.scope !== model.root) :
       kind === 'parameter' ? node.type === 'Identifier' && node.name === name && model.bindings.has(node) && model.lookup(node)?.scope?.kind === 'parameters' :
       kind === 'variable' ? node.type === 'VariableDeclarator' && node.id.name === name :
       kind === 'default' ? node.type === 'AssignmentPattern' && node.left.name === name :
       kind === 'function' ? node.type === 'FunctionDeclaration' && node.id.name === name :
+      kind === 'return' ? node.type === 'ReturnStatement' :
+      kind === 'iteration' ? node.type === 'ForOfStatement' && !node.await && syntaxShape(node.left) === syntaxShape(parse(`for (${name} of []) {}`, { ecmaVersion: 'latest' }).body[0].left) :
       node.type === 'Property' && parent.type === 'ObjectExpression' && memberName(node) === name
     )).filter(({ node }) => {
       if (selected.has(node)) return false;
       selected.add(node);
       return true;
     }).map(({ node, parent }) => {
+      if (bare === true && !parent.params?.includes(node)) fail(file, node, 'a configured receiving parameter must be a bare identifier without a default');
+      if (kind === 'parameter' && model.lookup(node)?.fallback) fail(file, node, 'a reviewed receiving parameter may not supply a default');
+      if (bare === 'return') {
+        const parents = parentsByFile.get(file);
+        const enclosing = (part) => {
+          for (let at = parents.get(part); at; at = parents.get(at)) if (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(at.type)) return at;
+        };
+        const factory = model.root.names.get(owner)?.value;
+        const returns = entriesByFile.get(file).filter(({ node: part }) => part.type === 'ReturnStatement' && enclosing(part) === factory);
+        if (returns.length !== 1 || returns[0].node.argument !== parent) fail(file, node, 'a reviewed transport property must be returned directly by its factory');
+      }
       const protectedBindings = protectedByFile.get(file) ?? new Set();
       protectedByFile.set(file, protectedBindings);
-      const value = kind === 'reader' && node.type === 'FunctionDeclaration' ? { ...node, type: 'FunctionExpression' } : ['binding', 'variable', 'reader'].includes(kind) ? node.init : kind === 'parameter' ? node : kind === 'default' ? node.right : kind === 'function' ? { ...node, type: 'FunctionExpression' } : node.value;
+      const value = kind === 'reader' && node.type === 'FunctionDeclaration' ? { ...node, type: 'FunctionExpression' } : ['binding', 'variable', 'reader'].includes(kind) ? node.init : kind === 'parameter' ? node : kind === 'default' ? node.right : kind === 'function' ? { ...node, type: 'FunctionExpression' } : kind === 'return' ? node.argument : kind === 'iteration' ? node.right : node.value;
+      if (value) checkedValues.push({ file, root: value });
       const declared = kind === 'parameter' ? node : kind === 'default' ? node.left : node.id;
-      if (declared?.type === 'Identifier') originBindings.set(key, model.lookup(declared));
-      if (source) links.push({ file, owner, node, value: { file, node: value }, kind: source[0], name: source[1] });
+      if (declared?.type === 'Identifier') remember(declared);
+      const reader = value?.type === 'AwaitExpression' ? value.argument?.callee : value?.type === 'CallExpression' ? value.callee : undefined;
+      if (source) links.push({ file, owner, node, value: { file, node: source[2] === 'callee' ? reader : value }, kind: source[0], name: source[1] });
       if (kind === 'property') protectedValues.add(bindings.origin(file, parent));
       if (kind === 'property' && parent.properties.some((property) => property.type !== 'Property' || property.computed)) fail(file, node, 'a reviewed origin object may not spread or compute sibling keys');
       // Linked sources have their own pin; an index dependency is not the selected step.
-      const identifiers = fields ? node.id.properties.filter((property) => fields.includes(property.value?.name)).map((property) => property.value) : [node.id];
-      const reader = value?.type === 'AwaitExpression' ? value.argument?.callee : value?.type === 'CallExpression' ? value.callee : undefined;
-      const roots = kind === 'reader' || source ? [node.id] : fields ? [...identifiers, reader] : [value, ...(['binding', 'variable'].includes(kind) ? identifiers : kind === 'default' ? [node.left] : [])];
+      const pattern = kind === 'iteration' ? node.left.declarations[0].id : node.id;
+      const identifiers = fields ? [...writeTargets(pattern)].filter((identifier) => fields.includes(identifier.name)) : [node.id];
+      if (fields) for (const identifier of identifiers) remember(identifier, originKey(file, owner, 'binding', identifier.name));
+      const closedReader = kind === 'reader' || (kind === 'property' && ['ArrowFunctionExpression', 'FunctionExpression'].includes(value?.type));
+      const roots = closedReader || source || kind === 'return' ? fields ? identifiers : [node.id] : fields ? [...identifiers, reader] : [value, ...(['binding', 'variable'].includes(kind) ? identifiers : kind === 'default' ? [node.left] : [])];
       for (const root of roots) {
         if (root) for (const { node: part, parent } of nodes(root)) if (part.type === 'Identifier' && (model.bindings.has(part) || referenceIdentifier(part, parent, model.bindings))) {
           const binding = model.lookup(part);
@@ -767,14 +811,14 @@ function programReport(modules) {
       }
       return value;
     });
-    if (matches.length !== 1) originBindings.delete(key);
-    if (matches.length !== 1 || syntaxShape(matches[0]) !== expressionShape(expression)) violations.push(`${file} N8 ${owner}'s ${name} program origin differs`);
+    if (matches.length !== expectedValues.length) originBindings.delete(key);
+    if (matches.length !== expectedValues.length || matches.some((value, index) => syntaxShape(value) !== expressionShape(expectedValues[index]))) violations.push(`${file} N8 ${owner}'s ${name} program origin differs`);
   }
   for (const { file, owner, node, value, kind, name } of links) {
     let root = value?.node;
     while (root?.type === 'MemberExpression') root = root.object;
-    const expected = originBindings.get(originKey(file, owner, kind, name));
-    if (!expected || value?.file !== file || root?.type !== 'Identifier' || bindings.models.get(file).lookup(root) !== expected) fail(file, node, `configured input binding differs at ${owner}`);
+    const expected = originBindings.get(originKey(file, kind === 'reader' ? name : owner, kind, name));
+    if (!expected || value?.file !== file || root?.type !== 'Identifier' || !expected.has(bindings.models.get(file).lookup(root))) fail(file, node, `configured input binding differs at ${owner}`);
   }
   for (const [file, protectedBindings] of protectedByFile) {
     const { program } = modules.get(file);
@@ -788,23 +832,38 @@ function programReport(modules) {
       'answer = askAttempt([], { attempt: number, maker: outcome })',
       'current = named(answer, role)',
       'next = next.following',
+      "settled[at] = { status: 'fulfilled', value: { role: judge.role, outcome: failure } }",
+      '[settled[at]] = await Promise.allSettled([judged(card, judge, repeat, scope)])',
     ] : [];
     for (const expression of allowed) {
       const matches = [...nodes(program)].map(({ node }) => node).filter((node) => syntaxShape(node) === expressionShape(expression));
       if (matches.length === 1) {
         const reader = file === 'src/scheduling/loop.mjs' && matches[0].right?.type === 'CallExpression' ? matches[0].right.callee : undefined;
-        if (!reader || (reader.type === 'Identifier' && bindings.models.get(file).lookup(reader) === originBindings.get(originKey(file, reader.name, 'reader', reader.name)))) admitted.add(matches[0]);
+        if (!reader || (reader.type === 'Identifier' && originBindings.get(originKey(file, reader.name, 'reader', reader.name))?.has(bindings.models.get(file).lookup(reader)))) {
+          admitted.add(matches[0]);
+          checkedValues.push({ file, root: matches[0] });
+        }
       }
     }
     const protectedInputs = new Set([...protectedBindings, ...protectedValues]);
     for (const node of bindingWrites(program, bindings.models.get(file), protectedInputs, (node) => bindings.origin(file, node), { bindings, file })) if (!admitted.has(node)) fail(file, node, 'rewrites a reviewed input binding or its member');
+  }
+  for (const { file, root } of checkedValues) {
+    const model = bindings.models.get(file);
+    for (const { node, parent } of nodes(root)) if (node.type === 'Identifier' && referenceIdentifier(node, parent, model.bindings)) {
+      const binding = model.lookup(node);
+      if (binding?.identifier?.start >= root.start && binding.identifier.end <= root.end) continue;
+      if (GLOBALS.has(node.name) && binding) fail(file, node, `reviewed global input binding differs: ${node.name}`);
+      const expected = readerBindings.get(`${file}#${node.name}`);
+      if (expected && (readerInputs.has(node.name) || (parent?.type === 'CallExpression' && parent.callee === node)) && !expected.has(binding)) fail(file, node, `reviewed reader input binding differs: ${node.name}`);
+    }
   }
   return violations;
 }
 
 /** Follow ordinary local aliases when refusing writes to a pinned input, including member mutations. */
 function bindingWrites(program, model, protectedBindings, origin = () => undefined, context) {
-  const entries = [...nodes(program)];
+  const entries = programSyntax(program).entries;
   const writers = new Set(['Object.assign', 'Object.defineProperty', 'Object.defineProperties', 'Reflect.set', 'Reflect.deleteProperty'].map(expressionShape));
   const protectedValue = (value) => protectedBindings.has(value) || context?.protectedOrigin?.(value) || (value?.parentOrigin && protectedValue(value.parentOrigin));
   const root = (node, file = context?.file) => {
@@ -817,9 +876,15 @@ function bindingWrites(program, model, protectedBindings, origin = () => undefin
     }
     return node?.type === 'Identifier' ? (context ? context.bindings.models.get(file) : model).lookup(node) : undefined;
   };
+  const localFunctions = new Set(entries.map(({ node }) => node).filter((node) => ['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(node.type)));
+  const parameterTransfers = context ? entries.flatMap(({ node }) => node.type === 'CallExpression' ? context.bindings.invocation(context.file, node).filter(({ symbol, created }) => !created && localFunctions.has(symbol)) : []) : [];
   let previous;
   do {
     previous = protectedBindings.size;
+    for (const { symbol, args } of parameterTransfers) for (const [index, parameter] of symbol.params.entries()) {
+      if (!protectedValue(root(args?.[index]?.node, args?.[index]?.file))) continue;
+      for (const identifier of writeTargets(parameter)) if (model.bindings.has(identifier)) protectedBindings.add(model.lookup(identifier));
+    }
     for (const { node } of entries) if (node.type === 'VariableDeclarator' && protectedValue(root(node.init))) {
       for (const { node: identifier } of nodes(node.id)) if (model.bindings.has(identifier)) protectedBindings.add(model.lookup(identifier));
     }
@@ -885,7 +950,8 @@ const PROGRAM_DEFINITIONS = [
   ['src/execution/run.mjs', ['dispatch']],
   ['src/execution/role.mjs', ['roleDispatch']],
   ['src/execution/step.mjs', ['stepDispatch']],
-  ['src/scheduling/loop.mjs', ['dispatchStep']],
+  ['src/scheduling/loop.mjs', ['dispatchStep', 'attempt', 'judges', 'judged', 'judgeWork', 'work', 'named'], true],
+  ['src/scheduling/loop.mjs', ['claiming']],
   ['src/cli/doctor.mjs', ['asked']],
   ['src/substrate/forge/runners.mjs', ['throughL0']],
 ];
@@ -933,6 +999,15 @@ const PROGRAM_CALLS = [
   ['src/scheduling/loop.mjs', 'dispatchStep', 'stepDispatch', 'all', 'step, path, environment', 1, [0, 'parameter', 'step']],
   ['src/scheduling/loop.mjs', 'attempt', 'dispatchStep', 'all', 'card, answer.step, path, { attempt: number }', 1, [1, 'variable', 'answer']],
   ['src/scheduling/loop.mjs', 'judgeWork', 'dispatchStep', 'all', 'card, step, head, { role }', 1, [1, 'variable', 'step']],
+  ['src/scheduling/loop.mjs', 'work', 'attempt', 'all', 'card, next, kept, remember, placed, scope', 1, [1, 'variable', 'next']],
+  ['src/scheduling/loop.mjs', 'work', 'judges', 'all', 'card, next, (options) => answerFrom(atPull, card, [], options), (ended) => kept({ card: card.number, judges: ended }), remember, placed, scope', 1, [1, 'variable', 'next']],
+  ['src/scheduling/loop.mjs', 'attempt', 'judges', 'all', 'card, judging, ask, (ended) => kept({ ...reached, judges: ended }), remember, placed, scope', 1, [[1, 'variable', 'judging'], [2, 'reader', 'ask']]],
+  ['src/scheduling/loop.mjs', 'judges', 'judged', 'all', 'card, judge, ask, scope', 1, [[1, 'parameter', 'judge'], [2, 'parameter', 'ask']]],
+  ['src/scheduling/loop.mjs', 'judges', 'judged', 'all', 'card, judge, repeat, scope', 1, [[1, 'binding', 'judge'], [2, 'reader', 'repeat']]],
+  ['src/scheduling/loop.mjs', 'judged', 'judgeWork', 'all', 'card, judge, ask, scope', 1, [[1, 'parameter', 'judge'], [2, 'parameter', 'ask']]],
+  ['src/scheduling/loop.mjs', 'trigger', 'work', 'all', 'claim, freed, setAsides', 1, [0, 'parameter', 'claim']],
+  ['src/scheduling/loop.mjs', 'judgeWork', 'named', 'all', 'answer, role', 2, [0, 'variable', 'answer']],
+  ["src/scheduling/loop.mjs", "loop", "claiming", "all", "{ config, board, facts, l2, sink, kill, readAdmission: () => admissionRecord.read(), follow: () => follow(), halted: () => unsaved !== undefined }"],
 ];
 
 /** Every native-method read, including methods forwarded without calling them at that site. */
@@ -948,20 +1023,41 @@ const PROCESS_REFERENCES = [
 
 /** Closed origins, lexical source links and local readers; the consumer line remains N10. */
 const PROGRAM_ORIGINS = [
+  ["src/scheduling/loop.mjs", "judgeWork", "return", "judge results", ["{ role, held: await heldJudge(card, role, answer), decision: answer }", "{ role, outcome: made, escalation: answer, decision: answer }", "{ role, withheld: { directory: made }, decision: answer }", "{ role, withheld: { step: step.name, outcome: outcomes.at(-1) }, decision: answer }", "{ role, outcome, halt: true, decision: answer }", "{ role, held: await heldJudge(card, role, answer), decision: answer }", "{ role, outcome, escalation: answer, decision: answer }", "{ role, retry: { judge: current, failure: outcome } }", "{ role, decision: answer, failure: Object.assign(new Error(`card #${card.number}'s judge \\`${role}\\` was stopped after two dispatches:\\nfirst: ${JSON.stringify(answer.firstFailure)}\\nsecond: ${JSON.stringify(answer.failure)}`), { card: card.number, role, decision: 'stop', firstFailure: answer.firstFailure, failure: answer.failure }) }", "{ role, withheld: { scratch: outcome }, decision: answer }", "{ role, outcome }"]],
+  ["src/scheduling/loop.mjs", "judges", "iteration", "const [at, each]", "settled.entries()", ["variable", "settled", "callee"], ["each"]],
+  ["src/scheduling/loop.mjs", "claiming", "property", "take", "async (limit, setAsides, poll = false, memory) => {\n      await killed();\n      const failures = [];\n      let unrecorded = false;\n      try {\n        record('trigger', { trigger: 'pull' });\n      } catch (refusal) {\n        unrecorded = true;\n        failures.push(refused('the event sink refused to record the pull trigger', refusal));\n      }\n      const { notices, unrecorded: unwritten } = await follow();\n      failures.push(...unwritten);\n      // A poll whose trigger the sink refused claims nothing (\"A poll in each idle state\").\n      if (poll && unrecorded) return { claims: [], failures, notices };\n      const read = setAsides?.read();\n      try {\n        return await claim(limit, setAsides, read, failures, notices, memory);\n      } catch (thrown) {\n        // A later read that fails keeps what this trigger already did and could not record.\n        const kept = [...failures, ...notices.map(noticeFailure)];\n        // The read's own failure stays original beside the trigger's earlier refusals.\n        const reason = thrown;\n        throw kept.length === 0 ? reason : Object.assign(new AggregateError([...kept, reason], `${reason.message}, after ${kept.length} earlier failure${kept.length === 1 ? '' : 's'} of this trigger`), { cause: reason });\n      } finally {\n        if (read !== undefined) setAsides.done(read);\n      }\n    }", null, null, "return"],
+  ["src/scheduling/loop.mjs", "loop", "binding", "{ concurrency, claims, killed, record, refused, take, start, release }", "claiming({ config, board, facts, l2, sink, kill, readAdmission: () => admissionRecord.read(), follow: () => follow(), halted: () => unsaved !== undefined })", null, ["take"]],
+  ["src/scheduling/loop.mjs", "judges", "variable", "settled", "await Promise.allSettled(answer.judges.map((judge) => judged(card, judge, ask, scope)))"],
+  ["src/scheduling/loop.mjs", "repeat", "reader", "repeat", "(options) => ask({ ...options, ...(options.directories === undefined ? {} : {\n        directories: Object.fromEntries(Object.entries(options.directories).map(([role, outcome]) => [role, { ...outcome, firstFailure: failure }])),\n      }) })"],
+  ["src/scheduling/loop.mjs", "work", "binding", "{ card, decide: atPull, scope }", "claim", ["parameter", "claim"], ["atPull"]],
+  ["src/scheduling/loop.mjs", "trigger", "variable", "worked", "await Promise.allSettled(claimed.map((claim) => (claim.next.action === 'merge' ? merged(claim, setAsides) : work(claim, freed, setAsides))))"],
+  ["src/scheduling/loop.mjs", "judgeWork", "variable", "answer", ["ask({ directories: { [role]: made } })", "ask({ judged: { [role]: [...outcomes] } })", "ask({ directories: { [role]: outcome } })"], ["parameter", "ask", "callee"]],
+  ["src/scheduling/loop.mjs", "judgeWork", "property", "judge", "current", ["variable", "current"]],
+  ["src/scheduling/loop.mjs", "judged", "return", "judgeWork result", "await judgeWork(card, judge, ask, scope)"],
+  ["src/scheduling/loop.mjs", "claim", "variable", "decide", "await facts(offered)"],
+  ["src/scheduling/loop.mjs", "judges", "parameter", "ask", "ask", null, null, true],
+  ["src/scheduling/loop.mjs", "judged", "parameter", "ask", "ask", null, null, true],
+  ["src/scheduling/loop.mjs", "judgeWork", "parameter", "ask", "ask", null, null, true],
+  ["src/scheduling/loop.mjs", "loop", "parameter", "decide", "decide", null, null, false],
+  ["src/scheduling/loop.mjs", "loop", "parameter", "facts", "facts", null, null, false],
+  ["src/scheduling/loop.mjs", "claiming", "parameter", "facts", "facts", null, null, false],
   ["src/scheduling/loop.mjs", "eligible", "reader", "eligible", "function eligible(card, next, memory) {\n  if (memory?.barred.has(card.number) && makerAction(next)) next = { action: 'ignore' };\n  if (memory !== undefined && next.action === 'judge') {\n    const judges = next.judges.filter((judge) => !memory.actions.has(`${card.number}:${judgeIdentity(judge)}`) && !memory.deferred.has(`${card.number}:${judgeIdentity(judge)}`));\n    next = judges.length === 0 ? { action: 'ignore' } : { ...next, judges };\n  }\n  if (memory !== undefined && makerAction(next) && (memory.actions.has(`${card.number}:${actionIdentity(next)}`) || memory.deferred.has(`${card.number}:${actionIdentity(next)}`))) next = { action: 'ignore' };\n  return next;\n}"],
   ["src/scheduling/loop.mjs", "claim", "reader", "claim", "async (limit, setAsides, read, failures, notices, memory) => {\n    const columns = await board.readColumns();\n    const { items, declared } = await board.readPriority();\n    /** A board item neither claimed nor skipped by this run's memory of the cards it set aside. */\n    const available = (item) => !claims.has(item.number) && !setAsides?.skips(item, read);\n    const offered = items.filter(available);\n    const offeredAt = new Map(offered.map(({ number }) => [number, generations.get(number)]));\n    const decide = await facts(offered);\n    // Only this read's original offer at its original generation can reach decide, even if an\n    // intervening claim already released or its start failed before this read finished.\n    const unclaimed = offered.filter((item) => available(item) && generations.get(item.number) === offeredAt.get(item.number));\n    // Each card's answer is kept as L2 gave it at the pull, so L3 asks nothing again to begin.\n    const answers = new Map();\n    const { pulls } = pullOrder({ items: unclaimed, columns, declared }, (card) => {\n      const next = eligible(card, decide(card), memory);\n      answers.set(card.number, next);\n      return next;\n    });\n    if (halted()) return { claims: [], failures, notices };\n    const admissionState = readAdmission();\n    if (admissionState.state === 'unreadable') {\n      const { unreadable } = admissionState;\n      throw Object.assign(new Error(`admission cannot be read, so this pull claims nothing: ${unreadable.map(({ path, cause }) => `${path} (${cause})`).join(', ')}`), { unreadable });\n    }\n    if (admissionState.state === 'closed') return { claims: [], failures, admission: admissionState, notices };\n    const taken = [];\n    for (const pull of pulls) {\n      if (limit !== undefined && taken.length >= limit) break;\n      const next = answers.get(pull.card);\n      // A merge claim holds no slot, so N does not bound it (the architect's r2 ruling 3); a limit\n      // given counts every card claimed, since each claim finishes a card.\n      const merge = next.action === 'merge';\n      if (!merge && slots.size >= concurrency) continue;\n      claims.add(pull.card);\n      generations.set(pull.card, (generations.get(pull.card) ?? 0) + 1);\n      if (!merge) slots.add(pull.card);\n      const card = unclaimed.find((item) => item.number === pull.card);\n      setAsides?.claimed(card.number, card.column, read);\n      taken.push({ ...pull, card, next, decide, order: order++, scope: memory === undefined ? undefined : { memory }, queueDepth: pulls.length - taken.length - 1, inFlight: slots.size });\n    }\n    return { claims: taken, failures, notices };\n  }"],
-  ["src/scheduling/loop.mjs", "work", "parameter", "claim", "claim"],
+  ["src/scheduling/loop.mjs", "work", "parameter", "claim", "claim", null, null, true],
   ["src/scheduling/loop.mjs", "work", "variable", "next", "claim.next", ["parameter", "claim"]],
-  ["src/scheduling/loop.mjs", "judged", "parameter", "judge", "judge"],
-  ["src/scheduling/loop.mjs", "judges", "parameter", "answer", "answer"],
-  ["src/scheduling/loop.mjs", "judges", "binding", "{ judge, failure }", "each.value.retry", null, ["judge"]],
+  ["src/scheduling/loop.mjs", "judged", "parameter", "judge", "judge", null, null, true],
+  ["src/scheduling/loop.mjs", "judges", "parameter", "answer", "answer", null, null, true],
+  ['src/scheduling/loop.mjs', 'judges', 'parameter', 'judge', 'judge', null, null, true],
+  ['src/scheduling/loop.mjs', 'trigger', 'parameter', 'claim', 'claim', null, null, true],
+  ['src/scheduling/loop.mjs', 'attempt', 'variable', 'judging', 'eligible(card, ask({}), scope?.memory)'],
+  ["src/scheduling/loop.mjs", "judges", "binding", "{ judge, failure }", "each.value.retry", ["binding", "each"], ["judge"]],
   ["src/scheduling/loop.mjs", "trigger", "binding", "{ claims: claimed, failures, admission: closed, notices = [] }", "await take(limit, setAsides, poll, memory)", null, ["claimed"]],
 
   ['src/scheduling/loop.mjs', 'loop', 'parameter', 'environment', 'environment'],
-  ['src/scheduling/loop.mjs', 'dispatchStep', 'parameter', 'step', 'step'],
-  ['src/scheduling/loop.mjs', 'attempt', 'parameter', 'next', 'next'],
+  ['src/scheduling/loop.mjs', 'dispatchStep', 'parameter', 'step', 'step', null, null, true],
+  ['src/scheduling/loop.mjs', 'attempt', 'parameter', 'next', 'next', null, null, true],
   ['src/scheduling/loop.mjs', 'attempt', 'variable', 'answer', 'next', ['parameter', 'next']],
-  ['src/scheduling/loop.mjs', 'judgeWork', 'parameter', 'judge', 'judge'],
+  ['src/scheduling/loop.mjs', 'judgeWork', 'parameter', 'judge', 'judge', null, null, true],
   ['src/scheduling/loop.mjs', 'judgeWork', 'variable', 'current', 'judge', ['parameter', 'judge']],
   ['src/scheduling/loop.mjs', 'judgeWork', 'variable', 'step', 'current.steps[outcomes.length]', ['variable', 'current']],
   ['src/scheduling/loop.mjs', 'answerFrom', 'reader', 'answerFrom', '(answer, ...args) => { try { return answer(...args); } catch (failure) { if (failure?.halt === true) refusedAnswers.add(failure); throw failure; } }'],
@@ -998,6 +1094,7 @@ const PROGRAM_ORIGINS = [
   ['src/substrate/providers/codex.mjs', '<module>', 'variable', 'auth', "['codex', 'login', 'status']"],
   ['src/execution/step.mjs', 'stepDispatch', 'property', 'command', "'/bin/sh'"],
   ['src/execution/step.mjs', 'stepDispatch', 'property', 'args', "['-c', step.run]"],
+  ['src/execution/step.mjs', 'stepDispatch', 'parameter', 'step', 'step', null, null, true],
   ['src/substrate/host.mjs', '<module>', 'property', 'ps', "process.platform === 'linux' ? fileURLToPath(new URL('./process-table.sh', import.meta.url)) : '/bin/ps'"],
   ['src/substrate/host.mjs', '<module>', 'property', 'lsof', "process.platform === 'linux' ? '/usr/bin/lsof' : '/usr/sbin/lsof'"],
   ['src/substrate/process.mjs', 'toolOf', 'variable', 'toolOf', '(read, ps) => (Array.isArray(read) ? [ps, read] : [read.tool, read.args])'],
@@ -1420,11 +1517,12 @@ test('N8 configured steps: reassignment, spread replacement, member writes and s
     ['member-stored alias', (step) => `const holder = {}; holder.step = ${step}; holder.step.run = ${replacement};`],
     ['object-field alias', (step) => `const holder = { step: ${step} }; holder.step.run = ${replacement};`],
     ['member mutator', (step) => `Object.assign(${step}, { run: ${replacement} });`],
+    ['local helper parameter', (step) => `function replaceConfigured(value) { value.run = ${replacement}; } replaceConfigured(${step});`],
   ];
   const missed = [];
-  const refuses = (anchor, rewritten, label) => {
-    const changed = changedPackage(report, file, anchor, rewritten, label);
-    if (!programReport(changed.modules).some((line) => line.includes(file) && line.includes('N8'))) missed.push(label);
+  const refuses = (anchor, rewritten, label, target = file) => {
+    const changed = changedPackage(report, target, anchor, rewritten, label);
+    if (!programReport(changed.modules).some((line) => line.includes(target) && line.includes('N8'))) missed.push(label);
   };
   for (const [path, anchor, step, insert] of paths) for (const [form, edit] of forms) refuses(anchor, insert(edit(step)), `${path} / ${form}`);
   const calls = [
@@ -1456,5 +1554,116 @@ test('N8 configured steps: reassignment, spread replacement, member writes and s
     ['judge selection', 'current = named(answer, role)', 'named', `({ steps: [{ run: ${replacement} }] })`],
     ['attempt answer', 'answer = askAttempt([...outcomes], { attempt: number })', 'askAttempt', `({ action: 'dispatch', step: { run: ${replacement} } })`],
   ]) refuses(update, `((${reader}) => { ${update}; })(() => ${forged})`, `${path} / admitted reader binding shadow`);
+  const forwardingCalls = [
+    ['work to attempt', 'attempt(card, next, kept, remember, placed, scope)', 'attempt(card, ', 'next', `{ ...next, step: { run: ${replacement} } }`],
+    ['work to judges', 'judges(card, next, (options) => answerFrom(atPull, card, [], options), (ended) => kept({ card: card.number, judges: ended }), remember, placed, scope)', 'judges(card, ', 'next', `{ ...next, judges: [{ steps: [{ run: ${replacement} }] }] }`],
+    ['attempt to judges', 'judges(card, judging, ask, (ended) => kept({ ...reached, judges: ended }), remember, placed, scope)', 'judges(card, ', 'judging', `{ ...judging, judges: [{ steps: [{ run: ${replacement} }] }] }`],
+    ['judge map to judged', 'judged(card, judge, ask, scope)', 'judged(card, ', 'judge', `{ ...judge, steps: [{ run: ${replacement} }] }`],
+    ['judge retry to judged', 'judged(card, judge, repeat, scope)', 'judged(card, ', 'judge', `{ ...judge, steps: [{ run: ${replacement} }] }`],
+    ['judged to judgeWork', 'judgeWork(card, judge, ask, scope)', 'judgeWork(card, ', 'judge', `{ ...judge, steps: [{ run: ${replacement} }] }`],
+    ['trigger to work', 'work(claim, freed, setAsides)', 'work(', 'claim', `{ ...claim, next: { action: 'dispatch', step: { run: ${replacement} } } }`],
+    ['judgeWork to dispatchStep', 'dispatchStep(card, step, head, { role })', 'dispatchStep(card, ', 'step', `{ ...step, run: ${replacement} }`],
+    ['dispatchStep to stepDispatch', 'stepDispatch(step, path, environment)', 'stepDispatch(', 'step', `{ ...step, run: ${replacement} }`],
+    ['refreshed named selection', 'current = named(answer, role)', 'named(', 'answer', `{ action: 'judge', judges: [{ role, steps: [{ run: ${replacement} }] }] }`],
+    ['withheld named selection', 'if (named(answer, role) === undefined)', 'named(', 'answer', `{ action: 'judge', judges: [{ role, steps: [{ run: ${replacement} }] }] }`],
+    ['claim to answer map', 'answers.set(card.number, next)', 'answers.set(card.number, ', 'next', `{ ...next, step: { run: ${replacement} } }`],
+    ['attempt selected step', 'dispatchStep(card, answer.step, path, { attempt: number })', 'dispatchStep(card, ', 'answer.step', `{ ...answer.step, run: ${replacement} }`],
+    ['claim configured producer', 'eligible(card, decide(card), memory)', 'eligible(card, ', 'decide(card)', `{ action: 'dispatch', step: { run: ${replacement} } }`],
+    ['settled configured producer', 'eligible(card, ask({}), scope?.memory)', 'eligible(card, ', 'ask({})', `{ action: 'judge', judges: [{ role: 'reviewer', steps: [{ run: ${replacement} }] }] }`],
+    ['claim container store', 'taken.push({ ...pull, card, next, decide, order: order++, scope: memory === undefined ? undefined : { memory }, queueDepth: pulls.length - taken.length - 1, inFlight: slots.size })', 'taken.push(', '{ ...pull, card, next, decide, order: order++, scope: memory === undefined ? undefined : { memory }, queueDepth: pulls.length - taken.length - 1, inFlight: slots.size }', `{ ...pull, card, next: { ...next, step: { run: ${replacement} } }, decide, order: order++, scope: memory === undefined ? undefined : { memory }, queueDepth: pulls.length - taken.length - 1, inFlight: slots.size }`],
+  ];
+  const argumentForms = [
+    ['spread argument', (name, forged) => forged],
+    ['object literal argument', (name, forged) => `({ substituted: ${forged} })`],
+    ['conditional argument', (name, forged) => `(process.env.RIGGER_STEP ? ${forged} : ${name})`],
+    ['call argument', (name, forged) => `(() => (${forged}))()`],
+    ['member argument', (name, forged) => `({ value: ${forged} }).value`],
+    ['argument list spread', (name, forged) => `...[${forged}]`],
+  ];
+  for (const [path, call, prefix, name, forged] of forwardingCalls) for (const [form, edit] of argumentForms) {
+    const rewritten = call.replace(`${prefix}${name}`, `${prefix}${edit(name, forged)}`);
+    refuses(call, rewritten, `${path} / ${form}`);
+  }
+  const selectorCalls = [
+    ['configured answer step', 'dispatchStep(card, answer.step, path, { attempt: number })', 'answer.step'],
+    ['claim L2 producer', 'eligible(card, decide(card), memory)', 'decide(card)'],
+    ['settled L2 producer', 'eligible(card, ask({}), scope?.memory)', 'ask({})'],
+    ['claimed container producer', 'taken.push({ ...pull, card, next, decide, order: order++, scope: memory === undefined ? undefined : { memory }, queueDepth: pulls.length - taken.length - 1, inFlight: slots.size })', '{ ...pull, card, next, decide, order: order++, scope: memory === undefined ? undefined : { memory }, queueDepth: pulls.length - taken.length - 1, inFlight: slots.size }'],
+  ];
+  for (const [path, call, selected] of selectorCalls) for (const [form, edit] of [
+    ['selector spread', (value) => `({ ...${value} })`],
+    ['selector fallback', (value) => `(${value} ?? { run: ${replacement} })`],
+    ['selector call', (value) => `((value) => value)(${value})`],
+    ['selector member', (value) => `({ selected: ${value} }).selected`],
+  ]) refuses(call, call.replace(selected, edit(selected)), `${path} / ${form}`);
+  const receiving = [
+    ['work claim', file, 'const work = async (claim, freed, setAsides) =>', 'async (', 'claim'],
+    ['attempt next', file, 'const attempt = async (card, next, kept, remember, placed, scope) =>', 'async (card, ', 'next'],
+    ['judges answer', file, 'const judges = async (card, answer, ask, keep, remember, placed, scope) =>', 'async (card, ', 'answer'],
+    ['judged judge', file, 'const judged = async (card, judge, ask, scope) =>', 'async (card, ', 'judge'],
+    ['judgeWork judge', file, 'const judgeWork = async (card, judge, ask, scope) =>', 'async (card, ', 'judge'],
+    ['dispatchStep step', file, 'const dispatchStep = async (card, step, path, fields) =>', 'async (card, ', 'step'],
+    ['judge map binding', file, 'answer.judges.map((judge) => judged(card, judge, ask, scope))', '.map((', 'judge'],
+    ['claim map binding', file, 'claimed.map((claim) =>', '.map((', 'claim'],
+    ['stepDispatch step', 'src/execution/step.mjs', 'export const stepDispatch = (step, workspace, env = process.env) =>', '= (', 'step'],
+    ['named answer', file, 'const named = (answer, role) =>', '= (', 'answer'],
+    ['eligible next', file, 'function eligible(card, next, memory) {', '(card, ', 'next'],
+  ];
+  const fallback = `{ action: 'dispatch', step: { run: ${replacement} }, steps: [{ run: ${replacement} }], run: ${replacement} }`;
+  for (const [path, target, anchor, prefix, name] of receiving) for (const [form, parameter] of [
+    ['parameter default', `${name} = ${fallback}`],
+    ['destructuring default', `{ ${name} = ${fallback} }`],
+  ]) refuses(anchor, anchor.replace(`${prefix}${name}`, `${prefix}${parameter}`), `${path} / ${form}`, target);
+  for (const [path, anchor, replacementText] of [
+    ['judge retry binding', 'const { judge, failure } = each.value.retry;', `const { judge = ${fallback}, failure } = each.value.retry;`],
+    ['claimed binding', 'const { claims: claimed, failures, admission: closed, notices = [] } = await take(limit, setAsides, poll, memory);', `const { claims: claimed = [${fallback}], failures, admission: closed, notices = [] } = await take(limit, setAsides, poll, memory);`],
+    ['retry iterator binding', 'for (const [at, each] of settled.entries()) {', `for (const [at, each = ${fallback}] of settled.entries()) {`],
+  ]) refuses(anchor, replacementText, `${path} / destructuring default`);
+  const selectedValues = [
+    ['selected judge step', 'const step = current.steps[outcomes.length];', 'current.steps[outcomes.length]'],
+    ['selected work answer', 'let next = claim.next;', 'claim.next'],
+    ['selected retry', 'const { judge, failure } = each.value.retry;', 'each.value.retry'],
+    ['selected cached answer', 'const next = answers.get(pull.card);', 'answers.get(pull.card)'],
+    ['returned claim list', 'return { claims: taken, failures, notices };', '{ claims: taken, failures, notices }'],
+    ['returned claim result', 'return await claim(limit, setAsides, read, failures, notices, memory);', 'await claim(limit, setAsides, read, failures, notices, memory)'],
+    ['returned judge result', 'return await judgeWork(card, judge, ask, scope);', 'await judgeWork(card, judge, ask, scope)'],
+  ];
+  for (const [path, anchor, selected] of selectedValues) for (const [form, value] of [
+    ['selector spread', `({ ...${selected} })`],
+    ['selector fallback', `(${selected} ?? ${fallback})`],
+    ['selector call', `((value) => value)(${selected})`],
+    ['selector member', `({ selected: ${selected} }).selected`],
+  ]) refuses(anchor, anchor.replace(selected, value), `${path} / ${form}`);
+  const transfers = [
+    ['judge map source', 'answer.judges.map((judge) => judged(card, judge, ask, scope))', `[{ role: 'reviewer', steps: [{ run: ${replacement} }] }].map((judge) => judged(card, judge, ask, scope))`],
+    ['claim map source', 'claimed.map((claim) =>', `[{ ...claimed[0], next: { action: 'dispatch', step: { run: ${replacement} } } }].map((claim) =>`],
+    ['claim result', 'return await claim(limit, setAsides, read, failures, notices, memory);', `return ((answer) => ({ ...answer, claims: answer.claims.map((claim) => ({ ...claim, next: { action: 'dispatch', step: { run: ${replacement} } } })) }))(await claim(limit, setAsides, read, failures, notices, memory));`],
+    ['judge refreshed answer', 'const answer = ask({ judged: { [role]: [...outcomes] } });', `const answer = { action: 'judge', judges: [{ role, steps: [{ run: ${replacement} }] }] };`],
+    ['judge retry payload', 'return { role, retry: { judge: current, failure: outcome } };', `return { role, retry: { judge: { ...current, steps: [{ run: ${replacement} }] }, failure: outcome } };`],
+    ['judge result return', 'return await judgeWork(card, judge, ask, scope);', `return { ...await judgeWork(card, judge, ask, scope), retry: { judge: { role: judge.role, steps: [{ run: ${replacement} }] }, failure: {} } };`],
+    ['selected answer binding', 'current = named(answer, role);', `((answer) => { current = named(answer, role); })({ action: 'judge', judges: [{ role, steps: [{ run: ${replacement} }] }] });`],
+    ['forwarded reader binding', 'judgeWork(card, judge, ask, scope)', `(() => { const substitute = () => ({ action: 'judge', judges: [{ role: judge.role, steps: [{ run: ${replacement} }] }] }); const ask = substitute; return judgeWork(card, judge, ask, scope); })()`],
+    ['L2 reader capture', 'const askAttempt = (outcomes, options) =>', `const substitute = () => ({ action: 'dispatch', step: { run: ${replacement} } }); const decide = substitute;\n    const askAttempt = (outcomes, options) =>`],
+    ['work reader capture', 'judges(card, next, (options) => answerFrom(atPull, card, [], options), (ended) => kept({ card: card.number, judges: ended }), remember, placed, scope)', `((atPull) => judges(card, next, (options) => answerFrom(atPull, card, [], options), (ended) => kept({ card: card.number, judges: ended }), remember, placed, scope))(() => ({ action: 'judge', judges: [{ role: 'reviewer', steps: [{ run: ${replacement} }] }] }))`],
+    ['returned retry binding', 'return { role, retry: { judge: current, failure: outcome } };', `{ function substitute(value) { return { ...value, retry: { judge: { ...current, steps: [{ run: ${replacement} }] }, failure: outcome } }; } return substitute({ role, retry: { judge: current, failure: outcome } }); }`],
+    ['claim reader binding', 'const { claims: claimed, failures, admission: closed, notices = [] } = await take(limit, setAsides, poll, memory);', `const substitute = async () => ({ claims: [], failures: [], notices: [] }); const take = substitute;\n    const { claims: claimed, failures, admission: closed, notices = [] } = await take(limit, setAsides, poll, memory);`],
+    ['retry iterator source', 'for (const [at, each] of settled.entries()) {', `for (const [at, each] of [[0, { status: 'fulfilled', value: { retry: { judge: { ...answer.judges[0], steps: [{ run: ${replacement} }] }, failure: {} } } }]]) {`],
+    ['retry iterator binding', 'for (const [at, each] of settled.entries()) {', `for (const [at, each] of settled.entries()) { const each = { status: 'fulfilled', value: { retry: { judge: { ...answer.judges[0], steps: [{ run: ${replacement} }] }, failure: {} } } };`],
+  ];
+  for (const [path, anchor, rewritten] of transfers) refuses(anchor, rewritten, `${path} / changed transfer`);
+  const factory = report.modules.get(file).program.body.find((node) => node.type === 'FunctionDeclaration' && node.id.name === 'claiming');
+  const factoryReturns = factory.body.body.filter((node) => node.type === 'ReturnStatement');
+  assert.equal(factoryReturns.length, 1, 'claim factory fixture has one direct return');
+  const factorySource = report.modules.get(file).source;
+  const returned = factoryReturns[0];
+  const returnedValue = factorySource.slice(returned.argument.start, returned.argument.end);
+  refuses(factorySource.slice(returned.start, returned.end), `function substitute(value) { return { ...value, take: async (...args) => { const result = await value.take(...args); return { ...result, claims: result.claims.map((claim) => ({ ...claim, next: { ...claim.next, step: { run: ${replacement} } } })) }; } }; }\n  return substitute(${returnedValue});`, 'claim factory / replaced return');
+  const stepImport = "import { stepDispatch } from '../execution/step.mjs';";
+  for (const [name, shadow] of [
+    ['Map', `const Map = class extends globalThis.Map { get(key) { const value = super.get(key); return value?.action === undefined ? value : { ...value, step: { run: ${replacement} } }; } };`],
+    ['Promise', `const Promise = class extends globalThis.Promise { static async allSettled(values) { const result = await super.allSettled(values); return result.map((entry) => entry.value?.role === undefined ? entry : { status: 'fulfilled', value: { role: entry.value.role, retry: { judge: { role: entry.value.role, steps: [{ run: ${replacement} }] }, failure: {} } } }); } };`],
+  ]) refuses(stepImport, `${stepImport}\n${shadow}`, `transfer producer / shadowed ${name}`);
+  const local = changedPackage(report, file, stepImport, `${stepImport}\nfunction unrelatedLocalMap() { const Map = 3; return Map; }`, 'unrelated local global-name control');
+  assert.deepEqual(programReport(local.modules), [], 'a local global-name binding outside a reviewed transfer remains admitted');
   assert.deepEqual(missed, [], 'N8: every configured-step matrix cell must refuse substitution before forwarding');
 });
