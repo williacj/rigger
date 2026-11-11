@@ -124,17 +124,24 @@ const WORKFLOW = '.github/workflows/self-hosting.yml';
 /** The one line that pins the check's code: two spaces, the key, and the commit single-quoted. */
 const CANONICAL = /^  SELF_HOSTING_COMMIT: '([0-9a-f]{40})'$/;
 
+/** `SELF_HOSTING_COMMIT` as a whole identifier, never part of a longer one. */
+const KEY = /(?<![A-Za-z0-9_])SELF_HOSTING_COMMIT(?![A-Za-z0-9_])/g;
+/** Whether `line` holds the key anywhere but as the shell reference `${SELF_HOSTING_COMMIT}`, read in place. */
+const bareKey = (line) => [...line.matchAll(KEY)]
+  .some(({ index }) => !(line.slice(index - 2, index) === '${' && line[index + 'SELF_HOSTING_COMMIT'.length] === '}'));
+
 /**
  * The commit a workflow pins for the check's code, from its one canonical line. Any other line
- * naming `SELF_HOSTING_COMMIT`, except as the shell reference `${SELF_HOSTING_COMMIT}`, is refused
- * by its line number, and so is a workflow with no canonical line or with two.
+ * naming `SELF_HOSTING_COMMIT` as a whole identifier, except as the shell reference
+ * `${SELF_HOSTING_COMMIT}`, is refused by its line number, and so is a workflow with no canonical
+ * line or with two.
  */
 function canonicalPin(workflow) {
   const lines = workflow.split('\n');
   const canonical = [];
   lines.forEach((line, index) => {
     if (CANONICAL.test(line)) canonical.push(index + 1);
-    else if (line.replaceAll('${SELF_HOSTING_COMMIT}', '').includes('SELF_HOSTING_COMMIT')) {
+    else if (bareKey(line)) {
       throw new Error(`${WORKFLOW} line ${index + 1} holds SELF_HOSTING_COMMIT outside its canonical line: ${JSON.stringify(line)}`);
     }
   });
@@ -157,6 +164,16 @@ test('the self-hosting workflow holds its pin in one canonical line and refuses 
     + 'jobs:\n  check:\n    steps:\n      - run: curl "https://codeload.github.com/${GITHUB_REPOSITORY}/tar.gz/${SELF_HOSTING_COMMIT}"\n'
     + rest;
   assert.equal(canonicalPin(workflow(`  SELF_HOSTING_COMMIT: '${sha}'`)), sha, 'the canonical line beside shell references');
+  // The key counts only as a whole identifier outside `${...}`: a shell reference is never joined to
+  // the text around it, and a longer identifier holding the key's letters is another name.
+  const allowed = {
+    'a comment splitting the key around a shell reference': '  # SELF_${SELF_HOSTING_COMMIT}HOSTING_COMMIT',
+    'letters before the key': "  XSELF_HOSTING_COMMIT: 'other'",
+    'letters after the key': "  SELF_HOSTING_COMMITX: 'other'",
+  };
+  for (const [name, line] of Object.entries(allowed)) {
+    assert.equal(canonicalPin(workflow(`  SELF_HOSTING_COMMIT: '${sha}'\n${line}`)), sha, name);
+  }
   // Each spelling rounds 1 to 3 and the attack found, as the line it puts in the workflow.
   const refused = {
     'value double-quoted': `  SELF_HOSTING_COMMIT: "${sha}"`,
@@ -178,12 +195,15 @@ test('the self-hosting workflow holds its pin in one canonical line and refuses 
     'a flow mapping': `  { SELF_HOSTING_COMMIT: '${sha}' }`,
     'a commented-out pin': `  # SELF_HOSTING_COMMIT: '${sha}'`,
     'a bare shell reference': `  NOTE: $SELF_HOSTING_COMMIT`,
+    'an expression reference': '  NOTE: ${{ env.SELF_HOSTING_COMMIT }}',
   };
   for (const [name, line] of Object.entries(refused)) {
     const text = workflow(line);
     const at = text.split('\n').findIndex((each) => each.includes('SELF_HOSTING_COMMIT') && !each.includes('${SELF_HOSTING_COMMIT}')) + 1;
     assert.throws(() => canonicalPin(text), { message: atLine(at) }, name);
   }
+  const mixed = workflow(`  SELF_HOSTING_COMMIT: '${sha}'\n  # \${SELF_HOSTING_COMMIT} SELF_HOSTING_COMMIT`);
+  assert.throws(() => canonicalPin(mixed), { message: atLine(7) }, 'a bare key beside a shell reference on one line');
   // A canonical line beside a re-spelled one is refused by the re-spelled line.
   const beside = workflow(`  SELF_HOSTING_COMMIT: '${sha}'`, `    env:\n      SELF_HOSTING_COMMIT: 'other'\n`);
   assert.throws(() => canonicalPin(beside), { message: atLine(beside.split('\n').length - 1) }, 'a job-level pin');
