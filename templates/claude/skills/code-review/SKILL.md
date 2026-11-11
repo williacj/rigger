@@ -39,11 +39,11 @@ An early bounded source review is preliminary and head-bound; name outstanding p
 final verdict.
 
 **3. Find the documents that own what changed.** For every changed behaviour, name the document
-that owns it, and read them in the order `AGENTS.md`'s "What binds" table sets — the README's CLI
-contract, then `docs/spec/requirements.md`, then `ARCHITECTURE.md`, then `docs/spec/decisions.md`.
-That order is the argument, and taking it out of order costs you. While v0 is still being built,
-`docs/v0-build-plan.md` carries the milestone this work belongs to and its exit conditions; read
-those too.
+that owns it, and read them in the order `AGENTS.md`'s "What binds" table sets — the README's
+CLI contract, then `docs/spec/requirements.md`, then `ARCHITECTURE.md`, then
+`docs/spec/decisions.md`. That order is the argument; reordering it costs you. While building
+v0, and where the repository defines it, `docs/v0-build-plan.md` carries this work's milestone
+and its exit conditions; read those too.
 
 **4. Verify yourself.** Independently run required/relevant checks; apply [TDD](../tdd/SKILL.md)
 to exact commands/results. Maker reports are context, never proof; read acceptance/implementation.

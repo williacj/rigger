@@ -90,14 +90,14 @@ sentence introducing it defines. A term that is neither fails.
   each register's preamble, which is the authority; `AGENTS.md`'s "When you write a decision or a
   requirement" states what proposing one obliges you to do. Read the preamble of the file you are
   changing before you draft.
-- **Not all of it lintable.** `scripts/spec-style-lint.mjs` reads rules 1 and 2 off this file and
-  applies them to `README.md`, `ARCHITECTURE.md`, `docs/spec/decisions.md`, and
-  `docs/spec/requirements.md`. It reads every prose paragraph and every table cell, and skips
-  fenced code and the retired registers, whose historical text is kept. A ruled-out term is a
-  finding, and so is a sentence past the ceiling, in a paragraph or a cell alike. Rules 3 and 4
-  ask whether an actor matters and whether a structure fits its meaning. Those are judgments, so
-  they hold because an author applies them and a reviewer reads for them. Rule 5 asks who owns a
-  fact, and holds the same way. The lint's `--hints` option gives advisory hints for rules 4
+- **Not all of it lintable.** Where the repository defines it, `scripts/spec-style-lint.mjs`
+  reads rules 1 and 2 off this file and applies them to `README.md`, `ARCHITECTURE.md`,
+  `docs/spec/decisions.md`, and `docs/spec/requirements.md`. It reads every prose paragraph and
+  every table cell, and skips fenced code and the retired registers, whose historical text is
+  kept. A ruled-out term is a finding, and so is a sentence past the ceiling. Rules 3 and 4 ask
+  whether an actor matters and whether a structure fits its meaning. Those are judgments, so
+  they hold because an author applies them and a reviewer reads for them. Rule 5 asks who owns
+  a fact, and holds the same way. The lint's `--hints` option gives advisory hints for rules 4
   and 5, which hold by judgment still.
 
 ## Before you hand it off
