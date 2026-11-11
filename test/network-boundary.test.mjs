@@ -54,6 +54,7 @@ function* nodes(node, parent = null, owner = '<module>') {
 }
 
 /** Follow imports from roots; never execute the modules being checked. */
+const parsedModules = new Map();
 function networkReport(read, roots) {
   const modules = new Map();
   const violations = [];
@@ -62,7 +63,10 @@ function networkReport(read, roots) {
   const visit = (file) => {
     if (modules.has(file)) return;
     const source = read(file);
-    const program = parse(source, { ecmaVersion: 'latest', sourceType: 'module', locations: true, allowHashBang: true });
+    if (parsedModules.get(file)?.source !== source) parsedModules.set(file, {
+      source, program: parse(source, { ecmaVersion: 'latest', sourceType: 'module', locations: true, allowHashBang: true }),
+    });
+    const { program } = parsedModules.get(file);
     modules.set(file, { source, program });
     for (const { node, parent, owner } of nodes(program)) {
       const named = node.type === 'Identifier' ? node.name : ['MemberExpression', 'Property'].includes(node.type) ? memberName(node) : undefined;
@@ -217,8 +221,19 @@ const PACKAGE_ROOT = realpathSync.native(fileURLToPath(new URL('../', import.met
 const ENTRY_POINTS = ['src/cli/rigger.mjs', 'scripts/gate-check.mjs'];
 
 /** Compare syntax, not quote style, whitespace or source positions. */
-const syntaxShape = (node) => JSON.stringify(node, (key, value) => ['start', 'end', 'loc', 'raw'].includes(key) ? undefined : value);
-const expressionShape = (source) => syntaxShape(parseExpressionAt(source, 0, { ecmaVersion: 'latest', sourceType: 'module' }));
+const syntaxShapes = new WeakMap();
+const expressionShapes = new Map();
+const syntaxShape = (node) => {
+  const tree = node && typeof node === 'object' && typeof node.type === 'string';
+  if (tree && syntaxShapes.has(node)) return syntaxShapes.get(node);
+  const shape = JSON.stringify(node, (key, value) => ['start', 'end', 'loc', 'raw'].includes(key) ? undefined : value);
+  if (tree) syntaxShapes.set(node, shape);
+  return shape;
+};
+const expressionShape = (source) => {
+  if (!expressionShapes.has(source)) expressionShapes.set(source, syntaxShape(parseExpressionAt(source, 0, { ecmaVersion: 'latest', sourceType: 'module' })));
+  return expressionShapes.get(source);
+};
 
 /** The sole nonliteral site imports the consumer's own code, outside N11 under M8-U3 Q15 a. */
 const DYNAMIC_IMPORTS = [{ file: 'src/cli/doctor.mjs', owner: 'consumerConfig', argument: 'pathToFileURL(path)', reason: 'Loads the target consumer config; N11 pins its filename and target directory.' }];
@@ -272,7 +287,9 @@ function memberName(node) {
 }
 
 /** Read lexical bindings before references, keeping parameter defaults outside body var scope. */
+const lexicalModels = new WeakMap();
 function lexical(program) {
+  if (lexicalModels.has(program)) return lexicalModels.get(program);
   const scopes = new WeakMap();
   const bindings = new WeakSet();
   const root = { parent: null, kind: 'module', names: new Map() };
@@ -287,7 +304,7 @@ function lexical(program) {
         if (property.type === 'RestElement') bind(property.argument, scope, value, path);
         else bind(property.value, scope, value, value ? [...path, memberName(property)] : [], fallback);
       }
-    } else if (pattern.type === 'ArrayPattern') pattern.elements.forEach((element, index) => bind(element, scope, value, value ? [...path, String(index)] : [], fallback));
+    } else if (pattern.type === 'ArrayPattern') pattern.elements.forEach((element, index) => bind(element?.type === 'RestElement' ? element.argument : element, scope, value, value ? [...path, element?.type === 'RestElement' ? { rest: index } : String(index)] : [], fallback));
     else if (pattern.type === 'AssignmentPattern') bind(pattern.left, scope, value ?? pattern.right, path, pattern.right);
     else if (pattern.type === 'RestElement') bind(pattern.argument, scope, value, path, fallback);
   };
@@ -299,7 +316,10 @@ function lexical(program) {
   const collect = (node, scope) => {
     scopes.set(node, scope);
     if (['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(node.type)) {
-      if (node.type === 'FunctionDeclaration') bind(node.id, scope, node);
+      if (node.type === 'FunctionDeclaration') {
+        scopes.set(node.id, scope);
+        bind(node.id, scope, node);
+      }
       const parameters = inner(scope, 'parameters');
       bind(node.id, parameters, node);
       if (node.type !== 'ArrowFunctionExpression') parameters.names.set('arguments', { implicit: true });
@@ -334,7 +354,9 @@ function lexical(program) {
     while (scope && !scope.names.has(node.name)) scope = scope.parent;
     return scope?.names.get(node.name);
   };
-  return { root, lookup, bindings };
+  const model = { root, lookup, bindings };
+  lexicalModels.set(program, model);
+  return model;
 }
 
 /** Identifier uses, excluding declarations, property labels and module syntax. */
@@ -404,23 +426,33 @@ const originVariants = (value) => value?.alternatives ? value.alternatives.flatM
 function processBindings(modules) {
   const models = new Map([...modules].map(([file, { program }]) => [file, lexical(program)]));
   const assignments = new WeakMap();
+  const memberStores = new Map();
+  const storeRecords = new WeakSet();
   const assigned = (file, pattern, value, path = []) => {
     if (pattern.type === 'Identifier') {
       const binding = models.get(file).lookup(pattern);
       if (binding) assignments.set(binding, [...(assignments.get(binding) ?? []), { file, value, path }]);
+    } else if (pattern.type === 'MemberExpression' && memberName(pattern) !== undefined) {
+      const stored = { file, object: pattern.object, value, path };
+      const name = memberName(pattern);
+      memberStores.set(name, [...(memberStores.get(name) ?? []), stored]);
+      storeRecords.add(stored);
     } else if (pattern.type === 'ObjectPattern') {
       for (const property of pattern.properties) assigned(file, property.type === 'RestElement' ? property.argument : property.value, value, property.type === 'RestElement' ? path : [...path, memberName(property)]);
     } else if (pattern.type === 'ArrayPattern') {
-      pattern.elements.forEach((part, index) => { if (part) assigned(file, part.type === 'RestElement' ? part.argument : part, value, part.type === 'RestElement' ? path : [...path, String(index)]); });
-    } else if (pattern.type === 'AssignmentPattern') assigned(file, pattern.left, value, path);
+      pattern.elements.forEach((part, index) => { if (part) assigned(file, part.type === 'RestElement' ? part.argument : part, value, [...path, part.type === 'RestElement' ? { rest: index } : String(index)]); });
+    } else if (pattern.type === 'AssignmentPattern') assigned(file, pattern.left, value, [...path, { fallback: pattern.right }]);
   };
   for (const [file, { program }] of modules) for (const { node } of nodes(program)) {
     if (node.type === 'AssignmentExpression' && ['=', '||=', '&&=', '??='].includes(node.operator)) assigned(file, node.left, node.right);
   }
+  const partial = (seen) => [...seen].some((value) => assignments.has(value) || storeRecords.has(value));
   const namespaces = new Map();
   const exports = new Map();
   const bindingValues = new WeakMap();
   const objects = new WeakMap();
+  const opaqueCalls = new WeakMap();
+  const memberOrigins = new WeakMap();
   const operations = new Map(['call', 'apply', 'bind'].map((operation) => [operation, { operation }]));
   const alternatives = (values) => {
     const found = [...new Set(values.flatMap(originVariants))];
@@ -435,7 +467,7 @@ function processBindings(modules) {
     const key = `${file}#${name}`;
     if (exports.has(key)) return exports.get(key);
     const value = readExport(file, name, seen);
-    if (value !== undefined) exports.set(key, value);
+    if (value !== undefined && !partial(seen)) exports.set(key, value);
     return value;
   };
   const readExport = (file, name, seen) => {
@@ -446,7 +478,7 @@ function processBindings(modules) {
     const key = `${file}#${name}`;
     if (seen.has(key)) return;
     seen = new Set([...seen, key]);
-    const declarations = [...nodes(modules.get(file).program)].map(({ node }) => node);
+    const declarations = modules.get(file).program.body;
     const star = (node) => node.type === 'ExportAllDeclaration' && !node.exported;
     const ordered = [...declarations.filter((node) => !star(node)), ...declarations.filter(star)];
     let builtin;
@@ -477,9 +509,21 @@ function processBindings(modules) {
     }
     return builtin;
   };
+  // An unresolved receiver may alias any receiver holding the same literal member name.
+  const uncertainReceiver = (value) => value === undefined || value?.unknownCall || (value?.parentOrigin && uncertainReceiver(value.parentOrigin));
   const member = (base, name, seen) => {
     if (name === undefined) return;
     if (base?.alternatives) return alternatives(base.alternatives.map((value) => member(value, name, seen)));
+    const stored = (memberStores.get(name) ?? []).map((record) => {
+      if (seen.has(record)) return;
+      const visiting = new Set([...seen, record]);
+      const receivers = originVariants(origin(record.file, record.object, visiting));
+      if (!uncertainReceiver(base) && receivers.length && !receivers.some(uncertainReceiver) && !receivers.includes(base)) return;
+      return project(record.file, origin(record.file, record.value, visiting), record.path, visiting);
+    });
+    return alternatives([declaredMember(base, name, seen), ...stored]);
+  };
+  const declaredMember = (base, name, seen) => {
     if (operations.has(name) && (typeof base === 'string' || base?.bound || base?.operation || ['FunctionDeclaration', 'FunctionExpression', 'ArrowFunctionExpression'].includes(base?.type))) return operations.get(name);
     if (base?.array && /^(0|[1-9][0-9]*)$/.test(name)) return origin(base.file, base.array.elements[Number(name)], seen);
     if (base?.namespace === 'global' && GLOBALS.has(name)) return namespace(`global:${name}`);
@@ -498,22 +542,40 @@ function processBindings(modules) {
         return origin(base.file, property.value, seen);
       }));
     }
+    if (base?.identifier || base?.parentOrigin || base?.unknownCall) {
+      if (!memberOrigins.has(base)) memberOrigins.set(base, new Map());
+      const members = memberOrigins.get(base);
+      if (!members.has(name)) members.set(name, { parentOrigin: base, name });
+      return members.get(name);
+    }
+  };
+  const rests = new WeakMap();
+  const rest = (value, offset) => {
+    if (value?.alternatives) return alternatives(value.alternatives.map((part) => rest(part, offset)));
+    if (!value?.array) return;
+    if (!rests.has(value)) rests.set(value, new Map());
+    const views = rests.get(value);
+    if (!views.has(offset)) views.set(offset, { file: value.file, array: { ...value.array, elements: value.array.elements.slice(offset) } });
+    return views.get(offset);
+  };
+  const project = (file, value, path, seen) => {
+    for (const part of path) value = typeof part === 'string' ? member(value, part, seen)
+      : part && 'rest' in part ? rest(value, part.rest)
+      : part && 'fallback' in part ? alternatives([value, origin(file, part.fallback, seen)]) : undefined;
+    return value;
   };
   const bindingOrigin = (file, binding, seen) => {
     if (!binding || seen.has(binding)) return;
     if (bindingValues.has(binding)) return bindingValues.get(binding);
     seen = new Set([...seen, binding]);
-    let value = origin(file, binding.value, seen);
-    for (const name of binding.path ?? []) value = member(value, name, seen);
+    let value = project(file, origin(file, binding.value, seen), binding.path ?? [], seen);
     if (value?.namespace === 'global:undefined') value = undefined;
     value ??= origin(file, binding.fallback, seen);
     value = alternatives([value, ...(assignments.get(binding) ?? []).map((assignment) => {
-      let value = origin(assignment.file, assignment.value, seen);
-      for (const name of assignment.path) value = member(value, name, seen);
-      return value;
-    })]);
-    // An assigned ancestor can participate in an alias cycle; do not cache a partial traversal.
-    if (value !== undefined && ![...seen].some((binding) => assignments.has(binding))) bindingValues.set(binding, value);
+      return project(assignment.file, origin(assignment.file, assignment.value, seen), assignment.path, seen);
+    })]) ?? binding;
+    // Stored ancestors can participate in alias cycles; cache only complete traversals.
+    if (!partial(seen)) bindingValues.set(binding, value);
     return value;
   };
   const origin = (file, node, seen = new Set()) => {
@@ -544,8 +606,11 @@ function processBindings(modules) {
       if (seen.has(node)) return;
       if (!objects.has(node)) {
         const values = invocation(file, node, new Set([...seen, node])).filter((call) => call.created).map(({ created }) => created);
-        const value = alternatives(values);
-        if (value !== undefined) objects.set(node, value);
+        // Keep unresolved call values in conditional origins instead of discarding that branch.
+        if (!opaqueCalls.has(node)) opaqueCalls.set(node, { file, unknownCall: node });
+        const value = alternatives(values) ?? opaqueCalls.get(node);
+        if (!partial(seen)) objects.set(node, value);
+        return value;
       }
       return objects.get(node);
     }
@@ -574,7 +639,16 @@ function processBindings(modules) {
     return [{ symbol, args }];
   };
   const invocation = (file, node, seen = new Set()) => invoke(origin(file, node.callee, seen), node.callee.type === 'MemberExpression' ? argument(file, node.callee.object) : undefined, node.arguments.map((node) => argument(file, node)), seen);
-  return { origin, exported, models, invocation, named: (file, name) => bindingOrigin(file, models.get(file).root.names.get(name), new Set()) };
+  const named = (file, name) => {
+    const model = models.get(file);
+    let binding = model.root.names.get(name);
+    if (!binding) {
+      const declarations = [...nodes(modules.get(file).program)].filter(({ node }) => node.type === 'VariableDeclarator' && node.id.name === name);
+      if (declarations.length === 1) binding = model.lookup(declarations[0].node.id);
+    }
+    return bindingOrigin(file, binding, new Set());
+  };
+  return { origin, exported, models, invocation, named };
 }
 
 /** Native starts remain starts through aliases and namespace/member access. */
@@ -587,6 +661,9 @@ function programReport(modules) {
   const references = [];
   const nativeBindings = new Map([...modules.keys()].map((file) => [file, new Set()]));
   const bindings = processBindings(modules);
+  const originBindings = new Map();
+  const links = [];
+  const originKey = (file, owner, kind, name) => `${file}#${owner}#${kind}#${name}`;
   const reviewed = new Set();
   for (const [file, names] of PROGRAM_DEFINITIONS) for (const name of names) {
     const symbol = bindings.named(file, name);
@@ -624,6 +701,10 @@ function programReport(modules) {
           const parsed = parseExpressionAt(`[${expected[4]}]`, 0, { ecmaVersion: 'latest', sourceType: 'module' }).elements;
           const wanted = expected[3] === 'all' ? parsed : parsed[0];
           if (syntaxShape(value) !== syntaxShape(wanted)) fail(file, node, `program/input differs at ${owner}`);
+          if (expected[6]) {
+            const [index, kind, name] = expected[6];
+            links.push({ file, owner, node, value: call.args?.[index], kind, name });
+          }
           if (nativeProgram(call.symbol) || processMember(callee)) {
             const functions = entries.filter(({ node }) => node.type === 'FunctionDeclaration' && node.id.name === owner);
             const parameter = functions.length === 1 ? functions[0].node.params[0] : undefined;
@@ -645,21 +726,36 @@ function programReport(modules) {
   if (syntaxShape(references.sort()) !== syntaxShape(expectedReferences.sort())) violations.push('N8 native process references differ (unreviewed alias or method)');
   const protectedByFile = new Map([...modules.keys()].map((file) => [file, new Set(['global:process#env', ...nativeBindings.get(file)])]));
   const protectedValues = new Set(reviewed);
-  for (const [file, owner, kind, name, expression] of PROGRAM_ORIGINS) {
+  for (const [file, owner, kind, name, expression, source, fields] of PROGRAM_ORIGINS) {
+    const model = bindings.models.get(file);
+    const key = originKey(file, owner, kind, name);
+    const selected = new Set();
     const matches = [...nodes(modules.get(file).program)].filter(({ node, parent, owner: at }) => at === owner && (
       kind === 'binding' ? node.type === 'VariableDeclarator' && syntaxShape(node.id) === syntaxShape(parse(`const ${name} = null`, { ecmaVersion: 'latest' }).body[0].declarations[0].id) :
+      kind === 'reader' ? (node.type === 'FunctionDeclaration' && node.id.name === name) || (node.type === 'VariableDeclarator' && node.id.name === name && model.lookup(node.id)?.scope !== model.root) :
+      kind === 'parameter' ? node.type === 'Identifier' && node.name === name && model.bindings.has(node) && model.lookup(node)?.scope?.kind === 'parameters' :
       kind === 'variable' ? node.type === 'VariableDeclarator' && node.id.name === name :
       kind === 'default' ? node.type === 'AssignmentPattern' && node.left.name === name :
       kind === 'function' ? node.type === 'FunctionDeclaration' && node.id.name === name :
       node.type === 'Property' && parent.type === 'ObjectExpression' && memberName(node) === name
-    )).map(({ node, parent }) => {
-      const model = bindings.models.get(file);
+    )).filter(({ node }) => {
+      if (selected.has(node)) return false;
+      selected.add(node);
+      return true;
+    }).map(({ node, parent }) => {
       const protectedBindings = protectedByFile.get(file) ?? new Set();
       protectedByFile.set(file, protectedBindings);
-      const value = ['binding', 'variable'].includes(kind) ? node.init : kind === 'default' ? node.right : kind === 'function' ? { ...node, type: 'FunctionExpression' } : node.value;
+      const value = kind === 'reader' && node.type === 'FunctionDeclaration' ? { ...node, type: 'FunctionExpression' } : ['binding', 'variable', 'reader'].includes(kind) ? node.init : kind === 'parameter' ? node : kind === 'default' ? node.right : kind === 'function' ? { ...node, type: 'FunctionExpression' } : node.value;
+      const declared = kind === 'parameter' ? node : kind === 'default' ? node.left : node.id;
+      if (declared?.type === 'Identifier') originBindings.set(key, model.lookup(declared));
+      if (source) links.push({ file, owner, node, value: { file, node: value }, kind: source[0], name: source[1] });
       if (kind === 'property') protectedValues.add(bindings.origin(file, parent));
       if (kind === 'property' && parent.properties.some((property) => property.type !== 'Property' || property.computed)) fail(file, node, 'a reviewed origin object may not spread or compute sibling keys');
-      for (const root of [value, ...(['binding', 'variable'].includes(kind) ? [node.id] : kind === 'default' ? [node.left] : [])]) {
+      // Linked sources have their own pin; an index dependency is not the selected step.
+      const identifiers = fields ? node.id.properties.filter((property) => fields.includes(property.value?.name)).map((property) => property.value) : [node.id];
+      const reader = value?.type === 'AwaitExpression' ? value.argument?.callee : value?.type === 'CallExpression' ? value.callee : undefined;
+      const roots = kind === 'reader' || source ? [node.id] : fields ? [...identifiers, reader] : [value, ...(['binding', 'variable'].includes(kind) ? identifiers : kind === 'default' ? [node.left] : [])];
+      for (const root of roots) {
         if (root) for (const { node: part, parent } of nodes(root)) if (part.type === 'Identifier' && (model.bindings.has(part) || referenceIdentifier(part, parent, model.bindings))) {
           const binding = model.lookup(part);
           if (binding) {
@@ -671,17 +767,34 @@ function programReport(modules) {
       }
       return value;
     });
+    if (matches.length !== 1) originBindings.delete(key);
     if (matches.length !== 1 || syntaxShape(matches[0]) !== expressionShape(expression)) violations.push(`${file} N8 ${owner}'s ${name} program origin differs`);
+  }
+  for (const { file, owner, node, value, kind, name } of links) {
+    let root = value?.node;
+    while (root?.type === 'MemberExpression') root = root.object;
+    const expected = originBindings.get(originKey(file, owner, kind, name));
+    if (!expected || value?.file !== file || root?.type !== 'Identifier' || bindings.models.get(file).lookup(root) !== expected) fail(file, node, `configured input binding differs at ${owner}`);
   }
   for (const [file, protectedBindings] of protectedByFile) {
     const { program } = modules.get(file);
     const writes = [...nodes(program)].map(({ node }) => node).filter((node) => node.type === 'AssignmentExpression' && node.left.type === 'Identifier' && node.left.name === 'invoked');
     const admitted = new Set();
     if (file === 'src/execution/role.mjs' && writes.length === 1 && writes[0].operator === '=' && writes[0].right.type === 'AwaitExpression' && writes[0].right.argument.type === 'CallExpression' && syntaxShape(writes[0].right.argument.callee) === expressionShape('adapters[provider].invocation')) admitted.add(writes[0]);
-    const allowed = file === 'src/execution/role.mjs' ? ['delete environment[name]', 'Object.assign(environment, set)'] : file === 'src/substrate/git-environment.mjs' ? ['env[name] = value'] : [];
+    const allowed = file === 'src/execution/role.mjs' ? ['delete environment[name]', 'Object.assign(environment, set)'] : file === 'src/substrate/git-environment.mjs' ? ['env[name] = value'] : file === 'src/scheduling/loop.mjs' ? [
+      'answer = unmade',
+      'answer = askAttempt([], { attempt: number })',
+      'answer = askAttempt([...outcomes], { attempt: number })',
+      'answer = askAttempt([], { attempt: number, maker: outcome })',
+      'current = named(answer, role)',
+      'next = next.following',
+    ] : [];
     for (const expression of allowed) {
       const matches = [...nodes(program)].map(({ node }) => node).filter((node) => syntaxShape(node) === expressionShape(expression));
-      if (matches.length === 1) admitted.add(matches[0]);
+      if (matches.length === 1) {
+        const reader = file === 'src/scheduling/loop.mjs' && matches[0].right?.type === 'CallExpression' ? matches[0].right.callee : undefined;
+        if (!reader || (reader.type === 'Identifier' && bindings.models.get(file).lookup(reader) === originBindings.get(originKey(file, reader.name, 'reader', reader.name)))) admitted.add(matches[0]);
+      }
     }
     const protectedInputs = new Set([...protectedBindings, ...protectedValues]);
     for (const node of bindingWrites(program, bindings.models.get(file), protectedInputs, (node) => bindings.origin(file, node), { bindings, file })) if (!admitted.has(node)) fail(file, node, 'rewrites a reviewed input binding or its member');
@@ -693,7 +806,7 @@ function programReport(modules) {
 function bindingWrites(program, model, protectedBindings, origin = () => undefined, context) {
   const entries = [...nodes(program)];
   const writers = new Set(['Object.assign', 'Object.defineProperty', 'Object.defineProperties', 'Reflect.set', 'Reflect.deleteProperty'].map(expressionShape));
-  const protectedValue = (value) => protectedBindings.has(value) || context?.protectedOrigin?.(value);
+  const protectedValue = (value) => protectedBindings.has(value) || context?.protectedOrigin?.(value) || (value?.parentOrigin && protectedValue(value.parentOrigin));
   const root = (node, file = context?.file) => {
     while (node) {
       const value = context ? context.bindings.origin(file, node) : origin(node);
@@ -772,11 +885,12 @@ const PROGRAM_DEFINITIONS = [
   ['src/execution/run.mjs', ['dispatch']],
   ['src/execution/role.mjs', ['roleDispatch']],
   ['src/execution/step.mjs', ['stepDispatch']],
+  ['src/scheduling/loop.mjs', ['dispatchStep']],
   ['src/cli/doctor.mjs', ['asked']],
   ['src/substrate/forge/runners.mjs', ['throughL0']],
 ];
 
-/** Site, program expression (or full forwarding arguments), and occurrence count. */
+/** Site, input expression, occurrence count, and optional argument-to-origin binding link. */
 const PROGRAM_CALLS = [
   ["src/substrate/process.mjs", "ended", "run", "first", "ps"],
   ["src/substrate/process.mjs", "reading", "run", "first", "...toolOf(look.value, ps)"],
@@ -816,7 +930,9 @@ const PROGRAM_CALLS = [
   ['src/scheduling/loop.mjs', 'dispatchStep', 'dispatchOnL1', 'all', '{ id, card: card.number, directory: state, sink, host, readTimeout, ...stepDispatch(step, path, environment) }'],
   ['src/scheduling/loop.mjs', 'run', 'dispatchOnL1', 'all', '{ id, card: card.number, directory: state, sink, host, readTimeout, ...handed }'],
   ['src/scheduling/loop.mjs', 'run', 'roleDispatch', 'all', '{ answer: stamp(answer, id), cwd, directory, scratch, repository, reach, maker, env: environment, sink, id, card: card.number }'],
-  ['src/scheduling/loop.mjs', 'dispatchStep', 'stepDispatch', 'all', 'step, path, environment'],
+  ['src/scheduling/loop.mjs', 'dispatchStep', 'stepDispatch', 'all', 'step, path, environment', 1, [0, 'parameter', 'step']],
+  ['src/scheduling/loop.mjs', 'attempt', 'dispatchStep', 'all', 'card, answer.step, path, { attempt: number }', 1, [1, 'variable', 'answer']],
+  ['src/scheduling/loop.mjs', 'judgeWork', 'dispatchStep', 'all', 'card, step, head, { role }', 1, [1, 'variable', 'step']],
 ];
 
 /** Every native-method read, including methods forwarded without calling them at that site. */
@@ -830,8 +946,28 @@ const PROCESS_REFERENCES = [
   ['src/substrate/process.mjs', 'startOf', 'host.spawnSync'],
 ];
 
-/** Closed program and environment origins; the consumer step line itself remains outside N10. */
+/** Closed origins, lexical source links and local readers; the consumer line remains N10. */
 const PROGRAM_ORIGINS = [
+  ["src/scheduling/loop.mjs", "eligible", "reader", "eligible", "function eligible(card, next, memory) {\n  if (memory?.barred.has(card.number) && makerAction(next)) next = { action: 'ignore' };\n  if (memory !== undefined && next.action === 'judge') {\n    const judges = next.judges.filter((judge) => !memory.actions.has(`${card.number}:${judgeIdentity(judge)}`) && !memory.deferred.has(`${card.number}:${judgeIdentity(judge)}`));\n    next = judges.length === 0 ? { action: 'ignore' } : { ...next, judges };\n  }\n  if (memory !== undefined && makerAction(next) && (memory.actions.has(`${card.number}:${actionIdentity(next)}`) || memory.deferred.has(`${card.number}:${actionIdentity(next)}`))) next = { action: 'ignore' };\n  return next;\n}"],
+  ["src/scheduling/loop.mjs", "claim", "reader", "claim", "async (limit, setAsides, read, failures, notices, memory) => {\n    const columns = await board.readColumns();\n    const { items, declared } = await board.readPriority();\n    /** A board item neither claimed nor skipped by this run's memory of the cards it set aside. */\n    const available = (item) => !claims.has(item.number) && !setAsides?.skips(item, read);\n    const offered = items.filter(available);\n    const offeredAt = new Map(offered.map(({ number }) => [number, generations.get(number)]));\n    const decide = await facts(offered);\n    // Only this read's original offer at its original generation can reach decide, even if an\n    // intervening claim already released or its start failed before this read finished.\n    const unclaimed = offered.filter((item) => available(item) && generations.get(item.number) === offeredAt.get(item.number));\n    // Each card's answer is kept as L2 gave it at the pull, so L3 asks nothing again to begin.\n    const answers = new Map();\n    const { pulls } = pullOrder({ items: unclaimed, columns, declared }, (card) => {\n      const next = eligible(card, decide(card), memory);\n      answers.set(card.number, next);\n      return next;\n    });\n    if (halted()) return { claims: [], failures, notices };\n    const admissionState = readAdmission();\n    if (admissionState.state === 'unreadable') {\n      const { unreadable } = admissionState;\n      throw Object.assign(new Error(`admission cannot be read, so this pull claims nothing: ${unreadable.map(({ path, cause }) => `${path} (${cause})`).join(', ')}`), { unreadable });\n    }\n    if (admissionState.state === 'closed') return { claims: [], failures, admission: admissionState, notices };\n    const taken = [];\n    for (const pull of pulls) {\n      if (limit !== undefined && taken.length >= limit) break;\n      const next = answers.get(pull.card);\n      // A merge claim holds no slot, so N does not bound it (the architect's r2 ruling 3); a limit\n      // given counts every card claimed, since each claim finishes a card.\n      const merge = next.action === 'merge';\n      if (!merge && slots.size >= concurrency) continue;\n      claims.add(pull.card);\n      generations.set(pull.card, (generations.get(pull.card) ?? 0) + 1);\n      if (!merge) slots.add(pull.card);\n      const card = unclaimed.find((item) => item.number === pull.card);\n      setAsides?.claimed(card.number, card.column, read);\n      taken.push({ ...pull, card, next, decide, order: order++, scope: memory === undefined ? undefined : { memory }, queueDepth: pulls.length - taken.length - 1, inFlight: slots.size });\n    }\n    return { claims: taken, failures, notices };\n  }"],
+  ["src/scheduling/loop.mjs", "work", "parameter", "claim", "claim"],
+  ["src/scheduling/loop.mjs", "work", "variable", "next", "claim.next", ["parameter", "claim"]],
+  ["src/scheduling/loop.mjs", "judged", "parameter", "judge", "judge"],
+  ["src/scheduling/loop.mjs", "judges", "parameter", "answer", "answer"],
+  ["src/scheduling/loop.mjs", "judges", "binding", "{ judge, failure }", "each.value.retry", null, ["judge"]],
+  ["src/scheduling/loop.mjs", "trigger", "binding", "{ claims: claimed, failures, admission: closed, notices = [] }", "await take(limit, setAsides, poll, memory)", null, ["claimed"]],
+
+  ['src/scheduling/loop.mjs', 'loop', 'parameter', 'environment', 'environment'],
+  ['src/scheduling/loop.mjs', 'dispatchStep', 'parameter', 'step', 'step'],
+  ['src/scheduling/loop.mjs', 'attempt', 'parameter', 'next', 'next'],
+  ['src/scheduling/loop.mjs', 'attempt', 'variable', 'answer', 'next', ['parameter', 'next']],
+  ['src/scheduling/loop.mjs', 'judgeWork', 'parameter', 'judge', 'judge'],
+  ['src/scheduling/loop.mjs', 'judgeWork', 'variable', 'current', 'judge', ['parameter', 'judge']],
+  ['src/scheduling/loop.mjs', 'judgeWork', 'variable', 'step', 'current.steps[outcomes.length]', ['variable', 'current']],
+  ['src/scheduling/loop.mjs', 'answerFrom', 'reader', 'answerFrom', '(answer, ...args) => { try { return answer(...args); } catch (failure) { if (failure?.halt === true) refusedAnswers.add(failure); throw failure; } }'],
+  ['src/scheduling/loop.mjs', 'askAttempt', 'reader', 'askAttempt', '(outcomes, options) => answerFrom(decide, card, outcomes, { ...options, firstFailure: failures[0], continuing })'],
+  ['src/scheduling/loop.mjs', 'ask', 'reader', 'ask', '(options) => answerFrom(decide, card, [], { ...options, forge: settled.value })'],
+  ['src/scheduling/loop.mjs', 'named', 'reader', 'named', "(answer, role) => (answer.action === 'judge' ? answer.judges.find((judge) => judge.role === role) : undefined)"],
   ["src/substrate/providers/claude.mjs", "invocation", "property", "env", "{ [TMPDIR_KEY]: join(real, TMPDIR_NAME) }"],
   ["src/substrate/providers/claude.mjs", "<module>", "variable", "TMPDIR_KEY", "'CLAUDE_CODE_TMPDIR'"],
   ["src/substrate/providers/claude.mjs", "<module>", "variable", "TMPDIR_NAME", "'.claude-tmp'"],
@@ -895,6 +1031,7 @@ test('N8: bound process calls and program inputs reject ordinary code edits', ()
 
 /** Ordinary edits that must not escape the process inventory or its input provenance. */
 const PROCESS_COUNTEREXAMPLES = [
+  ['A5-copier-binding-reassignment', 'src/substrate/git-environment.mjs', 'export function gitEnvironment(from = process.env) {', "if (process.env.RIGGER_EXTRA) gitEnvironment = (from = process.env) => ({ ...from, EXTRA_TOKEN: 'injected' });\nexport function gitEnvironment(from = process.env) {"],
   ["m2b-imported-origin-write", "src/cli/once.mjs", "import { NOT_STARTED } from '../substrate/process.mjs';", "import { NOT_STARTED } from '../substrate/process.mjs';\nimport { auth as providerAuth } from '../substrate/providers/claude.mjs';\nfunction unlistedProgramWrite() { if (process.env.RIGGER_AUTH_COMMAND) providerAuth[0] = process.env.RIGGER_AUTH_COMMAND; }"],
   ["m3-star-reexport-priority", "src/cli/once.mjs", "import { NOT_STARTED } from '../substrate/process.mjs';", "import { NOT_STARTED } from '../substrate/process.mjs';\nexport * from 'node:fs';\nexport * from '../execution/run.mjs';\nimport { dispatch as reexportedStart } from './once.mjs';\nfunction unlistedReexportedDispatch() { return reexportedStart({ command: 'curl', args: [] }); }"],
   ["m3-reexport-priority", "src/cli/once.mjs", "import { NOT_STARTED } from '../substrate/process.mjs';", "import { NOT_STARTED } from '../substrate/process.mjs';\nexport * from 'node:fs';\nexport { dispatch } from '../execution/run.mjs';\nimport { dispatch as reexportedStart } from './once.mjs';\nfunction unlistedReexportedDispatch() { return reexportedStart({ command: 'curl', args: [] }); }"],
@@ -1182,4 +1319,142 @@ test('N11 global writes: admitted globals, prototypes and aliases reject static 
   const changed = changedPackage(report, 'src/cli/once.mjs', anchor, `${anchor}\nasync function selectedConfig(named) { return consumerConfig(process.env.RIGGER_TARGET ?? named); }`, 'n21 remains out of scope');
   assert.deepEqual(changed.violations, [], 'M8-K13: selecting a consumer target is outside this guard');
   assert.deepEqual(configReport(changed.modules), [], 'M8-K13: the admitted import still resolves within its supplied target');
+});
+
+// proves R-SAFE-2, R-SAFE-4
+test('N8 A5 N11 static stores: each store form preserves or refuses protected process, environment and prototype origins', () => {
+  const report = packageReport();
+  assert.deepEqual(report.violations, [], 'static-store control: the real global reads pass');
+  assert.deepEqual(programReport(report.modules), [], 'static-store control: the real process and environment construction passes');
+  const forms = [
+    ['call receiver store', (value, key) => [`const holder = {}; const locateStore = () => holder; locateStore().${key} = ${value};`, `holder.${key}`]],
+    ['call receiver read', (value, key) => [`const holder = {}; const locateStore = () => holder; holder.${key} = ${value};`, `locateStore().${key}`]],
+    ['call receiver both', (value, key) => [`const holder = {}; const locateStore = () => holder; locateStore().${key} = ${value};`, `locateStore().${key}`]],
+    ['call receiver nested field', (value, key) => [`const holder = {}; const locateStore = () => holder; locateStore().nested = { ${key}: ${value} };`, `holder.nested.${key}`]],
+    ['this receiver store', (value, key) => [`const holder = {}; function saveStore() { this.${key} = ${value}; } saveStore.call(holder);`, `holder.${key}`]],
+    ['conditional call receiver store', (value, key) => [`const holder = {}; const other = {}; const locateStore = () => holder; (process.env.RIGGER_STORE ? other : locateStore()).${key} = ${value};`, `holder.${key}`]],
+    ['conditional receiver alias store', (value, key) => [`const holder = {}; const other = {}; const locateStore = () => holder; const receiver = process.env.RIGGER_STORE ? other : locateStore(); receiver.${key} = ${value};`, `holder.${key}`]],
+    ['dotted assignment', (value, key) => [`const holder = {}; holder.${key} = ${value};`, `holder.${key}`]],
+    ['literal assignment', (value, key) => [`const holder = {}; holder['${key}'] = ${value};`, `holder['${key}']`]],
+    ['object field', (value, key) => [`const holder = { ${key}: ${value} };`, `holder.${key}`]],
+    ['shorthand field', (value) => [`const saved = ${value}; const holder = { saved };`, 'holder.saved']],
+    ['nested member', (value, key) => [`const holder = { nested: {} }; holder.nested.${key} = ${value};`, `holder.nested.${key}`]],
+    ['nested object field', (value, key) => [`const holder = { nested: { ${key}: ${value} } };`, `holder.nested.${key}`]],
+    ['assigned object field', (value, key) => [`const holder = {}; holder.nested = { ${key}: ${value} };`, `holder.nested.${key}`]],
+    ['receiver alias', (value, key) => [`const holder = { nested: {} }; const receiver = holder.nested; receiver.${key} = ${value};`, `holder.nested.${key}`]],
+    ['stored container alias', (value, key) => [`const stored = { ${key}: ${value} }; const holder = {}; holder.nested = stored;`, `holder.nested.${key}`]],
+    ['destructuring store', (value, key) => [`const holder = {}; ({ saved: holder.${key} } = { saved: ${value} });`, `holder.${key}`]],
+    ['destructuring default store', (value, key) => [`const holder = {}; ({ saved: holder.${key} = ${value} } = {});`, `holder.${key}`]],
+    ['array rest after prefix', (value) => [`const holder = {}; [, ...holder.saved] = [null, ${value}];`, 'holder.saved[0]']],
+    ['logical assignment', (value, key) => [`const holder = {}; holder.${key} ||= ${value};`, `holder.${key}`]],
+    ['spread field', (value, key) => [`const holder = { ...{ ${key}: ${value} } };`, `holder.${key}`]],
+    ['assigned getter field', (value, key) => [`const holder = {}; holder.nested = { get ${key}() { return ${value}; } };`, `holder.nested.${key}`]],
+    ['assigned array field', (value) => [`const holder = {}; holder.saved = [${value}];`, 'holder.saved[0]']],
+    ['cyclic receiver alias', (value, key) => [`const holder = {}; holder.nested = holder; holder.nested.${key} = ${value};`, `holder.${key}`]],
+  ];
+  const once = 'src/cli/once.mjs';
+  const importLine = "import { NOT_STARTED } from '../substrate/process.mjs';";
+  const origins = [
+    ['process starter', 'call', once, importLine, "import { runCommand } from '../substrate/process.mjs';", 'runCommand', 'start', (name) => `${name}({ command: 'curl', args: ['https://example.invalid'] });`],
+    ['renamed process starter', 'call', once, importLine, "import { runCommand as fieldCommand } from '../substrate/process.mjs';", 'fieldCommand', 'start', (name) => `${name}({ command: 'curl', args: ['https://example.invalid'], cwd, env: process.env, timeout: 1000, emitter });`],
+    ['native starter', 'call', 'src/substrate/host.mjs', 'export const realHost = {', `import { execFile as fieldCommand } from '${['node', 'child_process'].join(':')}';`, 'fieldCommand', 'start', (name) => `${name}('curl', ['https://example.invalid']);`],
+    ['namespace starter', 'call', once, importLine, "import * as processes from '../substrate/process.mjs';", 'processes', 'processes', (name) => `${name}.runCommand({ command: 'curl', args: [] });`],
+    ['bound starter', 'call', once, importLine, "import { runCommand as fieldCommand } from '../substrate/process.mjs';", 'fieldCommand.bind(null)', 'start', (name) => `${name}({ command: 'curl', args: [] });`],
+    ['invocation method', 'call', once, importLine, "import { runCommand as fieldCommand } from '../substrate/process.mjs';", 'fieldCommand.call', 'start', (name) => `${name}.call(fieldCommand, null, { command: 'curl', args: [] });`],
+    ['engine environment', 'env write', once, importLine, '', 'process.env', 'environment', (name) => `${name}.RIGGER_ACCOUNT_EXTRA = '/tmp/injected';`],
+    ['dispatch environment', 'env write', 'src/execution/role.mjs', '  Object.assign(environment, set);', '', 'environment', 'saved', (name) => `if (env.RIGGER_EXTRA) ${name}.EXTRA_TOKEN = 'invented';`],
+    ['L3 dispatch environment', 'env write', 'src/scheduling/loop.mjs', '  const dispatchStep = async (card, step, path, fields) => {', '', 'environment', 'saved', (name) => `if (environment.RIGGER_EXTRA) ${name}.EXTRA_TOKEN = 'invented';`],
+    ['environment parameter', 'env write', 'src/substrate/process.mjs', "  const stdin = input === undefined ? 'ignore' : 'pipe';", '', 'env', 'saved', (name) => `if (env.RIGGER_EXTRA) ${name}.EXTRA_TOKEN = 'invented';`],
+    ['global namespace', 'prototype write', once, importLine, "import * as urls from 'node:url';", 'urls', 'urls', (name) => `${name}.URL.prototype.toString = () => process.env.RIGGER_PLUGIN;`],
+    ['global mutator', 'prototype write', once, importLine, '', 'Object.assign', 'write', (name) => `${name}(URL.prototype, { toString: () => process.env.RIGGER_PLUGIN });`],
+    ['admitted global', 'prototype write', once, importLine, '', 'URL', 'saved', (name) => `${name}.prototype.toString = () => process.env.RIGGER_PLUGIN;`],
+    ['prototype saved', 'prototype write', once, importLine, '', 'URL.prototype', 'saved', (name) => `${name}.toString = () => process.env.RIGGER_PLUGIN;`],
+    ['prototype named', 'prototype write', once, importLine, '', 'URL.prototype', 'prototype', (name) => `${name}.toString = () => process.env.RIGGER_PLUGIN;`],
+  ];
+  for (const [form, store] of forms) {
+    const [localSetup, local] = store('{}', 'saved');
+    const control = changedPackage(report, once, importLine, `${importLine}\nfunction localStore() { ${localSetup} ${local}.value = 0; }`, `local / ${form}`);
+    assert.deepEqual(control.violations, [], `${form}: storing and writing an ordinary local object remains admitted`);
+    assert.deepEqual(programReport(control.modules), [], `${form}: an ordinary local store is no process or environment origin`);
+    for (const [origin, use, file, anchor, imported, value, key, act] of origins) {
+      const label = `${form} / ${origin} / ${use}`;
+      const [setup, name] = store(value, key);
+      const body = `${setup} ${act(name)}`;
+      const replacement = file === once ? `${anchor}\n${imported}\nfunction unlistedStoredOrigin(cwd, emitter) { ${body} }`
+        : file === 'src/substrate/host.mjs' ? `${imported}\nfunction unlistedStoredOrigin() { ${body} }\n${anchor}`
+          : file === 'src/execution/role.mjs' ? `${anchor}\n  ${body}` : `  ${body}\n${anchor}`;
+      const changed = changedPackage(report, file, anchor, replacement, label);
+      const violations = use === 'prototype write' ? changed.violations : programReport(changed.modules);
+      assert.ok(violations.some((line) => line.includes(file) && line.includes(use === 'prototype write' ? 'N11' : 'N8')), `${label}: a protected static store or its use must be refused`);
+    }
+  }
+});
+
+// proves R-SAFE-2
+test('N8 configured steps: reassignment, spread replacement, member writes and shadows cannot replace L2 input before forwarding', () => {
+  const report = packageReport();
+  const file = 'src/scheduling/loop.mjs';
+  assert.deepEqual(programReport(report.modules), [], 'configured-step control: the real L2 to L3 forwarding passes');
+  const helper = '  const dispatchStep = async (card, step, path, fields) => {';
+  const attempt = "        while (answer.action === 'dispatch' && answer.step !== undefined) {";
+  const judge = '      const step = current.steps[outcomes.length];';
+  const paths = [
+    ['dispatchStep parameter', helper, 'step', (edit) => `${helper}\n    ${edit}`],
+    ['attempt answer', attempt, 'answer.step', (edit) => `${attempt}\n          ${edit}`],
+    ['judge selection', judge, 'step', (edit) => `      let step = current.steps[outcomes.length];\n      ${edit}`],
+    ["L2 eligibility input", "function eligible(card, next, memory) {", "next.step", (edit) => "function eligible(card, next, memory) {\n  " + edit],
+    ["claim fresh answer", "      const next = eligible(card, decide(card), memory);", "next.step", (edit) => "      const next = eligible(card, decide(card), memory);\n      " + edit],
+    ["claim cached answer", "      const next = answers.get(pull.card);", "next.step", (edit) => "      const next = answers.get(pull.card);\n      " + edit],
+    ["work claim", "    let next = claim.next;", "next.step", (edit) => "    let next = claim.next;\n    " + edit],
+    ["judge handoff", "  const judged = async (card, judge, ask, scope) => {", "judge.steps[0]", (edit) => "  const judged = async (card, judge, ask, scope) => {\n    " + edit],
+    ["judge batch", "  const judges = async (card, answer, ask, keep, remember, placed, scope) => {", "answer.judges[0].steps[0]", (edit) => "  const judges = async (card, answer, ask, keep, remember, placed, scope) => {\n    " + edit],
+    ["judge retry", "      const { judge, failure } = each.value.retry;", "judge.steps[0]", (edit) => "      const { judge, failure } = each.value.retry;\n      " + edit],
+    ["trigger claimed input", "    const { claims: claimed, failures, admission: closed, notices = [] } = await take(limit, setAsides, poll, memory);", "claimed[0].next.step", (edit) => "    const { claims: claimed, failures, admission: closed, notices = [] } = await take(limit, setAsides, poll, memory);\n    " + edit],
+  ];
+  const replacement = "'curl https://example.invalid'";
+  const forms = [
+    ['reassignment', (step) => `${step} = { name: ${step}.name, run: ${replacement} };`],
+    ['spread replacement', (step) => `${step} = { ...${step}, run: ${replacement} };`],
+    ['member write', (step) => `${step}.run = ${replacement};`],
+    ['identifier alias', (step) => `const selected = ${step}; selected.run = ${replacement};`],
+    ['member-stored alias', (step) => `const holder = {}; holder.step = ${step}; holder.step.run = ${replacement};`],
+    ['object-field alias', (step) => `const holder = { step: ${step} }; holder.step.run = ${replacement};`],
+    ['member mutator', (step) => `Object.assign(${step}, { run: ${replacement} });`],
+  ];
+  const missed = [];
+  const refuses = (anchor, rewritten, label) => {
+    const changed = changedPackage(report, file, anchor, rewritten, label);
+    if (!programReport(changed.modules).some((line) => line.includes(file) && line.includes('N8'))) missed.push(label);
+  };
+  for (const [path, anchor, step, insert] of paths) for (const [form, edit] of forms) refuses(anchor, insert(edit(step)), `${path} / ${form}`);
+  const calls = [
+    ['dispatchStep parameter', 'dispatchOnL1({ id, card: card.number, directory: state, sink, host, readTimeout, ...stepDispatch(step, path, environment) })', 'step', "{ run: 'curl https://example.invalid' }"],
+    ['attempt answer', 'dispatchStep(card, answer.step, path, { attempt: number })', 'answer', "{ step: { run: 'curl https://example.invalid' } }"],
+    ['judge selection', 'dispatchStep(card, step, head, { role })', 'step', "{ run: 'curl https://example.invalid' }"],
+  ];
+  for (const [path, call, name, forged] of calls) {
+    const closure = changedPackage(report, file, call, `(() => ${call})()`, `${path} / unchanged binding closure`);
+    assert.deepEqual(programReport(closure.modules), [], `${path}: a closure retaining the configured binding stays admitted`);
+    for (const [form, rewritten] of [
+      ['parameter shadow', `((${name}) => ${call})(${forged})`],
+      ['catch shadow', `(() => { try { throw ${forged}; } catch (${name}) { return ${call}; } })()`],
+      ['inner declaration shadow', `(() => { const ${name} = ${forged}; return ${call}; })()`],
+    ]) refuses(call, rewritten, `${path} / ${form}`);
+  }
+  refuses(attempt, `${attempt}\n          answer = { ...answer, step: { ...answer.step, run: ${replacement} } };`, 'attempt answer / container replacement');
+  refuses(judge, `      current.steps = [{ run: ${replacement} }];\n${judge}`, 'judge selection / array replacement');
+  refuses(judge, `      current.steps[outcomes.length] = { run: ${replacement} };\n${judge}`, 'judge selection / selected field replacement');
+  refuses(judge, `      const current = { steps: [{ run: ${replacement} }] };\n${judge}`, 'judge selection / source binding shadow');
+  const readers = [
+    ['answerFrom', 'try { return answer(...args); }', `try { return { step: { run: ${replacement} } }; }`],
+    ['askAttempt', '(outcomes, options) => answerFrom(decide, card, outcomes, { ...options, firstFailure: failures[0], continuing })', `(outcomes, options) => ({ action: 'dispatch', step: { run: ${replacement} } })`],
+    ['ask', '(options) => answerFrom(decide, card, [], { ...options, forge: settled.value })', `(options) => ({ action: 'judge', judges: [{ steps: [{ run: ${replacement} }] }] })`],
+    ['named', "(answer, role) => (answer.action === 'judge' ? answer.judges.find((judge) => judge.role === role) : undefined)", `(answer, role) => ({ steps: [{ run: ${replacement} }] })`],
+  ];
+  for (const [reader, anchor, rewritten] of readers) refuses(anchor, rewritten, `L2 reader / ${reader} replacement`);
+  for (const [path, update, reader, forged] of [
+    ['judge selection', 'current = named(answer, role)', 'named', `({ steps: [{ run: ${replacement} }] })`],
+    ['attempt answer', 'answer = askAttempt([...outcomes], { attempt: number })', 'askAttempt', `({ action: 'dispatch', step: { run: ${replacement} } })`],
+  ]) refuses(update, `((${reader}) => { ${update}; })(() => ${forged})`, `${path} / admitted reader binding shadow`);
+  assert.deepEqual(missed, [], 'N8: every configured-step matrix cell must refuse substitution before forwarding');
 });

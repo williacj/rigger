@@ -270,3 +270,124 @@ already-admitted builtin namespace, preserving the canonical URL member identity
 all four forms; it admits no additional builtin or global. No production default import
 exists in the measured closure. This stays within K13's static-alias/global-member class.
 The PR repeats all required verification and guarded receipts at the subsequent head.
+
+
+## Static member-store revision, 2026-11-10
+
+The [architect](https://github.com/williacj/rigger/pull/1331#issuecomment-6772894455)
+and [reviewer](https://github.com/williacj/rigger/pull/1331#issuecomment-6775081920)
+found that member assignment discarded the same protected identities that identifier assignment
+retained. Their process, environment and prototype probes are ordinary static stores under
+M8-K13. The architect also found that L3 could replace the configured step before its reviewed
+forwarding call. These findings concern the guard introduced by this card, at
+bf963af638f6b64b7e3677f35fafc30caad7f3fd; they do not claim a production network call.
+
+The static-store matrix crosses literal/dotted assignments, object fields, nested members,
+receiver/container aliases, destructuring/defaults, array rest, logical assignment, spread,
+getters, arrays and a cyclic receiver with process, environment and admitted-global/prototype
+origins. Ordinary local stores are positive controls. It parses counterexamples without
+executing them. The first red, 1300-r6-store-red.log, fails dotted assignment/process starter/call.
+The adjacent projection reds are 1300-r6-store-default-red.log and
+1300-r6-store-rest-red.log. Each names the unchanged committed head above and retains the exact
+uncommitted input separately. The rest run's producer log records exit 1; its execution-monitor
+handle was unavailable after context compaction, a retained monitoring limitation.
+
+The resolver collects member stores and resolves reads by the receiver's canonical origin.
+Unknown lexical values keep their binding identity, so a dispatch environment remains the same
+protected value after storage. Default and rest projections use the same path reader as
+identifier assignment. Recursive stores do not populate caches from incomplete traversals.
+This extends the existing static resolver instead of adding separate process/environment/global
+alias lists. No additional production path is changed.
+
+Private command, ref, input and output originals are retained outside scratch/temp roots in
+/Users/cjwilliams/Github/rigger-worktrees/retained-evidence/1300/engineer-round-1-20261110.
+The PR records completed verification and final-head mutation receipts; historical runs keep
+their original heads and failed attempts remain in the ledger.
+
+The configured-step matrix's [valid red](https://github.com/williacj/rigger/issues/1300#issuecomment-6779438946)
+exposed forty substitutions at the same committed head. It crosses reassignment, spread/run
+replacement, identifier/member/object aliases and mutators with the forwarding parameter, the
+attempt's answer and the judge's selection. Parameter, catch and local shadows exercise the
+actual operand bindings. Container and pure-reader replacements cover the path from L2's
+answer to the reviewed forwarding call. Three closures retaining the original binding are
+positive controls. An earlier fixture wrapped an inner call and changed the outer pinned
+argument expression; that failed positive control remains recorded without red credit.
+
+L3's local dispatchStep now belongs to the closed call inventory. Forwarded operands and
+selected initializers must refer to their canonical pinned declarations. The configured
+step, its answer/judge container and the local readers cannot be rewritten. The four existing
+answer updates and the judge update remain admitted once, at their reviewed expressions and
+reader bindings. Linked source pins protect the configured container rather than its unrelated
+index dependency. No production loop or L2 policy is changed.
+
+The first implementation refused thirty-eight cells; storing answer.step in another object
+still lost the protected parent. Static members of opaque bindings now retain canonical parent
+identity, and write protection follows that identity through further storage. The
+[matching green](https://github.com/williacj/rigger/issues/1300#issuecomment-6780386675),
+1300-r6-step-member-green.log, passes all forty cells and the unchanged-binding controls.
+The PR keeps the exact command/input hashes and native results for each attempt.
+
+The adjacent binding search found the same identity loss at a function declaration's own
+identifier. The [copier-reassignment red](https://github.com/williacj/rigger/issues/1300#issuecomment-6782373025),
+1300-r6-declaration-red.log, leaves gitEnvironment's reviewed declaration intact but conditionally
+reassigns its binding to a copier that adds an environment key. The lexical model now records
+the declaration identifier in its containing scope, so the existing protected-write check sees
+that reassignment. This changes the shared binding model rather than adding a special ban for
+that function name. The counterexample belongs to the existing bound-input matrix.
+
+
+The receiver extension of the same store matrix exposed two further gaps before their fixes.
+A [call-result receiver](https://github.com/williacj/rigger/issues/1300#issuecomment-6784593680)
+lost a stored process origin. Unresolved call values now remain explicit possible receivers,
+including conditional branches, so a known literal-member store cannot disappear at a read.
+The subsequent [L3-environment red](https://github.com/williacj/rigger/issues/1300#issuecomment-6786152232)
+showed that loop's incoming environment also needed a protected parameter identity. The shared
+origin table now supplies that pin. The [focused green](https://github.com/williacj/rigger/issues/1300#issuecomment-6786317645)
+reached all 360 refusal cells and 24 local-store controls; the measurement belongs to the
+recorded dirty input, not to a later committed head.
+
+Parsed modules are reused only while their source bytes match, and lexical models are reused
+only for the same immutable parsed tree. The [full guard-file run](https://github.com/williacj/rigger/issues/1300#issuecomment-6786502691)
+passes all twelve named cases after that cache refactor. These caches retain syntax and
+bindings, not a prior policy verdict for changed source.
+
+
+The upstream-carrier search extended that same configured-step matrix to eligibility, fresh
+and cached claims, work, judge handoff/batch/retry, and the trigger's claimed input. Its
+[red](https://github.com/williacj/rigger/issues/1300#issuecomment-6786823742) identifies all
+fifty-six added substitutions as missed. The guard now pins the reviewed eligibility and
+claim reader bodies and protects the selected work/judge/claim carriers. The existing
+next.following transition remains admitted at its single reviewed expression.
+
+A [planned green](https://github.com/williacj/rigger/issues/1300#issuecomment-6787166474)
+instead failed the unchanged-package control: following every initializer argument protected
+the shared undefined sentinel and unrelated writes. It earns no missing-behavior red credit.
+Destructured carrier pins now select only judge or claimed and the reader binding; sibling
+failures and notices remain mutable. The [matching green](https://github.com/williacj/rigger/issues/1300#issuecomment-6787202823)
+passes all ninety-six configured-step refusal cases and the positive controls. No production
+L3 function was changed.
+
+Export lookup examines the module body's declarations, where JavaScript permits exports,
+rather than walking every function body for each imported name. This retains the same export
+and re-export policy while avoiding repeated searches of syntax that cannot declare exports.
+The PR records the full guard-file verification after that refactor, final-head mutation
+receipts, and all failed attempts in a separate evidence ledger.
+
+
+Repeated source-shape comparisons now reuse the shape of the same immutable AST node or
+expression text. Arrays and other mutable values are not cached. The
+[full guard-file verification](https://github.com/williacj/rigger/issues/1300#issuecomment-6788072476)
+passes all twelve named cases after that refactor. The cache stores syntax, not origin or
+policy verdicts; each counterexample still parses its changed source and evaluates its own
+protected-origin checks.
+
+
+The first commit hook stopped at the repository-wide child-process census, which reads an
+import inside the new native-origin fixture as a real import. The full output and the missed
+pre-code coupling are retained in the [escalation](https://github.com/williacj/rigger/issues/1300#issuecomment-6788402164).
+[M8-K19](https://github.com/williacj/rigger/issues/1293#issuecomment-6788445046) resolves that
+conflict in this new fixture and leaves the census unchanged. The fixture now builds the
+module specifier from parts. An independent syntax check confirms the emitted import is
+byte-identical: native execFile from node:child_process, locally named fieldCommand. The
+[affected-file run](https://github.com/williacj/rigger/issues/1300#issuecomment-6788651753) passes the unchanged census and all guard cases. This spelling
+change preserves the native-origin matrix column; it admits no additional process boundary.
