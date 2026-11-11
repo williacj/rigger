@@ -120,24 +120,103 @@ test('literal file imports use Node URL decoding and follow absolute paths and f
   assert.deepEqual(result.bare, []);
 });
 
+const unsupported = (form) => new Error(`unsupported YAML form for SELF_HOSTING_COMMIT: ${form}`);
+
+/** YAML's double-quoted escapes (YAML 1.2, section 5.7), the escaped line break excepted. */
+const ESCAPES = { 0: '\0', a: '\x07', b: '\b', t: '\t', '\t': '\t', n: '\n', v: '\v', f: '\f', r: '\r', e: '\x1b',
+  ' ': ' ', '"': '"', '/': '/', '\\': '\\', N: '\x85', _: '\xa0', L: '\u2028', P: '\u2029' };
+const HEX = { x: 2, u: 4, U: 8 };
+
 /**
- * The values `SELF_HOSTING_COMMIT` takes in a workflow's top-level `env` map, however YAML spells the
- * scalar: single, double or no quotes, any indentation of the map, and a trailing comment.
+ * Reads one scalar at the start of `text`, plain, single- or double-quoted, and returns its value
+ * and the text after it. A plain scalar ends at `stop`; a form that is no scalar on one line throws.
+ */
+function scalar(text, stop) {
+  if (text[0] === "'") {
+    let value = '', at = 1;
+    for (;;) {
+      if (at >= text.length) throw unsupported('multi-line scalar');
+      if (text[at] === "'" && text[at + 1] === "'") { value += "'"; at += 2; continue; }
+      if (text[at] === "'") return { value, rest: text.slice(at + 1) };
+      value += text[at++];
+    }
+  }
+  if (text[0] === '"') {
+    let value = '', at = 1;
+    for (;;) {
+      if (at >= text.length) throw unsupported('multi-line scalar');
+      if (text[at] === '"') return { value, rest: text.slice(at + 1) };
+      if (text[at] !== '\\') { value += text[at++]; continue; }
+      const code = text[at + 1];
+      if (code in ESCAPES) { value += ESCAPES[code]; at += 2; continue; }
+      const digits = text.slice(at + 2, at + 2 + (HEX[code] ?? 0));
+      if (!HEX[code] || !/^[0-9a-fA-F]+$/.test(digits) || digits.length !== HEX[code]) throw unsupported('invalid escape');
+      value += String.fromCodePoint(parseInt(digits, 16));
+      at += 2 + HEX[code];
+    }
+  }
+  const form = { '{': 'flow mapping', '[': 'flow sequence', '&': 'anchor', '*': 'alias', '|': 'block scalar',
+    '>': 'block scalar', '!': 'tag', '?': 'explicit key', '-': 'sequence', '%': 'directive', '@': 'reserved indicator', '`': 'reserved indicator' }[text[0]];
+  if (form && !('-?'.includes(text[0]) && /^.\S/.test(text))) throw unsupported(form);
+  const end = text.search(stop);
+  return { value: (end === -1 ? text : text.slice(0, end)).trimEnd(), rest: end === -1 ? '' : text.slice(end) };
+}
+
+/** What follows a scalar on its line must be nothing but a comment. */
+function lineEnd(rest) {
+  if (!/^\s*(#.*)?$/.test(rest) || (/^#/.test(rest))) throw unsupported('multi-line scalar');
+}
+
+/** One `key: value` line of a block mapping, or a thrown form; `value` is null when it follows on later lines. */
+function entry(line) {
+  if (line.startsWith('<<') && /^<<\s*:/.test(line)) throw unsupported('merge key');
+  const key = scalar(line, /\s*:(\s|$)/);
+  const colon = key.rest.match(/^\s*:(\s+|$)/);
+  if (!colon) throw unsupported('multi-line scalar');
+  const after = key.rest.slice(colon[0].length);
+  if (/^(#.*)?$/.test(after)) return { key: key.value, value: null };
+  const value = scalar(after, /\s#/);
+  lineEnd(value.rest);
+  return { key: key.value, value: value.value };
+}
+
+/**
+ * The values `SELF_HOSTING_COMMIT` takes in a workflow's top-level `env` block mapping, however
+ * YAML spells it: key and value plain, single- or double-quoted, any indentation, blank lines and
+ * comments. Any other form for that map or key throws, naming the form, rather than reading none.
  */
 function pinsIn(workflow) {
   const lines = workflow.split(/\r?\n/);
-  const start = lines.findIndex((line) => /^env:\s*(#.*)?$/.test(line));
-  if (start === -1) return [];
+  let content = false, ended = false, env = null, indent;
   const pins = [];
-  let indent;
-  for (const line of lines.slice(start + 1)) {
+  for (const line of lines) {
     if (/^\s*(#.*)?$/.test(line)) continue;
+    if (/^(---|\.\.\.)(\s|$)/.test(line)) {
+      if (ended || (line.startsWith('---') && content)) throw unsupported('second document');
+      if (line.startsWith('...')) ended = true;
+      continue;
+    }
+    if (ended) throw unsupported('second document');
     const depth = line.match(/^ */)[0].length;
-    if (depth === 0) break;
+    if (line[depth] === '\t' && (depth === 0 || env === 'open')) throw unsupported('tab indentation');
+    if (depth === 0) {
+      content = true;
+      if (env) env = 'done';
+      const top = entry(line);
+      if (top.key !== 'env') continue;
+      if (env) throw unsupported('duplicate env key');
+      if (top.value !== null) throw unsupported('scalar env');
+      env = 'open';
+      continue;
+    }
+    if (env !== 'open') continue;
     indent ??= depth;
-    if (depth !== indent) continue;
-    const entry = line.slice(depth).match(/^SELF_HOSTING_COMMIT\s*:\s*('([^']*)'|"([^"]*)"|([^\s#'"][^#]*?))\s*(#.*)?$/);
-    if (entry) pins.push(entry[2] ?? entry[3] ?? entry[4]);
+    if (depth > indent) continue;
+    if (depth < indent) throw unsupported('irregular indentation');
+    const { key, value } = entry(line.slice(depth));
+    if (key !== 'SELF_HOSTING_COMMIT') continue;
+    if (value === null) throw unsupported('block value');
+    pins.push(value);
   }
   return pins;
 }
@@ -152,22 +231,59 @@ function onePin(workflow) {
 /** The commit `.github/workflows/self-hosting.yml` pins for the check's code. */
 const checkPin = () => onePin(readFileSync(join(ROOT, '.github/workflows/self-hosting.yml'), 'utf8'));
 
-// A reader tied to one quoting or indentation fails both pin tests on an equivalent workflow.
+// A reader tied to one spelling of the env block fails both pin tests on an equivalent workflow, and
+// one that reads zero pins from a form it does not parse hides the pin instead of naming the form.
 test('the pin reader reads the same commit from each YAML spelling and refuses zero or two pins', () => {
   const sha = 'c1e4833fd3bfdafef68590c48ad88571a3d3c885';
-  const workflow = (entry) => `name: self-hosting\non:\n  push:\nenv:\n${entry}\n  TREE: tree\njobs:\n  check:\n    env:\n      SELF_HOSTING_COMMIT: 'other'\n`;
-  for (const entry of [
-    `  SELF_HOSTING_COMMIT: '${sha}'`,
-    `  SELF_HOSTING_COMMIT: "${sha}"`,
-    `  SELF_HOSTING_COMMIT: ${sha}`,
-    `  SELF_HOSTING_COMMIT: '${sha}' # the check's code`,
-    `  SELF_HOSTING_COMMIT: ${sha}  # the check's code`,
-    `  # The commit that supplies the scripts.\n  SELF_HOSTING_COMMIT:   "${sha}"`,
-  ]) assert.equal(onePin(workflow(entry)), sha, entry);
-  const indented = `env:\n    NODE_MAJOR: '24'\n    SELF_HOSTING_COMMIT: "${sha}"\njobs:\n  check:\n`;
-  assert.equal(onePin(indented), sha);
-  assert.throws(() => onePin(workflow(`  # SELF_HOSTING_COMMIT: '${sha}'`)), /found 0/);
-  assert.throws(() => onePin(workflow(`  SELF_HOSTING_COMMIT: '${sha}'\n  SELF_HOSTING_COMMIT: "${sha}"`)), /found 2/);
+  // Each body is the top-level env block; a job's own env names another value and must not count.
+  const workflow = (env, { head = '', tail = '', end = '' } = {}) =>
+    `${head}name: self-hosting\non:\n  push:\n${env}\n${tail}jobs:\n  check:\n    env:\n      SELF_HOSTING_COMMIT: 'other'\n${end}`;
+  const block = (entry) => `env:\n  NODE_MAJOR: '24'\n${entry}\n  TREE: tree`;
+  const equivalent = {
+    'key and value unquoted': block(`  SELF_HOSTING_COMMIT: ${sha}`),
+    'value single-quoted': block(`  SELF_HOSTING_COMMIT: '${sha}'`),
+    'value double-quoted': block(`  SELF_HOSTING_COMMIT: "${sha}"`),
+    'value double-quoted with escapes': block(`  SELF_HOSTING_COMMIT: "\\x63\\u0031\\U00000065${sha.slice(3)}"`),
+    'key single-quoted': block(`  'SELF_HOSTING_COMMIT': '${sha}'`),
+    'key double-quoted': block(`  "SELF_HOSTING_COMMIT": '${sha}'`),
+    'key double-quoted with an escape': block(`  "SELF\\x5FHOSTING_COMMIT": ${sha}`),
+    'key single-quoted, value double-quoted': block(`  'SELF_HOSTING_COMMIT': "${sha}"`),
+    'four-space indentation': `env:\n    NODE_MAJOR: '24'\n    SELF_HOSTING_COMMIT: "${sha}"`,
+    'one-space indentation': `env:\n NODE_MAJOR: '24'\n SELF_HOSTING_COMMIT: ${sha}`,
+    'blank lines in the block': `env:\n\n  NODE_MAJOR: '24'\n\n  SELF_HOSTING_COMMIT: '${sha}'\n\n  TREE: tree`,
+    'full-line comments': `# the environment\nenv:\n  # the pin\n  SELF_HOSTING_COMMIT: '${sha}'\n    # an indented comment\n  TREE: tree`,
+    'trailing comments': `env: # the environment\n  SELF_HOSTING_COMMIT: '${sha}' # the pin\n  TREE: tree # the tree`,
+    'unquoted value with a trailing comment': block(`  SELF_HOSTING_COMMIT: ${sha}  # the pin`),
+    'spaces after the colon': block(`  SELF_HOSTING_COMMIT:     '${sha}'`),
+    'env key double-quoted': `"env":\n  SELF_HOSTING_COMMIT: '${sha}'`,
+    'env key single-quoted': `'env':\n  SELF_HOSTING_COMMIT: '${sha}'`,
+    'pin after a nested value': `env:\n  OTHER:\n    nested: 1\n  SELF_HOSTING_COMMIT: '${sha}'`,
+  };
+  for (const [name, env] of Object.entries(equivalent)) assert.equal(onePin(workflow(env)), sha, name);
+  assert.equal(onePin(workflow(block(`  SELF_HOSTING_COMMIT: '${sha}'`), { head: '---\n' })), sha, 'one explicit document');
+  assert.equal(onePin(workflow(block(`  SELF_HOSTING_COMMIT: '${sha}'`), { head: '---\n', end: '...\n' })), sha, 'one document with its end marker');
+
+  const unsupported = {
+    'flow mapping for the env map': ['flow mapping', workflow(`env: { SELF_HOSTING_COMMIT: '${sha}' }`)],
+    'flow mapping value': ['flow mapping', workflow(block(`  SELF_HOSTING_COMMIT: { sha: '${sha}' }`))],
+    'flow mapping document': ['flow mapping', `{ env: { SELF_HOSTING_COMMIT: '${sha}' } }\n`],
+    'anchor on the env map': ['anchor', workflow(`env: &environment\n  SELF_HOSTING_COMMIT: '${sha}'`)],
+    'anchor on the pin': ['anchor', workflow(block(`  SELF_HOSTING_COMMIT: &pin '${sha}'`))],
+    'anchor on the key': ['anchor', workflow(block(`  &key SELF_HOSTING_COMMIT: '${sha}'`))],
+    'alias for the pin': ['alias', workflow(block(`  SELF_HOSTING_COMMIT: *pin`))],
+    'alias for the env map': ['alias', workflow('env: *environment')],
+    'literal block scalar': ['block scalar', workflow(block(`  SELF_HOSTING_COMMIT: |\n    ${sha}`))],
+    'folded block scalar': ['block scalar', workflow(block(`  SELF_HOSTING_COMMIT: >-\n    ${sha}`))],
+    'merge key': ['merge key', workflow(block('  <<: *base'))],
+    'second document': ['second document', workflow(block(`  SELF_HOSTING_COMMIT: '${sha}'`), { tail: `---\nenv:\n  SELF_HOSTING_COMMIT: '${sha}'\n` })],
+    'document after an end marker': ['second document', workflow(block(`  SELF_HOSTING_COMMIT: '${sha}'`), { end: `...\n---\nenv:\n  SELF_HOSTING_COMMIT: '${sha}'\n` })],
+  };
+  for (const [name, [form, text]] of Object.entries(unsupported)) {
+    assert.throws(() => onePin(text), { message: `unsupported YAML form for SELF_HOSTING_COMMIT: ${form}` }, name);
+  }
+
+  assert.throws(() => onePin(workflow(block(`  # SELF_HOSTING_COMMIT: '${sha}'`))), /found 0/);
+  assert.throws(() => onePin(workflow(block(`  SELF_HOSTING_COMMIT: '${sha}'\n  "SELF_HOSTING_COMMIT": "${sha}"`))), /found 2/);
 });
 
 // A pin the default branch does not reach, such as a squash-merged pull request's own head
