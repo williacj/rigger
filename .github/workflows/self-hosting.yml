@@ -1,10 +1,10 @@
 # ABOUTME: This repository's own self-hosting check: on each event that can change a card's verdict,
-# runs the check from the tree fetched at the commit this file was read from, then posts
+# runs the check from the tree fetched at the commit this workflow pins, then posts
 # `self-hosting` on each head SHA it read, with the gate App's token minted after the check.
 
 # The forge runs this file from the default branch for every event below, whatever a pull
-# request's base, and never from its head. The scripts it runs come from the same commit as this
-# file, and the lists they rule by from the default branch's head at the run's start. It does not
+# request's base, and never from its head. The scripts it runs come from the pin below,
+# and the lists they rule by from the default branch's head at the run's start. It does not
 # ship: the gate workflow's template is the consumer's.
 name: self-hosting
 
@@ -29,8 +29,9 @@ defaults:
 env:
   # The Node major the check runs on: one `engines` admits, and past no end of life.
   NODE_MAJOR: '24'
-  # The tree the scripts run from, under the runner's temporary directory: this repository at the
-  # commit this file was read from.
+  # The commit of this repository that supplies the scripts.
+  SELF_HOSTING_COMMIT: 'c1e4833fd3bfdafef68590c48ad88571a3d3c885'
+  # The tree the scripts run from, under the runner's temporary directory.
   TREE: self-hosting-tree
   # The event's issue or pull request number, and whether it is a pull request's.
   NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
@@ -74,10 +75,10 @@ jobs:
             echo "::error::the runner's Node ${running} is below Node ${NODE_MAJOR}, which this workflow names"
             exit 1
           fi
-      - name: Fetch the tree this workflow was read from
+      - name: Fetch the pinned tree
         run: |
           mkdir -p "${RUNNER_TEMP}/${TREE}"
-          curl -sSfL "https://codeload.github.com/${GITHUB_REPOSITORY}/tar.gz/${GITHUB_WORKFLOW_SHA}" | tar -xzf - --strip-components 1 -C "${RUNNER_TEMP}/${TREE}"
+          curl -sSfL "https://codeload.github.com/${GITHUB_REPOSITORY}/tar.gz/${SELF_HOSTING_COMMIT}" | tar -xzf - --strip-components 1 -C "${RUNNER_TEMP}/${TREE}"
       - name: Resolve the card
         id: card
         env:
@@ -129,10 +130,10 @@ jobs:
             echo "::error::the runner's Node ${running} is below Node ${NODE_MAJOR}, which this workflow names"
             exit 1
           fi
-      - name: Fetch the tree this workflow was read from
+      - name: Fetch the pinned tree
         run: |
           mkdir -p "${RUNNER_TEMP}/${TREE}"
-          curl -sSfL "https://codeload.github.com/${GITHUB_REPOSITORY}/tar.gz/${GITHUB_WORKFLOW_SHA}" | tar -xzf - --strip-components 1 -C "${RUNNER_TEMP}/${TREE}"
+          curl -sSfL "https://codeload.github.com/${GITHUB_REPOSITORY}/tar.gz/${SELF_HOSTING_COMMIT}" | tar -xzf - --strip-components 1 -C "${RUNNER_TEMP}/${TREE}"
       - name: Map the event to its pull requests
         id: map
         env:

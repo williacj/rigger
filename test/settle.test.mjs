@@ -150,7 +150,7 @@ test('given a maker outcome of exit 0 and an open pull request from the card\'s 
   await w.l2.settled(w.card, exited(0));
 
   assert.equal(await columnOf(w.fake), columns.review);
-  assert.deepEqual(w.l2Events().map(({ event, from, to, cause }) => ({ event, from, to, cause })), [{ event: 'transition', from: 'coding', to: 'review', cause: 'returned' }]);
+  assert.deepEqual(w.l2Events().map(({ event, from, to, cause }) => ({ event, from, to, cause })), [{ event: 'transition', from: 'coding', to: 'review', cause: 'returned' }, { event: 'acceptance.history', from: undefined, to: undefined, cause: undefined }]);
 });
 
 /**
@@ -177,18 +177,16 @@ test('L2\'s settle makes one read of the forge for that card and answers the fac
 });
 
 // proves R-WORK-18
-test('given a maker outcome of exit 0 and no open pull request from the card\'s line of work, L2 leaves the card in coding, records an event under the card saying no pull request was found, and its caller is told the card and why', async () => {
+test('given a maker outcome of exit 0 and no open pull request from the card\'s line of work, L2 answers an ambiguous escalation to the owner naming the card, why and its line of work, and moves nothing', async () => {
   const w = await world();
 
-  await assert.rejects(w.l2.settled(w.card, exited(0)), (error) => /card #12\b/.test(error.message) && /no open pull request/.test(error.message) && /rigger-12/.test(error.message));
+  const answer = await w.l2.settled(w.card, exited(0));
+  assert.ok(/card #12\b/.test(answer.reason) && /no open pull request/.test(answer.reason) && /rigger-12/.test(answer.reason), answer.reason);
 
   assert.equal(await columnOf(w.fake), columns.coding);
   assert.deepEqual(w.fake.writes(), []);
-  const [event, ...more] = w.l2Events();
-  assert.deepEqual(more, []);
-  assert.equal(event.card, 12);
-  assert.equal(event.event, 'review.withheld');
-  assert.match(event.reason, /no open pull request/);
+  assert.deepEqual({ action: answer.action, category: answer.category, raiser: answer.raiser, destination: answer.destination, line: answer.line }, { action: 'escalate', category: 'ambiguous', raiser: 'loop', destination: 'owner', line: 'rigger-12' });
+  assert.deepEqual(w.l2Events(), []);
 });
 
 // proves R-WORK-18
@@ -202,10 +200,11 @@ test('given a maker outcome of exit 0 and two open pull requests from the card\'
 });
 
 // proves R-WORK-18
-test('given a maker outcome of exit 0 and a read of the forge that fails, L2 leaves the card in coding, and its caller is told the card and the read that failed', async () => {
+test('given a maker outcome of exit 0 and a read of the forge that fails, L2 answers an ambiguous escalation naming the card and the read that failed, and moves nothing', async () => {
   const w = await world({ fail: true });
 
-  await assert.rejects(w.l2.settled(w.card, exited(0)), (error) => /#12\b/.test(error.message) && /pull requests from branch rigger-12/.test(error.message));
+  const answer = await w.l2.settled(w.card, exited(0));
+  assert.ok(answer.action === 'escalate' && answer.category === 'ambiguous' && /#12\b/.test(answer.reason) && /pull requests from branch rigger-12/.test(answer.reason), answer.reason);
 
   assert.equal(await columnOf(w.fake), columns.coding);
   assert.deepEqual(w.fake.writes(), []);
@@ -223,10 +222,10 @@ test('given a maker outcome of non-zero exit, L2 leaves the card in coding, and 
 });
 
 // proves R-WORK-18
-test('L2 decides the move from the exit code and the forge alone, never from the output: exit 0 saying "pull request opened" with no pull request on the forge leaves the card in coding', async () => {
+test('L2 decides the move from the exit code and the forge alone, never from the output: exit 0 saying "pull request opened" with no pull request on the forge escalates the card, moving nothing', async () => {
   const w = await world();
 
-  await assert.rejects(w.l2.settled(w.card, exited(0, 'pull request opened: https://github.com/williacj/rigger/pull/120')), /no open pull request/);
+  assert.match((await w.l2.settled(w.card, exited(0, 'pull request opened: https://github.com/williacj/rigger/pull/120'))).reason, /no open pull request/);
 
   assert.equal(await columnOf(w.fake), columns.coding);
   assert.deepEqual(w.fake.writes(), []);
@@ -252,7 +251,7 @@ test('a Review card L3 claims to do again from the beginning moves from review t
 
   assert.equal(await columnOf(w.fake), columns.coding);
   assert.deepEqual(w.fake.writes(), [{ operation: 'moveItem', args: [w.card.id, columns.coding] }]);
-  assert.deepEqual(w.l2Events().map(({ event, card, from, to, cause }) => ({ event, card, from, to, cause })), [{ event: 'transition', card: 12, from: 'review', to: 'coding', cause: 'redone' }]);
+  assert.deepEqual(w.l2Events().map(({ event, card, from, to, cause }) => ({ event, card, from, to, cause })), [{ event: 'transition', card: 12, from: 'review', to: 'coding', cause: 'redone' }, { event: 'acceptance.history', card: 12, from: undefined, to: undefined, cause: undefined }]);
 });
 
 test('a Coding card L3 claims is not moved, and no transition is recorded for it', async () => {
@@ -279,7 +278,7 @@ test('L2\'s settle reads, in its one read for the card it settles, its one open 
 
   const facts = await l2.settled(card, exited(0));
 
-  assert.deepEqual(made.sort(), [['readCheckStates', pullFrom(13, 130).sha], ['readComments', 130], ['readDiff', 130], ['readEffectiveRules', 'main'], ['readIssueComments', 13], ['readMergeBase', 130], ['readMergeable', 130], ['readPullRequests', 'rigger-13']]);
+  assert.deepEqual(made.sort(), [['readCheckStates', pullFrom(13, 130).sha], ['readComments', 130], ['readDiff', 130], ['readEffectiveRules', 'main'], ['readIssueComments', 13], ['readIssueHistory', 13], ['readMergeBase', 130], ['readMergeable', 130], ['readPullRequests', 'rigger-13']]);
   assert.deepEqual(facts, {
     line: 'rigger-13',
     open: [{ number: 130, head: pullFrom(13, 130).sha, base: 'main' }],

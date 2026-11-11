@@ -635,7 +635,97 @@ const GATE_ENVIRONMENT = 'gate';
 const GATE_APP_ID = 'GATE_APP_ID';
 const GATE_APP_PRIVATE_KEY = 'GATE_APP_PRIVATE_KEY';
 
-/** The required gate context and its environment, read only through L0's repository side. */
+/** The gate workflow `init` forks, by the path a `workflow_path` condition names it with. */
+const GATE_WORKFLOW = '.github/workflows/rigger-gate.yml';
+
+/** The events the gate workflow declares under `on:`, in its order, guarded against the template in tests. */
+const GATE_EVENTS = ['pull_request_target', 'issue_comment', 'issues'];
+
+/** Whether a `workflow_path` pattern is one this check does not judge: a glob, or `~ALL`, which only `include` may hold. */
+const unjudgedPattern = (pattern) => /[*?[\]{}!]/.test(pattern) || pattern === '~ALL';
+
+/**
+ * Whether `policy` covers the gate workflow: true, false, or the patterns coverage turns on that
+ * this check does not judge. No `workflow_path` condition targets every workflow, and so does an
+ * empty `include` or one holding `~ALL`, less what `exclude` names (GitHub's REST page for Actions
+ * policies, read 2026-11-09).
+ */
+function covers({ workflowPath }) {
+  if (workflowPath === null) return true;
+  const { include, exclude } = workflowPath;
+  const unjudged = [];
+  const every = include.length === 0 || include.includes('~ALL');
+  if (!every && !include.includes(GATE_WORKFLOW)) {
+    unjudged.push(...include.filter(unjudgedPattern));
+    if (unjudged.length === 0) return false;
+  }
+  if (exclude.includes(GATE_WORKFLOW)) return false;
+  unjudged.push(...exclude.filter(unjudgedPattern));
+  return unjudged.length === 0 ? true : unjudged;
+}
+
+/**
+ * The event-policy axis of the gate line (`ARCHITECTURE.md`, "What the owner provisions"), as
+ * `{ unjudged, passes }`: what could not be judged, and what the line says where it passes. What
+ * fails it is added to `faults`, the line's own. Only the repository's own policies are read. Any
+ * covering active event rule that lacks one of the gate's events fails it, whatever another policy
+ * allows. `obtain` makes each read, adding a failed one to `faults` and answering undefined.
+ */
+async function eventPolicyAxis(repo, obtain, faults) {
+  const axis = { unjudged: [], passes: null };
+  const held = await obtain('readVisibility');
+  if (held === undefined) return axis;
+  if (held.visibility !== 'public') return { ...axis, passes: `${repo} is ${held.visibility}, so no Actions event policy is required` };
+  const policies = await obtain('readEventPolicies');
+  if (policies === undefined) return axis;
+  if (policies.length === 0) {
+    if (held.owner === 'organization') {
+      axis.unjudged.push(`${repo} holds no Actions event policy of its own, and only the repository's own policies were read, so one its organization or enterprise holds was not judged`);
+    } else {
+      faults.push(`${repo} is public and holds no Actions event policy of its own; add one that covers ${GATE_WORKFLOW} and allows its events (ARCHITECTURE.md, "What the owner provisions")`);
+    }
+    return axis;
+  }
+  const named = (policy) => `Actions event policy "${printable(policy.name)}"`;
+  const missing = (events) => GATE_EVENTS.filter((event) => !events.includes(event));
+  const judged = policies.map((policy) => ({ policy, covering: covers(policy), active: policy.enforcement === 'active' }));
+  const lacking = [];
+  for (const { policy, covering, active } of judged) {
+    if (covering !== true || !active) continue;
+    for (const events of policy.events) {
+      if (missing(events).length > 0) lacking.push(`${named(policy)} covers ${GATE_WORKFLOW} and does not allow ${missing(events).join(', ')}`);
+    }
+  }
+  if (lacking.length > 0) {
+    faults.push(...lacking);
+    return axis;
+  }
+  const notJudged = ({ policy, covering }) => covering.map((pattern) => `${named(policy)} has the workflow_path pattern ${printable(pattern)}, which was not judged against ${GATE_WORKFLOW}`);
+  const unknown = judged.filter(({ covering, active }) => Array.isArray(covering) && active);
+  const passing = judged.find(({ policy, covering, active }) => covering === true && active && policy.events.some((events) => missing(events).length === 0));
+  if (passing) {
+    const doubtful = unknown.filter(({ policy }) => policy.events.some((events) => missing(events).length > 0));
+    if (doubtful.length > 0) axis.unjudged.push(...doubtful.flatMap(notJudged));
+    else axis.passes = `${named(passing.policy)} covers ${GATE_WORKFLOW} and allows its events`;
+    return axis;
+  }
+  if (unknown.length > 0) {
+    axis.unjudged.push(...unknown.flatMap(notJudged));
+    return axis;
+  }
+  const covering = judged.filter((each) => each.covering === true);
+  const enforced = covering.filter((each) => each.active);
+  if (enforced.length > 0) faults.push(...enforced.map(({ policy }) => `${named(policy)} covers ${GATE_WORKFLOW} and has no restrict_action_events rule allowing its events`));
+  else if (covering.length > 0) faults.push(...covering.map(({ policy }) => `${named(policy)} covers ${GATE_WORKFLOW} but its enforcement is ${printable(policy.enforcement)}`));
+  else faults.push(`no active Actions event policy of ${repo}'s own covers ${GATE_WORKFLOW}`);
+  return axis;
+}
+
+/**
+ * The required gate context, its environment, and the repository's own Actions event policy,
+ * read only through L0's repository side. The line fails on any fault, is not asked where only
+ * the event policy could not be judged, and passes otherwise.
+ */
 export async function gateCheck({ target = process.cwd(), ask, emitter } = {}) {
   const name = 'gate check required';
   const valid = await configValidity({ target });
@@ -674,8 +764,10 @@ export async function gateCheck({ target = process.cwd(), ask, emitter } = {}) {
     else if (environment !== null && !appKnown) faults.push(`${GATE_CONTEXT}'s integration pin was not judged against ${GATE_APP_ID}`);
     else if (environment !== null && BigInt(rule.integration_id) !== BigInt(app)) faults.push(`${GATE_CONTEXT} is pinned to integration ${rule.integration_id}, rather than the gate App`);
   }
-  return { name, ok: faults.length === 0, detail: faults.length ? faults.join('; ')
-    : `${GATE_CONTEXT} is required on ${branch.name}; environment ${GATE_ENVIRONMENT}, ${GATE_APP_ID} and ${GATE_APP_PRIVATE_KEY} pass` };
+  const { unjudged, passes } = await eventPolicyAxis(config.repo, obtain, faults);
+  const said = [...faults, ...unjudged];
+  return { name, ok: faults.length > 0 ? false : unjudged.length > 0 ? null : true, detail: said.length ? said.join('; ')
+    : `${GATE_CONTEXT} is required on ${branch.name}; environment ${GATE_ENVIRONMENT}, ${GATE_APP_ID} and ${GATE_APP_PRIVATE_KEY} pass; ${passes}` };
 }
 
 /**

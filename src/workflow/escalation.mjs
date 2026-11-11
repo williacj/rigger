@@ -18,10 +18,10 @@ const blockLines = (fields) => ['```rigger-escalation', ...FIELDS.map((key) => `
 /** The instruction's note form and its one-comment stop rule for a maker of `card`. */
 export function escalationInstruction(card) {
   return [
-    `Where you cannot meet an acceptance item, write one comment on card #${card.number}'s issue with this block, filling each field:`,
+    'Where you cannot meet an acceptance item, write this block to `.rigger-escalation.md` in your working directory, filling each field:',
     ...blockLines({ category: '<recorded-decision, critical, or ambiguous>', item: '<the item ordinal>', reason: '<one line naming why>', dispatch: DISPATCH_SLOT }),
     'Count the item ordinal from 1 over the acceptance items in the evidence below, in order.',
-    'Write the note once, never edit it, and end your session after posting it.',
+    `Write the note once, never edit it, then run exactly \`gh issue comment ${card.number} --body-file .rigger-escalation.md\` and end your session after posting it.`,
   ].join('\n');
 }
 

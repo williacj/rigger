@@ -473,9 +473,9 @@ const PLUGINS_OFF = '"enabledPlugins":{"cc-plugin-agents-md@builtin":false,"cc-p
 const WORKTREE = '<root>/rigger-42';
 const JUDGE = '<root>/judges/rigger-42/reviewer';
 const ROUTED = '<root>/escalations/rigger-42/pm';
-const WORKTREE_SETTINGS = `{"autoMemoryEnabled":false,"claudeMdExcludes":["<root>/CLAUDE.md"],${PLUGINS_OFF}}`;
-const JUDGE_SETTINGS = `{"autoMemoryEnabled":false,"claudeMdExcludes":["${JUDGE}/CLAUDE.md","<root>/judges/rigger-42/CLAUDE.md","<root>/judges/CLAUDE.md","<root>/CLAUDE.md"],${PLUGINS_OFF},"permissions":{"allow":["Read(/${JUDGE}/head/**)","Edit(/${JUDGE}/head/**)"]}}`;
-const ROUTED_SETTINGS = `{"autoMemoryEnabled":false,"claudeMdExcludes":["${ROUTED}/CLAUDE.md","<root>/escalations/rigger-42/CLAUDE.md","<root>/escalations/CLAUDE.md","<root>/CLAUDE.md"],${PLUGINS_OFF}}`;
+const WORKTREE_SETTINGS = `{"autoMemoryEnabled":false,"claudeMdExcludes":["<root>/CLAUDE.md"],${PLUGINS_OFF},"permissions":{"allow":["Bash(gh issue comment 42 --body-file .rigger-escalation.md)"]}}`;
+const JUDGE_SETTINGS = `{"autoMemoryEnabled":false,"claudeMdExcludes":["${JUDGE}/CLAUDE.md","<root>/judges/rigger-42/CLAUDE.md","<root>/judges/CLAUDE.md","<root>/CLAUDE.md"],${PLUGINS_OFF},"permissions":{"allow":["Read(/${JUDGE}/head/**)","Edit(/${JUDGE}/head/**)","Bash(gh issue comment 42 --body-file .rigger-escalation.md)"]}}`;
+const ROUTED_SETTINGS = `{"autoMemoryEnabled":false,"claudeMdExcludes":["${ROUTED}/CLAUDE.md","<root>/escalations/rigger-42/CLAUDE.md","<root>/escalations/CLAUDE.md","<root>/CLAUDE.md"],${PLUGINS_OFF},"permissions":{"allow":["Bash(gh issue comment 42 --body-file .rigger-escalation.md)"]}}`;
 
 // Invariant guard M2: only the git-root list may differ from the merge base, and a judge has none.
 test('a Codex judge dispatch equals the merge base whole, prompt included', async (t) => {
@@ -601,7 +601,7 @@ const ROUTED_START = {
     "pipe",
     "pipe"
   ],
-  "input": "Rigger dispatched this session to handle an escalation for card #42.\nOnly the card's author changes an acceptance.\nWhere you cannot meet an acceptance item, write one comment on card #42's issue with this block, filling each field:\n```rigger-escalation\ncategory: <recorded-decision, critical, or ambiguous>\nitem: <the item ordinal>\nreason: <one line naming why>\ndispatch: d-<uuid>\n```\nCount the item ordinal from 1 over the acceptance items in the evidence below, in order.\nWrite the note once, never edit it, and end your session after posting it.\n\nCard #42: Card 42\nAcceptance:\n- The widget turns blue when pressed.\n\nMaker's ambiguous note, acceptance item 1:\nChoose `blue` or \"green\"; preserve $HOME and \\.\n",
+  "input": "Rigger dispatched this session to handle an escalation for card #42.\nOnly the card's author changes an acceptance.\nWhere you cannot meet an acceptance item, write this block to `.rigger-escalation.md` in your working directory, filling each field:\n```rigger-escalation\ncategory: <recorded-decision, critical, or ambiguous>\nitem: <the item ordinal>\nreason: <one line naming why>\ndispatch: d-<uuid>\n```\nCount the item ordinal from 1 over the acceptance items in the evidence below, in order.\nWrite the note once, never edit it, then run exactly `gh issue comment 42 --body-file .rigger-escalation.md` and end your session after posting it.\n\nCard #42: Card 42\nAcceptance:\n- The widget turns blue when pressed.\n\nMaker's ambiguous note, acceptance item 1:\nChoose `blue` or \"green\"; preserve $HOME and \\.\n",
   "start": {
     "layer": "L1",
     "card": 42,
@@ -670,7 +670,7 @@ const CLAUDE_MAKER_START = {
     "pipe",
     "pipe"
   ],
-  "input": "Rigger dispatched this session, unattended, as the maker for card #42.\nThis workspace is on the card's line of work, the branch `rigger-42`.\nOnce your work meets every acceptance item below, open a pull request from `rigger-42`.\nNever switch this workspace off `rigger-42`, never detach `HEAD`, and never add a worktree inside this workspace.\nWhere you cannot meet an acceptance item, write one comment on card #42's issue with this block, filling each field:\n```rigger-escalation\ncategory: <recorded-decision, critical, or ambiguous>\nitem: <the item ordinal>\nreason: <one line naming why>\ndispatch: d-<uuid>\n```\nCount the item ordinal from 1 over the acceptance items in the evidence below, in order.\nWrite the note once, never edit it, and end your session after posting it.\n\nCard #42: Card 42\n\nAcceptance:\n- The widget turns blue when pressed.\n",
+  "input": "Rigger dispatched this session, unattended, as the maker for card #42.\nThis workspace is on the card's line of work, the branch `rigger-42`.\nOnce your work meets every acceptance item below, open a pull request from `rigger-42`.\nNever switch this workspace off `rigger-42`, never detach `HEAD`, and never add a worktree inside this workspace.\nWhere you cannot meet an acceptance item, write this block to `.rigger-escalation.md` in your working directory, filling each field:\n```rigger-escalation\ncategory: <recorded-decision, critical, or ambiguous>\nitem: <the item ordinal>\nreason: <one line naming why>\ndispatch: d-<uuid>\n```\nCount the item ordinal from 1 over the acceptance items in the evidence below, in order.\nWrite the note once, never edit it, then run exactly `gh issue comment 42 --body-file .rigger-escalation.md` and end your session after posting it.\n\nCard #42: Card 42\n\nAcceptance:\n- The widget turns blue when pressed.\n",
   "start": {
     "layer": "L1",
     "card": 42,
@@ -697,7 +697,7 @@ const CODEX_MAKER_START = {
     "pipe",
     "pipe"
   ],
-  "input": "Rigger dispatched this session, unattended, as the maker for card #42.\nThis workspace is on the card's line of work, the branch `rigger-42`.\nOnce your work meets every acceptance item below, open a pull request from `rigger-42`.\nNever switch this workspace off `rigger-42`, never detach `HEAD`, and never add a worktree inside this workspace.\nWhere you cannot meet an acceptance item, write one comment on card #42's issue with this block, filling each field:\n```rigger-escalation\ncategory: <recorded-decision, critical, or ambiguous>\nitem: <the item ordinal>\nreason: <one line naming why>\ndispatch: d-<uuid>\n```\nCount the item ordinal from 1 over the acceptance items in the evidence below, in order.\nWrite the note once, never edit it, and end your session after posting it.\n\nCard #42: Card 42\n\nAcceptance:\n- The widget turns blue when pressed.\n",
+  "input": "Rigger dispatched this session, unattended, as the maker for card #42.\nThis workspace is on the card's line of work, the branch `rigger-42`.\nOnce your work meets every acceptance item below, open a pull request from `rigger-42`.\nNever switch this workspace off `rigger-42`, never detach `HEAD`, and never add a worktree inside this workspace.\nWhere you cannot meet an acceptance item, write this block to `.rigger-escalation.md` in your working directory, filling each field:\n```rigger-escalation\ncategory: <recorded-decision, critical, or ambiguous>\nitem: <the item ordinal>\nreason: <one line naming why>\ndispatch: d-<uuid>\n```\nCount the item ordinal from 1 over the acceptance items in the evidence below, in order.\nWrite the note once, never edit it, then run exactly `gh issue comment 42 --body-file .rigger-escalation.md` and end your session after posting it.\n\nCard #42: Card 42\n\nAcceptance:\n- The widget turns blue when pressed.\n",
   "start": {
     "layer": "L1",
     "card": 42,
@@ -763,7 +763,7 @@ const JUDGE_STEP_START = {
     "workspace": "<root>/judges/rigger-42/reviewer/head"
   }
 };
-const DECLARED_SETTINGS = "{\"autoMemoryEnabled\":false,\"claudeMdExcludes\":[\"<root>/CLAUDE.md\"],\"enabledPlugins\":{\"cc-plugin-agents-md@builtin\":false,\"cc-plugin-telemetry@builtin\":false,\"cc-plugin-plugin-authoring@builtin\":false},\"permissions\":{\"allow\":[\"Bash(git push:*)\"],\"deny\":[\"Bash(git push --force:*)\"],\"ask\":[\"Bash(npm run:*)\"]}}";
+const DECLARED_SETTINGS = "{\"autoMemoryEnabled\":false,\"claudeMdExcludes\":[\"<root>/CLAUDE.md\"],\"enabledPlugins\":{\"cc-plugin-agents-md@builtin\":false,\"cc-plugin-telemetry@builtin\":false,\"cc-plugin-plugin-authoring@builtin\":false},\"permissions\":{\"allow\":[\"Bash(git push:*)\",\"Bash(gh issue comment 42 --body-file .rigger-escalation.md)\"],\"deny\":[\"Bash(git push --force:*)\"],\"ask\":[\"Bash(npm run:*)\"]}}";
 
 // Invariant guard M3 at L3's own site: what L3 adds to a routed role reaches no argument.
 test('a role L3 routes reaches the agent with the merge base prompt, environment and timeout', async (t) => {

@@ -13,34 +13,46 @@ export function listGrowth(before, after) {
   });
 }
 
+/**
+ * The commit an event's head is compared with, as `{ base }`, or `{ error }` naming why there is
+ * none. It may throw where a history read fails.
+ */
+export function eventBase(context, facts) {
+  const { eventName, ref } = context;
+  if (!((eventName === 'push' && ref?.startsWith('refs/heads/'))
+      || eventName === 'pull_request' || eventName === 'merge_group'
+      || (['schedule', 'workflow_dispatch'].includes(eventName) && ref === 'refs/heads/main'))) {
+    return { error: 'unsupported event ' + eventName + ' at ref ' + ref };
+  }
+  if (!/^[a-f0-9]{40}$/.test(context.sha ?? '')) {
+    return { error: 'head is unavailable or invalid: ' + context.sha };
+  }
+  let base = context.event.before;
+  if (eventName === 'push' && !/^[a-f0-9]{40}$/.test(base ?? '')) {
+    return { error: 'push base is unavailable or invalid' };
+  }
+  if (context.eventName === 'push' && /^0{40}$/.test(base)) {
+    base = context.ref === 'refs/heads/' + context.event.repository.default_branch
+      ? facts.firstParent(context.sha)
+      : facts.mergeBase(context.sha, 'refs/remotes/origin/' + context.event.repository.default_branch);
+  }
+  // A pull request's merge head is built on its base branch's tip: its first parent is the base it
+  // was tested against, as ci.yml's collect reads it (checkout.parents[0]), whatever the payload says.
+  if (context.eventName === 'pull_request') base = facts.firstParent(context.sha);
+  if (context.eventName === 'merge_group') base = context.event.merge_group?.base_sha;
+  if (['schedule', 'workflow_dispatch'].includes(context.eventName) && context.ref === 'refs/heads/main') base = facts.firstParent(context.sha);
+  if (!base && (context.eventName !== 'push' || context.ref === 'refs/heads/' + context.event.repository.default_branch)) {
+    return { error: 'head ' + context.sha + ' is a root commit or has no available first parent' };
+  }
+  if (!base) return { error: 'head ' + context.sha + ' has no common ancestor with the default branch' };
+  if (!facts.present(base)) return { error: 'base ' + base + ' is not present in the clone' };
+  return { base };
+}
+
 export function checkGrowth(context, facts) {
   try {
-    const { eventName, ref } = context;
-    if (!((eventName === 'push' && ref?.startsWith('refs/heads/'))
-        || eventName === 'pull_request' || eventName === 'merge_group'
-        || (['schedule', 'workflow_dispatch'].includes(eventName) && ref === 'refs/heads/main'))) {
-      return { ok: false, errors: ['unsupported event ' + eventName + ' at ref ' + ref] };
-    }
-    if (!/^[a-f0-9]{40}$/.test(context.sha ?? '')) {
-      return { ok: false, errors: ['head is unavailable or invalid: ' + context.sha] };
-    }
-    let base = context.event.before;
-    if (eventName === 'push' && !/^[a-f0-9]{40}$/.test(base ?? '')) {
-      return { ok: false, errors: ['push base is unavailable or invalid'] };
-    }
-    if (context.eventName === 'push' && /^0{40}$/.test(base)) {
-      base = context.ref === 'refs/heads/' + context.event.repository.default_branch
-        ? facts.firstParent(context.sha)
-        : facts.mergeBase(context.sha, 'refs/remotes/origin/' + context.event.repository.default_branch);
-    }
-    if (context.eventName === 'pull_request') base = context.event.pull_request?.base?.sha;
-    if (context.eventName === 'merge_group') base = context.event.merge_group?.base_sha;
-    if (['schedule', 'workflow_dispatch'].includes(context.eventName) && context.ref === 'refs/heads/main') base = facts.firstParent(context.sha);
-    if (!base && (context.eventName !== 'push' || context.ref === 'refs/heads/' + context.event.repository.default_branch)) {
-      return { ok: false, errors: ['head ' + context.sha + ' is a root commit or has no available first parent'] };
-    }
-    if (!base) return { ok: false, errors: ['head ' + context.sha + ' has no common ancestor with the default branch'] };
-    if (!facts.present(base)) return { ok: false, errors: ['base ' + base + ' is not present in the clone'] };
+    const { base, error } = eventBase(context, facts);
+    if (error) return { ok: false, errors: [error] };
     if (!facts.listsExist(base)) {
       readListsAt(context.sha, 'head', facts);
       return { ok: true, notice: 'base ' + base + ' predates the transitional lists' };

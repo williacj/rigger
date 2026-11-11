@@ -248,14 +248,14 @@ env:
         const npmRoot = dirname(dirname(npmCli));
         const npm = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(await read(join(npmRoot, 'package.json'))));
         if (npm.name !== 'npm' || !['11.20.0', '12.2.2'].includes(npm.version) || npm.bin?.npm !== 'bin/npm-cli.js') return;
-        if (npm.version === '11.20.0' && (project.name !== '@williacj/rigger' || project.version !== '0.0.0')) return;
+        if (npm.version === '11.20.0' && (project.name !== '@williacj/rigger' || project.version !== '0.1.0')) return;
         for (const path of [join(npmRoot, 'npmrc'), join(env.HOME || homedir(), '.npmrc'), join(dirname(dirname(execPath)), 'etc/npmrc')]) {
           try { await read(path); return; }
           catch (error) { if (error.code !== 'ENOENT') return; }
         }
         const projectSources = {
           ".npmrc": "2ab58d679ddb6c245446999a2ea5fb54783b9aa26c94ce663cb7db0be0a8f7f8",
-          "test/suite.sh": "a8396006c5c6b4c3f1892bf7287307e60176e17094f9455ec5396312d81925f1",
+          "test/suite.sh": "9125d21b35c2640ca9f19c971c8c20b17a61cab85832e4ea9157b4371839e1ba",
           "test/suite-guard.cjs": "11057fb99548ffdfb62cea550d6aa7fb99c310b232a544a9e809d0936ece5370"
         };
         for (const [path, expected] of Object.entries(projectSources)) if (await fingerprint(join(cwd, path)) !== expected) return;
@@ -278,7 +278,7 @@ env:
         };
         for (const [path, expected] of Object.entries(npmSources)) if (await fingerprint(join(npmRoot, path)) !== expected) return;
         return { argv, npmVersion: npm.version,
-          stdoutPrefix: npm.version === '11.20.0' ? '\n> @williacj/rigger@0.0.0 test:host\n> sh test/suite.sh --host ' + argv.slice(4).join(' ') + '\n\n' : '' };
+          stdoutPrefix: npm.version === '11.20.0' ? '\n> @williacj/rigger@0.1.0 test:host\n> sh test/suite.sh --host ' + argv.slice(4).join(' ') + '\n\n' : '' };
       } catch { return; }
     }
     export async function executeScript({ spawnChild = spawn, stdoutSink = process.stdout, stderrSink = process.stderr, inspection, onStart } = {}) {
@@ -649,6 +649,11 @@ jobs:
       - run: npm ci
       - run: node .github/scripts/check-test-list-growth.mjs
       - run: npm test
+        env:
+          RIGGER_SUITE_TIMER_RECORD: ${{ runner.temp }}/rigger-timer-record
+      - run: node .github/scripts/check-host-declarations.mjs --added-timer
+        env:
+          RIGGER_SUITE_TIMER_RECORD: ${{ runner.temp }}/rigger-timer-record
       - run: npm run budget:package
       - run: npm run budget:instructions
       - run: npm run lint:spec-style
@@ -1010,7 +1015,7 @@ jobs:
       - run: test -s docs/demo.gif
       # Double-quoted for YAML, whose plain scalars can carry neither `: ` nor ` #`.
       # The screen wraps at the tape's width, so the pattern ends where the line fits its first row.
-      - run: "grep -E '^rigger once: claimed #[0-9]+ from board [0-9]+; its maker exited 0 and opened no pull request from rigger-[0-9]+,' docs/demo.txt"
+      - run: "grep -E '^rigger once: claimed #[0-9]+ from board [0-9]+; Rigger escalated it as ambiguous: card #[0-9]+' docs/demo.txt"
       # The status is the line after the last `echo exit $?` the tape typed, which comes after
       # anything the verb printed, so no line of its output can stand in for it.
       - run: awk '$0 == "> echo exit $?" { getline status } END { exit status !~ /^exit [1-9][0-9]*$/ }' docs/demo.txt
@@ -1056,6 +1061,11 @@ jobs:
       - run: npm ci
       - run: node .github/scripts/check-test-list-growth.mjs
       - run: npm test
+        env:
+          RIGGER_SUITE_TIMER_RECORD: ${{ runner.temp }}/rigger-timer-record
+      - run: node .github/scripts/check-host-declarations.mjs --added-timer
+        env:
+          RIGGER_SUITE_TIMER_RECORD: ${{ runner.temp }}/rigger-timer-record
       - run: npm run test:host -- --test-reporter=spec --test-reporter=junit --test-reporter-destination=stdout --test-reporter-destination="$RUNNER_TEMP/$CI_HOST_REPORT_NAME"
         id: host_tests
         shell: node --input-type=module -e "await import('data:text/javascript;base64,' + Buffer.from(process.env.CI_HOST).toString('base64'))" {0}

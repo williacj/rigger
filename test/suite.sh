@@ -22,6 +22,7 @@ unset NODE_TEST_CONTEXT
 host_tests='
 test/build-test-matrix-host.test.mjs
 test/call-events.test.mjs
+test/check-host-declarations-host.test.mjs
 test/claude-folder-live.test.mjs
 test/codex-judge-shell.test.mjs
 test/command-gate-hook.test.mjs
@@ -61,6 +62,7 @@ test/proof-diff.test.mjs
 test/provider-claude-installed-live.test.mjs
 test/provider-claude-live.test.mjs
 test/provider-claude-reach-live.test.mjs
+test/provider-codex-host.test.mjs
 test/provider-codex-live.test.mjs
 test/push-hook.test.mjs
 test/read-deadline.test.mjs
@@ -145,7 +147,6 @@ test/mixed-judges.test.mjs
 test/once.test.mjs
 test/package-budget.test.mjs
 test/plan.test.mjs
-test/provider-codex.test.mjs
 test/provider-contract.test.mjs
 test/pull-outcomes.test.mjs
 test/redo-settle.test.mjs

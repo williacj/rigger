@@ -118,7 +118,7 @@ test('L2\'s maker prompt tells the maker never to switch its workspace off its l
 });
 
 test('L2\'s maker prompt tells the maker to write an escalation note where it cannot meet an acceptance item', () => {
-  assert.match(promptOf(card(48)), /where you cannot meet an acceptance item, write one comment on card #48's issue/i);
+  assert.match(promptOf(card(48)), /where you cannot meet an acceptance item, write this block to `\.rigger-escalation\.md` in your working directory[\s\S]*run exactly `gh issue comment 48 --body-file \.rigger-escalation\.md`/i);
 });
 
 // proves R-LOOP-13

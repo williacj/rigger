@@ -1,6 +1,6 @@
 // ABOUTME: This repository's self-hosting check, which its own workflow runs: a pull request
-// touching a path `AGENTS.md` lists under "Self-hosting", or an authored document its "What binds"
-// table names, passes only with the owner's sound marker at its head. It reads through L0 alone.
+// touching a path in `AGENTS.md`'s marker group, or an authored document its "What binds" table
+// names, passes only with the owner's sound marker at its head. It reads through L0 alone.
 
 // It is run with one argument, the number of the pull request to rule on, and exits 0 where the
 // pull request passes, 1 where it is refused, and 2 where it read no head to post on. It prints
@@ -8,6 +8,7 @@
 // event reaches it through `GITHUB_REPOSITORY` alone.
 
 import { realpathSync } from 'node:fs';
+import { extname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { defaultConfig } from '../../scripts/gate-check.mjs';
@@ -31,12 +32,12 @@ const UNREAD = 2;
 /** What a failed read says, prefixed with what was being read. */
 const failedRead = (what, error) => `the read of ${what} failed: ${error.message}`;
 
-/** The lines of the section of `markdown` headed `## <heading>`, up to the next such heading, or null. */
-function sectionOf(markdown, heading) {
+/** The lines under `<prefix> <heading>`, up to the next heading of that level, or null. */
+function sectionOf(markdown, heading, prefix = '##') {
   const lines = markdown.split('\n');
-  const start = lines.indexOf(`## ${heading}`);
+  const start = lines.indexOf(`${prefix} ${heading}`);
   if (start === -1) return null;
-  const end = lines.findIndex((line, at) => at > start && line.startsWith('## '));
+  const end = lines.findIndex((line, at) => at > start && line.startsWith(`${prefix} `));
   return lines.slice(start + 1, end === -1 ? undefined : end);
 }
 
@@ -44,8 +45,8 @@ function sectionOf(markdown, heading) {
 const spansOf = (text) => [...text.matchAll(/`([^`]+)`/g)].map((match) => match[1]);
 
 /**
- * The paths the bullets of "Self-hosting" backtick. A bullet starts a line with `- ` and runs on
- * over the indented lines after it. Nothing else in the section is read.
+ * The marker group's backticked directories, dotfiles and files with extensions. A bullet starts
+ * with `- ` and runs over the indented lines after it; unbulleted prose and bare names are ignored.
  */
 function selfHostingPaths(section) {
   const bullets = [];
@@ -57,7 +58,7 @@ function selfHostingPaths(section) {
     } else if (open && /^\s+\S/.test(line)) bullets[bullets.length - 1] += ` ${line.trim()}`;
     else open = false;
   }
-  return bullets.flatMap(spansOf);
+  return bullets.flatMap(spansOf).filter((path) => path.includes('/') || path.startsWith('.') || extname(path) !== '');
 }
 
 /** The cells of a table row: the text between its pipes, trimmed. */
@@ -87,18 +88,21 @@ function authoredDocuments(section) {
 
 /**
  * The lists `AGENTS.md`'s `markdown` holds, as `{ paths, documents }`, or `{ problem }` saying why
- * either cannot be read: `paths` the backticked spans of each bullet under "Self-hosting", and
- * `documents` the authored documents "What binds" names.
+ * either cannot be read: `paths` the repository paths bulleted under "Paths needing the owner's
+ * marker" in "Self-hosting", and `documents` the authored documents "What binds" names.
  */
 export function listsOf(markdown) {
   const hosting = sectionOf(markdown, 'Self-hosting');
   if (hosting === null) return { problem: '`AGENTS.md` holds no "Self-hosting" section' };
-  const paths = selfHostingPaths(hosting);
-  if (paths.length === 0) return { problem: '`AGENTS.md`\'s "Self-hosting" section holds no bullet naming a path' };
   const binds = sectionOf(markdown, 'What binds');
   if (binds === null) return { problem: '`AGENTS.md` holds no "What binds" section' };
   const { documents, problem } = authoredDocuments(binds);
-  return problem === undefined ? { paths, documents } : { problem };
+  if (problem !== undefined) return { problem };
+  const marker = sectionOf(hosting.join('\n'), "Paths needing the owner's marker", '###');
+  if (marker === null) return { problem: '`AGENTS.md`\'s "Self-hosting" section holds no "Paths needing the owner\'s marker" heading' };
+  const paths = selfHostingPaths(marker);
+  if (paths.length === 0) return { problem: '`AGENTS.md`\'s "Paths needing the owner\'s marker" section holds no bullet naming a path' };
+  return { paths, documents };
 }
 
 /** What each of git's one-letter escapes in a quoted path stands for. */

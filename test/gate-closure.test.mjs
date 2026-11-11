@@ -1,10 +1,10 @@
-// ABOUTME: Checks the live gate import closure and its exact protection in the Self-hosting list.
+// ABOUTME: Checks the gate import closure for its supported import forms.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { measure, main, compare } from '../.github/scripts/gate-closure.mjs';
+import { measure, main } from '../.github/scripts/gate-closure.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -86,59 +86,6 @@ test('the command prints paths one per line and exits non-zero naming an unresol
   assert.deepEqual(errors, []);
 });
 
-// The same list grammar the live check consumes, without copying this repository's whole file.
-const GUARDS = ['src/substrate/process-table.sh', '.github/scripts/gate-closure.mjs', 'test/gate-closure.test.mjs'];
-function agents(gate, other = GUARDS) {
-  const ticks = (paths) => paths.map((path) => '`' + path + '`').join(', ');
-  return `## What binds
-| Document | Authority |
-|---|---|
-| \`AGENTS.md\` | Rules |
-## Self-hosting
-- The gate's code: ${ticks(gate)}.
-- The closure guard: ${ticks(other)}.
-## After
-`;
-}
-
-function compareFixture(root, markdown, paths) {
-  writeFileSync(join(root, 'AGENTS.md'), markdown);
-  return compare(readFileSync(join(root, 'AGENTS.md'), 'utf8'), paths);
-}
-
-test('the comparison names a closure file missing from the list, even where its directory or a comment names it', () => {
-  const root = fixture({ 'entry.mjs': "import './child.mjs';", 'child.mjs': '' });
-  const paths = measure(root, ['entry.mjs']).paths;
-  const complete = agents(paths);
-  assert.deepEqual(compareFixture(root, complete, paths), []);
-  for (const markdown of [agents(['entry.mjs']), agents(['entry.mjs', './']),
-    agents(['entry.mjs']) + '<!-- `child.mjs` -->\n']) {
-    assert.ok(compareFixture(root, markdown, paths).includes('unlisted closure file: child.mjs'));
-  }
-});
-
-test('the comparison names a gate-code mjs span absent from the closure, and ignores mjs spans in other bullets', () => {
-  const root = fixture({ 'entry.mjs': '' });
-  const paths = measure(root, ['entry.mjs']).paths;
-  assert.deepEqual(compareFixture(root, agents(['entry.mjs'], [...GUARDS, 'other.mjs']), paths), []);
-  assert.deepEqual(compareFixture(root, agents(['entry.mjs', 'extra.mjs']), paths), ['not in closure: extra.mjs']);
-});
-
-test('the Linux process-table executable is protected even though no import reaches it', () => {
-  const root = fixture({ 'entry.mjs': '', 'src/substrate/process-table.sh': '#!/bin/sh\n' });
-  const paths = measure(root, ['entry.mjs']).paths;
-  assert.ok(!paths.includes('src/substrate/process-table.sh'));
-  assert.ok(compareFixture(root, agents(paths, []), paths).includes('unlisted executable: src/substrate/process-table.sh'));
-});
-
-test('the measuring script and test must each be listed outside the gate-code bullet', () => {
-  const root = fixture({ 'entry.mjs': '' });
-  const paths = measure(root, ['entry.mjs']).paths;
-  for (const path of ['.github/scripts/gate-closure.mjs', 'test/gate-closure.test.mjs']) {
-    assert.ok(compareFixture(root, agents(paths, GUARDS.filter((guard) => guard !== path)), paths).includes(`unlisted guard: ${path}`));
-    assert.ok(compareFixture(root, agents([...paths, path], GUARDS.filter((guard) => guard !== path)), paths).includes(`guard in gate-code bullet: ${path}`));
-  }
-});
 
 test('the command reports computed calls on stderr and refuses bare packages or CommonJS calls', () => {
   for (const [source, status, diagnostic] of [
@@ -153,12 +100,11 @@ test('the command reports computed calls on stderr and refuses bare packages or 
   }
 });
 
-test('the repository closure has only the named config import and exactly listed protection', () => {
+test('the repository closure has only the named config import', () => {
   const result = measure(ROOT);
   assert.deepEqual(result.computed, [{ file: 'src/cli/doctor.mjs', call: 'import(pathToFileURL(path))' }]);
   assert.deepEqual(result.bare, []);
   assert.deepEqual(result.commonjs, []);
-  assert.deepEqual(compare(readFileSync(join(ROOT, 'AGENTS.md'), 'utf8'), result.paths), []);
 });
 
 test('literal file imports use Node URL decoding and follow absolute paths and file URLs', () => {

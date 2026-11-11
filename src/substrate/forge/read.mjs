@@ -1,9 +1,9 @@
 // ABOUTME: The forge adapter's read side: the board's cards, columns and single-select fields, the
-// repository's labels, branches, default branch, issues, pull requests and files at a commit, and
-// the IDs a write names, each read through the read runner.
+// repository's labels, branches, default branch, visibility, Actions event policies, issues, pull
+// requests and files at a commit, and the IDs a write names, each read through the read runner.
 
 import { literal } from './graphql.mjs';
-import { COLUMNS, DIFF_HEADER, firstLine, graphqlRequest, readRunner } from './runners.mjs';
+import { API_VERSION_HEADER, COLUMNS, DIFF_HEADER, firstLine, graphqlRequest, readRunner } from './runners.mjs';
 
 /** The most nodes GitHub answers in one page of a connection. */
 const PAGE = 100;
@@ -693,6 +693,51 @@ const REPOSITORY_READS = {
     },
   },
   /**
+   * The issue's opening, current body and body revisions, oldest first.
+   *
+   * D16 rule 3 measurements:
+   * A, 2026-11-10: gh api graphql -f query='query { repository(owner: "williacj", name: "rigger") { issue(number: 1302) { createdAt author { login } body userContentEdits(first: 100) { pageInfo { hasNextPage endCursor } nodes { editedAt editor { login } deletedAt diff } } } } }'
+   * A returned four full bodies (10021, 9926, 8192, 8209 characters); newest diff byte-equal
+   * to body, oldest editedAt equal to createdAt. The fallback is inactive for that capture (W7).
+   * A's edit times have second precision; the record cannot supply finer edit times (W9).
+   * B, 2026-11-10: gh api graphql -f query='query { __type(name: "UserContentEdit") { name fields { name type { kind name ofType { kind name ofType { kind name } } } } } }'
+   * B declares nullable deletedAt, deletedBy and diff. C's null deleted snapshot kept its
+   * flag and identity, without digest/items (W1, W13).
+   * C, 2026-11-11 UTC: npm test -- --test-timeout=120000 test/acceptance-history.test.mjs
+   * C's edit after the last move produced no further read or history after manual time advanced
+   * a minute: edits beyond the last column change remain outside its snapshots (W2).
+   * C's failed first/continuation page, deadline and unavailable undeleted body left only the
+   * accepted transition; an L0 write-record or transition refusal sent no history read (W8).
+   * C's null opener/editor, including a deleted revision's editor, refused the whole read with
+   * issue/revision context; L2 retained its accepted transition without history (M15).
+   * C retained all 201 same-second revisions in connection order, without inventing precision (W9).
+   */
+  readIssueHistory: {
+    reading: (number) => `issue #${number}'s body history`,
+    read: async (board, via, number, addressed) => {
+      const loginOf = (actor, revision) => {
+        if (typeof actor?.login !== 'string' || actor.login === '') fail('readIssueHistory', board, `${addressed}${revision} has no login`);
+        return actor.login;
+      };
+      const query = (page) => repositoryQuery(board, `issue(number: ${numbered('readIssueHistory', board, number)}) { createdAt author { login } body userContentEdits(${page}) { pageInfo { hasNextPage endCursor } nodes { editedAt editor { login } deletedAt diff } } }`);
+      let opened, body;
+      const nodes = await everyPage('readIssueHistory', board, via, query, (data) => {
+        const found = heldIn('readIssueHistory', board, data, 'issue', addressed);
+        const by = loginOf(found.author, 'opening revision');
+        opened ??= { at: found.createdAt, by };
+        body ??= found.body;
+        return found.userContentEdits;
+      }, addressed);
+      return {
+        opened, body,
+        revisions: nodes.toReversed().map(({ editedAt, editor, deletedAt, diff }, index) => {
+          if (deletedAt === null && typeof diff !== 'string') fail('readIssueHistory', board, `${addressed}revision ${index + 1} at ${editedAt} has no available body`);
+          return { editedAt, editor: loginOf(editor, `revision ${index + 1} at ${editedAt}`), deleted: deletedAt !== null, body: diff };
+        }),
+      };
+    },
+  },
+  /**
    * Issue `number`'s timeline of comments, label changes, closes and reopens, oldest first, across
    * every page, as `TIMELINE_ENTRIES` answers each entry. A page that fails fails the whole read.
    */
@@ -734,6 +779,41 @@ const REPOSITORY_READS = {
       return newest?.number ?? 0;
     },
   },
+  /**
+   * The repository's visibility and the kind of account that owns it, as `{ visibility, owner }`:
+   * `public`, `private` or `internal`, and `user` or `organization`.
+   */
+  readVisibility: {
+    reading: () => 'the visibility',
+    read: async (board, via, target, addressed) => {
+      const repository = (await asked('readVisibility', board, repositoryQuery(board, 'visibility owner { __typename }'), via, addressed))?.repository;
+      const visibility = named({ PUBLIC: 'public', PRIVATE: 'private', INTERNAL: 'internal' }, repository?.visibility);
+      const owner = named({ User: 'user', Organization: 'organization' }, repository?.owner?.__typename);
+      if (!visibility || !owner) fail('readVisibility', board, `${addressed}gh answered no visibility or owner`);
+      return { visibility, owner };
+    },
+  },
+  /**
+   * The repository's own Actions policies, those whose `source_type` is `Repository`, each as
+   * `eventPolicyOf` answers its detail read, in the order the list answers them. Every page of the
+   * list is read, then each own policy's detail, which alone answers its conditions and rules
+   * (measured on williacj/rigger, 2026-11-09). A policy inherited from an organization or
+   * enterprise is never read past the list. A read that fails fails the whole read.
+   */
+  readEventPolicies: {
+    reading: () => 'the Actions event policies',
+    read: async (board, via, target, addressed) => {
+      const own = [];
+      for (let page = 1, listed = []; page === 1 || listed.length === PAGE; page += 1) {
+        listed = JSON.parse(await restRead('readEventPolicies', board, via, `actions/policies?per_page=${PAGE}&page=${page}`, POLICY_HEADERS, addressed))?.policies;
+        if (!Array.isArray(listed)) fail('readEventPolicies', board, `${addressed}gh answered no policies`);
+        own.push(...listed.filter((policy) => policy?.source_type === 'Repository').map(({ id }) => (Number.isSafeInteger(id) && id > 0 ? id : fail('readEventPolicies', board, `${addressed}gh answered a policy with no id`))));
+      }
+      const policies = [];
+      for (const id of own) policies.push(eventPolicyOf(board, JSON.parse(await restRead('readEventPolicies', board, via, `actions/policies/${id}`, POLICY_HEADERS, `${addressed}policy ${id}, `)), id, addressed));
+      return policies;
+    },
+  },
   /** The role account `login` holds on the repository, as `permissionOf` answers it. */
   readPermission: {
     reading: (login) => `${login}'s permission`,
@@ -759,6 +839,30 @@ const REPOSITORY_READS = {
     },
   },
 };
+
+/** What a read of a GitHub enum answers for `said`, by `names`, or undefined for any other. */
+const named = (names, said) => (typeof said === 'string' && Object.hasOwn(names, said) ? names[said] : undefined);
+
+/** What the policy reads send after `-X GET`: the API version GitHub serves the policy endpoints at. */
+const POLICY_HEADERS = ['-H', API_VERSION_HEADER];
+
+/** Whether `value` is an array of strings, as a policy's patterns and events are answered. */
+const strings = (value) => Array.isArray(value) && value.every((each) => typeof each === 'string');
+
+/**
+ * One policy as its detail read answered it, as `{ id, name, enforcement, workflowPath, events }`:
+ * `workflowPath` null where it has no `workflow_path` condition, else its `include` and
+ * `exclude` patterns; `events` each `restrict_action_events` rule's allowed events. Any other
+ * rule is left out, and an answer of any other shape fails the read.
+ */
+function eventPolicyOf(board, held, id, addressed) {
+  const refuse = (why) => fail('readEventPolicies', board, `${addressed}policy ${id}, gh answered ${why}`);
+  if (held?.id !== id || typeof held.name !== 'string' || typeof held.enforcement !== 'string' || !Array.isArray(held.rules ?? [])) refuse('no policy id, name, enforcement or list of rules');
+  const path = held.conditions?.workflow_path ?? null;
+  if (path !== null && (!strings(path.include ?? []) || !strings(path.exclude ?? []))) refuse('a workflow_path that is not lists of patterns');
+  const events = (held.rules ?? []).filter((rule) => rule?.type === 'restrict_action_events').map((rule) => (strings(rule.parameters?.allowed_events) ? [...rule.parameters.allowed_events] : refuse('a restrict_action_events rule with no list of allowed events')));
+  return { id, name: held.name, enforcement: held.enforcement, workflowPath: path && { include: [...(path.include ?? [])], exclude: [...(path.exclude ?? [])] }, events };
+}
 
 /** The git modes of a file whose text a read answers: a regular file, and an executable one. */
 const FILE_MODES = [0o100644, 0o100755];

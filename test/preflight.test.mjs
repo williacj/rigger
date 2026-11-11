@@ -18,7 +18,7 @@ import { gitIn, repositoryAt } from './git-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 
 const subject = await import('../scripts/preflight.mjs');
-const CHECKS = ['clean', 'lands-in', 'retired ids', 'matrix', 'spec-style', 'paths'];
+const CHECKS = ['clean', 'lands-in', 'retired ids', 'matrix', 'spec-style', 'paths', 'added-timer'];
 
 function fixture() {
   const directory = temporaryDirectory('978-preflight-');
@@ -82,7 +82,7 @@ function run(f, options = {}) {
   const { argv = ['978', '--body-file', f.bodyFile], ...settings } = options;
   const lines = [];
   // These stand-ins implement child-process exit/stdout/stderr, not any check's algorithm.
-  const scriptChecks = ['matrix', 'spec-style', 'paths'].map((name) => ({
+  const scriptChecks = ['matrix', 'spec-style', 'paths', 'added-timer'].map((name) => ({
     name, command: ['git', 'rev-parse', 'HEAD'],
   }));
   const files = () => readdirSync(f.directory, { recursive: true, withFileTypes: true })
@@ -397,7 +397,7 @@ test('retired evidence binds committed comparisons to captured identities during
   // This direct invocation isolates the deliberate fixture transition; run() retains its no-change assertion.
   const status = subject.preflight(['978', '--body-file', f.bodyFile], {
     root: f.root,
-    scriptChecks: ['matrix', 'spec-style', 'paths'].map((name) => ({ name, command: ['git', 'rev-parse', 'HEAD'] })),
+    scriptChecks: ['matrix', 'spec-style', 'paths', 'added-timer'].map((name) => ({ name, command: ['git', 'rev-parse', 'HEAD'] })),
     write: (line) => lines.push(line),
     execute: (command, args, options) => {
       const answer = nativeExecute(command, args, options);
@@ -621,7 +621,7 @@ test('a committed rename checks both paths and treats every destination line as 
 test('each failed script check retains its exit and output while every other check reports', () => {
   const f = fixture();
   for (const broken of ['matrix', 'spec-style', 'paths']) {
-    const scriptChecks = ['matrix', 'spec-style', 'paths'].map((name) => ({
+    const scriptChecks = ['matrix', 'spec-style', 'paths', 'added-timer'].map((name) => ({
       name, command: name === broken ? ['git', 'rev-parse', '--verify', 'refs/heads/preflight-absent']
         : ['git', 'rev-parse', 'HEAD'],
     }));
@@ -670,7 +670,7 @@ test('npm and the mirrored maker prompts wire preflight within the forty-word al
   assert.deepEqual(subject.SCRIPT_CHECKS, [
     { name: 'matrix', command: ['npm', 'run', 'matrix:check'] },
     { name: 'spec-style', command: ['npm', 'run', 'lint:spec-style'] },
-    { name: 'paths', command: ['npm', 'run', 'check:paths'] },
+    { name: 'paths', command: ['npm', 'run', 'check:paths'] }, { name: 'added-timer', command: ['npm', 'test', '--'] },
   ]);
   const prompt = readFileSync(join(root, '.claude/agents/engineer.md'), 'utf8');
   assert.match(prompt, /Before handing back, run `npm run preflight -- <card>` and fix what it reports\./);

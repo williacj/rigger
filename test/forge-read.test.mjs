@@ -18,6 +18,7 @@ import { installFakeGh, seedRepository } from './fake-gh.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { spawnSync } from 'node:child_process';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+import { isHistoryRequest } from './acceptance-history-world.mjs';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
@@ -754,6 +755,12 @@ const PRINTED_REPOSITORY = Object.fromEntries(
     ['file', 'rigger-file-at-commit-2026-10-11.json'],
     // Captured with gh 2.103.2 on 2026-10-28, for the timeline read of #794.
     ['timeline', 'rigger-issue-timeline-2026-10-28.json'],
+    // Captured with gh api graphql on 2026-11-10 for #1337's history read.
+    ['history', 'rigger-issue-history-2026-11-10.json'],
+    // Captured with gh 2.98.0 on 2026-11-09 at API version 2026-03-10, for the event-policy reads of #1336.
+    ['visibility', 'rigger-visibility-2026-11-09.json'],
+    ['policies', 'rigger-actions-policies-2026-11-09.json'],
+    ['policy', 'rigger-actions-policy-2026-11-09.json'],
   ].map(([kind, file]) => [kind, pathsOf(JSON.parse(readFileSync(join(FIXTURES, file), 'utf8')))]),
 );
 
@@ -808,10 +815,12 @@ function repositoryForge(answers = {}) {
     if (document.includes('headRepository')) return answer('pull request', document);
     if (document.includes('issues(states:')) return ok({ repository: { issues: { pageInfo: { hasNextPage: false, endCursor: 'MQ' }, nodes: [] } } });
     if (document.includes('timelineItems(')) return answer('timeline', document);
+    if (isHistoryRequest(args)) return answer('history', document);
     if (document.includes('issue(')) return answer('issue', document);
     if (document.includes('object(oid:')) return answer('file', document);
     if (document.includes('mergeable')) return answer('mergeable', document);
     if (document.includes('pullRequest(')) return answer('head', document);
+    if (document.includes('visibility')) return answer('visibility', document);
     throw new Error(`the test forge does not answer ${document}`);
   };
   send.sent = sent;
@@ -1161,6 +1170,72 @@ test("the repository read answers #503's comments as gh answered them on 2026-10
   assert.deepEqual(read.map(({ body, createdAt }) => ({ body, createdAt })), JSON.parse(recorded).data.repository.pullRequest.comments.nodes);
 });
 
+test('the visibility and event-policy reads answer what gh printed for this repository on 2026-11-09', async () => {
+  // Captured with gh 2.98.0 at API version 2026-03-10, once option 1's policy was applied (#1336):
+  // the list holds no conditions or rules, which only the policy's detail answers.
+  const printed = {
+    'repos/williacj/rigger/actions/policies?per_page=100&page=1': 'rigger-actions-policies-2026-11-09.json',
+    'repos/williacj/rigger/actions/policies/12504': 'rigger-actions-policy-2026-11-09.json',
+  };
+  const sent = [];
+  const send = (command, args) => {
+    sent.push(args);
+    const file = args[1] === 'graphql' ? 'rigger-visibility-2026-11-09.json' : printed[args[1]];
+    assert.ok(file, `the test forge does not answer ${args.join(' ')}`);
+    return { status: 0, stdout: readFileSync(join(FIXTURES, file), 'utf8'), stderr: '' };
+  };
+  const reads = repositoryReads(BOARD, { send });
+
+  assert.deepEqual(await reads.readVisibility(), { visibility: 'public', owner: 'user' });
+  assert.deepEqual(await reads.readEventPolicies(), [{
+    id: 12504,
+    name: 'rigger gate events',
+    enforcement: 'active',
+    workflowPath: { include: ['.github/workflows/rigger-gate.yml', '.github/workflows/self-hosting.yml'], exclude: [] },
+    events: [['pull_request_target', 'issues', 'issue_comment']],
+  }]);
+  assert.deepEqual(sent.filter((args) => args[1] !== 'graphql'), [
+    ['api', 'repos/williacj/rigger/actions/policies?per_page=100&page=1', '-X', 'GET', '-H', 'X-GitHub-Api-Version: 2026-03-10'],
+    ['api', 'repos/williacj/rigger/actions/policies/12504', '-X', 'GET', '-H', 'X-GitHub-Api-Version: 2026-03-10'],
+  ]);
+});
+
+test('the event-policy read reads every page of the list and the detail of only the repository\'s own policies', async () => {
+  // Constructed, each page and detail shaped as gh printed them on 2026-11-09.
+  const listed = JSON.parse(readFileSync(join(FIXTURES, 'rigger-actions-policies-2026-11-09.json'), 'utf8')).policies[0];
+  const detail = JSON.parse(readFileSync(join(FIXTURES, 'rigger-actions-policy-2026-11-09.json'), 'utf8'));
+  const inherited = Array.from({ length: 100 }, (_, index) => ({ ...listed, id: index + 1, source_type: 'Organization', source: 'williacj' }));
+  const pages = { 1: { total_count: 101, policies: inherited }, 2: { total_count: 101, policies: [listed] } };
+  for (const page of Object.values(pages)) {
+    assert.deepEqual([...pathsOf(page)].filter((path) => !PRINTED_REPOSITORY.policies.has(path)), []);
+  }
+  const sent = [];
+  const send = (command, args) => {
+    sent.push(args[1]);
+    const page = /policies\?per_page=100&page=(\d+)$/.exec(args[1])?.[1];
+    if (page) return { status: 0, stdout: JSON.stringify(pages[page]), stderr: '' };
+    assert.equal(args[1], 'repos/williacj/rigger/actions/policies/12504');
+    return { status: 0, stdout: JSON.stringify(detail), stderr: '' };
+  };
+
+  const policies = await repositoryReads(BOARD, { send }).readEventPolicies();
+
+  assert.deepEqual(policies.map((policy) => policy.id), [12504]);
+  assert.deepEqual(sent, [
+    'repos/williacj/rigger/actions/policies?per_page=100&page=1',
+    'repos/williacj/rigger/actions/policies?per_page=100&page=2',
+    'repos/williacj/rigger/actions/policies/12504',
+  ]);
+});
+
+test('the event-policy read fails naming the policy whose detail gh refused, and answers no policy in its place', async () => {
+  const send = (command, args) => (args[1].endsWith('/12504')
+    ? failed('gh: Not Found (HTTP 404)')
+    : { status: 0, stdout: readFileSync(join(FIXTURES, 'rigger-actions-policies-2026-11-09.json'), 'utf8'), stderr: '' });
+  await assert.rejects(repositoryReads(BOARD, { send }).readEventPolicies(),
+    /^Error: readEventPolicies on board 6 failed: reading the Actions event policies in williacj\/rigger, policy 12504, gh: Not Found \(HTTP 404\)$/);
+});
+
 /** Each repository read, called on what it reads, with what a failure must name of it. */
 const REPOSITORY_READS = {
   readEnvironment: { call: (reads) => reads.readEnvironment('release/gate'), names: 'environment release/gate' },
@@ -1178,11 +1253,14 @@ const REPOSITORY_READS = {
   readDefaultBranch: { call: (reads) => reads.readDefaultBranch(), names: 'the default branch' },
   readPullRequestByNumber: { call: (reads) => reads.readPullRequestByNumber(12), names: 'pull request #12' },
   readIssue: { call: (reads) => reads.readIssue(214), names: 'issue #214' },
+  readIssueHistory: { call: (reads) => reads.readIssueHistory(1302), names: 'issue #1302' },
   readIssueTimeline: { call: (reads) => reads.readIssueTimeline(214), names: 'issue #214\'s timeline' },
   readFileAt: { call: (reads) => reads.readFileAt('a'.repeat(40), 'rigger.config.mjs'), names: `rigger.config.mjs at ${'a'.repeat(40)}` },
   readPermission: { call: (reads) => reads.readPermission('rigger-bot'), names: 'rigger-bot\'s permission' },
   readLabelledIssues: { call: (reads) => reads.readLabelledIssues('rigger:status'), names: 'the open issues labelled rigger:status' },
   readNewestNumber: { call: (reads) => reads.readNewestNumber(), names: 'the newest issue or pull request' },
+  readVisibility: { call: (reads) => reads.readVisibility(), names: 'the visibility' },
+  readEventPolicies: { call: (reads) => reads.readEventPolicies(), names: 'the Actions event policies' },
 };
 
 test('the table of repository reads names every read the repository side offers', () => {
@@ -1240,9 +1318,13 @@ test('every request a full repository read issues reaches the spawn through the 
     'repos/williacj/rigger/branches/main/protection': { required_status_checks: { checks: [], contexts: [] } },
     'repos/williacj/rigger/collaborators/rigger-bot/permission': { role_name: 'write' },
     'repos/williacj/rigger/issues?state=all&sort=created&direction=desc&per_page=1': '[]',
+    'repos/williacj/rigger/actions/policies?per_page=100&page=1': readFileSync(join(FIXTURES, 'rigger-actions-policies-2026-11-09.json'), 'utf8'),
+    'repos/williacj/rigger/actions/policies/12504': readFileSync(join(FIXTURES, 'rigger-actions-policy-2026-11-09.json'), 'utf8'),
+    visibility: JSON.parse(readFileSync(join(FIXTURES, 'rigger-visibility-2026-11-09.json'), 'utf8')).data,
     'default branch': { repository: { defaultBranchRef: { name: 'main', target: { oid: head } } } },
     'pull request': { repository: { pullRequest: pullNode({ number: 12 }) } },
     issue: { paged: { null: { repository: { issue: issueNode({ number: 214 }) } } } },
+    history: JSON.parse(readFileSync(join(FIXTURES, 'rigger-issue-history-2026-11-10.json'), 'utf8')).data,
     // Two pages, so the timeline's request for a page after the first is among those recorded.
     timeline: { paged: {
       null: { repository: { issue: { timelineItems: { pageInfo: { hasNextPage: true, endCursor: 'MQ' }, nodes: [] } } } },

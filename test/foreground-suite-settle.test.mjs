@@ -19,7 +19,7 @@ import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 const { 20_000: SETTLES_WITHIN } = BOUNDS;
 
 // proves R-WORK-18
-test('a maker exiting 0 with a child running and no PR has the child killed, review withheld, and its card left in Coding', SETTLES_WITHIN, async (t) => {
+test('a maker exiting 0 with a child running and no PR has the child killed, and L2 answers an ambiguous escalation, moving nothing', SETTLES_WITHIN, async (t) => {
   const root = scratch(t);
   const workspace = join(root, 'workspace');
   const base = join(root, 'scratch', 'rigger-671');
@@ -42,11 +42,12 @@ test('a maker exiting 0 with a child running and no PR has the child killed, rev
   const board = createFakeBoard({ columns: Object.values(config.board.columns), items: [{ type: 'issue', repository: config.repo, number: 671, title: 'Card 671', column: config.board.columns.coding }] });
   const l2 = columnChanges({ config, sink, items: board.operations, reads: createFakeRepository().operations });
   const [card] = await board.operations.readItems();
-  await assert.rejects(l2.settled(card, { status: 'fulfilled', value: result }), /card #671.*no open pull request/);
+  const settled = await l2.settled(card, { status: 'fulfilled', value: result });
+  assert.ok(settled.action === 'escalate' && settled.category === 'ambiguous' && /card #671.*no open pull request/.test(settled.reason), settled.reason);
 
   const events = readEvents(state);
   assert.ok(events.some(({ layer, event, pid, card: number }) => layer === 'L0' && event === 'survivor.killed' && pid === child && number === 671), 'L0 did not record the child kill');
-  assert.ok(events.some(({ layer, event, card: number, reason }) => layer === 'L2' && event === 'review.withheld' && number === 671 && /no open pull request/.test(reason)), 'L2 did not record the withheld review');
+  assert.equal(events.some(({ layer, event, card: number }) => layer === 'L2' && event === 'review.withheld' && number === 671), false, 'L2 withheld no review');
   assert.equal((await board.operations.readItems())[0].column, config.board.columns.coding);
   assert.deepEqual(board.writes(), []);
 });

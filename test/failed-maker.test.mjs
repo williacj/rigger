@@ -126,8 +126,7 @@ function world(t, { cards = [12], clock = manualClock(), afterMaker = () => {}, 
   const l2 = columnChanges({ config: settings, sink, items: fake.operations, reads, repositoryWrites: repository, roleReads: () => reads,
     cardReads: () => {
       if (!readFailure || failedRead) return reads;
-      failedRead = true;
-      return { ...reads, [readFailure]: async () => { throw new Error(`scripted ${readFailure} unavailable`); } };
+      return { ...reads, [readFailure]: async () => { failedRead = true; throw new Error(`scripted ${readFailure} unavailable`); } };
     },
   });
   // Notice publication is outside these attempt-classification tests; the documented notice

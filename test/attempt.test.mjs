@@ -88,9 +88,10 @@ function attemptWorld({
     const opened = agent.act(number, 'engineer')?.pr || makerCalls.some(({ start }) => start.card.number === number);
     return { open: opened ? [{ number: 900 + number, head: String(number).padStart(40, 'e'), base: 'main' }] : [], merged: [], closed: [] };
   };
-  const changes = columnChanges({ config: settings, sink, items: fake.operations, reads: readsServing(forgeOfAgent) });
+  const changes = columnChanges({ config: settings, sink, items: fake.operations, reads: readsServing(forgeOfAgent), repositoryWrites: { postIssueComment: async () => {}, addIssueLabel: async () => [] } });
   const l2 = {
     claimed: changes.claimed,
+    escalated: changes.escalated,
     settled: (card, outcome) => {
       settledCards.push(card.number);
       return changes.settled(card, outcome);
@@ -258,12 +259,12 @@ test('given no maker injected and the maker stand-in exiting non-zero, a card wh
   assert.deepEqual(reached.map(({ card, workspace, outcome }) => ({ card, workspace, exit: outcome.value.exit })), [{ card: 15, workspace: join(built.directory, 'workspaces', 'rigger-15'), exit: 2 }]);
 });
 
-test('given every selected step exits 0, the maker stand-in exits 0 and the forge holds no pull request, the card is in the coding column afterwards', async () => {
+test('given every selected step exits 0, the maker stand-in exits 0 and the forge holds no pull request, the card is in the owner column afterwards', async () => {
   const built = attemptWorld({ cards: [5], steps: ['a', 'b'], provisioning: { a: step('true'), b: step('true') } });
 
   await built.loop.pull();
 
-  assert.deepEqual(await columnsOf(built.fake), { 5: COLUMNS.coding });
+  assert.deepEqual(await columnsOf(built.fake), { 5: COLUMNS.owner });
 });
 
 test('given every selected step exits 0, the maker stand-in exits 0 and the forge holds no pull request, the fake board\'s write record holds no move of that card to the review column', async () => {

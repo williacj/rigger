@@ -365,7 +365,7 @@ command line as it runs a step's. The adapter also names, from the directory a d
 the environment it runs under, the one folder its CLI keeps for that directory outside the
 dispatch's directories, or none. This document uses folder for that directory alone. The Codex
 adapter names none. The adapter passes the CLI no setting that widens what the
-consumer's own provider settings allow, with three exceptions:
+consumer's own provider settings allow, with four exceptions:
 
 - **A reached directory.** A directory a dispatch reaches is one Rigger gives the dispatch beside
   the directory it runs in, and today that is only a judge's `head`. For each such directory, the
@@ -378,6 +378,11 @@ consumer's own provider settings allow, with three exceptions:
   sweep of the scratch directory. It allows no command, and the consumer's deny rules still apply
   there.
 - **A maker's git directories.** For a maker's dispatch, an adapter whose CLI refuses writes to git metadata may let the agent write to the worktree's own git directory and to the `objects`, `refs` and `logs` of the common git directory, so that the maker can commit and push its line of work. It names neither the common git directory itself nor any other part of it. It allows no command, and the consumer's deny rules still apply there.
+- **A card's escalation note.** The Claude Code adapter allows each dispatch exactly one command:
+  `gh issue comment <card> --body-file .rigger-escalation.md`, for the dispatch's own card, as a
+  rule with no `:*`. It lets a role post the escalation note its instruction asks for
+  (`R-ESCALATE-27`). It is the only command an exception allows. It admits no other card,
+  repository, flag or file, and the consumer's deny rules still apply to it.
 
 A provisioning step's working directory is `cwd`, a relative path naming a directory under the
 card's workspace. Where it is absent the step runs in the workspace itself. A step's `timeout` is
@@ -830,9 +835,10 @@ the acceptance digest and the items itself, with the functions the gate script a
 `self-hosting` check build them with. A judge Rigger did not dispatch takes them, and the provider
 required of it, from the gate check's run summary. The owner's marker carries no provider.
 
-The verb runs the Rigger the owner installed. The gate runs the Rigger it pins (`D25` rule 6), and
-this repository's `self-hosting` check runs the default branch's tree. Where either reads a card's
-acceptance differently from the verb, that check refuses the owner's verdict, naming why.
+The verb runs the Rigger the owner installed. The gate runs the Rigger it pins, and this
+repository's `self-hosting` check runs the commit its own workflow pins (`D35` rule 6). Where
+either reads a card's acceptance differently from the verb, that check refuses the owner's
+verdict, naming why.
 
 The verb asks for its confirmation only on a terminal at its standard input, and reads the answer
 there. No process L0 starts has a terminal at its standard input. A process under one that opens a
@@ -879,11 +885,17 @@ Two jobs post: the gate workflow's, and this repository's own `self-hosting` che
 either posting job runs an action, so no code but the workflow's own runs in a job the key reaches.
 
 This repository's `self-hosting` check is its own and does not ship. Its script lives under
-`.github/scripts/`. An inline step fetches the tree at the commit the run's workflow file was read
-from, a commit of the default branch. The check runs from that tree, never from a pinned install,
-because it rules on this repository's own lists. It takes the gate script's card resolution,
-mapping and config read from that tree. It reads the lists at the default-branch commit it read
-the config at, and reaches the forge through L0's read side alone.
+`.github/scripts/`. The check's workflow pins the commit of this repository its code runs from,
+in a value of its own (`D35` rule 6). An inline step fetches the tree at that commit, and the
+check runs from that tree with no install. It never runs from the default branch's tree, nor from
+the pull request's head. It takes the gate script's card resolution, mapping and config read from
+that tree. It reads the lists at the default-branch commit it read the config at, and reaches the
+forge through L0's read side alone.
+
+The check's code and the lists it reads therefore come from different commits. Where the lists
+take a form the pinned code cannot read, the check refuses, naming why. A pull request that
+changes that form moves the pin in the same merge. The pin names a commit the default branch
+reaches once that pull request merges. Changing the pin changes the live check.
 
 Both `rigger/gate` and, in this repository, `self-hosting` are posted with the App's token. Each
 of those two contexts is pinned to the App's id. Pinned to GitHub Actions' integration, 15368,
@@ -912,13 +924,14 @@ ruleset is (`D23`):
 - the required contexts: `rigger/gate` and, in this repository, `self-hosting`, each pinned to
   the App's id; and, in this repository, `check (26)`, pinned to GitHub Actions' integration,
   15368.
+- in a public repository, an Actions event policy of the repository's own, with `enforcement: active`, that covers the gate's workflow and allows each event that workflow declares; in this repository, it also covers `.github/workflows/self-hosting.yml` and allows each event that workflow declares.
 
 Of the gate's forge-side pieces, `init` forks only the workflow.
 
 `doctor` reads each of those settings through L0's read side but the App and its installation,
 which a user's token cannot read (#659). Of the required contexts it checks only `rigger/gate`:
 that the rules require it, and, in the App's place, that its pin matches the variable
-`GATE_APP_ID`. No verb writes any of them.
+`GATE_APP_ID`. Of the event policies, it reads only the repository's own, and judges only whether one covers the gate's workflow and allows its events. A policy the repository inherits from its organization or enterprise is outside that read. No verb writes any of them.
 
 ### The engine's merge decision
 
@@ -988,7 +1001,11 @@ the owner answers an escalation by removing it.
 
 A maker that cannot meet an acceptance item writes one escalation note and ends. The note is a
 comment on the card's issue holding a fenced block: the category, the item's ordinal, the reason,
-and the dispatch id its instruction names. `src/workflow/escalation.mjs` composes the instruction
+and the dispatch id its instruction names.
+
+The instruction names the one command that posts it, `gh issue comment <card> --body-file .rigger-escalation.md`, run from the role's working directory after the role writes the block to that file. The Claude Code adapter grants exactly that command for the dispatch's card, and nothing wider (`R-ESCALATE-27`). A Codex role posts it under the sandbox that lets it push (`R-WORK-42`).
+
+`src/workflow/escalation.mjs` composes the instruction
 for the note and parses the note back, so the two cannot drift, as `marker.mjs` does for markers.
 L2 reads notes when it answers the maker's outcome, through the forge adapter's read side. It reads
 only notes written by an account with write access to the repository. A note a session writes with
@@ -1045,6 +1062,8 @@ cannot record runs no command. Each entry names:
 - the dispatch's directory, where it has one, and what L0 needs to tell that directory from a
   later one at the same path.
 
+L1 keeps what each role dispatch's agent CLI wrote to its standard output and standard error, byte for byte, under `<state directory>/output/<dispatch id>/` (`R-RECORD-19`). L3 invokes it once L1's dispatch settles, for a maker, a judge or an escalation's role, and never for a step. L5's push reads only its stream, so the kept output never leaves the machine.
+
 L1 removes an entry once its group is empty, and on Rigger's own exit. Past exit cleanup's budget, it keeps each remaining group's entry, so that the next start sweeps that group's directories. On start, L3 has L1 kill
 every group it recorded, before L3 records or reads anything. L0 kills a recorded group only once it
 has confirmed that the group is the one recorded. A start that cannot confirm a recorded group kills
@@ -1065,8 +1084,16 @@ and the last transition the board shows. They also include
 the escalation label the card carries, the escalation notes on its issue, and L2's routing comment
 where it sent the card to a role. L2 derives card actions on each read and keeps no card state. L3 keeps the invocation-local direct set-asides and no-clock action memory described below; neither is persisted.
 
-`.rigger/` holds three things and no others: the process groups L1 must read back to kill, each with
-its dispatch and card, whether admission is open and why it closed, and L5's event stream. Each record's
+`.rigger/` holds four things and no others:
+
+- the process groups L1 must read back to kill, each with its dispatch and card;
+- whether admission is open and why it closed;
+- L5's event stream;
+- under `.rigger/output/<dispatch id>/`, what each role dispatch's agent CLI wrote to its standard output and standard error (`R-RECORD-19`).
+
+Nothing in Rigger reads that output back: it is kept for a person, and it is never the record.
+
+Each record's
 temporary file, which a write renames or links into place, belongs to its record. Two more things
 outlive a restart outside it: a card's workspace, and the markers on its pull request, which
 the forge holds. Nothing reads a workspace back once its attempt has ended. An attempt that starts
@@ -1442,6 +1469,8 @@ L3 owns the pause, the clock and the bound, and L2 owns what each read shows.
 
 Where a continuing maker exits 0 at the head L2 gave it, L2 answers a loop-raised `ambiguous` escalation in place of the move to Review (`R-LOOP-20`). L3 hands L2 that head unread. The comparison lies within one settle, so it needs no memory.
 
+Where a maker that started a card's work from the beginning exits 0 and L2 reads no open pull request from its line of work, L2 answers a loop-raised `ambiguous` escalation in place of leaving the card in Coding. `R-LOOP-21` to `R-LOOP-24` require it. L3 hands L2 the tip L1 read of the workspace, and the workspace's path, unread. The answer lies within one settle, so it needs no memory.
+
 L1's directory-removal operation lives in `src/execution/workspace.mjs`. L2 selects it, and L3 invokes it under the card's claim. It serves both `R-WORK-35` and `R-WORK-41`.
 
 Once L2 reads a card's pull request as merged, whoever merged it, L3 has L1 remove the card's
@@ -1703,6 +1732,147 @@ whose layer supplies one of them:
 A derivation that groups by `card` or `dispatch` treats a null field and an absent one alike. Every
 derivation below reads the stream in line order. Every append is synchronous, so line order is the
 order of events within a run.
+
+### A torn tail
+
+An append that fails partway can leave bytes after the stream's last newline that no writer will
+finish. A disk that fills during the append is one way. This section calls that state a torn tail,
+and those bytes the fragment. Any torn tail, whatever tore it, is handled as this section sets out.
+
+Two causes stand apart. Power loss is outside `R-RECORD-6` (M8-U2 Q7 a on #1293; #1298's row R10),
+and this section places nothing for it. #1298's row R7 already claims that a writer killed outright
+leaves no torn tail. A killed writer that did leave one would leave this section's state, and the
+reader below would read it so.
+
+**What a later reader finds.** After a torn tail, a reader of the stream finds:
+
+- every event whose emit returned before the tear, except a held event in the two cases "A held
+  event's write" names, which M8-U14 and M8-U15 on #1293 put out of scope;
+- every event whose emit returns after it, from any writer, the writer whose write failed included.
+
+The writer whose write failed can append again. Its exit cleanup records its own kills and ends the
+sink ("Failure model"; "Telemetry"). Its next line, or another writer's, may land straight after the
+fragment.
+
+**The emit whose write failed.** The sink refuses it, and the refusal reaches the emitting layer as
+a failure, as for every append the sink refuses. "Failure model" states what L3 does with it. Where
+the write left a fragment, a later reader never finds that event, because the fragment is never
+returned.
+
+**A held event's write.** A held event's emit returned when the sink held it, and the sink writes
+it only when the verb names the state directory ("Telemetry"). An event leaves the sink's hold only
+once the append of its whole line returns. An append that wrote the whole line and still reported
+an error leaves the event held, so its line is written twice; the fourth residual names that case.
+Where a write at naming tears or fails, the naming fails,
+and no emit is refused. The failure names every event still held, the torn one included, and reaches
+the verb that named the directory. The sink keeps holding each of those events.
+
+Every later append of that sink first appends what it still holds, in emit order, each as one whole
+line. Whichever whole line lands first after the fragment, this sink's or another writer's, rule 3
+below separates it from the fragment. Where one of those appends is refused, the emit that made it is refused too, and its own event is not written. A later
+reader therefore finds each held event whose emit returned before the tear, once a later append of
+its line returns. Until then the sink still holds it.
+
+The sink's end appends what it still holds, as any later append does. Where that append is refused
+too, the end writes what it still holds to standard error, as a sink never named does. M8-U14 on
+#1293 rules that path outside `R-RECORD-6`, under M8-U2 Q7 a's exclusion of the standard-error path.
+
+A process that ends without exit cleanup loses whatever its sink holds, whether or not a tear came
+first. A kill outright is one such ending, and a fatal abort that runs no exit cleanup is another.
+M8-U15 on #1293 puts that loss out of scope. These two cases are the only ones in which a held
+event whose emit returned reaches no stream.
+
+**No writer makes the call.** At one read, a fragment and another process's line still being
+appended are the same bytes, so no writer tells them apart. None needs to, because no writer acts
+on either. Every append the sink makes is one whole line, and the sink reads nothing before it. What
+keeps a line still being appended whole is that no writer writes any byte but its own line's. No
+writer, reader or push truncates, terminates or rewrites bytes another append made. #1298's Table I
+tests in `test/event-sink.test.mjs` claim that two processes appending to one stream leave every
+line whole, at 200 bytes and 1 MiB per line.
+
+**The reader separates the fragment.** L5's reader, `readEvents` in `src/observation/sink.mjs`, is
+the one code path that tells a fragment from an event. A line of the sink's form is one JSON object
+and then a newline. It begins with the bytes `{"ts":"`, because the envelope's `ts` comes first. The
+reader reads the stream line by line, under four rules:
+
+1. The bytes after the last newline are not an event. The reader neither returns them nor refuses
+   the stream for them. A fragment sits there until the next append, as does a line still being
+   appended.
+2. A newline-terminated line that is one event is returned.
+3. A newline-terminated line that is not one event may hold fragments before a whole event. The
+   reader looks for the leftmost offset past the line's start at which the bytes `{"ts":"` begin
+   and from which the rest of the line is one event. Where it finds one, and the line itself begins
+   with `{`, the reader returns that event. It neither returns nor refuses the bytes before that
+   offset. Every line of the sink's form begins with `{`, and so does every fragment of one, however
+   short.
+4. Any other newline-terminated line that is not one event is refused, and the refusal names its
+   line.
+
+Rule 1 is E1's first rule, as M8-K7 item 1 on #1293 states it. Rules 3 and 4 replace E1's second
+rule, which refuses every newline-terminated line that is not one event. Under that rule the first
+append after a tear makes the reader refuse the stream, so every event is lost to it. Rule 3 passes
+over only bytes that begin with `{` and that a whole event follows on the same line. A cut-short
+append leaves exactly that, and rule 1 already passes over it while it is last. Damage of any other
+form is still refused, as E1 refused it.
+
+The separation rests on where a sink line begins, not on where a JSON parser can start. JSON admits
+leading whitespace, so a fragment cut just after a space inside a string leaves a second offset that
+parses. The reviewer's round-1 verdict on #1374 found that case. Rule 3 therefore looks only at
+offsets where `{"ts":"` begins. `JSON.stringify` escapes every `"` inside a string, so those bytes
+always begin a JSON object and never sit inside a string.
+
+One or more cut-short lines followed by a whole line then leave one such offset from which the rest
+parses: where the whole line starts. That this holds for every line `JSON.stringify` writes is a
+judgment. The architect measured it on #1370's pull request with `node` v26.13.0. The measure used
+894 cut-short prefixes of six lines, the reviewer's case among them:
+
+- each prefix glued onto a whole line, 894 cases, in 13 of which a parser could also start earlier;
+- every ordered pair of prefixes glued onto a whole line, 799,236 cases;
+- 20,000 seeded triples of prefixes glued onto a whole line.
+
+In every case, of the offsets where `{"ts":"` begins, the rest parsed from the whole line's start and
+from no other.
+
+**What becomes of the fragment.** Its bytes stay in the stream, byte for byte, and reach every
+pushed copy that holds the line ending after them. `R-RECORD-5` reads: "Rigger never rewrites what
+it already recorded." Keeping the fragment rewrites nothing. The recovery is a reading of bytes the
+stream already holds, and the stream only grows.
+
+**The pushed copy.** "The commit" keeps its rule: the copy holds the stream up to and including the
+last newline. A fragment still after the last newline is outside the copy, as it is outside what the
+local reader returns. Once a line ends after it, the copy holds that same line, and its reader
+applies the same four rules. A reader of the pushed copy therefore finds the same events as a
+reader of the local stream, read at the push's start, once the record has recovered.
+
+**What it adds nowhere.** `.rigger/` holds the same three things "Failure model" names, and the
+recovery writes no other state. The sink's hold is memory in its own process, as it is before
+naming. It adds no lock. It places no recovery machinery in L1, since the reader and the sink are L5's.
+
+**What would reverse the placement.**
+
+| What is found | What Rigger would change |
+|---|---|
+| A host on which a failed append leaves bytes that do not begin its line, such as zero-filled bytes | rule 4 refuses that line; the sink would frame each line with a separator a whole line cannot hold, as RFC 7464's record separator does |
+| A line form other than one JSON object per line that begins with `{"ts":"` | the one offset rule 3 finds no longer exists; the placement is ruled again with that form |
+| A host on which two appends to one stream interleave, against #1298's Table I | a line still being appended no longer stays whole, and no reading recovers it; the record needs a lock or a stream per writer, which "Failure model" forbids without a delta |
+
+**The residuals.** The owner rules on each when M8-17 is filed:
+
+1. A line holding a fragment is not one JSON value, so a tool that reads the stream as plain JSONL
+   refuses it. `README.md`, "Telemetry", calls the stream "one JSONL event stream". The owner rules
+   whether that promise covers outside tools, or whether this reader's rules define the stream.
+2. No event records that a tear happened, and rule 3 passes over the fragment without naming it.
+   The refused emit was reported when it failed (`R-RECORD-9`). The owner rules whether the reader
+   should also name each fragment it passed over.
+3. Rule 3 would misread one form of damage as a fragment. That form is a line that begins with
+   `{` and ends in a whole event at a later `{"ts":"`. A line whose last field is a whole
+   sink-form line, with its own closing brace lost, is one such line. Rigger's sink writes no such
+   line except by a tear. Another program's edit is out of sight under #1298's row R13. The owner
+   rules whether that form needs refusing.
+4. An append can write the whole line and still report an error, as a write error deferred to the
+   file's close can. The event then stays held, its line is appended again, and a reader returns
+   it twice. For an emit that is not held, the emit is refused while its line stands whole. The
+   owner rules whether M8-17 must tell that case apart from a short write.
 
 ### L0's call events
 
@@ -2377,12 +2547,18 @@ Four things are not counted. Tests, the templates under `templates/`, and the ch
 for a consumer's own CI are outside the budget, because none of them runs a card. Blank lines and
 comment lines are outside it too: a comment cannot carry a bug.
 
+L0's row is the largest layer row, because L0 holds one adapter for each external system the other
+layers reach: the forge, git, the OS process model and each agent CLI. The forge adapter carries
+every read that L2's records rest on, the read of a card's body-edit history among them ("L2's
+acceptance, escalation and merge events"). The gate's row is the smallest, because the gate is one
+rule that holds no opinion ("The gate").
+
 | Budget | Production lines |
 |---|---|
-| L0 | 3,000 |
+| L0 | 3,200 |
 | L1 | 1,200 |
 | L2 | 1,600 |
-| The gate | 300 |
+| The gate | 100 |
 | L3 | 1,700 |
 | L5 | 800 |
 | L6 | 1,100 |

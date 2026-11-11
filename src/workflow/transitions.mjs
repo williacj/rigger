@@ -8,12 +8,15 @@ import { readSide, repositoryReads } from '../substrate/forge/read.mjs';
 import { itemWriteSide } from '../substrate/forge/item-write.mjs';
 import { repositoryWriteSide } from '../substrate/forge/repository-write.mjs';
 import { NOT_STARTED } from '../substrate/process.mjs';
+import { EVENT_REFUSED } from '../substrate/process.mjs';
 import { escalationDestination, makerEscalation, makerNote, routingComment, escalationRoleInstruction } from './escalation.mjs';
 import { acceptanceItems } from './form-check.mjs';
+import { acceptanceDigest } from './marker.mjs';
 import { pullRequestsFrom } from './facts.mjs';
 import { statusNotice } from './status-issue.mjs';
 import { kindOf, providerOf, tierOf, recordingHalt } from './next-action.mjs';
 import { composeClockMark, carriesClockMark } from './clock-mark.mjs';
+import { clockAuthor } from './clock-mark.mjs';
 import { firstAbove } from './first-above.mjs';
 
 /**
@@ -129,6 +132,22 @@ export function columnChanges({
     }
     try {
       record(card, transitionFields, context);
+      let history;
+      try {
+        history = await cardReads(card.number, context.dispatch).readIssueHistory(card.number);
+      } catch (failure) {
+        if (failure.code === EVENT_REFUSED) throw failure;
+        return columns[to];
+      }
+      const revisions = history.revisions.length === 0
+        ? [{ editedAt: history.opened.at, editor: history.opened.by, deleted: false, body: history.body }] : history.revisions;
+      const author = revisions[0].deleted ? undefined : clockAuthor(revisions[0].body);
+      note(card, 'acceptance.history', {
+        opened: history.opened,
+        revisions: revisions.map(({ editedAt, editor, deleted, body }) => ({ editedAt, editor, deleted,
+          ...(!deleted && { digest: acceptanceDigest(body), items: acceptanceItems(body).length }) })),
+        ...(author === undefined ? {} : { author }),
+      }, context);
     } catch (unrecorded) {
       throw Object.assign(unrecorded, { column: columns[to] });
     }
@@ -175,7 +194,7 @@ export function columnChanges({
     const evidence = {
       category: next.category, reason: next.reason, raiser: next.raiser ?? 'loop',
       ...(next.item === undefined ? {} : { item: next.item }),
-      ...Object.fromEntries(['pull', 'head', 'line', 'destination', 'reads', 'elapsedMs'].filter((key) => next[key] !== undefined).map((key) => [key, next[key]])),
+      ...Object.fromEntries(['class', 'pull', 'head', 'line', 'workspace', 'tip', 'tipUnread', 'destination', 'reads', 'elapsedMs'].filter((key) => next[key] !== undefined).map((key) => [key, next[key]])),
     };
     try {
       sink.emitter({ layer: 'L2', card: card.number, dispatch: next.dispatch ?? null }).emit('review.escalate', evidence);
@@ -299,11 +318,13 @@ export function columnChanges({
 
     /**
      * L3's lane hands over `next`, L2's `merge` answer for `card` from its rule run again at the
-     * lane: L2 merges the pull request it names at the head it names through the repository-write
+     * lane: L2 records its digest and governing verdicts before merging the pull request it names
+     * at the head it names through the repository-write
      * side, and marks an unknown-mergeability refusal for L3's full re-read. Other answers pass
      * through unread, and a failed call rejects as it did.
      */
     merge: async (card, next) => {
+      note(card, 'merge.decided', { pull: next.pull, head: next.head, digest: next.digest, judges: next.verdicts });
       const answer = await repositoryFor(card).mergePullRequest(next.pull, next.head);
       return answer.outcome === 'refused' && answer.reason === 'unknown' ? { ...answer, unknownMergeability: true } : answer;
     },
@@ -363,10 +384,10 @@ export function columnChanges({
 
     /** Settles the escalation role against the forge under the card's existing claim; a handled move answers its `column`. */
     roleSettled: async (card, next, outcome, { dispatch, firstFailure } = {}) => {
-      if (outcome.status === 'rejected' && [WORKSPACE_REFUSED, SCRATCH_REFUSED].includes(outcome.reason?.code)) return ownerEscalation(next, { category: 'ambiguous', reason: outcome.reason.message, dispatch });
+      if (outcome.status === 'rejected' && [WORKSPACE_REFUSED, SCRATCH_REFUSED].includes(outcome.reason?.code)) return ownerEscalation(next, { class: 'card-local', category: 'ambiguous', reason: outcome.reason.message, dispatch });
       if (outcome.status === 'rejected' && outcome.reason?.code === NOT_STARTED) {
         if (firstFailure === undefined) return { action: 'again' };
-        return ownerEscalation(next, { category: 'ambiguous', reason: `role ${next.destination} did not start twice: ${firstFailure.reason.message}; ${outcome.reason.message}`, dispatch });
+        return ownerEscalation(next, { class: 'environment', category: 'ambiguous', reason: `role ${next.destination} did not start twice: ${firstFailure.reason.message}; ${outcome.reason.message}`, dispatch });
       }
       if (outcome.status === 'rejected') return undefined;
       const reading = roleReads(card.number, dispatch);
@@ -440,9 +461,13 @@ export function columnChanges({
      * caller, which hands them back unread to L2's next action (the architect's ruling 3, AQ4). With
      * none open, or more than one, the card stays in coding, and L2 records why and
      * tells its caller the card and why, as `withheld` says. A read that fails leaves it in coding too, and its
-     * caller is told the card and the read.
+     * caller is told the card and the read. A fresh maker's exit 0 with none open, or with the read
+     * failing, instead answers a loop-raised `ambiguous` escalation (`R-LOOP-21` to `R-LOOP-24`), as
+     * `deliveredNothing` says, naming `workspace` and `tip`, which L3 hands unread for a fresh maker,
+     * or `tipUnread`, L1's failure to read that tip. A fresh maker is one handed neither
+     * `continuing`, `expectedHead` nor `tipFailure`.
      */
-    settled: async (card, outcome, { dispatch, continuing = false, noClock = false, startHead, rulings = [], expectedHead, tipFailure, lastForgeHead, last = false, reads: readCount, elapsedMs, placed = () => {} } = {}) => {
+    settled: async (card, outcome, { dispatch, continuing = false, noClock = false, startHead, rulings = [], expectedHead, tipFailure, tip, tipUnread, workspace, lastForgeHead, last = false, reads: readCount, elapsedMs, placed = () => {} } = {}) => {
       const exit = outcome?.status === 'fulfilled' ? outcome.value?.exit : outcome?.status === 'rejected' ? outcome.reason?.result?.exit : undefined;
       // A refused recording retains the result of a command that ran; its failure still reaches L3.
       if (outcome?.status === 'rejected' && ((continuing && !noClock) || !Number.isInteger(exit) || exit === 0)) {
@@ -480,11 +505,17 @@ export function columnChanges({
         if (noClock || !continuing) return failedMakerWork(card, exit, reading, noClock);
         return undefined;
       }
+      // L3 hands `expectedHead` or `tipFailure` only for a continuing maker, and `tip` or `tipUnread` only for a fresh one.
+      const fresh = !continuing && expectedHead === undefined && tipFailure === undefined;
       if (tipFailure !== undefined) withheld(card, `card #${card.number}'s maker exited 0, but L1 could not read the tip of its line of work in the workspace: ${tipFailure.message}`, undefined, {}, { dispatch });
       let facts;
       try {
         facts = await pullRequestsFrom(card.number, topicFor(topic, card.number), reading);
       } catch (failure) {
+        if (fresh) {
+          const line = topicFor(topic, card.number);
+          return deliveredNothing(card, line, `the forge's open pull requests from its line of work ${line} could not be read: ${failure.message}`, { dispatch, tip, tipUnread, workspace });
+        }
         if (expectedHead === undefined) throw failure;
         withheld(card, failure.message, undefined, {
           ...(lastForgeHead === undefined ? {} : { forgeHead: lastForgeHead }),
@@ -496,6 +527,10 @@ export function columnChanges({
         ...(open.length === 1 ? { forgeHead: open[0].head } : lastForgeHead === undefined ? {} : { forgeHead: lastForgeHead }),
         ...(readCount > 1 ? { reads: readCount, elapsedMs } : {}),
       };
+      if (open.length === 0 && fresh) {
+        const merged = facts.merged.length === 0 ? '' : `, and it holds merged pull request ${facts.merged.map((pull) => `#${pull.number}`).join(', ')} from it`;
+        return deliveredNothing(card, line, `the forge holds no open pull request from its line of work ${line}${merged}`, { dispatch, tip, tipUnread, workspace });
+      }
       if (open.length === 0) withheld(card, `its maker exited 0, and the forge holds no open pull request from its line of work ${line}`, facts, observed, { dispatch });
       if (open.length > 1) withheld(card, `its maker exited 0, and the forge holds more than one open pull request from its line of work ${line}: ${open.map((pull) => `#${pull.number}`).join(', ')}`, facts, observed, { dispatch });
       if (expectedHead !== undefined && open[0].head !== expectedHead) {
@@ -516,12 +551,13 @@ export function columnChanges({
 }
 
 /** The selected reason and available work identifiers, as data on the card's issue. */
-function escalationComment(card, { category, item, reason, pull, head, line }) {
+function escalationComment(card, { category, item, reason, pull, head, line, workspace, tip, tipUnread }) {
   const work = [
     ...(item === undefined ? [] : [`Acceptance item: ${item}`]),
     ...(pull === undefined ? [] : [`Pull request: #${pull}`]),
     ...(head === undefined ? [] : [`Head: ${head}`]),
     ...(line === undefined ? [] : [`Line of work: ${line}`]),
+    ...(workspace === undefined ? [] : [`Workspace: ${workspace}, ${tipUnread === undefined ? `its line of work at ${tip}` : `its tip not read: ${tipUnread}`}`]),
   ];
   return `Rigger escalates card #${card.number} to the owner (${category}).\n\n${reason}${work.length === 0 ? '' : `\n\n${work.join('\n')}`}\n`;
 }
@@ -529,6 +565,20 @@ function escalationComment(card, { category, item, reason, pull, head, line }) {
 /** One ruling a continuing maker was handed, as `continued` in judges.mjs handed it. */
 function standingRuling({ role, verdict, toSound, unmet }) {
   return `${role} (${verdict}): ${[...(toSound === undefined ? [] : [toSound]), ...unmet.map(({ item, text }) => `unmet item ${item}: ${text}`)].join('; ')}`;
+}
+
+/**
+ * The loop-raised `ambiguous` escalation of `card`, whose maker started its work from the
+ * beginning and exited 0, saying `held`, what L2 read of the forge for its line of work `line`
+ * (`R-LOOP-21` to `R-LOOP-24`). It names `line`, and the workspace L3 handed with the tip L1 read
+ * there, or why L1 read none.
+ */
+function deliveredNothing(card, line, held, { dispatch, tip, tipUnread, workspace }) {
+  return ownerEscalation({}, {
+    category: 'ambiguous', dispatch, line,
+    reason: `card #${card.number}'s maker started its work from the beginning and exited 0, and ${held}`,
+    ...(workspace === undefined ? {} : { workspace, ...(tipUnread === undefined ? { tip } : { tipUnread: tipUnread.message }) }),
+  });
 }
 
 /** A role's unresolved card always returns through L2's one destination function as loop-raised. */

@@ -185,53 +185,55 @@ Every agent judge, whatever its role, loads `.claude/skills/code-review/` and ru
 
 Once "rigger/gate" and "self-hosting" are green, anyone may merge: the engine's lane or a
 person. A pull request changing an authored document in "What binds", or a path "Self-hosting"
-lists, also needs a sound owner marker at its head (`D25` rules 5 and 7). The owner's merge is no
-verdict; the owner's marker is.
+lists as needing the owner's marker, also needs a sound owner marker at its head (`D35` rules 5
+and 7). Every other path merges on its judges alone. The owner's merge is no verdict; the owner's
+marker is.
 
 ## Self-hosting
 
 Rigger builds Rigger, so two rules have teeth here. **Never run Rigger from this checkout**
 (`R-SAFE-5`). The engine runs from a tarball installed outside the source tree, because an
 agent it dispatches can delete the runtime it is running under. `npm link` does not satisfy
-this, and the worktree root belongs outside both the checkout and the package. **The engine
-never dispatches a card that changes a path listed below** (`D25` rule 5); "Review and merge"
-says how one merges. The paths:
+this, and the worktree root belongs outside both the checkout and the package. **No maker is
+dispatched for a card that changes a path listed below** (`D35` rule 5), whoever dispatches it.
+Each takes effect on merge: the forge, the hooks, the engine or its makers read it from the
+repository or the default branch. "Review and merge" says how one merges.
 
-- The live gate: `.github/workflows/rigger-gate.yml` and
-  `templates/github/workflows/rigger-gate.yml`; `.github/workflows/self-hosting.yml` and
-  `.github/scripts/self-hosting-check.mjs`; `.github/workflows/ci.yml`.
-- The git hooks: `.githooks/`, and `templates/githooks/` with it, and what decides what they run:
-  `test/suite.sh` and `package.json`, with any file the suite loads to place a test in a tier
-  (`test/suite-guard.cjs` and `test/suite-path.cjs`), and the check that refuses growth in the two transitional lists: `.github/scripts/check-test-list-growth.mjs`.
+The source of the next version is not listed: `src/`, `templates/`, `scripts/gate-check.mjs`,
+and `.github/scripts/` other than `.github/scripts/check-test-list-growth.mjs` and
+`.github/scripts/self-hosted-job-guard.cjs`.
+It takes effect only when the installed tarball is reinstalled (`R-SAFE-5`) or a pin moves
+(`D35` rule 6). A maker may be dispatched for it, and it merges on its judges alone.
+
+### Paths needing the owner's marker
+
+Any workflow can reach the App's key that posts `self-hosting`, and the check runs its code from
+the commit its workflow pins, so a merge here can change the enforcer at once (`D35` rules 6 and
+7; `ARCHITECTURE.md`, "The gate"). Moving either pin, the gate's or the check's, is such a
+merge:
+
+- The workflows: `.github/workflows/`. Any of them can reach the App's key that posts
+  `self-hosting`, and the enforcer's own, `.github/workflows/self-hosting.yml`, pins the check's
+  code.
+- The live config, which the check imports and runs: `rigger.config.mjs`.
+
+### Paths that merge on their judges alone
+
+- The script CI runs from a pull request's own checkout:
+  `.github/scripts/check-test-list-growth.mjs`.
 - The self-hosted runner's job guard: `.github/scripts/self-hosted-job-guard.cjs`.
-- The live config: `rigger.config.mjs`.
-- The live Codex configuration: `.codex/config.toml`, and the directory `templates/codex/` with it.
-- The CLI entry point: `src/cli/rigger.mjs`, which the package manifest declares as its bin.
-- The gate's code: the import closure of `scripts/gate-check.mjs` and
-  `.github/scripts/self-hosting-check.mjs`, as .github/scripts/gate-closure.mjs measures it:
-  `src/cli/doctor.mjs`, `src/cli/init.mjs`, `src/cli/recording.mjs`, `src/config/validate.mjs`,
-  `src/execution/groups.mjs`, `src/execution/run.mjs`, `src/execution/workspace.mjs`,
-  `src/observation/sink.mjs`, `src/scheduling/admission.mjs`, `src/substrate/forge/assets.mjs`,
-  `src/substrate/forge/graphql.mjs`, `src/substrate/forge/read.mjs`,
-  `src/substrate/forge/runners.mjs`, `src/substrate/git-environment.mjs`,
-  `src/substrate/host.mjs`, `src/substrate/launchd.mjs`, `src/substrate/process.mjs`,
-  `src/substrate/providers/adapters.mjs`,
-  `src/substrate/providers/claude.mjs`, `src/substrate/providers/codex.mjs`,
-  `src/substrate/standard-error.mjs`, `src/substrate/worktrees.mjs`, `src/workflow/escalation.mjs`,
-  `src/workflow/form-check.mjs`, `src/workflow/gate.mjs`, `src/workflow/judges.mjs`,
-  `src/workflow/marker.mjs`, `src/workflow/next-action.mjs`.
-- The closure guard: `.github/scripts/gate-closure.mjs` and `test/gate-closure.test.mjs`.
-  The executable the live checks run outside that closure: `src/substrate/process-table.sh`.
+- The git hooks: `.githooks/`, and what decides what they run: `test/suite.sh` and
+  `package.json`, with any file the suite loads to place a test in a tier
+  (`test/suite-guard.cjs` and `test/suite-path.cjs`).
+- The live Codex configuration: `.codex/config.toml`.
 - The coordinator's tooling, which launches its Codex makers and judges: `tools/coordinator/`.
-
-The gate's code is listed because it runs live (`D25` rule 6; `ARCHITECTURE.md`, "The gate").
 
 ## Version control
 
 Working by hand, create your own worktree; a dispatched session is already in one. The main
 checkout is not a workspace. Branch for every piece of work. Nothing reaches `main` except
 through the gate, the forge's required checks, "rigger/gate" and "self-hosting" among them
-(`D25` rule 7). Every pull request into `main` comes from its card's branch, named by the topic
+(`D35` rule 7). Every pull request into `main` comes from its card's branch, named by the topic
 rule in `rigger.config.mjs`. Commit atomically and often, with messages that say why.
 `git status` before `git add -A`. Commit a journal entry with the work that produced it, as its
 own file in `docs/journal/` named `<date>-<time>-<card>-<slug>.md`.

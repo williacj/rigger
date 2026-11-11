@@ -40,6 +40,12 @@ function standardOutput(text) {
 const failuresIn = (failure) => (failure instanceof AggregateError ? failure.errors.flatMap(failuresIn) : [failure]);
 
 /**
+ * The reason of a loop-raised escalation L2 answered at a maker's settle, `answer`, on one line:
+ * Rigger raised it, so it names no acceptance item (`R-LOOP-20`, `R-LOOP-21`).
+ */
+const loopReason = (answer) => answer.reason.replaceAll('\n', ' ');
+
+/**
  * What a card's maker did, as the pull answered it for a card that reached its maker: `outcome`,
  * L1's, and `settled`, L2's settle of it, each as `Promise.allSettled` records it. Answers `said`,
  * the outcome as the card's line reads it, `review`, whether L2 moved the card to review, and
@@ -54,6 +60,7 @@ function makerOutcome({ outcome, settled: settle }) {
   }
   const { exit } = outcome.value;
   if (exit !== 0 || failure !== undefined) return { said: `its maker exited ${exit}`, review: false, failure };
+  if (settle.status === 'fulfilled' && settle.value?.action === 'escalate' && settle.value.raiser === 'loop') return { said: `Rigger escalated it as ${settle.value.category}: ${loopReason(settle.value)}`, review: false };
   if (settle.status === 'fulfilled' && settle.value?.action === 'escalate') return { said: `its maker raised ${settle.value.category} for acceptance item ${settle.value.item}`, review: false };
   if (settle.status === 'fulfilled') {
     const { line, open: [pull] } = settle.value;
@@ -307,7 +314,9 @@ async function claiming(verb, limit, opened, {
       const words = {
         move: `moved to ${each.to}`,
         return: `returned acceptance on pull request #${each.pull}`,
-        escalate: `escalated ${each.category}${each.item === undefined ? '' : ` for acceptance item ${each.item}`}`,
+        escalate: each.settled?.status === 'fulfilled' && each.settled.value?.action === 'escalate' && each.settled.value.raiser === 'loop'
+          ? `escalated ${each.category} by Rigger: ${loopReason(each.settled.value)}`
+          : `escalated ${each.category}${each.item === undefined ? '' : ` for acceptance item ${each.item}`}`,
         refuse: `refused: ${each.reason}`,
       };
       if (each.action === 'merge') return { ...each, ...mergeOutcome(each), judgesPassed: true, judgeLines: [] };

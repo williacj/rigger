@@ -12,6 +12,7 @@ import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { pathToFileURL } from 'node:url';
 
 import template from '../templates/rigger.config.mjs';
 import { help } from '../src/cli/verbs.mjs';
@@ -30,6 +31,18 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (...parts) => readFileSync(join(root, ...parts), 'utf8');
 const manifest = JSON.parse(read('package.json'));
 const workflow = read('.github', 'workflows', 'ci.yml');
+
+/**
+ * Table P's rows P4 to P6 of card #1342: the resolver ("Document checking"), the gate script ("The
+ * required check on the forge"), and the prepack recorder `D7` rule 4 relies on with its import.
+ * Written out from the card, not read from `files`, so a `files` list that drifts is caught.
+ */
+const SANCTIONED_SCRIPTS = [
+  'scripts/doc-reference-check.mjs',
+  'scripts/gate-check.mjs',
+  'scripts/record-commit.mjs',
+  'scripts/lib/pack-result.mjs',
+];
 
 test('the Node floor is 20 or later, and the README states the same one', () => {
   // Read out of both documents and compared, rather than each asserted against a literal 20.
@@ -108,10 +121,11 @@ test('the refusal is printed however quiet the npm that launched the suite was t
   assert.match(said, /EBADENGINE|Unsupported engine/);
 });
 
-test('the package declares that it ships src/, templates/ and scripts/, and nothing else', () => {
-  // The owner's ruling U30, card #238: what npm always includes rides along, and nothing else of
-  // ours does. The listing test below asks npm what that declaration produces.
-  assert.deepEqual(manifest.files, ['src/', 'templates/', 'scripts/']);
+test('the package declares that it ships src/, templates/ and the four scripts ARCHITECTURE.md sanctions, and nothing else', () => {
+  // Card #1342's Table P, under M8-U2 Q14: what npm always includes rides along, and of ours only
+  // the engine, its templates, the resolver, the gate script and the prepack recorder with its
+  // import. The listing test below asks npm what that declaration produces.
+  assert.deepEqual(manifest.files, ['src/', 'templates/', ...SANCTIONED_SCRIPTS]);
 });
 
 /**
@@ -132,15 +146,18 @@ function packListing() {
 const heldUnder = (directory) =>
   gitIn(root, 'ls-files', '-z', '--', directory).split('\u0000').filter(Boolean);
 
-test('the tarball holds every file under src/, templates/ and scripts/, and of the rest only what npm always adds', () => {
+test('the tarball holds every file under src/ and templates/, of scripts/ only the sanctioned four, and of the rest only what npm always adds', () => {
   const { paths } = packListing();
 
-  for (const directory of ['src/', 'templates/', 'scripts/']) {
+  for (const directory of ['src/', 'templates/']) {
     const held = heldUnder(directory);
     assert.ok(held.length > 0, `git holds nothing under ${directory}`);
     const missing = held.filter((path) => !paths.includes(path));
     assert.deepEqual(missing, [], `the tarball leaves out what git holds under ${directory}`);
   }
+  // Table P's rows P4 to P6 are the only scripts that ship; any other path under scripts/ is P8.
+  const unsanctioned = paths.filter((path) => path.startsWith('scripts/') && !SANCTIONED_SCRIPTS.includes(path));
+  assert.deepEqual(unsanctioned, [], 'the tarball carries a script outside Table P\'s rows P4 to P6');
 
   // npm adds the manifest, the README and the licence to every tarball whatever `files` says, so
   // those three are the only paths outside the declared directories a pack may carry.
@@ -301,7 +318,7 @@ test('the installed rigger once, run against a fixture repository and a fake boa
   const ran = spawnSync(rigger, ['once'], { cwd: fixture, encoding: 'utf8', env: { ...gitEnvironment(), PATH: `${join(directory, 'fake')}:${path}` } });
 
   const said = `exited ${ran.status}: ${ran.stdout}${ran.stderr}`;
-  const workspace = ran.stderr.match(/^rigger once: claimed #10 from board 3; its maker exited 0 and opened no pull request from rigger-10, in its workspace, (\/.*)$/m)?.[1];
+  const workspace = ran.stderr.match(/^rigger once: claimed #10 from board 3; Rigger escalated it as ambiguous: card #10's maker started its work from the beginning and exited 0, and the forge holds no open pull request from its line of work rigger-10, in its workspace, (\/.*)$/m)?.[1];
   assert.ok(workspace && existsSync(workspace), said);
   const outside = (tree) => !`${realpathSync(workspace)}/`.startsWith(`${realpathSync(tree)}/`);
   assert.ok(outside(fixture), `${workspace} lies inside the fixture's checkout, ${fixture}`);
@@ -468,3 +485,44 @@ for (const [row, consumer, files] of [
     assert.deepEqual(failing, []);
   });
 }
+
+test('the package is version 0.1.0, the first release M8-U2 Q9 a rules', () => {
+  assert.equal(manifest.version, '0.1.0');
+});
+
+test('the package publishes with public access, so npx can serve the scoped name', () => {
+  // README.md, "Install and usage", promises `npx @williacj/rigger`; a restricted scoped package
+  // cannot serve that, and the setting lives in the manifest rather than on a command line.
+  assert.equal(manifest.publishConfig?.access, 'public');
+});
+
+test('the tarball holds each of the four sanctioned scripts', () => {
+  const { paths } = packListing();
+  const absent = SANCTIONED_SCRIPTS.filter((path) => !paths.includes(path));
+  assert.deepEqual(absent, [], 'the tarball leaves out a script Table P\'s rows P4 to P6 ship');
+});
+
+test('a tarball packed from the head, installed outside the checkout, runs rigger --help and records the head commit', () => {
+  const ran = runInstalled(['--help'], tmpdir());
+  assert.equal(ran.status, 0, ran.stderr);
+  assert.equal(ran.stdout, `${help()}\n`);
+
+  // The prepack recorder writes the record only where nothing the pack carries differs from HEAD,
+  // so this holds at a committed head and is what `D7` rule 4's recorded commit rests on.
+  const installedAt = join(installFromTarball().consumer, 'node_modules', '@williacj', 'rigger');
+  const record = join(installedAt, 'src', 'package-commit.json');
+  assert.ok(existsSync(record), 'the installed tarball holds no src/package-commit.json');
+  assert.equal(JSON.parse(readFileSync(record, 'utf8')).commit, gitIn(root, 'rev-parse', 'HEAD').trim());
+});
+
+test('the installed package resolves scripts/gate-check.mjs by the path src/cli/verdict.mjs imports it by', async () => {
+  const installedAt = join(installFromTarball().consumer, 'node_modules', '@williacj', 'rigger');
+  const verdict = join(installedAt, 'src', 'cli', 'verdict.mjs');
+  // The specifier is read out of the installed verb, so a move on either side of the import is caught.
+  const specifier = readFileSync(verdict, 'utf8').match(/import\('([^']*\/scripts\/gate-check\.mjs)'\)/)?.[1];
+  assert.ok(specifier, 'the installed verdict.mjs names no import of scripts/gate-check.mjs');
+
+  const imported = await import(new URL(specifier, pathToFileURL(verdict)).href);
+
+  assert.equal(typeof imported.defaultConfig, 'function');
+});

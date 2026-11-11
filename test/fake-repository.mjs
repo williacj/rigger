@@ -39,10 +39,24 @@ const PULL_FACTS = ['number', 'head', 'sha', 'base', 'merged', 'diff', 'declined
  * answers it in, which is another repository's for an issue transferred out of this one and null
  * for this repository's own. Its `comments` carry the comments appended to that issue.
  */
-const ISSUE_FACTS = ['number', 'title', 'body', 'labels', 'repository', 'comments', 'opened', 'events'];
+const ISSUE_FACTS = ['number', 'title', 'body', 'labels', 'repository', 'comments', 'opened', 'events', 'history'];
 
 /** The time the fake answers for every timeline entry but a comment: the timeline's order is what it models. */
 const EVENT_TIME = '2026-10-01T00:00:00Z';
+
+/**
+ * The body-history reply, shaped as the raw #1302 capture in
+ * fixtures/rigger-issue-history-2026-11-10.json (its exact gh query is recorded in
+ * acceptance-history.test.mjs). `history` supplies createdAt, author and userContentEdits;
+ * bodies are newest first, as that capture answers them. An unedited issue has no nodes.
+ * The default opening time and login are fixed fixture values, not a host-clock claim.
+ */
+export function bodyHistoryOf(issue) {
+  return {
+    createdAt: EVENT_TIME, author: { login: 'rigger-fake' }, ...issue.history,
+    body: issue.body ?? '', userContentEdits: issue.history?.userContentEdits ?? { nodes: [] },
+  };
+}
 
 /** The node GitHub answers for each kind of timeline event the fake holds. */
 const EVENT_TYPES = { labeled: 'LabeledEvent', unlabeled: 'UnlabeledEvent', closed: 'ClosedEvent', reopened: 'ReopenedEvent' };
@@ -161,6 +175,16 @@ export function createFakeRepository({ branches = [], pullRequests = [], issues 
     },
     readEnvironmentVariable: async (name, variable) => environments[name]?.variables?.[variable] ?? null,
     readEnvironmentSecret: async (name, secret) => environments[name]?.secrets?.includes(secret) ?? false,
+    /** Public and owned by a user, as the executable fake answers every repository. */
+    readVisibility: async () => ({ visibility: 'public', owner: 'user' }),
+    /** The one policy the executable fake holds, option 1 of #1336, as the read side answers it. */
+    readEventPolicies: async () => [{
+      id: 12504,
+      name: 'rigger gate events',
+      enforcement: 'active',
+      workflowPath: { include: ['.github/workflows/rigger-gate.yml', '.github/workflows/self-hosting.yml'], exclude: [] },
+      events: [['pull_request_target', 'issues', 'issue_comment']],
+    }],
     readPullRequests: async (branch) => {
       const from = held.pullRequests.filter((candidate) => candidate.head === branch && candidate.from === null && !candidate.headRepositoryDeleted);
       const inState = (state) => from.filter((candidate) => pullStateOf(candidate) === state).map(asAnswered);
@@ -195,6 +219,23 @@ export function createFakeRepository({ branches = [], pullRequests = [], issues 
         const author = node.author?.login ?? null;
         return { body: node.body, createdAt: node.createdAt, id: node.id, author, permission: author === null ? 'none' : permissions === undefined ? 'write' : permissions[author] ?? 'none', edited: node.lastEditedAt !== null || node.includesCreatedEdit };
       }));
+    },
+    /** Body revisions and opening, independently normalised from the captured history contract. */
+    readIssueHistory: async (number) => {
+      const identified = (actor, revision) => {
+        if (typeof actor?.login !== 'string' || actor.login === '') throw new Error(`issue #${number}'s ${revision} has no login`);
+        return actor.login;
+      };
+      const found = issue(number);
+      if (!found && held.issues.length > 0) throw new Error(`the fake repository holds no issue #${number}, so readIssueHistory has nothing to read`);
+      const { createdAt, author, body, userContentEdits } = bodyHistoryOf(found ?? {});
+      return structuredClone({
+        opened: { at: createdAt, by: identified(author, 'opening revision') }, body,
+        revisions: userContentEdits.nodes.toReversed().map((edit, index) => {
+          if (edit.deletedAt === null && typeof edit.diff !== 'string') throw new Error(`issue #${number}'s revision ${index + 1} at ${edit.editedAt} has no available body`);
+          return { editedAt: edit.editedAt, editor: identified(edit.editor, `revision ${index + 1} at ${edit.editedAt}`), deleted: edit.deletedAt !== null, body: edit.diff };
+        }),
+      });
     },
     /** Issue `number`'s timeline, as `timelineNodes` holds it, each entry as the timeline read answers it. */
     readIssueTimeline: async (number) => {

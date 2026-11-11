@@ -77,6 +77,7 @@ export async function roleDispatch({ answer, cwd, directory, scratch, repository
       tier: answer.tier,
       prompt: `${answer.instruction}${answer.evidence}`,
       directory: cwd,
+      card,
       scratch: made,
       reach,
       ...(maker ? { gitDirectories: () => workspaces({ repository, emitter: sink.emitter({ layer: 'L0', card, dispatch: id }) }).gitDirectories(cwd) } : {}),

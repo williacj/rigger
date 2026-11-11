@@ -322,6 +322,8 @@ function answeringEach(answers) {
     if (command === 'gh' && args[0] === 'api') {
       const gate = gateAnswer(args);
       if (gate !== null) return gate;
+      const policy = eventPolicyAnswer(args);
+      if (policy !== null) return policy;
     }
     if (command === 'gh' && args[0] === 'api') return args[3].includes('fields(') ? STARTER_FIELDS() : UNSHARED_BOARD;
     assert.ok(Object.hasOwn(answers, command), `the test recorded no answer for \`${command}\``);
@@ -926,6 +928,8 @@ async function onFakeBoard(board, { source = starter(), project = STARTER_BOARD.
     if (command === 'gh' && args[0] === 'api') {
       const gate = gateAnswer(args);
       if (gate !== null) return gate;
+      const policy = eventPolicyAnswer(args);
+      if (policy !== null) return policy;
     }
     return spawnSync(command, args, { encoding: 'utf8', env: { ...gitEnvironment(), PATH: path } });
   };
@@ -1490,7 +1494,7 @@ async function gateReport(state = {}, source = starter()) {
 }
 
 test('gate line keeps its whole verdict for every deployment policy answer', async () => {
-  const pass = '  ok         gate check required: rigger/gate is required on main; environment gate, GATE_APP_ID and GATE_APP_PRIVATE_KEY pass';
+  const pass = '  ok         gate check required: rigger/gate is required on main; environment gate, GATE_APP_ID and GATE_APP_PRIVATE_KEY pass; Actions event policy "rigger gate events" covers .github/workflows/rigger-gate.yml and allows its events';
   const policyFault = "  failed     gate check required: environment gate's deployment-branch policy must admit only branch main";
   const unreadable = "  failed     gate check required: environment gate's deployment-branch policy list is absent, or not readable with this token";
   const missing = '  failed     gate check required: readEnvironment on board 12 failed: reading environment gate in acme/widgets, gh answered no deployment-branch policy';
@@ -1779,6 +1783,305 @@ test('gate line names a failed deployment policy read and an absent secret toget
   const { line } = await gateReport({ failures: { 'environments/gate/deployment-branch-policies?per_page=100&page=1': 'gh: policy denied (HTTP 403)' }, environment: { ...gateEnvironment(), secrets: [] } });
   assert.match(line, /^\s*failed\s.*readEnvironment.*policy denied/);
   assert.match(line, /GATE_APP_PRIVATE_KEY.*absent, or not readable with this token/);
+});
+
+// Table D (#1336): what `doctor` reports of the repository's own Actions event policy, on its one
+// gate line. The shapes are GitHub's, measured with gh 2.98.0 on 2026-11-09 against
+// williacj/rigger and williacj/rigger-prt-scratch at API version 2026-03-10: the list answers
+// `{ total_count, policies }` with each item lacking `conditions` and `rules`, which only the
+// detail read answers; the GraphQL repository read answers `visibility` and the owner's type.
+
+/** The gate workflow `init` forks, by the path a `workflow_path` condition names it with. */
+const GATE_WORKFLOW = '.github/workflows/rigger-gate.yml';
+
+/** The events the gate workflow template declares under `on:`, read from the template itself. */
+function templateEvents() {
+  const template = readFileSync(join(root, 'templates/github/workflows/rigger-gate.yml'), 'utf8').split('\n');
+  const from = template.indexOf('on:');
+  assert.notEqual(from, -1, 'the gate template declares no `on:` block');
+  const events = [];
+  for (const line of template.slice(from + 1)) {
+    if (line !== '' && !line.startsWith(' ')) break;
+    const event = /^ {2}([a-z_]+):/.exec(line)?.[1];
+    if (event) events.push(event);
+  }
+  assert.ok(events.length > 0, 'the gate template declares no event');
+  return events;
+}
+
+/** The gate's events, as the template states them on 2026-11-09, checked against it where used. */
+const GATE_EVENTS = ['pull_request_target', 'issue_comment', 'issues'];
+
+/** An event rule allowing `events`, as policy 12504's detail read answered it. */
+const eventRule = (events) => ({ type: 'restrict_action_events', parameters: { allowed_events: events } });
+
+/** What `eventPolicy` is given to answer a policy with no `conditions` key at all. */
+const NO_CONDITION = Symbol('no conditions key');
+
+/** Whether `policy` holds no `conditions` key, the premise of every no-condition case. */
+const unconditioned = (policy) => Object.hasOwn(policy, 'conditions') === false;
+
+/** A `workflow_path` condition, as policy 12504's detail read answered it. */
+const workflowPath = (include = [GATE_WORKFLOW], exclude = []) => ({ workflow_path: { exclude, include } });
+
+/**
+ * A policy as its detail read answers it, shaped as policy 12504 on williacj/rigger answered on
+ * 2026-11-09. `conditions: NO_CONDITION` leaves the key out, which is a policy targeting every
+ * workflow. `undefined` would not: a destructuring default takes its place.
+ */
+function eventPolicy({ id = 12504, name = 'rigger gate events', source_type = 'Repository', enforcement = 'active', conditions = workflowPath(), rules = [eventRule(GATE_EVENTS)] } = {}) {
+  const policy = {
+    id, name, target: 'actions', source_type, source: source_type === 'Repository' ? 'acme/widgets' : 'acme', enforcement, conditions, rules,
+    node_id: 'MDE0OkFjdGlvbnNSdWxlc2V0MTI1MDQ=', created_at: '2026-11-09T12:42:08.683-06:00', updated_at: '2026-11-09T12:42:08.851-06:00',
+    _links: { self: { href: `https://api.github.com/repos/acme/widgets/actions/policies/${id}` }, html: { href: `https://github.com/acme/widgets/settings/actions/rules/${id}` } },
+  };
+  if (conditions === NO_CONDITION) delete policy.conditions;
+  return policy;
+}
+
+/**
+ * A recorded-shape answer to one of the event-policy reads, or null for a request another check
+ * owns. A repository is public and owned by a user, holding option 1's policy, unless `state` says
+ * otherwise. A failure is answered as gh answered a policy read it was refused, on stderr.
+ */
+function eventPolicyAnswer(args, { visibility = 'PUBLIC', owner = 'User', policies = [eventPolicy()], failures = {} } = {}) {
+  if (args[1] === 'graphql') {
+    if (!args[3].includes('visibility')) return null;
+    return failures.visibility ?? answered({ repository: { visibility, owner: { __typename: owner } } });
+  }
+  const path = args[1].split('/').slice(3).join('/');
+  if (!path.startsWith('actions/policies')) return null;
+  if (failures[path]) return { status: 1, stdout: '{"message":"Not Found","status":"404"}', stderr: failures[path] };
+  const json = (body) => ({ status: 0, stdout: JSON.stringify(body), stderr: '' });
+  const listed = /^actions\/policies\?per_page=100&page=(\d+)$/.exec(path);
+  if (listed) {
+    const page = Number(listed[1]);
+    return json({ total_count: policies.length, policies: policies.slice((page - 1) * 100, page * 100).map(({ conditions, rules, ...item }) => item) });
+  }
+  const held = policies.find((policy) => path === `actions/policies/${policy.id}` && policy.source_type === 'Repository');
+  if (held) return json(held);
+  assert.fail(`unexpected policy read: ${args.join(' ')}`);
+}
+
+/**
+ * A complete doctor run with each event-policy read answered from `state`, recorded with what
+ * called the spawn, and every other check passing. It asserts the one gate line and that no other
+ * line names the event policy.
+ */
+async function policyReport(state = {}, environment = undefined) {
+  const fallback = answeringEach({ gh: RECORDED.ghIn, claude: RECORDED.agentIn, codex: CODEX.signedIn });
+  const sent = [];
+  const callers = [];
+  const ask = (command, args) => {
+    const policy = command === 'gh' && args[0] === 'api' ? eventPolicyAnswer(args, state) : null;
+    if (policy === null) {
+      if (environment !== undefined && command === 'gh' && args[0] === 'api') {
+        const gate = gateAnswer(args, { environment });
+        if (gate !== null) return gate;
+      }
+      return fallback(command, args);
+    }
+    sent.push(args);
+    callers.push(new Error().stack.split('\n')[2].trim().split(' ')[1]);
+    return policy;
+  };
+  const ran = await doctor({ ...against(checked(starter()), {}), ask });
+  const lines = linesOf(ran.text, 'gate check required');
+  assert.equal(lines.length, 1, ran.text);
+  const others = ran.text.split('\n').filter((line) => line !== lines[0]);
+  assert.deepEqual(others.filter((line) => /event polic|Actions polic|actions\/policies|workflow_path|allowed_events|enforcement/i.test(line)), [], ran.text);
+  return { ran, line: lines[0], sent, callers };
+}
+
+/** Every key path `value` holds, each written as `.key` or `[]` steps from its root. */
+function keyPaths(value, at = '', into = new Set()) {
+  if (Array.isArray(value)) for (const held of value) keyPaths(held, `${at}[]`, into);
+  else if (value !== null && typeof value === 'object') {
+    for (const [key, held] of Object.entries(value)) {
+      into.add(`${at}.${key}`);
+      keyPaths(held, `${at}.${key}`, into);
+    }
+  }
+  return into;
+}
+
+test('the event-policy fakes are shaped as gh printed the list, the detail and the visibility read on 2026-11-09', () => {
+  const printed = (file) => keyPaths(JSON.parse(readFileSync(join(root, 'test/fixtures', file), 'utf8')));
+  const unprinted = (answer, file) => [...keyPaths(JSON.parse(answer.stdout))].filter((path) => !printed(file).has(path));
+  const policies = [eventPolicy(), eventPolicy({ id: 2, conditions: NO_CONDITION }), eventPolicy({ id: 3, conditions: workflowPath(['~ALL'], ['.github/workflows/ci.yml']) })];
+  assert.ok(unconditioned(policies[1]), 'premise: policy 2 holds no conditions key');
+  const state = { policies };
+  const list = eventPolicyAnswer(['api', 'repos/acme/widgets/actions/policies?per_page=100&page=1', '-X', 'GET'], state);
+  assert.deepEqual(unprinted(list, 'rigger-actions-policies-2026-11-09.json'), []);
+  for (const { id } of policies) {
+    assert.deepEqual(unprinted(eventPolicyAnswer(['api', `repos/acme/widgets/actions/policies/${id}`, '-X', 'GET'], state), 'rigger-actions-policy-2026-11-09.json'), [], String(id));
+  }
+  const visibility = eventPolicyAnswer(['api', 'graphql', '-f', 'query=query { repository(owner: "acme", name: "widgets") { visibility owner { __typename } } }'], state);
+  assert.deepEqual(unprinted(visibility, 'rigger-visibility-2026-11-09.json'), []);
+});
+
+/** What the gate line says ahead of the event policy where every other gate setting passes. */
+const GATE_PASSES = '  ok         gate check required: rigger/gate is required on main; environment gate, GATE_APP_ID and GATE_APP_PRIVATE_KEY pass';
+
+test('the gate events doctor judges are the ones the gate workflow template declares', async () => {
+  assert.deepEqual([...templateEvents()].sort(), [...GATE_EVENTS].sort());
+  for (const dropped of templateEvents()) {
+    const { line } = await policyReport({ policies: [eventPolicy({ rules: [eventRule(templateEvents().filter((event) => event !== dropped))] })] });
+    assert.equal(line, `  failed     gate check required: Actions event policy "rigger gate events" covers ${GATE_WORKFLOW} and does not allow ${dropped}`, dropped);
+  }
+});
+
+test('Table D: a private or internal repository passes the event-policy axis, saying no event policy is required, and reads no policy', async () => {
+  for (const [visibility, said] of [['PRIVATE', 'private'], ['INTERNAL', 'internal']]) {
+    const { line, sent, ran } = await policyReport({ visibility, policies: [] });
+    assert.equal(line, `${GATE_PASSES}; acme/widgets is ${said}, so no Actions event policy is required`, visibility);
+    assert.deepEqual(sent.filter((args) => args[1] !== 'graphql'), [], visibility);
+    assert.equal(ran.code, 0, ran.text);
+  }
+});
+
+test('Table D: a visibility read that fails fails the gate line, naming the failed read', async () => {
+  const { line, sent } = await policyReport({ failures: { visibility: { status: 1, stdout: '', stderr: 'gh: Bad Gateway (HTTP 502)' } } });
+  assert.equal(line, '  failed     gate check required: readVisibility on board 12 failed: reading the visibility in acme/widgets, gh: Bad Gateway (HTTP 502)');
+  assert.deepEqual(sent.filter((args) => args[1] !== 'graphql'), []);
+});
+
+test('Table D: a page of the policy list that fails to read fails the gate line, naming the failed read', async () => {
+  for (const [title, policies, path] of [
+    ['first page', [eventPolicy()], 'actions/policies?per_page=100&page=1'],
+    ['second page', Array.from({ length: 101 }, (_, index) => eventPolicy({ id: index + 1 })), 'actions/policies?per_page=100&page=2'],
+  ]) {
+    const { line } = await policyReport({ policies, failures: { [path]: 'gh: Not Found (HTTP 404)' } });
+    assert.equal(line, '  failed     gate check required: readEventPolicies on board 12 failed: reading the Actions event policies in acme/widgets, gh: Not Found (HTTP 404)', title);
+  }
+});
+
+test('Table D: a detail read of one of its own policies that fails fails the gate line, naming that policy\'s id and the failed read, whatever another policy allows', async () => {
+  const policies = [eventPolicy({ id: 7 }), eventPolicy({ id: 12504, name: 'unread' })];
+  const { line } = await policyReport({ policies, failures: { 'actions/policies/12504': 'gh: Not Found (HTTP 404)' } });
+  assert.equal(line, '  failed     gate check required: readEventPolicies on board 12 failed: reading the Actions event policies in acme/widgets, policy 12504, gh: Not Found (HTTP 404)');
+});
+
+test('Table D: a public repository a user owns holding none of its own policies fails the gate line, naming the missing policy and where it is provisioned', async () => {
+  for (const policies of [[], [eventPolicy({ source_type: 'Organization' }), eventPolicy({ id: 9, source_type: 'Enterprise' })]]) {
+    const { line, sent } = await policyReport({ policies });
+    assert.equal(line, `  failed     gate check required: acme/widgets is public and holds no Actions event policy of its own; add one that covers ${GATE_WORKFLOW} and allows its events (ARCHITECTURE.md, "What the owner provisions")`);
+    assert.deepEqual(sent.filter((args) => /actions\/policies\/\d/.test(args[1])), []);
+  }
+});
+
+test('Table D: a public repository an organization owns holding none of its own policies is not asked, naming that only repository policies were read', async () => {
+  for (const policies of [[], [eventPolicy({ source_type: 'Organization' })]]) {
+    const { line, ran } = await policyReport({ owner: 'Organization', policies });
+    assert.equal(line, '  not asked  gate check required: acme/widgets holds no Actions event policy of its own, and only the repository\'s own policies were read, so one its organization or enterprise holds was not judged');
+    assert.equal(ran.code, 1, ran.text);
+  }
+});
+
+test('Table D: an active own policy covering the gate workflow and allowing every gate event passes the gate line', async () => {
+  for (const [title, conditions] of [
+    ['literal include', workflowPath()],
+    ['option 1', workflowPath([GATE_WORKFLOW, '.github/workflows/self-hosting.yml'])],
+    ['no condition', NO_CONDITION],
+    ['empty include', workflowPath([])],
+    ['~ALL include', workflowPath(['~ALL'])],
+    ['~ALL include, another workflow excluded', workflowPath(['~ALL'], ['.github/workflows/ci.yml'])],
+    ['~ALL include beside another pattern', workflowPath(['~ALL', '.github/workflows/ci.yml'])],
+  ]) {
+    const policy = eventPolicy({ conditions, rules: [eventRule([...GATE_EVENTS, 'push'])] });
+    assert.equal(unconditioned(policy), conditions === NO_CONDITION, `premise: ${title}`);
+    const { line, ran } = await policyReport({ policies: [policy] });
+    assert.equal(line, `${GATE_PASSES}; Actions event policy "rigger gate events" covers ${GATE_WORKFLOW} and allows its events`, title);
+    assert.equal(ran.code, 0, title);
+  }
+});
+
+test('Table D: an own policy covering the gate workflow passes beside one that covers another workflow only, or is disabled', async () => {
+  const policies = [
+    eventPolicy({ id: 1, name: 'ci events', conditions: workflowPath(['.github/workflows/ci.yml']), rules: [eventRule(['push'])] }),
+    eventPolicy({ id: 2, name: 'old', enforcement: 'disabled', rules: [eventRule(['push'])] }),
+    eventPolicy({ id: 3 }),
+  ];
+  const { line } = await policyReport({ policies });
+  assert.equal(line, `${GATE_PASSES}; Actions event policy "rigger gate events" covers ${GATE_WORKFLOW} and allows its events`);
+});
+
+test('Table D: when every covering own policy is disabled or evaluate, the gate line fails, naming the enforcement found', async () => {
+  const { line } = await policyReport({ policies: [eventPolicy({ id: 1, name: 'off', enforcement: 'disabled' }), eventPolicy({ id: 2, name: 'trial', enforcement: 'evaluate' })] });
+  assert.equal(line, `  failed     gate check required: Actions event policy "off" covers ${GATE_WORKFLOW} but its enforcement is disabled; Actions event policy "trial" covers ${GATE_WORKFLOW} but its enforcement is evaluate`);
+});
+
+test('Table D: a covering active own event rule lacking one of the gate\'s events fails the gate line, naming each missing event', async () => {
+  // The guard: the fixture's rule omits issue_comment and holds each of the gate's other events,
+  // so a doctor that accepted it would be accepting exactly one missing event.
+  const policy = eventPolicy({ rules: [eventRule(['pull_request_target', 'issues', 'push'])] });
+  const allowed = policy.rules[0].parameters.allowed_events;
+  assert.ok(templateEvents().includes('issue_comment') && !allowed.includes('issue_comment'), 'guard: the fixture rule must omit issue_comment');
+  assert.deepEqual(templateEvents().filter((event) => event !== 'issue_comment').filter((event) => !allowed.includes(event)), [], 'guard: the fixture rule must hold the gate\'s other events');
+  const { line, ran } = await policyReport({ policies: [policy] });
+  assert.equal(line, `  failed     gate check required: Actions event policy "rigger gate events" covers ${GATE_WORKFLOW} and does not allow issue_comment`);
+  assert.equal(ran.code, 1, ran.text);
+});
+
+test('Table D: a covering active rule lacking events fails the gate line even beside a policy that allows them all, naming every missing event', async () => {
+  const policies = [eventPolicy({ id: 1 }), eventPolicy({ id: 2, name: 'narrow', conditions: NO_CONDITION, rules: [eventRule(['push'])] })];
+  assert.ok(unconditioned(policies[1]), 'premise: the narrow policy holds no conditions key');
+  const { line } = await policyReport({ policies });
+  assert.equal(line, `  failed     gate check required: Actions event policy "narrow" covers ${GATE_WORKFLOW} and does not allow pull_request_target, issue_comment, issues`);
+});
+
+test('Table D: when own active policies exist and none covers the gate workflow, the gate line fails, naming that it is not covered', async () => {
+  for (const [title, conditions] of [
+    ['another workflow', workflowPath(['.github/workflows/ci.yml'])],
+    ['excluded literally', workflowPath([GATE_WORKFLOW], [GATE_WORKFLOW])],
+    ['~ALL less the gate', workflowPath(['~ALL'], [GATE_WORKFLOW])],
+  ]) {
+    const { line } = await policyReport({ policies: [eventPolicy({ conditions })] });
+    assert.equal(line, `  failed     gate check required: no active Actions event policy of acme/widgets's own covers ${GATE_WORKFLOW}`, title);
+  }
+});
+
+test('Table D: a workflow_path pattern other than the literal path, where coverage turns on it, is not asked, naming the pattern', async () => {
+  for (const [title, conditions, pattern] of [
+    ['glob include', workflowPath(['.github/workflows/*.yml']), '.github/workflows/*.yml'],
+    ['glob exclude', workflowPath([GATE_WORKFLOW], ['.github/workflows/rigger-*.yml']), '.github/workflows/rigger-*.yml'],
+  ]) {
+    const { line, ran } = await policyReport({ policies: [eventPolicy({ conditions })] });
+    assert.equal(line, `  not asked  gate check required: Actions event policy "rigger gate events" has the workflow_path pattern ${pattern}, which was not judged against ${GATE_WORKFLOW}`, title);
+    assert.equal(ran.code, 1, title);
+  }
+});
+
+test('Table D: an unjudged pattern beside another axis\'s fault makes the gate line failed, naming both', async () => {
+  const { line } = await policyReport({ policies: [eventPolicy({ conditions: workflowPath(['.github/workflows/*.yml']) })] }, null);
+  assert.equal(line, `  failed     gate check required: environment gate is absent, or not readable with this token; Actions event policy "rigger gate events" has the workflow_path pattern .github/workflows/*.yml, which was not judged against ${GATE_WORKFLOW}`);
+});
+
+test('Table D: a covering active own policy with no event rule fails the gate line, naming that it allows none of the gate\'s events', async () => {
+  const { line } = await policyReport({ policies: [eventPolicy({ rules: [{ type: 'restrict_actions_actors', parameters: { allowed_actors: [{ id: 1, type: 'User' }] } }] })] });
+  assert.equal(line, `  failed     gate check required: Actions event policy "rigger gate events" covers ${GATE_WORKFLOW} and has no restrict_action_events rule allowing its events`);
+});
+
+test('doctor reads every page of the policy list and a detail of only the repository\'s own policies', async () => {
+  const policies = [...Array.from({ length: 100 }, (_, index) => eventPolicy({ id: index + 1, source_type: 'Organization' })), eventPolicy({ id: 12504 })];
+  const { line, sent } = await policyReport({ policies });
+  assert.equal(line, `${GATE_PASSES}; Actions event policy "rigger gate events" covers ${GATE_WORKFLOW} and allows its events`);
+  assert.deepEqual(sent.filter((args) => args[1] !== 'graphql').map((args) => args[1]), [
+    'repos/acme/widgets/actions/policies?per_page=100&page=1',
+    'repos/acme/widgets/actions/policies?per_page=100&page=2',
+    'repos/acme/widgets/actions/policies/12504',
+  ]);
+});
+
+test('doctor sends each policy read, the list and every detail, as gh api <path> -X GET with the policy API version header, through the read runner', async () => {
+  const { sent, callers } = await policyReport({ policies: [eventPolicy(), eventPolicy({ id: 12505, name: 'second' })] });
+  const header = ['-X', 'GET', '-H', 'X-GitHub-Api-Version: 2026-03-10'];
+  assert.deepEqual(sent.filter((args) => args[1] !== 'graphql'), [
+    ['api', 'repos/acme/widgets/actions/policies?per_page=100&page=1', ...header],
+    ['api', 'repos/acme/widgets/actions/policies/12504', ...header],
+    ['api', 'repos/acme/widgets/actions/policies/12505', ...header],
+  ]);
+  assert.deepEqual([...new Set(callers)], ['readRunner']);
 });
 
 // The admission check (#962): what `doctor` reports of the admission directory, read through L3's

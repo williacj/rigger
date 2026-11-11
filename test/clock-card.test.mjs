@@ -74,6 +74,7 @@ test('a clock opening writes the marked owner card, adds it, moves it to Ready a
       '-f', `body=${composeClockMark(NAME, OCCURRENCE)}\n\n**Author:** owner\n\n## Acceptance\n\n${TEMPLATE.acceptance}`,
       '-f', 'labels[]=type:change'],
     ['add', 214], ['move', 'PVTI_214', 'Ready'],
+    ['open', 'gh', 'api', 'graphql', '-f', 'query=query { repository(owner: "williacj", name: "rigger") { issue(number: 214) { createdAt author { login } body userContentEdits(first: 100) { pageInfo { hasNextPage endCursor } nodes { editedAt editor { login } deletedAt diff } } } } }'],
   ]);
   assert.deepEqual(transitions(run), [{ layer: 'L2', event: 'transition', card: 214, dispatch: null, to: 'ready', cause: 'created' }]);
   const opening = run.events.find(({ layer, event, side }) => layer === 'L0' && event === 'call.end' && side === 'repository-write');
@@ -220,7 +221,8 @@ test('a three-label clock opening accepts a case-folded answer and sends every l
     labels: [{ name: 'type:change' }, { name: 'TIER:HIGH' }, { name: 'customer:one' }] }) });
   await assert.doesNotReject(async () => assert.equal(await run.open(), 214));
   assert.deepEqual(run.writes[0].slice(10), ['-f', 'labels[]=type:change', '-f', 'labels[]=tier:high', '-f', 'labels[]=customer:one']);
-  assert.deepEqual(run.writes.slice(1), [['add', 214], ['move', 'PVTI_214', 'Ready']]);
+  assert.deepEqual(run.writes.slice(1), [['add', 214], ['move', 'PVTI_214', 'Ready'],
+    ['open', 'gh', 'api', 'graphql', '-f', 'query=query { repository(owner: "williacj", name: "rigger") { issue(number: 214) { createdAt author { login } body userContentEdits(first: 100) { pageInfo { hasNextPage endCursor } nodes { editedAt editor { login } deletedAt diff } } } } }']]);
   assert.deepEqual(transitions(run), [{ layer: 'L2', event: 'transition', card: 214, dispatch: null, to: 'ready', cause: 'created' }]);
 });
 
