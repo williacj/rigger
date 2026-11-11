@@ -378,7 +378,7 @@ test('the pin reader reads the same commit from each YAML spelling and refuses z
   };
   for (const [name, env] of Object.entries(equivalent)) assert.equal(onePin(workflow(env)), sha, name);
   const plain = workflow(block(`  SELF_HOSTING_COMMIT: '${sha}'`));
-  assert.equal(onePin(`\uFEFF${plain}`), sha, 'a byte-order mark at the start');
+  assert.equal(onePin(`\uFEFF${block(`  SELF_HOSTING_COMMIT: '${sha}'`)}`), sha, 'a byte-order mark at the start, before env');
   assert.equal(onePin(plain.replace(/\n/g, '\r\n')), sha, 'CRLF line ends');
   assert.equal(onePin(workflow(block(`  SELF_HOSTING_COMMIT: '${sha}'`), { head: 'description: >-\n  folded\n  text\n' })), sha,
     'a block scalar on another top-level key');
@@ -421,6 +421,7 @@ test('the pin reader reads the same commit from each YAML spelling and refuses z
   assert.throws(() => onePin(workflow(block(`  # SELF_HOSTING_COMMIT: '${sha}'`))), /found 0/);
   // A no-break space is no YAML white space, so these name another key, and the workflow holds no pin.
   assert.throws(() => onePin(workflow(block(`  SELF_HOSTING_COMMIT\u00a0: ${sha}`))), /found 0/);
+  // A byte-order mark is stripped only at the very start; elsewhere it is part of the key it precedes.
   assert.throws(() => onePin(workflow(`\uFEFF${block(`  SELF_HOSTING_COMMIT: '${sha}'`)}`)), /found 0/);
   assert.throws(() => onePin(workflow(block(`  SELF_HOSTING_COMMIT: '${sha}'\n  "SELF_HOSTING_COMMIT": "${sha}"`))), /found 2/);
 });
