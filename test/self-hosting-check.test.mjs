@@ -75,7 +75,7 @@ test('the boundary rules parse the self-hosting script under the rules they hold
   }
 });
 
-/** `AGENTS.md`'s "Self-hosting" section at b94e3f72, #728's head, copied byte for byte. */
+/** A grouped fixture using the bullet paths and prose of b94e3f72's Self-hosting section. */
 const SELF_HOSTING_AT_B94E3F72 = `## Self-hosting
 
 Rigger builds Rigger, so two rules have teeth here. **Never run Rigger from this checkout**
@@ -85,6 +85,12 @@ this, and the worktree root belongs outside both the checkout and the package. *
 never dispatches a card that changes a path listed below.** Such a card merges only with a sound
 owner marker at its head, which the "self-hosting" check enforces. Once "rigger/gate" and
 "self-hosting" are green, the engine's lane may merge it (\`D25\` rules 5 and 7). The paths:
+
+### Paths that merge on their judges alone
+
+- Reviewed source: \`package.json\`.
+
+### Paths needing the owner's marker
 
 - The live gate: \`.githooks/\`; \`templates/githooks/\`; \`.github/workflows/rigger-gate.yml\` and
   \`templates/github/workflows/rigger-gate.yml\`; \`.github/workflows/self-hosting.yml\` and
@@ -100,19 +106,25 @@ of it is live until the pin moves.
 
 `;
 
-test('run on AGENTS.md\'s Self-hosting section at b94e3f72, the check reads exactly the eleven paths its bullets backtick, and none of the paragraph after them', () => {
-  const { paths } = listsOf(`# AGENTS.md\n\n${WHAT_BINDS}\n${SELF_HOSTING_AT_B94E3F72}`);
+// Choosing the first subsection instead of its name reads the judges-alone path in this fixture.
+test('the check reads the named marker group after a judges-alone group, including continued bullets and excluding prose', () => {
+  const markdown = `# AGENTS.md\n\n${WHAT_BINDS}\n${SELF_HOSTING_AT_B94E3F72}`;
+  const { paths } = listsOf(markdown);
   assert.deepEqual(paths, [
     '.githooks/', 'templates/githooks/', '.github/workflows/rigger-gate.yml', 'templates/github/workflows/rigger-gate.yml',
     '.github/workflows/self-hosting.yml', '.github/scripts/self-hosting-check.mjs', '.github/workflows/ci.yml',
     'rigger.config.mjs', '.codex/config.toml', 'templates/codex/', 'src/cli/rigger.mjs',
   ]);
+  const missing = markdown.replace("### Paths needing the owner's marker", '### Another group');
+  assert.match(listsOf(missing).problem, /no "Paths needing the owner's marker" heading/);
+  const empty = `${WHAT_BINDS}\n## Self-hosting\n### Paths needing the owner's marker\nA prose path: \`hook/\`.\n### Paths that merge on their judges alone\n- \`package.json\`\n`;
+  assert.match(listsOf(empty).problem, /"Paths needing the owner's marker" section holds no bullet naming a path/);
 });
 
-test('run on this repository\'s AGENTS.md at the head, the check reads a Self-hosting list holding .githooks/ and rigger.config.mjs', () => {
+test('run on this repository\'s AGENTS.md at the head, the marker group holds exactly the workflow paths and live config', () => {
   const { paths, problem } = listsOf(readFileSync(join(ROOT, 'AGENTS.md'), 'utf8'));
   assert.equal(problem, undefined);
-  for (const path of ['.githooks/', 'rigger.config.mjs']) assert.ok(paths.includes(path), paths.join(', '));
+  assert.deepEqual(paths, ['.github/workflows/', '.github/workflows/self-hosting.yml', 'rigger.config.mjs']);
 });
 
 test('run on this repository\'s AGENTS.md at the head, the check reads ARCHITECTURE.md and AGENTS.md as authored, and not docs/derived/test-matrix.md', () => {
@@ -127,7 +139,7 @@ test('the check reads as authored the backticked span of the Document cell of ea
   assert.deepEqual(documents, ['README.md', 'AGENTS.md']);
 });
 
-/** `AGENTS.md`'s "Self-hosting" section at 66e5b7c9, #1026's merge base, copied byte for byte. */
+/** A grouped fixture using the bullet paths and prose of 66e5b7c9's Self-hosting section. */
 const SELF_HOSTING_AT_66E5B7C9 = `## Self-hosting
 
 Rigger builds Rigger, so two rules have teeth here. **Never run Rigger from this checkout**
@@ -136,6 +148,8 @@ agent it dispatches can delete the runtime it is running under. \`npm link\` doe
 this, and the worktree root belongs outside both the checkout and the package. **The engine
 never dispatches a card that changes a path listed below** (\`D25\` rule 5); "Review and merge"
 says how one merges. The paths:
+
+### Paths needing the owner's marker
 
 - The live gate: \`.github/workflows/rigger-gate.yml\` and
   \`templates/github/workflows/rigger-gate.yml\`; \`.github/workflows/self-hosting.yml\` and
@@ -152,23 +166,29 @@ says how one merges. The paths:
 
 The gate's code is listed because it runs live (\`D25\` rule 6; \`ARCHITECTURE.md\`, "The gate").
 
+### Paths that merge on their judges alone
+
+- Reviewed source: \`package.json\`.
+
 `;
 
-test('a diff touching src/substrate/forge/runners.mjs touches a Self-hosting path under this repository\'s AGENTS.md at the head, and none under its Self-hosting section at 66e5b7c9', () => {
+test('a diff touching src/substrate/forge/runners.mjs touches no marker path at the head or in the grouped section at 66e5b7c9', () => {
   const diff = diffOf({ 'src/substrate/forge/runners.mjs': 'one\n' }, (root) => put(root, 'src/substrate/forge/runners.mjs', 'two\n'));
   const head = listsOf(readFileSync(join(ROOT, 'AGENTS.md'), 'utf8'));
   assert.equal(head.problem, undefined);
-  assert.deepEqual(touchedIn(diff, head.paths), { touched: ['src/substrate/forge/runners.mjs'] });
+  assert.deepEqual(touchedIn(diff, head.paths), { touched: [] });
   const base = listsOf(`# AGENTS.md\n\n${WHAT_BINDS}\n${SELF_HOSTING_AT_66E5B7C9}`);
   assert.equal(base.problem, undefined);
   assert.deepEqual(touchedIn(diff, base.paths), { touched: [] });
 });
 
-test('the check fails, naming why, when it cannot read either section: no Self-hosting section, one with no bullet naming a path, no What binds section, or one with no table holding Document and Authority columns', () => {
-  const hosting = '## Self-hosting\n\n- The live gate: `.githooks/`.\n';
+test('the check refuses unreadable sections, an empty marker group and malformed What binds tables, naming why', () => {
+  const hosting = "## Self-hosting\n\n### Paths needing the owner's marker\n\n- The live gate: `.githooks/`.\n";
   const cases = [
     [WHAT_BINDS, /no "Self-hosting" section/],
-    [`${WHAT_BINDS}\n## Self-hosting\n\nThe paths are \`.githooks/\`, in prose.\n`, /"Self-hosting" section holds no bullet naming a path/],
+    [`${WHAT_BINDS}\n## Self-hosting\n\n### Paths needing the owner's marker\n\nThe paths are \`.githooks/\`, in prose.\n`, /"Paths needing the owner's marker" section holds no bullet naming a path/],
+    [`${WHAT_BINDS}\n## Self-hosting\n### Paths needing the owner's marker\n- Decision: \`D35\`.\n`, /"Paths needing the owner's marker" section holds no bullet naming a path/],
+    [`${WHAT_BINDS}\n## Self-hosting\n### Paths needing the owner's marker\n- Status: \`self-hosting\`.\n`, /"Paths needing the owner's marker" section holds no bullet naming a path/],
     [hosting, /no "What binds" section/],
     [`## What binds\n\nNo table.\n\n${hosting}`, /"What binds" section holds no table with a Document and an Authority column/],
     [`## What binds\n\n| Document | Authority |\n|---|---|\n\n${hosting}`, /"What binds" table holds no row/],
@@ -297,8 +317,8 @@ const PULL = 12;
 const BRANCH = `rigger-${CARD}`;
 const HEAD = 'c'.repeat(40);
 
-/** An `AGENTS.md` listing `.githooks/` and `rigger.config.mjs` under "Self-hosting", and `extra` too. */
-const agentsListing = (...extra) => `# AGENTS.md\n\n${WHAT_BINDS}\n## Self-hosting\n\n- The live gate: \`.githooks/\`.\n- The live config: \`rigger.config.mjs\`.\n${extra.map((path) => `- Another: \`${path}\`.\n`).join('')}\n## Version control\n\nBranch for every piece of work.\n`;
+/** The fixture's marker group lists two paths and extras; its other group lists an unprotected path. */
+const agentsListing = (...extra) => `# AGENTS.md\n\n${WHAT_BINDS}\n## Self-hosting\n\n### Paths needing the owner's marker\n\n- The live gate: \`.githooks/\`.\n- The live config: \`rigger.config.mjs\`.\n${extra.map((path) => `- Another: \`${path}\`.\n`).join('')}\n### Paths that merge on their judges alone\n\n- Other: \`docs/notes.md\`.\n\n## Version control\n\nBranch for every piece of work.\n`;
 
 /** A config as the module text a repository holds. */
 const moduleOf = (config) => `export default ${JSON.stringify(config, null, 2)};\n`;
@@ -539,7 +559,9 @@ test('where the default branch\'s AGENTS.md is absent, or its lists cannot be re
   const cases = [
     [{ 'rigger.config.mjs': MAIN['rigger.config.mjs'] }, /^`AGENTS.md` is absent from the default branch, main at [0-9a-f]{40}$/],
     [{ ...MAIN, 'AGENTS.md': WHAT_BINDS }, /^`AGENTS.md` holds no "Self-hosting" section, on the default branch, main at [0-9a-f]{40}$/],
-    [{ ...MAIN, 'AGENTS.md': '## Self-hosting\n\n- `.githooks/`\n' }, /^`AGENTS.md` holds no "What binds" section, on the default branch/],
+    [{ ...MAIN, 'AGENTS.md': `${WHAT_BINDS}\n## Self-hosting\n- \`.githooks/\`\n` }, /^`AGENTS\.md`'s "Self-hosting" section holds no "Paths needing the owner's marker" heading, on the default branch/],
+    [{ ...MAIN, 'AGENTS.md': `${WHAT_BINDS}\n## Self-hosting\n### Paths needing the owner's marker\n- Status: \`self-hosting\`.\n` }, /^`AGENTS\.md`'s "Paths needing the owner's marker" section holds no bullet naming a path, on the default branch/],
+    [{ ...MAIN, 'AGENTS.md': "## Self-hosting\n\n### Paths needing the owner's marker\n\n- The live gate: `.githooks/`.\n" }, /^`AGENTS.md` holds no "What binds" section, on the default branch/],
   ];
   for (const [main, pattern] of cases) assertRefused(checked(forge({ main, pullRequests: [pullFrom({ diff: changing('docs/notes.md') })] })), pattern);
 });
@@ -616,4 +638,40 @@ test('where the head moved after the owner\'s marker, the check fails a pull req
   const moved = 'e'.repeat(40);
   assertRefused(checked(forge({ pullRequests: [pullFrom({ sha: moved, comments: [ownerMarker({ head: HEAD })] })] })), new RegExp(`^owner: stale head: ${HEAD}; current head: ${moved}$`), moved);
   assertPassed(checked(forge({ pullRequests: [pullFrom({ sha: moved, comments: [ownerMarker({ head: HEAD }), ownerMarker({ head: moved })] })] })), moved);
+});
+
+/** The actual policy supplied as the fake forge's default-branch AGENTS.md. */
+const headPolicy = () => ({ ...MAIN, 'AGENTS.md': readFileSync(join(ROOT, 'AGENTS.md'), 'utf8') });
+
+// An arbitrary workflow must be protected even when its filename is absent from the policy.
+test('the head policy requires the owner marker for workflows and config, and admits a sound marker', () => {
+  const main = headPolicy();
+  for (const path of ['.github/workflows/another.yml', '.github/workflows/self-hosting.yml', 'rigger.config.mjs']) {
+    assertRefused(checked(forge({ main, pullRequests: [pullFrom({ diff: changing(path) })] })), /^owner: no marker$/);
+    assertPassed(checked(forge({ main, pullRequests: [pullFrom({ diff: changing(path), comments: [ownerMarker()] })] })));
+  }
+});
+
+// One representative of each bulleted file or directory in P4's judges-alone group.
+test('the head policy passes every judges-alone path without an owner marker', () => {
+  const main = headPolicy();
+  for (const path of [
+    '.github/scripts/check-test-list-growth.mjs', '.github/scripts/self-hosted-job-guard.cjs',
+    '.githooks/pre-commit', 'test/suite.sh', 'package.json', 'test/suite-guard.cjs',
+    'test/suite-path.cjs', '.codex/config.toml', 'tools/coordinator/maker.sh',
+  ]) {
+    const ran = checked(forge({ main, pullRequests: [pullFrom({ diff: changing(path) })] }));
+    assert.equal(ran.status, 0, `${path}: ${ran.stdout}${ran.stderr}`);
+    assertPassed(ran);
+  }
+});
+
+// Source named only in prose must not become a marker path.
+test('the head policy passes src/workflow/gate.mjs and the check source without an owner marker', () => {
+  const main = headPolicy();
+  for (const path of ['src/workflow/gate.mjs', '.github/scripts/self-hosting-check.mjs']) {
+    const ran = checked(forge({ main, pullRequests: [pullFrom({ diff: changing(path) })] }));
+    assert.equal(ran.status, 0, `${path}: ${ran.stdout}${ran.stderr}`);
+    assertPassed(ran);
+  }
 });

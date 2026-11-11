@@ -830,9 +830,10 @@ the acceptance digest and the items itself, with the functions the gate script a
 `self-hosting` check build them with. A judge Rigger did not dispatch takes them, and the provider
 required of it, from the gate check's run summary. The owner's marker carries no provider.
 
-The verb runs the Rigger the owner installed. The gate runs the Rigger it pins (`D25` rule 6), and
-this repository's `self-hosting` check runs the default branch's tree. Where either reads a card's
-acceptance differently from the verb, that check refuses the owner's verdict, naming why.
+The verb runs the Rigger the owner installed. The gate runs the Rigger it pins, and this
+repository's `self-hosting` check runs the commit its own workflow pins (`D35` rule 6). Where
+either reads a card's acceptance differently from the verb, that check refuses the owner's
+verdict, naming why.
 
 The verb asks for its confirmation only on a terminal at its standard input, and reads the answer
 there. No process L0 starts has a terminal at its standard input. A process under one that opens a
@@ -879,11 +880,17 @@ Two jobs post: the gate workflow's, and this repository's own `self-hosting` che
 either posting job runs an action, so no code but the workflow's own runs in a job the key reaches.
 
 This repository's `self-hosting` check is its own and does not ship. Its script lives under
-`.github/scripts/`. An inline step fetches the tree at the commit the run's workflow file was read
-from, a commit of the default branch. The check runs from that tree, never from a pinned install,
-because it rules on this repository's own lists. It takes the gate script's card resolution,
-mapping and config read from that tree. It reads the lists at the default-branch commit it read
-the config at, and reaches the forge through L0's read side alone.
+`.github/scripts/`. The check's workflow pins the commit of this repository its code runs from,
+in a value of its own (`D35` rule 6). An inline step fetches the tree at that commit, and the
+check runs from that tree with no install. It never runs from the default branch's tree, nor from
+the pull request's head. It takes the gate script's card resolution, mapping and config read from
+that tree. It reads the lists at the default-branch commit it read the config at, and reaches the
+forge through L0's read side alone.
+
+The check's code and the lists it reads therefore come from different commits. Where the lists
+take a form the pinned code cannot read, the check refuses, naming why. A pull request that
+changes that form moves the pin in the same merge. The pin names a commit the default branch
+reaches once that pull request merges. Changing the pin changes the live check.
 
 Both `rigger/gate` and, in this repository, `self-hosting` are posted with the App's token. Each
 of those two contexts is pinned to the App's id. Pinned to GitHub Actions' integration, 15368,
