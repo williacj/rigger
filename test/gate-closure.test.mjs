@@ -120,13 +120,55 @@ test('literal file imports use Node URL decoding and follow absolute paths and f
   assert.deepEqual(result.bare, []);
 });
 
-/** The commit `.github/workflows/self-hosting.yml` pins for the check's code, as its env names it. */
-function checkPin() {
-  const workflow = readFileSync(join(ROOT, '.github/workflows/self-hosting.yml'), 'utf8');
-  const pins = [...workflow.matchAll(/^ {2}SELF_HOSTING_COMMIT: '([0-9a-f]{40})'$/gm)].map((match) => match[1]);
+/**
+ * The values `SELF_HOSTING_COMMIT` takes in a workflow's top-level `env` map, however YAML spells the
+ * scalar: single, double or no quotes, any indentation of the map, and a trailing comment.
+ */
+function pinsIn(workflow) {
+  const lines = workflow.split(/\r?\n/);
+  const start = lines.findIndex((line) => /^env:\s*(#.*)?$/.test(line));
+  if (start === -1) return [];
+  const pins = [];
+  let indent;
+  for (const line of lines.slice(start + 1)) {
+    if (/^\s*(#.*)?$/.test(line)) continue;
+    const depth = line.match(/^ */)[0].length;
+    if (depth === 0) break;
+    indent ??= depth;
+    if (depth !== indent) continue;
+    const entry = line.slice(depth).match(/^SELF_HOSTING_COMMIT\s*:\s*('([^']*)'|"([^"]*)"|([^\s#'"][^#]*?))\s*(#.*)?$/);
+    if (entry) pins.push(entry[2] ?? entry[3] ?? entry[4]);
+  }
+  return pins;
+}
+
+/** The one commit a workflow pins for the check's code; zero pins or several are refused. */
+function onePin(workflow) {
+  const pins = pinsIn(workflow);
   assert.equal(pins.length, 1, `one SELF_HOSTING_COMMIT pin, found ${pins.length}`);
   return pins[0];
 }
+
+/** The commit `.github/workflows/self-hosting.yml` pins for the check's code. */
+const checkPin = () => onePin(readFileSync(join(ROOT, '.github/workflows/self-hosting.yml'), 'utf8'));
+
+// A reader tied to one quoting or indentation fails both pin tests on an equivalent workflow.
+test('the pin reader reads the same commit from each YAML spelling and refuses zero or two pins', () => {
+  const sha = 'c1e4833fd3bfdafef68590c48ad88571a3d3c885';
+  const workflow = (entry) => `name: self-hosting\non:\n  push:\nenv:\n${entry}\n  TREE: tree\njobs:\n  check:\n    env:\n      SELF_HOSTING_COMMIT: 'other'\n`;
+  for (const entry of [
+    `  SELF_HOSTING_COMMIT: '${sha}'`,
+    `  SELF_HOSTING_COMMIT: "${sha}"`,
+    `  SELF_HOSTING_COMMIT: ${sha}`,
+    `  SELF_HOSTING_COMMIT: '${sha}' # the check's code`,
+    `  SELF_HOSTING_COMMIT: ${sha}  # the check's code`,
+    `  # The commit that supplies the scripts.\n  SELF_HOSTING_COMMIT:   "${sha}"`,
+  ]) assert.equal(onePin(workflow(entry)), sha, entry);
+  const indented = `env:\n    NODE_MAJOR: '24'\n    SELF_HOSTING_COMMIT: "${sha}"\njobs:\n  check:\n`;
+  assert.equal(onePin(indented), sha);
+  assert.throws(() => onePin(workflow(`  # SELF_HOSTING_COMMIT: '${sha}'`)), /found 0/);
+  assert.throws(() => onePin(workflow(`  SELF_HOSTING_COMMIT: '${sha}'\n  SELF_HOSTING_COMMIT: "${sha}"`)), /found 2/);
+});
 
 // A pin the default branch does not reach, such as a squash-merged pull request's own head
 // commit, still fetches through codeload (D35 rule 6's reversal names such a move).
