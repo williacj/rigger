@@ -616,7 +616,7 @@ test('a merge answer takes a claim, records its pull and holds no slot, leaving 
     const fired = mode === 'pull' ? built.loop.pull() : built.loop.run();
     await settling(built, settledOf(fired));
 
-    assert.deepEqual(built.decisions.find(({ card }) => card === 82)?.action, { action: 'merge', pull: 182, head });
+    assert.deepEqual(built.decisions.find(({ card }) => card === 82)?.action, { action: 'merge', pull: 182, head, digest: 'e8328625667a5f466d3cae9f480e1f4b22b17b98d8d0736d99ad445226be38e5', verdicts: [{ role: 'owner', verdict: 'sound' }] });
     assert.deepEqual(built.dispatches.started, [95], `${mode} starts the Ready maker past merge`);
     assert.deepEqual(built.l3Events().filter(({ event }) => event === 'pull').map(({ card, inFlight }) => ({ card, inFlight })), [{ card: 82, inFlight: 0 }, { card: 95, inFlight: 1 }]);
     assert.deepEqual(cardsOf(built, 'slot.release').filter((card) => card === 82), []);
