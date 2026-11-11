@@ -564,3 +564,125 @@ JavaScript quote escapes, so its decoded line is exact without the census's raw-
 mistaking the fixture for a real import. No census or runner edit is required. The final PR
 records the head-bound receipts, proof comparison, hook, whole-host, named-host, fresh-clone,
 CI and body-check results. Earlier receipts keep their original heads and revised acceptance.
+
+
+## M8-U23 and M8-U24: wrappers, process access and whole-text pins
+
+The current acceptance is d9f71b0b31f5. The ordinary merge of main at 7a2c8f95
+produced d2bd7d50 without conflicts. Its hook measured 5896 passing deterministic cases,
+zero failures and zero skips (1300-r6-u24-merge-main.log). These revisions authorize
+changes to this guard, not production repairs or a return to value tracking.
+
+P7 derives enclosing functions from reviewed starter calls, then reviewed wrapper calls,
+until no function or exported name is added. Declaration/import bindings distinguish a local
+identifier from a wrapper. The exemption does not apply to keys, member names, module names
+or cooked strings/templates. Thus terminal `.once` and signalling `.kill` candidates are
+conservatively included when their spelling collides with a derived wrapper. N8 labels are
+closed program-family declarations, not a claim that those terminal or signal calls start a
+process. The actual empty set of starts at such a collision lies within its declared bound.
+
+The diagnostic AST search at dirty d2bd7d50 measured 58 closure modules, 98 named wrapper
+records, 923 reviewed lines and 1330 mentions. It found 177 call/new candidates on 168
+physical lines; the retained search includes every complete argument expression, including
+nested calls. The PR records the same measurements and line references at the committed head.
+All added inventory lines were read and given a reason. The inventory is still literal and
+its admission keys are file, exact line text, mention count and unused entry capacity.
+
+P8 admits only listed literal members of process. Bare process, aliases, destructuring,
+reflective reads and unknown members fail. N4 continues to refuse computed access on the
+global object itself. P9 protects the seven carrier names the owner listed. Four pins cover
+exact parser statement ranges, including export and internal comments, excluding leading
+comments. The packaged process-table.sh has a whole-file pin. A duplicate is diagnosed even
+when duplicate exports make the JavaScript module invalid; copies inside comments do not
+consume a pin. The character matrix changes each character of a fixture statement and file,
+and samples every real pin against independently checked parser ranges.
+
+The first semantic reds at dirty d2bd7d50 are u24-P9-red, u24-P8-mentions-red,
+u24-P7-red, u24-N8-wrappers-red, u24-pins-red's changed-character assertion and
+u24-S28-red's S15 assertion. Their complete 1300-r6-prefixed logs, exact input bytes,
+commands, diffs and producer/tee exits remain retained. The duplicate-export SyntaxError in
+the first pin run earns no semantic red credit. u24-P8-access-red used an invalid positive
+fixture against N4, and u24-P8-access-green exposed an old bare-global.process positive;
+neither earns red credit. They were corrected to the card's P8/N4 contract. The first pin
+green attempt exposed an unchanged x-to-x script fixture byte; the corrected fixture changes
+every byte. No failing test body was deleted. The final affected-file run measured 31
+passing named verdicts, zero failures and zero skips (1300-r6-u24-final-named.log).
+
+### Row disposition against the current merge base 7a2c8f95
+
+"Needed guard" means new tripwire/refusal proof, with production source holding at the base.
+No row needed a production change under the current card. Prior source changes and evidence
+remain historical; the current PR has no production delta.
+
+| Row | Held or needed a change |
+|---|---|
+| N1 | Held local built-ins and host-only native import; needed guard. |
+| N2 | Held traversable static and literal-import closure; needed guard. |
+| N3 | Held the one consumerConfig exception; needed guard. |
+| N4 | Held the named globals and lexical distinction; needed guard. |
+| N5 | Held absence of hidden loaders; needed guard. |
+| N6 | Held absence of eval and Function; needed guard. |
+| N8 | Held closed tool families and configured shell input; needed wrapper-call declarations and the new guard/pins, with no source repair. |
+| N9 | Out: tool internals, unchanged. |
+| N10 | Out: consumer step contents, unchanged. |
+| N11 | Held target-only consumer loading; needed parsed-value, absent-root and special-path proof. |
+| N12 | Out: no shipped native addons; unchanged. |
+| N13 | Out: the card’s computed/reflective/data routes; unchanged. |
+| N14 | Out: account NODE_OPTIONS; unchanged. |
+| P1 | Needed guard for runCommand. |
+| P2 | Needed guard for native starter names and namespace. |
+| P3 | Needed guard for dispatch environment names. |
+| P4 | Needed guard for the engine env member. |
+| P5 | Needed guard for URL and __proto__. |
+| P6 | Needed guard for configured producers and step/program names. |
+| P7 | Needed fixed-point wrapper derivation and scoped identifier exemption. |
+| P8 | Needed listed literal process-member checks. |
+| P9 | Needed guard for all seven named program/options carriers. |
+| S1 | Needed exact fixture refusal proof for RA returned/callback/class/Map/promise origins; no production change. |
+| S2 | Needed exact fixture refusal proof for RB environment carriers; no production change. |
+| S3 | Needed exact fixture refusal proof for RC step carriers; no production change. |
+| S4 | Needed exact fixture refusal proof for RD configured run declaration; no production change. |
+| S5 | Needed exact fixture refusal proof for RE native namespace return; no production change. |
+| S6 | Needed exact fixture refusal proof for RF judge step producer; no production change. |
+| S7 | Needed exact fixture refusal proof for member store and default; no production change. |
+| S8 | Needed exact fixture refusal proof for spread step replacement; no production change. |
+| S9 | Needed exact fixture refusal proof for template env and URL prototype routes; no production change. |
+| S10 | Needed exact fixture refusal proof for step producer return replacement; no production change. |
+| S11 | Needed exact fixture refusal proof for shell argument replacement; no production change. |
+| S12 | Needed exact fixture refusal proof for shell program replacement; no production change. |
+| S13 | Needed exact fixture refusal proof for native getter object; no production change. |
+| S14 | Needed exact fixture refusal proof for escaped templates; no production change. |
+| S15 | Needed exact fixture refusal proof for duplicate step args; no production change. |
+| S16 | Needed exact fixture refusal proof for pre-merge set environment write; no production change. |
+| S17 | Needed exact fixture refusal proof for new asked caller; no production change. |
+| S18 | Needed exact fixture refusal proof for runCommand args rewrite; no production change. |
+| S19 | Needed exact fixture refusal proof for process.execve; no production change. |
+| S20 | Needed exact fixture refusal proof for process.loadEnvFile; no production change. |
+| S21 | Needed exact fixture refusal proof for new startsIn caller; no production change. |
+| S22 | Needed exact fixture refusal proof for host lsof program; no production change. |
+| S23 | Needed exact fixture refusal proof for yield tool replacement; no production change. |
+| S24 | Needed exact fixture refusal proof for spread host ps override; no production change. |
+| S25 | Needed exact fixture refusal proof for PS_ENV preload; no production change. |
+| S26 | Needed exact fixture refusal proof for dispatch args rewrite; no production change. |
+| S27 | Needed exact fixture refusal proof for process alias; no production change. |
+| S28 | Needed exact fixture refusal proof for process destructuring; no production change. |
+| A1 | Held real/effective uid equality; no source change. |
+| A2 | Held real/effective gid equality; no source change. |
+| A3 | Held supplementary group equality; no source change. |
+| A4 | Held absence of uid/gid native options; no source change. |
+| A5 | Held adapter paths and inherited values; no source change. |
+| A6 | Held absence of either set-id file bit; no source change. |
+| A7 | Out: account grants, unchanged. |
+| A8 | Out: existing owner auth link, unchanged. |
+
+### Adjacent search and the owner’s stop rule
+
+U24 Q56 accepts a value reaching a reviewed sink through an unprotected carrier as a known
+limit. The search found mutable git/args carriers immediately before the reviewed workspace
+runCommand call; reader returns options spread into reviewed census starts; and forge runner
+send parameters default to throughL0 but are distinct declarations. These are recorded limits,
+not value-flow claims or reasons to add names or pins beyond the card. The PR records their
+current source lines and guarded guard-only observations. Attack code is parsed, never called.
+
+The final-head receipts, proof comparison, hook, full and named host checks, fresh-clone
+verification, CI, and body checker are recorded in the PR after the one implementation push.
