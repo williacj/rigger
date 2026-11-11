@@ -326,7 +326,7 @@ test('after run exits, the state directory holds the event stream and L1\'s reco
   const ran = run(FOUR_READY, { concurrency: 3 });
 
   assert.match(ran.err, /claimed #10\b/, ran.err);
-  assert.deepEqual(readdirSync(join(ran.consumer, '.rigger')).sort(), ['events.jsonl', 'groups.json']);
+  assert.deepEqual(readdirSync(join(ran.consumer, '.rigger')).sort(), ['events.jsonl', 'groups.json', 'output']);
 });
 
 test('given a board with no ready card, a second run claims the cards the first left in the coding column', async () => {

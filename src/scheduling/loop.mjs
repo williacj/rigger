@@ -8,6 +8,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { roleDispatch } from '../execution/role.mjs';
+import { keepOutput } from '../execution/kept-output.mjs';
 import { LINE_DELETED, LINE_MOVED, SCRATCH_REFUSED } from '../execution/workspace.mjs';
 import { dispatch as dispatchOnL1 } from '../execution/run.mjs';
 import { stepDispatch } from '../execution/step.mjs';
@@ -647,6 +648,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       return dispatchOnL1({ id, card: card.number, directory: state, sink, host, readTimeout, ...handed });
     };
     const [outcome] = await Promise.allSettled([run()]);
+    const result = outcome.status === 'fulfilled' ? outcome.value : outcome.reason?.result;
+    if (result !== undefined) keepOutput({ directory: state, id, card: card.number, sink, result });
     return { ...outcome, dispatch: id };
   };
 

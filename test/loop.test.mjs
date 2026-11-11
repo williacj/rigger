@@ -2825,7 +2825,7 @@ test('after `loop`\'s single pull returns, the state directory holds nothing but
     await release();
 
     assert.ok(claimed.length > 0, String(limit));
-    assert.deepEqual(readdirSync(built.directory, { recursive: true }), ['events.jsonl', 'groups.json'], String(limit));
+    assert.deepEqual(readdirSync(built.directory, { recursive: true }).filter((path) => !/^output(?:\/d-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?:\/(?:stdout|stderr))?)?$/.test(path)), ['events.jsonl', 'groups.json'], String(limit));
     built.phaseTrace.push({ phase: 'directory.asserted', at: performance.now(), files: readdirSync(built.directory, { recursive: true }) });
   }
   bodyEnd = performance.now();
@@ -3565,7 +3565,7 @@ test('after a `loop`\'s single pull the sink refused, followed by one it accepte
   built.dispatches.releaseAll();
   await next;
 
-  assert.deepEqual(readdirSync(built.directory, { recursive: true }), ['events.jsonl', 'groups.json']);
+  assert.deepEqual(readdirSync(built.directory, { recursive: true }).filter((path) => !/^output(?:\/d-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?:\/(?:stdout|stderr))?)?$/.test(path)), ['events.jsonl', 'groups.json']);
 });
 
 test('a start whose pull event the sink refused writes no release event once the sink accepts again, so no release event lacks its pull', async () => {
