@@ -871,6 +871,18 @@ function agentArgs(state, args) {
 /** The body a `--body` or `--body-file` gives, reading standard input for a file named `-`. */
 const bodyOf = (flags, cwd, input) => flags.body ?? (flags.bodyFile === undefined ? undefined : (flags.bodyFile === '-' ? input() : readFileSync(isAbsolute(flags.bodyFile) ? flags.bodyFile : resolve(cwd, flags.bodyFile), 'utf8')));
 
+/**
+ * `gh issue comment --help` (read 2026-11-10) names --body-file as the body text's source.
+ * The existing REST writer owns the issue model and its refusals for this CLI route too.
+ */
+async function issueComment(board, state, args, now, cwd, input) {
+  if (args.length !== 5 || !/^[1-9][0-9]*$/.test(args[2]) || args[3] !== '--body-file') throw new NotModelled(args);
+  const body = bodyOf({ bodyFile: args[4] }, cwd, input);
+  const rest = ['api', `repos/${state.repo}/issues/${args[2]}/comments`, '-X', 'POST', '-f', `body=${body}`];
+  const made = JSON.parse(await COMMANDS[commandOf(rest)](board, state, rest, now));
+  return `https://github.com/${state.repo}/issues/${args[2]}#issuecomment-${made.id}\n`;
+}
+
 /** The time `gh` is answered at, to the second, as GitHub writes one. */
 const now = () => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
 
@@ -1038,7 +1050,7 @@ export async function answerFakeGh(statePath, args, { now, cwd, input, gate } = 
   state.sent.push(args);
   writeFileSync(statePath, JSON.stringify(state));
   if (gate) await gate('recorded');
-  const answer = COMMANDS[commandOf(args)] ?? (args[0] === 'pr' && Object.hasOwn(AGENT_COMMANDS, args[1]) ? AGENT_COMMANDS[args[1]] : undefined);
+  const answer = COMMANDS[commandOf(args)] ?? (args[0] === 'issue' && args[1] === 'comment' ? issueComment : args[0] === 'pr' && Object.hasOwn(AGENT_COMMANDS, args[1]) ? AGENT_COMMANDS[args[1]] : undefined);
   if (!answer) {
     return { status: 1, stdout: '', stderr: `the fake gh does not model \`${spelled(args)}\`\n` };
   }

@@ -281,7 +281,7 @@ In this table, "the labels" are the labels a clock trigger's card template carri
 | R-WORK-15 | — the line of work the worktree holds is exactly the card's; | the engine | the test suite | |
 | R-WORK-16 | — it is not the worktree Rigger was handed as the repository, whatever line of work that worktree holds; | the engine | the test suite | |
 | R-WORK-17 | — no other worktree of the repository, the handed one included, lies inside it. | the engine | the test suite | |
-| R-WORK-18 | Rigger moves a card to review only once its maker has exited successfully and the forge holds an open pull request from the card's line of work. A maker that exits successfully with no such pull request leaves the card where it was, and Rigger names the card and why. | the engine | the test suite | |
+| R-WORK-18 | Rigger moves a card to review only once its maker has exited successfully and the forge holds an open pull request from the card's line of work. Except as `R-LOOP-21` to `R-LOOP-24` give, a maker that exits successfully with no such pull request leaves the card where it was, and Rigger names the card and why. | the engine | the test suite | |
 | R-WORK-19 | Rigger never starts a card's work from the beginning while the forge holds the card's line of work, or a merged pull request from it. It refuses the card, naming it and what the forge holds. | the engine | the test suite | D10 |
 | R-WORK-20 | Where a directory is at the path of the directory Rigger makes for a judge's dispatch, and any condition below does not hold, Rigger dispatches no judge there, names the path, and changes nothing. Rigger replaces that directory only when all of these hold: | the engine | the test suite | |
 | R-WORK-21 | — everything in it is a worktree added to the repository Rigger works, each at a detached commit; | the engine | the test suite | |
@@ -445,6 +445,10 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | R-LOOP-17 | An agent judge whose entry carries a provider rule runs on the provider that rule gives: the fixed provider, or the one the rule names for the provider its maker runs on. | the engine | the test suite | D24 |
 | R-LOOP-19 | Rigger dispatches no maker again, in the invocation that ran it, for a card whose maker exited non-zero and left the forge holding nothing of the card's line of work. The forge holds nothing of it where it holds no branch of it and no open or merged pull request from it. A card whose skip `R-SCHED-43` ends is the exception, and Rigger then dispatches it as it would any other. The next invocation dispatches the card as it would any other. | the engine | the test suite | |
 | R-LOOP-20 | A maker continuing a card that exits successfully and leaves its head as it found it answers nothing. Rigger then escalates the card as ambiguous, whatever rounds remain, and dispatches no maker for it until the owner answers. | the engine | the test suite | D3 |
+| R-LOOP-21 | Rigger escalates a card as ambiguous, naming why, where its maker has delivered nothing, and dispatches no maker for it until the owner answers. A maker has delivered nothing where all of these hold: | the engine | the test suite | D3 |
+| R-LOOP-22 | — the maker started the card's work from the beginning; | the engine | the test suite | |
+| R-LOOP-23 | — the maker exited successfully; | the engine | the test suite | |
+| R-LOOP-24 | — the forge then holds no open pull request from the card's line of work, or Rigger cannot read whether it does. | the engine | the test suite | |
 
 ## R-EVIDENCE — what a judge is given
 
@@ -559,6 +563,7 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | R-ESCALATE-24 | — the role writes an escalation note of its own, in any category; | the engine | the test suite | D26 |
 | R-ESCALATE-25 | — the role exits non-zero; | the engine | the test suite | D26 |
 | R-ESCALATE-26 | — the role's dispatch fails to start twice. A role's dispatch that fails to start never closes admission. | the engine | the test suite | D26 |
+| R-ESCALATE-27 | A maker, or a role an escalation goes to, that Rigger dispatches, on any provider Rigger ships and on each host Rigger supports, can write the escalation note its instruction asks for, under the settings `rigger init` gives a consumer. | the engine | the test suite | D26 |
 
 ### R-ESCALATE-9 — An escalation partly written
 
@@ -592,7 +597,7 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | R-STATE-1 | The board is the truth for a card's workflow state. Rigger persists no card workflow state of its own. | the engine | the test suite | D1 |
 | R-STATE-2 | A restart loses no card and completes no partial one. A card interrupted mid-flight is done again from the beginning, except where `R-WORK-19` refuses to start that card's work again. | the engine | the test suite | D1, D10 |
 | R-STATE-3 | A card done again after an interruption is distinguishable afterwards from one done at the first attempt. | the engine | the event record | D1 |
-| R-STATE-4 | Rigger persists only what it cannot rebuild from the board: whether admission is open and why it closed, the processes it must still clean up, and the record. Each survives a restart. | the engine | the test suite | D1 |
+| R-STATE-4 | Except as `R-RECORD-19` gives, Rigger persists only what it cannot rebuild from the board: whether admission is open and why it closed, the processes it must still clean up, and the record. Each survives a restart. | the engine | the test suite | D1 |
 | R-STATE-17 | A process works in a directory when its working directory is that directory or lies under it. A process outside every process group Rigger created, and working in no directory Rigger made for a dispatch, is outside this rule. Except as `R-STATE-19` and `R-STATE-28` allow, Rigger ends every process in a process group it created, and every process of its own user working in a dispatch's directory, whenever any of these holds: | the engine | the test suite | |
 | R-STATE-7 | — the command Rigger ran in that group returns; | the engine | the test suite | |
 | R-STATE-8 | — that command runs past its time; | the engine | the test suite | |
@@ -729,6 +734,7 @@ Each failure is one of three classes:
 | R-RECORD-16 | After a push of the record that did not succeed, Rigger tries the push again at its next push, however many pushes before it did not succeed. | the engine | the test suite | |
 | R-RECORD-17 | Every push of the record has a time limit, and a push that runs past it has not succeeded. | the engine | the test suite | |
 | R-RECORD-18 | A push of the record that does not succeed leaves the exit status of the verb that made it as that verb would otherwise have had it. | the engine | the test suite | |
+| R-RECORD-19 | Rigger keeps what each dispatch's agent CLI wrote to its standard output and its standard error, as `R-STATE-14` defines its output, on the consumer's machine, under the dispatch's id. It never places that output in the record, or anywhere beyond that machine. Where it cannot keep it, it names the dispatch and why, and the dispatch's outcome is as it would have been. | the engine | the test suite | |
 
 ### R-RECORD-13 — Push states
 

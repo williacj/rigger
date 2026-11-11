@@ -2825,7 +2825,7 @@ test('after `loop`\'s single pull returns, the state directory holds nothing but
     await release();
 
     assert.ok(claimed.length > 0, String(limit));
-    assert.deepEqual(readdirSync(built.directory, { recursive: true }), ['events.jsonl', 'groups.json'], String(limit));
+    assert.deepEqual(readdirSync(built.directory, { recursive: true }).filter((path) => !/^output(?:\/d-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?:\/(?:stdout|stderr))?)?$/.test(path)), ['events.jsonl', 'groups.json'], String(limit));
     built.phaseTrace.push({ phase: 'directory.asserted', at: performance.now(), files: readdirSync(built.directory, { recursive: true }) });
   }
   bodyEnd = performance.now();
@@ -3566,7 +3566,7 @@ test('after a `loop`\'s single pull the sink refused, followed by one it accepte
   built.dispatches.releaseAll();
   await next;
 
-  assert.deepEqual(readdirSync(built.directory, { recursive: true }), ['events.jsonl', 'groups.json']);
+  assert.deepEqual(readdirSync(built.directory, { recursive: true }).filter((path) => !/^output(?:\/d-[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}(?:\/(?:stdout|stderr))?)?$/.test(path)), ['events.jsonl', 'groups.json']);
 });
 
 test('a start whose pull event the sink refused writes no release event once the sink accepts again, so no release event lacks its pull', async () => {
@@ -5558,13 +5558,13 @@ test('each hand-over of a clock-held run is handed before the next poll fires', 
 
 test('L7: through the run verb, a clock-held run fires a pull at its slot release', async () => {
   const clock = manualClock();
-  const { agent, consumer, running, stop } = keptUpRunVerb({ items: [verbCard(10, 'Ready')], plan: { 10: { engineer: { hold: true } } }, clock });
+  const { agent, consumer, running, stop } = keptUpRunVerb({ items: [verbCard(10, 'Ready')], plan: { 10: { engineer: { hold: true, pr: true } } }, clock });
   const pulls = () => (fs.existsSync(streamPath(`${consumer}/.rigger`)) ? readEventsAt(`${consumer}/.rigger`) : []).filter(({ event, trigger }) => event === 'trigger' && trigger === 'pull').length;
   try {
     await positive(() => agent.held(10));
     assert.equal(pulls(), 1);
     agent.release(10);
-    await positive(() => pulls() === 2 && agent.held(10));
+    await positive(() => pulls() === 2);
     assert.equal(clock.now(), CLOCK_START, 'the second pull was the slot release\'s, not a poll');
   } finally {
     const stopped = stop();
@@ -5998,6 +5998,8 @@ test('settlement recording refusals retain original causes and omit the selected
     const judging = stage.startsWith('judge.');
     const merging = stage.startsWith('merge.');
     const removing = stage === 'removal.end';
+    // A continuing maker's exit 0 with no open pull request is still withheld (R-LOOP-21 escalates a fresh one's).
+    const continuingMaker = stage === 'maker.withheld';
     const root = temporaryDirectory('rigger-settlement-refusal-');
     const repository = repositoryIn('rigger-settlement-repository-');
     const making = makingWorkspaces(join(root, 'workspaces'));
@@ -6007,19 +6009,20 @@ test('settlement recording refusals retain original causes and omit the selected
     const pull = { number: 733, head: 'rigger-42', sha: head, mergeBase: 'b'.repeat(40), diff: 'diff --git a/help b/help\n', mergeable: 'mergeable',
       ...(removing ? { closed: true } : {}),
       ...(merging ? { comments: [markerComment({ card: 42, pull: 733, head, body: PASSING, role: 'owner' })] } : {}),
+      ...(continuingMaker ? { comments: [markerComment({ card: 42, pull: 733, head, body: PASSING, role: 'reviewer', verdict: 'needs revision', items: ['unmet'], toSound: 'Fix the help line.' })] } : {}),
     };
-    const initial = cardIn(42, judging || removing ? COLUMNS.review : merging ? COLUMNS.owner : COLUMNS.coding);
+    const initial = cardIn(42, judging || removing || continuingMaker ? COLUMNS.review : merging ? COLUMNS.owner : COLUMNS.coding);
     const scratch = join(root, 'scratch', 'rigger-42', 'reviewer');
     if (removing || stage === 'merge.cleanup') {
       fs.mkdirSync(scratch, { recursive: true });
       fs.writeFileSync(join(scratch, 'kept.txt'), 'the actual directory to remove');
     }
     built = onManualHost(t, { cards: [initial, { ...readyCard(95), labels: ['type:handoff'] }], concurrency: 1, makerHold: false, fresh: false,
-      kinds: { change: { ...KINDS.change, judges: judging ? ['reviewer'] : ['owner'] }, handoff: { ...KINDS.change, select: { labels: ['type:handoff'] } } },
+      kinds: { change: { ...KINDS.change, judges: judging || continuingMaker ? ['reviewer'] : ['owner'] }, handoff: { ...KINDS.change, select: { labels: ['type:handoff'] } } },
       workspace: async (card) => { const made = await making(card); paths.set(card, made.path); return made; },
       ...(stage === 'judge.withheld' ? { judgeDirectory: (card, role, at) => makeJudgeDirectory({ root, topic: 'rigger-{number}', repository: join(root, 'absent-repository'), card, role, head: at, sink: built.sink }) } : {}),
       removeDirectories: (card) => removeCardDirectories({ root, repository, topic: 'rigger-{number}', card, sink: built.sink }),
-      forge: { pullRequests: judging || merging || removing ? [pull] : [] },
+      forge: { pullRequests: judging || merging || removing || continuingMaker ? [pull] : [] },
     });
     if (judging) built.agent.plan(42, 'reviewer', {});
     let settling = false;
@@ -6055,6 +6058,7 @@ test('settlement recording refusals retain original causes and omit the selected
       const actual = await pulls(line);
       if (line !== 'rigger-42') return actual;
       if (!settling) selectedPulls ??= structuredClone(actual);
+      if (settling && continuingMaker) return { ...structuredClone(selectedPulls), open: [] };
       return settling && stage !== 'maker.withheld' ? actual : structuredClone(selectedPulls);
     };
     const emitter = built.sink.emitter.bind(built.sink);

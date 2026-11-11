@@ -194,7 +194,7 @@ export function columnChanges({
     const evidence = {
       category: next.category, reason: next.reason, raiser: next.raiser ?? 'loop',
       ...(next.item === undefined ? {} : { item: next.item }),
-      ...Object.fromEntries(['class', 'pull', 'head', 'line', 'destination', 'reads', 'elapsedMs'].filter((key) => next[key] !== undefined).map((key) => [key, next[key]])),
+      ...Object.fromEntries(['class', 'pull', 'head', 'line', 'workspace', 'tip', 'tipUnread', 'destination', 'reads', 'elapsedMs'].filter((key) => next[key] !== undefined).map((key) => [key, next[key]])),
     };
     try {
       sink.emitter({ layer: 'L2', card: card.number, dispatch: next.dispatch ?? null }).emit('review.escalate', evidence);
@@ -461,9 +461,13 @@ export function columnChanges({
      * caller, which hands them back unread to L2's next action (the architect's ruling 3, AQ4). With
      * none open, or more than one, the card stays in coding, and L2 records why and
      * tells its caller the card and why, as `withheld` says. A read that fails leaves it in coding too, and its
-     * caller is told the card and the read.
+     * caller is told the card and the read. A fresh maker's exit 0 with none open, or with the read
+     * failing, instead answers a loop-raised `ambiguous` escalation (`R-LOOP-21` to `R-LOOP-24`), as
+     * `deliveredNothing` says, naming `workspace` and `tip`, which L3 hands unread for a fresh maker,
+     * or `tipUnread`, L1's failure to read that tip. A fresh maker is one handed neither
+     * `continuing`, `expectedHead` nor `tipFailure`.
      */
-    settled: async (card, outcome, { dispatch, continuing = false, noClock = false, startHead, rulings = [], expectedHead, tipFailure, lastForgeHead, last = false, reads: readCount, elapsedMs, placed = () => {} } = {}) => {
+    settled: async (card, outcome, { dispatch, continuing = false, noClock = false, startHead, rulings = [], expectedHead, tipFailure, tip, tipUnread, workspace, lastForgeHead, last = false, reads: readCount, elapsedMs, placed = () => {} } = {}) => {
       const exit = outcome?.status === 'fulfilled' ? outcome.value?.exit : outcome?.status === 'rejected' ? outcome.reason?.result?.exit : undefined;
       // A refused recording retains the result of a command that ran; its failure still reaches L3.
       if (outcome?.status === 'rejected' && ((continuing && !noClock) || !Number.isInteger(exit) || exit === 0)) {
@@ -501,11 +505,17 @@ export function columnChanges({
         if (noClock || !continuing) return failedMakerWork(card, exit, reading, noClock);
         return undefined;
       }
+      // L3 hands `expectedHead` or `tipFailure` only for a continuing maker, and `tip` or `tipUnread` only for a fresh one.
+      const fresh = !continuing && expectedHead === undefined && tipFailure === undefined;
       if (tipFailure !== undefined) withheld(card, `card #${card.number}'s maker exited 0, but L1 could not read the tip of its line of work in the workspace: ${tipFailure.message}`, undefined, {}, { dispatch });
       let facts;
       try {
         facts = await pullRequestsFrom(card.number, topicFor(topic, card.number), reading);
       } catch (failure) {
+        if (fresh) {
+          const line = topicFor(topic, card.number);
+          return deliveredNothing(card, line, `the forge's open pull requests from its line of work ${line} could not be read: ${failure.message}`, { dispatch, tip, tipUnread, workspace });
+        }
         if (expectedHead === undefined) throw failure;
         withheld(card, failure.message, undefined, {
           ...(lastForgeHead === undefined ? {} : { forgeHead: lastForgeHead }),
@@ -517,6 +527,10 @@ export function columnChanges({
         ...(open.length === 1 ? { forgeHead: open[0].head } : lastForgeHead === undefined ? {} : { forgeHead: lastForgeHead }),
         ...(readCount > 1 ? { reads: readCount, elapsedMs } : {}),
       };
+      if (open.length === 0 && fresh) {
+        const merged = facts.merged.length === 0 ? '' : `, and it holds merged pull request ${facts.merged.map((pull) => `#${pull.number}`).join(', ')} from it`;
+        return deliveredNothing(card, line, `the forge holds no open pull request from its line of work ${line}${merged}`, { dispatch, tip, tipUnread, workspace });
+      }
       if (open.length === 0) withheld(card, `its maker exited 0, and the forge holds no open pull request from its line of work ${line}`, facts, observed, { dispatch });
       if (open.length > 1) withheld(card, `its maker exited 0, and the forge holds more than one open pull request from its line of work ${line}: ${open.map((pull) => `#${pull.number}`).join(', ')}`, facts, observed, { dispatch });
       if (expectedHead !== undefined && open[0].head !== expectedHead) {
@@ -537,12 +551,13 @@ export function columnChanges({
 }
 
 /** The selected reason and available work identifiers, as data on the card's issue. */
-function escalationComment(card, { category, item, reason, pull, head, line }) {
+function escalationComment(card, { category, item, reason, pull, head, line, workspace, tip, tipUnread }) {
   const work = [
     ...(item === undefined ? [] : [`Acceptance item: ${item}`]),
     ...(pull === undefined ? [] : [`Pull request: #${pull}`]),
     ...(head === undefined ? [] : [`Head: ${head}`]),
     ...(line === undefined ? [] : [`Line of work: ${line}`]),
+    ...(workspace === undefined ? [] : [`Workspace: ${workspace}, ${tipUnread === undefined ? `its line of work at ${tip}` : `its tip not read: ${tipUnread}`}`]),
   ];
   return `Rigger escalates card #${card.number} to the owner (${category}).\n\n${reason}${work.length === 0 ? '' : `\n\n${work.join('\n')}`}\n`;
 }
@@ -550,6 +565,20 @@ function escalationComment(card, { category, item, reason, pull, head, line }) {
 /** One ruling a continuing maker was handed, as `continued` in judges.mjs handed it. */
 function standingRuling({ role, verdict, toSound, unmet }) {
   return `${role} (${verdict}): ${[...(toSound === undefined ? [] : [toSound]), ...unmet.map(({ item, text }) => `unmet item ${item}: ${text}`)].join('; ')}`;
+}
+
+/**
+ * The loop-raised `ambiguous` escalation of `card`, whose maker started its work from the
+ * beginning and exited 0, saying `held`, what L2 read of the forge for its line of work `line`
+ * (`R-LOOP-21` to `R-LOOP-24`). It names `line`, and the workspace L3 handed with the tip L1 read
+ * there, or why L1 read none.
+ */
+function deliveredNothing(card, line, held, { dispatch, tip, tipUnread, workspace }) {
+  return ownerEscalation({}, {
+    category: 'ambiguous', dispatch, line,
+    reason: `card #${card.number}'s maker started its work from the beginning and exited 0, and ${held}`,
+    ...(workspace === undefined ? {} : { workspace, ...(tipUnread === undefined ? { tip } : { tipUnread: tipUnread.message }) }),
+  });
 }
 
 /** A role's unresolved card always returns through L2's one destination function as loop-raised. */

@@ -27,9 +27,8 @@ finding is a real result, as long as it names what you could not settle and what
 
 Two things, and they are the only things that merge:
 
-- **The report**, under `docs/spikes/`, where `docs/v0-build-plan.md` §5 puts the docs-only pull
-  request for the one spike v0 has planned. It says what you did, what you measured, what you
-  found, what you recommend, and what would reverse the recommendation.
+- **The report**, under `docs/spikes/`, in a docs-only pull request. It says what you did, what
+  you measured, what you found, what you recommend, and what would reverse the recommendation.
 - **A journal entry** in `docs/journal/`, linking the report. The journal records what we
   learned and what failed, and it binds nothing. `AGENTS.md` has you commit the entry with the
   work that produced it.

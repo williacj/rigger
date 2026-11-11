@@ -61,9 +61,10 @@ cannot prove an OS deadline. Identify any boundary left unproved; a fake pass ea
 behaviour's timer when readiness is its premise. Keep startup within the bound when startup
 itself is the contract. A readiness failure is not a failure of behaviour never exercised.
 
-**Keep the authority live.** Where a tool decides a fact (`D16`), assert the relation between its
-answer and the code's, rather than pinning today's answer. `test/package-budget.test.mjs` is a
-worked example: a fixed answer documents today; asking the tool catches a changed authority.
+**Keep the authority live.** Where a tool decides a fact (`D16`), assert the relation between
+its answer and the code's, rather than pinning today's answer. Where the repository defines it,
+`test/package-budget.test.mjs` is a worked example: a fixed answer documents today; asking the
+tool catches a changed authority.
 
 ## A test a change adds
 
@@ -145,11 +146,11 @@ Where the repository defines it, attach `npm run mutation:receipt` output to eac
 
 One mutation removes one behaviour. Batching several reports the union and hides the gap.
 
-`test/verify-mac-containment` guards its bounded Mac claims: anchors, readback/diff, named
-assertion verdicts without cancellation, observed effects, restoration and retained artifacts.
-Those mechanics do not decide whether a mutation represents the right semantic fault or covers
-the claim. The judge still evaluates that scope. `test/mutation-claim.test.mjs` checks the stated
-bar, not its use.
+Where the repository defines it, `test/verify-mac-containment` guards its bounded Mac claims:
+anchors, readback/diff, named assertion verdicts without cancellation, observed effects,
+restoration and retained artifacts. Those mechanics do not decide whether a mutation represents
+the right semantic fault or covers the claim. The judge still evaluates that scope.
+`test/mutation-claim.test.mjs` checks the stated bar, not its use.
 
 Preserve byte-complete private command/ref/provenance originals outside
 test/suite/mutation/scratch/temp roots through retention event; reopen after command/fixture
@@ -209,9 +210,10 @@ regenerates and commits it with its declarations. A declaration naming an id
 `docs/spec/requirements.md` does not hold is refused by name, and so is one standing above no
 test — a call that is commented out is not a test.
 
-The block comment above `declarationsIn` in `scripts/build-test-matrix.mjs` lists the source
-shapes the scan claims nothing for, the ones it refuses by file and line, and the one it wrongly
-claims. `test/build-test-matrix.test.mjs` holds the parser cases.
+Where the repository defines it, the block comment above `declarationsIn` in
+`scripts/build-test-matrix.mjs` lists the source shapes the scan claims nothing for, the ones it
+refuses by file and line, and the one it wrongly claims. `test/build-test-matrix.test.mjs` holds
+the parser cases.
 
 So when you add a requirement, the test that claims it is part of the same work. Where your card
 is what makes an older requirement true, its test closes that requirement's counted gap in the

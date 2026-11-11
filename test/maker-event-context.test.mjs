@@ -42,7 +42,7 @@ test('every maker review.withheld cause retains the completed dispatch', async (
   const cases = [
     ['tip unreadable', reviewed([one]), { tipFailure: new Error('tip unreadable') }],
     ['PR read failed', { readIssueComments: async () => [], readPullRequests: async () => { throw new Error('PR read failed'); } }, { expectedHead: one.head }],
-    ['no open pull', reviewed([]), {}],
+    ['no open pull', reviewed([]), { expectedHead: one.head }],
     ['multiple open pulls', reviewed([one, { ...one, number: 78 }]), {}],
     ['stale head', reviewed([one]), { expectedHead: 'c'.repeat(40), last: true }],
   ];
@@ -62,7 +62,7 @@ test('maker settle without a dispatch omits the dispatch key on failed and withh
   const failed = eventWorld();
   await failed.l2.settled(CARD, { status: 'rejected', reason: Object.assign(new Error('adapter refused'), { code: 'NOT_STARTED' }) });
   const withheld = eventWorld();
-  await assert.rejects(withheld.l2.settled(CARD, EXITED), { code: 'REVIEW_WITHHELD' });
+  await assert.rejects(withheld.l2.settled(CARD, EXITED, { expectedHead: 'b'.repeat(40) }), { code: 'REVIEW_WITHHELD' });
   const events = [...failed.events(), ...withheld.events()];
   assert.deepEqual(events.map((event) => event.event), ['maker.failed', 'review.withheld']);
   for (const event of events) {

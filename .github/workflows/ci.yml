@@ -255,7 +255,7 @@ env:
         }
         const projectSources = {
           ".npmrc": "2ab58d679ddb6c245446999a2ea5fb54783b9aa26c94ce663cb7db0be0a8f7f8",
-          "test/suite.sh": "a8396006c5c6b4c3f1892bf7287307e60176e17094f9455ec5396312d81925f1",
+          "test/suite.sh": "91e3f3ea060240a3f60b1bd11e1744689431095f8ff9e28648e11dbba5dee962",
           "test/suite-guard.cjs": "11057fb99548ffdfb62cea550d6aa7fb99c310b232a544a9e809d0936ece5370"
         };
         for (const [path, expected] of Object.entries(projectSources)) if (await fingerprint(join(cwd, path)) !== expected) return;
@@ -1010,7 +1010,7 @@ jobs:
       - run: test -s docs/demo.gif
       # Double-quoted for YAML, whose plain scalars can carry neither `: ` nor ` #`.
       # The screen wraps at the tape's width, so the pattern ends where the line fits its first row.
-      - run: "grep -E '^rigger once: claimed #[0-9]+ from board [0-9]+; its maker exited 0 and opened no pull request from rigger-[0-9]+,' docs/demo.txt"
+      - run: "grep -E '^rigger once: claimed #[0-9]+ from board [0-9]+; Rigger escalated it as ambiguous: card #[0-9]+' docs/demo.txt"
       # The status is the line after the last `echo exit $?` the tape typed, which comes after
       # anything the verb printed, so no line of its output can stand in for it.
       - run: awk '$0 == "> echo exit $?" { getline status } END { exit status !~ /^exit [1-9][0-9]*$/ }' docs/demo.txt
