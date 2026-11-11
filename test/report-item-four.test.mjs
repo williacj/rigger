@@ -17,7 +17,7 @@ function stream(t, events, directory = temporaryDirectory('rigger-item-four-', {
   const clock = manualClock();
   mkdirSync(directory, { recursive: true });
   writeFileSync(streamPath(directory), events.map((event) => JSON.stringify({
-    ts: new Date(clock.now()).toISOString(), run: 'r-a', card: null, dispatch: null, ...event,
+    ts: new Date(clock.now()).toISOString(), run: 'r-a', dispatch: null, ...event,
   })).join('\n') + '\n');
   return directory;
 }
@@ -32,7 +32,7 @@ test('causes count events per run and stream, ignore reason and preserve the dis
     escalation(9, undefined), escalation(10, 'out'),
     escalation(7, 'environment', { run: 'r-b' }), escalation(11, 'card-local', { run: 'r-b' }),
     escalation(12, 'policy', { run: 'r-b' }),
-    escalation(null, 'environment'), escalation(undefined, 'card-local'),
+    escalation(undefined, 'environment'), escalation(undefined, 'card-local'),
     escalation(99, 'environment', { layer: 'L3' }), escalation(98, 'environment', { event: 'review.waiting' }),
   ];
   const derived = report(stream(t, events));

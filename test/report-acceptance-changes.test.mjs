@@ -12,6 +12,9 @@ import { report } from '../src/cli/report.mjs';
 import { streamPath } from '../src/observation/sink.mjs';
 import { gitIn, repositoryIn } from './git-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { readFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { repositoryAt } from './git-repository.mjs';
 
 /** Second `n` of 2026-01-01 as an ISO time: every edit time and event `ts` below. */
 const at = (n) => new Date(Date.UTC(2026, 0, 1, 0, 0, n)).toISOString();
@@ -359,9 +362,25 @@ const GREW = '    acceptances that grew after admission';
 const MAKER = '    acceptance changes made during the card\'s maker dispatch';
 const AUTHORS = '    each card\'s author';
 
+/** G2: a forged card produces a single reader refusal and leaves the record untouched. */
+async function refusedCard(events) {
+  const directory = written(events);
+  const consumer = realpathSync.native(repositoryAt(dirname(directory)));
+  const path = streamPath(directory);
+  const before = readFileSync(path);
+  const answer = await report({ target: consumer, ask: (command, args) => {
+    assert.equal(command, 'git');
+    assert.deepEqual(args, ['-C', consumer, 'rev-parse', '--show-toplevel']);
+    // gitIn's documented status/stdout contract keeps Git as the root authority.
+    return { status: 0, stdout: gitIn(consumer, 'rev-parse', '--show-toplevel') };
+  } });
+  assert.equal(answer.code, 1, answer.text);
+  assert.equal(answer.text, `rigger report: ${path} line 1 is not a recorded event, so no signal is derived`);
+  assert.deepEqual(readFileSync(path), before, 'the refusal preserves the stream');
+}
+
 test('a card id carrying line breaks prints as one acceptance change line', async () => {
-  assert.deepEqual(block(await printedL2([history(FORGED, [revision(1, 'a', 'd-1', 3), revision(2, 'b', 'd-2', 3)])]), CHANGES),
-    [`      card #"${SHOWN}" at "${at(2)}": editor "b"`]);
+  await refusedCard([history(FORGED, [revision(1, 'a', 'd-1', 3), revision(2, 'b', 'd-2', 3)])]);
 });
 
 test('an edit time carrying line breaks prints as one acceptance change line', async () => {
@@ -386,7 +405,7 @@ test('a role carrying line breaks prints as one acceptance change line', async (
 });
 
 test('a card id carrying line breaks prints as one content-deleted line', async () => {
-  assert.deepEqual(block(await printedL2([history(FORGED, [deleted(2, 'm')])]), DELETED), [`      card #"${SHOWN}" at "${at(2)}": editor "m"`]);
+  await refusedCard([history(FORGED, [deleted(2, 'm')])]);
 });
 
 test('an edit time carrying line breaks prints as one content-deleted line', async () => {
@@ -398,8 +417,7 @@ test('an editor carrying line breaks prints as one content-deleted line', async 
 });
 
 test('a card id carrying line breaks prints as one growth line', async () => {
-  const l2 = await printedL2([pull(FORGED, 50), history(FORGED, [revision(10, 'a', 'd-1', 3), revision(60, 'b', 'd-2', 4)])]);
-  assert.deepEqual(block(l2, GREW), [`      card #"${SHOWN}" at "${at(60)}": 4 items, over 3 at its first pull`]);
+  await refusedCard([pull(FORGED, 50), history(FORGED, [revision(10, 'a', 'd-1', 3), revision(60, 'b', 'd-2', 4)])]);
 });
 
 test('an edit time carrying line breaks prints as one growth line', async () => {
@@ -420,9 +438,8 @@ test('an admitted item count carrying a line separator prints as one growth line
 });
 
 test('a card id carrying line breaks prints as one maker-dispatch line', async () => {
-  const l2 = await printedL2([dispatch(FORGED, 'd-make', 'engineer', { attempt: 1 }), start('d-make', 0),
+  await refusedCard([dispatch(FORGED, 'd-make', 'engineer', { attempt: 1 }), start('d-make', 0),
     history(FORGED, [revision(1, 'a', 'd-1', 3), revision(2, 'b', 'd-2', 3)]), end('d-make', 9)]);
-  assert.deepEqual(block(l2, MAKER), [`      card #"${SHOWN}" at "${at(2)}"`]);
 });
 
 test('an edit time carrying line breaks prints as one maker-dispatch line', async () => {
@@ -433,8 +450,7 @@ test('an edit time carrying line breaks prints as one maker-dispatch line', asyn
 });
 
 test('a card id carrying line breaks prints as one author line', async () => {
-  assert.deepEqual(block(await printedL2([history(FORGED, [revision(1, 'a', 'd-1', 3)], { opened: at(1) })]), AUTHORS),
-    [`      card #"${SHOWN}": the owner, since no role dispatch window holds its opening`]);
+  await refusedCard([history(FORGED, [revision(1, 'a', 'd-1', 3)], { opened: at(1) })]);
 });
 
 test('a recorded author carrying line breaks prints as one author line', async () => {
@@ -545,8 +561,6 @@ const MARK = 424242;
 test('a value of -0 never prints as 0 in the acceptance blocks', async () => {
   const window = [start('d-pm', 100), end('d-pm', 200)];
   const fields = [
-    ['dispatch id', [dispatch(7, MARK, 'pm'), start(MARK, 100), end(MARK, 200), changedAt(150)], CHANGES,
-      (answer) => answer.changes[0].dispatches[0].dispatch],
     ['change role', [dispatch(7, 'd-pm', MARK), ...window, changedAt(150)], CHANGES, (answer) => answer.changes[0].dispatches[0].role],
     ['editor', [changedAt(150, MARK)], CHANGES, (answer) => answer.changes[0].editor],
     ['recorded author', [history(7, [revision(1, 'a', 'd-1', 3)], { author: MARK })], AUTHORS, (answer) => answer.authors[0].names[0]],

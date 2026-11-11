@@ -50,8 +50,8 @@ test('report counts independent escalation populations per run and across the st
   const runs = [
     ['r-a', [pull(7), pull(7), pull(8), event('L3', 'merge.start', 8), pull(9), event('L3', 'merge.start', 9),
       pull(11), pull(12), escalation(7), escalation(7, { reason: 'another refusal' }), escalation(20),
-      event('L3', 'review.escalate', 11), event('L2', 'pull', 20), pull(undefined), pull(null),
-      escalation(undefined), escalation(null)]],
+      event('L3', 'review.escalate', 11), event('L2', 'pull', 20), pull(undefined), pull(undefined),
+      escalation(undefined), escalation(undefined)]],
     ['r-b', [pull(7), pull(10), escalation(7), escalation(10)]],
     ['r-outside', [pull(30), escalation(30), escalation(31)]],
     ['r-alone', [escalation(32)]],
@@ -123,7 +123,7 @@ test('report derives rounds from distinct head and digest pairs including owner 
       marker(10, 'head-a', 'digest-a'), marker(10, 'head-a', 'digest-b'),
       marker(11, 'a|b', 'c'), marker(11, 'a', 'b|c'), marker(12, null, undefined), pull(13),
       event('L1', 'marker.read', 14, { head: 'head-a', digest: 'digest-a' }),
-      marker(undefined, 'head-a', 'digest-a'), marker(null, 'head-a', 'digest-a')]],
+      marker(undefined, 'head-a', 'digest-a'), marker(undefined, 'head-a', 'digest-a')]],
     ['r-b', [marker(7, 'head-b', 'digest-a'), marker(8, 'head-a', 'digest-a', { evidence: 'e-3', verdict: 'needs revision' }),
       marker(12, undefined, null)]],
   ]);

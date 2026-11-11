@@ -686,3 +686,49 @@ current source lines and guarded guard-only observations. Attack code is parsed,
 
 The final-head receipts, proof comparison, hook, full and named host checks, fresh-clone
 verification, CI, and body checker are recorded in the PR after the one implementation push.
+
+
+## Main integration: the recorded-event envelope moves to its reader
+
+Main advanced from 7a2c8f95 to eaeb37f6 while the b65775ea evidence was running.
+The fast CI job 130842850132 at that head's merge candidate reported four real-closure
+assertion failures: three unreviewed sink.mjs lines and the orphaned loop.mjs row. The
+complete job output and source comparison were retained before inspection. This is a real
+inventory tripwire on newly reviewed code, separate from the cancellation controller's
+run-attribution failure. The coordinator disposition on #1300 allows verification to continue
+past that controller fault; its one retry repeated the same controller error.
+
+The running b65775ea host verification was preserved to completion: 2834 cases, 2793 pass,
+41 skip, zero failure or cancellation, in 1300-r6-u24-final-host.log. Its fresh clone measured
+5898 deterministic passes and its exact named-host run measured 22 passes. Both source proof
+comparisons passed, and 42 receipts were killed. The two optional guard-only carrier probes
+survived as the accepted U24 Q56 limits; the send default remains a static observation. All
+of this evidence retains b65775ea as its historical head. It is not relabeled for this merge.
+
+The conflict-free ordinary merge was stopped before its commit so the same commit can carry
+the required inventory maintenance. The existing positive closure case first failed locally
+on the incoming source at command-start head b65775ea (1300-r6-u24m-inventory-red.log),
+with the same three named unreviewed lines and orphan. No test body or assertion changed.
+After reviewing the incoming envelope code and its event-envelope test, three inventory rows
+were added: the run field requirement, the optional dispatch value check and the dispatch
+refusal field name. The obsolete L3 envelope row was removed and diagnostic positions were
+updated. No production source was edited. The affected guard and unchanged git census then
+measured 31 passing cases, zero failures/skips (1300-r6-u24m-inventory-green.log).
+
+The actual inventory now measures 925 rows and 1335 mentions, with the same 98 named wrapper
+records and four function pins plus the whole-file pin. The earlier proposal was a read-only
+virtual-source diagnostic, not a suite verdict. The actual main merge was checked against its
+retained Git blob bytes before the red run. The removed row's source is gone; each added row
+has a reason for the real field operation it admits. No baseline test line is changed.
+
+At merge base eaeb37f6, N1, N2, N3, N4, N5, N6, N8 and N11 still hold in production and
+need guard proof only. N9, N10, N12, N13 and N14 remain out as their individual rows above
+state. A1, A2, A3, A4, A5 and A6 hold without a production repair; A7 and A8 remain out.
+P1 through P9 need the new guard, with P6's run and P7's dispatch mentions receiving the
+reviewed envelope rows here. Every S1 through S28 still needs its exact refusal proof. These
+are the same per-row held/needed/out dispositions recorded in the preceding table, now at
+the new base; no source repair was introduced for any row.
+
+All final-head receipts, proof comparisons, named/whole-host checks, fresh-clone verification
+and CI are refreshed after the ordinary merge commit and push. The PR keeps older receipts,
+the invalid one-pass P7 fault specification and controller failures explicitly historical.
