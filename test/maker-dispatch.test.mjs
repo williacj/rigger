@@ -496,3 +496,147 @@ test('a `ps` stand-in whose start-time reads never answer, once made, has left n
   assert.deepEqual(readdirSync(dirname(path)).sort(), ['hold', 'ps']);
   assert.deepEqual(running(path), []);
 });
+
+import { createHash } from 'node:crypto';
+import nativeProcesses from 'node:child_process';
+import { syncBuiltinESMExports } from 'node:module';
+import { lstatSync } from 'node:fs';
+import { delimiter, relative } from 'node:path';
+import { dispatch as dispatchAccount } from '../src/execution/run.mjs';
+import { roleDispatch } from '../src/execution/role.mjs';
+import { repositoryAt } from './git-repository.mjs';
+
+/** Hash values before returning them, so a failed assertion cannot print an inherited secret. */
+const accountDigest = (value) => createHash('sha256').update(value).digest('hex');
+
+/**
+ * A stand-in for both provider CLIs. The probe's empty skill list follows the documented format
+ * beside skillsIn in codex.mjs; the session reports Node's real account IDs and environment.
+ * No credential is read, and neither stand-in starts another process.
+ */
+function accountAgent(directory) {
+  const bin = join(directory, 'bin');
+  mkdirSync(bin);
+  writeFileSync(join(bin, 'package.json'), JSON.stringify({ type: 'module' }));
+  const source = `#!${process.execPath}
+// ABOUTME: Reports a dispatched process's account and hashes its environment without reading credentials.
+import { createHash } from 'node:crypto';
+if (process.env.RIGGER_FIXTURE_WARMING) process.exit(0);
+if (process.argv.includes('prompt-input')) {
+  console.log(JSON.stringify([{ content: [{ text: '<skills_instructions>\\n### Available skills\\n</skills_instructions>' }] }]));
+} else {
+  for await (const chunk of process.stdin) { /* Consume L1's prompt before reporting. */ }
+  console.log(JSON.stringify({
+    uid: process.getuid(), euid: process.geteuid(),
+    gid: process.getgid(), egid: process.getegid(),
+    groups: process.getgroups(),
+    environment: Object.fromEntries(Object.entries(process.env).map(([key, value]) => [key, createHash('sha256').update(value).digest('hex')])),
+  }));
+}
+`;
+  for (const name of ['claude', 'codex']) {
+    const executable = join(bin, name);
+    writeFileSync(executable, source, { mode: 0o755 });
+    warmed(executable);
+  }
+  return bin;
+}
+
+/** Observe the native process API's options, including any options the real host itself adds. */
+function accountSpawns(t) {
+  const calls = [];
+  for (const method of ['spawn', 'spawnSync', 'execFile']) {
+    const native = nativeProcesses[method];
+    nativeProcesses[method] = (...args) => {
+      const [program] = args;
+      const options = [args[2], args[1]].find((value) => value && typeof value === 'object' && !Array.isArray(value)) ?? {};
+      calls.push({ method, program, uid: 'uid' in options, gid: 'gid' in options });
+      return native(...args);
+    };
+    t.after(() => { nativeProcesses[method] = native; syncBuiltinESMExports(); });
+  }
+  syncBuiltinESMExports();
+  return calls;
+}
+
+/** All entries below a directory, without following even the Codex auth.json link (A8). */
+function accountFiles(directory) {
+  return readdirSync(directory).flatMap((name) => {
+    const path = join(directory, name);
+    const stat = lstatSync(path);
+    return [{ path, mode: stat.mode }, ...(stat.isDirectory() ? accountFiles(path) : [])];
+  });
+}
+
+// Host reason: OS behaviour.
+// Rigger decision: none; this observes account inheritance, forwarded options and values, and native file modes after real L1 dispatch.
+// proves R-SAFE-4
+test('R-SAFE-4: real Claude and Codex role dispatch preserve account access', SETTLES_WITHIN, async (t) => {
+  const root = realpathSync.native(temporaryDirectory('rigger-account-'));
+  const bin = accountAgent(root);
+  const saved = process.env;
+  process.env = { ...saved, PATH: `${bin}${delimiter}${saved.PATH}`, CLAUDE_CONFIG_DIR: join(root, 'claude-config') };
+  mkdirSync(process.env.CLAUDE_CONFIG_DIR);
+  // Establish the premise that each adapter-controlled key is absent from the engine itself.
+  for (const name of ['CLAUDE_CODE_TMPDIR', 'CODEX_HOME', 'TMPDIR', 'TMPPREFIX']) delete process.env[name];
+  t.after(() => { process.env = saved; });
+  const engine = { ...process.env };
+  const calls = accountSpawns(t);
+  // Establish that the observer sees the native no-args overload before trusting A4.
+  for (const method of ['spawn', 'spawnSync', 'execFile']) {
+    const executable = join(bin, 'claude');
+    const options = { uid: process.getuid(), gid: process.getgid(), env: { ...engine, RIGGER_FIXTURE_WARMING: '1' }, stdio: 'ignore' };
+    if (method === 'spawnSync') assert.equal(nativeProcesses.spawnSync(executable, options).status, 0, 'A4 observer premise: the synchronous no-args child exited');
+    else if (method === 'execFile') await new Promise((resolve, reject) => nativeProcesses.execFile(executable, options, (error) => error ? reject(error) : resolve()));
+    else await new Promise((resolve, reject) => {
+      const child = nativeProcesses.spawn(executable, options);
+      child.once('error', reject);
+      child.once('exit', (code) => code === 0 ? resolve() : reject(new Error(`A4 observer premise: child exited ${code}`)));
+    });
+    assert.deepEqual(calls.at(-1), { method, program: executable, uid: true, gid: true }, `A4 observer premise: ${method}(command, options) records both account keys`);
+  }
+  calls.length = 0;
+  const groups = (values) => [...new Set(values)].sort((left, right) => left - right);
+  for (const provider of ['claude', 'codex']) {
+    const workspace = realpathSync.native(repositoryAt(join(root, provider), {
+      '.claude/agents/engineer.md': 'ABOUTME: Observe this dispatch account.\n',
+      '.codex/config.toml': '# ABOUTME: The account fixture declares no external service.\n',
+    }));
+    const base = join(root, 'scratch', provider);
+    const directory = join(workspace, '.rigger');
+    const sink = openSink({ directory, run: `account-${provider}`, now: Date.now });
+    let prepared;
+    await assert.doesNotReject(async () => {
+      prepared = await roleDispatch({
+        answer: { role: 'engineer', provider, agent: '.claude/agents/engineer.md', tier: 'standard', instruction: 'Observe the dispatch account.\n', evidence: '', timeout: 20_000 },
+        cwd: workspace, directory: workspace, scratch: base, repository: workspace,
+        env: engine, sink, id: `account-${provider}`, card: 1300,
+      });
+    }, `${provider}: the real role preparation must succeed before observing account access`);
+    const scratch = realpathSync.native(join(base, 'engineer'));
+    assert.equal(prepared.scratch, scratch, `${provider}: L1 made the declared scratch directory`);
+    let result;
+    await assert.doesNotReject(async () => {
+      result = await dispatchAccount({ ...prepared, id: `account-${provider}`, card: 1300, directory, sink });
+    }, `${provider}: the real account dispatch must start and settle`);
+    assert.equal(result.exit, 0, `${provider}: the account observer completed`);
+    const observed = JSON.parse(result.stdout.toString('utf8'));
+    assert.deepEqual([observed.uid, observed.euid], [process.getuid(), process.geteuid()], `${provider} A1: real and effective uid equal the engine's`);
+    assert.deepEqual([observed.gid, observed.egid], [process.getgid(), process.getegid()], `${provider} A2: real and effective gid equal the engine's`);
+    assert.deepEqual(groups(observed.groups), groups(process.getgroups()), `${provider} A3: supplementary groups equal the engine's set`);
+    const added = provider === 'claude' ? { CLAUDE_CODE_TMPDIR: join(workspace, '.claude-tmp') }
+      : { CODEX_HOME: join(scratch, 'codex-home'), TMPDIR: join(scratch, 'tmp'), TMPPREFIX: join(scratch, 'tmp', 'zsh') };
+    const extra = Object.keys(observed.environment).filter((name) => !Object.hasOwn(engine, name)).sort();
+    assert.deepEqual(extra, Object.keys(added).sort(), `${provider} A5: only the inventoried adapter variables are added`);
+    for (const [name, digest] of Object.entries(observed.environment)) {
+      const source = Object.hasOwn(added, name) ? added[name] : engine[name];
+      assert.equal(digest, accountDigest(source), `${provider} A5: ${name} comes from its declared path or the engine's own value`);
+    }
+    const entries = [...accountFiles(workspace), ...accountFiles(scratch)];
+    assert.ok(entries.some(({ path }) => path === join(directory, 'groups.json')), `${provider} A6: L1 actually wrote its process record in the work directory`);
+    if (provider === 'codex') assert.ok(entries.some(({ path }) => path === join(scratch, 'codex-home', 'config.toml')), 'codex A6: the adapter actually wrote its scratch config');
+    for (const { path, mode } of entries) assert.equal(mode & 0o6000, 0, `${provider} A6: ${relative(root, path)} has neither setuid nor setgid`);
+  }
+  assert.ok(calls.some(({ program }) => program === 'claude') && calls.some(({ program }) => program === 'codex'), 'A4: both providers reached the real host');
+  for (const { method, program, uid, gid } of calls) assert.deepEqual({ uid, gid }, { uid: false, gid: false }, `A4: ${method} ${program} carries no uid or gid option`);
+});
