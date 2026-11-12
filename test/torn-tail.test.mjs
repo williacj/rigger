@@ -239,6 +239,9 @@ test('H2a: a naming whose second append tears fails naming the second and third 
   assert.match(failure.message, /"name":"b"/);
   assert.match(failure.message, /"name":"c"/);
   assert.doesNotMatch(failure.message, /"name":"a"/);
+  // The sink still holds them and writes each as its own record line later, so the failure names
+  // them without a line a reader of standard error would take for a second record.
+  assert.deepEqual(failure.message.split('\n').filter((text) => text.startsWith('{')), []);
 });
 
 // A naming failure that left out an unwritten held event fails here.

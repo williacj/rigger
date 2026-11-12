@@ -79,8 +79,9 @@ export function openSink({ directory, run, now }) {
    * Name the state directory, and write there first every event held until now.
    *
    * A held event was never an append, so nothing refused it. A refusal here is the first, and the
-   * failure carries every held event its append did not write, the one it tore included. The sink
-   * still holds them, and its next append writes them first.
+   * failure names every held event its append did not write, the one it tore included, each
+   * indented: the sink still holds them, so its next append, or its end, writes each as a record
+   * line of its own, and the failure is no second copy of one.
    */
   function name(given) {
     named = given;
@@ -88,7 +89,7 @@ export function openSink({ directory, run, now }) {
       release();
     } catch (cause) {
       throw new Error(
-        `${cause.message}\n${held.length} held event(s) are not yet recorded, and the sink still holds them:\n${held.join('')}`,
+        `${cause.message}\n${held.length} held event(s) went unrecorded at this naming, and the sink still holds them:\n${held.map((line) => `  ${line}`).join('')}`,
         { cause },
       );
     }
