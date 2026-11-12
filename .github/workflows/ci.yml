@@ -919,8 +919,14 @@ jobs:
               continue;
             }
             const detailed = await get(ROOT + '/actions/runs/' + listed.id);
-            identity(detailed);
-            if (sourceIdentity(detailed) !== entry.source || entry.association && associationIdentity(detailed) !== entry.association) refuse('conflicting run identity');
+            if (sourceIdentity(detailed) !== entry.source) refuse('conflicting run identity');
+            const association = associationIdentity(detailed);
+            if (association === null) {
+              log({ action: 'exclude', target: detailed.id, reason: 'no pull request association' });
+              found.delete(listed.id);
+              continue;
+            }
+            if (entry.association && association !== entry.association) refuse('conflicting run identity');
             entry.frozen = detailed;
           }
           const result = { accepted: [], completed: [] };
@@ -940,8 +946,9 @@ jobs:
               log({ action: 'cancel-accepted', target: target.id, status: 202 });
             } else if (response?.status === 409) {
               const concurrent = await get(ROOT + '/actions/runs/' + target.id);
-              if (identity(concurrent) !== identity(frozen) || concurrent.status !== 'completed') refuse('cancel request conflict unresolved');
-              result.completed.push(target.id);
+              if (identity(concurrent) !== identity(frozen)) refuse('cancel request conflict unresolved');
+              if (concurrent.status === 'completed') result.completed.push(target.id);
+              else log({ action: 'cancel-conflict', target: target.id, status: 409, runStatus: concurrent.status });
             } else refuse('cancel request failed');
           }
           return result;
