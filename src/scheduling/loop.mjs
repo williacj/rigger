@@ -403,9 +403,6 @@ const CLOCK_EVENTS = {
  * outcome naming its issue. This is the one place the start decides what a recorded event is.
  */
 function unlikeEvent(event) {
-  if (event === null || typeof event !== 'object' || Array.isArray(event)) return `it parses to ${JSON.stringify(event)}, not to an object`;
-  if (!instant(event.ts)) return `its \`ts\` is ${JSON.stringify(event.ts) ?? 'missing'}, not an instant in UTC`;
-  if (!named(event.run) || typeof event.layer !== 'string' || !/^L[0-5]$/.test(event.layer) || !named(event.event)) return 'its envelope names no run, layer or event';
   if (event.event === 'trigger' && !named(event.trigger)) return 'it is a trigger naming no trigger';
   const kind = event.event === 'trigger' ? (event.trigger === 'clock' ? 'clock' : undefined)
     : (event.event === 'trigger.armed' || event.event === 'trigger.outcome' ? event.event : undefined);

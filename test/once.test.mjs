@@ -445,7 +445,7 @@ test('once, given N 3, an unclaimed review card L2 would dispatch and a ready ca
   const events = eventsOf(ran);
   assert.ok(events.some((event) => event.layer === 'L3' && event.event === 'pull' && event.card === 40), JSON.stringify(events));
   assert.deepEqual(events.filter((event) => event.layer === 'L2' && event.event === 'transition').map(({ event, card, from, to }) => ({ event, card, from, to })), [{ event: 'transition', card: 40, from: 'review', to: 'coding' }]);
-  assert.deepEqual(events.filter((event) => event.layer === 'L2' && event.event !== 'transition').map(({ event, card }) => ({ event, card })), [{ event: 'review.escalate', card: 40 }]);
+  assert.deepEqual(events.filter((event) => event.layer === 'L2' && event.event !== 'transition').map(({ event, card }) => ({ event, card })), [{ event: 'acceptance.history', card: 40 }, { event: 'review.escalate', card: 40 }]);
 });
 
 // proves R-SAFE-5

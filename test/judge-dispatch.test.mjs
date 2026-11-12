@@ -86,7 +86,7 @@ test('given a card whose maker\'s outcome moves it to Review, L3 dispatches the 
   assert.equal(releases.length, 1);
 });
 
-test('in that case, the fake forge records no read of that card between the settle\'s read and the judges\' dispatch', SETTLES_WITHIN, async () => {
+test('in that case, the fake forge reads only the settle\'s pull facts and moved card\'s acceptance history before the judges\' dispatch', SETTLES_WITHIN, async () => {
   const built = judgeWorld({ cards: [cardIn(3, COLUMNS.ready)] });
 
   await built.loop.pull();
@@ -95,8 +95,8 @@ test('in that case, the fake forge records no read of that card between the sett
   const judges = at(built, (entry) => appended(entry, 'L3', 'dispatch', (each) => each.fields.role === 'reviewer'));
   assert.ok(settle > 0 && judges > settle, JSON.stringify(built.log));
   const between = built.log.slice(settle + 1, judges).filter((entry) => entry.read !== undefined);
-  // The settle's one read is the pull requests and, of the one open, what the judge answer reads.
-  assert.deepEqual(between.map((entry) => entry.read).sort(), [['readCheckStates', HEAD], ['readComments', 1003], ['readDiff', 1003], ['readEffectiveRules', 'main'], ['readMergeBase', 1003], ['readMergeable', 1003]]);
+  // The settle reads its pull facts once; the accepted move also reads this card's history.
+  assert.deepEqual(between.map((entry) => entry.read).sort(), [['readCheckStates', HEAD], ['readComments', 1003], ['readDiff', 1003], ['readEffectiveRules', 'main'], ['readIssueHistory', 3], ['readMergeBase', 1003], ['readMergeable', 1003]]);
   const dispatched = at(built, (entry) => appended(entry, 'L3', 'dispatch', (each) => each.fields.role === 'engineer'));
   assert.ok(built.log.slice(dispatched, settle).some((entry) => appended(entry, 'L1', 'dispatch.end')), 'the settle read came before the maker ended');
 });

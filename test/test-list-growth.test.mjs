@@ -62,10 +62,10 @@ test('other-branch zero-before push uses the merge base with the default branch'
   assert.deepEqual(reads, [ancestor, head]);
 });
 
-test('pull request compares the synthetic checked-out SHA with the payload base SHA', () => {
+test('pull request compares the synthetic checked-out SHA with its first parent, the tested base', () => {
   const { result, reads } = comparison('pull_request', 'refs/pull/7/merge', { pull_request: { base: { sha: before } } });
   assert.equal(result.ok, true);
-  assert.deepEqual(reads, [before, head]);
+  assert.deepEqual(reads, [parent, head]);
 });
 
 test('merge group compares github SHA with the payload group base', () => {

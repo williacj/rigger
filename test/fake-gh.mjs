@@ -11,6 +11,7 @@ import { dirname } from 'node:path';
 import { branchesIn, checkedOut, commentOf, comparedIn, createFakeRepository, headIn } from './fake-repository.mjs';
 import { EXIT_IF_WARMING, warmed } from './process-fixtures.mjs';
 import { defaultBranchIn, entryIn, pullStateOf, recordEvent, timelineNodes } from './fake-repository.mjs';
+import { bodyHistoryOf } from './fake-repository.mjs';
 
 /** How the fake `gh` names a command it was run with: as the command line itself. */
 const spelled = (args) => ['gh', ...args].join(' ');
@@ -414,12 +415,23 @@ async function issue(board, state, operation) {
 }
 
 /** The held issue the read names in the repository the forge answers it in, or GitHub's not-found answer for it. */
-function heldIssue(state, operation) {
+function heldIssue(state, operation, fallback = []) {
   inTheRepository(state, operation);
   const number = Number(valueOf(fieldIn(operation.selections, 'issue'), 'number'));
-  const held = repositoryOf(state).held().issues.find((candidate) => candidate.number === number);
+  const held = repositoryOf(state).held().issues.find((candidate) => candidate.number === number)
+    ?? fallback.find((candidate) => candidate.number === number && candidate.repository?.toLowerCase() === state.repo.toLowerCase());
   if (!held) throw unresolved({ repository: { issue: null } }, ['repository', 'issue'], `Could not resolve to an Issue with the number of ${number}.`);
   return held;
+}
+
+/** History fields from the captured #1302 reply; page cursors use this fake's existing page contract. */
+const BODY_EDITS = 'pageInfo { hasNextPage endCursor } nodes { editedAt editor { login } deletedAt diff }';
+
+/** Answers one body-history page without changing any other read's answer. */
+async function issueHistory(board, state, operation) {
+  const held = heldIssue(state, operation, board.issues());
+  const { userContentEdits, ...opening } = bodyHistoryOf(held);
+  return { repository: { issue: { ...opening, userContentEdits: page(userContentEdits.nodes, fieldIn(operation.selections, 'userContentEdits')) } } };
 }
 
 /** Answers the state of the issue the read names, and the repository the forge answers it in. */
@@ -485,6 +497,8 @@ async function fileAt(board, state, operation) {
  * printing itself.
  */
 const COMMANDS = {
+  [graphql(repositoryShape(`issue(number: _) { createdAt author { login } body userContentEdits(first: _) { ${BODY_EDITS} } }`))]: issueHistory,
+  [graphql(repositoryShape(`issue(number: _) { createdAt author { login } body userContentEdits(first: _, after: _) { ${BODY_EDITS} } }`))]: issueHistory,
   [graphql(boardShape(`items(first: _) { pageInfo { hasNextPage endCursor } nodes { ${ITEM} } }`))]: items,
   [graphql(boardShape(`items(first: _, after: _) { pageInfo { hasNextPage endCursor } nodes { ${ITEM} } }`))]: items,
   [graphql(boardShape(`items(first: _) { pageInfo { hasNextPage endCursor } nodes { ${OWNED_ITEM} } }`))]: ownedItems,

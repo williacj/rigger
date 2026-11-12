@@ -9,11 +9,15 @@ import { fileURLToPath } from 'node:url';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { retiredIds } from './duplicate-id-check.mjs';
 import { documentChecking } from './doc-reference-check.mjs';
+import { addedTimers, gitFacts, modifiedConversionFiles, readRecord } from '../.github/scripts/check-host-declarations.mjs';
 
 export const SCRIPT_CHECKS = [
   { name: 'matrix', command: ['npm', 'run', 'matrix:check'] },
   { name: 'spec-style', command: ['npm', 'run', 'lint:spec-style'] },
   { name: 'paths', command: ['npm', 'run', 'check:paths'] },
+  // Runs the conversion-list files the change adds tests to, with the files appended, before the
+  // added-timer mode reads the record that run writes (D30 rule 6).
+  { name: 'added-timer', command: ['npm', 'test', '--'] },
 ];
 
 /** Backticked paths in the card's Lands in bullet, including its nested bullets. */
@@ -139,6 +143,35 @@ export function preflight(argv, { root = process.cwd(), scriptChecks = SCRIPT_CH
     return 1;
   }
   let failing = false;
+  // The added-timer step: an npm test run of the conversion-list files the change modifies, with a
+  // record directory of its own, then the mode over that record. A failed run stops it there.
+  const addedTimerStep = (command) => {
+    if (git('ls-tree', '-z', head, '--', 'test/suite.sh') === '') {
+      write('added-timer: passed (no test/suite.sh at the head, so no conversion list)');
+      return true;
+    }
+    const facts = gitFacts(root);
+    const modified = modifiedConversionFiles({ base, head, facts });
+    const files = modified.filter(({ error }) => !error).map(({ file }) => file);
+    if (modified.length === 0) {
+      write('added-timer: passed (no conversion-list file modified)');
+      return true;
+    }
+    const record = mkdtempSync(join(tmpdir(), 'rigger-timer-record-'));
+    try {
+      const result = files.length === 0 ? { status: 0 }
+        : run([...command, ...files], { env: { ...gitEnvironment(env), GIT_OPTIONAL_LOCKS: '0', RIGGER_SUITE_TIMER_RECORD: record } });
+      if (result.status !== 0) {
+        write(`added-timer: failed (${[...command, ...files].join(' ')} exited ${result.status})`);
+        if (result.stdout) write(result.stdout.trimEnd());
+        if (result.stderr) write(result.stderr.trimEnd());
+        return false;
+      }
+      const checked = addedTimers({ base, head, facts, record: readRecord(record) });
+      report('added-timer', checked.errors);
+      return checked.ok;
+    } finally { rmSync(record, { recursive: true, force: true }); }
+  };
   const report = (name, findings) => {
     write(`${name}: ${findings.length ? 'failed' : 'passed'}`);
     for (const finding of findings) write(finding);
@@ -193,6 +226,14 @@ export function preflight(argv, { root = process.cwd(), scriptChecks = SCRIPT_CH
   });
   report('retired ids', citations);
   for (const { name, command } of scriptChecks) {
+    if (name === 'added-timer') {
+      try { if (!addedTimerStep(command)) failing = true; }
+      catch (error) {
+        write(`added-timer: failed (${error.message})`);
+        failing = true;
+      }
+      continue;
+    }
     const result = run(command);
     write(`${name}: ${result.status === 0 ? 'passed' : 'failed'} (exit ${result.status})`);
     if (result.stdout) write(result.stdout.trimEnd());
