@@ -317,7 +317,10 @@ test('cancellation resolves every older target attribution before its first POST
   assert.ok(calls.some(([method, path]) => method === 'GET' && path === root + '/actions/runs/61'));
   assert.deepEqual(calls.filter(([method]) => method === 'POST'), [['POST', root + '/actions/runs/60/cancel']]);
   const firstPost = calls.findIndex(([method]) => method === 'POST');
-  for (const id of [60, 61]) assert.ok(calls.findIndex(([method, path]) => method === 'GET' && path === root + '/actions/runs/' + id) < firstPost);
+  for (const id of [60, 61]) {
+    const detailRead = calls.findIndex(([method, path]) => method === 'GET' && path === root + '/actions/runs/' + id);
+    assert.ok(detailRead >= 0 && detailRead < firstPost);
+  }
 });
 
 test('cancellation accepts exactly 100 complete records and deduplicates status drift but refuses conflicting identity', async () => {
