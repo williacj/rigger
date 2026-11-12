@@ -31,24 +31,45 @@ function streamOf(bytes) {
 
 const names = (events) => events.map(({ name }) => name);
 
-/** Every event `readEvents` returns for `directory`, where a refusal is this test's failure. */
+/**
+ * Runs `reading` and asserts it left every byte of `directory`'s stream as it was, whether it
+ * returned or threw: no reader path rewrites what was recorded (`R-RECORD-5`; `ARCHITECTURE.md`,
+ * "A torn tail", "No writer makes the call").
+ */
+function leavesStream(directory, reading) {
+  const before = readFileSync(streamPath(directory));
+  try {
+    reading();
+  } finally {
+    assert.deepEqual(readFileSync(streamPath(directory)), before, 'the reader must leave every byte of the stream as it was');
+  }
+}
+
+/** Every event `readEvents` returns for `directory`, where a refusal or a changed byte is this test's failure. */
 function read(directory) {
   let events;
-  assert.doesNotThrow(() => { events = readEvents(directory); }, 'the reader must not refuse the stream');
+  leavesStream(directory, () => {
+    assert.doesNotThrow(() => { events = readEvents(directory); }, 'the reader must not refuse the stream');
+  });
   return events;
 }
 
-/** Asserts `readEvents` refuses the stream at `number`, as #1391 words the refusal. */
+/**
+ * Asserts `readEvents` refuses the stream at `number`, as #1391 words the refusal, and leaves
+ * every byte of it as it was.
+ */
 function refusesLine(directory, number, cause) {
-  assert.throws(() => readEvents(directory), (failure) => {
-    assert.equal(failure.message, `${streamPath(directory)} line ${number} is not a recorded event`);
-    assert.ok(failure.cause instanceof cause, `the cause is a ${cause.name}: ${failure.cause}`);
-    return true;
+  leavesStream(directory, () => {
+    assert.throws(() => readEvents(directory), (failure) => {
+      assert.equal(failure.message, `${streamPath(directory)} line ${number} is not a recorded event`);
+      assert.ok(failure.cause instanceof cause, `the cause is a ${cause.name}: ${failure.cause}`);
+      return true;
+    });
   });
 }
 
 // A reader that refused or returned the unterminated fragment fails here.
-// proves R-RECORD-6
+// proves R-RECORD-5, R-RECORD-6
 test('R1: whole events, then a fragment with no newline after it, read as the whole events alone', () => {
   const directory = streamOf(`${line('one')}${line('two')}${cut('three', 40)}`);
 
@@ -56,7 +77,7 @@ test('R1: whole events, then a fragment with no newline after it, read as the wh
 });
 
 // A reader that refuses every line that is not one event (E1's second rule) fails here.
-// proves R-RECORD-6
+// proves R-RECORD-5, R-RECORD-6
 test('R2: a fragment, then a whole sink line on the same line, reads as that line\'s event and every event before it', () => {
   const directory = streamOf(`${line('one')}${line('two')}${cut('torn', 40)}${line('three')}`);
 
@@ -64,7 +85,7 @@ test('R2: a fragment, then a whole sink line on the same line, reads as that lin
 });
 
 // A reader that looks past only one fragment, or takes the rightmost offset, fails here.
-// proves R-RECORD-6
+// proves R-RECORD-5, R-RECORD-6
 test('R3: two fragments, then a whole sink line, on one line, read as the whole line\'s event', () => {
   const directory = streamOf(`${line('one')}${cut('torn', 30)}${cut('torn again', 60)}${line('three')}`);
 
@@ -73,7 +94,7 @@ test('R3: two fragments, then a whole sink line, on one line, read as the whole 
 
 // #1374's round-1 case: a fragment cut just after a space inside a string leaves a second offset a
 // JSON parser accepts. A reader that wants exactly one offset from which the rest parses fails here.
-// proves R-RECORD-6
+// proves R-RECORD-5, R-RECORD-6
 test('R4: a fragment cut just after a space inside a string, then a whole sink line, reads as the whole line\'s event', () => {
   const torn = line('torn', { reason: 'a b' });
   const fragment = torn.slice(0, torn.indexOf('a b') + 'a '.length);
@@ -86,7 +107,7 @@ test('R4: a fragment cut just after a space inside a string, then a whole sink l
 });
 
 // A reader that takes any JSON object at a `{"ts":"` offset, without #1391's envelope check, fails here.
-// proves R-RECORD-6
+// proves R-RECORD-5, R-RECORD-6
 test('R5: a fragment, then an object at a {"ts":" offset that breaks the envelope, is refused naming its line', () => {
   const breaking = `${JSON.stringify({ ...event('three'), layer: 'L9' })}\n`;
   assert.ok(breaking.startsWith('{"ts":"'), 'the premise: the object starts where a sink line does');
@@ -96,7 +117,7 @@ test('R5: a fragment, then an object at a {"ts":" offset that breaks the envelop
 });
 
 // A reader that recovers a whole line after bytes not beginning with `{` fails here.
-// proves R-RECORD-6
+// proves R-RECORD-5, R-RECORD-6
 test('R6a: NUL bytes, then a whole sink line, on one line, are refused naming the line', () => {
   const directory = streamOf(Buffer.concat([Buffer.from(line('one')), Buffer.alloc(16), Buffer.from(line('three'))]));
 
@@ -104,7 +125,7 @@ test('R6a: NUL bytes, then a whole sink line, on one line, are refused naming th
 });
 
 // A reader that recovers a whole line after bytes not beginning with `{` fails here.
-// proves R-RECORD-6
+// proves R-RECORD-5, R-RECORD-6
 test('R6b: text not beginning with {, then a whole sink line, on one line, is refused naming the line', () => {
   const directory = streamOf(`${line('one')}not a sink line ${line('three')}`);
 
@@ -112,7 +133,7 @@ test('R6b: text not beginning with {, then a whole sink line, on one line, is re
 });
 
 // A reader that passes over a line beginning with `{` without finding a whole event in it fails here.
-// proves R-RECORD-6
+// proves R-RECORD-5, R-RECORD-6
 test('R7: a line beginning with { with no {"ts":" offset from which the rest is one event is refused naming the line', () => {
   for (const damaged of [
     `${cut('torn', 40)}{"run":"r-torn","layer":"L5","event":"torn.probe"}\n`,
@@ -123,7 +144,7 @@ test('R7: a line beginning with { with no {"ts":" offset from which the rest is 
 });
 
 // A reader whose answer for the pushed copy differs from its answer for the local stream fails here.
-// proves R-RECORD-6
+// proves R-RECORD-5, R-RECORD-6
 test('R8: the pushed copy of a torn stream reads as the local stream does', () => {
   const local = Buffer.from(`${line('one')}${line('two')}${cut('torn', 40)}${line('three')}${cut('later', 25)}`);
   // "The commit" (`src/substrate/data-ref.mjs`, `pushStream`): up to and including the last newline.
