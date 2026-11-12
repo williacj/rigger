@@ -4,6 +4,7 @@ import { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseWorkflow, evaluateCiPolicy, ciFacts, ciProof } from './ci-policy-fixtures.mjs';
+import { manualClock } from './clock-report-world.mjs';
 const ci = parseWorkflow(readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'));
 
 const readOnlyPermissions = permissions => permissions === undefined || permissions === 'read-all' || permissions !== null && typeof permissions === 'object' && !Array.isArray(permissions) && Object.values(permissions).every(value => value === 'read' || value === 'none');
@@ -213,6 +214,10 @@ test('cancellation freezes attributable own run workflow and live PR without req
     const f = input(), own = run(); change(own);
     const answer = await execute(f, [get(root + '/actions/runs/80', own)], true);
     assert.match(answer.error, /own run/);
+    if (own.pull_requests.length === 0) {
+      assert.equal(answer.error, 'own run identity invalid');
+      assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), []);
+    }
   }
   const f = input(), wrong = start(f); wrong[1][2].body.id = 56;
   assert.match((await execute(f, wrong.slice(0, 2), true)).error, /workflow/);
@@ -283,8 +288,8 @@ test('cancellation refuses incomplete discovery and malformed attribution before
   }
   const f = input(), target = run(60, old, 10);
   const sparse = { ...structuredClone(target), pull_requests: [] };
-  const unresolved = await execute(f, [...start(f), list('queued', [sparse]), ...pages().slice(1), ...preflight(sparse)], true);
-  assert.match(unresolved.error, /attribution/);
+  const unresolved = await execute(f, [...start(f), list('queued', [sparse]), ...pages().slice(1), ...preflight(sparse)]);
+  assert.deepEqual(unresolved.result, { accepted: [], completed: [] });
   assert.ok(unresolved.calls.every(([method]) => method === 'GET'));
 });
 
@@ -298,7 +303,7 @@ test('cancellation resolves every older target attribution before its first POST
     [root + '/actions/runs/61', { ...second, pull_requests: [] }],
   ]);
   const calls = [];
-  await assert.rejects(controller.cancelSuperseded({ ...f, request: async (path, options = {}) => {
+  await assert.doesNotReject(controller.cancelSuperseded({ ...f, request: async (path, options = {}) => {
     const method = options.method ?? 'GET';
     calls.push([method, path]);
     if (method === 'POST') return { status: 202, body: null, link: null };
@@ -308,9 +313,11 @@ test('cancellation resolves every older target attribution before its first POST
     }
     assert.ok(route.has(path), 'unexpected API route ' + path);
     return { status: 200, body: structuredClone(route.get(path)), link: null };
-  }, log: () => {} }), /attribution/);
+  }, log: () => {} }));
   assert.ok(calls.some(([method, path]) => method === 'GET' && path === root + '/actions/runs/61'));
-  assert.deepEqual(calls.filter(([method]) => method === 'POST'), []);
+  assert.deepEqual(calls.filter(([method]) => method === 'POST'), [['POST', root + '/actions/runs/60/cancel']]);
+  const firstPost = calls.findIndex(([method]) => method === 'POST');
+  for (const id of [60, 61]) assert.ok(calls.findIndex(([method, path]) => method === 'GET' && path === root + '/actions/runs/' + id) < firstPost);
 });
 
 test('cancellation accepts exactly 100 complete records and deduplicates status drift but refuses conflicting identity', async () => {
@@ -378,8 +385,9 @@ test('cancellation treats 202 as acceptance only and handles 409 once without re
   const benign = await execute(f, [...before(), ...recheck(f, first), conflict, get(root + '/actions/runs/60', done), ...recheck(f, second), post(61)]);
   assert.deepEqual(benign.result, { accepted: [61], completed: [60] });
   assert.ok(!benign.logs.some(l => l.action === 'cancel-accepted' && l.target === 60));
-  const active = await execute(f, [...before(), ...recheck(f, first), conflict, get(root + '/actions/runs/60', first)], true);
-  assert.match(active.error, /cancel request/);
+  const active = await execute(f, [...before(), ...recheck(f, first), conflict, get(root + '/actions/runs/60', first), ...recheck(f, second), post(61)]);
+  assert.deepEqual(active.result, { accepted: [61], completed: [] });
+  assert.equal(active.calls.filter(([method, path]) => method === 'POST' && path === root + '/actions/runs/60/cancel').length, 1);
   for (const failure of [{ status: 403, body: {}, link: null }, { status: 429, body: {}, link: null }, new Error('controlled transport failure')]) {
     const answer = await execute(f, [...before(), ...recheck(f, first), post(60), ...recheck(f, second), ['POST', root + '/actions/runs/61/cancel', failure]], true);
     assert.deepEqual(answer.logs.filter(l => l.action === 'cancel-accepted'), [{ action: 'cancel-accepted', target: 60, status: 202 }]);
@@ -888,7 +896,7 @@ test('recovered cancellation preserves completion acceptance conflict and later-
     { final: recheck(f, done), result: { accepted: [], completed: [60] }, writes: [] },
     { final: [...recheck(f, target), post(60)], result: { accepted: [60], completed: [] }, writes: [['POST', '/repos/williacj/rigger/actions/runs/60/cancel']] },
     { final: [...recheck(f, target), conflict, get('/repos/williacj/rigger/actions/runs/60', done)], result: { accepted: [], completed: [60] }, writes: [['POST', '/repos/williacj/rigger/actions/runs/60/cancel']] },
-    { final: [...recheck(f, target), conflict, get('/repos/williacj/rigger/actions/runs/60', target)], error: 'cancel request conflict unresolved', writes: [['POST', '/repos/williacj/rigger/actions/runs/60/cancel']] },
+    { final: [...recheck(f, target), conflict, get('/repos/williacj/rigger/actions/runs/60', target)], result: { accepted: [], completed: [] }, writes: [['POST', '/repos/williacj/rigger/actions/runs/60/cancel']] },
     { final: [...recheck(f, target), conflict, ['GET', '/repos/williacj/rigger/actions/runs/60', { status: 403, body: {}, link: null }]], error: 'API read failed', writes: [['POST', '/repos/williacj/rigger/actions/runs/60/cancel']] },
   ];
   for (const sample of samples) {
@@ -907,4 +915,93 @@ test('recovered cancellation preserves completion acceptance conflict and later-
   assert.deepEqual(answer.calls, expectedCalls);
   assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), [['POST', '/repos/williacj/rigger/actions/runs/60/cancel'], ['POST', '/repos/williacj/rigger/actions/runs/61/cancel']]);
   assert.deepEqual(answer.logs.filter(entry => entry.action === 'cancel-accepted'), [{ action: 'cancel-accepted', target: 60, status: 202 }]);
+});
+
+// #1407's pre-dispatch attack (6812211557) records queued detail with no association.
+// The other statuses use the same REST workflow-run schema as controlled counterexamples.
+// Break: treating an empty detailed association as an error, a target, or an unlogged exclusion.
+test('unattributable older runs are logged and excluded across all statuses while attributable work continues', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: manualClock().now() });
+  for (const status of ['queued', 'in_progress', 'waiting', 'pending', 'requested']) {
+    for (const sparseList of [false, true]) {
+      for (const withTarget of [false, true]) {
+        const f = input(), listed = { ...run(60, old, 10), status };
+        if (sparseList) listed.pull_requests = [];
+        const unattributed = { ...listed, pull_requests: [] }, target = run(61, old, 11);
+        const rows = withTarget ? [listed, target] : [listed];
+        const script = [...start(f), ...pages().map(page => page[1].includes('status=' + status + '&') ? list(status, rows) : page),
+          ...preflight(unattributed, ...(withTarget ? [target] : [])), ...(withTarget ? [...recheck(f, target), post(61)] : [])];
+        const expectedCalls = script.map(([method, path]) => [method, path]);
+        let answer;
+        await assert.doesNotReject(async () => { answer = await execute(f, script); }, `${status}, sparse=${sparseList}, target=${withTarget}`);
+        assert.deepEqual(answer.result, { accepted: withTarget ? [61] : [], completed: [] });
+        assert.deepEqual(answer.calls, expectedCalls);
+        assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), withTarget ? [['POST', root + '/actions/runs/61/cancel']] : []);
+        assert.deepEqual(answer.logs.filter(entry => entry.action === 'exclude'), [{ action: 'exclude', target: 60, reason: 'no pull request association' }]);
+      }
+    }
+  }
+});
+
+// #1407 and M8-U25 record 409 with a still-queued run; other active statuses
+// are controlled REST states, not claims of additional observed GitHub failures.
+// Break: refusing or retrying a frozen active 409, claiming success, or abandoning later targets.
+test('active cancellation conflicts are logged once without acceptance completion or retry and later targets continue', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: manualClock().now() });
+  for (const status of ['queued', 'in_progress', 'waiting', 'pending', 'requested']) {
+    for (const withTarget of [false, true]) {
+      const f = input(), first = run(60, old, 10), second = run(61, old, 11);
+      const targets = withTarget ? [first, second] : [first];
+      const conflict = ['POST', root + '/actions/runs/60/cancel', { status: 409, body: {}, link: null }];
+      const script = [...start(f), list('queued', targets), ...pages().slice(1), ...preflight(...targets),
+        ...recheck(f, first), conflict, ...preflight({ ...first, status }), ...(withTarget ? [...recheck(f, second), post(61)] : [])];
+      const expectedCalls = script.map(([method, path]) => [method, path]);
+      let answer;
+      await assert.doesNotReject(async () => { answer = await execute(f, script); }, `${status}, target=${withTarget}`);
+      assert.deepEqual(answer.result, { accepted: withTarget ? [61] : [], completed: [] });
+      assert.deepEqual(answer.calls, expectedCalls);
+      assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), [
+        ['POST', root + '/actions/runs/60/cancel'], ...(withTarget ? [['POST', root + '/actions/runs/61/cancel']] : []),
+      ]);
+      assert.deepEqual(answer.logs.filter(entry => entry.action === 'cancel-conflict'), [{ action: 'cancel-conflict', target: 60, status: 409, runStatus: status }]);
+      assert.deepEqual(answer.logs.filter(entry => entry.action === 'cancel-accepted'), withTarget ? [{ action: 'cancel-accepted', target: 61, status: 202 }] : []);
+    }
+  }
+});
+
+// Break: extending the discovery-only empty-association exception to malformed details,
+// conflicting source fields, or the frozen target's final and post-409 identity checks.
+test('cancellation refuses malformed detailed attribution and association loss on final rereads without further writes', async t => {
+  t.mock.timers.enable({ apis: ['Date'], now: manualClock().now() });
+  const f = input(), target = run(60, old, 10);
+  const before = () => [...start(f), list('queued', [target]), ...pages().slice(1)];
+  const malformed = [
+    detail => { detail.pull_requests[0].id = 0; },
+    detail => { detail.pull_requests[0].number = -1; },
+    detail => { detail.pull_requests[0].head.repo.id = 0; },
+    detail => { detail.pull_requests[0].base.repo.id = -1; },
+    detail => { detail.pull_requests.push(assoc()); },
+    detail => { detail.pull_requests = [null]; },
+    detail => { delete detail.pull_requests; },
+  ];
+  for (const change of malformed) {
+    const detailed = structuredClone(target); change(detailed);
+    const answer = await execute(f, [...before(), ...preflight(detailed)], true);
+    assert.equal(answer.error, 'run attribution invalid');
+    assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), []);
+  }
+  const conflicting = { ...target, run_attempt: 2, pull_requests: [] };
+  const changed = await execute(f, [...before(), ...preflight(conflicting)], true);
+  assert.match(changed.error, /run attribution invalid|conflicting run identity/);
+  assert.deepEqual(changed.calls.filter(([method]) => method === 'POST'), []);
+  const missing = { ...target, pull_requests: [] };
+  const final = await execute(f, [...before(), ...preflight(target), get(root + '/pulls/7', f.pr), ...preflight(missing)], true);
+  assert.equal(final.error, 'run attribution invalid');
+  assert.deepEqual(final.calls.filter(([method]) => method === 'POST'), []);
+  for (const reread of [missing, { ...target, run_attempt: 2 }]) {
+    const conflict = ['POST', root + '/actions/runs/60/cancel', { status: 409, body: {}, link: null }];
+    const answer = await execute(f, [...before(), ...preflight(target), ...recheck(f, target), conflict, ...preflight(reread)], true);
+    assert.equal(answer.error, reread.pull_requests.length === 0 ? 'run attribution invalid' : 'cancel request conflict unresolved');
+    assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), [['POST', root + '/actions/runs/60/cancel']]);
+  }
 });
