@@ -108,7 +108,7 @@ job](../README.md#installing-the-launchd-job)), three things hold:
 
 - **No Self-hosting card enters `ready`.** A card that changes a path [`AGENTS.md`,
   "Self-hosting"](../AGENTS.md#self-hosting) lists is never dispatched by the engine
-  ([`D25`](spec/decisions.md) rule 5), so it does not wait in `ready` for it.
+  ([`D35`](spec/decisions.md) rule 5), so it does not wait in `ready` for it.
 - **No hand dispatch takes a `ready` card that a kind of `rigger.config.mjs` selects.** The engine
   may pull that card at any moment, and at most one actor mutates a card's board state or its
   workspace at a time ([`R-WORK-2`](spec/requirements.md)).

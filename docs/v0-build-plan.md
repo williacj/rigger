@@ -67,8 +67,8 @@ is a standing condition, not a transition, and it needs a promote step. That ste
 installed engine is upgraded, to which version, and what becomes of a card that changes a config
 schema or CLI contract the running engine reads. D7 settles it.
 
-**The engine never dispatches a change to its own live gate, and such a change merges under
-`D25` rule 7.** The gate is the forge check `ARCHITECTURE.md`'s "The gate" describes, and it binds
+**No maker is dispatched for a change to Rigger's own live gate, and such a change merges as
+`D35` rules 5 and 7 say.** The gate is the forge check `ARCHITECTURE.md`'s "The gate" describes, and it binds
 every route to this repository's main line, Rigger's own dispatches included. The template `init`
 ships holds the default-branch push refusal alone, and this repository's suite hooks are its own.
 `AGENTS.md` states which cards are excluded from self-dispatch as a result, and D7 records the
