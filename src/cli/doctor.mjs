@@ -947,7 +947,8 @@ export async function sourceTreeGuard(verb, { target = process.cwd(), packageRoo
  * asks git with an `L0` emitter on `sink`, and where it accepts the target, `name` names the state
  * directory there, which writes every event the sink held. As `{ named }`, or `{ refusal }`, what
  * the verb prints and exits with where the guard refused, or where the state directory refused
- * what the sink held, which names each event that went unrecorded (`R-RECORD-9`).
+ * what the sink held, which names each held event not yet recorded. The sink still holds those,
+ * and its next append writes them first (`R-RECORD-9`).
  */
 export async function settled(verb, { sink, name }, options = {}) {
   const guarded = await sourceTreeGuard(verb, { ...options, emitter: sink.emitter({ layer: 'L0' }) });
