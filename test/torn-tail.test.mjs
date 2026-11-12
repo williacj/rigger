@@ -76,12 +76,15 @@ test('R1: whole events, then a fragment with no newline after it, read as the wh
   assert.deepEqual(read(directory), [event('one'), event('two')]);
 });
 
-// A reader that refuses every line that is not one event (E1's second rule) fails here.
+// Rows R2 and R9 over one stream. A reader that refuses every line that is not one event (E1's
+// second rule) fails here, and so does one that truncated, terminated or rewrote the fragment.
 // proves R-RECORD-5, R-RECORD-6
-test('R2: a fragment, then a whole sink line on the same line, reads as that line\'s event and every event before it', () => {
-  const directory = streamOf(`${line('one')}${line('two')}${cut('torn', 40)}${line('three')}`);
+test('R2 R9: a fragment, then a whole sink line on the same line, reads as that line\'s event and every event before it, and leaves the stream\'s bytes as they were, the fragment included', () => {
+  const bytes = Buffer.from(`${line('one')}${line('two')}${cut('torn', 40)}${line('three')}`);
+  const directory = streamOf(bytes);
 
   assert.deepEqual(read(directory), [event('one'), event('two'), event('three')]);
+  assert.deepEqual(readFileSync(streamPath(directory)), bytes);
 });
 
 // A reader that looks past only one fragment, or takes the rightmost offset, fails here.
@@ -155,17 +158,6 @@ test('R8: the pushed copy of a torn stream reads as the local stream does', () =
 
   assert.deepEqual(read(streamOf(copy)), fromLocal);
   assert.deepEqual(names(fromLocal), ['one', 'two', 'three']);
-});
-
-// A reader that truncated, terminated or rewrote the fragment fails here.
-// proves R-RECORD-5
-test('R9: reading a torn stream leaves its bytes as they were, the fragment included', () => {
-  const bytes = Buffer.from(`${line('one')}${line('two')}${cut('torn', 40)}${line('three')}`);
-  const directory = streamOf(bytes);
-
-  read(directory);
-
-  assert.deepEqual(readFileSync(streamPath(directory)), bytes);
 });
 
 /**
