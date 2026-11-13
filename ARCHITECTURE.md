@@ -2103,9 +2103,13 @@ process adapter, with the environment `gitEnvironment` gives:
 1. `git remote get-url --push --all origin`, which reads `<url>`, the URL a push to `origin` goes
    to. Where it prints other than exactly one URL, the push fails, naming what it printed, and runs
    no later step.
-2. `git remote get-url --push --all rigger-data-push`, which must answer that no such remote
-   exists. Where it prints anything, the consumer's configuration already names that remote, and
-   the push fails, naming it, and runs no later step.
+2. `git config --get-regexp ^remote\.rigger-data-push\.`, which reads every scope `git` reads its
+   configuration from, the environment and the command line included. It must exit 1 and print
+   nothing. Where it prints a key, the consumer's configuration already names that remote, and
+   the push fails, naming it, and runs no later step. Where it exits other than 0 or 1, the push
+   fails in `git`'s words and runs no later step. `git remote get-url` finds no such remote set in
+   the global file, in `GIT_CONFIG_COUNT`'s keys or in `GIT_CONFIG_PARAMETERS`, as measured with
+   `git` 2.54.0 on #1411.
 3. `git ls-remote <url> refs/rigger/events refs/remotes/refs/rigger/events/HEAD`, which reads the
    tip, or finds the ref absent. Where it prints any ref other than `refs/rigger/events`, the push
    fails, naming that ref, and runs no later step.
