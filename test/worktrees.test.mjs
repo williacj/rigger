@@ -24,6 +24,9 @@ import { doctor } from '../src/cli/doctor.mjs';
 import template from '../templates/rigger.config.mjs';
 import { pushAtReturn } from '../src/observation/push.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
+import { bareCloneInto } from './git-repository.mjs';
+import { runCommand } from '../src/substrate/process.mjs';
+import { shellQuote } from './process-fixtures.mjs';
 
 /** Every event an emitter was handed, in order, each as its name and its fields. */
 function recorder() {
@@ -887,4 +890,67 @@ test('doctor, telemetry.push true, pushes its stream at its return through the p
   assert.equal(gitIn(origin, 'rev-parse', 'refs/rigger/events').trim(), end.commit);
   const stream = events.slice(0, -1).map((event) => `${JSON.stringify(event)}\n`).join('');
   assert.equal(gitIn(origin, 'cat-file', 'blob', `${end.commit}:events.jsonl`), stream);
+});
+
+// Host reason: wiring; inherited config must reach real git through the push side and L0.
+// Ordinary decision counterpart: test/data-ref.test.mjs :: P33: step 2 refuses a configured push remote or a config read failure, and permits an absent remote
+test('the push side refuses all nine inherited remote config cells without a network call or a changed ref', async (t) => {
+  for (const scope of ['global file', 'config count', 'config parameters']) {
+    for (const key of ['url', 'pushurl', 'fetch']) {
+      await t.test(`${scope} / ${key}`, async (t) => {
+        const { directory, origin, repository } = world(t);
+        const target = bareCloneInto(origin, join(directory, "injected's remote.git"));
+        const setting = `remote.rigger-data-push.${key}`;
+        const value = key === 'fetch' ? '+refs/rigger/*:refs/heads/stolen/*' : target;
+        const environment = { ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' };
+        if (scope === 'global file') {
+          const global = join(directory, 'global-config');
+          gitIn(repository, 'config', '--file', global, setting, value);
+          environment.GIT_CONFIG_GLOBAL = global;
+        } else if (scope === 'config count') {
+          Object.assign(environment, { GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: setting, GIT_CONFIG_VALUE_0: value });
+        } else {
+          environment.GIT_CONFIG_PARAMETERS = shellQuote(`${setting}=${value}`);
+        }
+        // Establish that this cell reaches git before testing the push's response to it.
+        const configured = spawnSync('git', ['-C', repository, 'config', '--get-regexp', '^remote\\.rigger-data-push\\.'], { env: gitEnvironment(environment), encoding: 'utf8' });
+        assert.equal(configured.status, 0, configured.stderr);
+        assert.equal(configured.stdout, `${setting} ${value}\n`);
+        const repositories = [origin, repository, ...(key === 'fetch' ? [] : [target])];
+        const before = repositories.map((root) => gitIn(root, 'for-each-ref'));
+        const calls = [];
+        const spawn = (call) => {
+          calls.push(call.args);
+          return runCommand(call);
+        };
+        const answer = await pushStream({ repository, stream: Buffer.from('inherited config cell\n'), emitter: recorder(), environment, spawn });
+        assert.deepEqual({
+          outcome: answer.outcome,
+          namesRemote: answer.reason?.includes('rigger-data-push') ?? false,
+          network: calls.filter((args) => ['ls-remote', 'fetch', 'push'].includes(args[0] === '-c' ? args[2] : args[0])),
+          refs: repositories.map((root) => gitIn(root, 'for-each-ref')),
+        }, { outcome: 'failed', namesRemote: true, network: [], refs: before });
+      });
+    }
+  }
+});
+
+// Host reason: wiring; unrelated inherited config reaches real git without becoming a remote collision.
+// Ordinary decision counterpart: test/data-ref.test.mjs :: P33: step 2 refuses a configured push remote or a config read failure, and permits an absent remote
+test('the push side permits unrelated config-count keys and pushes the stream only to origin', async (t) => {
+  const { directory, origin, repository } = world(t);
+  const target = bareCloneInto(origin, join(directory, 'other-remote.git'));
+  const before = gitIn(target, 'for-each-ref');
+  const environment = {
+    ...process.env, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1',
+    GIT_CONFIG_COUNT: '3', GIT_CONFIG_KEY_0: 'user.name', GIT_CONFIG_VALUE_0: 'inherited identity',
+    GIT_CONFIG_KEY_1: 'remote.rigger-data-pusher.url', GIT_CONFIG_VALUE_1: target,
+    GIT_CONFIG_KEY_2: 'remote.rigger-data-push-extra.url', GIT_CONFIG_VALUE_2: target,
+  };
+  const stream = Buffer.from('unrelated inherited config\n');
+  const answer = await pushStream({ repository, stream, emitter: recorder(), environment });
+  assert.equal(answer.outcome, 'pushed', answer.reason);
+  assert.equal(gitIn(origin, 'rev-parse', 'refs/rigger/events').trim(), answer.commit);
+  assert.equal(gitIn(origin, 'cat-file', 'blob', `${answer.commit}:events.jsonl`), stream.toString('utf8'));
+  assert.equal(gitIn(target, 'for-each-ref'), before);
 });
