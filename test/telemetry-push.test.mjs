@@ -638,6 +638,37 @@ test('O12: a doctor run, telemetry.push true, that stops on a kill event its sin
   assert.deepEqual(watch.lines, []);
 });
 
+// proves R-RECORD-13
+test('work run under the push that records an event of its own, meets an event its sink refused and returns normally with exit 1, has its stream copied once and one push.end pushed recorded', async (t) => {
+  const w = world(t, { ...ADMITTED, telemetry: { push: true } });
+  const watch = pushing();
+  const refused = 'rigger stand-in: the sink refused 1 L0 event(s), so they went unrecorded';
+  // Work as a verb that turns a kill its sink refused into a normal return does: one event of the
+  // run's own, then the refusal L0 rejects with, answered as the verb's text with exit 1.
+  const answer = await recording(({ sink, name, admitted }) => {
+    name(w.repository);
+    admitted({ ...ADMITTED, telemetry: { push: true } });
+    const emitter = sink.emitter({ layer: 'L0' });
+    emitter.emit('stand-in.check', {});
+    try {
+      throw Object.assign(new Error('the sink refused 1 L0 event(s), so they went unrecorded'), { code: EVENT_REFUSED });
+    } catch (failure) {
+      if (failure.code !== EVENT_REFUSED) throw failure;
+      return { text: refused, code: 1 };
+    }
+  }, watch.push);
+  assert.deepEqual(answer, { text: refused, code: 1 });
+  assert.equal(watch.pushes.length, 1, 'the push side was not reached once');
+  const [{ stream, answered }] = watch.pushes;
+  assert.equal(answered.outcome, 'pushed', answered.reason);
+  assert.deepEqual(pushedStream(w, answered.commit), held(stream));
+  assert.ok(stream.toString('utf8').includes('stand-in.check'), 'the copy holds no event of the run\'s own');
+  const ends = pushEnds(w);
+  assert.equal(ends.length, 1, 'no push.end, or more than one, was recorded');
+  assertPushEnd(ends[0], answered);
+  assert.deepEqual(watch.lines, []);
+});
+
 // proves R-RECORD-20, R-RECORD-13
 test('doctor, handed L5\'s push with telemetry.push true, copies nothing, and the commit the next once run pushes holds the events doctor recorded', async (t) => {
   const w = world(t, { ...ADMITTED, telemetry: { push: true } });
