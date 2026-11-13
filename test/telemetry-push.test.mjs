@@ -89,16 +89,15 @@ const failingForge = async () => ({ status: 1, stdout: '', stderr: 'no forge sta
 
 /**
  * A consumer's repository holding `config` as its `rigger.config.mjs`, with a local bare `origin`
- * beside it and a worktree root inside its tree, under a directory of the test's own. `source`,
- * where given, is the config file's text instead. `once` and `run` refuse that worktree root, which
- * is the normal return they reach in process: the workspace adapter they build next spawns through
- * L0's process adapter, which the deterministic tier refuses.
+ * beside it and a worktree root inside its tree, under a directory of the test's own. `once` and
+ * `run` refuse that worktree root, which is the normal return they reach in process: the workspace
+ * adapter they build next spawns through L0's process adapter, which the deterministic tier refuses.
  */
-function world(t, config = ADMITTED, { source } = {}) {
+function world(t, config = ADMITTED) {
   const directory = temporaryDirectory('rigger-telemetry-push-', { context: t });
   const repository = join(directory, 'consumer');
   const root = join(repository, 'worktrees');
-  const text = source ?? `export default ${JSON.stringify({ ...config, worktrees: { ...config.worktrees, root } })};\n`;
+  const text = `export default ${JSON.stringify({ ...config, worktrees: { ...config.worktrees, root } })};\n`;
   repositoryAt(repository, { 'rigger.config.mjs': text, 'worktrees/.keep': '' });
   const origin = join(directory, 'origin.git');
   withOrigin(repository, origin);
@@ -106,26 +105,12 @@ function world(t, config = ADMITTED, { source } = {}) {
 }
 
 /**
- * A config whose default export, `telemetry.push` false, is a live binding the test switches
- * through `globalThis[key]` to one with `telemetry.push` true: plain data either way, and no
- * accessor. `consumerConfig` reads a file once per process, so a run reads the switched value
- * only where it is the first read of that file by its instance of `doctor.mjs`.
+ * L5's push `push` as a config holding `telemetry.push` false hands it: the push off. `consumerConfig`
+ * reads a file once per process, so a run with the push off and a later one with it on in the same
+ * repository read one config, which holds the push on, and the run with it off hands L5 that config
+ * with the push off.
  */
-function switchable(key) {
-  const config = { ...ADMITTED };
-  return `const config = { ...${JSON.stringify(config)}, worktrees: { root: new URL('./worktrees', import.meta.url).pathname } };\nlet value = { ...config, telemetry: { push: false } };\nexport { value as default };\nglobalThis[${JSON.stringify(key)}] = () => { value = { ...config, telemetry: { push: true } }; };\n`;
-}
-
-/**
- * `doctor` from a second instance of `src/cli/doctor.mjs`, standing in for a run in another
- * process: it holds its own reads of each config file, apart from the instance the verbs import.
- */
-const { doctor: doctorElsewhere } = await import('../src/cli/doctor.mjs?elsewhere');
-
-/** The verbs `offThenOn` runs with the push off, each from the instance `doctorElsewhere` is. */
-const ELSEWHERE = {
-  doctor: (w, push, ask = asking()) => answerOf('doctor', doctorElsewhere({ target: w.repository, ask, checks: [], push })),
-};
+const pushOff = (push) => (given) => push({ ...given, config: { ...given.config, telemetry: { push: false } } });
 
 /**
  * The verb's answer, failing on an assertion where it ends by a throw instead: no push, and no push
@@ -211,34 +196,27 @@ function assertFailureLine(lines, answered) {
 }
 
 /**
- * Runs `verb` in `w` twice over its switchable config, with `watch`: with the push off, as another
- * process would, and then, the config switched, with it on. Answers both answers and the one push
- * the second run made.
+ * Runs `verb` in `w` twice, with `watch`: with the push off, and then with it on. Answers both
+ * answers and the one push the second run made.
  */
-async function offThenOn(w, key, verb, watch) {
-  const off = await ELSEWHERE[verb](w, watch.push);
+async function offThenOn(w, verb, watch) {
+  const off = await IN_PROCESS[verb](w, pushOff(watch.push));
   assert.equal(watch.pushes.length, 0, 'the run with the push off pushed');
-  globalThis[key]();
   const on = await IN_PROCESS[verb](w, watch.push);
   return { off, on };
 }
 
 /**
- * `doctor`'s answer in `w` with the push off, as another process would run it, which every later
- * answer there is held to; the config is then switched, so each later run has the push on.
+ * `once`'s answer in `w` with the push off, which every later answer there is held to; each later
+ * run has the push on.
  */
-async function offAnswer(w, key, watch) {
-  const off = await ELSEWHERE.doctor(w, watch.push);
-  globalThis[key]();
-  return off;
+async function offAnswer(w, watch) {
+  return IN_PROCESS.once(w, pushOff(watch.push));
 }
 
-let switches = 0;
-/** A world whose config switches the push off and on, and the key that switches it. */
+/** A world whose config holds the push on, for a run with the push off and later runs with it on. */
 function switching(t) {
-  const key = `rigger-telemetry-push-${switches += 1}`;
-  t.after(() => delete globalThis[key]);
-  return { key, w: world(t, ADMITTED, { source: switchable(key) }) };
+  return world(t, { ...ADMITTED, telemetry: { push: true } });
 }
 
 // proves R-SAFE-3
@@ -284,13 +262,18 @@ test('C5: each config-reading verb run in process, its config refused by the val
   }
 });
 
-// proves R-RECORD-13
-test('C6: each config-reading verb run in process, telemetry.push true, pushes once at its return the stream as it stood, then records one push.end', async (t) => {
+// proves R-RECORD-13, R-RECORD-20
+test('C6: once and run, run in process with telemetry.push true, each push once at their return the stream as it stood, then record one push.end; doctor and plan, each handed L5\'s push, reach no push side', async (t) => {
   for (const verb of Object.keys(IN_PROCESS)) {
     const w = world(t, { ...ADMITTED, telemetry: { push: true } });
     const watch = pushing();
     const answer = await IN_PROCESS[verb](w, watch.push);
     const said = `${verb}: ${answer.text}`;
+    if (verb !== 'once' && verb !== 'run') {
+      assert.ok(eventsOf(w).length > 0, `${said}: the verb named no state directory, so this proves nothing`);
+      assertNoPush(w, watch, said);
+      continue;
+    }
     assert.equal(watch.pushes.length, 1, said);
     assert.equal(watch.pushes.length, 1, 'the verb made no push, or more than one');
     const [{ given, stream, answered }] = watch.pushes;
@@ -325,14 +308,14 @@ test('C7: each config-reading verb run in process, telemetry.push true, whose gu
 });
 
 // proves R-SAFE-3
-test('C8: a real doctor run, telemetry.push true, whose run writes no line to a stream earlier runs wrote, reaches no push side', async (t) => {
+test('C8: a real once run, telemetry.push true, whose run writes no line to a stream earlier runs wrote, reaches no push side', async (t) => {
   const w = world(t, { ...ADMITTED, telemetry: { push: true } });
   mkdirSync(w.state);
   const earlier = `${JSON.stringify({ ts: '2026-10-29T00:00:00.000Z', run: 'an-earlier-run', layer: 'L0', event: 'stand-in.asked', dispatch: null })}\n`;
   writeFileSync(join(w.state, 'events.jsonl'), earlier);
   const watch = pushing();
-  const answer = await IN_PROCESS.doctor(w, watch.push, asking({ mark: false }));
-  assert.equal(answer.code, 0, answer.text);
+  const answer = await IN_PROCESS.once(w, watch.push, asking({ mark: false }));
+  assert.match(answer.text, /^rigger once: the worktree root .* lies inside the working tree/, `once did not return normally: ${answer.text}`);
   assertNoPush(w, watch, answer.text);
   assert.equal(readFileSync(join(w.state, 'events.jsonl'), 'utf8'), earlier, 'the run wrote a line, so this proves nothing');
 });
@@ -344,13 +327,17 @@ test('C10: a verb whose work never returns, ended as a signal or L0\'s exit clea
     const watch = pushing();
     let reached;
     const reaching = new Promise((resolve) => { reached = resolve; });
-    // A check that never settles, as a verb the process ends under: it hands back the sink, whose
-    // end is the last step L0's exit cleanup takes.
-    const hanging = ({ sink }) => {
+    // Work that names the repository and its admitted config and records an event of its own, then
+    // never settles, as a verb the process ends under: it hands back the sink, whose end is the
+    // last step L0's exit cleanup takes.
+    const hanging = ({ sink, name, admitted }) => {
+      name(w.repository);
+      admitted({ ...ADMITTED, telemetry: { push: true } });
+      sink.emitter({ layer: 'L0' }).emit('stand-in.asked', {});
       reached(sink);
       return new Promise(() => {});
     };
-    const running = doctor({ target: w.repository, ask: asking(), checks: [hanging], push: watch.push });
+    const running = recording(hanging, watch.push);
     const sink = await reaching;
     if (ending === 'SIGHUP') {
       const kept = () => {};
@@ -387,12 +374,12 @@ test('the push module\'s writer, where its caller injects none, is writeWhole fr
 });
 
 // proves R-RECORD-13
-test('O1, O2: a doctor push that succeeds onto an absent data ref pushes the stream as it stood at the push\'s start in a commit with no parent, and leaves the answer as with the push off and writes nothing', async (t) => {
-  const { key, w } = switching(t);
+test('O1, O2: a once push that succeeds onto an absent data ref pushes the stream as it stood at the push\'s start in a commit with no parent, and leaves the answer as with the push off and writes nothing', async (t) => {
+  const w = switching(t);
   // L5's clock reads 1,000 at the push's start and 1,250 from then on, so `ms` is 250.
   let reads = 0;
   const watch = pushing({ now: () => (reads++ === 0 ? 1_000 : 1_250) });
-  const { off, on } = await offThenOn(w, key, 'doctor', watch);
+  const { off, on } = await offThenOn(w, 'once', watch);
   assert.deepEqual(on, off);
   assert.deepEqual(watch.lines, []);
   assert.equal(watch.pushes.length, 1, 'the verb made no push, or more than one');
@@ -409,13 +396,13 @@ test('O1, O2: a doctor push that succeeds onto an absent data ref pushes the str
 });
 
 // proves R-RECORD-14, R-RECORD-15, R-RECORD-18
-test('O3: a doctor push origin\'s pre-receive hook refuses records push.end refused with the push side\'s reason, writes one line naming it, and leaves the answer as with the push off', async (t) => {
-  const { key, w } = switching(t);
+test('O3: a once push origin\'s pre-receive hook refuses records push.end refused with the push side\'s reason, writes one line naming it, and leaves the answer as with the push off', async (t) => {
+  const w = switching(t);
   const hook = join(w.origin, 'hooks', 'pre-receive');
   writeFileSync(hook, '#!/bin/sh\necho "the data ref is closed here" >&2\nexit 1\n');
   chmodSync(hook, 0o755);
   const watch = pushing();
-  const { off, on } = await offThenOn(w, key, 'doctor', watch);
+  const { off, on } = await offThenOn(w, 'once', watch);
   assert.deepEqual(on, off);
   assert.equal(watch.pushes.length, 1, 'the verb made no push, or more than one');
   const [{ answered }] = watch.pushes;
@@ -428,8 +415,8 @@ test('O3: a doctor push origin\'s pre-receive hook refuses records push.end refu
 });
 
 // proves R-RECORD-17, R-RECORD-15, R-RECORD-18
-test('O4: a doctor push whose earlier git calls spend its whole limit hands each call what is left of it, records push.end timed-out, writes one line naming it, and leaves the answer as with the push off', async (t) => {
-  const { key, w } = switching(t);
+test('O4: a once push whose earlier git calls spend its whole limit hands each call what is left of it, records push.end timed-out, writes one line naming it, and leaves the answer as with the push off', async (t) => {
+  const w = switching(t);
   // One clock for L5 and the push side. Each git call takes 5,000 ms on it, so the push's six calls
   // before `git push` spend its whole 30,000 ms, and `git push` is never started.
   let clock = 0;
@@ -443,7 +430,7 @@ test('O4: a doctor push whose earlier git calls spend its whole limit hands each
     return result;
   };
   const watch = pushing({ side: (given) => pushStream({ ...given, spawn: timed }), now: () => clock });
-  const { off, on } = await offThenOn(w, key, 'doctor', watch);
+  const { off, on } = await offThenOn(w, 'once', watch);
   assert.deepEqual(on, off);
   assert.equal(watch.pushes.length, 1, 'the verb made no push, or more than one');
   const [{ answered }] = watch.pushes;
@@ -467,9 +454,9 @@ test('O4: a doctor push whose earlier git calls spend its whole limit hands each
 });
 
 // proves R-RECORD-14, R-RECORD-15, R-RECORD-18
-test('O5: a doctor push whose git never starts, or whose repository has no origin, records push.end failed, writes one line naming it, and leaves the answer as with the push off', async (t) => {
+test('O5: a once push whose git never starts, or whose repository has no origin, records push.end failed, writes one line naming it, and leaves the answer as with the push off', async (t) => {
   for (const host of ['git never starts', 'no origin']) {
-    const { key, w } = switching(t);
+    const w = switching(t);
     let side;
     if (host === 'git never starts') {
       // The process adapter's failure for a command that never started, as `runCommand` rejects.
@@ -477,7 +464,7 @@ test('O5: a doctor push whose git never starts, or whose repository has no origi
       side = (given) => pushStream({ ...given, spawn: never });
     } else gitIn(w.repository, 'remote', 'remove', 'origin');
     const watch = pushing({ side });
-    const { off, on } = await offThenOn(w, key, 'doctor', watch);
+    const { off, on } = await offThenOn(w, 'once', watch);
     assert.deepEqual(on, off, host);
     assert.equal(watch.pushes.length, 1, 'the verb made no push, or more than one');
     const [{ answered }] = watch.pushes;
@@ -489,20 +476,20 @@ test('O5: a doctor push whose git never starts, or whose repository has no origi
 });
 
 // proves R-RECORD-16
-test('O6: after two doctor pushes origin refused, a doctor push that succeeds copies every event the stream held at its start, each earlier push.end included', async (t) => {
-  const { key, w } = switching(t);
+test('O6: after two once pushes origin refused, a once push that succeeds copies every event the stream held at its start, each earlier push.end included', async (t) => {
+  const w = switching(t);
   const hook = join(w.origin, 'hooks', 'pre-receive');
   writeFileSync(hook, '#!/bin/sh\nexit 1\n');
   chmodSync(hook, 0o755);
   const watch = pushing();
-  const off = await offAnswer(w, key, watch);
-  assert.deepEqual(await IN_PROCESS.doctor(w, watch.push), off);
-  assert.deepEqual(await IN_PROCESS.doctor(w, watch.push), off);
+  const off = await offAnswer(w, watch);
+  assert.deepEqual(await IN_PROCESS.once(w, watch.push), off);
+  assert.deepEqual(await IN_PROCESS.once(w, watch.push), off);
   assert.deepEqual(watch.pushes.map(({ answered }) => answered.outcome), ['refused', 'refused']);
   assert.equal(watch.lines.length, 2, watch.lines.join(''));
   for (const [index, line] of watch.lines.entries()) assertFailureLine([line], watch.pushes[index].answered);
   writeFileSync(hook, '#!/bin/sh\nexit 0\n');
-  assert.deepEqual(await IN_PROCESS.doctor(w, watch.push), off);
+  assert.deepEqual(await IN_PROCESS.once(w, watch.push), off);
   assert.equal(watch.lines.length, 2, 'the push that succeeded wrote a line');
   const last = watch.pushes.at(-1);
   assert.equal(last.answered.outcome, 'pushed', last.answered.reason);
@@ -514,8 +501,8 @@ test('O6: after two doctor pushes origin refused, a doctor push that succeeds co
 });
 
 // proves R-RECORD-13
-test('O7: an event appended while a doctor push is in flight is not in that push\'s copy, and the next push\'s copy holds it', async (t) => {
-  const { key, w } = switching(t);
+test('O7: an event appended while a once push is in flight is not in that push\'s copy, and the next push\'s copy holds it', async (t) => {
+  const w = switching(t);
   const late = `${JSON.stringify({ ts: '2026-10-29T00:00:00.000Z', run: 'another-writer', layer: 'L0', event: 'stand-in.late', dispatch: null })}\n`;
   let appended = false;
   const watch = pushing({
@@ -526,14 +513,14 @@ test('O7: an event appended while a doctor push is in flight is not in that push
       }
     },
   });
-  const off = await offAnswer(w, key, watch);
-  assert.deepEqual(await IN_PROCESS.doctor(w, watch.push), off);
+  const off = await offAnswer(w, watch);
+  assert.deepEqual(await IN_PROCESS.once(w, watch.push), off);
   assert.equal(watch.pushes.length, 1, 'the verb made no push, or more than one');
   const first = watch.pushes[0].answered;
   assert.equal(first.outcome, 'pushed', first.reason);
   assert.equal(pushedStream(w, first.commit).toString('utf8').includes('stand-in.late'), false);
   assert.ok(readFileSync(join(w.state, 'events.jsonl'), 'utf8').includes('stand-in.late'), 'the late event was never appended');
-  assert.deepEqual(await IN_PROCESS.doctor(w, watch.push), off);
+  assert.deepEqual(await IN_PROCESS.once(w, watch.push), off);
   assert.deepEqual(watch.lines, []);
   const second = watch.pushes[1].answered;
   assert.equal(second.outcome, 'pushed', second.reason);
@@ -543,15 +530,15 @@ test('O7: an event appended while a doctor push is in flight is not in that push
 });
 
 // proves R-RECORD-13
-test('O8: where origin holds a commit a push sent whose verb was killed before push.end, the next doctor push builds on it and copies every event', async (t) => {
-  const { key, w } = switching(t);
+test('O8: where origin holds a commit a push sent whose verb was killed before push.end, the next once push builds on it and copies every event', async (t) => {
+  const w = switching(t);
   // The killed verb's push: its commit reached origin, and no push.end was recorded.
-  const off = await offAnswer(w, key, pushing());
+  const off = await offAnswer(w, pushing());
   const killed = await pushStream({ repository: w.repository, stream: readFileSync(join(w.state, 'events.jsonl')), emitter: { emit: () => {} }, spawn: realGit([]), now: STILL });
   assert.equal(killed.outcome, 'pushed', killed.reason);
   assert.deepEqual(pushEnds(w), []);
   const watch = pushing();
-  assert.deepEqual(await IN_PROCESS.doctor(w, watch.push), off);
+  assert.deepEqual(await IN_PROCESS.once(w, watch.push), off);
   assert.deepEqual(watch.lines, []);
   assert.equal(watch.pushes.length, 1, 'the verb made no push, or more than one');
   const [{ answered, stream }] = watch.pushes;
@@ -564,11 +551,11 @@ test('O8: where origin holds a commit a push sent whose verb was killed before p
   assertOnePerRun(w);
 });
 
-test('O9: where the push side rejects with EVENT_REFUSED, doctor exits 1 with its own text then one line naming the unrecorded event and the sink\'s error, and no line is written', async (t) => {
-  const { key, w } = switching(t);
+test('O9: where the push side rejects with EVENT_REFUSED, once exits 1 with its own text then one line naming the unrecorded event and the sink\'s error, and no line is written', async (t) => {
+  const w = switching(t);
   const refusal = Object.assign(new Error('the sink refused 1 L0 event(s), so they went unrecorded:\nsurvivor.killed {"pid":7}: EACCES: permission denied'), { code: EVENT_REFUSED });
   const watch = pushing({ side: async () => { throw refusal; } });
-  const { off, on } = await offThenOn(w, key, 'doctor', watch);
+  const { off, on } = await offThenOn(w, 'once', watch);
   assert.equal(on.code, 1);
   assert.ok(on.text.startsWith(`${off.text}\n`), on.text);
   const added = on.text.slice(off.text.length + 1);
@@ -580,8 +567,8 @@ test('O9: where the push side rejects with EVENT_REFUSED, doctor exits 1 with it
   assert.deepEqual(pushEnds(w), []);
 });
 
-test('O10: where the sink refuses push.end, doctor exits 1 with its own text then one line naming the unrecorded push.end and the sink\'s error, and no line is written', async (t) => {
-  const { key, w } = switching(t);
+test('O10: where the sink refuses push.end, once exits 1 with its own text then one line naming the unrecorded push.end and the sink\'s error, and no line is written', async (t) => {
+  const w = switching(t);
   const stream = join(w.state, 'events.jsonl');
   // The push settles, and then the stream refuses every append: its path is now a directory.
   const side = async (given) => {
@@ -591,7 +578,7 @@ test('O10: where the sink refuses push.end, doctor exits 1 with its own text the
     return answered;
   };
   const watch = pushing({ side });
-  const { off, on } = await offThenOn(w, key, 'doctor', watch);
+  const { off, on } = await offThenOn(w, 'once', watch);
   assert.equal(watch.pushes.length, 1, 'the verb made no push, or more than one');
   assert.equal(watch.pushes[0].answered.outcome, 'pushed', watch.pushes[0].answered.reason);
   assert.equal(on.code, 1);
@@ -604,8 +591,8 @@ test('O10: where the sink refuses push.end, doctor exits 1 with its own text the
   assert.deepEqual(watch.lines, []);
 });
 
-test('C12: a doctor run, telemetry.push true, whose stream exists but cannot be read, makes no push and answers as with the push off', async (t) => {
-  const { key, w } = switching(t);
+test('C12: a once run, telemetry.push true, whose stream exists but cannot be read, makes no push and answers as with the push off', async (t) => {
+  const w = switching(t);
   // The stream takes appends and refuses reads: the sink appends, and L5 cannot read it back.
   mkdirSync(w.state);
   const stream = join(w.state, 'events.jsonl');
@@ -613,7 +600,7 @@ test('C12: a doctor run, telemetry.push true, whose stream exists but cannot be 
   chmodSync(stream, 0o200);
   t.after(() => chmodSync(stream, 0o600));
   const watch = pushing();
-  const { off, on } = await offThenOn(w, key, 'doctor', watch);
+  const { off, on } = await offThenOn(w, 'once', watch);
   assert.deepEqual(on, off);
   assert.deepEqual(watch.lines, []);
   chmodSync(stream, 0o600);
@@ -622,10 +609,10 @@ test('C12: a doctor run, telemetry.push true, whose stream exists but cannot be 
 });
 
 // proves R-RECORD-14, R-RECORD-15, R-RECORD-18
-test('O12: a doctor push whose push side rejects with a failure other than EVENT_REFUSED records push.end failed naming it, writes one line naming it, and answers as with the push off', async (t) => {
-  const { key, w } = switching(t);
+test('O12: a once push whose push side rejects with a failure other than EVENT_REFUSED records push.end failed naming it, writes one line naming it, and answers as with the push off', async (t) => {
+  const w = switching(t);
   const watch = pushing({ side: async () => { throw new Error('the push side broke here'); } });
-  const { off, on } = await offThenOn(w, key, 'doctor', watch);
+  const { off, on } = await offThenOn(w, 'once', watch);
   assert.deepEqual(on, off);
   const ends = pushEnds(w);
   assert.equal(ends.length, 1, 'no push.end, or more than one, was recorded');
@@ -635,7 +622,7 @@ test('O12: a doctor push whose push side rejects with a failure other than EVENT
   assertOnePerRun(w);
 });
 
-test('O12: a doctor run, telemetry.push true, that stops on a kill event its sink refused still returns normally and pushes once', async (t) => {
+test('O12: a doctor run, telemetry.push true, that stops on a kill event its sink refused still returns normally and reaches no push side', async (t) => {
   const w = world(t, { ...ADMITTED, telemetry: { push: true } });
   // A check whose forge call's kill the sink refused, as L0 rejects one: doctor stops before its next check.
   const refusing = ({ emitter }) => {
@@ -646,10 +633,24 @@ test('O12: a doctor run, telemetry.push true, that stops on a kill event its sin
   const answer = await answerOf('doctor', doctor({ target: w.repository, ask: asking(), checks: [refusing], push: watch.push }));
   assert.equal(answer.code, 1, answer.text);
   assert.match(answer.text, /^rigger doctor: the sink refused 1 L0 event/);
-  assert.equal(watch.pushes.length, 1, 'the verb made no push, or more than one');
-  assert.equal(watch.pushes[0].answered.outcome, 'pushed', watch.pushes[0].answered.reason);
-  const ends = pushEnds(w);
-  assert.equal(ends.length, 1, 'no push.end, or more than one, was recorded');
-  assertPushEnd(ends[0], watch.pushes[0].answered);
+  assert.ok(eventsOf(w).some(({ event }) => event === 'stand-in.check'), 'the check recorded nothing, so this proves nothing');
+  assertNoPush(w, watch, answer.text);
   assert.deepEqual(watch.lines, []);
+});
+
+// proves R-RECORD-20, R-RECORD-13
+test('doctor, handed L5\'s push with telemetry.push true, copies nothing, and the commit the next once run pushes holds the events doctor recorded', async (t) => {
+  const w = world(t, { ...ADMITTED, telemetry: { push: true } });
+  const watch = pushing();
+  const doctored = await IN_PROCESS.doctor(w, watch.push);
+  const recorded = eventsOf(w);
+  assert.ok(recorded.length > 0, `doctor recorded nothing, so this proves nothing: ${doctored.text}`);
+  assertNoPush(w, watch, `doctor: ${doctored.text}`);
+  const answer = await IN_PROCESS.once(w, watch.push);
+  assert.equal(watch.pushes.length, 1, `once made no push, or more than one: ${answer.text}`);
+  const [{ answered }] = watch.pushes;
+  assert.equal(answered.outcome, 'pushed', answered.reason);
+  const copied = pushedStream(w, answered.commit).toString('utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line));
+  assert.deepEqual(copied.slice(0, recorded.length), recorded);
+  assert.ok(copied.length > recorded.length, 'the copy holds no event of once\'s own');
 });

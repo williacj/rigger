@@ -13,7 +13,10 @@ import { mkdirSync } from 'node:fs';
 import { configWith, moduleOf, PULL } from './verdict-world.mjs';
 import { gitIn, withOrigin } from './git-repository.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
-import { assertPushEnd, held, pushTraced } from './push-fixtures.mjs';
+import { pushTraced } from './push-fixtures.mjs';
+import { readFileSync } from 'node:fs';
+import { dirname } from 'node:path';
+import { RIGGER } from './verdict-world.mjs';
 
 const WORLD = new URL('./verdict-world.mjs', import.meta.url).href;
 
@@ -150,21 +153,16 @@ test('C1, C2, C3: verdict run as the command at a terminal, its config admitted 
   }
 });
 
-// proves R-RECORD-13
-test('C6: verdict run as the command at a terminal, telemetry.push true, pushes the stream to origin\'s data ref once at its return, then records one push.end', { timeout: 120_000 }, async () => {
-  const { ran, events, tip, origin, traced } = await verdictPushing({ push: true });
+// proves R-RECORD-20
+test('C6: verdict run as the command at a terminal, telemetry.push true, copies nothing: origin\'s data ref stays absent, no push side is reached, and no push.end is recorded', { timeout: 120_000 }, async () => {
+  const { ran, events, tip, traced } = await verdictPushing({ push: true });
   const said = `exited ${ran.status}: ${ran.shown}`;
   assert.equal(ran.status, 0, said);
   assert.equal(ran.shown.includes('rigger: the push'), false, said);
-  assert.ok(tip, `${said}: origin holds no data ref`);
-  assert.ok(traced.length > 0, said);
-  const ends = events.filter(({ event }) => event === 'push.end');
-  assert.equal(ends.length, 1, said);
-  assert.equal(events.at(-1).event, 'push.end', said);
-  const pushed = Buffer.from(gitIn(origin, 'cat-file', 'blob', `${tip}:events.jsonl`));
-  const before = Buffer.from(events.slice(0, -1).map((event) => `${JSON.stringify(event)}\n`).join(''));
-  assert.deepEqual(pushed, held(before), said);
-  assertPushEnd(ends[0], { outcome: 'pushed', bytes: pushed.length, commit: tip });
+  assert.ok(events.length > 0, `${said}: verdict recorded nothing, so this proves nothing`);
+  assert.equal(tip, undefined, `${said}: origin holds the data ref`);
+  assert.deepEqual(traced, [], said);
+  assert.deepEqual(events.filter(({ event }) => event === 'push.end'), [], said);
 });
 
 // proves R-SAFE-3
@@ -186,4 +184,41 @@ test('C5: verdict run as the command at a terminal, its config refused by the va
   assert.deepEqual(events.filter(({ event }) => event === 'push.end'), [], said);
   assert.equal(tip, undefined, said);
   assert.deepEqual(traced, [], said);
+});
+
+/** The four verbs that copy nothing, in the README's order, each with the words after it. */
+const COPYING_NOTHING = [['doctor', []], ['setup-board', []], ['plan', []], ['verdict', [String(PULL), 'sound']]];
+
+// proves R-RECORD-20
+test('doctor, setup-board, plan and verdict, each run as the command at a terminal with telemetry.push true, copy nothing: origin\'s data ref stays absent or at its commit, no push.end is recorded, and each answers as with the push off', { timeout: 600_000 }, async () => {
+  const { telemetry: _own, ...config } = configWith();
+  for (const [verb, args] of COPYING_NOTHING) {
+    for (const before of ['absent', 'at a commit']) {
+      const where = world({ consumer: moduleOf({ ...config, telemetry: { push: false } }) });
+      const origin = join(temporaryDirectory('rigger-verdict-copy-'), 'origin.git');
+      withOrigin(where.cwd, origin);
+      if (before === 'at a commit') gitIn(origin, 'update-ref', 'refs/rigger/events', gitIn(origin, 'rev-parse', 'HEAD').trim());
+      const tip = () => gitIn(origin, 'for-each-ref', '--format=%(objectname)', 'refs/rigger/events').trim() || undefined;
+      const kept = tip();
+      assert.equal(kept === undefined, before === 'absent', `${verb}: the data ref is not ${before}, so this proves nothing`);
+      const state = join(where.cwd, '.rigger');
+      const events = () => (existsSync(join(state, 'events.jsonl')) ? readEvents(state) : []);
+      // The fake forge as it stood, so the run with the push on reads what the run with it off read.
+      const forge = join(dirname(where.fake.gh), 'board.json');
+      const seeded = readFileSync(forge);
+      const command = [process.execPath, RIGGER, verb, ...args];
+      const off = await atTerminal(where, args, { command });
+      const recorded = events().length;
+      writeFileSync(forge, seeded);
+      writeFileSync(join(where.cwd, 'rigger.config.mjs'), moduleOf({ ...config, telemetry: { push: true } }));
+      const on = await atTerminal(where, args, { command });
+      const said = `${verb}, the data ref ${before}: exited ${on.status}: ${on.shown}`;
+      const own = events().slice(recorded);
+      assert.ok(own.length > 0 && own.every(({ run }) => run === own[0].run), `${said}: the run appended no event of its own, so this proves nothing`);
+      assert.equal(tip(), kept, `${said}: origin's data ref moved`);
+      assert.deepEqual(events().filter(({ event }) => event === 'push.end'), [], said);
+      assert.equal(on.status, off.status, said);
+      assert.equal(on.shown, off.shown, said);
+    }
+  }
 });

@@ -20,10 +20,10 @@ import { nextAction } from '../src/workflow/next-action.mjs';
 import { KINDS, readyCard } from './loop-world.mjs';
 import { EVENT_REFUSED } from '../src/substrate/process.mjs';
 import { pushStream } from '../src/substrate/data-ref.mjs';
-import { doctor } from '../src/cli/doctor.mjs';
 import template from '../templates/rigger.config.mjs';
 import { pushAtReturn } from '../src/observation/push.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
+import { recording } from '../src/cli/recording.mjs';
 
 /** Every event an emitter was handed, in order, each as its name and its fields. */
 function recorder() {
@@ -869,16 +869,18 @@ test('the push side pushes the stream through L0\'s process adapter to a local b
 // process adapter, which the deterministic tier refuses, so only here does a verb's push run
 // through it.
 // proves R-RECORD-13
-test('doctor, telemetry.push true, pushes its stream at its return through the push side\'s default spawn and L0\'s process adapter, and origin\'s refs/rigger/events holds that stream', async (t) => {
+test('recording handed L5\'s push, telemetry.push true, pushes its stream at its return through the push side\'s default spawn and L0\'s process adapter, and origin\'s refs/rigger/events holds that stream', async (t) => {
   const { origin, repository } = clonedFromOrigin(scratch(t));
-  writeFileSync(join(repository, 'rigger.config.mjs'), `export default ${JSON.stringify({ ...template, repo: 'acme/widgets', board: { ...template.board, project: 3 }, telemetry: { push: true } })};\n`);
+  const config = { ...template, repo: 'acme/widgets', board: { ...template.board, project: 3 }, telemetry: { push: true } };
   const lines = [];
-  // A check that records one event of the run's own, as a check's forge call does.
-  const marking = ({ emitter }) => {
-    emitter.emit('stand-in.check', {});
-    return null;
+  // Work that names the repository and its admitted config, and records one event of the run's own, as `once` does.
+  const marking = ({ sink, name, admitted }) => {
+    name(repository);
+    admitted(config);
+    sink.emitter({ layer: 'L0' }).emit('stand-in.check', {});
+    return { text: 'done', code: 0 };
   };
-  const answer = await doctor({ target: repository, checks: [marking], push: pushAtReturn({ write: (line) => lines.push(line) }) });
+  const answer = await recording(marking, pushAtReturn({ write: (line) => lines.push(line) }));
   assert.equal(answer.code, 0, answer.text);
   assert.deepEqual(lines, []);
   const events = readEvents(join(repository, '.rigger'));

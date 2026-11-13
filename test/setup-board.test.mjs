@@ -16,7 +16,7 @@ import { temporaryDirectory } from './temporary-directory.mjs';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { gitIn, repositoryAt, withOrigin } from './git-repository.mjs';
 import { readEvents } from '../src/observation/sink.mjs';
-import { assertPushEnd, held as heldStream, pushTraced } from './push-fixtures.mjs';
+import { pushTraced } from './push-fixtures.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const BIN = join(ROOT, 'src', 'cli', 'rigger.mjs');
@@ -523,21 +523,16 @@ test('C1, C2, C3: setup-board run as the command, its config admitted with telem
   }
 });
 
-// proves R-RECORD-13
-test('C6: setup-board run as the command, telemetry.push true, pushes the stream to origin\'s data ref once at its return, then records one push.end', async () => {
-  const { ran, events, tip, origin, traced } = await setUpPushing({ ...CONFIG, telemetry: { push: true } });
+// proves R-RECORD-20
+test('C6: setup-board run as the command, telemetry.push true, copies nothing: origin\'s data ref stays absent, no push side is reached, and no push.end is recorded', async () => {
+  const { ran, events, tip, traced } = await setUpPushing({ ...CONFIG, telemetry: { push: true } });
   const said = `exited ${ran.status}: ${ran.stdout}${ran.stderr}`;
   assert.equal(ran.status, 0, said);
   assert.equal(ran.stderr.includes('rigger: the push'), false, said);
-  assert.ok(tip, `${said}: origin holds no data ref`);
-  assert.ok(traced.length > 0, said);
-  const ends = events.filter(({ event }) => event === 'push.end');
-  assert.equal(ends.length, 1, said);
-  assert.equal(events.at(-1).event, 'push.end', said);
-  const pushed = Buffer.from(gitIn(origin, 'cat-file', 'blob', `${tip}:events.jsonl`));
-  const before = Buffer.from(events.slice(0, -1).map((event) => `${JSON.stringify(event)}\n`).join(''));
-  assert.deepEqual(pushed, heldStream(before), said);
-  assertPushEnd(ends[0], { outcome: 'pushed', bytes: pushed.length, commit: tip });
+  assert.ok(events.length > 0, `${said}: setup-board recorded nothing, so this proves nothing`);
+  assert.equal(tip, undefined, `${said}: origin holds the data ref`);
+  assert.deepEqual(traced, [], said);
+  assert.deepEqual(events.filter(({ event }) => event === 'push.end'), [], said);
 });
 
 // proves R-SAFE-3

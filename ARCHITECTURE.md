@@ -2186,10 +2186,19 @@ consumer's own lines of work. A hook that ran on the data push could refuse it o
 
 **When L5 pushes.** L5 pushes on two occasions, and on no other:
 
-- **At a verb's normal return**, where the verb named the state directory and its sink appended at
-  least one event there. The push runs as the verb ends the sink, before the sink's end.
+- **At the normal return of `run` or `once`**, where the verb named the state directory and its
+  sink appended at least one event there. The push runs as the verb ends the sink, before the
+  sink's end.
 - **At each drain trigger**, while a clock trigger keeps `run` up. L3 has L5 push, and does not wait
   on it.
+
+Only `run` and `once` copy the record (`R-RECORD-20`). `src/cli/verbs.mjs` hands L5's push to
+those two verbs alone, and each hands it to `recording`. Every other verb takes no push and hands
+`recording` none, so it records to its own stream and reaches no push side.
+
+A verb run where `run` and `once` run appends to the same stream, so their next push carries its
+events. A `run` or `once` started elsewhere still makes its own stream the tip, because each
+commit holds one stream ("The commit").
 
 A drain that ends `run`, as with no clock trigger declared, makes no push of its own. The return's
 push follows at once and serves it. Exit cleanup makes no push, because a network call there would
@@ -2243,6 +2252,7 @@ that failed.
 | State | What happens |
 |---|---|
 | telemetry push off | no push, and no push side is reached (`R-SAFE-3`) |
+| a verb other than `run` or `once` | no push, and no push side is reached (`R-RECORD-20`) |
 | the data ref absent | the first push creates the ref, with a commit that has no parent |
 | the data ref's tip the previous stream commit | a plain push of a child of that tip |
 | the tip not in the local object store | the push fetches that commit from `<url>` before it builds the child |

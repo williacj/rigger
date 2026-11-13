@@ -116,6 +116,13 @@ job](../README.md#installing-the-launchd-job)), three things hold:
   and the worktree root that [`rigger once`](../README.md#install-and-usage) and
   [`rigger run`](../README.md#install-and-usage) use apart from the checkouts you work in by hand.
 
+With telemetry push on, only [`rigger run`](../README.md#install-and-usage) and
+[`rigger once`](../README.md#install-and-usage) copy the record to the data ref; every other verb
+records on your machine and copies nothing ([`R-RECORD-20`](spec/requirements.md)). Each copy holds
+the stream of the checkout that made it, so `run` and `once` belong in the engine's checkout: one
+started in another checkout makes that checkout's stream the data ref's tip ([`ARCHITECTURE.md`,
+"Pushing the stream"](../ARCHITECTURE.md#pushing-the-stream)).
+
 A card Rigger has not claimed is a new card whatever its column
 ([`R-SCHED-16`](spec/requirements.md)). [`pullOrder`](../src/scheduling/pull-order.mjs) offers L2
 the cards in `ready`, `coding`, `review` and `owner`, and no card in another column. So a card you
