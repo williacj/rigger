@@ -965,18 +965,7 @@ export async function settled(verb, { sink, name }, options = {}) {
  * What the command prints for a `doctor` run, and the status it exits with. Each check is handed
  * an `L0` emitter on the sink `recording` opens, for L0's kills in the forge calls it makes.
  */
-export const doctor = (options) => recording((opened) => checking(opened, options), options?.push);
-
-/**
- * Names to `opened` the config `named` holds, where the validator admits it, so L5 reads
- * `telemetry.push` from it. A config refused or unreadable is named to none: the config validity
- * check reports each.
- */
-async function admitting(named, opened) {
-  const { config } = await consumerConfig(named);
-  if (config === undefined) return;
-  if (validate(config).length === 0) opened.admitted(config);
-}
+export const doctor = (options) => recording((opened) => checking(opened, options));
 
 /** `doctor`'s work, recording through the sink `opened` holds once `settled` has named its state directory. */
 async function checking(opened, {
@@ -984,7 +973,6 @@ async function checking(opened, {
 } = {}) {
   const { named, refusal } = await settled('doctor', opened, { target, packageRoot, ask });
   if (refusal) return refusal;
-  await admitting(named, opened);
   const emitter = opened.sink.emitter({ layer: 'L0' });
   const results = [];
   for (const check of checks) {
