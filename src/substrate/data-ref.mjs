@@ -71,8 +71,9 @@ export async function pushStream({ repository, stream, emitter, limit = PUSH_TIM
     const [url] = urls;
     // The push names a remote that exists only on its own command line; one the consumer's
     // configuration also names would lend it that remote's settings, so the push stops there.
-    const named = await git(['remote', 'get-url', '--push', '--all', PUSH_REMOTE]);
+    const named = await git(['config', '--get-regexp', '^remote\\.rigger-data-push\\.']);
     if (named.exit === 0 || named.stdout.trim() !== '') throw new Ended('failed', `the consumer's configuration names a remote ${PUSH_REMOTE}, which the push uses for itself, so the push wrote nothing`);
+    if (named.exit !== 1) throw new Ended('failed', printed(named));
     const { parent, other } = tipIn(await needed(['ls-remote', url, DATA_REF, 'refs/remotes/refs/rigger/events/HEAD']));
     if (parent !== undefined) known.parent = parent;
     if (other !== undefined) throw new Ended('failed', `${url} holds ${other}, to which git push would resolve ${DATA_REF}, so the push wrote nothing`);

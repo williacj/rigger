@@ -450,7 +450,7 @@ test('O4: a doctor push whose earlier git calls spend its whole limit hands each
   // Each call is handed `PUSH_TIMEOUT` less what the calls before it took, worked out by hand.
   assert.deepEqual(handed, [
     { subcommand: 'remote', timeout: 30_000 },
-    { subcommand: 'remote', timeout: 25_000 },
+    { subcommand: 'config', timeout: 25_000 },
     { subcommand: 'ls-remote', timeout: 20_000 },
     { subcommand: 'hash-object', timeout: 15_000 },
     { subcommand: 'mktree', timeout: 10_000 },
