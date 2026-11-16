@@ -7,7 +7,7 @@ A feature, writing a doc, website change or even deep analysis: the loop is the 
 
 [![CI](https://github.com/williacj/rigger/actions/workflows/ci.yml/badge.svg)](https://github.com/williacj/rigger/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Status: pre-alpha](https://img.shields.io/badge/Status-pre--alpha-orange.svg)](#status)
+[![Status: v0](https://img.shields.io/badge/Status-v0-blue.svg)](#status)
 
 It decides which of your cards to work on next, keeps the agent that made a change from being the
 agent that approves it, and recognizes the decisions that are not its to make. Everything else it
@@ -161,8 +161,8 @@ acts with your account. So that rule gives the agent your account.
 
 ## Status
 
-**Pre-alpha, built in the open.** Rigger is being built fresh in this repository. There have been
-several private versions of Rigger to prove out the concept and identify key requirements.
+**v0, released on npm.** Rigger is built in the open in this repository. There have been several
+private versions of Rigger to prove out the concept and identify key requirements.
 
 Milestones, in order:
 
@@ -207,9 +207,8 @@ the ordinary test suite; engine installation and supported engine hosts are sepa
 
 ## Install and usage
 
-> Nothing is published yet. The commands below are the target interface. They become true as the
-> milestones in [Status](#status) land, and the first milestone's exit test is that
-> `rigger --help` lists exactly these verbs, in this order.
+> Published on npm as `@williacj/rigger`. `rigger --help` lists exactly the verbs below, in this
+> order.
 
 ```bash
 npx @williacj/rigger init          # write a starter config, fork the role templates
@@ -351,9 +350,9 @@ Rigger makes no network calls except through `gh`, `git` and your agent CLI.
 
 ## Contributing
 
-Rigger is not accepting pull requests during v0. Open an issue if you have found a bug or want
-to discuss a direction. When contributions open, the process will be: discuss in an issue first,
-then a PR that follows this repository's TDD and review rules.
+Rigger is not accepting pull requests until the improvement loops land (M9 and M10). Open an issue
+if you have found a bug or want to discuss a direction. When contributions open, the process will
+be: discuss in an issue first, then a PR that follows this repository's TDD and review rules.
 
 **Developing Rigger.** Clone, `npm ci`, `npm test`. One rule specific to agent tooling: never run
 Rigger against the checkout it is running from, and never point a consumer's worktree root inside
