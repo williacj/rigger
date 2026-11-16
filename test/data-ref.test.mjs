@@ -12,11 +12,12 @@ import { PUSH_TIMEOUT, pushStream } from '../src/substrate/data-ref.mjs';
 import { EVENT_REFUSED, NOT_STARTED } from '../src/substrate/process.mjs';
 import { bareCloneInto, cloneInto, clonedFromOrigin, gitIn } from './git-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { manualClock } from './clock-report-world.mjs';
 
 const DATA_REF = 'refs/rigger/events';
 
 /** The only `git` subcommands "Pushing the stream", "The steps", gives the push side. */
-const SUBCOMMANDS = ['ls-remote', 'remote', 'fetch', 'hash-object', 'mktree', 'commit-tree', 'push'];
+const SUBCOMMANDS = ['ls-remote', 'remote', 'config', 'fetch', 'hash-object', 'mktree', 'commit-tree', 'push'];
 
 /** The `git` subcommand in `args`, the first argument after any `-c` option and its value. */
 const subcommandIn = (args) => (args[0] === '-c' ? args[2] : args[0]);
@@ -160,7 +161,7 @@ function assertFields(answer, calls) {
 function assertPinned(calls) {
   if (calls.length === 0) return;
   const REMOTE = ['remote', 'get-url', '--push', '--all', 'origin'];
-  const NAMED = ['remote', 'get-url', '--push', '--all', 'rigger-data-push'];
+  const NAMED = ['config', '--get-regexp', '^remote\\.rigger-data-push\\.'];
   assert.deepEqual(calls[0].args, REMOTE, 'the push side\'s first call');
   const url = calls[0].result?.stdout.toString().trim() ?? '';
   if (calls.length > 1) assert.deepEqual(calls[1].args, NAMED, 'the push side\'s second call');
@@ -258,7 +259,7 @@ test('P5: handed bytes ending in a partial line, the commit holds them up to and
 test('P6: where the first reads fail, git remote get-url with no origin or git ls-remote with an origin that cannot be reached, the push answers failed with the text git printed, runs no later step and holds no parent', async (t) => {
   for (const [what, arrange, ran] of [
     ['no origin', (w) => gitIn(w.repository, 'remote', 'remove', 'origin'), ['remote']],
-    ['an unreachable origin', (w) => gitIn(w.repository, 'remote', 'set-url', 'origin', join(w.directory, 'nowhere.git')), ['remote', 'remote', 'ls-remote']],
+    ['an unreachable origin', (w) => gitIn(w.repository, 'remote', 'set-url', 'origin', join(w.directory, 'nowhere.git')), ['remote', 'config', 'ls-remote']],
   ]) {
     const w = world(t);
     arrange(w);
@@ -324,8 +325,9 @@ const URL = 'https://example.invalid/consumer.git';
  */
 const SUCCEEDING = {
   'ls-remote': () => ({ stdout: `${TIP}\t${DATA_REF}\n` }),
-  // `remote get-url` for the push's own remote answers as git does where no remote has that name.
-  remote: (args) => (args.includes('rigger-data-push') ? { exit: 2, stderr: "error: No such remote 'rigger-data-push'\n" } : { stdout: `${URL}\n` }),
+  remote: () => ({ stdout: `${URL}\n` }),
+  // git config --get-regexp exits 1 and prints nothing with no matching key (#1411 P1).
+  config: () => ({ exit: 1 }),
   'hash-object': () => ({ stdout: `${BLOB}\n` }),
   mktree: () => ({ stdout: `${TREE}\n` }),
   'commit-tree': () => ({ stdout: `${COMMIT}\n` }),
@@ -439,9 +441,9 @@ test('P14: where the process adapter rejects a push\'s git call with EVENT_REFUS
   const refusal = Object.assign(new Error('the sink refused 1 L0 event(s), so they went unrecorded'), { code: EVENT_REFUSED, unrecorded: [] });
   for (const [step, ran] of [
     ['remote', ['remote']],
-    ['ls-remote', ['remote', 'remote', 'ls-remote']],
-    ['hash-object', ['remote', 'remote', 'ls-remote', 'hash-object']],
-    ['push', ['remote', 'remote', 'ls-remote', 'hash-object', 'mktree', 'commit-tree', 'push']],
+    ['ls-remote', ['remote', 'config', 'ls-remote']],
+    ['hash-object', ['remote', 'config', 'ls-remote', 'hash-object']],
+    ['push', ['remote', 'config', 'ls-remote', 'hash-object', 'mktree', 'commit-tree', 'push']],
   ]) {
     const calls = [];
     const clock = { now: 0 };
@@ -492,8 +494,8 @@ test('PUSH_TIMEOUT is 30000 milliseconds', () => {
 
 test('P13: where the injected clock shows the limit spent when a git call is about to start, the push answers timed-out with the reason reading 9 gives, and starts neither that call nor any later one', async (t) => {
   for (const [limit, spentBy, next, ran] of [
-    [undefined, 'remote', 'remote', ['remote']],
-    [5_000, 'mktree', 'commit-tree', ['remote', 'remote', 'ls-remote', 'hash-object', 'mktree']],
+    [undefined, 'remote', 'config', ['remote']],
+    [5_000, 'mktree', 'commit-tree', ['remote', 'config', 'ls-remote', 'hash-object', 'mktree']],
   ]) {
     const { answer, calls } = await controlled(t, { ...(limit === undefined ? {} : { limit }), cost: (args) => (subcommandIn(args) === spentBy ? 30_000 : 1) });
     assert.deepEqual(answer, { outcome: 'timed-out', bytes: STREAM.length, ...(ran.includes('ls-remote') ? { parent: TIP } : {}), reason: `the push's limit of ${limit ?? 30_000} ms was spent before git ${next} started` });
@@ -615,7 +617,7 @@ test('P32: where a lacking tip\'s fetch succeeds and the commit onto it then fai
   };
   const { answer, calls } = await controlled(t, { steps });
   assert.deepEqual(answer, { outcome: 'failed', bytes: STREAM.length, parent: TIP, reason: 'fatal: cannot write commit object' });
-  assert.deepEqual(subcommandsOf(calls), ['remote', 'remote', 'ls-remote', 'hash-object', 'mktree', 'commit-tree', 'commit-tree', 'fetch', 'commit-tree']);
+  assert.deepEqual(subcommandsOf(calls), ['remote', 'config', 'ls-remote', 'hash-object', 'mktree', 'commit-tree', 'commit-tree', 'fetch', 'commit-tree']);
 });
 
 test('P19: with a fetch mapping of refs/rigger/* in the pushing repository\'s own config, the push answers pushed and writes no remote-tracking ref there', async (t) => {
@@ -793,4 +795,28 @@ test('P9: where the first commit onto a held parent fails on an object write and
   const { answer, calls } = await controlled(t, { steps });
   assert.deepEqual(answer, { outcome: 'failed', bytes: STREAM.length, parent: TIP, reason: refused.trim() });
   assert.deepEqual(subcommandsOf(calls).filter((name) => ['fetch', 'push'].includes(name)), []);
+});
+
+// Step 2's answers follow the real git config measurements on #1411 P1: a matching key
+// exits 0; malformed config exits 128 and prints its own diagnostic.
+test('P33: step 2 refuses a configured push remote or a config read failure, and permits an absent remote', async (t) => {
+  for (const reply of [
+    { exit: 0, stdout: 'remote.rigger-data-push.url /elsewhere.git\n' },
+    { exit: 128, stderr: 'fatal: bad config line 1 in file global-config\n' },
+    { exit: 1 },
+  ]) {
+    const clock = manualClock();
+    const { answer, calls } = await controlled(t, { now: clock.now, steps: {
+      remote: (args) => args.includes('origin') ? { stdout: `${URL}\n` } : reply,
+      config: () => reply,
+    } });
+    assert.equal(answer.outcome, reply.exit === 1 ? 'pushed' : 'failed', `step 2 exit ${reply.exit}: ${answer.reason}`);
+    if (reply.exit === 1) {
+      assert.equal(subcommandOf(calls.at(-1)), 'push');
+      continue;
+    }
+    if (reply.exit === 0) assert.match(answer.reason, /rigger-data-push/);
+    else assert.equal(answer.reason, reply.stderr.trim());
+    assert.equal(calls.length, 2, 'a refused step 2 started a later git call');
+  }
 });
