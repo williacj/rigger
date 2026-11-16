@@ -25,12 +25,12 @@ export const STATE = '.rigger';
  * returns or throws through, and ending it twice writes nothing more (the architect's ruling 3,
  * §3, on #332).
  *
- * `push`, where given, is L5's push, which `src/cli/verbs.mjs` hands each verb: once `work` returns
- * normally, having named both a repository and a config, and before the sink ends, it is handed
- * the sink, the run, that config, that repository and its state directory, and the verb's answer,
- * and answers the answer the verb gives. A path that throws, a signal and exit cleanup never reach
- * it, and a caller handing none, as the gate script does, never pushes (the architect's attack on
- * #1122, placement A).
+ * `push`, where given, is L5's push, which `src/cli/verbs.mjs` hands `run` and `once` alone
+ * (`R-RECORD-20`): once `work` returns normally, having named both a repository and a config, and
+ * before the sink ends, it is handed the sink, the run, that config, that repository and its state
+ * directory, and the verb's answer, and answers the answer the verb gives. A path that throws, a
+ * signal and exit cleanup never reach it, and a caller handing none, as every other verb and the
+ * gate script do, never pushes (the architect's attack on #1122, placement A).
  */
 export async function recording(work, push) {
   const run = randomUUID();

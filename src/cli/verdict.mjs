@@ -82,11 +82,11 @@ function lineFrom(input) {
  * after the verb. It asks only on a terminal at its standard input, and reads the answer there
  * (`R-VERDICT-10`).
  */
-export async function verdict({ args = [], push } = {}) {
+export async function verdict({ args = [] } = {}) {
   const given = ruling(args);
   if (given.refusal) return refused(given.refusal);
   if (process.stdin.isTTY !== true) return refused('its standard input is no terminal, so it has no terminal to ask on');
-  return recording((opened) => posting(opened, given), push);
+  return recording((opened) => posting(opened, given));
 }
 
 /** `verdict`'s work once the owner's verdict is read, recording through the sink `opened` holds. */
@@ -97,7 +97,6 @@ async function posting(opened, given) {
   if (problem) return refused(problem);
   const refusals = validate(config);
   if (refusals.length > 0) return refused(`\`${CONFIG}\` in ${named} is refused: ${refusals.join('; ')}`);
-  opened.admitted(config);
   const emitter = opened.sink.emitter({ layer: 'L0' });
   // The verb reads the repository its config names and no board, so its reads name none.
   const forge = { repo: config.repo, project: 'none' };

@@ -735,6 +735,7 @@ Each failure is one of three classes:
 | R-RECORD-17 | Every push of the record has a time limit, and a push that runs past it has not succeeded. | the engine | the test suite | |
 | R-RECORD-18 | A push of the record that does not succeed leaves the exit status of the verb that made it as that verb would otherwise have had it. | the engine | the test suite | |
 | R-RECORD-19 | Rigger keeps what each dispatch's agent CLI wrote to its standard output and its standard error, as `R-STATE-14` defines its output, on the consumer's machine, under the dispatch's id. It never places that output in the record, or anywhere beyond that machine. Where it cannot keep it, it names the dispatch and why, and the dispatch's outcome is as it would have been. | the engine | the test suite | |
+| R-RECORD-20 | Only `run` and `once` copy the record beyond the consumer's own machine. Every other verb records what it did and copies nothing. | the engine | the test suite | |
 
 ### R-RECORD-13 — Push states
 

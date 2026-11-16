@@ -46,6 +46,9 @@ export const VERBS = [
  */
 export const LANDED = { init, doctor, 'setup-board': setupBoard, plan, once, run: runVerb, pause, resume, report, verdict };
 
+/** The verbs that dispatch work, and the only ones handed L5's push (`R-RECORD-20`). */
+const PUSHING = new Set(['once', 'run']);
+
 /** What `--help` prints: one line per verb, the verb first. */
 export function help(verbs = VERBS) {
   const width = Math.max(...verbs.map(([verb]) => verb.length));
@@ -72,8 +75,8 @@ export async function run(argv) {
     const said = first === undefined ? 'rigger: a verb is required' : `rigger ${first}: no such verb`;
     return { text: `${said}\n\n${help()}`, code: 1 };
   }
-  // A verb is handed the words after it; those that take none read nothing from them. It is
-  // handed L5's push too, which a verb that reads a config hands `recording` (the architect's
-  // attack on #1122, placement A).
-  if (Object.hasOwn(LANDED, first)) return LANDED[first]({ args: argv.slice(1), push: pushAtReturn() });
+  // A verb is handed the words after it; those that take none read nothing from them. Only `run`
+  // and `once` are handed L5's push, which each hands `recording`: no other verb copies the record
+  // (`R-RECORD-20`; `ARCHITECTURE.md`, "When L5 pushes").
+  if (Object.hasOwn(LANDED, first)) return LANDED[first]({ args: argv.slice(1), ...(PUSHING.has(first) ? { push: pushAtReturn() } : {}) });
 }
