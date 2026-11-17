@@ -5,7 +5,7 @@ on:
   push:
     branches: [main]
   pull_request:
-    types: [opened, synchronize, reopened, edited, ready_for_review, labeled, unlabeled]
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
   merge_group:
   schedule:
     - cron: '0 3 * * *'
@@ -61,7 +61,7 @@ env:
       }
       if (f.event !== 'pull_request' || !f.pr || !f.live || !f.main || f.main.defaultBranch !== 'main' || !sha(f.main.head)) return invalid;
       const { pr, live } = f;
-      if (!['opened', 'synchronize', 'reopened', 'edited', 'ready_for_review', 'labeled', 'unlabeled'].includes(f.action) || typeof f.sender !== 'string' || !f.sender) return invalid;
+      if (!['opened', 'synchronize', 'reopened', 'ready_for_review', 'labeled'].includes(f.action) || typeof f.sender !== 'string' || !f.sender) return invalid;
       if (!Number.isSafeInteger(pr.number) || pr.number <= 0 || f.ref !== 'refs/pull/' + pr.number + '/merge' || !sha(pr.head) || !sha(pr.base) || !['open', 'closed'].includes(pr.state) || typeof pr.draft !== 'boolean' || typeof pr.baseRef !== 'string' || !pr.baseRef || !Array.isArray(live.labels) || !live.labels.every((name) => typeof name === 'string')) return invalid;
       if (pr.state !== 'open' || (pr.baseRef !== 'main' && pr.baseRef.toLowerCase() === 'main') || !sha(live.base) || !sha(pr.testedBase) || f.checkout.parents[0] !== pr.testedBase || (pr.baseRef !== 'main' && pr.base !== live.base) || ['head', 'baseRef', 'state', 'draft'].some((key) => pr[key] !== live[key]) || f.checkout.parents.length !== 2 || (pr.baseRef === 'main' ? (pr.testedBase !== pr.base && pr.eventBaseAncestor !== true) : pr.testedBase !== pr.base) || f.checkout.parents[1] !== pr.head) return invalid;
       if (!f.changes.every((row) => row && typeof row.path === 'string' && row.path.length > 0 && !row.path.includes(String.fromCharCode(0)) && /^[AMDRT]$/.test(row.status) && /^(000000|100644|100755|120000|160000)$/.test(row.oldMode) && /^(000000|100644|100755|120000|160000)$/.test(row.newMode))) return invalid;
@@ -839,7 +839,7 @@ jobs:
           const diagnostic = entry => console.error(JSON.stringify(entry));
           const pr = event?.pull_request;
           if (context?.eventName !== 'pull_request' || context.repository !== 'williacj/rigger' || !repository(event?.repository) || context.repositoryId !== event.repository.id || !positive(event.number) || !positive(pr?.id) || pr.number !== event.number || pr.state !== 'open' || !repository(pr.head?.repo) || !repository(pr.base?.repo) || pr.head.repo.id !== event.repository.id || pr.base.repo.id !== event.repository.id || !sha(pr.head.sha) || !sha(pr.base.sha) || typeof pr.head.ref !== 'string' || !pr.head.ref || typeof pr.base.ref !== 'string' || !pr.base.ref) refuse('controller source scope invalid');
-          if (!['opened', 'synchronize', 'reopened', 'edited', 'ready_for_review', 'labeled', 'unlabeled'].includes(event.action) || !event.sender?.login || context.actor !== event.sender.login || !positive(context.runId) || !positive(context.runNumber) || !positive(context.runAttempt) || context.ref !== 'refs/pull/' + event.number + '/merge' || context.workflowRef !== 'williacj/rigger/.github/workflows/ci.yml@' + context.ref) refuse('controller source context invalid');
+          if (!['opened', 'synchronize', 'reopened', 'ready_for_review', 'labeled'].includes(event.action) || !event.sender?.login || context.actor !== event.sender.login || !positive(context.runId) || !positive(context.runNumber) || !positive(context.runAttempt) || context.ref !== 'refs/pull/' + event.number + '/merge' || context.workflowRef !== 'williacj/rigger/.github/workflows/ci.yml@' + context.ref) refuse('controller source context invalid');
           if (!plan || plan.event !== context.eventName || plan.ref !== context.ref || plan.sha !== context.sha || !sha(plan.sha) || !sha(plan.tree) || plan.head !== pr.head.sha || !sha(plan.base) || !sha(plan.eventBase) || plan.eventBase !== pr.base.sha || plan.baseRef !== pr.base.ref || !Array.isArray(plan.parents) || plan.parents.length !== 2 || plan.parents[0] !== plan.base || plan.parents[1] !== plan.head) refuse('controller source plan invalid');
           const get = async path => { const response = await request(path); if (response?.status !== 200) refuse('API read failed'); links(response.link); return response.body; };
           const own = await get(ROOT + '/actions/runs/' + context.runId);
