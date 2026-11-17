@@ -1008,3 +1008,17 @@ test('cancellation refuses malformed detailed attribution and association loss o
     assert.deepEqual(answer.calls.filter(([method]) => method === 'POST'), [['POST', root + '/actions/runs/60/cancel']]);
   }
 });
+
+test('cancellation refuses an edited controller event before any API request', async () => {
+  const f = input(); f.event.action = 'edited';
+  const { error, calls } = await execute(f, [], true);
+  assert.match(error, /controller source context invalid/);
+  assert.deepEqual(calls, []);
+});
+
+test('cancellation refuses an unlabeled controller event before any API request', async () => {
+  const f = input(); f.event.action = 'unlabeled';
+  const { error, calls } = await execute(f, [], true);
+  assert.match(error, /controller source context invalid/);
+  assert.deepEqual(calls, []);
+});

@@ -98,7 +98,7 @@ test('inline CI policy admits only complete regular direct journal changes or no
   assert.equal(ciPolicy('policy', mixed).mode, 'BROAD_DEFERRED');
   const nonmain = structuredClone(mixed); nonmain.pr.baseRef = nonmain.live.baseRef = 'batch';
   assert.equal(ciPolicy('policy', nonmain).mode, 'FAST_ELIGIBLE');
-  nonmain.action = 'edited'; nonmain.pr.baseRef = nonmain.live.baseRef = 'main';
+  nonmain.action = 'synchronize'; nonmain.pr.baseRef = nonmain.live.baseRef = 'main';
   assert.equal(ciPolicy('policy', nonmain).mode, 'BROAD_DEFERRED');
   for (const main of [undefined, { head: '' }, { head: 'e'.repeat(40), defaultBranch: 'other' }]) {
     const unavailable = ciFacts(); unavailable.main = main;
@@ -458,7 +458,7 @@ test('inline CI policy refuses unknown event authority and malformed Git records
 
 test('staged CI preserves finite events, independent full lanes, every command and protected-main personal checkout', () => {
   const ci = parseWorkflow(readFileSync(join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8'));
-  assert.deepEqual(ci.on.pull_request.types, ['opened', 'synchronize', 'reopened', 'edited', 'ready_for_review', 'labeled', 'unlabeled']);
+  assert.deepEqual(ci.on.pull_request.types, ['opened', 'synchronize', 'reopened', 'ready_for_review', 'labeled']);
   assert.deepEqual(ci.on.push.branches, ['main']);
   assert.ok(Object.hasOwn(ci.on, 'merge_group'));
   assert.deepEqual(ci.on.schedule, [{ cron: '0 3 * * *' }]);

@@ -96,13 +96,13 @@ test('recorded CI nonmain policy retains the original recorded versus current ba
   assert.equal((await evaluateCiPolicy('policy', facts)).mode, 'INVALID', 'updated nonmain PR base remains refused');
 });
 
-test('recorded CI Table A label removal and another-label events remain deferred', async () => {
-  for (const change of ['removed', 'unlabeled', 'other-label']) {
+test('recorded CI Table A label removal and another-label events remain deferred, and the policy refuses unlabeled', async () => {
+  for (const [change, mode] of [['removed', 'BROAD_DEFERRED'], ['unlabeled', 'INVALID'], ['other-label', 'BROAD_DEFERRED']]) {
     const { facts, proof } = ciFullFixture();
     if (change === 'removed') facts.live.labels = [];
     if (change === 'unlabeled') facts.action = 'unlabeled';
     if (change === 'other-label') { facts.label = 'unrelated'; facts.live.labels.push('unrelated'); }
-    assert.equal((await evaluateCiPolicy('policy', facts)).mode, 'BROAD_DEFERRED', change);
+    assert.equal((await evaluateCiPolicy('policy', facts)).mode, mode, change);
     assert.equal((await evaluateCiPolicy('runPolicy', { action: 'worker', facts, proof, worker: 'full_host' })).ok, false, change);
   }
 });
@@ -452,8 +452,8 @@ test('Table A A1, A7, A8 and A9: a deferred run with its tiers skipped verifies,
     ['A7 another account adds ci:full', (facts) => { Object.assign(facts, { action: 'labeled', label: 'ci:full' }); facts.live.labels = ['ci:full']; }],
     ['A8 draft', (facts) => { facts.pr.draft = facts.live.draft = true; }],
     ['A8 draft with ci:full', (facts) => { Object.assign(facts, { action: 'labeled', sender: 'williacj', label: 'ci:full' }); facts.pr.draft = facts.live.draft = true; facts.live.labels = ['ci:full']; }],
-    ['A9 ci:full removed', (facts) => { Object.assign(facts, { action: 'unlabeled', sender: 'williacj', label: 'ci:full' }); }],
-    ['A9 edited', (facts) => { facts.action = 'edited'; }],
+    ['A9 another label added', (facts) => { Object.assign(facts, { action: 'labeled', sender: 'williacj', label: 'unrelated' }); facts.live.labels = ['unrelated']; }],
+    ['A9 reopened', (facts) => { facts.action = 'reopened'; }],
   ]) {
     const facts = deferredFacts(change), proof = ciProof('BROAD_DEFERRED');
     assert.equal((await evaluateCiPolicy('policy', facts)).mode, 'BROAD_DEFERRED', name);
@@ -537,8 +537,10 @@ test('Table A A20: a head green on another base holds no check (26) when retarge
   assert.deepEqual([red.name, red.conclusion], ['broad deferred (26)', 'failure']);
 });
 
-test('Table A A20: a journal-only pull request retargeted to main gets check (26) from its edited run', async () => {
-  const facts = ciFacts(); facts.action = 'edited';
+test('Table A A20: the policy refuses edited, and a journal-only pull request based on main gets check (26) from its synchronize run', async () => {
+  const edited = ciFacts(); edited.action = 'edited';
+  assert.equal((await evaluateCiPolicy('policy', edited)).mode, 'INVALID', 'a retarget fires edited, which starts no run');
+  const facts = ciFacts();
   assert.equal((await evaluateCiPolicy('policy', facts)).mode, 'FAST_ELIGIBLE');
   const run = await aggregateCheckRun(1, plannedAs('FAST_ELIGIBLE'), facts, ciProof());
   assert.deepEqual([run.name, run.conclusion], ['check (26)', 'success']);
@@ -612,9 +614,9 @@ test('Table A A8: a draft code pull request is deferred with or without the owne
   }
 });
 
-test('Table A A9: a green check (26) stays green through a deferred run at its head', async () => {
+test('Table A A9: a green check (26) stays green through a deferred run at its head from another label or a reopen', async () => {
   const prior = await fullRunAt(1);
-  for (const [name, change] of [['unlabeled', (facts) => { Object.assign(facts, { action: 'unlabeled', sender: 'williacj', label: 'ci:full' }); }], ['edited', (facts) => { facts.action = 'edited'; }]]) {
+  for (const [name, change] of [['labeled unrelated', (facts) => { Object.assign(facts, { action: 'labeled', sender: 'williacj', label: 'unrelated' }); facts.live.labels = ['unrelated']; }], ['reopened', (facts) => { facts.action = 'reopened'; }]]) {
     const facts = deferredFacts(change), proof = ciProof('BROAD_DEFERRED');
     const later = await aggregateCheckRun(2, plannedAs('BROAD_DEFERRED'), facts, proof);
     assert.equal(later.name, 'broad deferred (26)', name);
@@ -798,4 +800,39 @@ test('localChanges reads the changes of a pull request merge against its first p
   const unanswered = ciCollectorFixture();
   delete unanswered.git[JSON.stringify(['diff', '--raw', '-z', '--no-renames', c, a])];
   assert.equal((await evaluateCiPolicy('localChanges', unanswered)).answer, undefined, 'an unanswered diff');
+});
+
+test('CI starts on a pull request opened, synchronized, reopened, ready for review or labeled, and never on edited or unlabeled', () => {
+  const ci = parseWorkflow(readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'));
+  assert.deepEqual(ci.on.pull_request.types, ['opened', 'synchronize', 'reopened', 'ready_for_review', 'labeled']);
+});
+
+test('CI policy refuses a pull request fact whose action is edited', async () => {
+  for (const facts of [ciFacts(), deferredFacts()]) {
+    facts.action = 'edited';
+    assert.equal((await evaluateCiPolicy('policy', facts)).mode, 'INVALID', facts.changes[0].path);
+  }
+});
+
+test('CI policy refuses a pull request fact whose action is unlabeled', async () => {
+  for (const facts of [ciFacts(), deferredFacts()]) {
+    facts.action = 'unlabeled';
+    assert.equal((await evaluateCiPolicy('policy', facts)).mode, 'INVALID', facts.changes[0].path);
+  }
+});
+
+test('CI policy gives each kept pull request action on a ready main pull request its mode', async () => {
+  const owner = (label) => (facts) => { Object.assign(facts, { action: 'labeled', sender: 'williacj', label }); facts.live.labels = [label]; };
+  for (const [name, facts, mode] of [
+    ['code opened', deferredFacts((facts) => { facts.action = 'opened'; }), 'BROAD_DEFERRED'],
+    ['code synchronize', deferredFacts(), 'BROAD_DEFERRED'],
+    ['code reopened', deferredFacts((facts) => { facts.action = 'reopened'; }), 'BROAD_DEFERRED'],
+    ['code ready_for_review', deferredFacts((facts) => { facts.action = 'ready_for_review'; }), 'BROAD_DEFERRED'],
+    ['code labeled ci:full by the owner', deferredFacts(owner('ci:full')), 'BROAD_EXECUTED'],
+    ['code labeled ci:demo by the owner', deferredFacts(owner('ci:demo')), 'BROAD_DEFERRED'],
+    ['journal-only synchronize', ciFacts(), 'FAST_ELIGIBLE'],
+  ]) {
+    assert.deepEqual([facts.pr.baseRef, facts.pr.draft], ['main', false], name);
+    assert.equal((await evaluateCiPolicy('policy', facts)).mode, mode, name);
+  }
 });
