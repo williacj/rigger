@@ -788,6 +788,7 @@ Each failure is one of three classes:
 | R-SAFE-7 | An agent Rigger dispatches can use only the tools and connectors the consumer's repository declares. A tool in these rows is an action the agent CLI offers the agent. A connector is an outside service, such as mail or a shop, that the agent acts on through the owner's own sessions or login. What counts as declared: | the engine | the test suite | |
 | R-SAFE-8 | — a tool built into the agent CLI counts as declared unless the repository withholds it, except a tool `R-SAFE-9` names; | the engine | the test suite | |
 | R-SAFE-9 | — a connector, and a built-in tool that acts through the owner's own sessions or login, count as declared only where the repository declares them. Such a tool, for example, drives the owner's browser or desktop, or publishes as the owner. The agent never uses one the repository does not declare, even a connector the owner connected to their own account. | the engine | the test suite | |
+| R-SAFE-10 | Each file path rule the consumer's repository declares relative to itself, allowing or denying an agent's access to files, holds for an agent Rigger dispatches as it holds from the repository's root, whatever directory the agent's shell has moved to. | the engine | the test suite | |
 
 ## R-OPTION — what a consumer may leave out
 
