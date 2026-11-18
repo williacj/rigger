@@ -315,11 +315,15 @@ The run ended with admission paused (Z1), the job unloaded (Z3: bootout `exit 0`
 
 No step's result stopped the run, so no disposition was needed during it.
 
-R3's pattern defect was found after the run, by the coordinator's evidence check. The addendum
-was posted at 18:35:47Z, and M8-K38 was posted at 18:36:15Z. Both came after Z7 at 18:09:19Z, so
-no step of the run followed the defect.
-[Addendum](https://github.com/williacj/rigger/issues/1416#issuecomment-6987932366),
-[M8-K38](https://github.com/williacj/rigger/issues/1293#issuecomment-6987944281).
+R3's defective pattern ran at 17:32:30Z, and nobody noticed the defect during the run. Steps R4,
+R4b, R5 and Z1–Z7 followed it, from R4 at 17:32:35Z to Z7 at 18:09:19Z. The coordinator's
+evidence check found the defect after the run. The addendum was posted at 18:35:47Z, and M8-K38
+disposed of the defect at 18:36:15Z. M8-U60 ratifies R4, R4b, R5 and Z1–Z7 running before K38's
+disposition, for #1416's stop-rule item.
+[Run log, appendix 1](https://github.com/williacj/rigger/issues/1416#issuecomment-6987307772),
+[addendum](https://github.com/williacj/rigger/issues/1416#issuecomment-6987932366),
+[M8-K38](https://github.com/williacj/rigger/issues/1293#issuecomment-6987944281),
+[M8-U60](https://github.com/williacj/rigger/issues/1293#issuecomment-6989117859).
 
 ## Departures from the command list and their disposition
 
