@@ -193,11 +193,13 @@ with `groups.at-kill.json` and the census listing, is in
 - **No survivor.** The check ran at least 10204 ms after the kill. No line follows either
   survivor heading.
 - **The restarted engine.** R1 at 17:32:16Z read `state = running`, `runs = 2` and `pid = 82440`.
-  The outcome reports L0 `recorded.killed` events for pids 82096, 82114 and 82126 in run
-  `3826fd61-cb99-48c0-a578-20433850d1a5` at 17:32:01Z, and no `recorded.unended`,
-  `directory.skipped` or `record.partial-kept` event. Those lines are in the omitted R2 output, so
-  they rest on the outcome comment, and the appendices do not quote them.
-  [Outcome, item 2](https://github.com/williacj/rigger/issues/1416#issuecomment-6987307123).
+  The restarted engine's L0 `recorded.killed` events for pids 82096 (#119), 82114 (#120) and
+  82126 (#121), in run `3826fd61-cb99-48c0-a578-20433850d1a5`, are at 17:32:01.076Z,
+  17:32:01.334Z and 17:32:01.587Z. Addendum 2 quotes them uncut, from a read-only rerun at
+  18:59:10Z disclosed under U56. The outcome reports no `recorded.unended`, `directory.skipped`
+  or `record.partial-kept` event.
+  [Addendum 2](https://github.com/williacj/rigger/issues/1416#issuecomment-6988498235),
+  [outcome, item 2](https://github.com/williacj/rigger/issues/1416#issuecomment-6987307123).
 
 **R3, the claim lines.** R3 wrote `claims.jsonl` at 17:32:30Z. It is quoted whole in
 [appendix 2](https://github.com/williacj/rigger/issues/1416#issuecomment-6987308401). The
@@ -287,8 +289,18 @@ showed `state = not running`, `runs = 2` and `last exit code = 0`. No C2 launch 
   609-      reviewer (needs revision): Reject scheme-less host sources that permit HTTP(S) network origins, and preserve the example.com case in the existing CSP invariant tests while keeping the required suites green.; unmet item 2: A test fails when any directive of the production `app.security.csp` admits an `http:`, `https:`, `ws:` or `wss:` origin.
   ```
 
-  The outcome reports the L2 `transition` from `review` to `owner`, cause `escalated`, at
-  17:58:18.074Z. Z4 at 18:09:08Z read `121 Owner` on board 13.
+  #121's L2 `review.escalate` is at 17:58:14.628Z. It carries no `class` field, so
+  `report-final.out` counts it as `unclassified 1`, with 0 infrastructure-caused. Its L2
+  `transition` follows:
+
+  ```
+  {"ts":"2026-11-18T17:58:18.074Z","run":"3826fd61-cb99-48c0-a578-20433850d1a5","layer":"L2","event":"transition","card":121,"dispatch":null,"from":"review","to":"owner","cause":"escalated"}
+  ```
+
+  Addendum 2 quotes both lines uncut. It also quotes the L3 `merge.end` lines for #119 (pull
+  137, at 18:07:36.451Z) and #120 (pull 139, at 18:08:01.312Z), each with `"outcome":"merged"`.
+  [Addendum 2](https://github.com/williacj/rigger/issues/1416#issuecomment-6988498235).
+  Z4 at 18:09:08Z read `121 Owner` on board 13.
 - **#121 under M8-U57.** It stays in Owner until after M8, and stays out of the canary and the
   window. [M8-U57](https://github.com/williacj/rigger/issues/1293#issuecomment-6987800265).
 
