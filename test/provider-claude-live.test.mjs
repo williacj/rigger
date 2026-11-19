@@ -496,8 +496,40 @@ const PATH_BEFORE = 'before-1425\n';
 const PATH_AFTER = 'after-1425\n';
 const PATH_DENIAL = /requires approval|you haven't granted it yet|permission[^\n]*denied/i;
 
+/** The one credential this fixture accepts; its value is never included in the refusal. */
+function pathCredential() {
+  const credential = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  assert.ok(credential, 'no credential: set CLAUDE_CODE_OAUTH_TOKEN in the owner Terminal before running the M8-29 live cells');
+  return credential;
+}
+
+/** Runs the built session and retains the evidence its path assertions consume. */
+async function recordedPathSession(t, { built, configuration, directory, prompt, target, forgeDirectory, retained }, runCommand) {
+  const credential = pathCredential();
+  const redact = (text) => String(text).split(credential).join('[token removed]');
+  const diagnostic = (text) => t.diagnostic(redact(text));
+  const retain = (name, bytes) => writeFileSync(join(retained, name), redact(bytes), { mode: 0o600 });
+  const visibleEnvironment = { ...built.env, ...configuration };
+  const env = { ...visibleEnvironment, CLAUDE_CODE_OAUTH_TOKEN: credential };
+  const raw = await runCommand({ command: built.command, args: built.args, input: built.input,
+    cwd: directory, directory, env, timeout: SESSION, emitter: { emit: (event, fields) => diagnostic(JSON.stringify({ event, ...fields })) } })
+    .catch((failure) => { throw new Error(redact(failure.message)); });
+  const result = { ...raw, stdout: Buffer.from(redact(raw.stdout)), stderr: Buffer.from(redact(raw.stderr)) };
+  mkdirSync(retained, { recursive: true, mode: 0o700 });
+  for (const stream of ['stdout', 'stderr']) retain(stream, result[stream]);
+  const held = JSON.parse(redact(readFileSync(join(forgeDirectory, 'board.json'), 'utf8')));
+  retain('forge.json', JSON.stringify(held, null, 2));
+  retain('invocation.json', JSON.stringify({ command: built.command, args: built.args, prompt, env: visibleEnvironment, exit: result.exit }, null, 2));
+  const readTarget = () => redact(readFileSync(target, 'utf8'));
+  if (existsSync(target)) retain('target', readTarget());
+  diagnostic(`M8-29 retained evidence: ${retained}; exit ${result.exit}; stderr: ${result.stderr.toString('utf8')}`);
+  diagnostic(`M8-29 session directory: ${directory}; target: ${target}; environment: ${JSON.stringify(visibleEnvironment)}`);
+  return { result, held, readTarget };
+}
+
 /** One initialized consumer and one real session; only the stand-in gh can receive a comment. */
 async function cdSession(t, { name, tool, outside = false, deny = false, escalation = false }) {
+  pathCredential();
   assert.ok(onPath('claude', pastRefusing()), 'no claude is installed past the refusing one');
   const base = scratch();
   const directory = repositoryAt(join(base, 'repository'), { README: 'M8-29 path fixture.\n' });
@@ -537,20 +569,9 @@ async function cdSession(t, { name, tool, outside = false, deny = false, escalat
   const prompt = `First call Bash with exactly \`cd sub\`. Next call Bash with exactly \`pwd\`, as a separate call in this same session. Then do this task:\n${task}`;
   const { invocation, runCommand } = await fromCheckout();
   const built = await invocation({ agent, tier: 'standard', prompt, directory, card: 42, environment: configuration });
-  // These are the entire session environment: invocation's paths plus the test's three overrides.
-  const env = { ...built.env, ...configuration };
-  const result = await runCommand({ command: built.command, args: built.args, input: built.input,
-    cwd: directory, directory, env, timeout: SESSION, emitter: { emit: (event, fields) => t.diagnostic(JSON.stringify({ event, ...fields })) } });
   const retained = join(process.env.RIGGER_1425_EVIDENCE_ROOT ?? join(dirname(dirname(realpathSync.native(process.env.TMPDIR))), '1425-live-evidence'), randomUUID());
-  mkdirSync(retained, { recursive: true, mode: 0o700 });
-  for (const stream of ['stdout', 'stderr']) writeFileSync(join(retained, stream), result[stream], { mode: 0o600 });
-  const held = JSON.parse(readFileSync(join(forgeDirectory, 'board.json'), 'utf8'));
-  writeFileSync(join(retained, 'forge.json'), JSON.stringify(held, null, 2));
-  writeFileSync(join(retained, 'invocation.json'), JSON.stringify({ command: built.command, args: built.args, prompt, env, exit: result.exit }, null, 2));
-  if (existsSync(target)) writeFileSync(join(retained, 'target'), readFileSync(target));
-  t.diagnostic(`M8-29 retained originals: ${retained}; exit ${result.exit}; stderr: ${result.stderr.toString('utf8')}`);
-  const calls = callsOf(eventsOf(readFileSync(join(retained, 'stdout'))));
-  t.diagnostic(`M8-29 session directory: ${directory}; target: ${target}; environment: ${JSON.stringify(env)}`);
+  const { result, held, readTarget } = await recordedPathSession(t, { built, configuration, directory, prompt, target, forgeDirectory, retained }, runCommand);
+  const calls = callsOf(eventsOf(result.stdout));
   t.diagnostic(`M8-29 tool calls and results: ${JSON.stringify(calls)}`);
   assert.equal(result.exit, 0, result.stderr.toString('utf8'));
   assert.equal(calls[0]?.name, 'Bash');
@@ -564,7 +585,7 @@ async function cdSession(t, { name, tool, outside = false, deny = false, escalat
   assert.equal(targetCalls.length, 1, 'the session must attempt its target tool exactly once');
   assert.ok(targetCalls[0].result, 'the target must return a tool result');
   assert.ok(calls.indexOf(targetCalls[0]) > 1, 'the target must follow cd and pwd');
-  return { directory, target, call: targetCalls[0], calls, held };
+  return { directory, target, call: targetCalls[0], calls, held, readTarget };
 }
 
 /** A successful tool result and independent file bytes must agree. */
@@ -572,7 +593,7 @@ function allowedPath(made) {
   assert.notEqual(made.call.result?.is_error, true, textOf(made.call.result));
   assert.doesNotMatch(textOf(made.call.result), PATH_DENIAL);
   assert.ok(existsSync(made.target), 'the requested file must exist');
-  assert.equal(readFileSync(made.target, 'utf8'), PATH_AFTER, 'the requested file must hold the edited or written bytes');
+  assert.equal(made.readTarget(), PATH_AFTER, 'the requested file must hold the edited or written bytes');
 }
 
 // Host reason: wiring.
@@ -613,7 +634,7 @@ test('M8-29 live: the declared root .env deny survives cd sub and leaves its byt
   const made = await cdSession(t, { name: '.env', tool: 'Edit', deny: true });
   assert.equal(made.call.result?.is_error, true);
   assert.match(textOf(made.call.result), PATH_DENIAL);
-  assert.equal(readFileSync(made.target, 'utf8'), PATH_BEFORE, 'a denied Edit must leave the root .env unchanged');
+  assert.equal(made.readTarget(), PATH_BEFORE, 'a denied Edit must leave the root .env unchanged');
 });
 
 // Host reason: wiring.
@@ -624,8 +645,72 @@ test('M8-29 live: after cd sub the instructed root escalation note reaches only 
   assert.notEqual(made.call.result?.is_error, true, textOf(made.call.result));
   assert.doesNotMatch(textOf(made.call.result), PATH_DENIAL);
   assert.ok(existsSync(made.target), 'the note must be at the workspace root');
-  const note = readFileSync(made.target, 'utf8');
+  const note = made.readTarget();
   assert.deepEqual(parseEscalationNote(note, 1), { category: 'ambiguous', item: 1, reason: ESCALATION_REASON, dispatch: 'd-11111111-2222-3333-4444-555555555555' });
   assert.deepEqual(made.held.repository.issues.map(({ number, comments }) => [number, comments.map(({ body }) => body)]), [[42, [note]], [43, []]], 'the forge must read --body-file relative to its own working directory and keep every note byte');
   assert.deepEqual(made.held.sent, [['issue', 'comment', '42', '--body-file', '.rigger-escalation.md']]);
+});
+
+/** A transport/evidence fixture; no CLI or forge process is started. */
+function pathEvidenceFixture() {
+  const base = scratch();
+  const directory = join(base, 'repository');
+  const forgeDirectory = join(base, 'forge');
+  mkdirSync(directory);
+  mkdirSync(forgeDirectory);
+  const target = join(directory, 'target');
+  return { directory, forgeDirectory, target, retained: join(base, 'retained'), prompt: 'fixture prompt',
+    configuration: { CLAUDE_CONFIG_DIR: join(base, 'claude-home'), GH_CONFIG_DIR: join(base, 'gh-home'), PATH: '/fixture/bin' },
+    built: { command: 'claude', args: ['-p'], input: Buffer.from('fixture prompt'), env: { CLAUDE_CODE_TMPDIR: join(directory, '.claude-tmp') } } };
+}
+
+// Owner-directed harness diagnostic: credential transport and evidence redaction, not a product path-rule claim.
+// The runner double uses ARCHITECTURE.md's command result contract: exit plus captured stdout/stderr bytes.
+test('M8-29 harness: only the explicit OAuth token reaches the session and no evidence or diagnostic retains it', async (t) => {
+  const token = 'sk-ant-dummy-1425-not-a-credential';
+  const variables = { CLAUDE_CODE_OAUTH_TOKEN: token, ANTHROPIC_API_KEY: 'other-dummy', GH_TOKEN: 'forge-dummy', GITHUB_TOKEN: 'github-dummy' };
+  const previous = Object.fromEntries(Object.keys(variables).map((key) => [key, process.env[key]]));
+  Object.assign(process.env, variables);
+  t.after(() => { for (const [key, value] of Object.entries(previous)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; } });
+  const fixture = pathEvidenceFixture();
+  writeFileSync(fixture.target, `target ${token}`);
+  writeFileSync(join(fixture.forgeDirectory, 'board.json'), JSON.stringify({ note: token }));
+  const diagnostics = [];
+  let received;
+  const made = await recordedPathSession({ diagnostic: (message) => diagnostics.push(message) }, fixture, async (request) => {
+    received = request;
+    request.emitter.emit('fixture.event', { message: token });
+    return { exit: 0, stdout: Buffer.from(`stdout ${token}`), stderr: Buffer.from(`stderr ${token}`) };
+  });
+  assert.equal(received.env.CLAUDE_CODE_OAUTH_TOKEN, token, 'the session must receive the explicit OAuth token');
+  assert.deepEqual(Object.keys(received.env).sort(), [...Object.keys(fixture.built.env), ...Object.keys(fixture.configuration), 'CLAUDE_CODE_OAUTH_TOKEN'].sort(), 'no other inherited credential or environment may reach the session');
+  const files = readdirSync(fixture.retained, { recursive: true }).map((name) => join(fixture.retained, name)).filter((file) => statSync(file).isFile());
+  assert.equal(files.length, 5, 'both streams, invocation, forge and target must be inspected');
+  for (const file of files) assert.equal(readFileSync(file).includes(Buffer.from(token)), false, `credential retained in ${file}`);
+  assert.equal(diagnostics.join('\n').includes(token), false, 'a diagnostic exposed the credential');
+  assert.equal(made.result.stdout.includes(Buffer.from(token)), false, 'returned streams must be safe for later assertion diagnostics');
+  assert.equal(JSON.stringify(made.held).includes(token), false, 'returned forge state must be safe for later assertion diagnostics');
+  await assert.rejects(recordedPathSession({ diagnostic: (message) => diagnostics.push(message) }, fixture, async () => {
+    throw new Error(`runner failure ${token}`);
+  }), (failure) => {
+    assert.equal(failure.message.includes(token), false, 'runner failure diagnostics must not expose the token');
+    assert.match(failure.message, /runner failure \[token removed\]/);
+    return true;
+  });
+});
+
+// Owner-directed harness diagnostic: a missing fixture credential is a precondition failure, not path-rule evidence.
+test('M8-29 harness: no credential fails before a session starts or evidence is written', async (t) => {
+  const previous = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  t.after(() => { if (previous === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN; else process.env.CLAUDE_CODE_OAUTH_TOKEN = previous; });
+  const fixture = pathEvidenceFixture();
+  writeFileSync(join(fixture.forgeDirectory, 'board.json'), '{}');
+  let started = false;
+  await assert.rejects(recordedPathSession(t, fixture, async () => {
+    started = true;
+    return { exit: 0, stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) };
+  }), /no credential.*CLAUDE_CODE_OAUTH_TOKEN/i);
+  assert.equal(started, false, 'no session may start without the explicit credential');
+  assert.equal(existsSync(fixture.retained), false, 'no evidence directory may be made without a credential');
 });
