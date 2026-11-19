@@ -249,7 +249,7 @@ function rulesOf(declared) {
 const COMPOUND = /[;&|\n\r]/;
 
 /**
- * The characters a reached directory's real path may hold, so that no rule reads part of the path
+ * The characters an anchored directory's real path may hold, so that no rule reads part of the path
  * as a separator, a glob or `:*`: a glob character would let `Read(/<head>/**)` and
  * `Edit(/<head>/**)` match directories beside it. A space is admitted (ruling 12 on #520), since the
  * default worktree root sits beside the consumer's checkout, under a home that may hold one; #531's
@@ -278,12 +278,22 @@ const PLAIN = /^[A-Za-z0-9/._+ -]+$/;
  * refused, since a rule on a path it does not resolve to was not measured to match; so is one whose
  * real path holds a character outside `PLAIN`.
  *
- * Each deny rule the directory's settings declare for a path relative to it is written again for
- * each reached directory by `anchoredAt`, so the consumer's deny rules apply there too (O61 on #520;
- * ruling 12). `real` is the working directory's real path, at which a `/path` rule is anchored too.
+ * Each relative Read or Edit allow and deny rule is anchored at `real`, the dispatch directory's
+ * real path, so it still holds after the session changes directory (M8-29). Each relative deny
+ * rule is also copied to each reached directory (O61 on #520; ruling 12).
  */
 function granting(rules, reach, real) {
-  if (reach.length === 0) return rules;
+  const copied = (list, at) => atStart('claude-rule-unreadable', () => (rules?.[list] ?? []).map((rule) => anchoredAt(rule, at)).filter((copy) => copy !== undefined));
+  let permissions = rules;
+  for (const list of ['allow', 'deny']) {
+    const copies = copied(list, real);
+    if (copies.length === 0) continue;
+    if (!PLAIN.test(real)) {
+      throw startFailure(new Error(`the dispatch directory ${real} holds a character outside letters, digits, a space and \`/._+-\`, which its rules would read as more than a path, so the Claude Code adapter started nothing`), 'claude-dispatch-path', { path: real });
+    }
+    permissions = { ...permissions, [list]: [...rules[list], ...copies] };
+  }
+  if (reach.length === 0) return permissions;
   const compound = atStart('claude-rule-unreadable', () => Object.values(rules ?? {}).flat().find((rule) => /^Bash\(/.test(rule) && COMPOUND.test(rule)));
   if (compound !== undefined) {
     throw startFailure(new Error(`the directory's settings declare ${compound}, a rule for a compound command line, which admits nothing (#519's report, c17), so the Claude Code adapter started nothing`), 'claude-compound-rule');
@@ -294,19 +304,17 @@ function granting(rules, reach, real) {
     throw startFailure(new Error(`the reached directory ${unplain} holds a character outside letters, digits, a space and \`/._+-\`, which its rules would read as more than a path, so the Claude Code adapter started nothing`), 'claude-reached-path', { path: unplain });
   }
   const grants = heads.flatMap((head) => [`Read(/${head}/**)`, `Edit(/${head}/**)`]);
-  const denied = rules?.deny ?? [];
-  const copied = (at, fromRoot) => denied.map((rule) => anchoredAt(rule, at, fromRoot)).filter((copy) => copy !== undefined);
-  const copies = [...heads.flatMap((head) => copied(head, false)), ...copied(real, true)];
-  return { ...rules, allow: [...(rules?.allow ?? []), ...grants], ...(copies.length > 0 ? { deny: [...denied, ...copies] } : {}) };
+  const copies = heads.flatMap((head) => copied('deny', head));
+  return { ...permissions, allow: [...(permissions?.allow ?? []), ...grants], ...(copies.length > 0 ? { deny: [...(permissions?.deny ?? []), ...copies] } : {}) };
 }
 
 /** A Read or Edit rule naming a path, as its tool and its path. */
 const PATH_RULE = /^(Read|Edit)\((.+)\)$/s;
 
 /**
- * The deny rule `rule` anchored at the directory `at`, or undefined where it is not copied there.
+ * The path rule `rule` anchored at the directory `at`, or undefined where it is not copied there.
  * Claude Code reads a Read or Edit path as a gitignore pattern ("Read and Edit",
- * code.claude.com/docs/en/permissions), and the copy blocks under `at` what the rule blocks under the
+ * code.claude.com/docs/en/permissions), and the copy matches under `at` what the rule matches under the
  * working directory, depth for depth:
  *
  * - `path` and `./path` alike: one segment, alone or before `/**` or a trailing `/`, at any depth, as
@@ -315,16 +323,15 @@ const PATH_RULE = /^(Read|Edit)\((.+)\)$/s;
  *   `sub/.env` (Claude Code 2.1.287, #531's engineer judge; 2.1.288, the maker's probe);
  *   `Read(secrets/**)`, `Read(secrets/)` and `Read(./secrets/**)` each denied `secrets/token` and
  *   `sub/secrets/token`, and `Read(./a/b.txt)` and `Read(a/b.txt)` denied `a/b.txt` and not
- *   `x/a/b.txt` (2.1.288, the maker's probes). These are copied to each reached directory,
- *   and not to the working directory, where they already hold. A version that reads `./` as the
- *   top only, as the docs' "relative to current directory" suggests, makes a single-segment copy
- *   stricter than the rule, never wider.
+ *   `x/a/b.txt` (2.1.288, the maker's probes). The dispatch and reached directories use that same
+ *   mapping. A version that reads `./` as the top only, as the docs' "relative to current
+ *   directory" suggests, would require changing this mapping to retain the declared root behavior.
  * - `/path` is "relative to the settings source", which for the consumer's project settings is the
  *   repository's root. Passed inline in `--settings` it does not hold there: #531 measured on Claude
  *   Code 2.1.287 that `Read(/secret.txt)` passed inline let a session read the working directory's
  *   `secret.txt`, while the same rule in the project's own `.claude/settings.json` denied it. Where
  *   the inline rule does resolve was not measured. So it is copied to each reached directory and,
- *   with `fromRoot`, to the working directory too (ruling 12 on #520).
+ *   to the working directory too (ruling 12 on #520).
  * - `//path` and `~/path` name one place already and are not copied.
  * - A `!` pattern is read relative to the current directory and cannot carve anything out of an
  *   anchored rule, so it is not copied, and a reached directory's copies may block what the working
@@ -332,15 +339,14 @@ const PATH_RULE = /^(Read|Edit)\((.+)\)$/s;
  *   judge measured unable to do its card's work for a negation its copies could not carry reverses
  *   it, as a placement question for the architect.
  */
-function anchoredAt(rule, at, fromRoot) {
+function anchoredAt(rule, at) {
   const match = PATH_RULE.exec(rule);
   if (match === null) return undefined;
   const [, tool, path] = match;
   if (path.startsWith('//') || path.startsWith('~/') || path.startsWith('!')) return undefined;
   if (path.startsWith('/')) return `${tool}(/${at}${path})`;
-  if (fromRoot) return undefined;
   const bare = path.startsWith('./') ? path.slice(2) : path;
-  const relative = bare.replace(/\/(\*\*)?$/, '').includes('/') ? bare : `**/${bare}`;
+  const relative = bare === '**' || bare.replace(/\/(\*\*)?$/, '').includes('/') ? bare : `**/${bare}`;
   return `${tool}(/${at}/${relative})`;
 }
 
@@ -364,7 +370,8 @@ function above(directory) {
  * Refused, each naming what it refused: a tier Rigger does not fix; an agent file whose real path is not under `directory`
  * (`R-SAFE-6`), though the file is not read and need not exist; a directory under a path holding a
  * glob character, which its `CLAUDE.md` exclusions would read as a pattern; a settings file in
- * `directory` that is no JSON object; and, given `reach`, a reached directory with no real path, one
+ * `directory` that is no JSON object; a dispatch real path outside `PLAIN` needing an anchored
+ * rule; and, given `reach`, a reached directory with no real path, one
  * whose real path holds a character outside `PLAIN`, or a declared Bash rule for a compound line.
  */
 export async function invocation({ agent, tier, prompt, directory, card, reach = [], emitter, environment = process.env }) {
