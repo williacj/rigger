@@ -2,7 +2,7 @@ ABOUTME: The dispatch-root path-rule fix, controlled red and green evidence, and
 
 # Dispatch-root path rules
 
-Card #1425, acceptance revision `0d91850d15a3`, places the path-rule change in the Claude provider
+Card #1425, acceptance revision `ad84e40dc0a0`, places the path-rule change in the Claude provider
 adapter and the escalation wording in workflow. M8-U63 on #1293 approved R-SAFE-10 through spec
 PR #1427, merged at `6be13718`. The coordinator resumed this maker after that merge and the PM
 updated the claim item. This branch claims the registered requirement; it does not author it.
@@ -128,6 +128,17 @@ The following are the recorded target calls/results, each same-session pwd resul
       "result": "/Users/cjwilliams/GitHub/rigger-worktrees/codex-1425-tmp/1425-owner-head-tmp/rigger-suite.cmOfEy/rigger-claude-live-iG8daU/repository/sub",
       "is_error": false
     },
+    "readCall": {
+      "name": "Read",
+      "input": {
+        "file_path": "/Users/cjwilliams/GitHub/rigger-worktrees/codex-1425-tmp/1425-owner-head-tmp/rigger-suite.cmOfEy/rigger-claude-live-iG8daU/repository/root.txt"
+      },
+      "result": {
+        "tool_use_id": "toolu_01NvqDKCU7hbFGq6PSsfSj5j",
+        "type": "tool_result",
+        "content": "1\tbefore-1425\n2\t"
+      }
+    },
     "targetCall": {
       "name": "Edit",
       "input": {
@@ -181,6 +192,17 @@ The following are the recorded target calls/results, each same-session pwd resul
       "command": "pwd",
       "result": "/Users/cjwilliams/GitHub/rigger-worktrees/codex-1425-tmp/1425-owner-head-tmp/rigger-suite.cmOfEy/rigger-claude-live-sNUpFX/repository/sub",
       "is_error": false
+    },
+    "readCall": {
+      "name": "Read",
+      "input": {
+        "file_path": "/Users/cjwilliams/GitHub/rigger-worktrees/codex-1425-tmp/1425-owner-head-tmp/rigger-suite.cmOfEy/rigger-claude-live-sNUpFX/repository/sub/existing.txt"
+      },
+      "result": {
+        "tool_use_id": "toolu_01KYSto5ZXUHV3gLiDejK7y8",
+        "type": "tool_result",
+        "content": "1\tbefore-1425\n2\t"
+      }
     },
     "targetCall": {
       "name": "Edit",
@@ -236,6 +258,17 @@ The following are the recorded target calls/results, each same-session pwd resul
       "command": "pwd",
       "result": "/Users/cjwilliams/GitHub/rigger-worktrees/codex-1425-tmp/1425-owner-head-tmp/rigger-suite.cmOfEy/rigger-claude-live-lmmOHI/repository/sub",
       "is_error": false
+    },
+    "readCall": {
+      "name": "Read",
+      "input": {
+        "file_path": "/Users/cjwilliams/GitHub/rigger-worktrees/codex-1425-tmp/1425-owner-head-tmp/rigger-suite.cmOfEy/rigger-claude-live-lmmOHI/repository/.env"
+      },
+      "result": {
+        "tool_use_id": "toolu_01GbAfYvGGwSJRy2VvL8PqmZ",
+        "type": "tool_result",
+        "content": "1\tbefore-1425\n2\t"
+      }
     },
     "targetCall": {
       "name": "Edit",
@@ -357,6 +390,17 @@ The following are the recorded target calls/results, each same-session pwd resul
       "result": "/Users/cjwilliams/GitHub/rigger-worktrees/codex-1425-tmp/1425-owner-base-tmp/rigger-suite.mAoW6A/rigger-claude-live-nXQsz8/repository/sub",
       "is_error": false
     },
+    "readCall": {
+      "name": "Read",
+      "input": {
+        "file_path": "/Users/cjwilliams/GitHub/rigger-worktrees/codex-1425-tmp/1425-owner-base-tmp/rigger-suite.mAoW6A/rigger-claude-live-nXQsz8/repository/root.txt"
+      },
+      "result": {
+        "tool_use_id": "toolu_014QtEyDoJND6R2BBQ1eCuJ8",
+        "type": "tool_result",
+        "content": "1\tbefore-1425\n2\t"
+      }
+    },
     "targetCall": {
       "name": "Edit",
       "input": {
@@ -413,6 +457,17 @@ The following are the recorded target calls/results, each same-session pwd resul
       "result": "/Users/cjwilliams/GitHub/rigger-worktrees/codex-1425-tmp/1425-owner-base-tmp/rigger-suite.mAoW6A/rigger-claude-live-PBesu1/repository/sub",
       "is_error": false
     },
+    "readCall": {
+      "name": "Read",
+      "input": {
+        "file_path": "/Users/cjwilliams/GitHub/rigger-worktrees/codex-1425-tmp/1425-owner-base-tmp/rigger-suite.mAoW6A/rigger-claude-live-PBesu1/repository/sub/existing.txt"
+      },
+      "result": {
+        "tool_use_id": "toolu_01UcwUDAcDa9mc4cHHCRXVtB",
+        "type": "tool_result",
+        "content": "1\tbefore-1425\n2\t"
+      }
+    },
     "targetCall": {
       "name": "Edit",
       "input": {
@@ -467,6 +522,17 @@ The following are the recorded target calls/results, each same-session pwd resul
       "command": "pwd",
       "result": "/Users/cjwilliams/GitHub/rigger-worktrees/codex-1425-tmp/1425-owner-base-tmp/rigger-suite.mAoW6A/rigger-claude-live-m2JDYA/repository/sub",
       "is_error": false
+    },
+    "readCall": {
+      "name": "Read",
+      "input": {
+        "file_path": "/Users/cjwilliams/GitHub/rigger-worktrees/codex-1425-tmp/1425-owner-base-tmp/rigger-suite.mAoW6A/rigger-claude-live-m2JDYA/repository/.env"
+      },
+      "result": {
+        "tool_use_id": "toolu_014wp5UyUXbW3in8FZFuqggR",
+        "type": "tool_result",
+        "content": "1\tbefore-1425\n2\t"
+      }
     },
     "targetCall": {
       "name": "Edit",
@@ -553,4 +619,10 @@ The following are the recorded target calls/results, each same-session pwd resul
 
 The head passed every live cell, including root note creation and a byte-identical comment on only issue 42. The base failed exactly the root Edit, root Write and root escalation cells; the first two returned “you haven't granted it yet”, while the escalation wrote under sub/ and left the requested root note absent. The base still passed sub Edit, outside refusal and .env deny. These three expected counterexamples are not flakes and do not earn a green base verdict. The head .env deny now matches its observed denied-by-permission-settings result and leaves before-1425 bytes unchanged.
 
-All product live acceptance rows now have measured owner proof. Item 28 remains unmet as written: two owner-requested controlled credential/evidence harness diagnostics omit product proves declarations because they assert neither R-SAFE-10 nor R-ESCALATE-27. The existing ambiguous report on #1425 asks the author to reconcile that blanket wording; no source, test or acceptance was changed in this journal-only completion. Independent judges and coordinator ci:full remain separate review gates.
+All product live acceptance rows have measured owner proof. Against current K7 ad84e40dc0a0, item 28 is met: escalation tests claim R-ESCALATE-27, other new product tests claim R-SAFE-10, and the two M8-29 harness diagnostics are expressly exempt. The author recorded the admission, checked requirements and five killed harness mutations in [1425#7014224268](https://github.com/williacj/rigger/issues/1425#issuecomment-7014224268). Item 15 is met as amended in [1425#7014339333](https://github.com/williacj/rigger/issues/1425#issuecomment-7014339333): only the set CLAUDE_CODE_OAUTH_TOKEN is forwarded, no other credential is forwarded, and no retained file or diagnostic holds it. This supersedes the earlier ambiguous claim report; it is the author's amendment, not a maker exception. The PR ledger is restated against all 33 items at this K7. No source or test changes are part of this update.
+
+The live quotes above now include the actual Read call at position three, between pwd and Edit, for root Edit, sub Edit and .env on both sides. Each Read returned the recorded before-1425 line. The quoted tool ids, inputs and results come from the same retained owner diagnostics as the existing Edit results.
+
+### macOS runner capacity remains a separate gate
+
+CI run [44552261773](https://github.com/williacj/rigger/actions/runs/44552261773), at the preceding journal-only head ce4d17c9f62f02481a43e1553fd190b72d9b2de7, had a successful fast job. Its [macOS smoke job](https://github.com/williacj/rigger/actions/runs/44552261773/job/135659055157) was cancelled without acquiring a runner: runner_name and steps were empty. The retained annotation says "The job was not acquired by Runner of type hosted even after multiple attempts" and notes macOS arm64 capacity constraints. No Mac test ran, and no rerun was made. The raw job and annotation JSON remain in that head's 1425-evidence archive. This infrastructure cancellation remains distinct from the green owner live proof and deterministic suites. Independent judgments and coordinator-controlled ci:full remain separate review gates.
