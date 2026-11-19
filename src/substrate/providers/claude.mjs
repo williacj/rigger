@@ -284,6 +284,18 @@ const PLAIN = /^[A-Za-z0-9/._+ -]+$/;
  */
 function granting(rules, reach, real) {
   const copied = (list, at) => atStart('claude-rule-unreadable', () => (rules?.[list] ?? []).map((rule) => anchoredAt(rule, at)).filter((copy) => copy !== undefined));
+  // Reached-path refusals must name the reached directory before dispatch copies are checked.
+  if (reach.length > 0) {
+    const compound = atStart('claude-rule-unreadable', () => Object.values(rules ?? {}).flat().find((rule) => /^Bash\(/.test(rule) && COMPOUND.test(rule)));
+    if (compound !== undefined) {
+      throw startFailure(new Error(`the directory's settings declare ${compound}, a rule for a compound command line, which admits nothing (#519's report, c17), so the Claude Code adapter started nothing`), 'claude-compound-rule');
+    }
+  }
+  const heads = reach.map((each) => atStart('directory-unusable', () => realpathSync.native(each)));
+  const unplain = heads.find((head) => !PLAIN.test(head));
+  if (unplain !== undefined) {
+    throw startFailure(new Error(`the reached directory ${unplain} holds a character outside letters, digits, a space and \`/._+-\`, which its rules would read as more than a path, so the Claude Code adapter started nothing`), 'claude-reached-path', { path: unplain });
+  }
   let permissions = rules;
   for (const list of ['allow', 'deny']) {
     const copies = copied(list, real);
@@ -294,15 +306,6 @@ function granting(rules, reach, real) {
     permissions = { ...permissions, [list]: [...rules[list], ...copies] };
   }
   if (reach.length === 0) return permissions;
-  const compound = atStart('claude-rule-unreadable', () => Object.values(rules ?? {}).flat().find((rule) => /^Bash\(/.test(rule) && COMPOUND.test(rule)));
-  if (compound !== undefined) {
-    throw startFailure(new Error(`the directory's settings declare ${compound}, a rule for a compound command line, which admits nothing (#519's report, c17), so the Claude Code adapter started nothing`), 'claude-compound-rule');
-  }
-  const heads = reach.map((each) => atStart('directory-unusable', () => realpathSync.native(each)));
-  const unplain = heads.find((head) => !PLAIN.test(head));
-  if (unplain !== undefined) {
-    throw startFailure(new Error(`the reached directory ${unplain} holds a character outside letters, digits, a space and \`/._+-\`, which its rules would read as more than a path, so the Claude Code adapter started nothing`), 'claude-reached-path', { path: unplain });
-  }
   const grants = heads.flatMap((head) => [`Read(/${head}/**)`, `Edit(/${head}/**)`]);
   const copies = heads.flatMap((head) => copied('deny', head));
   return { ...permissions, allow: [...(permissions?.allow ?? []), ...grants], ...(copies.length > 0 ? { deny: [...(permissions?.deny ?? []), ...copies] } : {}) };

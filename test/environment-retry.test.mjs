@@ -2326,3 +2326,36 @@ test('representative-R3 original and changed admitted providers retain nonexecut
     }
   });
 });
+
+// A dispatch-root refusal must not mask the existing reached-head cause or its counted identity.
+// proves R-FAIL-8
+test('M8-29 B1: sibling judge paths under a semicolon ancestor retain R13 retry and hold', SETTLES_WITHIN, async (t) => {
+  // Preparation deadlines are logical; filesystem answers and the refusal policy stay real.
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { request } = judgeStartRequest(t, 'claude');
+  const moved = `${request.directory};host`;
+  renameSync(request.directory, moved);
+  request.directory = moved;
+  request.cwd = join(moved, 'main');
+  mkdirSync(join(request.cwd, '.claude'));
+  writeFileSync(join(request.cwd, '.claude', 'settings.json'), JSON.stringify({ permissions: { allow: ['Edit(./**)'] } }));
+  const head = join(moved, 'head');
+  mkdirSync(head);
+  request.reach = [head];
+  const counted = realpathSync.native(head);
+  assert.ok(realpathSync.native(request.cwd).includes(';host/main'));
+  assert.ok(counted.includes(';host/head'));
+  // An unexpected continuation uses Node's existing no-pid failed-spawn fixture, never a CLI.
+  refuseSpawn(t, { command: 'claude', code: 'ENOENT' });
+  const [first] = await Promise.allSettled([roleDispatch(request)]);
+  const retry = judgeStartAnswer({ reviewer: first });
+  assert.equal(retry.next.action, 'again', 'a judge whose head real path is non-PLAIN must retry under R-FAIL-8');
+  judgeStartClass(first, { kind: 'claude-reached-path', path: counted }, 'R13');
+  assert.equal(retry.next.failure.path, counted, 'R13 must count head, not the dispatch main directory');
+  const [second] = await Promise.allSettled([roleDispatch({ ...request, id: 'd-judge-second' })]);
+  const held = judgeStartAnswer({ reviewer: second }, { firstFailures: { reviewer: first } });
+  judgeStartClass(second, { kind: 'claude-reached-path', path: counted }, 'R13');
+  assert.equal(held.next.action, 'hold', 'a second matching real preparation refusal must close admission');
+  assert.equal(held.next.failure.row, 'R13');
+  assert.equal(held.next.failure.path, counted);
+});
