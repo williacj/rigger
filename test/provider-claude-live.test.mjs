@@ -494,7 +494,7 @@ test('a live L3 role dispatch keeps Claude Code final result output under its re
 
 const PATH_BEFORE = 'before-1425\n';
 const PATH_AFTER = 'after-1425\n';
-const PATH_DENIAL = /requires approval|you haven't granted it yet|permission[^\n]*denied/i;
+const PATH_DENIAL = /requires approval|you haven't granted it yet|permission[^\n]*denied|denied by your permission settings/i;
 
 /** The one credential this fixture accepts; its value is never included in the refusal. */
 function pathCredential() {
