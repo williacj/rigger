@@ -449,17 +449,44 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | R-LOOP-22 | — the maker started the card's work from the beginning; | the engine | the test suite | |
 | R-LOOP-23 | — the maker exited successfully; | the engine | the test suite | |
 | R-LOOP-24 | — the forge then holds no open pull request from the card's line of work, or Rigger cannot read whether it does. | the engine | the test suite | |
+| R-LOOP-25 | A judge's dispatch that started, and ended without leaving a verdict Rigger can read at the head and acceptance it was dispatched for, has failed. A judge's dispatch that ran past its time has failed, whatever it left. Either failure spends no round. Its cases are in `### R-LOOP-25 — A judge that leaves no verdict`. | the engine | the test suite | |
+| R-LOOP-26 | Rigger escalates a card as ambiguous where one of its judges fails under `R-LOOP-25` twice at one head and one acceptance, with no verdict from that judge and no escalation Rigger raised for the card between the two. A verdict that judge left counts as between them, even where its dispatch failed by running past its time. The escalation names the judge and each failure. | the engine | the test suite | D3 |
+
+### R-LOOP-25 — A judge that leaves no verdict
+
+| How the judge's dispatch ended | What it left at the head and acceptance it was dispatched for | Scope |
+|---|---|---|
+| it exited non-zero | no verdict | in: failed |
+| it exited successfully | no verdict | in: failed |
+| it exited, successfully or not | a verdict Rigger cannot read | in: failed |
+| it ran past its time (`R-LOOP-15`) | anything | in: failed |
+| it exited, successfully or not | a verdict Rigger can read | out: the verdict is read as any other |
+| it exited, successfully or not | Rigger cannot read the forge to tell whether it left a verdict | out: not counted; the next read of the forge answers it |
+| it never started | — | out: `### R-FAIL-8 — Environment failures and the hold` |
+| Rigger killed it at a later start, as a process a dead engine left | — | out: not the judge's failure |
 
 ## R-EVIDENCE — what a judge is given
 
 | id | requirement | made true by | checked by | from |
 |---|---|---|---|---|
-| R-EVIDENCE-1 | Rigger gives a judge the facts of the work it is ruling on, so that the judge does not go and find them itself. | the engine | the event record, by what each judge was given | D9 |
+| R-EVIDENCE-1 | Except as `R-EVIDENCE-7` gives, Rigger gives a judge the facts of the work it is ruling on, so that the judge does not go and find them itself. | the engine | the event record, by what each judge was given | D9 |
 | R-EVIDENCE-2 | A judge may look beyond what it was given. What it is given is a floor, never a limit. | the engine | the test suite | D9 |
-| R-EVIDENCE-3 | What a judge is given identifies the card, its acceptance, the work under review, and what that work changed. On a second or later round it also identifies what changed since the round before. | the engine | the event record, by what each judge was given | D9 |
+| R-EVIDENCE-3 | Except as `R-EVIDENCE-7` gives, what a judge is given identifies the card, its acceptance, the work under review, and what that work changed. On a second or later round it also identifies what changed since the round before. | the engine | the event record, by what each judge was given | D9 |
 | R-EVIDENCE-4 | What a judge is given carries no other judge's findings or verdict, and no part of the maker's session. | the engine | the event record, by what each judge was given | D9, D6 |
 | R-EVIDENCE-5 | Rigger records what each judge was given, so a later reader can tell whether two judges ruled on the same thing. | the engine | the event record | D9 |
 | R-EVIDENCE-6 | Rigger gives a judge the work it judges as the pull request's head, provisioned by the steps the card's kind selects, in a directory apart from where the judge's instructions are read. | the engine | the test suite | D9 |
+| R-EVIDENCE-7 | A judge's prompt is the instruction and evidence Rigger hands its provider's CLI on standard input. Rigger measures a prompt in UTF-8 bytes, against the largest prompt it holds that provider's CLI to: that provider's prompt limit. Where a judge's prompt exceeds its provider's prompt limit, Rigger gives the judge the paths the work changed in place of the lines it changed, and says that it did so. Its cases are in `### R-EVIDENCE-7 — Evidence larger than a provider accepts`. | the engine | the test suite | D9 |
+| R-EVIDENCE-8 | Where a judge's prompt would still exceed its provider's prompt limit with the evidence `R-EVIDENCE-7` gives, Rigger does not dispatch that judge. It escalates the card as ambiguous, naming the judge and that limit. | the engine | the test suite | D3, D9 |
+
+### R-EVIDENCE-7 — Evidence larger than a provider accepts
+
+| Rigger holds a prompt limit for the judge's provider | The prompt, with what `R-EVIDENCE-3` names | The prompt, with the paths changed in place of the lines | Scope |
+|---|---|---|---|
+| yes | within the limit, and the provider accepts it | — | out: `R-EVIDENCE-3` as written |
+| yes | past the limit | within it | in: `R-EVIDENCE-7` |
+| yes | past the limit | past it | in: `R-EVIDENCE-8` |
+| yes | within the limit, and the provider refuses it | — | out: the judge fails under `R-LOOP-25`, and `R-LOOP-26` bounds it |
+| no | — | — | out: a judge its provider refuses fails under `R-LOOP-25`, and `R-LOOP-26` bounds it |
 
 ## R-VERDICT — what a judge returns
 
