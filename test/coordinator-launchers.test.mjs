@@ -109,10 +109,9 @@ test('codex-judge.sh writes a prompt naming suite-slot.sh by the absolute path o
 // a marker block not directly under the comment's first line is no marker", is the test of the
 // gate's read this layout depends on.
 //
-// The prompt's "## Post" section names the verdict's parts in the order the verdict writes them: the
-// heading, the marker block, then the rest. The test lays out a verdict in that order, with a
-// composed block, and asks the gate's own parse whether it reads the block. A sentence about the
-// marker block that names another position for it fails the test too.
+// The prompt's "## Post" section shows the verdict's layout as an example inside a four-backtick
+// fence. The test fills the example's marker block with a composed one and asks the gate's own
+// parse whether it reads it, so the prose around the example can say anything.
 test('codex-judge.sh hands codex a prompt placing the marker block on the verdict comment\'s second line, under the heading and before the rest of the verdict', () => {
   const { w, bare, root, logs } = setup('coord-judge-marker-');
   const result = run(w, launcher('codex-judge.sh'), ['12', '7', '1'], { env: { RIGGER_WORKTREE_ROOT: root, RIGGER_REPO_URL: bare, CODEX_LOG_DIR: logs } });
@@ -120,22 +119,17 @@ test('codex-judge.sh hands codex a prompt placing the marker block on the verdic
   assert.equal(result.status, 0, result.stderr);
   const prompt = codexCalls(w)[0].stdin;
   const post = prompt.slice(prompt.indexOf('\n## Post\n')).split('\n');
-  const heading = post.findIndex((line) => line.startsWith('`**Codex'));
-  const block = post.findIndex((line) => /marker block|rigger-marker/i.test(line));
-  const rest = post.findIndex((line) => line.startsWith('- '));
-  assert.ok(heading !== -1 && block !== -1 && rest !== -1, `the marker block's placement: the Post section names no heading, marker block or list of the rest (${heading}, ${block}, ${rest})`);
+  const open = post.indexOf('````');
+  const close = post.indexOf('````', open + 1);
+  assert.ok(open !== -1 && close !== -1, 'the marker block\'s placement: the Post section shows no example layout of the verdict in a four-backtick fence');
+  const example = post.slice(open + 1, close);
+  const from = example.indexOf('```rigger-marker');
+  const to = example.indexOf('```', from + 1);
+  assert.ok(from !== -1 && to !== -1, `the marker block's placement: the example layout holds no marker block:\n${example.join('\n')}`);
   const marker = { card: 7, pull: 12, head: 'a'.repeat(40), digest: 'b'.repeat(64), role: 'reviewer', verdict: 'sound', items: ['met'], coverage: 'covered' };
-  const parts = new Map([
-    [heading, [post[heading].replaceAll('`', '')]],
-    [block, composeMarker(marker, '').split('\n').slice(1, -1)],
-    [rest, [post[rest]]],
-  ]);
-  const verdict = [...parts.keys()].sort((a, b) => a - b).flatMap((at) => parts.get(at)).join('\n');
-  assert.equal(parseMarker(verdict, 1).state, 'marker', `the marker block's placement: a verdict laid out in the prompt's order holds no block the gate reads:\n${verdict}`);
-  const sentences = prompt.split(/(?<=[.:;])\s+|\n+/);
-  const elsewhere = sentences.filter((sentence) => /marker block/i.test(sentence) && /\b(?:end|ends|last|final|bottom|top|third)\b/i.test(sentence));
-  assert.deepEqual(elsewhere, [], 'the marker block\'s placement: a sentence places the marker block somewhere other than the comment\'s second line');
-  assertToolingClean();
+  const block = composeMarker(marker, '').split('\n').slice(1, -1);
+  const verdict = [...example.slice(0, from), ...block, ...example.slice(to + 1)].join('\n');
+  assert.equal(parseMarker(verdict, 1).state, 'marker', `the marker block's placement: a verdict laid out as the prompt's example holds no block the gate reads:\n${verdict}`);
 });
 
 /** A maker's clone and its tmp directory, as codex-maker.sh leaves them, and a message file. */
@@ -301,14 +295,13 @@ function sourceCopy(dir) {
 }
 
 /**
- * The judge prompt with the lines card #1439 changed under its "## Post" heading set aside: the
- * source copy's "Below that line" line and its closing marker paragraph, and the head's three
- * paragraphs placing the marker block on the verdict's second line. Each becomes one token.
+ * The judge prompt with the lines card #1439 changed under its "## Post" heading set aside: from
+ * "Write the verdict to" to the line that introduces the rest of the verdict, in the source copy
+ * and at the head, and the source copy's closing marker paragraph. Each run becomes one token.
  */
 const placed = (text) => text
-  .replace(/^Below that line, give:$/m, '<marker placement>')
-  .replace(/^End the verdict with the gate's marker block for your role\..*\n\n/m, '')
-  .replace(/^Its second line opens the gate's marker block for your role\b[\s\S]*?^After the block's closing fence, give:$/m, '<marker placement>');
+  .replace(/^Write the verdict to `[\s\S]*?^(?:Below that line, give:|After the block's closing fence, give:)$/m, '<marker placement>')
+  .replace(/^End the verdict with the gate's marker block for your role\..*\n\n/m, '');
 
 /** What one copy of a launcher handed the stub codex, with that run's own paths named generically. */
 function invocation(w, copy, launch) {

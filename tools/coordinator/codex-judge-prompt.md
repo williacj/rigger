@@ -37,11 +37,17 @@ You are the **Codex judge**, in the `@ROLE@` role, on pull request #@PR@ in will
   - `critical`, only where no maker revision could resolve the fault without an owner decision.
 
 ## Post
-Write the verdict to `@BASE@/verdict-@PR@-codex-@ROLE@-r@ROUND@.md`. Its first line is exactly:
+Write the verdict to `@BASE@/verdict-@PR@-codex-@ROLE@-r@ROUND@.md`, laid out line for line as this example, whose outer four-backtick fence is not part of it:
 
-`**Codex @ROLE@ judge — PR #@PR@, round @ROUND@, head @SHA@, acceptance @ACCREV@: <sound | needs revision | critical>**`
+````
+**Codex @ROLE@ judge — PR #@PR@, round @ROUND@, head @SHA@, acceptance @ACCREV@: <sound | needs revision | critical>**
+```rigger-marker
+<the lines inside the gate's marker block for your role, filled in as below>
+```
+<the rest of the verdict, as listed below>
+````
 
-Its second line opens the gate's marker block for your role, directly under that heading: the gate reads a marker block only where it opens on the comment's second line. Take the block from the latest `rigger/gate` run's log on this pull request: `gh run list -R williacj/rigger --workflow rigger-gate.yml`, then `gh run view <id> -R williacj/rigger --log`, which prints "## The marker @ROLE@ must post" followed by a fenced `rigger-marker` block. If no run prints a block for your role, say so in your report. Never compose a block yourself.
+Its first line is exactly the heading the example shows, filled in. Its second line opens the gate's marker block for your role, directly under that heading: the gate reads a marker block only where it opens on the comment's second line. Take the block from the latest `rigger/gate` run's log on this pull request: `gh run list -R williacj/rigger --workflow rigger-gate.yml`, then `gh run view <id> -R williacj/rigger --log`, which prints "## The marker @ROLE@ must post" followed by a fenced `rigger-marker` block. If no run prints a block for your role, say so in your report. Never compose a block yourself.
 
 Copy that block without the prefix the log puts before each of its lines, the job name, the step name and the timestamp, so each copied line begins where the gate's printed line begins. Replace every `<…>` placeholder with your ruling: the verdict, `met` or `unmet` for each item, and `covered` or `insufficient` for `coverage`. Write the `coverageReason` line only where coverage is `insufficient`, and the `toSound` line only where the verdict is not `sound`, as the gate's printed instruction says; leave each out otherwise. Keep every other field exactly as printed.
 
