@@ -450,7 +450,10 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | R-LOOP-23 | — the maker exited successfully; | the engine | the test suite | |
 | R-LOOP-24 | — the forge then holds no open pull request from the card's line of work, or Rigger cannot read whether it does. | the engine | the test suite | |
 | R-LOOP-25 | A judge's dispatch that started, and ended without leaving a verdict Rigger can read at the head and acceptance it was dispatched for, has failed. A judge's dispatch that ran past its time has failed, whatever it left. Either failure spends no round. Its cases are in `### R-LOOP-25 — A judge that leaves no verdict`. | the engine | the test suite | |
-| R-LOOP-26 | Rigger escalates a card as ambiguous where one of its judges fails under `R-LOOP-25` twice at one head and one acceptance, with no verdict from that judge and no escalation Rigger raised for the card between the two. A verdict that judge left counts as between them, even where its dispatch failed by running past its time. The escalation names the judge and each failure. | the engine | the test suite | D3 |
+| R-LOOP-26 | Rigger escalates a card as ambiguous, naming the judge and each failure, where all of these hold for one of the card's judges: | the engine | the test suite | D3 |
+| R-LOOP-27 | — the judge's dispatch has failed under `R-LOOP-25` twice at one head and one acceptance; | the engine | the test suite | |
+| R-LOOP-28 | — the judge left no verdict between the two failures, counting a verdict left by a dispatch that failed by running past its time; | the engine | the test suite | |
+| R-LOOP-29 | — Rigger raised no escalation for the card between the two failures. | the engine | the test suite | D3 |
 
 ### R-LOOP-25 — A judge that leaves no verdict
 
