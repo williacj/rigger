@@ -5,6 +5,9 @@
 // the events L3 records, the drain trigger's among them; and L3's single pull, which claims up to
 // a limit capped at N and takes a redo without a move.
 
+import { traceFile } from './file-trace.mjs';
+traceFile('test/loop.test.mjs');
+
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';

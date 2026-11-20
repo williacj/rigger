@@ -1,6 +1,9 @@
 // ABOUTME: Tests L1's role runner: what `roleDispatch` hands L1's `dispatch` for a role's answer,
 // through the provider adapter the answer names, and what L1 records of the dispatch it runs.
 
+import { traceFile } from './file-trace.mjs';
+traceFile('test/role-dispatch.test.mjs');
+
 import { GIT, holding, withFirstOnPath } from './process-fixtures.mjs';
 import { assertCommandContext, commandKills, leavingRecordedChild } from './event-context-world.mjs';
 import { workspaceHandle } from '../src/execution/workspace.mjs';
