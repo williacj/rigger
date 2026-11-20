@@ -1,0 +1,18 @@
+ABOUTME: Spike #1429 evidence: laptop-side output of the SSH sessions that launched remote workers, copied unchanged below this line.
+2026-11-20T00:46:26.868282450Z wsl worker HOST_ID=wsl-1 WF_FILE=wf-v1.js pid=1010 holder-bash=1008
+bash: line 9:  1010 Killed                     node worker.js >> $D/logs/worker-$1.log 2>&1
+2026-11-20T00:47:42.924054709Z worker pid=1010 exited status=0
+2026-11-20T00:47:43.643798959Z wsl worker HOST_ID=wsl-1 WF_FILE=wf-v1.js pid=1499 holder-bash=1497
+2026-11-20T00:52:57.593272572Z worker pid=1499 exited status=0
+2026-11-20T00:53:03.771163897Z wsl worker HOST_ID=wsl-1 WF_FILE=wf-v1.js pid=104118 holder-bash=104116
+2026-11-20T01:02:23.542794921Z worker pid=104118 exited status=0
+bash: line 9: 104118 Killed                     node worker.js >> $D/logs/worker-$1.log 2>&1
+2026-11-20T01:02:23.850972605Z wsl worker HOST_ID=wsl-1 WF_FILE=wf-v2.js pid=104548 holder-bash=104546
+2026-11-20T01:04:03.676430052Z worker pid=104548 exited status=0
+2026-11-20T01:04:03.951373544Z wsl worker HOST_ID=wsl-1 WF_FILE=wf-v3.js pid=104779 holder-bash=104777
+2026-11-20T01:04:21.622229863Z worker pid=104779 exited status=0
+2026-11-20T01:04:21.964061547Z wsl worker HOST_ID=wsl-1 WF_FILE=wf-v1.js pid=104866 holder-bash=104864
+2026-11-20T01:04:34.310755178Z worker pid=104866 exited status=0
+bash: line 9: 104866 Killed                     node worker.js >> $D/logs/worker-$1.log 2>&1
+2026-11-20T01:04:34.600831977Z wsl worker HOST_ID=wsl-1 WF_FILE=wf-v3.js pid=104971 holder-bash=104969
+2026-11-20T01:13:00.712867724Z worker pid=104971 exited status=0

@@ -1,0 +1,1930 @@
+ABOUTME: Full command transcript of spike #1429, each command with its UTC time and host, and an appendix of commands run outside the logging wrapper.
+
+Committed as transcript.txt (captured as transcript.log; .gitignore excludes *.log). Format: each logged command opens with a line '=== <UTC time> | host=<laptop|wsl|windows> | cmd: <command>', followed by its output and a '--- exit=<code> at <UTC time>' line. Commands on wsl ran as 'ssh finnpc wsl.exe -e bash -s' with the command on stdin; commands on windows marked cmd(powershell) ran as 'ssh finnpc powershell -EncodedCommand <the command shown>'. Lines starting '###' are markers the driver scripts wrote.
+
+=== 2026-11-20T00:40:56Z | host=laptop | cmd: sw_vers; node --version; which temporal; temporal --version 2>&1; uname -a
+ProductName:		macOS
+ProductVersion:		27.2.1
+BuildVersion:		26B131
+v26.13.0
+bash: temporal: command not found
+Darwin CJs-MacBook-Pro.local 27.2.0 Darwin Kernel Version 27.2.0: Wed Oct 14 23:44:56 PDT 2026; root:xnu-13432.41.4~25/RELEASE_ARM64_T6041 arm64
+--- exit=0 at 2026-11-20T00:40:57Z
+
+=== 2026-11-20T00:40:57Z | host=laptop | cmd: ssh -o ConnectTimeout=8 wsl-finnpc "uname -a" 2>&1
+Connection timed out during banner exchange
+Connection to 10.0.0.29 port 2222 timed out
+--- exit=255 at 2026-11-20T00:41:05Z
+
+=== 2026-11-20T00:41:05Z | host=laptop | cmd: ssh -o ConnectTimeout=8 finnpc "ver & node --version & where temporal & hostname" 2>&1
+
+Microsoft Windows [Version 10.0.26300.9974]
+v24.19.0
+INFO: Could not find files for the given pattern(s).
+Finn-PC10
+--- exit=0 at 2026-11-20T00:41:05Z
+
+=== 2026-11-20T00:41:10Z | host=laptop | cmd: ssh finnpc "wsl.exe -l -v" 2>&1 | iconv -f UTF-16LE -t UTF-8 2>/dev/null || true
+  NAME      STATE           VERSION
+* Ubuntu    Running         2
+--- exit=0 at 2026-11-20T00:41:10Z
+
+=== 2026-11-20T00:41:10Z | host=laptop | cmd: ssh finnpc "wsl.exe -e bash -lc \"uname -a; cat /etc/os-release | head -3; which node curl tar; whoami; ip -4 addr show eth0 | grep inet; ls ~\"" 2>&1
+Linux Finn-PC10 6.18.58.1-microsoft-standard-WSL2 #1 SMP PREEMPT_DYNAMIC Tue Oct 27 00:24:11 UTC 2026 x86_64 GNU/Linux
+PRETTY_NAME="Ubuntu 26.04.1 LTS"
+NAME="Ubuntu"
+VERSION_ID="26.04"
+/usr/bin/curl
+/usr/bin/tar
+cj
+    inet 192.168.32.12/20 brd 192.168.47.255 scope global eth0
+GitHub
+judge-arch-1169-out
+proofs
+receipts
+rev1276-tmp
+review-evidence
+reviews
+rigger-1093-evidence
+rigger-1276-reviewer-out
+rigger-card-drafts
+rigger-evidence
+rigger-owner-pack-957
+rigger-owner-runtime-957
+rigger-private-tools
+rigger-review-1223-final-architect-independent
+rigger-review-927-code
+rigger-review-evidence
+rigger-reviewer-1212.py
+rigger-reviewer-native-1212.py
+rigger-reviewer-native-spool-1212
+rigger-reviewer-resume-1212.py
+rigger-runtime
+rigger-test-logs
+rigger-test-tmp
+rigger-tmp
+rigger-tq-acceptance-drafts
+rigger-worktrees
+rv1169-out
+src
+--- exit=0 at 2026-11-20T00:41:11Z
+
+=== 2026-11-20T00:42:18Z | host=laptop | cmd: ls -la ~/.claude/projects | head -3; env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY CLAUDE_CONFIG_DIR=/Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/claude-home-probe claude auth status 2>&1; echo rc=$?
+total 16
+drwxr-xr-x@  5 cjwilliams  staff   160 Nov  1 08:14 -Users-cjwilliams-GitHub
+drwx------@  5 cjwilliams  staff   160 Nov 10 20:20 -Users-cjwilliams-GitHub-biblical-writing
+{
+  "loggedIn": false,
+  "authMethod": "none",
+  "apiProvider": "firstParty",
+  "analyticsDisabled": false,
+  "projectsDirectory": "/Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/claude-home-probe/projects",
+  "configDirectory": "/Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/claude-home-probe",
+  "loginExpiresAt": null,
+  "consoleProfileSignInOffered": true
+}
+rc=1
+--- exit=0 at 2026-11-20T00:42:18Z
+
+=== 2026-11-20T00:42:50Z | host=wsl | cmd: ssh finnpc wsl.exe -e bash -s < /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/remote/wsl-install.sh
+curl: (22) The requested URL returned error: 404
+LICENSE
+temporal
+v24.22.3
+temporal version 1.10.1 (Server 1.32.2, UI 2.56.4)
+--- exit=0 at 2026-11-20T00:42:55Z
+
+=== 2026-11-20T00:44:10Z | host=laptop | cmd: cd /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app && npm_config_cache=/Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/npm-cache npm install --no-audit --no-fund 2>&1 | tail -5 && npm ls 2>&1 | grep temporalio
+npm notice
+npm notice New major version of npm available! 11.20.0 -> 12.2.3
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.3
+npm notice To update run: npm install -g npm@12.2.3
+npm notice
+├── @temporalio/activity@1.26.0
+├── @temporalio/client@1.26.0
+├── @temporalio/common@1.26.0
+├── @temporalio/worker@1.26.0
+└── @temporalio/workflow@1.26.0
+--- exit=0 at 2026-11-20T00:44:19Z
+
+=== 2026-11-20T00:44:19Z | host=laptop | cmd: mkdir -p /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli && cd /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli && curl -fsSL -o t.tgz 'https://temporal.download/cli/archive/latest?platform=darwin&arch=arm64' && tar -xzf t.tgz && ./temporal --version
+temporal version 1.10.1 (Server 1.32.2, UI 2.56.4)
+--- exit=0 at 2026-11-20T00:44:22Z
+
+=== 2026-11-20T00:44:28Z | host=laptop | cmd: ssh finnpc "mkdir C:\Users\cj\1429-spike-engineer\app & echo %USERPROFILE%"
+C:\Users\CJ
+--- exit=0 at 2026-11-20T00:44:28Z
+
+=== 2026-11-20T00:44:28Z | host=laptop | cmd: cd /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app && scp -q package.json tree.js activities.js wf-common.js wf-v1.js wf-v2.js wf-v3.js worker.js finnpc:C:/Users/cj/1429-spike-engineer/app/ && ssh finnpc 'dir /b C:\Users\cj\1429-spike-engineer\app'
+activities.js
+package.json
+tree.js
+wf-common.js
+wf-v1.js
+wf-v2.js
+wf-v3.js
+worker.js
+--- exit=0 at 2026-11-20T00:44:29Z
+
+=== 2026-11-20T00:44:34Z | host=windows | cmd: ssh finnpc "cd /d C:\Users\cj\1429-spike-engineer\app && set npm_config_cache=C:\Users\cj\1429-spike-engineer\npm-cache&& npm install --no-audit --no-fund 2>&1 && npm ls 2>&1"
+
+added 145 packages in 8s
+npm warn allow-scripts 2 packages have install scripts not yet covered by allowScripts:
+npm warn allow-scripts   protobufjs@7.6.6 (postinstall: node scripts/postinstall)
+npm warn allow-scripts   @swc/core@1.16.22 (postinstall: node postinstall.js)
+npm warn allow-scripts
+npm warn allow-scripts Run `npm approve-scripts --allow-scripts-pending` to review, or `npm approve-scripts <pkg>` to allow.
+npm notice
+npm notice New major version of npm available! 11.17.0 -> 12.2.3
+npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.3
+npm notice To update run: npm install -g npm@12.2.3
+npm notice
+spike-1429@ C:\Users\CJ\1429-spike-engineer\app
++-- @temporalio/activity@1.26.0
++-- @temporalio/client@1.26.0
++-- @temporalio/common@1.26.0
++-- @temporalio/worker@1.26.0
+`-- @temporalio/workflow@1.26.0
+
+--- exit=0 at 2026-11-20T00:44:42Z
+
+=== 2026-11-20T00:44:52Z | host=windows | cmd: ssh finnpc "dir /b C:\Users\cj\1429-spike-engineer & cd /d C:\Users\cj\1429-spike-engineer && mkdir tcli & curl.exe -fsSL -o tcli\t.zip \"https://temporal.download/cli/archive/latest?platform=windows&arch=amd64\" && tar -xf tcli\t.zip -C tcli && tcli\temporal.exe --version"
+app
+npm-cache
+temporal version 1.10.1 (Server 1.32.2, UI 2.56.4)
+--- exit=0 at 2026-11-20T00:44:54Z
+
+=== 2026-11-20T00:45:00Z | host=wsl | cmd: ssh finnpc wsl.exe -e bash -s < /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/remote/wsl-npm.sh
+npm notice To update run: npm install -g npm@12.2.3
+npm notice
+spike-1429@ /home/cj/1429-spike-engineer/app
+├── @temporalio/activity@1.26.0
+├── @temporalio/client@1.26.0
+├── @temporalio/common@1.26.0
+├── @temporalio/worker@1.26.0
+└── @temporalio/workflow@1.26.0
+
+--- exit=0 at 2026-11-20T00:45:10Z
+
+=== 2026-11-20T00:45:19Z | host=laptop | cmd: lsof -nP -iTCP:7233 -iTCP:8233 -sTCP:LISTEN; echo laptop-free-check-done
+laptop-free-check-done
+--- exit=0 at 2026-11-20T00:45:20Z
+
+=== 2026-11-20T00:45:20Z | host=wsl | cmd: ssh finnpc wsl.exe -e bash -c "ss -ltnp | grep -E \":(7233|8233|7243|8243) \"; echo wsl-check-done"
+'grep' is not recognized as an internal or external command,
+operable program or batch file.
+--- exit=255 at 2026-11-20T00:45:20Z
+
+=== 2026-11-20T00:45:20Z | host=windows | cmd: ssh finnpc "netstat -ano | findstr LISTENING | findstr \":7233 :8233 :7243 :8243\" & echo win-check-done"
+  TCP    127.0.0.1:7243         0.0.0.0:0              LISTENING       30376
+  TCP    127.0.0.1:8243         0.0.0.0:0              LISTENING       30376
+win-check-done
+--- exit=0 at 2026-11-20T00:45:20Z
+
+=== 2026-11-20T00:45:27Z | host=wsl | cmd: ss -ltnp | grep -E ":(7233|8233|7243|8243) "; echo wsl-check-done; date -u
+wsl-check-done
+Fri Nov 20 00:45:27 UTC 2026
+--- exit=0 at 2026-11-20T00:45:28Z
+
+=== 2026-11-20T00:45:35Z | host=laptop | cmd: (background) ssh -N-less tunnel+server: ssh -L 7233:127.0.0.1:7233 -L 8233:127.0.0.1:8233 finnpc wsl.exe -e bash -s < remote/server.sh > server-session.log
+laptop ssh server-session pid=24640
+
+=== 2026-11-20T00:45:39Z | host=wsl | cmd: ss -ltnp | grep -E ":(7233|8233) "; ps -eo pid,ppid,lstart,args | grep -E "temporal server" | grep -v grep
+LISTEN 0      4096                *:7233             *:*    users:(("temporal",pid=745,fd=11))
+LISTEN 0      4096                *:8233             *:*    users:(("temporal",pid=745,fd=14))
+    745     742 Thu Nov 19 18:45:34 2026 /home/cj/1429-spike-engineer/tcli/temporal server start-dev --ip 0.0.0.0 --port 7233 --ui-port 8233 --db-filename /home/cj/1429-spike-engineer/temporal.db --log-level warn
+--- exit=0 at 2026-11-20T00:45:40Z
+
+=== 2026-11-20T00:45:40Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal operator cluster health --address 127.0.0.1:7233
+SERVING
+--- exit=0 at 2026-11-20T00:45:40Z
+
+=== 2026-11-20T00:45:40Z | host=windows | cmd: ssh finnpc "C:\Users\cj\1429-spike-engineer\tcli\temporal.exe operator cluster health --address 127.0.0.1:7233"
+SERVING
+--- exit=0 at 2026-11-20T00:45:40Z
+
+=== 2026-11-20T00:46:03Z | host=windows | cmd(powershell): Get-Date -AsUTC -Format o; $PSVersionTable.PSVersion.ToString()
+#< CLIXML
+5.1.26100.9818
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><S S="Error">Get-Date : A parameter cannot be found that matches parameter name 'AsUTC'._x000D__x000A_</S><S S="Error">At line:1 char:50_x000D__x000A_</S><S S="Error">+ $ProgressPreference='SilentlyContinue'; Get-Date -AsUTC -Format o; $P ..._x000D__x000A_</S><S S="Error">+                                                  ~~~~~~_x000D__x000A_</S><S S="Error">    + CategoryInfo          : InvalidArgument: (:) [Get-Date], ParameterBindingException_x000D__x000A_</S><S S="Error">    + FullyQualifiedErrorId : NamedParameterNotFound,Microsoft.PowerShell.Commands.GetDateCommand_x000D__x000A_</S><S S="Error"> _x000D__x000A_</S></Objs>--- exit=0 at 2026-11-20T00:46:03Z
+
+=== 2026-11-20T00:46:26Z | host=laptop | cmd: start-remote-worker.sh wsl wsl-1 wf-v1.js -> laptop ssh session pid=34550
+
+=== 2026-11-20T00:46:26Z | host=laptop | cmd: start-remote-worker.sh win win-1 wf-v1.js -> laptop ssh session pid=34554
+
+=== 2026-11-20T00:46:26Z | host=laptop | cmd: start-mac-worker.sh mac-a wf-v1.js -> worker pid=34563
+
+=== 2026-11-20T00:46:26Z | host=laptop | cmd: start-mac-worker.sh mac-b wf-v1.js -> worker pid=34568
+
+=== 2026-11-20T00:46:30Z | host=wsl | cmd: cat ~/1429-spike-engineer/logs/worker-wsl-1.log
+2026-11-20T00:46:27.037Z worker starting identity=wsl-1/Finn-PC10/1010 pid=1010 os=linux wf=wf-v1.js node=v24.22.3
+(node:1010) [DEP0176] DeprecationWarning: fs.F_OK is deprecated, use fs.constants.F_OK instead
+(Use `node --trace-deprecation ...` to show where the warning was created)
+2026-11-20T00:46:27.575Z [INFO] asset workflow-bundle-43a3d83efdc7a2fdaebb.js 1.72 MiB [emitted] [immutable] (name: main)
+modules by path ./node_modules/@temporalio/ 441 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 183 KiB 41 modules
+  modules by path ./node_modules/@temporalio/workflow/ 258 KiB 36 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./*.js 2.09 KiB
+  ./wf-v1.js 396 bytes [built] [code generated]
+  ./wf-common.js 1.7 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./wf-v1-autogenerated-entrypoint.cjs 488 bytes [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 2.07 KiB [built] [code generated]
+webpack 5.113.0 compiled successfully in 375 ms { sdkComponent: 'worker', taskQueue: 'rigger-linux' }
+2026-11-20T00:46:27.578Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'rigger-linux', size: '1.72MB' }
+2026-11-20T00:46:27.987Z [INFO] asset workflow-bundle-43a3d83efdc7a2fdaebb.js 1.72 MiB [emitted] [immutable] (name: main)
+modules by path ./node_modules/@temporalio/ 441 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 183 KiB 41 modules
+  modules by path ./node_modules/@temporalio/workflow/ 258 KiB 36 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./*.js 2.09 KiB
+  ./wf-v1.js 396 bytes [built] [code generated]
+  ./wf-common.js 1.7 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./wf-v1-autogenerated-entrypoint.cjs 488 bytes [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 2.07 KiB [built] [code generated]
+webpack 5.113.0 compiled successfully in 240 ms { sdkComponent: 'worker', taskQueue: 'host-wsl-1' }
+2026-11-20T00:46:27.990Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'host-wsl-1', size: '1.72MB' }
+2026-11-20T00:46:28.125Z worker polling rigger-linux and host-wsl-1
+2026-11-20T00:46:28.125Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'rigger-linux', state: 'RUNNING' }
+2026-11-20T00:46:28.126Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'rigger-linux' }
+2026-11-20T00:46:28.127Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'host-wsl-1', state: 'RUNNING' }
+2026-11-20T00:46:28.127Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'host-wsl-1' }
+--- exit=0 at 2026-11-20T00:46:30Z
+
+=== 2026-11-20T00:46:30Z | host=windows | cmd(powershell): Get-Content C:\Users\cj\1429-spike-engineer\logs\worker-win-1.log
+2026-11-20T00:46:27.127Z worker starting identity=win-1/Finn-PC10/19380 pid=19380 os=windows wf=wf-v1.js node=v24.19.0
+(node:19380) [DEP0176] DeprecationWarning: fs.F_OK is deprecated, use fs.constants.F_OK instead
+(Use `node --trace-deprecation ...` to show where the warning was created)
+2026-11-20T00:46:27.834Z [INFO] asset workflow-bundle-0115b590aa1f4f9cf05d.js 1.72 MiB [emitted] [immutable] (name: main)
+modules by path ./node_modules/@temporalio/ 441 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 183 KiB 41 modules
+  modules by path ./node_modules/@temporalio/workflow/ 258 KiB 36 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./*.js 2.09 KiB
+  ./wf-v1.js 396 bytes [built] [code generated]
+  ./wf-common.js 1.7 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./wf-v1-autogenerated-entrypoint.cjs 496 bytes [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 2.07 KiB [built] [code generated]
+webpack 5.113.0 compiled successfully in 375 ms { sdkComponent: 'worker', taskQueue: 'rigger-windows' }
+2026-11-20T00:46:27.837Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'rigger-windows', size: '1.72MB' }
+2026-11-20T00:46:28.412Z [INFO] asset workflow-bundle-0115b590aa1f4f9cf05d.js 1.72 MiB [emitted] [immutable] (name: main)
+modules by path ./node_modules/@temporalio/ 441 KiB
+  modules by path ./node_modules/@temporalio/common/lib/ 183 KiB 41 modules
+  modules by path ./node_modules/@temporalio/workflow/ 258 KiB 36 modules
+modules by path ./node_modules/nexus-rpc/lib/ 22.3 KiB 13 modules
+modules by path ./*.js 2.09 KiB
+  ./wf-v1.js 396 bytes [built] [code generated]
+  ./wf-common.js 1.7 KiB [built] [code generated]
+optional modules 30 bytes [optional]
+  __temporal_custom_payload_converter (ignored) 15 bytes [optional] [built] [code generated]
+  __temporal_custom_failure_converter (ignored) 15 bytes [optional] [built] [code generated]
+./wf-v1-autogenerated-entrypoint.cjs 496 bytes [built] [code generated]
+./node_modules/long/umd/index.js 49.8 KiB [built] [code generated]
+./node_modules/ms/dist/index.cjs 2.07 KiB [built] [code generated]
+webpack 5.113.0 compiled successfully in 169 ms { sdkComponent: 'worker', taskQueue: 'host-win-1' }
+2026-11-20T00:46:28.413Z [INFO] Workflow bundle created { sdkComponent: 'worker', taskQueue: 'host-win-1', size: '1.72MB' }
+2026-11-20T00:46:28.587Z worker polling rigger-windows and host-win-1
+2026-11-20T00:46:28.587Z [INFO] Worker state changed {
+  sdkComponent: 'worker',
+  taskQueue: 'rigger-windows',
+  state: 'RUNNING'
+}
+2026-11-20T00:46:28.588Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'rigger-windows' }
+2026-11-20T00:46:28.589Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'host-win-1', state: 'RUNNING' }
+2026-11-20T00:46:28.589Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'host-win-1' }
+--- exit=0 at 2026-11-20T00:46:31Z
+
+=== 2026-11-20T00:46:38Z | host=windows | cmd(powershell): (Get-Date).ToUniversalTime().ToString("o"); Get-CimInstance Win32_Process -Filter "Name=node.exe" | ForEach-Object { "{0,6} {1,6} {2} {3}" -f $_.ProcessId, $_.ParentProcessId, $_.CreationDate.ToUniversalTime().ToString("o"), $_.CommandLine }
+2026-11-20T00:46:38.8822557Z
+#< CLIXML
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><S S="Error">Get-CimInstance : Invalid query _x000D__x000A_</S><S S="Error">At line:1 char:85_x000D__x000A_</S><S S="Error">+ ... tring("o"); Get-CimInstance Win32_Process -Filter "Name=node.exe" | F ..._x000D__x000A_</S><S S="Error">+                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~_x000D__x000A_</S><S S="Error">    + CategoryInfo          : InvalidArgument: (:) [Get-CimInstance], CimException_x000D__x000A_</S><S S="Error">    + FullyQualifiedErrorId : HRESULT 0x80041017,Microsoft.Management.Infrastructure.CimCmdlets.GetCimInstanceCommand_x000D__x000A_</S><S S="Error"> _x000D__x000A_</S></Objs>--- exit=1 at 2026-11-20T00:46:39Z
+
+=== 2026-11-20T00:46:43Z | host=windows | cmd(powershell): (Get-Date).ToUniversalTime().ToString("o"); Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "node.exe" } | ForEach-Object { "{0,6} {1,6} {2} {3}" -f $_.ProcessId, $_.ParentProcessId, $_.CreationDate.ToUniversalTime().ToString("o"), $_.CommandLine }
+2026-11-20T00:46:43.1836970Z
+ 31732  24196 2026-11-19T20:21:51.2696860Z "C:\Program Files\Adobe\Adobe Creative Cloud Experience\libs\node.exe" "C:\Program Files\Adobe\Adobe Creative Cloud Experience\js\main.js"
+ 30548  16456 2026-11-20T00:45:36.0866930Z node  worker.js 
+ 19380  12292 2026-11-20T00:46:26.8351780Z node  worker.js 
+--- exit=0 at 2026-11-20T00:46:43Z
+
+=== 2026-11-20T00:46:43Z | host=wsl | cmd: date -u +%FT%TZ; ps -eo pid,ppid,pgid,lstart,args | grep -E "rigger-tree|worker.js|PID" | grep -v grep
+2026-11-20T00:46:43Z
+    PID    PPID    PGID                  STARTED COMMAND
+   1010    1008    1008 Thu Nov 19 18:46:25 2026 node worker.js
+--- exit=0 at 2026-11-20T00:46:44Z
+
+=== 2026-11-20T00:46:44Z | host=laptop | cmd: date -u +%FT%TZ; ps -axo pid,ppid,pgid,lstart,command | grep -E "rigger-tree|worker.js|PID" | grep -v grep
+2026-11-20T00:46:44Z
+  PID  PPID  PGID STARTED                      COMMAND
+24652 27624 24652 Thu Nov 19 18:45:36 2026     /bin/zsh -c source /Users/cjwilliams/.claude/shell-snapshots/snapshot-zsh-1795099474648-j62gqd.sh 2>/dev/null || true && \builtin setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL NO_BRACE_CCL NO_MAGIC_EQUAL_SUBST NO_EQUALS 2>/dev/null || true && { \builtin unalias -- 'which'; \builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \builtin unalias -- 'unsetenv'; \builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'TOKEN=1 ~/GitHub/rigger-worktrees/1431-spike-engineer/spikes/1431-spike-engineer/hold.sh worker2 '"'"'node worker.js > worker2.log 2>&1'"'"'' < /dev/null && pwd -P >| /tmp/claude-9482-cwd
+24653 24652 24652 Thu Nov 19 18:45:36 2026     bash /Users/cjwilliams/GitHub/rigger-worktrees/1431-spike-engineer/spikes/1431-spike-engineer/hold.sh worker2 node worker.js > worker2.log 2>&1
+24660 24653 24652 Thu Nov 19 18:45:36 2026     ssh -o UserKnownHostsFile=/Users/cjwilliams/GitHub/rigger-worktrees/1431-spike-engineer/spikes/1431-spike-engineer/known_hosts -o ServerAliveInterval=30 finnpc cd /d %USERPROFILE%\1431-spike-engineer && node worker.js > worker2.log 2>&1
+34563     1 34520 Thu Nov 19 18:46:26 2026     node worker.js
+34568     1 34520 Thu Nov 19 18:46:26 2026     node worker.js
+--- exit=0 at 2026-11-20T00:46:44Z
+
+=== 2026-11-20T00:46:52Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow start --type card --task-queue rigger-linux --workflow-id smoke-linux --input '{"card":"smoke-linux","os":"linux","seconds":5}'
+Running execution:
+  WorkflowId  smoke-linux
+  RunId       01a1f66b-a6ad-7bc5-a76a-2eb1a44b448a
+  Type        card
+  Namespace   default
+  TaskQueue   rigger-linux
+--- exit=0 at 2026-11-20T00:46:52Z
+
+=== 2026-11-20T00:46:52Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow start --type card --task-queue rigger-windows --workflow-id smoke-windows --input '{"card":"smoke-windows","os":"windows","seconds":5}'
+Running execution:
+  WorkflowId  smoke-windows
+  RunId       01a1f66b-a6fb-7587-9291-1a6569592539
+  Type        card
+  Namespace   default
+  TaskQueue   rigger-windows
+--- exit=0 at 2026-11-20T00:46:52Z
+
+=== 2026-11-20T00:46:52Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow start --type card --task-queue rigger-macos --workflow-id smoke-macos --input '{"card":"smoke-macos","os":"macos","seconds":5}'
+Running execution:
+  WorkflowId  smoke-macos
+  RunId       01a1f66b-a744-743b-ac96-ac9834f4d20a
+  Type        card
+  Namespace   default
+  TaskQueue   rigger-macos
+--- exit=0 at 2026-11-20T00:46:53Z
+
+=== 2026-11-20T00:46:56Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow describe -w smoke-linux | head -12 | grep -E 'Status|Result|Close'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow result -w smoke-linux 2>&1 | tail -3
+  Status          COMPLETED
+  Result          {"attempt":1,"exit":0,"host":"wsl-1","root":1201}
+  ResultEncoding  json/plain
+--- exit=0 at 2026-11-20T00:46:58Z
+
+=== 2026-11-20T00:46:58Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow describe -w smoke-windows | head -12 | grep -E 'Status|Result|Close'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow result -w smoke-windows 2>&1 | tail -3
+  Status          COMPLETED
+  Result          {"attempt":1,"exit":0,"host":"win-1","root":20488}
+  ResultEncoding  json/plain
+--- exit=0 at 2026-11-20T00:46:58Z
+
+=== 2026-11-20T00:46:58Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow describe -w smoke-macos | head -12 | grep -E 'Status|Result|Close'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow result -w smoke-macos 2>&1 | tail -3
+  CloseTime             now
+  Status          COMPLETED
+  Result          {"attempt":1,"exit":0,"host":"mac-b","root":48538}
+  ResultEncoding  json/plain
+--- exit=0 at 2026-11-20T00:46:58Z
+
+=== 2026-11-20T00:47:13Z | host=laptop | cmd: for i in 1 2 3; do a=$(perl -MTime::HiRes=time -e "printf q(%.3f),time"); r=$(printf "date +%%s.%%N\n" | ssh finnpc wsl.exe -e bash -s); b=$(perl -MTime::HiRes=time -e "printf q(%.3f),time"); echo "laptop_before=$a wsl=$r laptop_after=$b"; done
+laptop_before=1795135633.501 wsl=1795135633.499208936 laptop_after=1795135633.810
+laptop_before=1795135633.822 wsl=1795135633.817508326 laptop_after=1795135634.133
+laptop_before=1795135634.145 wsl=1795135634.285773589 laptop_after=1795135634.603
+--- exit=0 at 2026-11-20T00:47:14Z
+
+=== 2026-11-20T00:47:14Z | host=windows | cmd(powershell): $w=[DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds(); $l = wsl.exe -e date +%s%3N; "windows_ms=$w wsl_ms=$l"
+windows_ms=1795135634692 wsl_ms=1795135634745041137
+--- exit=0 at 2026-11-20T00:47:15Z
+
+=== 2026-11-20T00:47:35Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow start --type card --task-queue rigger-linux --workflow-id card-kill-linux --input '{"card":"card-kill-linux","os":"linux","seconds":300,"retrySeconds":20}'
+Running execution:
+  WorkflowId  card-kill-linux
+  RunId       01a1f66c-5049-75b3-89f5-1a6ee0c4a278
+  Type        card
+  Namespace   default
+  TaskQueue   rigger-linux
+--- exit=0 at 2026-11-20T00:47:36Z
+pending: [{"type":"dispatch","state":"PENDING_ACTIVITY_STATE_STARTED","attempt":1,"lastWorkerIdentity":"wsl-1/Finn-PC10/1010","lastStartedTime":"2026-11-20T00:47:36.075191422Z","scheduledTime":"2026-11-20T00:47:36.066897231Z"}]
+dispatch on identity=wsl-1/Finn-PC10/1010 host=wsl-1 workerpid=1010
+### listing before kill
+
+=== 2026-11-20T00:47:42Z | host=wsl | cmd: date -u +%FT%TZ; ps -eo pid,ppid,pgid,lstart,args | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T00:47:42Z
+    PID    PPID    PGID                  STARTED COMMAND
+   1010    1008    1008 Thu Nov 19 18:46:25 2026 node worker.js
+   1426    1010    1008 Thu Nov 19 18:47:35 2026 /home/cj/1429-spike-engineer/node/bin/node /home/cj/1429-spike-engineer/app/tree.js 1 300 /home/cj/1429-spike-engineer/worktrees/wsl-1/card-kill-linux/tree.log rigger-tree card=card-kill-linux attempt=1 host=wsl-1
+   1433    1426    1008 Thu Nov 19 18:47:35 2026 /home/cj/1429-spike-engineer/node/bin/node /home/cj/1429-spike-engineer/app/tree.js 2 300 /home/cj/1429-spike-engineer/worktrees/wsl-1/card-kill-linux/tree.log rigger-tree card=card-kill-linux attempt=1 host=wsl-1
+--- exit=0 at 2026-11-20T00:47:42Z
+
+=== 2026-11-20T00:47:42Z | host=wsl | cmd: echo kill-at $(date -u +%FT%T.%3NZ); kill -9 1010; echo kill-rc=$?
+kill-at 2026-11-20T00:47:42.916091087Z
+kill-rc=0
+--- exit=0 at 2026-11-20T00:47:43Z
+### listing just after kill
+
+=== 2026-11-20T00:47:43Z | host=wsl | cmd: date -u +%FT%TZ; ps -eo pid,ppid,pgid,lstart,args | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T00:47:43Z
+    PID    PPID    PGID                  STARTED COMMAND
+   1426    1005    1008 Thu Nov 19 18:47:35 2026 /home/cj/1429-spike-engineer/node/bin/node /home/cj/1429-spike-engineer/app/tree.js 1 300 /home/cj/1429-spike-engineer/worktrees/wsl-1/card-kill-linux/tree.log rigger-tree card=card-kill-linux attempt=1 host=wsl-1
+   1433    1426    1008 Thu Nov 19 18:47:35 2026 /home/cj/1429-spike-engineer/node/bin/node /home/cj/1429-spike-engineer/app/tree.js 2 300 /home/cj/1429-spike-engineer/worktrees/wsl-1/card-kill-linux/tree.log rigger-tree card=card-kill-linux attempt=1 host=wsl-1
+--- exit=0 at 2026-11-20T00:47:43Z
+### restarting worker wsl-1 at 2026-11-20T00:47:43.615Z
+
+=== 2026-11-20T00:47:43Z | host=laptop | cmd: start-remote-worker.sh wsl wsl-1 wf-v1.js -> laptop ssh session pid=51971
+2026-11-20T00:47:50.462Z after-restart pending: [{"type":"dispatch","state":"PENDING_ACTIVITY_STATE_STARTED","attempt":2,"lastWorkerIdentity":"wsl-1/Finn-PC10/1499","lastStartedTime":"2026-11-20T00:47:49.096402270Z","scheduledTime":"2026-11-20T00:47:49.093089694Z"}]
+### listing with retry attempt running
+
+=== 2026-11-20T00:47:53Z | host=wsl | cmd: date -u +%FT%TZ; ps -eo pid,ppid,pgid,lstart,args | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T00:47:53Z
+    PID    PPID    PGID                  STARTED COMMAND
+   1426    1005    1008 Thu Nov 19 18:47:35 2026 /home/cj/1429-spike-engineer/node/bin/node /home/cj/1429-spike-engineer/app/tree.js 1 300 /home/cj/1429-spike-engineer/worktrees/wsl-1/card-kill-linux/tree.log rigger-tree card=card-kill-linux attempt=1 host=wsl-1
+   1433    1426    1008 Thu Nov 19 18:47:35 2026 /home/cj/1429-spike-engineer/node/bin/node /home/cj/1429-spike-engineer/app/tree.js 2 300 /home/cj/1429-spike-engineer/worktrees/wsl-1/card-kill-linux/tree.log rigger-tree card=card-kill-linux attempt=1 host=wsl-1
+   1499    1497    1497 Thu Nov 19 18:47:42 2026 node worker.js
+   1576    1499    1497 Thu Nov 19 18:47:48 2026 /home/cj/1429-spike-engineer/node/bin/node /home/cj/1429-spike-engineer/app/tree.js 1 20 /home/cj/1429-spike-engineer/worktrees/wsl-1/card-kill-linux/tree.log rigger-tree card=card-kill-linux attempt=2 host=wsl-1
+   1583    1576    1497 Thu Nov 19 18:47:48 2026 /home/cj/1429-spike-engineer/node/bin/node /home/cj/1429-spike-engineer/app/tree.js 2 20 /home/cj/1429-spike-engineer/worktrees/wsl-1/card-kill-linux/tree.log rigger-tree card=card-kill-linux attempt=2 host=wsl-1
+--- exit=0 at 2026-11-20T00:47:53Z
+
+=== 2026-11-20T00:47:58Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow start --type card --task-queue rigger-windows --workflow-id card-kill-windows --input '{"card":"card-kill-windows","os":"windows","seconds":300,"retrySeconds":20}'
+Running execution:
+  WorkflowId  card-kill-windows
+  RunId       01a1f66c-a7b9-7104-b84b-1cededb1fb69
+  Type        card
+  Namespace   default
+  TaskQueue   rigger-windows
+--- exit=0 at 2026-11-20T00:47:58Z
+pending: [{"type":"dispatch","state":"PENDING_ACTIVITY_STATE_STARTED","attempt":1,"lastWorkerIdentity":"win-1/Finn-PC10/19380","lastStartedTime":"2026-11-20T00:47:58.593849Z","scheduledTime":"2026-11-20T00:47:58.580861464Z"}]
+dispatch on identity=win-1/Finn-PC10/19380 host=win-1 workerpid=19380
+### listing before kill
+
+=== 2026-11-20T00:48:05Z | host=windows | cmd(powershell): (Get-Date).ToUniversalTime().ToString("o"); Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "node.exe" } | ForEach-Object { "{0,6} {1,6} {2} {3}" -f $_.ProcessId, $_.ParentProcessId, $_.CreationDate.ToUniversalTime().ToString("o"), $_.CommandLine }
+2026-11-20T00:48:06.0852070Z
+ 31732  24196 2026-11-19T20:21:51.2696860Z "C:\Program Files\Adobe\Adobe Creative Cloud Experience\libs\node.exe" "C:\Program Files\Adobe\Adobe Creative Cloud Experience\js\main.js"
+ 19380  12292 2026-11-20T00:46:26.8351780Z node  worker.js 
+ 33496  19380 2026-11-20T00:47:58.6002290Z "C:\Program Files\nodejs\node.exe" C:\Users\CJ\1429-spike-engineer\app\tree.js 1 300 C:\Users\cj\1429-spike-engineer\worktrees\win-1\card-kill-windows\tree.log "rigger-tree card=card-kill-windows attempt=1 host=win-1"
+ 19992  33496 2026-11-20T00:47:58.6286360Z "C:\Program Files\nodejs\node.exe" C:\Users\CJ\1429-spike-engineer\app\tree.js 2 300 C:\Users\cj\1429-spike-engineer\worktrees\win-1\card-kill-windows\tree.log "rigger-tree card=card-kill-windows attempt=1 host=win-1"
+--- exit=0 at 2026-11-20T00:48:06Z
+
+=== 2026-11-20T00:48:06Z | host=windows | cmd(powershell): 'kill-at ' + (Get-Date).ToUniversalTime().ToString('o'); Stop-Process -Id 19380 -Force; 'stop-rc=' + $?
+kill-at 2026-11-20T00:48:06.7746306Z
+stop-rc=True
+--- exit=0 at 2026-11-20T00:48:07Z
+### listing just after kill
+
+=== 2026-11-20T00:48:07Z | host=windows | cmd(powershell): (Get-Date).ToUniversalTime().ToString("o"); Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "node.exe" } | ForEach-Object { "{0,6} {1,6} {2} {3}" -f $_.ProcessId, $_.ParentProcessId, $_.CreationDate.ToUniversalTime().ToString("o"), $_.CommandLine }
+2026-11-20T00:48:07.1956794Z
+ 31732  24196 2026-11-19T20:21:51.2696860Z "C:\Program Files\Adobe\Adobe Creative Cloud Experience\libs\node.exe" "C:\Program Files\Adobe\Adobe Creative Cloud Experience\js\main.js"
+--- exit=0 at 2026-11-20T00:48:07Z
+### restarting worker win-1 at 2026-11-20T00:48:07.686Z
+
+=== 2026-11-20T00:48:07Z | host=laptop | cmd: start-remote-worker.sh win win-1 wf-v1.js -> laptop ssh session pid=54309
+2026-11-20T00:48:12.344Z after-restart pending: [{"type":"dispatch","state":"PENDING_ACTIVITY_STATE_STARTED","attempt":2,"lastWorkerIdentity":"win-1/Finn-PC10/19544","lastStartedTime":"2026-11-20T00:48:11.620779932Z","scheduledTime":"2026-11-20T00:48:11.615858069Z"}]
+### listing with retry attempt running
+
+=== 2026-11-20T00:48:15Z | host=windows | cmd(powershell): (Get-Date).ToUniversalTime().ToString("o"); Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "node.exe" } | ForEach-Object { "{0,6} {1,6} {2} {3}" -f $_.ProcessId, $_.ParentProcessId, $_.CreationDate.ToUniversalTime().ToString("o"), $_.CommandLine }
+2026-11-20T00:48:15.4809574Z
+ 31732  24196 2026-11-19T20:21:51.2696860Z "C:\Program Files\Adobe\Adobe Creative Cloud Experience\libs\node.exe" "C:\Program Files\Adobe\Adobe Creative Cloud Experience\js\main.js"
+ 19544  31524 2026-11-20T00:48:07.6503750Z node  worker.js 
+ 21388  19544 2026-11-20T00:48:11.6648730Z "C:\Program Files\nodejs\node.exe" C:\Users\CJ\1429-spike-engineer\app\tree.js 1 20 C:\Users\cj\1429-spike-engineer\worktrees\win-1\card-kill-windows\tree.log "rigger-tree card=card-kill-windows attempt=2 host=win-1"
+ 37528  21388 2026-11-20T00:48:11.7021450Z "C:\Program Files\nodejs\node.exe" C:\Users\CJ\1429-spike-engineer\app\tree.js 2 20 C:\Users\cj\1429-spike-engineer\worktrees\win-1\card-kill-windows\tree.log "rigger-tree card=card-kill-windows attempt=2 host=win-1"
+--- exit=0 at 2026-11-20T00:48:15Z
+
+=== 2026-11-20T00:48:23Z | host=windows | cmd(powershell): Get-Content C:\Users\cj\1429-spike-engineer\worktrees\win-1\card-kill-windows\tree.log; Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "PING.EXE" -or $_.Name -eq "cmd.exe" } | ForEach-Object { "{0,6} {1,6} {2} {3}" -f $_.ProcessId, $_.ParentProcessId, $_.Name, $_.CommandLine }
+2026-11-20T00:47:58.625Z start level=1 pid=33496 ppid=19380 rigger-tree card=card-kill-windows attempt=1 host=win-1
+2026-11-20T00:47:58.652Z start level=2 pid=19992 ppid=33496 rigger-tree card=card-kill-windows attempt=1 host=win-1
+2026-11-20T00:48:11.699Z start level=1 pid=21388 ppid=19544 rigger-tree card=card-kill-windows attempt=2 host=win-1
+2026-11-20T00:48:11.724Z start level=2 pid=37528 ppid=21388 rigger-tree card=card-kill-windows attempt=2 host=win-1
+  3988   2988 cmd.exe C:\WINDOWS\SYSTEM32\cmd.exe /c ""C:\sccache\start-sccache-server.cmd""
+ 37088  19424 cmd.exe "c:\windows\system32\cmd.exe" /c "cmd /d /c "if exist .\AppData\Local\Programs\herdr-core\herdr-core.exe (.\AppData\Local\Programs\herdr-core\herdr-core.exe connect) else (echo herdr-core is not installed here 1>&2 & exit /b 127)""
+ 27692  37088 cmd.exe cmd  /d /c "if exist .\AppData\Local\Programs\herdr-core\herdr-core.exe (.\AppData\Local\Programs\herdr-core\herdr-core.exe connect) else (echo herdr-core is not installed here 1>&2 & exit /b 127)"
+  4788  35248 cmd.exe "c:\windows\system32\cmd.exe" /c "wsl.exe -e bash -lc ~/1430-spike-engineer/wsl-run.sh e1 w1"
+ 32072   7232 cmd.exe "c:\windows\system32\cmd.exe" /c "wsl.exe -e bash -s"
+ 35372  19092 cmd.exe "c:\windows\system32\cmd.exe" /c "wsl.exe -e bash -s -- wsl-1 wf-v1.js"
+ 12292  15112 cmd.exe "c:\windows\system32\cmd.exe" /c "C:\Users\cj\1429-spike-engineer\win-worker.cmd win-1 wf-v1.js"
+ 27620  32896 cmd.exe "c:\windows\system32\cmd.exe" /c "wsl.exe -e bash -s -- wsl-1 wf-v1.js"
+ 36912  12292 PING.EXE ping  -n 1800 127.0.0.1 
+ 31524  36676 cmd.exe "c:\windows\system32\cmd.exe" /c "C:\Users\cj\1429-spike-engineer\win-worker.cmd win-1 wf-v1.js"
+  9528  37636 cmd.exe "c:\windows\system32\cmd.exe" /c "powershell -NoProfile -NonInteractive -EncodedCommand JABQAHIAbwBnAHIAZQBzAHMAUAByAGUAZgBlAHIAZQBuAGMAZQA9ACcAUwBpAGwAZQBuAHQAbAB5AEMAbwBuAHQAaQBuAHUAZQAnADsAIABHAGUAdAAtAEMAbwBuAHQAZQBuAHQAIABDADoAXABVAHMAZQByAHMAXABjAGoAXAAxADQAMgA5AC0AcwBwAGkAawBlAC0AZQBuAGcAaQBuAGUAZQByAFwAdwBvAHIAawB0AHIAZQBlAHMAXAB3AGkAbgAtADEAXABjAGEAcgBkAC0AawBpAGwAbAAtAHcAaQBuAGQAbwB3AHMAXAB0AHIAZQBlAC4AbABvAGcAOwAgAEcAZQB0AC0AQwBpAG0ASQBuAHMAdABhAG4AYwBlACAAVwBpAG4AMwAyAF8AUAByAG8AYwBlAHMAcwAgAHwAIABXAGgAZQByAGUALQBPAGIAagBlAGMAdAAgAHsAIAAkAF8ALgBOAGEAbQBlACAALQBlAHEAIAAiAFAASQBOAEcALgBFAFgARQAiACAALQBvAHIAIAAkAF8ALgBOAGEAbQBlACAALQBlAHEAIAAiAGMAbQBkAC4AZQB4AGUAIgAgAH0AIAB8ACAARgBvAHIARQBhAGMAaAAtAE8AYgBqAGUAYwB0ACAAewAgACIAewAwACwANgB9ACAAewAxACwANgB9ACAAewAyAH0AIAB7ADMAfQAiACAALQBmACAAJABfAC4AUAByAG8AYwBlAHMAcwBJAGQALAAgACQAXwAuAFAAYQByAGUAbgB0AFAAcgBvAGMAZQBzAHMASQBkACwAIAAkAF8ALgBOAGEAbQBlACwAIAAkAF8ALgBDAG8AbQBtAGEAbgBkAEwAaQBuAGUAIAB9AA=="
+--- exit=0 at 2026-11-20T00:48:24Z
+
+=== 2026-11-20T00:48:30Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow start --type card --task-queue rigger-macos --workflow-id card-kill-macos --input '{"card":"card-kill-macos","os":"macos","seconds":300,"retrySeconds":20}'
+Running execution:
+  WorkflowId  card-kill-macos
+  RunId       01a1f66d-2551-7a7e-afd1-79e6444676dc
+  Type        card
+  Namespace   default
+  TaskQueue   rigger-macos
+--- exit=0 at 2026-11-20T00:48:30Z
+pending: [{"type":"dispatch","state":"PENDING_ACTIVITY_STATE_STARTED","attempt":1,"lastWorkerIdentity":"mac-b/CJs-MacBook-Pro.local/34568","lastStartedTime":"2026-11-20T00:48:30.678055066Z","scheduledTime":"2026-11-20T00:48:30.669138941Z"}]
+dispatch on identity=mac-b/CJs-MacBook-Pro.local/34568 host=mac-b workerpid=34568
+### listing before kill
+
+=== 2026-11-20T00:48:38Z | host=laptop | cmd: date -u +%FT%TZ; ps -axo pid,ppid,pgid,lstart,command | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T00:48:38Z
+  PID  PPID  PGID STARTED                      COMMAND
+34563     1 34520 Thu Nov 19 18:46:26 2026     node worker.js
+34568     1 34520 Thu Nov 19 18:46:26 2026     node worker.js
+55566 34568 34520 Thu Nov 19 18:48:30 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 1 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=1 host=mac-b
+55579 55566 34520 Thu Nov 19 18:48:31 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 2 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=1 host=mac-b
+--- exit=0 at 2026-11-20T00:48:38Z
+
+=== 2026-11-20T00:48:38Z | host=laptop | cmd: perl -MTime::HiRes=time -MPOSIX=strftime -e '$t=time; printf qq(kill-at %s.%03dZ\n), strftime(q(%Y-%m-%dT%H:%M:%S),gmtime($t)), ($t-int($t))*1000'; kill -9 34568; echo kill-rc=$?
+kill-at 2026-11-20T00:48:38.169Z
+kill-rc=0
+--- exit=0 at 2026-11-20T00:48:38Z
+### listing just after kill
+
+=== 2026-11-20T00:48:38Z | host=laptop | cmd: date -u +%FT%TZ; ps -axo pid,ppid,pgid,lstart,command | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T00:48:38Z
+  PID  PPID  PGID STARTED                      COMMAND
+34563     1 34520 Thu Nov 19 18:46:26 2026     node worker.js
+55566     1 34520 Thu Nov 19 18:48:30 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 1 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=1 host=mac-b
+55579 55566 34520 Thu Nov 19 18:48:31 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 2 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=1 host=mac-b
+--- exit=0 at 2026-11-20T00:48:38Z
+### restarting worker mac-b at 2026-11-20T00:48:38.260Z
+
+=== 2026-11-20T00:48:38Z | host=laptop | cmd: start-mac-worker.sh mac-b wf-v1.js -> worker pid=56714
+2026-11-20T00:48:44.958Z after-restart pending: [{"type":"dispatch","state":"PENDING_ACTIVITY_STATE_STARTED","attempt":2,"lastWorkerIdentity":"mac-b/CJs-MacBook-Pro.local/56714","lastStartedTime":"2026-11-20T00:48:43.701828876Z","scheduledTime":"2026-11-20T00:48:43.699636972Z"}]
+### listing with retry attempt running
+
+=== 2026-11-20T00:48:47Z | host=laptop | cmd: date -u +%FT%TZ; ps -axo pid,ppid,pgid,lstart,command | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T00:48:48Z
+  PID  PPID  PGID STARTED                      COMMAND
+34563     1 34520 Thu Nov 19 18:46:26 2026     node worker.js
+55566     1 34520 Thu Nov 19 18:48:30 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 1 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=1 host=mac-b
+55579 55566 34520 Thu Nov 19 18:48:31 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 2 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=1 host=mac-b
+56714     1 55535 Thu Nov 19 18:48:38 2026     node worker.js
+57776 56714 55535 Thu Nov 19 18:48:43 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 1 20 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=2 host=mac-b
+57798 57776 55535 Thu Nov 19 18:48:44 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 2 20 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=2 host=mac-b
+--- exit=0 at 2026-11-20T00:48:48Z
+
+=== 2026-11-20T00:49:13Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow describe -w card-kill-linux | grep -E '^  Status'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow show -w card-kill-linux --output json > /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/card-kill-linux.json; echo exported card-kill-linux $(jq '.events|length' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/card-kill-linux.json) events
+  Status          COMPLETED
+exported card-kill-linux 17 events
+--- exit=0 at 2026-11-20T00:49:13Z
+
+=== 2026-11-20T00:49:13Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow describe -w card-kill-windows | grep -E '^  Status'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow show -w card-kill-windows --output json > /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/card-kill-windows.json; echo exported card-kill-windows $(jq '.events|length' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/card-kill-windows.json) events
+  Status          COMPLETED
+exported card-kill-windows 17 events
+--- exit=0 at 2026-11-20T00:49:14Z
+
+=== 2026-11-20T00:49:14Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow describe -w card-kill-macos | grep -E '^  Status'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow show -w card-kill-macos --output json > /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/card-kill-macos.json; echo exported card-kill-macos $(jq '.events|length' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/card-kill-macos.json) events
+  Status          COMPLETED
+exported card-kill-macos 17 events
+--- exit=0 at 2026-11-20T00:49:14Z
+
+=== 2026-11-20T00:49:14Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow describe -w smoke-linux | grep -E '^  Status'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow show -w smoke-linux --output json > /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/smoke-linux.json; echo exported smoke-linux $(jq '.events|length' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/smoke-linux.json) events
+  Status          COMPLETED
+exported smoke-linux 17 events
+--- exit=0 at 2026-11-20T00:49:14Z
+
+=== 2026-11-20T00:49:14Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow describe -w smoke-windows | grep -E '^  Status'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow show -w smoke-windows --output json > /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/smoke-windows.json; echo exported smoke-windows $(jq '.events|length' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/smoke-windows.json) events
+  Status          COMPLETED
+exported smoke-windows 17 events
+--- exit=0 at 2026-11-20T00:49:14Z
+
+=== 2026-11-20T00:49:14Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow describe -w smoke-macos | grep -E '^  Status'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow show -w smoke-macos --output json > /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/smoke-macos.json; echo exported smoke-macos $(jq '.events|length' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/smoke-macos.json) events
+  Status          COMPLETED
+exported smoke-macos 17 events
+--- exit=0 at 2026-11-20T00:49:14Z
+
+=== 2026-11-20T00:49:42Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 workflow start --type card --task-queue rigger-macos --workflow-id pin-stop-macos --input '{"card":"pin-stop-macos","os":"macos","seconds":20,"pauseAfterPick":"20s"}'
+Running execution:
+  WorkflowId  pin-stop-macos
+  RunId       01a1f66e-3f01-779c-8df1-d054797cf981
+  Type        card
+  Namespace   default
+  TaskQueue   rigger-macos
+--- exit=0 at 2026-11-20T00:49:42Z
+2026-11-20T00:49:43.062Z picked host=mac-a worker pid=34563
+
+=== 2026-11-20T00:49:43Z | host=laptop | cmd: perl -MTime::HiRes=time -MPOSIX=strftime -e '$t=time; printf qq(stop-at %s.%03dZ\n), strftime(q(%Y-%m-%dT%H:%M:%S),gmtime($t)), ($t-int($t))*1000'; kill -TERM 34563; echo term-rc=$?
+stop-at 2026-11-20T00:49:43.084Z
+term-rc=0
+--- exit=0 at 2026-11-20T00:49:43Z
+### timed listing target=00:49:43
+
+=== 2026-11-20T00:49:43Z | host=wsl | cmd: date -u +%FT%TZ; ps -eo pid,ppid,pgid,lstart,args | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T00:49:43Z
+    PID    PPID    PGID                  STARTED COMMAND
+   1426    1005    1008 Thu Nov 19 18:47:35 2026 /home/cj/1429-spike-engineer/node/bin/node /home/cj/1429-spike-engineer/app/tree.js 1 300 /home/cj/1429-spike-engineer/worktrees/wsl-1/card-kill-linux/tree.log rigger-tree card=card-kill-linux attempt=1 host=wsl-1
+   1433    1426    1008 Thu Nov 19 18:47:35 2026 /home/cj/1429-spike-engineer/node/bin/node /home/cj/1429-spike-engineer/app/tree.js 2 300 /home/cj/1429-spike-engineer/worktrees/wsl-1/card-kill-linux/tree.log rigger-tree card=card-kill-linux attempt=1 host=wsl-1
+   1499    1497    1497 Thu Nov 19 18:47:42 2026 node worker.js
+--- exit=0 at 2026-11-20T00:49:44Z
+
+=== 2026-11-20T00:49:44Z | host=laptop | cmd: date -u +%FT%TZ; ps -axo pid,ppid,pgid,lstart,command | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T00:49:44Z
+  PID  PPID  PGID STARTED                      COMMAND
+55566     1 34520 Thu Nov 19 18:48:30 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 1 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=1 host=mac-b
+55579 55566 34520 Thu Nov 19 18:48:31 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 2 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=1 host=mac-b
+56714     1 55535 Thu Nov 19 18:48:38 2026     node worker.js
+--- exit=0 at 2026-11-20T00:49:44Z
+
+=== 2026-11-20T00:49:44Z | host=windows | cmd(powershell): (Get-Date).ToUniversalTime().ToString("o"); Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "node.exe" } | ForEach-Object { "{0,6} {1,6} {2} {3}" -f $_.ProcessId, $_.ParentProcessId, $_.CreationDate.ToUniversalTime().ToString("o"), $_.CommandLine }
+2026-11-20T00:49:44.4756769Z
+ 31732  24196 2026-11-19T20:21:51.2696860Z "C:\Program Files\Adobe\Adobe Creative Cloud Experience\libs\node.exe" "C:\Program Files\Adobe\Adobe Creative Cloud Experience\js\main.js"
+ 19544  31524 2026-11-20T00:48:07.6503750Z node  worker.js 
+--- exit=0 at 2026-11-20T00:49:45Z
+2026-11-20T00:51:08.746Z end-of-watch status= pending=
+
+=== 2026-11-20T00:51:08Z | host=laptop | cmd: date -u +%FT%TZ; ps -axo pid,ppid,pgid,lstart,command | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T00:51:08Z
+  PID  PPID  PGID STARTED                      COMMAND
+55566     1 34520 Thu Nov 19 18:48:30 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 1 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=1 host=mac-b
+55579 55566 34520 Thu Nov 19 18:48:31 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 2 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=1 host=mac-b
+56714     1 55535 Thu Nov 19 18:48:38 2026     node worker.js
+--- exit=0 at 2026-11-20T00:51:08Z
+### timed listing target=00:51:10
+
+=== 2026-11-20T00:51:10Z | host=wsl | cmd: date -u +%FT%TZ; ps -eo pid,ppid,pgid,lstart,args | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T00:51:10Z
+    PID    PPID    PGID                  STARTED COMMAND
+   1426    1005    1008 Thu Nov 19 18:47:35 2026 /home/cj/1429-spike-engineer/node/bin/node /home/cj/1429-spike-engineer/app/tree.js 1 300 /home/cj/1429-spike-engineer/worktrees/wsl-1/card-kill-linux/tree.log rigger-tree card=card-kill-linux attempt=1 host=wsl-1
+   1433    1426    1008 Thu Nov 19 18:47:35 2026 /home/cj/1429-spike-engineer/node/bin/node /home/cj/1429-spike-engineer/app/tree.js 2 300 /home/cj/1429-spike-engineer/worktrees/wsl-1/card-kill-linux/tree.log rigger-tree card=card-kill-linux attempt=1 host=wsl-1
+   1499    1497    1497 Thu Nov 19 18:47:42 2026 node worker.js
+--- exit=0 at 2026-11-20T00:51:10Z
+
+=== 2026-11-20T00:51:10Z | host=laptop | cmd: date -u +%FT%TZ; ps -axo pid,ppid,pgid,lstart,command | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T00:51:10Z
+  PID  PPID  PGID STARTED                      COMMAND
+55566     1 34520 Thu Nov 19 18:48:30 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 1 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=1 host=mac-b
+55579 55566 34520 Thu Nov 19 18:48:31 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 2 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=1 host=mac-b
+56714     1 55535 Thu Nov 19 18:48:38 2026     node worker.js
+--- exit=0 at 2026-11-20T00:51:10Z
+
+=== 2026-11-20T00:51:10Z | host=windows | cmd(powershell): (Get-Date).ToUniversalTime().ToString("o"); Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "node.exe" } | ForEach-Object { "{0,6} {1,6} {2} {3}" -f $_.ProcessId, $_.ParentProcessId, $_.CreationDate.ToUniversalTime().ToString("o"), $_.CommandLine }
+2026-11-20T00:51:10.9116850Z
+ 31732  24196 2026-11-19T20:21:51.2696860Z "C:\Program Files\Adobe\Adobe Creative Cloud Experience\libs\node.exe" "C:\Program Files\Adobe\Adobe Creative Cloud Experience\js\main.js"
+ 19544  31524 2026-11-20T00:48:07.6503750Z node  worker.js 
+--- exit=0 at 2026-11-20T00:51:11Z
+
+=== 2026-11-20T00:51:18Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 operator cluster health
+Error: failed connecting to Temporal server at 127.0.0.1:7233: context deadline exceeded while waiting for connections to become ready
+  Namespace: default
+  TLS: false
+
+  Connection checks for 127.0.0.1:7233
+    - DNS lookup skipped: address uses an IP literal
+    ✓ TCP connection established
+    ? TLS check inconclusive: diagnosis deadline reached
+--- exit=1 at 2026-11-20T00:51:26Z
+
+=== 2026-11-20T00:51:33Z | host=wsl | cmd: ~/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 operator cluster health; ps -o pid,stat,etime,args -p 745; uptime
+SERVING
+    PID STAT     ELAPSED COMMAND
+    745 Ssl+       05:57 /home/cj/1429-spike-engineer/tcli/temporal server start-dev --ip 0.0.0.0 --port 7233 --ui-port 8233 --db-filename /home/cj/1429-spike-engineer/temporal.db --log-level warn
+ 18:51:33 up 6 min,  1 user,  load average: 0.65, 0.28, 0.10
+--- exit=0 at 2026-11-20T00:51:33Z
+
+=== 2026-11-20T00:51:33Z | host=windows | cmd(powershell): C:\Users\cj\1429-spike-engineer\tcli\temporal.exe --address 127.0.0.1:7233 operator cluster health
+SERVING
+--- exit=0 at 2026-11-20T00:51:34Z
+
+=== 2026-11-20T00:51:40Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:7233 operator cluster health; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address localhost:7233 operator cluster health
+Error: failed connecting to Temporal server at 127.0.0.1:7233: context deadline exceeded while waiting for connections to become ready
+  Namespace: default
+  TLS: false
+
+  Connection checks for 127.0.0.1:7233
+    - DNS lookup skipped: address uses an IP literal
+    ✓ TCP connection established
+    ? TLS check inconclusive: diagnosis deadline reached
+Error: failed connecting to Temporal server at localhost:7233: context deadline exceeded while waiting for connections to become ready
+  Namespace: default
+  TLS: false
+
+  Connection checks for localhost:7233
+    ✓ DNS resolved (2 addresses)
+    ✓ TCP connection established
+    ? TLS check inconclusive: diagnosis deadline reached
+--- exit=1 at 2026-11-20T00:51:56Z
+test tunnel pid=83430
+
+=== 2026-11-20T00:52:05Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 operator cluster health
+SERVING
+--- exit=0 at 2026-11-20T00:52:05Z
+
+=== 2026-11-20T00:52:17Z | host=laptop | cmd: curl -s -m 5 -o /dev/null -w 'old-tunnel-8233 http=%{http_code}\n' http://127.0.0.1:8233/; echo rc=$?
+old-tunnel-8233 http=000
+rc=28
+--- exit=0 at 2026-11-20T00:52:22Z
+### timed listing target=00:52:30
+
+=== 2026-11-20T00:52:30Z | host=wsl | cmd: date -u +%FT%TZ; ps -eo pid,ppid,pgid,lstart,args | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T00:52:30Z
+    PID    PPID    PGID                  STARTED COMMAND
+   1426    1005    1008 Thu Nov 19 18:47:35 2026 /home/cj/1429-spike-engineer/node/bin/node /home/cj/1429-spike-engineer/app/tree.js 1 300 /home/cj/1429-spike-engineer/worktrees/wsl-1/card-kill-linux/tree.log rigger-tree card=card-kill-linux attempt=1 host=wsl-1
+   1433    1426    1008 Thu Nov 19 18:47:35 2026 /home/cj/1429-spike-engineer/node/bin/node /home/cj/1429-spike-engineer/app/tree.js 2 300 /home/cj/1429-spike-engineer/worktrees/wsl-1/card-kill-linux/tree.log rigger-tree card=card-kill-linux attempt=1 host=wsl-1
+   1499    1497    1497 Thu Nov 19 18:47:42 2026 node worker.js
+--- exit=0 at 2026-11-20T00:52:31Z
+
+=== 2026-11-20T00:52:31Z | host=laptop | cmd: date -u +%FT%TZ; ps -axo pid,ppid,pgid,lstart,command | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T00:52:31Z
+  PID  PPID  PGID STARTED                      COMMAND
+55566     1 34520 Thu Nov 19 18:48:30 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 1 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=1 host=mac-b
+55579 55566 34520 Thu Nov 19 18:48:31 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 2 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=1 host=mac-b
+56714     1 55535 Thu Nov 19 18:48:38 2026     node worker.js
+--- exit=0 at 2026-11-20T00:52:31Z
+
+=== 2026-11-20T00:52:31Z | host=windows | cmd(powershell): (Get-Date).ToUniversalTime().ToString("o"); Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "node.exe" } | ForEach-Object { "{0,6} {1,6} {2} {3}" -f $_.ProcessId, $_.ParentProcessId, $_.CreationDate.ToUniversalTime().ToString("o"), $_.CommandLine }
+2026-11-20T00:52:31.5675140Z
+ 31732  24196 2026-11-19T20:21:51.2696860Z "C:\Program Files\Adobe\Adobe Creative Cloud Experience\libs\node.exe" "C:\Program Files\Adobe\Adobe Creative Cloud Experience\js\main.js"
+ 19544  31524 2026-11-20T00:48:07.6503750Z node  worker.js 
+--- exit=0 at 2026-11-20T00:52:32Z
+### timed listing target=00:52:45
+
+=== 2026-11-20T00:52:45Z | host=wsl | cmd: date -u +%FT%TZ; ps -eo pid,ppid,pgid,lstart,args | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T00:52:45Z
+    PID    PPID    PGID                  STARTED COMMAND
+   1499    1497    1497 Thu Nov 19 18:47:42 2026 node worker.js
+--- exit=0 at 2026-11-20T00:52:45Z
+
+=== 2026-11-20T00:52:45Z | host=laptop | cmd: date -u +%FT%TZ; ps -axo pid,ppid,pgid,lstart,command | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T00:52:45Z
+  PID  PPID  PGID STARTED                      COMMAND
+55566     1 34520 Thu Nov 19 18:48:30 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 1 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=1 host=mac-b
+55579 55566 34520 Thu Nov 19 18:48:31 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 2 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=1 host=mac-b
+56714     1 55535 Thu Nov 19 18:48:38 2026     node worker.js
+--- exit=0 at 2026-11-20T00:52:45Z
+
+=== 2026-11-20T00:52:45Z | host=windows | cmd(powershell): (Get-Date).ToUniversalTime().ToString("o"); Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "node.exe" } | ForEach-Object { "{0,6} {1,6} {2} {3}" -f $_.ProcessId, $_.ParentProcessId, $_.CreationDate.ToUniversalTime().ToString("o"), $_.CommandLine }
+2026-11-20T00:52:45.9143486Z
+ 31732  24196 2026-11-19T20:21:51.2696860Z "C:\Program Files\Adobe\Adobe Creative Cloud Experience\libs\node.exe" "C:\Program Files\Adobe\Adobe Creative Cloud Experience\js\main.js"
+ 19544  31524 2026-11-20T00:48:07.6503750Z node  worker.js 
+--- exit=0 at 2026-11-20T00:52:46Z
+
+=== 2026-11-20T00:52:47Z | host=laptop | cmd: (edit) wf-common.js: import TimeoutType from @temporalio/common (was undefined from @temporalio/workflow; pin-stop-macos workflow task failed on it)
+
+=== 2026-11-20T00:52:47Z | host=laptop | cmd: scp -q /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/wf-common.js finnpc:C:/Users/cj/1429-spike-engineer/app/wf-common.js && echo copied-win
+copied-win
+--- exit=0 at 2026-11-20T00:52:47Z
+
+=== 2026-11-20T00:52:47Z | host=wsl | cmd: cp /mnt/c/Users/cj/1429-spike-engineer/app/wf-common.js ~/1429-spike-engineer/app/ && grep -c TimeoutType ~/1429-spike-engineer/app/wf-common.js
+2
+--- exit=0 at 2026-11-20T00:52:48Z
+
+=== 2026-11-20T00:52:57Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow terminate -w pin-stop-macos --reason 'spike: workflow code bug (TimeoutType undefined); rerun with fix'
+Workflow terminated
+--- exit=0 at 2026-11-20T00:52:57Z
+
+=== 2026-11-20T00:52:57Z | host=laptop | cmd: kill -TERM 56714; echo rc=$?
+rc=0
+--- exit=0 at 2026-11-20T00:52:57Z
+
+=== 2026-11-20T00:52:57Z | host=wsl | cmd: kill -TERM 1499; echo rc=$?
+rc=0
+--- exit=0 at 2026-11-20T00:52:57Z
+
+=== 2026-11-20T00:52:57Z | host=windows | cmd(powershell): Stop-Process -Id 19544 -Force; "rc=" + $?
+rc=True
+--- exit=0 at 2026-11-20T00:52:58Z
+
+=== 2026-11-20T00:53:03Z | host=laptop | cmd: start-remote-worker.sh wsl wsl-1 wf-v1.js -> laptop ssh session pid=85007
+
+=== 2026-11-20T00:53:03Z | host=laptop | cmd: start-remote-worker.sh win win-1 wf-v1.js -> laptop ssh session pid=85011
+
+=== 2026-11-20T00:53:03Z | host=laptop | cmd: start-mac-worker.sh mac-a wf-v1.js -> worker pid=85018
+
+=== 2026-11-20T00:53:03Z | host=laptop | cmd: start-mac-worker.sh mac-b wf-v1.js -> worker pid=85022
+
+=== 2026-11-20T00:53:07Z | host=laptop | cmd: date -u +%FT%TZ; ps -axo pid,ppid,pgid,lstart,command | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T00:53:07Z
+  PID  PPID  PGID STARTED                      COMMAND
+55566     1 34520 Thu Nov 19 18:48:30 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 1 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=1 host=mac-b
+55579 55566 34520 Thu Nov 19 18:48:31 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 2 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=1 host=mac-b
+85018     1 85004 Thu Nov 19 18:53:03 2026     node worker.js
+85022     1 85004 Thu Nov 19 18:53:03 2026     node worker.js
+--- exit=0 at 2026-11-20T00:53:07Z
+
+=== 2026-11-20T00:53:13Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow start --type card --task-queue rigger-macos --workflow-id pin-stop-macos-2 --input '{"card":"pin-stop-macos-2","os":"macos","seconds":20,"pauseAfterPick":"20s"}'
+Running execution:
+  WorkflowId  pin-stop-macos-2
+  RunId       01a1f671-77b8-706e-b475-1e25f17e01da
+  Type        card
+  Namespace   default
+  TaskQueue   rigger-macos
+--- exit=0 at 2026-11-20T00:53:14Z
+2026-11-20T00:53:15.428Z picked host=mac-a worker pid=85018
+
+=== 2026-11-20T00:53:15Z | host=laptop | cmd: perl -MTime::HiRes=time -MPOSIX=strftime -e '$t=time; printf qq(stop-at %s.%03dZ\n), strftime(q(%Y-%m-%dT%H:%M:%S),gmtime($t)), ($t-int($t))*1000'; kill -TERM 85018; echo term-rc=$?
+stop-at 2026-11-20T00:53:15.452Z
+term-rc=0
+--- exit=0 at 2026-11-20T00:53:15Z
+### timed listing target=00:53:25
+
+=== 2026-11-20T00:53:25Z | host=wsl | cmd: date -u +%FT%TZ; ps -eo pid,ppid,pgid,lstart,args | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T00:53:25Z
+    PID    PPID    PGID                  STARTED COMMAND
+ 104118  104116  104116 Thu Nov 19 18:53:02 2026 node worker.js
+--- exit=0 at 2026-11-20T00:53:25Z
+
+=== 2026-11-20T00:53:25Z | host=laptop | cmd: date -u +%FT%TZ; ps -axo pid,ppid,pgid,lstart,command | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T00:53:25Z
+  PID  PPID  PGID STARTED                      COMMAND
+55566     1 34520 Thu Nov 19 18:48:30 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 1 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=1 host=mac-b
+55579 55566 34520 Thu Nov 19 18:48:31 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 2 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=1 host=mac-b
+85022     1 85004 Thu Nov 19 18:53:03 2026     node worker.js
+--- exit=0 at 2026-11-20T00:53:25Z
+
+=== 2026-11-20T00:53:25Z | host=windows | cmd(powershell): (Get-Date).ToUniversalTime().ToString("o"); Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "node.exe" } | ForEach-Object { "{0,6} {1,6} {2} {3}" -f $_.ProcessId, $_.ParentProcessId, $_.CreationDate.ToUniversalTime().ToString("o"), $_.CommandLine }
+2026-11-20T00:53:25.5329852Z
+ 31732  24196 2026-11-19T20:21:51.2696860Z "C:\Program Files\Adobe\Adobe Creative Cloud Experience\libs\node.exe" "C:\Program Files\Adobe\Adobe Creative Cloud Experience\js\main.js"
+ 21712  34604 2026-11-20T00:53:03.7386730Z node  worker.js 
+--- exit=0 at 2026-11-20T00:53:26Z
+### timed listing target=00:53:45
+
+=== 2026-11-20T00:53:45Z | host=wsl | cmd: date -u +%FT%TZ; ps -eo pid,ppid,pgid,lstart,args | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T00:53:45Z
+    PID    PPID    PGID                  STARTED COMMAND
+ 104118  104116  104116 Thu Nov 19 18:53:02 2026 node worker.js
+--- exit=0 at 2026-11-20T00:53:45Z
+
+=== 2026-11-20T00:53:45Z | host=laptop | cmd: date -u +%FT%TZ; ps -axo pid,ppid,pgid,lstart,command | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T00:53:45Z
+  PID  PPID  PGID STARTED                      COMMAND
+55566     1 34520 Thu Nov 19 18:48:30 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 1 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=1 host=mac-b
+55579 55566 34520 Thu Nov 19 18:48:31 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 2 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/card-kill-macos/tree.log rigger-tree card=card-kill-macos attempt=1 host=mac-b
+85022     1 85004 Thu Nov 19 18:53:03 2026     node worker.js
+--- exit=0 at 2026-11-20T00:53:45Z
+
+=== 2026-11-20T00:53:45Z | host=windows | cmd(powershell): (Get-Date).ToUniversalTime().ToString("o"); Get-CimInstance Win32_Process | Where-Object { $_.Name -eq "node.exe" } | ForEach-Object { "{0,6} {1,6} {2} {3}" -f $_.ProcessId, $_.ParentProcessId, $_.CreationDate.ToUniversalTime().ToString("o"), $_.CommandLine }
+2026-11-20T00:53:45.7816802Z
+ 31732  24196 2026-11-19T20:21:51.2696860Z "C:\Program Files\Adobe\Adobe Creative Cloud Experience\libs\node.exe" "C:\Program Files\Adobe\Adobe Creative Cloud Experience\js\main.js"
+ 21712  34604 2026-11-20T00:53:03.7386730Z node  worker.js 
+--- exit=0 at 2026-11-20T00:53:46Z
+2026-11-20T00:54:24.800Z end-of-watch status=WORKFLOW_EXECUTION_STATUS_RUNNING pending=[{"type":"dispatch","state":"PENDING_ACTIVITY_STATE_STARTED","attempt":1,"lastWorkerIdentity":"mac-b/CJs-MacBook-Pro.local/85022","lastStartedTime":"2026-11-20T00:54:24.359871306Z","scheduledTime":"2026-11-20T00:54:24.347975082Z"}]
+
+=== 2026-11-20T00:54:24Z | host=laptop | cmd: date -u +%FT%TZ; ps -axo pid,ppid,pgid,lstart,command | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T00:54:24Z
+  PID  PPID  PGID STARTED                      COMMAND
+ 6507 85022 85004 Thu Nov 19 18:54:24 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 1 20 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/pin-stop-macos-2/tree.log rigger-tree card=pin-stop-macos-2 attempt=1 host=mac-b
+ 6513  6507 85004 Thu Nov 19 18:54:24 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 2 20 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/pin-stop-macos-2/tree.log rigger-tree card=pin-stop-macos-2 attempt=1 host=mac-b
+85022     1 85004 Thu Nov 19 18:53:03 2026     node worker.js
+--- exit=0 at 2026-11-20T00:54:24Z
+
+=== 2026-11-20T00:54:41Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow describe -w pin-stop-macos-2 | grep -E '^  Status'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow show -w pin-stop-macos-2 --output json > /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/pin-stop-macos-2.json; echo exported pin-stop-macos-2 $(jq '.events|length' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/pin-stop-macos-2.json) events
+exported pin-stop-macos-2 32 events
+--- exit=0 at 2026-11-20T00:54:41Z
+
+=== 2026-11-20T00:54:49Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow describe -w pin-stop-macos-2 | grep -E '^  Status'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow show -w pin-stop-macos-2 --output json > /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/pin-stop-macos-2.json; echo exported pin-stop-macos-2 $(jq '.events|length' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/pin-stop-macos-2.json) events
+  Status          COMPLETED
+exported pin-stop-macos-2 38 events
+--- exit=0 at 2026-11-20T00:54:50Z
+
+=== 2026-11-20T00:54:50Z | host=laptop | cmd: start-mac-worker.sh mac-a wf-v1.js -> worker pid=6723
+
+=== 2026-11-20T00:58:02Z | host=laptop | note: a wait loop for mac-a readiness never matched (tail window too short); stopped by TaskStop, pintest kill had not started
+
+=== 2026-11-20T00:58:02Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow start --type card --task-queue rigger-macos --workflow-id pin-kill-macos-1 --input '{"card":"pin-kill-macos-1","os":"macos","seconds":300,"retrySeconds":20}'
+Running execution:
+  WorkflowId  pin-kill-macos-1
+  RunId       01a1f675-e0ff-7f05-9cbd-f88676f00af3
+  Type        card
+  Namespace   default
+  TaskQueue   rigger-macos
+--- exit=0 at 2026-11-20T00:58:03Z
+2026-11-20T00:58:03.356Z picked host=mac-b worker pid=85022
+pending: [{"type":"dispatch","state":"PENDING_ACTIVITY_STATE_STARTED","attempt":1,"lastWorkerIdentity":"mac-b/CJs-MacBook-Pro.local/85022","lastStartedTime":"2026-11-20T00:58:03.046814592Z","scheduledTime":"2026-11-20T00:58:03.039245172Z"}]
+
+=== 2026-11-20T00:58:08Z | host=laptop | cmd: date -u +%FT%TZ; ps -axo pid,ppid,pgid,lstart,command | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T00:58:08Z
+  PID  PPID  PGID STARTED                      COMMAND
+75813 85022 85004 Thu Nov 19 18:58:03 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 1 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/pin-kill-macos-1/tree.log rigger-tree card=pin-kill-macos-1 attempt=1 host=mac-b
+75963 75813 85004 Thu Nov 19 18:58:03 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 2 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/pin-kill-macos-1/tree.log rigger-tree card=pin-kill-macos-1 attempt=1 host=mac-b
+85022     1 85004 Thu Nov 19 18:53:03 2026     node worker.js
+85078 27624 85078 Thu Nov 19 18:58:08 2026     /bin/zsh -c source /Users/cjwilliams/.claude/shell-snapshots/snapshot-zsh-1795099474648-j62gqd.sh 2>/dev/null || true && \builtin setopt NO_EXTENDED_GLOB NO_BARE_GLOB_QUAL NO_BRACE_CCL NO_MAGIC_EQUAL_SUBST NO_EQUALS 2>/dev/null || true && { \builtin unalias -- 'which'; \builtin unset -f -- 'which'; } >/dev/null 2>&1 || true && { \builtin unalias -- 'unsetenv'; \builtin unset -f -- 'unsetenv'; } >/dev/null 2>&1 || true && eval 'cd ~/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer && ./t.sh finnpc '"'"'ssh finnpc "cd /d C:\Users\cj\1430-spike-engineer && node winlist.cjs x4 & tasklist /FI \"PID eq 12972\" /FI \"PID eq 36704\" & tasklist /FI \"IMAGENAME eq node.exe\""'"'"'' < /dev/null && pwd -P >| /tmp/claude-a8b4-cwd
+85080 85078 85078 Thu Nov 19 18:58:08 2026     /bin/bash ./t.sh finnpc ssh finnpc "cd /d C:\Users\cj\1430-spike-engineer && node winlist.cjs x4 & tasklist /FI \"PID eq 12972\" /FI \"PID eq 36704\" & tasklist /FI \"IMAGENAME eq node.exe\""
+85101 85080 85078 Thu Nov 19 18:58:08 2026     /bin/bash ./t.sh finnpc ssh finnpc "cd /d C:\Users\cj\1430-spike-engineer && node winlist.cjs x4 & tasklist /FI \"PID eq 12972\" /FI \"PID eq 36704\" & tasklist /FI \"IMAGENAME eq node.exe\""
+85102 85101 85078 Thu Nov 19 18:58:08 2026     ssh finnpc cd /d C:\Users\cj\1430-spike-engineer && node winlist.cjs x4 & tasklist /FI "PID eq 12972" /FI "PID eq 36704" & tasklist /FI "IMAGENAME eq node.exe"
+--- exit=0 at 2026-11-20T00:58:08Z
+
+=== 2026-11-20T00:58:08Z | host=laptop | cmd: perl -MTime::HiRes=time -MPOSIX=strftime -e '$t=time; printf qq(kill-at %s.%03dZ\n), strftime(q(%Y-%m-%dT%H:%M:%S),gmtime($t)), ($t-int($t))*1000'; kill -9 85022; echo kill-rc=$?
+kill-at 2026-11-20T00:58:08.600Z
+kill-rc=0
+--- exit=0 at 2026-11-20T00:58:08Z
+2026-11-20T01:01:21.668Z end-of-watch status=WORKFLOW_EXECUTION_STATUS_RUNNING pending=[]
+
+=== 2026-11-20T01:01:21Z | host=laptop | cmd: date -u +%FT%TZ; ps -axo pid,ppid,pgid,lstart,command | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T01:01:21Z
+  PID  PPID  PGID STARTED                      COMMAND
+75813     1 85004 Thu Nov 19 18:58:03 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 1 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/pin-kill-macos-1/tree.log rigger-tree card=pin-kill-macos-1 attempt=1 host=mac-b
+75963 75813 85004 Thu Nov 19 18:58:03 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 2 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/pin-kill-macos-1/tree.log rigger-tree card=pin-kill-macos-1 attempt=1 host=mac-b
+--- exit=0 at 2026-11-20T01:01:21Z
+
+=== 2026-11-20T01:01:29Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow describe -w pin-kill-macos-1 | grep -E '^  Status'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow show -w pin-kill-macos-1 --output json > /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/pin-kill-macos-1.json; echo exported pin-kill-macos-1 $(jq '.events|length' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/pin-kill-macos-1.json) events
+exported pin-kill-macos-1 15 events
+--- exit=0 at 2026-11-20T01:01:29Z
+
+=== 2026-11-20T01:01:38Z | host=laptop | note: UNPLANNED: mac-a worker pid 6723 shut down gracefully at 00:57:56.655Z because TaskStop of background task bh0jwufkl signalled its process group, which held the nohup-started worker. pin-kill-macos-1 therefore ran with no second macOS worker.
+
+=== 2026-11-20T01:01:38Z | host=laptop | cmd: start-mac-worker.sh mac-a wf-v1.js -> worker pid=68452
+
+=== 2026-11-20T01:01:47Z | host=wsl | cmd: cat ~/1429-spike-engineer/worktrees/wsl-1/card-kill-linux/tree.log
+2026-11-20T00:47:36.102Z start level=1 pid=1426 ppid=1010 rigger-tree card=card-kill-linux attempt=1 host=wsl-1
+2026-11-20T00:47:36.118Z start level=2 pid=1433 ppid=1426 rigger-tree card=card-kill-linux attempt=1 host=wsl-1
+2026-11-20T00:47:49.128Z start level=1 pid=1576 ppid=1499 rigger-tree card=card-kill-linux attempt=2 host=wsl-1
+2026-11-20T00:47:49.144Z start level=2 pid=1583 ppid=1576 rigger-tree card=card-kill-linux attempt=2 host=wsl-1
+2026-11-20T00:48:09.147Z end level=2 pid=1583 ppid=1576 rigger-tree card=card-kill-linux attempt=2 host=wsl-1
+2026-11-20T00:48:09.147Z end level=1 pid=1576 ppid=1499 rigger-tree card=card-kill-linux attempt=2 host=wsl-1
+2026-11-20T00:52:36.171Z end level=1 pid=1426 ppid=1005 rigger-tree card=card-kill-linux attempt=1 host=wsl-1
+2026-11-20T00:52:36.219Z end level=2 pid=1433 ppid=1005 rigger-tree card=card-kill-linux attempt=1 host=wsl-1
+--- exit=0 at 2026-11-20T01:01:47Z
+
+=== 2026-11-20T01:01:54Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow describe -w pin-kill-macos-1 | grep -E '^  Status'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow show -w pin-kill-macos-1 --output json > /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/pin-kill-macos-1.json; echo exported pin-kill-macos-1 $(jq '.events|length' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/pin-kill-macos-1.json) events
+exported pin-kill-macos-1 24 events
+--- exit=0 at 2026-11-20T01:01:54Z
+
+=== 2026-11-20T01:02:20Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow start --type card --task-queue rigger-linux --workflow-id ver-unpatched --input '{"card":"ver-unpatched","os":"linux","seconds":60,"retrySeconds":10}'
+Running execution:
+  WorkflowId  ver-unpatched
+  RunId       01a1f679-cd64-7117-ae22-c6d23163722c
+  Type        card
+  Namespace   default
+  TaskQueue   rigger-linux
+--- exit=0 at 2026-11-20T01:02:20Z
+pending: [{"type":"dispatch","state":"PENDING_ACTIVITY_STATE_STARTED","attempt":1,"lastWorkerIdentity":"wsl-1/Finn-PC10/104118"}]
+
+=== 2026-11-20T01:02:23Z | host=wsl | cmd: echo kill-at $(date -u +%FT%T.%3NZ); kill -9 104118; echo kill-rc=$?; cat ~/1429-spike-engineer/app/wf-v2.js | head -20
+kill-at 2026-11-20T01:02:23.533988852Z
+kill-rc=0
+// ABOUTME: Throwaway: card workflow v2 — v1 plus an unguarded prepare activity ahead of the dispatch.
+const { proxyActivities } = require('@temporalio/workflow');
+const { pinnedDispatch } = require('./wf-common');
+async function card(input) {
+  return pinnedDispatch(input, async (os) => {
+    const { prepare } = proxyActivities({ taskQueue: `rigger-${os}`, startToCloseTimeout: '30s' });
+    await prepare({ card: input.card });
+  });
+}
+module.exports = { card };
+--- exit=0 at 2026-11-20T01:02:23Z
+
+=== 2026-11-20T01:02:23Z | host=laptop | cmd: start-remote-worker.sh wsl wsl-1 wf-v2.js -> laptop ssh session pid=35824
+
+=== 2026-11-20T01:02:37Z | host=laptop | cmd: ls -la -T ~/.claude/projects/ | sort -k10 > /dev/null; stat -f "%Sm %N" -t "%Y-%m-%dT%H:%M:%S%z" ~/.claude/projects/* | sort -k2
+2026-11-01T08:14:41-0600 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub
+2026-11-10T20:20:14-0600 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-biblical-writing
+2026-11-19T09:14:34-0600 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-cjwillresume
+2026-11-08T20:56:34-0600 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-cowrite
+2026-07-31T16:46:53-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-cowrite--claude-worktrees-source-button-not-working-a9ffcd
+2026-11-18T11:35:59-0600 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-emend-engine-worktrees-rigger-121
+2026-11-11T07:59:11-0600 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-fxt-racing
+2026-11-19T09:14:35-0600 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger
+2026-10-21T14:04:01-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger-worktrees-839-tq-handoff
+2026-10-21T11:30:08-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger-worktrees-840-init-fixture
+2026-10-21T15:00:22-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger-worktrees-843-budget
+2026-10-29T22:11:28-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger-worktrees-coordinator-tools
+2026-10-29T22:01:35-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger-worktrees-m6-acceptance-attack
+2026-10-29T22:03:43-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger-worktrees-m6-build-pm
+2026-10-29T21:36:27-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger-worktrees-node20-architect
+--- exit=0 at 2026-11-20T01:02:37Z
+
+=== 2026-11-20T01:02:48Z | host=wsl | cmd: grep -n -i -E "nondetermin|TMPRL|workflow task|Failed|error" ~/1429-spike-engineer/logs/worker-wsl-1.log | tail -12 | cut -c1-700
+118:[2m2026-11-20T00:52:57.578468Z[0m [33m WARN[0m [2mtemporalio_sdk_core::worker[0m[2m:[0m shutdown_worker rpc errored during worker shutdown: Status { code: Cancelled, message: "operation was canceled", source: Some(tonic::transport::Error(Transport, hyper::Error(Canceled, "connection closed"))) }
+213:[2m2026-11-20T01:02:43.258063Z[0m [33m WARN[0m [2mtemporalio_sdk_core::worker::workflow[0m[2m:[0m Failing workflow task [3mrun_id[0m[2m=[0m01a1f679-cd64-7117-ae22-c6d23163722c [3mfailure[0m[2m=[0mFailure { failure: Some(Failure { message: "[TMPRL1100] Nondeterminism error: Activity type of scheduled event 'dispatch' does not match activity type of activity command 'prepare'", source: "", stack_trace: "", encoded_attributes: None, cause: None, failure_info: Some(ApplicationFailureInfo(ApplicationFailureInfo { r#type: "", non_retryable: false, details: None, next_retry_delay: None, category: Unspecified })) }), force_cause: NonDeterministicError }
+--- exit=0 at 2026-11-20T01:02:48Z
+
+=== 2026-11-20T01:02:52Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow describe -w ver-unpatched | grep -E '^  Status'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow show -w ver-unpatched --output json > /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/ver-unpatched.json; echo exported ver-unpatched $(jq '.events|length' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/ver-unpatched.json) events
+exported ver-unpatched 16 events
+--- exit=0 at 2026-11-20T01:02:52Z
+
+=== 2026-11-20T01:02:52Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow describe -w ver-unpatched | head -20
+Execution Info:
+  WorkflowId            ver-unpatched
+  RunId                 01a1f679-cd64-7117-ae22-c6d23163722c
+  Type                  card
+  Namespace             default
+  TaskQueue             rigger-linux
+  AssignedBuildId        
+  StartTime             33 seconds ago
+  ExecutionTime         33 seconds ago
+  SearchAttributes      map[BuildIds:metadata:{key:"encoding"  value:"json/plain"}  metadata:{key:"type"  value:"KeywordList"}  data:"[\"unversioned\",\"unversioned:@temporalio/worker@1.26.0+59521526e147dd26edbe84ea522fbbe27054e770264e1fdefa098aa68d5d1995\"]"]
+  StateTransitionCount  18
+  HistoryLength         16
+  HistorySize           2674
+  RootWorkflowId        ver-unpatched
+  RootRunId             01a1f679-cd64-7117-ae22-c6d23163722c
+Extended Execution Info:
+  CancelRequested    false
+  OriginalStartTime  33 seconds ago
+
+Pending Activities: 0
+--- exit=0 at 2026-11-20T01:02:53Z
+
+=== 2026-11-20T01:03:01Z | host=laptop | cmd: date -u +%FT%TZ; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow describe -w ver-unpatched --output json | jq '{status: .workflowExecutionInfo.status, historyLength: .workflowExecutionInfo.historyLength, pendingWorkflowTask}'
+2026-11-20T01:03:01Z
+{
+  "status": "WORKFLOW_EXECUTION_STATUS_RUNNING",
+  "historyLength": "16",
+  "pendingWorkflowTask": {
+    "state": "PENDING_WORKFLOW_TASK_STATE_STARTED",
+    "scheduledTime": "2026-11-20T01:02:53.268710904Z",
+    "originalScheduledTime": "2026-11-20T01:02:53.268708934Z",
+    "startedTime": "2026-11-20T01:02:53.280499664Z",
+    "attempt": 3
+  }
+}
+--- exit=0 at 2026-11-20T01:03:01Z
+
+=== 2026-11-20T01:03:08Z | host=laptop | cmd: ls -la /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/claude-home; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow execute --type card --task-queue rigger-macos --workflow-id claude-macos --input '{"card":"claude-macos","os":"macos","claude":{"configDir":"/Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/claude-home","prompt":"Reply with the single word ok."}}' 2>&1 | tail -15
+total 0
+drwxr-xr-x@  2 cjwilliams  staff   64 Nov 19 19:02 .
+drwxr-xr-x@ 24 cjwilliams  staff  768 Nov 19 19:02 ..
+    9  2026-11-20T01:03:08Z  WorkflowTaskStarted       
+   10  2026-11-20T01:03:08Z  WorkflowTaskCompleted     
+   11  2026-11-20T01:03:08Z  ActivityTaskScheduled     
+   12  2026-11-20T01:03:08Z  ActivityTaskStarted       
+   13  2026-11-20T01:03:09Z  ActivityTaskCompleted     
+   14  2026-11-20T01:03:09Z  WorkflowTaskScheduled     
+   15  2026-11-20T01:03:09Z  WorkflowTaskStarted       
+   16  2026-11-20T01:03:09Z  WorkflowTaskCompleted     
+   17  2026-11-20T01:03:09Z  WorkflowExecutionCompleted
+
+Results:
+  RunTime         1.71s
+  Status          COMPLETED
+  Result          {"exit":1,"host":"mac-a","signal":null,"stderr":"Permission allow rule (../../../../../rigger/.claude/settings.local.json): Write(//Users/cjwilliams/GitHub/rigger-worktrees/tq-tools/codex-session.sh) is not matched by file permission checks — only Edit(path) rules are. Use Edit(//Users/cjwilliams/GitHub/rigger-worktrees/tq-tools/codex-session.sh) instead (Edit rules cover all file-editing tools).\nPermission allow rule (../../../../../rigger/.claude/settings.local.json): Bash(sh /Users/cjwilliams/GitHub/rigger-worktrees/tq-tools/codex-*.sh:*) mixes * with the trailing :* prefix syntax, so it is matched as a literal prefix (the * is not expanded) and will likely never match. Replace that * with the exact value you mean.\n","stdout":"Not logged in · Please run /login\n"}
+  ResultEncoding  json/plain
+--- exit=0 at 2026-11-20T01:03:10Z
+
+=== 2026-11-20T01:03:34Z | host=laptop | cmd: date -u +%FT%TZ; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow describe -w ver-unpatched --output json | jq -c '{status: .workflowExecutionInfo.status, historyLength: .workflowExecutionInfo.historyLength, pendingWorkflowTask}'
+2026-11-20T01:03:34Z
+{"status":"WORKFLOW_EXECUTION_STATUS_RUNNING","historyLength":"16","pendingWorkflowTask":{"state":"PENDING_WORKFLOW_TASK_STATE_STARTED","scheduledTime":"2026-11-20T01:03:17.884028916Z","originalScheduledTime":"2026-11-20T01:03:17.884028146Z","startedTime":"2026-11-20T01:03:17.890305780Z","attempt":5}}
+--- exit=0 at 2026-11-20T01:03:34Z
+
+=== 2026-11-20T01:03:34Z | host=wsl | cmd: grep -c TMPRL1100 ~/1429-spike-engineer/logs/worker-wsl-1.log; grep TMPRL1100 ~/1429-spike-engineer/logs/worker-wsl-1.log | sed -E "s/.*(2026-[0-9T:.-]+Z).*/\1/" | tr "\n" " "
+1
+2026-11-20T01:02:43.258063Z --- exit=0 at 2026-11-20T01:03:34Z
+
+=== 2026-11-20T01:03:51Z | host=laptop | cmd: sw_vers; uname -m; node --version; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --version; cd /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app && npm ls --depth=0 2>&1 | grep temporalio; npm ls --all 2>/dev/null | grep -o '@temporalio/[a-z-]*@[0-9.]*' | sort -u
+ProductName:		macOS
+ProductVersion:		27.2.1
+BuildVersion:		26B131
+arm64
+v26.13.0
+temporal version 1.10.1 (Server 1.32.2, UI 2.56.4)
+├── @temporalio/activity@1.26.0
+├── @temporalio/client@1.26.0
+├── @temporalio/common@1.26.0
+├── @temporalio/worker@1.26.0
+└── @temporalio/workflow@1.26.0
+@temporalio/activity@1.26.0
+@temporalio/client@1.26.0
+@temporalio/common@1.26.0
+@temporalio/core-bridge@1.26.0
+@temporalio/nexus@1.26.0
+@temporalio/proto@1.26.0
+@temporalio/worker@1.26.0
+@temporalio/workflow@1.26.0
+--- exit=0 at 2026-11-20T01:03:52Z
+
+=== 2026-11-20T01:03:52Z | host=wsl | cmd: grep -E "^(PRETTY_NAME|VERSION)=" /etc/os-release; uname -r; ~/1429-spike-engineer/node/bin/node --version; ~/1429-spike-engineer/tcli/temporal --version; cd ~/1429-spike-engineer/app && PATH=~/1429-spike-engineer/node/bin:$PATH npm ls --all 2>/dev/null | grep -o "@temporalio/[a-z-]*@[0-9.]*" | sort -u
+PRETTY_NAME="Ubuntu 26.04.1 LTS"
+VERSION="26.04.1 LTS (Resolute Raccoon)"
+6.18.58.1-microsoft-standard-WSL2
+v24.22.3
+temporal version 1.10.1 (Server 1.32.2, UI 2.56.4)
+@temporalio/activity@1.26.0
+@temporalio/client@1.26.0
+@temporalio/common@1.26.0
+@temporalio/core-bridge@1.26.0
+@temporalio/nexus@1.26.0
+@temporalio/proto@1.26.0
+@temporalio/worker@1.26.0
+@temporalio/workflow@1.26.0
+--- exit=0 at 2026-11-20T01:03:53Z
+
+=== 2026-11-20T01:03:53Z | host=windows | cmd: ssh finnpc "ver & node --version & C:\Users\cj\1429-spike-engineer\tcli\temporal.exe --version & cd /d C:\Users\cj\1429-spike-engineer\app && npm ls --all 2>nul | findstr @temporalio"
+
+Microsoft Windows [Version 10.0.26300.9974]
+v24.19.0
+temporal version 1.10.1 (Server 1.32.2, UI 2.56.4)
++-- @temporalio/activity@1.26.0
+| +-- @temporalio/client@1.26.0 deduped
+| +-- @temporalio/common@1.26.0 deduped
++-- @temporalio/client@1.26.0
+| +-- @temporalio/common@1.26.0 deduped
+| +-- @temporalio/proto@1.26.0
++-- @temporalio/common@1.26.0
+| +-- @temporalio/proto@1.26.0 deduped
++-- @temporalio/worker@1.26.0
+| +-- @temporalio/activity@1.26.0 deduped
+| +-- @temporalio/client@1.26.0 deduped
+| +-- @temporalio/common@1.26.0 deduped
+| +-- @temporalio/core-bridge@1.26.0
+| | +-- @temporalio/common@1.26.0 deduped
+| +-- @temporalio/nexus@1.26.0
+| | +-- @temporalio/client@1.26.0 deduped
+| | +-- @temporalio/common@1.26.0 deduped
+| | +-- @temporalio/proto@1.26.0 deduped
+| +-- @temporalio/proto@1.26.0 deduped
+| +-- @temporalio/workflow@1.26.0 deduped
+`-- @temporalio/workflow@1.26.0
+  +-- @temporalio/common@1.26.0 deduped
+  +-- @temporalio/proto@1.26.0 deduped
+--- exit=0 at 2026-11-20T01:03:53Z
+
+=== 2026-11-20T01:03:58Z | host=laptop | cmd: date -u +%FT%TZ; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow describe -w ver-unpatched --output json | jq -c '{status: .workflowExecutionInfo.status, historyLength: .workflowExecutionInfo.historyLength, pendingWorkflowTask}'
+2026-11-20T01:03:58Z
+{"status":"WORKFLOW_EXECUTION_STATUS_RUNNING","historyLength":"16","pendingWorkflowTask":{"state":"PENDING_WORKFLOW_TASK_STATE_STARTED","scheduledTime":"2026-11-20T01:03:37.415527676Z","originalScheduledTime":"2026-11-20T01:03:37.415525368Z","startedTime":"2026-11-20T01:03:37.431438849Z","attempt":6}}
+--- exit=0 at 2026-11-20T01:03:58Z
+
+=== 2026-11-20T01:04:03Z | host=wsl | cmd: kill -TERM 104548; echo rc=$?
+rc=0
+--- exit=0 at 2026-11-20T01:04:03Z
+
+=== 2026-11-20T01:04:03Z | host=laptop | cmd: start-remote-worker.sh wsl wsl-1 wf-v3.js -> laptop ssh session pid=92769
+
+=== 2026-11-20T01:04:15Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow describe -w ver-unpatched | grep -E '^  Status'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow show -w ver-unpatched --output json > /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/ver-unpatched.json; echo exported ver-unpatched $(jq '.events|length' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/ver-unpatched.json) events
+  Status          COMPLETED
+exported ver-unpatched 20 events
+--- exit=0 at 2026-11-20T01:04:15Z
+
+=== 2026-11-20T01:04:21Z | host=wsl | cmd: kill -TERM 104779; echo rc=$?
+rc=0
+--- exit=0 at 2026-11-20T01:04:21Z
+
+=== 2026-11-20T01:04:21Z | host=laptop | cmd: start-remote-worker.sh wsl wsl-1 wf-v1.js -> laptop ssh session pid=14457
+
+=== 2026-11-20T01:04:21Z | host=wsl | cmd: tail -n 3 ~/1429-spike-engineer/logs/worker-wsl-1.log
+2026-11-20T01:04:21.607Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'rigger-linux', state: 'STOPPED' }
+2026-11-20T01:04:21.607Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'host-wsl-1', state: 'DRAINED' }
+2026-11-20T01:04:21.607Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'host-wsl-1', state: 'STOPPED' }
+--- exit=0 at 2026-11-20T01:04:22Z
+
+=== 2026-11-20T01:04:24Z | host=wsl | cmd: tail -n 3 ~/1429-spike-engineer/logs/worker-wsl-1.log
+2026-11-20T01:04:23.115Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'rigger-linux' }
+2026-11-20T01:04:23.116Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'host-wsl-1', state: 'RUNNING' }
+2026-11-20T01:04:23.116Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'host-wsl-1' }
+--- exit=0 at 2026-11-20T01:04:24Z
+
+=== 2026-11-20T01:04:24Z | host=wsl | cmd: grep "worker starting" ~/1429-spike-engineer/logs/worker-wsl-1.log | tail -1
+2026-11-20T01:04:22.112Z worker starting identity=wsl-1/Finn-PC10/104866 pid=104866 os=linux wf=wf-v1.js node=v24.22.3
+--- exit=0 at 2026-11-20T01:04:24Z
+
+=== 2026-11-20T01:04:30Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow start --type card --task-queue rigger-linux --workflow-id ver-patched --input '{"card":"ver-patched","os":"linux","seconds":60,"retrySeconds":10}'
+Running execution:
+  WorkflowId  ver-patched
+  RunId       01a1f67b-c87e-78b7-85f1-b1f8198335ce
+  Type        card
+  Namespace   default
+  TaskQueue   rigger-linux
+--- exit=0 at 2026-11-20T01:04:30Z
+pending: [{"type":"dispatch","state":"PENDING_ACTIVITY_STATE_STARTED","attempt":1,"lastWorkerIdentity":"wsl-1/Finn-PC10/104866"}]
+
+=== 2026-11-20T01:04:34Z | host=wsl | cmd: echo kill-at $(date -u +%FT%T.%3NZ); kill -9 104866; echo kill-rc=$?; cat ~/1429-spike-engineer/app/wf-v3.js | head -20
+kill-at 2026-11-20T01:04:34.302294627Z
+kill-rc=0
+// ABOUTME: Throwaway: card workflow v3 — the v2 prepare call guarded by patched().
+const { proxyActivities, patched } = require('@temporalio/workflow');
+const { pinnedDispatch } = require('./wf-common');
+async function card(input) {
+  return pinnedDispatch(input, async (os) => {
+    if (patched('prepare-before-dispatch')) {
+      const { prepare } = proxyActivities({ taskQueue: `rigger-${os}`, startToCloseTimeout: '30s' });
+      await prepare({ card: input.card });
+    }
+  });
+}
+module.exports = { card };
+--- exit=0 at 2026-11-20T01:04:34Z
+
+=== 2026-11-20T01:04:34Z | host=laptop | cmd: start-remote-worker.sh wsl wsl-1 wf-v3.js -> laptop ssh session pid=24451
+
+=== 2026-11-20T01:04:45Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow describe -w ver-patched --output json | jq -c '{status: .workflowExecutionInfo.status, pend: [.pendingActivities[]? | {t:.activityType.name, state, attempt}]}'
+{"status":"WORKFLOW_EXECUTION_STATUS_RUNNING","pend":[{"t":"dispatch","state":"PENDING_ACTIVITY_STATE_STARTED","attempt":2}]}
+--- exit=0 at 2026-11-20T01:04:45Z
+
+=== 2026-11-20T01:04:57Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow describe -w ver-patched | grep -E '^  Status'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow show -w ver-patched --output json > /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/ver-patched.json; echo exported ver-patched $(jq '.events|length' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/ver-patched.json) events
+  Status          COMPLETED
+exported ver-patched 17 events
+--- exit=0 at 2026-11-20T01:04:57Z
+
+=== 2026-11-20T01:05:02Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow execute --type card --task-queue rigger-linux --workflow-id ver-patched-new --input '{"card":"ver-patched-new","os":"linux","seconds":5}' 2>&1 | tail -4
+  RunTime         5.23s
+  Status          COMPLETED
+  Result          {"attempt":1,"exit":0,"host":"wsl-1","root":105067}
+  ResultEncoding  json/plain
+--- exit=0 at 2026-11-20T01:05:07Z
+
+=== 2026-11-20T01:05:07Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow describe -w ver-patched-new | grep -E '^  Status'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow show -w ver-patched-new --output json > /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/ver-patched-new.json; echo exported ver-patched-new $(jq '.events|length' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/ver-patched-new.json) events
+  Status          COMPLETED
+exported ver-patched-new 25 events
+--- exit=0 at 2026-11-20T01:05:07Z
+
+=== 2026-11-20T01:05:13Z | host=laptop | cmd: start-mac-worker.sh mac-b wf-v1.js -> worker pid=44645
+
+=== 2026-11-20T01:06:48Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow describe -w pin-kill-macos-1 | grep -E '^  Status'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow show -w pin-kill-macos-1 --output json > /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/pin-kill-macos-1.json; echo exported pin-kill-macos-1 $(jq '.events|length' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/pin-kill-macos-1.json) events
+  Status          COMPLETED
+exported pin-kill-macos-1 30 events
+--- exit=0 at 2026-11-20T01:06:48Z
+
+=== 2026-11-20T01:06:48Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow start --type card --task-queue rigger-macos --workflow-id pin-kill-macos-2 --input '{"card":"pin-kill-macos-2","os":"macos","seconds":300,"retrySeconds":20}'
+Running execution:
+  WorkflowId  pin-kill-macos-2
+  RunId       01a1f67d-e604-7e0e-ab5d-3ef7601c989f
+  Type        card
+  Namespace   default
+  TaskQueue   rigger-macos
+--- exit=0 at 2026-11-20T01:06:48Z
+2026-11-20T01:06:50.044Z picked host=mac-a worker pid=68452
+pending: [{"type":"dispatch","state":"PENDING_ACTIVITY_STATE_STARTED","attempt":1,"lastWorkerIdentity":"mac-a/CJs-MacBook-Pro.local/68452","lastStartedTime":"2026-11-20T01:06:48.656311042Z","scheduledTime":"2026-11-20T01:06:48.648039416Z"}]
+
+=== 2026-11-20T01:06:55Z | host=laptop | cmd: date -u +%FT%TZ; ps -axo pid,ppid,pgid,lstart,command | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T01:06:55Z
+  PID  PPID  PGID STARTED                      COMMAND
+44645     1 44640 Thu Nov 19 19:05:13 2026     node worker.js
+68452     1 68377 Thu Nov 19 19:01:38 2026     node worker.js
+84441 68452 68377 Thu Nov 19 19:06:48 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 1 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-a/pin-kill-macos-2/tree.log rigger-tree card=pin-kill-macos-2 attempt=1 host=mac-a
+84443 84441 68377 Thu Nov 19 19:06:49 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 2 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-a/pin-kill-macos-2/tree.log rigger-tree card=pin-kill-macos-2 attempt=1 host=mac-a
+--- exit=0 at 2026-11-20T01:06:55Z
+
+=== 2026-11-20T01:06:55Z | host=laptop | cmd: perl -MTime::HiRes=time -MPOSIX=strftime -e '$t=time; printf qq(kill-at %s.%03dZ\n), strftime(q(%Y-%m-%dT%H:%M:%S),gmtime($t)), ($t-int($t))*1000'; kill -9 68452; echo kill-rc=$?
+kill-at 2026-11-20T01:06:55.210Z
+kill-rc=0
+--- exit=0 at 2026-11-20T01:06:55Z
+2026-11-20T01:07:32.574Z end-of-watch status=WORKFLOW_EXECUTION_STATUS_RUNNING pending=[{"type":"dispatch","state":"PENDING_ACTIVITY_STATE_STARTED","attempt":1,"lastWorkerIdentity":"mac-b/CJs-MacBook-Pro.local/44645","lastStartedTime":"2026-11-20T01:07:31.930242372Z","scheduledTime":"2026-11-20T01:07:31.920019594Z"}]
+
+=== 2026-11-20T01:07:32Z | host=laptop | cmd: date -u +%FT%TZ; ps -axo pid,ppid,pgid,lstart,command | grep -E "rigger-tree|worker.js|PID" | grep -v grep | grep -v 1431-spike
+2026-11-20T01:07:32Z
+  PID  PPID  PGID STARTED                      COMMAND
+ 5133 44645 44640 Thu Nov 19 19:07:32 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 1 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/pin-kill-macos-2/tree.log rigger-tree card=pin-kill-macos-2 attempt=1 host=mac-b
+ 5134  5133 44640 Thu Nov 19 19:07:32 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 2 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/pin-kill-macos-2/tree.log rigger-tree card=pin-kill-macos-2 attempt=1 host=mac-b
+44645     1 44640 Thu Nov 19 19:05:13 2026     node worker.js
+84441     1 68377 Thu Nov 19 19:06:48 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 1 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-a/pin-kill-macos-2/tree.log rigger-tree card=pin-kill-macos-2 attempt=1 host=mac-a
+84443 84441 68377 Thu Nov 19 19:06:49 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 2 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-a/pin-kill-macos-2/tree.log rigger-tree card=pin-kill-macos-2 attempt=1 host=mac-a
+--- exit=0 at 2026-11-20T01:07:32Z
+
+=== 2026-11-20T01:07:39Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow describe -w pin-kill-macos-2 | grep -E '^  Status'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow show -w pin-kill-macos-2 --output json > /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/pin-kill-macos-2.json; echo exported pin-kill-macos-2 $(jq '.events|length' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/pin-kill-macos-2.json) events
+exported pin-kill-macos-2 22 events
+--- exit=0 at 2026-11-20T01:07:39Z
+
+=== 2026-11-20T01:08:00Z | host=wsl | cmd: grep -E "worker starting|worker polling|dispatch (start|end)" ~/1429-spike-engineer/logs/worker-wsl-1.log
+2026-11-20T00:46:27.037Z worker starting identity=wsl-1/Finn-PC10/1010 pid=1010 os=linux wf=wf-v1.js node=v24.22.3
+2026-11-20T00:46:28.125Z worker polling rigger-linux and host-wsl-1
+2026-11-20T00:46:52.707Z [wsl-1] dispatch start card=smoke-linux attempt=1 seconds=5 treeRoot=1201 workerPid=1010
+2026-11-20T00:46:57.730Z [wsl-1] dispatch end card=smoke-linux attempt=1 treeRoot=1201 exit=0
+2026-11-20T00:47:36.085Z [wsl-1] dispatch start card=card-kill-linux attempt=1 seconds=300 treeRoot=1426 workerPid=1010
+2026-11-20T00:47:43.905Z worker starting identity=wsl-1/Finn-PC10/1499 pid=1499 os=linux wf=wf-v1.js node=v24.22.3
+2026-11-20T00:47:45.098Z worker polling rigger-linux and host-wsl-1
+2026-11-20T00:47:49.113Z [wsl-1] dispatch start card=card-kill-linux attempt=2 seconds=20 treeRoot=1576 workerPid=1499
+2026-11-20T00:48:09.148Z [wsl-1] dispatch end card=card-kill-linux attempt=2 treeRoot=1576 exit=0
+2026-11-20T00:53:03.924Z worker starting identity=wsl-1/Finn-PC10/104118 pid=104118 os=linux wf=wf-v1.js node=v24.22.3
+2026-11-20T00:53:04.937Z worker polling rigger-linux and host-wsl-1
+2026-11-20T01:02:20.127Z [wsl-1] dispatch start card=ver-unpatched attempt=1 seconds=60 treeRoot=104523 workerPid=104118
+2026-11-20T01:02:24.162Z worker starting identity=wsl-1/Finn-PC10/104548 pid=104548 os=linux wf=wf-v2.js node=v24.22.3
+2026-11-20T01:02:25.381Z worker polling rigger-linux and host-wsl-1
+2026-11-20T01:02:33.173Z [wsl-1] dispatch start card=ver-unpatched attempt=2 seconds=10 treeRoot=104607 workerPid=104548
+2026-11-20T01:02:43.200Z [wsl-1] dispatch end card=ver-unpatched attempt=2 treeRoot=104607 exit=0
+2026-11-20T01:04:04.099Z worker starting identity=wsl-1/Finn-PC10/104779 pid=104779 os=linux wf=wf-v3.js node=v24.22.3
+2026-11-20T01:04:05.112Z worker polling rigger-linux and host-wsl-1
+2026-11-20T01:04:22.112Z worker starting identity=wsl-1/Finn-PC10/104866 pid=104866 os=linux wf=wf-v1.js node=v24.22.3
+2026-11-20T01:04:23.114Z worker polling rigger-linux and host-wsl-1
+2026-11-20T01:04:29.925Z [wsl-1] dispatch start card=ver-patched attempt=1 seconds=60 treeRoot=104946 workerPid=104866
+2026-11-20T01:04:34.748Z worker starting identity=wsl-1/Finn-PC10/104971 pid=104971 os=linux wf=wf-v3.js node=v24.22.3
+2026-11-20T01:04:35.767Z worker polling rigger-linux and host-wsl-1
+2026-11-20T01:04:42.963Z [wsl-1] dispatch start card=ver-patched attempt=2 seconds=10 treeRoot=105026 workerPid=104971
+2026-11-20T01:04:52.989Z [wsl-1] dispatch end card=ver-patched attempt=2 treeRoot=105026 exit=0
+2026-11-20T01:05:01.865Z [wsl-1] dispatch start card=ver-patched-new attempt=1 seconds=5 treeRoot=105067 workerPid=104971
+2026-11-20T01:05:06.892Z [wsl-1] dispatch end card=ver-patched-new attempt=1 treeRoot=105067 exit=0
+--- exit=0 at 2026-11-20T01:08:00Z
+
+=== 2026-11-20T01:08:00Z | host=windows | cmd(powershell): Select-String -Path C:\Users\cj\1429-spike-engineer\logs\worker-win-1.log -Pattern "worker starting|worker polling|dispatch (start|end)" | ForEach-Object { $_.Line }
+2026-11-20T00:46:27.127Z worker starting identity=win-1/Finn-PC10/19380 pid=19380 os=windows wf=wf-v1.js node=v24.19.0
+2026-11-20T00:46:28.587Z worker polling rigger-windows and host-win-1
+2026-11-20T00:46:52.916Z [win-1] dispatch start card=smoke-windows attempt=1 seconds=5 treeRoot=20488 workerPid=19380
+2026-11-20T00:46:57.964Z [win-1] dispatch end card=smoke-windows attempt=1 treeRoot=20488 exit=0
+2026-11-20T00:47:58.600Z [win-1] dispatch start card=card-kill-windows attempt=1 seconds=300 treeRoot=33496 workerPid=19380
+2026-11-20T00:48:07.931Z worker starting identity=win-1/Finn-PC10/19544 pid=19544 os=windows wf=wf-v1.js node=v24.19.0
+2026-11-20T00:48:09.188Z worker polling rigger-windows and host-win-1
+2026-11-20T00:48:11.668Z [win-1] dispatch start card=card-kill-windows attempt=2 seconds=20 treeRoot=21388 workerPid=19544
+2026-11-20T00:48:31.736Z [win-1] dispatch end card=card-kill-windows attempt=2 treeRoot=21388 exit=0
+2026-11-20T00:53:04.025Z worker starting identity=win-1/Finn-PC10/21712 pid=21712 os=windows wf=wf-v1.js node=v24.19.0
+2026-11-20T00:53:05.317Z worker polling rigger-windows and host-win-1
+--- exit=0 at 2026-11-20T01:08:00Z
+
+=== 2026-11-20T01:08:08Z | host=laptop | cmd: stat -f "%Sm %N" -t "%Y-%m-%dT%H:%M:%S%z" ~/.claude/projects/* | sort -k2
+2026-11-01T08:14:41-0600 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub
+2026-11-10T20:20:14-0600 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-biblical-writing
+2026-11-19T09:14:34-0600 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-cjwillresume
+2026-11-08T20:56:34-0600 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-cowrite
+2026-07-31T16:46:53-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-cowrite--claude-worktrees-source-button-not-working-a9ffcd
+2026-11-18T11:35:59-0600 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-emend-engine-worktrees-rigger-121
+2026-11-11T07:59:11-0600 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-fxt-racing
+2026-11-19T09:14:35-0600 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger
+2026-10-21T14:04:01-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger-worktrees-839-tq-handoff
+2026-10-21T11:30:08-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger-worktrees-840-init-fixture
+2026-10-21T15:00:22-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger-worktrees-843-budget
+2026-10-29T22:11:28-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger-worktrees-coordinator-tools
+2026-10-29T22:01:35-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger-worktrees-m6-acceptance-attack
+2026-10-29T22:03:43-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger-worktrees-m6-build-pm
+2026-10-29T21:36:27-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger-worktrees-node20-architect
+--- exit=0 at 2026-11-20T01:08:08Z
+
+=== 2026-11-20T01:12:21Z | host=laptop | cmd: ls -la ~/.config/temporalio ~/Library/Application\ Support/temporalio 2>&1; ls -la ~/.npm/_logs 2>&1 | tail -3
+ls: /Users/cjwilliams/.config/temporalio: No such file or directory
+ls: /Users/cjwilliams/Library/Application Support/temporalio: No such file or directory
+-rw-r--r--@  1 cjwilliams  staff  1291 Nov 19 19:08 2026-11-20T01_08_46_788Z-debug-0.log
+-rw-r--r--@  1 cjwilliams  staff  1291 Nov 19 19:08 2026-11-20T01_08_48_322Z-debug-0.log
+-rw-r--r--@  1 cjwilliams  staff  1291 Nov 19 19:08 2026-11-20T01_08_50_183Z-debug-0.log
+--- exit=0 at 2026-11-20T01:12:21Z
+
+=== 2026-11-20T01:12:21Z | host=wsl | cmd: ls -la ~/.config/temporalio ~/.npm 2>&1; find ~ -maxdepth 3 -newer ~/1429-spike-engineer/node.tar.xz -not -path "*/1429-spike-engineer*" -not -path "*/1430-spike-engineer*" -not -path "*/1431-spike-engineer*" 2>/dev/null | head -30
+ls: cannot access '/home/cj/.config/temporalio': No such file or directory
+/home/cj/.npm:
+total 16
+drwxr-xr-x  4 cj cj 4096 Oct 21 18:42 .
+drwxr-x--- 35 cj cj 4096 Nov 19 19:02 ..
+drwxr-xr-x  5 cj cj 4096 Nov  4 19:33 _cacache
+drwxr-xr-x  2 cj cj 4096 Nov 19 19:03 _logs
+-rw-r--r--  1 cj cj    0 Nov 19 19:03 _update-notifier-last-checked
+/home/cj
+/home/cj/.cache
+/home/cj/.cache/ubuntu-pro/ubuntu-pro.log
+/home/cj/.cache/swc-native-1000
+/home/cj/.cache/swc-native-1000/v1
+/home/cj/.npm/_logs
+/home/cj/.npm/_logs/2026-11-20T01_03_52_536Z-debug-0.log
+/home/cj/.npm/_update-notifier-last-checked
+--- exit=0 at 2026-11-20T01:12:22Z
+
+=== 2026-11-20T01:12:34Z | host=laptop | cmd: ls -la -T ~/.npm/_logs | grep -E "Nov 19 (18|19):" ; ls -la ~/.npm/_update-notifier-last-checked 2>&1; ls $HOME/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/npm-cache/_logs
+drwxr-xr-x@ 16 cjwilliams  staff   512 Nov 19 19:08:50 2026 .
+-rw-r--r--@  1 cjwilliams  staff  1284 Nov 19 19:08:33 2026 2026-11-20T01_08_32_872Z-debug-0.log
+-rw-r--r--@  1 cjwilliams  staff  1284 Nov 19 19:08:35 2026 2026-11-20T01_08_34_276Z-debug-0.log
+-rw-r--r--@  1 cjwilliams  staff  1284 Nov 19 19:08:37 2026 2026-11-20T01_08_35_853Z-debug-0.log
+-rw-r--r--@  1 cjwilliams  staff  1291 Nov 19 19:08:39 2026 2026-11-20T01_08_38_208Z-debug-0.log
+-rw-r--r--@  1 cjwilliams  staff  1291 Nov 19 19:08:41 2026 2026-11-20T01_08_39_849Z-debug-0.log
+-rw-r--r--@  1 cjwilliams  staff  1291 Nov 19 19:08:42 2026 2026-11-20T01_08_41_467Z-debug-0.log
+-rw-r--r--@  1 cjwilliams  staff  1284 Nov 19 19:08:44 2026 2026-11-20T01_08_42_974Z-debug-0.log
+-rw-r--r--@  1 cjwilliams  staff  1284 Nov 19 19:08:46 2026 2026-11-20T01_08_44_438Z-debug-0.log
+-rw-r--r--@  1 cjwilliams  staff  1291 Nov 19 19:08:47 2026 2026-11-20T01_08_46_788Z-debug-0.log
+-rw-r--r--@  1 cjwilliams  staff  1291 Nov 19 19:08:49 2026 2026-11-20T01_08_48_322Z-debug-0.log
+-rw-r--r--@  1 cjwilliams  staff  1291 Nov 19 19:08:51 2026 2026-11-20T01_08_50_183Z-debug-0.log
+-rw-r--r--@ 1 cjwilliams  staff  0 Nov 15 20:42 /Users/cjwilliams/.npm/_update-notifier-last-checked
+2026-11-20T00_44_10_715Z-debug-0.log
+--- exit=0 at 2026-11-20T01:12:34Z
+
+=== 2026-11-20T01:12:34Z | host=wsl | cmd: ls -la --time-style=full-iso ~/.npm/_logs | tail -5; head -5 ~/.npm/_logs/2026-11-20T01_03_52_536Z-debug-0.log
+-rw-r--r-- 1 cj cj 2005 2026-11-10 11:55:10.799132364 -0600 2026-11-10T17_55_09_540Z-debug-0.log
+-rw-r--r-- 1 cj cj 1948 2026-11-10 11:55:12.159668748 -0600 2026-11-10T17_55_10_836Z-debug-0.log
+-rw-r--r-- 1 cj cj 1220 2026-11-10 11:55:29.708047724 -0600 2026-11-10T17_55_28_018Z-debug-0.log
+-rw-r--r-- 1 cj cj 3775 2026-11-10 11:55:52.383055141 -0600 2026-11-10T17_55_52_357Z-debug-0.log
+-rw-r--r-- 1 cj cj  978 2026-11-19 19:03:52.801497835 -0600 2026-11-20T01_03_52_536Z-debug-0.log
+0 verbose cli /home/cj/1429-spike-engineer/node/bin/node /home/cj/1429-spike-engineer/node/bin/npm
+1 info using npm@11.19.1
+2 info using node@v24.22.3
+3 silly config load:file:/home/cj/1429-spike-engineer/node/lib/node_modules/npm/npmrc
+4 silly config load:file:/home/cj/1429-spike-engineer/app/.npmrc
+--- exit=0 at 2026-11-20T01:12:34Z
+
+=== 2026-11-20T01:12:35Z | host=windows | cmd(powershell): Get-ChildItem $env:LOCALAPPDATA\npm-cache\_logs -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -gt (Get-Date).AddHours(-2) } | ForEach-Object { $_.FullName + " " + $_.LastWriteTime.ToUniversalTime().ToString("o") }; Test-Path $env:APPDATA\temporalio; Get-ChildItem C:\Users\cj\1429-spike-engineer\npm-cache\_logs | Select-Object -ExpandProperty Name
+C:\Users\CJ\AppData\Local\npm-cache\_logs\2026-11-20T01_03_53_372Z-debug-0.log 2026-11-20T01:03:53.6127108Z
+False
+2026-11-20T00_44_34_146Z-debug-0.log
+2026-11-20T00_44_42_264Z-debug-0.log
+--- exit=0 at 2026-11-20T01:12:35Z
+
+=== 2026-11-20T01:12:44Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow describe -w pin-kill-macos-2 | grep -E '^  Status'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow show -w pin-kill-macos-2 --output json > /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/pin-kill-macos-2.json; echo exported pin-kill-macos-2 $(jq '.events|length' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/pin-kill-macos-2.json) events
+  Status          COMPLETED
+exported pin-kill-macos-2 28 events
+--- exit=0 at 2026-11-20T01:12:44Z
+
+=== 2026-11-20T01:12:44Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow describe -w pin-stop-macos-2 | grep -E '^  Status'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow show -w pin-stop-macos-2 --output json > /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/pin-stop-macos-2.json; echo exported pin-stop-macos-2 $(jq '.events|length' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/pin-stop-macos-2.json) events
+  Status          COMPLETED
+exported pin-stop-macos-2 38 events
+--- exit=0 at 2026-11-20T01:12:45Z
+
+=== 2026-11-20T01:12:45Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow describe -w pin-kill-macos-1 | grep -E '^  Status'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow show -w pin-kill-macos-1 --output json > /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/pin-kill-macos-1.json; echo exported pin-kill-macos-1 $(jq '.events|length' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/pin-kill-macos-1.json) events
+  Status          COMPLETED
+exported pin-kill-macos-1 30 events
+--- exit=0 at 2026-11-20T01:12:45Z
+
+=== 2026-11-20T01:12:52Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow describe -w pin-stop-macos | grep -E '^  Status'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow show -w pin-stop-macos --output json > /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/pin-stop-macos.json; echo exported pin-stop-macos $(jq '.events|length' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/pin-stop-macos.json) events
+  Status    
+exported pin-stop-macos 24 events
+--- exit=0 at 2026-11-20T01:12:52Z
+
+=== 2026-11-20T01:12:52Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow describe -w claude-macos | grep -E '^  Status'; /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow show -w claude-macos --output json > /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/claude-macos.json; echo exported claude-macos $(jq '.events|length' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/claude-macos.json) events
+  Status          COMPLETED
+exported claude-macos 17 events
+--- exit=0 at 2026-11-20T01:12:52Z
+
+=== 2026-11-20T01:13:00Z | host=windows | cmd(powershell): Stop-Process -Id 21712 -Force; "rc=" + $?
+rc=True
+--- exit=0 at 2026-11-20T01:13:00Z
+
+=== 2026-11-20T01:13:00Z | host=wsl | cmd: kill -TERM 104971; echo rc=$?
+rc=0
+--- exit=0 at 2026-11-20T01:13:01Z
+
+=== 2026-11-20T01:13:01Z | host=laptop | cmd: kill -TERM 44645; echo rc=$?
+rc=0
+--- exit=0 at 2026-11-20T01:13:01Z
+
+=== 2026-11-20T01:13:06Z | host=laptop | cmd: ssh finnpc wsl.exe -e tar -C /home/cj/1429-spike-engineer -cf - logs worktrees | tar -C /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/collected/wsl -xf - && find /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/collected/wsl -type f | sed 's#.*/collected/##'
+wsl/logs/worker-wsl-1.pid
+wsl/logs/worker-wsl-1.log
+wsl/worktrees/wsl-1/ver-patched/tree.log
+wsl/worktrees/wsl-1/ver-unpatched/tree.log
+wsl/worktrees/wsl-1/ver-patched-new/tree.log
+wsl/worktrees/wsl-1/smoke-linux/tree.log
+wsl/worktrees/wsl-1/card-kill-linux/tree.log
+--- exit=0 at 2026-11-20T01:13:06Z
+
+=== 2026-11-20T01:13:06Z | host=laptop | cmd: scp -q -r finnpc:C:/Users/cj/1429-spike-engineer/logs finnpc:C:/Users/cj/1429-spike-engineer/worktrees /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/collected/windows/ && find /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/collected/windows -type f | sed 's#.*/collected/##'
+windows/logs/worker-win-1.log
+windows/worktrees/win-1/card-kill-windows/tree.log
+windows/worktrees/win-1/smoke-windows/tree.log
+--- exit=0 at 2026-11-20T01:13:07Z
+
+=== 2026-11-20T01:13:13Z | host=wsl | cmd: kill -TERM 745; echo rc=$?
+rc=0
+--- exit=0 at 2026-11-20T01:13:13Z
+
+=== 2026-11-20T01:13:13Z | host=laptop | cmd: ps -p 24640,34550,34554,51971,54309,83430,85007,85011,35824,92769,14457,24451 -o pid,etime,command
+  PID ELAPSED COMMAND
+14457   08:52 ssh -o ServerAliveInterval=30 finnpc wsl.exe -e bash -s -- wsl-1 wf-v1.js
+24451   08:39 ssh -o ServerAliveInterval=30 finnpc wsl.exe -e bash -s -- wsl-1 wf-v3.js
+34550   26:47 ssh -o ServerAliveInterval=30 finnpc wsl.exe -e bash -s -- wsl-1 wf-v1.js
+34554   26:47 ssh -o ServerAliveInterval=30 finnpc C:\Users\cj\1429-spike-engineer\win-worker.cmd win-1 wf-v1.js
+35824   10:50 ssh -o ServerAliveInterval=30 finnpc wsl.exe -e bash -s -- wsl-1 wf-v2.js
+51971   25:30 ssh -o ServerAliveInterval=30 finnpc wsl.exe -e bash -s -- wsl-1 wf-v1.js
+54309   25:06 ssh -o ServerAliveInterval=30 finnpc C:\Users\cj\1429-spike-engineer\win-worker.cmd win-1 wf-v1.js
+83430   21:10 ssh -N -o ExitOnForwardFailure=yes -L 17233:127.0.0.1:7233 finnpc
+85007   20:10 ssh -o ServerAliveInterval=30 finnpc wsl.exe -e bash -s -- wsl-1 wf-v1.js
+85011   20:10 ssh -o ServerAliveInterval=30 finnpc C:\Users\cj\1429-spike-engineer\win-worker.cmd win-1 wf-v1.js
+92769   09:10 ssh -o ServerAliveInterval=30 finnpc wsl.exe -e bash -s -- wsl-1 wf-v3.js
+--- exit=0 at 2026-11-20T01:13:13Z
+
+=== 2026-11-20T01:13:19Z | host=laptop | cmd: kill -TERM 14457 24451 34550 34554 35824 51971 54309 83430 85007 85011 92769; echo rc=$?
+rc=0
+--- exit=0 at 2026-11-20T01:13:19Z
+
+=== 2026-11-20T01:13:25Z | host=wsl | cmd: ps -o pid,ppid,etime,args -p 745,1008,1010,1426,1433,1497,1499,1576,1583,104116,104118,104546,104548,104777,104779,104864,104866,104969,104971; echo ---; ps -eo pid,args | grep -E "1429-spike|rigger-tree|worker.js" | grep -v grep
+    PID    PPID     ELAPSED COMMAND
+   1008    1005       26:58 sleep 1800
+   1497    1496       25:41 sleep 1800
+ 104116  104112       20:21 sleep 1800
+ 104546  104545       11:01 sleep 1800
+ 104777  104776       09:21 sleep 1800
+ 104864  104863       09:03 sleep 1800
+ 104969  104968       08:50 sleep 1800
+---
+--- exit=1 at 2026-11-20T01:13:25Z
+
+=== 2026-11-20T01:13:30Z | host=wsl | cmd: kill -TERM 1008 1497 104116 104546 104777 104864 104969; echo rc=$?
+rc=0
+--- exit=0 at 2026-11-20T01:13:30Z
+
+=== 2026-11-20T01:13:37Z | host=windows | cmd(powershell): Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match "1429-spike-engineer" -or $_.CommandLine -match "ping  -n 1800" -or (19380,19544,21712,33496,19992,21388,37528,20488,12292,31524,36912 -contains $_.ProcessId) } | ForEach-Object { "{0,6} {1,6} {2} {3}" -f $_.ProcessId, $_.ParentProcessId, $_.Name, $_.CommandLine }; "listing-done"
+ 12292  15112 cmd.exe "c:\windows\system32\cmd.exe" /c "C:\Users\cj\1429-spike-engineer\win-worker.cmd win-1 wf-v1.js"
+ 36912  12292 PING.EXE ping  -n 1800 127.0.0.1 
+ 31524  36676 cmd.exe "c:\windows\system32\cmd.exe" /c "C:\Users\cj\1429-spike-engineer\win-worker.cmd win-1 wf-v1.js"
+ 19052  31524 PING.EXE ping  -n 1800 127.0.0.1 
+ 34604  14512 cmd.exe "c:\windows\system32\cmd.exe" /c "C:\Users\cj\1429-spike-engineer\win-worker.cmd win-1 wf-v1.js"
+ 23108  34604 PING.EXE ping  -n 1800 127.0.0.1 
+listing-done
+--- exit=0 at 2026-11-20T01:13:38Z
+
+=== 2026-11-20T01:13:48Z | host=windows | cmd(powershell): Stop-Process -Id 36912,19052,23108,12292,31524,34604 -Force; "rc=" + $?; Start-Sleep -Seconds 2; Get-CimInstance Win32_Process | Where-Object { 15112,36676,14512,12292,31524,34604,36912,19052,23108 -contains $_.ProcessId } | ForEach-Object { "{0,6} {1,6} {2} {3}" -f $_.ProcessId, $_.ParentProcessId, $_.Name, $_.CommandLine }; "check-done"
+rc=True
+check-done
+--- exit=0 at 2026-11-20T01:13:51Z
+
+=== 2026-11-20T01:14:01Z | host=wsl | cmd: rm -v ~/.npm/_logs/2026-11-20T01_03_52_536Z-debug-0.log; ls -la --time-style=full-iso ~/.npm/_update-notifier-last-checked
+removed '/home/cj/.npm/_logs/2026-11-20T01_03_52_536Z-debug-0.log'
+-rw-r--r-- 1 cj cj 0 2026-11-19 19:03:52.581497868 -0600 /home/cj/.npm/_update-notifier-last-checked
+--- exit=0 at 2026-11-20T01:14:03Z
+
+=== 2026-11-20T01:14:03Z | host=windows | cmd(powershell): Remove-Item C:\Users\CJ\AppData\Local\npm-cache\_logs\2026-11-20T01_03_53_372Z-debug-0.log -Verbose 4>&1; Get-Item $env:LOCALAPPDATA\npm-cache\_update-notifier-last-checked -ErrorAction SilentlyContinue | ForEach-Object { $_.FullName + " " + $_.LastWriteTime.ToUniversalTime().ToString("o") + " created " + $_.CreationTime.ToUniversalTime().ToString("o") }
+#< CLIXML
+C:\Users\CJ\AppData\Local\npm-cache\_update-notifier-last-checked 2026-11-20T00:41:18.1382148Z created 2026-08-23T20:54:19.2286097Z
+<Objs Version="1.1.0.1" xmlns="http://schemas.microsoft.com/powershell/2004/04"><S S="verbose">Performing the operation "Remove File" on target </S><S S="verbose">"C:\Users\CJ\AppData\Local\npm-cache\_logs\2026-11-20T01_03_53_372Z-debug-0.log".</S></Objs>--- exit=0 at 2026-11-20T01:14:03Z
+
+=== 2026-11-20T01:14:08Z | host=wsl | cmd: stat -c "birth=%w modify=%y" ~/.npm/_update-notifier-last-checked
+birth=2026-10-21 18:42:22.955907022 -0500 modify=2026-11-19 19:03:52.581497868 -0600
+--- exit=0 at 2026-11-20T01:14:08Z
+
+=== 2026-11-20T01:14:16Z | host=wsl | cmd: du -sh ~/1429-spike-engineer; rm -rf ~/1429-spike-engineer; ls -d ~/1429-spike-engineer 2>&1
+797M	/home/cj/1429-spike-engineer
+ls: cannot access '/home/cj/1429-spike-engineer': No such file or directory
+--- exit=2 at 2026-11-20T01:14:17Z
+
+=== 2026-11-20T01:14:17Z | host=windows | cmd(powershell): Remove-Item -Recurse -Force C:\Users\cj\1429-spike-engineer; Test-Path C:\Users\cj\1429-spike-engineer
+False
+--- exit=0 at 2026-11-20T01:14:20Z
+### final process listings after last run
+
+=== 2026-11-20T01:14:37Z | host=laptop | cmd: date -u +%FT%TZ; ps -p 24640,34550,34554,51971,54309,83430,85007,85011,35824,92769,14457,24451,34563,34568,56714,85018,85022,6723,68452,44645,71540,71677,84441,84443,55566,55579,57776,57798,75813,75963,5133,5134,6507,6513,48538,48546 -o pid,command; echo ps-exit=$?; ps -axo pid,command | grep -E 'rigger-tree|worker.js|1429-spike' | grep -v grep | grep -v 1431; echo grep-done
+2026-11-20T01:14:37Z
+  PID COMMAND
+ps-exit=1
+ 4501 tee -a /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/transcript.log
+grep-done
+--- exit=0 at 2026-11-20T01:14:37Z
+
+=== 2026-11-20T01:14:37Z | host=wsl | cmd: date -u +%FT%TZ; ps -o pid,args -p 745,1008,1010,1497,1499,104116,104118,104546,104548,104777,104779,104864,104866,104969,104971,1426,1433,1576,1583,1201,1208,104946,104953,105026,105033,105067,105074,104523,104530,104607,104614; echo ps-exit=$?; ps -eo pid,args | grep -E 'rigger-tree|worker.js|1429-spike|temporal server' | grep -v grep; echo grep-done
+2026-11-20T01:14:38Z
+    PID COMMAND
+ps-exit=1
+grep-done
+--- exit=0 at 2026-11-20T01:14:38Z
+
+=== 2026-11-20T01:14:38Z | host=windows | cmd(powershell): (Get-Date).ToUniversalTime().ToString("o"); $ids = 19380,19544,21712,33496,19992,21388,37528,20488,23612,12292,31524,34604,36912,19052,23108; $alive = Get-Process -Id $ids -ErrorAction SilentlyContinue; "alive-count=" + @($alive).Count; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match "1429-spike-engineer|rigger-tree" } | ForEach-Object { $_.ProcessId }; "grep-done"
+2026-11-20T01:14:38.8836545Z
+alive-count=2
+grep-done
+--- exit=0 at 2026-11-20T01:14:39Z
+
+=== 2026-11-20T01:14:43Z | host=windows | cmd(powershell): $ids = 19380,19544,21712,33496,19992,21388,37528,20488,23612,12292,31524,34604,36912,19052,23108; Get-CimInstance Win32_Process | Where-Object { $ids -contains $_.ProcessId } | ForEach-Object { "{0,6} {1,6} {2} created={3} {4}" -f $_.ProcessId, $_.ParentProcessId, $_.Name, $_.CreationDate.ToUniversalTime().ToString("o"), $_.CommandLine }
+ 21388   4784 conhost.exe created=2026-11-20T01:14:37.3178040Z \??\C:\WINDOWS\system32\conhost.exe 0x4
+--- exit=0 at 2026-11-20T01:14:44Z
+
+=== 2026-11-20T01:17:43Z | host=windows | cmd(powershell): (Get-Date).ToUniversalTime().ToString("o"); $ids = 19380,19544,21712,33496,19992,21388,37528,20488,23612,12292,31524,34604,36912,19052,23108; Get-CimInstance Win32_Process | Where-Object { $ids -contains $_.ProcessId } | ForEach-Object { "live id {0} is {1} created {2}" -f $_.ProcessId, $_.Name, $_.CreationDate.ToUniversalTime().ToString("o") }; "by-command-line:"; Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match "1429-spike-engineer|rigger-tree" } | ForEach-Object { $_.ProcessId }; "done"
+2026-11-20T01:17:43.3699628Z
+by-command-line:
+done
+--- exit=0 at 2026-11-20T01:17:44Z
+
+=== 2026-11-20T01:30:51Z | host=laptop | cmd: cd /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer && npm_config_cache=/Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/npm-cache npm ci --no-audit --no-fund 2>&1 | tail -3
+
+added 3 packages in 504ms
+--- exit=0 at 2026-11-20T01:30:51Z
+### re-run for the owner grant 1429#7027885620 (one claude -p under the owner's ~/.claude)
+
+=== 2026-11-20T01:53:13Z | host=wsl | cmd: D=~/1429-spike-engineer; mkdir -p $D/tcli && cd $D && curl -fsSL -o temporal.tgz "https://temporal.download/cli/archive/latest?platform=linux&arch=amd64" && tar -xzf temporal.tgz -C tcli && ./tcli/temporal --version; ss -ltn | grep -E ":(7233|8233) " ; echo port-check-done
+temporal version 1.10.1 (Server 1.32.2, UI 2.56.4)
+port-check-done
+--- exit=0 at 2026-11-20T01:53:17Z
+
+=== 2026-11-20T01:53:30Z | host=laptop | cmd: (edit) app/activities.js claudeRun: CLAUDE_CONFIG_DIR only when given, extraArgs passed before the prompt; app/wf-common.js passes the whole claude input
+
+=== 2026-11-20T01:53:42Z | host=laptop | cmd: (edit) claudeRun spawns claude asynchronously and heartbeats every 2 s; wf-common gives claudeRun retry maximumAttempts 1, so the run happens exactly once
+
+=== 2026-11-20T01:53:50Z | host=laptop | cmd: (background) ssh -o ServerAliveInterval=30 finnpc wsl.exe -e bash -s < remote/server.sh > server-session-2.log
+laptop server-session ssh pid=68933
+
+=== 2026-11-20T01:53:50Z | host=laptop | cmd: (background) ssh -N -o ExitOnForwardFailure=yes -L 17233:127.0.0.1:7233 finnpc
+laptop tunnel ssh pid=68938
+
+=== 2026-11-20T01:53:55Z | host=wsl | cmd: ss -ltnp | grep -E ":(7233|8233) "
+LISTEN 0      4096                *:8233             *:*    users:(("temporal",pid=406,fd=13))
+LISTEN 0      4096                *:7233             *:*    users:(("temporal",pid=406,fd=10))
+--- exit=0 at 2026-11-20T01:53:56Z
+
+=== 2026-11-20T01:53:56Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 operator cluster health
+SERVING
+--- exit=0 at 2026-11-20T01:53:56Z
+
+=== 2026-11-20T01:54:03Z | host=laptop | cmd: start-mac-worker.sh mac-a wf-v1.js -> worker pid=71061
+
+=== 2026-11-20T01:54:10Z | host=laptop | cmd: date -u +%FT%TZ; stat -f "%Sm %N" -t "%Y-%m-%dT%H:%M:%S%z" ~/.claude/* ~/.claude/.[!.]* 2>/dev/null | sort -k2; echo "projects count: $(ls -1A ~/.claude/projects | wc -l | tr -d " ")"; ls -d ~/.claude/projects/*1429-spike-engineer* 2>&1
+2026-11-20T01:54:10Z
+2026-11-19T09:14:35-0600 /Users/cjwilliams/.claude/.last-cleanup
+2026-11-19T08:32:30-0600 /Users/cjwilliams/.claude/.last-update-result.json
+2026-11-19T19:53:21-0600 /Users/cjwilliams/.claude/backups
+2026-11-19T08:32:02-0600 /Users/cjwilliams/.claude/cache
+2026-07-09T09:12:17-0500 /Users/cjwilliams/.claude/chrome
+2026-07-07T11:45:12-0500 /Users/cjwilliams/.claude/downloads
+2026-11-01T08:14:41-0600 /Users/cjwilliams/.claude/feedback
+2026-11-19T09:14:35-0600 /Users/cjwilliams/.claude/file-history
+2026-11-19T19:31:10-0600 /Users/cjwilliams/.claude/history.jsonl
+2026-11-04T16:21:01-0600 /Users/cjwilliams/.claude/hooks
+2026-11-18T20:45:33-0600 /Users/cjwilliams/.claude/ide
+2026-11-19T08:32:06-0600 /Users/cjwilliams/.claude/mcp-needs-auth-cache.json
+2026-11-19T19:31:10-0600 /Users/cjwilliams/.claude/paste-cache
+2026-10-29T20:57:43-0500 /Users/cjwilliams/.claude/plans
+2026-11-19T19:41:04-0600 /Users/cjwilliams/.claude/plugins
+2026-11-19T19:41:48-0600 /Users/cjwilliams/.claude/projects
+2026-11-19T19:52:11-0600 /Users/cjwilliams/.claude/session-env
+2026-11-19T19:53:13-0600 /Users/cjwilliams/.claude/sessions
+2026-11-04T16:21:01-0600 /Users/cjwilliams/.claude/settings.json
+2026-11-19T19:53:13-0600 /Users/cjwilliams/.claude/shell-snapshots
+2026-11-04T12:21:31-0600 /Users/cjwilliams/.claude/skills
+2026-11-04T16:44:09-0600 /Users/cjwilliams/.claude/state
+2026-11-10T20:01:18-0600 /Users/cjwilliams/.claude/stats-cache.json
+2026-11-19T13:25:02-0600 /Users/cjwilliams/.claude/telemetry
+projects count: 16
+ls: /Users/cjwilliams/.claude/projects/*1429-spike-engineer*: No such file or directory
+--- exit=1 at 2026-11-20T01:54:10Z
+
+=== 2026-11-20T01:54:20Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow execute --type card --task-queue rigger-macos --workflow-id claude-macos-owner --input '{"card":"claude-macos-owner","os":"macos","claude":{"configDir":null,"prompt":"Reply with the single word ok.","extraArgs":["--no-session-persistence"]}}' 2>&1 | tail -6
+
+Results:
+  RunTime         1.25s
+  Status          COMPLETED
+  Result          {"exit":1,"host":"mac-a","pid":77583,"signal":null,"stderr":"Permission allow rule (../../../../../rigger/.claude/settings.local.json): Write(//Users/cjwilliams/GitHub/rigger-worktrees/tq-tools/codex-session.sh) is not matched by file permission checks — only Edit(path) rules are. Use Edit(//Users/cjwilliams/GitHub/rigger-worktrees/tq-tools/codex-session.sh) instead (Edit rules cover all file-editing tools).\nPermission allow rule (../../../../../rigger/.claude/settings.local.json): Bash(sh /Users/cjwilliams/GitHub/rigger-worktrees/tq-tools/codex-*.sh:*) mixes * with the trailing :* prefix syntax, so it is matched as a literal prefix (the * is not expanded) and will likely never match. Replace that * with the exact value you mean.\n","stdout":"Not logged in · Please run /login\n"}
+  ResultEncoding  json/plain
+--- exit=0 at 2026-11-20T01:54:22Z
+
+=== 2026-11-20T01:54:31Z | host=laptop | cmd: date -u +%FT%TZ; stat -f "%Sm %N" -t "%Y-%m-%dT%H:%M:%S%z" ~/.claude/* ~/.claude/.[!.]* 2>/dev/null | sort -k2; echo "projects count: $(ls -1A ~/.claude/projects | wc -l | tr -d " ")"; ls -d ~/.claude/projects/*1429-spike-engineer* 2>&1
+2026-11-20T01:54:31Z
+2026-11-19T09:14:35-0600 /Users/cjwilliams/.claude/.last-cleanup
+2026-11-19T08:32:30-0600 /Users/cjwilliams/.claude/.last-update-result.json
+2026-11-19T19:53:21-0600 /Users/cjwilliams/.claude/backups
+2026-11-19T08:32:02-0600 /Users/cjwilliams/.claude/cache
+2026-07-09T09:12:17-0500 /Users/cjwilliams/.claude/chrome
+2026-07-07T11:45:12-0500 /Users/cjwilliams/.claude/downloads
+2026-11-01T08:14:41-0600 /Users/cjwilliams/.claude/feedback
+2026-11-19T09:14:35-0600 /Users/cjwilliams/.claude/file-history
+2026-11-19T19:31:10-0600 /Users/cjwilliams/.claude/history.jsonl
+2026-11-04T16:21:01-0600 /Users/cjwilliams/.claude/hooks
+2026-11-18T20:45:33-0600 /Users/cjwilliams/.claude/ide
+2026-11-19T08:32:06-0600 /Users/cjwilliams/.claude/mcp-needs-auth-cache.json
+2026-11-19T19:31:10-0600 /Users/cjwilliams/.claude/paste-cache
+2026-10-29T20:57:43-0500 /Users/cjwilliams/.claude/plans
+2026-11-19T19:54:21-0600 /Users/cjwilliams/.claude/plugins
+2026-11-19T19:41:48-0600 /Users/cjwilliams/.claude/projects
+2026-11-19T19:54:21-0600 /Users/cjwilliams/.claude/session-env
+2026-11-19T19:54:22-0600 /Users/cjwilliams/.claude/sessions
+2026-11-04T16:21:01-0600 /Users/cjwilliams/.claude/settings.json
+2026-11-19T19:53:13-0600 /Users/cjwilliams/.claude/shell-snapshots
+2026-11-04T12:21:31-0600 /Users/cjwilliams/.claude/skills
+2026-11-04T16:44:09-0600 /Users/cjwilliams/.claude/state
+2026-11-10T20:01:18-0600 /Users/cjwilliams/.claude/stats-cache.json
+2026-11-19T13:25:02-0600 /Users/cjwilliams/.claude/telemetry
+projects count: 16
+ls: /Users/cjwilliams/.claude/projects/*1429-spike-engineer*: No such file or directory
+--- exit=1 at 2026-11-20T01:54:31Z
+
+=== 2026-11-20T01:54:38Z | host=laptop | cmd: cd ~/.claude && find plugins session-env sessions -maxdepth 2 -newermt "2026-11-19 19:54:15" -exec stat -f "%Sm %N" -t "%Y-%m-%dT%H:%M:%S%z" {} \; 2>/dev/null; echo find-done
+2026-11-19T19:54:21-0600 plugins
+2026-11-19T19:54:21-0600 plugins/store
+2026-11-19T19:54:21-0600 plugins/store/cc-plugin-agents-md_builtin-b049b47b3618.json
+2026-11-19T19:54:21-0600 session-env
+2026-11-19T19:54:21-0600 session-env/2940f454-aa3a-4a1c-a49a-a1fe3b0f0276
+2026-11-19T19:54:22-0600 sessions
+find-done
+--- exit=0 at 2026-11-20T01:54:38Z
+
+=== 2026-11-20T01:54:48Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow show -w claude-macos-owner --output json > /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/claude-macos-owner.json; jq '.events|length' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/claude-macos-owner.json; jq -r '[.events[]|select(.eventType=="EVENT_TYPE_ACTIVITY_TASK_STARTED")|.activityTaskStartedEventAttributes|{identity,attempt}]' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/claude-macos-owner.json
+17
+[
+  {
+    "identity": "mac-a/CJs-MacBook-Pro.local/71061",
+    "attempt": 1
+  },
+  {
+    "identity": "mac-a/CJs-MacBook-Pro.local/71061",
+    "attempt": 1
+  }
+]
+--- exit=0 at 2026-11-20T01:54:48Z
+
+=== 2026-11-20T01:54:48Z | host=laptop | cmd: kill -TERM 71061; echo rc=$?
+rc=0
+--- exit=0 at 2026-11-20T01:54:48Z
+
+=== 2026-11-20T01:54:48Z | host=wsl | cmd: kill -TERM 406; echo rc=$?
+rc=0
+--- exit=0 at 2026-11-20T01:54:48Z
+
+=== 2026-11-20T01:54:55Z | host=laptop | cmd: ps -p 68933,68938,71061,77583 -o pid,command; kill -TERM 68938 2>/dev/null; echo tunnel-term=$?
+  PID COMMAND
+68938 ssh -N -o ServerAliveInterval=30 -o ExitOnForwardFailure=yes -L 17233:127.0.0.1:7233 finnpc
+tunnel-term=0
+--- exit=0 at 2026-11-20T01:54:55Z
+
+=== 2026-11-20T01:54:55Z | host=wsl | cmd: ps -o pid,args -p 406; rm -rf ~/1429-spike-engineer; ls -d ~/1429-spike-engineer 2>&1; ps -eo pid,args | grep -E "1429-spike|temporal server" | grep -v grep; echo wsl-done
+    PID COMMAND
+ls: cannot access '/home/cj/1429-spike-engineer': No such file or directory
+wsl-done
+--- exit=0 at 2026-11-20T01:54:55Z
+### final process listings after the re-run
+
+=== 2026-11-20T01:55:01Z | host=laptop | cmd: date -u +%FT%TZ; ps -p 68933,68938,71061,77583 -o pid,command; echo ps-exit=$?
+2026-11-20T01:55:01Z
+  PID COMMAND
+ps-exit=1
+--- exit=0 at 2026-11-20T01:55:01Z
+
+=== 2026-11-20T01:55:01Z | host=wsl | cmd: date -u +%FT%TZ; ps -o pid,args -p 406; echo ps-exit=$?
+2026-11-20T01:55:01Z
+    PID COMMAND
+ps-exit=1
+--- exit=0 at 2026-11-20T01:55:01Z
+
+=== 2026-11-20T01:55:01Z | host=windows | cmd(powershell): (Get-Date).ToUniversalTime().ToString("o"); Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match "1429-spike-engineer|rigger-tree" } | ForEach-Object { $_.ProcessId }; "windows-none-listed"
+2026-11-20T01:55:01.6326906Z
+windows-none-listed
+--- exit=0 at 2026-11-20T01:55:02Z
+### third claude -p run for the owner grant 1429#7028383522 (full login environment, owner ~/.claude)
+
+=== 2026-11-20T02:24:53Z | host=laptop | cmd: (edit) app/activities.js claudeRun: inheritEnv passes the worker process environment unchanged; logs env key names only, never values
+
+=== 2026-11-20T02:24:53Z | host=wsl | cmd: D=~/1429-spike-engineer; mkdir -p $D/tcli && cd $D && curl -fsSL -o temporal.tgz "https://temporal.download/cli/archive/latest?platform=linux&arch=amd64" && tar -xzf temporal.tgz -C tcli && ./tcli/temporal --version; ss -ltn | grep -E ":(7233|8233) "; echo port-check-done
+temporal version 1.10.1 (Server 1.32.2, UI 2.56.4)
+port-check-done
+--- exit=0 at 2026-11-20T02:24:56Z
+
+=== 2026-11-20T02:25:03Z | host=laptop | cmd: env -i HOME="$HOME" USER="$USER" LOGNAME="$LOGNAME" SHELL=/bin/zsh TMPDIR="$TMPDIR" /bin/zsh -l -c "command -v node claude; env | cut -d= -f1 | sort | tr \"\n\" \" \""
+/opt/homebrew/bin/node
+/opt/homebrew/bin/claude
+HOME LANG LOGNAME OLDPWD PATH PWD SHELL SHLVL TMPDIR USER _ --- exit=0 at 2026-11-20T02:25:03Z
+
+=== 2026-11-20T02:25:14Z | host=laptop | cmd: (background) ssh -o ServerAliveInterval=30 finnpc wsl.exe -e bash -s < remote/server.sh > server-session-3.log
+laptop server-session ssh pid=23073
+
+=== 2026-11-20T02:25:14Z | host=laptop | cmd: (background) ssh -N -o ExitOnForwardFailure=yes -L 17233:127.0.0.1:7233 finnpc
+laptop tunnel ssh pid=23077
+
+=== 2026-11-20T02:25:21Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 operator cluster health
+SERVING
+--- exit=0 at 2026-11-20T02:25:21Z
+
+=== 2026-11-20T02:25:21Z | host=laptop | cmd: start-mac-worker-login.sh mac-a -> worker pid=23128 (env -i HOME USER LOGNAME SHELL TMPDIR, then zsh -l, exec node)
+
+=== 2026-11-20T02:25:36Z | host=laptop | cmd: date -u +%FT%TZ; stat -f "%Sm %N" -t "%Y-%m-%dT%H:%M:%S%z" ~/.claude/* ~/.claude/.[!.]* 2>/dev/null | sort -k2; echo "projects count: $(ls -1A ~/.claude/projects | wc -l | tr -d " ")"; ls -d ~/.claude/projects/*1429-spike-engineer* 2>&1
+2026-11-20T02:25:36Z
+2026-11-19T09:14:35-0600 /Users/cjwilliams/.claude/.last-cleanup
+2026-11-19T08:32:30-0600 /Users/cjwilliams/.claude/.last-update-result.json
+2026-11-19T20:25:03-0600 /Users/cjwilliams/.claude/backups
+2026-11-19T08:32:02-0600 /Users/cjwilliams/.claude/cache
+2026-07-09T09:12:17-0500 /Users/cjwilliams/.claude/chrome
+2026-07-07T11:45:12-0500 /Users/cjwilliams/.claude/downloads
+2026-11-01T08:14:41-0600 /Users/cjwilliams/.claude/feedback
+2026-11-19T09:14:35-0600 /Users/cjwilliams/.claude/file-history
+2026-11-19T19:31:10-0600 /Users/cjwilliams/.claude/history.jsonl
+2026-11-04T16:21:01-0600 /Users/cjwilliams/.claude/hooks
+2026-11-18T20:45:33-0600 /Users/cjwilliams/.claude/ide
+2026-11-19T08:32:06-0600 /Users/cjwilliams/.claude/mcp-needs-auth-cache.json
+2026-11-19T19:31:10-0600 /Users/cjwilliams/.claude/paste-cache
+2026-10-29T20:57:43-0500 /Users/cjwilliams/.claude/plans
+2026-11-19T19:54:21-0600 /Users/cjwilliams/.claude/plugins
+2026-11-19T19:41:48-0600 /Users/cjwilliams/.claude/projects
+2026-11-19T19:54:21-0600 /Users/cjwilliams/.claude/session-env
+2026-11-19T19:57:42-0600 /Users/cjwilliams/.claude/sessions
+2026-11-04T16:21:01-0600 /Users/cjwilliams/.claude/settings.json
+2026-11-19T19:57:42-0600 /Users/cjwilliams/.claude/shell-snapshots
+2026-11-04T12:21:31-0600 /Users/cjwilliams/.claude/skills
+2026-11-04T16:44:09-0600 /Users/cjwilliams/.claude/state
+2026-11-10T20:01:18-0600 /Users/cjwilliams/.claude/stats-cache.json
+2026-11-19T13:25:02-0600 /Users/cjwilliams/.claude/telemetry
+projects count: 16
+ls: /Users/cjwilliams/.claude/projects/*1429-spike-engineer*: No such file or directory
+--- exit=1 at 2026-11-20T02:25:36Z
+
+=== 2026-11-20T02:25:36Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow execute --type card --task-queue rigger-macos --workflow-id claude-macos-login --input '{"card":"claude-macos-login","os":"macos","claude":{"configDir":null,"prompt":"Reply with the single word ok.","extraArgs":["--no-session-persistence"],"inheritEnv":true}}' 2>&1 | tail -5
+Results:
+  RunTime         6.36s
+  Status          COMPLETED
+  Result          {"exit":0,"host":"mac-a","pid":23310,"signal":null,"stderr":"Permission allow rule (../../../../../rigger/.claude/settings.local.json): Write(//Users/cjwilliams/GitHub/rigger-worktrees/tq-tools/codex-session.sh) is not matched by file permission checks — only Edit(path) rules are. Use Edit(//Users/cjwilliams/GitHub/rigger-worktrees/tq-tools/codex-session.sh) instead (Edit rules cover all file-editing tools).\nPermission allow rule (../../../../../rigger/.claude/settings.local.json): Bash(sh /Users/cjwilliams/GitHub/rigger-worktrees/tq-tools/codex-*.sh:*) mixes * with the trailing :* prefix syntax, so it is matched as a literal prefix (the * is not expanded) and will likely never match. Replace that * with the exact value you mean.\n","stdout":"ok\n"}
+  ResultEncoding  json/plain
+--- exit=0 at 2026-11-20T02:25:42Z
+
+=== 2026-11-20T02:25:42Z | host=laptop | cmd: date -u +%FT%TZ; stat -f "%Sm %N" -t "%Y-%m-%dT%H:%M:%S%z" ~/.claude/* ~/.claude/.[!.]* 2>/dev/null | sort -k2; echo "projects count: $(ls -1A ~/.claude/projects | wc -l | tr -d " ")"; ls -d ~/.claude/projects/*1429-spike-engineer* 2>&1
+2026-11-20T02:25:42Z
+2026-11-19T09:14:35-0600 /Users/cjwilliams/.claude/.last-cleanup
+2026-11-19T08:32:30-0600 /Users/cjwilliams/.claude/.last-update-result.json
+2026-11-19T20:25:03-0600 /Users/cjwilliams/.claude/backups
+2026-11-19T08:32:02-0600 /Users/cjwilliams/.claude/cache
+2026-07-09T09:12:17-0500 /Users/cjwilliams/.claude/chrome
+2026-07-07T11:45:12-0500 /Users/cjwilliams/.claude/downloads
+2026-11-01T08:14:41-0600 /Users/cjwilliams/.claude/feedback
+2026-11-19T09:14:35-0600 /Users/cjwilliams/.claude/file-history
+2026-11-19T19:31:10-0600 /Users/cjwilliams/.claude/history.jsonl
+2026-11-04T16:21:01-0600 /Users/cjwilliams/.claude/hooks
+2026-11-18T20:45:33-0600 /Users/cjwilliams/.claude/ide
+2026-11-19T08:32:06-0600 /Users/cjwilliams/.claude/mcp-needs-auth-cache.json
+2026-11-19T19:31:10-0600 /Users/cjwilliams/.claude/paste-cache
+2026-10-29T20:57:43-0500 /Users/cjwilliams/.claude/plans
+2026-11-19T20:25:37-0600 /Users/cjwilliams/.claude/plugins
+2026-11-19T19:41:48-0600 /Users/cjwilliams/.claude/projects
+2026-11-19T20:25:37-0600 /Users/cjwilliams/.claude/session-env
+2026-11-19T20:25:42-0600 /Users/cjwilliams/.claude/sessions
+2026-11-04T16:21:01-0600 /Users/cjwilliams/.claude/settings.json
+2026-11-19T19:57:42-0600 /Users/cjwilliams/.claude/shell-snapshots
+2026-11-04T12:21:31-0600 /Users/cjwilliams/.claude/skills
+2026-11-04T16:44:09-0600 /Users/cjwilliams/.claude/state
+2026-11-10T20:01:18-0600 /Users/cjwilliams/.claude/stats-cache.json
+2026-11-19T13:25:02-0600 /Users/cjwilliams/.claude/telemetry
+projects count: 16
+ls: /Users/cjwilliams/.claude/projects/*1429-spike-engineer*: No such file or directory
+--- exit=1 at 2026-11-20T02:25:42Z
+
+=== 2026-11-20T02:25:53Z | host=laptop | cmd: cd ~/.claude && find plugins session-env sessions -maxdepth 2 -newermt "2026-11-19 20:25:30" -exec stat -f "%Sm %N" -t "%Y-%m-%dT%H:%M:%S%z" {} \; 2>/dev/null; echo find-done
+2026-11-19T20:25:37-0600 plugins
+2026-11-19T20:25:37-0600 plugins/synced/188cbadc-5575-4b25-9748-2c3fea791070_22bb0b79-1ee7-4d08-bfc9-cd94c807252c
+2026-11-19T20:25:37-0600 session-env
+2026-11-19T20:25:37-0600 session-env/bf0a1443-cde9-452e-9fa6-8c32273b4372
+2026-11-19T20:25:42-0600 sessions
+find-done
+--- exit=0 at 2026-11-20T02:25:53Z
+
+=== 2026-11-20T02:26:01Z | host=laptop | cmd: /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/tcli/temporal --address 127.0.0.1:17233 workflow show -w claude-macos-login --output json > /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/claude-macos-login.json; jq -c '[.events[]|select(.eventType=="EVENT_TYPE_ACTIVITY_TASK_STARTED")|.activityTaskStartedEventAttributes|{identity,attempt}]' /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories/claude-macos-login.json
+[{"identity":"mac-a/CJs-MacBook-Pro.local/23128","attempt":1},{"identity":"mac-a/CJs-MacBook-Pro.local/23128","attempt":1}]
+--- exit=0 at 2026-11-20T02:26:01Z
+
+=== 2026-11-20T02:26:01Z | host=laptop | cmd: kill -TERM 23128; echo rc=$?
+rc=0
+--- exit=0 at 2026-11-20T02:26:01Z
+
+=== 2026-11-20T02:26:01Z | host=wsl | cmd: kill -TERM 407; echo rc=$?
+rc=0
+--- exit=0 at 2026-11-20T02:26:02Z
+
+=== 2026-11-20T02:26:02Z | host=laptop | cmd: kill -TERM 23077; echo rc=$?
+rc=0
+--- exit=0 at 2026-11-20T02:26:02Z
+
+=== 2026-11-20T02:26:02Z | host=wsl | cmd: rm -rf ~/1429-spike-engineer; ls -d ~/1429-spike-engineer 2>&1
+ls: cannot access '/home/cj/1429-spike-engineer': No such file or directory
+--- exit=2 at 2026-11-20T02:26:02Z
+### final process listings after the third run
+
+=== 2026-11-20T02:26:08Z | host=laptop | cmd: date -u +%FT%TZ; ps -p 23073,23077,23128,23310 -o pid,command; echo ps-exit=$?
+2026-11-20T02:26:08Z
+  PID COMMAND
+ps-exit=1
+--- exit=0 at 2026-11-20T02:26:08Z
+
+=== 2026-11-20T02:26:08Z | host=wsl | cmd: date -u +%FT%TZ; ps -o pid,args -p 407; echo ps-exit=$?; ps -eo pid,args | grep -E "1429-spike|temporal server" | grep -v grep; echo wsl-grep-done
+2026-11-20T02:26:08Z
+    PID COMMAND
+ps-exit=1
+wsl-grep-done
+--- exit=0 at 2026-11-20T02:26:09Z
+
+=== 2026-11-20T02:26:09Z | host=windows | cmd(powershell): (Get-Date).ToUniversalTime().ToString("o"); Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match "1429-spike-engineer|rigger-tree" } | ForEach-Object { $_.ProcessId }; "windows-none-listed"
+2026-11-20T02:26:09.2837248Z
+windows-none-listed
+--- exit=0 at 2026-11-20T02:26:10Z
+
+=== APPENDIX: commands run outside the logging wrapper ===
+These ran on the laptop from the spike engineer's shell (zsh), not through t.sh, w.sh or p.sh. Times are UTC; a time marked ~ is reconstructed from neighbouring logged entries, to within a minute. Each line is the command as run, with these names standing for the same text throughout:
+  W  = /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer
+  S  = W/spikes/1429-spike-engineer
+  SP = /private/tmp/claude-501/-Users-cjwilliams-GitHub-rigger/17bfb854-c7ed-40ce-af2d-5578b0a83820/scratchpad
+  TC = S/tcli/temporal --address 127.0.0.1:17233
+Output is quoted where the command was not read-only or where it failed; read-only commands whose output fed the report are covered by the evidence files the report cites.
+
+Throwaway files: the commands that wrote them were heredocs ("cat > <file> <<'EOF' … EOF") and in-place edits (sed -i '', perl -pi/-0pi). Their bodies are the spike's code, which AGENTS.md ("When you write code") keeps out of the repository, so they are not reproduced here. Each file's path and final sha256 (first 16 hex) instead:
+  bf40cce5212ab949 S/t.sh                 2adee2e982c37c15 S/w.sh                 a76c5c6312ec8248 S/p.sh
+  acb9a1be6ccb79ed S/lst.sh               5f770c35a96436b0 S/killtest.sh          1ad236367689bf23 S/sample.sh
+  4648d99e92db67f5 S/pintest.sh           d68b63d3214f0ed2 S/hist.sh              90692faa7b5127d6 S/vertest.sh
+  447493a5cb1c17b0 S/start-mac-worker.sh  f472ed863c5e91b6 S/start-mac-worker-login.sh  6a9ea4086562c7db S/start-remote-worker.sh
+  be1e37077f6c2080 S/remote/server.sh     701de4037d655919 S/remote/wsl-install.sh      56e818bc6c74f3be S/remote/wsl-npm.sh
+  031a9591f062e5f1 S/remote/wsl-worker.sh 285bce88959d5e41 S/remote/win-worker.cmd
+  334eca55da255d54 S/app/package.json     90b73eea2381fd71 S/app/tree.js          a5b290cd01586074 S/app/activities.js
+  59e0448f37a03136 S/app/wf-common.js     4313e7b06ad88e8a S/app/wf-v1.js         9c44ffbdd003ebd3 S/app/wf-v2.js
+  1e97f4ff873f4147 S/app/wf-v3.js         7fb1ceb0e5478ee0 S/app/worker.js
+Edits to app/ files during the runs are logged above as "(edit)" note lines at the time they were made.
+
+~00:38  cd /Users/cjwilliams/GitHub/rigger && gh issue view 1429 --json body -q .body | shasum | cut -c1-12; gh issue view 1429; gh api repos/williacj/rigger/issues/comments/7013263477 -q .body; cat SP/temporal-spike-common.md
+        (printed ae678a4be9d6, then the card, the attack comment and the brief)
+~00:38  gh api repos/williacj/rigger/issues/1429/comments -q '.[] | "---- \(.id) \(.user.login) \(.created_at)\n\(.body)"'
+~00:39  cd /Users/cjwilliams/GitHub/rigger && git fetch -q origin && ls ~/GitHub/rigger-worktrees/ | head -50; git worktree add -b rigger-1429 ~/GitHub/rigger-worktrees/1429-spike-engineer origin/main 2>&1 | tail -2
+        (printed: branch 'rigger-1429' set up to track 'origin/main'. HEAD is now at ebe7949e Merge pull request #1428 from williacj/rigger-1425)
+~00:39  mkdir -p S; cd W && git check-ignore -v spikes/1429-spike-engineer/x; cat > S/t.sh <<'EOF' … EOF; chmod +x S/t.sh
+        (printed: .gitignore:5:/spikes/	spikes/1429-spike-engineer/x)
+~00:41  cat ~/.claude/projects/-Users-cjwilliams-GitHub-rigger/memory/live-test-home.md …/spike-transcript-not-plan.md …/unique-scratch-dirs.md; env | grep -i -E 'anthropic|claude' | sed 's/=.*/=<set>/'; which claude; claude --version
+        (printed: 12 variable names, each =<set>; /Users/cjwilliams/.local/bin/claude; 2.1.328 (Claude Code))
+~00:41  cd W && grep -rn -E "CLAUDE_CONFIG_DIR|CLAUDE_CODE_OAUTH_TOKEN|ANTHROPIC_API_KEY|apiKeyHelper" src test docs/spikes scripts 2>/dev/null | head -30
+00:42:38 gh issue comment 1429 --body-file SP/1429-intent.md     (printed: https://github.com/williacj/rigger/issues/1429#issuecomment-7026651102)
+~00:43  mkdir -p S/app; cat > package.json/tree.js/activities.js/wf-v1.js/wf-v2.js/wf-v3.js/wf-common.js/worker.js <<'EOF' … EOF (in S/app)
+~00:44  cd S/app && sed -i '' 's/"\*"/"1.26.0"/' package.json && grep 1.26 package.json | head -2
+~00:45  cat > S/remote/{wsl-install.sh,wsl-npm.sh,server.sh,wsl-worker.sh,win-worker.cmd} and S/{w.sh,p.sh,lst.sh,start-mac-worker.sh,start-remote-worker.sh} <<'EOF' … EOF; chmod +x; scp -q S/remote/win-worker.cmd finnpc:C:/Users/cj/1429-spike-engineer/win-worker.cmd
+00:45:34 cd S; nohup ssh -o ServerAliveInterval=30 -o ExitOnForwardFailure=yes -L 7233:127.0.0.1:7233 -L 8233:127.0.0.1:8233 finnpc wsl.exe -e bash -s < remote/server.sh > server-session.log 2>&1 &     (laptop pid 24640)
+~00:46  cd S; cat logs/session-*.log logs/worker-mac-*.log
+~00:47  perl -0pi -e 's/-Filter "Name=''node.exe''" \|/| Where-Object { $_.Name -eq "node.exe" } |/' S/lst.sh; sed -i '' 's/| grep -v grep. ;;/| grep -v grep | grep -v 1431-spike'"'"' ;;/' S/lst.sh
+~00:47  cat > S/killtest.sh <<'EOF' … EOF; chmod +x; date -u +%FT%T.%3NZ     (printed 2026-11-20T00:46:21.3NZ: BSD date has no %3N)
+~00:47  sed -i '' (start-mac-worker.sh: replace the %3N date with date -u +%FT%TZ)
+~00:49  cat > S/sample.sh <<'EOF' … EOF; S/sample.sh (as a background task; each listing it made is logged above)
+~00:49  for w in card-kill-linux card-kill-windows card-kill-macos smoke-linux smoke-windows smoke-macos: S/t.sh laptop "TC … workflow describe …; workflow show -w $w --output json > W/docs/spikes/temporal-dispatch-under-failure/histories/$w.json" (logged above); then jq -r '.events[] | [...] | @tsv' over the three card-kill histories
+~00:51  ps -p 24640 -o pid,stat,command; tail -5 S/server-session.log; tail -5 S/logs/worker-mac-b.log; tail -3 S/logs/poll-pin-stop-macos.log
+00:51:5x cd S; nohup ssh -N -o ExitOnForwardFailure=yes -L 17233:127.0.0.1:7233 finnpc > logs/tunnel-test.log 2>&1 &     (laptop pid 83430)
+~00:52  ps -p 24640,34550,34554,51971,54309,83430 -o pid,stat,etime,command; tail -3 S/server-session.log; tail -2 S/logs/session-*.log
+~00:52  cd S/app && node -e "const c=require('@temporalio/common'); console.log(c.TimeoutType); const w=Object.keys(require('@temporalio/workflow')).filter(k=>/Timeout/.test(k)); console.log(w)"
+        (printed the TimeoutType map and [ 'TimeoutFailure' ])
+~00:52  sed -i '' (wf-common.js: import TimeoutType from @temporalio/common; logged as a note); sed -i '' 's/127.0.0.1:7233/127.0.0.1:17233/g' start-mac-worker.sh killtest.sh pintest.sh
+~00:53  cat > S/pintest.sh, S/hist.sh <<'EOF' … EOF; sed -i '' 's/WF=pin-$MODE-macos/WF=pin-$MODE-macos${RUN:-}/' S/pintest.sh
+00:54:50 S/start-mac-worker.sh mac-a; until grep -q "worker polling" <(tail -n 30 S/logs/worker-mac-a.log | grep "$(cat S/logs/worker-mac-a.pid)" -A30); do sleep 1; done; RUN=-1 S/pintest.sh kill …
+        (the until loop never matched; this background task was stopped with the TaskStop tool at 00:57:56, which also ended worker pid 6723; disclosed in the report)
+~00:58  RUN=-1 S/pintest.sh kill 2>&1 | tail -14 (a background task; its commands are logged above)
+~01:01  Monitor until-loops (read-only, laptop): until [ "$(TC workflow describe -w <id> --output json | jq -r .workflowExecutionInfo.status)" != WORKFLOW_EXECUTION_STATUS_RUNNING ]; do sleep 3; done — for pin-kill-macos-1, ver-unpatched, ver-patched and pin-kill-macos-2
+~01:02  until TC workflow show -w ver-unpatched --output json | jq -e '[.events[]|select(.eventType=="EVENT_TYPE_WORKFLOW_TASK_FAILED" or .eventType=="EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED")]|length>0' >/dev/null; do sleep 3; done
+~01:03  cd W && grep -rln "settings.local" docs/spikes docs/spec ARCHITECTURE.md; grep -rn "settings.local\|settingSources\|setting-sources" src templates ARCHITECTURE.md docs/spec; sed -n 395,425p src/substrate/providers/claude.mjs
+~01:05  cd W && sed -n 1,40p docs/spikes/what-leaves-the-process-group.md; head -40 docs/journal/README.md; sed -n 1,30p doc-references.json; sed -n 1,200p .claude/skills/acceptance/SKILL.md
+~01:07  cd S/app && grep -n "export declare function deprecatePatch\|export declare function patched" node_modules/@temporalio/workflow/lib/workflow.d.ts; grep -n "workerDeploymentOptions\|useWorkerVersioning\|buildId" node_modules/@temporalio/worker/lib/worker-options.d.ts | head; grep -n "VersioningBehavior\|PINNED\|AUTO_UPGRADE" node_modules/@temporalio/common/lib/worker-deployments.d.ts | head -5
+~01:12  until [ "$(TC workflow describe -w pin-kill-macos-2 --output json | jq -r .workflowExecutionInfo.status)" != WORKFLOW_EXECUTION_STATUS_RUNNING ]; do sleep 5; done
+~01:13  cat S/logs/session-wsl-1.log
+~01:14  copying evidence: cp S/logs/{worker-mac-a,worker-mac-b,poll-*,session-*,…} W/docs/spikes/temporal-dispatch-under-failure/logs/laptop/; cp of the collected WSL2 and Windows logs and tree logs; mv of versions.txt; a loop prepending one "ABOUTME: Spike #1429 evidence: <what>." line to each text file
+~01:15  WebFetch https://docs.temporal.io/develop/typescript/versioning     (read the SDK's versioning routes)
+~01:16  cd W && grep -n -E "^#+ .*\b(D1|D10|D11|D13)\b" docs/spec/decisions.md; grep -n -E "R-STATE-(1|4|17)\b" docs/spec/requirements.md; grep -n "^## \|^### " ARCHITECTURE.md | head -40
+~01:18  write the report (Write tool), the journal entry (cat > … <<'EOF'), and the doc-references.json line (sed -i ''); rebuild this transcript copy
+~01:20  for f in $(find docs/spikes/temporal-dispatch-under-failure -name '*.log'); do mv "$f" "${f%.log}.txt"; done     (.gitignore excludes *.log)
+01:22-01:40  cd W && npm test > SP/1429-npmtest.log (failed run 1); S/t.sh laptop "cd W && npm_config_cache=S/npm-cache npm ci --no-audit --no-fund" (logged above); npm_config_cache=S/npm-cache npm test > SP/1429-npmtest2.log (failed run 2)
+        (full failing sections: suite-runs/failed-run-1.txt and failed-run-2.txt)
+~01:41  node --test test/path-check.test.mjs; perl SP/fixpaths.pl SP/missing.txt docs/spikes/temporal-dispatch-under-failure.md (rewrote unresolvable backticked spans); node --test test/path-check.test.mjs
+~01:45  git add -A docs doc-references.json; git commit -q -F - <<'EOF' … EOF     (its pre-commit hook was stopped with TaskStop on rigger-ae's window rule; no commit was made)
+01:52  gh api repos/williacj/rigger/issues/comments/7027885620 -q '.user.login + " " + .created_at + "\n" + .body'
+~01:53  perl -0pi edits to S/app/activities.js and S/app/wf-common.js (logged as notes above)
+01:53:52 cd S; nohup ssh -o ServerAliveInterval=30 finnpc wsl.exe -e bash -s < remote/server.sh > server-session-2.log 2>&1 & (laptop pid 68933); nohup ssh -N -o ServerAliveInterval=30 -o ExitOnForwardFailure=yes -L 17233:127.0.0.1:7233 finnpc > logs/tunnel-2.log 2>&1 & (laptop pid 68938)
+~01:54  until grep -q "Temporal Server" S/server-session-2.log; do sleep 1; done; until tail -n 5 S/logs/worker-mac-a.log | grep -q "…host-mac-a…"; do sleep 1; done
+~01:56  copy the re-run evidence; edit the report and journal; rerun the credential scan; node --test test/path-check.test.mjs
+02:24  gh api repos/williacj/rigger/issues/1429/comments -q '.[] | select(.id >= 7028000000) | …'     (read the grant for the third run)
+~02:25  perl -0pi edit to S/app/activities.js (logged as a note above); cat > S/start-mac-worker-login.sh <<'EOF' … EOF; cd S; nohup ssh … < remote/server.sh > server-session-3.log 2>&1 & (laptop pid 23073); nohup ssh -N … -L 17233:127.0.0.1:7233 finnpc > logs/tunnel-3.log 2>&1 & (laptop pid 23077)
+~02:25  until grep -q "Temporal Server" S/server-session-3.log; do sleep 1; done; until tail -n 5 S/logs/worker-mac-a.log | grep -q "…host-mac-a…"; do sleep 1; done
+~02:27  copy the third run's evidence; edit the report, journal and PR draft; rerun the credential scan; node --test test/path-check.test.mjs; git add
+05:11:10-05:44:36  cd W && npm_config_cache=S/npm-cache npm test > SP/1429-npmtest3.log     (failed run 3: 5965 tests, 5957 pass, 2 fail; load average about 110; full failing section: suite-runs/failed-run-3.txt)
+15:48:45-16:00:32  cd W && npm_config_cache=S/npm-cache caffeinate -i npm test > SP/1429-npmtest4.log     (failed run 4: 5965 tests, 5964 pass, 1 fail, test/loop.test.mjs:5559; one-minute load 68.94 at 15:51; full failing section: suite-runs/failed-run-4.txt)
+16:01:21-16:16:01  cd W && npm_config_cache=S/npm-cache ~/GitHub/rigger-worktrees/coordinator-tools/suite-slot.sh 1429-maker -- caffeinate -dims npm test 2>&1 | tee SP/1429-npmtest5.log
+        (queued at one-minute load 12.19; the slot started it at 16:08:26 at load 4.53 and ended it at 16:16:01 at load 4.98, status=0, duration=455s: 5965 tests, 5965 pass, 0 fail. This run was before the evidence revisions that followed the #1435 review, so it does not verify the committed head)
+~16:17  gh api repos/williacj/rigger/issues/comments/7044457092 -q .body     (read the #1435 judge's findings); then the report revisions, the suite-runs/ evidence files and this rebuilt appendix
+16:18:56-16:18:57  cd W && mv spikes SP/1429-spikes-hidden; npm test -- test/path-check.test.mjs; mv SP/1429-spikes-hidden spikes     (14 tests, 14 pass, 0 fail with the gitignored spikes directory absent; one-minute load 26.82 at start and end)
+16:19:09-16:31:50  cd W && npm_config_cache=S/npm-cache ~/GitHub/rigger-worktrees/coordinator-tools/suite-slot.sh 1429-maker -- caffeinate -dims npm test > SP/1429-npmtest6.log 2>&1     (queued at load 26.32; slot start 16:24:17 at load 5.21, end 16:31:50 at load 4.34, exit 0: 5965 tests, 5965 pass, 0 fail, over this transcript's staged change before this line was added)
+After that: git add of this file, then suite-slot.sh 1429-maker -- caffeinate -dims git commit (whose pre-commit hook runs the deterministic suite again), suite-slot.sh 1429-maker -- caffeinate -dims git push -u origin rigger-1429, and gh pr create. Their results are in the pull request, since this file is part of that commit.

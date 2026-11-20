@@ -1,0 +1,16 @@
+ABOUTME: Spike #1429 evidence: owner's ~/.claude/projects on the laptop by entry and modification time, taken after the claude -p run.
+2026-11-01T08:14:41-0600 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub
+2026-11-10T20:20:14-0600 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-biblical-writing
+2026-11-19T09:14:34-0600 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-cjwillresume
+2026-11-08T20:56:34-0600 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-cowrite
+2026-07-31T16:46:53-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-cowrite--claude-worktrees-source-button-not-working-a9ffcd
+2026-11-18T11:35:59-0600 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-emend-engine-worktrees-rigger-121
+2026-11-11T07:59:11-0600 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-fxt-racing
+2026-11-19T09:14:35-0600 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger
+2026-10-21T14:04:01-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger-worktrees-839-tq-handoff
+2026-10-21T11:30:08-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger-worktrees-840-init-fixture
+2026-10-21T15:00:22-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger-worktrees-843-budget
+2026-10-29T22:11:28-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger-worktrees-coordinator-tools
+2026-10-29T22:01:35-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger-worktrees-m6-acceptance-attack
+2026-10-29T22:03:43-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger-worktrees-m6-build-pm
+2026-10-29T21:36:27-0500 /Users/cjwilliams/.claude/projects/-Users-cjwilliams-GitHub-rigger-worktrees-node20-architect
