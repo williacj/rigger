@@ -8,7 +8,7 @@ agent's whole process tree, measured against the macOS baseline and today's rout
 On Linux under WSL2, the answer is yes. An unprivileged supervisor obtained a cgroup it could write
 to from the systemd user manager, with no root. Writing cgroup.kill ended all six fixture
 members, including the two that left the session and the one that moved to `/`. The cgroup reported
-no live process 1.66 ms after the write, in both runs that measured it. When the supervisor was
+no live process between 0.88 and 1.66 ms after the write, in the three runs that measured it. When the supervisor was
 killed outright, all six members lived on in the orphaned cgroup. A fresh process that wrote
 cgroup.kill to that cgroup ended every one of them.
 
@@ -25,6 +25,10 @@ new session and changes its working directory to `/`. The group kill and the wor
 census found every other member. On macOS, the process-group kill alone also left M3 alive, the
 member that starts a new session. Killing the supervisor outright left every member alive on macOS,
 as `R-STATE-9` and `R-STATE-10` expect.
+
+Round 2 repeated every measurement on every host with every process the runs started recorded by
+pid, as the judge's round-1 verdict asked. Each repeat gave the same result for every member
+("Round 2", below).
 
 I recommend a delegated cgroup ended by cgroup.kill for Linux under WSL2, and a Job Object with
 kill-on-job-close for native Windows. Both are under "Recommendations", with what would reverse
@@ -45,6 +49,9 @@ each. This report hands over evidence. It changes no code, requirement or record
 | x1, x2 | Windows | E1, `TerminateJobObject` | `ssh hostpc` ran `node win-run.cjs` in the SSH session. That started the supervisor detached |
 | x3 | Windows | E2, `taskkill /F`, kill-on-job-close set | the same |
 | x4 | Windows | E2, `taskkill /F`, kill-on-job-close not set, then a fresh process's reach | the same |
+| mr1, mr2, mr3 | laptop | round 2: E1, E1c, E2 | `docs/spikes/whole-tree-containment/rerun/orch.cjs` ran `docs/spikes/whole-tree-containment/rerun/driver-posix.cjs` locally |
+| wr1, wr2, wr3 | WSL2 | round 2: E1, E1c, E2 with the fresh writer | orch.cjs ran `ssh hostpc wsl.exe -e bash -s fx1430r2` with a script on stdin. The script execs into the driver in a transient `systemd-run --user --scope` unit, and the driver starts each supervisor as a transient systemd user service, as round 1 did |
+| xr1, xr2, xr3 | Windows | round 2: E1, E2 with kill-on-job-close, E2 without it and the fresh reach | orch.cjs ran `ssh hostpc` with `node driver-win.cjs`. That started each supervisor detached |
 
 WSL was reached only through `ssh hostpc wsl.exe -e …`, because `wsl-hostpc` did not answer. In every
 WSL run, the process that launched the tree, the Node supervisor, lived inside WSL. It was a child
@@ -56,7 +63,12 @@ Windows process.
 - `docs/spikes/whole-tree-containment/transcript.txt`, the full transcript.
 - `docs/spikes/whole-tree-containment/fixture/`, the fixture source for macOS and Linux.
 - `docs/spikes/whole-tree-containment/fixture-win/`, the fixture source for Windows.
-- `docs/spikes/whole-tree-containment/runners/`, the scripts that drove the runs.
+- `docs/spikes/whole-tree-containment/runners/`, the scripts that drove the round-1 runs.
+- `docs/spikes/whole-tree-containment/rerun/`, round 2's code, its transcript and its process records.
+- `docs/spikes/whole-tree-containment/session-log.txt`, every command the spike engineer ran, with
+  its exact input, UTC times, host and full result.
+- `docs/spikes/whole-tree-containment/ci-fast-136023691075-excerpt.txt`, the failure output of the
+  CI run that failed on this pull request.
 
 ## Hosts and versions
 
@@ -206,8 +218,9 @@ own. M4 (1851) was reparented to the user manager, 339. Every member is in the `
 ### E1, cgroup.kill (w1)
 
 The supervisor wrote `1` to tree/cgroup.kill at 00:48:40.761Z. It logged `E1 cgroup.kill written;
-cgroup.events populated 0 after 1.66 ms`, and w7 logged the same figure, 1.66 ms. That is a
-measurement: two samples, each taken by the supervisor's 1 ms poll of cgroup.events. Twelve
+cgroup.events populated 0 after 1.66 ms`, and w7 logged the same figure, 1.66 ms. Round 2's wr1 logged
+0.88 ms. That is a measurement: three samples, each taken by the supervisor's 1 ms poll of
+cgroup.events. Twelve
 seconds after the write:
 
 ```
@@ -541,6 +554,58 @@ count=7
 
 M1 to M6 were all alive, along with the supervised command.
 
+## Round 2: every measurement repeated, with every process recorded
+
+The round-1 judge found that round 1 recorded only the long-lived processes. It never recorded the
+pids of short-lived helpers, or of the intermediate process that M4's parent is on macOS and Linux
+("Every process the spike started", below). Those pids cannot be recovered, so round 2 repeated
+every card measurement, on every host, on 2026-11-20, with every process the runs started
+recorded. The stated intent for the new steps went up first, at
+[1430#7044905230](https://github.com/williacj/rigger/issues/1430#issuecomment-7044905230).
+
+### How each process was recorded
+
+| Host | What recorded it |
+|---|---|
+| All | Every Node process loads `docs/spikes/whole-tree-containment/rerun/rec.cjs`. It writes the process's own pid and parent, and the pid, command and exit of every process it starts, as JSON lines. The laptop's step runner, `docs/spikes/whole-tree-containment/rerun/orch.cjs`, records each `ssh` and local command the same way, and writes `docs/spikes/whole-tree-containment/rerun/transcript-r2.txt`: each step's exact argv, its stdin script verbatim with sha256, its UTC start and end, and its full output |
+| macOS and Linux | `docs/spikes/whole-tree-containment/rerun/fixture.sh` writes the pid of every process it starts, M4's parent included, using bash builtins only. The listing (`docs/spikes/whole-tree-containment/rerun/list.cjs`) runs in Node, with one recorded `ps`. On macOS it adds one recorded `lsof -O` and one recorded `python3`, run by its real path rather than through the `/usr/bin/python3` stub |
+| WSL | Each script fed to `bash -s` writes its own pid and its two WSL init parents, and runs every external command through a `rec` function that prints the command's pid, using bash builtins only. Each supervisor's unit prints the pid of its `id` and of its own bash, which then execs Node |
+| Windows | A watcher, `docs/spikes/whole-tree-containment/rerun/watcher.ps1`, ran in its own SSH session from 16:34:25Z to 16:41:43Z. It logged every process start and stop on the machine through WMI's `Win32_ProcessStartTrace` and `Win32_ProcessStopTrace`. `docs/spikes/whole-tree-containment/rerun/collect-win.cjs` then picks out the spike's own processes: the watcher's session chain, every per-connection `sshd` that started within 3 s of one of the laptop's recorded `ssh` spawns, and every descendant of either. The result is `docs/spikes/whole-tree-containment/rerun/win-mine-full.json`. The log holds 12 new per-connection `sshd` processes, from 16:35:03Z to 16:41:19Z, and each one matched one of the spike's 12 `ssh` spawns in that span. No other connection arrived while the watcher ran. Every pid that `docs/spikes/whole-tree-containment/rerun/rec.cjs` recorded on Windows is in that set |
+
+On Windows every file sat in one directory, so the sources under
+`docs/spikes/whole-tree-containment/rerun/win/` loaded a byte-identical copy of
+`docs/spikes/whole-tree-containment/rerun/rec.cjs` beside them. `cmp` confirmed the two were
+identical, and the copy is not committed twice.
+
+Round 2 differs from round 1 only in how it records:
+
+- The census and the macOS listing call `lsof -O`, so lsof does its kernel reads in its own
+  process instead of forked helpers. The census reads the same fields as before.
+- `docs/spikes/whole-tree-containment/rerun/fixture.sh` ends with `exec sleep 300` instead of `sleep 300`, so its tail makes no new process.
+- The listing runs in Node instead of `docs/spikes/whole-tree-containment/fixture/list.sh`.
+- WSL was reached only through `ssh hostpc wsl.exe -e`, as in round 1. The WSL machine booted again
+  between sessions, because WSL stops when idle. The final check printed a boot time of 16:41:18Z,
+  and its pids began again near 400.
+
+### What round 2 measured
+
+Every cell of the table below matches round 1. Times are in `docs/spikes/whole-tree-containment/rerun/transcript-r2.txt`.
+
+| Run | Ending | Reading at least 10 s after the ending |
+|---|---|---|
+| mr1, macOS | E1, process-group kill of 74511 at 16:33:16.190Z | count=3: the supervisor, M3 (74528) and M6 (74532) alive. M1, M2, M4 and M5 ended |
+| mr2, macOS | E1c, group kill of 99236, then the census killed 99254 (M3) | count=2: the supervisor and M6 (99267) alive. M1 to M5 ended |
+| mr3, macOS | E2, SIGKILL of supervisor 21189 at 16:33:49.272Z | count=7: the supervised command and M1 to M6 all alive |
+| wr1, WSL2 | E1, cgroup.kill, `populated 0` after 0.88 ms | count=1: the supervisor only. M1 to M6 ended |
+| wr2, WSL2 | E1c, group kill of 651, then the census killed 653 (M3) | count=2: the supervisor and M6 (656) alive. M1 to M5 ended |
+| wr3, WSL2 | E2, SIGKILL of supervisor 666 at 16:37:54.154Z | count=7: the supervised command and M1 to M6 alive in the orphaned cgroup. The fresh writer, pid 685, wrote cgroup.kill, which read `populated 0` after 0.43 ms, and the listing 10 s later read count=0 |
+| xr1, Windows | E1, `TerminateJobObject`, `ActiveProcesses` 0 after 0.31 ms | count=1: the supervisor only. M1 to M4 and M6 ended |
+| xr2, Windows | E2 with kill-on-job-close (`LimitFlags=0x2000`), `taskkill /F /PID 36852` | count=0 from a fresh process: M1 to M4 and M6 ended |
+| xr3, Windows | E2 without kill-on-job-close (`LimitFlags=0x0000`), `taskkill /F /PID 35400` | M1 to M4 and M6 alive at +12 s and at +22 s. Fresh processes 26888 and 12844 got `NULL` and error 2 from `OpenJobObjectW`. The driver then ended the survivors |
+
+Before each ending, every member was alive and in the spike's job (Windows) or its process group,
+session and cgroup (macOS and Linux), as each run's `BEFORE ENDING` listing shows.
+
 ## The table
 
 Each cell gives the state at least 10 s after the ending, and the run whose listing shows it.
@@ -548,33 +613,33 @@ Windows has two E2 rows, because the card runs E2 there twice.
 
 | Member | Ending | macOS (laptop) | Linux (WSL2) | Windows |
 |---|---|---|---|---|
-| M1 | E1 | ended (m1) | ended (w1, w7) | ended (x2, x1) |
-| M2 | E1 | ended (m1) | ended (w1, w7) | ended (x2, x1) |
-| M3 | E1 | **alive** (m1) | ended (w1, w7) | ended (x2, x1) |
-| M4 | E1 | ended (m1) | ended (w1, w7) | ended (x2, x1) |
-| M5 | E1 | ended (m1) | ended (w1, w7) | not applicable (`TerminateProcess` cannot be ignored) |
-| M6 | E1 | **alive** (m1) | ended (w1, w7) | ended (x2, x1) |
-| M1 | E1c | ended (m2) | ended (w2) | not run (the card runs E1c on macOS and Linux) |
-| M2 | E1c | ended (m2) | ended (w2) | not run (the same) |
-| M3 | E1c | ended (m2, by the census) | ended (w2, by the census) | not run (the same) |
-| M4 | E1c | ended (m2) | ended (w2) | not run (the same) |
-| M5 | E1c | ended (m2) | ended (w2) | not applicable |
-| M6 | E1c | **alive** (m2) | **alive** (w2) | not run (the same) |
-| M1 | E2 (Windows: kill-on-job-close set) | **alive** (m3) | **alive** (w5) | ended (x3) |
-| M2 | E2 (the same) | **alive** (m3) | **alive** (w5) | ended (x3) |
-| M3 | E2 (the same) | **alive** (m3) | **alive** (w5) | ended (x3) |
-| M4 | E2 (the same) | **alive** (m3) | **alive** (w5) | ended (x3) |
-| M5 | E2 (the same) | **alive** (m3) | **alive** (w5) | not applicable |
-| M6 | E2 (the same) | **alive** (m3) | **alive** (w5) | ended (x3) |
-| M1 | E2, kill-on-job-close not set | not applicable (a Windows job limit) | not applicable (the same) | **alive** (x4) |
-| M2 | E2, the same | not applicable | not applicable | **alive** (x4) |
-| M3 | E2, the same | not applicable | not applicable | **alive** (x4) |
-| M4 | E2, the same | not applicable | not applicable | **alive** (x4) |
+| M1 | E1 | ended (m1, mr1) | ended (w1, w7, wr1) | ended (x2, x1, xr1) |
+| M2 | E1 | ended (m1, mr1) | ended (w1, w7, wr1) | ended (x2, x1, xr1) |
+| M3 | E1 | **alive** (m1, mr1) | ended (w1, w7, wr1) | ended (x2, x1, xr1) |
+| M4 | E1 | ended (m1, mr1) | ended (w1, w7, wr1) | ended (x2, x1, xr1) |
+| M5 | E1 | ended (m1, mr1) | ended (w1, w7, wr1) | not applicable (`TerminateProcess` cannot be ignored) |
+| M6 | E1 | **alive** (m1, mr1) | ended (w1, w7, wr1) | ended (x2, x1, xr1) |
+| M1 | E1c | ended (m2, mr2) | ended (w2, wr2) | not run (the card runs E1c on macOS and Linux) |
+| M2 | E1c | ended (m2, mr2) | ended (w2, wr2) | not run (the same) |
+| M3 | E1c | ended (m2, mr2, by the census) | ended (w2, wr2, by the census) | not run (the same) |
+| M4 | E1c | ended (m2, mr2) | ended (w2, wr2) | not run (the same) |
+| M5 | E1c | ended (m2, mr2) | ended (w2, wr2) | not applicable |
+| M6 | E1c | **alive** (m2, mr2) | **alive** (w2, wr2) | not run (the same) |
+| M1 | E2 (Windows: kill-on-job-close set) | **alive** (m3, mr3) | **alive** (w5, wr3) | ended (x3, xr2) |
+| M2 | E2 (the same) | **alive** (m3, mr3) | **alive** (w5, wr3) | ended (x3, xr2) |
+| M3 | E2 (the same) | **alive** (m3, mr3) | **alive** (w5, wr3) | ended (x3, xr2) |
+| M4 | E2 (the same) | **alive** (m3, mr3) | **alive** (w5, wr3) | ended (x3, xr2) |
+| M5 | E2 (the same) | **alive** (m3, mr3) | **alive** (w5, wr3) | not applicable |
+| M6 | E2 (the same) | **alive** (m3, mr3) | **alive** (w5, wr3) | ended (x3, xr2) |
+| M1 | E2, kill-on-job-close not set | not applicable (a Windows job limit) | not applicable (the same) | **alive** (x4, xr3) |
+| M2 | E2, the same | not applicable | not applicable | **alive** (x4, xr3) |
+| M3 | E2, the same | not applicable | not applicable | **alive** (x4, xr3) |
+| M4 | E2, the same | not applicable | not applicable | **alive** (x4, xr3) |
 | M5 | E2, the same | not applicable | not applicable | not applicable |
-| M6 | E2, the same | not applicable | not applicable | **alive** (x4) |
+| M6 | E2, the same | not applicable | not applicable | **alive** (x4, xr3) |
 
-After E2 on Linux, a fresh cgroup.kill writer ended every member (w5). After E2 without
-kill-on-job-close on Windows, a fresh process could not reach the job (x4).
+After E2 on Linux, a fresh cgroup.kill writer ended every member (w5, wr3). After E2 without
+kill-on-job-close on Windows, a fresh process could not reach the job (x4, xr3).
 
 ## Recommendations
 
@@ -592,7 +657,7 @@ The next card should do these things:
   That is the cgroup analogue of `R-STATE-10`, which w5's fresh writer showed works.
 
 This closed every escape the fixture tried, including M6, which today's route left alive (w2). It
-ended M5 without a `SIGTERM` stage, and it took 1.66 ms. It needed no root.
+ended M5 without a `SIGTERM` stage, and it took 0.88 to 1.66 ms. It needed no root.
 
 The next card must not assume the following:
 
@@ -695,28 +760,85 @@ runtime, in the spike's own directory, and removed afterwards. It answers nothin
   a test requires every tracked Markdown file under `docs/spikes/` to be a checked report. It is
   evidence, not a report, so it was renamed to
   `docs/spikes/whole-tree-containment/transcript.txt`.
+- **Three more pre-commit refusals and one CI failure followed.**
+  - Two backticked bare file names in the report failed the path check.
+  - A timing test in `test/loop.test.mjs` failed while the laptop's load average was about 100, and
+    passed 3 of 3 times on its own.
+  - CI's `fast` job then failed on the backticked gitignored spike directory, which a clean checkout
+    lacks. `docs/spikes/whole-tree-containment/ci-fast-136023691075-excerpt.txt` holds that output.
+- **Round 2's first `npm install` took a marker argument as a package name** and failed with E404.
+  It was rerun without the marker.
+- **Round 2's first two WSL file copies wrote wrong bytes.** In the first, `rec` ran `base64` in the
+  background without its here-document as stdin. In the second, the redirect of `rec`'s call also
+  caught `rec`'s own records. The third copy's sha256 matched the laptop's for all five files, and
+  only those copies ran.
+- **Round 2's check A stopped the Windows watcher before the watcher had delivered check A's own
+  start events.** That left four of check A's processes unrecorded ("Every process the spike
+  started").
+- **Round 2's first attempt at check B failed to start.** zsh's `echo` read `\c` in a comment as
+  "stop output" and merged two lines, so Node raised `ReferenceError: list is not defined`. The
+  retry wrote the script with Python.
 
 ## Custody
 
 ### The transcript
 
-`docs/spikes/whole-tree-containment/transcript.txt` holds every command run through `docs/spikes/whole-tree-containment/runners/t.sh`,
-each with its UTC start time and host. Its appendix lists the commands run without the wrapper,
-with the UTC window each fell in, and two marked edits: a redaction, and the collapsed loop output.
+Four files hold the record:
+
+- `docs/spikes/whole-tree-containment/session-log.txt`: every tool call the spike engineer made,
+  with its exact input, the UTC times it was issued and returned, its host and its full result.
+  It was generated by `docs/spikes/whole-tree-containment/rerun/gen-session-log.py` from the
+  retained Claude Code session record. It is the full transcript, and it replaces round 1's
+  approximate appendix.
+- `docs/spikes/whole-tree-containment/transcript.txt`: round 1's commands run through
+  `docs/spikes/whole-tree-containment/runners/t.sh`, with their output. It carries two marked
+  edits: a redaction, and the collapsed loop output.
+- `docs/spikes/whole-tree-containment/rerun/transcript-r2.txt`: round 2's steps, with exact argv,
+  stdin scripts, pids and full output.
+- `docs/spikes/whole-tree-containment/ci-fast-136023691075-excerpt.txt`: the CI failure output, as
+  an excerpt of the 8 MB log. The excerpt names the log's sha256 and the command that fetches it.
+
+Some evidence cannot be recovered, and this report does not rest on it:
+
+- **The full output of the first pre-commit refusal.** The command kept only its last 15 lines
+  (`| tail -15`). Those lines, and the reruns of the failing test that identified it, are in
+  session-log.txt.
+- **The full output of the second and third refusals.** Each went to a scratch file that the next
+  commit overwrote. The failing-test excerpts read from those files before they were overwritten
+  are in session-log.txt.
+- **The last steps of this revision.** These ran after session-log.txt was generated at
+  2026-11-20T17:07Z, so their output is not in it: the credential scan above, the edit that wrote
+  its result here, `node scripts/path-check.mjs`, `npm test -- test/path-check.test.mjs`, the
+  commit and the push. They ran as
+  `~/GitHub/rigger-worktrees/coordinator-tools/suite-slot.sh 1430-maker -- caffeinate -dims git commit`
+  and `… -- caffeinate -dims git push`. The pull request's head is their evidence.
 
 ### The credential scan
 
-Run at the pull request's head, over every file under `docs/spikes/whole-tree-containment/`:
+Run at 2026-11-20 over every file under `docs/spikes/whole-tree-containment/`, all 41 of them,
+including the session log:
 
 ```
-$ grep -rnIiE 'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_|sk-ant-|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-|BEGIN [A-Z ]*PRIVATE KEY|bearer [A-Za-z0-9._-]{20,}|(password|passwd|secret|token|api[_-]?key)[[:space:]]*[:=]' docs/spikes/whole-tree-containment; echo "grep exit $?"
+$ grep -rnIiE 'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_|sk-ant-|sk-[A-Za-z0-9]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-|BEGIN [A-Z ]*PRIVATE KEY|bearer [A-Za-z0-9._-]{20,}|(password|passwd|secret|token|api[_-]?key)[[:space:]]*[:=]' docs/spikes/whole-tree-containment
+```
+
+It printed four lines and exited 0. All four are in the session log, and each one is this scan's
+own command line, recorded when an earlier scan ran: lines 2701, 2741, 3217 and 6320. The pattern
+text carries `sk-ant-`, so the scan matches itself. Repeated with those lines removed, the scan finds
+nothing:
+
+```
+$ grep -rnIiE '<the same pattern>' docs/spikes/whole-tree-containment | grep -vF 'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_|sk-ant-'; echo "grep exit $?"
 grep exit 1
 ```
 
-Exit 1 with no lines printed means no match in any of the 14 files. A second scan for email
-addresses, `grep -rnIoE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}'`, found only the systemd unit
-name `user@1000.service`. The one account address `whoami /groups` printed was redacted before it
-was committed.
+A second scan for email addresses, `grep -rnIoE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[a-z]{2,}'`, found
+two strings:
+
+- the systemd unit name `user@1000.service`, 359 times;
+- the commit trailer address noreply@anthropic.com, 5 times.
+
+The one account address that `whoami /groups` printed was redacted before it was committed.
 
 ### Files written outside the spike's own directories
 
@@ -724,7 +846,9 @@ was committed.
 |---|---|---|---|
 | WSL2 | `/run/user/1000/systemd/transient/fx1430-*.service`, one per run (`fx1430-`, w1 to w3, w5 to w7), and those for the probe units run-p511-i2417.scope and `run-p512-i2418.service` | systemd writes a runtime file for each transient unit `systemd-run --user` starts. It was not planned | Yes. Each was removed when its unit was collected, after `systemctl --user reset-failed` for the failed ones. At 00:58:39Z, `ls /run/user/1000/systemd/transient/ \| grep fx1430` printed nothing, and at 01:02:17Z its count was 0 |
 | WSL2 | the units' cgroups under `/sys/fs/cgroup/user.slice/…/app.slice/`, with the `tree` children the supervisors made | a cgroup is the subject of the test. They are kernel state, not files on disk | Yes. At 01:02:17Z, `ls -d …/app.slice/fx1430*` printed `No such file or directory` |
+| WSL2, round 2 | `/run/user/1000/systemd/transient/` files for fx1430r2-drv.scope and fx1430r2-wr1 to wr3, with their cgroups | the same as round 1's, for round 2's transient units | Yes. At 16:41:20Z, `ls -d` found none of the four files or the four cgroups |
 | WSL2 | the user's systemd journal entries for the units | systemd logs unit starts and stops. It was not planned | No. Removing them means editing the user's journal, so they are left |
+| Windows, round 2 | none found. The watcher's log, the npm cache and every run file stayed in `C:\Users\user\1430-r2\`. The WMI subscriptions were temporary event registrations held by the watcher's own process, which ended at 16:41:43Z | — | — |
 | Windows | none found. The npm cache was pointed at the spike's own directory. At 00:59:00Z, a check of `%LOCALAPPDATA%\npm-cache\_logs`, `%APPDATA%\npm` and `%USERPROFILE%\.npmrc` for writes in the last hour returned nothing | — | — |
 | Laptop | none outside the gitignored spike directory in the worktree (spikes/1430-spike-engineer), the worktree itself, and this pull request | — | — |
 
@@ -734,6 +858,8 @@ The spike's own directories were these:
 - `C:\Users\user\1430-spike-engineer\` on Windows, removed at 00:59:00Z, after which `Test-Path`
   printed `False`.
 - the gitignored spike directory in the laptop's worktree, spikes/1430-spike-engineer.
+- Round 2: `~/1430-r2/` in WSL, removed at 16:41:20Z, after which `ls -d` found no such directory.
+  `C:\Users\user\1430-r2\` on Windows, removed at 16:42:56Z (`exists now: false`).
 
 ### Host-configuration changes
 
@@ -741,17 +867,60 @@ The stated-intent comment went up before any install:
 [1430#7026629400](https://github.com/williacj/rigger/issues/1430#issuecomment-7026629400). It
 declared no host-configuration change, and none was made: no package install, firewall rule, WSL or
 systemd setting, or registry key. The transient units above are runtime state that vanishes with
-the unit, not configuration. Nothing was reverted, because nothing was changed. No WSL restart, no
-.wslconfig or `/etc/wsl.conf` change, and no reboot was made, so no sibling card needed to clear
-one.
+the unit, not configuration. Round 2's addendum, [1430#7044905230](https://github.com/williacj/rigger/issues/1430#issuecomment-7044905230),
+went up before its first step and again declared no configuration change. Round 2's WMI
+subscriptions were temporary registrations made with `Register-CimIndicationEvent`, ended with the
+watcher, and left no permanent WMI subscription behind. Nothing was reverted, because nothing was
+changed. The spike made no WSL restart, no
+.wslconfig or `/etc/wsl.conf` change, and no reboot, so no sibling card needed to clear one.
+The WSL VM's own stops between round 2's sessions came from its idle timeout, not from any command
+of the spike.
 
 ### Every process the spike started
 
-The pids below are every long-lived process the runs started, each read from a listing or a log.
-The short-lived helpers ran synchronously and exited before their command returned: `ps`, `lsof`,
-`python3`, `powershell`, `taskkill`, `ssh`, wsl.exe, `npm`, and the listing scripts. Each M4's
-intermediate `bash`, and each cmd.exe on Windows, exited at once. On Linux and macOS that
-intermediate's pid was never printed. On Windows it was: 34852, 37664, 37080 and 12108.
+**Round 2 is the census of record.** Its records list every process the runs started, by host and
+pid, apart from the few named under "What round 2 still misses":
+
+| Host | Inventory | Count |
+|---|---|---|
+| Laptop | `docs/spikes/whole-tree-containment/rerun/pids-laptop.json`, from `docs/spikes/whole-tree-containment/rerun/rec-laptop.json` and `docs/spikes/whole-tree-containment/rerun/sh-laptop.log`. It holds each step runner, its `ssh` or local command, the drivers, the supervisors, the fixture with M4's parent, every `ps`, `lsof` and `python3`, and the Bash tool shell that launched each step runner | 114 pids |
+| WSL2 | `docs/spikes/whole-tree-containment/rerun/pids-wsl.json`, from `docs/spikes/whole-tree-containment/rerun/rec-wsl.json`, `docs/spikes/whole-tree-containment/rerun/sh-wsl.log` and the `rec` lines in `docs/spikes/whole-tree-containment/rerun/transcript-r2.txt`. It holds each session's bash and its two WSL init parents, every `rec` command, the driver, the supervisor units' bash and `id`, the fixture with M4's parent, every `ps` and `lsof`, `systemd-run`, `systemctl` and the fresh writer | 80 entries. One of them, 334, is the user's systemd manager, which predates the spike and is listed only as the supervisors' parent, so 79 are the spike's |
+| Windows | `docs/spikes/whole-tree-containment/rerun/win-mine-full.json`: every process of the spike's 12 watched connections, from `sshd` down to every cmd.exe, conhost.exe, node.exe, powershell.exe, taskkill.exe, whoami.exe, wsl.exe and wslhost.exe, with the times each started and stopped. Add the nine self-reported processes of the two sessions the watcher did not log: check A's node 8952, cmd 10272 and powershell 6156, and fetch2's node 33068, cmd 23192, sshd 36716 and 25524, conhost 36272 and powershell 34312 | 163 + 9 |
+
+The fixture's survivors in round 2 were ended by the drivers, each one a descendant of a recorded
+supervisor:
+
+- On the laptop: 74528, 74532, 99267, and 21315, 21317, 21318, 21319, 21321, 21323 and 21333.
+- In WSL: 656.
+- On Windows: 17704, 10868, 19128, 17556, 26720 and 29192.
+
+**What round 2 still misses:**
+
+- **Windows: the watcher's own connection.** Its short-lived `sshd` helper started and exited
+  before the watcher could log anything. The rest of that connection is in the watcher's chain
+  lines: 2852, 25948, 15948 and 21884.
+- **Windows: check A's connection.** Its per-connection `sshd`, the `sshd` helper, its `sshd -z`
+  and its conhost.exe are missing, because check A stopped the watcher before their start events
+  were delivered.
+- **Windows: the unwatched sessions.** fetch2's `sshd` helper is missing. The first, failed check-B
+  attempt printed no pids at all. Check B's own `sshd` helper is missing too. Check B's other
+  processes are self-reported: 31604, 16824, 34132, 2908, 32944, 6452 and 29468.
+- **Laptop.** The helpers in my own Bash tool command lines beside `docs/spikes/whole-tree-containment/rerun/orch.cjs` were not recorded:
+  `grep`, `head`, `cat`, `iconv`, `base64`, `shasum`, `perl`, `node -e`, the collect scripts and
+  the final `ps`. Each command line is in `docs/spikes/whole-tree-containment/session-log.txt`, but
+  no pid was recorded.
+- **The listing processes.** The final listing on each host cannot list itself as ended.
+
+**Round 1 is kept for the record, with its gaps.** It recorded only the long-lived processes in the
+table below. These were never recorded, and cannot be recovered:
+
+- the pids of its short-lived helpers: `ps`, `lsof`, `python3`, `powershell`, `taskkill`, `ssh`,
+  wsl.exe, `npm`, `curl`, `tar` and its `xz`, the per-connection `sshd`, cmd.exe and conhost.exe
+  on Windows, and the listing scripts' subshells;
+- on Linux and macOS, the pid of each M4 parent;
+- the shells and pipeline helpers of my own laptop commands.
+
+On Windows, round 1 did print the M4 parent cmd.exe: 34852, 37664, 37080 and 12108.
 
 | Host | Run | Pids |
 |---|---|---|
@@ -771,23 +940,44 @@ intermediate's pid was never printed. On Windows it was: 34852, 37664, 37080 and
 | Windows | x3 | runner 35696, supervisor 32600, root 37088, M1 37000, M2 18884, M3 21348, M4 35804, M6 36804, cmd 37080, conhost 18988 and 31656, fresh lister 12620 |
 | Windows | x4 | runner 9408, supervisor 2092, root 12972, M1 36704, M2 33440, M3 5208, M4 34948, M6 21380, cmd 12108, conhost 36612 and 5972, fresh listers 9496, 17412 and 7956 |
 
-Survivors were ended by the spike, each one a descendant of a supervisor it had started and
-recorded:
+Round 1's survivors were ended by the spike, each one a descendant of a supervisor it had
+started and recorded:
 
 - On the laptop: 22313, 22316, 23296, the group -23765, 23767 and 23770.
 - In WSL: 2024.
 
-The SSH session's job ended x4's survivors. Every other member ended under its run's own ending.
+The SSH session's job ended x4's survivors.
 
 ### After the last run, none of these pids is alive
 
-- **Laptop (00:58:51Z).** `ps -o pid,lstart,args -p <the laptop pids above>` printed only its header,
-  `PID STARTED ARGS`. `ps -axo args | grep -c 'fx-m[0-9]-M'` printed `0`.
-- **WSL2 (01:02:17Z).** `ps -o pid,lstart,args -p <the WSL pids above>` printed only its header,
-  `PID STARTED COMMAND`. Its count of fixture members printed `matching-members: 0`.
-- **Windows (00:59:00Z).** `Get-Process -Id <the Windows pids above>` printed
-  `live pids from the started list: 0`. A search for fixture command lines printed
-  `matching fx1430 command lines: 0` (00:58:52Z).
+Round 2's final listings checked every pid in its inventories. Each one is in
+`docs/spikes/whole-tree-containment/rerun/transcript-r2.txt` or, for the laptop, in
+`docs/spikes/whole-tree-containment/session-log.txt`:
+
+- **Laptop (16:43:05Z).** `ps -o pid,lstart,args -p <the 114 pids>` printed only its header,
+  `PID STARTED ARGS`, and exited 1.
+- **WSL2 (16:41:20Z).** `ps -o pid,lstart,args -p <the 79 pids>` printed only its header,
+  `PID STARTED COMMAND`, and exited 1.
+  - The session printed a boot time of 16:41:18Z, because WSL had stopped while idle since the runs.
+    The in-boot evidence is each run's `after cleanup` listing, `count=0`, taken by the driver
+    before it exited.
+  - No `fx1430r2*` unit was listed.
+  - `ls -d` found none of the four unit cgroups or the four transient unit files.
+  - `~/1430-r2` was removed.
+- **Windows, check A (16:41:43Z), while the watcher ran.** `Get-Process -Id <144 pids>` found
+  `0 pids held by live processes`.
+- **Windows, check B (16:42:56Z), the last Windows session.** `Get-Process -Id <172 pids>` found
+  `0 of those pids held by live processes`. Those were the 163 watched processes and the nine
+  self-reported ones. It then removed `C:\Users\user\1430-r2`, and `exists now: false`. Its own
+  processes, listed above, end when it returns.
+
+Round 1's final listings checked only round 1's narrower set:
+
+- the laptop at 00:58:51Z;
+- WSL at 01:02:17Z;
+- Windows at 00:59:00Z.
+
+Each found none alive.
 
 ## Questions this leaves open, and what would settle them
 

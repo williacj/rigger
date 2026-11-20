@@ -1,0 +1,481 @@
+[
+ {
+  "t": "2026-11-20T16:37:18.371Z",
+  "host": "wsl",
+  "by": 611,
+  "event": "self",
+  "pid": 611,
+  "ppid": 610,
+  "argv": [
+   "/home/user/1430-r2/node-v24.19.0-linux-x64/bin/node",
+   "/home/user/1430-r2/driver-posix.cjs",
+   "wr"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:37:18.377Z",
+  "host": "wsl",
+  "by": 611,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:37:18.373Z",
+  "pid": 618,
+  "cmd": "systemd-run",
+  "args": [
+   "--user",
+   "--unit=fx1430r2-wr1",
+   "-p",
+   "Delegate=yes",
+   "-p",
+   "KillMode=process",
+   "--setenv=FX_REC=/home/user/1430-r2/rec-wsl.jsonl",
+   "--setenv=FX_HOST=wsl",
+   "--setenv=FX_SHLOG=/home/user/1430-r2/sh-wr1.log",
+   "--working-directory=/home/user/1430-r2",
+   "bash",
+   "-c",
+   "id >> /home/user/1430-r2/wr1.log & echo \"id-pid $$!\" >> /home/user/1430-r2/sh-wr1.log; wait $$!; echo \"supervisor-bash $$$$\" >> /home/user/1430-r2/sh-wr1.log; exec /home/user/1430-r2/node-v24.19.0-linux-x64/bin/node /home/user/1430-r2/supervisor-posix.cjs e1 wr1 /home/user/1430-r2/d-wr1 /home/user/1430-r2 >> /home/user/1430-r2/wr1.log 2>&1"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:37:18.396Z",
+  "host": "wsl",
+  "by": 619,
+  "event": "self",
+  "pid": 619,
+  "ppid": 334,
+  "argv": [
+   "/home/user/1430-r2/node-v24.19.0-linux-x64/bin/node",
+   "/home/user/1430-r2/supervisor-posix.cjs",
+   "e1",
+   "wr1",
+   "/home/user/1430-r2/d-wr1",
+   "/home/user/1430-r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:37:18.398Z",
+  "host": "wsl",
+  "by": 619,
+  "event": "spawn",
+  "pid": 628,
+  "cmd": "bash",
+  "args": [
+   "-c",
+   "read _; exec bash /home/user/1430-r2/fixture.sh wr1"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:37:21.415Z",
+  "host": "wsl",
+  "by": 619,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:37:21.403Z",
+  "pid": 636,
+  "cmd": "ps",
+  "args": [
+   "-eo",
+   "pid=,ppid=,pgid=,sid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:37:21.417Z",
+  "host": "wsl",
+  "by": 619,
+  "event": "exit",
+  "pid": 628,
+  "code": null,
+  "sig": "SIGKILL"
+ },
+ {
+  "t": "2026-11-20T16:37:33.431Z",
+  "host": "wsl",
+  "by": 619,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:37:33.425Z",
+  "pid": 637,
+  "cmd": "ps",
+  "args": [
+   "-eo",
+   "pid=,ppid=,pgid=,sid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:37:33.639Z",
+  "host": "wsl",
+  "by": 611,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:37:33.633Z",
+  "pid": 638,
+  "cmd": "ps",
+  "args": [
+   "-eo",
+   "pid=,ppid=,pgid=,sid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:37:33.644Z",
+  "host": "wsl",
+  "by": 611,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:37:33.639Z",
+  "pid": 639,
+  "cmd": "systemctl",
+  "args": [
+   "--user",
+   "--no-pager",
+   "reset-failed",
+   "fx1430r2-wr1.service"
+  ],
+  "status": 1,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:37:34.656Z",
+  "host": "wsl",
+  "by": 611,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:37:34.647Z",
+  "pid": 640,
+  "cmd": "ps",
+  "args": [
+   "-eo",
+   "pid=,ppid=,pgid=,sid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:37:34.664Z",
+  "host": "wsl",
+  "by": 611,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:37:34.658Z",
+  "pid": 641,
+  "cmd": "systemd-run",
+  "args": [
+   "--user",
+   "--unit=fx1430r2-wr2",
+   "-p",
+   "Delegate=yes",
+   "-p",
+   "KillMode=process",
+   "--setenv=FX_REC=/home/user/1430-r2/rec-wsl.jsonl",
+   "--setenv=FX_HOST=wsl",
+   "--setenv=FX_SHLOG=/home/user/1430-r2/sh-wr2.log",
+   "--working-directory=/home/user/1430-r2",
+   "bash",
+   "-c",
+   "id >> /home/user/1430-r2/wr2.log & echo \"id-pid $$!\" >> /home/user/1430-r2/sh-wr2.log; wait $$!; echo \"supervisor-bash $$$$\" >> /home/user/1430-r2/sh-wr2.log; exec /home/user/1430-r2/node-v24.19.0-linux-x64/bin/node /home/user/1430-r2/supervisor-posix.cjs e1c wr2 /home/user/1430-r2/d-wr2 /home/user/1430-r2 >> /home/user/1430-r2/wr2.log 2>&1"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:37:34.710Z",
+  "host": "wsl",
+  "by": 642,
+  "event": "self",
+  "pid": 642,
+  "ppid": 334,
+  "argv": [
+   "/home/user/1430-r2/node-v24.19.0-linux-x64/bin/node",
+   "/home/user/1430-r2/supervisor-posix.cjs",
+   "e1c",
+   "wr2",
+   "/home/user/1430-r2/d-wr2",
+   "/home/user/1430-r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:37:34.712Z",
+  "host": "wsl",
+  "by": 642,
+  "event": "spawn",
+  "pid": 651,
+  "cmd": "bash",
+  "args": [
+   "-c",
+   "read _; exec bash /home/user/1430-r2/fixture.sh wr2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:37:37.726Z",
+  "host": "wsl",
+  "by": 642,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:37:37.718Z",
+  "pid": 659,
+  "cmd": "ps",
+  "args": [
+   "-eo",
+   "pid=,ppid=,pgid=,sid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:37:37.755Z",
+  "host": "wsl",
+  "by": 642,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:37:37.727Z",
+  "pid": 660,
+  "cmd": "lsof",
+  "args": [
+   "-O",
+   "-w",
+   "-n",
+   "-P",
+   "-a",
+   "-d",
+   "cwd",
+   "-u",
+   "1000",
+   "-F",
+   "pun"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:37:37.756Z",
+  "host": "wsl",
+  "by": 642,
+  "event": "exit",
+  "pid": 651,
+  "code": null,
+  "sig": "SIGKILL"
+ },
+ {
+  "t": "2026-11-20T16:37:49.774Z",
+  "host": "wsl",
+  "by": 642,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:37:49.765Z",
+  "pid": 661,
+  "cmd": "ps",
+  "args": [
+   "-eo",
+   "pid=,ppid=,pgid=,sid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:37:49.921Z",
+  "host": "wsl",
+  "by": 611,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:37:49.913Z",
+  "pid": 662,
+  "cmd": "ps",
+  "args": [
+   "-eo",
+   "pid=,ppid=,pgid=,sid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:37:49.927Z",
+  "host": "wsl",
+  "by": 611,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:37:49.922Z",
+  "pid": 663,
+  "cmd": "systemctl",
+  "args": [
+   "--user",
+   "--no-pager",
+   "reset-failed",
+   "fx1430r2-wr2.service"
+  ],
+  "status": 1,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:37:50.936Z",
+  "host": "wsl",
+  "by": 611,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:37:50.927Z",
+  "pid": 664,
+  "cmd": "ps",
+  "args": [
+   "-eo",
+   "pid=,ppid=,pgid=,sid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:37:50.943Z",
+  "host": "wsl",
+  "by": 611,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:37:50.937Z",
+  "pid": 665,
+  "cmd": "systemd-run",
+  "args": [
+   "--user",
+   "--unit=fx1430r2-wr3",
+   "-p",
+   "Delegate=yes",
+   "-p",
+   "KillMode=process",
+   "--setenv=FX_REC=/home/user/1430-r2/rec-wsl.jsonl",
+   "--setenv=FX_HOST=wsl",
+   "--setenv=FX_SHLOG=/home/user/1430-r2/sh-wr3.log",
+   "--working-directory=/home/user/1430-r2",
+   "bash",
+   "-c",
+   "id >> /home/user/1430-r2/wr3.log & echo \"id-pid $$!\" >> /home/user/1430-r2/sh-wr3.log; wait $$!; echo \"supervisor-bash $$$$\" >> /home/user/1430-r2/sh-wr3.log; exec /home/user/1430-r2/node-v24.19.0-linux-x64/bin/node /home/user/1430-r2/supervisor-posix.cjs e2 wr3 /home/user/1430-r2/d-wr3 /home/user/1430-r2 >> /home/user/1430-r2/wr3.log 2>&1"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:37:50.974Z",
+  "host": "wsl",
+  "by": 666,
+  "event": "self",
+  "pid": 666,
+  "ppid": 334,
+  "argv": [
+   "/home/user/1430-r2/node-v24.19.0-linux-x64/bin/node",
+   "/home/user/1430-r2/supervisor-posix.cjs",
+   "e2",
+   "wr3",
+   "/home/user/1430-r2/d-wr3",
+   "/home/user/1430-r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:37:50.976Z",
+  "host": "wsl",
+  "by": 666,
+  "event": "spawn",
+  "pid": 675,
+  "cmd": "bash",
+  "args": [
+   "-c",
+   "read _; exec bash /home/user/1430-r2/fixture.sh wr3"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:37:53.989Z",
+  "host": "wsl",
+  "by": 666,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:37:53.982Z",
+  "pid": 683,
+  "cmd": "ps",
+  "args": [
+   "-eo",
+   "pid=,ppid=,pgid=,sid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:38:06.171Z",
+  "host": "wsl",
+  "by": 611,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:38:06.162Z",
+  "pid": 684,
+  "cmd": "ps",
+  "args": [
+   "-eo",
+   "pid=,ppid=,pgid=,sid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:38:06.191Z",
+  "host": "wsl",
+  "by": 611,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:38:06.171Z",
+  "pid": 685,
+  "cmd": "/home/user/1430-r2/node-v24.19.0-linux-x64/bin/node",
+  "args": [
+   "-e",
+   "const fs=require('fs');const T=process.argv[1];console.log('fresh writer pid',process.pid,'ppid',process.ppid);const t0=process.hrtime.bigint();fs.writeFileSync(T+'/cgroup.kill','1');for(;;){let e;try{e=fs.readFileSync(T+'/cgroup.events','utf8')}catch{e=null}if(e===null||/populated 0/.test(e)){console.log('cgroup.kill written; tree',e===null?'removed':'populated 0','after',(Number(process.hrtime.bigint()-t0)/1e6).toFixed(2),'ms');break}}",
+   "/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/fx1430r2-wr3.service/tree"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:38:16.195Z",
+  "host": "wsl",
+  "by": 611,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:38:16.191Z",
+  "pid": 692,
+  "cmd": "ps",
+  "args": [
+   "-eo",
+   "pid=,ppid=,pgid=,sid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:38:16.198Z",
+  "host": "wsl",
+  "by": 611,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:38:16.195Z",
+  "pid": 693,
+  "cmd": "ps",
+  "args": [
+   "-eo",
+   "pid=,ppid=,pgid=,sid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:38:16.201Z",
+  "host": "wsl",
+  "by": 611,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:38:16.198Z",
+  "pid": 694,
+  "cmd": "systemctl",
+  "args": [
+   "--user",
+   "--no-pager",
+   "reset-failed",
+   "fx1430r2-wr3.service"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:38:17.212Z",
+  "host": "wsl",
+  "by": 611,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:38:17.202Z",
+  "pid": 695,
+  "cmd": "ps",
+  "args": [
+   "-eo",
+   "pid=,ppid=,pgid=,sid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ }
+]

@@ -39,3 +39,18 @@ gitignored `spikes/`. Its source, every listing and the transcript are in
   `"type": "module"`. Throwaway CommonJS in `spikes/` needs the `.cjs` extension.
 - **A non-elevated Windows run could not be made.** `runas /trustlevel` failed over SSH, so every
   Windows reading is from an elevated supervisor.
+
+## Round 2
+
+- **"Every process" means every pid, and that has to be designed in before the run.**
+  - Round 1 recorded only the long-lived processes, and the judge was right that synchronous
+    helpers and M4's parent are processes too.
+  - Round 2 recorded each spawn in Node, made the fixture write its own pids, and ran a WMI
+    process-start watcher on Windows.
+  - Even so, the measuring sessions themselves cannot be fully recorded, and the report names what
+    is left.
+- **A watcher must outlive the events it is meant to catch.** Check A stopped the Windows watcher
+  before WMI had delivered check A's own start events.
+- **A full transcript is cheapest to produce from the session record.** Round 1's hand-kept
+  appendix could only give time windows. The retained tool-call record gives exact inputs, times
+  and outputs.
