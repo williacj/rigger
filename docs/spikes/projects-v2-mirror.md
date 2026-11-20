@@ -112,9 +112,17 @@ It lived in the spike's gitignored directory, spikes/1431-spike-engineer under t
   `x-ratelimit-*` headers and the GraphQL rateLimit.cost. That is
   [`docs/spikes/projects-v2-mirror/calllog.json`](projects-v2-mirror/calllog.json). It holds 599 logged calls, merged from both hosts. Each logged
   `ts` is the request's start and `ms` its duration, so `ts + ms` is when the response completed.
-  It also holds 20 entries marked `reconstructed: true`. Those are the calls I made by hand with
-  `gh`, `git` and curl.exe; they were not logged when made. Each one is rebuilt from the
-  transcript, and its `note` says which of its fields are not measured.
+  It also holds 30 entries marked `reconstructed: true`, none of which was logged when made.
+  - **What they are:** the calls I made by hand with `gh`, `git` and curl.exe, and five fetches
+    of GitHub documentation.
+  - **How they were rebuilt:** each comes from the transcript or from session-log.txt. Its
+    `source` names the entry, and its `note` says which of its fields are not measured.
+  - **Completeness:** I checked every `gh`, `git fetch`, `git push` and curl.exe command, and every
+    documentation fetch, in session-log.txt through revision 2 against these entries. Each has
+    one.
+  - **Exceptions:** the revision-2 push, which this file cannot record because the push carries
+    it. One `gh issue view 1431 --comments --json comments`, in session-log entry [2], failed on
+    its own flags before sending any request; gh printed its usage text.
 
 ### Read-back delay
 
@@ -478,13 +486,13 @@ ReadDeletedNumber 200 {"data":{"user":{"projectV2":null},"rateLimit":{"cost":1}}
   - GraphQL mutations on project `PVT_kwHOBzomGc4BsXT-` only: `CreateProject`,
     `SetStatusOptions`, `CreateEscalationField`, `AddItem` ×33 (one of them the network-error
     attempt), `SetStatus` ×47, `SetEscalation` ×2, `ClearEscalation` ×2 and `DeleteProject`.
-- The call log's reconstructed entries add four hand-made writes, all on this card or its
+- The call log's reconstructed entries add five hand-made writes, all on this card or its
   branch:
   - the two stated-intent comments on #1431;
-  - the push of `rigger-1431`;
+  - the two pushes of `rigger-1431`, one creating the branch and one carrying revision 1;
   - pull request #1435.
-- This revision's own push is not in the log, because a file cannot record the push that carries
-  it. The transcript's revision-1 entries record it.
+- The revision-2 push is not in the log, because a file cannot record the push that carries it.
+  The transcript's revision-2 section names it.
 - Nothing in the log or the transcript writes to the live board (project 6), an M8 card or #1293.
 
 **Unplanned events, disclosed.**
@@ -533,30 +541,48 @@ carry `3180@Finn-PC10` (cards 1 and 4) and `11740@Finn-PC10` (cards 2, 3 and 5).
 identities `34000@Finn-PC10` and `30548@Finn-PC10` in the same histories match the recorded worker
 pids.
 
-**Pids I cannot recover.** Item 43 asks for every process with its pid, and this inventory does
-not have them all. Every other process was started by a foreground command that exited before the
-next one ran, and nothing recorded its pid:
-- **finnpc:**
-  - the `node start.js` for cards 6–32. Its history was not exported, and the server's database
-    was deleted with the scratch directory;
-  - each `node` run of sigwatch.js, editwatch.js, gated.js, watch.js and scan.js;
-  - each temporal.exe CLI call. Its identity, `temporal-cli:FINN-PC10\CJ@Finn-PC10`, carries no
-    pid;
-  - each `npm` run;
-  - each curl.exe and tar.exe run;
-  - the cmd.exe and `sshd` session processes behind every SSH command.
-- **laptop:**
-  - each `ssh`, `scp`, `gh`, `node`, `python3`, `npm` and `git` run;
-  - the `npm test` runs. The one stopped at 00:59Z was checked afterwards, and no process with the
-    worktree in its command line remained.
+**Processes with no recorded pid.** The owner accepted this gap for all three Temporal spikes, on
+condition that the report lists exactly which processes have no pid and why. The ruling is at
+[1431#7050910524](https://github.com/williacj/rigger/issues/1431#issuecomment-7050910524).
 
-None of these can survive their command, and the listings below show none did. They show:
-- no temporal.exe on finnpc;
-- no node.exe there but 31732 and 19544, which belong to other sessions and which I did not
-  touch;
-- no laptop holder alive.
+**Which processes.** Every process started by a tool call in
+`docs/spikes/projects-v2-mirror/session-log.txt`, and every descendant of such a process, except
+the eight in the table above. The log holds every tool call I made, with its exact input, so it
+fixes the set. By host and kind, these are:
+- **finnpc, from the commands inside each `ssh … finnpc` and w.sh string:**
+  - the `node start.js 30000 - 6 … 32` that started cards 6–32;
+  - each `node` run of sigwatch.js, editwatch.js, gated.js, watch.js, scan.js and `node -e`;
+  - each temporal.exe CLI run, whether typed directly or launched by sigwatch.js and gated.js
+    through `execFileSync`;
+  - each `npm` run (`install`, `ls`, `config get`) and the processes npm spawned;
+  - each curl.exe, tar.exe, `taskkill`, `tasklist`, `netstat`, `findstr`, `powershell`, `wmic`,
+    `ping`, `rmdir`, `del` and `mkdir`;
+  - the cmd.exe shell and the OpenSSH session process behind every SSH connection, including the
+    three held sessions whose laptop clients are in the table.
+- **laptop, from every Bash tool call:**
+  - the shell the session ran each call in, and everything that shell ran: `ssh`, `scp`, `gh`,
+    `git`, `node`, `python3`, `npm`, `grep`, `sed`, `awk`, `date` and the like;
+  - the background tasks and their waiting loops: `run_in_background` calls and the one Monitor
+    loop;
+  - `caffeinate`;
+  - suite-slot.sh and its children;
+  - the git hooks;
+  - every node process of every `npm test` run, including the run stopped at 00:59Z.
 
-The other `ssh finnpc` clients on the laptop belong to other sessions as well.
+**Why they have none.** Each ran in the foreground of its tool call, or as a descendant of one,
+and exited when that call ended. Nothing recorded its pid when it started: not the spike's
+scripts, and not the session record. The two exceptions are the Temporal clients 3180 and 11740,
+recovered above from the histories. The start.js for cards 6–32 could have been recovered the
+same way, but its history was never exported, and the server's database was deleted with the
+scratch directory.
+
+**None survived.** No process can outlive its tool call unless it is detached, and only the eight
+held or background processes in the table were detached. The listings below, and one more taken
+on the laptop at 21:25:07Z, show that none of mine remains:
+- **finnpc:** no temporal.exe, and no node.exe but 31732 and 19544. Those two belong to other
+  sessions, and I did not touch them.
+- **laptop:** no recorded holder alive. At 21:25:07Z, `ps -axo pid,ppid,command | grep -E
+  '1431-spike-engineer|1431-maker|finnpc'` printed no line.
 
 **Process listings after the last run** (transcript, about 00:51Z).
 
@@ -572,18 +598,36 @@ The laptop, running `ps -p 98483,99034,24660 -o pid=`:
 ps exit=1 (1 = none of 98483,99034,24660 alive)
 ```
 
-**Transcript:** [`docs/spikes/projects-v2-mirror/transcript.txt`](projects-v2-mirror/transcript.txt). It has
-every wrapped command with its UTC time and host. It also has a section, "Commands run outside
-the wrapper, verbatim", that gives every command I ran without the wrapper, verbatim, with the
-heredoc bodies and patches it wrote.
-- **What its times are:** the time of each such command is either the mtime of the file it wrote,
-  which is measured, or a bracket between the wrapped entries before and after it. No exact time
-  of its own was recorded, and none can be recovered.
-- **Writes into committed files:** for a command that wrote into a file this pull request
-  commits, the committed file stands in for the body.
+**Transcript and session log.** The owner accepted transcript gaps if they are listed, in the same
+ruling, [1431#7050910524](https://github.com/williacj/rigger/issues/1431#issuecomment-7050910524).
+This revision withdraws the earlier claim that the transcript gives every command verbatim.
+What the record holds:
+- **[`docs/spikes/projects-v2-mirror/session-log.txt`](projects-v2-mirror/session-log.txt)** is
+  extracted from the spike engineer's own session record. It gives every tool call I made, from
+  2026-11-19T15:50:48Z to its extraction, in order. For each call it gives the exact input: the
+  command string, a Write's body, or an Edit's old and new text. It also gives the call's issue
+  and answer times.
+- **[`docs/spikes/projects-v2-mirror/transcript.txt`](projects-v2-mirror/transcript.txt)** gives
+  each wrapped command with its UTC time, host and output. It then copies session-log entries
+  [1]–[160] and [161]–[218], and the revision-2 entries, verbatim, in place of the reconstructions
+  and prose summaries the earlier revisions had. Its "Backfilled result notes" summarize results
+  only; the commands behind them are in the copied entries.
+- **[`docs/spikes/projects-v2-mirror/failed-runs.txt`](projects-v2-mirror/failed-runs.txt)** holds
+  the complete failing output of every failed suite run.
 
-The complete failing output of every failed suite run is in
-[`docs/spikes/projects-v2-mirror/failed-runs.txt`](projects-v2-mirror/failed-runs.txt).
+**Gaps that remain.**
+- **Times of chained commands:** a command chained with `;` or `&&` inside one tool call has only
+  its call's issue and answer times. No time of its own was recorded.
+- **Background-task times:** for a background tool call, the answer time is its launch. Its end
+  appears only where its own output printed a time.
+- **Command output:** the session log holds inputs, not outputs. Outputs are in the transcript's
+  wrapped entries, in failed-runs.txt, or nowhere. The outputs of most unwrapped laptop commands
+  were shown to the session but are not committed. Two examples are the local `grep`/`cut`
+  filters and the read-only `python3` analyses, whose results the report quotes.
+- **Final steps of this revision:** the record cannot hold the steps that follow its own
+  extraction. These are this revision's last credential scan, its path check with the spikes
+  directory hidden, its commit and its push. The transcript's revision-2 section names each one
+  with its exact command text, and the pull request shows their results.
 
 **Credential scan** over every file committed under `docs/spikes/projects-v2-mirror/`:
 
@@ -593,17 +637,21 @@ grep -rnE 'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|Bearer [A-Za-
 
 Result: no line printed and `exit=1`, which is grep's "no match". The scan first ran at about
 01:00Z over the six evidence paths of that time. It ran again in revision 1 over the eight files
-now committed there, with the same command and the same result. It found no credential or token.
+then committed, and in revision 2 over the nine files now committed there, with the same command
+and the same result each time. It found no credential or token.
 
 ## Evidence
 
 All of these are under [`docs/spikes/projects-v2-mirror/`](projects-v2-mirror/).
-- `docs/spikes/projects-v2-mirror/transcript.txt` is the full transcript.
+- `docs/spikes/projects-v2-mirror/transcript.txt` is the transcript of wrapped commands and their
+  output, with the session-log entries copied in.
+- `docs/spikes/projects-v2-mirror/session-log.txt` is every tool call, with its exact input and
+  its times.
 - `docs/spikes/projects-v2-mirror/calllog.json` holds every forge call:
   - the scripts' calls, logged at call time with request start, duration, method, endpoint or
     operation, status, rate-limit headers and cost;
-  - the hand-made `gh`, `git` and curl.exe calls, each marked `reconstructed` and rebuilt from
-    the transcript.
+  - the hand-made `gh`, `git` and curl.exe calls, and the GitHub documentation fetches, each
+    marked `reconstructed` and rebuilt from the transcript or the session log.
 - `docs/spikes/projects-v2-mirror/failed-runs.txt` is the failing output of every failed suite run.
 - `docs/spikes/projects-v2-mirror/mirror-runs.json` holds every `mirrorCard` event.
 - `docs/spikes/projects-v2-mirror/histories/card-1.json` … `docs/spikes/projects-v2-mirror/histories/card-5.json` are the event histories from

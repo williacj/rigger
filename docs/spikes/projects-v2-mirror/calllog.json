@@ -1,5 +1,5 @@
 {
- "about": "Spike 1431 call log: every forge call the spike made, merged from both hosts, in time order. Entries without 'reconstructed' were logged by the spike's forge client at call time: ts is the request start and ms its duration, so ts+ms is when the response completed. purpose separates production calls (mirror-read, mirror-write, setup, teardown) from instrumentation (readback, measure, edit-drift, scan reads). Entries with reconstructed: true are calls made by hand with gh, git or curl. They were not logged when made; each is rebuilt from the transcript entry named in its source, and its note says which fields are not measured.",
+ "about": "Spike 1431 call log: every forge call the spike made, merged from both hosts, in time order. Entries without 'reconstructed' were logged by the spike's forge client at call time: ts is the request start and ms its duration, so ts+ms is when the response completed. purpose separates production calls (mirror-read, mirror-write, setup, teardown) from instrumentation (readback, measure, edit-drift, scan reads). Entries with reconstructed: true are calls made by hand with gh, git or curl. They were not logged when made; each is rebuilt from the transcript entry named in its source, and its note says which fields are not measured. Every gh, git and curl command and every GitHub documentation fetch in session-log.txt up to its extraction has an entry here. The one exception is the revision-2 push that carries this file; transcript.txt lists it.",
  "calls": [
   {
    "ts": "2026-11-19T15:50:50Z",
@@ -8617,6 +8617,19 @@
    "host": "Finn-PC10 (finnpc)"
   },
   {
+   "ts": "2026-11-20T00:46:13.104Z",
+   "host": "CJs-MacBook-Pro (laptop)",
+   "api": "docs",
+   "rw": "read",
+   "method": "GET",
+   "endpoint": "https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api",
+   "purpose": "manual",
+   "reconstructed": true,
+   "source": "session-log.txt [60]",
+   "command": "WebFetch (tool)",
+   "note": "Reconstructed, not logged at call time. ts is the issue time of the tool call that ran the command, from session-log.txt; the request itself followed within that call. gh and git do not report their HTTP requests, so api, method and endpoint are what the command is documented to call, not logged values. A fetch of GitHub documentation, not of the GitHub API, recorded here so that every request to a GitHub host is in this log."
+  },
+  {
    "ts": "2026-11-20T00:46:14.334Z",
    "ms": 243,
    "api": "graphql",
@@ -11342,6 +11355,19 @@
    "host": "Finn-PC10 (finnpc)"
   },
   {
+   "ts": "2026-11-20T00:47:08.026Z",
+   "host": "CJs-MacBook-Pro (laptop)",
+   "api": "docs",
+   "rw": "read",
+   "method": "GET",
+   "endpoint": "https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api",
+   "purpose": "manual",
+   "reconstructed": true,
+   "source": "session-log.txt [69]",
+   "command": "WebFetch (tool)",
+   "note": "Reconstructed, not logged at call time. ts is the issue time of the tool call that ran the command, from session-log.txt; the request itself followed within that call. gh and git do not report their HTTP requests, so api, method and endpoint are what the command is documented to call, not logged values. A fetch of GitHub documentation, not of the GitHub API, recorded here so that every request to a GitHub host is in this log."
+  },
+  {
    "ts": "2026-11-20T00:47:20.163Z",
    "ms": 393,
    "api": "graphql",
@@ -12767,7 +12793,46 @@
    "host": "CJs-MacBook-Pro (laptop)"
   },
   {
-   "ts": "2026-11-20T01:3xZ",
+   "ts": "2026-11-20T00:52:02.150Z",
+   "host": "CJs-MacBook-Pro (laptop)",
+   "api": "docs",
+   "rw": "read",
+   "method": "GET",
+   "endpoint": "https://docs.github.com/en/webhooks/webhook-events-and-payloads#projects_v2_item",
+   "purpose": "manual",
+   "reconstructed": true,
+   "source": "session-log.txt [95]",
+   "command": "WebFetch (tool)",
+   "note": "Reconstructed, not logged at call time. ts is the issue time of the tool call that ran the command, from session-log.txt; the request itself followed within that call. gh and git do not report their HTTP requests, so api, method and endpoint are what the command is documented to call, not logged values. A fetch of GitHub documentation, not of the GitHub API, recorded here so that every request to a GitHub host is in this log."
+  },
+  {
+   "ts": "2026-11-20T00:52:08.213Z",
+   "host": "CJs-MacBook-Pro (laptop)",
+   "api": "docs",
+   "rw": "read",
+   "method": "GET",
+   "endpoint": "https://docs.github.com/en/webhooks/webhook-events-and-payloads#projects_v2_item (offset 100000)",
+   "purpose": "manual",
+   "reconstructed": true,
+   "source": "session-log.txt [96]",
+   "command": "WebFetch (tool)",
+   "note": "Reconstructed, not logged at call time. ts is the issue time of the tool call that ran the command, from session-log.txt; the request itself followed within that call. gh and git do not report their HTTP requests, so api, method and endpoint are what the command is documented to call, not logged values. A fetch of GitHub documentation, not of the GitHub API, recorded here so that every request to a GitHub host is in this log."
+  },
+  {
+   "ts": "2026-11-20T00:52:16.543Z",
+   "host": "CJs-MacBook-Pro (laptop)",
+   "api": "docs",
+   "rw": "read",
+   "method": "GET",
+   "endpoint": "https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows",
+   "purpose": "manual",
+   "reconstructed": true,
+   "source": "session-log.txt [97]",
+   "command": "WebFetch (tool)",
+   "note": "Reconstructed, not logged at call time. ts is the issue time of the tool call that ran the command, from session-log.txt; the request itself followed within that call. gh and git do not report their HTTP requests, so api, method and endpoint are what the command is documented to call, not logged values. A fetch of GitHub documentation, not of the GitHub API, recorded here so that every request to a GitHub host is in this log."
+  },
+  {
+   "ts": "2026-11-20T01:31:22.137Z",
    "host": "CJs-MacBook-Pro (laptop)",
    "api": "rest",
    "rw": "read",
@@ -12775,13 +12840,25 @@
    "endpoint": "/repos/williacj/rigger/issues/1431/comments",
    "purpose": "manual",
    "reconstructed": true,
-   "source": "after the transcript entry for the repository-deletion addendum; time approximate (between 01:31:13Z, the comment it found, and the report edit that followed)",
+   "source": "session-log.txt [123]",
    "command": "gh api repos/williacj/rigger/issues/1431/comments --paginate",
-   "note": "Reconstructed from the transcript, not logged at call time. ts is the wrapper start time of the command, not the request time. gh does not report how many HTTP requests one command makes; the api, method and endpoint here are what the command is documented to call, not logged values. ",
-   "tsApproximate": true
+   "note": "Reconstructed, not logged at call time. ts is the issue time of the tool call that ran the command, from session-log.txt; the request itself followed within that call. gh and git do not report their HTTP requests, so api, method and endpoint are what the command is documented to call, not logged values."
   },
   {
-   "ts": "2026-11-20T15:3xZ",
+   "ts": "2026-11-20T05:26:09.614Z",
+   "host": "CJs-MacBook-Pro (laptop)",
+   "api": "git",
+   "rw": "read",
+   "method": "GET",
+   "endpoint": "github.com/williacj/rigger.git (git fetch origin main)",
+   "purpose": "manual",
+   "reconstructed": true,
+   "source": "session-log.txt [135]",
+   "command": "git fetch -q origin main",
+   "note": "Reconstructed, not logged at call time. ts is the issue time of the tool call that ran the command, from session-log.txt; the request itself followed within that call. gh and git do not report their HTTP requests, so api, method and endpoint are what the command is documented to call, not logged values."
+  },
+  {
+   "ts": "2026-11-20T15:47:57.691Z",
    "host": "CJs-MacBook-Pro (laptop)",
    "api": "git",
    "rw": "write",
@@ -12789,13 +12866,12 @@
    "endpoint": "github.com/williacj/rigger.git (git push, new branch rigger-1431)",
    "purpose": "manual",
    "reconstructed": true,
-   "source": "after commit 8fb675a7 (commit date 15:38:04Z); before gh pr create",
+   "source": "session-log.txt [158]",
    "command": "git push -u origin rigger-1431",
-   "note": "Reconstructed from the transcript, not logged at call time. ts is the wrapper start time of the command, not the request time. gh does not report how many HTTP requests one command makes; the api, method and endpoint here are what the command is documented to call, not logged values. ",
-   "tsApproximate": true
+   "note": "Reconstructed, not logged at call time. ts is the issue time of the tool call that ran the command, from session-log.txt; the request itself followed within that call. gh and git do not report their HTTP requests, so api, method and endpoint are what the command is documented to call, not logged values."
   },
   {
-   "ts": "2026-11-20T15:4xZ",
+   "ts": "2026-11-20T15:48:16.903Z",
    "host": "CJs-MacBook-Pro (laptop)",
    "api": "graphql",
    "rw": "write",
@@ -12803,38 +12879,87 @@
    "operation": "gh pr create (createPullRequest mutation)",
    "purpose": "manual",
    "reconstructed": true,
-   "source": "after the git push above; result pull 1435",
+   "source": "session-log.txt [160]",
    "command": "gh pr create --repo williacj/rigger --base main --head rigger-1431",
-   "note": "Reconstructed from the transcript, not logged at call time. ts is the wrapper start time of the command, not the request time. gh does not report how many HTTP requests one command makes; the api, method and endpoint here are what the command is documented to call, not logged values. Result: pull 1435.",
-   "tsApproximate": true
+   "note": "Reconstructed, not logged at call time. ts is the issue time of the tool call that ran the command, from session-log.txt; the request itself followed within that call. gh and git do not report their HTTP requests, so api, method and endpoint are what the command is documented to call, not logged values."
   },
   {
    "host": "CJs-MacBook-Pro (laptop)",
    "purpose": "manual",
    "reconstructed": true,
-   "tsApproximate": true,
-   "note": "Reconstructed, not logged at call time; the time is approximate. gh does not report its own HTTP requests.",
-   "ts": "2026-11-20T16:1xZ",
+   "note": "Reconstructed, not logged at call time. ts is the issue time of the tool call that ran the command, from session-log.txt; the request itself followed within that call. gh and git do not report their HTTP requests, so api, method and endpoint are what the command is documented to call, not logged values.",
+   "ts": "2026-11-20T16:14:23.794Z",
    "api": "rest",
    "rw": "read",
    "method": "GET",
    "endpoint": "/repos/williacj/rigger/issues/comments/7044457092",
    "command": "gh api repos/williacj/rigger/issues/comments/7044457092 -q .body",
-   "source": "reading the round-1 verdict on PR #1435"
+   "source": "session-log.txt [162]"
   },
   {
    "host": "CJs-MacBook-Pro (laptop)",
    "purpose": "manual",
    "reconstructed": true,
-   "tsApproximate": true,
-   "note": "Reconstructed, not logged at call time; the time is approximate. gh does not report its own HTTP requests.",
-   "ts": "2026-11-20T16:1xZ",
+   "note": "Reconstructed, not logged at call time. ts is the issue time of the tool call that ran the command, from session-log.txt; the request itself followed within that call. gh and git do not report their HTTP requests, so api, method and endpoint are what the command is documented to call, not logged values.",
+   "ts": "2026-11-20T16:14:58.615Z",
    "api": "git",
    "rw": "read",
    "method": "GET",
    "endpoint": "github.com/williacj/rigger.git (git fetch)",
    "command": "git fetch -q origin",
-   "source": "revision 1, before editing"
+   "source": "session-log.txt [164]"
+  },
+  {
+   "ts": "2026-11-20T16:22:29.222Z",
+   "host": "CJs-MacBook-Pro (laptop)",
+   "api": "graphql",
+   "rw": "read",
+   "method": "POST",
+   "operation": "gh issue view (issue body query, twice)",
+   "purpose": "manual",
+   "reconstructed": true,
+   "source": "session-log.txt [203]",
+   "command": "gh issue view 1431 -R williacj/rigger --json body -q .body (x2)",
+   "note": "Reconstructed, not logged at call time. ts is the issue time of the tool call that ran the command, from session-log.txt; the request itself followed within that call. gh and git do not report their HTTP requests, so api, method and endpoint are what the command is documented to call, not logged values."
+  },
+  {
+   "ts": "2026-11-20T16:39:10.334Z",
+   "host": "CJs-MacBook-Pro (laptop)",
+   "api": "git",
+   "rw": "write",
+   "method": "POST",
+   "endpoint": "github.com/williacj/rigger.git (git push, 8fb675a7..7b392020)",
+   "purpose": "manual",
+   "reconstructed": true,
+   "source": "session-log.txt [216]",
+   "command": "git push origin rigger-1431 (through suite-slot.sh)",
+   "note": "Reconstructed, not logged at call time. ts is the issue time of the tool call that ran the command, from session-log.txt; the request itself followed within that call. gh and git do not report their HTTP requests, so api, method and endpoint are what the command is documented to call, not logged values. The command waited for the suite slot; its output records the push done by 16:46:17Z."
+  },
+  {
+   "ts": "2026-11-20T21:21:15.016Z",
+   "host": "CJs-MacBook-Pro (laptop)",
+   "api": "rest",
+   "rw": "read",
+   "method": "GET",
+   "endpoint": "/repos/williacj/rigger/issues/comments/7045878932",
+   "purpose": "manual",
+   "reconstructed": true,
+   "source": "session-log.txt [219]",
+   "command": "gh api repos/williacj/rigger/issues/comments/7045878932 -q .body",
+   "note": "Reconstructed, not logged at call time. ts is the issue time of the tool call that ran the command, from session-log.txt; the request itself followed within that call. gh and git do not report their HTTP requests, so api, method and endpoint are what the command is documented to call, not logged values."
+  },
+  {
+   "ts": "2026-11-20T21:21:15.016Z",
+   "host": "CJs-MacBook-Pro (laptop)",
+   "api": "rest",
+   "rw": "read",
+   "method": "GET",
+   "endpoint": "/repos/williacj/rigger/issues/comments/7050910524",
+   "purpose": "manual",
+   "reconstructed": true,
+   "source": "session-log.txt [219]",
+   "command": "gh api repos/williacj/rigger/issues/comments/7050910524 -q '.html_url, .created_at, .body'",
+   "note": "Reconstructed, not logged at call time. ts is the issue time of the tool call that ran the command, from session-log.txt; the request itself followed within that call. gh and git do not report their HTTP requests, so api, method and endpoint are what the command is documented to call, not logged values."
   }
  ]
 }
