@@ -1,4 +1,4 @@
-ABOUTME: Full transcript of every command the #1430 spike engineer ran, each with its UTC time and host, and its output.
+ABOUTME: Round-1 transcript for #1430: the commands run through runners/t.sh, each with its UTC start time, host and output.
 
 Each entry was appended by `runners/t.sh` when its command returned, stamped with the UTC time the command started, so an entry for a long command can follow later ones. "host" names where the command acted: laptop, hostpc (Windows, over `ssh hostpc`), or wsl-via-hostpc (WSL reached as `ssh hostpc wsl.exe -e`). A WSL entry shows its script inline after `# script`, with newlines shown as `;`. Edits after the fact, each marked where made: one Microsoft account name and its SID in `whoami /groups` output are redacted; 20,209 repeated `grep` error lines from a runaway polling loop are collapsed to a note. Commands run without the wrapper are in session-log.txt, as the last section says.
 
@@ -1179,7 +1179,7 @@ ls: cannot access '/home/user/1430-spike-engineer': No such file or directory
 
 ## Commands run without the wrapper
 
-Round 1 of this transcript logs only what ran through `runners/t.sh`. Every command the spike engineer ran, wrapped or not, is in
-docs/spikes/whole-tree-containment/session-log.txt: its exact input, the UTC times it was issued and returned, its host and its full
-result, generated from the retained session record. An earlier version of this section grouped the unwrapped commands into
-approximate windows; session-log.txt replaces it.
+This transcript logs only what ran through `runners/t.sh`. The commands run without it are in
+docs/spikes/whole-tree-containment/session-log.txt, which is generated from the spike engineer's retained session record. That log
+has gaps of its own, and the report lists them under "The transcript". An earlier version of this section grouped the unwrapped
+commands into approximate windows; session-log.txt replaces it.

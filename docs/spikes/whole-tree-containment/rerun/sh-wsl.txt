@@ -1,0 +1,44 @@
+ABOUTME: Round-2 fixture pid logs (sh-wr1.log to sh-wr3.log) from the WSL runs wr1, wr2 and wr3, as fetched by wsl-fetch: every process fixture.sh and each supervisor unit's bash started, by role and pid.
+
+=== FILE /home/user/1430-r2/sh-wr1.log
+id-pid 620
+supervisor-bash 619
+root 628
+M1-from-root 629
+M3 630
+M4-parent-from-root 631
+M5-from-root 632
+M6 633
+M1 629
+M2 634
+M4-parent 631
+M4 635
+M5 632
+=== FILE /home/user/1430-r2/sh-wr2.log
+id-pid 643
+supervisor-bash 642
+root 651
+M1-from-root 652
+M3 653
+M4-parent-from-root 654
+M5-from-root 655
+M6 656
+M1 652
+M2 657
+M4-parent 654
+M4 658
+M5 655
+=== FILE /home/user/1430-r2/sh-wr3.log
+id-pid 667
+supervisor-bash 666
+root 675
+M1-from-root 676
+M3 677
+M4-parent-from-root 678
+M5-from-root 679
+M6 680
+M1 676
+M2 681
+M4-parent 678
+M4 682
+M5 679
