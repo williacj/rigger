@@ -1,6 +1,6 @@
 ABOUTME: Full transcript of every command the #1430 spike engineer ran, each with its UTC time and host, and its output.
 
-Each entry was appended by `runners/t.sh` when its command returned, stamped with the UTC time the command started, so an entry for a long command can follow later ones. "host" names where the command acted: laptop, finnpc (Windows, over `ssh finnpc`), or wsl-via-finnpc (WSL reached as `ssh finnpc wsl.exe -e`). A WSL entry shows its script inline after `# script`, with newlines shown as `;`. Edits after the fact, each marked where made: one Microsoft account name and its SID in `whoami /groups` output are redacted; 20,209 repeated `grep` error lines from a runaway polling loop are collapsed to a note. Commands run without the wrapper are in the appendix at the end.
+Each entry was appended by `runners/t.sh` when its command returned, stamped with the UTC time the command started, so an entry for a long command can follow later ones. "host" names where the command acted: laptop, finnpc (Windows, over `ssh finnpc`), or wsl-via-finnpc (WSL reached as `ssh finnpc wsl.exe -e`). A WSL entry shows its script inline after `# script`, with newlines shown as `;`. Edits after the fact, each marked where made: one Microsoft account name and its SID in `whoami /groups` output are redacted; 20,209 repeated `grep` error lines from a runaway polling loop are collapsed to a note. Commands run without the wrapper are in session-log.txt, as the last section says.
 
 # Transcript, card #1430
 
@@ -1177,30 +1177,9 @@ ls: cannot access '/home/cj/1430-spike-engineer': No such file or directory
 [exit 2]
 ```
 
-## Appendix: commands run without the wrapper
+## Commands run without the wrapper
 
-These ran outside `runners/t.sh`, so they carry no exact time. Each is placed in the UTC window between the logged entries around it, all on 2026-11-20. Every one ran on the laptop except where a host is named.
-
-| Window (UTC) | Host | Command, or what it did |
-|---|---|---|
-| before 00:41:03 | laptop | `gh issue view 1430 --json body -q .body \| shasum`; `gh issue view 1430`; `cat` of the shared brief in the coordinator's scratchpad |
-| before 00:41:03 | laptop | `git fetch -q origin`; `git worktree add -b rigger-1430 ~/GitHub/rigger-worktrees/1430-spike-engineer origin/main`; `grep -n spikes .gitignore`; `ls docs/spikes`; `gh issue view 1430 --comments` |
-| before 00:41:03 | laptop | read-only `grep`, `ls` and `head` over `doc-references.json`, `docs/spec/requirements.md`, `docs/journal/` and `docs/spikes/what-leaves-the-process-group.md` |
-| before 00:41:03 | laptop | `mkdir -p spikes/1430-spike-engineer`; wrote `t.sh`; `echo '# Transcript, card #1430' > transcript.md` |
-| 00:41:04 to 00:41:17 | laptop | wrote `wsl.sh` and `p1.sh` (local script files) |
-| 00:41:17 to 00:41:39 | laptop | wrote `intent.md` (the stated-intent comment); the `gh issue comment` itself is logged at 00:41:39 |
-| 00:41:39 to 00:42:55 | laptop | read-only `grep` over `src/substrate/process.mjs` for today's kill and census; wrote `p3.sh` |
-| 00:42:55 to 00:43:41 | laptop | wrote `fixture/fixture.sh`, `fixture/list.sh`, `fixture/supervisor.js`, `mac-run.sh`; `bash -n` and `node --check` on them |
-| 00:43:41 to 00:44:05 | laptop | `mv fixture/supervisor.js fixture/supervisor.cjs`; `sed -i '' 's/supervisor\.js/supervisor.cjs/g'` over the fixture and `mac-run.sh` |
-| 00:44:05 | laptop | a `python3` edit of `fixture/list.sh` (timestamp format and column order), before that entry's command |
-| 00:44:49 to 00:45:09 | laptop | wrote `wsl-run.sh` and `p4.sh` |
-| 00:45:14 to 00:48:25 | finnpc, then WSL | `ssh finnpc wsl.exe -e bash -c '"cat ~/1430-spike-engineer/w1.log; systemctl --user status fx1430-w1 --no-pager \| head -20; ps -eo pid,ppid,args \| grep -E \"wsl-run\|fx-w1\|supervisor\" \| grep -v grep"'`. `cmd.exe` split it at its pipes; it printed `'fx-w1' is not recognized as an internal or external command, operable program or batch file.` and exited 255. Read-only; no write is known |
-| 00:45:14 to 00:48:25 | laptop | wrote `p5.sh`, `p6.sh`, `p7.sh` |
-| 00:49:22 to 00:51:55 | laptop | wrote `p8.sh`, `p9.sh`, `p10.sh` |
-| 00:51:55 to 00:52:10 | laptop | a `python3` edit of `transcript.md` that collapsed the 20,209 repeated lines (marked where made); a `python3` edit of `wsl-run.sh` (the fresh writer's loop also stops when the cgroup is gone); wrote `p11.sh` |
-| 00:52:43 to 00:55:51 | laptop | wrote `p12.sh`; wrote `fixture-win/win32.cjs`, `member-win.cjs`, `fixture-win.cjs`, `supervisor-win.cjs`, `winlist.cjs`, `win-run.cjs`; `node --check` on each |
-| 00:56:14 to 00:56:45 | laptop | a `python3` edit adding `names()` to `win32.cjs`, used by `supervisor-win.cjs` and `winlist.cjs` |
-| 00:58:20 to 00:58:51 | laptop | wrote `p13.sh`, `p14.sh`, and the pid lists `pids-mac.txt`, `pids-wsl.txt`, `pids-win.txt` |
-| 00:59:00 to 01:01:53 | laptop | `npm ci` and `npm test` in the worktree (the deterministic baseline); `mkdir` of `docs/spikes/whole-tree-containment/` and `cp` of the fixture and runner sources into it; a `python3` copy of `transcript.md` into it with the redaction; `sed` adding `ABOUTME:` to the runner copies; read-only `grep` and `sed` over `ARCHITECTURE.md`, `docs/spec/decisions.md` and `docs/v0-build-plan.md`; `curl` of libuv's `src/win/process.c` at `v1.51.0` into the session scratchpad, and `grep` and `sed` over it; a `sed` adding `id` to `wsl-run.sh`; wrote `p15.sh` |
-| after 01:02:17 | laptop | wrote `p16.sh` before that entry; then wrote the report, the journal entry and the `doc-references.json` entry; the credential scan the report quotes; `npm test`; `git status`, `git add`, `git commit`, which the pre-commit suite refused because a test requires every tracked `.md` under `docs/spikes/` to be a checked report; `git mv` of this transcript from `transcript.md` to `transcript.txt` and a `sed` updating the report's references; `node scripts/path-check.mjs`, `node scripts/aboutme-header-check.mjs` and `node --test test/path-check.test.mjs`; the credential scan again; `git commit`; `git push -u origin rigger-1430`; `gh pr create` |
-| after the pull request opened | laptop | The coordinator relayed a CI failure: `test/path-check.test.mjs` found the backticked gitignored spike directory missing on a clean checkout. `git fetch -q origin`; `git status -sb`; `grep` for path spans in the report; `sed -n 155,185p test/path-check.test.mjs`; a `python3` edit that writes that directory in plain prose in two places; `mv spikes spikes.hidden-1430`, then `node scripts/path-check.mjs` and `npm test -- test/path-check.test.mjs` (14 of 14 passed), then `mv spikes.hidden-1430 spikes`, to read the report as a clean checkout would; this appendix row; `suite-slot.sh 1430-maker -- caffeinate -dims git commit`; `suite-slot.sh 1430-maker -- git push` |
+Round 1 of this transcript logs only what ran through `runners/t.sh`. Every command the spike engineer ran, wrapped or not, is in
+docs/spikes/whole-tree-containment/session-log.txt: its exact input, the UTC times it was issued and returned, its host and its full
+result, generated from the retained session record. An earlier version of this section grouped the unwrapped commands into
+approximate windows; session-log.txt replaces it.

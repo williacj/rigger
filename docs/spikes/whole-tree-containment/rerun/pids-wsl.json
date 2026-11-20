@@ -1,0 +1,572 @@
+[
+ {
+  "pid": 334,
+  "why": [
+   "parent of 619 [rec-wsl.jsonl]",
+   "parent of 642 [rec-wsl.jsonl]",
+   "parent of 666 [rec-wsl.jsonl]",
+   "parent of 619 [tr-wsl-only.txt]",
+   "parent of 642 [tr-wsl-only.txt]",
+   "parent of 666 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 390,
+  "why": [
+   "WSL init, grandparent of 393 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 391,
+  "why": [
+   "WSL init, parent of 393 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 393,
+  "why": [
+   "session bash [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 401,
+  "why": [
+   "rec: mkdir -p /home/cj/1430-r2 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 405,
+  "why": [
+   "rec: curl -fsSLo node.tar.xz https://nodejs.org/dist/v24.19.0/node-v24.19.0-linux-x64.tar.xz [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 419,
+  "why": [
+   "WSL init, grandparent of 421 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 420,
+  "why": [
+   "WSL init, parent of 421 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 421,
+  "why": [
+   "session bash [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 471,
+  "why": [
+   "rec: python3 -c import tarfile,sys; tarfile.open(sys.argv[1]).extractall(sys.argv[2]) node.tar. [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 472,
+  "why": [
+   "rec: rm node.tar.xz [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 473,
+  "why": [
+   "rec: node-v24.19.0-linux-x64/bin/node --version [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 479,
+  "why": [
+   "rec: sha256sum /home/cj/1430-r2/rec.cjs /home/cj/1430-r2/list.cjs /home/cj/1430-r2/supervisor-p [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 485,
+  "why": [
+   "WSL init, grandparent of 489 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 487,
+  "why": [
+   "WSL init, parent of 489 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 489,
+  "why": [
+   "session bash [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 497,
+  "why": [
+   "rec: sha256sum /home/cj/1430-r2/rec.cjs /home/cj/1430-r2/list.cjs /home/cj/1430-r2/supervisor-p [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 502,
+  "why": [
+   "WSL init, grandparent of 508 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 504,
+  "why": [
+   "WSL init, parent of 508 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 508,
+  "why": [
+   "session bash [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 509,
+  "why": [
+   "rec: base64 -d [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 510,
+  "why": [
+   "rec: base64 -d [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 511,
+  "why": [
+   "rec: base64 -d [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 512,
+  "why": [
+   "rec: base64 -d [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 513,
+  "why": [
+   "rec: base64 -d [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 514,
+  "why": [
+   "rec: sha256sum /home/cj/1430-r2/rec.cjs /home/cj/1430-r2/list.cjs /home/cj/1430-r2/supervisor-p [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 605,
+  "why": [
+   "WSL init, grandparent of 611 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 610,
+  "why": [
+   "parent of 611 [rec-wsl.jsonl]",
+   "WSL init, parent of 611 [tr-wsl-only.txt]",
+   "parent of 611 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 611,
+  "why": [
+   "self: /home/cj/1430-r2/driver-posix.cjs wr [rec-wsl.jsonl]",
+   "session bash [tr-wsl-only.txt]",
+   "self: /home/cj/1430-r2/driver-posix.cjs wr [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 618,
+  "why": [
+   "spawnSync by 611: systemd-run --user --unit=fx1430r2-wr1 -p Delegate=yes -p KillMode=process --setenv=FX_REC [rec-wsl.jsonl]",
+   "spawnSync by 611: systemd-run --user --unit=fx1430r2-wr1 -p Delegate=yes -p KillMode=process --setenv=FX_REC [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 619,
+  "why": [
+   "self: /home/cj/1430-r2/supervisor-posix.cjs e1 wr1 /home/cj/1430-r2/d-wr1 /home/cj/1430-r2 [rec-wsl.jsonl]",
+   "fixture log: supervisor-bash [sh-wsl.log]",
+   "fixture log: supervisor-bash [tr-wsl-only.txt]",
+   "self: /home/cj/1430-r2/supervisor-posix.cjs e1 wr1 /home/cj/1430-r2/d-wr1 /home/cj/1430-r2 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 620,
+  "why": [
+   "fixture log: id-pid [sh-wsl.log]",
+   "fixture log: id-pid [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 628,
+  "why": [
+   "spawn by 619: bash -c read _; exec bash /home/cj/1430-r2/fixture.sh wr1 [rec-wsl.jsonl]",
+   "fixture log: root [sh-wsl.log]",
+   "fixture log: root [tr-wsl-only.txt]",
+   "spawn by 619: bash -c read _; exec bash /home/cj/1430-r2/fixture.sh wr1 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 629,
+  "why": [
+   "fixture log: M1-from-root [sh-wsl.log]",
+   "fixture log: M1 [sh-wsl.log]",
+   "fixture log: M1-from-root [tr-wsl-only.txt]",
+   "fixture log: M1 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 630,
+  "why": [
+   "fixture log: M3 [sh-wsl.log]",
+   "fixture log: M3 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 631,
+  "why": [
+   "fixture log: M4-parent-from-root [sh-wsl.log]",
+   "fixture log: M4-parent [sh-wsl.log]",
+   "fixture log: M4-parent-from-root [tr-wsl-only.txt]",
+   "fixture log: M4-parent [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 632,
+  "why": [
+   "fixture log: M5-from-root [sh-wsl.log]",
+   "fixture log: M5 [sh-wsl.log]",
+   "fixture log: M5-from-root [tr-wsl-only.txt]",
+   "fixture log: M5 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 633,
+  "why": [
+   "fixture log: M6 [sh-wsl.log]",
+   "fixture log: M6 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 634,
+  "why": [
+   "fixture log: M2 [sh-wsl.log]",
+   "fixture log: M2 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 635,
+  "why": [
+   "fixture log: M4 [sh-wsl.log]",
+   "fixture log: M4 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 636,
+  "why": [
+   "spawnSync by 619: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [rec-wsl.jsonl]",
+   "spawnSync by 619: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 637,
+  "why": [
+   "spawnSync by 619: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [rec-wsl.jsonl]",
+   "spawnSync by 619: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 638,
+  "why": [
+   "spawnSync by 611: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [rec-wsl.jsonl]",
+   "spawnSync by 611: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 639,
+  "why": [
+   "spawnSync by 611: systemctl --user --no-pager reset-failed fx1430r2-wr1.service [rec-wsl.jsonl]",
+   "spawnSync by 611: systemctl --user --no-pager reset-failed fx1430r2-wr1.service [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 640,
+  "why": [
+   "spawnSync by 611: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [rec-wsl.jsonl]",
+   "spawnSync by 611: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 641,
+  "why": [
+   "spawnSync by 611: systemd-run --user --unit=fx1430r2-wr2 -p Delegate=yes -p KillMode=process --setenv=FX_REC [rec-wsl.jsonl]",
+   "spawnSync by 611: systemd-run --user --unit=fx1430r2-wr2 -p Delegate=yes -p KillMode=process --setenv=FX_REC [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 642,
+  "why": [
+   "self: /home/cj/1430-r2/supervisor-posix.cjs e1c wr2 /home/cj/1430-r2/d-wr2 /home/cj/1430-r2 [rec-wsl.jsonl]",
+   "fixture log: supervisor-bash [sh-wsl.log]",
+   "fixture log: supervisor-bash [tr-wsl-only.txt]",
+   "self: /home/cj/1430-r2/supervisor-posix.cjs e1c wr2 /home/cj/1430-r2/d-wr2 /home/cj/1430-r2 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 643,
+  "why": [
+   "fixture log: id-pid [sh-wsl.log]",
+   "fixture log: id-pid [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 651,
+  "why": [
+   "spawn by 642: bash -c read _; exec bash /home/cj/1430-r2/fixture.sh wr2 [rec-wsl.jsonl]",
+   "fixture log: root [sh-wsl.log]",
+   "fixture log: root [tr-wsl-only.txt]",
+   "spawn by 642: bash -c read _; exec bash /home/cj/1430-r2/fixture.sh wr2 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 652,
+  "why": [
+   "fixture log: M1-from-root [sh-wsl.log]",
+   "fixture log: M1 [sh-wsl.log]",
+   "fixture log: M1-from-root [tr-wsl-only.txt]",
+   "fixture log: M1 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 653,
+  "why": [
+   "fixture log: M3 [sh-wsl.log]",
+   "fixture log: M3 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 654,
+  "why": [
+   "fixture log: M4-parent-from-root [sh-wsl.log]",
+   "fixture log: M4-parent [sh-wsl.log]",
+   "fixture log: M4-parent-from-root [tr-wsl-only.txt]",
+   "fixture log: M4-parent [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 655,
+  "why": [
+   "fixture log: M5-from-root [sh-wsl.log]",
+   "fixture log: M5 [sh-wsl.log]",
+   "fixture log: M5-from-root [tr-wsl-only.txt]",
+   "fixture log: M5 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 656,
+  "why": [
+   "fixture log: M6 [sh-wsl.log]",
+   "fixture log: M6 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 657,
+  "why": [
+   "fixture log: M2 [sh-wsl.log]",
+   "fixture log: M2 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 658,
+  "why": [
+   "fixture log: M4 [sh-wsl.log]",
+   "fixture log: M4 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 659,
+  "why": [
+   "spawnSync by 642: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [rec-wsl.jsonl]",
+   "spawnSync by 642: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 660,
+  "why": [
+   "spawnSync by 642: lsof -O -w -n -P -a -d cwd -u 1000 -F pun [rec-wsl.jsonl]",
+   "spawnSync by 642: lsof -O -w -n -P -a -d cwd -u 1000 -F pun [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 661,
+  "why": [
+   "spawnSync by 642: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [rec-wsl.jsonl]",
+   "spawnSync by 642: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 662,
+  "why": [
+   "spawnSync by 611: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [rec-wsl.jsonl]",
+   "spawnSync by 611: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 663,
+  "why": [
+   "spawnSync by 611: systemctl --user --no-pager reset-failed fx1430r2-wr2.service [rec-wsl.jsonl]",
+   "spawnSync by 611: systemctl --user --no-pager reset-failed fx1430r2-wr2.service [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 664,
+  "why": [
+   "spawnSync by 611: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [rec-wsl.jsonl]",
+   "spawnSync by 611: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 665,
+  "why": [
+   "spawnSync by 611: systemd-run --user --unit=fx1430r2-wr3 -p Delegate=yes -p KillMode=process --setenv=FX_REC [rec-wsl.jsonl]",
+   "spawnSync by 611: systemd-run --user --unit=fx1430r2-wr3 -p Delegate=yes -p KillMode=process --setenv=FX_REC [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 666,
+  "why": [
+   "self: /home/cj/1430-r2/supervisor-posix.cjs e2 wr3 /home/cj/1430-r2/d-wr3 /home/cj/1430-r2 [rec-wsl.jsonl]",
+   "fixture log: supervisor-bash [sh-wsl.log]",
+   "fixture log: supervisor-bash [tr-wsl-only.txt]",
+   "self: /home/cj/1430-r2/supervisor-posix.cjs e2 wr3 /home/cj/1430-r2/d-wr3 /home/cj/1430-r2 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 667,
+  "why": [
+   "fixture log: id-pid [sh-wsl.log]",
+   "fixture log: id-pid [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 675,
+  "why": [
+   "spawn by 666: bash -c read _; exec bash /home/cj/1430-r2/fixture.sh wr3 [rec-wsl.jsonl]",
+   "fixture log: root [sh-wsl.log]",
+   "fixture log: root [tr-wsl-only.txt]",
+   "spawn by 666: bash -c read _; exec bash /home/cj/1430-r2/fixture.sh wr3 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 676,
+  "why": [
+   "fixture log: M1-from-root [sh-wsl.log]",
+   "fixture log: M1 [sh-wsl.log]",
+   "fixture log: M1-from-root [tr-wsl-only.txt]",
+   "fixture log: M1 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 677,
+  "why": [
+   "fixture log: M3 [sh-wsl.log]",
+   "fixture log: M3 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 678,
+  "why": [
+   "fixture log: M4-parent-from-root [sh-wsl.log]",
+   "fixture log: M4-parent [sh-wsl.log]",
+   "fixture log: M4-parent-from-root [tr-wsl-only.txt]",
+   "fixture log: M4-parent [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 679,
+  "why": [
+   "fixture log: M5-from-root [sh-wsl.log]",
+   "fixture log: M5 [sh-wsl.log]",
+   "fixture log: M5-from-root [tr-wsl-only.txt]",
+   "fixture log: M5 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 680,
+  "why": [
+   "fixture log: M6 [sh-wsl.log]",
+   "fixture log: M6 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 681,
+  "why": [
+   "fixture log: M2 [sh-wsl.log]",
+   "fixture log: M2 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 682,
+  "why": [
+   "fixture log: M4 [sh-wsl.log]",
+   "fixture log: M4 [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 683,
+  "why": [
+   "spawnSync by 666: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [rec-wsl.jsonl]",
+   "spawnSync by 666: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 684,
+  "why": [
+   "spawnSync by 611: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [rec-wsl.jsonl]",
+   "spawnSync by 611: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 685,
+  "why": [
+   "spawnSync by 611: /home/cj/1430-r2/node-v24.19.0-linux-x64/bin/node -e const fs=require('fs');const T=proces [rec-wsl.jsonl]",
+   "spawnSync by 611: /home/cj/1430-r2/node-v24.19.0-linux-x64/bin/node -e const fs=require('fs');const T=proces [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 692,
+  "why": [
+   "spawnSync by 611: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [rec-wsl.jsonl]",
+   "spawnSync by 611: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 693,
+  "why": [
+   "spawnSync by 611: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [rec-wsl.jsonl]",
+   "spawnSync by 611: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 694,
+  "why": [
+   "spawnSync by 611: systemctl --user --no-pager reset-failed fx1430r2-wr3.service [rec-wsl.jsonl]",
+   "spawnSync by 611: systemctl --user --no-pager reset-failed fx1430r2-wr3.service [tr-wsl-only.txt]"
+  ]
+ },
+ {
+  "pid": 695,
+  "why": [
+   "spawnSync by 611: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [rec-wsl.jsonl]",
+   "spawnSync by 611: ps -eo pid=,ppid=,pgid=,sid=,stat=,args= [tr-wsl-only.txt]"
+  ]
+ }
+]

@@ -1,0 +1,1306 @@
+[
+ {
+  "pid": 2852,
+  "ppid": 4156,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:34:24.1757870Z",
+  "stopped": null,
+  "cmd": "\"C:\\WINDOWS\\System32\\OpenSSH\\sshd.exe\" -R"
+ },
+ {
+  "pid": 25948,
+  "ppid": 2852,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:34:24.3804610Z",
+  "stopped": null,
+  "cmd": "\"C:\\WINDOWS\\System32\\OpenSSH\\sshd.exe\" -z"
+ },
+ {
+  "pid": 15948,
+  "ppid": 25948,
+  "name": "cmd.exe",
+  "started": "2026-11-20T16:34:24.4067180Z",
+  "stopped": null,
+  "cmd": "\"c:\\windows\\system32\\cmd.exe\" /c \"powershell -NoProfile -NonInteractive -EncodedCommand IwAgAEEAQgBPAFUAVABNAEUAOgAgAEMAYQByAGQAIAAjADEANAAzADAAIAByAGUAcgB1AG4A"
+ },
+ {
+  "pid": 21884,
+  "ppid": 15948,
+  "name": "powershell.exe",
+  "started": "2026-11-20T16:34:24.4247800Z",
+  "stopped": null,
+  "cmd": "powershell  -NoProfile -NonInteractive -EncodedCommand IwAgAEEAQgBPAFUAVABNAEUAOgAgAEMAYQByAGQAIAAjADEANAAzADAAIAByAGUAcgB1AG4AIABXAGkAbgBkAG8AdwBzACAAdwBhAHQAY"
+ },
+ {
+  "pid": 8068,
+  "ppid": 4156,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:35:03.9044085Z",
+  "stopped": "2026-11-20T16:35:04.9149514Z",
+  "cmd": ""
+ },
+ {
+  "pid": 18020,
+  "ppid": 8068,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:35:03.9055085Z",
+  "stopped": "2026-11-20T16:35:04.9079512Z",
+  "cmd": ""
+ },
+ {
+  "pid": 31808,
+  "ppid": 8068,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:35:04.9079513Z",
+  "stopped": "2026-11-20T16:35:04.9139492Z",
+  "cmd": ""
+ },
+ {
+  "pid": 18312,
+  "ppid": 31808,
+  "name": "cmd.exe",
+  "started": "2026-11-20T16:35:04.9089469Z",
+  "stopped": "2026-11-20T16:35:04.9089473Z",
+  "cmd": ""
+ },
+ {
+  "pid": 36920,
+  "ppid": 18312,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:35:04.9089470Z",
+  "stopped": "2026-11-20T16:35:04.9109439Z",
+  "cmd": ""
+ },
+ {
+  "pid": 18672,
+  "ppid": 18312,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:04.9089471Z",
+  "stopped": "2026-11-20T16:35:04.9089472Z",
+  "cmd": ""
+ },
+ {
+  "pid": 27308,
+  "ppid": 4156,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:35:04.9149515Z",
+  "stopped": "2026-11-20T16:35:06.9304322Z",
+  "cmd": ""
+ },
+ {
+  "pid": 21236,
+  "ppid": 27308,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:35:04.9149516Z",
+  "stopped": "2026-11-20T16:35:04.9149517Z",
+  "cmd": ""
+ },
+ {
+  "pid": 36384,
+  "ppid": 27308,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:35:04.9149518Z",
+  "stopped": "2026-11-20T16:35:05.9186432Z",
+  "cmd": ""
+ },
+ {
+  "pid": 33380,
+  "ppid": 36384,
+  "name": "cmd.exe",
+  "started": "2026-11-20T16:35:04.9149519Z",
+  "stopped": "2026-11-20T16:35:05.9186430Z",
+  "cmd": ""
+ },
+ {
+  "pid": 23156,
+  "ppid": 33380,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:35:04.9149520Z",
+  "stopped": "2026-11-20T16:35:05.9186431Z",
+  "cmd": ""
+ },
+ {
+  "pid": 16664,
+  "ppid": 33380,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:04.9149521Z",
+  "stopped": "2026-11-20T16:35:04.9159524Z",
+  "cmd": ""
+ },
+ {
+  "pid": 7624,
+  "ppid": 33380,
+  "name": "whoami.exe",
+  "started": "2026-11-20T16:35:04.9159525Z",
+  "stopped": "2026-11-20T16:35:04.9159526Z",
+  "cmd": ""
+ },
+ {
+  "pid": 8124,
+  "ppid": 33380,
+  "name": "cmd.exe",
+  "started": "2026-11-20T16:35:04.9159527Z",
+  "stopped": "2026-11-20T16:35:04.9159530Z",
+  "cmd": ""
+ },
+ {
+  "pid": 18528,
+  "ppid": 8124,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:04.9159528Z",
+  "stopped": "2026-11-20T16:35:04.9159529Z",
+  "cmd": ""
+ },
+ {
+  "pid": 19752,
+  "ppid": 33380,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:04.9159531Z",
+  "stopped": "2026-11-20T16:35:05.9186429Z",
+  "cmd": ""
+ },
+ {
+  "pid": 31056,
+  "ppid": 4156,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:35:11.9670854Z",
+  "stopped": "2026-11-20T16:35:13.9761077Z",
+  "cmd": ""
+ },
+ {
+  "pid": 1264,
+  "ppid": 31056,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:35:11.9670855Z",
+  "stopped": "2026-11-20T16:35:11.9670856Z",
+  "cmd": ""
+ },
+ {
+  "pid": 22540,
+  "ppid": 31056,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:35:11.9680860Z",
+  "stopped": "2026-11-20T16:35:12.9736836Z",
+  "cmd": ""
+ },
+ {
+  "pid": 15144,
+  "ppid": 22540,
+  "name": "cmd.exe",
+  "started": "2026-11-20T16:35:11.9680861Z",
+  "stopped": "2026-11-20T16:35:12.9736834Z",
+  "cmd": ""
+ },
+ {
+  "pid": 32052,
+  "ppid": 15144,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:35:11.9680862Z",
+  "stopped": "2026-11-20T16:35:12.9736835Z",
+  "cmd": ""
+ },
+ {
+  "pid": 35804,
+  "ppid": 15144,
+  "name": "cmd.exe",
+  "started": "2026-11-20T16:35:11.9680863Z",
+  "stopped": "2026-11-20T16:35:11.9680866Z",
+  "cmd": ""
+ },
+ {
+  "pid": 26888,
+  "ppid": 35804,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:11.9680864Z",
+  "stopped": "2026-11-20T16:35:11.9680865Z",
+  "cmd": ""
+ },
+ {
+  "pid": 19652,
+  "ppid": 15144,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:11.9680867Z",
+  "stopped": "2026-11-20T16:35:12.9726921Z",
+  "cmd": ""
+ },
+ {
+  "pid": 33224,
+  "ppid": 19652,
+  "name": "cmd.exe",
+  "started": "2026-11-20T16:35:12.9716825Z",
+  "stopped": "2026-11-20T16:35:12.9726920Z",
+  "cmd": ""
+ },
+ {
+  "pid": 36392,
+  "ppid": 33224,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:12.9726916Z",
+  "stopped": "2026-11-20T16:35:12.9726919Z",
+  "cmd": ""
+ },
+ {
+  "pid": 19252,
+  "ppid": 36392,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:12.9726917Z",
+  "stopped": "2026-11-20T16:35:12.9726918Z",
+  "cmd": ""
+ },
+ {
+  "pid": 28200,
+  "ppid": 15144,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:12.9736830Z",
+  "stopped": "2026-11-20T16:35:12.9736831Z",
+  "cmd": ""
+ },
+ {
+  "pid": 18880,
+  "ppid": 15144,
+  "name": "whoami.exe",
+  "started": "2026-11-20T16:35:12.9736832Z",
+  "stopped": "2026-11-20T16:35:12.9736833Z",
+  "cmd": ""
+ },
+ {
+  "pid": 11088,
+  "ppid": 4156,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:35:17.9973222Z",
+  "stopped": "2026-11-20T16:36:29.7124101Z",
+  "cmd": "\"C:\\WINDOWS\\System32\\OpenSSH\\sshd.exe\" -R"
+ },
+ {
+  "pid": 32080,
+  "ppid": 11088,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:35:17.9983268Z",
+  "stopped": "2026-11-20T16:35:17.9993239Z",
+  "cmd": ""
+ },
+ {
+  "pid": 5140,
+  "ppid": 11088,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:35:17.9998384Z",
+  "stopped": "2026-11-20T16:36:29.7114107Z",
+  "cmd": "\"C:\\WINDOWS\\System32\\OpenSSH\\sshd.exe\" -z"
+ },
+ {
+  "pid": 37200,
+  "ppid": 5140,
+  "name": "cmd.exe",
+  "started": "2026-11-20T16:35:18.0008504Z",
+  "stopped": "2026-11-20T16:36:29.7104129Z",
+  "cmd": "\"c:\\windows\\system32\\cmd.exe\" /c \"cd /d C:\\Users\\cj\\1430-r2 && set FX_REC=C:\\Users\\cj\\1430-r2\\rec-win.jsonl&& set FX_HOST=finnpc&& node driver-win.cjs\""
+ },
+ {
+  "pid": 36688,
+  "ppid": 37200,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:35:18.0008505Z",
+  "stopped": "2026-11-20T16:36:29.7114106Z",
+  "cmd": "\\??\\C:\\WINDOWS\\system32\\conhost.exe 0x4"
+ },
+ {
+  "pid": 30476,
+  "ppid": 37200,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:18.0018497Z",
+  "stopped": "2026-11-20T16:36:29.7104128Z",
+  "cmd": "node  driver-win.cjs"
+ },
+ {
+  "pid": 19668,
+  "ppid": 30476,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:18.0018498Z",
+  "stopped": "2026-11-20T16:35:36.1196054Z",
+  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" C:\\Users\\CJ\\1430-r2\\supervisor-win.cjs e1 fx1430-xr1-sup C:\\Users\\CJ\\1430-r2\\d-xr1"
+ },
+ {
+  "pid": 21364,
+  "ppid": 19668,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:18.0018499Z",
+  "stopped": "2026-11-20T16:35:25.0497502Z",
+  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" C:\\Users\\CJ\\1430-r2\\fixture-win.cjs fx1430-xr1-root"
+ },
+ {
+  "pid": 26396,
+  "ppid": 21364,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:18.0028518Z",
+  "stopped": "2026-11-20T16:35:25.0477377Z",
+  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" C:\\Users\\CJ\\1430-r2\\member-win.cjs fx1430-xr1-M1 M1"
+ },
+ {
+  "pid": 1284,
+  "ppid": 26396,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:35:18.0028519Z",
+  "stopped": "2026-11-20T16:35:25.0507628Z",
+  "cmd": "\\??\\C:\\WINDOWS\\system32\\conhost.exe 0x4"
+ },
+ {
+  "pid": 11096,
+  "ppid": 21364,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:18.0038516Z",
+  "stopped": "2026-11-20T16:35:25.0487359Z",
+  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" C:\\Users\\CJ\\1430-r2\\member-win.cjs fx1430-xr1-M3 leaf"
+ },
+ {
+  "pid": 19692,
+  "ppid": 21364,
+  "name": "cmd.exe",
+  "started": "2026-11-20T16:35:18.0038517Z",
+  "stopped": "2026-11-20T16:35:18.0058519Z",
+  "cmd": ""
+ },
+ {
+  "pid": 37344,
+  "ppid": 21364,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:18.0048524Z",
+  "stopped": "2026-11-20T16:35:25.0487360Z",
+  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" C:\\Users\\CJ\\1430-r2\\member-win.cjs fx1430-xr1-M6 M6"
+ },
+ {
+  "pid": 12140,
+  "ppid": 19692,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:35:18.0048525Z",
+  "stopped": "2026-11-20T16:35:25.0497503Z",
+  "cmd": "\\??\\C:\\WINDOWS\\system32\\conhost.exe 0x4"
+ },
+ {
+  "pid": 23192,
+  "ppid": 19692,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:18.0058518Z",
+  "stopped": "2026-11-20T16:35:25.0507627Z",
+  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\"  \"C:\\Users\\CJ\\1430-r2\\member-win.cjs\" fx1430-xr1-M4 leaf"
+ },
+ {
+  "pid": 9876,
+  "ppid": 26396,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:18.0068517Z",
+  "stopped": "2026-11-20T16:35:25.0507626Z",
+  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" C:\\Users\\CJ\\1430-r2\\member-win.cjs fx1430-xr1-M2 leaf"
+ },
+ {
+  "pid": 35040,
+  "ppid": 19668,
+  "name": "powershell.exe",
+  "started": "2026-11-20T16:35:23.0349171Z",
+  "stopped": "2026-11-20T16:35:23.0359179Z",
+  "cmd": ""
+ },
+ {
+  "pid": 36184,
+  "ppid": 35040,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:35:23.0359178Z",
+  "stopped": "2026-11-20T16:35:23.0359180Z",
+  "cmd": ""
+ },
+ {
+  "pid": 8752,
+  "ppid": 19668,
+  "name": "powershell.exe",
+  "started": "2026-11-20T16:35:23.0359181Z",
+  "stopped": "2026-11-20T16:35:24.0384370Z",
+  "cmd": ""
+ },
+ {
+  "pid": 18272,
+  "ppid": 8752,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:35:23.0369180Z",
+  "stopped": "2026-11-20T16:35:24.0404458Z",
+  "cmd": ""
+ },
+ {
+  "pid": 22776,
+  "ppid": 19668,
+  "name": "powershell.exe",
+  "started": "2026-11-20T16:35:36.1166043Z",
+  "stopped": "2026-11-20T16:35:36.1186059Z",
+  "cmd": ""
+ },
+ {
+  "pid": 32856,
+  "ppid": 22776,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:35:36.1176069Z",
+  "stopped": "2026-11-20T16:35:36.1196053Z",
+  "cmd": ""
+ },
+ {
+  "pid": 12876,
+  "ppid": 30476,
+  "name": "powershell.exe",
+  "started": "2026-11-20T16:35:36.1196055Z",
+  "stopped": "2026-11-20T16:35:37.1264697Z",
+  "cmd": ""
+ },
+ {
+  "pid": 36928,
+  "ppid": 30476,
+  "name": "powershell.exe",
+  "started": "2026-11-20T16:35:38.1278887Z",
+  "stopped": "2026-11-20T16:35:38.1298899Z",
+  "cmd": ""
+ },
+ {
+  "pid": 36852,
+  "ppid": 30476,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:38.1338894Z",
+  "stopped": "2026-11-20T16:35:45.1647077Z",
+  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" C:\\Users\\CJ\\1430-r2\\supervisor-win.cjs e2k fx1430-xr2-sup C:\\Users\\CJ\\1430-r2\\d-xr2"
+ },
+ {
+  "pid": 36636,
+  "ppid": 36852,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:38.1348891Z",
+  "stopped": "2026-11-20T16:35:45.1657069Z",
+  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" C:\\Users\\CJ\\1430-r2\\fixture-win.cjs fx1430-xr2-root"
+ },
+ {
+  "pid": 21020,
+  "ppid": 36636,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:38.1348892Z",
+  "stopped": "2026-11-20T16:35:45.1667018Z",
+  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" C:\\Users\\CJ\\1430-r2\\member-win.cjs fx1430-xr2-M1 M1"
+ },
+ {
+  "pid": 35108,
+  "ppid": 36636,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:38.1348893Z",
+  "stopped": "2026-11-20T16:35:45.1677017Z",
+  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" C:\\Users\\CJ\\1430-r2\\member-win.cjs fx1430-xr2-M3 leaf"
+ },
+ {
+  "pid": 3996,
+  "ppid": 21020,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:35:38.1358897Z",
+  "stopped": "2026-11-20T16:35:45.1687019Z",
+  "cmd": "\\??\\C:\\WINDOWS\\system32\\conhost.exe 0x4"
+ },
+ {
+  "pid": 28404,
+  "ppid": 36636,
+  "name": "cmd.exe",
+  "started": "2026-11-20T16:35:38.1358898Z",
+  "stopped": "2026-11-20T16:35:38.1378909Z",
+  "cmd": ""
+ },
+ {
+  "pid": 30104,
+  "ppid": 36636,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:38.1368906Z",
+  "stopped": "2026-11-20T16:35:45.1667019Z",
+  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" C:\\Users\\CJ\\1430-r2\\member-win.cjs fx1430-xr2-M6 M6"
+ },
+ {
+  "pid": 19052,
+  "ppid": 28404,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:35:38.1368907Z",
+  "stopped": "2026-11-20T16:35:45.1697015Z",
+  "cmd": "\\??\\C:\\WINDOWS\\system32\\conhost.exe 0x4"
+ },
+ {
+  "pid": 25500,
+  "ppid": 28404,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:38.1368908Z",
+  "stopped": "2026-11-20T16:35:45.1687018Z",
+  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\"  \"C:\\Users\\CJ\\1430-r2\\member-win.cjs\" fx1430-xr2-M4 leaf"
+ },
+ {
+  "pid": 34772,
+  "ppid": 21020,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:38.1378910Z",
+  "stopped": "2026-11-20T16:35:45.1657068Z",
+  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" C:\\Users\\CJ\\1430-r2\\member-win.cjs fx1430-xr2-M2 leaf"
+ },
+ {
+  "pid": 34516,
+  "ppid": 36852,
+  "name": "powershell.exe",
+  "started": "2026-11-20T16:35:43.1542392Z",
+  "stopped": "2026-11-20T16:35:43.1554735Z",
+  "cmd": ""
+ },
+ {
+  "pid": 33468,
+  "ppid": 34516,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:35:43.1542393Z",
+  "stopped": "2026-11-20T16:35:44.1616506Z",
+  "cmd": ""
+ },
+ {
+  "pid": 27704,
+  "ppid": 36852,
+  "name": "powershell.exe",
+  "started": "2026-11-20T16:35:44.1626554Z",
+  "stopped": "2026-11-20T16:35:44.1646511Z",
+  "cmd": ""
+ },
+ {
+  "pid": 3596,
+  "ppid": 27704,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:35:44.1636532Z",
+  "stopped": "2026-11-20T16:35:44.1656508Z",
+  "cmd": ""
+ },
+ {
+  "pid": 29656,
+  "ppid": 30476,
+  "name": "taskkill.exe",
+  "started": "2026-11-20T16:35:44.1656509Z",
+  "stopped": "2026-11-20T16:35:45.1647078Z",
+  "cmd": ""
+ },
+ {
+  "pid": 33244,
+  "ppid": 30476,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:56.2556976Z",
+  "stopped": "2026-11-20T16:35:56.2576953Z",
+  "cmd": ""
+ },
+ {
+  "pid": 21924,
+  "ppid": 33244,
+  "name": "powershell.exe",
+  "started": "2026-11-20T16:35:56.2566986Z",
+  "stopped": "2026-11-20T16:35:56.2566987Z",
+  "cmd": ""
+ },
+ {
+  "pid": 37484,
+  "ppid": 30476,
+  "name": "powershell.exe",
+  "started": "2026-11-20T16:35:56.2586960Z",
+  "stopped": "2026-11-20T16:35:58.2722138Z",
+  "cmd": ""
+ },
+ {
+  "pid": 18024,
+  "ppid": 30476,
+  "name": "powershell.exe",
+  "started": "2026-11-20T16:35:58.2732082Z",
+  "stopped": "2026-11-20T16:35:59.2732492Z",
+  "cmd": ""
+ },
+ {
+  "pid": 35400,
+  "ppid": 30476,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:59.2732493Z",
+  "stopped": "2026-11-20T16:36:05.3139680Z",
+  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" C:\\Users\\CJ\\1430-r2\\supervisor-win.cjs e2n fx1430-xr3-sup C:\\Users\\CJ\\1430-r2\\d-xr3"
+ },
+ {
+  "pid": 17704,
+  "ppid": 35400,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:59.2732494Z",
+  "stopped": "2026-11-20T16:36:28.6994157Z",
+  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" C:\\Users\\CJ\\1430-r2\\fixture-win.cjs fx1430-xr3-root"
+ },
+ {
+  "pid": 10868,
+  "ppid": 17704,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:59.2732495Z",
+  "stopped": "2026-11-20T16:36:28.7004158Z",
+  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" C:\\Users\\CJ\\1430-r2\\member-win.cjs fx1430-xr3-M1 M1"
+ },
+ {
+  "pid": 19128,
+  "ppid": 17704,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:59.2742498Z",
+  "stopped": "2026-11-20T16:36:28.6984141Z",
+  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" C:\\Users\\CJ\\1430-r2\\member-win.cjs fx1430-xr3-M3 leaf"
+ },
+ {
+  "pid": 37320,
+  "ppid": 10868,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:35:59.2742499Z",
+  "stopped": "2026-11-20T16:36:28.7019250Z",
+  "cmd": "\\??\\C:\\WINDOWS\\system32\\conhost.exe 0x4"
+ },
+ {
+  "pid": 21332,
+  "ppid": 17704,
+  "name": "cmd.exe",
+  "started": "2026-11-20T16:35:59.2742500Z",
+  "stopped": "2026-11-20T16:35:59.2742504Z",
+  "cmd": ""
+ },
+ {
+  "pid": 17556,
+  "ppid": 17704,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:59.2742501Z",
+  "stopped": "2026-11-20T16:36:28.6984142Z",
+  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" C:\\Users\\CJ\\1430-r2\\member-win.cjs fx1430-xr3-M6 M6"
+ },
+ {
+  "pid": 21196,
+  "ppid": 21332,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:35:59.2742502Z",
+  "stopped": "2026-11-20T16:36:28.7004161Z",
+  "cmd": "\\??\\C:\\WINDOWS\\system32\\conhost.exe 0x4"
+ },
+ {
+  "pid": 26720,
+  "ppid": 21332,
+  "name": "node.exe",
+  "started": "2026-11-20T16:35:59.2742503Z",
+  "stopped": "2026-11-20T16:36:28.7004159Z",
+  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\"  \"C:\\Users\\CJ\\1430-r2\\member-win.cjs\" fx1430-xr3-M4 leaf"
+ },
+ {
+  "pid": 29192,
+  "ppid": 10868,
+  "name": "node.exe",
+  "started": "2026-11-20T16:36:00.2818973Z",
+  "stopped": "2026-11-20T16:36:28.7004160Z",
+  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" C:\\Users\\CJ\\1430-r2\\member-win.cjs fx1430-xr3-M2 leaf"
+ },
+ {
+  "pid": 16664,
+  "ppid": 35400,
+  "name": "powershell.exe",
+  "started": "2026-11-20T16:36:04.3029123Z",
+  "stopped": "2026-11-20T16:36:04.3059134Z",
+  "cmd": ""
+ },
+ {
+  "pid": 32928,
+  "ppid": 16664,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:36:04.3039241Z",
+  "stopped": "2026-11-20T16:36:04.3069129Z",
+  "cmd": ""
+ },
+ {
+  "pid": 1032,
+  "ppid": 35400,
+  "name": "powershell.exe",
+  "started": "2026-11-20T16:36:04.3069130Z",
+  "stopped": "2026-11-20T16:36:04.3089154Z",
+  "cmd": ""
+ },
+ {
+  "pid": 37616,
+  "ppid": 1032,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:36:04.3079133Z",
+  "stopped": "2026-11-20T16:36:04.3089155Z",
+  "cmd": ""
+ },
+ {
+  "pid": 37292,
+  "ppid": 30476,
+  "name": "taskkill.exe",
+  "started": "2026-11-20T16:36:04.3099159Z",
+  "stopped": "2026-11-20T16:36:06.3141077Z",
+  "cmd": ""
+ },
+ {
+  "pid": 26888,
+  "ppid": 30476,
+  "name": "node.exe",
+  "started": "2026-11-20T16:36:16.3857568Z",
+  "stopped": "2026-11-20T16:36:17.3958079Z",
+  "cmd": ""
+ },
+ {
+  "pid": 11392,
+  "ppid": 26888,
+  "name": "powershell.exe",
+  "started": "2026-11-20T16:36:17.3938065Z",
+  "stopped": "2026-11-20T16:36:17.3948110Z",
+  "cmd": ""
+ },
+ {
+  "pid": 12844,
+  "ppid": 30476,
+  "name": "node.exe",
+  "started": "2026-11-20T16:36:27.6924011Z",
+  "stopped": "2026-11-20T16:36:27.6954021Z",
+  "cmd": ""
+ },
+ {
+  "pid": 34348,
+  "ppid": 12844,
+  "name": "powershell.exe",
+  "started": "2026-11-20T16:36:27.6934040Z",
+  "stopped": "2026-11-20T16:36:27.6944037Z",
+  "cmd": ""
+ },
+ {
+  "pid": 14676,
+  "ppid": 30476,
+  "name": "powershell.exe",
+  "started": "2026-11-20T16:36:27.6954022Z",
+  "stopped": "2026-11-20T16:36:28.6974183Z",
+  "cmd": ""
+ },
+ {
+  "pid": 29184,
+  "ppid": 30476,
+  "name": "powershell.exe",
+  "started": "2026-11-20T16:36:29.7074123Z",
+  "stopped": "2026-11-20T16:36:29.7094148Z",
+  "cmd": ""
+ },
+ {
+  "pid": 27948,
+  "ppid": 4156,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:36:40.8297810Z",
+  "stopped": "2026-11-20T16:36:45.8765493Z",
+  "cmd": "\"C:\\WINDOWS\\System32\\OpenSSH\\sshd.exe\" -R"
+ },
+ {
+  "pid": 29424,
+  "ppid": 27948,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:36:40.8297811Z",
+  "stopped": "2026-11-20T16:36:40.8297812Z",
+  "cmd": ""
+ },
+ {
+  "pid": 30904,
+  "ppid": 27948,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:36:40.8297813Z",
+  "stopped": "2026-11-20T16:36:45.8765492Z",
+  "cmd": "\"C:\\WINDOWS\\System32\\OpenSSH\\sshd.exe\" -z"
+ },
+ {
+  "pid": 19692,
+  "ppid": 30904,
+  "name": "cmd.exe",
+  "started": "2026-11-20T16:36:40.8297814Z",
+  "stopped": "2026-11-20T16:36:45.8745518Z",
+  "cmd": "\"c:\\windows\\system32\\cmd.exe\" /c \"wsl.exe -e bash -s fx1430r2\""
+ },
+ {
+  "pid": 29728,
+  "ppid": 19692,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:36:40.8297815Z",
+  "stopped": "2026-11-20T16:36:45.8755499Z",
+  "cmd": "\\??\\C:\\WINDOWS\\system32\\conhost.exe 0x4"
+ },
+ {
+  "pid": 26200,
+  "ppid": 19692,
+  "name": "wsl.exe",
+  "started": "2026-11-20T16:36:40.8297816Z",
+  "stopped": "2026-11-20T16:36:44.8650501Z",
+  "cmd": "wsl.exe  -e bash -s fx1430r2"
+ },
+ {
+  "pid": 9136,
+  "ppid": 26200,
+  "name": "wsl.exe",
+  "started": "2026-11-20T16:36:40.8297817Z",
+  "stopped": "2026-11-20T16:36:44.8640261Z",
+  "cmd": "wsl.exe  -e bash -s fx1430r2"
+ },
+ {
+  "pid": 14624,
+  "ppid": 9136,
+  "name": "wslhost.exe",
+  "started": "2026-11-20T16:36:42.8518109Z",
+  "stopped": "2026-11-20T16:36:44.8660304Z",
+  "cmd": ""
+ },
+ {
+  "pid": 15712,
+  "ppid": 14624,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:36:42.8518110Z",
+  "stopped": "2026-11-20T16:36:44.8660305Z",
+  "cmd": ""
+ },
+ {
+  "pid": 32720,
+  "ppid": 4156,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:36:57.9685792Z",
+  "stopped": "2026-11-20T16:36:59.9858532Z",
+  "cmd": ""
+ },
+ {
+  "pid": 23440,
+  "ppid": 32720,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:36:57.9695811Z",
+  "stopped": "2026-11-20T16:36:57.9705787Z",
+  "cmd": ""
+ },
+ {
+  "pid": 19772,
+  "ppid": 32720,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:36:57.9705788Z",
+  "stopped": "2026-11-20T16:36:59.9858531Z",
+  "cmd": ""
+ },
+ {
+  "pid": 33088,
+  "ppid": 19772,
+  "name": "cmd.exe",
+  "started": "2026-11-20T16:36:58.9743021Z",
+  "stopped": "2026-11-20T16:36:59.9828531Z",
+  "cmd": ""
+ },
+ {
+  "pid": 36460,
+  "ppid": 33088,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:36:58.9753071Z",
+  "stopped": "2026-11-20T16:36:59.9848543Z",
+  "cmd": ""
+ },
+ {
+  "pid": 34880,
+  "ppid": 33088,
+  "name": "wsl.exe",
+  "started": "2026-11-20T16:36:58.9753072Z",
+  "stopped": "2026-11-20T16:36:58.9773030Z",
+  "cmd": ""
+ },
+ {
+  "pid": 20676,
+  "ppid": 34880,
+  "name": "wsl.exe",
+  "started": "2026-11-20T16:36:58.9753073Z",
+  "stopped": "2026-11-20T16:36:58.9763041Z",
+  "cmd": ""
+ },
+ {
+  "pid": 22496,
+  "ppid": 20676,
+  "name": "wslhost.exe",
+  "started": "2026-11-20T16:36:58.9763039Z",
+  "stopped": "2026-11-20T16:36:58.9783031Z",
+  "cmd": ""
+ },
+ {
+  "pid": 36980,
+  "ppid": 22496,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:36:58.9763040Z",
+  "stopped": "2026-11-20T16:36:59.9838571Z",
+  "cmd": ""
+ },
+ {
+  "pid": 27852,
+  "ppid": 4156,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:37:11.0570912Z",
+  "stopped": "2026-11-20T16:37:13.0798204Z",
+  "cmd": ""
+ },
+ {
+  "pid": 2440,
+  "ppid": 27852,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:37:11.0580932Z",
+  "stopped": "2026-11-20T16:37:12.0677915Z",
+  "cmd": ""
+ },
+ {
+  "pid": 21464,
+  "ppid": 27852,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:37:12.0677916Z",
+  "stopped": "2026-11-20T16:37:13.0798203Z",
+  "cmd": ""
+ },
+ {
+  "pid": 17944,
+  "ppid": 21464,
+  "name": "cmd.exe",
+  "started": "2026-11-20T16:37:12.0697889Z",
+  "stopped": "2026-11-20T16:37:12.0747899Z",
+  "cmd": ""
+ },
+ {
+  "pid": 18860,
+  "ppid": 17944,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:37:12.0697890Z",
+  "stopped": "2026-11-20T16:37:12.0757904Z",
+  "cmd": ""
+ },
+ {
+  "pid": 19604,
+  "ppid": 17944,
+  "name": "wsl.exe",
+  "started": "2026-11-20T16:37:12.0707879Z",
+  "stopped": "2026-11-20T16:37:12.0737932Z",
+  "cmd": ""
+ },
+ {
+  "pid": 20152,
+  "ppid": 19604,
+  "name": "wsl.exe",
+  "started": "2026-11-20T16:37:12.0717887Z",
+  "stopped": "2026-11-20T16:37:12.0727882Z",
+  "cmd": ""
+ },
+ {
+  "pid": 37616,
+  "ppid": 20152,
+  "name": "wslhost.exe",
+  "started": "2026-11-20T16:37:12.0717888Z",
+  "stopped": "2026-11-20T16:37:12.0737933Z",
+  "cmd": ""
+ },
+ {
+  "pid": 13232,
+  "ppid": 37616,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:37:12.0727881Z",
+  "stopped": "2026-11-20T16:37:12.0747900Z",
+  "cmd": ""
+ },
+ {
+  "pid": 14512,
+  "ppid": 4156,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:37:19.1114589Z",
+  "stopped": "2026-11-20T16:38:19.4530078Z",
+  "cmd": "\"C:\\WINDOWS\\System32\\OpenSSH\\sshd.exe\" -R"
+ },
+ {
+  "pid": 24244,
+  "ppid": 14512,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:37:19.1124639Z",
+  "stopped": "2026-11-20T16:37:20.1174262Z",
+  "cmd": ""
+ },
+ {
+  "pid": 33248,
+  "ppid": 14512,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:37:20.1184383Z",
+  "stopped": "2026-11-20T16:38:18.4506403Z",
+  "cmd": "\"C:\\WINDOWS\\System32\\OpenSSH\\sshd.exe\" -z"
+ },
+ {
+  "pid": 32848,
+  "ppid": 33248,
+  "name": "cmd.exe",
+  "started": "2026-11-20T16:37:20.1194282Z",
+  "stopped": "2026-11-20T16:38:18.4486398Z",
+  "cmd": "\"c:\\windows\\system32\\cmd.exe\" /c \"wsl.exe -e bash -s fx1430r2\""
+ },
+ {
+  "pid": 30788,
+  "ppid": 32848,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:37:20.1194283Z",
+  "stopped": "2026-11-20T16:38:18.4496402Z",
+  "cmd": "\\??\\C:\\WINDOWS\\system32\\conhost.exe 0x4"
+ },
+ {
+  "pid": 36156,
+  "ppid": 32848,
+  "name": "wsl.exe",
+  "started": "2026-11-20T16:37:20.1204277Z",
+  "stopped": "2026-11-20T16:38:18.4476374Z",
+  "cmd": "wsl.exe  -e bash -s fx1430r2"
+ },
+ {
+  "pid": 23984,
+  "ppid": 36156,
+  "name": "wsl.exe",
+  "started": "2026-11-20T16:37:20.1204278Z",
+  "stopped": "2026-11-20T16:38:18.4466389Z",
+  "cmd": "wsl.exe  -e bash -s fx1430r2"
+ },
+ {
+  "pid": 13580,
+  "ppid": 23984,
+  "name": "wslhost.exe",
+  "started": "2026-11-20T16:37:20.1214298Z",
+  "stopped": "2026-11-20T16:38:18.4486397Z",
+  "cmd": " --distro-id {6a662f70-abd7-4325-8bcd-2a3a97683bf5} --vm-id {2739f83e-c3cf-4ca0-bd69-e65c88148d3e} --handle 892 --event 916 --parent 920"
+ },
+ {
+  "pid": 33224,
+  "ppid": 13580,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:37:20.1214299Z",
+  "stopped": "2026-11-20T16:38:18.4496401Z",
+  "cmd": "\\??\\C:\\WINDOWS\\system32\\conhost.exe 0x4"
+ },
+ {
+  "pid": 17296,
+  "ppid": 4156,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:38:36.5813625Z",
+  "stopped": "2026-11-20T16:38:38.5894622Z",
+  "cmd": ""
+ },
+ {
+  "pid": 35212,
+  "ppid": 17296,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:38:36.5813626Z",
+  "stopped": "2026-11-20T16:38:36.5813627Z",
+  "cmd": ""
+ },
+ {
+  "pid": 26216,
+  "ppid": 17296,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:38:36.5813628Z",
+  "stopped": "2026-11-20T16:38:37.5846513Z",
+  "cmd": ""
+ },
+ {
+  "pid": 12572,
+  "ppid": 26216,
+  "name": "cmd.exe",
+  "started": "2026-11-20T16:38:36.5823630Z",
+  "stopped": "2026-11-20T16:38:37.5846510Z",
+  "cmd": ""
+ },
+ {
+  "pid": 29788,
+  "ppid": 12572,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:38:36.5823631Z",
+  "stopped": "2026-11-20T16:38:37.5846512Z",
+  "cmd": ""
+ },
+ {
+  "pid": 12568,
+  "ppid": 12572,
+  "name": "wsl.exe",
+  "started": "2026-11-20T16:38:36.5823632Z",
+  "stopped": "2026-11-20T16:38:37.5846508Z",
+  "cmd": ""
+ },
+ {
+  "pid": 29196,
+  "ppid": 12568,
+  "name": "wsl.exe",
+  "started": "2026-11-20T16:38:36.5823633Z",
+  "stopped": "2026-11-20T16:38:37.5846507Z",
+  "cmd": ""
+ },
+ {
+  "pid": 25136,
+  "ppid": 29196,
+  "name": "wslhost.exe",
+  "started": "2026-11-20T16:38:37.5836507Z",
+  "stopped": "2026-11-20T16:38:37.5846509Z",
+  "cmd": ""
+ },
+ {
+  "pid": 21076,
+  "ppid": 25136,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:38:37.5836508Z",
+  "stopped": "2026-11-20T16:38:37.5846511Z",
+  "cmd": ""
+ },
+ {
+  "pid": 31548,
+  "ppid": 4156,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:38:50.8942366Z",
+  "stopped": "2026-11-20T16:38:51.8995768Z",
+  "cmd": ""
+ },
+ {
+  "pid": 33372,
+  "ppid": 31548,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:38:50.8952456Z",
+  "stopped": "2026-11-20T16:38:50.8952457Z",
+  "cmd": ""
+ },
+ {
+  "pid": 36904,
+  "ppid": 31548,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:38:50.8962284Z",
+  "stopped": "2026-11-20T16:38:50.8972285Z",
+  "cmd": ""
+ },
+ {
+  "pid": 36800,
+  "ppid": 36904,
+  "name": "cmd.exe",
+  "started": "2026-11-20T16:38:50.8962285Z",
+  "stopped": "2026-11-20T16:38:50.8972283Z",
+  "cmd": ""
+ },
+ {
+  "pid": 29804,
+  "ppid": 36800,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:38:50.8962286Z",
+  "stopped": "2026-11-20T16:38:50.8972284Z",
+  "cmd": ""
+ },
+ {
+  "pid": 20376,
+  "ppid": 36800,
+  "name": "node.exe",
+  "started": "2026-11-20T16:38:50.8962287Z",
+  "stopped": "2026-11-20T16:38:50.8972282Z",
+  "cmd": ""
+ },
+ {
+  "pid": 19652,
+  "ppid": 4156,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:38:57.9451138Z",
+  "stopped": "2026-11-20T16:38:58.9509010Z",
+  "cmd": ""
+ },
+ {
+  "pid": 18680,
+  "ppid": 19652,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:38:57.9461156Z",
+  "stopped": "2026-11-20T16:38:57.9461157Z",
+  "cmd": ""
+ },
+ {
+  "pid": 34360,
+  "ppid": 19652,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:38:57.9461158Z",
+  "stopped": "2026-11-20T16:38:57.9501137Z",
+  "cmd": ""
+ },
+ {
+  "pid": 33032,
+  "ppid": 34360,
+  "name": "cmd.exe",
+  "started": "2026-11-20T16:38:57.9461159Z",
+  "stopped": "2026-11-20T16:38:57.9491145Z",
+  "cmd": ""
+ },
+ {
+  "pid": 28952,
+  "ppid": 33032,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:38:57.9471149Z",
+  "stopped": "2026-11-20T16:38:57.9491146Z",
+  "cmd": ""
+ },
+ {
+  "pid": 9984,
+  "ppid": 33032,
+  "name": "node.exe",
+  "started": "2026-11-20T16:38:57.9481141Z",
+  "stopped": "2026-11-20T16:38:57.9481142Z",
+  "cmd": ""
+ },
+ {
+  "pid": 17296,
+  "ppid": 4156,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:41:19.3943841Z",
+  "stopped": "2026-11-20T16:41:23.4260064Z",
+  "cmd": "\"C:\\WINDOWS\\System32\\OpenSSH\\sshd.exe\" -R"
+ },
+ {
+  "pid": 24680,
+  "ppid": 17296,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:41:19.3943842Z",
+  "stopped": "2026-11-20T16:41:19.3943843Z",
+  "cmd": ""
+ },
+ {
+  "pid": 24568,
+  "ppid": 17296,
+  "name": "sshd.exe",
+  "started": "2026-11-20T16:41:19.3943844Z",
+  "stopped": "2026-11-20T16:41:23.4260063Z",
+  "cmd": "\"C:\\WINDOWS\\System32\\OpenSSH\\sshd.exe\" -z"
+ },
+ {
+  "pid": 18972,
+  "ppid": 24568,
+  "name": "cmd.exe",
+  "started": "2026-11-20T16:41:19.3943845Z",
+  "stopped": "2026-11-20T16:41:23.4251071Z",
+  "cmd": "\"c:\\windows\\system32\\cmd.exe\" /c \"wsl.exe -e bash -s fx1430r2\""
+ },
+ {
+  "pid": 26944,
+  "ppid": 18972,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:41:19.3943846Z",
+  "stopped": "2026-11-20T16:41:23.4251072Z",
+  "cmd": "\\??\\C:\\WINDOWS\\system32\\conhost.exe 0x4"
+ },
+ {
+  "pid": 17784,
+  "ppid": 18972,
+  "name": "wsl.exe",
+  "started": "2026-11-20T16:41:19.3955489Z",
+  "stopped": "2026-11-20T16:41:22.4083387Z",
+  "cmd": "wsl.exe  -e bash -s fx1430r2"
+ },
+ {
+  "pid": 3100,
+  "ppid": 17784,
+  "name": "wsl.exe",
+  "started": "2026-11-20T16:41:19.3955490Z",
+  "stopped": "2026-11-20T16:41:22.4083386Z",
+  "cmd": "wsl.exe  -e bash -s fx1430r2"
+ },
+ {
+  "pid": 3028,
+  "ppid": 3100,
+  "name": "wslhost.exe",
+  "started": "2026-11-20T16:41:21.4043906Z",
+  "stopped": "2026-11-20T16:41:23.4230017Z",
+  "cmd": ""
+ },
+ {
+  "pid": 33344,
+  "ppid": 3028,
+  "name": "conhost.exe",
+  "started": "2026-11-20T16:41:21.4043907Z",
+  "stopped": "2026-11-20T16:41:23.4240036Z",
+  "cmd": ""
+ }
+]
