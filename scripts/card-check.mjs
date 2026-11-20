@@ -1,6 +1,5 @@
-// ABOUTME: An author's check of a card body before filing: a new requirement id with no line naming
-// a claim, and spec-style findings inside a pinned `markdown` fence, with its advisory hints apart.
-// It refuses no card.
+// ABOUTME: An author's card check: new IDs without claims, pinned spec-style findings, and omitted
+// strict spike-registration scope, with advisory hints apart. It refuses no card.
 
 import { readFileSync } from 'node:fs';
 import { join, resolve, dirname } from 'node:path';
@@ -8,6 +7,8 @@ import { fileURLToPath } from 'node:url';
 
 import { idRows, retiredIds } from './duplicate-id-check.mjs';
 import { findings, hints, ruledOutTerms, sentenceCeiling } from './spec-style-lint.mjs';
+import { landsIn, covers } from './preflight.mjs';
+import { CONFIG, documentChecking } from './doc-reference-check.mjs';
 
 const REQUIREMENTS = 'docs/spec/requirements.md';
 const RETIRED = ['docs/spec/requirements-retired.md', 'docs/spec/decisions-retired.md'];
@@ -77,6 +78,34 @@ export function inputs(root) {
   });
 }
 
+/** Missing delivery scope for concrete spike reports that are not already strict. */
+function registrationScope(body, root) {
+  const paths = landsIn(body);
+  const reports = paths.filter((path) => {
+    const segments = path.split('/');
+    return path.startsWith('docs/spikes/') && path.endsWith('.md')
+      && segments.at(-1).length > 3
+      && segments.every((segment) => /^[A-Za-z0-9_.-]+$/.test(segment)
+        && segment !== '.' && segment !== '..');
+  });
+  if (reports.length === 0) return [];
+  const policy = named([join(root, CONFIG)], () => documentChecking(root));
+  if (!policy || typeof policy !== 'object' || Array.isArray(policy)) {
+    throw new Error(`${join(root, CONFIG)}: policy must be an object`);
+  }
+  const { documents } = policy;
+  if (!documents || typeof documents !== 'object' || Array.isArray(documents)) {
+    throw new Error(`${join(root, CONFIG)}: documents must be an object`);
+  }
+  for (const report of reports) {
+    if (Object.hasOwn(documents, report) && documents[report] !== 'strict' && documents[report] !== 'soft') {
+      throw new Error(`${join(root, CONFIG)}: unrecognized documents entry for ${report}`);
+    }
+  }
+  return reports.filter((path) => documents[path] !== 'strict'
+    && !paths.some((entry) => covers(entry, CONFIG)));
+}
+
 /**
  * What the body holds: each new id, with the first line naming it and the first line covering it,
  * and each finding the lint makes in a pinned fence, its line moved to the body line it falls on.
@@ -95,7 +124,12 @@ export function check(body, root, { allocated, rules } = inputs(root)) {
   });
   const moved = (read) => fences(lines).filter(pinned).flatMap((fence) =>
     read(fence.content.join('\n')).map((one) => ({ ...one, line: one.line + fence.at + 1 })));
-  return { ids: [...named.values()], pinned: moved((text) => findings(text, rules)), hints: moved(hints) };
+  return {
+    ids: [...named.values()],
+    pinned: moved((text) => findings(text, rules)),
+    hints: moved(hints),
+    registration: registrationScope(body, root),
+  };
 }
 
 /**
@@ -132,6 +166,10 @@ export function main(args, { out: print = console.log, err = console.error } = {
     count += 1;
     const why = rule === 'term' ? `ruled-out term \`${term}\`` : `sentence of ${words} words`;
     print(`line ${line}  ${why} in pinned text: ${text}`);
+  }
+  for (const report of result.registration) {
+    count += 1;
+    print(`${report}: strict registration scope is missing from Lands in: ${CONFIG}`);
   }
   print(count ? `${count} findings` : 'nothing found');
   // A hint is advisory, so it prints after the count it is no part of and leaves the exit alone.
