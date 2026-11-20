@@ -726,14 +726,14 @@ was committed.
 | WSL2 | the units' cgroups under `/sys/fs/cgroup/user.slice/…/app.slice/`, with the `tree` children the supervisors made | a cgroup is the subject of the test. They are kernel state, not files on disk | Yes. At 01:02:17Z, `ls -d …/app.slice/fx1430*` printed `No such file or directory` |
 | WSL2 | the user's systemd journal entries for the units | systemd logs unit starts and stops. It was not planned | No. Removing them means editing the user's journal, so they are left |
 | Windows | none found. The npm cache was pointed at the spike's own directory. At 00:59:00Z, a check of `%LOCALAPPDATA%\npm-cache\_logs`, `%APPDATA%\npm` and `%USERPROFILE%\.npmrc` for writes in the last hour returned nothing | — | — |
-| Laptop | none outside the gitignored `spikes/1430-spike-engineer/`, the worktree, and this pull request | — | — |
+| Laptop | none outside the gitignored spike directory in the worktree (spikes/1430-spike-engineer), the worktree itself, and this pull request | — | — |
 
 The spike's own directories were these:
 
 - `~/1430-spike-engineer/` in WSL, removed at 00:58:51Z, recreated for w7, and removed at 01:02:17Z.
 - `C:\Users\cj\1430-spike-engineer\` on Windows, removed at 00:59:00Z, after which `Test-Path`
   printed `False`.
-- `spikes/1430-spike-engineer/` in the laptop's worktree, which is gitignored.
+- the gitignored spike directory in the laptop's worktree, spikes/1430-spike-engineer.
 
 ### Host-configuration changes
 
