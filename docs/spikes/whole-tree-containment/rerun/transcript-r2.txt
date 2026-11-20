@@ -1,4 +1,4 @@
-ABOUTME: Round-2 rerun transcript for #1430: every step orch.cjs ran, with its exact argv, any stdin script verbatim with its sha256, UTC start and end, host, pids and full output. One account name in whoami /groups output is redacted.
+ABOUTME: Round-2 rerun transcript for #1430: the steps run through orch.cjs (and only those), each with its exact argv, any stdin script verbatim with its sha256, UTC start and end, host, pids and full output. One account name in whoami /groups output is redacted.
 
 
 ### 2026-11-20T16:33:07.568Z -> 2026-11-20T16:33:08.757Z  host=laptop  orch pid 68217 (ppid 68214), child pid 68324, exit 0

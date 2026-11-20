@@ -1,0 +1,35 @@
+ABOUTME: Round-2 fixture pid logs (sh-mr1.log to sh-mr3.log) from the laptop runs mr1, mr2 and mr3, in run order: every process fixture.sh started, by role and pid.
+
+root 74511
+M1-from-root 74527
+M1 74527
+M3 74528
+M4-parent-from-root 74530
+M5-from-root 74531
+M2 74529
+M6 74532
+M5 74531
+M4-parent 74530
+M4 74534
+root 99236
+M1-from-root 99251
+M3 99254
+M4-parent-from-root 99259
+M5-from-root 99266
+M6 99267
+M1 99251
+M4-parent 99259
+M4 99270
+M2 99269
+M5 99266
+root 21315
+M1-from-root 21317
+M1 21317
+M2 21319
+M3 21318
+M4-parent-from-root 21320
+M5-from-root 21321
+M4-parent 21320
+M4 21333
+M6 21323
+M5 21321

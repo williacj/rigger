@@ -51,6 +51,6 @@ gitignored `spikes/`. Its source, every listing and the transcript are in
     is left.
 - **A watcher must outlive the events it is meant to catch.** Check A stopped the Windows watcher
   before WMI had delivered check A's own start events.
-- **A full transcript is cheapest to produce from the session record.** Round 1's hand-kept
+- **A command log is cheapest to produce from the session record.** Round 1's hand-kept
   appendix could only give time windows. The retained tool-call record gives exact inputs, times
   and outputs.
