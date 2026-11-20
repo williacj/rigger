@@ -12,15 +12,18 @@ beside this report.
 ## Answer
 
 The board converged back to the workflow every time.
-- **Drift:** after an API edit, the per-card reconcile restored the workflow's column in 22.6 s
-  (I1), 35.0 s (I2) and 35.0 s (I3), against a stated bound of 60 s.
-- **Escalation:** the answer, sent as a signal from the Temporal CLI, moved the board to the next
-  column 1.3 s after the signal was sent.
+- **Drift:** after an API edit, the per-card reconcile restored the workflow's column. A poll
+  first returned the restored column 22.9 s (I1), 35.2 s (I2) and 35.5 s (I3) after the edit was
+  acknowledged, against a stated bound of 60 s. "Drift" below defines the metric and its bounds.
+- **Escalation:** the answer, sent as a signal from the Temporal CLI, reached the board in about
+  1.5 s: a poll first returned the next column 1,495 ms after the signal was sent.
 - **Kill mid-write (I4):** killing the worker between the two field writes of one run left a
   partial board. The retried activity found it and wrote only the field still missing.
 - **The workflow's own state never changed** because of a board edit.
 - **Cost of one card:** from Ready to Done, with one escalation and one drift, it made **15
-  production forge calls**, all GraphQL: 7 reads and 8 writes.
+  production forge calls**, all GraphQL: 7 reads and 8 writes. Their GraphQL cost is 7 measured
+  query points plus mutations the forge did not price per call. That is 15 points at the
+  documented 1-point minimum, and at most 51 by the forge's own counters.
 
 On affordability, the mirror is affordable at the card's load **if the reconcile reads the board
 in one batched query per pass**. That costs about 120 GraphQL points an hour at a 30 s interval.
@@ -84,7 +87,7 @@ switch.
 
 ### The code (throwaway, not committed)
 
-It lived in the gitignored `spikes/1431-spike-engineer/`, and was copied to
+It lived in the spike's gitignored directory, spikes/1431-spike-engineer under the worktree, and was copied to
 `C:\Users\USER\1431-spike-engineer\`, which I have since removed.
 
 - **`cardWorkflow`:**
@@ -107,7 +110,11 @@ It lived in the gitignored `spikes/1431-spike-engineer/`, and was copied to
 - **Call logger:** every forge call went through one logger. It recorded the time, REST or
   GraphQL, read or write, the method, the endpoint or operation, the HTTP status, the
   `x-ratelimit-*` headers and the GraphQL rateLimit.cost. That is
-  [`docs/spikes/projects-v2-mirror/calllog.json`](projects-v2-mirror/calllog.json): 599 calls, merged from both hosts.
+  [`docs/spikes/projects-v2-mirror/calllog.json`](projects-v2-mirror/calllog.json). It holds 599 logged calls, merged from both hosts. Each logged
+  `ts` is the request's start and `ms` its duration, so `ts + ms` is when the response completed.
+  It also holds 20 entries marked `reconstructed: true`. Those are the calls I made by hand with
+  `gh`, `git` and curl.exe; they were not logged when made. Each one is rebuilt from the
+  transcript, and its `note` says which of its fields are not measured.
 
 ### Read-back delay
 
@@ -180,16 +187,37 @@ temporal.exe workflow signal --address localhost:7243 --workflow-id rigger-1431-
   `signalName` `answer`, input `"proceed: owner answer"` and identity
   `temporal-cli:HOST-PC10\USER@Host-PC10`. Event 35 schedules `mirrorCard` with
   `{column: Review, escalation: ''}`.
-- **Signal to board:** the signal was sent at 00:42:48.146Z. The board was first seen showing
-  Review at 00:42:49.442Z, so **1,296 ms** elapsed (sigwatch.js output, 500 ms polling).
+- **Signal to board:** the signal was sent at 00:42:48.146Z, the instant sigwatch.js printed
+  just before invoking the CLI. The board first showed Review in a poll that started at
+  00:42:49.442Z and **completed at 00:42:49.641Z, 1,495 ms after the signal**. The metric is
+  defined under "Drift". The bounds:
+  - The poll before it started at 00:42:48.213Z (67 ms) and still answered Coding, so the change
+    landed later than 67 ms and no later than 1,495 ms.
+  - The mirror's own `SetStatus` to Review was acknowledged at 00:42:49.047Z (901 ms). So the
+    change landed after 67 ms and by 901 ms; the poll saw it at 1,495 ms.
 
 ### Drift
 
-| Drift | Card and edit | Edit answered | Board back to the workflow's column | Measured time | Reverted within 60 s |
-|---|---|---|---|---|---|
-| I1 | 1: Review → Done | 00:43:01.675Z | 00:43:24.262Z | **22,587 ms** | yes |
-| I2a | 2: Ready → Review | 00:43:49.893Z | 00:44:24.847Z | **34,954 ms** | yes |
-| I3 | 3: Coding → Owner | 00:44:41.493Z | 00:45:16.530Z | **35,037 ms** | yes |
+**The timing metric.** Each figure is measured from the call log's request times.
+- **Start instant:** for drift, the moment the edit's API call was acknowledged. For the signal,
+  the moment just before the CLI was invoked.
+- **The figure:** the **completion** of the first watcher poll that returned the workflow's
+  column (`ts + ms` of that poll in `docs/spikes/projects-v2-mirror/calllog.json`). A read's answer is known only when its
+  response completes, so this is the observation. It is an upper bound on when the board changed.
+- **Lower bound:** the start of the poll before it, which still returned the old column.
+- **Cross-check:** the acknowledgment of the reconcile's own write. It proves the change had
+  landed by then, so it tightens the upper bound.
+- **Correction:** the version of this report at `8fb675a7` used the matching poll's request
+  start, which is earlier than its answer. These figures replace it.
+
+| Drift | Card and edit | Edit acknowledged | Reconcile write acknowledged | Previous poll started (old column) | Matching poll completed | **Measured time** (edit → matching poll completed) | Within 60 s |
+|---|---|---|---|---|---|---|---|
+| I1 | 1: Review → Done | 00:43:01.675Z | 00:43:24.413Z (22,738 ms) | 00:43:23.539Z (21,864 ms) | 00:43:24.554Z | **22,879 ms** | yes |
+| I2a | 2: Ready → Review | 00:43:49.893Z | 00:44:24.588Z (34,695 ms) | 00:44:24.106Z (34,213 ms) | 00:44:25.069Z | **35,176 ms** | yes |
+| I3 | 3: Coding → Owner | 00:44:41.493Z | 00:45:16.342Z (34,849 ms) | 00:45:15.791Z (34,298 ms) | 00:45:16.950Z | **35,457 ms** | yes |
+
+Each revert therefore landed after the previous poll's start and by the reconcile write's
+acknowledgment. The first poll that saw it completed 22.9 s, 35.2 s and 35.5 s after the edit.
 
 **The workflow's own state did not change.** In each case its history shows no signal during the
 drift, and the next activity carries the unchanged state.
@@ -227,7 +255,7 @@ I2b used the same steps; see the transcript entry at 00:44:31Z.
 
 **What I2a shows.** A read-compare-write mirror cannot see an edit that lands after its read in a
 run that found nothing to write. The run then reports success over a drifted board, and the drift
-lasts until the next reconcile. That is bounded by the 60 s bound, and it measured 35 s here.
+lasts until the next reconcile. That is bounded by the 60 s bound, and it measured 35.2 s here.
 
 ### Forge calls for one card
 
@@ -249,23 +277,45 @@ transition and 1 reconcile.
 
 The signals and the workflow's state cost no forge call. They are Temporal-only.
 
-**GraphQL rate-limit cost of that lifecycle.**
-- **Queries:** the sum of the forge's rateLimit.cost answers over the 7 production queries is
-  **7 points**. Every `ReadItem` answered `cost: 1`. With instrumentation included, the 56 reads
-  sum to 56 points.
-- **Mutations:** a mutation cannot ask for `rateLimit`, so the forge gives no per-mutation cost
-  in the body. I read it from the `x-ratelimit-used` header instead. In the quietest window, the
-  laptop's setup calls under reset `1795106695`, 30 of the 35 consecutive deltas into a mutation
-  were exactly 1, and the rest were 2 or 3. That fits a cost of 1 per mutation plus other users
-  of the same account; the sibling spikes ran at the same time on the same login. On that reading
-  the 8 mutations cost 8 points, which makes **15 primary points** for the lifecycle. This is a
-  measured mode, not a per-call answer.
-- **Secondary-limit points:** 7 × 1 + 8 × 5 = **47**, using the per-request costs below.
+**GraphQL rate-limit cost of that lifecycle.** Part of this figure is measured and part is bounded.
 
-**Header noise.** During the runs, GraphQL answers came back under two reset values
-(`1795138635` with 394 calls, `1795138638` with 104), and `used` went backwards between
+- **Queries, measured:** the 7 production queries cost **7 points**. That is the sum of the
+  forge's own rateLimit.cost answers, and every `ReadItem` answered `cost: 1`. With
+  instrumentation, the 56 reads cost 56 points.
+- **Mutations, not measured per call:** a mutation cannot ask for `rateLimit`, so no answer
+  carries the cost of one mutation, and I have no per-call measurement of the 8. The forge's own
+  counters do bound them.
+  - **The window:** every spike mutation from 00:42:06Z to 00:48:11Z fell under one
+    `x-ratelimit-reset`, `1795138635`. Over the 393 spike calls after the first in that window,
+    the header `x-ratelimit-used` rose from 183 to 612, an increase of 429.
+  - **Arithmetic:** those 393 calls are 341 query points (measured rateLimit.cost) plus 52
+    mutations. So the 52 mutations, together with anything else the account spent in that window,
+    cost at most 429 − 341 = **88 points**.
+  - **Upper bound for card 1:** the other 44 mutations cost at least 1 point each, the documented
+    minimum. That leaves card 1's 8 production mutations costing **at most 88 − 44 = 44 points**.
+    If every mutation cost the same, each cost at most 88 / 52 = 1.69, and the 8 cost at most
+    about 14.
+  - **Lower bound:** the 8 cost at least 8 points. That is not measured; it rests on the GraphQL
+    docs' statement that a call costs at least 1 point.
+- **Lifecycle total:** **at least 15 and at most 51 primary points**, made of 7 measured and the
+  8 mutations' 8 to 44. If every mutation costs 1, as GitHub's documented minimum suggests and the
+  setup window's header steps fit, the total is **15**. That 15 is an estimate, not a measurement.
+  - **The setup-window pattern:** at reset `1795106695`, 30 of the 35 steps of `used` into a
+    mutation were exactly 1, 2 were 2 and 3 were 3, summing to 43. That fits a cost of 1 plus
+    other spending on the same login.
+  - **Header caveat:** the counter is shared with every other user of the login. During the runs
+    `used` sometimes went backwards between consecutive answers, so the bound above is only as
+    good as the first and last readings.
+- **Secondary-limit points:** 7 × 1 + 8 × 5 = **47**. These use the documented per-request
+  costs (1 for a query, 5 for a mutation), not a measurement.
+- **What would measure it exactly:** a run of mutations on a scratch board, on a login nothing
+  else uses, reading `rateLimit { used }` before and after. That needs a new scratch board. The
+  spike's board is deleted, so this revision did not make one.
+
+**Header noise.** During the runs, GraphQL answers came back under two reset values: 394 spike
+calls under `1795138635` and 104 reads under `1795138638`. `used` went backwards between
 consecutive calls. The header counters are therefore not a clean per-call meter on a shared
-login.
+login. Only bounds like the one above can be read from them.
 
 ### One reconcile pass over 30 or more cards
 
@@ -300,24 +350,53 @@ one reconcile interval, the call log holds:
 - At concurrency 3, at most about 9 cards finish an hour, which assumes each card holds a slot
   for at least 20 minutes.
 
-**Per hour, at the measured per-card costs.** The per-lifecycle figures come from card 1's
-transitions: 6 transition reads and 7 transition writes.
+**Per hour.**
+- **Measured per-call costs:** a query costs 1 point. For mutations the table gives two columns of
+  figures: the documented 1-point minimum, and the 1.69-point mean the forge's counters bound.
+- **Per-lifecycle counts:** taken from card 1's transitions, 6 transition reads and 7 transition
+  writes.
+- **Judgments:** the cards-per-hour and drift-per-hour rates.
 
 | Item | Per-card route (what I ran) | Batched route |
 |---|---|---|
 | Reconcile reads (R = 30 s → 120 passes an hour) | 30 cards × 120 = **3,600** | 1 × 120 = **120** |
-| Transitions (≈9 cards an hour × (6 reads + 7 writes)) | 9 × 13 = 117 | 117 |
-| Drift reverts (1 write each; judgment: a few an hour) | ≈5 | ≈5 |
-| **GraphQL primary points an hour** (1 point per call, as measured) | **≈3,722**, 74% of 5,000 | **≈242**, 4.8% of 5,000 |
-| GraphQL secondary, peak per minute (reads ×1, mutations ×5) | 60 reads + ≈2 mutations × 5 ≈ 70 of 2,000 | 2 + ≈10 ≈ 12 of 2,000 |
-| Writes an hour, against the content-creation limit of 500 an hour, if field updates count | ≈68 | ≈68 |
+| Transitions (≈9 cards an hour × (6 reads + 7 writes)) | 9 × (6 + 7) = 117, or 9 × (6 + 7 × 1.69) ≈ 160 | the same |
+| Drift reverts (1 write each; judgment: a few an hour) | ≈5 to ≈9 | the same |
+| **GraphQL primary points an hour** | **≈3,722 to ≈3,769**, 74–75% of 5,000 | **≈242 to ≈289**, 4.8–5.8% of 5,000 |
+| Writes an hour, against the content-creation limit of 500 an hour, if field updates count | 63 transitions + ≈5 drift + up to 30 new cards entering the board ≈ **98** | the same |
 | REST calls an hour | 0 of 5,000 | 0 of 5,000 |
+
+**Per minute and at once.** Hourly averages do not bound bursts, so these rows use a burst model.
+The model is a **judgment**; the peaks the spike itself produced are **measured** from
+`docs/spikes/projects-v2-mirror/calllog.json`, over every logged call including instrumentation.
+
+- **Transition burst:** card 1 made its last four transition writes within 47.3 s: Status to
+  Review, the escalation clear, Owner and Done, from 00:42:48.425Z to 00:43:35.736Z. At
+  concurrency 3, three cards can finish together, so three such spans can align: **12 writes and
+  12 reads in one minute**.
+- **Board fill:** the window's 30 cards can be started together. Each writes Ready once. The
+  spike did exactly this with 27 cards at 00:45:53Z.
+- **Reconcile:** the per-card route reads 30 cards every 30 s, which is 60 reads a minute. If
+  their timers align, up to 30 of those reads can be in flight at once. The batched route makes 2
+  reads a minute.
+
+| Limit (source in the table above) | Modelled peak, per-card route | Modelled peak, batched route | Measured peak in this spike |
+|---|---|---|---|
+| GraphQL secondary, 2,000 points a minute (query 1, mutation 5) | reads 60 + 12 + 30 = 102, writes 12 + 30 = 42 × 5 = 210: **312** | 2 + 12 + 30 = 44, plus 210: **254** | **266** in the busiest 60 s window (from 00:45:37.6Z) |
+| Content creation, 80 a minute, if Projects field updates count | **42** | **42** | **39** writes in the busiest 60 s window (setup on the laptop, from 16:00:32Z: issue creation and `AddItem`), and **30** in the busiest on hostpc (the 27-card start) |
+| Concurrent requests, 100 | up to 30 aligned reconcile reads + 3 writes = **33** | **≈4** | **25** requests in flight at once (00:45:53.9Z, the 27-card start) |
+| REST secondary, 900 points a minute | **0** | **0** | 0 during the runs |
+
+Every modelled peak is inside every limit the report lists. The tightest is content creation, at
+42 of 80 a minute, if GitHub counts Projects field updates as content creation. The docs do not
+say whether it does.
 
 ## Recommendation
 
 **A one-way board mirror is affordable at this load, provided its reconcile reads the board in
-one batched query per pass.** It then costs about 5% of the user's GraphQL hour, with ample room
-under every secondary limit.
+one batched query per pass.** It then costs about 5–6% of the user's GraphQL hour. It stays within
+every per-minute and concurrency limit, with content creation the closest, at about half its
+limit in the modelled burst.
 
 **Do not use the per-card polling I ran on a token shared with anything else.** At 30 open cards
 it takes about three quarters of the hour's 5,000 points. Rigger's own board reads, the gh CLI,
@@ -393,15 +472,20 @@ ReadDeletedNumber 200 {"data":{"user":{"projectV2":null},"rateLimit":{"cost":1}}
 ```
 
 **Forge writes outside the scratch repository and board: none from the spike's scripts.**
-- The call log's 121 writes are:
+- The call log's 121 logged writes are:
   - `POST /user/repos`, which created the scratch repository;
   - `POST /repos/williacj/rigger-1431-mirror-scratch/issues` ×32;
   - GraphQL mutations on project `PVT_kwHOBzomGc4BsXT-` only: `CreateProject`,
     `SetStatusOptions`, `CreateEscalationField`, `AddItem` ×33 (one of them the network-error
     attempt), `SetStatus` ×47, `SetEscalation` ×2, `ClearEscalation` ×2 and `DeleteProject`.
-- The transcript adds the writes the card requires on #1431 itself: the two stated-intent
-  comments, plus this report's branch and pull request. It shows nothing on the live board,
-  project 6, nothing on an M8 card, and nothing on #1293.
+- The call log's reconstructed entries add four hand-made writes, all on this card or its
+  branch:
+  - the two stated-intent comments on #1431;
+  - the push of `rigger-1431`;
+  - pull request #1435.
+- This revision's own push is not in the log, because a file cannot record the push that carries
+  it. The transcript's revision-1 entries record it.
+- Nothing in the log or the transcript writes to the live board (project 6), an M8 card or #1293.
 
 **Unplanned events, disclosed.**
 - **Setup network error:** at 15:55:14Z, during setup, one `AddItem` failed below HTTP
@@ -440,10 +524,39 @@ transcript:
 | laptop | 98483 | `ssh hostpc` holding the server | exited 00:47:54Z |
 | laptop | 99034 | `ssh hostpc` holding worker 1 | exited 00:45:25Z |
 | laptop | 24660 | `ssh hostpc` holding worker 2 | exited 00:47:54Z |
+| hostpc | 3180 | `node start.js 30000 Coding 1 4` (started cards 1 and 4) | foreground; exited by 00:42:22Z, when the next command ran |
+| hostpc | 11740 | `node start.js 30000 - 2 3 5` (started cards 2, 3 and 5) | foreground; exited by 00:42:22Z |
 
-Every other command ran in the foreground and exited. node.exe pids 31732 and 19544 on hostpc,
-and the other `ssh hostpc` clients on the laptop, belong to other sessions, and I did not touch
-them.
+**How the two foreground pids are known.** I did not record them at the time. The Temporal
+client's default identity is pid@hostname. The histories' `WORKFLOW_EXECUTION_STARTED` events
+carry `3180@Host-PC10` (cards 1 and 4) and `11740@Host-PC10` (cards 2, 3 and 5). The worker
+identities `34000@Host-PC10` and `30548@Host-PC10` in the same histories match the recorded worker
+pids.
+
+**Pids I cannot recover.** Item 43 asks for every process with its pid, and this inventory does
+not have them all. Every other process was started by a foreground command that exited before the
+next one ran, and nothing recorded its pid:
+- **hostpc:**
+  - the `node start.js` for cards 6–32. Its history was not exported, and the server's database
+    was deleted with the scratch directory;
+  - each `node` run of sigwatch.js, editwatch.js, gated.js, watch.js and scan.js;
+  - each temporal.exe CLI call. Its identity, `temporal-cli:HOST-PC10\USER@Host-PC10`, carries no
+    pid;
+  - each `npm` run;
+  - each curl.exe and tar.exe run;
+  - the cmd.exe and `sshd` session processes behind every SSH command.
+- **laptop:**
+  - each `ssh`, `scp`, `gh`, `node`, `python3`, `npm` and `git` run;
+  - the `npm test` runs. The one stopped at 00:59Z was checked afterwards, and no process with the
+    worktree in its command line remained.
+
+None of these can survive their command, and the listings below show none did. They show:
+- no temporal.exe on hostpc;
+- no node.exe there but 31732 and 19544, which belong to other sessions and which I did not
+  touch;
+- no laptop holder alive.
+
+The other `ssh hostpc` clients on the laptop belong to other sessions as well.
 
 **Process listings after the last run** (transcript, about 00:51Z).
 
@@ -460,8 +573,17 @@ ps exit=1 (1 = none of 98483,99034,24660 alive)
 ```
 
 **Transcript:** [`docs/spikes/projects-v2-mirror/transcript.txt`](projects-v2-mirror/transcript.txt). It has
-every wrapped command with its UTC time and host, and a closing table of the commands I ran
-outside the wrapper, with approximate times.
+every wrapped command with its UTC time and host. It also has a section, "Commands run outside
+the wrapper, verbatim", that gives every command I ran without the wrapper, verbatim, with the
+heredoc bodies and patches it wrote.
+- **What its times are:** the time of each such command is either the mtime of the file it wrote,
+  which is measured, or a bracket between the wrapped entries before and after it. No exact time
+  of its own was recorded, and none can be recovered.
+- **Writes into committed files:** for a command that wrote into a file this pull request
+  commits, the committed file stands in for the body.
+
+The complete failing output of every failed suite run is in
+[`docs/spikes/projects-v2-mirror/failed-runs.txt`](projects-v2-mirror/failed-runs.txt).
 
 **Credential scan** over every file committed under `docs/spikes/projects-v2-mirror/`:
 
@@ -469,14 +591,20 @@ outside the wrapper, with approximate times.
 grep -rnE 'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|Bearer [A-Za-z0-9._-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9]{20,}' docs/spikes/projects-v2-mirror/ ; echo "exit=$?"
 ```
 
-Result: no line printed and `exit=1`, which is grep's "no match". The scan ran at about 01:00Z over the six evidence paths, and found no credential or token.
+Result: no line printed and `exit=1`, which is grep's "no match". The scan first ran at about
+01:00Z over the six evidence paths of that time. It ran again in revision 1 over the eight files
+now committed there, with the same command and the same result. It found no credential or token.
 
 ## Evidence
 
 All of these are under [`docs/spikes/projects-v2-mirror/`](projects-v2-mirror/).
 - `docs/spikes/projects-v2-mirror/transcript.txt` is the full transcript.
-- `docs/spikes/projects-v2-mirror/calllog.json` is every forge call the scripts made, with the time, method, endpoint or
-  operation, status, rate-limit headers and cost.
+- `docs/spikes/projects-v2-mirror/calllog.json` holds every forge call:
+  - the scripts' calls, logged at call time with request start, duration, method, endpoint or
+    operation, status, rate-limit headers and cost;
+  - the hand-made `gh`, `git` and curl.exe calls, each marked `reconstructed` and rebuilt from
+    the transcript.
+- `docs/spikes/projects-v2-mirror/failed-runs.txt` is the failing output of every failed suite run.
 - `docs/spikes/projects-v2-mirror/mirror-runs.json` holds every `mirrorCard` event.
 - `docs/spikes/projects-v2-mirror/histories/card-1.json` … `docs/spikes/projects-v2-mirror/histories/card-5.json` are the event histories from
   `temporal workflow show --output json`.

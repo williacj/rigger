@@ -3152,27 +3152,959 @@ ps exit=1 (1 = none of 98483,99034,24660 alive)
 
 ---
 
-## Commands run outside the wrapper (backfilled)
+## Commands run outside the wrapper, verbatim
 
-The spike ran these on `[laptop host]` (the laptop) without `t.sh`, so they carry no entry above. Each time is approximate, placed between the wrapped entries before and after it. None of them sent a forge call, apart from the WebFetch documentation reads, which are reads of docs.github.com. None of them touched any host but the laptop, except where the line says so.
+This section replaces the summary table that stood here at 8fb675a7. It gives each command the spike ran on the laptop without `t.sh`, verbatim, in order. Where a command wrote a file with a heredoc, the file's body follows it.
 
-| ≈ UTC | Command |
-|---|---|
-| 2026-11-19T15:51:30Z | `mkdir -p spikes/1431-spike-engineer`; heredoc writes of `t.sh` and `transcript.md`; `chmod +x t.sh` |
-| 15:52–15:53Z | heredoc writes of `package.json`, `forge.js`, `board.js`, `activities.js`, `workflows.js`, `worker.js`, `start.js`, `edit.js`, `watch.js`, `scan.js`, `setup.js`; a `python3` in-place patch of `activities.js` (heartbeats); `node --check` on each file |
-| 15:55Z | `cat calllog.jsonl; ls; cat board.json` (reading what setup reached after the network error) |
-| 15:56Z | a `python3` in-place patch of `forge.js` and `setup.js`; `node --check`; `grep -n guarded forge.js`; `printf … >> calllog.jsonl` (the backfilled network-error entry, flagged in its `note`) |
-| 15:57Z | `wc -l calllog.jsonl; grep -c network-error calllog.jsonl` |
-| 15:58Z | heredoc writes of `r.sh` and `run-plan.md` |
-| 16:00Z | `git -C <worktree> status --short` |
-| 2026-11-20T00:40:20Z | heredoc write of `intent-addendum.md` |
-| 00:40:40Z | a `python3` in-place patch of `forge.js` and `worker.js` (token from stdin); heredoc write of `w.sh`; `grep` |
-| 00:41:20Z | heredoc write of `hold.sh` (its own launches are logged above as "[held, background]") |
-| 00:41:40–00:45:40Z | `cat pids.log` / `tail pids.log` on the laptop; heredoc writes of `sigwatch.js`, `editwatch.js`, `gated.js`; `sed -i` on `watch.js` (500 ms poll); `date -u +%T`; local `grep`/`cut`/`python3 -c` over the printed output of wrapped `w.sh` commands |
-| 00:46:00–00:47:20Z | `date -u +%T` (several); WebFetch of the GitHub GraphQL and REST rate-limit docs |
-| 00:48:30–00:52:00Z | `mkdir remote`; heredoc write and run of `analyse.py`; four `python3` analyses of the copied call log, mirror runs and histories; heredoc write of `teardown.js` (its run is logged above) |
-| 00:52–00:56Z | `sed -n` / `grep` / `head` reads of `ARCHITECTURE.md`, `doc-references.json`, `docs/journal/`, `docs/spikes/` and `scripts/aboutme-header-check.mjs`; WebFetch of the GitHub webhook-events and Actions-trigger docs |
-| 00:56Z onward | a `python3` write of `calllog.json` and `mirror-runs.json` into this directory; `cp` of the histories; writes of `host-logs.md` and this transcript; writes of the report, the journal entry and the `doc-references.json` entry; the credential scan; `npm test`; `git add`/`commit`/`push`; `gh pr create`. The report quotes each of these that it cites |
+**What the times are.** A time marked **mtime** is the file's last-modification time on the laptop, read with `TZ=UTC stat -f %Sm`. It is a measurement of the write, unless a later patch, named beside it, moved it. A time marked **between** is a bracket: the wrapped transcript entries immediately before and after the command. Commands of that kind recorded no time of their own, and no exact time can be recovered for them.
+
+**What the bodies are.** Each body below is the file as it stood at the end of the spike. Where a later patch changed a file, the heredoc's original body is the final body with that patch reverted. Every patch is quoted verbatim in "Patches". `$S` is `/Users/cjwilliams/GitHub/rigger-worktrees/1431-spike-engineer/spikes/1431-spike-engineer`.
+
+**Writes into committed files.** Where a command wrote into a file this pull request commits (the report, the journal entry, `doc-references.json`, or the evidence files), that file at the commit stands in for the body.
+
+**The throwaway code is quoted, not committed as code.** It is in this file only as part of the record the card's transcript rule asks for. It is not runnable from the repository, and nothing in the pull request imports or executes it.
+
+### mtime 2026-11-19T15:51:15Z (t.sh) -- laptop
+$ S=~/GitHub/rigger-worktrees/1431-spike-engineer/spikes/1431-spike-engineer; mkdir -p $S && cat > $S/t.sh <<'EOF'
+#!/usr/bin/env bash
+# ABOUTME: Transcript wrapper for spike 1431: logs UTC time, host and command, runs it, logs its output.
+T="$(dirname "$0")/transcript.md"
+ts=$(date -u +%FT%TZ); h=$(hostname -s)
+printf '\n### %s `%s`\n\n```\n$ %s\n' "$ts" "$h" "$*" >> "$T"
+out=$(bash -c "$*" 2>&1); rc=$?
+printf '%s\n' "$out" | sed -E 's/(gh[opsu]_)[A-Za-z0-9]+/\1REDACTED/g' >> "$T"
+printf '[exit %s]\n```\n' "$rc" >> "$T"
+printf '%s\n' "$out"; exit $rc
+EOF
+chmod +x $S/t.sh; cat > $S/transcript.md <<EOF
+(body: the opening of this transcript, from "# Spike 1431 transcript" to the 15:51:05Z backfilled entry)
+EOF
+$S/t.sh 'git -C ~/GitHub/rigger-worktrees/1431-spike-engineer status --short; hostname; sw_vers; npm -v'   (wrapped; its own entry follows)
+
+### mtime 2026-11-19T15:52:26Z (intent-comment.md) -- laptop
+$ S=...; cat > $S/intent-comment.md <<'EOF'
+**Stated intent, spike engineer for #1431** (posted before any forge creation, install or host-configuration change).
+
+**Forge objects the spike will create**
+- Scratch repository: `williacj/rigger-1431-mirror-scratch`, **private**, owned by the **user** `williacj`. It will hold about 32 issues used as cards. The owner deletes it by hand at the end; the spike never deletes it.
+- Scratch board: a **user-owned** Projects v2 board under `williacj`, titled `rigger-1431 mirror scratch`. Its Status field gets the options Ready, Coding, Review, Owner, Done, and it gets one text field, `Escalation`. The spike writes to no other board and to no other repository.
+- **Deleting the board:** at the end the spike runs the `deleteProjectV2` GraphQL mutation on the board's node id (`gh project delete <number> --owner williacj`). It then reads the node id back and quotes the forge's not-found answer in the report.
+
+**Credential**
+- This is the `gh` CLI's OAuth token for `williacj` (`gh auth status`). Its scopes are `delete_repo`, `gist`, `project`, `read:org`, `repo` and `workflow`. The spike needs only `repo` and `project`. It sends no call that needs `delete_repo`, `gist` or `workflow`, and its call log will show that.
+- On the remote host the token reaches the worker on stdin over SSH (`gh auth token | ssh host '... read -r GITHUB_TOKEN ...'`). It is never written to a file there.
+
+**Installs and configuration changes, by host**
+- **Laptop (macOS, `[laptop host]`):** `npm install` of `@temporalio/{client,worker,workflow,activity}@1.26.0` inside the gitignored `spikes/1431-spike-engineer/` only. There is no global install and no configuration change. SSH uses `-o UserKnownHostsFile=<spike dir>/known_hosts`, so `~/.ssh/known_hosts` is not touched. No Temporal server or worker runs on the laptop.
+- **Remote host (the WSL2 machine, or the Windows machine; the hostname is still a placeholder on the card):** a scratch directory `~/1431-spike-engineer/`. Inside it go:
+  - a Node tarball, only if the host's Node is missing or older than 20.3;
+  - the Temporal CLI release binary, downloaded into the directory;
+  - `npm install` of the same four packages;
+  - `temporal server start-dev --port 7243 --ui-port 8243 --db-filename ~/1431-spike-engineer/temporal.db`.
+
+  The spike plans **no package install, firewall rule, WSL/systemd setting or registry key**. If one turns out to be needed, the spike posts it here first and waits.
+- **Sibling rule:** the spike plans no WSL restart and no `.wslconfig` or `/etc/wsl.conf` change. It ends only the server and worker pids it records.
+EOF
+$S/t.sh "gh issue comment 1431 --repo williacj/rigger --body-file $S/intent-comment.md"   (wrapped)
+
+### mtime 2026-11-19T15:53:29Z (package.json, board.js; forge.js was patched later) -- laptop
+$ S=...; cd $S && cat > package.json <<'EOF'
+{
+  "name": "spike-1431",
+  "private": true,
+  "description": "Throwaway spike for rigger #1431: Projects v2 board as a one-way mirror of Temporal card workflows.",
+  "dependencies": {
+    "@temporalio/activity": "1.26.0",
+    "@temporalio/client": "1.26.0",
+    "@temporalio/worker": "1.26.0",
+    "@temporalio/workflow": "1.26.0"
+  }
+}
+EOF
+cat > forge.js <<'EOF'
+(body: forge.js below, with PATCH forge-guarded-and-setup-resume and PATCH forge-and-worker-token-stdin reverted)
+EOF
+cat > board.js <<'EOF'
+// ABOUTME: Board reads and writes for spike 1431's scratch Projects v2 board: read one item's
+// fields, set Status and Escalation, and read every item in one paginated query.
+const fs = require('fs');
+const path = require('path');
+const { graphql } = require('./forge');
+const BOARD_FILE = process.env.BOARD_FILE || path.join(__dirname, 'board.json');
+const board = () => JSON.parse(fs.readFileSync(BOARD_FILE, 'utf8'));
+
+const READ_ITEM = `query ReadItem($id: ID!) {
+  node(id: $id) { ... on ProjectV2Item {
+    status: fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+    escalation: fieldValueByName(name: "Escalation") { ... on ProjectV2ItemFieldTextValue { text } }
+  } }
+  rateLimit { cost remaining used }
+}`;
+
+async function readItem(card, tag) {
+  const b = board();
+  const d = await graphql('ReadItem', READ_ITEM, { id: b.items[card] }, { card, ...tag });
+  return { column: d.node?.status?.name ?? null, escalation: d.node?.escalation?.text ?? '' };
+}
+
+const SET_STATUS = `mutation SetStatus($p: ID!, $i: ID!, $f: ID!, $o: String!) {
+  updateProjectV2ItemFieldValue(input: { projectId: $p, itemId: $i, fieldId: $f,
+    value: { singleSelectOptionId: $o } }) { projectV2Item { id } } }`;
+const SET_TEXT = `mutation SetEscalation($p: ID!, $i: ID!, $f: ID!, $t: String!) {
+  updateProjectV2ItemFieldValue(input: { projectId: $p, itemId: $i, fieldId: $f,
+    value: { text: $t } }) { projectV2Item { id } } }`;
+const CLEAR = `mutation ClearEscalation($p: ID!, $i: ID!, $f: ID!) {
+  clearProjectV2ItemFieldValue(input: { projectId: $p, itemId: $i, fieldId: $f }) { projectV2Item { id } } }`;
+
+async function setColumn(card, column, tag) {
+  const b = board();
+  await graphql('SetStatus', SET_STATUS, { p: b.projectId, i: b.items[card], f: b.statusFieldId,
+    o: b.statusOptions[column] }, { card, column, ...tag });
+}
+
+async function setEscalation(card, text, tag) {
+  const b = board();
+  if (text) await graphql('SetEscalation', SET_TEXT, { p: b.projectId, i: b.items[card], f: b.escalationFieldId, t: text }, { card, ...tag });
+  else await graphql('ClearEscalation', CLEAR, { p: b.projectId, i: b.items[card], f: b.escalationFieldId }, { card, ...tag });
+}
+
+const SCAN = `query ScanBoard($p: ID!, $after: String) {
+  node(id: $p) { ... on ProjectV2 { items(first: 100, after: $after) {
+    pageInfo { hasNextPage endCursor }
+    nodes { id content { ... on Issue { number } }
+      status: fieldValueByName(name: "Status") { ... on ProjectV2ItemFieldSingleSelectValue { name } }
+      escalation: fieldValueByName(name: "Escalation") { ... on ProjectV2ItemFieldTextValue { text } } } } } }
+  rateLimit { cost remaining used }
+}`;
+
+async function scanBoard(tag) {
+  const b = board();
+  const out = {};
+  let after = null;
+  do {
+    const d = await graphql('ScanBoard', SCAN, { p: b.projectId, after }, tag);
+    const items = d.node.items;
+    for (const n of items.nodes) out[n.content.number] = { column: n.status?.name ?? null, escalation: n.escalation?.text ?? '' };
+    after = items.pageInfo.hasNextPage ? items.pageInfo.endCursor : null;
+  } while (after);
+  return out;
+}
+
+module.exports = { readItem, setColumn, setEscalation, scanBoard, board };
+EOF
+echo ok
+
+### mtime 2026-11-19T15:53:58Z (workflows.js, start.js, edit.js, scan.js; activities.js, worker.js and watch.js were patched later) -- laptop
+$ S=...; cd $S && cat > activities.js <<'EOF'
+(body: activities.js below, with PATCH activities-heartbeat reverted)
+EOF
+cat > workflows.js <<'EOF'
+// ABOUTME: cardWorkflow for spike 1431: the card's truth. Holds column and escalation, advances on
+// a signal, escalates on entering escalateIn and waits for an answer signal, and re-runs the
+// mirror every reconcileMs while it waits, which is its drift reconcile.
+const wf = require('@temporalio/workflow');
+
+const COLUMNS = ['Ready', 'Coding', 'Review', 'Owner', 'Done'];
+const { mirrorCard } = wf.proxyActivities({
+  startToCloseTimeout: '2 minutes',
+  heartbeatTimeout: '10 seconds',
+  retry: { initialInterval: '1 second', maximumAttempts: 10 },
+});
+const advance = wf.defineSignal('advance');
+const answer = wf.defineSignal('answer');
+const stateQuery = wf.defineQuery('state');
+
+async function cardWorkflow({ card, reconcileMs, escalateIn }) {
+  let state = { column: 'Ready', escalation: '' };
+  let advances = 0;
+  let answered = null;
+  let escalated = false;
+  wf.setHandler(advance, () => { advances += 1; });
+  wf.setHandler(answer, (a) => { answered = a; });
+  wf.setHandler(stateQuery, () => state);
+  const next = () => COLUMNS[COLUMNS.indexOf(state.column) + 1];
+
+  await mirrorCard({ card, state, why: 'transition' });
+  while (state.column !== 'Done') {
+    if (state.column === escalateIn && !escalated) {
+      escalated = true;
+      state = { ...state, escalation: 'ambiguous: waiting on owner answer' };
+      await mirrorCard({ card, state, why: 'transition' });
+    }
+    const waiting = state.escalation ? () => answered !== null : () => advances > 0;
+    if (!(await wf.condition(waiting, reconcileMs))) {
+      await mirrorCard({ card, state, why: 'reconcile' });
+      continue;
+    }
+    if (state.escalation) answered = null; else advances -= 1;
+    state = { column: next(), escalation: '' };
+    await mirrorCard({ card, state, why: 'transition' });
+  }
+  return state;
+}
+
+module.exports = { cardWorkflow };
+EOF
+cat > worker.js <<'EOF'
+(body: worker.js below, with the worker.js half of PATCH forge-and-worker-token-stdin reverted)
+EOF
+cat > start.js <<'EOF'
+// ABOUTME: Starts one cardWorkflow per card number given, workflow id = the card.
+// Usage: node start.js <reconcileMs> <escalateIn|-> <card>...
+const { Client, Connection } = require('@temporalio/client');
+const { board } = require('./board');
+async function main() {
+  const [reconcileMs, escalateIn, ...cards] = process.argv.slice(2);
+  const client = new Client({ connection: await Connection.connect({ address: process.env.TEMPORAL_ADDRESS || 'localhost:7243' }) });
+  for (const c of cards) {
+    const id = `${board().repo}#${c}`;
+    await client.workflow.start('cardWorkflow', { taskQueue: 'spike-1431', workflowId: id,
+      args: [{ card: c, reconcileMs: Number(reconcileMs), escalateIn: escalateIn === '-' ? null : escalateIn }] });
+    console.log(new Date().toISOString(), 'started', id);
+  }
+}
+main().catch((e) => { console.error(e); process.exit(1); });
+EOF
+cat > edit.js <<'EOF'
+// ABOUTME: Plays the person: moves a card's board item to another column through the API, logged
+// with purpose edit-drift. Usage: node edit.js <card> <column>
+const { setColumn } = require('./board');
+const [card, column] = process.argv.slice(2);
+setColumn(card, column, { purpose: 'edit-drift' })
+  .then(() => console.log(new Date().toISOString(), 'edited', card, '->', column))
+  .catch((e) => { console.error(e); process.exit(1); });
+EOF
+cat > watch.js <<'EOF'
+(body: watch.js below, with PATCH watch-interval reverted)
+EOF
+cat > scan.js <<'EOF'
+// ABOUTME: Reads every card on the board in one paginated query and prints column and escalation
+// per card. Usage: node scan.js [purpose]
+const { scanBoard } = require('./board');
+scanBoard({ purpose: process.argv[2] || 'scan' }).then((r) => console.log(JSON.stringify(r)))
+  .catch((e) => { console.error(e); process.exit(1); });
+EOF
+echo ok
+
+### mtime 2026-11-19T15:54:20Z (activities.js after PATCH activities-heartbeat; setup.js was patched later) -- laptop
+$ (PATCH activities-heartbeat, below)
+cat > setup.js <<'EOF'
+(body: setup.js below, with the setup.js half of PATCH forge-guarded-and-setup-resume reverted)
+EOF
+node --check setup.js && for f in forge board activities workflows worker start edit watch scan; do node --check $f.js || echo BAD $f; done; echo checked
+
+### between the wrapped 15:55 setup.js run and PATCH forge-guarded-and-setup-resume -- laptop
+$ S=...; cd $S && cat calllog.jsonl 2>/dev/null; ls; cat board.json 2>/dev/null
+
+### mtime 2026-11-19T16:00:28Z (setup.js) -- laptop
+$ (PATCH forge-guarded-and-setup-resume, below, which ends in the wrapped setup.js rerun)
+
+### between the wrapped 16:01:59Z scan and 16:02:39Z -- laptop
+$ (same command as the wrapped 16:01:59Z scan, then) wc -l calllog.jsonl; grep -c network-error calllog.jsonl
+
+### mtime 2026-11-19T16:02:39Z (r.sh, run-plan.md) -- laptop
+$ S=...; cd $S && cat > r.sh <<'EOF'
+#!/usr/bin/env bash
+# ABOUTME: Runs one command on the remote spike host in ~/1431-spike-engineer, with GITHUB_TOKEN
+# read from stdin (never a file or argv there), logged through t.sh. Usage: HOST=<h> r.sh '<cmd>'
+D="$(cd "$(dirname "$0")" && pwd)"
+: "${HOST:?set HOST}"
+exec "$D/t.sh" "gh auth token | ssh -o UserKnownHostsFile=$D/known_hosts $HOST 'cd ~/1431-spike-engineer && read -r GITHUB_TOKEN && export GITHUB_TOKEN TEMPORAL_ADDRESS=localhost:7243 && $1'"
+EOF
+chmod +x r.sh; cat > run-plan.md <<'EOF'
+# Spike 1431 run plan (throwaway)
+
+Host: the WSL2 machine over SSH (bash). The Windows machine is the fallback.
+All forge calls, the server, the worker, the temporal CLI and the watchers run on that one host, so
+every timestamp comes from one clock. Reconcile interval R = 30 s. Read-back delay D = 3 s.
+The revert bound is 2R = 60 s: the next reconcile timer fires within R, and one mirror run takes
+well under R. watch.js polls every 1 s, with a 180 s timeout.
+
+## Deploy
+1. `ssh HOST 'mkdir -p ~/1431-spike-engineer'`, then rsync the code and board.json, without node_modules or the logs.
+2. Check `node -v` (needs >=20.3). If it is missing, get the Node tarball into the dir.
+3. Download the Temporal CLI release into the dir. Run `./temporal --version`.
+4. `npm install` (approve the core-bridge install scripts if npm 11 blocks them), then `npm ls`.
+5. Start the server: `setsid nohup ./temporal server start-dev --port 7243 --ui-port 8243 --db-filename ~/1431-spike-engineer/temporal.db > server.log 2>&1 < /dev/null & echo $!` and record the pid.
+6. Start the worker through r.sh: `setsid nohup node worker.js > worker.log 2>&1 < /dev/null & echo $!` and record the pid. The token is in the env, read from stdin.
+
+## Runs
+| Run | Card | Escalate in | Steps |
+|---|---|---|---|
+| L (lifecycle + escalation + I1 drift) | 1 | Coding | start → advance (Coding, escalates) → `temporal workflow signal --name answer` and watch for Review (time from signal) → while held in Review: edit.js 1 Done (I1), watch for Review (time from the edit) → advance ×2 → Done |
+| I2a (edit between the read and the write, reconcile run) | 2 | - | held in Ready; `touch gates/2.after-read`; wait for `gates/2.after-read.held`; edit.js 2 Review; `touch gates/2.release`; readback, then the next reconcile reverts |
+| I2b (same, transition run) | 2 | - | `touch gates/2.after-read`; advance → the read sees Ready and holds; edit.js 2 Done; release; the mirror writes Coding |
+| I3 | 3 | - | `touch gates/3.after-writes`; advance → it writes Coding and holds; edit.js 3 Owner; release; readback; the next reconcile reverts |
+| I4 | 4 | Coding | advance → Coding + escalation; `touch gates/4.after-write1`; signal answer → it writes Status=Review and holds; `kill -9 <worker pid>`; start a new worker and record its pid; a heartbeat timeout of 10 s → attempt 2 writes only Escalation |
+| Twice-run | 5 | - | the reconcile runs on a card held in Ready, with no change between: the writes in the 2nd run come from calllog |
+| 30-card pass | 2–32 (31 running) | - | start 5..32; once all have settled, count the mirror-read and mirror-write calls with why=reconcile in one R window; plus one `node scan.js` for the batched route |
+| Event history | all | - | `temporal workflow show -w '<repo>#<n>' --output json` → evidence |
+
+## Teardown
+Kill the worker and server pids I recorded. Take a process listing. Copy back the call log, mirror-runs, histories and logs. Delete the board (deleteProjectV2) and read its node id back to show not-found. The repository is left for the owner.
+EOF
+echo ok
+
+### between the wrapped 16:02:43Z entry and the 2026-11-20T00:40:07Z entry -- laptop
+$ git -C ~/GitHub/rigger-worktrees/1431-spike-engineer status --short
+
+### mtime 2026-11-20T00:40:51Z (intent-addendum.md) -- laptop
+$ S=...; cat > $S/intent-addendum.md <<'EOF'
+**Stated-intent addendum, spike engineer for #1431** (card revision `3c509245f0e7`). This comes before any install on a remote host.
+
+**Host.** `ssh wsl-hostpc` reset the connection at the probe (`kex_exchange_identification: Connection reset by peer`). As rigger-ae directed, phase 2 therefore runs on the **Windows machine**, `hostpc` (Host-PC10, Windows 10.0.26300, AMD64, Node v24.19.0, npm 11.17.0). I make no install or change in WSL.
+
+My first intent comment already covers the following. This addendum states them exactly for Windows.
+- **Directory:** everything goes in `C:\Users\USER\1431-spike-engineer\`. Nothing goes outside it.
+- **Temporal CLI:** `temporal_cli_1.10.1_windows_amd64.zip`, fetched from the temporalio/cli GitHub release with the built-in `curl.exe`. It is unpacked with `tar.exe` into that directory. It is not installed, not added to PATH, and has no installer.
+- **npm install:** `@temporalio/{client,worker,workflow,activity}@1.26.0` into that directory only, using the host's existing Node. I install no Node.
+- **Server:** `temporal.exe server start-dev --port 7243 --ui-port 8243 --db-filename C:\Users\USER\1431-spike-engineer\temporal.db`. It binds localhost. I plan no firewall rule; if Windows asks for one, I decline and report it.
+- **Token:** it reaches each Node process on stdin over SSH (`gh auth token | ssh hostpc "... node …"`). It is never written to a file or put on a command line there.
+- **Process lifetime:** Windows OpenSSH ends a session's children when the session closes. The server and the worker therefore run inside SSH sessions that the laptop holds open in the background. Those `ssh` client processes are light, and I record each laptop pid and each Windows pid. The worker kill for row I4 is `taskkill /F /PID <recorded worker pid>`.
+
+There is no registry, service, scheduled-task, PATH, firewall or WSL change.
+EOF
+$S/t.sh "gh issue comment 1431 --repo williacj/rigger --body-file $S/intent-addendum.md"   (wrapped)
+
+### mtime 2026-11-20T00:41:04Z (forge.js, worker.js, w.sh) -- laptop
+$ (PATCH forge-and-worker-token-stdin, below; it writes w.sh with this body:)
+#!/usr/bin/env bash
+# ABOUTME: Runs one cmd.exe command on the Windows spike host (hostpc) in its spike directory,
+# logged through t.sh. With TOKEN=1 the gh token goes to the command's stdin. Usage: [TOKEN=1] w.sh '<cmd>'
+D="$(cd "$(dirname "$0")" && pwd)"
+SSH="ssh -o UserKnownHostsFile=$D/known_hosts hostpc"
+if [ -n "$TOKEN" ]; then
+  exec "$D/t.sh" "gh auth token | $SSH 'cd /d %USERPROFILE%\\1431-spike-engineer && $1'"
+else
+  exec "$D/t.sh" "$SSH 'cd /d %USERPROFILE%\\1431-spike-engineer && $1' < /dev/null"
+fi
+
+### mtime 2026-11-20T00:41:32Z (hold.sh) -- laptop
+$ S=...; cd $S && cat > hold.sh <<'EOF'
+#!/usr/bin/env bash
+# ABOUTME: Holds one long-running cmd.exe command open on hostpc in an ssh session from the laptop,
+# recording the laptop ssh pid in pids.log and the transcript. Usage: [TOKEN=1] hold.sh <name> '<cmd>'
+D="$(cd "$(dirname "$0")" && pwd)"; name=$1; cmd=$2
+SSH=(ssh -o UserKnownHostsFile="$D/known_hosts" -o ServerAliveInterval=30 hostpc "cd /d %USERPROFILE%\\1431-spike-engineer && $cmd")
+if [ -n "$TOKEN" ]; then gh auth token | "${SSH[@]}" & else "${SSH[@]}" < /dev/null & fi
+pid=$!; ts=$(date -u +%FT%TZ)
+echo "$ts laptop ssh pid=$pid holds $name: $cmd" >> "$D/pids.log"
+printf '\n### %s `%s`\n\n```\n$ [held, background] %s ssh hostpc "%s"\nlaptop ssh pid=%s\n```\n' "$ts" "$(hostname -s)" "${TOKEN:+gh auth token |}" "$cmd" "$pid" >> "$D/transcript.md"
+wait $pid; rc=$?
+echo "$(date -u +%FT%TZ) laptop ssh pid=$pid ($name) exited rc=$rc" | tee -a "$D/pids.log" >> "$D/transcript.md"
+EOF
+chmod +x hold.sh; echo ok
+(the three hold.sh launches log themselves as "[held, background]" entries)
+
+### between 00:41:38Z and 00:45:40Z -- laptop (local reads beside wrapped w.sh commands)
+$ cat pids.log                        (beside the 00:41:38Z w.sh entry)
+$ tail -1 pids.log                    (beside the 00:41:5xZ and 00:45:3xZ w.sh entries)
+$ tail -2 pids.log                    (beside the 00:45:25Z scan entry)
+$ ./w.sh 'type mirror-runs.jsonl' | grep '"end"' | cut -c1-260                               (local grep and cut over wrapped output)
+$ ./w.sh 'type mirror-runs.jsonl' | grep '"end"' | grep -E '"card":"(1|4)"' | cut -c1-300 | tail -4
+$ ./w.sh 'type mirror-runs.jsonl' | grep '"card":"1"' | tail -2 | cut -c1-200; date -u +%T
+$ ./w.sh 'type mirror-runs.jsonl' | grep '"card":"2"' | tail -9 | cut -c1-280
+$ TOKEN=1 ./w.sh 'node scan.js final-readback-i2b' | python3 -c 'import json,sys;d=json.load(sys.stdin);print({k:d[k] for k in ["2"]})'
+$ ./w.sh 'type mirror-runs.jsonl' | grep '"card":"3"' | grep '"end"' | tail -2 | cut -c1-280
+$ TOKEN=1 ./w.sh 'node scan.js partial-state-i4' | python3 -c 'import json,sys;print(json.load(sys.stdin)["4"])'
+$ ./w.sh 'type pids.log & type mirror-runs.jsonl' | grep -E 'worker pid|"card":"4"' | tail -8 | cut -c1-300
+$ TOKEN=1 ./w.sh 'node scan.js final-readback-i4' | python3 -c 'import json,sys;print(json.load(sys.stdin)["4"])'
+
+### mtime 2026-11-20T00:42:43Z (sigwatch.js, watch.js) -- laptop
+$ S=...; cd $S && cat > sigwatch.js <<'EOF'
+// ABOUTME: Sends a signal through the Temporal CLI, noting the instant just before, then polls the
+// card's board item every 500 ms until it shows the target column, and prints the elapsed time.
+// Usage: node sigwatch.js <card> <signal> <targetColumn> [inputJson]
+const { execFileSync } = require('child_process');
+const { readItem, board } = require('./board');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function main() {
+  const [card, signal, column, input] = process.argv.slice(2);
+  const args = ['workflow', 'signal', '--address', 'localhost:7243', '--workflow-id', `${board().repo}#${card}`, '--name', signal];
+  if (input) args.push('--input', input);
+  console.log('command: temporal.exe ' + args.map((a) => (/[\s"]/.test(a) ? `'${a}'` : a)).join(' '));
+  const t0 = Date.now();
+  console.log('signal sent at', new Date(t0).toISOString());
+  console.log(execFileSync('temporal.exe', args, { encoding: 'utf8' }).trim());
+  for (;;) {
+    const at = Date.now();
+    const s = await readItem(card, { purpose: 'measure' });
+    if (s.column === column) { console.log(JSON.stringify({ card, column, seenAt: new Date(at).toISOString(), elapsedMs: at - t0, state: s })); return; }
+    if (at - t0 > 180000) { console.log(JSON.stringify({ timedOut: true, s })); process.exitCode = 2; return; }
+    await sleep(500);
+  }
+}
+main().catch((e) => { console.error(e); process.exit(1); });
+EOF
+(PATCH watch-interval, below)
+./t.sh "scp -o UserKnownHostsFile=$S/known_hosts $S/sigwatch.js $S/watch.js hostpc:1431-spike-engineer/"   (wrapped)
+
+### mtime 2026-11-20T00:42:59Z (editwatch.js) -- laptop
+$ S=...; cd $S && cat > editwatch.js <<'EOF'
+// ABOUTME: Plays the person: moves a card's board item to another column through the API, then
+// polls every 500 ms until the board shows the workflow's column again, timing it from the edit's
+// answer. Usage: node editwatch.js <card> <editColumn> <workflowColumn> [timeoutMs]
+const { setColumn, readItem } = require('./board');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function main() {
+  const [card, editCol, wfCol, timeoutMs = '120000'] = process.argv.slice(2);
+  await setColumn(card, editCol, { purpose: 'edit-drift' });
+  const t0 = Date.now();
+  console.log('edit answered at', new Date(t0).toISOString(), card, '->', editCol);
+  for (;;) {
+    const at = Date.now();
+    const s = await readItem(card, { purpose: 'measure' });
+    if (s.column === wfCol) { console.log(JSON.stringify({ card, revertedTo: wfCol, seenAt: new Date(at).toISOString(), elapsedMs: at - t0, state: s })); return; }
+    if (at - t0 > Number(timeoutMs)) { console.log(JSON.stringify({ card, timedOut: true, boundMs: Number(timeoutMs), lastState: s })); process.exitCode = 2; return; }
+    await sleep(500);
+  }
+}
+main().catch((e) => { console.error(e); process.exit(1); });
+EOF
+./t.sh "scp -q ... editwatch.js hostpc:1431-spike-engineer/"   (wrapped)
+
+### mtime 2026-11-20T00:43:47Z (gated.js) -- laptop
+$ S=...; cd $S && cat > gated.js <<'EOF'
+// ABOUTME: Places a person's edit at a gate inside one mirrorCard run: arms gates/<card>.<point>,
+// optionally sends an advance signal, waits until the run holds at the gate, edits the column
+// through the API, then releases the run. Usage: node gated.js <card> <point> <editColumn> [advance]
+const fs = require('fs');
+const path = require('path');
+const { execFileSync } = require('child_process');
+const { setColumn, board } = require('./board');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const say = (...a) => console.log(new Date().toISOString(), ...a);
+async function main() {
+  const [card, point, editCol, adv] = process.argv.slice(2);
+  const G = path.join(__dirname, 'gates');
+  fs.mkdirSync(G, { recursive: true });
+  fs.writeFileSync(path.join(G, `${card}.${point}`), '');
+  say('armed', `gates/${card}.${point}`);
+  if (adv) { execFileSync('temporal.exe', ['workflow', 'signal', '--address', 'localhost:7243', '--workflow-id', `${board().repo}#${card}`, '--name', 'advance']); say('sent advance'); }
+  while (!fs.existsSync(path.join(G, `${card}.${point}.held`))) await sleep(100);
+  say('run holds at', point);
+  if (editCol !== '-') { await setColumn(card, editCol, { purpose: 'edit-drift' }); say('edit answered', card, '->', editCol); }
+  fs.writeFileSync(path.join(G, `${card}.release`), '');
+  say('released');
+}
+main().catch((e) => { console.error(e); process.exit(1); });
+EOF
+./t.sh "scp -q ... gated.js hostpc:1431-spike-engineer/"   (wrapped)
+
+### between 00:46:00Z and 00:48:00Z -- laptop
+$ date -u +%T     (seven times, each beside a wrapped entry)
+WebFetch (tool, not a shell command): https://docs.github.com/en/graphql/overview/rate-limits-and-query-limits-for-the-graphql-api
+WebFetch (tool): https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api
+
+### mtime 2026-11-20T00:48:11Z (teardown.js) -- laptop
+$ S=...; cd $S && cat > teardown.js <<'EOF'
+// ABOUTME: Deletes spike 1431's scratch board with deleteProjectV2, then reads its node id and its
+// number back and prints the forge's answers.
+const { graphql } = require('./forge');
+const b = require('./board.json');
+async function main() {
+  const d = await graphql('DeleteProject', `mutation DeleteProject($p: ID!) { deleteProjectV2(input: { projectId: $p }) { projectV2 { id number } } }`, { p: b.projectId }, { purpose: 'teardown' });
+  console.log('deleted', JSON.stringify(d));
+  for (const [op, q, v] of [
+    ['ReadDeletedNode', 'query ReadDeletedNode($p: ID!) { node(id: $p) { id } rateLimit { cost } }', { p: b.projectId }],
+    ['ReadDeletedNumber', 'query ReadDeletedNumber($n: Int!) { user(login: "williacj") { projectV2(number: $n) { id } } rateLimit { cost } }', { n: b.projectNumber }],
+  ]) {
+    const res = await fetch('https://api.github.com/graphql', { method: 'POST', headers: { authorization: `Bearer ${process.env.GITHUB_TOKEN}`, 'content-type': 'application/json', 'user-agent': 'spike-1431' }, body: JSON.stringify({ query: q, variables: v }) });
+    const text = await res.text();
+    require('./forge').log({ ts: new Date().toISOString(), api: 'graphql', rw: 'read', method: 'POST', operation: op, status: res.status, purpose: 'teardown' });
+    console.log(op, res.status, text);
+  }
+}
+main().catch((e) => { console.error(e); process.exit(1); });
+EOF
+./t.sh "cd $S && GITHUB_TOKEN=\$(gh auth token) node teardown.js"   (wrapped)
+
+### mtime 2026-11-20T00:48:33Z (analyse.py) -- laptop
+$ S=...; cd $S && cat > analyse.py <<'EOF'
+# ABOUTME: Throwaway analysis of spike 1431's call logs and mirror runs.
+import json, collections
+L=[json.loads(l) for l in open('calllog.jsonl')]; R=[json.loads(l) for l in open('remote/calllog.jsonl')]
+for e in L: e['host']='laptop'
+for e in R: e['host']='hostpc'
+A=sorted(L+R,key=lambda e:e['ts'])
+print('total calls',len(A), collections.Counter((e['host'],e.get('purpose')) for e in A))
+c1=[e for e in R if e.get('card')=='1']
+print('\ncard1 by purpose/api/rw', collections.Counter((e['purpose'],e['api'],e['rw']) for e in c1))
+prod=[e for e in c1 if e['purpose'] in('mirror-read','mirror-write')]
+print('card1 production', len(prod), collections.Counter((e['api'],e['rw'],e.get('why')) for e in prod))
+print('card1 query cost sum (production reads)', sum(e['cost'] or 0 for e in prod if e['rw']=='read'))
+print('card1 cost sum all reads', sum(e['cost'] or 0 for e in c1 if e['rw']=='read'))
+print('first/last card1', c1[0]['ts'], c1[-1]['ts'])
+# used deltas around mutations
+print('\nsample graphql used sequence (card1 production):')
+for e in prod: print(e['ts'][11:23], e['operation'], e.get('why'), 'used', e['ratelimit']['used'], 'cost', e['cost'])
+# card 5 runs
+print('\ncard5:')
+for e in R:
+  if e.get('card')=='5' and e['purpose'] in ('mirror-read','mirror-write'): print(e['ts'][11:23], e['operation'], e.get('why'))
+EOF
+python3 analyse.py 2>&1 | head -80
+
+### between 00:48:33Z and 00:56Z -- laptop (read-only analyses of the copied logs; each printed only to the session)
+$ python3 - <<'EOF'      (rate-limit answers grouped by reset window)
+import json,collections
+R=[json.loads(l) for l in open('remote/calllog.jsonl')]+[json.loads(l) for l in open('calllog.jsonl')]
+R.sort(key=lambda e:e['ts'])
+g=[e for e in R if e['api']=='graphql' and e.get('ratelimit')]
+print(collections.Counter(e['ratelimit']['reset'] for e in g))
+for reset in set(e['ratelimit']['reset'] for e in g):
+  b=[e for e in g if e['ratelimit']['reset']==reset]
+  d=collections.defaultdict(list)
+  for p,c in zip(b,b[1:]):
+    d[c['rw']].append(int(c['ratelimit']['used'])-int(p['ratelimit']['used']))
+  print(reset, len(b), {k:collections.Counter(v).most_common(6) for k,v in d.items()})
+EOF
+$ python3 - <<'EOF'      (calls in two reconcile windows; card 5's runs)
+import json,collections
+R=[json.loads(l) for l in open('remote/calllog.jsonl')]
+for lo,hi in [('2026-11-20T00:46:50','2026-11-20T00:47:20'),('2026-11-20T00:47:20','2026-11-20T00:47:50')]:
+  w=[e for e in R if lo<=e['ts']<hi]
+  print(lo,hi,len(w),collections.Counter((e['purpose'],e['api'],e['rw'],e.get('why')) for e in w))
+  rr=[e for e in w if e['purpose']=='mirror-read']
+  print(' distinct cards', len(set(e['card'] for e in rr)), sorted(set(int(e['card']) for e in rr)))
+  print(' cost', sum(e['cost'] or 0 for e in rr))
+b=[e for e in R if e['purpose']=='batched-reconcile-pass']; print(b)
+M=[json.loads(l) for l in open('remote/mirror-runs.jsonl')]
+for m in M:
+  if m['card']=='5' and m['event']=='end': print(m['ts'][11:23], m['why'], m['writes'], m['after'], m['match'])
+EOF
+$ python3 - <<'EOF'      (event types, signals and retries per history; a first version had a case error in its signal test and printed no signals)
+import json,collections,base64
+for n in [1,2,3,4]:
+  h=json.load(open(f'remote/hist/card-{n}.json'))
+  ev=h['events']
+  print('card',n,len(ev),collections.Counter(e['eventType'] for e in ev))
+  for e in ev:
+    if 'Signaled' in e['eventType']:
+      a=e['workflowExecutionSignaledEventAttributes']
+      inp=a.get('input',{}).get('payloads',[{}])
+      data=[base64.b64decode(p['data']).decode() for p in inp if 'data' in p]
+      print('  ',e['eventId'],e['eventTime'],e['eventType'],a['signalName'],data)
+    if e['eventType']=='EVENT_TYPE_ACTIVITY_TASK_STARTED' and int(e['workflowActivityTaskStartedEventAttributes' if False else 'eventId'])>0:
+      a=e['activityTaskStartedEventAttributes']
+      if a.get('attempt',1)>1: print('  retry',e['eventId'],e['eventTime'],'attempt',a['attempt'], a.get('lastFailure',{}).get('message'))
+EOF
+$ python3 - <<'EOF'      (signal events and card 1's activity inputs)
+import json,base64
+for n in [1,2,3,4]:
+  ev=json.load(open(f'remote/hist/card-{n}.json'))['events']
+  for e in ev:
+    if e['eventType']=='EVENT_TYPE_WORKFLOW_EXECUTION_SIGNALED':
+      a=e['workflowExecutionSignaledEventAttributes']
+      data=[base64.b64decode(p['data']).decode() for p in a.get('input',{}).get('payloads',[]) if 'data' in p]
+      print(n,e['eventId'],e['eventTime'],a['signalName'],data,a.get('identity'))
+ev=json.load(open('remote/hist/card-1.json'))['events']
+for e in ev:
+  if e['eventType']=='EVENT_TYPE_ACTIVITY_TASK_SCHEDULED':
+    a=e['activityTaskScheduledEventAttributes']; inp=json.loads(base64.b64decode(a['input']['payloads'][0]['data']))
+    print(' c1 act',e['eventId'],e['eventTime'][11:23],inp['why'],inp['state'])
+EOF
+$ python3 - <<'EOF'      (mirror runs for cards 1 to 4)
+import json
+M=[json.loads(l) for l in open('remote/mirror-runs.jsonl')]
+for c in ['1','2','3','4']:
+  print('card',c)
+  for m in M:
+    if m['card']==c and m['event'] in('end','gate-held','gate-released') : print(' ',m['ts'][11:23],m['event'],m.get('why',m.get('point')),m.get('attempt',''),m.get('writes',''),m.get('after',{}).get('column',''),repr(m.get('after',{}).get('escalation','')) if 'after' in m else '',m.get('workflowState',{}).get('column',''),m.get('match',''))
+EOF
+$ (the committed-evidence versions of these reads, run after 00:56Z over docs/spikes/projects-v2-mirror/: a write-target check of calllog.json; activity events in the drift windows of histories 2 to 4. Both are read-only, and their output is quoted in the report)
+
+### between 00:52Z and 00:56Z -- laptop (reads of repository files for the report's proposals and format)
+$ cd ~/GitHub/rigger-worktrees/1431-spike-engineer && sed -n 973,990p ARCHITECTURE.md
+$ sed -n 58,76p ARCHITECTURE.md; sed -n 435,440p ARCHITECTURE.md; grep -n -i -E 'answer' ARCHITECTURE.md | sed -n 1,12p
+$ head -c 1500 doc-references.json; echo; grep -n spikes doc-references.json | head; ls docs/journal | tail -3; head -12 "docs/journal/$(ls docs/journal | tail -1)"; head -8 docs/spikes/launchd-lost-cells.md; ls docs/spikes
+$ grep -rln "ABOUTME" scripts test/*.mjs test/*.cjs 2>/dev/null | head; grep -rn -E "json|gif|exempt" $(grep -rln "ABOUTME" scripts 2>/dev/null | head -3) | head -20
+$ sed -n 1,80p scripts/aboutme-header-check.mjs
+WebFetch (tool): https://docs.github.com/en/webhooks/webhook-events-and-payloads#projects_v2_item (twice, the second at offset 100000)
+WebFetch (tool): https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows
+
+### between 00:51Z and 00:56Z -- laptop (writing the evidence)
+$ W=~/GitHub/rigger-worktrees/1431-spike-engineer; S=$W/spikes/1431-spike-engineer; E=$W/docs/spikes/projects-v2-mirror; mkdir -p $E/histories && cd $S && python3 - <<EOF
+import json
+L=[json.loads(l) for l in open('calllog.jsonl')]; R=[json.loads(l) for l in open('remote/calllog.jsonl')]
+for e in L: e['host']='[laptop host] (laptop)'
+for e in R: e['host']='Host-PC10 (hostpc)'
+A=sorted(L+R,key=lambda e:e['ts'])
+json.dump({'about':'(the first version of calllog.json about text)','calls':A},open('$E/calllog.json','w'),indent=1)
+M=[json.loads(l) for l in open('remote/mirror-runs.jsonl')]
+json.dump({'about':'Spike 1431 mirrorCard run log from the worker on Host-PC10: start, read, gate, write and end events per run, with the workflow state each run carried and the read-back after it.','events':M},open('$E/mirror-runs.json','w'),indent=1)
+print(len(A),len(M))
+EOF
+cp remote/hist/card-*.json $E/histories/; ls $E $E/histories
+$ (host-logs and transcript copy) W=...; S=...; E=...; cd $S && {
+echo '<!-- ABOUTME: Spike 1431 host logs: the Temporal server and worker logs and the pid logs from both hosts, copied verbatim. -->'
+echo; echo '# Host logs, spike 1431'; echo
+echo '(the introductory sentence that opens host-logs.txt)'
+for f in pids.log server.log worker1.log worker2.log; do echo; echo "## hostpc \`$f\`"; echo; echo '```'; tr -d '\r' < remote/$f; echo '```'; done
+echo; echo '## laptop `pids.log` (laptop ssh client pids that held the hostpc sessions open)'; echo; echo '```'; cat pids.log; echo '```'
+} > $E/host-logs.md; { echo '<!-- ABOUTME: Spike 1431 full transcript: every command the spike ran, each with its UTC time and the host it ran on. -->'; echo; cat transcript.md; } > $E/transcript.md; wc -l $E/*.md
+$ E=...; H=$(hostname -s); cat >> $E/transcript.md <<EOF
+(the summary table this section replaces)
+EOF
+$ E=...; python3 - <<EOF      (inserts the paragraph on reading hosts at the top of the transcript)
+p='$E/transcript.md'; s=open(p).read()
+s=s.replace("# Spike 1431 transcript\n","# Spike 1431 transcript\n\n(the paragraph that now follows the heading)\n",1)
+open(p,'w').write(s)
+EOF
+sed -n 1,12p $E/transcript.md
+Write (tool): docs/spikes/projects-v2-mirror.md, the report. Its content at each commit is the committed file.
+Edit (tool): docs/spikes/projects-v2-mirror.md, the forge-call table
+$ cd ~/GitHub/rigger-worktrees/1431-spike-engineer && grep -rnE 'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|Bearer [A-Za-z0-9._-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9]{20,}' docs/spikes/projects-v2-mirror/ ; echo "exit=$?"; grep -c 'REDACTED' docs/spikes/projects-v2-mirror/transcript.md
+  -> exit=1, then 0
+$ (python3 edits filling the scan result into the report and adding the report to doc-references.json)
+$ cat > docs/journal/2026-11-20-0055-1431-projects-v2-mirror.md <<'EOF' (body: the journal entry as first written; its content at each commit is the committed file) EOF
+$ date -u +%T; npm test 2>&1 | tail -15       (00:55:55Z; stopped at 00:59Z under the M8 window; see the backfilled entry)
+$ ps -axo pid,ppid,command | grep -E '1431-spike-engineer' | grep -v grep | cut -c1-180; date -u +%T      -> no lines; 00:59:16
+$ for s in doc-reference-check aboutme-header-check ruled-out-word-check path-check; do echo "== $s"; nice node scripts/$s.mjs 2>&1 | tail -4; done
+$ nice node scripts/path-check.mjs 2>&1 | grep -v '^\s*$' | head -40; git stash list | head -1; git status --short
+$ python3 (rewrote the report's backticked evidence paths as repository paths, and unbackticked tool names)
+$ (01:3xZ) gh api repos/williacj/rigger/issues/1431/comments --paginate -q '...'; grep -n -i 'left for the owner\|...' (report, journal)
+$ python3 (replaced the report's repository-teardown paragraph and added a sentence to the journal entry; the effect is the committed text)
+
+### 05:10Z onward -- laptop (verification, commit, pull request)
+$ cd ~/GitHub/rigger-worktrees/1431-spike-engineer && uptime && date -u +%T && npm test > .../npmtest-1431.log 2>&1; echo "exit=$?"     -> failed-runs.txt, run 1
+$ grep / tail over that log; ls -d node_modules        -> no node_modules
+$ npm ci --no-audit --no-fund; npm test > .../npmtest-1431-r2.log 2>&1      -> failed-runs.txt, run 2
+$ pmset -g log | grep ...       (sleep and wake entries during run 2)
+$ caffeinate -i npm test > .../npmtest-1431-r3.log 2>&1        -> exit 0, 5958 of 5958
+$ git add doc-references.json docs/journal/2026-11-20-0055-1431-projects-v2-mirror.md docs/spikes/projects-v2-mirror.md docs/spikes/projects-v2-mirror && git commit -q -F - <<'EOF' (message) EOF      -> refused by the hook, failed-runs.txt run 4
+$ git mv transcript.md transcript.txt; git mv host-logs.md host-logs.txt; sed (first-line headers, link paths); git add -A docs doc-references.json
+$ for s in aboutme-header-check ruled-out-word-check path-check doc-reference-check; do nice node scripts/$s.mjs 2>&1 | tail -1; done; node --test test/path-check.test.mjs test/aboutme-header-check.test.mjs
+$ git commit -q -F - <<'EOF' (the message of 8fb675a7) EOF      -> 8fb675a7, commit date 15:38:04Z
+$ git push -u origin rigger-1431
+$ gh pr create --repo williacj/rigger --base main --head rigger-1431 --title "Spike #1431: a Projects v2 board as a one-way mirror of Temporal card workflows" --body-file .../pr-1431.md      -> https://github.com/williacj/rigger/pull/1435
+
+## Patches
+
+### PATCH activities-heartbeat
+cd $S && python3 - <<'EOF'
+p='activities.js'; s=open(p).read()
+s=s.replace("const note = (e) => fs.appendFileSync(RUNS, JSON.stringify({ ts: now(), ...e }) + '\\n');",
+"const note = (e) => {\n  fs.appendFileSync(RUNS, JSON.stringify({ ts: now(), ...e }) + '\\n');\n  try { Context.current().heartbeat(e.event); } catch { /* outside an activity */ }\n};")
+s=s.replace("  await sleep(READBACK_DELAY_MS);\n","  for (let w = 0; w < READBACK_DELAY_MS; w += 1000) { Context.current().heartbeat('readback-wait'); await sleep(Math.min(1000, READBACK_DELAY_MS - w)); }\n")
+open(p,'w').write(s)
+EOF
+grep -n heartbeat activities.js
+### PATCH forge-guarded-and-setup-resume
+cd $S && python3 - <<'EOF'
+p='forge.js'; s=open(p).read()
+s=s.replace("""  const res = await fetch('https://api.github.com' + endpoint, {""","""  const res = await guarded(() => fetch('https://api.github.com' + endpoint, {""")
+s=s.replace("""    body: body ? JSON.stringify(body) : undefined,
+  });""","""    body: body ? JSON.stringify(body) : undefined,
+  }), { ts: t0.toISOString(), api: 'rest', rw: method === 'GET' ? 'read' : 'write', method, endpoint, ...tag });""")
+s=s.replace("""  const res = await fetch('https://api.github.com/graphql', {""","""  const res = await guarded(() => fetch('https://api.github.com/graphql', {""")
+s=s.replace("""    body: JSON.stringify({ query, variables }),
+  });""","""    body: JSON.stringify({ query, variables }),
+  }), { ts: t0.toISOString(), api: 'graphql', rw: /^\\s*mutation/.test(query) ? 'write' : 'read', method: 'POST', operation: op, ...tag });""")
+s=s.replace("""function log(entry) { fs.appendFileSync(LOG, JSON.stringify(entry) + '\\n'); }""","""function log(entry) { fs.appendFileSync(LOG, JSON.stringify(entry) + '\\n'); }
+
+// A call that fails below HTTP (DNS, TLS, reset) is still a call that may have landed: log it.
+async function guarded(send, entry) {
+  try { return await send(); } catch (e) {
+    log({ ...entry, status: 'network-error', error: String(e.cause?.code || e.message) });
+    throw e;
+  }
+}""")
+open(p,'w').write(s)
+p='setup.js'; s=open(p).read()
+s=s.replace("""    const issue = await rest('POST', `/repos/${OWNER}/${REPO}/issues`, { title: `Scratch card ${i}` }, tag);""",
+"""    // A run cut off after creating issue i but before adding it resumes on that issue.
+    const issue = await rest('GET', `/repos/${OWNER}/${REPO}/issues/${i}`, null, tag).catch(() => null)
+      || await rest('POST', `/repos/${OWNER}/${REPO}/issues`, { title: `Scratch card ${i}` }, tag);""")
+open(p,'w').write(s)
+EOF
+node --check forge.js && node --check setup.js && grep -n guarded forge.js | head; printf '{"ts":"2026-11-19T15:55:14.6Z","api":"graphql","rw":"write","method":"POST","operation":"AddItem","status":"network-error","error":"EHOSTUNREACH","purpose":"setup","note":"backfilled from the setup.js stderr; the logger did not yet record failed fetches; time is approximate"}\n' >> calllog.jsonl
+./t.sh "cd $S && GITHUB_TOKEN=\$(gh auth token) node setup.js 32"
+### PATCH forge-and-worker-token-stdin
+cd $S && python3 - <<'EOF'
+p='forge.js'; s=open(p).read()
+s=s.replace("""const TOKEN = () => {
+  const t = process.env.GITHUB_TOKEN;""","""// Unset GITHUB_TOKEN: read it from stdin's first line, so on the remote host it never lands in a
+// file or a command line.
+const TOKEN = () => {
+  if (!process.env.GITHUB_TOKEN) process.env.GITHUB_TOKEN = fs.readFileSync(0, 'utf8').split(/\\r?\\n/)[0].trim();
+  const t = process.env.GITHUB_TOKEN;""")
+open(p,'w').write(s)
+p='worker.js'; s=open(p).read()
+s=s.replace("""  if (!process.env.GITHUB_TOKEN) process.env.GITHUB_TOKEN = fs.readFileSync(0, 'utf8').split('\\n')[0].trim();\n""","""  if (!process.env.GITHUB_TOKEN) process.env.GITHUB_TOKEN = fs.readFileSync(0, 'utf8').split(/\\r?\\n/)[0].trim();\n""")
+open(p,'w').write(s)
+EOF
+grep -n "readFileSync(0" forge.js worker.js
+cat > w.sh <<'EOF'
+#!/usr/bin/env bash
+# ABOUTME: Runs one cmd.exe command on the Windows spike host (hostpc) in its spike directory,
+# logged through t.sh. With TOKEN=1 the gh token goes to the command's stdin. Usage: [TOKEN=1] w.sh '<cmd>'
+D="$(cd "$(dirname "$0")" && pwd)"
+SSH="ssh -o UserKnownHostsFile=$D/known_hosts hostpc"
+if [ -n "$TOKEN" ]; then
+  exec "$D/t.sh" "gh auth token | $SSH 'cd /d %USERPROFILE%\\1431-spike-engineer && $1'"
+else
+  exec "$D/t.sh" "$SSH 'cd /d %USERPROFILE%\\1431-spike-engineer && $1' < /dev/null"
+fi
+EOF
+chmod +x w.sh
+./t.sh "ssh ... hostpc 'mkdir %USERPROFILE%\\1431-spike-engineer' < /dev/null && cd $S && scp ... hostpc:1431-spike-engineer/"   (wrapped; see its own entry)
+./w.sh 'dir /b'   (wrapped)
+### PATCH watch-interval
+sed -i '' "s/intervalMs = '1000'/intervalMs = '500'/" watch.js
+
+## Final file bodies for the patched files
+
+### forge.js (final)
+```
+// ABOUTME: Forge client for spike 1431: every REST and GraphQL call goes through here and is
+// appended to calllog.jsonl with its time, method, endpoint or operation, and rate-limit answers.
+const fs = require('fs');
+const path = require('path');
+const LOG = process.env.CALL_LOG || path.join(__dirname, 'calllog.jsonl');
+// Unset GITHUB_TOKEN: read it from stdin's first line, so on the remote host it never lands in a
+// file or a command line.
+const TOKEN = () => {
+  if (!process.env.GITHUB_TOKEN) process.env.GITHUB_TOKEN = fs.readFileSync(0, 'utf8').split(/\r?\n/)[0].trim();
+  const t = process.env.GITHUB_TOKEN;
+  if (!t) throw new Error('GITHUB_TOKEN unset');
+  return t;
+};
+
+function rl(h) {
+  return {
+    resource: h.get('x-ratelimit-resource'), limit: h.get('x-ratelimit-limit'),
+    remaining: h.get('x-ratelimit-remaining'), used: h.get('x-ratelimit-used'),
+    reset: h.get('x-ratelimit-reset'),
+  };
+}
+
+function log(entry) { fs.appendFileSync(LOG, JSON.stringify(entry) + '\n'); }
+
+// A call that fails below HTTP (DNS, TLS, reset) is still a call that may have landed: log it.
+async function guarded(send, entry) {
+  try { return await send(); } catch (e) {
+    log({ ...entry, status: 'network-error', error: String(e.cause?.code || e.message) });
+    throw e;
+  }
+}
+
+// tag: { purpose, card } — purpose separates production calls (setup, mirror-read, mirror-write)
+// from instrumentation (readback, measure, edit-drift).
+async function rest(method, endpoint, body, tag = {}) {
+  const t0 = new Date();
+  const res = await guarded(() => fetch('https://api.github.com' + endpoint, {
+    method,
+    headers: { authorization: `Bearer ${TOKEN()}`, accept: 'application/vnd.github+json',
+      'x-github-api-version': '2022-11-28', 'user-agent': 'spike-1431' },
+    body: body ? JSON.stringify(body) : undefined,
+  }), { ts: t0.toISOString(), api: 'rest', rw: method === 'GET' ? 'read' : 'write', method, endpoint, ...tag });
+  const text = await res.text();
+  log({ ts: t0.toISOString(), ms: Date.now() - t0, api: 'rest', rw: method === 'GET' ? 'read' : 'write',
+    method, endpoint, status: res.status, ratelimit: rl(res.headers), ...tag });
+  if (!res.ok) throw new Error(`${method} ${endpoint} ${res.status}: ${text}`);
+  return text ? JSON.parse(text) : null;
+}
+
+// op: the GraphQL operation name; rw: 'read' for queries, 'write' for mutations.
+async function graphql(op, query, variables, tag = {}) {
+  const t0 = new Date();
+  const res = await guarded(() => fetch('https://api.github.com/graphql', {
+    method: 'POST',
+    headers: { authorization: `Bearer ${TOKEN()}`, 'user-agent': 'spike-1431',
+      'content-type': 'application/json' },
+    body: JSON.stringify({ query, variables }),
+  }), { ts: t0.toISOString(), api: 'graphql', rw: /^\s*mutation/.test(query) ? 'write' : 'read', method: 'POST', operation: op, ...tag });
+  const json = await res.json();
+  const rw = /^\s*mutation/.test(query) ? 'write' : 'read';
+  log({ ts: t0.toISOString(), ms: Date.now() - t0, api: 'graphql', rw, method: 'POST', operation: op,
+    status: res.status, ratelimit: rl(res.headers), cost: json?.data?.rateLimit?.cost ?? null,
+    errors: json.errors ? json.errors.map((e) => e.type || e.message) : undefined, ...tag });
+  if (!res.ok || json.errors) throw new Error(`${op}: ${res.status} ${JSON.stringify(json.errors)}`);
+  return json.data;
+}
+
+module.exports = { rest, graphql, log };
+```
+
+### activities.js (final)
+```
+// ABOUTME: mirrorCard activity for spike 1431: reads the card's board item, writes each field that
+// differs from the workflow's full state, waits, reads back, and logs the run. File gates let the
+// spike place an edit or a kill at a chosen point inside one run.
+const fs = require('fs');
+const path = require('path');
+const { Context } = require('@temporalio/activity');
+const { readItem, setColumn, setEscalation } = require('./board');
+
+const DIR = __dirname;
+const GATES = process.env.GATE_DIR || path.join(DIR, 'gates');
+const RUNS = path.join(DIR, 'mirror-runs.jsonl');
+const READBACK_DELAY_MS = Number(process.env.READBACK_DELAY_MS || 3000);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const now = () => new Date().toISOString();
+const note = (e) => {
+  fs.appendFileSync(RUNS, JSON.stringify({ ts: now(), ...e }) + '\n');
+  try { Context.current().heartbeat(e.event); } catch { /* outside an activity */ }
+};
+
+// If gates/<card>.<point> exists: rename it to .<point>.held, then wait (heartbeating) until
+// gates/<card>.release exists, consume it, and go on. One-shot per arming.
+async function gate(card, point) {
+  const armed = path.join(GATES, `${card}.${point}`);
+  if (!fs.existsSync(armed)) return;
+  fs.renameSync(armed, `${armed}.held`);
+  note({ card, event: 'gate-held', point, pid: process.pid });
+  const release = path.join(GATES, `${card}.release`);
+  while (!fs.existsSync(release)) { Context.current().heartbeat(point); await sleep(250); }
+  fs.rmSync(release);
+  fs.rmSync(`${armed}.held`, { force: true });
+  note({ card, event: 'gate-released', point });
+}
+
+async function mirrorCard({ card, state, why }) {
+  const info = Context.current().info;
+  const tag = { attempt: info.attempt, why };
+  note({ card, event: 'start', why, attempt: info.attempt, workflowState: state, pid: process.pid });
+  const before = await readItem(card, { purpose: 'mirror-read', ...tag });
+  note({ card, event: 'read', before });
+  await gate(card, 'after-read');
+  const writes = [];
+  if (before.column !== state.column) {
+    await setColumn(card, state.column, { purpose: 'mirror-write', ...tag });
+    writes.push('Status');
+    note({ card, event: 'wrote', field: 'Status', value: state.column });
+    await gate(card, 'after-write1');
+  }
+  if ((before.escalation || '') !== (state.escalation || '')) {
+    await setEscalation(card, state.escalation, { purpose: 'mirror-write', ...tag });
+    writes.push('Escalation');
+    note({ card, event: 'wrote', field: 'Escalation', value: state.escalation });
+  }
+  await gate(card, 'after-writes');
+  for (let w = 0; w < READBACK_DELAY_MS; w += 1000) { Context.current().heartbeat('readback-wait'); await sleep(Math.min(1000, READBACK_DELAY_MS - w)); }
+  const after = await readItem(card, { purpose: 'readback', ...tag });
+  const match = after.column === state.column && (after.escalation || '') === (state.escalation || '');
+  note({ card, event: 'end', why, attempt: info.attempt, writes, after, workflowState: state, match,
+    readbackDelayMs: READBACK_DELAY_MS });
+  return { before, writes, after, match };
+}
+
+module.exports = { mirrorCard };
+```
+
+### worker.js (final)
+```
+// ABOUTME: The spike's single Temporal worker. Reads GITHUB_TOKEN from stdin's first line when it
+// is unset, so the token never lands in a file or a command line on the remote host.
+const fs = require('fs');
+const path = require('path');
+const { Worker, NativeConnection } = require('@temporalio/worker');
+const activities = require('./activities');
+
+async function main() {
+  if (!process.env.GITHUB_TOKEN) process.env.GITHUB_TOKEN = fs.readFileSync(0, 'utf8').split(/\r?\n/)[0].trim();
+  fs.appendFileSync(path.join(__dirname, 'pids.log'), `${new Date().toISOString()} worker pid=${process.pid}\n`);
+  const connection = await NativeConnection.connect({ address: process.env.TEMPORAL_ADDRESS || 'localhost:7243' });
+  const worker = await Worker.create({ connection, taskQueue: 'spike-1431',
+    workflowsPath: require.resolve('./workflows'), activities });
+  await worker.run();
+}
+main().catch((e) => { console.error(e); process.exit(1); });
+```
+
+### watch.js (final)
+```
+// ABOUTME: Polls one card's board item every intervalMs until its column equals the target, and
+// prints the elapsed time from a given start instant. Usage: node watch.js <card> <column> <startIso> [intervalMs] [timeoutMs]
+const { readItem } = require('./board');
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function main() {
+  const [card, column, startIso, intervalMs = '500', timeoutMs = '180000'] = process.argv.slice(2);
+  const t0 = Date.parse(startIso);
+  for (;;) {
+    const at = Date.now();
+    const s = await readItem(card, { purpose: 'measure' });
+    if (s.column === column) {
+      console.log(JSON.stringify({ card, column, seenAt: new Date(at).toISOString(), elapsedMs: at - t0, state: s }));
+      return;
+    }
+    if (at - t0 > Number(timeoutMs)) { console.log(JSON.stringify({ card, column, timedOut: true, lastState: s, elapsedMs: at - t0 })); process.exitCode = 2; return; }
+    await sleep(Number(intervalMs));
+  }
+}
+main().catch((e) => { console.error(e); process.exit(1); });
+```
+
+### setup.js (final)
+```
+// ABOUTME: Creates spike 1431's scratch forge objects: a private user repository, a user-owned
+// Projects v2 board linked to it with Status options Ready..Done and an Escalation text field,
+// and N issues added to the board. Writes their ids to board.json. Usage: node setup.js <N>
+const fs = require('fs');
+const path = require('path');
+const { rest, graphql } = require('./forge');
+const OWNER = 'williacj';
+const REPO = 'rigger-1431-mirror-scratch';
+const COLUMNS = ['Ready', 'Coding', 'Review', 'Owner', 'Done'];
+const COLORS = ['GRAY', 'BLUE', 'YELLOW', 'ORANGE', 'GREEN'];
+const OUT = path.join(__dirname, 'board.json');
+const tag = { purpose: 'setup' };
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function main() {
+  const n = Number(process.argv[2] || 32);
+  const b = fs.existsSync(OUT) ? JSON.parse(fs.readFileSync(OUT, 'utf8')) : { repo: REPO, items: {} };
+  const save = () => fs.writeFileSync(OUT, JSON.stringify(b, null, 2));
+  if (!b.repoNodeId) {
+    const r = await rest('POST', '/user/repos', { name: REPO, private: true, auto_init: true,
+      description: 'Scratch repository for rigger #1431 (throwaway spike). Owner deletes by hand.' }, tag);
+    Object.assign(b, { repoUrl: r.html_url, repoNodeId: r.node_id, repoPrivate: r.private }); save();
+  }
+  if (!b.projectId) {
+    const v = await graphql('Viewer', 'query Viewer { viewer { id login } rateLimit { cost remaining used } }', {}, tag);
+    const d = await graphql('CreateProject', `mutation CreateProject($o: ID!, $r: ID!) {
+      createProjectV2(input: { ownerId: $o, title: "rigger-1431 mirror scratch", repositoryId: $r }) {
+        projectV2 { id number url owner { __typename } } } }`, { o: v.viewer.id, r: b.repoNodeId }, tag);
+    const p = d.createProjectV2.projectV2;
+    Object.assign(b, { projectId: p.id, projectNumber: p.number, projectUrl: p.url, projectOwnerType: p.owner.__typename }); save();
+  }
+  if (!b.statusFieldId) {
+    const d = await graphql('ReadFields', `query ReadFields($p: ID!) { node(id: $p) { ... on ProjectV2 {
+      field(name: "Status") { ... on ProjectV2SingleSelectField { id options { id name } } } } }
+      rateLimit { cost remaining used } }`, { p: b.projectId }, tag);
+    const f = d.node.field;
+    const u = await graphql('SetStatusOptions', `mutation SetStatusOptions($f: ID!, $o: [ProjectV2SingleSelectFieldOptionInput!]) {
+      updateProjectV2Field(input: { fieldId: $f, singleSelectOptions: $o }) {
+        projectV2Field { ... on ProjectV2SingleSelectField { id options { id name } } } } }`,
+      { f: f.id, o: COLUMNS.map((name, i) => ({ name, color: COLORS[i], description: '' })) }, tag);
+    const sf = u.updateProjectV2Field.projectV2Field;
+    b.statusFieldId = sf.id;
+    b.statusOptions = Object.fromEntries(sf.options.map((o) => [o.name, o.id])); save();
+  }
+  if (!b.escalationFieldId) {
+    const d = await graphql('CreateEscalationField', `mutation CreateEscalationField($p: ID!) {
+      createProjectV2Field(input: { projectId: $p, dataType: TEXT, name: "Escalation" }) {
+        projectV2Field { ... on ProjectV2Field { id } } } }`, { p: b.projectId }, tag);
+    b.escalationFieldId = d.createProjectV2Field.projectV2Field.id; save();
+  }
+  for (let i = Object.keys(b.items).length + 1; i <= n; i += 1) {
+    // A run cut off after creating issue i but before adding it resumes on that issue.
+    const issue = await rest('GET', `/repos/${OWNER}/${REPO}/issues/${i}`, null, tag).catch(() => null)
+      || await rest('POST', `/repos/${OWNER}/${REPO}/issues`, { title: `Scratch card ${i}` }, tag);
+    const d = await graphql('AddItem', `mutation AddItem($p: ID!, $c: ID!) {
+      addProjectV2ItemById(input: { projectId: $p, contentId: $c }) { item { id } } }`,
+      { p: b.projectId, c: issue.node_id }, tag);
+    b.items[issue.number] = d.addProjectV2ItemById.item.id; save();
+    await sleep(1500);
+  }
+  console.log(JSON.stringify({ repoUrl: b.repoUrl, repoPrivate: b.repoPrivate, projectUrl: b.projectUrl,
+    projectNumber: b.projectNumber, projectOwnerType: b.projectOwnerType, items: Object.keys(b.items).length }));
+}
+main().catch((e) => { console.error(e); process.exit(1); });
+```
+
+## Backfilled entries after the report was drafted
 
 ### 2026-11-20T00:55:55Z `[laptop host]` (backfilled)
 ```
@@ -3184,9 +4116,9 @@ $ nice node scripts/{doc-reference-check,aboutme-header-check,ruled-out-word-che
 
 ### 2026-11-20T05:10:49Z `[laptop host]` (backfilled; after the M8 window closed)
 ```
-$ npm test   -> exit=1: 4944 tests, 76 fail. 60 failures were "Cannot find module 'saxes'"; the worktree had no node_modules.
+$ npm test   -> exit=1: 4944 tests, 76 fail. 60 failures were "Cannot find module 'saxes'"; the worktree had no node_modules. Full failing output: failed-runs.txt, run 1.
 $ npm ci --no-audit --no-fund   (05:26Z, rigger-ae approved)   -> added 3 packages in 1s
-$ npm test   (05:26:57Z–15:09:59Z)   -> exit=1: 5958 tests, 47 fail, 25 cancelled, all wall-clock waits that ran out. pmset shows the laptop sleeping during the run.
+$ npm test   (05:26:57Z–15:09:59Z)   -> exit=1: 5958 tests, 47 fail, 25 cancelled, all wall-clock waits that ran out. pmset shows the laptop sleeping during the run. Full failing output: failed-runs.txt, run 2.
 $ caffeinate -i npm test   (15:11:02Z–15:21:11Z, rigger-ae approved)   -> exit=0: 5958 tests, 5958 pass, 0 fail
 ```
 
@@ -3194,6 +4126,88 @@ $ caffeinate -i npm test   (15:11:02Z–15:21:11Z, rigger-ae approved)   -> exit
 ```
 $ git commit   -> refused by the pre-commit suite: 5958 tests, 18 fail.
    - test/loop.test.mjs:6115 timed out at 120000 ms, and its 17 subtests were cancelled. Load average was 9.9.
-   - test/path-check.test.mjs:134 failed with "docs/spikes/projects-v2-mirror/host-logs.md must fail on a pointer". Every tracked .md under docs/spikes is held to be a checked spike report.
+   - test/path-check.test.mjs:134 failed with "docs/spikes/projects-v2-mirror/host-logs.md must fail on a pointer". Every tracked .md under docs/spikes is held to be a checked spike report. Full failing output: failed-runs.txt, run 4.
 $ git mv transcript.md transcript.txt; git mv host-logs.md host-logs.txt   (evidence, not reports; the report's links were updated to match)
+```
+
+## Revision 1 (round-1 verdict on PR #1435), laptop `[laptop host]`, 2026-11-20 from about 16:10Z
+
+The commands are listed in order. A write into a committed file has that file's diff from
+8fb675a7 as its body (`git diff 8fb675a7 -- <file>`). The read-only analyses are verbatim.
+
+```
+$ gh api repos/williacj/rigger/issues/comments/7044457092 -q .body        (the verdict; saved by the session to a tool-results file)
+$ cd ~/GitHub/rigger-worktrees/1431-spike-engineer && git fetch -q origin && git status -sb | head -2 && python3 - <<'EOF'
+import json,collections,glob
+ids=collections.Counter()
+for f in sorted(glob.glob('docs/spikes/projects-v2-mirror/histories/*.json')):
+  for e in json.load(open(f))['events']:
+    for k,v in e.items():
+      if isinstance(v,dict) and 'identity' in v: ids[(f[-11:],e['eventType'][11:],v['identity'])]+=1
+for k,v in sorted(ids.items()): print(v,k)
+EOF
+$ python3 - <<'EOF'      (rate-limit buckets, in-flight concurrency, busiest 60 s windows; hostpc entries of calllog.json)
+import json,collections
+from datetime import datetime,timedelta
+P=lambda s: datetime.fromisoformat(s.replace('Z','+00:00'))
+A=json.load(open('docs/spikes/projects-v2-mirror/calllog.json'))['calls']
+R=[e for e in A if e['host'].startswith('Host')]
+g=[e for e in R if e['api']=='graphql' and e.get('ratelimit') and e['ratelimit'].get('used')]
+for b in sorted(set(e['ratelimit']['reset'] for e in g)):
+  bb=[e for e in g if e['ratelimit']['reset']==b]
+  u=[int(e['ratelimit']['used']) for e in bb]
+  q=sum(e['cost'] or 0 for e in bb if e['rw']=='read'); m=sum(1 for e in bb if e['rw']=='write')
+  print('bucket',b,len(bb),'reads',sum(1 for e in bb if e['rw']=='read'),'querycost',q,'mutations',m,'used min',min(u),'max',max(u),'first',u[0],'last',u[-1], bb[0]['ts'],bb[-1]['ts'])
+allg=[e for e in R if e['api']=='graphql']
+print('remote graphql calls',len(allg),'reads',sum(e['rw']=='read' for e in allg),'writes',sum(e['rw']=='write' for e in allg), 'querycost', sum(e['cost'] or 0 for e in allg if e['rw']=='read'))
+ev=[]
+for e in A:
+  if 'ms' in e:
+    s=P(e['ts']); ev.append((s,1)); ev.append((s+timedelta(milliseconds=e['ms']),-1))
+ev.sort(); c=mx=0
+for t,d in ev:
+  c+=d; mx=max(mx,c)
+print('max concurrent requests',mx)
+ts=[(P(e['ts']),e) for e in R]; ts.sort(key=lambda x:x[0])
+best={'all':0,'writes':0,'sec':0,'prodwrites':0}
+for i,(t,_) in enumerate(ts):
+  w=[e for t2,e in ts[i:] if t2<t+timedelta(seconds=60)]
+  allc=len(w); wr=sum(e['rw']=='write' for e in w); sec=sum(5 if e['rw']=='write' else 1 for e in w if e['api']=='graphql')
+  pw=sum(e['rw']=='write' and e.get('purpose')=='mirror-write' for e in w)
+  for k,v in (('all',allc),('writes',wr),('sec',sec),('prodwrites',pw)):
+    if v>best[k]: best[k]=v
+print('peak 60s window', best)
+EOF
+  -> bucket 1795138635: 393 calls, 342 reads cost 342, 51 mutations, used 183..608; bucket 1795138638: 104 reads, used 41..155; max concurrent 25; peak 60 s window {all 154, writes 30, sec 266, prodwrites 30}
+$ python3 - <<'EOF'      (observation bounds for the signal and the three drift reverts)
+import json
+from datetime import datetime,timedelta
+P=lambda s: datetime.fromisoformat(s.replace('Z','+00:00'))
+A=json.load(open('docs/spikes/projects-v2-mirror/calllog.json'))['calls']
+def end(e): return P(e['ts'])+timedelta(milliseconds=e['ms'])
+cases=[('signal','1','2026-11-20T00:42:48.146Z','00:42:49.4'),('I1','1','2026-11-20T00:43:01.675Z','00:43:24.2'),('I2a','2','2026-11-20T00:43:49.893Z','00:44:24.8'),('I3','3','2026-11-20T00:44:41.493Z','00:45:16.5')]
+for name,card,t0,match in cases:
+  T0=P(t0)
+  polls=[e for e in A if e.get('card')==card and e.get('purpose')=='measure' and P(e['ts'])>=T0-timedelta(seconds=1)]
+  m=[e for e in polls if e['ts'][11:22]==match[:11] or e['ts'][11:21]==match[:10]]
+  mi=polls.index(m[0]); prev=polls[mi-1] if mi>0 else None
+  w=[e for e in A if e.get('card')==card and e.get('purpose')=='mirror-write' and T0<=P(e['ts'])<=end(m[0])]
+  print(name,'match start',m[0]['ts'],'end',end(m[0]).isoformat(),'ms',(end(m[0])-T0).total_seconds()*1000,
+        '| prev poll start',prev['ts'] if prev else None,'prev end',end(prev).isoformat() if prev else None,'lower(ms from prev start)',(P(prev['ts'])-T0).total_seconds()*1000 if prev else None,
+        '| writes',[(x['operation'],x['ts'],end(x).isoformat(),(end(x)-T0).total_seconds()*1000) for x in w])
+for e in A:
+  if e.get('purpose')=='edit-drift': print('edit',e['card'],e['ts'],end(e).isoformat(),e['ms'])
+EOF
+  -> signal 1495 ms (previous poll start 67 ms; SetStatus ack 901 ms); I1 22879 (21864; 22738); I2a 35176 (34213; 34695); I3 35457 (34298; 34849)
+$ ls -la (scratchpad and task output files); grep -cE 'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_' (the three failed-run logs)   -> 0, 0, 0
+$ three successive builds of failed-runs.txt with a shell function sec() that prints the suite's summary lines and everything from "failing tests:" to the end. The first build took every diagnostic info line and was 18.8 MB; the second kept only the summary-count lines; two sed edits then corrected the run-4 and run-5 headings. The result is failed-runs.txt.
+$ python3 edits that appended 18, then 2, reconstructed entries to calllog.json and rewrote its about text; a third corrected their approximate times. The result is calllog.json.
+$ date -u +%FT%TZ; git log -1 --format='%cI %H'     -> 2026-11-20T16:17:19Z; 8fb675a7 committed 09:38:04-06:00
+$ cd spikes/1431-spike-engineer && for f in (the 23 file names); do printf '%s %s\n' "$(TZ=UTC stat -f '%Sm' -t '%Y-%m-%dT%H:%M:%SZ' $f)" $f; done; ls      -> the mtimes quoted in "Commands run outside the wrapper, verbatim"
+$ heredoc writes of <scratchpad>/1431-r1/patches.txt, section.txt and entries.txt, whose content became that section; a python3 run filled the file bodies from spikes/1431-spike-engineer and spliced the section into this file
+$ grep -n over the report; a Read of the report; python3 edit blocks to the report and three sed corrections; sed edits to the journal entry. Their effect is git diff 8fb675a7 -- docs/spikes/projects-v2-mirror.md docs/journal/
+$ python3 over bucket 1795138635 across every logged call: first 00:42:06.380Z, a read, used 183; last 00:48:11.357Z, DeleteProject, used 612; 341 query points and 52 mutations after the first; card 1 has 9 writes there, 8 production and 1 edit
+$ python3 over the busiest 60 s windows across every logged call: 39 writes from 16:00:32.635Z, 266 secondary points from 00:45:37.623Z; 25 in flight at 00:45:53.907Z; hostpc made 0 REST calls
+$ gh issue view 1431 -R williacj/rigger --json body -q .body | shasum | cut -c1-12   -> 3c509245f0e7 (sha256 prefix be7d22410444)
+$ this append; the four lint scripts; the credential scan; npm test -- test/path-check.test.mjs with spikes/ moved aside; the suite, commit and push through suite-slot.sh. The pull request and its hooks record their results.
 ```
