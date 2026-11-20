@@ -106,8 +106,8 @@ test('codex-judge.sh writes a prompt naming suite-slot.sh by the absolute path o
 
 // D29 reason: wiring; the real codex-judge.sh fills the judge prompt with sed and hands it to the
 // stub codex on standard input. Deterministic counterpart: test/marker.test.mjs, "the marker table:
-// a marker block not directly under the comment's first line is no marker", proves the gate's read
-// this layout depends on.
+// a marker block not directly under the comment's first line is no marker", is the test of the
+// gate's read this layout depends on.
 //
 // The prompt's "## Post" section names the verdict's parts in the order the verdict writes them: the
 // heading, the marker block, then the rest. The test lays out a verdict in that order, with a
