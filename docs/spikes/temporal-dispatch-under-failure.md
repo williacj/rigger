@@ -625,8 +625,10 @@ claude-home/projects/-Users-cjwilliams-GitHub-rigger-worktrees-1429-spike-engine
 - Each operating system detected a dead worker and started the next attempt within 4.85 s to
   6.18 s.
 - The host-pinned dispatch moved to another host of the same operating system 36.7 s after its
-  host was lost, and 30 s after its schedule-to-start timeout when the host was stopped before the
-  dispatch began.
+  host was lost. When the host was stopped before the dispatch began, the schedule-to-start
+  timeout fired 30 s after the dispatch was scheduled, and the dispatch started on the other host
+  20.19 s after that timeout (measured from events 17 and 33 of pin-stop-macos-2; 20 s of it was
+  the spike's own pause after each pick).
 - No dispatch ever crossed operating systems.
 - The native Windows worker worked.
 
@@ -680,6 +682,7 @@ These are proposals for the PM and the architect. This report changes none of th
 | Document | What would change |
 |---|---|
 | `D1` (redo over resume) and `D10` (v0 builds no resume) | A Temporal workflow resumes a card from its history, so redo would become one policy among others |
+| `R-STATE-2` (an interrupted card is done again from the beginning) | A card interrupted mid-flight would continue from its workflow history, with only the interrupted activity attempt redone. The requirement would change from "done again from the beginning" to "resumed from its last recorded step", keeping "a restart loses no card and completes no partial one" |
 | `D11` (one engine per repository) | Workers on several hosts share one server, and one card's attempts can span hosts |
 | `D13` (macOS is v0's only host) | Windows and Linux workers ran the dispatch here |
 | `R-STATE-1` and `R-STATE-4` (the board is the truth, and Rigger persists only what it cannot rebuild) | Temporal's history would hold a card's workflow state, with the board as a mirror |
@@ -692,15 +695,14 @@ These are proposals for the PM and the architect. This report changes none of th
 
 All of it is under [`docs/spikes/temporal-dispatch-under-failure/`](temporal-dispatch-under-failure/):
 
-- **`docs/spikes/temporal-dispatch-under-failure/transcript.txt`:** the full transcript. It gives every command with its UTC time and host,
-  and ends with an appendix of the commands run outside the logging wrapper.
+- **`docs/spikes/temporal-dispatch-under-failure/transcript.txt`:** the transcript. Every command run through the logging wrapper appears with its UTC time, host and output. An appendix gives the commands run outside the wrapper, and lists the gaps below.
 - **`histories/*.json`:** each card workflow's event history, start to end, exported with
   `temporal workflow show -w <id> --output json`. `docs/spikes/temporal-dispatch-under-failure/histories/ver-unpatched-stuck.json` is the stuck state,
   before the repair.
 - **`docs/spikes/temporal-dispatch-under-failure/logs/laptop/`, `docs/spikes/temporal-dispatch-under-failure/logs/wsl/` and `docs/spikes/temporal-dispatch-under-failure/logs/windows/`:** worker logs, tree logs, pending-activity
   polls, session output, the server session, and the `~/.claude/projects` listings.
 - **`docs/spikes/temporal-dispatch-under-failure/versions.txt`:** the version output from each host.
-- **`docs/spikes/temporal-dispatch-under-failure/suite-runs/`:** for each of the four failed `npm test` runs in the spike's worktree, the run's complete failing-tests section and summary, copied unchanged, with the full log's line count, size and sha256. The full logs, 6.6 MB to 9.4 MB each, stay in the spike engineer's scratch directory and are not committed. Runs 1 to 4 are described in the transcript appendix: run 1 failed for want of `npm ci` in the new worktree, run 2 on this report's backticked paths, and runs 3 and 4 on timeouts at one-minute load averages of about 110 and 69.
+- **`docs/spikes/temporal-dispatch-under-failure/suite-runs/`:** for each of the five failed `npm test` runs in the spike's worktree (the fifth is the pre-commit hook run that refused the first round-1 commit), the run's complete failing-tests section and summary, copied unchanged, with the full log's line count, size and sha256. The full logs, 6.6 MB to 9.4 MB each, stay in the spike engineer's scratch directory and are not committed. Runs 1 to 4 are described in the transcript appendix: run 1 failed for want of `npm ci` in the new worktree, run 2 on this report's backticked paths, and runs 3 and 4 on timeouts at one-minute load averages of about 110 and 69.
 
 Each text file in the evidence directory opened with a one-line `ABOUTME:` header, added at
 commit time because the repository requires it. The content below each header is unchanged. The
@@ -709,7 +711,17 @@ JSON files carry no header.
 Each log was captured as `<name>.log` and committed as `<name>.txt`, because `.gitignore` excludes
 `*.log`. The transcript's commands use the capture names.
 
-The transcript's appendix gives each command run outside the logging wrapper as it was run. Its last section, "HEREDOC AND PATCH BODIES", quotes every heredoc and in-place edit that wrote the spike's throwaway files, at its command and time, with the sha256 of each body and each file's final sha256. They are quoted under rigger-ae's ruling of 2026-11-20 that bodies quoted in a transcript are evidence, not merged spike code: nothing runs or imports them, and the runnable files stay in the gitignored spikes directory. The original bodies of the seven files edited during the runs were checked by replaying the quoted edits on them, which reproduced each file's final sha256.
+The transcript's appendix quotes the commands run outside the logging wrapper, recovered from the session's conversation, with two named substitutions. It is not complete or verbatim throughout, and claims nothing through these gaps, which its own head lists as G1 to G7 (owner ruling [1429#7050911360](https://github.com/williacj/rigger/issues/1429#issuecomment-7050911360)):
+
+- **G1:** the short processes the hooks, the suite and the slot started are recorded only as summaries and failures.
+- **G2:** non-shell tool calls (Write, Edit, Read, Monitor, TaskStop, WebFetch) are listed by kind, time and target, without their full arguments.
+- **G3:** the intermediate uncommitted states of the report and journal are not kept.
+- **G4:** a command that would have extracted the list from the session's on-disk record was refused by Claude Code's permission classifier, so the list comes from the conversation and its ~ times are reconstructions.
+- **G5:** ten entries summarise a group of commands that edited the report, journal, PR draft or transcript, or re-ran read-only checks, instead of quoting each command.
+- **G6:** where an entry elides text inside a command, it names where that text is.
+- **G7:** one word in a quoted `grep` is written with brackets, because the repository's ruled-out-word check refuses it in any tracked file.
+
+Its last section, "HEREDOC AND PATCH BODIES", quotes every heredoc and in-place edit that wrote the spike's throwaway files, at its command and time, with the sha256 of each body and each file's final sha256. They are quoted under rigger-ae's ruling of 2026-11-20 that bodies quoted in a transcript are evidence, not merged spike code: nothing runs or imports them, and the runnable files stay in the gitignored spikes directory. The original bodies of the seven files edited during the runs were checked by replaying the quoted edits on them, which reproduced each file's final sha256.
 
 ### Credential scan
 
@@ -720,16 +732,18 @@ after the last file was written:
 grep -rnE -i 'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_|sk-ant-|xox[baprs]-|AKIA[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY|bearer [A-Za-z0-9._-]{10,}|oauth|api[_-]?key|token|secret|password|passwd|credential|@[a-z0-9.-]+\.(com|net|org|io)' docs/spikes/temporal-dispatch-under-failure
 ```
 
-The result was five lines, all in `docs/spikes/temporal-dispatch-under-failure/transcript.txt`, and none of them is a credential:
+The result was thirteen lines, all in `docs/spikes/temporal-dispatch-under-failure/transcript.txt`, and none of them is a credential:
 
 - **Line 72** is the spike's own `env -u CLAUDE_CODE_OAUTH_TOKEN -u ANTHROPIC_API_KEY …` command,
   which names variables and holds no values.
 - **Line 330** is a laptop process listing that caught a sibling spike's command line,
   `TOKEN=1 …/1431-spike-engineer/…/hold.sh`. `TOKEN=1` there is that script's flag, not a
   credential.
-- **Line 1876** is the appendix entry for the spike's `grep` of the repository for those variable
-  names.
-- **Lines 1918 and 1922** are appendix entries that name this scan by the word "credential". The email pattern matched nothing.
+- **Lines 1892, 1894 and 1895** are appendix entries for the spike's own `grep` and `env -u` commands, which name those variables and hold no values.
+- **Line 2061** is the appendix entry quoting this scan's own pattern.
+- **Lines 2073, 2089, 2125, 2134, 2138, 2163 and 2170** are appendix entries that contain the word "credential" or "credentials": a re-run of this scan, a `grep -c "credentials"` over the `~/.claude` listing, and the sha256 replay that names the scan.
+
+The email pattern matched nothing.
 
 ## Disclosures
 
@@ -785,7 +799,7 @@ after their logs were copied here. For the re-run, `~/1429-spike-engineer` in WS
 Every process the spike started, with its host and pid. Every stand-in tree process ended by
 itself unless the table says otherwise.
 
-**A gap.** The spike recorded the pid of every long-lived process: the server, each worker, each SSH session and tunnel, and every stand-in tree. It did not record the pids of short foreground commands, and they cannot be recovered now. The rows marked "not recorded" name those commands by kind. Every pid-bearing identity in the exported histories is a worker in this table, and the only other identity, `temporal-cli:cjwilliams@CJs-MacBook-Pro.local`, carries no pid.
+**A gap.** The spike recorded the pid of every long-lived process: the server, each worker, each SSH session and tunnel, and every stand-in tree. It did not record the pids of short foreground commands. An audit of every listing in the transcript and every pid in the logs found the recorded ones below, from 4501 to the session processes, and they are in the table. For the rest no pid exists in any record, so they cannot be recovered: the rows marked "not recorded" name each by kind. A pid-like number in the evidence that is not in this table belongs to another session: 30548 is #1431's Windows worker, and the others are processes other spikes or the host ran. Every pid-bearing identity in the exported histories is a worker in this table, and the only other identity, `temporal-cli:cjwilliams@CJs-MacBook-Pro.local`, carries no pid.
 
 | Host | Pids | What they were | How each ended |
 |---|---|---|---|
@@ -799,6 +813,12 @@ itself unless the table says otherwise.
 | Laptop | not recorded | The first `claude -p` run's child of worker 68452 and the `claude auth status` probe; the background sampler and the driver scripts' shells | Each exited by itself |
 | Laptop | not recorded | Every foreground command in the transcript: each `temporal` CLI call (its history identity is `temporal-cli:cjwilliams@CJs-MacBook-Pro.local`, which carries no pid), each one-shot `ssh`, `scp`, `ps`, `jq`, `curl`, `perl`, `npm` and `node --test`, and the suite runs' test processes | Each returned before the transcript's `--- exit` line for it, or before the next command in the appendix |
 | WSL2 and Windows | not recorded | The remote side of each one-shot SSH command: wsl.exe, bash and PowerShell sessions and the commands they ran | Each ended when its SSH session closed |
+| Laptop | 4501 | `tee -a` of the transcript wrapper t.sh, caught by the final laptop listing at 01:14:37Z (transcript line 1516) because its command line names the spike directory | Exited with that listing's wrapper; `ps -p 4501` printed only its header at 21:42:05Z |
+| Windows | 32072 | `cmd.exe /c "wsl.exe -e bash -s"`, the Windows side of the server's SSH session (laptop 24640), recorded in the 00:48:55Z listing (transcript line 494). It is the only `bash -s` session without arguments in that listing, so attributing it to the spike is a judgment | Ended when that session closed; not alive at 21:42:01Z |
+| Windows | 35372, 27620 | `cmd.exe /c "wsl.exe -e bash -s -- wsl-1 wf-v1.js"`, the Windows side of the WSL2 worker sessions, recorded in the same listing (lines 495 and 497) | Ended when their sessions closed; not alive at 21:42:01Z |
+| Windows | 9528 | `cmd.exe /c "powershell … -EncodedCommand …"`, the Windows side of that listing's own p.sh call (line 500) | Ended with the call; not alive at 21:42:01Z |
+| Windows | 7232, 19092, 32896, 37636, 15112, 36676, 14512 | The OpenSSH session processes the server started for the spike's connections, recorded only as the parent pids of 32072, 35372, 27620, 9528, 12292, 31524 and 34604 | Ended when the connections closed; not alive at 21:42:01Z |
+| WSL2 | 1005, 1496, 104112, 104545, 104776, 104863, 104968 | The WSL2 session processes for the spike's worker sessions, recorded only as parent pids: of the holders 1008, 1497, 104116, 104546, 104777, 104864 and 104969, and of the orphan 1426 after its reparenting | Not alive at 21:42:04Z |
 | WSL2 | 745 | Temporal dev server | `kill -TERM`, 01:13Z |
 | WSL2 | 1010, 104118, 104866 | Workers | `kill -9` in the kill and versioning runs |
 | WSL2 | 1499, 104548, 104779, 104971 | Workers | `kill -TERM` |
@@ -834,6 +854,7 @@ Each host was listed after the last run. All the listings are in the transcript:
     had reused a pid, and the process was not the spike's.
 - **After the re-run, at 01:55:01Z on all three hosts.** `ps -p 68933,68938,71061,77583` on the laptop and `ps -p 406` in WSL2 each printed only the header and exited 1. A Windows command-line search for `1429-spike-engineer` or `rigger-tree` found nothing.
 - **After the third run, at 02:26:08Z on all three hosts.** `ps -p 23073,23077,23128,23310` on the laptop and `ps -p 407` in WSL2 each printed only the header and exited 1. A WSL2 search for `1429-spike` or `temporal server`, and a Windows command-line search for `1429-spike-engineer` or `rigger-tree`, found nothing.
+- **For the pids recovered in the round-1 audit, at 21:42Z.** A Windows search for 32072, 35372, 27620, 9528, 7232, 19092, 32896, 37636, 15112, 36676 and 14512 found none alive at 21:42:01Z. `ps -p` over 1005, 1496, 104112, 104545, 104776, 104863 and 104968 in WSL2 at 21:42:04Z, and over 4501 on the laptop at 21:42:05Z, each printed only its header and exited 1.
 
 ### The Mac mini
 
