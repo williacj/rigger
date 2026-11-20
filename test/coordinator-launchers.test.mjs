@@ -103,6 +103,27 @@ test('codex-judge.sh writes a prompt naming suite-slot.sh by the absolute path o
   assertToolingClean();
 });
 
+// The gate reads a marker block only where it opens on the comment's second line, under a first
+// line of free text (src/workflow/marker.mjs, `parseMarker`). This checks the prompt asks for that
+// layout: heading, then the block, then the rest of the verdict.
+test('codex-judge.sh hands codex a prompt placing the marker block on the verdict comment\'s second line, under the heading and before the rest of the verdict', () => {
+  const { w, bare, root, logs } = setup('coord-judge-marker-');
+  const result = run(w, launcher('codex-judge.sh'), ['12', '7', '1'], { env: { RIGGER_WORKTREE_ROOT: root, RIGGER_REPO_URL: bare, CODEX_LOG_DIR: logs } });
+
+  assert.equal(result.status, 0, result.stderr);
+  const prompt = codexCalls(w)[0].stdin;
+  const sentences = prompt.split(/(?<=[.:;])\s+|\n+/);
+  const placing = sentences.filter((sentence) => /marker block/i.test(sentence) && /\b(?:line|end|last|below|after|under|first)\b/i.test(sentence));
+  assert.ok(placing.length > 0, 'the marker block\'s placement: no sentence of the prompt says where the marker block goes');
+  const astray = placing.filter((sentence) => !/second line/i.test(sentence));
+  assert.deepEqual(astray, [], 'the marker block\'s placement: each sentence saying where the marker block goes places it on the comment\'s second line');
+  const post = prompt.slice(prompt.indexOf('\n## Post\n'));
+  const fence = post.search(/closing fence/i);
+  const rest = post.indexOf('- each acceptance item, met or unmet');
+  assert.ok(fence !== -1 && rest > fence, 'the marker block\'s placement: the rest of the verdict follows the marker block\'s closing fence');
+  assertToolingClean();
+});
+
 /** A maker's clone and its tmp directory, as codex-maker.sh leaves them, and a message file. */
 function resumable(w, bare, root) {
   cloneInto(bare, join(root, 'codex-7'));
@@ -264,6 +285,16 @@ function sourceCopy(dir) {
   }
 }
 
+/**
+ * The judge prompt with the lines card #1439 changed under its "## Post" heading set aside: the
+ * source copy's "Below that line" line and its closing marker paragraph, and the head's three
+ * paragraphs placing the marker block on the verdict's second line. Each becomes one token.
+ */
+const placed = (text) => text
+  .replace(/^Below that line, give:$/m, '<marker placement>')
+  .replace(/^End the verdict with the gate's marker block for your role\..*\n\n/m, '')
+  .replace(/^Its second line opens the gate's marker block for your role\b[\s\S]*?^After the block's closing fence, give:$/m, '<marker placement>');
+
 /** What one copy of a launcher handed the stub codex, with that run's own paths named generically. */
 function invocation(w, copy, launch) {
   const home = join(w.base, `home-${copy}`);
@@ -288,7 +319,7 @@ function invocation(w, copy, launch) {
   const result = run(w, join(tools, launch.name), launch.args(env.CODEX_LOG_DIR, tools), { env });
   assert.equal(result.status, 0, `${copy} ${launch.name}: ${result.stderr}`);
   const generic = (text) => text.replaceAll(tools, '<TOOLS>').replaceAll(home, '<HOME>');
-  const kept = (stdin) => stdin.split('\n').filter((line) => !line.startsWith('<!-- ABOUTME:') && !line.includes('**Load and the slot:**')).map((line) => copy === 'source' && line.includes('Wrap every suite run') ? line.replaceAll('caffeinate -i', 'caffeinate -dims') : line).join('\n').replace(/\n*$/, '');
+  const kept = (stdin) => placed(stdin.split('\n').filter((line) => !line.startsWith('<!-- ABOUTME:') && !line.includes('**Load and the slot:**')).map((line) => copy === 'source' && line.includes('Wrap every suite run') ? line.replaceAll('caffeinate -i', 'caffeinate -dims') : line).join('\n')).replace(/\n*$/, '');
   return codexCalls({ stub }).map((call) => ({
     args: call.args.map(generic),
     cwd: generic(call.cwd),

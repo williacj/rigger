@@ -41,15 +41,17 @@ Write the verdict to `@BASE@/verdict-@PR@-codex-@ROLE@-r@ROUND@.md`. Its first l
 
 `**Codex @ROLE@ judge — PR #@PR@, round @ROUND@, head @SHA@, acceptance @ACCREV@: <sound | needs revision | critical>**`
 
-Below that line, give:
+Its second line opens the gate's marker block for your role, directly under that heading: the gate reads a marker block only where it opens on the comment's second line. Take the block from the latest `rigger/gate` run's log on this pull request: `gh run list -R williacj/rigger --workflow rigger-gate.yml`, then `gh run view <id> -R williacj/rigger --log`, which prints "## The marker @ROLE@ must post" followed by a fenced `rigger-marker` block. If no run prints a block for your role, say so in your report. Never compose a block yourself.
+
+Copy that block without the prefix the log puts before each of its lines, the job name, the step name and the timestamp, so each copied line begins where the gate's printed line begins. Replace every `<…>` placeholder with your ruling: the verdict, `met` or `unmet` for each item, and `covered` or `insufficient` for `coverage`. Write the `coverageReason` line only where coverage is `insufficient`, and the `toSound` line only where the verdict is not `sound`, as the gate's printed instruction says; leave each out otherwise. Keep every other field exactly as printed.
+
+After the block's closing fence, give:
 - each acceptance item, met or unmet, with its evidence;
 - the `R-LOOP-6` ruling;
 - the blocking findings, each with what would make it sound;
 - the non-blocking findings, each saying whether this PR caused it;
 - every suite run, with its ref, its load at start and end, and its counts;
 - every failed run, named with its output.
-
-End the verdict with the gate's marker block for your role. Take it from the latest `rigger/gate` run's log on this pull request: `gh run list -R williacj/rigger --workflow rigger-gate.yml`, then `gh run view <id> -R williacj/rigger --log`, which prints "## The marker @ROLE@ must post" followed by a fenced `rigger-marker` block. Copy that block. Replace each `<…>` placeholder with your ruling: the verdict, and `met` or `unmet` for each item. Keep every other field exactly as printed. If no run prints a block for your role, say so in your report. Never compose a block yourself.
 
 Before you post, confirm `git rev-parse HEAD` is still `@SHA@`. Then post it once, with `gh pr comment @PR@ -R williacj/rigger --body-file @BASE@/verdict-@PR@-codex-@ROLE@-r@ROUND@.md`.
 
