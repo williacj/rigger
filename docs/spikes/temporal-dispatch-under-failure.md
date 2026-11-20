@@ -709,7 +709,7 @@ JSON files carry no header.
 Each log was captured as `<name>.log` and committed as `<name>.txt`, because `.gitignore` excludes
 `*.log`. The transcript's commands use the capture names.
 
-The transcript's appendix gives each command run outside the logging wrapper as it was run, except the heredocs and in-place edits that wrote the spike's throwaway files. Their bodies are the spike's code, which `AGENTS.md`, "When you write code", keeps out of the repository. The appendix names each such file with the sha256 of its final content instead, and each change made to them during the runs is logged at its time as a note line.
+The transcript's appendix gives each command run outside the logging wrapper as it was run. Its last section, "HEREDOC AND PATCH BODIES", quotes every heredoc and in-place edit that wrote the spike's throwaway files, at its command and time, with the sha256 of each body and each file's final sha256. They are quoted under rigger-ae's ruling of 2026-11-20 that bodies quoted in a transcript are evidence, not merged spike code: nothing runs or imports them, and the runnable files stay in the gitignored spikes directory. The original bodies of the seven files edited during the runs were checked by replaying the quoted edits on them, which reproduced each file's final sha256.
 
 ### Credential scan
 
