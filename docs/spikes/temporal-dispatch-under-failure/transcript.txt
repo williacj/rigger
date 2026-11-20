@@ -1852,7 +1852,7 @@ These ran on the laptop from the spike engineer's shell (zsh), not through t.sh,
   TC = S/tcli/temporal --address 127.0.0.1:17233
 Output is quoted where the command was not read-only or where it failed; read-only commands whose output fed the report are covered by the evidence files the report cites.
 
-Throwaway files: the commands that wrote them were heredocs ("cat > <file> <<'EOF' … EOF") and in-place edits (sed -i '', perl -pi/-0pi). Their bodies are the spike's code, which AGENTS.md ("When you write code") keeps out of the repository, so they are not reproduced here. Each file's path and final sha256 (first 16 hex) instead:
+Throwaway files: the commands that wrote them were heredocs ("cat > <file> <<'EOF' … EOF") and in-place edits (sed -i '', perl -pi/-0pi). Their bodies are quoted in full, at their commands and times, in the section "HEREDOC AND PATCH BODIES" at the end of this file, under rigger-ae's ruling of 2026-11-20. Each file's path and final sha256 (first 16 hex):
   bf40cce5212ab949 S/t.sh                 2adee2e982c37c15 S/w.sh                 a76c5c6312ec8248 S/p.sh
   acb9a1be6ccb79ed S/lst.sh               5f770c35a96436b0 S/killtest.sh          1ad236367689bf23 S/sample.sh
   4648d99e92db67f5 S/pintest.sh           d68b63d3214f0ed2 S/hist.sh              90692faa7b5127d6 S/vertest.sh
@@ -1928,3 +1928,521 @@ Edits to app/ files during the runs are logged above as "(edit)" note lines at t
 16:18:56-16:18:57  cd W && mv spikes SP/1429-spikes-hidden; npm test -- test/path-check.test.mjs; mv SP/1429-spikes-hidden spikes     (14 tests, 14 pass, 0 fail with the gitignored spikes directory absent; one-minute load 26.82 at start and end)
 16:19:09-16:31:50  cd W && npm_config_cache=S/npm-cache ~/GitHub/rigger-worktrees/coordinator-tools/suite-slot.sh 1429-maker -- caffeinate -dims npm test > SP/1429-npmtest6.log 2>&1     (queued at load 26.32; slot start 16:24:17 at load 5.21, end 16:31:50 at load 4.34, exit 0: 5965 tests, 5965 pass, 0 fail, over this transcript's staged change before this line was added)
 After that: git add of this file, then suite-slot.sh 1429-maker -- caffeinate -dims git commit (whose pre-commit hook runs the deterministic suite again), suite-slot.sh 1429-maker -- caffeinate -dims git push -u origin rigger-1429, and gh pr create. Their results are in the pull request, since this file is part of that commit.
+
+=== HEREDOC AND PATCH BODIES ===
+Quoted under rigger-ae's ruling of 2026-11-20 for #1429: heredoc and patch bodies in a transcript are evidence, not merged spike code. Nothing runs or imports them here; the runnable files stay in the gitignored spikes directory. Each heredoc is quoted as it was written, at its command and time (a time marked ~ is reconstructed to within a minute), with the sha256 of its body. Each in-place edit is quoted as run, in order, and each edited file ends with the sha256 of its final content. The original bodies of the edited files were checked by replaying every edit below on them in a scratch directory, which reproduced each file's final sha256 exactly. S, SP and W are the abbreviations defined at the start of the appendix.
+
+--- ~00:39  cat > S/t.sh <<'EOF'
+#!/bin/bash
+# ABOUTME: Throwaway transcript wrapper: logs UTC time, host label, command and output for spike #1429.
+# usage: t.sh <hostlabel> <command string run by bash -c on the laptop>
+T=$HOME/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/transcript.log
+H="$1"; shift
+C="$*"
+{ printf '\n=== %s | host=%s | cmd: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$H" "$C"; } >> "$T"
+bash -c "$C" 2>&1 | tee -a "$T"
+rc=${PIPESTATUS[0]}
+printf -- '--- exit=%s at %s\n' "$rc" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$T"
+exit $rc
+EOF
+    sha256 of this body: bf40cce5212ab9494efd7e959abef78d03106308e00902e17f9d56c80cea8688
+
+--- ~00:42:40  cat > SP/1429-intent.md (the stated-intent comment, posted as 1429#7026651102) <<'EOF'
+**Stated intent, #1429 spike engineer** (posted before any install or host-configuration change)
+
+Installs, each into a directory of the spike's own making, none system-wide:
+
+- **WSL2 (`finnpc`, reached by `ssh finnpc wsl.exe -e …`):** the Node 24 LTS linux-x64 tarball from nodejs.org and the Temporal CLI linux-amd64 tarball from temporal.download, unpacked under `~/1429-spike-engineer/`. Then `npm install` of `@temporalio/client`, `@temporalio/worker`, `@temporalio/workflow` and `@temporalio/activity` into that directory, with `npm_config_cache` pointed inside it so nothing lands in `~/.npm`.
+- **Windows (`finnpc`):** the Temporal CLI windows-amd64 zip, unpacked under `C:\Users\cj\1429-spike-engineer\`. Then the same `npm install` there with the cache inside it. Node 24 is already installed.
+- **Laptop:** the Temporal CLI darwin-arm64 tarball and the same `npm install`, under the gitignored `spikes/1429-spike-engineer/` in my own worktree, with the cache inside it.
+
+Host-configuration changes: **none intended.** The server runs in WSL2 on 7233/8233 with `--ip 0.0.0.0`. Windows reaches it through WSL2's localhost forwarding. The laptop reaches it through an SSH local forward (`ssh -L 7233:localhost:7233 finnpc`). There is no firewall rule and no port proxy. If either route fails, I will post the change here before I make it.
+
+Processes: one laptop SSH session carries the tunnel and keeps WSL awake for the server. Every pid is recorded in the transcript. I end nothing of #1431's (7243/8243) or #1430's.
+
+Mac mini: not used.
+EOF
+    sha256 of this body: d27a5e94616755edb2d124b675f250ba453ed4bc99f9dda0a33a14751a22c1f7
+
+--- ~00:42:45  cat > S/remote/wsl-install.sh <<'EOF'
+# ABOUTME: Throwaway: installs Node and Temporal CLI into the spike's own WSL directory.
+set -e
+D=~/1429-spike-engineer; mkdir -p $D; cd $D
+curl -fsSL -o node.tar.xz https://nodejs.org/dist/latest-v24.x/node-v24.11.1-linux-x64.tar.xz || { V=$(curl -fsSL https://nodejs.org/dist/latest-v24.x/SHASUMS256.txt | grep -o 'node-v24[.0-9]*-linux-x64.tar.xz' | head -1); curl -fsSL -o node.tar.xz https://nodejs.org/dist/latest-v24.x/$V; }
+mkdir -p node && tar -xJf node.tar.xz -C node --strip-components=1
+curl -fsSL -o temporal.tgz 'https://temporal.download/cli/archive/latest?platform=linux&arch=amd64'
+mkdir -p tcli && tar -xzf temporal.tgz -C tcli
+ls tcli; ./node/bin/node --version; ./tcli/temporal --version
+EOF
+    sha256 of this body: 701de4037d6559195af0e71c140402511aea84a9b511235d199e013cf8690a80
+
+--- ~00:43  cat > S/app/package.json <<'EOF'
+{
+  "name": "spike-1429",
+  "private": true,
+  "description": "Throwaway: Temporal card-dispatch spike for rigger #1429",
+  "dependencies": {
+    "@temporalio/activity": "*",
+    "@temporalio/client": "*",
+    "@temporalio/common": "*",
+    "@temporalio/worker": "*",
+    "@temporalio/workflow": "*"
+  }
+}
+EOF
+    sha256 of this body: c7e9038d3a148b8146243efd48b578597b308e7b4446a5b099f51df6a8ba18c3
+
+--- ~00:43  cat > S/app/tree.js <<'EOF'
+// ABOUTME: Throwaway: stand-in agent process tree; each level logs start/end and lives N seconds.
+const { spawn } = require('child_process');
+const fs = require('fs');
+const [, , level, seconds, log, tag] = process.argv;
+const lv = Number(level);
+const line = (s) => fs.appendFileSync(log, `${new Date().toISOString()} ${s} level=${lv} pid=${process.pid} ppid=${process.ppid} ${tag}\n`);
+line('start');
+if (lv < 2) spawn(process.execPath, [__filename, String(lv + 1), seconds, log, tag], { stdio: 'ignore' });
+process.on('SIGTERM', () => { line('sigterm'); process.exit(143); });
+setTimeout(() => { line('end'); process.exit(0); }, Number(seconds) * 1000);
+EOF
+    sha256 of this body: 90b73eea2381fd71d7d11b9aee179ba2272c3606289258afa9212159937a4a1f
+
+--- ~00:43  cat > S/app/activities.js <<'EOF'
+// ABOUTME: Throwaway: activities for the #1429 spike — host pick, a dispatch that runs a heartbeating process tree, prepare, claude -p.
+const { Context, ApplicationFailure } = require('@temporalio/activity');
+const { spawn, spawnSync } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+const HOST = process.env.HOST_ID;
+const WORKTREES = process.env.WORKTREES;
+const log = (s) => console.log(`${new Date().toISOString()} [${HOST}] ${s}`);
+
+async function pickHost({ excluded = [] } = {}) {
+  if (excluded.includes(HOST)) {
+    log(`pickHost: ${HOST} is excluded, failing so another worker takes it`);
+    throw ApplicationFailure.retryable(`host ${HOST} excluded`, 'Excluded');
+  }
+  log(`pickHost -> ${HOST}`);
+  return { host: HOST, machine: require('os').hostname() };
+}
+
+async function prepare({ card }) {
+  log(`prepare card=${card}`);
+  return `prepared ${card} on ${HOST}`;
+}
+
+async function dispatch({ card, seconds, retrySeconds }) {
+  const info = Context.current().info;
+  const secs = info.attempt > 1 && retrySeconds ? retrySeconds : seconds;
+  const dir = path.join(WORKTREES, card); fs.mkdirSync(dir, { recursive: true });
+  const treeLog = path.join(dir, 'tree.log');
+  const tag = `rigger-tree card=${card} attempt=${info.attempt} host=${HOST}`;
+  const child = spawn(process.execPath, [path.join(__dirname, 'tree.js'), '1', String(secs), treeLog, tag], { cwd: dir, stdio: 'ignore' });
+  log(`dispatch start card=${card} attempt=${info.attempt} seconds=${secs} treeRoot=${child.pid} workerPid=${process.pid}`);
+  const beat = setInterval(() => Context.current().heartbeat({ attempt: info.attempt, root: child.pid }), 2000);
+  try {
+    const code = await new Promise((res, rej) => { child.on('exit', res); child.on('error', rej); });
+    log(`dispatch end card=${card} attempt=${info.attempt} treeRoot=${child.pid} exit=${code}`);
+    return { host: HOST, attempt: info.attempt, root: child.pid, exit: code };
+  } finally { clearInterval(beat); }
+}
+
+async function claudeRun({ card, configDir, prompt }) {
+  const info = Context.current().info;
+  const env = { PATH: process.env.PATH, HOME: process.env.HOME, CLAUDE_CONFIG_DIR: configDir };
+  log(`claudeRun card=${card} attempt=${info.attempt} CLAUDE_CONFIG_DIR=${configDir}`);
+  const r = spawnSync('claude', ['-p', prompt], { env, encoding: 'utf8', timeout: 120000 });
+  const out = { host: HOST, exit: r.status, signal: r.signal, stdout: r.stdout, stderr: r.stderr, error: r.error && String(r.error) };
+  log(`claudeRun result ${JSON.stringify(out)}`);
+  return out;
+}
+
+module.exports = { pickHost, prepare, dispatch, claudeRun };
+EOF
+    sha256 of this body: c9dc05fca2cc8a38eb445ae4068b9e6132518a1748349aea4719d5458a96a7d9
+
+--- ~00:43  cat > S/app/wf-v1.js <<'EOF'
+// ABOUTME: Throwaway: card workflow v1 — pick a host on the OS queue, then dispatch on that host's queue, re-picking on schedule-to-start timeout.
+const { proxyActivities, sleep, ActivityFailure, TimeoutFailure } = require('@temporalio/workflow');
+const { pinnedDispatch } = require('./wf-common');
+async function card(input) { return pinnedDispatch(input, null); }
+module.exports = { card };
+EOF
+    sha256 of this body: 4313e7b06ad88e8a0cb782bc0d8fc0dbad834ce62b5f0d7abd81967feab47c44
+
+--- ~00:43  cat > S/app/wf-v2.js <<'EOF'
+// ABOUTME: Throwaway: card workflow v2 — v1 plus an unguarded prepare activity ahead of the dispatch.
+const { proxyActivities } = require('@temporalio/workflow');
+const { pinnedDispatch } = require('./wf-common');
+async function card(input) {
+  return pinnedDispatch(input, async (os) => {
+    const { prepare } = proxyActivities({ taskQueue: `rigger-${os}`, startToCloseTimeout: '30s' });
+    await prepare({ card: input.card });
+  });
+}
+module.exports = { card };
+EOF
+    sha256 of this body: 9c44ffbdd003ebd3747f8d481fa3675589da710c1d9ddc94a6177b5323b0034b
+
+--- ~00:43  cat > S/app/wf-v3.js <<'EOF'
+// ABOUTME: Throwaway: card workflow v3 — the v2 prepare call guarded by patched().
+const { proxyActivities, patched } = require('@temporalio/workflow');
+const { pinnedDispatch } = require('./wf-common');
+async function card(input) {
+  return pinnedDispatch(input, async (os) => {
+    if (patched('prepare-before-dispatch')) {
+      const { prepare } = proxyActivities({ taskQueue: `rigger-${os}`, startToCloseTimeout: '30s' });
+      await prepare({ card: input.card });
+    }
+  });
+}
+module.exports = { card };
+EOF
+    sha256 of this body: 1e97f4ff873f4147569e306b229167e5ee05919c2c286e082e541281ccdd260a
+
+--- ~00:43  cat > S/app/wf-common.js <<'EOF'
+// ABOUTME: Throwaway: shared two-stage routing for the card workflow (OS queue pick, host-queue dispatch).
+const { proxyActivities, sleep, log, ActivityFailure, TimeoutFailure, TimeoutType } = require('@temporalio/workflow');
+const DISPATCH = { startToCloseTimeout: '20m', heartbeatTimeout: '10s', scheduleToStartTimeout: '30s',
+  retry: { initialInterval: '1s', backoffCoefficient: 2, maximumInterval: '10s', maximumAttempts: 5 } };
+async function pinnedDispatch(input, beforeDispatch) {
+  const os = input.os; const excluded = [];
+  const { pickHost } = proxyActivities({ taskQueue: `rigger-${os}`, startToCloseTimeout: '30s',
+    retry: { initialInterval: '1s', backoffCoefficient: 1, maximumAttempts: 30 } });
+  for (let round = 1; round <= 3; round++) {
+    const picked = await pickHost({ excluded });
+    log.info(`round ${round} picked ${picked.host}`);
+    if (input.pauseAfterPick) await sleep(input.pauseAfterPick);
+    if (beforeDispatch && round === 1) await beforeDispatch(os);
+    const acts = proxyActivities({ ...DISPATCH, taskQueue: `host-${picked.host}` });
+    try {
+      if (input.claude) return await acts.claudeRun({ card: input.card, configDir: input.claude.configDir, prompt: input.claude.prompt });
+      return await acts.dispatch({ card: input.card, seconds: input.seconds, retrySeconds: input.retrySeconds });
+    } catch (e) {
+      const c = e instanceof ActivityFailure ? e.cause : null;
+      if (c instanceof TimeoutFailure && c.timeoutType === TimeoutType.SCHEDULE_TO_START) {
+        log.info(`schedule-to-start timeout on ${picked.host}; re-picking`); excluded.push(picked.host); continue;
+      }
+      throw e;
+    }
+  }
+  throw new Error('no host');
+}
+module.exports = { pinnedDispatch, DISPATCH };
+EOF
+    sha256 of this body: 817396162c7bb8937adfe0f5d0a797b03aea41c0137e16028834cd04f1f3de3c
+
+--- ~00:43  cat > S/app/worker.js <<'EOF'
+// ABOUTME: Throwaway: runs one host's workers — the OS queue (workflows, pickHost) and the host's own queue (dispatch).
+const { Worker, NativeConnection } = require('@temporalio/worker');
+const path = require('path');
+const activities = require('./activities');
+const HOST = process.env.HOST_ID, OS = process.env.OS_NAME, WF = process.env.WF_FILE || 'wf-v1.js';
+(async () => {
+  const connection = await NativeConnection.connect({ address: process.env.TEMPORAL_ADDRESS || 'localhost:7233' });
+  const identity = `${HOST}/${require('os').hostname()}/${process.pid}`;
+  console.log(`${new Date().toISOString()} worker starting identity=${identity} pid=${process.pid} os=${OS} wf=${WF} node=${process.version}`);
+  const common = { connection, namespace: 'default', identity, activities, workflowsPath: path.join(__dirname, WF) };
+  const w1 = await Worker.create({ ...common, taskQueue: `rigger-${OS}` });
+  const w2 = await Worker.create({ ...common, taskQueue: `host-${HOST}` });
+  console.log(`${new Date().toISOString()} worker polling rigger-${OS} and host-${HOST}`);
+  await Promise.all([w1.run(), w2.run()]);
+})().catch((e) => { console.error(`${new Date().toISOString()} worker error`, e); process.exit(1); });
+EOF
+    sha256 of this body: 7fb1ceb0e5478ee08aa2f4afda9c3058cc54f9560a1dd1a5786f307ebd68aed1
+
+--- ~00:44  cd S/app && sed -i '' 's/"\*"/"1.26.0"/' package.json
+    final sha256 of S/app/package.json after the edits above: 334eca55da255d547fb0ccce8b73516a0ee28eafdcca5fdbf762584ef60cf4c4
+
+--- ~00:44:55  cat > S/remote/wsl-npm.sh <<'EOF'
+# ABOUTME: Throwaway: copies the spike app into WSL's own directory and installs it there.
+set -e
+D=~/1429-spike-engineer; mkdir -p $D/app; cd $D/app
+cp /mnt/c/Users/cj/1429-spike-engineer/app/*.js /mnt/c/Users/cj/1429-spike-engineer/app/package.json .
+export PATH=$D/node/bin:$PATH npm_config_cache=$D/npm-cache
+npm install --no-audit --no-fund 2>&1 | tail -2; npm ls 2>&1
+EOF
+    sha256 of this body: 56e818bc6c74f3be2cd01c249a3d6a7a6429cf2fe3b3a4b4035686fc7225911d
+
+--- ~00:45:20  cat > S/w.sh <<'EOF'
+#!/bin/bash
+# ABOUTME: Throwaway: runs a bash command inside WSL on finnpc via stdin, logged to the transcript as host=wsl.
+S=$HOME/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer
+T=$S/transcript.log
+C="$*"
+printf '\n=== %s | host=wsl | cmd: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$C" >> "$T"
+printf '%s\n' "$C" | ssh finnpc wsl.exe -e bash -s 2>&1 | tee -a "$T"
+rc=${PIPESTATUS[1]}
+printf -- '--- exit=%s at %s\n' "$rc" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$T"
+exit $rc
+EOF
+    sha256 of this body: 2adee2e982c37c159f425fbeeb09c531c45532144a2ca0de119b6c95d769f262
+
+--- ~00:45:30  cat > S/remote/server.sh <<'EOF'
+# ABOUTME: Throwaway: runs the #1429 Temporal dev server in WSL in the foreground of this session.
+D=~/1429-spike-engineer
+echo "server-session bash pid=$$ $(date -u +%FT%TZ)"
+exec $D/tcli/temporal server start-dev --ip 0.0.0.0 --port 7233 --ui-port 8233 --db-filename $D/temporal.db --log-level warn
+EOF
+    sha256 of this body: be1e37077f6c2080fed1ac5537d749c15b66dc3b19f1dbd2a7f0c7625666d6ea
+
+--- ~00:45:55  cat > S/remote/wsl-worker.sh <<'EOF'
+# ABOUTME: Throwaway: starts one WSL worker in the background, records its pid, and holds the session after it exits.
+D=~/1429-spike-engineer; cd $D/app
+export PATH=$D/node/bin:$PATH HOST_ID=$1 OS_NAME=linux WF_FILE=${2:-wf-v1.js} WORKTREES=$D/worktrees/$1 TEMPORAL_ADDRESS=127.0.0.1:7233
+mkdir -p $WORKTREES $D/logs
+node worker.js >> $D/logs/worker-$1.log 2>&1 &
+W=$!
+echo "$(date -u +%FT%T.%3NZ) wsl worker HOST_ID=$1 WF_FILE=$WF_FILE pid=$W holder-bash=$$"
+echo $W > $D/logs/worker-$1.pid
+wait $W; echo "$(date -u +%FT%T.%3NZ) worker pid=$W exited status=$?"
+exec sleep 1800
+EOF
+    sha256 of this body: 031a9591f062e5f10487687a889163cee4ef963d0946730fc8c43034be35f836
+
+--- ~00:45:55  cat > S/p.sh <<'EOF'
+#!/bin/bash
+# ABOUTME: Throwaway: runs a PowerShell command on finnpc (Windows) via -EncodedCommand, logged as host=windows.
+S=$HOME/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer
+T=$S/transcript.log
+C="$*"
+printf '\n=== %s | host=windows | cmd(powershell): %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$C" >> "$T"
+E=$(printf '%s' "\$ProgressPreference='SilentlyContinue'; $C" | iconv -f UTF-8 -t UTF-16LE | base64)
+ssh finnpc "powershell -NoProfile -NonInteractive -EncodedCommand $E" 2>&1 | tee -a "$T"
+rc=${PIPESTATUS[0]}
+printf -- '--- exit=%s at %s\n' "$rc" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$T"
+exit $rc
+EOF
+    sha256 of this body: a76c5c6312ec82485ac6095166f4648ac37d5ba44f29606bd1d2541a197ab3e7
+
+--- ~00:46:10  cat > S/remote/win-worker.cmd <<'EOF'
+@rem ABOUTME: Throwaway: runs one Windows worker in the foreground, then holds the SSH session after it exits.
+@echo off
+set D=C:\Users\cj\1429-spike-engineer
+cd /d %D%\app
+set HOST_ID=%1
+set OS_NAME=windows
+set WF_FILE=%2
+if "%WF_FILE%"=="" set WF_FILE=wf-v1.js
+set WORKTREES=%D%\worktrees\%1
+set TEMPORAL_ADDRESS=127.0.0.1:7233
+if not exist %WORKTREES% mkdir %WORKTREES%
+if not exist %D%\logs mkdir %D%\logs
+echo %date% %time% windows worker launcher HOST_ID=%1 WF_FILE=%WF_FILE%
+node worker.js >> %D%\logs\worker-%1.log 2>&1
+echo %date% %time% worker exited errorlevel=%errorlevel%
+ping -n 1800 127.0.0.1 >nul
+EOF
+    sha256 of this body: 285bce88959d5e41093769a29cb192393c7adb811e9fa5e2de3f55e679098882
+
+--- ~00:46:15  cat > S/start-mac-worker.sh <<'EOF'
+#!/bin/bash
+# ABOUTME: Throwaway: starts one laptop worker identity in the background and records its pid in the transcript.
+S=$HOME/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer
+H=$1; WF=${2:-wf-v1.js}
+mkdir -p $S/worktrees/$H $S/logs
+cd $S/app
+HOST_ID=$H OS_NAME=macos WF_FILE=$WF WORKTREES=$S/worktrees/$H TEMPORAL_ADDRESS=127.0.0.1:7233 nohup node worker.js >> $S/logs/worker-$H.log 2>&1 &
+P=$!
+echo $P > $S/logs/worker-$H.pid
+printf '\n=== %s | host=laptop | cmd: start-mac-worker.sh %s %s -> worker pid=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ 2>/dev/null || date -u +%FT%TZ)" "$H" "$WF" "$P" >> $S/transcript.log
+echo "mac worker $H pid=$P"
+EOF
+    sha256 of this body: 63055aa4984d557ad266a6851a65ace73eb7309337bb396fd202ecc7b3837459
+
+--- ~00:46:15  cat > S/start-remote-worker.sh <<'EOF'
+#!/bin/bash
+# ABOUTME: Throwaway: starts a WSL or Windows worker through a background laptop SSH session and records that session's pid.
+S=$HOME/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer
+KIND=$1; H=$2; WF=${3:-wf-v1.js}
+mkdir -p $S/logs
+if [ "$KIND" = wsl ]; then
+  nohup ssh -o ServerAliveInterval=30 finnpc wsl.exe -e bash -s -- $H $WF < $S/remote/wsl-worker.sh >> $S/logs/session-$H.log 2>&1 &
+else
+  nohup ssh -o ServerAliveInterval=30 finnpc "C:\\Users\\cj\\1429-spike-engineer\\win-worker.cmd $H $WF" < /dev/null >> $S/logs/session-$H.log 2>&1 &
+fi
+P=$!
+printf '\n=== %s | host=laptop | cmd: start-remote-worker.sh %s %s %s -> laptop ssh session pid=%s\n' "$(date -u +%FT%TZ)" "$KIND" "$H" "$WF" "$P" >> $S/transcript.log
+echo "$KIND worker $H via laptop ssh pid=$P"
+EOF
+    sha256 of this body: 6a9ea4086562c7dba68ddf7018fef3c4d66d4451f3e8a565cd42c6abe04b4bb9
+
+--- ~00:46:20  sed -i '' 's/"$(date -u +%Y-%m-%dT%H:%M:%S.%3NZ 2>\/dev\/null || date -u +%FT%TZ)"/"$(date -u +%FT%TZ)"/' S/start-mac-worker.sh
+
+--- ~00:46:30  cat > S/lst.sh <<'EOF'
+#!/bin/bash
+# ABOUTME: Throwaway: process listing of workers and stand-in trees on one host (laptop, wsl or windows), logged.
+S=$HOME/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer
+case $1 in
+  laptop) $S/t.sh laptop 'date -u +%FT%TZ; ps -axo pid,ppid,pgid,lstart,command | grep -E "rigger-tree|worker.js|PID" | grep -v grep' ;;
+  wsl) $S/w.sh 'date -u +%FT%TZ; ps -eo pid,ppid,pgid,lstart,args | grep -E "rigger-tree|worker.js|PID" | grep -v grep' ;;
+  windows) $S/p.sh '(Get-Date).ToUniversalTime().ToString("o"); Get-CimInstance Win32_Process -Filter "Name=''node.exe''" | ForEach-Object { "{0,6} {1,6} {2} {3}" -f $_.ProcessId, $_.ParentProcessId, $_.CreationDate.ToUniversalTime().ToString("o"), $_.CommandLine }' ;;
+esac
+EOF
+    sha256 of this body: a3652832d914f99414604ef044882c605f568b98f5867708a23fb4b28acad709
+
+--- ~00:46:40  perl -0pi -e 's/-Filter "Name=\x27\x27node.exe\x27\x27" \|/| Where-Object { \$_.Name -eq "node.exe" } |/' S/lst.sh
+
+--- ~00:46:45  sed -i '' 's/| grep -v grep. ;;/| grep -v grep | grep -v 1431-spike'"'"' ;;/' S/lst.sh
+    final sha256 of S/lst.sh after the edits above: acb9a1be6ccb79ed5c23756121dbf704728b895e6bef5f477a4af4350c9e04ac
+
+--- ~00:47:30  cat > S/killtest.sh <<'EOF'
+#!/bin/bash
+# ABOUTME: Throwaway: kill-mid-dispatch run for one OS — start a card, kill its worker -9, restart it, sample processes, export history.
+S=$HOME/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer
+OS=$1; KIND=$2   # KIND: laptop|wsl|windows
+WF=card-kill-$OS
+TC="$S/tcli/temporal --address 127.0.0.1:7233"
+now() { perl -MTime::HiRes=time -MPOSIX=strftime -e '$t=time; printf "%s.%03dZ", strftime("%Y-%m-%dT%H:%M:%S",gmtime($t)), ($t-int($t))*1000'; }
+pend() { $TC workflow describe -w $WF --output json 2>/dev/null | jq -c '[.pendingActivities[]? | {type:.activityType.name, state, attempt, lastWorkerIdentity, lastStartedTime, scheduledTime}]'; }
+$S/t.sh laptop "$TC workflow start --type card --task-queue rigger-$OS --workflow-id $WF --input '{\"card\":\"$WF\",\"os\":\"$OS\",\"seconds\":300,\"retrySeconds\":20}'"
+for i in $(seq 1 60); do P=$(pend); echo "$P" | grep -q '"type":"dispatch","state":"PENDING_ACTIVITY_STATE_STARTED"' && break; sleep 1; done
+echo "pending: $P" | tee -a $S/transcript.log
+ID=$(echo "$P" | jq -r '.[0].lastWorkerIdentity'); H=${ID%%/*}; WPID=${ID##*/}
+echo "dispatch on identity=$ID host=$H workerpid=$WPID" | tee -a $S/transcript.log
+sleep 6
+echo "### listing before kill" | tee -a $S/transcript.log; $S/lst.sh $KIND
+case $KIND in
+  laptop) $S/t.sh laptop "perl -MTime::HiRes=time -MPOSIX=strftime -e '\$t=time; printf qq(kill-at %s.%03dZ\n), strftime(q(%Y-%m-%dT%H:%M:%S),gmtime(\$t)), (\$t-int(\$t))*1000'; kill -9 $WPID; echo kill-rc=\$?" ;;
+  wsl) $S/w.sh "echo kill-at \$(date -u +%FT%T.%3NZ); kill -9 $WPID; echo kill-rc=\$?" ;;
+  windows) $S/p.sh "'kill-at ' + (Get-Date).ToUniversalTime().ToString('o'); Stop-Process -Id $WPID -Force; 'stop-rc=' + \$?" ;;
+esac
+echo "### listing just after kill" | tee -a $S/transcript.log; $S/lst.sh $KIND
+echo "### restarting worker $H at $(now)" | tee -a $S/transcript.log
+case $KIND in
+  laptop) $S/start-mac-worker.sh $H ;;
+  wsl) $S/start-remote-worker.sh wsl $H ;;
+  windows) $S/start-remote-worker.sh win $H ;;
+esac
+for i in $(seq 1 90); do P=$(pend); echo "$(now) $P" >> $S/logs/poll-$WF.log; echo "$P" | grep -q '"attempt":2,"lastWorkerIdentity"' && echo "$P" | grep -q 'STARTED' && break; [ "$P" = "[]" ] && break; sleep 1; done
+echo "$(now) after-restart pending: $P" | tee -a $S/transcript.log
+sleep 3
+echo "### listing with retry attempt running" | tee -a $S/transcript.log; $S/lst.sh $KIND
+EOF
+    sha256 of this body: c211a40dab9e481bbce0998b815bd0edcbb5c862be77aaa3850c8c4b92fff055
+
+--- ~00:49:00  cat > S/sample.sh <<'EOF'
+#!/bin/bash
+# ABOUTME: Throwaway: timed process listings on laptop and WSL after the kills, to see how long the orphans live.
+S=$HOME/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer
+for at in 00:49:43 00:51:10 00:52:30 00:52:45 00:53:25 00:53:45; do
+  while [ "$(date -u +%H:%M:%S)" \< "$at" ]; do sleep 1; done
+  echo "### timed listing target=$at" >> $S/transcript.log
+  $S/lst.sh wsl >/dev/null; $S/lst.sh laptop >/dev/null; $S/lst.sh windows > /dev/null
+done
+echo sampling-done
+EOF
+    sha256 of this body: 1ad236367689bf23e80e3026fbe4042766e93281c0981e093f3c43a0817e6f87
+
+--- ~00:49:40  cat > S/pintest.sh <<'EOF'
+#!/bin/bash
+# ABOUTME: Throwaway: macOS pinning runs — stop the picked host's worker before dispatch (stop) or kill it mid-dispatch without restart (kill).
+S=$HOME/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer
+MODE=$1; WF=pin-$MODE-macos
+TC="$S/tcli/temporal --address 127.0.0.1:7233"
+stamp() { perl -MTime::HiRes=time -MPOSIX=strftime -e '$t=time; printf "%s.%03dZ", strftime("%Y-%m-%dT%H:%M:%S",gmtime($t)), ($t-int($t))*1000'; }
+picked() { $TC workflow show -w $WF --output json | jq -r '[.events[] | select(.eventType=="EVENT_TYPE_ACTIVITY_TASK_COMPLETED") | .activityTaskCompletedEventAttributes.result.payloads[0].data | @base64d | fromjson | .host?] | first // empty'; }
+pend() { $TC workflow describe -w $WF --output json 2>/dev/null | jq -c '[.pendingActivities[]? | {type:.activityType.name, state, attempt, lastWorkerIdentity, lastStartedTime, scheduledTime}]'; }
+if [ $MODE = stop ]; then IN='{"card":"'$WF'","os":"macos","seconds":20,"pauseAfterPick":"20s"}'; else IN='{"card":"'$WF'","os":"macos","seconds":300,"retrySeconds":20}'; fi
+$S/t.sh laptop "$TC workflow start --type card --task-queue rigger-macos --workflow-id $WF --input '$IN'"
+for i in $(seq 1 30); do H=$(picked); [ -n "$H" ] && break; sleep 1; done
+WPID=$(cat $S/logs/worker-$H.pid)
+echo "$(stamp) picked host=$H worker pid=$WPID" | tee -a $S/transcript.log
+if [ $MODE = kill ]; then
+  for i in $(seq 1 30); do P=$(pend); echo "$P" | grep -q STARTED && break; sleep 1; done
+  echo "pending: $P" | tee -a $S/transcript.log; sleep 5
+  $S/lst.sh laptop
+  $S/t.sh laptop "perl -MTime::HiRes=time -MPOSIX=strftime -e '\$t=time; printf qq(kill-at %s.%03dZ\n), strftime(q(%Y-%m-%dT%H:%M:%S),gmtime(\$t)), (\$t-int(\$t))*1000'; kill -9 $WPID; echo kill-rc=\$?"
+else
+  $S/t.sh laptop "perl -MTime::HiRes=time -MPOSIX=strftime -e '\$t=time; printf qq(stop-at %s.%03dZ\n), strftime(q(%Y-%m-%dT%H:%M:%S),gmtime(\$t)), (\$t-int(\$t))*1000'; kill -TERM $WPID; echo term-rc=\$?"
+fi
+for i in $(seq 1 150); do P=$(pend); echo "$(stamp) $P" >> $S/logs/poll-$WF.log; S2=$($TC workflow describe -w $WF --output json | jq -r .workflowExecutionInfo.status); [ "$S2" != WORKFLOW_EXECUTION_STATUS_RUNNING ] && break; echo "$P" | grep -v "$H/" | grep -q '"type":"dispatch","state":"PENDING_ACTIVITY_STATE_STARTED"' && break; sleep 1; done
+echo "$(stamp) end-of-watch status=$S2 pending=$P" | tee -a $S/transcript.log
+$S/lst.sh laptop
+EOF
+    sha256 of this body: 04286c599e2fd56751fb196d2e05be7bba8551f09a6f8082c8ca67c677fca317
+
+--- ~00:52:50  cd S/app && sed -i '' "s/const { proxyActivities, sleep, log, ActivityFailure, TimeoutFailure, TimeoutType } = require('@temporalio\/workflow');/const { proxyActivities, sleep, log, ActivityFailure, TimeoutFailure } = require('@temporalio\/workflow');\nconst { TimeoutType } = require('@temporalio\/common');/" wf-common.js
+
+--- ~00:52:55  cd S && sed -i '' 's/127.0.0.1:7233/127.0.0.1:17233/g' start-mac-worker.sh killtest.sh pintest.sh
+    final sha256 of S/start-mac-worker.sh after the edits above: 447493a5cb1c17b013ae67ff6891eef4c720ebd377b0a860eb99759805824c3a
+    final sha256 of S/killtest.sh after the edits above: 5f770c35a96436b0ebc8cd24449c9f25bbcf3e5b0a0a6561c54543483ad8b69c
+
+--- ~00:53:10  cat > S/hist.sh <<'EOF'
+#!/bin/bash
+# ABOUTME: Throwaway: exports a workflow's history into the evidence directory and prints a one-line-per-event summary.
+S=$HOME/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer
+E=$HOME/GitHub/rigger-worktrees/1429-spike-engineer/docs/spikes/temporal-dispatch-under-failure/histories
+TC="$S/tcli/temporal --address 127.0.0.1:17233"
+w=$1
+$S/t.sh laptop "$TC workflow describe -w $w | grep -E '^  Status'; $TC workflow show -w $w --output json > $E/$w.json; echo exported $w \$(jq '.events|length' $E/$w.json) events" 
+jq -r '.events[] | [.eventId, .eventTime, .eventType, (.activityTaskScheduledEventAttributes.activityType.name // ""), (.activityTaskScheduledEventAttributes.taskQueue.name // ""), (.activityTaskStartedEventAttributes.identity // .workflowTaskStartedEventAttributes.identity // .workflowTaskFailedEventAttributes.identity // ""), (.activityTaskStartedEventAttributes.attempt // ""), (.activityTaskTimedOutEventAttributes.failure.timeoutFailureInfo.timeoutType // .activityTaskStartedEventAttributes.lastFailure.message // ""), (.timerStartedEventAttributes.startToFireTimeout // ""), (.markerRecordedEventAttributes.markerName // ""), (.workflowTaskFailedEventAttributes.cause // ""), ((.workflowTaskFailedEventAttributes.failure.message // "")[0:160])] | @tsv' $E/$w.json
+EOF
+    sha256 of this body: d68b63d3214f0ed2939c38c507c9340267c05daf37d1cea925cdf7e29fe168dc
+
+--- ~00:53:10  sed -i '' 's/WF=pin-$MODE-macos/WF=pin-$MODE-macos${RUN:-}/' S/pintest.sh
+    final sha256 of S/pintest.sh after the edits above: 4648d99e92db67f57b301c4cc432d6ae6d408650b691f488d4b53e07f94773a6
+
+--- ~01:02:15  cat > S/vertest.sh <<'EOF'
+#!/bin/bash
+# ABOUTME: Throwaway: versioning run on WSL — start a card on the running worker, kill it mid-dispatch, restart it on new workflow code.
+S=$HOME/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer
+WF=$1; NEWCODE=$2
+TC="$S/tcli/temporal --address 127.0.0.1:17233"
+pend() { $TC workflow describe -w $WF --output json 2>/dev/null | jq -c '[.pendingActivities[]? | {type:.activityType.name, state, attempt, lastWorkerIdentity}]'; }
+$S/t.sh laptop "$TC workflow start --type card --task-queue rigger-linux --workflow-id $WF --input '{\"card\":\"$WF\",\"os\":\"linux\",\"seconds\":60,\"retrySeconds\":10}'"
+for i in $(seq 1 60); do P=$(pend); echo "$P" | grep -q '"type":"dispatch","state":"PENDING_ACTIVITY_STATE_STARTED"' && break; sleep 1; done
+echo "pending: $P" | tee -a $S/transcript.log
+ID=$(echo "$P" | jq -r '.[0].lastWorkerIdentity'); WPID=${ID##*/}
+sleep 3
+$S/w.sh "echo kill-at \$(date -u +%FT%T.%3NZ); kill -9 $WPID; echo kill-rc=\$?; cat ~/1429-spike-engineer/app/$NEWCODE | head -20"
+$S/start-remote-worker.sh wsl wsl-1 $NEWCODE
+EOF
+    sha256 of this body: 90692faa7b5127d62010cab3f63ac1515f24357740c6821959d47d6744244ea4
+
+--- 01:53 (logged as a note at the time)  cd S/app && perl -0pi -e 's/async function claudeRun\(\{ card, configDir, prompt \}\) \{\n  const info = Context.current\(\).info;\n  const env = \{ PATH: process.env.PATH, HOME: process.env.HOME, CLAUDE_CONFIG_DIR: configDir \};\n  log\(`claudeRun card=\$\{card\} attempt=\$\{info.attempt\} CLAUDE_CONFIG_DIR=\$\{configDir\}`\);\n  const r = spawnSync\(\x27claude\x27, \[\x27-p\x27, prompt\], /async function claudeRun({ card, configDir, prompt, extraArgs = [] }) {\n  const info = Context.current().info;\n  const env = { PATH: process.env.PATH, HOME: process.env.HOME };\n  if (configDir) env.CLAUDE_CONFIG_DIR = configDir;\n  const args = [\x27-p\x27, ...extraArgs, prompt];\n  log(`claudeRun card=\${card} attempt=\${info.attempt} CLAUDE_CONFIG_DIR=\${configDir || \x27(unset: owner ~\/.claude)\x27} args=\${JSON.stringify(args)}`);\n  const r = spawnSync(\x27claude\x27, args, /' activities.js && perl -pi -e 's/acts\.claudeRun\(\{ card: input\.card, configDir: input\.claude\.configDir, prompt: input\.claude\.prompt \}\)/acts.claudeRun({ card: input.card, ...input.claude })/' wf-common.js
+
+--- 01:53 (logged as a note at the time)  cd S/app && perl -0pi -e 's/  const r = spawnSync\(\x27claude\x27, args, \{ env, encoding: \x27utf8\x27, timeout: 120000 \}\);\n  const out = \{ host: HOST, exit: r.status, signal: r.signal, stdout: r.stdout, stderr: r.stderr, error: r.error && String\(r.error\) \};/  const child = spawn(\x27claude\x27, args, { env, stdio: [\x27ignore\x27, \x27pipe\x27, \x27pipe\x27] });\n  let stdout = \x27\x27, stderr = \x27\x27;\n  child.stdout.on(\x27data\x27, (d) => { stdout += d; });\n  child.stderr.on(\x27data\x27, (d) => { stderr += d; });\n  const beat = setInterval(() => Context.current().heartbeat({ claudePid: child.pid }), 2000);\n  const kill = setTimeout(() => child.kill(\x27SIGTERM\x27), 120000);\n  const [status, signal] = await new Promise((res) => child.on(\x27close\x27, (c, s) => res([c, s])));\n  clearInterval(beat); clearTimeout(kill);\n  const out = { host: HOST, pid: child.pid, exit: status, signal, stdout, stderr };/' activities.js && perl -pi -e 's/const acts = proxyActivities\(\{ \.\.\.DISPATCH, taskQueue: `host-\$\{picked\.host\}` \}\);/const acts = proxyActivities({ ...DISPATCH, ...(input.claude ? { retry: { maximumAttempts: 1 } } : {}), taskQueue: `host-\${picked.host}` });/' wf-common.js && node -e "require('./activities')"
+    final sha256 of S/app/wf-common.js after the edits above: 59e0448f37a031362be19facfc67d638bae15f664c06a2d6b305550e1e57c4f1
+
+--- 02:25 (logged as a note at the time)  cd S/app && perl -0pi -e 's/async function claudeRun\(\{ card, configDir, prompt, extraArgs = \[\] \}\) \{\n  const info = Context.current\(\).info;\n  const env = \{ PATH: process.env.PATH, HOME: process.env.HOME \};/async function claudeRun({ card, configDir, prompt, extraArgs = [], inheritEnv = false }) {\n  const info = Context.current().info;\n  const env = inheritEnv ? { ...process.env } : { PATH: process.env.PATH, HOME: process.env.HOME };\n  log(`claudeRun env keys (names only): \${Object.keys(env).sort().join(\x27,\x27)}`);/' activities.js && node -e "require('./activities')"
+    final sha256 of S/app/activities.js after the edits above: a5b290cd0158607446f1bd2c7fd29852288a87921d1387a9e4e60785de8723ae
+
+--- ~02:25:10  cat > S/start-mac-worker-login.sh <<'EOF'
+#!/bin/bash
+# ABOUTME: Throwaway: starts the laptop worker under a fresh login shell's environment, so claude inherits a login environment.
+S=$HOME/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer
+H=$1
+mkdir -p $S/worktrees/$H $S/logs
+nohup env -i HOME="$HOME" USER="$USER" LOGNAME="$LOGNAME" SHELL=/bin/zsh TMPDIR="$TMPDIR" /bin/zsh -l -c "cd $S/app && HOST_ID=$H OS_NAME=macos WF_FILE=wf-v1.js WORKTREES=$S/worktrees/$H TEMPORAL_ADDRESS=127.0.0.1:17233 exec node worker.js" >> $S/logs/worker-$H.log 2>&1 &
+P=$!
+echo $P > $S/logs/worker-$H.pid
+printf '\n=== %s | host=laptop | cmd: start-mac-worker-login.sh %s -> worker pid=%s (env -i HOME USER LOGNAME SHELL TMPDIR, then zsh -l, exec node)\n' "$(date -u +%FT%TZ)" "$H" "$P" >> $S/transcript.log
+echo "mac worker $H pid=$P"
+EOF
+    sha256 of this body: f472ed863c5e91b66591bda22520bf5b952c150ded3010e1dca94743326eff3a
+
+--- ~01:41  cat > SP/fixpaths.pl <<'EOF'   (scratch helper that rewrote unresolvable backticked spans in the report)
+# ABOUTME: Throwaway: rewrites backticked spans in the #1429 report that the path check cannot resolve.
+use strict;
+my $B = 'docs/spikes/temporal-dispatch-under-failure';
+open my $m, '<', $ARGV[0] or die; my %miss = map { chomp; ($_ => 1) } <$m>; close $m;
+my $file = $ARGV[1]; local $/; open my $f, '<', $file or die; my $t = <$f>; close $f;
+my $infence = 0; my @out;
+for my $line (split /\n/, $t, -1) {
+  if ($line =~ /^```/) { $infence = !$infence; push @out, $line; next; }
+  if (!$infence) {
+    $line =~ s{`([^`]+)`}{
+      my $s = $1; my $r;
+      if (!$miss{$s}) { $r = "`$s`" }
+      elsif ($s =~ m{^(logs/|histories/)} || $s =~ m{^(transcript\.txt|versions\.txt)$}) { $r = "`$B/$s`" }
+      elsif ($s eq 'temporal-dispatch-under-failure/') { $r = "`$B/`" }
+      elsif ($s =~ m{^(card-kill|pin-|ver-|claude-macos|smoke-).*\.json$}) { $r = "`$B/histories/$s`" }
+      elsif ($s eq 'claude-projects-after.txt') { $r = "`$B/logs/laptop/$s`" }
+      else { $r = $s }
+      $r }ge;
+  }
+  push @out, $line;
+}
+open my $o, '>', $file or die; print $o join("\n", @out); close $o;
+EOF
+    sha256 of this body: 67bc2da6414024f7bb4c6f8a697cd01105e18705f057ee7803ff74ce2f25bbc9
