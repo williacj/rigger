@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { TOOLS, answer, assertToolingClean, codexCalls, forge, run, world } from './coordinator-fixtures.mjs';
 import { cloneInto, gitIn } from './git-repository.mjs';
 import { SOURCE, sourceText } from './coordinator-source.mjs';
+import { composeMarker, parseMarker } from '../src/workflow/marker.mjs';
 
 const LAUNCHERS = process.env.CODEX_TOOLS_DIR || TOOLS;
 const launcher = (name) => join(LAUNCHERS, name);
@@ -103,24 +104,37 @@ test('codex-judge.sh writes a prompt naming suite-slot.sh by the absolute path o
   assertToolingClean();
 });
 
-// The gate reads a marker block only where it opens on the comment's second line, under a first
-// line of free text (src/workflow/marker.mjs, `parseMarker`). This checks the prompt asks for that
-// layout: heading, then the block, then the rest of the verdict.
+// D29 reason: wiring; the real codex-judge.sh fills the judge prompt with sed and hands it to the
+// stub codex on standard input. Deterministic counterpart: test/marker.test.mjs, "the marker table:
+// a marker block not directly under the comment's first line is no marker", proves the gate's read
+// this layout depends on.
+//
+// The prompt's "## Post" section names the verdict's parts in the order the verdict writes them: the
+// heading, the marker block, then the rest. The test lays out a verdict in that order, with a
+// composed block, and asks the gate's own parse whether it reads the block. A sentence about the
+// marker block that names another position for it fails the test too.
 test('codex-judge.sh hands codex a prompt placing the marker block on the verdict comment\'s second line, under the heading and before the rest of the verdict', () => {
   const { w, bare, root, logs } = setup('coord-judge-marker-');
   const result = run(w, launcher('codex-judge.sh'), ['12', '7', '1'], { env: { RIGGER_WORKTREE_ROOT: root, RIGGER_REPO_URL: bare, CODEX_LOG_DIR: logs } });
 
   assert.equal(result.status, 0, result.stderr);
   const prompt = codexCalls(w)[0].stdin;
+  const post = prompt.slice(prompt.indexOf('\n## Post\n')).split('\n');
+  const heading = post.findIndex((line) => line.startsWith('`**Codex'));
+  const block = post.findIndex((line) => /marker block|rigger-marker/i.test(line));
+  const rest = post.findIndex((line) => line.startsWith('- '));
+  assert.ok(heading !== -1 && block !== -1 && rest !== -1, `the marker block's placement: the Post section names no heading, marker block or list of the rest (${heading}, ${block}, ${rest})`);
+  const marker = { card: 7, pull: 12, head: 'a'.repeat(40), digest: 'b'.repeat(64), role: 'reviewer', verdict: 'sound', items: ['met'], coverage: 'covered' };
+  const parts = new Map([
+    [heading, [post[heading].replaceAll('`', '')]],
+    [block, composeMarker(marker, '').split('\n').slice(1, -1)],
+    [rest, [post[rest]]],
+  ]);
+  const verdict = [...parts.keys()].sort((a, b) => a - b).flatMap((at) => parts.get(at)).join('\n');
+  assert.equal(parseMarker(verdict, 1).state, 'marker', `the marker block's placement: a verdict laid out in the prompt's order holds no block the gate reads:\n${verdict}`);
   const sentences = prompt.split(/(?<=[.:;])\s+|\n+/);
-  const placing = sentences.filter((sentence) => /marker block/i.test(sentence) && /\b(?:line|end|last|below|after|under|first)\b/i.test(sentence));
-  assert.ok(placing.length > 0, 'the marker block\'s placement: no sentence of the prompt says where the marker block goes');
-  const astray = placing.filter((sentence) => !/second line/i.test(sentence));
-  assert.deepEqual(astray, [], 'the marker block\'s placement: each sentence saying where the marker block goes places it on the comment\'s second line');
-  const post = prompt.slice(prompt.indexOf('\n## Post\n'));
-  const fence = post.search(/closing fence/i);
-  const rest = post.indexOf('- each acceptance item, met or unmet');
-  assert.ok(fence !== -1 && rest > fence, 'the marker block\'s placement: the rest of the verdict follows the marker block\'s closing fence');
+  const elsewhere = sentences.filter((sentence) => /marker block/i.test(sentence) && /\b(?:end|ends|last|final|bottom|top|third)\b/i.test(sentence));
+  assert.deepEqual(elsewhere, [], 'the marker block\'s placement: a sentence places the marker block somewhere other than the comment\'s second line');
   assertToolingClean();
 });
 
