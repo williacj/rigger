@@ -273,8 +273,9 @@ function movedCopy(dir) {
 
 /**
  * The rebuilt source copy, launchers and prompts, each checked against the manifest's sha256 first.
- * The comparison below sets aside only the header and slot line; in the source wrapper line it
- * rewrites caffeinate -i to caffeinate -dims, keeping every other byte in the comparison.
+ * The comparison below sets aside only the header, the slot line and the judge prompt's lines
+ * `placed` names; in the source wrapper line it rewrites caffeinate -i to caffeinate -dims,
+ * keeping every other byte in the comparison.
  */
 function sourceCopy(dir) {
   mkdirSync(dir);
