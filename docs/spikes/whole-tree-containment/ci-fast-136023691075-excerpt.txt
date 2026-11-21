@@ -1,7 +1,8 @@
 ABOUTME: Excerpt of the CI log of job 136023691075 ("fast", run 44656406941, head 241e48a3), the path-check failure on PR #1432, escape sequences removed.
 
 Fetched 2026-11-20 with: gh api --allow-escape-sequences repos/williacj/rigger/actions/jobs/136023691075/logs
-The raw log is 8,018,218 bytes, sha256 4fc6df70ae1d98992e4ab90888c09e9250a9bf09470cf78c0f257f19bae61917, 14,787 lines once escape sequences are removed with perl -pe 's/\[[0-9;]*[A-Za-z]//g'. Shown: lines 1-30, 8615-8635 and 14720-14787, each prefixed with its line number.
+The raw log is 8,018,218 bytes, sha256 4fc6df70ae1d98992e4ab90888c09e9250a9bf09470cf78c0f257f19bae61917, 14,787 lines once escape sequences are removed with perl -pe 's/\x1b\[[0-9;]*[A-Za-z]//g'. Shown: lines 1-30, 8615-8635 and 14720-14787, each prefixed with its line number.
+Note: this file's one ESC byte (0x1b), on the line above inside the quoted perl command, is written here as the literal text \x1b, because the engine's diff read refuses ESC bytes. Before that change the file's sha256 was f0dc0cad9afb3686bc7207d7d27c1f6746c3065a2487051fee41b3487eaa81f8. The raw log's sha256 above is unchanged.
 
     1  ﻿2026-11-20T01:49:52.2603768Z Current runner version: '2.338.2'
     2  2026-11-20T01:49:52.2620979Z ##[group]Runner Image Provisioner
