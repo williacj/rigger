@@ -1,0 +1,2 @@
+ABOUTME: Scratch file for #1444, never merged; its next line holds an ESC byte so the forge diff carries one.
+ESC byte follows: [31m red [0m end
