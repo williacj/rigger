@@ -597,7 +597,17 @@ import { acceptanceDigest, composeMarker } from '../src/workflow/marker.mjs';
 import { KINDS } from './judge-world.mjs';
 
 /** Fresh L3 handles share only the record reader and stand-in forge; no loop handle is reused. */
-const freshJudges = (built, options = {}) => loop({ ...built.handed, readRecord: built.events, ...options });
+function freshJudges(built, options = {}) {
+  const clock = options.clock ?? { ...manualClock(), pause: async () => {} };
+  const handle = loop({ ...built.handed, readRecord: built.events, ...options, clock });
+  const onClock = async (call) => {
+    const prior = realHost.clock;
+    realHost.clock = clock;
+    try { return await call(); }
+    finally { realHost.clock = prior; }
+  };
+  return { ...handle, pull: (...args) => onClock(() => handle.pull(...args)), run: (...args) => onClock(() => handle.run(...args)) };
+}
 const oneJudgeKind = { change: { ...KINDS.change, judges: ['reviewer'] } };
 const judgeVerdict = (body = cardIn(7, COLUMNS.review).body, role = 'reviewer') => composeMarker({
   card: 7, pull: 1007, head: HEAD, digest: acceptanceDigest(body), role, provider: config.roles[role].provider,
@@ -651,17 +661,13 @@ import { realHost } from '../src/substrate/host.mjs';
 /** The native stand-in establishes readiness; only the injected clock expires its judge deadline. */
 async function timedJudge(built, { verdict = false } = {}) {
   const clock = { ...manualClock(), pause: async () => {} };
-  const prior = realHost.clock;
-  realHost.clock = clock;
-  try {
-    built.agent.plan(7, 'reviewer', { hold: true });
-    const running = freshJudges(built, { clock }).pull();
-    const result = running.then((value) => ({ value }), (error) => ({ error }));
-    await waitFor(() => built.agent.held(7, 'reviewer'), 20_000);
-    if (verdict) built.repository.comment(1007, judgeVerdict(), '2026-11-21T02:00:00Z');
-    await clock.advance(clock.now() + 1001);
-    return await result;
-  } finally { realHost.clock = prior; }
+  built.agent.plan(7, 'reviewer', { hold: true });
+  const running = freshJudges(built, { clock }).pull();
+  const result = running.then((value) => ({ value }), (error) => ({ error }));
+  await waitFor(() => built.agent.held(7, 'reviewer'), 20_000);
+  if (verdict) built.repository.comment(1007, judgeVerdict(), '2026-11-21T02:00:00Z');
+  await clock.advance(clock.now() + 1001);
+  return await result;
 }
 
 // An exited first failure and a timed-out second dispatch form the same bounded failure pair.
