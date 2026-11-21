@@ -2188,12 +2188,20 @@ function judgePromptOnce({ bytes = 1048577, title = 'Card 10', judges = ['review
   settings.roles = { ...settings.roles, reviewer: { ...settings.roles.reviewer, provider: reviewerProvider } };
   settings.kinds = { ...settings.kinds, change: { ...settings.kinds.change, judges } };
   const consumer = consumerRepository(settings);
+  // A non-main default exposes a fixture push that updates a different remote branch.
+  gitIn(consumer, 'branch', '-m', 'fixture-mainline');
+  gitIn(consumer, 'push', '-q', 'origin', 'HEAD:refs/heads/fixture-mainline');
+  gitIn(join(dirname(consumer), 'origin.git'), 'symbolic-ref', 'HEAD', 'refs/heads/fixture-mainline');
   mkdirSync(join(consumer, '.claude', 'agents'), { recursive: true });
   writeFileSync(join(consumer, '.claude', 'agents', 'reviewer.md'), '# Fixture reviewer\n');
   writeFileSync(join(consumer, '.claude', 'agents', 'architect.md'), '# Fixture architect\n');
   gitIn(consumer, 'add', '-A');
   gitIn(consumer, 'commit', '-qm', 'Declare the consumer judges');
-  gitIn(consumer, 'push', '-q', 'origin', 'HEAD:refs/heads/main');
+  gitIn(consumer, 'push', '-q', 'origin', 'HEAD');
+  for (const role of ['reviewer', 'architect']) assert.equal(
+    gitIn(join(dirname(consumer), 'origin.git'), 'show', `HEAD:.claude/agents/${role}.md`), `# Fixture ${role}\n`,
+    'the remote default branch holds each judge instruction before the CLI runs',
+  );
   const head = gitIn(consumer, 'rev-parse', 'HEAD').trim();
   gitIn(consumer, 'push', '-q', 'origin', 'HEAD:refs/heads/rigger-10');
   const directory = temporaryDirectory('rigger-prompt-once-');
