@@ -61,3 +61,10 @@ GitHub's size limit and the command started its named rerun without checking the
 The corrected report is #1437 comment 7067626810. A later named acceptance run started at load
 32.79, above the standing bound; it is retained as an out-of-bound attempt. Further named runs
 wait at the bound before spawning the runner. Neither deviation is claimed compliant.
+
+The receipt guard rejected two proposed B3 counterexamples: the first reached an undefined
+dispatch lookup; the second correctly escalated early, but the forge double refused the write
+and the test rejected before its later assertions. Neither earns assertion proof. The new
+negative B3/B4/B5/B10/B12 cases now explicitly assert successful resolution, so an unexpected
+escalation is an assertion failure at the observable loop boundary. Earlier receipts remain
+retained at their earlier head and must be rerun at the reviewed head.
