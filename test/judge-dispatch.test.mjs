@@ -593,28 +593,6 @@ test('1437 A1: a judge exiting nonzero without a verdict records one failure at 
   }]);
 });
 
-// Each start calls the same once export the CLI calls; each invocation constructs a fresh loop.
-// The consumer's forge and append-only event record are the only workflow history between them.
-// proves R-LOOP-26, R-LOOP-27
-test('1437 B1: two fresh once invocations escalate the second failure naming the judge and both dispatches', async (t) => {
-  const built = failingJudgeInvocation(t);
-  await built.start();
-  assert.equal(built.events().filter(({ event }) => event === 'judge.failed').length, 1);
-  assert.deepEqual(built.events().filter(({ event }) => event === 'review.escalate'), []);
-  const second = await built.start();
-  assert.deepEqual(built.fixtureErrors, []);
-  const failures = built.events().filter(({ event }) => event === 'judge.failed');
-  assert.equal(failures.length, 2);
-  assert.notEqual(failures[0].dispatch, failures[1].dispatch);
-  const raised = built.events().filter(({ event }) => event === 'review.escalate');
-  assert.equal(raised.length, 1, 'the second once invocation escalates the judge failure pair');
-  assert.equal(raised[0].category, 'ambiguous');
-  assert.equal(raised[0].raiser, 'loop');
-  for (const text of ['reviewer', ...failures.map(({ dispatch }) => dispatch)]) assert.ok(raised[0].reason.includes(text), text);
-  assert.deepEqual(built.state().writes.filter(({ operation }) => operation === 'moveItem').map(({ args }) => args), [['item-1', 'Owner']], second.text);
-  assert.ok(built.state().repository.issues[0].labels.includes('rigger:escalated'));
-});
-
 import { acceptanceDigest, composeMarker } from '../src/workflow/marker.mjs';
 import { KINDS } from './judge-world.mjs';
 

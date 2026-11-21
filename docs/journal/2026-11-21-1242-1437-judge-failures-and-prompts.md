@@ -68,3 +68,10 @@ and the test rejected before its later assertions. Neither earns assertion proof
 negative B3/B4/B5/B10/B12 cases now explicitly assert successful resolution, so an unexpected
 escalation is an assertion failure at the observable loop boundary. Earlier receipts remain
 retained at their earlier head and must be rerun at the reviewed head.
+
+Item 4's literal CLI boundary now has two independent rigger.mjs once processes in the B1 CLI
+case in once.test.mjs. The replacement passed before the redundant, newly added exported-once
+B1 case was removed. It preserves both failure events, distinct dispatch ids, the reason's
+role and ids, ambiguous/loop attribution, the Owner move and escalation label; it also asserts
+different run ids. No test held at origin/main was removed. The full suite must pass again
+at the resulting head before handoff.
