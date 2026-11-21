@@ -72,8 +72,9 @@ const spelled = (args) => `\`${[FORGE, ...args].join(' ')}\``;
  * The `gh` subcommands the read runner admits other than `gh api`, each as its whole argument
  * list. A whole list rather than a subcommand name, so that `gh auth status --show-token`, which
  * would put a credential into whatever captured the output, is refused with everything else.
+ * `gh --version` is the one form with no subcommand: it names the installed release.
  */
-const READ_SUBCOMMANDS = [['auth', 'status']];
+const READ_SUBCOMMANDS = [['auth', 'status'], ['--version']];
 
 /** Whether `args` is exactly one of `lists`. */
 const oneOf = (args, lists) => lists.some((list) => list.length === args.length && list.every((word, i) => word === args[i]));

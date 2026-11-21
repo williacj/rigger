@@ -834,6 +834,7 @@ const COMMANDS = {
     if (!target.labels.includes(label)) target.labels.push(label);
     return JSON.stringify(target.labels.map((name) => ({ name })));
   },
+  [commandOf(['--version'])]: () => 'gh version 2.103.3 (2026-10-26)\nhttps://github.com/cli/cli/releases/tag/v2.103.3\n', // gh 2.103.3 on macOS, 2026-11-21 (#1448)
 };
 
 /** Every command the fake `gh` answers, as `commandOf` writes it. */

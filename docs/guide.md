@@ -233,6 +233,7 @@ Where one fails, do this:
 | Check | What you do |
 |---|---|
 | Node | Install the Node.js version the README's [prerequisites](../README.md#prerequisites) name. |
+| gh version | Install `gh` 2.97.0 or later, the version the README's [prerequisites](../README.md#prerequisites) name. |
 | gh auth | Sign in to GitHub's `gh` on the machine Rigger runs on. Rigger stores no credentials, and uses the ones you gave its tools ([`R-SAFE-1`](spec/requirements.md)). |
 | agent CLI auth | Sign in to the agent CLI of each provider your roles name, with that CLI's own login ([`R-SAFE-1`](spec/requirements.md)). |
 | config | Correct what the failure names. Rigger refuses a configuration naming anything it does not offer, and says what it refused ([`R-SCHED-10`](spec/requirements.md)). The keys are in [`ARCHITECTURE.md`, "Extension points"](../ARCHITECTURE.md#extension-points). |
