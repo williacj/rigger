@@ -1572,7 +1572,6 @@ under the card's claim, and nowhere else. It is not in L3's memory of cards it d
 again, and not in `.rigger/`. That failure to start does not survive the invocation.
 A Rigger that stops between those two dispatches loses the count, as between a maker's two
 attempts. The next invocation's failure to start that judge is then a first failure.
-
 A failure under `R-LOOP-25` survives in the event record (`R-STATE-4`). L2 records each as
 `judge.failed`, under the dispatch's id, with the fields "Telemetry" names. Where the read after
 that dispatch finds both a failure and that judge's readable verdict, L2 records `judge.failed`
