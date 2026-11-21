@@ -1,0 +1,7 @@
+ABOUTME: Spike #1429 evidence: laptop-side output of the SSH sessions that launched remote workers, copied unchanged below this line.
+Thu 11/19/2026 18:46:26.83 windows worker launcher HOST_ID=win-1 WF_FILE=wf-v1.js
+Thu 11/19/2026 18:48:06.82 worker exited errorlevel=-1
+Thu 11/19/2026 18:48:07.64 windows worker launcher HOST_ID=win-1 WF_FILE=wf-v1.js
+Thu 11/19/2026 18:52:58.02 worker exited errorlevel=-1
+Thu 11/19/2026 18:53:03.73 windows worker launcher HOST_ID=win-1 WF_FILE=wf-v1.js
+Thu 11/19/2026 19:13:00.37 worker exited errorlevel=-1

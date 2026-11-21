@@ -1,0 +1,277 @@
+ABOUTME: Spike #1429 evidence: failed npm test run 2 (2026-11-20 about 01:40Z), its complete failing-tests section and summary, copied unchanged below the next line.
+Source log: 10889 lines, 7621680 bytes, sha256 a2c613d5fe3b1748c79e4bd8ab2c80fca4edce5ce99a59072a370a5ed89f6600. Everything from the line '✖ failing tests:' (line 10615) to the end follows.
+✖ failing tests:
+
+test at test/path-check.test.mjs:160:1
+✖ every backticked path in the checked documents exists or is exempt (25.570959ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+  + [
+  +   {
+  +     line: 44,
+  +     missing: 'tree.log',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 79,
+  +     missing: 'versions.txt',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 126,
+  +     missing: 'logs/windows/worker-win-1.txt',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 136,
+  +     missing: 'histories/smoke-windows.json',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 145,
+  +     missing: 'killtest.sh',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 153,
+  +     missing: 'tree.log',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 158,
+  +     missing: 'card-kill-linux.json',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 158,
+  +     missing: 'card-kill-windows.json',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 158,
+  +     missing: 'card-kill-macos.json',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 180,
+  +     missing: 'pin-kill-macos-2.json',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 195,
+  +     missing: '[laptop host].local',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 203,
+  +     missing: 'pin-stop-macos-2.json',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 215,
+  +     missing: 'mac-b/[laptop host].local/85022',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 224,
+  +     missing: '@temporalio/workflow',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 227,
+  +     missing: 'pin-stop-macos.json',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 233,
+  +     missing: 'pin-kill-macos-2.json',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 241,
+  +     missing: 'mac-b/[laptop host].local/44645',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 251,
+  +     missing: 'logs/laptop/pintest-kill-2.out',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 257,
+  +     missing: 'pin-kill-macos-1.json',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 309,
+  +     missing: 'wf-v2.js',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 311,
+  +     missing: 'logs/wsl/worker-wsl-1.txt',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 318,
+  +     missing: 'ver-unpatched-stuck.json',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 332,
+  +     missing: 'wf-v3.js',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 334,
+  +     missing: 'ver-unpatched.json',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 340,
+  +     missing: 'wf-v3.js',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 343,
+  +     missing: 'ver-patched.json',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 348,
+  +     missing: 'ver-patched-new.json',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 352,
+  +     missing: 'docs.temporal.io/develop/typescript/versioning',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 355,
+  +     missing: '@temporalio/workflow/lib/workflow.d.ts',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 357,
+  +     missing: '@temporalio/worker',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 357,
+  +     missing: '@temporalio/common',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 359,
+  +     missing: 'worker-options.d.ts',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 376,
+  +     missing: 'claude-macos.json',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 377,
+  +     missing: 'logs/laptop/worker-mac-a.txt',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 394,
+  +     missing: '.claude/settings.local.json',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 402,
+  +     missing: 'logs/laptop/claude-projects-before.txt',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 403,
+  +     missing: 'claude-projects-after.txt',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 427,
+  +     missing: 'claude-home/projects/-Users-cjwilliams-GitHub-rigger-worktrees-1429-spike-engineer-spikes-1429-spike-engineer-app',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 501,
+  +     missing: 'temporal-dispatch-under-failure/',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 503,
+  +     missing: 'transcript.txt',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 506,
+  +     missing: 'ver-unpatched-stuck.json',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 508,
+  +     missing: 'logs/laptop/',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 508,
+  +     missing: 'logs/wsl/',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 508,
+  +     missing: 'logs/windows/',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 510,
+  +     missing: 'versions.txt',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 528,
+  +     missing: 'transcript.txt',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 561,
+  +     missing: 'claude-home-probe/',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 563,
+  +     missing: '.claude/settings.local.json',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 616,
+  +     missing: 'worker.js',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   },
+  +   {
+  +     line: 622,
+  +     missing: 'conhost.exe',
+  +     path: 'docs/spikes/temporal-dispatch-under-failure.md'
+  +   }
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/test/path-check.test.mjs:161:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 44, missing: 'tree.log' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 79, missing: 'versions.txt' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 126, missing: 'logs/windows/worker-win-1.txt' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 136, missing: 'histories/smoke-windows.json' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 145, missing: 'killtest.sh' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 153, missing: 'tree.log' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 158, missing: 'card-kill-linux.json' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 158, missing: 'card-kill-windows.json' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 158, missing: 'card-kill-macos.json' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 180, missing: 'pin-kill-macos-2.json' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 195, missing: '[laptop host].local' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 203, missing: 'pin-stop-macos-2.json' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 215, missing: 'mac-b/[laptop host].local/85022' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 224, missing: '@temporalio/workflow' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 227, missing: 'pin-stop-macos.json' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 233, missing: 'pin-kill-macos-2.json' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 241, missing: 'mac-b/[laptop host].local/44645' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 251, missing: 'logs/laptop/pintest-kill-2.out' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 257, missing: 'pin-kill-macos-1.json' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 309, missing: 'wf-v2.js' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 311, missing: 'logs/wsl/worker-wsl-1.txt' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 318, missing: 'ver-unpatched-stuck.json' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 332, missing: 'wf-v3.js' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 334, missing: 'ver-unpatched.json' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 340, missing: 'wf-v3.js' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 343, missing: 'ver-patched.json' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 348, missing: 'ver-patched-new.json' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 352, missing: 'docs.temporal.io/develop/typescript/versioning' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 355, missing: '@temporalio/workflow/lib/workflow.d.ts' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 357, missing: '@temporalio/worker' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 357, missing: '@temporalio/common' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 359, missing: 'worker-options.d.ts' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 376, missing: 'claude-macos.json' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 377, missing: 'logs/laptop/worker-mac-a.txt' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 394, missing: '.claude/settings.local.json' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 402, missing: 'logs/laptop/claude-projects-before.txt' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 403, missing: 'claude-projects-after.txt' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 427, missing: 'claude-home/projects/-Users-cjwilliams-GitHub-rigger-worktrees-1429-spike-engineer-spikes-1429-spike-engineer-app' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 501, missing: 'temporal-dispatch-under-failure/' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 503, missing: 'transcript.txt' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 506, missing: 'ver-unpatched-stuck.json' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 508, missing: 'logs/laptop/' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 508, missing: 'logs/wsl/' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 508, missing: 'logs/windows/' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 510, missing: 'versions.txt' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 528, missing: 'transcript.txt' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 561, missing: 'claude-home-probe/' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 563, missing: '.claude/settings.local.json' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 616, missing: 'worker.js' }, { path: 'docs/spikes/temporal-dispatch-under-failure.md', line: 622, missing: 'conhost.exe' } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

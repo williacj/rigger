@@ -1,0 +1,32 @@
+ABOUTME: Spike #1429 evidence: failed npm test run 5 (the pre-commit hook's suite, 2026-11-20 22:06:16Z to 22:15:36Z), its complete failing-tests section and summary, copied unchanged below the next line, except that the ruled-out word it reports is written corp[u]s, because the same check refuses the plain word in a tracked file.
+Source log: 11080 lines, 8265889 bytes, sha256 efbc8302877025c4ec3cc623985fa74b8ffece1c5433c7aaf74bdda5fc2f14a2. Everything from the line '✖ failing tests:' (line 11051) to the end follows.
+✖ failing tests:
+
+test at test/ruled-out-word-check.test.mjs:131:1
+✖ no tracked file in this repository carries a ruled-out word (1059.826958ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+  + [
+  +   'docs/spikes/temporal-dispatch-under-failure/transcript.txt:2080 corp[u]s'
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/test/ruled-out-word-check.test.mjs:136:10)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ 'docs/spikes/temporal-dispatch-under-failure/transcript.txt:2080 corp[u]s' ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+refused: the suite is not green.
+Fix it and commit the fix on its own before you go on (AGENTS.md, Before you start).
+--no-verify needs the owner's approval first.
