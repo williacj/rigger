@@ -105,26 +105,49 @@ test('codex-judge.sh writes a prompt naming suite-slot.sh by the absolute path o
 });
 
 /**
- * The lines under the prompt's "## Post" heading, up to the next "## " heading outside a fenced
- * block. Fences are told as the gate tells them, copied from src/workflow/marker.mjs: lines are
- * compared after trimEnd() (`parseMarker`, lines 163-167), a fence opens on `FENCE` and closes on
- * a run of its own mark at least as long (`secondBlock`, lines 214-225).
+ * The fenced code blocks of `lines` that no other block encloses, by CommonMark's fenced code
+ * rules: a fence opens on three or more backticks or tildes indented at most three spaces, a
+ * backtick fence's info string holding no backtick; it closes on a run of its own character at
+ * least as long, indented at most three spaces, with nothing after it but spaces or tabs; every
+ * line inside an open fence is content, and a fence never closed runs to the end. Each block names
+ * the line it opens on (`at`), the line it closes on (`end`, or `lines.length` where it never
+ * closes), its run (`mark`) and its info string (`info`).
  */
+function fencedBlocks(lines) {
+  const blocks = [];
+  let open = null;
+  for (let at = 0; at < lines.length; at += 1) {
+    if (open !== null) {
+      const run = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(lines[at])?.[1];
+      if (run !== undefined && run[0] === open.mark[0] && run.length >= open.mark.length) {
+        open.end = at;
+        open = null;
+      }
+      continue;
+    }
+    const opener = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(lines[at]);
+    if (opener === null || (opener[1][0] === '`' && opener[2].includes('`'))) continue;
+    open = { at, end: lines.length, mark: opener[1], info: opener[2].trim() };
+    blocks.push(open);
+  }
+  return blocks;
+}
+
+/** The indexes of `lines` outside every block `fencedBlocks` finds, fence lines included in their block. */
+function topLevel(lines) {
+  const inside = new Set();
+  for (const block of fencedBlocks(lines)) for (let at = block.at; at <= Math.min(block.end, lines.length - 1); at += 1) inside.add(at);
+  return lines.map((_, at) => at).filter((at) => !inside.has(at));
+}
+
+/** The lines under the prompt's "## Post" heading, up to the next "## " heading, both outside every fenced block. */
 function postSection(prompt) {
   const lines = prompt.split('\n');
-  let fence = null;
-  let start = -1;
-  for (let at = 0; at < lines.length; at += 1) {
-    const line = lines[at].trimEnd();
-    if (fence !== null) {
-      const run = /^ {0,3}(`+|~+)[ \t]*$/.exec(line)?.[1];
-      if (run !== undefined && run[0] === fence[0] && run.length >= fence.length) fence = null;
-    } else if (line.startsWith('## ')) {
-      if (start !== -1) return lines.slice(start, at);
-      if (line === '## Post') start = at + 1;
-    } else fence = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1] ?? null;
-  }
-  return start === -1 ? [] : lines.slice(start);
+  const outside = topLevel(lines);
+  const start = outside.find((at) => lines[at].trimEnd() === '## Post');
+  if (start === undefined) return [];
+  const end = outside.find((at) => at > start && lines[at].startsWith('## '));
+  return lines.slice(start + 1, end === undefined ? lines.length : end);
 }
 
 // D29 reason: wiring; the real codex-judge.sh fills the judge prompt with sed and hands it to the
@@ -140,24 +163,18 @@ test('codex-judge.sh hands codex a prompt placing the marker block on the verdic
 
   assert.equal(result.status, 0, result.stderr);
   const post = postSection(codexCalls(w)[0].stdin);
-  const examples = [];
-  for (let at = 0; at < post.length; at += 1) {
-    if (!/^````(?!`)/.test(post[at])) continue;
-    const close = post.indexOf('````', at + 1);
-    if (close === -1) break;
-    const inside = post.slice(at + 1, close);
-    if (inside.includes('```rigger-marker')) examples.push(inside);
-    at = close;
-  }
+  const examples = fencedBlocks(post)
+    .filter((block) => block.mark === '````' && block.end < post.length && post[block.end].trimEnd() === '````')
+    .map((block) => post.slice(block.at + 1, block.end))
+    .filter((inside) => inside.includes('```rigger-marker'));
   const broken = [];
   if (examples.length !== 1) broken.push(`E1: the Post section holds ${examples.length} four-backtick blocks with a \`\`\`rigger-marker line, not exactly one`);
   else {
     const [example] = examples;
     if (!(example[0].startsWith('**Codex ') && example[0].endsWith('**'))) broken.push(`E2: the example's first line is not the **Codex …** heading: ${example[0]}`);
     if (parseMarker(example.join('\n'), 1).state === 'none') broken.push('E3: the gate reads no marker block on the example\'s second line');
-    const fenceLines = example.map((line) => line.trimEnd());
-    const fence = fenceLines.indexOf('```', fenceLines.indexOf('```rigger-marker') + 1);
-    if (fence === -1 || !example.slice(fence + 1).some((line) => line.trim() !== '')) broken.push('E4: no non-empty line follows the marker block\'s closing fence');
+    const block = fencedBlocks(example).find((fenced) => fenced.mark === '```' && fenced.info === 'rigger-marker');
+    if (block === undefined || block.end === example.length || !example.slice(block.end + 1).some((line) => line.trim() !== '')) broken.push('E4: no non-empty line follows the marker block\'s closing fence');
   }
   assert.deepEqual(broken, [], `the marker block's placement: the example verdict layout breaks ${broken.map((entry) => entry.slice(0, 2)).join(' and ')}`);
 });
