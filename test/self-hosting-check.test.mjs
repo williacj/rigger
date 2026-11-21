@@ -385,6 +385,29 @@ function assertPassed(ran, head = HEAD) {
   assert.deepEqual(reasons(ran), []);
 }
 
+test('the self-hosting check rules on rigger.config.mjs in a diff holding an ESC byte', (t) => {
+  const diff = changing('rigger.config.mjs').replace('+two\n', '+\x1b[31mtwo\n');
+  assert.ok(diff.includes('\x1b'), 'the served diff holds an ESC byte');
+  const clock = temporaryDirectory('rigger-self-hosting-clock-');
+  const preload = join(clock, 'clock.mjs');
+  const marker = join(clock, 'clock.json');
+  writeFileSync(preload, [
+    '// ABOUTME: Gives the self-hosting check logical deadline timers.',
+    "import { mock } from 'node:test';",
+    "import { writeFileSync } from 'node:fs';",
+    `if (process.argv[1] === ${JSON.stringify(SCRIPT)}) {`,
+    "  mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: Date.now() });",
+    `  writeFileSync(${JSON.stringify(marker)}, '{"timers":"mocked"}');`,
+    '}', '',
+  ].join('\n'));
+  const options = [process.env.NODE_OPTIONS, `--import=${pathToFileURL(preload).href}`].filter(Boolean).join(' ');
+  const ran = checked(forge({ pullRequests: [pullFrom({ diff })] }), PULL, { NODE_OPTIONS: options });
+  assert.deepEqual(JSON.parse(readFileSync(marker, 'utf8')), { timers: 'mocked' }, 'the child uses logical deadline timers');
+  assert.ok(ran.lines.includes('touches: rigger.config.mjs'), ran.stdout + ran.stderr);
+  t.diagnostic(ran.lines.find((line) => line.startsWith('touches:')));
+  assertRefused(ran, /^owner: no marker$/);
+});
+
 test('the check fails a pull request touching a listed path while it holds no owner marker, printing the head it read and naming the owner', () => {
   assertRefused(checked(forge({ pullRequests: [pullFrom()] })), /^owner: no marker$/);
 });

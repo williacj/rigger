@@ -93,7 +93,8 @@ export const API_VERSION_HEADER = 'X-GitHub-Api-Version: 2026-03-10';
 /**
  * The whole of what may follow `gh api <path>` for the read runner to send it: an explicit GET,
  * and, after `-X GET` only, the header asking for a diff or the one naming the policy endpoints'
- * API version.
+ * API version. Only the diff form also admits `--allow-escape-sequences`, after its header:
+ * gh 2.103.3 refuses a raw diff holding ESC without it (#1441, measured on 2026-11-20).
  *
  * `gh` chooses the method itself when none is named, and where it can disagree with a reading of
  * the request (`D16` rule 3), measured with gh 2.99.0 on macOS on 2026-09-25 through a local
@@ -104,7 +105,7 @@ export const API_VERSION_HEADER = 'X-GitHub-Api-Version: 2026-03-10';
  * API version, each as a fixed literal.
  * `test/forge-runners.test.mjs` asks `gh` the same question each run, of each header's form too.
  */
-const EXPLICIT_GET = [['-X', 'GET'], ['--method', 'GET'], ['-X', 'GET', '-H', DIFF_HEADER], ['-X', 'GET', '-H', API_VERSION_HEADER]];
+const EXPLICIT_GET = [['-X', 'GET'], ['--method', 'GET'], ['-X', 'GET', '-H', DIFF_HEADER], ['-X', 'GET', '-H', API_VERSION_HEADER], ['-X', 'GET', '-H', DIFF_HEADER, '--allow-escape-sequences']];
 
 /** How an operation is named in a refusal: its type, its name if it has one, and its root fields. */
 function named(operation) {
