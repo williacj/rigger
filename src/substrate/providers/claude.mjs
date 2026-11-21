@@ -6,6 +6,9 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { startFailure } from '../process.mjs';
 import { atStart } from '../process.mjs';
 
+/** No Claude Code prompt limit has been measured. */
+export const promptLimit = undefined;
+
 /*
  * Every flag and setting here is grounded in #473's report, `docs/spikes/what-headless-sessions-
  * load.md`, measured with Claude Code 2.1.286, and cited below by its run labels. Where `claude`'s

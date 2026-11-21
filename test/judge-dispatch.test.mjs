@@ -546,3 +546,283 @@ test('loop is refused when built where judgeDirectory is not a function, naming 
     assert.throws(() => loop({ ...built.handed, judgeDirectory }), /\bjudgeDirectory\b/, String(judgeDirectory));
   }
 });
+
+import { optionalWorld } from './optional-config-world.mjs';
+import { minimalConfig } from './optional-config.mjs';
+import { card as consumerCard } from './verb-consumer.mjs';
+import { gitIn } from './git-repository.mjs';
+import { seedRepositoryAt } from './fake-gh.mjs';
+import { spentRounds } from './judge-world.mjs';
+
+/** A new verb invocation over the existing logical-agent and forge contracts, with no judge marker. */
+function failingJudgeInvocation(t, options = {}) {
+  const settings = minimalConfig();
+  settings.kinds.change.judges = ['reviewer'];
+  const built = optionalWorld(t, 'minimal', {
+    settings,
+    items: [consumerCard(10, 'Review')],
+    plan: { 10: { reviewer: { exit: 7 } } },
+    ...options,
+  });
+  const head = gitIn(built.consumer, 'rev-parse', 'HEAD').trim();
+  gitIn(built.consumer, 'push', '-q', 'origin', 'HEAD:refs/heads/rigger-10');
+  const { number, title, body, labels } = consumerCard(10, 'Review');
+  seedRepositoryAt(built.statePath, { issues: [{ number, title, body, labels }], pullRequests: [{ number: 11, head: 'rigger-10', sha: head, mergeBase: head, diff: '' }] });
+  return { ...built, head };
+}
+
+// A started nonzero judge must leave an observable failure, rather than disappearing between runs.
+// proves R-LOOP-25
+test('1437 A1: a judge exiting nonzero without a verdict records one failure at its dispatched head and acceptance', async (t) => {
+  const built = failingJudgeInvocation(t);
+  const round = { number: 10, pull: 11, body: consumerCard(10, 'Review').body };
+  const spent = () => spentRounds(built.state().repository.pullRequests[0].comments ?? [], round);
+  const before = spent();
+  await built.start();
+  assert.deepEqual(built.fixtureErrors, []);
+  const events = built.events();
+  const start = events.find(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'reviewer');
+  assert.ok(start, 'the reviewer must actually be dispatched');
+  const input = built.starts.find(({ command }) => command === 'claude').input;
+  const failures = events.filter(({ event }) => event === 'judge.failed');
+  assert.equal(failures.length, 1, 'one started judge without a readable verdict must record exactly one judge.failed');
+  assert.equal(spent(), before, 'the failure itself spends no round');
+  assert.deepEqual(failures.map(({ card, dispatch, role, pull, head, digest, outcome }) => ({ card, dispatch, role, pull, head, digest, outcome })), [{
+    card: 10, dispatch: start.dispatch, role: 'reviewer', pull: 11, head: built.head,
+    digest: input.match(/^digest: ([0-9a-f]{64})$/m)[1], outcome: { exit: 7, timedOut: false },
+  }]);
+});
+
+// Each start calls the same once export the CLI calls; each invocation constructs a fresh loop.
+// The consumer's forge and append-only event record are the only workflow history between them.
+// proves R-LOOP-26, R-LOOP-27
+test('1437 B1: two fresh once invocations escalate the second failure naming the judge and both dispatches', async (t) => {
+  const built = failingJudgeInvocation(t);
+  await built.start();
+  assert.equal(built.events().filter(({ event }) => event === 'judge.failed').length, 1);
+  assert.deepEqual(built.events().filter(({ event }) => event === 'review.escalate'), []);
+  const second = await built.start();
+  assert.deepEqual(built.fixtureErrors, []);
+  const failures = built.events().filter(({ event }) => event === 'judge.failed');
+  assert.equal(failures.length, 2);
+  assert.notEqual(failures[0].dispatch, failures[1].dispatch);
+  const raised = built.events().filter(({ event }) => event === 'review.escalate');
+  assert.equal(raised.length, 1, 'the second once invocation escalates the judge failure pair');
+  assert.equal(raised[0].category, 'ambiguous');
+  assert.equal(raised[0].raiser, 'loop');
+  for (const text of ['reviewer', ...failures.map(({ dispatch }) => dispatch)]) assert.ok(raised[0].reason.includes(text), text);
+  assert.deepEqual(built.state().writes.filter(({ operation }) => operation === 'moveItem').map(({ args }) => args), [['item-1', 'Owner']], second.text);
+  assert.ok(built.state().repository.issues[0].labels.includes('rigger:escalated'));
+});
+
+import { acceptanceDigest, composeMarker } from '../src/workflow/marker.mjs';
+import { KINDS } from './judge-world.mjs';
+
+/** Fresh L3 handles share only the record reader and stand-in forge; no loop handle is reused. */
+const freshJudges = (built, options = {}) => loop({ ...built.handed, readRecord: built.events, ...options });
+const oneJudgeKind = { change: { ...KINDS.change, judges: ['reviewer'] } };
+const judgeVerdict = (body = cardIn(7, COLUMNS.review).body) => composeMarker({
+  card: 7, pull: 1007, head: HEAD, digest: acceptanceDigest(body), role: 'reviewer', provider: config.roles.reviewer.provider,
+  verdict: 'sound', items: ['met'], coverage: 'covered',
+}, 'Sound');
+
+// A verdict read in an intervening invocation breaks the pair even after that comment is edited.
+// proves R-LOOP-28
+test('1437 B6: a readable verdict between two fresh failure invocations restarts the count', SETTLES_WITHIN, async () => {
+  const built = judgeWorld({ ...reviewed(7), kinds: oneJudgeKind });
+  built.agent.plan(7, 'reviewer', { exit: 7 });
+  await freshJudges(built).pull();
+  built.repository.comment(1007, judgeVerdict(), '2026-11-21T01:00:00Z');
+  await freshJudges(built).pull();
+  assert.ok(recorded(built, 'L2', 'marker.read').some(({ verdict }) => verdict === 'sound'), 'the intervening invocation actually read the verdict');
+  built.repository.update(1007, { comments: built.repository.pull(1007).comments.map((comment) => ({ ...comment, lastEditedAt: '2026-11-21T01:01:00Z' })) });
+  const failure = await freshJudges(built).pull().then(() => undefined, (error) => error);
+  assert.equal(recorded(built, 'L2', 'judge.failed').length, 2);
+  assert.deepEqual(recorded(built, 'L2', 'review.escalate'), [], 'a verdict between failures resets the count');
+  assert.equal(failure, undefined);
+});
+
+import { columnChanges } from '../src/workflow/transitions.mjs';
+
+// Both engine escalation routes restart the count; the label is only the owner's stop signal.
+// proves R-LOOP-29
+test('1437 B8: a recorded loop or maker escalation separates fresh judge failure invocations', SETTLES_WITHIN, async (t) => {
+  for (const raiser of ['loop', 'maker']) await t.test(raiser, async () => {
+    const issue = cardIn(7, COLUMNS.review);
+    const built = judgeWorld({ cards: [issue], kinds: oneJudgeKind,
+      forge: { pullRequests: [pullFor(7)], issues: [{ number: 7, title: issue.title, body: issue.body, labels: issue.labels }] } });
+    built.agent.plan(7, 'reviewer', { exit: 7 });
+    await freshJudges(built).pull();
+    const [card] = await built.fake.operations.readItems();
+    const changes = columnChanges({ config: built.handed.config, sink: built.handed.sink, items: built.fake.operations,
+      reads: built.repository.operations, repositoryWrites: built.repository });
+    await changes.escalated(card, { category: 'ambiguous', raiser, destination: 'owner', reason: 'An earlier question for the owner.' });
+    built.fake.setIssueLabels(config.repo, 7, [...issue.labels, 'rigger:escalated']);
+    built.fake.setIssueLabels(config.repo, 7, issue.labels);
+    await built.fake.operations.moveItem(card.id, COLUMNS.review);
+    const failed = await freshJudges(built).pull().then(() => undefined, (error) => error);
+    assert.equal(recorded(built, 'L2', 'judge.failed').length, 2);
+    assert.equal(recorded(built, 'L2', 'review.escalate').length, 1, `${raiser}: no escalation after the owner's answer`);
+    assert.equal(failed, undefined);
+  });
+});
+
+import { manualClock } from './clock-report-world.mjs';
+import { realHost } from '../src/substrate/host.mjs';
+
+/** The native stand-in establishes readiness; only the injected clock expires its judge deadline. */
+async function timedJudge(built, { verdict = false } = {}) {
+  const clock = { ...manualClock(), pause: async () => {} };
+  const prior = realHost.clock;
+  realHost.clock = clock;
+  try {
+    built.agent.plan(7, 'reviewer', { hold: true });
+    const running = freshJudges(built, { clock }).pull();
+    const result = running.then((value) => ({ value }), (error) => ({ error }));
+    await waitFor(() => built.agent.held(7, 'reviewer'), 20_000);
+    if (verdict) built.repository.comment(1007, judgeVerdict(), '2026-11-21T02:00:00Z');
+    await clock.advance(clock.now() + 1001);
+    return await result;
+  } finally { realHost.clock = prior; }
+}
+
+// An exited first failure and a timed-out second dispatch form the same bounded failure pair.
+// proves R-LOOP-26, R-LOOP-27
+test('1437 B2: a fresh timeout invocation completes an earlier exit failure pair', SETTLES_WITHIN, async () => {
+  const roles = { ...config.roles, reviewer: { ...config.roles.reviewer, timeout: 1000 } };
+  const built = judgeWorld({ ...reviewed(7), kinds: oneJudgeKind, roles });
+  built.agent.plan(7, 'reviewer', { exit: 7 });
+  await freshJudges(built).pull();
+  await timedJudge(built);
+  const failures = recorded(built, 'L2', 'judge.failed');
+  assert.equal(failures.length, 2);
+  assert.equal(failures[1].outcome.timedOut, true, 'the second dispatch really exceeded its injected deadline');
+  assert.equal(recorded(built, 'L2', 'review.escalate').length, 1);
+});
+
+// A single failure must remain retryable, without spending the pair's second failure in advance.
+// proves R-LOOP-27
+test('1437 B3: one failure dispatches the judge again in a fresh invocation without escalation', SETTLES_WITHIN, async () => {
+  const built = judgeWorld({ ...reviewed(7), kinds: oneJudgeKind });
+  built.agent.plan(7, 'reviewer', { exit: 7 });
+  await freshJudges(built).pull();
+  assert.deepEqual(recorded(built, 'L2', 'review.escalate'), []);
+  built.agent.plan(7, 'reviewer', { exit: 0 });
+  await freshJudges(built).pull();
+  assert.equal(recorded(built, 'L3', 'dispatch').length, 2, 'the next invocation dispatches the judge again');
+  assert.equal(recorded(built, 'L2', 'judge.failed').length, 1);
+  assert.deepEqual(recorded(built, 'L2', 'review.escalate'), []);
+});
+
+// Failures at different heads or acceptances cannot be paired by a role alone.
+// proves R-LOOP-27
+test('1437 B4 B5: fresh invocations at a changed head or acceptance do not complete a failure pair', SETTLES_WITHIN, async (t) => {
+  for (const changed of ['head', 'acceptance']) await t.test(changed, async () => {
+    const built = judgeWorld({ ...reviewed(7), kinds: oneJudgeKind });
+    built.agent.plan(7, 'reviewer', { exit: 7 });
+    await freshJudges(built).pull();
+    const options = {};
+    if (changed === 'head') built.repository.update(1007, { sha: '6'.repeat(40) });
+    else {
+      const prior = built.handed.board;
+      options.board = { ...prior, readPriority: async () => {
+        const read = await prior.readPriority();
+        return { ...read, items: read.items.map((card) => ({ ...card, body: card.body.replace('prints its help', 'prints its usage') })) };
+      } };
+    }
+    await freshJudges(built, options).pull();
+    const failures = recorded(built, 'L2', 'judge.failed');
+    assert.equal(failures.length, 2);
+    assert.notEqual(failures[0][changed === 'head' ? 'head' : 'digest'], failures[1][changed === 'head' ? 'head' : 'digest']);
+    assert.deepEqual(recorded(built, 'L2', 'review.escalate'), [], `${changed}: these failures are not at one pair`);
+  });
+});
+
+// A timeout's readable verdict resets earlier failures, including its own failure event.
+// proves R-LOOP-28
+test('1437 B7 B12: a readable timeout verdict separates failures in either position', SETTLES_WITHIN, async (t) => {
+  for (const firstTimeout of [false, true]) await t.test(firstTimeout ? 'B12' : 'B7', async () => {
+    const roles = { ...config.roles, reviewer: { ...config.roles.reviewer, timeout: 1000 } };
+    const built = judgeWorld({ ...reviewed(7), kinds: oneJudgeKind, roles });
+    if (!firstTimeout) {
+      built.agent.plan(7, 'reviewer', { exit: 7 });
+      await freshJudges(built).pull();
+    }
+    const ended = await timedJudge(built, { verdict: true });
+    assert.equal(ended.error, undefined);
+    if (firstTimeout) {
+      built.repository.update(1007, { comments: built.repository.pull(1007).comments.map((comment) => ({ ...comment, lastEditedAt: '2026-11-21T02:01:00Z' })) });
+      built.agent.plan(7, 'reviewer', { exit: 7 });
+      await freshJudges(built).pull();
+    }
+    assert.equal(recorded(built, 'L2', 'judge.failed').length, 2);
+    assert.ok(recorded(built, 'L2', 'marker.read').some(({ verdict }) => verdict === 'sound'));
+    assert.deepEqual(recorded(built, 'L2', 'review.escalate'), [], 'the timeout verdict breaks the failure pair');
+  });
+});
+
+// A hand-added label is not a recorded Rigger escalation and therefore cannot reset failures.
+// proves R-LOOP-29
+test('1437 B9: an owner label added and removed between fresh failures does not reset their pair', SETTLES_WITHIN, async () => {
+  const built = judgeWorld({ ...reviewed(7), kinds: oneJudgeKind });
+  built.agent.plan(7, 'reviewer', { exit: 7 });
+  await freshJudges(built).pull();
+  built.fake.setIssueLabels(config.repo, 7, ['type:change', 'rigger:escalated']);
+  built.fake.setIssueLabels(config.repo, 7, ['type:change']);
+  await freshJudges(built).pull().catch(() => {});
+  assert.equal(recorded(built, 'L2', 'judge.failed').length, 2);
+  assert.equal(recorded(built, 'L2', 'review.escalate').length, 1, 'the unrecorded label does not forgive the first failure');
+});
+
+// A second role's failure cannot complete the first role's pair on the same card.
+// proves R-LOOP-27
+test('1437 B10: two judges failing in separate invocations each have only one failure', SETTLES_WITHIN, async () => {
+  const kinds = { change: { ...oneJudgeKind.change, judges: ['reviewer', 'architect'] } };
+  const built = judgeWorld({ ...reviewed(7), kinds });
+  built.agent.plan(7, 'reviewer', { exit: 7 });
+  await freshJudges(built).pull();
+  const comments = built.repository.pull(1007).comments.map((comment) => ({ ...comment, lastEditedAt: '2026-11-21T02:01:00Z' }));
+  built.repository.update(1007, { comments });
+  built.repository.comment(1007, judgeVerdict(), '2026-11-21T02:02:00Z');
+  built.agent.plan(7, 'architect', { exit: 7 });
+  await freshJudges(built).pull();
+  assert.deepEqual(recorded(built, 'L2', 'judge.failed').map(({ role }) => role), ['reviewer', 'architect']);
+  assert.deepEqual(recorded(built, 'L2', 'review.escalate'), []);
+});
+
+// Clock-held runs have no per-invocation judge memory; the event record still bounds retries.
+// proves R-LOOP-26, R-LOOP-27
+test('1437 B11: two judge failures in one clock-held run escalate once', SETTLES_WITHIN, async () => {
+  const built = judgeWorld({ ...reviewed(7), kinds: oneJudgeKind });
+  built.agent.plan(7, 'reviewer', { exit: 7 });
+  const clock = { ...manualClock(Date.now()), pause: async () => {} };
+  const config = { ...built.handed.config, clock: { poll: 1000, triggers: { later: {
+    interval: 3600000, anchor: new Date(clock.now()).toISOString(), catchUp: 'skip', job: 'report',
+  } } } };
+  const stop = new AbortController();
+  const running = freshJudges(built, { config, clock }).run({ stop: stop.signal });
+  const result = running.then((value) => ({ value }), (error) => ({ error }));
+  try { await waitFor(() => recorded(built, 'L2', 'review.escalate').length === 1, 20_000); }
+  finally { stop.abort(); await result; }
+  assert.equal(recorded(built, 'L2', 'judge.failed').length, 2);
+  assert.equal(recorded(built, 'L2', 'review.escalate')[0].category, 'ambiguous');
+});
+
+import { appendFileSync } from 'node:fs';
+
+// Losing the event history must preserve the current failure without inventing a pair.
+// proves R-LOOP-26
+test('1437 unreadable record: once records the second failure without escalation and names the unreadable stream', async (t) => {
+  let calls = 0;
+  let built;
+  built = failingJudgeInvocation(t, { beforeAgent: async () => {
+    if (++calls === 2) appendFileSync(join(built.consumer, '.rigger', 'events.jsonl'), 'unreadable event\n');
+  } });
+  await built.start();
+  const result = await built.start();
+  const stream = join(built.consumer, '.rigger', 'events.jsonl');
+  const events = readFileSync(stream, 'utf8').split('\n').filter((line) => line.startsWith('{')).map((line) => JSON.parse(line));
+  assert.equal(events.filter(({ event }) => event === 'judge.failed').length, 2, 'the current failure is still recorded');
+  assert.deepEqual(events.filter(({ event }) => event === 'review.escalate'), []);
+  assert.ok(result.text.includes(stream), 'the verb names the record it could not read');
+});
