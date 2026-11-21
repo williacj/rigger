@@ -1,4 +1,4 @@
-// ABOUTME: Checks the gate import closure for its supported import forms.
+// ABOUTME: Checks the gate import closure and the self-hosting pin in the tree being committed.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
@@ -9,6 +9,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { measure, main } from '../.github/scripts/gate-closure.mjs';
 import { gitIn } from './git-repository.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { commitParents, repositoryAt, worktreeAt } from './git-repository.mjs';
+import { existsSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 function fixture(files) {
@@ -219,11 +222,233 @@ test('the self-hosting workflow holds its pin in one canonical line and refuses 
     { message: `${WORKFLOW} holds the canonical SELF_HOSTING_COMMIT line twice, at lines 6 and 7` }, 'twice');
 });
 
-// A pin the default branch does not reach, such as a squash-merged pull request's own head
-// commit, still fetches through codeload (D35 rule 6's reversal names such a move).
-test('the self-hosting check pins a commit HEAD reaches', () => {
-  const pin = checkPin();
-  assert.equal(gitIn(ROOT, 'merge-base', pin, 'HEAD').trim(), pin, `${pin} is no ancestor of HEAD`);
+/** Refuses a pin that the commit being made cannot reach through its parents. */
+function assertPinReached(root, pin) {
+  const parents = commitParents(root);
+  const reached = parents.some((parent) => {
+    try { return gitIn(root, 'merge-base', pin, parent).trim() === pin; }
+    catch { return false; }
+  });
+  assert.ok(reached, `${pin} is no ancestor of the commit being made (parents: ${parents.join(', ')})`);
+}
+
+// A squash-merged pull request's own head is still unreachable through the commit's parents
+// (D35 rule 6); a real merge also reaches the commits recorded in its worktree's MERGE_HEAD.
+test('the self-hosting check pins a commit the commit being made reaches', () => {
+  assertPinReached(ROOT, checkPin());
+});
+
+/** Commits one fixture file with real git, returning the commit it made. */
+function commitFile(root, path, text) {
+  mkdirSync(dirname(join(root, path)), { recursive: true });
+  writeFileSync(join(root, path), text);
+  gitIn(root, 'add', path);
+  gitIn(root, 'commit', '-qm', path);
+  return gitIn(root, 'rev-parse', 'HEAD').trim();
+}
+
+const workflowPin = (pin) => `env:\n  SELF_HOSTING_COMMIT: '${pin}'\n`;
+const pinIn = (root) => canonicalPin(readFileSync(join(root, WORKFLOW), 'utf8'));
+
+/** Diverged branches: incoming moves the workflow's pin to its own ancestor. */
+function pinMergeFixture() {
+  const directory = temporaryDirectory('rigger-pin-parents-');
+  const root = repositoryAt(join(directory, 'repository'), { conflict: 'base\n' });
+  gitIn(root, 'branch', '-M', 'main');
+  const base = gitIn(root, 'rev-parse', 'HEAD').trim();
+  const fork = commitFile(root, WORKFLOW, workflowPin(base));
+  gitIn(root, 'switch', '-qc', 'incoming');
+  const pin = commitFile(root, 'incoming', 'incoming\n');
+  const incoming = commitFile(root, WORKFLOW, workflowPin(pin));
+  gitIn(root, 'switch', '-q', 'main');
+  const head = commitFile(root, 'local', 'local\n');
+  return { directory, root, base, fork, pin, incoming, head };
+}
+
+/** Git's own per-worktree record path, independently observed by the fixtures. */
+const recordPath = (root, name) => resolve(root, gitIn(root, 'rev-parse', '--git-path', name).trim());
+const mergeRecord = (root) => readFileSync(recordPath(root, 'MERGE_HEAD'), 'utf8').trim().split('\n');
+
+/** The common check reads the workflow without changing the commit, index, worktree or merge. */
+function assertPinOutcome(root, accepted) {
+  const pin = pinIn(root);
+  const snapshot = () => ({
+    head: gitIn(root, 'rev-parse', 'HEAD'),
+    status: gitIn(root, 'status', '--porcelain'),
+    workflow: readFileSync(join(root, WORKFLOW), 'utf8'),
+    merge: existsSync(recordPath(root, 'MERGE_HEAD')) ? mergeRecord(root) : null,
+  });
+  const before = snapshot();
+  if (accepted) assert.doesNotThrow(() => assertPinReached(root, pin));
+  else assert.throws(() => assertPinReached(root, pin), (error) => {
+    assert.equal(error.code, 'ERR_ASSERTION');
+    assert.ok(error.message.includes(pin), error.message);
+    return true;
+  });
+  assert.deepEqual(snapshot(), before, 'checking the pin must leave the repository unchanged');
+}
+
+// Omitting HEAD outside a merge would refuse an ordinary staged commit with an ancestor pin.
+test('P1: an ordinary commit reaches an ancestor pin through HEAD', () => {
+  const { root, base, head } = pinMergeFixture();
+  assert.notEqual(base, head);
+  assert.equal(pinIn(root), base);
+  assert.equal(gitIn(root, 'merge-base', base, 'HEAD').trim(), base);
+  assert.equal(existsSync(recordPath(root, 'MERGE_HEAD')), false);
+  assertPinOutcome(root, true);
+});
+
+// Considering all refs instead of parents would accept this unmerged branch/remote pin.
+test('P2: branch and remote-tracking reachability cannot admit an ordinary commit', () => {
+  const { root, pin, incoming } = pinMergeFixture();
+  gitIn(root, 'update-ref', 'refs/remotes/origin/incoming', incoming);
+  assert.equal(gitIn(root, 'merge-base', pin, 'incoming').trim(), pin);
+  assert.equal(gitIn(root, 'merge-base', pin, 'refs/remotes/origin/incoming').trim(), pin);
+  assert.notEqual(gitIn(root, 'merge-base', pin, 'HEAD').trim(), pin);
+  writeFileSync(join(root, WORKFLOW), workflowPin(pin));
+  gitIn(root, 'add', WORKFLOW);
+  assert.equal(existsSync(recordPath(root, 'MERGE_HEAD')), false);
+  assertPinOutcome(root, false);
+});
+
+// Treating a failed git lookup as acceptance would hide a pin that names no object.
+test('P3: a missing pin object is refused by its name', () => {
+  const { root } = pinMergeFixture();
+  const pin = 'f'.repeat(40);
+  assert.throws(() => gitIn(root, 'cat-file', '-e', pin));
+  writeFileSync(join(root, WORKFLOW), workflowPin(pin));
+  gitIn(root, 'add', WORKFLOW);
+  assertPinOutcome(root, false);
+});
+
+// HEAD alone wrongly refuses the workflow merged from incoming before the merge commit exists.
+test('M1: a merge across a pin move reaches the pin through the merged commit', () => {
+  const { root, pin, incoming, head } = pinMergeFixture();
+  assert.notEqual(gitIn(root, 'merge-base', pin, 'HEAD').trim(), pin);
+  gitIn(root, 'merge', '--no-commit', '--no-ff', incoming);
+  assert.equal(gitIn(root, 'rev-parse', 'HEAD').trim(), head);
+  assert.equal(gitIn(root, 'rev-parse', 'MERGE_HEAD').trim(), incoming);
+  assert.equal(pinIn(root), pin);
+  assertPinOutcome(root, true);
+});
+
+// Considering only MERGE_HEAD would refuse a merge that keeps HEAD's existing ancestor pin.
+test('M2: a merge that keeps the pin reaches it through HEAD', () => {
+  const { root, base, head } = pinMergeFixture();
+  gitIn(root, 'switch', '-q', 'incoming');
+  const incoming = commitFile(root, WORKFLOW, workflowPin(base));
+  gitIn(root, 'switch', '-q', 'main');
+  commitFile(root, WORKFLOW, workflowPin(head));
+  gitIn(root, 'merge', '--no-commit', '--no-ff', incoming);
+  assert.deepEqual(mergeRecord(root), [incoming]);
+  assert.equal(pinIn(root), head);
+  assert.equal(gitIn(root, 'merge-base', head, 'HEAD').trim(), head);
+  assert.notEqual(gitIn(root, 'merge-base', head, incoming).trim(), head);
+  assertPinOutcome(root, true);
+});
+
+// A merge record is no blanket permission for an unrelated pin staged into its tree.
+test('M3: a merge refuses a pin neither parent reaches', () => {
+  const { root, fork, incoming } = pinMergeFixture();
+  gitIn(root, 'switch', '-qc', 'unreachable', fork);
+  const pin = commitFile(root, 'unreachable', 'unreachable\n');
+  gitIn(root, 'switch', '-q', 'main');
+  gitIn(root, 'merge', '--no-commit', '--no-ff', incoming);
+  assert.deepEqual(mergeRecord(root), [incoming]);
+  for (const parent of ['HEAD', incoming]) assert.notEqual(gitIn(root, 'merge-base', pin, parent).trim(), pin);
+  writeFileSync(join(root, WORKFLOW), workflowPin(pin));
+  gitIn(root, 'add', WORKFLOW);
+  assertPinOutcome(root, false);
+});
+
+// Looking in the common .git directory misses a linked worktree's own merge record.
+test('M4: a linked worktree merge reaches the pin through its own merged commit', () => {
+  const { directory, root, incoming, pin } = pinMergeFixture();
+  const linked = worktreeAt(root, join(directory, 'linked'), 'linked');
+  assert.notEqual(gitIn(linked, 'merge-base', pin, 'HEAD').trim(), pin);
+  gitIn(linked, 'merge', '--no-commit', '--no-ff', incoming);
+  assert.deepEqual(mergeRecord(linked), [incoming]);
+  assert.equal(existsSync(recordPath(root, 'MERGE_HEAD')), false);
+  assert.equal(pinIn(linked), pin);
+  assertPinOutcome(linked, true);
+});
+
+// Reading only the first MERGE_HEAD line would miss an octopus merge's second incoming parent.
+test('M5: an octopus merge reaches the pin only through its second merged commit', () => {
+  const { root, fork, incoming, pin } = pinMergeFixture();
+  gitIn(root, 'switch', '-qc', 'first', fork);
+  const first = commitFile(root, 'first', 'first\n');
+  gitIn(root, 'switch', '-q', 'main');
+  for (const parent of ['HEAD', first]) assert.notEqual(gitIn(root, 'merge-base', pin, parent).trim(), pin);
+  gitIn(root, 'merge', '--no-commit', '--no-ff', first, incoming);
+  assert.deepEqual(mergeRecord(root), [first, incoming]);
+  for (const path of ['local', 'first', 'incoming']) {
+    assert.equal(readFileSync(join(root, path), 'utf8'), `${path}\n`);
+    assert.equal(gitIn(root, 'show', `:${path}`), `${path}\n`);
+  }
+  assert.equal(pinIn(root), pin);
+  assertPinOutcome(root, true);
+});
+
+/** Diverged edits force git to stop a merge, cherry-pick or rebase at a real conflict. */
+function conflictingPinFixture() {
+  const fixture = pinMergeFixture();
+  const { root } = fixture;
+  gitIn(root, 'switch', '-q', 'incoming');
+  const tip = commitFile(root, 'conflict', 'incoming\n');
+  gitIn(root, 'switch', '-q', 'main');
+  commitFile(root, 'conflict', 'local\n');
+  return { ...fixture, tip };
+}
+
+// A resolved index does not end the merge: its additional parent must still be considered.
+test('M6: a resolved and staged conflicted merge reaches the incoming pin', () => {
+  const { root, tip, pin } = conflictingPinFixture();
+  assert.throws(() => gitIn(root, 'merge', '--no-commit', '--no-ff', tip));
+  assert.equal(gitIn(root, 'diff', '--name-only', '--diff-filter=U'), 'conflict\n');
+  writeFileSync(join(root, 'conflict'), 'resolved\n');
+  gitIn(root, 'add', 'conflict');
+  assert.equal(gitIn(root, 'diff', '--name-only', '--diff-filter=U'), '');
+  assert.deepEqual(mergeRecord(root), [tip]);
+  assert.notEqual(gitIn(root, 'merge-base', pin, 'HEAD').trim(), pin);
+  assert.equal(pinIn(root), pin);
+  assertPinOutcome(root, true);
+});
+
+// A staged squash has no merged parent even though its source branch reaches the pin.
+test('S1: a squash cannot admit the pin reached only by the squashed branch', () => {
+  const { root, incoming, pin } = pinMergeFixture();
+  gitIn(root, 'merge', '--squash', incoming);
+  assert.equal(existsSync(recordPath(root, 'MERGE_HEAD')), false);
+  assert.equal(existsSync(recordPath(root, 'SQUASH_MSG')), true);
+  assert.notEqual(gitIn(root, 'merge-base', pin, 'HEAD').trim(), pin);
+  assert.equal(pinIn(root), pin);
+  assertPinOutcome(root, false);
+});
+
+// CHERRY_PICK_HEAD names a source, never a parent of the commit the hook is checking.
+test('C1: a cherry-pick in progress cannot admit a pin reached only by its source', () => {
+  const { root, tip } = conflictingPinFixture();
+  assert.throws(() => gitIn(root, 'cherry-pick', tip));
+  assert.equal(gitIn(root, 'rev-parse', 'CHERRY_PICK_HEAD').trim(), tip);
+  assert.equal(existsSync(recordPath(root, 'MERGE_HEAD')), false);
+  assert.notEqual(gitIn(root, 'merge-base', tip, 'HEAD').trim(), tip);
+  writeFileSync(join(root, WORKFLOW), workflowPin(tip));
+  gitIn(root, 'add', WORKFLOW);
+  assertPinOutcome(root, false);
+});
+
+// ORIG_HEAD, REBASE_HEAD and the pre-rebase branch tip are not parents of the current step.
+test('R1: a stopped rebase cannot admit a pin reached only by the pre-rebase tip', () => {
+  const { root, tip } = conflictingPinFixture();
+  assert.throws(() => gitIn(root, 'rebase', 'main', 'incoming'));
+  assert.equal(gitIn(root, 'rev-parse', 'incoming').trim(), tip);
+  assert.equal(gitIn(root, 'rev-parse', 'REBASE_HEAD').trim(), tip);
+  assert.equal(existsSync(recordPath(root, 'MERGE_HEAD')), false);
+  assert.notEqual(gitIn(root, 'merge-base', tip, 'HEAD').trim(), tip);
+  writeFileSync(join(root, WORKFLOW), workflowPin(tip));
+  gitIn(root, 'add', WORKFLOW);
+  assertPinOutcome(root, false);
 });
 
 // The check runs the pinned tree with no install, so a package or CommonJS call there fails live.
