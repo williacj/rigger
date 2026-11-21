@@ -16,6 +16,9 @@ import { temporaryDirectory } from './temporary-directory.mjs';
 import { installFakeGh } from './fake-gh.mjs';
 import { repositoryWriteSide } from '../src/substrate/forge/repository-write.mjs';
 import { itemWriteSide } from '../src/substrate/forge/item-write.mjs';
+import { dirname } from 'node:path';
+import { repositoryReads } from '../src/substrate/forge/read.mjs';
+import { UNKILLED } from './process-fixtures.mjs';
 
 /**
  * A stand-in for the one spawn a runner makes, recording every command it is handed and answering
@@ -113,7 +116,7 @@ test('the read runner sends `gh api <path>` given an explicit GET and nothing el
 
 test("the read runner sends `gh api <path> -X GET` carrying the header that asks for a pull request's diff", async () => {
   // The one header a read needs: GitHub serves a pull request as its diff under this media type.
-  const args = ['api', 'repos/williacj/rigger/pulls/12', '-X', 'GET', '-H', 'Accept: application/vnd.github.diff'];
+  const args = ['api', 'repos/williacj/rigger/pulls/12', '-X', 'GET', '-H', 'Accept: application/vnd.github.diff', '--allow-escape-sequences'];
   const send = recording();
 
   await readRunner(args, { send });
@@ -125,6 +128,10 @@ test('the read runner refuses `gh api <path>` carrying any header but the diff m
   // The defect this catches is a runner admitting any `-H` once it admits one: a header can
   // override the method, ask for another media type than the diff, or another policy API version.
   const refused = [
+    ['api', 'rate_limit', '-X', 'GET', '--allow-escape-sequences'],
+    ['api', 'rate_limit', '-X', 'GET', '-H', 'X-GitHub-Api-Version: 2026-03-10', '--allow-escape-sequences'],
+    ['api', 'rate_limit', '-X', 'GET', '--allow-escape-sequences', '-H', 'Accept: application/vnd.github.diff'],
+    ['api', 'rate_limit', '--method', 'GET', '-H', 'Accept: application/vnd.github.diff', '--allow-escape-sequences'],
     ['api', 'rate_limit', '-X', 'GET', '-H', 'Accept: application/vnd.github.raw'],
     ['api', 'rate_limit', '-X', 'GET', '-H', 'accept: application/vnd.github.diff'],
     ['api', 'rate_limit', '-X', 'GET', '-H', 'Accept: application/vnd.github.diff', '-H', 'X-HTTP-Method-Override: DELETE'],
@@ -330,6 +337,61 @@ async function methodGhSends(gh, args, cwd = process.cwd()) {
   return seen[0];
 }
 
+// Host reason: wiring; real gh must print the proxy's non-JSON diff through the default read transport.
+// Rigger decision: none; this observes the unconditional diff request and gh's printed bytes.
+test('real gh refuses an ESC byte diff without the flag and readDiff preserves it byte for byte', { timeout: 60_000 }, async (t) => {
+  const gh = installedGh();
+  if (!gh) return t.skip('no real gh on PATH; raw diff escape probe not run');
+  const served = 'diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+é\x1b[31m "quoted" \\ tail\n';
+  const seen = [];
+  const proxy = createServer((request, response) => {
+    let body = '';
+    request.on('data', (chunk) => { body += chunk; });
+    request.on('end', () => {
+      seen.push({ method: request.method, body, accept: request.headers.accept, path: request.url });
+      response.writeHead(200, { 'content-type': 'text/plain; charset=utf-8' });
+      response.end(served);
+    });
+  });
+  await new Promise((listening) => proxy.listen(0, '127.0.0.1', listening));
+  const environment = {
+    PATH: `${dirname(gh)}${delimiter}${process.env.PATH}`,
+    GH_CONFIG_DIR: temporaryDirectory('rigger-gh-diff-'),
+    GH_HOST: 'github.localhost', GH_ENTERPRISE_TOKEN: 'not-a-token', GH_TOKEN: 'not-a-token',
+    GITHUB_TOKEN: 'not-a-token', GITHUB_ENTERPRISE_TOKEN: 'not-a-token', GH_NO_UPDATE_NOTIFIER: '1',
+    HTTP_PROXY: `http://127.0.0.1:${proxy.address().port}`, HTTPS_PROXY: `http://127.0.0.1:${proxy.address().port}`, NO_PROXY: '',
+  };
+  const held = Object.fromEntries(Object.keys(environment).map((name) => [name, process.env[name]]));
+  Object.assign(process.env, environment);
+  try {
+    const base = await new Promise((done) => execFile(gh,
+      ['api', 'repos/williacj/rigger/pulls/301', '-X', 'GET', '-H', 'Accept: application/vnd.github.diff'],
+      { env: { ...process.env } }, (error, stdout, stderr) => done({ exit: error?.code ?? 0, stdout, stderr })));
+    assert.equal(typeof base.exit, 'number', 'real gh started and returned an exit code');
+    assert.notEqual(base.exit, 0, 'the unflagged raw ESC diff is refused by real gh');
+    assert.equal(base.stdout, '');
+    assert.match(base.stderr, /terminal escape sequences/);
+    let read;
+    await assert.doesNotReject(async () => {
+      read = await repositoryReads({ repo: 'williacj/rigger' }, { emitter: UNKILLED }).readDiff(301);
+    }, 'the default transport must read the ESC diff through real gh');
+    assert.deepEqual(Buffer.from(read), Buffer.from(served), 'real gh preserves every served byte, including ESC');
+    assert.equal(seen.length, 2, 'the proxy answered the base request and the adapter request');
+    for (const request of seen) {
+      assert.deepEqual({ method: request.method, body: request.body, accept: request.accept }, {
+        method: 'GET', body: '', accept: 'application/vnd.github.diff',
+      });
+      assert.ok(request.path.endsWith('/repos/williacj/rigger/pulls/301'), request.path);
+    }
+  } finally {
+    for (const [name, value] of Object.entries(held)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    await new Promise((closed) => proxy.close(closed));
+  }
+});
+
 test('the read runner admits a `gh api <path>` form only where gh itself sends it as a GET with no body', async (t) => {
   const gh = installedGh();
   traceGh('live-first', { selected: gh });
@@ -349,6 +411,7 @@ test('the read runner admits a `gh api <path>` form only where gh itself sends i
     ['api', 'rate_limit', '--method', 'GET'],
     ['api', 'rate_limit', '-X', 'GET', '-H', 'Accept: application/vnd.github.diff'],
     ['api', 'rate_limit', '-X', 'GET', '-H', 'X-GitHub-Api-Version: 2026-03-10'],
+    ['api', 'rate_limit', '-X', 'GET', '-H', 'Accept: application/vnd.github.diff', '--allow-escape-sequences'],
     ...REFUSED_PATH_FORMS.map((form) => form.map((word) => (word === 'body.json' ? body : word))),
     FLAG_IN_PATH_SLOT[0],
   ];
