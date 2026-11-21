@@ -492,6 +492,17 @@ export const FORGE_MANIFEST = {
  },
  "cases": [
   {
+   "id": "F1-64",
+   "key": 64,
+   "args": [
+    "--version"
+   ],
+   "status": 0,
+   "stdout": "gh version 2.103.3 (2026-10-26)\nhttps://github.com/cli/cli/releases/tag/v2.103.3\n",
+   "stderr": "",
+   "after": "unchanged"
+  },
+  {
    "id": "F1-40-base",
    "key": 40,
    "args": [

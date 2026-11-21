@@ -18,6 +18,7 @@ import { repositoryWriteSide } from '../src/substrate/forge/repository-write.mjs
 import { itemWriteSide } from '../src/substrate/forge/item-write.mjs';
 import { dirname } from 'node:path';
 import { repositoryReads } from '../src/substrate/forge/read.mjs';
+import { GH_MINIMUM, readGhVersion } from '../src/substrate/forge/read.mjs';
 import { UNKILLED } from './process-fixtures.mjs';
 
 /**
@@ -94,6 +95,17 @@ test('the read runner sends `gh auth status`, which its read allowlist names', a
 
   assert.deepEqual(send.sent, [['gh', 'auth', 'status']]);
   assert.equal(said.stdout, 'Logged in');
+});
+
+test('the read runner sends `gh --version`, which its read allowlist names', async () => {
+  // The defect this catches is the version read refused before it is sent, which leaves
+  // `doctor`'s gh version line unable to ask gh at all.
+  const send = recording(() => ({ status: 0, stdout: 'gh version 2.103.3 (2026-10-26)\n', stderr: '' }));
+
+  const said = await readRunner(['--version'], { send });
+
+  assert.deepEqual(send.sent, [['gh', '--version']]);
+  assert.equal(said.stdout, 'gh version 2.103.3 (2026-10-26)\n');
 });
 
 test('the read runner refuses a subcommand its read allowlist does not name, naming it, and sends nothing', async () => {
@@ -389,6 +401,46 @@ test('real gh refuses an ESC byte diff without the flag and readDiff preserves i
       else process.env[name] = value;
     }
     await new Promise((closed) => proxy.close(closed));
+  }
+});
+
+// Host reason: wiring; the version read must reach the host's real gh through the read runner and L0, and read what it prints.
+// Rigger decision: test/gh-version.test.mjs — the gh version line reaches the minimum exactly where the version gh reports does, compared by number and never as text.
+test("the forge adapter's version read is the release on real gh's own first line, and a gh at the minimum takes the diff read's flag", { timeout: 60_000 }, async (t) => {
+  // `D16` rule 2: gh owns which release it is, and the read is a copy of its answer, so the host's
+  // gh is asked each run and the relation asserted, never today's number. The defects this catches
+  // are a read that takes its version from anywhere but gh's first line, and a minimum below the
+  // release that first accepts `--allow-escape-sequences`, which `readDiff` sends.
+  const gh = installedGh();
+  if (!gh) return t.skip('no real gh on PATH; version read probe not run');
+  const environment = { PATH: `${dirname(gh)}${delimiter}${process.env.PATH}`, GH_CONFIG_DIR: temporaryDirectory('rigger-gh-version-'), GH_NO_UPDATE_NOTIFIER: '1' };
+  const ask = (args) => new Promise((done) => execFile(gh, args, { env: { ...process.env, ...environment } },
+    (error, stdout, stderr) => done({ exit: error ? error.code : 0, stdout, stderr })));
+  const own = await ask(['--version']);
+  assert.equal(own.exit, 0, own.stderr);
+  const printed = own.stdout.split('\n')[0].match(/^gh version (\d+)\.(\d+)\.(\d+)/);
+  assert.ok(printed, `real gh's first line names no release: ${own.stdout}`);
+
+  const held = Object.fromEntries(Object.keys(environment).map((name) => [name, process.env[name]]));
+  Object.assign(process.env, environment);
+  let read;
+  try {
+    read = await readGhVersion({ emitter: UNKILLED });
+  } finally {
+    for (const [name, value] of Object.entries(held)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+  assert.equal(read.version, printed.slice(1).join('.'), `the read gave ${read.version} for ${own.stdout}`);
+
+  const [major, minor, patch] = printed.slice(1).map(Number);
+  const [wantMajor, wantMinor, wantPatch] = GH_MINIMUM.split('.').map(Number);
+  const reaches = major !== wantMajor ? major > wantMajor : minor !== wantMinor ? minor > wantMinor : patch >= wantPatch;
+  if (reaches) {
+    const help = await ask(['api', '--help']);
+    assert.equal(help.exit, 0, help.stderr);
+    assert.match(help.stdout + help.stderr, /--allow-escape-sequences/, `gh ${read.version} reaches ${GH_MINIMUM} and its \`gh api --help\` lists no --allow-escape-sequences`);
   }
 });
 
