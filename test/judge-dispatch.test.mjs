@@ -705,10 +705,10 @@ test('1437 B2: a fresh timeout invocation completes an earlier exit failure pair
 test('1437 B3: one failure dispatches the judge again in a fresh invocation without escalation', SETTLES_WITHIN, async () => {
   const built = judgeWorld({ ...reviewed(7), kinds: oneJudgeKind });
   built.agent.plan(7, 'reviewer', { exit: 7 });
-  await freshJudges(built).pull();
+  await assert.doesNotReject(freshJudges(built).pull(), 'the non-escalating invocation must settle successfully');
   assert.deepEqual(recorded(built, 'L2', 'review.escalate'), []);
   built.agent.plan(7, 'reviewer', { exit: 0 });
-  await freshJudges(built).pull();
+  await assert.doesNotReject(freshJudges(built).pull(), 'the non-escalating invocation must settle successfully');
   assert.equal(recorded(built, 'L3', 'dispatch').length, 2, 'the next invocation dispatches the judge again');
   assert.equal(recorded(built, 'L2', 'judge.failed').length, 1);
   assert.deepEqual(recorded(built, 'L2', 'review.escalate'), []);
@@ -720,7 +720,7 @@ test('1437 B4 B5: fresh invocations at a changed head or acceptance do not compl
   for (const changed of ['head', 'acceptance']) await t.test(changed, async () => {
     const built = judgeWorld({ ...reviewed(7), kinds: oneJudgeKind });
     built.agent.plan(7, 'reviewer', { exit: 7 });
-    await freshJudges(built).pull();
+    await assert.doesNotReject(freshJudges(built).pull(), 'the non-escalating invocation must settle successfully');
     const options = {};
     if (changed === 'head') built.repository.update(1007, { sha: '6'.repeat(40) });
     else {
@@ -730,7 +730,7 @@ test('1437 B4 B5: fresh invocations at a changed head or acceptance do not compl
         return { ...read, items: read.items.map((card) => ({ ...card, body: card.body.replace('prints its help', 'prints its usage') })) };
       } };
     }
-    await freshJudges(built, options).pull();
+    await assert.doesNotReject(freshJudges(built, options).pull(), 'the non-escalating invocation must settle successfully');
     const failures = recorded(built, 'L2', 'judge.failed');
     assert.equal(failures.length, 2);
     assert.notEqual(failures[0][changed === 'head' ? 'head' : 'digest'], failures[1][changed === 'head' ? 'head' : 'digest']);
@@ -746,14 +746,14 @@ test('1437 B7 B12: a readable timeout verdict separates failures in either posit
     const built = judgeWorld({ ...reviewed(7), kinds: oneJudgeKind, roles });
     if (!firstTimeout) {
       built.agent.plan(7, 'reviewer', { exit: 7 });
-      await freshJudges(built).pull();
+      await assert.doesNotReject(freshJudges(built).pull(), 'the non-escalating invocation must settle successfully');
     }
     const ended = await timedJudge(built, { verdict: true });
     assert.equal(ended.error, undefined);
     if (firstTimeout) {
       built.repository.update(1007, { comments: built.repository.pull(1007).comments.map((comment) => ({ ...comment, lastEditedAt: '2026-11-21T02:01:00Z' })) });
       built.agent.plan(7, 'reviewer', { exit: 7 });
-      await freshJudges(built).pull();
+      await assert.doesNotReject(freshJudges(built).pull(), 'the non-escalating invocation must settle successfully');
     }
     assert.equal(recorded(built, 'L2', 'judge.failed').length, 2);
     assert.ok(recorded(built, 'L2', 'marker.read').some(({ verdict }) => verdict === 'sound'));
@@ -766,7 +766,7 @@ test('1437 B7 B12: a readable timeout verdict separates failures in either posit
 test('1437 B9: an owner label added and removed between fresh failures does not reset their pair', SETTLES_WITHIN, async () => {
   const built = judgeWorld({ ...reviewed(7), kinds: oneJudgeKind });
   built.agent.plan(7, 'reviewer', { exit: 7 });
-  await freshJudges(built).pull();
+  await assert.doesNotReject(freshJudges(built).pull(), 'the non-escalating invocation must settle successfully');
   built.fake.setIssueLabels(config.repo, 7, ['type:change', 'rigger:escalated']);
   built.fake.setIssueLabels(config.repo, 7, ['type:change']);
   await freshJudges(built).pull().catch(() => {});
@@ -780,12 +780,12 @@ test('1437 B10: two judges failing in separate invocations each have only one fa
   const kinds = { change: { ...oneJudgeKind.change, judges: ['reviewer', 'architect'] } };
   const built = judgeWorld({ ...reviewed(7), kinds });
   built.agent.plan(7, 'reviewer', { exit: 7 });
-  await freshJudges(built).pull();
+  await assert.doesNotReject(freshJudges(built).pull(), 'the non-escalating invocation must settle successfully');
   const comments = built.repository.pull(1007).comments.map((comment) => ({ ...comment, lastEditedAt: '2026-11-21T02:01:00Z' }));
   built.repository.update(1007, { comments });
   built.repository.comment(1007, judgeVerdict(), '2026-11-21T02:02:00Z');
   built.agent.plan(7, 'architect', { exit: 7 });
-  await freshJudges(built).pull();
+  await assert.doesNotReject(freshJudges(built).pull(), 'the non-escalating invocation must settle successfully');
   assert.deepEqual(recorded(built, 'L2', 'judge.failed').map(({ role }) => role), ['reviewer', 'architect']);
   assert.deepEqual(recorded(built, 'L2', 'review.escalate'), []);
 });
