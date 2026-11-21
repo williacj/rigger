@@ -1591,8 +1591,11 @@ The verb names the failed read.
 
 Two observations would reverse this placement:
 
-- A `judge.failed` whose dispatch id a readable marker at that head and digest carries would show
-  that the forge's read after the write lagged. L2's determination would move to the next pull's read.
+- A `judge.failed` would show forge read lag if a later `marker.read` names a readable verdict for
+  the same dispatch id, head and digest. That verdict must have been posted before the settle
+  read that found no readable verdict.
+  A timeout with a verdict readable at settle does not show lag. L2's determination would move
+  to the next pull's read.
 - A whole-record read at each judge failure costing a measurable share of a run would require
   ruling again on how L2 obtains the failures.
 
