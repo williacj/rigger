@@ -300,23 +300,19 @@ export async function ghAuth({ ask, emitter } = {}) {
  * reported as unasked: no comparison was made. Every detail is one line.
  */
 export async function ghVersion({ ask, emitter } = {}) {
-  const name = 'gh version';
+  const line = (ok, detail) => ({ name: 'gh version', ok, detail });
   let read;
   try {
     read = await readGhVersion({ send: ask, emitter });
   } catch (failure) {
     if (failure.code !== NOT_STARTED) throw failure;
-    return { name, ok: null, detail: `\`gh --version\` could not be run here: ${oneLine(failure.message)}` };
+    return line(null, `\`gh --version\` could not be run here: ${oneLine(failure.message)}`);
   }
-  if (read.timedOut) return { name, ok: null, detail: `\`gh --version\` ran past its timeout of ${read.timeout} ms, and L0 ended it` };
-  if (read.status !== 0) return { name, ok: null, detail: `\`gh --version\` exited ${read.status}, so no version was read` };
-  if (read.version === null) {
-    return { name, ok: null, detail: `\`gh --version\` began \`${printable(read.line)}\`, which names no release as \`gh version <major>.<minor>.<patch>\`; Rigger requires gh ${GH_MINIMUM} or later` };
-  }
-  if (!reaches(read.version, GH_MINIMUM)) {
-    return { name, ok: false, detail: `gh ${read.version} is below the ${GH_MINIMUM} Rigger requires; install gh ${GH_MINIMUM} or later` };
-  }
-  return { name, ok: true, detail: `gh ${read.version} against the ${GH_MINIMUM} Rigger requires` };
+  if (read.timedOut) return line(null, `\`gh --version\` ran past its timeout of ${read.timeout} ms, and L0 ended it`);
+  if (read.status !== 0) return line(null, `\`gh --version\` exited ${read.status}, so no version was read`);
+  if (read.version === null) return line(null, `\`gh --version\` began \`${printable(read.line)}\`, which names no release as \`gh version <major>.<minor>.<patch>\`; Rigger requires gh ${GH_MINIMUM} or later`);
+  const ok = reaches(read.version, GH_MINIMUM);
+  return line(ok, ok ? `gh ${read.version} against the ${GH_MINIMUM} Rigger requires` : `gh ${read.version} is below the ${GH_MINIMUM} Rigger requires; install gh ${GH_MINIMUM} or later`);
 }
 
 /** The verdict a set of them folds to: unknown if any is, failed if any is, passed otherwise. */
