@@ -610,7 +610,7 @@ const REPOSITORY_READS = {
    */
   readDiff: {
     reading: (number) => `pull request #${number}'s diff`,
-    read: (board, via, number, addressed) => restRead('readDiff', board, via, `pulls/${numbered('readDiff', board, number)}`, ['-H', DIFF_HEADER], addressed),
+    read: (board, via, number, addressed) => restRead('readDiff', board, via, `pulls/${numbered('readDiff', board, number)}`, ['-H', DIFF_HEADER, '--allow-escape-sequences'], addressed),
   },
   /**
    * The merge base the forge computes pull request `number`'s diff from, as `{ base, head,

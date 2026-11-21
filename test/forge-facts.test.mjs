@@ -10,6 +10,9 @@ import { nextAction } from '../src/workflow/next-action.mjs';
 import { factsCall } from '../src/workflow/facts.mjs';
 import { createFakeRepository } from './fake-repository.mjs';
 import { acceptanceDigest, composeMarker } from '../src/workflow/marker.mjs';
+import { repositoryReads } from '../src/substrate/forge/read.mjs';
+import { forgeWithDiff } from './in-process-fixtures.mjs';
+import { recordingSink } from './admission-world.mjs';
 
 const { columns } = config.board;
 
@@ -79,6 +82,27 @@ test('given its read of the branches failing, L2\'s facts call rejects naming ev
 /** A diff the forge serves, and the merge base it computes it from, each written by hand. */
 const DIFF = 'diff --git a/src/verb.mjs b/src/verb.mjs\n+export const verb = 1;\n';
 const BASE = 'c'.repeat(40);
+
+// proves R-EVIDENCE-3
+test('each judge of a Review card receives the ESC byte diff from fake gh without diff.refused', async () => {
+  const diff = 'diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+é\x1b[31m "quoted" \\ tail\n';
+  const fake = forgeWithDiff(diff);
+  const { sink, events } = recordingSink();
+  const card = cardIn(7, columns.review);
+  const reads = repositoryReads({ repo: config.repo, ...config.board }, { send: fake.send });
+  const decide = await factsCall({ config, reads, decide: (given) => nextAction(given, config.kinds, config.epicLabel, {
+    columns, roles: config.roles, provisioning: config.provisioning, sink,
+  }) })([card]);
+
+  const answer = decide(card);
+
+  assert.equal(answer.action, 'judge', JSON.stringify(answer));
+  assert.deepEqual(answer.judges.map(({ role }) => role), ['reviewer', 'architect']);
+  for (const { role, evidence } of answer.judges) {
+    assert.ok(Buffer.from(evidence).includes(Buffer.from(diff)), `${role} receives every diff byte, including ESC: ${JSON.stringify(evidence)}`);
+  }
+  assert.deepEqual(events.filter(({ event }) => event === 'diff.refused'), [], 'a readable ESC diff is never recorded as refused');
+});
 
 /** A pull request from card `number`'s line of work, numbered `pull`, merged where `merged` says. */
 const pullFrom = (number, pull, merged = false) => ({ number: pull, head: `rigger-${number}`, sha: `${pull}`.padStart(40, 'a'), merged });

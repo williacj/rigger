@@ -1,0 +1,439 @@
+{
+  "events": [
+    {
+      "eventId": "1",
+      "eventTime": "2026-11-20T00:49:42.657499572Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_STARTED",
+      "taskId": "1048932",
+      "workflowExecutionStartedEventAttributes": {
+        "workflowType": {
+          "name": "card"
+        },
+        "taskQueue": {
+          "name": "rigger-macos",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJjYXJkIjoicGluLXN0b3AtbWFjb3MiLCJvcyI6Im1hY29zIiwic2Vjb25kcyI6MjAsInBhdXNlQWZ0ZXJQaWNrIjoiMjBzIn0="
+            }
+          ]
+        },
+        "workflowExecutionTimeout": "0s",
+        "workflowRunTimeout": "0s",
+        "workflowTaskTimeout": "10s",
+        "originalExecutionRunId": "01a1f66e-3f01-779c-8df1-d054797cf981",
+        "identity": "temporal-cli:laptop-user@[laptop host].local",
+        "firstExecutionRunId": "01a1f66e-3f01-779c-8df1-d054797cf981",
+        "attempt": 1,
+        "firstWorkflowTaskBackoff": "0s",
+        "header": {},
+        "workflowId": "pin-stop-macos"
+      }
+    },
+    {
+      "eventId": "2",
+      "eventTime": "2026-11-20T00:49:42.657553710Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "taskId": "1048933",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "rigger-macos",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "3",
+      "eventTime": "2026-11-20T00:49:42.667711636Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "taskId": "1048938",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "2",
+        "identity": "mac-a/[laptop host].local/34563",
+        "requestId": "bd2dafe8-4846-445d-a611-cac5399260a6",
+        "historySizeBytes": "366",
+        "workerVersion": {
+          "buildId": "@temporalio/worker@1.26.0+7792801ad540af163e7a50f33c7e46d81c5f1ab97320804e85102395c4dadc51"
+        }
+      }
+    },
+    {
+      "eventId": "4",
+      "eventTime": "2026-11-20T00:49:42.692383326Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "taskId": "1048943",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "2",
+        "startedEventId": "3",
+        "identity": "mac-a/[laptop host].local/34563",
+        "workerVersion": {
+          "buildId": "@temporalio/worker@1.26.0+7792801ad540af163e7a50f33c7e46d81c5f1ab97320804e85102395c4dadc51"
+        },
+        "sdkMetadata": {
+          "coreUsedFlags": [
+            1,
+            2,
+            3,
+            4
+          ],
+          "sdkName": "temporal-typescript",
+          "sdkVersion": "1.26.0"
+        },
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "5",
+      "eventTime": "2026-11-20T00:49:42.692421721Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "taskId": "1048944",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "1",
+        "activityType": {
+          "name": "pickHost"
+        },
+        "taskQueue": {
+          "name": "rigger-macos",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJleGNsdWRlZCI6W119"
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "0s",
+        "scheduleToStartTimeout": "0s",
+        "startToCloseTimeout": "30s",
+        "heartbeatTimeout": "0s",
+        "workflowTaskCompletedEventId": "4",
+        "retryPolicy": {
+          "initialInterval": "1s",
+          "backoffCoefficient": 1,
+          "maximumInterval": "100s",
+          "maximumAttempts": 30
+        },
+        "useWorkflowBuildId": true
+      }
+    },
+    {
+      "eventId": "6",
+      "eventTime": "2026-11-20T00:49:42.692441090Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_STARTED",
+      "taskId": "1048948",
+      "activityTaskStartedEventAttributes": {
+        "scheduledEventId": "5",
+        "identity": "mac-a/[laptop host].local/34563",
+        "requestId": "d0f8cb60-81fa-4d91-afa9-3050b50adbce",
+        "attempt": 1,
+        "workerVersion": {
+          "buildId": "@temporalio/worker@1.26.0+7792801ad540af163e7a50f33c7e46d81c5f1ab97320804e85102395c4dadc51"
+        }
+      }
+    },
+    {
+      "eventId": "7",
+      "eventTime": "2026-11-20T00:49:42.743483786Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_COMPLETED",
+      "taskId": "1048949",
+      "activityTaskCompletedEventAttributes": {
+        "result": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJob3N0IjoibWFjLWEiLCJtYWNoaW5lIjoiW2xhcHRvcCBob3N0XS5sb2NhbCJ9"
+            }
+          ]
+        },
+        "scheduledEventId": "5",
+        "startedEventId": "6",
+        "identity": "mac-a/[laptop host].local/34563"
+      }
+    },
+    {
+      "eventId": "8",
+      "eventTime": "2026-11-20T00:49:42.743497455Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "taskId": "1048950",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "mac-a/[laptop host].local/34563-7a8e6f7f84b2461a848f310456739839",
+          "kind": "TASK_QUEUE_KIND_STICKY",
+          "normalName": "rigger-macos"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "9",
+      "eventTime": "2026-11-20T00:49:42.751807309Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "taskId": "1048954",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "8",
+        "identity": "mac-a/[laptop host].local/34563",
+        "requestId": "6c57d934-cc42-473a-9f93-3731dad7b184",
+        "historySizeBytes": "1373",
+        "workerVersion": {
+          "buildId": "@temporalio/worker@1.26.0+7792801ad540af163e7a50f33c7e46d81c5f1ab97320804e85102395c4dadc51"
+        }
+      }
+    },
+    {
+      "eventId": "10",
+      "eventTime": "2026-11-20T00:49:42.774483955Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "taskId": "1048958",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "8",
+        "startedEventId": "9",
+        "identity": "mac-a/[laptop host].local/34563",
+        "workerVersion": {
+          "buildId": "@temporalio/worker@1.26.0+7792801ad540af163e7a50f33c7e46d81c5f1ab97320804e85102395c4dadc51"
+        },
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "11",
+      "eventTime": "2026-11-20T00:49:42.774524563Z",
+      "eventType": "EVENT_TYPE_TIMER_STARTED",
+      "taskId": "1048959",
+      "timerStartedEventAttributes": {
+        "timerId": "1",
+        "startToFireTimeout": "20s",
+        "workflowTaskCompletedEventId": "10"
+      }
+    },
+    {
+      "eventId": "12",
+      "eventTime": "2026-11-20T00:50:02.776113615Z",
+      "eventType": "EVENT_TYPE_TIMER_FIRED",
+      "taskId": "1048962",
+      "timerFiredEventAttributes": {
+        "timerId": "1",
+        "startedEventId": "11"
+      }
+    },
+    {
+      "eventId": "13",
+      "eventTime": "2026-11-20T00:50:02.776161455Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "taskId": "1048963",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "mac-a/[laptop host].local/34563-7a8e6f7f84b2461a848f310456739839",
+          "kind": "TASK_QUEUE_KIND_STICKY",
+          "normalName": "rigger-macos"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "14",
+      "eventTime": "2026-11-20T00:50:02.786593440Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "taskId": "1048967",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "13",
+        "identity": "mac-b/[laptop host].local/56714",
+        "requestId": "df1133f4-11e9-42e0-be77-aefe4385b3e7",
+        "historySizeBytes": "1924",
+        "workerVersion": {
+          "buildId": "@temporalio/worker@1.26.0+7792801ad540af163e7a50f33c7e46d81c5f1ab97320804e85102395c4dadc51"
+        }
+      }
+    },
+    {
+      "eventId": "15",
+      "eventTime": "2026-11-20T00:50:02.855635325Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_COMPLETED",
+      "taskId": "1048971",
+      "workflowTaskCompletedEventAttributes": {
+        "scheduledEventId": "13",
+        "startedEventId": "14",
+        "identity": "mac-b/[laptop host].local/56714",
+        "workerVersion": {
+          "buildId": "@temporalio/worker@1.26.0+7792801ad540af163e7a50f33c7e46d81c5f1ab97320804e85102395c4dadc51"
+        },
+        "sdkMetadata": {},
+        "meteringMetadata": {}
+      }
+    },
+    {
+      "eventId": "16",
+      "eventTime": "2026-11-20T00:50:02.855673933Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_SCHEDULED",
+      "taskId": "1048972",
+      "activityTaskScheduledEventAttributes": {
+        "activityId": "2",
+        "activityType": {
+          "name": "dispatch"
+        },
+        "taskQueue": {
+          "name": "host-mac-a",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "header": {},
+        "input": {
+          "payloads": [
+            {
+              "metadata": {
+                "encoding": "anNvbi9wbGFpbg=="
+              },
+              "data": "eyJjYXJkIjoicGluLXN0b3AtbWFjb3MiLCJzZWNvbmRzIjoyMH0="
+            }
+          ]
+        },
+        "scheduleToCloseTimeout": "0s",
+        "scheduleToStartTimeout": "30s",
+        "startToCloseTimeout": "1200s",
+        "heartbeatTimeout": "10s",
+        "workflowTaskCompletedEventId": "15",
+        "retryPolicy": {
+          "initialInterval": "1s",
+          "backoffCoefficient": 2,
+          "maximumInterval": "10s",
+          "maximumAttempts": 5
+        }
+      }
+    },
+    {
+      "eventId": "17",
+      "eventTime": "2026-11-20T00:50:32.857908033Z",
+      "eventType": "EVENT_TYPE_ACTIVITY_TASK_TIMED_OUT",
+      "taskId": "1048976",
+      "activityTaskTimedOutEventAttributes": {
+        "failure": {
+          "message": "activity ScheduleToStart timeout",
+          "source": "Server",
+          "timeoutFailureInfo": {
+            "timeoutType": "TIMEOUT_TYPE_SCHEDULE_TO_START"
+          }
+        },
+        "scheduledEventId": "16",
+        "retryState": "RETRY_STATE_TIMEOUT"
+      }
+    },
+    {
+      "eventId": "18",
+      "eventTime": "2026-11-20T00:50:32.857960358Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "taskId": "1048977",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "mac-b/[laptop host].local/56714-b44b9f053a89468ba5c3a3a74ea4ca4d",
+          "kind": "TASK_QUEUE_KIND_STICKY",
+          "normalName": "rigger-macos"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "19",
+      "eventTime": "2026-11-20T00:50:32.866073635Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "taskId": "1048981",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "18",
+        "identity": "mac-b/[laptop host].local/56714",
+        "requestId": "2f6b6cd7-ed0f-4cbd-854d-4037f233f838",
+        "historySizeBytes": "2653",
+        "workerVersion": {
+          "buildId": "@temporalio/worker@1.26.0+7792801ad540af163e7a50f33c7e46d81c5f1ab97320804e85102395c4dadc51"
+        }
+      }
+    },
+    {
+      "eventId": "20",
+      "eventTime": "2026-11-20T00:50:32.935812750Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_FAILED",
+      "taskId": "1048985",
+      "workflowTaskFailedEventAttributes": {
+        "scheduledEventId": "18",
+        "startedEventId": "19",
+        "cause": "WORKFLOW_TASK_FAILED_CAUSE_WORKFLOW_WORKER_UNHANDLED_FAILURE",
+        "failure": {
+          "message": "Cannot read properties of undefined (reading 'SCHEDULE_TO_START')",
+          "source": "TypeScriptSDK",
+          "stackTrace": "/Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/workflow-bundle-08f225d81d3e20b76c5f.js:7037\n            throw this.workflowTaskError;\n            ^\n\nTypeError: Cannot read properties of undefined (reading 'SCHEDULE_TO_START')\n    at pinnedDispatch (/Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/wf-common.js:20:0)"
+        },
+        "identity": "mac-b/[laptop host].local/56714"
+      }
+    },
+    {
+      "eventId": "21",
+      "eventTime": "2026-11-20T00:50:32.935895658Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_SCHEDULED",
+      "taskId": "1048986",
+      "workflowTaskScheduledEventAttributes": {
+        "taskQueue": {
+          "name": "rigger-macos",
+          "kind": "TASK_QUEUE_KIND_NORMAL"
+        },
+        "startToCloseTimeout": "10s",
+        "attempt": 1
+      }
+    },
+    {
+      "eventId": "22",
+      "eventTime": "2026-11-20T00:50:32.944226372Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_STARTED",
+      "taskId": "1048989",
+      "workflowTaskStartedEventAttributes": {
+        "scheduledEventId": "21",
+        "identity": "mac-b/[laptop host].local/56714",
+        "requestId": "1a79de2b-c031-4c4a-82d6-13c880b0a4fc",
+        "historySizeBytes": "3466",
+        "workerVersion": {
+          "buildId": "@temporalio/worker@1.26.0+7792801ad540af163e7a50f33c7e46d81c5f1ab97320804e85102395c4dadc51"
+        }
+      }
+    },
+    {
+      "eventId": "23",
+      "eventTime": "2026-11-20T00:50:33.011693355Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_TASK_FAILED",
+      "taskId": "1048993",
+      "workflowTaskFailedEventAttributes": {
+        "scheduledEventId": "21",
+        "startedEventId": "22",
+        "cause": "WORKFLOW_TASK_FAILED_CAUSE_WORKFLOW_WORKER_UNHANDLED_FAILURE",
+        "failure": {
+          "message": "Cannot read properties of undefined (reading 'SCHEDULE_TO_START')",
+          "source": "TypeScriptSDK",
+          "stackTrace": "/Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/workflow-bundle-08f225d81d3e20b76c5f.js:7037\n            throw this.workflowTaskError;\n            ^\n\nTypeError: Cannot read properties of undefined (reading 'SCHEDULE_TO_START')\n    at pinnedDispatch (/Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/wf-common.js:20:0)"
+        },
+        "identity": "mac-b/[laptop host].local/56714"
+      }
+    },
+    {
+      "eventId": "24",
+      "eventTime": "2026-11-20T00:52:57.254326181Z",
+      "eventType": "EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED",
+      "taskId": "1049006",
+      "workflowExecutionTerminatedEventAttributes": {
+        "reason": "spike: workflow code bug (TimeoutType undefined); rerun with fix",
+        "identity": "temporal-cli:laptop-user@[laptop host].local"
+      }
+    }
+  ]
+}

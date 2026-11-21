@@ -1,0 +1,707 @@
+[
+ {
+  "pid": 2562,
+  "why": [
+   "parent of 2812 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 2812,
+  "why": [
+   "self: /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 2997,
+  "why": [
+   "spawn by 2812: ssh hostpc cd /d C:\\Users\\user && node - fx1430r2-final-B [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 3968,
+  "why": [
+   "spawnSync by 98929: ps -axo pid=,ppid=,pgid=,stat=,args= [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 4023,
+  "why": [
+   "spawnSync by 98929: /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/ [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 4060,
+  "why": [
+   "spawnSync by 98929: lsof -O -w -n -P -a -d cwd -p 98929,99236,99251,99254,99266,99267,99269,99270 -Fpn [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 4070,
+  "why": [
+   "spawnSync by 98929: lsof -O -w -n -P -a -d cwd -u 501 -F pun [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 12866,
+  "why": [
+   "parent of 12896 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 12896,
+  "why": [
+   "self: /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 13093,
+  "why": [
+   "spawn by 12896: ssh hostpc cd /d C:\\Users\\user\\1430-r2 && node - fx1430r2-fetch2 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 19620,
+  "why": [
+   "spawnSync by 98929: ps -axo pid=,ppid=,pgid=,stat=,args= [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 19633,
+  "why": [
+   "spawnSync by 98929: /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/ [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 19653,
+  "why": [
+   "spawnSync by 98929: lsof -O -w -n -P -a -d cwd -p 98929,99267 -Fpn [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 19706,
+  "why": [
+   "spawnSync by 74267: ps -axo pid=,ppid=,pgid=,stat=,args= [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 19770,
+  "why": [
+   "spawnSync by 74267: /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/ [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 19806,
+  "why": [
+   "spawnSync by 74267: lsof -O -w -n -P -a -d cwd -p 99267 -Fpn [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 21069,
+  "why": [
+   "spawnSync by 74267: ps -axo pid=,ppid=,pgid=,stat=,args= [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 21189,
+  "why": [
+   "spawn by 74267: /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/143 [rec-laptop.jsonl]",
+   "self: /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 21315,
+  "why": [
+   "spawn by 21189: bash -c read _; exec bash /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/sp [rec-laptop.jsonl]",
+   "fixture log: root [sh-laptop.log]"
+  ]
+ },
+ {
+  "pid": 21317,
+  "why": [
+   "fixture log: M1-from-root [sh-laptop.log]",
+   "fixture log: M1 [sh-laptop.log]"
+  ]
+ },
+ {
+  "pid": 21318,
+  "why": [
+   "fixture log: M3 [sh-laptop.log]"
+  ]
+ },
+ {
+  "pid": 21319,
+  "why": [
+   "fixture log: M2 [sh-laptop.log]"
+  ]
+ },
+ {
+  "pid": 21320,
+  "why": [
+   "fixture log: M4-parent-from-root [sh-laptop.log]",
+   "fixture log: M4-parent [sh-laptop.log]"
+  ]
+ },
+ {
+  "pid": 21321,
+  "why": [
+   "fixture log: M5-from-root [sh-laptop.log]",
+   "fixture log: M5 [sh-laptop.log]"
+  ]
+ },
+ {
+  "pid": 21323,
+  "why": [
+   "fixture log: M6 [sh-laptop.log]"
+  ]
+ },
+ {
+  "pid": 21333,
+  "why": [
+   "fixture log: M4 [sh-laptop.log]"
+  ]
+ },
+ {
+  "pid": 24378,
+  "why": [
+   "spawnSync by 21189: ps -axo pid=,ppid=,pgid=,stat=,args= [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 24415,
+  "why": [
+   "spawnSync by 21189: /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/ [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 24422,
+  "why": [
+   "spawnSync by 21189: lsof -O -w -n -P -a -d cwd -p 21189,21315,21317,21318,21319,21321,21323,21333 -Fpn [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 33062,
+  "why": [
+   "parent of 33074 [rec-laptop.jsonl]",
+   "parent of 33847 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 33074,
+  "why": [
+   "self: /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 33229,
+  "why": [
+   "spawn by 33074: ssh hostpc cd /d C:\\Users\\user\\1430-r2 && node -e \"let s='';process.stdin.on('data',d=>s+=d) [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 33371,
+  "why": [
+   "parent of 33410 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 33410,
+  "why": [
+   "self: /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 33446,
+  "why": [
+   "spawn by 33410: ssh hostpc wsl.exe -e bash -s fx1430r2 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 33847,
+  "why": [
+   "self: /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 33979,
+  "why": [
+   "spawn by 33847: ssh hostpc cd /d C:\\Users\\user\\1430-r2 && ver && node --version && whoami && npm install kof [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 39807,
+  "why": [
+   "spawnSync by 74267: ps -axo pid=,ppid=,pgid=,stat=,args= [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 39889,
+  "why": [
+   "spawnSync by 74267: /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/ [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 39909,
+  "why": [
+   "spawnSync by 74267: lsof -O -w -n -P -a -d cwd -p 21315,21317,21318,21319,21321,21323,21333 -Fpn [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 39916,
+  "why": [
+   "spawnSync by 74267: ps -axo pid=,ppid=,pgid=,stat=,args= [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 39959,
+  "why": [
+   "spawnSync by 74267: /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/ [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 39992,
+  "why": [
+   "spawnSync by 74267: lsof -O -w -n -P -a -d cwd -p 21315,21317,21318,21319,21321,21323,21333 -Fpn [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 41231,
+  "why": [
+   "spawnSync by 74267: ps -axo pid=,ppid=,pgid=,stat=,args= [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 42132,
+  "why": [
+   "parent of 42141 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 42141,
+  "why": [
+   "self: /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 42171,
+  "why": [
+   "spawn by 42141: ssh hostpc wsl.exe -e bash -s fx1430r2 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 44948,
+  "why": [
+   "parent of 44980 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 44980,
+  "why": [
+   "self: /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 45139,
+  "why": [
+   "spawn by 44980: ssh hostpc cd /d C:\\Users\\user\\1430-r2 && npm install koffi --cache C:\\Users\\user\\1430-r2\\npm- [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 47854,
+  "why": [
+   "parent of 47859 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 47859,
+  "why": [
+   "self: /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 47867,
+  "why": [
+   "spawn by 47859: ssh hostpc wsl.exe -e bash -s fx1430r2 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 52158,
+  "why": [
+   "parent of 52162 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 52162,
+  "why": [
+   "self: /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 52175,
+  "why": [
+   "spawn by 52162: ssh hostpc wsl.exe -e bash -s fx1430r2 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 53255,
+  "why": [
+   "parent of 53266 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 53266,
+  "why": [
+   "self: /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 53488,
+  "why": [
+   "spawn by 53266: ssh hostpc cd /d C:\\Users\\user\\1430-r2 && set FX_REC=C:\\Users\\user\\1430-r2\\rec-win.jsonl&& set [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 53723,
+  "why": [
+   "parent of 53926 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 53926,
+  "why": [
+   "self: /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 54171,
+  "why": [
+   "spawn by 53926: ssh hostpc wsl.exe -e bash -s fx1430r2 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 68214,
+  "why": [
+   "parent of 68217 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 68217,
+  "why": [
+   "self: /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 68324,
+  "why": [
+   "spawn by 68217: gh issue comment 1430 -R williacj/rigger --body-file intent2.md [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 70214,
+  "why": [
+   "parent of 70233 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 70233,
+  "why": [
+   "self: /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 70461,
+  "why": [
+   "spawn by 70233: ssh hostpc powershell -NoProfile -NonInteractive -EncodedCommand IwAgAEEAQgBPAFUAVABNAEUAO [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 73969,
+  "why": [
+   "parent of 73993 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 73993,
+  "why": [
+   "self: /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r [rec-laptop.jsonl]",
+   "parent of 74267 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 74267,
+  "why": [
+   "spawn by 73993: node driver-posix.cjs mr [rec-laptop.jsonl]",
+   "self: /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r [rec-laptop.jsonl]",
+   "parent of 74351 [rec-laptop.jsonl]",
+   "parent of 98929 [rec-laptop.jsonl]",
+   "parent of 21189 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 74351,
+  "why": [
+   "spawn by 74267: /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/143 [rec-laptop.jsonl]",
+   "self: /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 74511,
+  "why": [
+   "spawn by 74351: bash -c read _; exec bash /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/sp [rec-laptop.jsonl]",
+   "fixture log: root [sh-laptop.log]"
+  ]
+ },
+ {
+  "pid": 74527,
+  "why": [
+   "fixture log: M1-from-root [sh-laptop.log]",
+   "fixture log: M1 [sh-laptop.log]"
+  ]
+ },
+ {
+  "pid": 74528,
+  "why": [
+   "fixture log: M3 [sh-laptop.log]"
+  ]
+ },
+ {
+  "pid": 74529,
+  "why": [
+   "fixture log: M2 [sh-laptop.log]"
+  ]
+ },
+ {
+  "pid": 74530,
+  "why": [
+   "fixture log: M4-parent-from-root [sh-laptop.log]",
+   "fixture log: M4-parent [sh-laptop.log]"
+  ]
+ },
+ {
+  "pid": 74531,
+  "why": [
+   "fixture log: M5-from-root [sh-laptop.log]",
+   "fixture log: M5 [sh-laptop.log]"
+  ]
+ },
+ {
+  "pid": 74532,
+  "why": [
+   "fixture log: M6 [sh-laptop.log]"
+  ]
+ },
+ {
+  "pid": 74534,
+  "why": [
+   "fixture log: M4 [sh-laptop.log]"
+  ]
+ },
+ {
+  "pid": 78213,
+  "why": [
+   "parent of 78394 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 78394,
+  "why": [
+   "self: /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 78559,
+  "why": [
+   "parent of 78561 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 78561,
+  "why": [
+   "self: /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 78567,
+  "why": [
+   "spawn by 78561: ssh hostpc wsl.exe -e bash -s fx1430r2 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 78636,
+  "why": [
+   "spawn by 78394: ssh hostpc cd /d C:\\Users\\user && node - fx1430r2-final-B [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 78923,
+  "why": [
+   "spawnSync by 74351: ps -axo pid=,ppid=,pgid=,stat=,args= [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 79026,
+  "why": [
+   "spawnSync by 74351: /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/ [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 79055,
+  "why": [
+   "spawnSync by 74351: lsof -O -w -n -P -a -d cwd -p 74351,74511,74527,74528,74529,74531,74532,74534 -Fpn [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 85896,
+  "why": [
+   "parent of 85899 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 85899,
+  "why": [
+   "self: /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 86017,
+  "why": [
+   "spawn by 85899: ssh hostpc cd /d C:\\Users\\user\\1430-r2 && node -e \"const fs=require('fs');console.log('fetch [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 90317,
+  "why": [
+   "parent of 90349 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 90349,
+  "why": [
+   "self: /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 90551,
+  "why": [
+   "spawn by 90349: ssh hostpc cd /d C:\\Users\\user\\1430-r2 && node - fx1430r2-final-A [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 93249,
+  "why": [
+   "parent of 93250 [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 93250,
+  "why": [
+   "self: /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 93256,
+  "why": [
+   "spawn by 93250: ssh hostpc cd /d C:\\Users\\user\\1430-r2 && node -e \"console.log('watchfetch pid',process.pid, [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 96974,
+  "why": [
+   "spawnSync by 74351: ps -axo pid=,ppid=,pgid=,stat=,args= [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 97071,
+  "why": [
+   "spawnSync by 74351: /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/ [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 97110,
+  "why": [
+   "spawnSync by 74351: lsof -O -w -n -P -a -d cwd -p 74351,74528,74532 -Fpn [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 97216,
+  "why": [
+   "spawnSync by 74267: ps -axo pid=,ppid=,pgid=,stat=,args= [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 97260,
+  "why": [
+   "spawnSync by 74267: /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/ [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 97294,
+  "why": [
+   "spawnSync by 74267: lsof -O -w -n -P -a -d cwd -p 74528,74532 -Fpn [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 98819,
+  "why": [
+   "spawnSync by 74267: ps -axo pid=,ppid=,pgid=,stat=,args= [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 98929,
+  "why": [
+   "spawn by 74267: /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/143 [rec-laptop.jsonl]",
+   "self: /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r [rec-laptop.jsonl]"
+  ]
+ },
+ {
+  "pid": 99236,
+  "why": [
+   "spawn by 98929: bash -c read _; exec bash /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/sp [rec-laptop.jsonl]",
+   "fixture log: root [sh-laptop.log]"
+  ]
+ },
+ {
+  "pid": 99251,
+  "why": [
+   "fixture log: M1-from-root [sh-laptop.log]",
+   "fixture log: M1 [sh-laptop.log]"
+  ]
+ },
+ {
+  "pid": 99254,
+  "why": [
+   "fixture log: M3 [sh-laptop.log]"
+  ]
+ },
+ {
+  "pid": 99259,
+  "why": [
+   "fixture log: M4-parent-from-root [sh-laptop.log]",
+   "fixture log: M4-parent [sh-laptop.log]"
+  ]
+ },
+ {
+  "pid": 99266,
+  "why": [
+   "fixture log: M5-from-root [sh-laptop.log]",
+   "fixture log: M5 [sh-laptop.log]"
+  ]
+ },
+ {
+  "pid": 99267,
+  "why": [
+   "fixture log: M6 [sh-laptop.log]"
+  ]
+ },
+ {
+  "pid": 99269,
+  "why": [
+   "fixture log: M2 [sh-laptop.log]"
+  ]
+ },
+ {
+  "pid": 99270,
+  "why": [
+   "fixture log: M4 [sh-laptop.log]"
+  ]
+ }
+]
