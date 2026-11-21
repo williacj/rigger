@@ -30,7 +30,7 @@ env:
   # The Node major the check runs on: one `engines` admits, and past no end of life.
   NODE_MAJOR: '24'
   # The commit of this repository that supplies the scripts.
-  SELF_HOSTING_COMMIT: 'c1e4833fd3bfdafef68590c48ad88571a3d3c885'
+  SELF_HOSTING_COMMIT: '1e8bdd8e08ec5337e0cb50356756f1a9491e333b'
   # The tree the scripts run from, under the runner's temporary directory.
   TREE: self-hosting-tree
   # The event's issue or pull request number, and whether it is a pull request's.
