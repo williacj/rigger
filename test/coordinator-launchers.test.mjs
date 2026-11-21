@@ -104,6 +104,29 @@ test('codex-judge.sh writes a prompt naming suite-slot.sh by the absolute path o
   assertToolingClean();
 });
 
+/**
+ * The lines under the prompt's "## Post" heading, up to the next "## " heading outside a fenced
+ * block. Fences are told as the gate tells them, copied from src/workflow/marker.mjs: lines are
+ * compared after trimEnd() (`parseMarker`, lines 163-167), a fence opens on `FENCE` and closes on
+ * a run of its own mark at least as long (`secondBlock`, lines 214-225).
+ */
+function postSection(prompt) {
+  const lines = prompt.split('\n');
+  let fence = null;
+  let start = -1;
+  for (let at = 0; at < lines.length; at += 1) {
+    const line = lines[at].trimEnd();
+    if (fence !== null) {
+      const run = /^ {0,3}(`+|~+)[ \t]*$/.exec(line)?.[1];
+      if (run !== undefined && run[0] === fence[0] && run.length >= fence.length) fence = null;
+    } else if (line.startsWith('## ')) {
+      if (start !== -1) return lines.slice(start, at);
+      if (line === '## Post') start = at + 1;
+    } else fence = /^ {0,3}(`{3,}|~{3,})/.exec(line)?.[1] ?? null;
+  }
+  return start === -1 ? [] : lines.slice(start);
+}
+
 // D29 reason: wiring; the real codex-judge.sh fills the judge prompt with sed and hands it to the
 // stub codex on standard input. Deterministic counterpart: test/marker.test.mjs, "the marker table:
 // a marker block not directly under the comment's first line is no marker", is the test of the
@@ -116,10 +139,7 @@ test('codex-judge.sh hands codex a prompt placing the marker block on the verdic
   const result = run(w, launcher('codex-judge.sh'), ['12', '7', '1'], { env: { RIGGER_WORKTREE_ROOT: root, RIGGER_REPO_URL: bare, CODEX_LOG_DIR: logs } });
 
   assert.equal(result.status, 0, result.stderr);
-  const lines = codexCalls(w)[0].stdin.split('\n');
-  const heading = lines.indexOf('## Post');
-  const next = lines.findIndex((line, at) => at > heading && line.startsWith('## '));
-  const post = heading === -1 ? [] : lines.slice(heading + 1, next === -1 ? lines.length : next);
+  const post = postSection(codexCalls(w)[0].stdin);
   const examples = [];
   for (let at = 0; at < post.length; at += 1) {
     if (!/^````(?!`)/.test(post[at])) continue;
@@ -135,7 +155,8 @@ test('codex-judge.sh hands codex a prompt placing the marker block on the verdic
     const [example] = examples;
     if (!(example[0].startsWith('**Codex ') && example[0].endsWith('**'))) broken.push(`E2: the example's first line is not the **Codex …** heading: ${example[0]}`);
     if (parseMarker(example.join('\n'), 1).state === 'none') broken.push('E3: the gate reads no marker block on the example\'s second line');
-    const fence = example.indexOf('```', example.indexOf('```rigger-marker') + 1);
+    const fenceLines = example.map((line) => line.trimEnd());
+    const fence = fenceLines.indexOf('```', fenceLines.indexOf('```rigger-marker') + 1);
     if (fence === -1 || !example.slice(fence + 1).some((line) => line.trim() !== '')) broken.push('E4: no non-empty line follows the marker block\'s closing fence');
   }
   assert.deepEqual(broken, [], `the marker block's placement: the example verdict layout breaks ${broken.map((entry) => entry.slice(0, 2)).join(' and ')}`);
