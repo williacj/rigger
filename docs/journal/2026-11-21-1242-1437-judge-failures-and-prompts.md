@@ -105,3 +105,18 @@ top-level await; its suite measured tests=6018, pass=6017, fail=1, exit 1. Coord
 continuation. The required isolated rerun on 2026-11-21 passed: tests=1, pass=1, fail=0,
 exit 0; start/end load 8.32, user processes 556. Full output is
 1437-self-hosting-resumed.log; the PR quotes both attempts. No root-cause card was mutated.
+
+CI run 44954185336 failed the new C2-once, C1-once and C7 cases at the previous head:
+each received an R8 hold because the default-line judge checkout lacked reviewer.md.
+The fast job measured tests=6018, pass=6006, fail=3, skipped=9; macOS smoke passed.
+The summary log command returned an early prefix only; the complete 6711637-byte fast-job
+original was recovered through the job logs API with escape sequences allowed and retained.
+This is an introduced fixture defect, not a flake; no retry of that job was requested.
+
+The prompt fixture pushed its instructions to a literal main branch, while L0 reads the
+remote HEAD. A controlled non-main default reproduced the missing-file assertion before the
+fix: tests=1, pass=0, fail=1, exit 1, load 3.15 to 3.77. The fixture now declares that default,
+publishes the role commit through HEAD and asserts both files at the remote HEAD before the
+CLI runs. The selected C1/C2/C4/C5/C7/C8 run then measured tests=7, pass=7, fail=0, exit 0,
+load 3.61 to 3.93. The fixture ripple search found its callers only in once.test.mjs.
+No production source, acceptance, original-main test line or grant scope changed.
