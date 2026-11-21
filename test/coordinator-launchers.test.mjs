@@ -14,7 +14,7 @@ import { join } from 'node:path';
 import { TOOLS, answer, assertToolingClean, codexCalls, forge, run, world } from './coordinator-fixtures.mjs';
 import { cloneInto, gitIn } from './git-repository.mjs';
 import { SOURCE, sourceText } from './coordinator-source.mjs';
-import { composeMarker, parseMarker } from '../src/workflow/marker.mjs';
+import { parseMarker } from '../src/workflow/marker.mjs';
 
 const LAUNCHERS = process.env.CODEX_TOOLS_DIR || TOOLS;
 const launcher = (name) => join(LAUNCHERS, name);
@@ -109,27 +109,36 @@ test('codex-judge.sh writes a prompt naming suite-slot.sh by the absolute path o
 // a marker block not directly under the comment's first line is no marker", is the test of the
 // gate's read this layout depends on.
 //
-// The prompt's "## Post" section shows the verdict's layout as an example inside a four-backtick
-// fence. The test fills the example's marker block with a composed one and asks the gate's own
-// parse whether it reads it, so the prose around the example can say anything.
+// The prompt's "## Post" section carries the verdict's layout as one example, which card #1439's
+// "The example verdict layout" pins as conditions E1 to E4. The test checks those and no prose.
 test('codex-judge.sh hands codex a prompt placing the marker block on the verdict comment\'s second line, under the heading and before the rest of the verdict', () => {
   const { w, bare, root, logs } = setup('coord-judge-marker-');
   const result = run(w, launcher('codex-judge.sh'), ['12', '7', '1'], { env: { RIGGER_WORKTREE_ROOT: root, RIGGER_REPO_URL: bare, CODEX_LOG_DIR: logs } });
 
   assert.equal(result.status, 0, result.stderr);
-  const prompt = codexCalls(w)[0].stdin;
-  const post = prompt.slice(prompt.indexOf('\n## Post\n')).split('\n');
-  const open = post.indexOf('````');
-  const close = post.indexOf('````', open + 1);
-  assert.ok(open !== -1 && close !== -1, 'the marker block\'s placement: the Post section shows no example layout of the verdict in a four-backtick fence');
-  const example = post.slice(open + 1, close);
-  const from = example.indexOf('```rigger-marker');
-  const to = example.indexOf('```', from + 1);
-  assert.ok(from !== -1 && to !== -1, `the marker block's placement: the example layout holds no marker block:\n${example.join('\n')}`);
-  const marker = { card: 7, pull: 12, head: 'a'.repeat(40), digest: 'b'.repeat(64), role: 'reviewer', verdict: 'sound', items: ['met'], coverage: 'covered' };
-  const block = composeMarker(marker, '').split('\n').slice(1, -1);
-  const verdict = [...example.slice(0, from), ...block, ...example.slice(to + 1)].join('\n');
-  assert.equal(parseMarker(verdict, 1).state, 'marker', `the marker block's placement: a verdict laid out as the prompt's example holds no block the gate reads:\n${verdict}`);
+  const lines = codexCalls(w)[0].stdin.split('\n');
+  const heading = lines.indexOf('## Post');
+  const next = lines.findIndex((line, at) => at > heading && line.startsWith('## '));
+  const post = heading === -1 ? [] : lines.slice(heading + 1, next === -1 ? lines.length : next);
+  const examples = [];
+  for (let at = 0; at < post.length; at += 1) {
+    if (!/^````(?!`)/.test(post[at])) continue;
+    const close = post.indexOf('````', at + 1);
+    if (close === -1) break;
+    const inside = post.slice(at + 1, close);
+    if (inside.includes('```rigger-marker')) examples.push(inside);
+    at = close;
+  }
+  const broken = [];
+  if (examples.length !== 1) broken.push(`E1: the Post section holds ${examples.length} four-backtick blocks with a \`\`\`rigger-marker line, not exactly one`);
+  else {
+    const [example] = examples;
+    if (!(example[0].startsWith('**Codex ') && example[0].endsWith('**'))) broken.push(`E2: the example's first line is not the **Codex …** heading: ${example[0]}`);
+    if (parseMarker(example.join('\n'), 1).state === 'none') broken.push('E3: the gate reads no marker block on the example\'s second line');
+    const fence = example.indexOf('```', example.indexOf('```rigger-marker') + 1);
+    if (fence === -1 || !example.slice(fence + 1).some((line) => line.trim() !== '')) broken.push('E4: no non-empty line follows the marker block\'s closing fence');
+  }
+  assert.deepEqual(broken, [], `the marker block's placement: the example verdict layout breaks ${broken.map((entry) => entry.slice(0, 2)).join(' and ')}`);
 });
 
 /** A maker's clone and its tmp directory, as codex-maker.sh leaves them, and a message file. */
