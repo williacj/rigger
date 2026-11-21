@@ -490,6 +490,21 @@ async function fileAt(board, state, operation) {
 }
 
 /**
+ * gh 2.103.3's raw diff contract, measured on 2026-11-20 on #1441:
+ * https://github.com/williacj/rigger/issues/1441#observed-gh-behaviour
+ * It refuses ESC anywhere unless escape output is allowed; HTTP 406 remains the forge's answer.
+ */
+async function diffReply(board, state, args) {
+  const pull = repositoryOf(state).pull(Number(pathIn(state, args).split('/')[1]));
+  if (!pull) throw notFound('https://docs.github.com/rest/pulls/pulls#get-a-pull-request');
+  if (pull.declined) throw new GhPrinted(`gh: ${pull.declined} (HTTP 406)`, JSON.stringify({ message: pull.declined, errors: [{ resource: 'PullRequest', field: 'diff', code: 'too_large' }], status: '406' }));
+  if (pull.diff.includes('\x1b') && !args.includes('--allow-escape-sequences')) {
+    throw new GhFailure('the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway');
+  }
+  return pull.diff;
+}
+
+/**
  * The commands the fake `gh` answers, each keyed by how `commandOf` writes it, with what answers
  * it. A GraphQL request's answer is the data `gh` prints, given the board, the fake's state and the
  * document's one operation; a REST read's is the text `gh` prints, given the board, the fake's
@@ -650,11 +665,9 @@ const COMMANDS = {
   },
   // A pull request's diff, or the forge's refusal to serve it, which GitHub gives as HTTP 406.
   [commandOf(['api', 'repos/_/_/pulls/_', '-X', 'GET', '-H', 'Accept: application/vnd.github.diff'])]: async (board, state, args) => {
-    const pull = repositoryOf(state).pull(Number(pathIn(state, args).split('/')[1]));
-    if (!pull) throw notFound('https://docs.github.com/rest/pulls/pulls#get-a-pull-request');
-    if (pull.declined) throw new GhPrinted(`gh: ${pull.declined} (HTTP 406)`, JSON.stringify({ message: pull.declined, errors: [{ resource: 'PullRequest', field: 'diff', code: 'too_large' }], status: '406' }));
-    return pull.diff;
+    return diffReply(board, state, args);
   },
+  [commandOf(['api', 'repos/_/_/pulls/_', '-X', 'GET', '-H', 'Accept: application/vnd.github.diff', '--allow-escape-sequences'])]: diffReply,
   // The comparison of a pull request's base and head, answered with the merge base the fake holds
   // for that pull request, or, where the fake was given the test's `origin`, the one git finds there.
   [commandOf(['api', 'repos/_/_/compare/_..._', '-X', 'GET'])]: async (board, state, args) => {

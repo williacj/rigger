@@ -19,6 +19,7 @@ import { temporaryDirectory } from './temporary-directory.mjs';
 import { spawnSync } from 'node:child_process';
 import { gitEnvironment } from '../src/substrate/git-environment.mjs';
 import { isHistoryRequest } from './acceptance-history-world.mjs';
+import { forgeWithDiff } from './in-process-fixtures.mjs';
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures');
 
@@ -1080,7 +1081,15 @@ test('given a pull request number, the repository read answers its diff as the f
   const diff = await repositoryReads(BOARD, { send }).readDiff(12);
 
   assert.equal(Buffer.compare(Buffer.from(diff), Buffer.from(DIFF)), 0);
-  assert.deepEqual(send.sent, [['gh', 'api', 'repos/williacj/rigger/pulls/12', '-X', 'GET', '-H', 'Accept: application/vnd.github.diff']]);
+  assert.deepEqual(send.sent, [['gh', 'api', 'repos/williacj/rigger/pulls/12', '-X', 'GET', '-H', 'Accept: application/vnd.github.diff', '--allow-escape-sequences']]);
+});
+
+test('readDiff preserves a diff holding an ESC byte through fake gh byte for byte', async () => {
+  const served = 'diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+é\x1b[31m "quoted" \\ tail\n\\ No newline at end of file';
+  const fake = forgeWithDiff(served);
+  let read;
+  await assert.doesNotReject(async () => { read = await repositoryReads(BOARD, { send: fake.send }).readDiff(301); }, 'the ESC diff must remain readable');
+  assert.deepEqual(Buffer.from(read), Buffer.from(served), 'every diff byte, including ESC, is preserved');
 });
 
 test('given a pull request whose diff the forge declines to serve, the repository read rejects naming the pull request and the reason', async () => {
