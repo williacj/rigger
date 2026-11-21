@@ -599,8 +599,8 @@ import { KINDS } from './judge-world.mjs';
 /** Fresh L3 handles share only the record reader and stand-in forge; no loop handle is reused. */
 const freshJudges = (built, options = {}) => loop({ ...built.handed, readRecord: built.events, ...options });
 const oneJudgeKind = { change: { ...KINDS.change, judges: ['reviewer'] } };
-const judgeVerdict = (body = cardIn(7, COLUMNS.review).body) => composeMarker({
-  card: 7, pull: 1007, head: HEAD, digest: acceptanceDigest(body), role: 'reviewer', provider: config.roles.reviewer.provider,
+const judgeVerdict = (body = cardIn(7, COLUMNS.review).body, role = 'reviewer') => composeMarker({
+  card: 7, pull: 1007, head: HEAD, digest: acceptanceDigest(body), role, provider: config.roles[role].provider,
   verdict: 'sound', items: ['met'], coverage: 'covered',
 }, 'Sound');
 
@@ -757,8 +757,10 @@ test('1437 B9: an owner label added and removed between fresh failures does not 
 test('1437 B10: two judges failing in separate invocations each have only one failure', SETTLES_WITHIN, async () => {
   const kinds = { change: { ...oneJudgeKind.change, judges: ['reviewer', 'architect'] } };
   const built = judgeWorld({ ...reviewed(7), kinds });
+  built.repository.comment(1007, judgeVerdict(undefined, 'architect'), '2026-11-21T00:00:00Z');
   built.agent.plan(7, 'reviewer', { exit: 7 });
   await assert.doesNotReject(freshJudges(built).pull(), 'the non-escalating invocation must settle successfully');
+  assert.deepEqual(recorded(built, 'L3', 'dispatch').map(({ role }) => role), ['reviewer'], 'the architect verdict precedes the reviewer failure rather than resetting its history afterward');
   const comments = built.repository.pull(1007).comments.map((comment) => ({ ...comment, lastEditedAt: '2026-11-21T02:01:00Z' }));
   built.repository.update(1007, { comments });
   built.repository.comment(1007, judgeVerdict(), '2026-11-21T02:02:00Z');

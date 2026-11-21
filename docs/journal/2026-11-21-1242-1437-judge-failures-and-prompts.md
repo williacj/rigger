@@ -75,3 +75,11 @@ B1 case was removed. It preserves both failure events, distinct dispatch ids, th
 role and ids, ambiguous/loop attribution, the Owner move and escalation label; it also asserts
 different run ids. No test held at origin/main was removed. The full suite must pass again
 at the resulting head before handoff.
+
+The role-comparison mutation survived B10 at the next head: its first invocation dispatched
+the architect successfully after the reviewer failed, and that architect verdict reset the
+window the mutation needed. B10 now seeds the architect verdict before the reviewer failure
+and asserts that only the reviewer dispatches initially. In the local guarded check, the
+unchanged source passed, removing the failure-role comparison produced one named assertion
+failure, and byte-exact restoration passed again. The rejected/surviving earlier attempts
+remain retained; the final receipt must reproduce this assertion at the committed head.
