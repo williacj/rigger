@@ -1,0 +1,6714 @@
+{
+ "about": "Spike 1431 mirrorCard run log from the worker on Host-PC10: start, read, gate, write and end events per run, with the workflow state each run carried and the read-back after it.",
+ "events": [
+  {
+   "ts": "2026-11-20T00:42:06.379Z",
+   "card": "4",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:42:06.418Z",
+   "card": "1",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:42:06.573Z",
+   "card": "2",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:42:06.587Z",
+   "card": "3",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:42:06.614Z",
+   "card": "5",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:42:06.740Z",
+   "card": "4",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:42:06.912Z",
+   "card": "2",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:42:06.927Z",
+   "card": "3",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:42:06.952Z",
+   "card": "5",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:42:06.962Z",
+   "card": "1",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:42:07.461Z",
+   "card": "3",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:42:07.573Z",
+   "card": "1",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:42:07.845Z",
+   "card": "2",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:42:08.078Z",
+   "card": "4",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:42:08.824Z",
+   "card": "5",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:42:10.703Z",
+   "card": "3",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:42:10.858Z",
+   "card": "1",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:42:11.063Z",
+   "card": "2",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:42:11.380Z",
+   "card": "4",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:42:12.236Z",
+   "card": "5",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:42:22.623Z",
+   "card": "1",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:42:22.660Z",
+   "card": "4",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:42:22.936Z",
+   "card": "1",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:42:22.970Z",
+   "card": "4",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:42:23.828Z",
+   "card": "1",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Coding"
+  },
+  {
+   "ts": "2026-11-20T00:42:24.039Z",
+   "card": "4",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Coding"
+  },
+  {
+   "ts": "2026-11-20T00:42:27.052Z",
+   "card": "1",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:42:27.136Z",
+   "card": "1",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:42:27.373Z",
+   "card": "4",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:42:27.404Z",
+   "card": "4",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:42:27.486Z",
+   "card": "1",
+   "event": "read",
+   "before": {
+    "column": "Coding",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:42:27.599Z",
+   "card": "4",
+   "event": "read",
+   "before": {
+    "column": "Coding",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:42:28.033Z",
+   "card": "1",
+   "event": "wrote",
+   "field": "Escalation",
+   "value": "ambiguous: waiting on owner answer"
+  },
+  {
+   "ts": "2026-11-20T00:42:28.718Z",
+   "card": "4",
+   "event": "wrote",
+   "field": "Escalation",
+   "value": "ambiguous: waiting on owner answer"
+  },
+  {
+   "ts": "2026-11-20T00:42:31.503Z",
+   "card": "1",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Escalation"
+   ],
+   "after": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   },
+   "workflowState": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:42:31.972Z",
+   "card": "4",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Escalation"
+   ],
+   "after": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   },
+   "workflowState": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:42:40.773Z",
+   "card": "3",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:42:41.162Z",
+   "card": "3",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:42:41.178Z",
+   "card": "2",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:42:41.533Z",
+   "card": "2",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:42:42.324Z",
+   "card": "5",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:42:42.510Z",
+   "card": "5",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:42:44.530Z",
+   "card": "3",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:42:44.842Z",
+   "card": "2",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:42:45.736Z",
+   "card": "5",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:42:48.225Z",
+   "card": "1",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Review",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:42:48.425Z",
+   "card": "1",
+   "event": "read",
+   "before": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   }
+  },
+  {
+   "ts": "2026-11-20T00:42:49.047Z",
+   "card": "1",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Review"
+  },
+  {
+   "ts": "2026-11-20T00:42:49.568Z",
+   "card": "1",
+   "event": "wrote",
+   "field": "Escalation",
+   "value": ""
+  },
+  {
+   "ts": "2026-11-20T00:42:52.807Z",
+   "card": "1",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status",
+    "Escalation"
+   ],
+   "after": {
+    "column": "Review",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Review",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:43:02.096Z",
+   "card": "4",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:43:02.562Z",
+   "card": "4",
+   "event": "read",
+   "before": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   }
+  },
+  {
+   "ts": "2026-11-20T00:43:05.862Z",
+   "card": "4",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   },
+   "workflowState": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:43:14.607Z",
+   "card": "3",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:43:14.919Z",
+   "card": "2",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:43:14.944Z",
+   "card": "3",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:43:15.223Z",
+   "card": "2",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:43:15.805Z",
+   "card": "5",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:43:16.028Z",
+   "card": "5",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:43:18.316Z",
+   "card": "3",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:43:18.460Z",
+   "card": "2",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:43:19.318Z",
+   "card": "5",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:43:22.886Z",
+   "card": "1",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Review",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:43:23.182Z",
+   "card": "1",
+   "event": "read",
+   "before": {
+    "column": "Done",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:43:24.415Z",
+   "card": "1",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Review"
+  },
+  {
+   "ts": "2026-11-20T00:43:27.756Z",
+   "card": "1",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Review",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Review",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:43:29.815Z",
+   "card": "1",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Owner",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:43:30.120Z",
+   "card": "1",
+   "event": "read",
+   "before": {
+    "column": "Review",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:43:31.849Z",
+   "card": "1",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Owner"
+  },
+  {
+   "ts": "2026-11-20T00:43:35.379Z",
+   "card": "1",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Owner",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Owner",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:43:35.412Z",
+   "card": "1",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Done",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:43:35.735Z",
+   "card": "1",
+   "event": "read",
+   "before": {
+    "column": "Owner",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:43:35.997Z",
+   "card": "4",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:43:36.207Z",
+   "card": "4",
+   "event": "read",
+   "before": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   }
+  },
+  {
+   "ts": "2026-11-20T00:43:36.570Z",
+   "card": "1",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Done"
+  },
+  {
+   "ts": "2026-11-20T00:43:39.569Z",
+   "card": "4",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   },
+   "workflowState": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:43:39.886Z",
+   "card": "1",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Done",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Done",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:43:48.417Z",
+   "card": "3",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:43:48.550Z",
+   "card": "2",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:43:48.793Z",
+   "card": "3",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:43:48.927Z",
+   "card": "2",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:43:48.928Z",
+   "card": "2",
+   "event": "gate-held",
+   "point": "after-read",
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:43:49.434Z",
+   "card": "5",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:43:49.774Z",
+   "card": "5",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:43:49.956Z",
+   "card": "2",
+   "event": "gate-released",
+   "point": "after-read"
+  },
+  {
+   "ts": "2026-11-20T00:43:52.125Z",
+   "card": "3",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:43:53.167Z",
+   "card": "5",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:43:53.393Z",
+   "card": "2",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Review",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": false,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:44:09.658Z",
+   "card": "4",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:44:09.991Z",
+   "card": "4",
+   "event": "read",
+   "before": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   }
+  },
+  {
+   "ts": "2026-11-20T00:44:13.261Z",
+   "card": "4",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   },
+   "workflowState": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:44:22.215Z",
+   "card": "3",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:44:22.569Z",
+   "card": "3",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:44:23.253Z",
+   "card": "5",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:44:23.462Z",
+   "card": "5",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:44:23.480Z",
+   "card": "2",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:44:23.708Z",
+   "card": "2",
+   "event": "read",
+   "before": {
+    "column": "Review",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:44:24.590Z",
+   "card": "2",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:44:25.809Z",
+   "card": "3",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:44:26.709Z",
+   "card": "5",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:44:27.889Z",
+   "card": "2",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:44:31.920Z",
+   "card": "2",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:44:32.279Z",
+   "card": "2",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:44:32.282Z",
+   "card": "2",
+   "event": "gate-held",
+   "point": "after-read",
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:44:33.325Z",
+   "card": "2",
+   "event": "gate-released",
+   "point": "after-read"
+  },
+  {
+   "ts": "2026-11-20T00:44:33.888Z",
+   "card": "2",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Coding"
+  },
+  {
+   "ts": "2026-11-20T00:44:37.136Z",
+   "card": "2",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:44:39.218Z",
+   "card": "3",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:44:39.422Z",
+   "card": "3",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:44:40.482Z",
+   "card": "3",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Coding"
+  },
+  {
+   "ts": "2026-11-20T00:44:40.483Z",
+   "card": "3",
+   "event": "gate-held",
+   "point": "after-writes",
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:44:41.528Z",
+   "card": "3",
+   "event": "gate-released",
+   "point": "after-writes"
+  },
+  {
+   "ts": "2026-11-20T00:44:43.327Z",
+   "card": "4",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:44:43.545Z",
+   "card": "4",
+   "event": "read",
+   "before": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   }
+  },
+  {
+   "ts": "2026-11-20T00:44:44.852Z",
+   "card": "3",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Owner",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "match": false,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:44:46.967Z",
+   "card": "4",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   },
+   "workflowState": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:44:56.832Z",
+   "card": "5",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:44:57.198Z",
+   "card": "5",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:00.474Z",
+   "card": "5",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:07.210Z",
+   "card": "2",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:45:07.540Z",
+   "card": "2",
+   "event": "read",
+   "before": {
+    "column": "Coding",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:10.828Z",
+   "card": "2",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:14.926Z",
+   "card": "3",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:45:15.324Z",
+   "card": "3",
+   "event": "read",
+   "before": {
+    "column": "Owner",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:16.342Z",
+   "card": "3",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Coding"
+  },
+  {
+   "ts": "2026-11-20T00:45:17.033Z",
+   "card": "4",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:45:17.261Z",
+   "card": "4",
+   "event": "read",
+   "before": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:19.578Z",
+   "card": "3",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:20.528Z",
+   "card": "4",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   },
+   "workflowState": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:23.609Z",
+   "card": "4",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Review",
+    "escalation": ""
+   },
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:45:23.935Z",
+   "card": "4",
+   "event": "read",
+   "before": {
+    "column": "Coding",
+    "escalation": "ambiguous: waiting on owner answer"
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:24.694Z",
+   "card": "4",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Review"
+  },
+  {
+   "ts": "2026-11-20T00:45:24.697Z",
+   "card": "4",
+   "event": "gate-held",
+   "point": "after-write1",
+   "pid": 34000
+  },
+  {
+   "ts": "2026-11-20T00:45:37.623Z",
+   "card": "4",
+   "event": "start",
+   "why": "transition",
+   "attempt": 2,
+   "workflowState": {
+    "column": "Review",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:38.211Z",
+   "card": "4",
+   "event": "read",
+   "before": {
+    "column": "Review",
+    "escalation": "ambiguous: waiting on owner answer"
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:39.239Z",
+   "card": "4",
+   "event": "wrote",
+   "field": "Escalation",
+   "value": ""
+  },
+  {
+   "ts": "2026-11-20T00:45:40.716Z",
+   "card": "5",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:40.934Z",
+   "card": "2",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:40.984Z",
+   "card": "5",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:41.234Z",
+   "card": "2",
+   "event": "read",
+   "before": {
+    "column": "Coding",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:42.487Z",
+   "card": "4",
+   "event": "end",
+   "why": "transition",
+   "attempt": 2,
+   "writes": [
+    "Escalation"
+   ],
+   "after": {
+    "column": "Review",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Review",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:44.241Z",
+   "card": "5",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:44.839Z",
+   "card": "2",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:49.714Z",
+   "card": "3",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:50.124Z",
+   "card": "3",
+   "event": "read",
+   "before": {
+    "column": "Coding",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:52.575Z",
+   "card": "6",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:52.639Z",
+   "card": "7",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:52.689Z",
+   "card": "8",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:52.711Z",
+   "card": "9",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:52.743Z",
+   "card": "10",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:52.787Z",
+   "card": "11",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:52.816Z",
+   "card": "12",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:52.855Z",
+   "card": "13",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:52.895Z",
+   "card": "14",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:52.898Z",
+   "card": "6",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:52.919Z",
+   "card": "15",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:52.974Z",
+   "card": "16",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:53.053Z",
+   "card": "7",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:53.062Z",
+   "card": "17",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:53.071Z",
+   "card": "8",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:53.102Z",
+   "card": "9",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:53.111Z",
+   "card": "18",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:53.123Z",
+   "card": "15",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:53.171Z",
+   "card": "13",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:53.176Z",
+   "card": "19",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:53.179Z",
+   "card": "11",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:53.240Z",
+   "card": "10",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:53.242Z",
+   "card": "17",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:53.250Z",
+   "card": "20",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:53.277Z",
+   "card": "21",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:53.299Z",
+   "card": "18",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:53.303Z",
+   "card": "14",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:53.321Z",
+   "card": "22",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:53.324Z",
+   "card": "16",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:53.338Z",
+   "card": "19",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:53.387Z",
+   "card": "23",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:53.403Z",
+   "card": "12",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:53.437Z",
+   "card": "3",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:53.444Z",
+   "card": "20",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:53.463Z",
+   "card": "24",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:53.541Z",
+   "card": "25",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:53.577Z",
+   "card": "22",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:53.623Z",
+   "card": "26",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:53.674Z",
+   "card": "23",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:53.690Z",
+   "card": "27",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:53.704Z",
+   "card": "24",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:53.707Z",
+   "card": "28",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:53.736Z",
+   "card": "9",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:53.753Z",
+   "card": "29",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:53.803Z",
+   "card": "8",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:53.810Z",
+   "card": "30",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:53.849Z",
+   "card": "25",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:53.873Z",
+   "card": "31",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:53.875Z",
+   "card": "26",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:53.905Z",
+   "card": "32",
+   "event": "start",
+   "why": "transition",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:45:53.986Z",
+   "card": "28",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:53.998Z",
+   "card": "30",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:54.009Z",
+   "card": "6",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:54.028Z",
+   "card": "29",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:54.030Z",
+   "card": "27",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:54.096Z",
+   "card": "32",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:54.111Z",
+   "card": "14",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:54.199Z",
+   "card": "10",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:54.220Z",
+   "card": "31",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:54.236Z",
+   "card": "18",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:54.244Z",
+   "card": "19",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:54.250Z",
+   "card": "13",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:54.271Z",
+   "card": "11",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:54.325Z",
+   "card": "21",
+   "event": "read",
+   "before": {
+    "column": null,
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:45:54.353Z",
+   "card": "17",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:54.376Z",
+   "card": "15",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:54.411Z",
+   "card": "12",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:54.414Z",
+   "card": "20",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:54.478Z",
+   "card": "16",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:54.503Z",
+   "card": "22",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:54.522Z",
+   "card": "25",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:54.632Z",
+   "card": "26",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:54.743Z",
+   "card": "27",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:54.791Z",
+   "card": "24",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:54.851Z",
+   "card": "30",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:54.855Z",
+   "card": "32",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:54.943Z",
+   "card": "29",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:55.032Z",
+   "card": "28",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:55.078Z",
+   "card": "23",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:55.137Z",
+   "card": "21",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:55.143Z",
+   "card": "7",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:55.212Z",
+   "card": "31",
+   "event": "wrote",
+   "field": "Status",
+   "value": "Ready"
+  },
+  {
+   "ts": "2026-11-20T00:45:56.954Z",
+   "card": "9",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:57.020Z",
+   "card": "8",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:57.263Z",
+   "card": "6",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:57.427Z",
+   "card": "14",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:57.466Z",
+   "card": "19",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:57.471Z",
+   "card": "11",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:57.528Z",
+   "card": "10",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:57.576Z",
+   "card": "17",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:57.579Z",
+   "card": "13",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:57.604Z",
+   "card": "18",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:57.615Z",
+   "card": "12",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:57.678Z",
+   "card": "20",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:57.702Z",
+   "card": "16",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:57.722Z",
+   "card": "22",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:57.814Z",
+   "card": "15",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:57.856Z",
+   "card": "25",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:57.940Z",
+   "card": "27",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:58.019Z",
+   "card": "26",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:58.036Z",
+   "card": "24",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:58.068Z",
+   "card": "32",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:58.117Z",
+   "card": "30",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:58.194Z",
+   "card": "29",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:58.336Z",
+   "card": "21",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:58.360Z",
+   "card": "28",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:58.370Z",
+   "card": "7",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:58.395Z",
+   "card": "23",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:45:58.436Z",
+   "card": "31",
+   "event": "end",
+   "why": "transition",
+   "attempt": 1,
+   "writes": [
+    "Status"
+   ],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:12.581Z",
+   "card": "4",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Review",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:13.014Z",
+   "card": "4",
+   "event": "read",
+   "before": {
+    "column": "Review",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:14.333Z",
+   "card": "5",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:14.578Z",
+   "card": "5",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:14.922Z",
+   "card": "2",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:15.119Z",
+   "card": "2",
+   "event": "read",
+   "before": {
+    "column": "Coding",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:16.341Z",
+   "card": "4",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Review",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Review",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:17.863Z",
+   "card": "5",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:18.396Z",
+   "card": "2",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:23.708Z",
+   "card": "3",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:24.030Z",
+   "card": "3",
+   "event": "read",
+   "before": {
+    "column": "Coding",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:27.015Z",
+   "card": "9",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:27.081Z",
+   "card": "8",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:27.213Z",
+   "card": "9",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:27.325Z",
+   "card": "6",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:27.396Z",
+   "card": "8",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:27.412Z",
+   "card": "3",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:27.515Z",
+   "card": "14",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:27.601Z",
+   "card": "19",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:27.608Z",
+   "card": "11",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:27.640Z",
+   "card": "10",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:27.671Z",
+   "card": "6",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:27.679Z",
+   "card": "17",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:27.692Z",
+   "card": "13",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:27.710Z",
+   "card": "18",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:27.728Z",
+   "card": "12",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:27.753Z",
+   "card": "20",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:27.778Z",
+   "card": "16",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:27.799Z",
+   "card": "22",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:27.809Z",
+   "card": "14",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:27.854Z",
+   "card": "19",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:27.882Z",
+   "card": "15",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:27.883Z",
+   "card": "17",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:27.893Z",
+   "card": "11",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:27.907Z",
+   "card": "25",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:28.006Z",
+   "card": "10",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:28.017Z",
+   "card": "27",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:28.064Z",
+   "card": "15",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:28.079Z",
+   "card": "26",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:28.090Z",
+   "card": "13",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:28.092Z",
+   "card": "12",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:28.114Z",
+   "card": "24",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:28.162Z",
+   "card": "20",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:28.176Z",
+   "card": "22",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:28.184Z",
+   "card": "32",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:28.216Z",
+   "card": "30",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:28.218Z",
+   "card": "27",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:28.237Z",
+   "card": "18",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:28.245Z",
+   "card": "25",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:28.261Z",
+   "card": "29",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:28.263Z",
+   "card": "26",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:28.286Z",
+   "card": "16",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:28.294Z",
+   "card": "24",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:28.413Z",
+   "card": "30",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:28.421Z",
+   "card": "21",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:28.435Z",
+   "card": "29",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:28.454Z",
+   "card": "28",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:28.461Z",
+   "card": "7",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:28.480Z",
+   "card": "23",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:28.517Z",
+   "card": "31",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:28.540Z",
+   "card": "32",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:28.601Z",
+   "card": "21",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:28.714Z",
+   "card": "31",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:28.735Z",
+   "card": "28",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:28.773Z",
+   "card": "7",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:28.900Z",
+   "card": "23",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:30.510Z",
+   "card": "9",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:30.683Z",
+   "card": "8",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:30.994Z",
+   "card": "6",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:31.023Z",
+   "card": "14",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:31.156Z",
+   "card": "19",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:31.179Z",
+   "card": "17",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:31.214Z",
+   "card": "10",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:31.254Z",
+   "card": "11",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:31.352Z",
+   "card": "15",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:31.381Z",
+   "card": "12",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:31.421Z",
+   "card": "13",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:31.427Z",
+   "card": "18",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:31.466Z",
+   "card": "26",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:31.528Z",
+   "card": "22",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:31.530Z",
+   "card": "20",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:31.564Z",
+   "card": "25",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:31.570Z",
+   "card": "16",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:31.589Z",
+   "card": "24",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:31.601Z",
+   "card": "27",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:31.696Z",
+   "card": "30",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:31.734Z",
+   "card": "32",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:31.747Z",
+   "card": "29",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:31.815Z",
+   "card": "21",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:31.960Z",
+   "card": "28",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:31.981Z",
+   "card": "31",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:32.017Z",
+   "card": "7",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:32.154Z",
+   "card": "23",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:46.431Z",
+   "card": "4",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Review",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:46.796Z",
+   "card": "4",
+   "event": "read",
+   "before": {
+    "column": "Review",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:47.921Z",
+   "card": "5",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:48.211Z",
+   "card": "5",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:48.479Z",
+   "card": "2",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:48.658Z",
+   "card": "2",
+   "event": "read",
+   "before": {
+    "column": "Coding",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:46:50.070Z",
+   "card": "4",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Review",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Review",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:51.425Z",
+   "card": "5",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:52.065Z",
+   "card": "2",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:46:57.484Z",
+   "card": "3",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:46:57.868Z",
+   "card": "3",
+   "event": "read",
+   "before": {
+    "column": "Coding",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:00.581Z",
+   "card": "9",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:00.776Z",
+   "card": "8",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:00.830Z",
+   "card": "9",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:01.093Z",
+   "card": "6",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:01.144Z",
+   "card": "14",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:01.164Z",
+   "card": "8",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:01.171Z",
+   "card": "3",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:01.272Z",
+   "card": "19",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:01.283Z",
+   "card": "17",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:01.291Z",
+   "card": "10",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:01.321Z",
+   "card": "11",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:01.442Z",
+   "card": "6",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:01.468Z",
+   "card": "15",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:01.472Z",
+   "card": "19",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:01.482Z",
+   "card": "14",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:01.492Z",
+   "card": "17",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:01.553Z",
+   "card": "12",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:01.572Z",
+   "card": "13",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:01.640Z",
+   "card": "18",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:01.669Z",
+   "card": "15",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:01.670Z",
+   "card": "26",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:01.745Z",
+   "card": "12",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:01.765Z",
+   "card": "11",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:01.772Z",
+   "card": "22",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:01.781Z",
+   "card": "20",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:01.782Z",
+   "card": "10",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:01.797Z",
+   "card": "25",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:01.808Z",
+   "card": "16",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:01.813Z",
+   "card": "24",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:01.821Z",
+   "card": "27",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:01.822Z",
+   "card": "18",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:01.833Z",
+   "card": "30",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:01.862Z",
+   "card": "32",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:01.866Z",
+   "card": "13",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:01.868Z",
+   "card": "29",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:01.888Z",
+   "card": "26",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:01.890Z",
+   "card": "21",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:02.019Z",
+   "card": "25",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:02.096Z",
+   "card": "21",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:02.112Z",
+   "card": "20",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:02.113Z",
+   "card": "28",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:02.118Z",
+   "card": "31",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:02.130Z",
+   "card": "22",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:02.137Z",
+   "card": "16",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:02.138Z",
+   "card": "7",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:02.140Z",
+   "card": "30",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:02.156Z",
+   "card": "24",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:02.201Z",
+   "card": "32",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:02.219Z",
+   "card": "23",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:02.302Z",
+   "card": "29",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:02.324Z",
+   "card": "31",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:02.332Z",
+   "card": "7",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:02.334Z",
+   "card": "27",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:02.386Z",
+   "card": "28",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:02.553Z",
+   "card": "23",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:04.125Z",
+   "card": "9",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:04.477Z",
+   "card": "8",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:04.667Z",
+   "card": "6",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:04.690Z",
+   "card": "17",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:04.746Z",
+   "card": "19",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:04.801Z",
+   "card": "14",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:04.946Z",
+   "card": "15",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:04.998Z",
+   "card": "10",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:05.002Z",
+   "card": "12",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:05.030Z",
+   "card": "18",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:05.070Z",
+   "card": "11",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:05.083Z",
+   "card": "26",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:05.200Z",
+   "card": "13",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:05.254Z",
+   "card": "25",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:05.374Z",
+   "card": "24",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:05.389Z",
+   "card": "16",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:05.413Z",
+   "card": "21",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:05.421Z",
+   "card": "20",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:05.428Z",
+   "card": "30",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:05.466Z",
+   "card": "22",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:05.472Z",
+   "card": "32",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:05.571Z",
+   "card": "29",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:05.660Z",
+   "card": "28",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:05.679Z",
+   "card": "27",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:05.684Z",
+   "card": "7",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:05.697Z",
+   "card": "31",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:05.762Z",
+   "card": "23",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:20.162Z",
+   "card": "4",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Review",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:20.556Z",
+   "card": "4",
+   "event": "read",
+   "before": {
+    "column": "Review",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:21.486Z",
+   "card": "5",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:21.671Z",
+   "card": "5",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:22.170Z",
+   "card": "2",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:22.496Z",
+   "card": "2",
+   "event": "read",
+   "before": {
+    "column": "Coding",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:23.776Z",
+   "card": "4",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Review",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Review",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:24.919Z",
+   "card": "5",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:25.696Z",
+   "card": "2",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:31.284Z",
+   "card": "3",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:31.690Z",
+   "card": "3",
+   "event": "read",
+   "before": {
+    "column": "Coding",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:34.225Z",
+   "card": "9",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:34.412Z",
+   "card": "9",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:34.588Z",
+   "card": "8",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:34.793Z",
+   "card": "6",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:34.815Z",
+   "card": "17",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:34.859Z",
+   "card": "19",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:34.874Z",
+   "card": "14",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:34.943Z",
+   "card": "8",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:35.022Z",
+   "card": "15",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:35.084Z",
+   "card": "10",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:35.095Z",
+   "card": "3",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Coding",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:35.105Z",
+   "card": "12",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:35.128Z",
+   "card": "18",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:35.156Z",
+   "card": "11",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:35.162Z",
+   "card": "26",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:35.195Z",
+   "card": "19",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:35.206Z",
+   "card": "6",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:35.212Z",
+   "card": "17",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:35.244Z",
+   "card": "14",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:35.269Z",
+   "card": "13",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:35.307Z",
+   "card": "15",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:35.313Z",
+   "card": "25",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:35.433Z",
+   "card": "12",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:35.440Z",
+   "card": "10",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:35.444Z",
+   "card": "18",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:35.449Z",
+   "card": "13",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:35.454Z",
+   "card": "26",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:35.477Z",
+   "card": "25",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:35.512Z",
+   "card": "11",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:35.547Z",
+   "card": "24",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:35.552Z",
+   "card": "16",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:35.603Z",
+   "card": "21",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:35.607Z",
+   "card": "20",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:35.610Z",
+   "card": "30",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:35.639Z",
+   "card": "22",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:35.645Z",
+   "card": "32",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:35.673Z",
+   "card": "29",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:35.761Z",
+   "card": "16",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:35.764Z",
+   "card": "28",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:35.782Z",
+   "card": "24",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:35.791Z",
+   "card": "20",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:35.799Z",
+   "card": "30",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:35.804Z",
+   "card": "27",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:35.842Z",
+   "card": "7",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:35.849Z",
+   "card": "31",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:35.866Z",
+   "card": "23",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:35.867Z",
+   "card": "22",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:35.897Z",
+   "card": "29",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:35.912Z",
+   "card": "21",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:35.936Z",
+   "card": "32",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:36.020Z",
+   "card": "28",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:36.027Z",
+   "card": "7",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:36.042Z",
+   "card": "27",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:36.055Z",
+   "card": "23",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:36.229Z",
+   "card": "31",
+   "event": "read",
+   "before": {
+    "column": "Ready",
+    "escalation": ""
+   }
+  },
+  {
+   "ts": "2026-11-20T00:47:37.710Z",
+   "card": "9",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:38.175Z",
+   "card": "8",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:38.471Z",
+   "card": "6",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:38.491Z",
+   "card": "17",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:38.516Z",
+   "card": "14",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:38.546Z",
+   "card": "19",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:38.653Z",
+   "card": "10",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:38.668Z",
+   "card": "26",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:38.701Z",
+   "card": "13",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:38.706Z",
+   "card": "15",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:38.708Z",
+   "card": "12",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:38.777Z",
+   "card": "18",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:38.812Z",
+   "card": "11",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:38.819Z",
+   "card": "25",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:39.056Z",
+   "card": "24",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:39.079Z",
+   "card": "16",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:39.097Z",
+   "card": "22",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:39.108Z",
+   "card": "30",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:39.114Z",
+   "card": "29",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:39.130Z",
+   "card": "20",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:39.173Z",
+   "card": "32",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:39.234Z",
+   "card": "21",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:39.251Z",
+   "card": "27",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:39.255Z",
+   "card": "7",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:39.367Z",
+   "card": "23",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:39.390Z",
+   "card": "28",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:39.588Z",
+   "card": "31",
+   "event": "end",
+   "why": "reconcile",
+   "attempt": 1,
+   "writes": [],
+   "after": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "workflowState": {
+    "column": "Ready",
+    "escalation": ""
+   },
+   "match": true,
+   "readbackDelayMs": 3000
+  },
+  {
+   "ts": "2026-11-20T00:47:53.849Z",
+   "card": "4",
+   "event": "start",
+   "why": "reconcile",
+   "attempt": 1,
+   "workflowState": {
+    "column": "Review",
+    "escalation": ""
+   },
+   "pid": 30548
+  },
+  {
+   "ts": "2026-11-20T00:47:54.321Z",
+   "card": "4",
+   "event": "read",
+   "before": {
+    "column": "Review",
+    "escalation": ""
+   }
+  }
+ ]
+}
