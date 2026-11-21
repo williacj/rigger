@@ -2216,6 +2216,41 @@ function judgePromptOnce({ bytes = 1048577, title = 'Card 10', judges = ['review
   return { consumer, stand, ran, fake, full, diff: given.forge.diff.value, invoke };
 }
 
+// proves R-LOOP-26, R-LOOP-27
+test('1437 B1 CLI: two fresh once processes escalate the second failure naming the judge and both dispatches', SETTLES_WITHIN, async () => {
+  const settings = config();
+  settings.kinds = { ...settings.kinds, change: { ...settings.kinds.change, judges: ['reviewer'] } };
+  const consumer = consumerRepository(settings);
+  const head = gitIn(consumer, 'rev-parse', 'HEAD').trim();
+  gitIn(consumer, 'push', '-q', 'origin', 'HEAD:refs/heads/rigger-10');
+  const directory = temporaryDirectory('rigger-failure-pair-once-');
+  const fake = installFakeGh(directory, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, items: [card(10, 'Review')] } });
+  seedRepository(fake, { pullRequests: [{ number: 11, head: 'rigger-10', sha: head, mergeBase: head, diff: '' }] });
+  const agent = standInAgent({ 10: { reviewer: { exit: 7 } } });
+  const env = { ...process.env, PATH: agent.first(directory + delimiter + process.env.PATH), CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-failure-pair-home-') };
+  const events = () => readEvents(join(consumer, '.rigger'));
+  for (let invocation = 1; invocation <= 2; invocation += 1) {
+    const ran = spawnSync(process.execPath, [bin, 'once'], { cwd: consumer, env, encoding: 'utf8' });
+    assert.equal(ran.error, undefined);
+    assert.equal(ran.signal, null, 'each independent CLI process must settle naturally');
+    const failures = events().filter(({ event }) => event === 'judge.failed');
+    assert.equal(failures.length, invocation, ran.stdout + ran.stderr);
+    assert.ok(failures.every(({ outcome }) => outcome.exit === 7 && !outcome.timedOut));
+    const raised = events().filter(({ event }) => event === 'review.escalate');
+    assert.equal(raised.length, invocation - 1, 'only the second CLI invocation escalates');
+  }
+  const failures = events().filter(({ event }) => event === 'judge.failed');
+  assert.notEqual(failures[0].run, failures[1].run, 'the invocations share no in-process loop memory');
+  assert.notEqual(failures[0].dispatch, failures[1].dispatch);
+  const [raised] = events().filter(({ event }) => event === 'review.escalate');
+  assert.equal(raised.category, 'ambiguous');
+  assert.equal(raised.raiser, 'loop');
+  for (const text of ['reviewer', ...failures.map(({ dispatch }) => dispatch)]) assert.ok(raised.reason.includes(text), text);
+  const items = await (await fake.model()).operations.readItems();
+  assert.equal(items[0].column, 'Owner');
+  assert.ok(items[0].labels.includes('rigger:escalated'));
+});
+
 // A dropped decide option, a pre-UUID measurement, or an unchanged evidence digest each breaks this verb case.
 // proves R-EVIDENCE-7
 test('1437 C2 once: the adapter receives paths at L plus one bytes and dispatch.start hashes those paths', SETTLES_WITHIN, () => {
