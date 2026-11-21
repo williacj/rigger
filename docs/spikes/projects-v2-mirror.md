@@ -569,19 +569,20 @@ fixes the set. By host and kind, these are:
   - the git hooks;
   - every node process of every `npm test` run, including the run stopped at 00:59Z.
 
-**Why they have none.** Each ran in the foreground of its tool call, or as a descendant of one,
-and exited when that call ended. Nothing recorded its pid when it started: not the spike's
+**Why they have none.** Each ran in the foreground of its tool call, or as a descendant of one.
+Nothing recorded its pid when it started: not the spike's
 scripts, and not the session record. The two exceptions are the Temporal clients 3180 and 11740,
 recovered above from the histories. The start.js for cards 6–32 could have been recovered the
 same way, but its history was never exported, and the server's database was deleted with the
 scratch directory.
 
-**None survived.** No process can outlive its tool call unless it is detached, and only the eight
-held or background processes in the table were detached. The listings below, and one more taken
-on the laptop at 21:25:07Z, show that none of mine remains:
-- **hostpc:** no temporal.exe, and no node.exe but 31732 and 19544. Those two belong to other
-  sessions, and I did not touch them.
-- **laptop:** no recorded holder alive. At 21:25:07Z, `ps -axo pid,ppid,command | grep -E
+**What the listings establish.** They do not prove that the processes without a pid were
+cleaned up; that remains unproved. The listings below, and one more taken on the laptop at
+21:25:07Z, show only this:
+- **laptop holders:** the three recorded ssh clients, 98483, 99034 and 24660, are absent.
+- **hostpc:** no temporal.exe was running. The only node.exe processes were 31732 and 19544,
+  which belong to other sessions; I did not touch them.
+- **laptop filter:** at 21:25:07Z, `ps -axo pid,ppid,command | grep -E
   '1431-spike-engineer|1431-maker|hostpc'` printed no line.
 
 **Process listings after the last run** (transcript, about 00:51Z).
@@ -636,9 +637,9 @@ grep -rnE 'gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|Bearer [A-Za-
 ```
 
 Result: no line printed and `exit=1`, which is grep's "no match". The scan first ran at about
-01:00Z over the six evidence paths of that time. It ran again in revision 1 over the eight files
-then committed, and in revision 2 over the nine files now committed there, with the same command
-and the same result each time. It found no credential or token.
+01:00Z, then again in revision 1 and in revision 2, each time over the evidence files present in
+the directory. The command and the result were the same each time. It found no credential or
+token.
 
 ## Evidence
 
@@ -657,3 +658,12 @@ All of these are under [`docs/spikes/projects-v2-mirror/`](projects-v2-mirror/).
 - `docs/spikes/projects-v2-mirror/histories/card-1.json` … `docs/spikes/projects-v2-mirror/histories/card-5.json` are the event histories from
   `temporal workflow show --output json`.
 - `docs/spikes/projects-v2-mirror/host-logs.txt` holds the server, worker and pid logs.
+
+### Names masked
+
+Names in this report and its evidence that aren't the spike's own are masked, under the owner's
+ruling at [1480#7113575800](https://github.com/williacj/rigger/issues/1480#issuecomment-7113575800).
+Each mask reads `[name withheld]`. Every pid and time stays. Where this report or a file's header
+says that content is unchanged or complete, that is apart from the masks.
+
+One file is masked, `docs/spikes/projects-v2-mirror/transcript.txt`. The owner\'s hash amendment at [1459#7104456293](https://github.com/williacj/rigger/issues/1459#issuecomment-7104456293) drops the hash it had before masking.
