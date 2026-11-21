@@ -55,7 +55,10 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
    the verb unread. L2's notice function also
    gives L3 each rename a hold's closer is to take, and the number that rename attaches. A next
    action that dispatches a role carries what that dispatch is handed, which L2 composes. L1
-   delivers it unread, through L0's provider adapter. L3
+   delivers it unread, through L0's provider adapter. L0's provider adapter gives L2 one fact:
+   its CLI's prompt limit in UTF-8 bytes, or none. No other fact of the adapter reaches L2.
+   L3 gives L2 the card's events from the event record unread. L2 owns the judge failure count
+   in "Failure model". L3
    gives L1 dispatches, and has L1 make the workspace each
    attempt at a card runs in. L1 gives L3 the tip of a card's line of work in that workspace once a
    continuing attempt's maker exits, and L3 hands it to L2 unread. L0's workspace adapter,
@@ -90,8 +93,8 @@ every layer emits and derives signals. Improvement (L6) turns signals into propo
 
    The gate script reaches only the read side. The gate's workflow, which is no layer, posts the
    gate's status. L4 gives the layers below it names, procedures and settings. If a layer needs to
-   know something from two layers down, the design is wrong; fix the boundary, do not reach through
-   it.
+   know something from two layers down, apart from the provider's prompt limit, the design is
+   wrong; fix the boundary, do not reach through it.
 3. **The meta loop may target the core, on conditions.** A proposal against L0 through L3 must
    cite the signal from that layer's own telemetry it would improve, must pass the budget check,
    and goes to the owner. A proposal against L4 goes to the owner. L6 changes no code itself, in
@@ -222,7 +225,7 @@ workaround.
 | | | — a role is the destination of critical or a recorded-decision change. | |
 | **Improvement roles** | Per loop: the role, its cadence (drain or clock), and the signals it reads | L6 | After v0 |
 | **Clock triggers** | Per trigger, a schedule, a card template or an internal job, and a catch-up policy. Beside the triggers, the board poll's interval, which `run` waits between two polls of the board while idle. Both in the form given below the table | L3 for the schedule, the catch-up policy, the internal job and the poll. L2 for the card template, its author included | Yes |
-| **Provider adapters** | A module implementing the adapter interface for one agent CLI. It turns an agent file, a tier and a prompt into the CLI's invocation in one directory. It names the one folder its CLI keeps for that directory outside the dispatch's directories, or none. It loads only the tools and connectors that directory declares | L0 | Claude Code shipped; Codex shipped in M4 |
+| **Provider adapters** | A module implementing the adapter interface for one agent CLI. It turns an agent file, a tier and a prompt into the CLI's invocation in one directory. It names the one folder its CLI keeps for that directory outside the dispatch's directories, or none. It declares its CLI's prompt limit in UTF-8 bytes, or none. It loads only the tools and connectors that directory declares | L0 for the invocation and folder; L2 for the prompt limit | Claude Code shipped; Codex shipped in M4 |
 | **Forge adapter** | A module implementing the board, issue, PR, and CI interface, with the forge assets `init` forks. The one asset is the gate workflow, and `init` reads its destination from `src/substrate/forge/assets.mjs` | L0, and `init` for each asset's destination | GitHub only; the interface exists so a second forge is an L0 change and nothing else |
 | **Deliverable** | Fixed in v0: a pull request merged behind the gate. Content scenarios still deliver by branch and PR. A publish adapter for non-git targets is a later L0 extension | L2 | Fixed |
 
@@ -359,7 +362,8 @@ The fenced shape above holds exactly what the validator offers at every commit.
 A provider adapter is the one place Rigger holds a fact about its agent CLI. That covers how
 `doctor` asks whether the CLI is signed in and where `init` forks its templates. It also covers
 which model each tier selects, and how an agent file, a prompt and a directory become the CLI's
-command line, standard input and environment. A variable the adapter sets holds a path under the
+command line, standard input and environment. The adapter also declares its CLI's prompt limit
+in UTF-8 bytes, or none. A variable the adapter sets holds a path under the
 dispatch's directory or its scratch directory, and is never one that L1 removes. L1 runs that
 command line as it runs a step's. The adapter also names, from the directory a dispatch runs in and
 the environment it runs under, the one folder its CLI keeps for that directory outside the
@@ -383,6 +387,11 @@ consumer's own provider settings allow, with four exceptions:
   rule with no `:*`. It lets a role post the escalation note its instruction asks for
   (`R-ESCALATE-27`). It is the only command an exception allows. It admits no other card,
   repository, flag or file, and the consumer's deny rules still apply to it.
+
+The prompt measure and paths evidence live in L2 because L2 composes the prompt and computes
+its evidence digest. A provider limit depending on the directory, environment or an agent file
+carried on standard input would reverse that placement. Those are facts only L1 holds at dispatch.
+The measure would move to L1, which would report "too large" for L3 to hand L2 unread.
 
 A provisioning step's working directory is `cwd`, a relative path naming a directory under the
 card's workspace. Where it is absent the step runs in the workspace itself. A step's `timeout` is
@@ -1082,7 +1091,7 @@ facts. Those facts are the card's column, its line of work's open, merged and cl
 each open request's head SHA. They include the head SHA and acceptance digest each marker names,
 and the last transition the board shows. They also include
 the escalation label the card carries, the escalation notes on its issue, and L2's routing comment
-where it sent the card to a role. L2 derives card actions on each read and keeps no card state. L3 keeps the invocation-local direct set-asides and no-clock action memory described below; neither is persisted.
+where it sent the card to a role. The facts also include the judge failures the event record holds. L2 derives card actions on each read and keeps no card state. L3 keeps the invocation-local direct set-asides and no-clock action memory described below; neither is persisted.
 
 `.rigger/` holds four things and no others:
 
@@ -1429,12 +1438,26 @@ An attempt at a card runs in this order, under the card's one claim and slot:
 3. L3 dispatches the maker once L2 finds that no required step failed. Once a maker continuing the
    card's work exits 0, L3 has L1 read the tip of the card's line of work in the workspace.
 4. L3 dispatches every agent judge L2 names, at once, once L2 finds the maker's work delivered.
+
+   In `src/workflow/judges.mjs`, L2 measures each judge's prompt as the adapter receives it on
+   standard input, dispatch id included. L3 mints that id, and L2 fills it before measuring.
+   L2 builds the evidence with the changed paths in place of the changed lines for `R-EVIDENCE-7`.
+   L2 computes the evidence digest from the evidence it hands the judge; L1 delivers it unread.
+   Where the prompt with paths evidence still exceeds its provider's prompt limit, L2 withholds
+   that judge and answers a loop-raised `ambiguous` escalation naming the judge and the limit.
+
    For each judge, L3 first has L1 make the judge's directory, and dispatches the card's
    selected steps there. L1 makes the judge's scratch directory after the judge's directory, and
    before L3 dispatches that judge. Where the file system gave no answer for it, or none in time,
    L1 reports that the judge's command did not start, naming that directory as what was missing.
-   L3 hands L2 that report unread, and L2 withholds the judge. Where L2 instead routes the
-   maker's note to a role, L3 dispatches that role in the judges' place, first having L1 make the
+   L3 hands L2 that report unread, and L2 withholds the judge.
+
+   Once an agent judge's dispatch that started settles, L3 has L2 read the card's markers again
+   under the same claim. L3 hands L2 L1's report of how the dispatch ended unread.
+   L2 decides whether it failed under `R-LOOP-25`, at the head and acceptance digest it was
+   dispatched for.
+
+   Where L2 instead routes the maker's note to a role, L3 dispatches that role in the judges' place, first having L1 make the
    role's escalation directory.
 
 A card L3 pulls from Review starts at step 4.
@@ -1544,12 +1567,37 @@ A judge's directory or scratch directory not made, on its first dispatch or its 
 outcome `R-FAIL-8`'s table states. So does a judge's dispatch that table classes out. L2 answers
 neither by a retry of that judge.
 
-L3 keeps the first failure in the one call that dispatched the judge, under the card's claim, and
-nowhere else. It is not in L3's memory of the cards it does not pull again, and not in `.rigger/`.
-A judge's first failure therefore does not survive the end of an invocation, because `R-STATE-4`
-does not let Rigger persist it. A Rigger that stops between the two dispatches loses the count, as
-it does between a maker's two attempts. The next invocation's dispatch of that judge is then a
-first failure.
+L3 keeps the first failure to start under `R-FAIL-8` in the one call that dispatched the judge,
+under the card's claim, and nowhere else. It is not in L3's memory of cards it does not pull
+again, and not in `.rigger/`. That failure to start does not survive the invocation.
+A Rigger that stops between those two dispatches loses the count, as between a maker's two
+attempts. The next invocation's failure to start that judge is then a first failure.
+A failure under `R-LOOP-25` survives in the event record (`R-STATE-4`). L2 records each as
+`judge.failed`, under the dispatch's id, with the fields "Telemetry" names. Where the read after
+that dispatch finds both a failure and that judge's readable verdict, L2 records `judge.failed`
+before the verdict's `marker.read`.
+
+At that settle, L3 reads the event record and hands L2 the card's events unread. L2 counts that
+judge's `judge.failed` events at the dispatched head and acceptance digest, in record order,
+after both of these:
+
+- the card's latest `review.escalate`, whether a maker or the loop raised it;
+- that judge's latest `marker.read` at that head and digest.
+
+Two such failures answer a loop-raised `ambiguous` escalation naming the judge and both dispatch
+ids. A hand-added escalation label records no `review.escalate`, so it does not restart the count.
+Where the record cannot be read, L2 still records the failure and answers no escalation.
+The verb names the failed read.
+
+Two observations would reverse this placement:
+
+- A `judge.failed` would show forge read lag if a later `marker.read` names a readable verdict for
+  the same dispatch id, head and digest. That verdict must have been posted before the settle
+  read that found no readable verdict.
+  A timeout with a verdict readable at settle does not show lag. L2's determination would move
+  to the next pull's read.
+- A whole-record read at each judge failure costing a measurable share of a run would require
+  ruling again on how L2 obtains the failures.
 
 L2 decides whether the card is attempted again, and L3 attempts it under the same claim.
 
@@ -1977,6 +2025,22 @@ Any one of these would reverse the placement:
 - A git fault rate whose faults are answers rather than host faults. Two kinds show it: a fetch try
   a `fetch.retried` follows, and a non-zero exit its caller reads as an answer, as `git ls-remote
   --exit-code` gives for a missing ref. The fix would leave those out of the numerator.
+
+### L2's judge failure event
+
+L2 records `judge.failed` at the settle "Failure model" places, under the card and the failed
+dispatch's id. L2 gives it these fields:
+
+| Field | What it holds | Absent from the line |
+|---|---|---|
+| `role` | The judge's role | Never |
+| `pull` | The pull request's number | Never |
+| `head` | The head SHA the judge was dispatched for | Never |
+| `digest` | The acceptance digest the judge was dispatched for | Never |
+| `outcome` | How the dispatch ended, from L1's report: its exit code and whether it ran past its time | Never |
+
+L2 reads this event for the judge failure count in "Failure model". L5 stamps the card and
+dispatch as the envelope specifies; neither is an emitting-layer field.
 
 ### L2's acceptance, escalation and merge events
 
