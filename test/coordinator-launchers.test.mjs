@@ -14,6 +14,7 @@ import { join } from 'node:path';
 import { TOOLS, answer, assertToolingClean, codexCalls, forge, run, world } from './coordinator-fixtures.mjs';
 import { cloneInto, gitIn } from './git-repository.mjs';
 import { SOURCE, sourceText } from './coordinator-source.mjs';
+import { parseMarker } from '../src/workflow/marker.mjs';
 
 const LAUNCHERS = process.env.CODEX_TOOLS_DIR || TOOLS;
 const launcher = (name) => join(LAUNCHERS, name);
@@ -101,6 +102,87 @@ test('codex-judge.sh writes a prompt naming suite-slot.sh by the absolute path o
   const prompt = readFileSync(join(logs, 'judge-12-codex-r1-prompt.md'), 'utf8');
   assert.ok(prompt.includes(`\`${join(LAUNCHERS, 'suite-slot.sh')} 12-reviewer-r1 -- `), 'the slot line names the suite-slot.sh beside the launcher');
   assertToolingClean();
+});
+
+/**
+ * The fenced code blocks of `lines` that no other block encloses, by CommonMark's fenced code
+ * rules: a fence opens on three or more backticks or tildes indented at most three spaces, a
+ * backtick fence's info string holding no backtick; it closes on a run of its own character at
+ * least as long, indented at most three spaces, with nothing after it but spaces or tabs; every
+ * line inside an open fence is content, and a fence never closed runs to the end. Each block names
+ * the line it opens on (`at`), the line it closes on (`end`, or `lines.length` where it never
+ * closes), its run (`mark`) and its info string (`info`). Each line is read as the gate reads a fence
+ * line, after trimEnd() (src/workflow/marker.mjs, `parseMarker`), so trailing whitespace of any
+ * kind, a carriage return included, never decides whether a line opens or closes a fence.
+ */
+function fencedBlocks(lines) {
+  const blocks = [];
+  let open = null;
+  for (let at = 0; at < lines.length; at += 1) {
+    if (open !== null) {
+      const run = /^ {0,3}(`{3,}|~{3,})$/.exec(lines[at].trimEnd())?.[1];
+      if (run !== undefined && run[0] === open.mark[0] && run.length >= open.mark.length) {
+        open.end = at;
+        open = null;
+      }
+      continue;
+    }
+    const opener = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(lines[at].trimEnd());
+    if (opener === null || (opener[1][0] === '`' && opener[2].includes('`'))) continue;
+    open = { at, end: lines.length, mark: opener[1], info: opener[2].trim() };
+    blocks.push(open);
+  }
+  return blocks;
+}
+
+/** The indexes of `lines` outside every block `fencedBlocks` finds, fence lines included in their block. */
+function topLevel(lines) {
+  const inside = new Set();
+  for (const block of fencedBlocks(lines)) for (let at = block.at; at <= Math.min(block.end, lines.length - 1); at += 1) inside.add(at);
+  return lines.map((_, at) => at).filter((at) => !inside.has(at));
+}
+
+/**
+ * The lines under the prompt's "## Post" heading, up to the next "## " heading, both outside every
+ * fenced block. Lines split on LF or CRLF, as `parseMarker` splits a comment, so a lone CR is no
+ * line break.
+ */
+function postSection(prompt) {
+  const lines = prompt.split(/\r?\n/);
+  const outside = topLevel(lines);
+  const start = outside.find((at) => lines[at].trimEnd() === '## Post');
+  if (start === undefined) return [];
+  const end = outside.find((at) => at > start && lines[at].startsWith('## '));
+  return lines.slice(start + 1, end === undefined ? lines.length : end);
+}
+
+// D29 reason: wiring; the real codex-judge.sh fills the judge prompt with sed and hands it to the
+// stub codex on standard input. Deterministic counterpart: test/marker.test.mjs, "the marker table:
+// a marker block not directly under the comment's first line is no marker", is the test of the
+// gate's read this layout depends on.
+//
+// The prompt's "## Post" section carries the verdict's layout as one example, which card #1439's
+// "The example verdict layout" pins as conditions E1 to E4. The test checks those and no prose.
+test('codex-judge.sh hands codex a prompt placing the marker block on the verdict comment\'s second line, under the heading and before the rest of the verdict', () => {
+  const { w, bare, root, logs } = setup('coord-judge-marker-');
+  const result = run(w, launcher('codex-judge.sh'), ['12', '7', '1'], { env: { RIGGER_WORKTREE_ROOT: root, RIGGER_REPO_URL: bare, CODEX_LOG_DIR: logs } });
+
+  assert.equal(result.status, 0, result.stderr);
+  const post = postSection(codexCalls(w)[0].stdin);
+  const examples = fencedBlocks(post)
+    .filter((block) => block.mark === '````' && block.end < post.length && post[block.end].trimEnd() === '````')
+    .map((block) => post.slice(block.at + 1, block.end))
+    .filter((inside) => inside.some((line) => line.trimEnd() === '```rigger-marker'));
+  const broken = [];
+  if (examples.length !== 1) broken.push(`E1: the Post section holds ${examples.length} four-backtick blocks with a \`\`\`rigger-marker line, not exactly one`);
+  else {
+    const [example] = examples;
+    if (!(example[0].startsWith('**Codex ') && example[0].endsWith('**'))) broken.push(`E2: the example's first line is not the **Codex …** heading: ${example[0]}`);
+    if (parseMarker(example.join('\n'), 1).state === 'none') broken.push('E3: the gate reads no marker block on the example\'s second line');
+    const block = fencedBlocks(example).find((fenced) => fenced.mark === '```' && fenced.info === 'rigger-marker');
+    if (block === undefined || block.end === example.length || !example.slice(block.end + 1).some((line) => line.trim() !== '')) broken.push('E4: no non-empty line follows the marker block\'s closing fence');
+  }
+  assert.deepEqual(broken, [], `the marker block's placement: the example verdict layout breaks ${broken.map((entry) => entry.slice(0, 2)).join(' and ')}`);
 });
 
 /** A maker's clone and its tmp directory, as codex-maker.sh leaves them, and a message file. */
@@ -252,8 +334,9 @@ function movedCopy(dir) {
 
 /**
  * The rebuilt source copy, launchers and prompts, each checked against the manifest's sha256 first.
- * The comparison below sets aside only the header and slot line; in the source wrapper line it
- * rewrites caffeinate -i to caffeinate -dims, keeping every other byte in the comparison.
+ * The comparison below sets aside only the header, the slot line and the judge prompt's lines
+ * `placed` names; in the source wrapper line it rewrites caffeinate -i to caffeinate -dims,
+ * keeping every other byte in the comparison.
  */
 function sourceCopy(dir) {
   mkdirSync(dir);
@@ -263,6 +346,15 @@ function sourceCopy(dir) {
     writeFileSync(join(dir, name), text, { mode: NAMES.includes(name) ? 0o755 : 0o644 });
   }
 }
+
+/**
+ * The judge prompt with the lines card #1439 changed under its "## Post" heading set aside: from
+ * "Write the verdict to" to the line that introduces the rest of the verdict, in the source copy
+ * and at the head, and the source copy's closing marker paragraph. Each run becomes one token.
+ */
+const placed = (text) => text
+  .replace(/^Write the verdict to `[\s\S]*?^(?:Below that line, give:|After the block's closing fence, give:)$/m, '<marker placement>')
+  .replace(/^End the verdict with the gate's marker block for your role\..*\n\n/m, '');
 
 /** What one copy of a launcher handed the stub codex, with that run's own paths named generically. */
 function invocation(w, copy, launch) {
@@ -288,7 +380,7 @@ function invocation(w, copy, launch) {
   const result = run(w, join(tools, launch.name), launch.args(env.CODEX_LOG_DIR, tools), { env });
   assert.equal(result.status, 0, `${copy} ${launch.name}: ${result.stderr}`);
   const generic = (text) => text.replaceAll(tools, '<TOOLS>').replaceAll(home, '<HOME>');
-  const kept = (stdin) => stdin.split('\n').filter((line) => !line.startsWith('<!-- ABOUTME:') && !line.includes('**Load and the slot:**')).map((line) => copy === 'source' && line.includes('Wrap every suite run') ? line.replaceAll('caffeinate -i', 'caffeinate -dims') : line).join('\n').replace(/\n*$/, '');
+  const kept = (stdin) => placed(stdin.split('\n').filter((line) => !line.startsWith('<!-- ABOUTME:') && !line.includes('**Load and the slot:**')).map((line) => copy === 'source' && line.includes('Wrap every suite run') ? line.replaceAll('caffeinate -i', 'caffeinate -dims') : line).join('\n')).replace(/\n*$/, '');
   return codexCalls({ stub }).map((call) => ({
     args: call.args.map(generic),
     cwd: generic(call.cwd),
