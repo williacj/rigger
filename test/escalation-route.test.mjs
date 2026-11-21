@@ -23,6 +23,18 @@ const KIND = { maker: 'engineer', judges: ['reviewer', { role: 'architect', prov
 const routing = (body = `${ROUTING_LINE}\n\nSent to pm.`, other = {}) => ({ body, author: 'someone', permission: 'none', edited: false, ...other });
 const route = (fields) => escalationDestination({ category: 'ambiguous', raiser: 'maker', escalate: { ambiguous: 'pm' }, ...KIND, comments: [], ...fields });
 
+// A shell that has moved must still create and post the same root note, on either provider.
+// proves R-ESCALATE-27
+test('M8-29: the escalation instruction writes and posts from the directory this session started in without naming provider tools', () => {
+  const instruction = escalationInstruction({ number: 42 });
+  assert.match(instruction, /write this block to `\.rigger-escalation\.md` in the directory this session started in/i,
+    'the note location must be the starting directory');
+  assert.match(instruction, /run exactly `gh issue comment 42 --body-file \.rigger-escalation\.md` from the directory this session started in/i,
+    'the unchanged command must run in the starting directory');
+  assert.doesNotMatch(instruction, /\b(?:claude|codex|Bash|Read|Edit|Write|NotebookEdit|ToolSearch)\b(?! the note| this block)/,
+    'the shared instruction must name no agent CLI or provider tool');
+});
+
 // proves R-ESCALATE-15
 test('a loop-raised escalation goes to the owner whatever its configured destination', () => {
   for (const category of ['ambiguous', 'critical', 'recorded-decision']) {
@@ -174,7 +186,7 @@ test('makers and routed roles are instructed to write the note file and run exac
     ];
     for (const instruction of instructions) {
       const stamped = dispatchedEscalation({ instruction }, DISPATCH).instruction;
-      assert.match(stamped, /write this block to `\.rigger-escalation\.md` in your working directory/i);
+      assert.match(stamped, /write this block to `\.rigger-escalation\.md` in the directory this session started in/i);
       assert.ok(stamped.includes(`run exactly \`gh issue comment ${number} --body-file .rigger-escalation.md\``), 'the instruction must name the dispatch card and the exact command');
       assert.match(stamped, /write the note once, never edit it,.*end your session after posting it/i);
       assert.ok(stamped.includes(`dispatch: ${DISPATCH}`));

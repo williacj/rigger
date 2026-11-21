@@ -176,7 +176,7 @@ function instructionFor(provider) {
 test('Claude maker instruction gives the one-note block, ordinal rule, dispatch slot and stop rule', () => {
   const instruction = instructionFor('claude');
 
-  assert.match(instruction, /write this block to `\.rigger-escalation\.md` in your working directory/i);
+  assert.match(instruction, /write this block to `\.rigger-escalation\.md` in the directory this session started in/i);
   assert.match(instruction, /```rigger-escalation\ncategory:.*\nitem:.*\nreason:.*\ndispatch: <the dispatch id>\n```/);
   assert.match(instruction, /count.*from 1.*acceptance items/i);
   assert.match(instruction, /write.*once.*never edit.*end/i);

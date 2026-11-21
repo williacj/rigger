@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { answerFakeGh } from './fake-gh.mjs';
+import { seedRepositoryAt } from './fake-gh.mjs';
+import { temporaryDirectory } from './temporary-directory.mjs';
 import { clonedFromOrigin, gitIn } from './git-repository.mjs';
 import { fixedAnswer } from './stub-gh.mjs';
 import { codexProbeAct, codexProbeRecord, codexProbed, codexSessionRecord, isCodexProbe, standInAct, standInFindings, standInPush, standInRecord, standInReply } from './stub-claude.mjs';
@@ -72,6 +74,20 @@ export function forgeStore(statePath) {
 }
 
 const FINDINGS = { digest: 'd'.repeat(64), evidence: 'e'.repeat(64), dispatch: 'd-01234567-89ab-cdef-0123-456789abcdef' };
+
+/** The shared fake gh holding Review card 7's pull request 301, without an executable stand-in. */
+export function forgeWithDiff(diff) {
+  const statePath = join(temporaryDirectory('rigger-diff-'), 'board.json');
+  writeFileSync(statePath, JSON.stringify({ repo: 'williacj/rigger', project: 6, model: {}, writes: [], sent: [] }));
+  seedRepositoryAt(statePath, { branches: ['rigger-7'], pullRequests: [
+    { number: 301, head: 'rigger-7', sha: 'a'.repeat(40), mergeBase: 'b'.repeat(40), diff },
+  ] });
+  const store = forgeStore(statePath);
+  return { statePath, answer: store.answer, send: (command, args) => {
+    assert.equal(command, 'gh');
+    return store.answer(args);
+  } };
+}
 
 /** A judge's input holding a marker block for pull 301 at `head`, written by hand as L3's instruction shapes it. */
 export const judgeInput = (head) => ['Judge card #31.', '```rigger-marker', 'card: 31', 'pull: 301', `head: ${head}`, `digest: ${FINDINGS.digest}`, 'role: reviewer', 'provider: claude', 'verdict: <sound, needs revision or critical>', 'item 1: <met or unmet>', 'item 2: <met or unmet>', 'coverage: <covered or insufficient>', `dispatch: ${FINDINGS.dispatch}`, `evidence: ${FINDINGS.evidence}`, '```', ''].join('\n');
@@ -475,6 +491,22 @@ export const FORGE_MANIFEST = {
   ]
  },
  "cases": [
+  {
+   "id": "F1-40-base",
+   "key": 40,
+   "args": [
+    "api",
+    "repos/example/widgets/pulls/301",
+    "-X",
+    "GET",
+    "-H",
+    "Accept: application/vnd.github.diff"
+   ],
+   "status": 0,
+   "stdout": "+added line\n-removed line\n",
+   "stderr": "",
+   "after": "unchanged"
+  },
   {
    "id": "F1-62",
    "key": 62,
@@ -1550,7 +1582,8 @@ export const FORGE_MANIFEST = {
     "-X",
     "GET",
     "-H",
-    "Accept: application/vnd.github.diff"
+    "Accept: application/vnd.github.diff",
+    "--allow-escape-sequences"
    ],
    "status": 0,
    "stdout": "+added line\n-removed line\n",
@@ -1566,7 +1599,8 @@ export const FORGE_MANIFEST = {
     "-X",
     "GET",
     "-H",
-    "Accept: application/vnd.github.diff"
+    "Accept: application/vnd.github.diff",
+    "--allow-escape-sequences"
    ],
    "status": 1,
    "stdout": "{\"message\":\"diff too large\",\"errors\":[{\"resource\":\"PullRequest\",\"field\":\"diff\",\"code\":\"too_large\"}],\"status\":\"406\"}",
@@ -1582,7 +1616,8 @@ export const FORGE_MANIFEST = {
     "-X",
     "GET",
     "-H",
-    "Accept: application/vnd.github.diff"
+    "Accept: application/vnd.github.diff",
+    "--allow-escape-sequences"
    ],
    "status": 1,
    "stdout": "{\"message\":\"Not Found\",\"documentation_url\":\"https://docs.github.com/rest/pulls/pulls#get-a-pull-request\",\"status\":\"404\"}",

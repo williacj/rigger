@@ -1,0 +1,1185 @@
+ABOUTME: Round-1 transcript for #1430: the commands run through runners/t.sh, each with its UTC start time, host and output.
+
+Each entry was appended by `runners/t.sh` when its command returned, stamped with the UTC time the command started, so an entry for a long command can follow later ones. "host" names where the command acted: laptop, finnpc (Windows, over `ssh finnpc`), or wsl-via-finnpc (WSL reached as `ssh finnpc wsl.exe -e`). A WSL entry shows its script inline after `# script`, with newlines shown as `;`. Edits after the fact, each marked where made: one Microsoft account name and its SID in `whoami /groups` output are redacted; 20,209 repeated `grep` error lines from a runaway polling loop are collapsed to a note. Commands run without the wrapper are in session-log.txt, as the last section says.
+
+# Transcript, card #1430
+
+### 2026-11-20T00:41:03Z  host=laptop  (issued from laptop)
+```
+$ sw_vers; uname -a; node --version; date -u
+```
+```
+ProductName:		macOS
+ProductVersion:		27.2.1
+BuildVersion:		26B131
+Darwin CJs-MacBook-Pro.local 27.2.0 Darwin Kernel Version 27.2.0: Wed Oct 14 23:44:56 PDT 2026; root:xnu-13432.41.4~25/RELEASE_ARM64_T6041 arm64
+v26.13.0
+Fri Nov 20 00:41:04 UTC 2026
+[exit 0]
+```
+
+### 2026-11-20T00:41:04Z  host=finnpc  (issued from laptop)
+```
+$ ssh finnpc "ver & node --version & whoami & echo %DATE% %TIME%"
+```
+```
+
+Microsoft Windows [Version 10.0.26300.9974]
+v24.19.0
+finn-pc10\cj
+Thu 11/19/2026 18:41:04.01
+[exit 0]
+```
+
+### 2026-11-20T00:41:04Z  host=wsl-via-finnpc  (issued from laptop)
+```
+$ ssh finnpc wsl.exe -e bash -c "\"cat /etc/os-release | head -4; uname -r; id; ps -p 1 -o pid,comm; stat -fc %T /sys/fs/cgroup; cat /proc/self/cgroup; which node\""
+```
+```
+PRETTY_NAME="Ubuntu 26.04.1 LTS"
+NAME="Ubuntu"
+VERSION_ID="26.04"
+VERSION="26.04.1 LTS (Resolute Raccoon)"
+6.18.58.1-microsoft-standard-WSL2
+uid=1000(cj) gid=1000(cj) groups=1000(cj),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),100(users)
+    PID COMMAND
+      1 systemd
+cgroup2fs
+0::/non-systemd
+[exit 1]
+```
+
+### 2026-11-20T00:41:17Z  host=wsl-via-finnpc  (issued from laptop)
+```
+$ cat p1.sh | ssh finnpc wsl.exe -e bash -s   # script p1.sh: mount | grep cgroup;cat /sys/fs/cgroup/cgroup.controllers;ls /sys/fs/cgroup;ls -ld /sys/fs/cgroup/non-systemd /sys/fs/cgroup/user.slice 2>&1;ls -l /sys/fs/cgroup/non-systemd | head;grep -c . /sys/fs/cgroup/non-systemd/cgroup.procs;systemctl is-system-running;loginctl list-sessions --no-legend 2>&1;loginctl show-user cj 2>&1 | head;systemctl --user is-system-running 2>&1;echo XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR DBUS=$DBUS_SESSION_BUS_ADDRESS;ls -la /run/user/1000 2>&1 | head;cat /proc/1/cgroup;ls /sys/fs/cgroup/user.slice 2>&1;
+```
+```
+cgroup2 on /sys/fs/cgroup type cgroup2 (rw,nosuid,nodev,noexec,relatime,nsdelegate)
+cpuset cpu io memory hugetlb pids rdma
+cgroup.controllers
+cgroup.events
+cgroup.freeze
+cgroup.kill
+cgroup.max.depth
+cgroup.max.descendants
+cgroup.pressure
+cgroup.procs
+cgroup.stat
+cgroup.stat.local
+cgroup.subtree_control
+cgroup.threads
+cgroup.type
+cpu.idle
+cpu.max
+cpu.max.burst
+cpu.pressure
+cpu.stat
+cpu.stat.local
+cpu.weight
+cpu.weight.nice
+cpuset.cpus
+cpuset.cpus.effective
+cpuset.cpus.exclusive
+cpuset.cpus.exclusive.effective
+cpuset.cpus.partition
+cpuset.mems
+cpuset.mems.effective
+dev-hugepages.mount
+dev-mqueue.mount
+hugetlb.1GB.current
+hugetlb.1GB.events
+hugetlb.1GB.events.local
+hugetlb.1GB.max
+hugetlb.1GB.numa_stat
+hugetlb.1GB.rsvd.current
+hugetlb.1GB.rsvd.max
+hugetlb.2MB.current
+hugetlb.2MB.events
+hugetlb.2MB.events.local
+hugetlb.2MB.max
+hugetlb.2MB.numa_stat
+hugetlb.2MB.rsvd.current
+hugetlb.2MB.rsvd.max
+init.scope
+io.latency
+io.max
+io.pressure
+io.stat
+memory.current
+memory.events
+memory.events.local
+memory.high
+memory.low
+memory.max
+memory.min
+memory.numa_stat
+memory.oom.group
+memory.peak
+memory.pressure
+memory.reclaim
+memory.stat
+memory.swap.current
+memory.swap.events
+memory.swap.high
+memory.swap.max
+memory.swap.peak
+non-systemd
+pids.current
+pids.events
+pids.events.local
+pids.max
+pids.peak
+rdma.current
+rdma.max
+sys-fs-fuse-connections.mount
+sys-kernel-config.mount
+sys-kernel-debug.mount
+sys-kernel-tracing.mount
+system.slice
+user.slice
+drwxr-xr-x  2 root root 0 Nov 19 18:41 /sys/fs/cgroup/non-systemd
+drwxr-xr-x+ 3 root root 0 Nov 19 18:41 /sys/fs/cgroup/user.slice
+total 0
+-r--r--r-- 1 root root 0 Nov 19 18:41 cgroup.controllers
+-r--r--r-- 1 root root 0 Nov 19 18:41 cgroup.events
+-rw-r--r-- 1 root root 0 Nov 19 18:41 cgroup.freeze
+--w------- 1 root root 0 Nov 19 18:41 cgroup.kill
+-rw-r--r-- 1 root root 0 Nov 19 18:41 cgroup.max.depth
+-rw-r--r-- 1 root root 0 Nov 19 18:41 cgroup.max.descendants
+-rw-r--r-- 1 root root 0 Nov 19 18:41 cgroup.pressure
+-rw-r--r-- 1 root root 0 Nov 19 18:41 cgroup.procs
+-r--r--r-- 1 root root 0 Nov 19 18:41 cgroup.stat
+11
+running
+c1 1000 cj - 340 manager -     no -
+c2 1000 cj - 414 user    pts/1 no -
+c3 1000 cj - 501 user    -     no -
+UID=1000
+GID=1000
+Name=cj
+Timestamp=Thu 2026-11-19 18:41:06 CST
+TimestampMonotonic=1375119
+RuntimePath=/run/user/1000
+Service=user@1000.service
+Slice=user-1000.slice
+Display=c2
+State=active
+running
+XDG_RUNTIME_DIR=/run/user/1000 DBUS=unix:path=/run/user/1000/bus
+total 0
+drwx------ 9 cj   cj   300 Nov 19 18:41 .
+drwxr-xr-x 3 root root  60 Nov 19 18:41 ..
+srw-rw-rw- 1 cj   cj     0 Nov 19 18:41 bus
+drwx------ 3 cj   cj    60 Nov 19 18:41 dbus-1
+drwx------ 2 cj   cj   160 Nov 19 18:41 gnupg
+drwx------ 2 cj   cj    60 Nov 19 18:41 hc-hold-e78c7319
+drwx------ 2 cj   cj    60 Nov 19 18:41 hc-serve-2a5ee6ea
+drwx------ 2 cj   cj    80 Nov 19 18:41 herdr-core
+srw------- 1 cj   cj     0 Nov 19 18:41 openssh_agent
+0::/init.scope
+cgroup.controllers
+cgroup.events
+cgroup.freeze
+cgroup.kill
+cgroup.max.depth
+cgroup.max.descendants
+cgroup.pressure
+cgroup.procs
+cgroup.stat
+cgroup.stat.local
+cgroup.subtree_control
+cgroup.threads
+cgroup.type
+cpu.idle
+cpu.max
+cpu.max.burst
+cpu.pressure
+cpu.stat
+cpu.stat.local
+cpu.weight
+cpu.weight.nice
+io.pressure
+memory.current
+memory.events
+memory.events.local
+memory.high
+memory.low
+memory.max
+memory.min
+memory.numa_stat
+memory.oom.group
+memory.peak
+memory.pressure
+memory.reclaim
+memory.stat
+memory.swap.current
+memory.swap.events
+memory.swap.high
+memory.swap.max
+memory.swap.peak
+pids.current
+pids.events
+pids.events.local
+pids.max
+pids.peak
+user-1000.slice
+[exit 0]
+```
+
+### 2026-11-20T00:41:39Z  host=laptop
+```
+$ gh issue comment 1430 --body-file intent.md
+```
+```
+https://github.com/williacj/rigger/issues/1430#issuecomment-7026629400
+```
+
+### 2026-11-20T00:41:39Z  host=wsl-via-finnpc  (issued from laptop)
+```
+$ cat p2.sh | ssh finnpc wsl.exe -e bash -s   # script p2.sh: mkdir -p ~/1430-spike-engineer && cd ~/1430-spike-engineer;curl -fsSLO https://nodejs.org/dist/v24.19.0/node-v24.19.0-linux-x64.tar.xz && tar xf node-v24.19.0-linux-x64.tar.xz && rm node-v24.19.0-linux-x64.tar.xz;~/1430-spike-engineer/node-v24.19.0-linux-x64/bin/node --version;which setsid python3 ps;
+```
+```
+v24.19.0
+/usr/bin/setsid
+/usr/bin/python3
+/usr/bin/ps
+[exit 0]
+```
+
+### 2026-11-20T00:42:55Z  host=laptop  (issued from laptop)
+```
+$ which python3 perl lsof; python3 --version; lsof -v 2>&1 | grep -i revision
+```
+```
+/usr/bin/python3
+/usr/bin/perl
+/usr/sbin/lsof
+Python 3.9.6
+    revision: 4.91
+    latest revision: ftp://lsof.itap.purdue.edu/pub/tools/unix/lsof/
+[exit 0]
+```
+
+### 2026-11-20T00:42:55Z  host=wsl-via-finnpc  (issued from laptop)
+```
+$ cat p3.sh | ssh finnpc wsl.exe -e bash -s   # script p3.sh: which lsof perl; lsof -v 2>&1 | grep -i revision; perl -v | sed -n 2p;systemd-run --user --scope -p Delegate=yes cat /proc/self/cgroup 2>&1;systemd-run --user --wait --pipe -q -p Delegate=yes bash -c \"cat /proc/self/cgroup; c=\$(cut -d: -f3 /proc/self/cgroup); ls -l /sys/fs/cgroup\$c | grep -E \\"procs|kill|subtree\\"; id\";systemctl --user --version | head -1;
+```
+```
+/usr/bin/lsof
+/usr/bin/perl
+    revision: 4.99.4
+    latest revision: https://github.com/lsof-org/lsof
+This is perl 5, version 40, subversion 1 (v5.40.1) built for x86_64-linux-gnu-thread-multi
+Running as unit: run-p511-i2417.scope; invocation ID: f03feebebecb4105b3116a22f05c16e8
+0::/user.slice/user-1000.slice/user@1000.service/app.slice/run-p511-i2417.scope
+0::/user.slice/user-1000.slice/user@1000.service/app.slice/run-p512-i2418.service
+--w------- 1 cj cj 0 Nov 19 18:42 cgroup.kill
+-rw-r--r-- 1 cj cj 0 Nov 19 18:42 cgroup.procs
+-rw-r--r-- 1 cj cj 0 Nov 19 18:42 cgroup.subtree_control
+uid=1000(cj) gid=1000(cj) groups=1000(cj),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),100(users)
+systemd 259 (259.5-0ubuntu3.4)
+[exit 0]
+```
+
+### 2026-11-20T00:43:35Z  host=laptop  (issued from laptop)
+```
+$ ./mac-run.sh e1 m1
+```
+```
+supervisor pid 22195 (started by mac-run.sh pid 22190)
+supervisor exited 1
+---- supervisor log
+file:///Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/fixture/supervisor.js:5
+const { spawn, spawnSync } = require('node:child_process');
+                             ^
+
+ReferenceError: require is not defined in ES module scope, you can use import instead
+This file is being treated as an ES module because it has a '.js' file extension and '/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/package.json' contains "type": "module". To treat it as a CommonJS script, rename it to use the '.cjs' file extension.
+    at file:///Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/fixture/supervisor.js:5:30
+    at ModuleJob.run (node:internal/modules/esm/module_job:569:25)
+    at async node:internal/modules/esm/loader:650:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:105:5)
+
+Node.js v26.13.0
+[exit 0]
+```
+
+### 2026-11-20T00:43:41Z  host=laptop  (issued from laptop)
+```
+$ ./mac-run.sh e1 m1
+```
+```
+supervisor pid 22305 (started by mac-run.sh pid 22303)
+supervisor exited 0
+---- supervisor log
+2026-11-20T00:43:41.215Z supervisor pid 22305 pgid/sid see listing; mode e1
+2026-11-20T00:43:41.217Z fixture root pid 22311 (its own process group)
+2026-11-20T00:43:44.219Z BEFORE ENDING
+listing run=m1 at 2026-11-20T00:43:44.3NZ on Darwin
+PID     PPID    PGID    SID     STAT  ARGS                         CWD                                      CGROUP
+22305   22303   22294   22294   S     node /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/fixture/supervisor.cjs e1 m1 /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m1 /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/fixture /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer -
+22311   22305   22311   22311   Ss    bash /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/fixture/fixture.sh m1 /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m1 -
+22312   22311   22311   22311   S     fx-m1-M1 300                 /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m1 -
+22313   22311   22313   22313   Ss    fx-m1-M3 300                 /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m1 -
+22315   22311   22311   22311   S     fx-m1-M5 300                 /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m1 -
+22316   22311   22316   22316   Ss    fx-m1-M6 300                 /                                        -
+22317   22312   22311   22311   S     fx-m1-M2 300                 /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m1 -
+22318   1       22311   22311   S     fx-m1-M4 300                 /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m1 -
+count=8
+
+2026-11-20T00:43:44.659Z E1 SIGKILL sent to process group 22311
+2026-11-20T00:43:56.661Z AFTER ENDING (+12 s)
+listing run=m1 at 2026-11-20T00:43:56.3NZ on Darwin
+PID     PPID    PGID    SID     STAT  ARGS                         CWD                                      CGROUP
+22305   22303   22294   22294   S     node /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/fixture/supervisor.cjs e1 m1 /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m1 /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/fixture /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer -
+22313   1       22313   22313   Ss    fx-m1-M3 300                 /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m1 -
+22316   1       22316   22316   Ss    fx-m1-M6 300                 /                                        -
+count=3
+[exit 0]
+```
+
+### 2026-11-20T00:44:05Z  host=laptop  (issued from laptop)
+```
+$ kill -9 22313 22316; bash fixture/list.sh m1
+```
+```
+listing run=m1 at 2026-11-20T00:44:05Z on Darwin
+PID     PPID    PGID    SID     STAT  CWD | CGROUP | ARGS
+count=0
+[exit 0]
+```
+
+### 2026-11-20T00:44:08Z  host=laptop  (issued from laptop)
+```
+$ ./mac-run.sh e1c m2
+```
+```
+supervisor pid 23286 (started by mac-run.sh pid 23284)
+supervisor exited 0
+---- supervisor log
+2026-11-20T00:44:09.018Z supervisor pid 23286 pgid/sid see listing; mode e1c
+2026-11-20T00:44:09.020Z fixture root pid 23291 (its own process group)
+2026-11-20T00:44:12.022Z BEFORE ENDING
+listing run=m2 at 2026-11-20T00:44:12Z on Darwin
+PID     PPID    PGID    SID     STAT  CWD | CGROUP | ARGS
+23286   23284   23280   23280   S     /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer | - | node /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/fixture/supervisor.cjs e1c m2 /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m2 /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/fixture
+23291   23286   23291   23291   Ss    /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m2 | - | bash /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/fixture/fixture.sh m2
+23292   23291   23291   23291   S     /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m2 | - | fx-m2-M1 300
+23293   23291   23293   23293   Ss    /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m2 | - | fx-m2-M3 300
+23295   23291   23291   23291   S     /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m2 | - | fx-m2-M5 300
+23296   23291   23296   23296   Ss    / | - | fx-m2-M6 300
+23297   23292   23291   23291   S     /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m2 | - | fx-m2-M2 300
+23298   1       23291   23291   S     /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m2 | - | fx-m2-M4 300
+count=8
+
+2026-11-20T00:44:12.417Z E1c SIGKILL sent to process group 23291
+2026-11-20T00:44:12.537Z E1c census under /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m2 found and SIGKILLed 23293
+2026-11-20T00:44:24.539Z AFTER ENDING (+12 s)
+listing run=m2 at 2026-11-20T00:44:24Z on Darwin
+PID     PPID    PGID    SID     STAT  CWD | CGROUP | ARGS
+23286   23284   23280   23280   S     /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer | - | node /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/fixture/supervisor.cjs e1c m2 /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m2 /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/fixture
+23296   1       23296   23296   Ss    / | - | fx-m2-M6 300
+count=2
+[exit 0]
+```
+
+### 2026-11-20T00:44:29Z  host=laptop  (issued from laptop)
+```
+$ kill -9 23296; bash fixture/list.sh m2
+```
+```
+listing run=m2 at 2026-11-20T00:44:29Z on Darwin
+PID     PPID    PGID    SID     STAT  CWD | CGROUP | ARGS
+count=0
+[exit 0]
+```
+
+### 2026-11-20T00:44:29Z  host=laptop  (issued from laptop)
+```
+$ ./mac-run.sh e2 m3
+```
+```
+supervisor pid 23758 (started by mac-run.sh pid 23756)
+2026-11-20T00:44:33Z kill -9 23758
+2026-11-20T00:44:45Z listing +12 s after kill -9
+listing run=m3 at 2026-11-20T00:44:45Z on Darwin
+PID     PPID    PGID    SID     STAT  CWD | CGROUP | ARGS
+23765   1       23765   23765   Ss    /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m3 | - | bash /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/fixture/fixture.sh m3
+23766   23765   23765   23765   S     /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m3 | - | fx-m3-M1 300
+23767   23765   23767   23767   Ss    /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m3 | - | fx-m3-M3 300
+23769   23765   23765   23765   S     /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m3 | - | fx-m3-M5 300
+23770   23765   23770   23770   Ss    / | - | fx-m3-M6 300
+23771   23766   23765   23765   S     /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m3 | - | fx-m3-M2 300
+23772   1       23765   23765   S     /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m3 | - | fx-m3-M4 300
+count=7
+---- supervisor log
+2026-11-20T00:44:29.646Z supervisor pid 23758 pgid/sid see listing; mode e2
+2026-11-20T00:44:29.648Z fixture root pid 23765 (its own process group)
+2026-11-20T00:44:32.649Z BEFORE ENDING
+listing run=m3 at 2026-11-20T00:44:32Z on Darwin
+PID     PPID    PGID    SID     STAT  CWD | CGROUP | ARGS
+23758   23756   23734   23734   S     /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer | - | node /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/fixture/supervisor.cjs e2 m3 /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m3 /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/fixture
+23765   23758   23765   23765   Ss    /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m3 | - | bash /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/fixture/fixture.sh m3
+23766   23765   23765   23765   S     /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m3 | - | fx-m3-M1 300
+23767   23765   23767   23767   Ss    /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m3 | - | fx-m3-M3 300
+23769   23765   23765   23765   S     /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m3 | - | fx-m3-M5 300
+23770   23765   23770   23770   Ss    / | - | fx-m3-M6 300
+23771   23766   23765   23765   S     /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m3 | - | fx-m3-M2 300
+23772   1       23765   23765   S     /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/mac/d-m3 | - | fx-m3-M4 300
+count=8
+
+2026-11-20T00:44:33.038Z waiting to be killed outright
+[exit 0]
+```
+
+### 2026-11-20T00:44:49Z  host=laptop  (issued from laptop)
+```
+$ kill -9 -23765; kill -9 23767 23770; bash fixture/list.sh m3; ps -p 22195,22303,22305,22311,22190,23284,23286,23291,23756,23758 -o pid,args
+```
+```
+listing run=m3 at 2026-11-20T00:44:49Z on Darwin
+PID     PPID    PGID    SID     STAT  CWD | CGROUP | ARGS
+count=0
+  PID ARGS
+[exit 1]
+```
+
+### 2026-11-20T00:45:09Z  host=wsl-via-finnpc  (issued from laptop)
+```
+$ cat p4.sh | ssh finnpc wsl.exe -e bash -s  # copies fixture/fixture.sh fixture/list.sh fixture/supervisor.cjs wsl-run.sh as base64
+```
+```
+/home/cj/1430-spike-engineer:
+total 20
+drwxr-xr-x  4 cj cj 4096 Nov 19 18:45 .
+drwxr-x--- 36 cj cj 4096 Nov 19 18:42 ..
+drwxr-xr-x  2 cj cj 4096 Nov 19 18:45 fixture
+drwxr-xr-x  6 cj cj 4096 Aug  3 02:53 node-v24.19.0-linux-x64
+-rwxr-xr-x  1 cj cj 1858 Nov 19 18:45 wsl-run.sh
+
+/home/cj/1430-spike-engineer/fixture:
+total 20
+drwxr-xr-x 2 cj cj 4096 Nov 19 18:45 .
+drwxr-xr-x 4 cj cj 4096 Nov 19 18:45 ..
+-rw-r--r-- 1 cj cj  943 Nov 19 18:45 fixture.sh
+-rw-r--r-- 1 cj cj  974 Nov 19 18:45 list.sh
+-rw-r--r-- 1 cj cj 3653 Nov 19 18:45 supervisor.cjs
+9963b9d227007e9f07f5604576c89f56e01f89b0d3dc9a7677afc7c515622dce  /home/cj/1430-spike-engineer/fixture/fixture.sh
+011740caed0b98e42dff069aa01b5ebc467a1c080a0c91660357676270cacebf  /home/cj/1430-spike-engineer/fixture/list.sh
+a551558c385dc0f0abab176f7e47eeae34a6641376246b42ca6f126d3ffcde12  /home/cj/1430-spike-engineer/fixture/supervisor.cjs
+[exit 0]
+```
+
+### 2026-11-20T00:48:25Z  host=wsl-via-finnpc  (issued from laptop)
+```
+$ cat p5.sh | ssh finnpc wsl.exe -e bash -s   # script p5.sh: cat ~/1430-spike-engineer/w1.log;systemctl --user status fx1430-w1 --no-pager | head -20;ps -eo pid,ppid,args | grep -E \"wsl-run|fx-w1|supervisor\" | grep -v grep;
+```
+```
+cat: /home/cj/1430-spike-engineer/w1.log: No such file or directory
+Unit fx1430-w1.service could not be found.
+    618     614 /bin/bash /home/cj/1430-spike-engineer/wsl-run.sh
+[exit 0]
+```
+
+### 2026-11-20T00:45:14Z  host=wsl-via-finnpc  (issued from laptop)
+```
+$ ssh finnpc wsl.exe -e bash -lc "~/1430-spike-engineer/wsl-run.sh e1 w1"
+```
+```
+runner pid 618 in cgroup /non-systemd; id: uid=1000(cj) gid=1000(cj) groups=1000(cj),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),100(users)
+Running as unit: fx1430-.service; invocation ID: e8e7a03c7ca34680ab2da7d29840e18d
+/home/cj/1430-spike-engineer/wsl-run.sh: line 9: [: =: unary operator expected
+[exit 15]
+```
+
+### 2026-11-20T00:48:31Z  host=wsl-via-finnpc  (issued from laptop)
+```
+$ cat p6.sh | ssh finnpc wsl.exe -e bash -s   # script p6.sh: kill 618;systemctl --user list-units --all \"fx1430*\" --no-pager;cat ~/1430-spike-engineer/.log 2>&1 | head -30;ls ~/1430-spike-engineer;ps -eo pid,ppid,args | grep -E \"fx-|supervisor.cjs\" | grep -v grep;
+```
+```
+  UNIT            LOAD   ACTIVE SUB    DESCRIPTION
+● fx1430-.service loaded failed failed [systemd-run] /usr/bin/bash -c "exec /home/cj/1430-spike-engineer/node-v24.19.0-linux-x64/bin/node /home/cj/1430-spike-engineer/fixture/supervisor.cjs   /home/cj/1430-spike-engineer/d- /home/cj/1430-spike-engineer/fixture >> /home/cj/1430-spike-engineer/.log 2>&1"
+
+Legend: LOAD   → Reflects whether the unit definition was properly loaded.
+        ACTIVE → The high-level unit activation state, i.e. generalization of SUB.
+        SUB    → The low-level unit activation state, values depend on unit type.
+
+1 loaded units listed.
+To show all installed unit files use 'systemctl list-unit-files'.
+2026-11-20T00:45:14.418Z supervisor cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-.service tree cgroup /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-.service/tree
+2026-11-20T00:45:14.423Z supervisor pid 630 pgid/sid see listing; mode /home/cj/1430-spike-engineer/d-
+node:internal/errors:542
+      throw error;
+      ^
+
+TypeError [ERR_INVALID_ARG_TYPE]: The "path" argument must be of type string. Received undefined
+    at Object.join (node:path:1339:7)
+    at Object.<anonymous> (/home/cj/1430-spike-engineer/fixture/supervisor.cjs:22:62)
+    at Module._compile (node:internal/modules/cjs/loader:1872:14)
+    at Object..js (node:internal/modules/cjs/loader:2003:10)
+    at Module.load (node:internal/modules/cjs/loader:1594:32)
+    at Module._load (node:internal/modules/cjs/loader:1396:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47 {
+  code: 'ERR_INVALID_ARG_TYPE'
+}
+
+Node.js v24.19.0
+d-
+fixture
+node-v24.19.0-linux-x64
+wsl-run.sh
+[exit 1]
+```
+
+### 2026-11-20T00:48:37Z  host=wsl-via-finnpc  (issued from laptop)
+```
+$ cat p7.sh | ssh finnpc wsl.exe -e bash -s   # script p7.sh: systemctl --user reset-failed fx1430-.service; rmdir ~/1430-spike-engineer/d-; rm ~/1430-spike-engineer/.log; systemctl --user list-units --all \"fx1430*\" --no-legend;~/1430-spike-engineer/wsl-run.sh e1 w1;
+```
+```
+runner pid 1829 in cgroup /non-systemd; id: uid=1000(cj) gid=1000(cj) groups=1000(cj),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),100(users)
+Running as unit: fx1430-w1.service; invocation ID: dc673e6daeff427699ecaf91e3f32a06
+---- supervisor log
+2026-11-20T00:48:37.581Z supervisor cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w1.service tree cgroup /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w1.service/tree
+2026-11-20T00:48:37.585Z supervisor pid 1834 pgid/sid see listing; mode e1
+2026-11-20T00:48:37.587Z fixture root pid 1844 (its own process group)
+2026-11-20T00:48:37.611Z moved 1844 into /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w1.service/tree
+2026-11-20T00:48:40.615Z BEFORE ENDING
+listing run=w1 at 2026-11-20T00:48:40Z on Linux
+PID     PPID    PGID    SID     STAT  CWD | CGROUP | ARGS
+1834    339     1834    1834    Ssl   /home/cj/1430-spike-engineer | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w1.service | /home/cj/1430-spike-engineer/node-v24.19.0-linux-x64/bin/node /home/cj/1430-spike-engineer/fixture/supervisor.cjs e1 w1 /home/cj/1430-spike-engineer/d-w1 /home/cj/1430-spike-engineer/fixture
+1844    1834    1844    1844    Ss    /home/cj/1430-spike-engineer/d-w1 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w1.service/tree | bash /home/cj/1430-spike-engineer/fixture/fixture.sh w1
+1845    1844    1844    1844    S     /home/cj/1430-spike-engineer/d-w1 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w1.service/tree | fx-w1-M1 300
+1846    1844    1846    1846    Ss    /home/cj/1430-spike-engineer/d-w1 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w1.service/tree | fx-w1-M3 300
+1848    1844    1844    1844    S     /home/cj/1430-spike-engineer/d-w1 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w1.service/tree | fx-w1-M5 300
+1849    1844    1849    1849    Ss    / | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w1.service/tree | fx-w1-M6 300
+1850    1845    1844    1844    S     /home/cj/1430-spike-engineer/d-w1 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w1.service/tree | fx-w1-M2 300
+1851    339     1844    1844    S     /home/cj/1430-spike-engineer/d-w1 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w1.service/tree | fx-w1-M4 300
+count=8
+
+2026-11-20T00:48:40.760Z tree cgroup.procs: 1844 1845 1846 1848 1849 1850 1851
+2026-11-20T00:48:40.761Z E1 cgroup.kill written; cgroup.events populated 0 after 1.66 ms
+2026-11-20T00:48:52.773Z AFTER ENDING (+12 s)
+listing run=w1 at 2026-11-20T00:48:52Z on Linux
+PID     PPID    PGID    SID     STAT  CWD | CGROUP | ARGS
+1834    339     1834    1834    Ssl   /home/cj/1430-spike-engineer | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w1.service | /home/cj/1430-spike-engineer/node-v24.19.0-linux-x64/bin/node /home/cj/1430-spike-engineer/fixture/supervisor.cjs e1 w1 /home/cj/1430-spike-engineer/d-w1 /home/cj/1430-spike-engineer/fixture
+count=1
+
+2026-11-20T00:48:52.803Z tree cgroup.procs: ""
+[exit 0]
+```
+
+### 2026-11-20T00:48:58Z  host=wsl-via-finnpc  (issued from laptop)
+```
+$ cat p8.sh | ssh finnpc wsl.exe -e bash -s   # script p8.sh: ~/1430-spike-engineer/wsl-run.sh e1c w2;systemctl --user status fx1430-w2 --no-pager | head -12;
+```
+```
+runner pid 2004 in cgroup /non-systemd; id: uid=1000(cj) gid=1000(cj) groups=1000(cj),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),100(users)
+Running as unit: fx1430-w2.service; invocation ID: bf7be1b56a7249cebcbd7dab274b8885
+---- supervisor log
+2026-11-20T00:48:58.798Z supervisor pid 2009 pgid/sid see listing; mode e1c
+2026-11-20T00:48:58.800Z fixture root pid 2019 (its own process group)
+2026-11-20T00:49:01.804Z BEFORE ENDING
+listing run=w2 at 2026-11-20T00:49:01Z on Linux
+PID     PPID    PGID    SID     STAT  CWD | CGROUP | ARGS
+2009    339     2009    2009    Ssl   /home/cj/1430-spike-engineer | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w2.service | /home/cj/1430-spike-engineer/node-v24.19.0-linux-x64/bin/node /home/cj/1430-spike-engineer/fixture/supervisor.cjs e1c w2 /home/cj/1430-spike-engineer/d-w2 /home/cj/1430-spike-engineer/fixture
+2019    2009    2019    2019    Ss    /home/cj/1430-spike-engineer/d-w2 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w2.service | bash /home/cj/1430-spike-engineer/fixture/fixture.sh w2
+2020    2019    2019    2019    S     /home/cj/1430-spike-engineer/d-w2 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w2.service | fx-w2-M1 300
+2021    2019    2021    2021    Ss    /home/cj/1430-spike-engineer/d-w2 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w2.service | fx-w2-M3 300
+2023    2019    2019    2019    S     /home/cj/1430-spike-engineer/d-w2 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w2.service | fx-w2-M5 300
+2024    2019    2024    2024    Ss    / | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w2.service | fx-w2-M6 300
+2025    2020    2019    2019    S     /home/cj/1430-spike-engineer/d-w2 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w2.service | fx-w2-M2 300
+2026    339     2019    2019    S     /home/cj/1430-spike-engineer/d-w2 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w2.service | fx-w2-M4 300
+count=8
+
+2026-11-20T00:49:01.927Z E1c SIGKILL sent to process group 2019
+2026-11-20T00:49:01.984Z E1c census under /home/cj/1430-spike-engineer/d-w2 found and SIGKILLed 2021
+2026-11-20T00:49:13.995Z AFTER ENDING (+12 s)
+listing run=w2 at 2026-11-20T00:49:13Z on Linux
+PID     PPID    PGID    SID     STAT  CWD | CGROUP | ARGS
+2009    339     2009    2009    Ssl   /home/cj/1430-spike-engineer | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w2.service | /home/cj/1430-spike-engineer/node-v24.19.0-linux-x64/bin/node /home/cj/1430-spike-engineer/fixture/supervisor.cjs e1c w2 /home/cj/1430-spike-engineer/d-w2 /home/cj/1430-spike-engineer/fixture
+2024    339     2024    2024    Ss    / | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w2.service | fx-w2-M6 300
+count=2
+
+○ fx1430-w2.service - [systemd-run] /usr/bin/bash -c "exec /home/cj/1430-spike-engineer/node-v24.19.0-linux-x64/bin/node /home/cj/1430-spike-engineer/fixture/supervisor.cjs e1c w2 /home/cj/1430-spike-engineer/d-w2 /home/cj/1430-spike-engineer/fixture >> /home/cj/1430-spike-engineer/w2.log 2>&1"
+     Loaded: loaded (/run/user/1000/systemd/transient/fx1430-w2.service; transient)
+  Transient: yes
+     Active: inactive (dead) since Thu 2026-11-19 18:49:14 CST; 476ms ago
+   Duration: 15.250s
+ Invocation: bf7be1b56a7249cebcbd7dab274b8885
+    Process: 2009 ExecStart=/usr/bin/bash -c exec /home/cj/1430-spike-engineer/node-v24.19.0-linux-x64/bin/node /home/cj/1430-spike-engineer/fixture/supervisor.cjs e1c w2 /home/cj/1430-spike-engineer/d-w2 /home/cj/1430-spike-engineer/fixture >> /home/cj/1430-spike-engineer/w2.log 2>&1 (code=exited, status=0/SUCCESS)
+   Main PID: 2009 (code=exited, status=0/SUCCESS)
+      Tasks: 1 (limit: 19077)
+     Memory: 5.7M (peak: 26.6M)
+        CPU: 228ms
+     CGroup: /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w2.service
+[exit 0]
+```
+
+### 2026-11-20T00:49:22Z  host=wsl-via-finnpc  (issued from laptop)
+```
+$ cat p9.sh | ssh finnpc wsl.exe -e bash -s   # script p9.sh: kill -9 2024; bash ~/1430-spike-engineer/fixture/list.sh w2;~/1430-spike-engineer/wsl-run.sh e2 w3;
+```
+```
+listing run=w2 at 2026-11-20T00:49:22Z on Linux
+PID     PPID    PGID    SID     STAT  CWD | CGROUP | ARGS
+count=0
+runner pid 2200 in cgroup /non-systemd; id: uid=1000(cj) gid=1000(cj) groups=1000(cj),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),100(users)
+Running as unit: fx1430-w3.service; invocation ID: 21fd450615354d1d801be3b61d64b485
+supervisor MainPID 2205, unit cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w3.service
+2026-11-20T00:49:26.259339602Z kill -9 2205
+2026-11-20T00:49:38.269882901Z listing +12 s after kill -9
+listing run=w3 at 2026-11-20T00:49:38Z on Linux
+PID     PPID    PGID    SID     STAT  CWD | CGROUP | ARGS
+2215    339     2215    2215    Ss    /home/cj/1430-spike-engineer/d-w3 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w3.service/tree | bash /home/cj/1430-spike-engineer/fixture/fixture.sh w3
+2216    2215    2215    2215    S     /home/cj/1430-spike-engineer/d-w3 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w3.service/tree | fx-w3-M1 300
+2217    2215    2217    2217    Ss    /home/cj/1430-spike-engineer/d-w3 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w3.service/tree | fx-w3-M3 300
+2219    2215    2215    2215    S     /home/cj/1430-spike-engineer/d-w3 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w3.service/tree | fx-w3-M5 300
+2220    2215    2220    2220    Ss    / | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w3.service/tree | fx-w3-M6 300
+2221    2216    2215    2215    S     /home/cj/1430-spike-engineer/d-w3 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w3.service/tree | fx-w3-M2 300
+2222    339     2215    2215    S     /home/cj/1430-spike-engineer/d-w3 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w3.service/tree | fx-w3-M4 300
+count=7
+ActiveState=failed
+SubState=failed
+Result=signal
+tree cgroup /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w3.service/tree procs: 2215 2216 2217 2219 2220 2221 2222 
+fresh writer pid 2377
+[transcript edit by the spike engineer: 20209 identical lines "grep: /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w3.service/tree/cgroup.events: No such file or directory" removed here; the polling loop ran on after systemd removed the emptied cgroup, until pid 2377 was ended]
+Read from remote host 10.0.0.29: Operation timed out
+client_loop: send disconnect: Broken pipe
+[exit 255]
+```
+
+### 2026-11-20T00:51:55Z  host=wsl-via-finnpc  (issued from laptop)
+```
+$ cat p10.sh | ssh finnpc wsl.exe -e bash -s   # script p10.sh: ps -o pid,ppid,etime,args -p 2200,2377 | cut -c1-150;kill 2377 2200;bash ~/1430-spike-engineer/fixture/list.sh w3;ls -d /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-* 2>&1;systemctl --user list-units --all \"fx1430*\" --no-legend;journalctl --user -u fx1430-w3 --no-pager -o short-iso-precise | tail -8;
+```
+```
+    PID    PPID     ELAPSED COMMAND
+   2200    2187       02:32 /bin/bash /home/cj/1430-spike-engineer/wsl-run.sh e2 w3
+   2377    2200       02:16 bash -c echo "fresh writer pid $$"; t0=$(date +%s%N); echo 1 > /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service
+listing run=w3 at 2026-11-20T00:51:55Z on Linux
+PID     PPID    PGID    SID     STAT  CWD | CGROUP | ARGS
+count=0
+ls: cannot access '/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-*': No such file or directory
+● fx1430-w3.service loaded failed failed [systemd-run] /usr/bin/bash -c "exec /home/cj/1430-spike-engineer/node-v24.19.0-linux-x64/bin/node /home/cj/1430-spike-engineer/fixture/supervisor.cjs e2 w3 /home/cj/1430-spike-engineer/d-w3 /home/cj/1430-spike-engineer/fixture >> /home/cj/1430-spike-engineer/w3.log 2>&1"
+2026-11-19T18:49:26.258683-06:00 Finn-PC10 systemd[339]: fx1430-w3.service: Failed with result 'signal'.
+2026-11-19T18:49:26.258727-06:00 Finn-PC10 systemd[339]: fx1430-w3.service: Unit process 2215 (bash) remains running after unit stopped.
+2026-11-19T18:49:26.258740-06:00 Finn-PC10 systemd[339]: fx1430-w3.service: Unit process 2216 (sleep) remains running after unit stopped.
+2026-11-19T18:49:26.258752-06:00 Finn-PC10 systemd[339]: fx1430-w3.service: Unit process 2217 (sleep) remains running after unit stopped.
+2026-11-19T18:49:26.258765-06:00 Finn-PC10 systemd[339]: fx1430-w3.service: Unit process 2219 (sleep) remains running after unit stopped.
+2026-11-19T18:49:26.258790-06:00 Finn-PC10 systemd[339]: fx1430-w3.service: Unit process 2220 (sleep) remains running after unit stopped.
+2026-11-19T18:49:26.258801-06:00 Finn-PC10 systemd[339]: fx1430-w3.service: Unit process 2221 (sleep) remains running after unit stopped.
+2026-11-19T18:49:26.258814-06:00 Finn-PC10 systemd[339]: fx1430-w3.service: Unit process 2222 (sleep) remains running after unit stopped.
+[exit 0]
+```
+
+### 2026-11-20T00:52:10Z  host=wsl-via-finnpc  (issued from laptop)
+```
+$ cat p11.sh | ssh finnpc wsl.exe -e bash -s   # script p11.sh: systemctl --user reset-failed fx1430-w3.service;base64 -d > ~/1430-spike-engineer/wsl-run.sh <<'B64';IyEvYmluL2Jhc2gKIyB3c2wtcnVuLnNoIDxtb2RlPiA8cnVuPiBba2lsbG1vZGVdOiBpbnNpZGUgV1NMLCBzdGFydHMgdGhlIHN1cGVydmlzb3IgYXMgYSB0cmFuc2llbnQgc3lzdGVtZCB1c2VyIHNlcnZpY2UKIyAoRGVsZWdhdGU9eWVzLCBLaWxsTW9kZT1wcm9jZXNzIHVubGVzcyBnaXZlbiksIGFuZCBmb3IgZTIga2lsbHMgaXQgb3V0cmlnaHQsIGxpc3RzICsxMiBzLCB0aGVuIGEgZnJlc2ggd3JpdGVyIGtpbGxzIHRoZSBvcnBoYW5lZCB0cmVlIGNncm91cC4KUz0kSE9NRS8xNDMwLXNwaWtlLWVuZ2luZWVyOyBOPSRTL25vZGUtdjI0LjE5LjAtbGludXgteDY0L2Jpbi9ub2RlCm1vZGU9JDE7IHJ1bj0kMjsga209JHszOi1wcm9jZXNzfTsgRD0kUy9kLSRydW47IG1rZGlyIC1wICREOyBMPSRTLyRydW4ubG9nOyA6ID4gJEwKZWNobyAicnVubmVyIHBpZCAkJCBpbiBjZ3JvdXAgJChjdXQgLWQ6IC1mMyAvcHJvYy9zZWxmL2Nncm91cCk7IGlkOiAkKGlkKSIKc3lzdGVtZC1ydW4gLS11c2VyIC0tdW5pdD1meDE0MzAtJHJ1biAtcCBEZWxlZ2F0ZT15ZXMgLXAgS2lsbE1vZGU9JGttIC0td29ya2luZy1kaXJlY3Rvcnk9JFMgXAogIGJhc2ggLWMgImV4ZWMgJE4gJFMvZml4dHVyZS9zdXBlcnZpc29yLmNqcyAkbW9kZSAkcnVuICREICRTL2ZpeHR1cmUgPj4gJEwgMj4mMSIKaWYgWyAkbW9kZSA9IGUyIF07IHRoZW4KICB1bnRpbCBncmVwIC1xICd3YWl0aW5nIHRvIGJlIGtpbGxlZCcgJEw7IGRvIHNsZWVwIDAuMjsgZG9uZQogIHN1cD0kKHN5c3RlbWN0bCAtLXVzZXIgc2hvdyAtcCBNYWluUElEIC0tdmFsdWUgZngxNDMwLSRydW4pOyBjZz0kKHN5c3RlbWN0bCAtLXVzZXIgc2hvdyAtcCBDb250cm9sR3JvdXAgLS12YWx1ZSBmeDE0MzAtJHJ1bikKICBlY2hvICJzdXBlcnZpc29yIE1haW5QSUQgJHN1cCwgdW5pdCBjZ3JvdXAgJGNnIgogIGtpbGwgLTkgJHN1cDsgZWNobyAiJChkYXRlIC11ICslRlQlVC4lM05aKSBraWxsIC05ICRzdXAiCiAgc2xlZXAgMTI7IGVjaG8gIiQoZGF0ZSAtdSArJUZUJVQuJTNOWikgbGlzdGluZyArMTIgcyBhZnRlciBraWxsIC05IjsgYmFzaCAkUy9maXh0dXJlL2xpc3Quc2ggJHJ1bgogIHN5c3RlbWN0bCAtLXVzZXIgc2hvdyAtcCBBY3RpdmVTdGF0ZSAtcCBTdWJTdGF0ZSAtcCBSZXN1bHQgZngxNDMwLSRydW4KICBUPS9zeXMvZnMvY2dyb3VwJGNnL3RyZWUKICBpZiBbIC1kICRUIF07IHRoZW4KICAgIGVjaG8gInRyZWUgY2dyb3VwICRUIHByb2NzOiAkKHRyICdcbicgJyAnIDwgJFQvY2dyb3VwLnByb2NzKSIKICAgIGJhc2ggLWMgImVjaG8gXCJmcmVzaCB3cml0ZXIgcGlkIFwkXCRcIjsgdDA9XCQoZGF0ZSArJXMlTik7IGVjaG8gMSA+ICRUL2Nncm91cC5raWxsOyB1bnRpbCBbICEgLWUgJFQvY2dyb3VwLmV2ZW50cyBdIHx8IGdyZXAgLXEgJ3BvcHVsYXRlZCAwJyAkVC9jZ3JvdXAuZXZlbnRzOyBkbyBzbGVlcCAwLjAwMTsgZG9uZTsgZWNobyBcImZyZXNoIHdyaXRlcjogY2dyb3VwLmtpbGwgd3JpdHRlbjsgdHJlZSBjZ3JvdXAgZW1wdHkgb3IgcmVtb3ZlZCAoZXhpc3RzOiBcJChbIC1lICRUIF0gJiYgZWNobyB5ZXMgfHwgZWNobyBubykpIGFmdGVyIFwkKCggKFwkKGRhdGUgKyVzJU4pLXQwKS8xMDAwICkpIHVzXCIiCiAgICBzbGVlcCAxMDsgZWNobyAiJChkYXRlIC11ICslRlQlVC4lM05aKSBsaXN0aW5nICsxMCBzIGFmdGVyIGZyZXNoIGNncm91cC5raWxsIjsgYmFzaCAkUy9maXh0dXJlL2xpc3Quc2ggJHJ1bgogIGVsc2UgZWNobyAibm8gdHJlZSBjZ3JvdXAgYXQgJFQgKHN5c3RlbWQgcmVtb3ZlZCB0aGUgdW5pdCBjZ3JvdXApIjsgZmkKZWxzZQogIHVudGlsIGdyZXAgLXEgJ0FGVEVSIEVORElORycgJEwgJiYgISBzeXN0ZW1jdGwgLS11c2VyIGlzLWFjdGl2ZSAtcSBmeDE0MzAtJHJ1bjsgZG8gc2xlZXAgMC41OyBkb25lCmZpCmVjaG8gLS0tLSBzdXBlcnZpc29yIGxvZzsgY2F0ICRMCg==;B64;sha256sum ~/1430-spike-engineer/wsl-run.sh;~/1430-spike-engineer/wsl-run.sh e2 w5;
+```
+```
+7c273b59c1505b35357dd021d25bbd766c87324fea473b2e79b167c45c51d301  /home/cj/1430-spike-engineer/wsl-run.sh
+runner pid 103714 in cgroup /non-systemd; id: uid=1000(cj) gid=1000(cj) groups=1000(cj),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),100(users)
+Running as unit: fx1430-w5.service; invocation ID: 13225e92133145fda769a4fce5c582ba
+supervisor MainPID 103719, unit cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w5.service
+2026-11-20T00:52:13.959571562Z kill -9 103719
+2026-11-20T00:52:25.970994910Z listing +12 s after kill -9
+listing run=w5 at 2026-11-20T00:52:25Z on Linux
+PID     PPID    PGID    SID     STAT  CWD | CGROUP | ARGS
+103729  339     103729  103729  Ss    /home/cj/1430-spike-engineer/d-w5 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w5.service/tree | bash /home/cj/1430-spike-engineer/fixture/fixture.sh w5
+103730  103729  103729  103729  S     /home/cj/1430-spike-engineer/d-w5 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w5.service/tree | fx-w5-M1 300
+103731  103729  103731  103731  Ss    /home/cj/1430-spike-engineer/d-w5 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w5.service/tree | fx-w5-M3 300
+103733  103729  103729  103729  S     /home/cj/1430-spike-engineer/d-w5 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w5.service/tree | fx-w5-M5 300
+103734  103729  103734  103734  Ss    / | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w5.service/tree | fx-w5-M6 300
+103735  103730  103729  103729  S     /home/cj/1430-spike-engineer/d-w5 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w5.service/tree | fx-w5-M2 300
+103736  339     103729  103729  S     /home/cj/1430-spike-engineer/d-w5 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w5.service/tree | fx-w5-M4 300
+count=7
+ActiveState=failed
+SubState=failed
+Result=signal
+tree cgroup /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w5.service/tree procs: 103729 103730 103731 103733 103734 103735 103736 
+fresh writer pid 103890
+grep: /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w5.service/tree/cgroup.events: No such file or directory
+fresh writer: cgroup.kill written; tree cgroup empty or removed (exists: no) after 6019 us
+2026-11-20T00:52:36.109510642Z listing +10 s after fresh cgroup.kill
+listing run=w5 at 2026-11-20T00:52:36Z on Linux
+PID     PPID    PGID    SID     STAT  CWD | CGROUP | ARGS
+count=0
+---- supervisor log
+2026-11-20T00:52:10.665Z supervisor cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w5.service tree cgroup /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w5.service/tree
+2026-11-20T00:52:10.665Z supervisor pid 103719 pgid/sid see listing; mode e2
+2026-11-20T00:52:10.667Z fixture root pid 103729 (its own process group)
+2026-11-20T00:52:10.667Z moved 103729 into /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w5.service/tree
+2026-11-20T00:52:13.671Z BEFORE ENDING
+listing run=w5 at 2026-11-20T00:52:13Z on Linux
+PID     PPID    PGID    SID     STAT  CWD | CGROUP | ARGS
+103719  339     103719  103719  Ssl   /home/cj/1430-spike-engineer | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w5.service | /home/cj/1430-spike-engineer/node-v24.19.0-linux-x64/bin/node /home/cj/1430-spike-engineer/fixture/supervisor.cjs e2 w5 /home/cj/1430-spike-engineer/d-w5 /home/cj/1430-spike-engineer/fixture
+103729  103719  103729  103729  Ss    /home/cj/1430-spike-engineer/d-w5 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w5.service/tree | bash /home/cj/1430-spike-engineer/fixture/fixture.sh w5
+103730  103729  103729  103729  S     /home/cj/1430-spike-engineer/d-w5 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w5.service/tree | fx-w5-M1 300
+103731  103729  103731  103731  Ss    /home/cj/1430-spike-engineer/d-w5 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w5.service/tree | fx-w5-M3 300
+103733  103729  103729  103729  S     /home/cj/1430-spike-engineer/d-w5 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w5.service/tree | fx-w5-M5 300
+103734  103729  103734  103734  Ss    / | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w5.service/tree | fx-w5-M6 300
+103735  103730  103729  103729  S     /home/cj/1430-spike-engineer/d-w5 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w5.service/tree | fx-w5-M2 300
+103736  339     103729  103729  S     /home/cj/1430-spike-engineer/d-w5 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w5.service/tree | fx-w5-M4 300
+count=8
+
+2026-11-20T00:52:13.794Z tree cgroup.procs: 103729 103730 103731 103733 103734 103735 103736
+2026-11-20T00:52:13.794Z waiting to be killed outright
+[exit 0]
+```
+
+### 2026-11-20T00:52:43Z  host=wsl-via-finnpc  (issued from laptop)
+```
+$ cat p12.sh | ssh finnpc wsl.exe -e bash -s   # script p12.sh: systemctl --user reset-failed fx1430-w5.service;~/1430-spike-engineer/wsl-run.sh e2 w6 control-group 2>&1 | grep -v \"^$\";journalctl --user -u fx1430-w6 --no-pager -o short-iso-precise | tail -6;
+```
+```
+runner pid 103939 in cgroup /non-systemd; id: uid=1000(cj) gid=1000(cj) groups=1000(cj),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),100(users)
+Running as unit: fx1430-w6.service; invocation ID: d9338de5e97445ab81722c6b7fe9ff9d
+supervisor MainPID 103945, unit cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w6.service
+2026-11-20T00:52:46.403141595Z kill -9 103945
+2026-11-20T00:52:58.413896491Z listing +12 s after kill -9
+listing run=w6 at 2026-11-20T00:52:58Z on Linux
+PID     PPID    PGID    SID     STAT  CWD | CGROUP | ARGS
+103959  339     103955  103955  S     /home/cj/1430-spike-engineer/d-w6 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w6.service/tree | fx-w6-M5 300
+count=1
+ActiveState=deactivating
+SubState=stop-sigterm
+Result=signal
+tree cgroup /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w6.service/tree procs: 103959 
+fresh writer pid 104103
+grep: /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w6.service/tree/cgroup.events: No such file or directory
+fresh writer: cgroup.kill written; tree cgroup empty or removed (exists: no) after 5326 us
+2026-11-20T00:53:08.465929044Z listing +10 s after fresh cgroup.kill
+listing run=w6 at 2026-11-20T00:53:08Z on Linux
+PID     PPID    PGID    SID     STAT  CWD | CGROUP | ARGS
+count=0
+---- supervisor log
+2026-11-20T00:52:43.154Z supervisor cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w6.service tree cgroup /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w6.service/tree
+2026-11-20T00:52:43.155Z supervisor pid 103945 pgid/sid see listing; mode e2
+2026-11-20T00:52:43.156Z fixture root pid 103955 (its own process group)
+2026-11-20T00:52:43.156Z moved 103955 into /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w6.service/tree
+2026-11-20T00:52:46.160Z BEFORE ENDING
+listing run=w6 at 2026-11-20T00:52:46Z on Linux
+PID     PPID    PGID    SID     STAT  CWD | CGROUP | ARGS
+103945  339     103945  103945  Ssl   /home/cj/1430-spike-engineer | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w6.service | /home/cj/1430-spike-engineer/node-v24.19.0-linux-x64/bin/node /home/cj/1430-spike-engineer/fixture/supervisor.cjs e2 w6 /home/cj/1430-spike-engineer/d-w6 /home/cj/1430-spike-engineer/fixture
+103955  103945  103955  103955  Ss    /home/cj/1430-spike-engineer/d-w6 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w6.service/tree | bash /home/cj/1430-spike-engineer/fixture/fixture.sh w6
+103956  103955  103955  103955  S     /home/cj/1430-spike-engineer/d-w6 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w6.service/tree | fx-w6-M1 300
+103957  103955  103957  103957  Ss    /home/cj/1430-spike-engineer/d-w6 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w6.service/tree | fx-w6-M3 300
+103959  103955  103955  103955  S     /home/cj/1430-spike-engineer/d-w6 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w6.service/tree | fx-w6-M5 300
+103960  103955  103960  103960  Ss    / | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w6.service/tree | fx-w6-M6 300
+103961  103956  103955  103955  S     /home/cj/1430-spike-engineer/d-w6 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w6.service/tree | fx-w6-M2 300
+103962  339     103955  103955  S     /home/cj/1430-spike-engineer/d-w6 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w6.service/tree | fx-w6-M4 300
+count=8
+2026-11-20T00:52:46.279Z tree cgroup.procs: 103955 103956 103957 103959 103960 103961 103962
+2026-11-20T00:52:46.280Z waiting to be killed outright
+2026-11-19T18:52:43.137702-06:00 Finn-PC10 systemd[339]: Started fx1430-w6.service - [systemd-run] /usr/bin/bash -c "exec /home/cj/1430-spike-engineer/node-v24.19.0-linux-x64/bin/node /home/cj/1430-spike-engineer/fixture/supervisor.cjs e2 w6 /home/cj/1430-spike-engineer/d-w6 /home/cj/1430-spike-engineer/fixture >> /home/cj/1430-spike-engineer/w6.log 2>&1".
+2026-11-19T18:52:46.402589-06:00 Finn-PC10 systemd[339]: fx1430-w6.service: Main process exited, code=killed, status=9/KILL
+2026-11-19T18:52:58.451765-06:00 Finn-PC10 systemd[339]: fx1430-w6.service: Failed with result 'signal'.
+[exit 0]
+```
+
+### 2026-11-20T00:55:51Z  host=finnpc  (issued from laptop)
+```
+$ ssh finnpc "mkdir C:\Users\cj\1430-spike-engineer" ; scp -q fixture-win/*.cjs finnpc:C:/Users/cj/1430-spike-engineer/ && ssh finnpc "cd /d C:\Users\cj\1430-spike-engineer && dir /b && npm --version && npm install koffi --cache C:\Users\cj\1430-spike-engineer\npm-cache --no-fund --no-audit --no-update-notifier 2>&1 && dir /b node_modules && type node_modules\koffi\package.json | findstr /c:\"\\\"version\""
+```
+```
+fixture-win.cjs
+member-win.cjs
+supervisor-win.cjs
+win-run.cjs
+win32.cjs
+winlist.cjs
+11.17.0
+
+added 2 packages in 996ms
+npm warn allow-scripts 1 package has install scripts not yet covered by allowScripts:
+npm warn allow-scripts   koffi@3.3.8 (install: node ./cnoke.cjs -P . -D src/koffi --prebuild --release)
+npm warn allow-scripts
+npm warn allow-scripts Run `npm approve-scripts --allow-scripts-pending` to review, or `npm approve-scripts <pkg>` to allow.
+.package-lock.json
+@koromix
+koffi
+    "version": "3.3.8",
+[exit 0]
+```
+
+### 2026-11-20T00:55:59Z  host=finnpc  (issued from laptop)
+```
+$ ssh finnpc "cd /d C:\Users\cj\1430-spike-engineer && node -e \"const k=require(\x27koffi\x27);console.log(\x27koffi\x27,k.version)\" & dir /s /b node_modules\koffi\*.node & whoami /groups"
+```
+```
+[eval]:1
+const k=require(\x27koffi\x27);console.log(\x27koffi\x27,k.version)
+                ^
+Expected unicode escape
+
+SyntaxError: Invalid or unexpected token
+    at makeContextifyScript (node:internal/vm:194:14)
+    at compileScript (node:internal/process/execution:388:10)
+    at evalTypeScript (node:internal/process/execution:260:22)
+    at node:internal/main/eval_string:71:3
+
+Node.js v24.19.0
+File Not Found
+
+GROUP INFORMATION
+-----------------
+
+Group Name                                                    Type             SID                                                                                                          Attributes                                                     
+============================================================= ================ ============================================================================================================ ===============================================================
+Everyone                                                      Well-known group S-1-1-0                                                                                                      Mandatory group, Enabled by default, Enabled group             
+NT AUTHORITY\Local account and member of Administrators group Well-known group S-1-5-114                                                                                                    Mandatory group, Enabled by default, Enabled group             
+BUILTIN\Administrators                                        Alias            S-1-5-32-544                                                                                                 Mandatory group, Enabled by default, Enabled group, Group owner
+BUILTIN\Users                                                 Alias            S-1-5-32-545                                                                                                 Mandatory group, Enabled by default, Enabled group             
+NT AUTHORITY\NETWORK                                          Well-known group S-1-5-2                                                                                                      Mandatory group, Enabled by default, Enabled group             
+NT AUTHORITY\Authenticated Users                              Well-known group S-1-5-11                                                                                                     Mandatory group, Enabled by default, Enabled group             
+NT AUTHORITY\This Organization                                Well-known group S-1-5-15                                                                                                     Mandatory group, Enabled by default, Enabled group             
+NT AUTHORITY\Local account                                    Well-known group S-1-5-113                                                                                                    Mandatory group, Enabled by default, Enabled group             
+MicrosoftAccount\[redacted: account name, by the spike engineer]                  User             S-1-11-96-[redacted] Enabled group                                                  
+NT AUTHORITY\NTLM Authentication                              Well-known group S-1-5-64-10                                                                                                  Mandatory group, Enabled by default, Enabled group             
+Mandatory Label\High Mandatory Level                          Label            S-1-16-12288                                                                                                                                                                
+[exit 0]
+```
+
+### 2026-11-20T00:56:09Z  host=finnpc  (issued from laptop)
+```
+$ ssh finnpc "cd /d C:\Users\cj\1430-spike-engineer && node -p require.resolve(String.fromCharCode(107,111,102,102,105)) && node -p require(String.fromCharCode(107,111,102,102,105)).version & dir /b node_modules\koffi node_modules\@koromix"
+```
+```
+C:\Users\CJ\1430-spike-engineer\node_modules\koffi\index.cjs
+3.3.8
+CHANGELOG.md
+cnoke.cjs
+doc
+index.cjs
+index.d.ts
+index.js
+indirect.cjs
+indirect.js
+lib
+LICENSE.txt
+package.json
+README.md
+src
+vendor
+koffi-win32-x64
+[exit 0]
+```
+
+### 2026-11-20T00:56:14Z  host=finnpc  (issued from laptop)
+```
+$ ssh finnpc "cd /d C:\Users\cj\1430-spike-engineer && node win-run.cjs e1 x1"
+```
+```
+2026-11-20T00:56:14.132Z runner pid 12284; supervisor pid 32860
+---- supervisor log
+2026-11-20T00:56:14.161Z supervisor pid 32860 mode e1 run x1
+2026-11-20T00:56:14.162Z IsProcessInJob(GetCurrentProcess(), NULL) before creating a job: returned 1, Result=TRUE (already in a job)
+2026-11-20T00:56:14.162Z CreateJobObjectW name Local\fx1430-x1 ok
+2026-11-20T00:56:14.162Z SetInformationJobObject(JobObjectExtendedLimitInformation, KILL_ON_JOB_CLOSE): ok
+2026-11-20T00:56:14.162Z job limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION.BasicLimitInformation.LimitFlags=0x2000 KILL_ON_JOB_CLOSE=set
+2026-11-20T00:56:14.165Z fixture root pid 31132 AssignProcessToJobObject: ok
+2026-11-20T00:56:19.178Z BEFORE ENDING
+listing run=x1 at 2026-11-20T00:56:19.683Z on Windows (Win32_Process + IsProcessInJob + PEB CurrentDirectory)
+PID     PPID    SESS  IN_SPIKE_JOB IN_ANY_JOB CWD | ROLE
+32860   12284   0     no           yes        C:\Users\CJ\1430-spike-engineer\ | sup
+31132   32860   0     yes          yes        C:\Users\CJ\1430-spike-engineer\d-x1\ | root
+37476   31132   0     yes          yes        C:\Users\CJ\1430-spike-engineer\d-x1\ | M1
+23952   31132   0     yes          yes        C:\Users\CJ\1430-spike-engineer\d-x1\ | M3
+37836   31132   0     yes          yes        C:\ | M6
+12344   34852   0     yes          yes        C:\Users\CJ\1430-spike-engineer\d-x1\ | M4
+11444   37476   0     yes          yes        C:\Users\CJ\1430-spike-engineer\d-x1\ | M2
+count=7
+2026-11-20T00:56:19.684Z job process id list (JobObjectBasicProcessIdList): [12000,23952,37836,36920,12344,31132,37476,11444] accounting: {"total":9,"active":8,"terminated":0}
+2026-11-20T00:56:19.684Z TerminateJobObject: ok
+2026-11-20T00:56:19.684Z job ActiveProcesses reached 0 after 0.31 ms
+2026-11-20T00:56:31.690Z AFTER ENDING (+12 s)
+listing run=x1 at 2026-11-20T00:56:32.106Z on Windows (Win32_Process + IsProcessInJob + PEB CurrentDirectory)
+PID     PPID    SESS  IN_SPIKE_JOB IN_ANY_JOB CWD | ROLE
+32860   12284   0     no           yes        C:\Users\CJ\1430-spike-engineer\ | sup
+count=1
+2026-11-20T00:56:32.106Z job accounting: {"total":9,"active":0,"terminated":0}
+[exit 0]
+```
+
+### 2026-11-20T00:56:45Z  host=finnpc  (issued from laptop)
+```
+$ scp -q fixture-win/*.cjs finnpc:C:/Users/cj/1430-spike-engineer/ && ssh finnpc "cd /d C:\Users\cj\1430-spike-engineer && node win-run.cjs e1 x2"
+```
+```
+2026-11-20T00:56:46.289Z runner pid 32616; supervisor pid 2652
+---- supervisor log
+2026-11-20T00:56:46.317Z supervisor pid 2652 mode e1 run x2
+2026-11-20T00:56:46.318Z IsProcessInJob(GetCurrentProcess(), NULL) before creating a job: returned 1, Result=TRUE (already in a job)
+2026-11-20T00:56:46.318Z CreateJobObjectW name Local\fx1430-x2 ok
+2026-11-20T00:56:46.318Z SetInformationJobObject(JobObjectExtendedLimitInformation, KILL_ON_JOB_CLOSE): ok
+2026-11-20T00:56:46.318Z job limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION.BasicLimitInformation.LimitFlags=0x2000 KILL_ON_JOB_CLOSE=set
+2026-11-20T00:56:46.321Z fixture root pid 30952 AssignProcessToJobObject: ok
+2026-11-20T00:56:51.332Z BEFORE ENDING
+listing run=x2 at 2026-11-20T00:56:51.733Z on Windows (Win32_Process + IsProcessInJob + PEB CurrentDirectory)
+PID     PPID    SESS  IN_SPIKE_JOB IN_ANY_JOB CWD | ROLE
+2652    32616   0     no           yes        C:\Users\CJ\1430-spike-engineer\ | sup
+30952   2652    0     yes          yes        C:\Users\CJ\1430-spike-engineer\d-x2\ | root
+21128   30952   0     yes          yes        C:\Users\CJ\1430-spike-engineer\d-x2\ | M1
+1480    30952   0     yes          yes        C:\Users\CJ\1430-spike-engineer\d-x2\ | M3
+36504   30952   0     yes          yes        C:\ | M6
+32708   37664   0     yes          yes        C:\Users\CJ\1430-spike-engineer\d-x2\ | M4
+36552   21128   0     yes          yes        C:\Users\CJ\1430-spike-engineer\d-x2\ | M2
+count=7
+2026-11-20T00:56:52.158Z job process id list (JobObjectBasicProcessIdList): ["1304:conhost.exe(ppid 21128)","1480:node.exe(ppid 30952)","8140:conhost.exe(ppid 37664)","36504:node.exe(ppid 30952)","32708:node.exe(ppid 37664)","30952:node.exe(ppid 2652)","21128:node.exe(ppid 30952)","36552:node.exe(ppid 21128)"] accounting: {"total":9,"active":8,"terminated":0}
+2026-11-20T00:56:52.158Z TerminateJobObject: ok
+2026-11-20T00:56:52.158Z job ActiveProcesses reached 0 after 0.24 ms
+2026-11-20T00:57:04.168Z AFTER ENDING (+12 s)
+listing run=x2 at 2026-11-20T00:57:04.549Z on Windows (Win32_Process + IsProcessInJob + PEB CurrentDirectory)
+PID     PPID    SESS  IN_SPIKE_JOB IN_ANY_JOB CWD | ROLE
+2652    32616   0     no           yes        C:\Users\CJ\1430-spike-engineer\ | sup
+count=1
+2026-11-20T00:57:04.549Z job accounting: {"total":9,"active":0,"terminated":0}
+[exit 0]
+```
+
+### 2026-11-20T00:57:10Z  host=finnpc  (issued from laptop)
+```
+$ ssh finnpc "cd /d C:\Users\cj\1430-spike-engineer && node win-run.cjs e2k x3"
+```
+```
+2026-11-20T00:57:10.168Z runner pid 35696; supervisor pid 32600
+2026-11-20T00:57:16.324Z taskkill /F /PID 32600: SUCCESS: The process with PID 32600 has been terminated.
+2026-11-20T00:57:28.333Z fresh listing +12 s after the kill:
+2026-11-20T00:57:28.375Z fresh process pid 12620: OpenJobObjectW(JOB_OBJECT_ALL_ACCESS, FALSE, "Local\fx1430-x3") -> NULL, GetLastError=2
+listing run=x3 at 2026-11-20T00:57:28.808Z on Windows (Win32_Process + IsProcessInJob + PEB CurrentDirectory)
+PID     PPID    SESS  IN_SPIKE_JOB IN_ANY_JOB CWD | ROLE
+count=0
+
+---- supervisor log
+2026-11-20T00:57:10.193Z supervisor pid 32600 mode e2k run x3
+2026-11-20T00:57:10.194Z IsProcessInJob(GetCurrentProcess(), NULL) before creating a job: returned 1, Result=TRUE (already in a job)
+2026-11-20T00:57:10.194Z CreateJobObjectW name Local\fx1430-x3 ok
+2026-11-20T00:57:10.194Z SetInformationJobObject(JobObjectExtendedLimitInformation, KILL_ON_JOB_CLOSE): ok
+2026-11-20T00:57:10.194Z job limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION.BasicLimitInformation.LimitFlags=0x2000 KILL_ON_JOB_CLOSE=set
+2026-11-20T00:57:10.197Z fixture root pid 37088 AssignProcessToJobObject: ok
+2026-11-20T00:57:15.211Z BEFORE ENDING
+listing run=x3 at 2026-11-20T00:57:15.639Z on Windows (Win32_Process + IsProcessInJob + PEB CurrentDirectory)
+PID     PPID    SESS  IN_SPIKE_JOB IN_ANY_JOB CWD | ROLE
+32600   35696   0     no           yes        C:\Users\CJ\1430-spike-engineer\ | sup
+37088   32600   0     yes          yes        C:\Users\CJ\1430-spike-engineer\d-x3\ | root
+37000   37088   0     yes          yes        C:\Users\CJ\1430-spike-engineer\d-x3\ | M1
+21348   37088   0     yes          yes        C:\Users\CJ\1430-spike-engineer\d-x3\ | M3
+36804   37088   0     yes          yes        C:\ | M6
+35804   37080   0     yes          yes        C:\Users\CJ\1430-spike-engineer\d-x3\ | M4
+18884   37000   0     yes          yes        C:\Users\CJ\1430-spike-engineer\d-x3\ | M2
+count=7
+2026-11-20T00:57:16.020Z job process id list (JobObjectBasicProcessIdList): ["18988:conhost.exe(ppid 37000)","21348:node.exe(ppid 37088)","36804:node.exe(ppid 37088)","31656:conhost.exe(ppid 37080)","35804:node.exe(ppid 37080)","37088:node.exe(ppid 32600)","37000:node.exe(ppid 37088)","18884:node.exe(ppid 37000)"] accounting: {"total":9,"active":8,"terminated":0}
+2026-11-20T00:57:16.020Z waiting to be killed outright
+[exit 0]
+```
+
+### 2026-11-20T00:57:33Z  host=finnpc  (issued from laptop)
+```
+$ ssh finnpc "cd /d C:\Users\cj\1430-spike-engineer && node win-run.cjs e2n x4"
+```
+```
+2026-11-20T00:57:33.638Z runner pid 9408; supervisor pid 2092
+2026-11-20T00:57:39.980Z taskkill /F /PID 2092: SUCCESS: The process with PID 2092 has been terminated.
+2026-11-20T00:57:51.993Z fresh listing +12 s after the kill:
+2026-11-20T00:57:52.049Z fresh process pid 9496: OpenJobObjectW(JOB_OBJECT_ALL_ACCESS, FALSE, "Local\fx1430-x4") -> NULL, GetLastError=2
+listing run=x4 at 2026-11-20T00:57:52.409Z on Windows (Win32_Process + IsProcessInJob + PEB CurrentDirectory)
+PID     PPID    SESS  IN_SPIKE_JOB IN_ANY_JOB CWD | ROLE
+12972   2092    0     n/a          yes        C:\Users\CJ\1430-spike-engineer\d-x4\ | root
+36704   12972   0     n/a          yes        C:\Users\CJ\1430-spike-engineer\d-x4\ | M1
+5208    12972   0     n/a          yes        C:\Users\CJ\1430-spike-engineer\d-x4\ | M3
+21380   12972   0     n/a          yes        C:\ | M6
+34948   12108   0     n/a          yes        C:\Users\CJ\1430-spike-engineer\d-x4\ | M4
+33440   36704   0     n/a          yes        C:\Users\CJ\1430-spike-engineer\d-x4\ | M2
+count=6
+
+2026-11-20T00:58:02.423Z fresh listing +10 s after the reach attempt:
+2026-11-20T00:58:02.462Z fresh process pid 17412: OpenJobObjectW(JOB_OBJECT_ALL_ACCESS, FALSE, "Local\fx1430-x4") -> NULL, GetLastError=2
+listing run=x4 at 2026-11-20T00:58:02.845Z on Windows (Win32_Process + IsProcessInJob + PEB CurrentDirectory)
+PID     PPID    SESS  IN_SPIKE_JOB IN_ANY_JOB CWD | ROLE
+12972   2092    0     n/a          yes        C:\Users\CJ\1430-spike-engineer\d-x4\ | root
+36704   12972   0     n/a          yes        C:\Users\CJ\1430-spike-engineer\d-x4\ | M1
+5208    12972   0     n/a          yes        C:\Users\CJ\1430-spike-engineer\d-x4\ | M3
+21380   12972   0     n/a          yes        C:\ | M6
+34948   12108   0     n/a          yes        C:\Users\CJ\1430-spike-engineer\d-x4\ | M4
+33440   36704   0     n/a          yes        C:\Users\CJ\1430-spike-engineer\d-x4\ | M2
+count=6
+
+---- supervisor log
+2026-11-20T00:57:33.664Z supervisor pid 2092 mode e2n run x4
+2026-11-20T00:57:33.665Z IsProcessInJob(GetCurrentProcess(), NULL) before creating a job: returned 1, Result=TRUE (already in a job)
+2026-11-20T00:57:33.665Z CreateJobObjectW name Local\fx1430-x4 ok
+2026-11-20T00:57:33.665Z job limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION.BasicLimitInformation.LimitFlags=0x0000 KILL_ON_JOB_CLOSE=not set
+2026-11-20T00:57:33.668Z fixture root pid 12972 AssignProcessToJobObject: ok
+2026-11-20T00:57:38.678Z BEFORE ENDING
+listing run=x4 at 2026-11-20T00:57:39.088Z on Windows (Win32_Process + IsProcessInJob + PEB CurrentDirectory)
+PID     PPID    SESS  IN_SPIKE_JOB IN_ANY_JOB CWD | ROLE
+2092    9408    0     no           yes        C:\Users\CJ\1430-spike-engineer\ | sup
+12972   2092    0     yes          yes        C:\Users\CJ\1430-spike-engineer\d-x4\ | root
+36704   12972   0     yes          yes        C:\Users\CJ\1430-spike-engineer\d-x4\ | M1
+5208    12972   0     yes          yes        C:\Users\CJ\1430-spike-engineer\d-x4\ | M3
+21380   12972   0     yes          yes        C:\ | M6
+34948   12108   0     yes          yes        C:\Users\CJ\1430-spike-engineer\d-x4\ | M4
+33440   36704   0     yes          yes        C:\Users\CJ\1430-spike-engineer\d-x4\ | M2
+count=7
+2026-11-20T00:57:39.503Z job process id list (JobObjectBasicProcessIdList): ["36612:conhost.exe(ppid 36704)","5208:node.exe(ppid 12972)","21380:node.exe(ppid 12972)","5972:conhost.exe(ppid 12108)","34948:node.exe(ppid 12108)","12972:node.exe(ppid 2092)","36704:node.exe(ppid 12972)","33440:node.exe(ppid 36704)"] accounting: {"total":9,"active":8,"terminated":0}
+2026-11-20T00:57:39.503Z waiting to be killed outright
+[exit 0]
+```
+
+### 2026-11-20T00:58:08Z  host=finnpc  (issued from laptop)
+```
+$ ssh finnpc "cd /d C:\Users\cj\1430-spike-engineer && node winlist.cjs x4 & tasklist /FI \"PID eq 12972\" /FI \"PID eq 36704\" & tasklist /FI \"IMAGENAME eq node.exe\""
+```
+```
+2026-11-20T00:58:08.479Z fresh process pid 7956: OpenJobObjectW(JOB_OBJECT_ALL_ACCESS, FALSE, "Local\fx1430-x4") -> NULL, GetLastError=2
+listing run=x4 at 2026-11-20T00:58:08.800Z on Windows (Win32_Process + IsProcessInJob + PEB CurrentDirectory)
+PID     PPID    SESS  IN_SPIKE_JOB IN_ANY_JOB CWD | ROLE
+count=0
+INFO: No tasks are running which match the specified criteria.
+
+Image Name                     PID Session Name        Session#    Mem Usage
+========================= ======== ================ =========== ============
+node.exe                     31732 Console                    1    150,368 K
+node.exe                     21712 Services                   0    188,296 K
+[exit 0]
+```
+
+### 2026-11-20T00:58:20Z  host=finnpc  (issued from laptop)
+```
+$ ssh finnpc "runas /showtrustlevels & cd /d C:\Users\cj\1430-spike-engineer && runas /trustlevel:0x20000 \"cmd /c whoami /groups > C:\Users\cj\1430-spike-engineer\basic-whoami.txt 2>&1\" & ping -n 4 127.0.0.1 >/dev/null & type C:\Users\cj\1430-spike-engineer\basic-whoami.txt | findstr /i \"Mandatory Administrators\""
+```
+```
+The system cannot find the path specified.
+The system cannot find the file specified.
+[exit 1]
+```
+
+### 2026-11-20T00:58:39Z  host=wsl-via-finnpc  (issued from laptop)
+```
+$ cat p13.sh | ssh finnpc wsl.exe -e bash -s   # script p13.sh: systemctl --user list-units --all \"fx1430*\" --no-legend;ls /run/user/1000/systemd/transient/ | grep fx1430;for u in $(systemctl --user list-units --all \"fx1430*\" --no-legend --plain | awk \"{print \$1}\"); do systemctl --user reset-failed $u 2>/dev/null; done;echo after:; systemctl --user list-units --all \"fx1430*\" --no-legend; ls /run/user/1000/systemd/transient/ | grep fx1430; ls -d /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/fx1430* 2>&1;
+```
+```
+● fx1430-w6.service loaded failed failed [systemd-run] /usr/bin/bash -c "exec /home/cj/1430-spike-engineer/node-v24.19.0-linux-x64/bin/node /home/cj/1430-spike-engineer/fixture/supervisor.cjs e2 w6 /home/cj/1430-spike-engineer/d-w6 /home/cj/1430-spike-engineer/fixture >> /home/cj/1430-spike-engineer/w6.log 2>&1"
+fx1430-w6.service
+after:
+ls: cannot access '/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/fx1430*': No such file or directory
+[exit 2]
+```
+
+### 2026-11-20T00:58:51Z  host=laptop  (issued from laptop)
+```
+$ date -u; ps -o pid,lstart,args -p 22190,22195,22303,22305,22311,22312,22313,22315,22316,22317,22318,23284,23286,23291,23292,23293,23295,23296,23297,23298,23756,23758,23765,23766,23767,23769,23770,23771,23772; ps -axo args | grep -c 'fx-m[0-9]-M'
+```
+```
+Fri Nov 20 00:58:51 UTC 2026
+  PID STARTED                      ARGS
+0
+[exit 1]
+```
+
+### 2026-11-20T00:58:51Z  host=wsl-via-finnpc  (issued from laptop)
+```
+$ cat p14.sh | ssh finnpc wsl.exe -e bash -s   # script p14.sh: date -u; ps -o pid,lstart,args -p 618,630,1829,1834,1844,1845,1846,1848,1849,1850,1851,2004,2009,2019,2020,2021,2023,2024,2025,2026,2200,2205,2215,2216,2217,2219,2220,2221,2222,2377,103714,103719,103729,103730,103731,103733,103734,103735,103736,103890,103939,103945,103955,103956,103957,103959,103960,103961,103962,104103; ps -eo args | grep -c '[f]x-w[0-9]-M'; rm -rf ~/1430-spike-engineer; ls -d ~/1430-spike-engineer 2>&1;
+```
+```
+Fri Nov 20 00:58:51 UTC 2026
+    PID                  STARTED COMMAND
+0
+ls: cannot access '/home/cj/1430-spike-engineer': No such file or directory
+[exit 2]
+```
+
+### 2026-11-20T00:58:52Z  host=finnpc  (issued from laptop)
+```
+$ ssh finnpc "powershell -NoProfile -Command \"Get-Date -AsUTC; Get-Process -Id 12284,32860,31132,37476,23952,37836,12344,11444,34852,12000,36920,32616,2652,30952,21128,1480,36504,32708,36552,37664,1304,8140,35696,32600,37088,37000,21348,36804,35804,18884,37080,18988,31656,12620,9408,2092,12972,36704,5208,21380,34948,33440,12108,36612,5972,9496,17412,7956 -ErrorAction SilentlyContinue | Select-Object Id,ProcessName,StartTime | Format-Table -AutoSize; 'matching fx1430 command lines: ' + @(Get-CimInstance Win32_Process | Where-Object { \$_.CommandLine -like '*fx1430-x*' -and \$_.CommandLine -notlike '*Get-CimInstance*' }).Count\""
+```
+```
+Get-Date : A parameter cannot be found that matches parameter name 'AsUTC'.
+At line:1 char:10
++ Get-Date -AsUTC; Get-Process -Id 12284,32860,31132,37476,23952,37836, ...
++          ~~~~~~
+    + CategoryInfo          : InvalidArgument: (:) [Get-Date], ParameterBindingException
+    + FullyQualifiedErrorId : NamedParameterNotFound,Microsoft.PowerShell.Commands.GetDateCommand
+ 
+matching fx1430 command lines: 0
+[exit 0]
+```
+
+### 2026-11-20T00:59:00Z  host=finnpc  (issued from laptop)
+```
+$ ssh finnpc "powershell -NoProfile -Command \"(Get-Date).ToUniversalTime().ToString('o'); 'live pids from the started list: ' + @(Get-Process -Id 12284,32860,31132,37476,23952,37836,12344,11444,34852,12000,36920,32616,2652,30952,21128,1480,36504,32708,36552,37664,1304,8140,35696,32600,37088,37000,21348,36804,35804,18884,37080,18988,31656,12620,9408,2092,12972,36704,5208,21380,34948,33440,12108,36612,5972,9496,17412,7956 -ErrorAction SilentlyContinue).Count; Get-ChildItem \$env:LOCALAPPDATA\npm-cache\_logs,\$env:APPDATA\npm,\$env:USERPROFILE\.npmrc -ErrorAction SilentlyContinue | Where-Object { \$_.LastWriteTime -gt (Get-Date).AddHours(-1) } | Select-Object FullName,LastWriteTime; 'recent npm writes outside: done'; Remove-Item -Recurse -Force C:\Users\cj\1430-spike-engineer; Test-Path C:\Users\cj\1430-spike-engineer\""
+```
+```
+2026-11-20T00:59:00.6019375Z
+live pids from the started list: 0
+recent npm writes outside: done
+False
+[exit 0]
+```
+
+### 2026-11-20T01:01:51Z  host=wsl-via-finnpc  (issued from laptop)
+```
+$ cat p15.sh | ssh finnpc wsl.exe -e bash -s  # redeploys Node and fixture/fixture.sh fixture/list.sh fixture/supervisor.cjs wsl-run.sh (base64), then runs wsl-run.sh e1 w7
+```
+```
+9963b9d227007e9f07f5604576c89f56e01f89b0d3dc9a7677afc7c515622dce  /home/cj/1430-spike-engineer/fixture/fixture.sh
+011740caed0b98e42dff069aa01b5ebc467a1c080a0c91660357676270cacebf  /home/cj/1430-spike-engineer/fixture/list.sh
+a551558c385dc0f0abab176f7e47eeae34a6641376246b42ca6f126d3ffcde12  /home/cj/1430-spike-engineer/fixture/supervisor.cjs
+eebb9356908fc891772b8ac6306cd24296052ec17d0eb710aa50c932dceffc14  /home/cj/1430-spike-engineer/wsl-run.sh
+runner pid 104323 in cgroup /non-systemd; id: uid=1000(cj) gid=1000(cj) groups=1000(cj),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),100(users)
+Running as unit: fx1430-w7.service; invocation ID: 2f05086d6bfb4161a3e670d2480f3f52
+---- supervisor log
+uid=1000(cj) gid=1000(cj) groups=1000(cj),4(adm),24(cdrom),27(sudo),30(dip),46(plugdev),100(users)
+supervisor-process pid $
+2026-11-20T01:01:53.373Z supervisor cgroup /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w7.service tree cgroup /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w7.service/tree
+2026-11-20T01:01:53.373Z supervisor pid 104328 pgid/sid see listing; mode e1
+2026-11-20T01:01:53.375Z fixture root pid 104339 (its own process group)
+2026-11-20T01:01:53.375Z moved 104339 into /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w7.service/tree
+2026-11-20T01:01:56.379Z BEFORE ENDING
+listing run=w7 at 2026-11-20T01:01:56Z on Linux
+PID     PPID    PGID    SID     STAT  CWD | CGROUP | ARGS
+104328  339     104328  104328  Ssl   /home/cj/1430-spike-engineer | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w7.service | /home/cj/1430-spike-engineer/node-v24.19.0-linux-x64/bin/node /home/cj/1430-spike-engineer/fixture/supervisor.cjs e1 w7 /home/cj/1430-spike-engineer/d-w7 /home/cj/1430-spike-engineer/fixture
+104339  104328  104339  104339  Ss    /home/cj/1430-spike-engineer/d-w7 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w7.service/tree | bash /home/cj/1430-spike-engineer/fixture/fixture.sh w7
+104340  104339  104339  104339  S     /home/cj/1430-spike-engineer/d-w7 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w7.service/tree | fx-w7-M1 300
+104341  104339  104341  104341  Ss    /home/cj/1430-spike-engineer/d-w7 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w7.service/tree | fx-w7-M3 300
+104343  104339  104339  104339  S     /home/cj/1430-spike-engineer/d-w7 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w7.service/tree | fx-w7-M5 300
+104344  104339  104344  104344  Ss    / | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w7.service/tree | fx-w7-M6 300
+104345  104340  104339  104339  S     /home/cj/1430-spike-engineer/d-w7 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w7.service/tree | fx-w7-M2 300
+104346  339     104339  104339  S     /home/cj/1430-spike-engineer/d-w7 | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w7.service/tree | fx-w7-M4 300
+count=8
+
+2026-11-20T01:01:56.514Z tree cgroup.procs: 104339 104340 104341 104343 104344 104345 104346
+2026-11-20T01:01:56.515Z E1 cgroup.kill written; cgroup.events populated 0 after 1.66 ms
+2026-11-20T01:02:08.527Z AFTER ENDING (+12 s)
+listing run=w7 at 2026-11-20T01:02:08Z on Linux
+PID     PPID    PGID    SID     STAT  CWD | CGROUP | ARGS
+104328  339     104328  104328  Ssl   /home/cj/1430-spike-engineer | /user.slice/user-1000.slice/user@1000.service/app.slice/fx1430-w7.service | /home/cj/1430-spike-engineer/node-v24.19.0-linux-x64/bin/node /home/cj/1430-spike-engineer/fixture/supervisor.cjs e1 w7 /home/cj/1430-spike-engineer/d-w7 /home/cj/1430-spike-engineer/fixture
+count=1
+
+2026-11-20T01:02:08.558Z tree cgroup.procs: ""
+[exit 0]
+```
+
+### 2026-11-20T01:02:17Z  host=wsl-via-finnpc  (issued from laptop)
+```
+$ cat p16.sh | ssh finnpc wsl.exe -e bash -s   # script p16.sh: date -u; ps -o pid,lstart,args -p 618,630,1829,1834,1844,1845,1846,1848,1849,1850,1851,2004,2009,2019,2020,2021,2023,2024,2025,2026,2200,2205,2215,2216,2217,2219,2220,2221,2222,2377,103714,103719,103729,103730,103731,103733,103734,103735,103736,103890,103939,103945,103955,103956,103957,103959,103960,103961,103962,104103,104323,104328,104339,104340,104341,104343,104344,104345,104346; echo matching-members: $(ps -eo args | grep -c '[f]x-w[0-9]-M'); systemctl --user list-units --all 'fx1430*' --no-legend; ls /run/user/1000/systemd/transient/ | grep -c fx1430; ls -d /sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/fx1430* 2>&1; rm -rf ~/1430-spike-engineer; ls -d ~/1430-spike-engineer 2>&1;
+```
+```
+Fri Nov 20 01:02:17 UTC 2026
+    PID                  STARTED COMMAND
+matching-members: 0
+0
+ls: cannot access '/sys/fs/cgroup/user.slice/user-1000.slice/user@1000.service/app.slice/fx1430*': No such file or directory
+ls: cannot access '/home/cj/1430-spike-engineer': No such file or directory
+[exit 2]
+```
+
+## Commands run without the wrapper
+
+This transcript logs only what ran through `runners/t.sh`. The commands run without it are in
+docs/spikes/whole-tree-containment/session-log.txt, which is generated from the spike engineer's retained session record. That log
+has gaps of its own, and the report lists them under "The transcript". An earlier version of this section grouped the unwrapped
+commands into approximate windows; session-log.txt replaces it.

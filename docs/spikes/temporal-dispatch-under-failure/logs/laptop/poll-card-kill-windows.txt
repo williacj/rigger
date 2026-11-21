@@ -1,0 +1,6 @@
+ABOUTME: Spike #1429 evidence: once-a-second pending-activity polls the driver script took for one workflow, copied unchanged below this line.
+2026-11-20T00:48:07.813Z [{"type":"dispatch","state":"PENDING_ACTIVITY_STATE_STARTED","attempt":1,"lastWorkerIdentity":"win-1/Finn-PC10/19380","lastStartedTime":"2026-11-20T00:47:58.593849Z","scheduledTime":"2026-11-20T00:47:58.580861464Z"}]
+2026-11-20T00:48:08.907Z [{"type":"dispatch","state":"PENDING_ACTIVITY_STATE_STARTED","attempt":1,"lastWorkerIdentity":"win-1/Finn-PC10/19380","lastStartedTime":"2026-11-20T00:47:58.593849Z","scheduledTime":"2026-11-20T00:47:58.580861464Z"}]
+2026-11-20T00:48:10.037Z [{"type":"dispatch","state":"PENDING_ACTIVITY_STATE_STARTED","attempt":1,"lastWorkerIdentity":"win-1/Finn-PC10/19380","lastStartedTime":"2026-11-20T00:47:58.593849Z","scheduledTime":"2026-11-20T00:47:58.580861464Z"}]
+2026-11-20T00:48:11.202Z [{"type":"dispatch","state":"PENDING_ACTIVITY_STATE_SCHEDULED","attempt":2,"lastWorkerIdentity":"win-1/Finn-PC10/19380","lastStartedTime":null,"scheduledTime":"2026-11-20T00:48:11.615858069Z"}]
+2026-11-20T00:48:12.325Z [{"type":"dispatch","state":"PENDING_ACTIVITY_STATE_STARTED","attempt":2,"lastWorkerIdentity":"win-1/Finn-PC10/19544","lastStartedTime":"2026-11-20T00:48:11.620779932Z","scheduledTime":"2026-11-20T00:48:11.615858069Z"}]

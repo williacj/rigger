@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import * as claude from '../src/substrate/providers/claude.mjs';
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { readFileSync } from 'node:fs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -45,6 +46,81 @@ function after(args, flag) {
 
 /** The settings the invocation passes in `--settings`, parsed. */
 const settings = (args) => JSON.parse(after(args, '--settings'));
+
+// An empty reach list must not leave a maker's root writes dependent on its shell directory.
+// proves R-SAFE-10
+test('M8-29: without reach, Edit(./**) is anchored at the dispatch real path for the whole tree', async (t) => {
+  const repo = consumer(t);
+  put(repo.directory, '.claude/settings.json', { permissions: { allow: ['Edit(./**)'] } });
+  assert.deepEqual(settings((await invoked(repo)).args).permissions.allow,
+    ['Edit(./**)', `Edit(/${repo.directory}/**)`], 'the whole workspace needs an absolute Edit grant');
+});
+
+// Anchoring only the allow opens the root .env after the shell changes directory.
+// proves R-SAFE-10
+test('M8-29: without reach, relative Edit and Read denies are anchored at the dispatch real path', async (t) => {
+  const repo = consumer(t);
+  const deny = ['Edit(./.env)', 'Read(./secrets/**)'];
+  put(repo.directory, '.claude/settings.json', { permissions: { deny } });
+  assert.deepEqual(settings((await invoked(repo)).args).permissions.deny,
+    [...deny, `Edit(/${repo.directory}/**/.env)`, `Read(/${repo.directory}/**/secrets/**)`],
+    'relative denies must still cover the workspace root after cd');
+});
+
+// A rule metacharacter in the dispatch path must not turn its absolute copy into a wider grant.
+// proves R-SAFE-10
+test('M8-29: a dispatch real path outside PLAIN is refused as a start failure naming the path', async (t) => {
+  const base = scratch();
+  for (const name of ['bad;path', 'bad\npath', 'bad:rule', 'bad*glob', 'badΔ']) {
+    const directory = join(base, name);
+    put(directory, '.claude/settings.json', { permissions: { allow: ['Edit(./**)'] } });
+    const file = join(directory, '.claude/settings.json');
+    const original = readFileSync(file);
+    await assert.rejects(invoked({ directory, agent: join(directory, 'agent.md') }), (failure) => {
+      assert.equal(failure.startCause?.kind, 'claude-dispatch-path', 'an unsafe absolute grant must fail before start');
+      assert.equal(failure.startCause?.path, directory);
+      assert.ok(failure.message.includes(directory), 'the refusal must name the real path');
+      return true;
+    });
+    assert.deepEqual(readFileSync(file), original, 'refusal must leave the declaration untouched');
+  }
+});
+
+// Missing narrow allows and extra grants are both faults; enumerate the whole settings value.
+// proves R-SAFE-10
+test('M8-29: relative Read and Edit rules use only the declared per-rule copies and reached tree grants', async (t) => {
+  const repo = consumer(t);
+  const one = scratch();
+  const two = scratch();
+  const declared = {
+    allow: ['Edit(src/**)', 'Read(./docs/**)', 'Edit(./a/b.txt)', 'Read(/root-only)', 'Read(//etc/hosts)', 'Edit(~/.ssh/**)', 'Bash(npm test)'],
+    deny: ['Edit(./.env)', 'Read(./secrets/**)', 'Read(!keep.txt)', 'Edit(//outside/file)', 'Read(~/.ssh/**)'],
+    ask: ['Bash(git push:*)'],
+  };
+  put(repo.directory, '.claude/settings.json', { permissions: declared });
+  // #531's measured gitignore mapping: a single segment is depth-independent; a/b stays at a/b.
+  const allows = (at) => [`Edit(/${at}/**/src/**)`, `Read(/${at}/**/docs/**)`, `Edit(/${at}/a/b.txt)`, `Read(/${at}/root-only)`];
+  const denies = (at) => [`Edit(/${at}/**/.env)`, `Read(/${at}/**/secrets/**)`];
+  for (const reach of [[], [one, two]]) {
+    assert.deepEqual(settings((await invoked(repo, { reach })).args).permissions, {
+      allow: [...declared.allow, ...allows(repo.directory), ...reach.flatMap((at) => [`Read(/${at}/**)`, `Edit(/${at}/**)`])],
+      deny: [...declared.deny, ...denies(repo.directory), ...reach.flatMap(denies)],
+      ask: declared.ask,
+    }, 'every path rule must be declared, a per-rule anchored copy, or a reached tree grant');
+  }
+});
+
+// Using the spelling passed by L1 would anchor the grant at a link instead of its real workspace.
+// proves R-SAFE-10
+test('M8-29: dispatch path rules name the real directory and never its symbolic link', async (t) => {
+  const repo = consumer(t);
+  put(repo.directory, '.claude/settings.json', { permissions: { allow: ['Edit(./**)'] } });
+  const link = join(scratch(), 'linked');
+  symlinkSync(repo.directory, link);
+  const { permissions } = settings((await invoked({ directory: link, agent: join(link, '.claude/agents/engineer.md') })).args);
+  assert.deepEqual(permissions, { allow: ['Edit(./**)', `Edit(/${repo.directory}/**)`] }, 'only the real workspace may be anchored');
+  assert.equal(JSON.stringify(permissions).includes(link), false, 'no rule may name the link');
+});
 
 test('the adapter map names the Claude Code module for `claude`', () => {
   // Ruling 1 Q1 on #467: one module per agent CLI, each found by its provider's name.
@@ -265,7 +341,7 @@ test('given reach, each Read or Edit deny rule relative to the working directory
     `Read(/${head}/**/keys/)`, `Read(/${head}/**/vault/**)`,
     `Read(/${head}/config/local.json)`,
   ];
-  assert.deepEqual([...deny].sort(), [...declared, ...copies(one), ...copies(two)].sort());
+  assert.deepEqual([...deny].sort(), [...declared, ...copies(repo.directory), ...copies(one), ...copies(two)].sort());
 });
 
 test('given reach, a /path deny rule is copied to each reached directory\'s real path and anchored at the working directory\'s real path too, and a ! rule is not copied', async (t) => {

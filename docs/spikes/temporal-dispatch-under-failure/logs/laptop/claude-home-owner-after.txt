@@ -1,0 +1,28 @@
+ABOUTME: Spike #1429 evidence: owner's ~/.claude on the laptop, top-level entries with modification times and the projects/ count, taken after the granted re-run.
+2026-11-20T01:54:31Z
+2026-11-19T09:14:35-0600 /Users/cjwilliams/.claude/.last-cleanup
+2026-11-19T08:32:30-0600 /Users/cjwilliams/.claude/.last-update-result.json
+2026-11-19T19:53:21-0600 /Users/cjwilliams/.claude/backups
+2026-11-19T08:32:02-0600 /Users/cjwilliams/.claude/cache
+2026-07-09T09:12:17-0500 /Users/cjwilliams/.claude/chrome
+2026-07-07T11:45:12-0500 /Users/cjwilliams/.claude/downloads
+2026-11-01T08:14:41-0600 /Users/cjwilliams/.claude/feedback
+2026-11-19T09:14:35-0600 /Users/cjwilliams/.claude/file-history
+2026-11-19T19:31:10-0600 /Users/cjwilliams/.claude/history.jsonl
+2026-11-04T16:21:01-0600 /Users/cjwilliams/.claude/hooks
+2026-11-18T20:45:33-0600 /Users/cjwilliams/.claude/ide
+2026-11-19T08:32:06-0600 /Users/cjwilliams/.claude/mcp-needs-auth-cache.json
+2026-11-19T19:31:10-0600 /Users/cjwilliams/.claude/paste-cache
+2026-10-29T20:57:43-0500 /Users/cjwilliams/.claude/plans
+2026-11-19T19:54:21-0600 /Users/cjwilliams/.claude/plugins
+2026-11-19T19:41:48-0600 /Users/cjwilliams/.claude/projects
+2026-11-19T19:54:21-0600 /Users/cjwilliams/.claude/session-env
+2026-11-19T19:54:22-0600 /Users/cjwilliams/.claude/sessions
+2026-11-04T16:21:01-0600 /Users/cjwilliams/.claude/settings.json
+2026-11-19T19:53:13-0600 /Users/cjwilliams/.claude/shell-snapshots
+2026-11-04T12:21:31-0600 /Users/cjwilliams/.claude/skills
+2026-11-04T16:44:09-0600 /Users/cjwilliams/.claude/state
+2026-11-10T20:01:18-0600 /Users/cjwilliams/.claude/stats-cache.json
+2026-11-19T13:25:02-0600 /Users/cjwilliams/.claude/telemetry
+projects count: 16
+ls: /Users/cjwilliams/.claude/projects/*1429-spike-engineer*: No such file or directory

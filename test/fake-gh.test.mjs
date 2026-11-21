@@ -26,6 +26,7 @@ import { mkdirSync } from 'node:fs';
 import { repositoryIn } from './git-repository.mjs';
 import { readRunner } from '../src/substrate/forge/runners.mjs';
 import { accessSync, constants } from 'node:fs';
+import { forgeWithDiff } from './in-process-fixtures.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -54,6 +55,23 @@ const COLUMNS = { ready: 'Ready', coding: 'Coding', review: 'Review', owner: 'Ow
 
 /** The board the real adapter is pointed at, named as a config names it. */
 const BOARD = { ...WHERE, columns: COLUMNS };
+
+test('fake gh refuses an ESC byte at every diff position unless escape output is allowed', async () => {
+  const args = ['api', 'repos/williacj/rigger/pulls/301', '-X', 'GET', '-H', 'Accept: application/vnd.github.diff'];
+  const plain = 'diff --git a/a b/a\n+plain "text" \\ tail\n';
+  assert.deepEqual(await forgeWithDiff(plain).answer(args), { status: 0, stdout: plain, stderr: '' });
+  for (let offset = 0; offset <= plain.length; offset += 1) {
+    const diff = `${plain.slice(0, offset)}\x1b${plain.slice(offset)}`;
+    const fake = forgeWithDiff(diff);
+    const before = JSON.parse(readFileSync(fake.statePath, 'utf8'));
+    assert.deepEqual(await fake.answer(args), {
+      status: 1, stdout: '',
+      stderr: 'the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway\n',
+    }, `ESC byte at offset ${offset}`);
+    assert.deepEqual(JSON.parse(readFileSync(fake.statePath, 'utf8')), { ...before, sent: [args] }, 'refusal changes only the request record');
+    assert.deepEqual(await fake.answer([...args, '--allow-escape-sequences']), { status: 0, stdout: diff, stderr: '' }, `allowed ESC byte at offset ${offset}`);
+  }
+});
 
 test('a successful issue label is visible on fresh board reads only for the same repository and issue', async () => {
   const fake = installed({ columns: Object.values(COLUMNS), items: [
@@ -479,7 +497,7 @@ test('E-C P1/P2/P3-A1: the unforced recorder observes a passing target file', (t
   commandsIssuedBy('forge-runners.test.mjs', true);
 });
 
-test('the gh commands the fake gh answers are the ones the adapter issues across its own tests, compared both ways', (t) => {
+test('the fake gh and adapter command inventories agree except the refused unflagged diff, which the adapter never issues', (t) => {
   if (!hasInstalledGh()) return t.skip('no installed real gh available for the recorder control');
   // Recorded rather than listed: each file runs as it does in the suite, and every request the
   // adapter's read, item-write and schema-write sides hand a runner is kept, with the item-write
@@ -489,8 +507,12 @@ test('the gh commands the fake gh answers are the ones the adapter issues across
   const issued = new Set(ADAPTER_TESTS.flatMap(commandsIssuedBy).map(commandOf));
   assert.ok(issued.size >= 5, `only ${issued.size} commands were recorded, so the recording read the wrong thing`);
 
+  const unflaggedDiff = commandOf(['api', 'repos/_/_/pulls/_', '-X', 'GET', '-H', 'Accept: application/vnd.github.diff']);
+  assert.equal(issued.has(unflaggedDiff), false, 'the adapter never issues the unflagged diff form real gh refuses');
+
   assert.deepEqual([...issued].filter((command) => !ANSWERED.includes(command)), [], 'the adapter issues a command the fake gh does not answer');
-  assert.deepEqual(ANSWERED.filter((command) => !issued.has(command)), [], 'the fake gh answers a command the adapter never issues');
+  // The fake keeps the unflagged form only to model real gh's escape refusal, which the adapter must never trigger.
+  assert.deepEqual(ANSWERED.filter((command) => command !== unflaggedDiff && !issued.has(command)), [], 'the fake gh answers a command the adapter never issues');
 });
 
 test('no file under src/ names the fake gh or its recording, and the fake gh reads no environment variable', () => {

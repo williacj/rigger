@@ -1,0 +1,13 @@
+ABOUTME: Spike #1429 evidence: failed npm test run 4 (2026-11-20 15:48:45Z to 16:00:32Z), its complete failing-tests section and summary, copied unchanged below the next line.
+Source log: 9957 lines, 6585093 bytes, sha256 19711b4f3c5b40af3ad4ac3fa8e97bad3b664ba87de5da4fe56c3cc0865fa118. Everything from the line '✖ failing tests:' (line 9947) to the end follows.
+✖ failing tests:
+
+test at test/loop.test.mjs:5559:1
+✖ L7: through the run verb, a clock-held run fires a pull at its slot release (9971.14225ms)
+  Error: the condition () => pulls() === 2 did not hold within 5000 ms
+      at waitFor (file:///Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/test/loop-world.mjs:70:40)
+      at runNextTicks (node:internal/process/task_queues:65:5)
+      at process.processImmediate (node:internal/timers:541:9)
+      at async TestContext.<anonymous> (file:///Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/test/loop.test.mjs:5567:5)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7)

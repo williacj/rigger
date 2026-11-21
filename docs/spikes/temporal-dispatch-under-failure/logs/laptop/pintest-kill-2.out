@@ -1,0 +1,25 @@
+ABOUTME: Spike #1429 evidence: driver output of the clean pinning kill run pin-kill-macos-2, copied unchanged below this line.
+Running execution:
+  WorkflowId  pin-kill-macos-2
+  RunId       01a1f67d-e604-7e0e-ab5d-3ef7601c989f
+  Type        card
+  Namespace   default
+  TaskQueue   rigger-macos
+2026-11-20T01:06:50.044Z picked host=mac-a worker pid=68452
+pending: [{"type":"dispatch","state":"PENDING_ACTIVITY_STATE_STARTED","attempt":1,"lastWorkerIdentity":"mac-a/CJs-MacBook-Pro.local/68452","lastStartedTime":"2026-11-20T01:06:48.656311042Z","scheduledTime":"2026-11-20T01:06:48.648039416Z"}]
+2026-11-20T01:06:55Z
+  PID  PPID  PGID STARTED                      COMMAND
+44645     1 44640 Thu Nov 19 19:05:13 2026     node worker.js
+68452     1 68377 Thu Nov 19 19:01:38 2026     node worker.js
+84441 68452 68377 Thu Nov 19 19:06:48 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 1 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-a/pin-kill-macos-2/tree.log rigger-tree card=pin-kill-macos-2 attempt=1 host=mac-a
+84443 84441 68377 Thu Nov 19 19:06:49 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 2 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-a/pin-kill-macos-2/tree.log rigger-tree card=pin-kill-macos-2 attempt=1 host=mac-a
+kill-at 2026-11-20T01:06:55.210Z
+kill-rc=0
+2026-11-20T01:07:32.574Z end-of-watch status=WORKFLOW_EXECUTION_STATUS_RUNNING pending=[{"type":"dispatch","state":"PENDING_ACTIVITY_STATE_STARTED","attempt":1,"lastWorkerIdentity":"mac-b/CJs-MacBook-Pro.local/44645","lastStartedTime":"2026-11-20T01:07:31.930242372Z","scheduledTime":"2026-11-20T01:07:31.920019594Z"}]
+2026-11-20T01:07:32Z
+  PID  PPID  PGID STARTED                      COMMAND
+ 5133 44645 44640 Thu Nov 19 19:07:32 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 1 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/pin-kill-macos-2/tree.log rigger-tree card=pin-kill-macos-2 attempt=1 host=mac-b
+ 5134  5133 44640 Thu Nov 19 19:07:32 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 2 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-b/pin-kill-macos-2/tree.log rigger-tree card=pin-kill-macos-2 attempt=1 host=mac-b
+44645     1 44640 Thu Nov 19 19:05:13 2026     node worker.js
+84441     1 68377 Thu Nov 19 19:06:48 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 1 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-a/pin-kill-macos-2/tree.log rigger-tree card=pin-kill-macos-2 attempt=1 host=mac-a
+84443 84441 68377 Thu Nov 19 19:06:49 2026     /opt/homebrew/Cellar/node/26.13.0_2/bin/node /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/app/tree.js 2 300 /Users/cjwilliams/GitHub/rigger-worktrees/1429-spike-engineer/spikes/1429-spike-engineer/worktrees/mac-a/pin-kill-macos-2/tree.log rigger-tree card=pin-kill-macos-2 attempt=1 host=mac-a
