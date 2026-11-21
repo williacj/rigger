@@ -1,0 +1,127 @@
+ABOUTME: Excerpt of the CI log of job 136023691075 ("fast", run 44656406941, head 241e48a3), the path-check failure on PR #1432, escape sequences removed.
+
+Fetched 2026-11-20 with: gh api --allow-escape-sequences repos/williacj/rigger/actions/jobs/136023691075/logs
+The raw log is 8,018,218 bytes, sha256 4fc6df70ae1d98992e4ab90888c09e9250a9bf09470cf78c0f257f19bae61917, 14,787 lines once escape sequences are removed with perl -pe 's/\x1b\[[0-9;]*[A-Za-z]//g'. Shown: lines 1-30, 8615-8635 and 14720-14787, each prefixed with its line number.
+Note: this file's one ESC byte (0x1b), on the line above inside the quoted perl command, is written here as the literal text \x1b, because the engine's diff read refuses ESC bytes. Before that change the file's sha256 was f0dc0cad9afb3686bc7207d7d27c1f6746c3065a2487051fee41b3487eaa81f8. The raw log's sha256 above is unchanged.
+
+    1  ﻿2026-11-20T01:49:52.2603768Z Current runner version: '2.338.2'
+    2  2026-11-20T01:49:52.2620979Z ##[group]Runner Image Provisioner
+    3  2026-11-20T01:49:52.2621482Z Hosted Compute Agent
+    4  2026-11-20T01:49:52.2621897Z Version: 20261111.635
+    5  2026-11-20T01:49:52.2622268Z Commit: b8a594ea514ff44cadb5342986c68b1eac6e22ed
+    6  2026-11-20T01:49:52.2622683Z Build Date: 2026-11-11T01:49:01Z
+    7  2026-11-20T01:49:52.2623135Z Worker ID: {a4a520e2-0f1c-4f3f-889d-7693d79c5249}
+    8  2026-11-20T01:49:52.2623536Z Region: westus2
+    9  2026-11-20T01:49:52.2623842Z Cloud: Azure
+   10  2026-11-20T01:49:52.2624369Z ##[endgroup]
+   11  2026-11-20T01:49:52.2625199Z ##[group]Operating System
+   12  2026-11-20T01:49:52.2625612Z Ubuntu
+   13  2026-11-20T01:49:52.2625925Z 26.04.1
+   14  2026-11-20T01:49:52.2626238Z LTS
+   15  2026-11-20T01:49:52.2626572Z ##[endgroup]
+   16  2026-11-20T01:49:52.2626888Z ##[group]Runner Image
+   17  2026-11-20T01:49:52.2627279Z Image: ubuntu-26.04
+   18  2026-11-20T01:49:52.2627619Z Version: 20261116.202.1
+   19  2026-11-20T01:49:52.2628371Z Included Software: https://github.com/actions/runner-images/blob/ubuntu26/20261116.202/images/ubuntu/Ubuntu2604-Readme.md
+   20  2026-11-20T01:49:52.2629263Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu26%2F20261116.202
+   21  2026-11-20T01:49:52.2629820Z ##[endgroup]
+   22  2026-11-20T01:49:52.2630523Z ##[group]GITHUB_TOKEN Permissions
+   23  2026-11-20T01:49:52.2631676Z Contents: read
+   24  2026-11-20T01:49:52.2632014Z Metadata: read
+   25  2026-11-20T01:49:52.2632368Z PullRequests: read
+   26  2026-11-20T01:49:52.2632723Z ##[endgroup]
+   27  2026-11-20T01:49:52.2633941Z Secret source: Actions
+   28  2026-11-20T01:49:52.2634640Z Cache mode: write
+   29  2026-11-20T01:49:52.2635072Z Prepare workflow directory
+   30  2026-11-20T01:49:52.2878068Z Prepare all required actions
+      [...]
+ 8615  2026-11-20T01:55:11.5622019Z ✔ a backticked path that does not exist fails the build, naming the path (1.918524ms)
+ 8616  2026-11-20T01:55:11.5622509Z ✔ a backticked path that exists is no finding (1.200511ms)
+ 8617  2026-11-20T01:55:11.5622994Z ✔ docs/derived/ is exempt while the directory does not exist (0.942272ms)
+ 8618  2026-11-20T01:55:11.5623606Z ✔ the exemption ends when the directory exists, so a missing file under it is found (1.361524ms)
+ 8619  2026-11-20T01:55:11.5624874Z ✔ an exemption whose prefix exists is spent, so the absence its reason states is reported (0.734238ms)
+ 8620  2026-11-20T01:55:11.5625676Z ✔ an exemption whose prefix is still absent is no finding, and still excuses its paths (0.624612ms)
+ 8621  2026-11-20T01:55:11.5626473Z ✔ the document config checks every tracked agent prompt and skill, including template twins (4.267026ms)
+ 8622  2026-11-20T01:55:11.5627213Z ✔ every tracked spike report is a checked document that no path exemption covers (3.353048ms)
+ 8623  2026-11-20T01:55:11.5627855Z ✔ no exemption in the config claims an absence this repository contradicts (0.164578ms)
+ 8624  2026-11-20T01:55:11.5628486Z ✖ every backticked path in the checked documents exists or is exempt (16.868725ms)
+ 8625  2026-11-20T01:55:11.5628965Z ✔ test/path-spelling.test.mjs (37.163278ms)
+ 8626  2026-11-20T01:55:11.5629704Z ✔ recording hands its work the run id the sink stamps on every event the work records (5.648891ms)
+ 8627  2026-11-20T01:55:11.5630452Z ✔ pause over an absent admission directory links one owner closer, prints it and exits 0 (29.588902ms)
+ 8628  2026-11-20T01:55:11.5631269Z ✔ pause writes the reason "the owner's pause", the time from its clock, and the run of the events it records (23.093085ms)
+ 8629  2026-11-20T01:55:11.5632132Z ✔ pause while admission is closed by an owner closer links a second owner closer beside it, prints both and exits 0 (32.534716ms)
+ 8630  2026-11-20T01:55:11.5632970Z ✔ pause while admission is closed by a hold closer links an owner closer beside it, prints both and exits 0 (28.397414ms)
+ 8631  2026-11-20T01:55:11.5633833Z ✔ pause beside an unreadable closer entry links its owner closer, prints it, names the unreadable path and exits 0 (24.615381ms)
+ 8632  2026-11-20T01:55:11.5634800Z ✔ pause where the admission directory is not a directory adds nothing, names the cause and exits non-zero (20.784561ms)
+ 8633  2026-11-20T01:55:11.5635621Z ✔ pause where the admission directory cannot be written adds nothing, names the cause and exits non-zero (20.276221ms)
+ 8634  2026-11-20T01:55:11.5636426Z ✔ pause where the admission directory cannot be listed adds nothing, names the cause and exits non-zero (29.138487ms)
+ 8635  2026-11-20T01:55:11.5637302Z ✔ pause whose close event the sink refuses after the link leaves the closer standing, names the refusal and exits non-zero (25.37107ms)
+      [...]
+14720  2026-11-20T01:58:23.4517639Z ✔ createLabel marks a refused kill event on its write call made, with its parsed answer, only where the result passes its success check (not on a non-zero exit, not on a timeout, not on an answer that does not parse, not on an answer whose data lacks the mutation's root field, not on an answer whose data holds the mutation's root field null), and never one on a read before its write, the side's or its runner's own (0.857893ms)
+14721  2026-11-20T01:58:23.4519105Z ✔ mergePullRequest marks a refused kill event on its write call made, with its parsed answer, only where the result passes its success check (not on a non-zero exit, not on a timeout, not on an answer that does not parse, not on an answer whose merged is not true), and never one on a read before its write, the side's or its runner's own (1.140299ms)
+14722  2026-11-20T01:58:23.4520351Z ✔ postComment marks a refused kill event on its write call made, with its parsed answer, only where the result passes its success check (not on a non-zero exit, not on a timeout, not on an answer that does not parse), and never one on a read before its write, the side's or its runner's own (0.725234ms)
+14723  2026-11-20T01:58:23.4521579Z ✔ postIssueComment marks a refused kill event on its write call made, with its parsed answer, only where the result passes its success check (not on a non-zero exit, not on a timeout, not on an answer that does not parse), and never one on a read before its write, the side's or its runner's own (0.335626ms)
+14724  2026-11-20T01:58:23.4522755Z ✔ addIssueLabel marks a refused kill event on its write call made, with its parsed answer, only where the result passes its success check (not on a non-zero exit, not on a timeout, not on an answer that does not parse), and never one on a read before its write, the side's or its runner's own (0.44445ms)
+14725  2026-11-20T01:58:23.4523961Z ✔ openIssue marks a refused kill event on its write call made, with its parsed answer, only where the result passes its success check (not on a non-zero exit, not on a timeout, not on an answer that does not parse), and never one on a read before its write, the side's or its runner's own (0.746226ms)
+14726  2026-11-20T01:58:23.4525275Z ✔ closeIssue marks a refused kill event on its write call made, with its parsed answer, only where the result passes its success check (not on a non-zero exit, not on a timeout, not on an answer that does not parse), and never one on a read before its write, the side's or its runner's own (0.690811ms)
+14727  2026-11-20T01:58:23.4526453Z ✔ removeIssueLabel marks a refused kill event on its write call made, with its parsed answer, only where the result passes its success check (not on a non-zero exit, not on a timeout, not on an answer that does not parse), and never one on a read before its write, the side's or its runner's own (0.378991ms)
+14728  2026-11-20T01:58:23.4527031Z ℹ tests 5965
+14729  2026-11-20T01:58:23.4527155Z ℹ suites 0
+14730  2026-11-20T01:58:23.4527274Z ℹ pass 5955
+14731  2026-11-20T01:58:23.4527497Z ℹ fail 1
+14732  2026-11-20T01:58:23.4527613Z ℹ cancelled 0
+14733  2026-11-20T01:58:23.4527736Z ℹ skipped 9
+14734  2026-11-20T01:58:23.4527851Z ℹ todo 0
+14735  2026-11-20T01:58:23.4527992Z ℹ duration_ms 501427.221154
+14736  2026-11-20T01:58:23.4528082Z 
+14737  2026-11-20T01:58:23.4528153Z ✖ failing tests:
+14738  2026-11-20T01:58:23.4528223Z 
+14739  2026-11-20T01:58:23.4528324Z test at test/path-check.test.mjs:160:1
+14740  2026-11-20T01:58:23.4528626Z ✖ every backticked path in the checked documents exists or is exempt (16.868725ms)
+14741  2026-11-20T01:58:23.4528938Z   AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+14742  2026-11-20T01:58:23.4529162Z   + actual - expected
+14743  2026-11-20T01:58:23.4529294Z   
+14744  2026-11-20T01:58:23.4529395Z   + [
+14745  2026-11-20T01:58:23.4529500Z   +   {
+14746  2026-11-20T01:58:23.4529608Z   +     line: 729,
+14747  2026-11-20T01:58:23.4529762Z   +     missing: 'spikes/1430-spike-engineer/',
+14748  2026-11-20T01:58:23.4529962Z   +     path: 'docs/spikes/whole-tree-containment.md'
+14749  2026-11-20T01:58:23.4530129Z   +   },
+14750  2026-11-20T01:58:23.4530233Z   +   {
+14751  2026-11-20T01:58:23.4530336Z   +     line: 736,
+14752  2026-11-20T01:58:23.4530478Z   +     missing: 'spikes/1430-spike-engineer/',
+14753  2026-11-20T01:58:23.4530711Z   +     path: 'docs/spikes/whole-tree-containment.md'
+14754  2026-11-20T01:58:23.4530869Z   +   }
+14755  2026-11-20T01:58:23.4530975Z   + ]
+14756  2026-11-20T01:58:23.4531073Z   - []
+14757  2026-11-20T01:58:23.4531172Z   
+14758  2026-11-20T01:58:23.4531418Z       at TestContext.<anonymous> (file:///home/runner/work/rigger/rigger/test/path-check.test.mjs:161:10)
+14759  2026-11-20T01:58:23.4531710Z       at Test.runInAsyncScope (node:async_hooks:226:14)
+14760  2026-11-20T01:58:23.4531915Z       at Test.run (node:internal/test_runner/test:1402:25)
+14761  2026-11-20T01:58:23.4532165Z       at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+14762  2026-11-20T01:58:23.4532436Z       at Test.postRun (node:internal/test_runner/test:1542:19)
+14763  2026-11-20T01:58:23.4532652Z       at Test.run (node:internal/test_runner/test:1467:12)
+14764  2026-11-20T01:58:23.4532911Z       at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+14765  2026-11-20T01:58:23.4533133Z     generatedMessage: true,
+14766  2026-11-20T01:58:23.4533278Z     code: 'ERR_ASSERTION',
+14767  2026-11-20T01:58:23.4533758Z     actual: [ { path: 'docs/spikes/whole-tree-containment.md', line: 729, missing: 'spikes/1430-spike-engineer/' }, { path: 'docs/spikes/whole-tree-containment.md', line: 736, missing: 'spikes/1430-spike-engineer/' } ],
+14768  2026-11-20T01:58:23.4534902Z     expected: [],
+14769  2026-11-20T01:58:23.4535047Z     operator: 'deepStrictEqual',
+14770  2026-11-20T01:58:23.4535191Z     diff: 'simple'
+14771  2026-11-20T01:58:23.4535307Z   }
+14772  2026-11-20T01:58:23.5270288Z ##[error]Process completed with exit code 1.
+14773  2026-11-20T01:58:23.5385587Z Post job cleanup.
+14774  2026-11-20T01:58:23.5969932Z [command]/usr/bin/git version
+14775  2026-11-20T01:58:23.6004931Z git version 2.56.1
+14776  2026-11-20T01:58:23.6028411Z Temporarily overriding HOME='/home/runner/work/_temp/b55080f3-1cd0-438a-a9b9-e93500349b57' before making global git config changes
+14777  2026-11-20T01:58:23.6029176Z Adding repository directory to the temporary git global config as a safe directory
+14778  2026-11-20T01:58:23.6032141Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/rigger/rigger
+14779  2026-11-20T01:58:23.6065520Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+14780  2026-11-20T01:58:23.6095074Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+14781  2026-11-20T01:58:23.6339103Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+14782  2026-11-20T01:58:23.6362863Z http.https://github.com/.extraheader
+14783  2026-11-20T01:58:23.6372019Z [command]/usr/bin/git config --local --unset-all http.https://github.com/.extraheader
+14784  2026-11-20T01:58:23.6418980Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+14785  2026-11-20T01:58:23.6671517Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+14786  2026-11-20T01:58:23.6701242Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+14787  2026-11-20T01:58:23.7042435Z Cleaning up orphan processes

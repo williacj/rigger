@@ -1,0 +1,1588 @@
+[
+ {
+  "t": "2026-11-20T16:33:07.567Z",
+  "host": "laptop",
+  "by": 68217,
+  "event": "self",
+  "pid": 68217,
+  "ppid": 68214,
+  "argv": [
+   "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/orch.cjs",
+   "laptop",
+   "-",
+   "--",
+   "gh",
+   "issue",
+   "comment",
+   "1430",
+   "-R",
+   "williacj/rigger",
+   "--body-file",
+   "intent2.md"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:33:07.597Z",
+  "host": "laptop",
+  "by": 68217,
+  "event": "spawn",
+  "pid": 68324,
+  "cmd": "gh",
+  "args": [
+   "issue",
+   "comment",
+   "1430",
+   "-R",
+   "williacj/rigger",
+   "--body-file",
+   "intent2.md"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:33:08.756Z",
+  "host": "laptop",
+  "by": 68217,
+  "event": "exit",
+  "pid": 68324,
+  "code": 0,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:33:12.860Z",
+  "host": "laptop",
+  "by": 73993,
+  "event": "self",
+  "pid": 73993,
+  "ppid": 73969,
+  "argv": [
+   "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/orch.cjs",
+   "laptop",
+   "-",
+   "--",
+   "node",
+   "driver-posix.cjs",
+   "mr"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:33:12.866Z",
+  "host": "laptop",
+  "by": 73993,
+  "event": "spawn",
+  "pid": 74267,
+  "cmd": "node",
+  "args": [
+   "driver-posix.cjs",
+   "mr"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:33:12.971Z",
+  "host": "laptop",
+  "by": 74267,
+  "event": "self",
+  "pid": 74267,
+  "ppid": 73993,
+  "argv": [
+   "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/driver-posix.cjs",
+   "mr"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:33:12.979Z",
+  "host": "laptop",
+  "by": 74267,
+  "event": "spawn",
+  "pid": 74351,
+  "cmd": "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+  "args": [
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/supervisor-posix.cjs",
+   "e1",
+   "mr1",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/d-mr1",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:33:13.104Z",
+  "host": "laptop",
+  "by": 74351,
+  "event": "self",
+  "pid": 74351,
+  "ppid": 74267,
+  "argv": [
+   "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/supervisor-posix.cjs",
+   "e1",
+   "mr1",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/d-mr1",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:33:13.121Z",
+  "host": "laptop",
+  "by": 74351,
+  "event": "spawn",
+  "pid": 74511,
+  "cmd": "bash",
+  "args": [
+   "-c",
+   "read _; exec bash /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/fixture.sh mr1"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:33:16.157Z",
+  "host": "laptop",
+  "by": 74351,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:16.123Z",
+  "pid": 78923,
+  "cmd": "ps",
+  "args": [
+   "-axo",
+   "pid=,ppid=,pgid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:16.175Z",
+  "host": "laptop",
+  "by": 74351,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:16.158Z",
+  "pid": 79026,
+  "cmd": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3",
+  "args": [
+   "-c",
+   "import os,sys\nfor p in sys.argv[1:]:\n  try: print(p, os.getsid(int(p)))\n  except Exception as e: print(p, \"?\")",
+   "74351",
+   "74511",
+   "74527",
+   "74528",
+   "74529",
+   "74531",
+   "74532",
+   "74534"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:16.190Z",
+  "host": "laptop",
+  "by": 74351,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:16.175Z",
+  "pid": 79055,
+  "cmd": "lsof",
+  "args": [
+   "-O",
+   "-w",
+   "-n",
+   "-P",
+   "-a",
+   "-d",
+   "cwd",
+   "-p",
+   "74351,74511,74527,74528,74529,74531,74532,74534",
+   "-Fpn"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:16.192Z",
+  "host": "laptop",
+  "by": 74351,
+  "event": "exit",
+  "pid": 74511,
+  "code": null,
+  "sig": "SIGKILL"
+ },
+ {
+  "t": "2026-11-20T16:33:28.227Z",
+  "host": "laptop",
+  "by": 74351,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:28.191Z",
+  "pid": 96974,
+  "cmd": "ps",
+  "args": [
+   "-axo",
+   "pid=,ppid=,pgid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:28.245Z",
+  "host": "laptop",
+  "by": 74351,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:28.227Z",
+  "pid": 97071,
+  "cmd": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3",
+  "args": [
+   "-c",
+   "import os,sys\nfor p in sys.argv[1:]:\n  try: print(p, os.getsid(int(p)))\n  except Exception as e: print(p, \"?\")",
+   "74351",
+   "74528",
+   "74532"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:28.257Z",
+  "host": "laptop",
+  "by": 74351,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:28.245Z",
+  "pid": 97110,
+  "cmd": "lsof",
+  "args": [
+   "-O",
+   "-w",
+   "-n",
+   "-P",
+   "-a",
+   "-d",
+   "cwd",
+   "-p",
+   "74351,74528,74532",
+   "-Fpn"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:28.261Z",
+  "host": "laptop",
+  "by": 74267,
+  "event": "exit",
+  "pid": 74351,
+  "code": 0,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:33:28.308Z",
+  "host": "laptop",
+  "by": 74267,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:28.274Z",
+  "pid": 97216,
+  "cmd": "ps",
+  "args": [
+   "-axo",
+   "pid=,ppid=,pgid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:28.334Z",
+  "host": "laptop",
+  "by": 74267,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:28.309Z",
+  "pid": 97260,
+  "cmd": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3",
+  "args": [
+   "-c",
+   "import os,sys\nfor p in sys.argv[1:]:\n  try: print(p, os.getsid(int(p)))\n  except Exception as e: print(p, \"?\")",
+   "74528",
+   "74532"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:28.349Z",
+  "host": "laptop",
+  "by": 74267,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:28.334Z",
+  "pid": 97294,
+  "cmd": "lsof",
+  "args": [
+   "-O",
+   "-w",
+   "-n",
+   "-P",
+   "-a",
+   "-d",
+   "cwd",
+   "-p",
+   "74528,74532",
+   "-Fpn"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:29.397Z",
+  "host": "laptop",
+  "by": 74267,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:29.352Z",
+  "pid": 98819,
+  "cmd": "ps",
+  "args": [
+   "-axo",
+   "pid=,ppid=,pgid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:29.398Z",
+  "host": "laptop",
+  "by": 74267,
+  "event": "spawn",
+  "pid": 98929,
+  "cmd": "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+  "args": [
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/supervisor-posix.cjs",
+   "e1c",
+   "mr2",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/d-mr2",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:33:29.545Z",
+  "host": "laptop",
+  "by": 98929,
+  "event": "self",
+  "pid": 98929,
+  "ppid": 74267,
+  "argv": [
+   "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/supervisor-posix.cjs",
+   "e1c",
+   "mr2",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/d-mr2",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:33:29.556Z",
+  "host": "laptop",
+  "by": 98929,
+  "event": "spawn",
+  "pid": 99236,
+  "cmd": "bash",
+  "args": [
+   "-c",
+   "read _; exec bash /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/fixture.sh mr2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:33:32.597Z",
+  "host": "laptop",
+  "by": 98929,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:32.558Z",
+  "pid": 3968,
+  "cmd": "ps",
+  "args": [
+   "-axo",
+   "pid=,ppid=,pgid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:32.618Z",
+  "host": "laptop",
+  "by": 98929,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:32.598Z",
+  "pid": 4023,
+  "cmd": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3",
+  "args": [
+   "-c",
+   "import os,sys\nfor p in sys.argv[1:]:\n  try: print(p, os.getsid(int(p)))\n  except Exception as e: print(p, \"?\")",
+   "98929",
+   "99236",
+   "99251",
+   "99254",
+   "99266",
+   "99267",
+   "99269",
+   "99270"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:32.632Z",
+  "host": "laptop",
+  "by": 98929,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:32.618Z",
+  "pid": 4060,
+  "cmd": "lsof",
+  "args": [
+   "-O",
+   "-w",
+   "-n",
+   "-P",
+   "-a",
+   "-d",
+   "cwd",
+   "-p",
+   "98929,99236,99251,99254,99266,99267,99269,99270",
+   "-Fpn"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:32.812Z",
+  "host": "laptop",
+  "by": 98929,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:32.633Z",
+  "pid": 4070,
+  "cmd": "lsof",
+  "args": [
+   "-O",
+   "-w",
+   "-n",
+   "-P",
+   "-a",
+   "-d",
+   "cwd",
+   "-u",
+   "501",
+   "-F",
+   "pun"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:32.814Z",
+  "host": "laptop",
+  "by": 98929,
+  "event": "exit",
+  "pid": 99236,
+  "code": null,
+  "sig": "SIGKILL"
+ },
+ {
+  "t": "2026-11-20T16:33:44.860Z",
+  "host": "laptop",
+  "by": 98929,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:44.814Z",
+  "pid": 19620,
+  "cmd": "ps",
+  "args": [
+   "-axo",
+   "pid=,ppid=,pgid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:44.884Z",
+  "host": "laptop",
+  "by": 98929,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:44.861Z",
+  "pid": 19633,
+  "cmd": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3",
+  "args": [
+   "-c",
+   "import os,sys\nfor p in sys.argv[1:]:\n  try: print(p, os.getsid(int(p)))\n  except Exception as e: print(p, \"?\")",
+   "98929",
+   "99267"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:44.899Z",
+  "host": "laptop",
+  "by": 98929,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:44.884Z",
+  "pid": 19653,
+  "cmd": "lsof",
+  "args": [
+   "-O",
+   "-w",
+   "-n",
+   "-P",
+   "-a",
+   "-d",
+   "cwd",
+   "-p",
+   "98929,99267",
+   "-Fpn"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:44.902Z",
+  "host": "laptop",
+  "by": 74267,
+  "event": "exit",
+  "pid": 98929,
+  "code": 0,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:33:44.958Z",
+  "host": "laptop",
+  "by": 74267,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:44.920Z",
+  "pid": 19706,
+  "cmd": "ps",
+  "args": [
+   "-axo",
+   "pid=,ppid=,pgid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:44.983Z",
+  "host": "laptop",
+  "by": 74267,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:44.959Z",
+  "pid": 19770,
+  "cmd": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3",
+  "args": [
+   "-c",
+   "import os,sys\nfor p in sys.argv[1:]:\n  try: print(p, os.getsid(int(p)))\n  except Exception as e: print(p, \"?\")",
+   "99267"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:44.995Z",
+  "host": "laptop",
+  "by": 74267,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:44.983Z",
+  "pid": 19806,
+  "cmd": "lsof",
+  "args": [
+   "-O",
+   "-w",
+   "-n",
+   "-P",
+   "-a",
+   "-d",
+   "cwd",
+   "-p",
+   "99267",
+   "-Fpn"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:46.034Z",
+  "host": "laptop",
+  "by": 74267,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:45.996Z",
+  "pid": 21069,
+  "cmd": "ps",
+  "args": [
+   "-axo",
+   "pid=,ppid=,pgid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:46.035Z",
+  "host": "laptop",
+  "by": 74267,
+  "event": "spawn",
+  "pid": 21189,
+  "cmd": "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+  "args": [
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/supervisor-posix.cjs",
+   "e2",
+   "mr3",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/d-mr3",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:33:46.132Z",
+  "host": "laptop",
+  "by": 21189,
+  "event": "self",
+  "pid": 21189,
+  "ppid": 74267,
+  "argv": [
+   "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/supervisor-posix.cjs",
+   "e2",
+   "mr3",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/d-mr3",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:33:46.136Z",
+  "host": "laptop",
+  "by": 21189,
+  "event": "spawn",
+  "pid": 21315,
+  "cmd": "bash",
+  "args": [
+   "-c",
+   "read _; exec bash /Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/fixture.sh mr3"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:33:49.200Z",
+  "host": "laptop",
+  "by": 21189,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:49.138Z",
+  "pid": 24378,
+  "cmd": "ps",
+  "args": [
+   "-axo",
+   "pid=,ppid=,pgid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:49.216Z",
+  "host": "laptop",
+  "by": 21189,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:49.200Z",
+  "pid": 24415,
+  "cmd": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3",
+  "args": [
+   "-c",
+   "import os,sys\nfor p in sys.argv[1:]:\n  try: print(p, os.getsid(int(p)))\n  except Exception as e: print(p, \"?\")",
+   "21189",
+   "21315",
+   "21317",
+   "21318",
+   "21319",
+   "21321",
+   "21323",
+   "21333"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:49.231Z",
+  "host": "laptop",
+  "by": 21189,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:33:49.216Z",
+  "pid": 24422,
+  "cmd": "lsof",
+  "args": [
+   "-O",
+   "-w",
+   "-n",
+   "-P",
+   "-a",
+   "-d",
+   "cwd",
+   "-p",
+   "21189,21315,21317,21318,21319,21321,21323,21333",
+   "-Fpn"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:33:49.274Z",
+  "host": "laptop",
+  "by": 74267,
+  "event": "exit",
+  "pid": 21189,
+  "code": null,
+  "sig": "SIGKILL"
+ },
+ {
+  "t": "2026-11-20T16:34:01.316Z",
+  "host": "laptop",
+  "by": 74267,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:34:01.273Z",
+  "pid": 39807,
+  "cmd": "ps",
+  "args": [
+   "-axo",
+   "pid=,ppid=,pgid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:34:01.343Z",
+  "host": "laptop",
+  "by": 74267,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:34:01.316Z",
+  "pid": 39889,
+  "cmd": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3",
+  "args": [
+   "-c",
+   "import os,sys\nfor p in sys.argv[1:]:\n  try: print(p, os.getsid(int(p)))\n  except Exception as e: print(p, \"?\")",
+   "21315",
+   "21317",
+   "21318",
+   "21319",
+   "21321",
+   "21323",
+   "21333"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:34:01.362Z",
+  "host": "laptop",
+  "by": 74267,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:34:01.343Z",
+  "pid": 39909,
+  "cmd": "lsof",
+  "args": [
+   "-O",
+   "-w",
+   "-n",
+   "-P",
+   "-a",
+   "-d",
+   "cwd",
+   "-p",
+   "21315,21317,21318,21319,21321,21323,21333",
+   "-Fpn"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:34:01.398Z",
+  "host": "laptop",
+  "by": 74267,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:34:01.362Z",
+  "pid": 39916,
+  "cmd": "ps",
+  "args": [
+   "-axo",
+   "pid=,ppid=,pgid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:34:01.414Z",
+  "host": "laptop",
+  "by": 74267,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:34:01.399Z",
+  "pid": 39959,
+  "cmd": "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/bin/python3",
+  "args": [
+   "-c",
+   "import os,sys\nfor p in sys.argv[1:]:\n  try: print(p, os.getsid(int(p)))\n  except Exception as e: print(p, \"?\")",
+   "21315",
+   "21317",
+   "21318",
+   "21319",
+   "21321",
+   "21323",
+   "21333"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:34:01.434Z",
+  "host": "laptop",
+  "by": 74267,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:34:01.414Z",
+  "pid": 39992,
+  "cmd": "lsof",
+  "args": [
+   "-O",
+   "-w",
+   "-n",
+   "-P",
+   "-a",
+   "-d",
+   "cwd",
+   "-p",
+   "21315,21317,21318,21319,21321,21323,21333",
+   "-Fpn"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:34:02.475Z",
+  "host": "laptop",
+  "by": 74267,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:34:02.435Z",
+  "pid": 41231,
+  "cmd": "ps",
+  "args": [
+   "-axo",
+   "pid=,ppid=,pgid=,stat=,args="
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:34:02.481Z",
+  "host": "laptop",
+  "by": 73993,
+  "event": "exit",
+  "pid": 74267,
+  "code": 0,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:34:25.222Z",
+  "host": "laptop",
+  "by": 70233,
+  "event": "self",
+  "pid": 70233,
+  "ppid": 70214,
+  "argv": [
+   "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/orch.cjs",
+   "hostpc",
+   "-",
+   "--",
+   "ssh",
+   "hostpc",
+   "powershell",
+   "-NoProfile",
+   "-NonInteractive",
+   "-EncodedCommand",
+   "IwAgAEEAQgBPAFUAVABNAEUAOgAgAEMAYQByAGQAIAAjADEANAAzADAAIAByAGUAcgB1AG4AIABXAGkAbgBkAG8AdwBzACAAdwBhAHQAYwBoAGUAcgAgACgAZgB4ADEANAAzADAAcgAyACkAOgAgAGwAbwBnAHMAIABlAHYAZQByAHkAIABwAHIAbwBjAGUAcwBzACAAcwB0AGEAcgB0ACAAYQBuAGQAIABzAHQAbwBwACAAbwBuACAAdABoAGUAIABoAG8AcwB0ACwAIABmAHIAbwBtACAAVwBNAEkAJwBzACAAdABlAG0AcABvAHIAYQByAHkACgAjACAAVwBpAG4AMwAyAF8AUAByAG8AYwBlAHMAcwBTAHQAYQByAHQAVAByAGEAYwBlACAAYQBuAGQAIABXAGkAbgAzADIAXwBQAHIAbwBjAGUAcwBzAFMAdABvAHAAVAByAGEAYwBlACAAcwB1AGIAcwBjAHIAaQBwAHQAaQBvAG4AcwAsACAAdQBuAHQAaQBsACAAQwA6AFwAVQBzAGUAcgBzAFwAdQBzAGUAcgBcADEANAAzADAALQByADIAXABzAHQAbwBwACAAZQB4AGkAcwB0AHMALgAKACQAZABpAHIAIAA9ACAAJwBDADoAXABVAHMAZQByAHMAXAB1AHMAZQByAFwAMQA0ADMAMAAtAHIAMgAnAAoATgBlAHcALQBJAHQAZQBtACAALQBJAHQAZQBtAFQAeQBwAGUAIABEAGkAcgBlAGMAdABvAHIAeQAgAC0ARgBvAHIAYwBlACAAJABkAGkAcgAgAHwAIABPAHUAdAAtAE4AdQBsAGwACgAkAGwAbwBnACAAPQAgACIAJABkAGkAcgBcAHcAYQB0AGMAaAAuAGwAbwBnACIACgBmAHUAbgBjAHQAaQBvAG4AIABXACgAJABzACkAIAB7ACAAQQBkAGQALQBDAG8AbgB0AGUAbgB0ACAALQBQAGEAdABoACAAJABsAG8AZwAgAC0AVgBhAGwAdQBlACAAJABzACAALQBFAG4AYwBvAGQAaQBuAGcAIAB1AHQAZgA4ACAAfQAKAGYAdQBuAGMAdABpAG8AbgAgAE4AbwB3ACAAewAgACgARwBlAHQALQBEAGEAdABlACkALgBUAG8AVQBuAGkAdgBlAHIAcwBhAGwAVABpAG0AZQAoACkALgBUAG8AUwB0AHIAaQBuAGcAKAAnAG8AJwApACAAfQAKACQAcAAgAD0AIAAkAFAASQBEAAoAZgBvAHIAIAAoACQAaQAgAD0AIAAwADsAIAAkAGkAIAAtAGwAdAAgADYAIAAtAGEAbgBkACAAJABwADsAIAAkAGkAKwArACkAIAB7AAoAIAAgACQAYQAgAD0AIABHAGUAdAAtAEMAaQBtAEkAbgBzAHQAYQBuAGMAZQAgAFcAaQBuADMAMgBfAFAAcgBvAGMAZQBzAHMAIAAtAEYAaQBsAHQAZQByACAAIgBQAHIAbwBjAGUAcwBzAEkAZAA9ACQAcAAiAAoAIAAgAGkAZgAgACgALQBuAG8AdAAgACQAYQApACAAewAgAGIAcgBlAGEAawAgAH0ACgAgACAAVwAgACIAYwBoAGEAaQBuACAAJAAoAE4AbwB3ACkAIABwAGkAZAA9ACQAKAAkAGEALgBQAHIAbwBjAGUAcwBzAEkAZAApACAAcABwAGkAZAA9ACQAKAAkAGEALgBQAGEAcgBlAG4AdABQAHIAbwBjAGUAcwBzAEkAZAApACAAbgBhAG0AZQA9ACQAKAAkAGEALgBOAGEAbQBlACkAIABjAHIAZQBhAHQAZQBkAD0AJAAoACQAYQAuAEMAcgBlAGEAdABpAG8AbgBEAGEAdABlAC4AVABvAFUAbgBpAHYAZQByAHMAYQBsAFQAaQBtAGUAKAApAC4AVABvAFMAdAByAGkAbgBnACgAJwBvACcAKQApACAAYwBtAGQAPQAkACgAJABhAC4AQwBvAG0AbQBhAG4AZABMAGkAbgBlACkAIgAKACAAIAAkAHAAIAA9ACAAJABhAC4AUABhAHIAZQBuAHQAUAByAG8AYwBlAHMAcwBJAGQACgB9AAoAUgBlAGcAaQBzAHQAZQByAC0AQwBpAG0ASQBuAGQAaQBjAGEAdABpAG8AbgBFAHYAZQBuAHQAIAAtAEMAbABhAHMAcwBOAGEAbQBlACAAVwBpAG4AMwAyAF8AUAByAG8AYwBlAHMAcwBTAHQAYQByAHQAVAByAGEAYwBlACAALQBTAG8AdQByAGMAZQBJAGQAZQBuAHQAaQBmAGkAZQByACAAcwAgAHwAIABPAHUAdAAtAE4AdQBsAGwACgBSAGUAZwBpAHMAdABlAHIALQBDAGkAbQBJAG4AZABpAGMAYQB0AGkAbwBuAEUAdgBlAG4AdAAgAC0AQwBsAGEAcwBzAE4AYQBtAGUAIABXAGkAbgAzADIAXwBQAHIAbwBjAGUAcwBzAFMAdABvAHAAVAByAGEAYwBlACAALQBTAG8AdQByAGMAZQBJAGQAZQBuAHQAaQBmAGkAZQByACAAZQAgAHwAIABPAHUAdAAtAE4AdQBsAGwACgBXACAAIgByAGUAYQBkAHkAIAAkACgATgBvAHcAKQAgAHcAYQB0AGMAaABlAHIAIABwAGkAZAA9ACQAUABJAEQAIgAKACIAdwBhAHQAYwBoAGUAcgAgAHIAZQBhAGQAeQAgAHAAaQBkAD0AJABQAEkARAAiAAoAdwBoAGkAbABlACAAKAAtAG4AbwB0ACAAKABUAGUAcwB0AC0AUABhAHQAaAAgACIAJABkAGkAcgBcAHMAdABvAHAAIgApACkAIAB7AAoAIAAgACQAZQB2ACAAPQAgAFcAYQBpAHQALQBFAHYAZQBuAHQAIAAtAFQAaQBtAGUAbwB1AHQAIAAyAAoAIAAgAGkAZgAgACgAJABlAHYAKQAgAHsACgAgACAAIAAgACQAbgAgAD0AIAAkAGUAdgAuAFMAbwB1AHIAYwBlAEUAdgBlAG4AdABBAHIAZwBzAC4ATgBlAHcARQB2AGUAbgB0AAoAIAAgACAAIAAkAHQAIAA9ACAAWwBEAGEAdABlAFQAaQBtAGUAXQA6ADoARgByAG8AbQBGAGkAbABlAFQAaQBtAGUAVQB0AGMAKABbAGwAbwBuAGcAXQAkAG4ALgBUAEkATQBFAF8AQwBSAEUAQQBUAEUARAApAC4AVABvAFMAdAByAGkAbgBnACgAJwBvACcAKQAKACAAIAAgACAAaQBmACAAKAAkAGUAdgAuAFMAbwB1AHIAYwBlAEkAZABlAG4AdABpAGYAaQBlAHIAIAAtAGUAcQAgACcAcwAnACkAIAB7AAoAIAAgACAAIAAgACAAJABjACAAPQAgACgARwBlAHQALQBDAGkAbQBJAG4AcwB0AGEAbgBjAGUAIABXAGkAbgAzADIAXwBQAHIAbwBjAGUAcwBzACAALQBGAGkAbAB0AGUAcgAgACIAUAByAG8AYwBlAHMAcwBJAGQAPQAkACgAJABuAC4AUAByAG8AYwBlAHMAcwBJAEQAKQAiACAALQBFAHIAcgBvAHIAQQBjAHQAaQBvAG4AIABTAGkAbABlAG4AdABsAHkAQwBvAG4AdABpAG4AdQBlACkALgBDAG8AbQBtAGEAbgBkAEwAaQBuAGUACgAgACAAIAAgACAAIABXACAAIgBzAHQAYQByAHQAIAAkAHQAIABwAGkAZAA9ACQAKAAkAG4ALgBQAHIAbwBjAGUAcwBzAEkARAApACAAcABwAGkAZAA9ACQAKAAkAG4ALgBQAGEAcgBlAG4AdABQAHIAbwBjAGUAcwBzAEkARAApACAAbgBhAG0AZQA9ACQAKAAkAG4ALgBQAHIAbwBjAGUAcwBzAE4AYQBtAGUAKQAgAGMAbQBkAD0AJABjACIACgAgACAAIAAgAH0AIABlAGwAcwBlACAAewAgAFcAIAAiAHMAdABvAHAAIAAkAHQAIABwAGkAZAA9ACQAKAAkAG4ALgBQAHIAbwBjAGUAcwBzAEkARAApACAAcABwAGkAZAA9ACQAKAAkAG4ALgBQAGEAcgBlAG4AdABQAHIAbwBjAGUAcwBzAEkARAApACAAbgBhAG0AZQA9ACQAKAAkAG4ALgBQAHIAbwBjAGUAcwBzAE4AYQBtAGUAKQAiACAAfQAKACAAIAAgACAAUgBlAG0AbwB2AGUALQBFAHYAZQBuAHQAIAAtAEUAdgBlAG4AdABJAGQAZQBuAHQAaQBmAGkAZQByACAAJABlAHYALgBFAHYAZQBuAHQASQBkAGUAbgB0AGkAZgBpAGUAcgAKACAAIAB9AAoAfQAKAFUAbgByAGUAZwBpAHMAdABlAHIALQBFAHYAZQBuAHQAIAAtAFMAbwB1AHIAYwBlAEkAZABlAG4AdABpAGYAaQBlAHIAIABzADsAIABVAG4AcgBlAGcAaQBzAHQAZQByAC0ARQB2AGUAbgB0ACAALQBTAG8AdQByAGMAZQBJAGQAZQBuAHQAaQBmAGkAZQByACAAZQAKAFcAIAAiAHMAdABvAHAAcABlAGQAIAAkACgATgBvAHcAKQAiAAoAIgB3AGEAdABjAGgAZQByACAAcwB0AG8AcABwAGUAZAAiAAoA"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:34:25.228Z",
+  "host": "laptop",
+  "by": 70233,
+  "event": "spawn",
+  "pid": 70461,
+  "cmd": "ssh",
+  "args": [
+   "hostpc",
+   "powershell",
+   "-NoProfile",
+   "-NonInteractive",
+   "-EncodedCommand",
+   "IwAgAEEAQgBPAFUAVABNAEUAOgAgAEMAYQByAGQAIAAjADEANAAzADAAIAByAGUAcgB1AG4AIABXAGkAbgBkAG8AdwBzACAAdwBhAHQAYwBoAGUAcgAgACgAZgB4ADEANAAzADAAcgAyACkAOgAgAGwAbwBnAHMAIABlAHYAZQByAHkAIABwAHIAbwBjAGUAcwBzACAAcwB0AGEAcgB0ACAAYQBuAGQAIABzAHQAbwBwACAAbwBuACAAdABoAGUAIABoAG8AcwB0ACwAIABmAHIAbwBtACAAVwBNAEkAJwBzACAAdABlAG0AcABvAHIAYQByAHkACgAjACAAVwBpAG4AMwAyAF8AUAByAG8AYwBlAHMAcwBTAHQAYQByAHQAVAByAGEAYwBlACAAYQBuAGQAIABXAGkAbgAzADIAXwBQAHIAbwBjAGUAcwBzAFMAdABvAHAAVAByAGEAYwBlACAAcwB1AGIAcwBjAHIAaQBwAHQAaQBvAG4AcwAsACAAdQBuAHQAaQBsACAAQwA6AFwAVQBzAGUAcgBzAFwAdQBzAGUAcgBcADEANAAzADAALQByADIAXABzAHQAbwBwACAAZQB4AGkAcwB0AHMALgAKACQAZABpAHIAIAA9ACAAJwBDADoAXABVAHMAZQByAHMAXAB1AHMAZQByAFwAMQA0ADMAMAAtAHIAMgAnAAoATgBlAHcALQBJAHQAZQBtACAALQBJAHQAZQBtAFQAeQBwAGUAIABEAGkAcgBlAGMAdABvAHIAeQAgAC0ARgBvAHIAYwBlACAAJABkAGkAcgAgAHwAIABPAHUAdAAtAE4AdQBsAGwACgAkAGwAbwBnACAAPQAgACIAJABkAGkAcgBcAHcAYQB0AGMAaAAuAGwAbwBnACIACgBmAHUAbgBjAHQAaQBvAG4AIABXACgAJABzACkAIAB7ACAAQQBkAGQALQBDAG8AbgB0AGUAbgB0ACAALQBQAGEAdABoACAAJABsAG8AZwAgAC0AVgBhAGwAdQBlACAAJABzACAALQBFAG4AYwBvAGQAaQBuAGcAIAB1AHQAZgA4ACAAfQAKAGYAdQBuAGMAdABpAG8AbgAgAE4AbwB3ACAAewAgACgARwBlAHQALQBEAGEAdABlACkALgBUAG8AVQBuAGkAdgBlAHIAcwBhAGwAVABpAG0AZQAoACkALgBUAG8AUwB0AHIAaQBuAGcAKAAnAG8AJwApACAAfQAKACQAcAAgAD0AIAAkAFAASQBEAAoAZgBvAHIAIAAoACQAaQAgAD0AIAAwADsAIAAkAGkAIAAtAGwAdAAgADYAIAAtAGEAbgBkACAAJABwADsAIAAkAGkAKwArACkAIAB7AAoAIAAgACQAYQAgAD0AIABHAGUAdAAtAEMAaQBtAEkAbgBzAHQAYQBuAGMAZQAgAFcAaQBuADMAMgBfAFAAcgBvAGMAZQBzAHMAIAAtAEYAaQBsAHQAZQByACAAIgBQAHIAbwBjAGUAcwBzAEkAZAA9ACQAcAAiAAoAIAAgAGkAZgAgACgALQBuAG8AdAAgACQAYQApACAAewAgAGIAcgBlAGEAawAgAH0ACgAgACAAVwAgACIAYwBoAGEAaQBuACAAJAAoAE4AbwB3ACkAIABwAGkAZAA9ACQAKAAkAGEALgBQAHIAbwBjAGUAcwBzAEkAZAApACAAcABwAGkAZAA9ACQAKAAkAGEALgBQAGEAcgBlAG4AdABQAHIAbwBjAGUAcwBzAEkAZAApACAAbgBhAG0AZQA9ACQAKAAkAGEALgBOAGEAbQBlACkAIABjAHIAZQBhAHQAZQBkAD0AJAAoACQAYQAuAEMAcgBlAGEAdABpAG8AbgBEAGEAdABlAC4AVABvAFUAbgBpAHYAZQByAHMAYQBsAFQAaQBtAGUAKAApAC4AVABvAFMAdAByAGkAbgBnACgAJwBvACcAKQApACAAYwBtAGQAPQAkACgAJABhAC4AQwBvAG0AbQBhAG4AZABMAGkAbgBlACkAIgAKACAAIAAkAHAAIAA9ACAAJABhAC4AUABhAHIAZQBuAHQAUAByAG8AYwBlAHMAcwBJAGQACgB9AAoAUgBlAGcAaQBzAHQAZQByAC0AQwBpAG0ASQBuAGQAaQBjAGEAdABpAG8AbgBFAHYAZQBuAHQAIAAtAEMAbABhAHMAcwBOAGEAbQBlACAAVwBpAG4AMwAyAF8AUAByAG8AYwBlAHMAcwBTAHQAYQByAHQAVAByAGEAYwBlACAALQBTAG8AdQByAGMAZQBJAGQAZQBuAHQAaQBmAGkAZQByACAAcwAgAHwAIABPAHUAdAAtAE4AdQBsAGwACgBSAGUAZwBpAHMAdABlAHIALQBDAGkAbQBJAG4AZABpAGMAYQB0AGkAbwBuAEUAdgBlAG4AdAAgAC0AQwBsAGEAcwBzAE4AYQBtAGUAIABXAGkAbgAzADIAXwBQAHIAbwBjAGUAcwBzAFMAdABvAHAAVAByAGEAYwBlACAALQBTAG8AdQByAGMAZQBJAGQAZQBuAHQAaQBmAGkAZQByACAAZQAgAHwAIABPAHUAdAAtAE4AdQBsAGwACgBXACAAIgByAGUAYQBkAHkAIAAkACgATgBvAHcAKQAgAHcAYQB0AGMAaABlAHIAIABwAGkAZAA9ACQAUABJAEQAIgAKACIAdwBhAHQAYwBoAGUAcgAgAHIAZQBhAGQAeQAgAHAAaQBkAD0AJABQAEkARAAiAAoAdwBoAGkAbABlACAAKAAtAG4AbwB0ACAAKABUAGUAcwB0AC0AUABhAHQAaAAgACIAJABkAGkAcgBcAHMAdABvAHAAIgApACkAIAB7AAoAIAAgACQAZQB2ACAAPQAgAFcAYQBpAHQALQBFAHYAZQBuAHQAIAAtAFQAaQBtAGUAbwB1AHQAIAAyAAoAIAAgAGkAZgAgACgAJABlAHYAKQAgAHsACgAgACAAIAAgACQAbgAgAD0AIAAkAGUAdgAuAFMAbwB1AHIAYwBlAEUAdgBlAG4AdABBAHIAZwBzAC4ATgBlAHcARQB2AGUAbgB0AAoAIAAgACAAIAAkAHQAIAA9ACAAWwBEAGEAdABlAFQAaQBtAGUAXQA6ADoARgByAG8AbQBGAGkAbABlAFQAaQBtAGUAVQB0AGMAKABbAGwAbwBuAGcAXQAkAG4ALgBUAEkATQBFAF8AQwBSAEUAQQBUAEUARAApAC4AVABvAFMAdAByAGkAbgBnACgAJwBvACcAKQAKACAAIAAgACAAaQBmACAAKAAkAGUAdgAuAFMAbwB1AHIAYwBlAEkAZABlAG4AdABpAGYAaQBlAHIAIAAtAGUAcQAgACcAcwAnACkAIAB7AAoAIAAgACAAIAAgACAAJABjACAAPQAgACgARwBlAHQALQBDAGkAbQBJAG4AcwB0AGEAbgBjAGUAIABXAGkAbgAzADIAXwBQAHIAbwBjAGUAcwBzACAALQBGAGkAbAB0AGUAcgAgACIAUAByAG8AYwBlAHMAcwBJAGQAPQAkACgAJABuAC4AUAByAG8AYwBlAHMAcwBJAEQAKQAiACAALQBFAHIAcgBvAHIAQQBjAHQAaQBvAG4AIABTAGkAbABlAG4AdABsAHkAQwBvAG4AdABpAG4AdQBlACkALgBDAG8AbQBtAGEAbgBkAEwAaQBuAGUACgAgACAAIAAgACAAIABXACAAIgBzAHQAYQByAHQAIAAkAHQAIABwAGkAZAA9ACQAKAAkAG4ALgBQAHIAbwBjAGUAcwBzAEkARAApACAAcABwAGkAZAA9ACQAKAAkAG4ALgBQAGEAcgBlAG4AdABQAHIAbwBjAGUAcwBzAEkARAApACAAbgBhAG0AZQA9ACQAKAAkAG4ALgBQAHIAbwBjAGUAcwBzAE4AYQBtAGUAKQAgAGMAbQBkAD0AJABjACIACgAgACAAIAAgAH0AIABlAGwAcwBlACAAewAgAFcAIAAiAHMAdABvAHAAIAAkAHQAIABwAGkAZAA9ACQAKAAkAG4ALgBQAHIAbwBjAGUAcwBzAEkARAApACAAcABwAGkAZAA9ACQAKAAkAG4ALgBQAGEAcgBlAG4AdABQAHIAbwBjAGUAcwBzAEkARAApACAAbgBhAG0AZQA9ACQAKAAkAG4ALgBQAHIAbwBjAGUAcwBzAE4AYQBtAGUAKQAiACAAfQAKACAAIAAgACAAUgBlAG0AbwB2AGUALQBFAHYAZQBuAHQAIAAtAEUAdgBlAG4AdABJAGQAZQBuAHQAaQBmAGkAZQByACAAJABlAHYALgBFAHYAZQBuAHQASQBkAGUAbgB0AGkAZgBpAGUAcgAKACAAIAB9AAoAfQAKAFUAbgByAGUAZwBpAHMAdABlAHIALQBFAHYAZQBuAHQAIAAtAFMAbwB1AHIAYwBlAEkAZABlAG4AdABpAGYAaQBlAHIAIABzADsAIABVAG4AcgBlAGcAaQBzAHQAZQByAC0ARQB2AGUAbgB0ACAALQBTAG8AdQByAGMAZQBJAGQAZQBuAHQAaQBmAGkAZQByACAAZQAKAFcAIAAiAHMAdABvAHAAcABlAGQAIAAkACgATgBvAHcAKQAiAAoAIgB3AGEAdABjAGgAZQByACAAcwB0AG8AcABwAGUAZAAiAAoA"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:03.707Z",
+  "host": "laptop",
+  "by": 33074,
+  "event": "self",
+  "pid": 33074,
+  "ppid": 33062,
+  "argv": [
+   "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/orch.cjs",
+   "hostpc",
+   "win-bundle.json",
+   "--",
+   "ssh",
+   "hostpc",
+   "cd /d C:\\Users\\user\\1430-r2 && node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const f=JSON.parse(s);const fs=require('fs');for(const k in f)fs.writeFileSync(k,Buffer.from(f[k],'base64'));console.log(Object.keys(f).length,'files written, pid',process.pid,'ppid',process.ppid)})\" fx1430r2 && dir /b"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:03.710Z",
+  "host": "laptop",
+  "by": 33074,
+  "event": "spawn",
+  "pid": 33229,
+  "cmd": "ssh",
+  "args": [
+   "hostpc",
+   "cd /d C:\\Users\\user\\1430-r2 && node -e \"let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const f=JSON.parse(s);const fs=require('fs');for(const k in f)fs.writeFileSync(k,Buffer.from(f[k],'base64'));console.log(Object.keys(f).length,'files written, pid',process.pid,'ppid',process.ppid)})\" fx1430r2 && dir /b"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:04.171Z",
+  "host": "laptop",
+  "by": 33074,
+  "event": "exit",
+  "pid": 33229,
+  "code": 0,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:35:04.266Z",
+  "host": "laptop",
+  "by": 33847,
+  "event": "self",
+  "pid": 33847,
+  "ppid": 33062,
+  "argv": [
+   "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/orch.cjs",
+   "hostpc",
+   "-",
+   "--",
+   "ssh",
+   "hostpc",
+   "cd /d C:\\Users\\user\\1430-r2 && ver && node --version && whoami && npm install koffi --cache C:\\Users\\user\\1430-r2\\npm-cache --no-fund --no-audit --no-update-notifier fx1430r2-install 2>&1"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:04.269Z",
+  "host": "laptop",
+  "by": 33847,
+  "event": "spawn",
+  "pid": 33979,
+  "cmd": "ssh",
+  "args": [
+   "hostpc",
+   "cd /d C:\\Users\\user\\1430-r2 && ver && node --version && whoami && npm install koffi --cache C:\\Users\\user\\1430-r2\\npm-cache --no-fund --no-audit --no-update-notifier fx1430r2-install 2>&1"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:05.754Z",
+  "host": "laptop",
+  "by": 33847,
+  "event": "exit",
+  "pid": 33979,
+  "code": 1,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:35:11.249Z",
+  "host": "laptop",
+  "by": 44980,
+  "event": "self",
+  "pid": 44980,
+  "ppid": 44948,
+  "argv": [
+   "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/orch.cjs",
+   "hostpc",
+   "-",
+   "--",
+   "ssh",
+   "hostpc",
+   "cd /d C:\\Users\\user\\1430-r2 && npm install koffi --cache C:\\Users\\user\\1430-r2\\npm-cache --no-fund --no-audit --no-update-notifier 2>&1 && node -p require('koffi').version && whoami /groups"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:11.252Z",
+  "host": "laptop",
+  "by": 44980,
+  "event": "spawn",
+  "pid": 45139,
+  "cmd": "ssh",
+  "args": [
+   "hostpc",
+   "cd /d C:\\Users\\user\\1430-r2 && npm install koffi --cache C:\\Users\\user\\1430-r2\\npm-cache --no-fund --no-audit --no-update-notifier 2>&1 && node -p require('koffi').version && whoami /groups"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:12.383Z",
+  "host": "laptop",
+  "by": 44980,
+  "event": "exit",
+  "pid": 45139,
+  "code": 0,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:35:17.073Z",
+  "host": "laptop",
+  "by": 53266,
+  "event": "self",
+  "pid": 53266,
+  "ppid": 53255,
+  "argv": [
+   "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/orch.cjs",
+   "hostpc",
+   "-",
+   "--",
+   "ssh",
+   "hostpc",
+   "cd /d C:\\Users\\user\\1430-r2 && set FX_REC=C:\\Users\\user\\1430-r2\\rec-win.jsonl&& set FX_HOST=hostpc&& node driver-win.cjs"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:17.075Z",
+  "host": "laptop",
+  "by": 53266,
+  "event": "spawn",
+  "pid": 53488,
+  "cmd": "ssh",
+  "args": [
+   "hostpc",
+   "cd /d C:\\Users\\user\\1430-r2 && set FX_REC=C:\\Users\\user\\1430-r2\\rec-win.jsonl&& set FX_HOST=hostpc&& node driver-win.cjs"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:36:29.495Z",
+  "host": "laptop",
+  "by": 53266,
+  "event": "exit",
+  "pid": 53488,
+  "code": 0,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:36:40.257Z",
+  "host": "laptop",
+  "by": 33410,
+  "event": "self",
+  "pid": 33410,
+  "ppid": 33371,
+  "argv": [
+   "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/orch.cjs",
+   "wsl-via-hostpc",
+   "wsl-setup.sh",
+   "--",
+   "ssh",
+   "hostpc",
+   "wsl.exe",
+   "-e",
+   "bash",
+   "-s",
+   "fx1430r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:36:40.259Z",
+  "host": "laptop",
+  "by": 33410,
+  "event": "spawn",
+  "pid": 33446,
+  "cmd": "ssh",
+  "args": [
+   "hostpc",
+   "wsl.exe",
+   "-e",
+   "bash",
+   "-s",
+   "fx1430r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:36:44.892Z",
+  "host": "laptop",
+  "by": 33410,
+  "event": "exit",
+  "pid": 33446,
+  "code": 0,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:36:57.831Z",
+  "host": "laptop",
+  "by": 42141,
+  "event": "self",
+  "pid": 42141,
+  "ppid": 42132,
+  "argv": [
+   "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/orch.cjs",
+   "wsl-via-hostpc",
+   "wsl-copy.sh",
+   "--",
+   "ssh",
+   "hostpc",
+   "wsl.exe",
+   "-e",
+   "bash",
+   "-s",
+   "fx1430r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:36:57.834Z",
+  "host": "laptop",
+  "by": 42141,
+  "event": "spawn",
+  "pid": 42171,
+  "cmd": "ssh",
+  "args": [
+   "hostpc",
+   "wsl.exe",
+   "-e",
+   "bash",
+   "-s",
+   "fx1430r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:36:58.162Z",
+  "host": "laptop",
+  "by": 42141,
+  "event": "exit",
+  "pid": 42171,
+  "code": 0,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:37:10.845Z",
+  "host": "laptop",
+  "by": 47859,
+  "event": "self",
+  "pid": 47859,
+  "ppid": 47854,
+  "argv": [
+   "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/orch.cjs",
+   "wsl-via-hostpc",
+   "wsl-copy.sh",
+   "--",
+   "ssh",
+   "hostpc",
+   "wsl.exe",
+   "-e",
+   "bash",
+   "-s",
+   "fx1430r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:37:10.847Z",
+  "host": "laptop",
+  "by": 47859,
+  "event": "spawn",
+  "pid": 47867,
+  "cmd": "ssh",
+  "args": [
+   "hostpc",
+   "wsl.exe",
+   "-e",
+   "bash",
+   "-s",
+   "fx1430r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:37:11.264Z",
+  "host": "laptop",
+  "by": 47859,
+  "event": "exit",
+  "pid": 47867,
+  "code": 0,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:37:19.122Z",
+  "host": "laptop",
+  "by": 52162,
+  "event": "self",
+  "pid": 52162,
+  "ppid": 52158,
+  "argv": [
+   "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/orch.cjs",
+   "wsl-via-hostpc",
+   "wsl-run.sh",
+   "--",
+   "ssh",
+   "hostpc",
+   "wsl.exe",
+   "-e",
+   "bash",
+   "-s",
+   "fx1430r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:37:19.124Z",
+  "host": "laptop",
+  "by": 52162,
+  "event": "spawn",
+  "pid": 52175,
+  "cmd": "ssh",
+  "args": [
+   "hostpc",
+   "wsl.exe",
+   "-e",
+   "bash",
+   "-s",
+   "fx1430r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:38:18.327Z",
+  "host": "laptop",
+  "by": 52162,
+  "event": "exit",
+  "pid": 52175,
+  "code": 0,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:38:36.031Z",
+  "host": "laptop",
+  "by": 78561,
+  "event": "self",
+  "pid": 78561,
+  "ppid": 78559,
+  "argv": [
+   "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/orch.cjs",
+   "wsl-via-hostpc",
+   "wsl-fetch.sh",
+   "--",
+   "ssh",
+   "hostpc",
+   "wsl.exe",
+   "-e",
+   "bash",
+   "-s",
+   "fx1430r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:38:36.033Z",
+  "host": "laptop",
+  "by": 78561,
+  "event": "spawn",
+  "pid": 78567,
+  "cmd": "ssh",
+  "args": [
+   "hostpc",
+   "wsl.exe",
+   "-e",
+   "bash",
+   "-s",
+   "fx1430r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:38:37.604Z",
+  "host": "laptop",
+  "by": 78561,
+  "event": "exit",
+  "pid": 78567,
+  "code": 0,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:38:50.327Z",
+  "host": "laptop",
+  "by": 85899,
+  "event": "self",
+  "pid": 85899,
+  "ppid": 85896,
+  "argv": [
+   "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/orch.cjs",
+   "hostpc",
+   "-",
+   "--",
+   "ssh",
+   "hostpc",
+   "cd /d C:\\Users\\user\\1430-r2 && node -e \"const fs=require('fs');console.log('fetch pid',process.pid,'ppid',process.ppid);for(const f of ['rec-win.jsonl','xr1.log','xr2.log','xr3.log']){console.log('=== FILE '+f);process.stdout.write(fs.readFileSync(f,'utf8'))}\" fx1430r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:38:50.329Z",
+  "host": "laptop",
+  "by": 85899,
+  "event": "spawn",
+  "pid": 86017,
+  "cmd": "ssh",
+  "args": [
+   "hostpc",
+   "cd /d C:\\Users\\user\\1430-r2 && node -e \"const fs=require('fs');console.log('fetch pid',process.pid,'ppid',process.ppid);for(const f of ['rec-win.jsonl','xr1.log','xr2.log','xr3.log']){console.log('=== FILE '+f);process.stdout.write(fs.readFileSync(f,'utf8'))}\" fx1430r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:38:50.629Z",
+  "host": "laptop",
+  "by": 85899,
+  "event": "exit",
+  "pid": 86017,
+  "code": 0,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:38:57.146Z",
+  "host": "laptop",
+  "by": 93250,
+  "event": "self",
+  "pid": 93250,
+  "ppid": 93249,
+  "argv": [
+   "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/orch.cjs",
+   "hostpc",
+   "-",
+   "--",
+   "ssh",
+   "hostpc",
+   "cd /d C:\\Users\\user\\1430-r2 && node -e \"console.log('watchfetch pid',process.pid,'ppid',process.ppid);process.stdout.write(require('fs').readFileSync('watch.log','utf8'))\" fx1430r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:38:57.148Z",
+  "host": "laptop",
+  "by": 93250,
+  "event": "spawn",
+  "pid": 93256,
+  "cmd": "ssh",
+  "args": [
+   "hostpc",
+   "cd /d C:\\Users\\user\\1430-r2 && node -e \"console.log('watchfetch pid',process.pid,'ppid',process.ppid);process.stdout.write(require('fs').readFileSync('watch.log','utf8'))\" fx1430r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:38:57.499Z",
+  "host": "laptop",
+  "by": 93250,
+  "event": "exit",
+  "pid": 93256,
+  "code": 0,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:41:18.635Z",
+  "host": "laptop",
+  "by": 53926,
+  "event": "self",
+  "pid": 53926,
+  "ppid": 53723,
+  "argv": [
+   "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/orch.cjs",
+   "wsl-via-hostpc",
+   "wsl-final.sh",
+   "--",
+   "ssh",
+   "hostpc",
+   "wsl.exe",
+   "-e",
+   "bash",
+   "-s",
+   "fx1430r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:41:18.638Z",
+  "host": "laptop",
+  "by": 53926,
+  "event": "spawn",
+  "pid": 54171,
+  "cmd": "ssh",
+  "args": [
+   "hostpc",
+   "wsl.exe",
+   "-e",
+   "bash",
+   "-s",
+   "fx1430r2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:41:22.024Z",
+  "host": "laptop",
+  "by": 53926,
+  "event": "exit",
+  "pid": 54171,
+  "code": 2,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:41:44.252Z",
+  "host": "laptop",
+  "by": 90349,
+  "event": "self",
+  "pid": 90349,
+  "ppid": 90317,
+  "argv": [
+   "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/orch.cjs",
+   "hostpc",
+   "win-final-A.js",
+   "--",
+   "ssh",
+   "hostpc",
+   "cd /d C:\\Users\\user\\1430-r2 && node - fx1430r2-final-A"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:41:44.258Z",
+  "host": "laptop",
+  "by": 90349,
+  "event": "spawn",
+  "pid": 90551,
+  "cmd": "ssh",
+  "args": [
+   "hostpc",
+   "cd /d C:\\Users\\user\\1430-r2 && node - fx1430r2-final-A"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:41:44.888Z",
+  "host": "laptop",
+  "by": 70233,
+  "event": "exit",
+  "pid": 70461,
+  "code": 0,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:41:44.925Z",
+  "host": "laptop",
+  "by": 90349,
+  "event": "exit",
+  "pid": 90551,
+  "code": 0,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:41:56.952Z",
+  "host": "laptop",
+  "by": 12896,
+  "event": "self",
+  "pid": 12896,
+  "ppid": 12866,
+  "argv": [
+   "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/orch.cjs",
+   "hostpc",
+   "win-fetch2.js",
+   "--",
+   "ssh",
+   "hostpc",
+   "cd /d C:\\Users\\user\\1430-r2 && node - fx1430r2-fetch2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:41:56.980Z",
+  "host": "laptop",
+  "by": 12896,
+  "event": "spawn",
+  "pid": 13093,
+  "cmd": "ssh",
+  "args": [
+   "hostpc",
+   "cd /d C:\\Users\\user\\1430-r2 && node - fx1430r2-fetch2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:41:58.362Z",
+  "host": "laptop",
+  "by": 12896,
+  "event": "exit",
+  "pid": 13093,
+  "code": 0,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:42:40.785Z",
+  "host": "laptop",
+  "by": 78394,
+  "event": "self",
+  "pid": 78394,
+  "ppid": 78213,
+  "argv": [
+   "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/orch.cjs",
+   "hostpc",
+   "win-final-B.js",
+   "--",
+   "ssh",
+   "hostpc",
+   "cd /d C:\\Users\\user && node - fx1430r2-final-B"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:42:40.802Z",
+  "host": "laptop",
+  "by": 78394,
+  "event": "spawn",
+  "pid": 78636,
+  "cmd": "ssh",
+  "args": [
+   "hostpc",
+   "cd /d C:\\Users\\user && node - fx1430r2-final-B"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:42:41.089Z",
+  "host": "laptop",
+  "by": 78394,
+  "event": "exit",
+  "pid": 78636,
+  "code": 1,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:42:57.302Z",
+  "host": "laptop",
+  "by": 2812,
+  "event": "self",
+  "pid": 2812,
+  "ppid": 2562,
+  "argv": [
+   "/opt/homebrew/Cellar/node/26.13.0_2/bin/node",
+   "/Users/cjwilliams/GitHub/rigger-worktrees/1430-spike-engineer/spikes/1430-spike-engineer/r2/orch.cjs",
+   "hostpc",
+   "win-final-B.js",
+   "--",
+   "ssh",
+   "hostpc",
+   "cd /d C:\\Users\\user && node - fx1430r2-final-B"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:42:57.305Z",
+  "host": "laptop",
+  "by": 2812,
+  "event": "spawn",
+  "pid": 2997,
+  "cmd": "ssh",
+  "args": [
+   "hostpc",
+   "cd /d C:\\Users\\user && node - fx1430r2-final-B"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:42:58.653Z",
+  "host": "laptop",
+  "by": 2812,
+  "event": "exit",
+  "pid": 2997,
+  "code": 0,
+  "sig": null
+ }
+]

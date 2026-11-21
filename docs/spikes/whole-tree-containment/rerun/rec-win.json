@@ -1,0 +1,1030 @@
+[
+ {
+  "t": "2026-11-20T16:35:16.294Z",
+  "host": "hostpc",
+  "by": 30476,
+  "event": "self",
+  "pid": 30476,
+  "ppid": 37200,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\driver-win.cjs"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:16.304Z",
+  "host": "hostpc",
+  "by": 30476,
+  "event": "spawn",
+  "pid": 19668,
+  "cmd": "C:\\Program Files\\nodejs\\node.exe",
+  "args": [
+   "C:\\Users\\USER\\1430-r2\\supervisor-win.cjs",
+   "e1",
+   "fx1430-xr1-sup",
+   "C:\\Users\\USER\\1430-r2\\d-xr1"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:16.328Z",
+  "host": "hostpc",
+  "by": 19668,
+  "event": "self",
+  "pid": 19668,
+  "ppid": 30476,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\supervisor-win.cjs",
+   "e1",
+   "fx1430-xr1-sup",
+   "C:\\Users\\USER\\1430-r2\\d-xr1"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:16.338Z",
+  "host": "hostpc",
+  "by": 19668,
+  "event": "spawn",
+  "pid": 21364,
+  "cmd": "C:\\Program Files\\nodejs\\node.exe",
+  "args": [
+   "C:\\Users\\USER\\1430-r2\\fixture-win.cjs",
+   "fx1430-xr1-root"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:16.358Z",
+  "host": "hostpc",
+  "by": 21364,
+  "event": "self",
+  "pid": 21364,
+  "ppid": 19668,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\fixture-win.cjs",
+   "fx1430-xr1-root"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:16.363Z",
+  "host": "hostpc",
+  "by": 21364,
+  "event": "spawn",
+  "pid": 26396,
+  "cmd": "C:\\Program Files\\nodejs\\node.exe",
+  "args": [
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr1-M1",
+   "M1"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:16.364Z",
+  "host": "hostpc",
+  "by": 21364,
+  "event": "spawn",
+  "pid": 11096,
+  "cmd": "C:\\Program Files\\nodejs\\node.exe",
+  "args": [
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr1-M3",
+   "leaf"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:16.366Z",
+  "host": "hostpc",
+  "by": 21364,
+  "event": "spawn",
+  "pid": 19692,
+  "cmd": "cmd.exe",
+  "args": [
+   "/d /c start \"\" /b \"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\USER\\1430-r2\\member-win.cjs\" fx1430-xr1-M4 leaf"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:16.367Z",
+  "host": "hostpc",
+  "by": 21364,
+  "event": "spawn",
+  "pid": 37344,
+  "cmd": "C:\\Program Files\\nodejs\\node.exe",
+  "args": [
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr1-M6",
+   "M6"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:16.383Z",
+  "host": "hostpc",
+  "by": 21364,
+  "event": "exit",
+  "pid": 19692,
+  "code": 0,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:35:16.387Z",
+  "host": "hostpc",
+  "by": 11096,
+  "event": "self",
+  "pid": 11096,
+  "ppid": 21364,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr1-M3",
+   "leaf"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:16.388Z",
+  "host": "hostpc",
+  "by": 37344,
+  "event": "self",
+  "pid": 37344,
+  "ppid": 21364,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr1-M6",
+   "M6"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:16.395Z",
+  "host": "hostpc",
+  "by": 26396,
+  "event": "self",
+  "pid": 26396,
+  "ppid": 21364,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr1-M1",
+   "M1"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:16.398Z",
+  "host": "hostpc",
+  "by": 26396,
+  "event": "spawn",
+  "pid": 9876,
+  "cmd": "C:\\Program Files\\nodejs\\node.exe",
+  "args": [
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr1-M2",
+   "leaf"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:16.404Z",
+  "host": "hostpc",
+  "by": 23192,
+  "event": "self",
+  "pid": 23192,
+  "ppid": 19692,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr1-M4",
+   "leaf"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:16.420Z",
+  "host": "hostpc",
+  "by": 9876,
+  "event": "self",
+  "pid": 9876,
+  "ppid": 26396,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr1-M2",
+   "leaf"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:21.717Z",
+  "host": "hostpc",
+  "by": 19668,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:35:21.346Z",
+  "pid": 35040,
+  "cmd": "powershell.exe",
+  "args": [
+   "-NoProfile",
+   "-NonInteractive",
+   "-Command",
+   "Get-CimInstance Win32_Process -Filter \"CommandLine like '%fx1430-xr1-%'\" | Select-Object ProcessId,ParentProcessId,SessionId,CommandLine | ConvertTo-Json -Compress"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:35:22.121Z",
+  "host": "hostpc",
+  "by": 19668,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:35:21.718Z",
+  "pid": 8752,
+  "cmd": "powershell.exe",
+  "args": [
+   "-NoProfile",
+   "-NonInteractive",
+   "-Command",
+   "Get-CimInstance Win32_Process -Filter \"ProcessId=1284 OR ProcessId=11096 OR ProcessId=37344 OR ProcessId=12140 OR ProcessId=23192 OR ProcessId=21364 OR ProcessId=26396 OR ProcessId=9876\" | Select-Object ProcessId,ParentProcessId,Name | ConvertTo-Json -Compress"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:35:22.139Z",
+  "host": "hostpc",
+  "by": 19668,
+  "event": "exit",
+  "pid": 21364,
+  "code": 1,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:35:34.484Z",
+  "host": "hostpc",
+  "by": 19668,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:35:34.134Z",
+  "pid": 22776,
+  "cmd": "powershell.exe",
+  "args": [
+   "-NoProfile",
+   "-NonInteractive",
+   "-Command",
+   "Get-CimInstance Win32_Process -Filter \"CommandLine like '%fx1430-xr1-%'\" | Select-Object ProcessId,ParentProcessId,SessionId,CommandLine | ConvertTo-Json -Compress"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:35:34.489Z",
+  "host": "hostpc",
+  "by": 30476,
+  "event": "exit",
+  "pid": 19668,
+  "code": 0,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:35:34.837Z",
+  "host": "hostpc",
+  "by": 30476,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:35:34.490Z",
+  "pid": 12876,
+  "cmd": "powershell.exe",
+  "args": [
+   "-NoProfile",
+   "-NonInteractive",
+   "-Command",
+   "Get-CimInstance Win32_Process -Filter \"CommandLine like '%fx1430-xr1-%'\" | Select-Object ProcessId,ParentProcessId,SessionId,CommandLine | ConvertTo-Json -Compress"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:35:36.752Z",
+  "host": "hostpc",
+  "by": 30476,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:35:36.349Z",
+  "pid": 36928,
+  "cmd": "powershell.exe",
+  "args": [
+   "-NoProfile",
+   "-NonInteractive",
+   "-Command",
+   "Get-CimInstance Win32_Process -Filter \"CommandLine like '%fx1430-xr1-%'\" | Select-Object ProcessId,ParentProcessId,SessionId,CommandLine | ConvertTo-Json -Compress"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:35:36.755Z",
+  "host": "hostpc",
+  "by": 30476,
+  "event": "spawn",
+  "pid": 36852,
+  "cmd": "C:\\Program Files\\nodejs\\node.exe",
+  "args": [
+   "C:\\Users\\USER\\1430-r2\\supervisor-win.cjs",
+   "e2k",
+   "fx1430-xr2-sup",
+   "C:\\Users\\USER\\1430-r2\\d-xr2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:36.777Z",
+  "host": "hostpc",
+  "by": 36852,
+  "event": "self",
+  "pid": 36852,
+  "ppid": 30476,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\supervisor-win.cjs",
+   "e2k",
+   "fx1430-xr2-sup",
+   "C:\\Users\\USER\\1430-r2\\d-xr2"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:36.787Z",
+  "host": "hostpc",
+  "by": 36852,
+  "event": "spawn",
+  "pid": 36636,
+  "cmd": "C:\\Program Files\\nodejs\\node.exe",
+  "args": [
+   "C:\\Users\\USER\\1430-r2\\fixture-win.cjs",
+   "fx1430-xr2-root"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:36.809Z",
+  "host": "hostpc",
+  "by": 36636,
+  "event": "self",
+  "pid": 36636,
+  "ppid": 36852,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\fixture-win.cjs",
+   "fx1430-xr2-root"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:36.813Z",
+  "host": "hostpc",
+  "by": 36636,
+  "event": "spawn",
+  "pid": 21020,
+  "cmd": "C:\\Program Files\\nodejs\\node.exe",
+  "args": [
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr2-M1",
+   "M1"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:36.815Z",
+  "host": "hostpc",
+  "by": 36636,
+  "event": "spawn",
+  "pid": 35108,
+  "cmd": "C:\\Program Files\\nodejs\\node.exe",
+  "args": [
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr2-M3",
+   "leaf"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:36.817Z",
+  "host": "hostpc",
+  "by": 36636,
+  "event": "spawn",
+  "pid": 28404,
+  "cmd": "cmd.exe",
+  "args": [
+   "/d /c start \"\" /b \"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\USER\\1430-r2\\member-win.cjs\" fx1430-xr2-M4 leaf"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:36.818Z",
+  "host": "hostpc",
+  "by": 36636,
+  "event": "spawn",
+  "pid": 30104,
+  "cmd": "C:\\Program Files\\nodejs\\node.exe",
+  "args": [
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr2-M6",
+   "M6"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:36.833Z",
+  "host": "hostpc",
+  "by": 36636,
+  "event": "exit",
+  "pid": 28404,
+  "code": 0,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:35:36.836Z",
+  "host": "hostpc",
+  "by": 35108,
+  "event": "self",
+  "pid": 35108,
+  "ppid": 36636,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr2-M3",
+   "leaf"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:36.839Z",
+  "host": "hostpc",
+  "by": 30104,
+  "event": "self",
+  "pid": 30104,
+  "ppid": 36636,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr2-M6",
+   "M6"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:36.847Z",
+  "host": "hostpc",
+  "by": 21020,
+  "event": "self",
+  "pid": 21020,
+  "ppid": 36636,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr2-M1",
+   "M1"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:36.850Z",
+  "host": "hostpc",
+  "by": 21020,
+  "event": "spawn",
+  "pid": 34772,
+  "cmd": "C:\\Program Files\\nodejs\\node.exe",
+  "args": [
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr2-M2",
+   "leaf"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:36.854Z",
+  "host": "hostpc",
+  "by": 25500,
+  "event": "self",
+  "pid": 25500,
+  "ppid": 28404,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr2-M4",
+   "leaf"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:36.871Z",
+  "host": "hostpc",
+  "by": 34772,
+  "event": "self",
+  "pid": 34772,
+  "ppid": 21020,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr2-M2",
+   "leaf"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:42.147Z",
+  "host": "hostpc",
+  "by": 36852,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:35:41.794Z",
+  "pid": 34516,
+  "cmd": "powershell.exe",
+  "args": [
+   "-NoProfile",
+   "-NonInteractive",
+   "-Command",
+   "Get-CimInstance Win32_Process -Filter \"CommandLine like '%fx1430-xr2-%'\" | Select-Object ProcessId,ParentProcessId,SessionId,CommandLine | ConvertTo-Json -Compress"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:35:42.506Z",
+  "host": "hostpc",
+  "by": 36852,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:35:42.148Z",
+  "pid": 27704,
+  "cmd": "powershell.exe",
+  "args": [
+   "-NoProfile",
+   "-NonInteractive",
+   "-Command",
+   "Get-CimInstance Win32_Process -Filter \"ProcessId=35108 OR ProcessId=3996 OR ProcessId=30104 OR ProcessId=19052 OR ProcessId=25500 OR ProcessId=36636 OR ProcessId=21020 OR ProcessId=34772\" | Select-Object ProcessId,ParentProcessId,Name | ConvertTo-Json -Compress"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:35:42.681Z",
+  "host": "hostpc",
+  "by": 30476,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:35:42.519Z",
+  "pid": 29656,
+  "cmd": "taskkill",
+  "args": [
+   "/F",
+   "/PID",
+   "36852"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:35:42.684Z",
+  "host": "hostpc",
+  "by": 30476,
+  "event": "exit",
+  "pid": 36852,
+  "code": 1,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:35:54.725Z",
+  "host": "hostpc",
+  "by": 33244,
+  "event": "self",
+  "pid": 33244,
+  "ppid": 30476,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\winlist.cjs",
+   "xr2",
+   ""
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:55.105Z",
+  "host": "hostpc",
+  "by": 33244,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:35:54.726Z",
+  "pid": 21924,
+  "cmd": "powershell.exe",
+  "args": [
+   "-NoProfile",
+   "-NonInteractive",
+   "-Command",
+   "Get-CimInstance Win32_Process -Filter \"CommandLine like '%fx1430-xr2-%'\" | Select-Object ProcessId,ParentProcessId,SessionId,CommandLine | ConvertTo-Json -Compress"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:35:55.111Z",
+  "host": "hostpc",
+  "by": 30476,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:35:54.688Z",
+  "pid": 33244,
+  "cmd": "C:\\Program Files\\nodejs\\node.exe",
+  "args": [
+   "C:\\Users\\USER\\1430-r2\\winlist.cjs",
+   "xr2",
+   ""
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:35:55.490Z",
+  "host": "hostpc",
+  "by": 30476,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:35:55.111Z",
+  "pid": 37484,
+  "cmd": "powershell.exe",
+  "args": [
+   "-NoProfile",
+   "-NonInteractive",
+   "-Command",
+   "Get-CimInstance Win32_Process -Filter \"CommandLine like '%fx1430-xr2-%'\" | Select-Object ProcessId,ParentProcessId,SessionId,CommandLine | ConvertTo-Json -Compress"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:35:57.361Z",
+  "host": "hostpc",
+  "by": 30476,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:35:56.994Z",
+  "pid": 18024,
+  "cmd": "powershell.exe",
+  "args": [
+   "-NoProfile",
+   "-NonInteractive",
+   "-Command",
+   "Get-CimInstance Win32_Process -Filter \"CommandLine like '%fx1430-xr2-%'\" | Select-Object ProcessId,ParentProcessId,SessionId,CommandLine | ConvertTo-Json -Compress"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:35:57.364Z",
+  "host": "hostpc",
+  "by": 30476,
+  "event": "spawn",
+  "pid": 35400,
+  "cmd": "C:\\Program Files\\nodejs\\node.exe",
+  "args": [
+   "C:\\Users\\USER\\1430-r2\\supervisor-win.cjs",
+   "e2n",
+   "fx1430-xr3-sup",
+   "C:\\Users\\USER\\1430-r2\\d-xr3"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:57.385Z",
+  "host": "hostpc",
+  "by": 35400,
+  "event": "self",
+  "pid": 35400,
+  "ppid": 30476,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\supervisor-win.cjs",
+   "e2n",
+   "fx1430-xr3-sup",
+   "C:\\Users\\USER\\1430-r2\\d-xr3"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:57.394Z",
+  "host": "hostpc",
+  "by": 35400,
+  "event": "spawn",
+  "pid": 17704,
+  "cmd": "C:\\Program Files\\nodejs\\node.exe",
+  "args": [
+   "C:\\Users\\USER\\1430-r2\\fixture-win.cjs",
+   "fx1430-xr3-root"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:57.416Z",
+  "host": "hostpc",
+  "by": 17704,
+  "event": "self",
+  "pid": 17704,
+  "ppid": 35400,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\fixture-win.cjs",
+   "fx1430-xr3-root"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:57.420Z",
+  "host": "hostpc",
+  "by": 17704,
+  "event": "spawn",
+  "pid": 10868,
+  "cmd": "C:\\Program Files\\nodejs\\node.exe",
+  "args": [
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr3-M1",
+   "M1"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:57.422Z",
+  "host": "hostpc",
+  "by": 17704,
+  "event": "spawn",
+  "pid": 19128,
+  "cmd": "C:\\Program Files\\nodejs\\node.exe",
+  "args": [
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr3-M3",
+   "leaf"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:57.423Z",
+  "host": "hostpc",
+  "by": 17704,
+  "event": "spawn",
+  "pid": 21332,
+  "cmd": "cmd.exe",
+  "args": [
+   "/d /c start \"\" /b \"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\USER\\1430-r2\\member-win.cjs\" fx1430-xr3-M4 leaf"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:57.425Z",
+  "host": "hostpc",
+  "by": 17704,
+  "event": "spawn",
+  "pid": 17556,
+  "cmd": "C:\\Program Files\\nodejs\\node.exe",
+  "args": [
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr3-M6",
+   "M6"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:57.440Z",
+  "host": "hostpc",
+  "by": 17704,
+  "event": "exit",
+  "pid": 21332,
+  "code": 0,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:35:57.444Z",
+  "host": "hostpc",
+  "by": 19128,
+  "event": "self",
+  "pid": 19128,
+  "ppid": 17704,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr3-M3",
+   "leaf"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:57.448Z",
+  "host": "hostpc",
+  "by": 17556,
+  "event": "self",
+  "pid": 17556,
+  "ppid": 17704,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr3-M6",
+   "M6"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:57.454Z",
+  "host": "hostpc",
+  "by": 10868,
+  "event": "self",
+  "pid": 10868,
+  "ppid": 17704,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr3-M1",
+   "M1"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:57.457Z",
+  "host": "hostpc",
+  "by": 10868,
+  "event": "spawn",
+  "pid": 29192,
+  "cmd": "C:\\Program Files\\nodejs\\node.exe",
+  "args": [
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr3-M2",
+   "leaf"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:57.460Z",
+  "host": "hostpc",
+  "by": 26720,
+  "event": "self",
+  "pid": 26720,
+  "ppid": 21332,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr3-M4",
+   "leaf"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:35:57.478Z",
+  "host": "hostpc",
+  "by": 29192,
+  "event": "self",
+  "pid": 29192,
+  "ppid": 10868,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\member-win.cjs",
+   "fx1430-xr3-M2",
+   "leaf"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:36:02.817Z",
+  "host": "hostpc",
+  "by": 35400,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:36:02.399Z",
+  "pid": 16664,
+  "cmd": "powershell.exe",
+  "args": [
+   "-NoProfile",
+   "-NonInteractive",
+   "-Command",
+   "Get-CimInstance Win32_Process -Filter \"CommandLine like '%fx1430-xr3-%'\" | Select-Object ProcessId,ParentProcessId,SessionId,CommandLine | ConvertTo-Json -Compress"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:36:03.150Z",
+  "host": "hostpc",
+  "by": 35400,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:36:02.818Z",
+  "pid": 1032,
+  "cmd": "powershell.exe",
+  "args": [
+   "-NoProfile",
+   "-NonInteractive",
+   "-Command",
+   "Get-CimInstance Win32_Process -Filter \"ProcessId=19128 OR ProcessId=37320 OR ProcessId=17556 OR ProcessId=21196 OR ProcessId=26720 OR ProcessId=17704 OR ProcessId=10868 OR ProcessId=29192\" | Select-Object ProcessId,ParentProcessId,Name | ConvertTo-Json -Compress"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:36:03.340Z",
+  "host": "hostpc",
+  "by": 30476,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:36:03.186Z",
+  "pid": 37292,
+  "cmd": "taskkill",
+  "args": [
+   "/F",
+   "/PID",
+   "35400"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:36:03.340Z",
+  "host": "hostpc",
+  "by": 30476,
+  "event": "exit",
+  "pid": 35400,
+  "code": 1,
+  "sig": null
+ },
+ {
+  "t": "2026-11-20T16:36:15.387Z",
+  "host": "hostpc",
+  "by": 26888,
+  "event": "self",
+  "pid": 26888,
+  "ppid": 30476,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\winlist.cjs",
+   "xr3",
+   "terminate"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:36:15.720Z",
+  "host": "hostpc",
+  "by": 26888,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:36:15.388Z",
+  "pid": 11392,
+  "cmd": "powershell.exe",
+  "args": [
+   "-NoProfile",
+   "-NonInteractive",
+   "-Command",
+   "Get-CimInstance Win32_Process -Filter \"CommandLine like '%fx1430-xr3-%'\" | Select-Object ProcessId,ParentProcessId,SessionId,CommandLine | ConvertTo-Json -Compress"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:36:15.726Z",
+  "host": "hostpc",
+  "by": 30476,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:36:15.351Z",
+  "pid": 26888,
+  "cmd": "C:\\Program Files\\nodejs\\node.exe",
+  "args": [
+   "C:\\Users\\USER\\1430-r2\\winlist.cjs",
+   "xr3",
+   "terminate"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:36:25.782Z",
+  "host": "hostpc",
+  "by": 12844,
+  "event": "self",
+  "pid": 12844,
+  "ppid": 30476,
+  "argv": [
+   "C:\\Program Files\\nodejs\\node.exe",
+   "C:\\Users\\USER\\1430-r2\\winlist.cjs",
+   "xr3"
+  ]
+ },
+ {
+  "t": "2026-11-20T16:36:26.133Z",
+  "host": "hostpc",
+  "by": 12844,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:36:25.783Z",
+  "pid": 34348,
+  "cmd": "powershell.exe",
+  "args": [
+   "-NoProfile",
+   "-NonInteractive",
+   "-Command",
+   "Get-CimInstance Win32_Process -Filter \"CommandLine like '%fx1430-xr3-%'\" | Select-Object ProcessId,ParentProcessId,SessionId,CommandLine | ConvertTo-Json -Compress"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:36:26.140Z",
+  "host": "hostpc",
+  "by": 30476,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:36:25.741Z",
+  "pid": 12844,
+  "cmd": "C:\\Program Files\\nodejs\\node.exe",
+  "args": [
+   "C:\\Users\\USER\\1430-r2\\winlist.cjs",
+   "xr3"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:36:26.471Z",
+  "host": "hostpc",
+  "by": 30476,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:36:26.140Z",
+  "pid": 14676,
+  "cmd": "powershell.exe",
+  "args": [
+   "-NoProfile",
+   "-NonInteractive",
+   "-Command",
+   "Get-CimInstance Win32_Process -Filter \"CommandLine like '%fx1430-xr3-%'\" | Select-Object ProcessId,ParentProcessId,SessionId,CommandLine | ConvertTo-Json -Compress"
+  ],
+  "status": 0,
+  "signal": null
+ },
+ {
+  "t": "2026-11-20T16:36:28.398Z",
+  "host": "hostpc",
+  "by": 30476,
+  "event": "spawnSync",
+  "started": "2026-11-20T16:36:27.984Z",
+  "pid": 29184,
+  "cmd": "powershell.exe",
+  "args": [
+   "-NoProfile",
+   "-NonInteractive",
+   "-Command",
+   "Get-CimInstance Win32_Process -Filter \"CommandLine like '%fx1430-xr3-%'\" | Select-Object ProcessId,ParentProcessId,SessionId,CommandLine | ConvertTo-Json -Compress"
+  ],
+  "status": 0,
+  "signal": null
+ }
+]
