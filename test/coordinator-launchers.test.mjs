@@ -111,21 +111,23 @@ test('codex-judge.sh writes a prompt naming suite-slot.sh by the absolute path o
  * least as long, indented at most three spaces, with nothing after it but spaces or tabs; every
  * line inside an open fence is content, and a fence never closed runs to the end. Each block names
  * the line it opens on (`at`), the line it closes on (`end`, or `lines.length` where it never
- * closes), its run (`mark`) and its info string (`info`).
+ * closes), its run (`mark`) and its info string (`info`). Each line is read as the gate reads a fence
+ * line, after trimEnd() (src/workflow/marker.mjs, `parseMarker`), so trailing whitespace of any
+ * kind, a carriage return included, never decides whether a line opens or closes a fence.
  */
 function fencedBlocks(lines) {
   const blocks = [];
   let open = null;
   for (let at = 0; at < lines.length; at += 1) {
     if (open !== null) {
-      const run = /^ {0,3}(`{3,}|~{3,})[ \t]*$/.exec(lines[at])?.[1];
+      const run = /^ {0,3}(`{3,}|~{3,})$/.exec(lines[at].trimEnd())?.[1];
       if (run !== undefined && run[0] === open.mark[0] && run.length >= open.mark.length) {
         open.end = at;
         open = null;
       }
       continue;
     }
-    const opener = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(lines[at]);
+    const opener = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(lines[at].trimEnd());
     if (opener === null || (opener[1][0] === '`' && opener[2].includes('`'))) continue;
     open = { at, end: lines.length, mark: opener[1], info: opener[2].trim() };
     blocks.push(open);
@@ -140,9 +142,13 @@ function topLevel(lines) {
   return lines.map((_, at) => at).filter((at) => !inside.has(at));
 }
 
-/** The lines under the prompt's "## Post" heading, up to the next "## " heading, both outside every fenced block. */
+/**
+ * The lines under the prompt's "## Post" heading, up to the next "## " heading, both outside every
+ * fenced block. Lines split on LF or CRLF, as `parseMarker` splits a comment, so a lone CR is no
+ * line break.
+ */
 function postSection(prompt) {
-  const lines = prompt.split('\n');
+  const lines = prompt.split(/\r?\n/);
   const outside = topLevel(lines);
   const start = outside.find((at) => lines[at].trimEnd() === '## Post');
   if (start === undefined) return [];
@@ -166,7 +172,7 @@ test('codex-judge.sh hands codex a prompt placing the marker block on the verdic
   const examples = fencedBlocks(post)
     .filter((block) => block.mark === '````' && block.end < post.length && post[block.end].trimEnd() === '````')
     .map((block) => post.slice(block.at + 1, block.end))
-    .filter((inside) => inside.includes('```rigger-marker'));
+    .filter((inside) => inside.some((line) => line.trimEnd() === '```rigger-marker'));
   const broken = [];
   if (examples.length !== 1) broken.push(`E1: the Post section holds ${examples.length} four-backtick blocks with a \`\`\`rigger-marker line, not exactly one`);
   else {
