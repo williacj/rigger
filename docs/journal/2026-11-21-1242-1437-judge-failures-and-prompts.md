@@ -83,3 +83,25 @@ and asserts that only the reviewer dispatches initially. In the local guarded ch
 unchanged source passed, removing the failure-role comparison produced one named assertion
 failure, and byte-exact restoration passed again. The rejected/surviving earlier attempts
 remain retained; the final receipt must reproduce this assertion at the committed head.
+
+Preflight at d811845e36c7 exited 1 because nine new B cases armed L0's native timers.
+The logical loop clock alone did not replace the OS host clock. The new fresh-invocation
+fixture now lends that same injected clock to L0 for the awaited invocation and restores it
+in finally. The timeout helper uses that fixture rather than a second host-clock override.
+The selected rerun measured 17 tests, 17 passes, exit 0 at start load 4.20 and end load 4.58;
+the retained timer record reports no positive native timer arms for these new cases.
+
+The first preflight also launched its title-listing subprocesses with bare node --test.
+Their listing output is consumed by the check; their full original runner output was not
+retained. That attempt remains missing evidence and is not claimed compliant with the maker
+brief. A private capture adapter will run the same unfiltered listing jobs through npm test,
+retain both listing and full spec reporters, and return the unchanged listing to preflight.
+It changes no repository check or acceptance. This outside-scope tooling finding goes to the
+coordinator. The full preflight must pass again at the final head.
+
+The clock-fixture commit hook stopped on self-hosting-check.test.mjs:388 with an unsettled
+top-level await; its suite measured tests=6018, pass=6017, fail=1, exit 1. Coordinator comment
+7069258595 classifies this as the outside-diff load flake in #1317's family and authorizes
+continuation. The required isolated rerun on 2026-11-21 passed: tests=1, pass=1, fail=0,
+exit 0; start/end load 8.32, user processes 556. Full output is
+1437-self-hosting-resumed.log; the PR quotes both attempts. No root-cause card was mutated.
