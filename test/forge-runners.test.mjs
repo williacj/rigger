@@ -19,6 +19,8 @@ import { itemWriteSide } from '../src/substrate/forge/item-write.mjs';
 import { dirname } from 'node:path';
 import { repositoryReads } from '../src/substrate/forge/read.mjs';
 import { GH_MINIMUM, readGhVersion } from '../src/substrate/forge/read.mjs';
+import { ghVersion } from '../src/cli/doctor.mjs';
+import { stubGh } from './stub-gh.mjs';
 import { UNKILLED } from './process-fixtures.mjs';
 
 /**
@@ -431,6 +433,31 @@ test("the forge adapter's version read is the release on real gh's own first lin
     assert.equal(help.exit, 0, help.stderr);
     assert.match(help.stdout + help.stderr, /--allow-escape-sequences/, `gh ${read.version} reaches ${GH_MINIMUM} and its \`gh api --help\` lists no --allow-escape-sequences`);
   }
+});
+
+// Host reason: wiring; doctor's version check must reach a gh on the path through the read runner's spawn under L0, which only a real spawn records.
+// Rigger decision: none; this observes which spawn carries the check's call, a route no decision of Rigger's selects.
+test('the gh version check reaches gh only through the forge read runner, which records the read as a forge call', async () => {
+  // The defect this catches is a version check that spawns gh by a route of its own, around the
+  // read runner's allowlist. Only the forge adapter's runner records a forge `call.end` on its
+  // side (`ARCHITECTURE.md`, "L0's call events"), so a gh reached any other way leaves none,
+  // whatever the report says. The gh asked is a stand-in first on the path the spawn searches.
+  // `gh --version` as gh 2.103.3 answered it on macOS on 2026-11-21 (#1448, "Measured").
+  const gh = stubGh({ status: 0, stdout: 'gh version 2.103.3 (2026-10-26)\nhttps://github.com/cli/cli/releases/tag/v2.103.3\n', stderr: '' });
+  const events = [];
+  const emitter = { emit: (event, fields) => { events.push({ event, ...fields }); } };
+  const held = process.env.PATH;
+  process.env.PATH = gh.first();
+  let line;
+  try {
+    line = await ghVersion({ emitter });
+  } finally {
+    process.env.PATH = held;
+  }
+  assert.equal(line.ok, true, line.detail);
+  assert.deepEqual(gh.calls(), ['--version']);
+  const calls = events.filter(({ event }) => event === 'call.end').map(({ system, side, outcome }) => ({ system, side, outcome }));
+  assert.deepEqual(calls, [{ system: 'forge', side: 'read', outcome: 'ok' }]);
 });
 
 test('the read runner admits a `gh api <path>` form only where gh itself sends it as a GET with no body', async (t) => {

@@ -474,28 +474,6 @@ test("the gh version line's detail names what #1448's version boundary asks of e
   }
 });
 
-test('the gh version check reaches gh only through the forge read runner, which records the read as a forge call', async () => {
-  // The defect this catches is a version check that spawns gh by a route of its own, around the
-  // read runner's allowlist. Only the forge adapter's runner records a forge `call.end` on its
-  // side (`ARCHITECTURE.md`, "L0's call events"), so a gh reached any other way leaves none,
-  // whatever the report says. The gh asked is a stand-in first on the path the spawn searches.
-  const gh = stubGh(RECORDED.ghVersion);
-  const events = [];
-  const emitter = { emit: (event, fields) => { events.push({ event, ...fields }); } };
-  const held = process.env.PATH;
-  process.env.PATH = gh.first();
-  let line;
-  try {
-    line = await ghVersion({ emitter });
-  } finally {
-    process.env.PATH = held;
-  }
-  assert.equal(line.ok, true, line.detail);
-  assert.deepEqual(gh.calls(), ['--version']);
-  const calls = events.filter(({ event }) => event === 'call.end').map(({ system, side, outcome }) => ({ system, side, outcome }));
-  assert.deepEqual(calls, [{ system: 'forge', side: 'read', outcome: 'ok' }]);
-});
-
 test("the gh version line comes once, after the Node line and before the gh sign-in line, and fails doctor's status below the minimum", async () => {
   // #1448: gh 2.96.0 fails the whole run, and 2.97.0 passes it where every other check passes.
   // The defects this catches: the line missing or doubled, placed where a consumer reading the
