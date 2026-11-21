@@ -13,6 +13,57 @@ import { GATE_CONTEXT, gateAnswer } from './gate.mjs';
 import { acceptanceDigest, evidenceDigest, markerInstruction, readMarkers, WRITERS } from './marker.mjs';
 import { failed, kindOf, panelOf, selectedSteps, stepAnswer, tierOf } from './next-action.mjs';
 import { failedAttempt, recordingHalt } from './next-action.mjs';
+import { dispatched } from './marker.mjs';
+import { ADAPTERS } from '../substrate/providers/adapters.mjs';
+
+/** L2 fills the minted id before preparing the prompt the provider's adapter will receive. */
+export function preparedJudge(card, kinds, epicLabel, { judge, id }, options) {
+  const full = dispatched(judge, id);
+  const limit = ADAPTERS[judge.provider]?.promptLimit;
+  if (limit === undefined || Buffer.byteLength(full.instruction + full.evidence, 'utf8') <= limit) return { action: 'judge', judges: [full] };
+  const paths = changedPaths(card.forge.diff.value);
+  const diff = `Changed lines were omitted because the prompt exceeded the provider's limit of ${limit} UTF-8 bytes.\nChanged paths:\n${paths.map((path) => JSON.stringify(path)).join('\n')}`;
+  const { judges, ...next } = judgeAnswer({ ...card, forge: { ...card.forge, diff: { status: 'fulfilled', value: diff } } }, kinds, epicLabel, options);
+  const bounded = dispatched(judges.find((each) => each.role === judge.role), id);
+  if (Buffer.byteLength(bounded.instruction + bounded.evidence, 'utf8') > limit) return {
+    action: 'escalate', category: 'ambiguous', raiser: 'loop', pull: judge.facts.pull, head: judge.facts.head, from: card.forge.stage,
+    reason: `Judge ${judge.role}'s prompt still exceeds its provider's limit of ${limit} UTF-8 bytes with changed paths in place of changed lines.`,
+  };
+  return { ...next, judges: [bounded] };
+}
+
+/** Git quotes control characters and UTF-8 bytes with C escapes; JSON does not read its octal escapes. */
+function gitPath(text) {
+  if (!text.startsWith('"')) return text;
+  const escaped = { a: 7, b: 8, f: 12, n: 10, r: 13, t: 9, v: 11, '"': 34, '\\': 92 };
+  const bytes = [...text.slice(1, -1).matchAll(/\\([0-7]{1,3}|.)|([^\\]+)/g)].map(([, escape, plain]) => plain !== undefined
+    ? Buffer.from(plain, 'utf8') : Buffer.from([/^[0-7]/.test(escape) ? parseInt(escape, 8) : escaped[escape]]));
+  return Buffer.concat(bytes).toString('utf8');
+}
+
+/** Diff metadata names both rename paths and deleted files; binary/mode-only changes need the header. */
+function changedPaths(diff) {
+  const paths = new Set();
+  for (const block of diff.split(/^diff --git /m).slice(1)) {
+    const [header, ...lines] = block.split('\n');
+    const metadata = [];
+    for (const line of lines) {
+      if (/^@@|^GIT binary patch/.test(line)) break;
+      const renamed = /^(?:rename|copy) (?:from|to) (.*)$/.exec(line);
+      const file = /^(?:---|\+\+\+) (.*?)(?:\t.*)?$/.exec(line);
+      if (renamed) metadata.push(gitPath(renamed[1]));
+      if (file && file[1] !== '/dev/null') metadata.push(gitPath(file[1]).slice(2));
+    }
+    if (metadata.length > 0) { for (const path of metadata) paths.add(path); continue; }
+    // Unquoted equal paths can themselves contain " b/"; split at the equal halves first.
+    const length = (header.length - 5) / 2;
+    const same = header.slice(2, 2 + length);
+    if (header === `a/${same} b/${same}`) { paths.add(same); continue; }
+    const pair = /^("(?:\\.|[^"\\])*"|a\/.*?) ("(?:\\.|[^"\\])*"|b\/.*)$/.exec(header);
+    if (pair) for (const path of pair.slice(1)) paths.add(gitPath(path).slice(2));
+  }
+  return [...paths];
+}
 
 /** What each read of a Review card's facts the judge answer uses reads, as its failure names it. */
 const READS = {
@@ -51,6 +102,32 @@ function record(sink, card, name, fields, what, dispatch) {
   } catch (refusal) {
     throw recordingHalt(`card #${card.number}'s ${what}, and the event sink refused to record it, so L2 answers no action: ${refusal.message}`, refusal);
   }
+}
+
+/** L2 records a started judge's failure after L3 obtains the settle read under its claim. */
+export function settledJudge(card, { judge, outcome, comments, record: history }, sink) {
+  if (comments.status !== 'fulfilled') return { action: 'ignore' };
+  const { role, facts: { pull, head, revision: digest } } = judge;
+  const round = { card: card.number, pull, head, digest, count: acceptanceItems(card.body).length };
+  const { governing } = readMarkers(comments.value, round);
+  const verdict = governing.get(role);
+  const readable = stateOf(verdict, judge.provider) !== 'owed';
+  const result = outcome.status === 'fulfilled' ? outcome.value : outcome.reason?.result;
+  const failed = result !== undefined && (result.timedOut || !readable);
+  if (failed) {
+    record(sink, card, 'judge.failed', { role, pull, head, digest,
+      outcome: { exit: result.exit, timedOut: result.timedOut ?? false } },
+    `judge ${role}'s dispatch failed`, outcome.dispatch);
+  }
+  if (verdict !== undefined) markerRead(sink, card, { number: pull }, round, role, verdict);
+  if (failed && !readable && history?.status === 'fulfilled') {
+    const reset = history.value.findLastIndex((event) => event.event === 'review.escalate' || (event.event === 'marker.read' && event.role === role && event.head === head && event.digest === digest
+      && event.provider === judge.provider && !event.edited && event.verdict !== null && event.reason === undefined));
+    const failures = history.value.slice(reset + 1).filter((event) => event.event === 'judge.failed' && event.role === role && event.head === head && event.digest === digest);
+    if (failures.length > 0) return { action: 'escalate', category: 'ambiguous', raiser: 'loop', pull, head,
+      reason: `Judge ${role} failed twice at head ${head}, acceptance ${digest}: dispatches ${failures.at(-1).dispatch} and ${outcome.dispatch}.` };
+  }
+  return { action: 'ignore' };
 }
 
 /**

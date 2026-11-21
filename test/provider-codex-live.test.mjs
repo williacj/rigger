@@ -547,6 +547,28 @@ test('a repository Codex declaration through L1 permits /bin/ps with the maker g
   linkHolds(handed.env.CODEX_HOME, process.env.CODEX_HOME || join(homedir(), '.codex'));
 });
 
+// Host reason: wiring; the installed Codex CLI owns its input refusal, with no decision Rigger makes.
+test('1437: the installed Codex invocation refuses 1048577 ASCII bytes as input_too_large', { skip, timeout: SESSION }, async (t) => {
+  realCodex(t);
+  const base = scratch('rigger-codex-prompt-limit-');
+  const directory = repositoryAt(join(base, 'repository'), {
+    'agent.md': '# ABOUTME: Stops without running a command.\nRun no command.\n',
+    '.codex/config.toml': '# ABOUTME: Declares the live input-bound probe.\nsandbox_mode = "workspace-write"\n',
+  });
+  const made = join(base, 'scratch');
+  mkdirSync(made);
+  const prompt = 'x'.repeat(1048577);
+  assert.equal(prompt.length, 1048577);
+  assert.equal(Buffer.byteLength(prompt, 'utf8'), 1048577);
+  const ran = await session({ agent: join(directory, 'agent.md'), tier: 'standard', directory, scratch: made, prompt });
+  quote('1437 refusal', { date: new Date().toISOString(), bytes: Buffer.byteLength(prompt), exit: ran.result.exit, timedOut: ran.result.timedOut,
+    input_too_large: ran.result.stderr.includes('input_too_large') });
+  assert.equal(ran.result.timedOut, false, 'the CLI must refuse the input itself');
+  assert.notEqual(ran.result.exit, 0, 'an oversized input must be refused');
+  assert.match(ran.result.stderr.toString('utf8'), /input_too_large/);
+  linkHolds(ran.home, process.env.CODEX_HOME || join(homedir(), '.codex'));
+});
+
 /** The consumer's shipped Codex declaration, which each declared-tools fixture starts from. */
 const TEMPLATE = () => readFileSync(new URL('../templates/codex/config.toml', import.meta.url), 'utf8');
 

@@ -13,6 +13,7 @@ import { parse } from 'acorn';
 import { openSink, readEvents, streamPath } from '../src/observation/sink.mjs';
 import { judgeAnswer } from '../src/workflow/judges.mjs';
 import * as judgeModule from '../src/workflow/judges.mjs';
+import { spentRounds } from './judge-world.mjs';
 import { composeMarker } from '../src/workflow/marker.mjs';
 import { parseMarker } from '../src/workflow/marker.mjs';
 import { nextAction } from '../src/workflow/next-action.mjs';
@@ -1597,4 +1598,215 @@ test('loop raiser on governing owner critical evidence', () => {
     action: 'escalate', category: 'critical', raiser: 'loop', destination: 'owner', pull: 70, head: HEAD,
     reason: 'owner (critical): Retain the failure evidence.',
   });
+});
+
+/** A settle at L2's public next-action boundary, using L1's documented result and forge comments. */
+function judgeSettle({ exit = 0, timedOut = false, comments = [], beforeComments = [], status = 'fulfilled', record = [], provider = 'claude' } = {}) {
+  const { sink, events } = sinkFor();
+  const given = card();
+  const selected = judge(answer(given, { roles: { ...ROLES, reviewer: { ...ROLES.reviewer, provider } } }), 'reviewer');
+  const outcome = status === 'fulfilled'
+    ? { ...exited(exit), value: { ...exited(exit).value, timedOut }, dispatch: 'd-settle' }
+    : { status: 'rejected', reason: status === 'record-refused'
+      ? Object.assign(new Error('the groups record could not be rewritten'), { code: 'RECORD_REFUSED', result: { ...exited(exit).value, timedOut } })
+      : Object.assign(new Error('executable missing'), { code: 'NOT_STARTED' }), dispatch: 'd-settle' };
+  const spent = (held) => spentRounds(held, { body: BODY, provider });
+  const before = spent(beforeComments);
+  const next = nextAction(given, KINDS, undefined, { sink, roles: { ...ROLES, reviewer: { ...ROLES.reviewer, provider } }, provisioning: PROVISIONING, judgeSettled: { judge: selected, outcome,
+    comments: Array.isArray(comments) ? read(comments) : comments, record: read(record) } });
+  return { next, events: events(), before, after: spent(Array.isArray(comments) ? comments : []) };
+}
+
+// A successful exit without a marker must not silently retry forever.
+// proves R-LOOP-25
+test('1437 A2: zero exit without a verdict records one failure and spends no round', () => {
+  const settled = judgeSettle();
+  assert.deepEqual(settled.events.filter(({ event }) => event === 'judge.failed').map(({ role, head, digest, outcome }) => ({ role, head, digest, outcome })), [
+    { role: 'reviewer', head: HEAD, digest: DIGEST, outcome: { exit: 0, timedOut: false } },
+  ], 'a zero exit without a verdict is one judge failure');
+  assert.equal(settled.after, settled.before);
+});
+
+// Exit code alone must not turn a readable verdict into a failure.
+// proves R-LOOP-25
+test('1437 A6: a readable verdict after either exit records no failure and counts only its distinct pair', () => {
+  for (const exit of [0, 7]) {
+    for (const held of [false, true]) {
+      const prior = held ? [markerOf({ role: 'reviewer' })] : [];
+      const written = markerOf({ role: 'reviewer', at: 9 });
+      const settled = judgeSettle({ exit, beforeComments: prior, comments: [...prior, written] });
+      assert.deepEqual(settled.events.filter(({ event }) => event === 'judge.failed'), [], 'a readable verdict is not an exit failure');
+      assert.equal(settled.after, settled.before + (held ? 0 : 1));
+      assert.equal(settled.events.filter(({ event, verdict }) => event === 'marker.read' && verdict === 'sound').length, 1);
+    }
+  }
+});
+
+// A readable verdict does not excuse the dispatch's timeout, and must follow its failure event.
+// proves R-LOOP-25
+test('1437 A5: timeout with a readable verdict records the failure before the marker and counts its pair once', () => {
+  for (const held of [false, true]) {
+    const prior = held ? [markerOf({ role: 'reviewer' })] : [];
+    const settled = judgeSettle({ exit: 137, timedOut: true, beforeComments: prior, comments: [...prior, markerOf({ role: 'reviewer', at: 9 })] });
+    assert.deepEqual(settled.events.map(({ event }) => event), ['judge.failed', 'marker.read'], 'timeout failure precedes the readable verdict');
+    assert.deepEqual(settled.events[0].outcome, { exit: 137, timedOut: true });
+    assert.equal(settled.events[0].role, 'reviewer');
+    assert.equal(settled.events[0].head, HEAD);
+    assert.equal(settled.events[0].digest, DIGEST);
+    assert.equal(settled.after, settled.before + (held ? 0 : 1));
+  }
+});
+
+// An unavailable forge is not evidence that the judge left no verdict, even after a timeout.
+// proves R-LOOP-25
+test('1437 A7: a failed marker read counts no failure or round', () => {
+  for (const timedOut of [false, true]) {
+    let settled;
+    assert.doesNotThrow(() => { settled = judgeSettle({ exit: 7, timedOut, comments: failedRead('gh unavailable') }); }, 'an unreadable forge does not classify the judge');
+    assert.deepEqual(settled.events, []);
+    assert.equal(settled.after, settled.before);
+  }
+});
+
+// Invalid, stale and wrong-provider comments cannot supply a readable verdict at the dispatched pair.
+// proves R-LOOP-25
+test('1437 A3 A4 A8 A10 A11: each remaining settled outcome records only the specified failure and rounds', async (t) => {
+  const cases = [
+    { row: 'A3', comments: [unreadableOf('reviewer', 'm7')], failure: true },
+    { row: 'A4', exit: 137, timedOut: true, failure: true },
+    { row: 'A8', status: 'rejected', failure: false },
+    ...[false, true].flatMap((held) => [HEAD, EARLIER].map((head) => {
+      const digest = head === HEAD ? OTHER_DIGEST : DIGEST;
+      const prior = held ? [markerOf({ role: 'reviewer', head, digest })] : [];
+      return { row: `A10 ${head === HEAD ? 'digest' : 'head'} ${held ? 'held' : 'new'}`, beforeComments: prior,
+        comments: [...prior, markerOf({ role: 'reviewer', head, digest, at: 9 })], failure: true, added: held ? 0 : 1 };
+    })),
+    { row: 'A11 edited', comments: [markerOf({ role: 'reviewer', edited: true })], failure: true },
+    { row: 'A11 provider', comments: [markerOf({ role: 'reviewer', provider: 'codex' })], failure: true },
+  ];
+  for (const given of cases) await t.test(given.row, () => {
+    const settled = judgeSettle(given);
+    assert.deepEqual(settled.events.filter(({ event }) => event === 'judge.failed').map(({ role, head, digest }) => ({ role, head, digest })),
+      given.failure ? [{ role: 'reviewer', head: HEAD, digest: DIGEST }] : [], `${given.row}: exactly the row's failure event`);
+    assert.equal(settled.after, settled.before + (given.added ?? 0), `${given.row}: only readable distinct marker pairs spend rounds`);
+  });
+});
+
+import { dispatched } from '../src/workflow/marker.mjs';
+
+const JUDGE_ID = 'd-01234567-89ab-cdef-0123-456789abcdef';
+const CODEX_LIMIT = 1048576;
+const codexRoles = { ...ROLES, reviewer: { ...ROLES.reviewer, provider: 'codex' } };
+
+/** L2's preparation request crosses nextAction just as the verb's decide wrapper forwards it. */
+function preparedPrompt(given, options = {}) {
+  const roles = options.roles ?? codexRoles;
+  const initial = answer(given, { roles });
+  const selected = judge(initial, options.role ?? 'reviewer');
+  return nextAction(given, KINDS, undefined, { roles, provisioning: PROVISIONING, sink: sinkFor().sink,
+    judgeDispatch: { judge: selected, id: JUDGE_ID } });
+}
+
+/** Independent size arithmetic: the full instruction/evidence prefix plus an ASCII diff pad. */
+function promptAt(bytes, { character = 'x', comments = [] } = {}) {
+  const header = 'diff --git a/src/verb.mjs b/src/verb.mjs\n+changed-line-1437 ';
+  const given = card({ comments, diff: read(header) });
+  const full = dispatched(judge(answer(given, { roles: codexRoles }), 'reviewer'), JUDGE_ID);
+  const prefix = full.instruction + full.evidence;
+  const count = bytes - Buffer.byteLength(prefix);
+  assert.ok(count >= 0);
+  given.forge.diff = read(header + character.repeat(count) + '');
+  return { given, full: prefix + character.repeat(count) };
+}
+
+// An input one byte over the limit must lose the lines, while keeping the evidence's work identity.
+// proves R-EVIDENCE-7
+test('1437 C2: L plus one bytes uses paths and explains why the changed lines were omitted', () => {
+  const { given, full } = promptAt(CODEX_LIMIT + 1, { comments: [verdict(EARLIER, 'architect')] });
+  assert.equal(Buffer.byteLength(full), CODEX_LIMIT + 1, 'independent full-prompt arithmetic includes the minted id');
+  const selected = judge(preparedPrompt(given), 'reviewer');
+  const prompt = selected.instruction + selected.evidence;
+  for (const line of given.forge.diff.value.split('\n').filter(Boolean)) assert.equal(prompt.includes(line), false, 'no line of the diff reaches the adapter');
+  for (const identity of ['src/verb.mjs', BASE, HEAD, EARLIER, 'Card #7', 'The verb prints its help.', 'The verb exits 0.']) assert.ok(selected.evidence.includes(identity), identity);
+  assert.match(selected.evidence, /changed lines.*omitted.*prompt.*exceeded.*provider.*limit/i);
+  assert.ok(Buffer.byteLength(prompt) <= CODEX_LIMIT);
+  assert.equal(selected.digest, createHash('sha256').update(selected.evidence, 'utf8').digest('hex'));
+});
+
+import { gitIn, repositoryAt } from './git-repository.mjs';
+import { renameSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { gitEnvironment } from '../src/substrate/git-environment.mjs';
+
+// Real git supplies the path grammar, independently of L2's parser and its evidence builder.
+// proves R-EVIDENCE-7
+test('1437 C2 paths: git renames deletions binaries and quoted UTF-8 control characters all survive the fallback', () => {
+  const root = temporaryDirectory('rigger-prompt-paths-');
+  const repository = repositoryAt(join(root, 'repository'), { 'old name': 'preserved\n', gone: 'deleted\n', 'binary.bin': Buffer.from([0, 1]) });
+  renameSync(join(repository, 'old name'), join(repository, 'new name'));
+  rmSync(join(repository, 'gone'));
+  writeFileSync(join(repository, 'binary.bin'), Buffer.from([0, 2]));
+  const quoted = 'quoted\té\nname';
+  writeFileSync(join(repository, quoted), 'a quoted path\n');
+  writeFileSync(join(repository, 'large.txt'), 'x'.repeat(CODEX_LIMIT) + '\n');
+  gitIn(repository, 'add', '-A');
+  const result = spawnSync('git', ['diff', '--cached', '--find-renames'], { cwd: repository, env: gitEnvironment(), encoding: 'utf8', maxBuffer: 4 * CODEX_LIMIT });
+  assert.equal(result.status, 0, result.stderr);
+  const diff = result.stdout;
+  assert.match(diff, /rename from old name\nrename to new name/);
+  assert.match(diff, /Binary files/);
+  assert.match(diff, /deleted file mode/);
+  assert.ok(diff.includes('\\303\\251'), 'git actually quoted the UTF-8 name with octal bytes');
+  const selected = judge(preparedPrompt(card({ diff: read(diff) })), 'reviewer');
+  for (const path of ['old name', 'new name', 'gone', 'binary.bin', quoted, 'large.txt']) {
+    assert.ok(selected.evidence.includes(JSON.stringify(path)), `changed path ${JSON.stringify(path)} is handed to the judge`);
+  }
+  assert.equal(selected.evidence.includes('x'.repeat(100)), false);
+});
+
+// A character count can fit while UTF-8 bytes exceed the adapter's declared byte bound.
+// proves R-EVIDENCE-7
+test('1437 C3: a multibyte prompt within L characters still falls back when its UTF-8 bytes exceed L', () => {
+  const { given, full } = promptAt(CODEX_LIMIT - 1000, { character: 'é' });
+  assert.ok(full.length <= CODEX_LIMIT, 'the fixture fits when counted as characters');
+  assert.ok(Buffer.byteLength(full, 'utf8') > CODEX_LIMIT, 'the fixture exceeds L when counted as UTF-8 bytes');
+  const selected = judge(preparedPrompt(given), 'reviewer');
+  for (const line of given.forge.diff.value.split('\n')) assert.equal(selected.evidence.includes(line), false, 'no diff line survives the byte-based fallback');
+  assert.ok(selected.evidence.includes('src/verb.mjs'));
+});
+
+// Losing the diff cannot fix an oversized acceptance packet; a retry would be the same refusal.
+// proves R-EVIDENCE-8
+test('1437 C4: paths evidence still beyond L withholds the judge and names its role and byte limit', () => {
+  const given = { ...card(), title: 'oversized work identity ' + 'x'.repeat(CODEX_LIMIT) };
+  const next = preparedPrompt(given);
+  assert.equal(next.action, 'escalate', 'oversized paths evidence must not be dispatched');
+  assert.equal(next.category, 'ambiguous');
+  assert.equal(next.raiser, 'loop');
+  assert.equal(next.judges, undefined);
+  assert.ok(next.reason.includes('reviewer'));
+  assert.ok(next.reason.includes('1048576'));
+  assert.match(next.reason, /bytes/);
+});
+
+// A conservative byte bound does not promise provider acceptance below it; L1's refusal is still work failure.
+// proves R-LOOP-25
+test('1437 C6: a provider refusal within its declared limit records one judge failure', () => {
+  const selected = judge(preparedPrompt(card()), 'reviewer');
+  assert.equal(selected.provider, 'codex');
+  assert.ok(Buffer.byteLength(selected.instruction + selected.evidence, 'utf8') < CODEX_LIMIT);
+  const settled = judgeSettle({ provider: 'codex', exit: 1 });
+  const failures = settled.events.filter(({ event }) => event === 'judge.failed');
+  assert.equal(failures.length, 1, 'a refused within-limit prompt is a judge failure');
+  assert.deepEqual(failures[0].outcome, { exit: 1, timedOut: false });
+});
+
+// L1 retains the command result when its groups-file removal fails after the command ended.
+// proves R-LOOP-25
+test('1437 A1 result: a completed nonzero judge still fails when L1 also reports its groups record refusal', () => {
+  const settled = judgeSettle({ status: 'record-refused', exit: 7 });
+  const failures = settled.events.filter(({ event }) => event === 'judge.failed');
+  assert.equal(failures.length, 1, 'a retained L1 result is still a started, ended judge dispatch');
+  assert.deepEqual(failures[0].outcome, { exit: 7, timedOut: false });
 });

@@ -2176,3 +2176,178 @@ test('acceptance-first: once C3 gives no work to only fenced bullets', SETTLES_W
 
 // proves R-CARD-1
 test('acceptance-first: once C4 gives no work to every item comparing to the title', SETTLES_WITHIN, (t) => acceptanceFirst(t, onceVerb, 'C4', manualClock()));
+
+import { standInCodex } from './stub-claude.mjs';
+import { judgeAnswer } from '../src/workflow/judges.mjs';
+import { dispatched } from '../src/workflow/marker.mjs';
+import { createHash } from 'node:crypto';
+
+/** The real CLI runs a fresh consumer and the shared Codex executable double, never an installed agent. */
+function judgePromptOnce({ bytes = 1048577, title = 'Card 10', judges = ['reviewer'], reviewerProvider = 'codex' } = {}) {
+  const settings = config();
+  settings.roles = { ...settings.roles, reviewer: { ...settings.roles.reviewer, provider: reviewerProvider } };
+  settings.kinds = { ...settings.kinds, change: { ...settings.kinds.change, judges } };
+  const consumer = consumerRepository(settings);
+  mkdirSync(join(consumer, '.claude', 'agents'), { recursive: true });
+  writeFileSync(join(consumer, '.claude', 'agents', 'reviewer.md'), '# Fixture reviewer\n');
+  writeFileSync(join(consumer, '.claude', 'agents', 'architect.md'), '# Fixture architect\n');
+  gitIn(consumer, 'add', '-A');
+  gitIn(consumer, 'commit', '-qm', 'Declare the consumer judges');
+  gitIn(consumer, 'push', '-q', 'origin', 'HEAD:refs/heads/main');
+  const head = gitIn(consumer, 'rev-parse', 'HEAD').trim();
+  gitIn(consumer, 'push', '-q', 'origin', 'HEAD:refs/heads/rigger-10');
+  const directory = temporaryDirectory('rigger-prompt-once-');
+  const fake = installFakeGh(directory, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, items: [card(10, 'Review', { title })] } });
+  const read = (value) => ({ status: 'fulfilled', value });
+  const header = 'diff --git a/widget.txt b/widget.txt\n+changed-line-1437 ';
+  const given = { ...card(10, 'Review', { title }), forge: { pull: read({ number: 11, base: head, head }), diff: read(header), comments: read([]) } };
+  const answer = () => judgeAnswer(given, settings.kinds, undefined, { roles: settings.roles, provisioning: {}, sink: { emitter: () => ({ emit() {} }) } }).judges.find(({ role }) => role === 'reviewer');
+  const trial = dispatched(answer(), 'd-01234567-89ab-cdef-0123-456789abcdef');
+  const padding = Math.max(0, bytes - Buffer.byteLength(trial.instruction + trial.evidence));
+  given.forge.diff = read(header + 'x'.repeat(padding));
+  const full = answer();
+  seedRepository(fake, { pullRequests: [{ number: 11, head: 'rigger-10', sha: head, mergeBase: head, diff: given.forge.diff.value }] });
+  const stand = standInCodex();
+  const env = { ...process.env, PATH: stand.first(directory + delimiter + process.env.PATH),
+    CODEX_HOME: temporaryDirectory('rigger-prompt-owner-'), CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-prompt-claude-') };
+  const invoke = () => spawnSync(process.execPath, [bin, 'once'], { cwd: consumer, env, encoding: 'utf8', maxBuffer: 4 * 1048576 });
+  const ran = invoke();
+  assert.equal(ran.error, undefined);
+  return { consumer, stand, ran, fake, full, diff: given.forge.diff.value, invoke };
+}
+
+// A dropped decide option, a pre-UUID measurement, or an unchanged evidence digest each breaks this verb case.
+// proves R-EVIDENCE-7
+test('1437 C2 once: the adapter receives paths at L plus one bytes and dispatch.start hashes those paths', SETTLES_WITHIN, () => {
+  const built = judgePromptOnce();
+  const sessions = built.stand.sessions();
+  assert.equal(sessions.length, 1, built.ran.stderr);
+  const input = sessions[0].input;
+  const id = input.match(/^dispatch: (d-[0-9a-f-]+)$/m)?.[1];
+  assert.match(id ?? '', /^d-[0-9a-f-]{36}$/);
+  const withLines = dispatched(built.full, id);
+  assert.equal(Buffer.byteLength(withLines.instruction + withLines.evidence), 1048577, 'the full prompt with its actually minted dispatch id would be L + 1 bytes');
+  for (const line of built.diff.split('\n')) assert.equal(input.includes(line), false, 'no diff line reaches the provider through once');
+  assert.ok(input.includes('widget.txt'));
+  const evidence = input.slice(input.indexOf('Card #10: Card 10'));
+  const digest = createHash('sha256').update(evidence, 'utf8').digest('hex');
+  const start = readEvents(join(built.consumer, '.rigger')).find(({ event, dispatch }) => event === 'dispatch.start' && dispatch === id);
+  assert.equal(start.digest, digest, 'dispatch.start records the paths evidence digest');
+  assert.notEqual(start.digest, createHash('sha256').update(built.full.evidence, 'utf8').digest('hex'));
+  assert.ok(input.includes(`evidence: ${digest}\n`));
+});
+
+// Equality must retain lines in the actual adapter input, including the minted id's bytes.
+// proves R-EVIDENCE-3
+test('1437 C1 once: exactly L bytes reaches Codex with the complete diff', SETTLES_WITHIN, () => {
+  const built = judgePromptOnce({ bytes: 1048576 });
+  const sessions = built.stand.sessions();
+  assert.equal(sessions.length, 1, built.ran.stderr);
+  assert.equal(Buffer.byteLength(sessions[0].input, 'utf8'), 1048576);
+  assert.ok(sessions[0].input.includes(built.diff));
+});
+
+// A provider declaring no bound must keep changed lines even above the other provider's limit.
+// proves R-EVIDENCE-3
+test('1437 C5: the Claude adapter receives the complete diff beyond 1048576 bytes', SETTLES_WITHIN, () => {
+  const built = judgePromptOnce({ bytes: 1048577, reviewerProvider: 'claude' });
+  const sessions = built.stand.runs().filter(({ name, role }) => name === 'claude' && role === 'reviewer');
+  assert.equal(sessions.length, 1, built.ran.stderr);
+  assert.ok(Buffer.byteLength(sessions[0].input, 'utf8') > 1048576);
+  assert.ok(sessions[0].input.includes(built.diff));
+  assert.equal(built.stand.probes().length, 0);
+});
+
+// One card's providers choose their own evidence; narrowing one must not narrow the other.
+// proves R-EVIDENCE-7
+test('1437 C7: a mixed-provider card sends paths to Codex and the changed lines to Claude', SETTLES_WITHIN, () => {
+  const built = judgePromptOnce({ judges: ['reviewer', 'architect'] });
+  const codex = built.stand.sessions();
+  const claude = built.stand.runs().filter(({ name, role }) => name === 'claude' && role === 'architect');
+  assert.equal(codex.length, 1, built.ran.stderr);
+  assert.equal(claude.length, 1, built.ran.stderr);
+  assert.equal(codex[0].input.includes(built.diff), false);
+  assert.ok(codex[0].input.includes('widget.txt'));
+  assert.ok(claude[0].input.includes(built.diff));
+});
+
+// Even the adapter's preparation probe must be withheld, and later invocations respect the label.
+// proves R-EVIDENCE-8
+test('1437 C4 C8: oversized paths escalate without invoking Codex and the labelled card starts no later judge', SETTLES_WITHIN, async (t) => {
+  for (const mixed of [false, true]) await t.test(mixed ? 'C8' : 'C4', async () => {
+    const built = judgePromptOnce({ title: 'x'.repeat(1048576), judges: mixed ? ['reviewer', 'architect'] : ['reviewer'] });
+    assert.equal(built.stand.probes().length, 0, 'the oversized provider is never invoked');
+    assert.equal(built.stand.sessions().length, 0);
+    const raised = readEvents(join(built.consumer, '.rigger')).filter(({ event }) => event === 'review.escalate');
+    assert.equal(raised.length, 1);
+    assert.equal(raised[0].category, 'ambiguous');
+    assert.match(raised[0].reason, /reviewer/);
+    assert.match(raised[0].reason, /1048576 UTF-8 bytes/);
+    const items = await (await built.fake.model()).operations.readItems();
+    assert.equal(items[0].column, 'Owner');
+    assert.ok(items[0].labels.includes('rigger:escalated'));
+    const before = built.stand.runs().length;
+    const next = built.invoke();
+    assert.equal(next.error, undefined);
+    assert.equal(built.stand.runs().length, before, 'no judge starts after the escalation label is present');
+    assert.doesNotMatch(built.ran.stdout + built.ran.stderr, /judge `reviewer` undefined/);
+  });
+});
+
+import { spentRounds } from './judge-world.mjs';
+import { waitFor } from './loop-world.mjs';
+
+/** A real consumer engine held at its judge, interrupted only after its recorded child reaches readiness. */
+async function interruptedJudge(t, signal) {
+  const settings = config();
+  settings.kinds = { ...settings.kinds, change: { ...settings.kinds.change, judges: ['reviewer'] } };
+  const consumer = consumerRepository(settings);
+  const head = gitIn(consumer, 'rev-parse', 'HEAD').trim();
+  gitIn(consumer, 'push', '-q', 'origin', 'HEAD:refs/heads/rigger-10');
+  const directory = temporaryDirectory('rigger-interrupted-judge-');
+  const fake = installFakeGh(directory, { repo: REPO, project: PROJECT, board: { columns: COLUMNS, fields: FIELDS, items: [card(10, 'Review')] } });
+  seedRepository(fake, { pullRequests: [{ number: 11, head: 'rigger-10', sha: head, mergeBase: head, diff: '' }] });
+  const agent = standInAgent({ 10: { reviewer: { hold: true } } });
+  const env = { ...process.env, PATH: agent.first(directory + delimiter + process.env.PATH), CLAUDE_CONFIG_DIR: temporaryDirectory('rigger-interrupted-home-') };
+  const child = spawn(process.execPath, [bin, 'once'], { cwd: consumer, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  assert.ok(child.pid > 0, 'record the engine child pid before any signal');
+  const ended = ownedChild(t, child, () => sweep(agent.dir));
+  child.stdout.resume();
+  child.stderr.resume();
+  await waitFor(() => agent.held(10, 'reviewer'), 20_000);
+  const state = join(consumer, '.rigger');
+  const events = () => readEvents(state);
+  const dispatch = events().find(({ layer, event, role }) => layer === 'L3' && event === 'dispatch' && role === 'reviewer').dispatch;
+  const comments = () => JSON.parse(readFileSync(join(directory, 'board.json'), 'utf8')).repository.pullRequests[0].comments ?? [];
+  const round = { number: 10, pull: 11, body: ADMITTED };
+  const before = spentRounds(comments(), round);
+  child.kill(signal);
+  const [, endedBy] = await ended;
+  assert.equal(endedBy, signal, 'the recorded engine child ended by the requested signal');
+  return { agent, events, dispatch, before, spent: () => spentRounds(comments(), round),
+    restart() {
+      agent.plan(10, 'reviewer', { exit: 7 });
+      const ran = spawnSync(process.execPath, [bin, 'once'], { cwd: consumer, env, encoding: 'utf8' });
+      assert.equal(ran.error, undefined);
+      return ran;
+    } };
+}
+
+// A dead engine cannot settle its orphan judge; the next engine's recorded kill is no judge failure.
+// proves R-LOOP-25
+test('1437 A9: a later start kills a dead engine judge without counting that dispatch as failed or spending a round', SETTLES_WITHIN, async (t) => {
+  const built = await interruptedJudge(t, 'SIGKILL');
+  built.restart();
+  assert.ok(built.events().some(({ event, dispatch }) => event === 'recorded.killed' && dispatch === built.dispatch), 'the later engine actually ended the orphan');
+  assert.deepEqual(built.events().filter(({ event, dispatch }) => event === 'judge.failed' && dispatch === built.dispatch), []);
+  assert.equal(built.spent(), built.before);
+});
+
+// Exit cleanup records an L1 end, while the ending engine has no L2 judge settle to classify it.
+// proves R-LOOP-25
+test('1437 A12: engine exit cleanup ends its judge without a failure event or a spent round', SETTLES_WITHIN, async (t) => {
+  const built = await interruptedJudge(t, 'SIGTERM');
+  assert.ok(built.events().some(({ event, dispatch }) => event === 'dispatch.end' && dispatch === built.dispatch), 'exit cleanup records the judge dispatch end');
+  assert.deepEqual(built.events().filter(({ event, dispatch }) => event === 'judge.failed' && dispatch === built.dispatch), []);
+  assert.equal(built.spent(), built.before);
+});

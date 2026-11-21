@@ -169,3 +169,22 @@ export function alive(pid) {
     throw failure;
   }
 }
+
+/**
+ * Observe the private roundsOf rule through the existing public round-bound answer. A unique
+ * sentinel pair contributes one known round to each snapshot; the answer names the total.
+ */
+export function spentRounds(comments, { number = 7, pull = 70, body = PASSING, provider = 'claude' } = {}) {
+  const head = '9'.repeat(40);
+  const sentinel = composeMarker({ card: number, pull, head, digest: acceptanceDigest(body), role: 'reviewer', provider,
+    verdict: 'needs revision', items: acceptanceItems(body).map(() => 'met'), coverage: 'covered', toSound: 'Expose the spent round count.' }, 'Counter verdict');
+  const given = { number, title: 'Observe the round bound', body, labels: ['type:change'], forge: {
+    stage: 'review', line: `rigger-${number}`, branch: true, open: [{ number: pull, head, base: 'main' }], merged: [], closed: [],
+    comments: { status: 'fulfilled', value: [...comments, { body: sentinel, createdAt: '2099-01-01T00:00:00Z', id: 'IC_counter', author: 'fixture', permission: 'write', edited: false }] },
+  } };
+  const kinds = { change: { select: { labels: ['type:change'] }, maker: 'engineer', judges: ['reviewer'], rounds: 1 } };
+  const next = nextAction(given, kinds, undefined, { roles: { reviewer: { provider } }, sink: { emitter: () => ({ emit() {} }) } });
+  const count = /^(\d+) of 1 rounds spent\./.exec(next.reason ?? '');
+  if (!count) throw new Error(`the counter premise did not reach the round bound: ${JSON.stringify(next)}`);
+  return Number(count[1]) - 1;
+}

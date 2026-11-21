@@ -103,3 +103,11 @@ test('the contract names the module that answers otherwise, and how', async (t) 
     'the other adapter answers no object of variables to set as `env`',
   ]);
 });
+
+// A missing or shared limit would route the same evidence incorrectly for one of the providers.
+// proves R-EVIDENCE-7
+test('1437: each provider declares its prompt limit in bytes or explicitly declares none', () => {
+  assert.equal(ADAPTERS.codex.promptLimit, 1048576, 'Codex declares the measured byte bound');
+  assert.equal(Object.hasOwn(ADAPTERS.claude, 'promptLimit'), true, 'Claude explicitly declares no measured bound');
+  assert.equal(ADAPTERS.claude.promptLimit, undefined);
+});

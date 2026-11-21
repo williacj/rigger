@@ -13,7 +13,6 @@ import { LINE_DELETED, LINE_MOVED, SCRATCH_REFUSED } from '../execution/workspac
 import { dispatch as dispatchOnL1 } from '../execution/run.mjs';
 import { stepDispatch } from '../execution/step.mjs';
 import { EVENT_REFUSED, NOT_STARTED, whenElapsed } from '../substrate/process.mjs';
-import { dispatched } from '../workflow/marker.mjs';
 import { judgeIdentity } from '../workflow/judges.mjs';
 import { actionIdentity, makerAction } from '../workflow/next-action.mjs';
 import { dispatchedEscalation } from '../workflow/escalation.mjs';
@@ -634,8 +633,7 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
    * writes a judge's id into its instruction (the architect's r2 ruling 6 on #642). The outcome
    * carries the id as `dispatch`, as `dispatchStep`'s does.
    */
-  const dispatchRole = async (card, answer, { cwd, directory, reach, scratch, repository, maker }, fields, stamp = (given) => given) => {
-    const id = `d-${randomUUID()}`;
+  const dispatchRole = async (card, answer, { cwd, directory, reach, scratch, repository, maker }, fields, stamp = (given) => given, id = `d-${randomUUID()}`) => {
     try {
       sink.emitter({ layer: 'L3', card: card.number, dispatch: id }).emit('dispatch', { role: answer.role, tier: answer.tier, ...fields });
     } catch (refusal) {
@@ -1084,7 +1082,12 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       current = named(answer, role);
       if (current === undefined) return { role, withheld: { step: step.name, outcome: outcomes.at(-1) }, decision: answer };
     }
-    const outcome = await dispatchRole(card, current, { cwd: main, directory: path, reach: [head], scratch, repository }, {}, dispatched);
+    const id = `d-${randomUUID()}`;
+    const ready = ask({ judgeDispatch: { judge: current, id } });
+    if (ready.action === 'escalate') return { role, escalation: ready, decision: ready };
+    current = named(ready, role);
+    if (current === undefined) return { role, decision: ready };
+    const outcome = await dispatchRole(card, current, { cwd: main, directory: path, reach: [head], scratch, repository }, {}, (given) => given, id);
     if (scope !== undefined && (outcome.status === 'fulfilled' || outcome.reason?.result !== undefined)) {
       scope.memory.actions.add(`${card.number}:${judgeIdentity(current)}`);
     }
@@ -1100,7 +1103,12 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       if (answer.action === 'stop') return { role, decision: answer, failure: Object.assign(new Error(`card #${card.number}'s judge \`${role}\` was stopped after two dispatches:\nfirst: ${JSON.stringify(answer.firstFailure)}\nsecond: ${JSON.stringify(answer.failure)}`), { card: card.number, role, decision: 'stop', firstFailure: answer.firstFailure, failure: answer.failure }) };
       if (named(answer, role) === undefined) return { role, withheld: { scratch: outcome }, decision: answer };
     }
-    return { role, outcome };
+    const comments = await facts([], { judge: current });
+    const [history] = await Promise.allSettled([Promise.resolve().then(() => readRecord().filter((event) => event.card === card.number))]);
+    const decision = ask({ judgeSettled: { judge: current, outcome, comments, record: history } });
+    if (history.status === 'rejected') return { role, outcome, decision,
+      failure: new Error(`the event record ${readRecord.stream ?? ''} could not be read: ${history.reason.message}`, { cause: history.reason }) };
+    return { role, outcome, decision, ...(decision.action === 'escalate' ? { escalation: decision } : {}) };
   };
 
   const judged = async (card, judge, ask, scope) => {
@@ -1151,7 +1159,8 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
       [settled[at]] = await Promise.allSettled([judged(card, judge, repeat, scope)]);
       interrupted ||= settled[at].status === 'rejected' || settled[at].value.halt;
     }
-    remember(ask({ judged: Object.fromEntries(settled.map((each, at) => [answer.judges[at].role, { decision: each.status === 'fulfilled' ? each.value.decision : undefined }])) }));
+    const decision = ask({ judged: Object.fromEntries(settled.map((each, at) => [answer.judges[at].role, { decision: each.status === 'fulfilled' ? each.value.decision : undefined }])) });
+    remember(decision);
     // A judge L2 held fails the card held, as one that handed back no outcome fails it.
     const ended = settled.map((each, at) => (each.status === 'fulfilled'
       ? (each.value.held === undefined ? each.value : { role: each.value.role, failure: each.value.held })
@@ -1161,9 +1170,9 @@ export function loop({ config, board, decide, facts, l2, sink, kill, workspace, 
     const carried = ended.map(({ escalation, decision, ...each }) => each);
     if (escalating.length > 0) {
       keep(carried);
-      const answer = ask({ directories: Object.fromEntries(escalating.map(({ role, outcome }) => [role, outcome])) });
+      const escalation = ask({ directories: Object.fromEntries(escalating.map(({ role, outcome }) => [role, outcome])), judged: Object.fromEntries(settled.map((each, at) => [answer.judges[at].role, { decision: each.status === 'fulfilled' ? each.value.decision : undefined }])) });
       try {
-        placed(await l2.escalated(card, answer));
+        placed(await l2.escalated(card, escalation));
       } catch (failure) {
         placed(failure?.column);
         failed.push(failure);
