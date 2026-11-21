@@ -1,0 +1,11 @@
+ABOUTME: Spike #1429 evidence: output of the Temporal dev server session in WSL2, copied unchanged below this line.
+server-session bash pid=745 2026-11-20T00:45:35Z
+Temporal CLI 1.10.1 (Server 1.32.2, UI 2.56.4)
+
+Temporal Server:      0.0.0.0:7233
+Temporal Persistence: /home/cj/1429-spike-engineer/temporal.db
+Temporal UI:          http://0.0.0.0:8233
+Temporal Metrics:     http://0.0.0.0:38101/metrics
+time=2026-11-19T18:50:32.935 level=WARN msg="workflow task failed" shard-id=1 address=127.0.0.1:45303 wf-namespace-id=01a1f66a-7b45-7dc8-9cba-8a4f9bc85a7e wf-id=pin-stop-macos wf-run-id=01a1f66e-3f01-779c-8df1-d054797cf981 workflow-task-fail-cause=WorkflowWorkerUnhandledFailure failure-message="Cannot read properties of undefined (reading 'SCHEDULE_TO_START')" failure-source=TypeScriptSDK
+time=2026-11-19T18:50:33.011 level=WARN msg="workflow task failed" shard-id=1 address=127.0.0.1:45303 wf-namespace-id=01a1f66a-7b45-7dc8-9cba-8a4f9bc85a7e wf-id=pin-stop-macos wf-run-id=01a1f66e-3f01-779c-8df1-d054797cf981 workflow-task-fail-cause=WorkflowWorkerUnhandledFailure failure-message="Cannot read properties of undefined (reading 'SCHEDULE_TO_START')" failure-source=TypeScriptSDK
+Timeout, server 10.0.0.29 not responding.

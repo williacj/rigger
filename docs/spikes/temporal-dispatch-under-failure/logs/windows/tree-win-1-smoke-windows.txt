@@ -1,0 +1,4 @@
+ABOUTME: Spike #1429 evidence: start and end lines the stand-in agent tree wrote for one card on one worker identity, copied unchanged below this line.
+2026-11-20T00:46:52.936Z start level=1 pid=20488 ppid=19380 rigger-tree card=smoke-windows attempt=1 host=win-1
+2026-11-20T00:46:52.962Z start level=2 pid=23612 ppid=20488 rigger-tree card=smoke-windows attempt=1 host=win-1
+2026-11-20T00:46:57.950Z end level=1 pid=20488 ppid=19380 rigger-tree card=smoke-windows attempt=1 host=win-1

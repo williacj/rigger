@@ -1,0 +1,7 @@
+ABOUTME: Spike #1429 evidence: read-only find of owner ~/.claude entries in plugins, session-env and sessions newer than 20:25:30 local, around the third run.
+2026-11-19T20:25:37-0600 plugins
+2026-11-19T20:25:37-0600 plugins/synced/188cbadc-5575-4b25-9748-2c3fea791070_22bb0b79-1ee7-4d08-bfc9-cd94c807252c
+2026-11-19T20:25:37-0600 session-env
+2026-11-19T20:25:37-0600 session-env/bf0a1443-cde9-452e-9fa6-8c32273b4372
+2026-11-19T20:25:42-0600 sessions
+find-done
