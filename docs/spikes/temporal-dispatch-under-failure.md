@@ -717,11 +717,25 @@ The transcript's appendix quotes the commands run outside the logging wrapper, r
 - **G2:** non-shell tool calls (Write, Edit, Read, Monitor, TaskStop, WebFetch) are listed by kind, time and target, without their full arguments.
 - **G3:** the intermediate uncommitted states of the report and journal are not kept.
 - **G4:** a command that would have extracted the list from the session's on-disk record was refused by Claude Code's permission classifier, so the list comes from the conversation and its ~ times are reconstructions.
-- **G5:** ten entries summarise a group of commands that edited the report, journal, PR draft or transcript, or re-ran read-only checks, instead of quoting each command.
+- **G5:** twelve entries summarise a group of commands that edited the report, journal, PR draft or transcript, or re-ran read-only checks, instead of quoting each command.
 - **G6:** where an entry elides text inside a command, it names where that text is.
 - **G7:** one word in a quoted `grep` is written with brackets, because the repository's ruled-out-word check refuses it in any tracked file.
 
 Its last section, "HEREDOC AND PATCH BODIES", quotes every heredoc and in-place edit that wrote the spike's throwaway files, at its command and time, with the sha256 of each body and each file's final sha256. They are quoted under rigger-ae's ruling of 2026-11-20 that bodies quoted in a transcript are evidence, not merged spike code: nothing runs or imports them, and the runnable files stay in the gitignored spikes directory. The original bodies of the seven files edited during the runs were checked by replaying the quoted edits on them, which reproduced each file's final sha256.
+
+### Names masked
+
+Names in this report and its evidence that aren't the spike's own are masked, under the owner's
+ruling at [1480#7113575800](https://github.com/williacj/rigger/issues/1480#issuecomment-7113575800).
+Each mask reads `[name withheld]`. Every pid and time stays. Where this report or a file's header
+says that content is unchanged or complete, that is apart from the masks and the dropped hashes.
+
+A hash was dropped for each masked file, under the owner's hash amendment at
+[1459#7104456293](https://github.com/williacj/rigger/issues/1459#issuecomment-7104456293):
+the sha256 of the file as it was before masking. The transcript's header lost one more: the
+sha256 of an earlier version of that file. Everything around each mask is published, so
+such a hash would let someone confirm a guess at a masked name. The dropped hashes are kept
+off-repo.
 
 ### Credential scan
 
@@ -799,7 +813,7 @@ after their logs were copied here. For the re-run, `~/1429-spike-engineer` in WS
 Every process the spike started, with its host and pid. Every stand-in tree process ended by
 itself unless the table says otherwise.
 
-**A gap.** The spike recorded the pid of every long-lived process: the server, each worker, each SSH session and tunnel, and every stand-in tree. It did not record the pids of short foreground commands. An audit of every listing in the transcript and every pid in the logs found the recorded ones below, from 4501 to the session processes, and they are in the table. For the rest no pid exists in any record, so they cannot be recovered: the rows marked "not recorded" name each by kind. A pid-like number in the evidence that is not in this table belongs to another session: 30548 is #1431's Windows worker, and the others are processes other spikes or the host ran. Every pid-bearing identity in the exported histories is a worker in this table, and the only other identity, `temporal-cli:laptop-user@[laptop host].local`, carries no pid.
+**A gap.** The spike recorded the pid of every long-lived process: the server, each worker, each SSH session and tunnel, and every stand-in tree. It did not record the pids of short foreground commands. An audit of every listing in the transcript and every pid in the logs found the recorded ones below, from 4501 to the session processes, and they are in the table. For the rest no pid exists in any record, so they cannot be recovered: the rows marked "not recorded" name each by kind. Of the pids in the evidence's process listings, those not in this table each sit on a line whose command names another session's directory (`1430-spike-engineer` or `1431-spike-engineer`) or a program the spike did not start ([name withheld]'s node.exe, [name withheld], [name withheld], or the owner's own `zsh` session). The one exception is 30548, listed as `node  worker.js` on Windows: it started at 00:45:36Z, before the spike's first Windows worker (19380, 00:46:26Z), under a parent (16456) that is none of the spike's sessions, and it is #1431's worker, which that card's spike ran on the same PC at the time. That attribution is a judgment. Suite processes other than those listed above, and those of the later suite runs, have no recorded pid. Every pid-bearing identity in the exported histories is a worker in this table, and the only other identity, `temporal-cli:laptop-user@[laptop host].local`, carries no pid.
 
 | Host | Pids | What they were | How each ended |
 |---|---|---|---|
@@ -819,6 +833,8 @@ itself unless the table says otherwise.
 | Windows | 9528 | `cmd.exe /c "powershell … -EncodedCommand …"`, the Windows side of that listing's own p.sh call (line 500) | Ended with the call; not alive at 21:42:01Z |
 | Windows | 7232, 19092, 32896, 37636, 15112, 36676, 14512 | The OpenSSH session processes the server started for the spike's connections, recorded only as the parent pids of 32072, 35372, 27620, 9528, 12292, 31524 and 34604 | Ended when the connections closed; not alive at 21:42:01Z |
 | WSL2 | 1005, 1496, 104112, 104545, 104776, 104863, 104968 | The WSL2 session processes for the spike's worker sessions, recorded only as parent pids: of the holders 1008, 1497, 104116, 104546, 104777, 104864 and 104969, and of the orphan 1426 after its reparenting | Not alive at 21:42:04Z |
+| Laptop | 88318, 99455 | Processes of failed suite run 1 (01:22Z to about 01:40Z) that the spike inspected while that run was going, named in the appendix's ~01:30 entry: 88318 is the `npm test` process, and 99455 is a `node` test process of its runner | Each ended with run 1, before 01:40Z. `ps -p` printed only its header at 23:59:52Z |
+| Laptop | 88316, 88317, 88359, 88504, 88523 | The same run's other processes, as the spike's `ps` showed them at about 01:30Z (recovered from the session's conversation, since that output is not in the evidence): the two `zsh -c` shells that launched it, `sh test/suite.sh`, `node test/suite-reaper` and the `node --test` runner | As above |
 | WSL2 | 745 | Temporal dev server | `kill -TERM`, 01:13Z |
 | WSL2 | 1010, 104118, 104866 | Workers | `kill -9` in the kill and versioning runs |
 | WSL2 | 1499, 104548, 104779, 104971 | Workers | `kill -TERM` |

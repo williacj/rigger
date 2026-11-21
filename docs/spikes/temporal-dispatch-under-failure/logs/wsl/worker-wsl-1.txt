@@ -1,4 +1,4 @@
-ABOUTME: Spike #1429 evidence: worker log (stdout and stderr) of one spike worker process, copied unchanged below this line.
+ABOUTME: Spike #1429 evidence: worker log (stdout and stderr) of one spike worker process, copied unchanged below this line. Each ESC byte (0x1b) in the captured output, 24 in all, is written here as the four characters \x1b, so the forge can read this file in a diff; the file as committed at e60760f5, before that substitution, had sha256 234ca476fc6895dba29dd53ca96f723954f29b5d2d20421c1ec0ae5c1b6016ea.
 2026-11-20T00:46:27.037Z worker starting identity=wsl-1/Host-PC10/1010 pid=1010 os=linux wf=wf-v1.js node=v24.22.3
 (node:1010) [DEP0176] DeprecationWarning: fs.F_OK is deprecated, use fs.constants.F_OK instead
 (Use `node --trace-deprecation ...` to show where the warning was created)
@@ -116,7 +116,7 @@ webpack 5.113.0 compiled successfully in 210 ms { sdkComponent: 'worker', taskQu
 2026-11-20T00:52:57.577Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'host-wsl-1', state: 'DRAINING' }
 2026-11-20T00:52:57.578Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'host-wsl-1', state: 'DRAINED' }
 2026-11-20T00:52:57.578Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'host-wsl-1', state: 'STOPPED' }
-[2m2026-11-20T00:52:57.578468Z[0m [33m WARN[0m [2mtemporalio_sdk_core::worker[0m[2m:[0m shutdown_worker rpc errored during worker shutdown: Status { code: Cancelled, message: "operation was canceled", source: Some(tonic::transport::Error(Transport, hyper::Error(Canceled, "connection closed"))) }
+\x1b[2m2026-11-20T00:52:57.578468Z\x1b[0m \x1b[33m WARN\x1b[0m \x1b[2mtemporalio_sdk_core::worker\x1b[0m\x1b[2m:\x1b[0m shutdown_worker rpc errored during worker shutdown: Status { code: Cancelled, message: "operation was canceled", source: Some(tonic::transport::Error(Transport, hyper::Error(Canceled, "connection closed"))) }
 2026-11-20T00:52:57.578Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'rigger-linux', state: 'DRAINED' }
 2026-11-20T00:52:57.578Z [INFO] Worker state changed { sdkComponent: 'worker', taskQueue: 'rigger-linux', state: 'STOPPED' }
 2026-11-20T00:53:03.924Z worker starting identity=wsl-1/Host-PC10/104118 pid=104118 os=linux wf=wf-v1.js node=v24.22.3
@@ -211,7 +211,7 @@ webpack 5.113.0 compiled successfully in 204 ms { sdkComponent: 'worker', taskQu
 2026-11-20T01:02:25.383Z [INFO] No Nexus services registered, not polling for Nexus tasks { sdkComponent: 'worker', taskQueue: 'host-wsl-1' }
 2026-11-20T01:02:33.173Z [wsl-1] dispatch start card=ver-unpatched attempt=2 seconds=10 treeRoot=104607 workerPid=104548
 2026-11-20T01:02:43.200Z [wsl-1] dispatch end card=ver-unpatched attempt=2 treeRoot=104607 exit=0
-[2m2026-11-20T01:02:43.258063Z[0m [33m WARN[0m [2mtemporalio_sdk_core::worker::workflow[0m[2m:[0m Failing workflow task [3mrun_id[0m[2m=[0m01a1f679-cd64-7117-ae22-c6d23163722c [3mfailure[0m[2m=[0mFailure { failure: Some(Failure { message: "[TMPRL1100] Nondeterminism error: Activity type of scheduled event 'dispatch' does not match activity type of activity command 'prepare'", source: "", stack_trace: "", encoded_attributes: None, cause: None, failure_info: Some(ApplicationFailureInfo(ApplicationFailureInfo { r#type: "", non_retryable: false, details: None, next_retry_delay: None, category: Unspecified })) }), force_cause: NonDeterministicError }
+\x1b[2m2026-11-20T01:02:43.258063Z\x1b[0m \x1b[33m WARN\x1b[0m \x1b[2mtemporalio_sdk_core::worker::workflow\x1b[0m\x1b[2m:\x1b[0m Failing workflow task \x1b[3mrun_id\x1b[0m\x1b[2m=\x1b[0m01a1f679-cd64-7117-ae22-c6d23163722c \x1b[3mfailure\x1b[0m\x1b[2m=\x1b[0mFailure { failure: Some(Failure { message: "[TMPRL1100] Nondeterminism error: Activity type of scheduled event 'dispatch' does not match activity type of activity command 'prepare'", source: "", stack_trace: "", encoded_attributes: None, cause: None, failure_info: Some(ApplicationFailureInfo(ApplicationFailureInfo { r#type: "", non_retryable: false, details: None, next_retry_delay: None, category: Unspecified })) }), force_cause: NonDeterministicError }
 2026-11-20T01:04:03.649Z [INFO] Worker state changed {
   sdkComponent: 'worker',
   taskQueue: 'rigger-linux',
