@@ -9,12 +9,8 @@ Read these first, in order, with `gh` and the files in this clone:
 
 Then make the change the card asks for, finishing against its acceptance:
 - **TDD:** write the failing test first.
-- **Grants, in one round:** you may edit any file locally while you work, but you may not commit or push a change to an existing line under `test/` unless the card or a comment on it grants that line. To keep to one round of grants:
-  1. Read every test and fixture the change touches before writing code.
-  2. Make the whole change locally, then run the affected test files.
-  3. List every existing `test/` line your diff changes (`git diff -U0 origin/main -- test/`).
-  4. Post all of those lines on #@CARD@ in one comment, each with its reason, unless a grant or a bounded class on the card already covers it.
-  5. Stop once. Resume after the grant, and commit only lines that are granted.
+- **Test edits:** you may change, commit and push any test `D33` rule 3 reaches, under its conditions, with no grant. Leave any other existing line under `test/` unchanged, and name it in the PR body for its own card.
+- **Found test faults:** for each test fault class the acceptance or a judge's blocking finding names, rerun the search it names and fix every hit `R-CARD-42` makes the card's own. A search of your own is evidence, never scope.
 - **Processes:** kill only processes you started, by the pid you recorded when you started them. Never kill by working directory, name or pattern.
 - **Never:**
   - `--no-verify`;

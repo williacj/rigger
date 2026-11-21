@@ -1,4 +1,4 @@
-// ABOUTME: Checks the maker's grant sequence and the session rule for ending processes.
+// ABOUTME: Checks the maker's grant-free test-edit rule (D33 rule 3) and the session rule for ending processes.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -9,20 +9,17 @@ import { fileURLToPath } from 'node:url';
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const read = (path) => readFileSync(join(root, path), 'utf8');
 
-test('the maker completes and tests local work before one request for uncovered test lines', () => {
+test('the maker changes only existing tests D33 rule 3 reaches, under its conditions, with no grant', () => {
   const prompt = read('.claude/agents/engineer.md');
-  assert.match(prompt, /whole change locally[\s\S]*?npm test[\s\S]*?ask once/i);
-  assert.match(prompt, /text at base and head/i);
-  assert.match(prompt, /delet(?:e|ing|ion) a test/i);
-  assert.match(prompt, /grant class[\s\S]*?pull request/i);
-  assert.match(prompt, /do not push[\s\S]*?grant/i);
+  assert.match(prompt, /\*\*Change only existing tests `D33` rule 3 reaches\*\*, under its conditions; they need no grant\./);
+  assert.doesNotMatch(prompt, /whole change locally|ask once|grant class/i);
 });
 
-test('grant classes are bounded by visible test lines and cannot weaken a test', () => {
+test('tests D33 rule 3 reaches need no grant, and a card words its test-line item by that rule', () => {
   const skill = read('.claude/skills/acceptance/SKILL.md');
-  assert.match(skill, /bounded grant classes[\s\S]*?git diff/i);
-  assert.match(skill, /assertion lines[\s\S]*?fixture lines/i);
-  assert.match(skill, /delet(?:e|ion) of a test[\s\S]*?weaken/i);
+  assert.match(skill, /\*\*Tests `D33` rule 3 reaches need no grant\.\*\*/);
+  assert.match(skill, /Word any test-line item as: `git diff` against the\s+base changes no existing line under `test\/` outside a test `D33` rule 3 reaches\./);
+  assert.doesNotMatch(skill, /grant class/i);
 });
 
 test('a session ends only its own recorded process, by command', () => {
@@ -32,12 +29,10 @@ test('a session ends only its own recorded process, by command', () => {
   assert.match(rules, /commands[\s\S]*?not code it writes/i);
 });
 
-test('an uncovered existing test line triggers batching even when the card grants none', () => {
+test('the D33 rule 3 bound reaches existing tests only, and no grant is asked for', () => {
   const prompt = read('.claude/agents/engineer.md');
-  assert.ok(
-    /(?:no grant|lacks a grant)[\s\S]*?whole change locally[\s\S]*?npm test[\s\S]*?ask once/i.test(prompt),
-    'the sequence must begin with an uncovered line, not with a card that grants some lines',
-  );
+  assert.match(prompt, /Change only existing tests `D33` rule 3 reaches/);
+  assert.doesNotMatch(prompt, /Change only tests|until granted/i);
 });
 
 test('the acceptance reviewer checks that cited sources are posted and linked', () => {

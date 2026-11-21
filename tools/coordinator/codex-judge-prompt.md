@@ -30,7 +30,7 @@ You are the **Codex judge**, in the `@ROLE@` role, on pull request #@PR@ in will
   - Never run two suites at once.
   - Wrap every suite run in `caffeinate -dims` inside the slot (`suite-slot.sh <label> -- caffeinate -dims <command>`), so the host cannot sleep mid-run (U9 on #740).
   - Use `npm test -- <file>` for single files. Never use plain `node --test`.
-- Keep to the card's scope, as the brief says. Report anything you find beyond it as non-blocking, and say whether this PR caused it. A defect this PR introduced blocks.
+- Keep to the card's scope, as the brief says. A test fault `R-CARD-42` makes the card's own is inside it: rerun the search of each class the acceptance or your own blocking findings name, and an unfixed instance blocks (`R-VERDICT-14`). Report anything else beyond the scope as non-blocking, and say whether this PR caused it. A defect this PR introduced blocks.
 - A verdict is one of three values, decided by `D14`:
   - `sound`;
   - `needs revision`;
