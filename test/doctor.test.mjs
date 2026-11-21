@@ -450,6 +450,10 @@ test("the gh version line's detail names what #1448's version boundary asks of e
     ['V4', () => ({ status: 0, stdout: 'gh version DEV\n', stderr: '' }), null, ['gh version DEV']],
     ['V4', () => ({ status: 0, stdout: '', stderr: '' }), null, ['``']],
     ['V4', () => ({ status: 0, stdout: 'To get started with GitHub CLI, please run:  gh auth login\n', stderr: '' }), null, ['To get started with GitHub CLI, please run:  gh auth login']],
+    // A first line carrying a separator other than LF, which the read keeps inside the line.
+    ['V4', () => ({ status: 0, stdout: 'gh version DEV\rextra detail\n', stderr: '' }), null, ['gh version DEV']],
+    ['V4', () => ({ status: 0, stdout: 'gh version DEV\u2028extra detail\n', stderr: '' }), null, ['gh version DEV']],
+    ['V4', () => ({ status: 0, stdout: 'gh version DEV\u2029extra detail\n', stderr: '' }), null, ['gh version DEV']],
     ['V5', () => ghPrinting('2.97.0'), true, ['2.97.0']],
     ['V6', () => ghPrinting('2.96.0'), false, ['2.96.0', '2.97.0']],
     ['V6', () => ghPrinting('2.96.9'), false, ['2.96.9', '2.97.0']],
@@ -470,20 +474,26 @@ test("the gh version line's detail names what #1448's version boundary asks of e
   }
 });
 
-test('the gh version check sends `gh --version` through the forge read runner, and doctor names no gh command itself', async () => {
+test('the gh version check reaches gh only through the forge read runner, which records the read as a forge call', async () => {
   // The defect this catches is a version check that spawns gh by a route of its own, around the
-  // read runner's allowlist and L0's kills. The read runner hands its spawn the side it sends on,
-  // so the side the stand-in is handed is the runner's own word for which runner sent it.
-  const sent = [];
-  const ask = (command, args, options) => { sent.push({ command, args, side: options?.side }); return RECORDED.ghVersion; };
-  await ghVersion({ ask });
-  assert.deepEqual(sent, [{ command: 'gh', args: ['--version'], side: 'read' }]);
-
-  const source = readFileSync(join(root, 'src', 'cli', 'doctor.mjs'), 'utf8');
-  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-  assert.doesNotMatch(code, /(['"`])gh\1/, 'doctor.mjs names `gh` as a command of its own');
-  assert.doesNotMatch(code, /['"`]--version['"`]/, 'doctor.mjs builds the version request itself');
-  assert.doesNotMatch(code, /from 'node:child_process'/, 'doctor.mjs imports a spawn of its own');
+  // read runner's allowlist. Only the forge adapter's runner records a forge `call.end` on its
+  // side (`ARCHITECTURE.md`, "L0's call events"), so a gh reached any other way leaves none,
+  // whatever the report says. The gh asked is a stand-in first on the path the spawn searches.
+  const gh = stubGh(RECORDED.ghVersion);
+  const events = [];
+  const emitter = { emit: (event, fields) => { events.push({ event, ...fields }); } };
+  const held = process.env.PATH;
+  process.env.PATH = gh.first();
+  let line;
+  try {
+    line = await ghVersion({ emitter });
+  } finally {
+    process.env.PATH = held;
+  }
+  assert.equal(line.ok, true, line.detail);
+  assert.deepEqual(gh.calls(), ['--version']);
+  const calls = events.filter(({ event }) => event === 'call.end').map(({ system, side, outcome }) => ({ system, side, outcome }));
+  assert.deepEqual(calls, [{ system: 'forge', side: 'read', outcome: 'ok' }]);
 });
 
 test("the gh version line comes once, after the Node line and before the gh sign-in line, and fails doctor's status below the minimum", async () => {

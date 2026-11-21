@@ -97,17 +97,6 @@ test('the read runner sends `gh auth status`, which its read allowlist names', a
   assert.equal(said.stdout, 'Logged in');
 });
 
-test('the read runner sends `gh --version`, which its read allowlist names', async () => {
-  // The defect this catches is the version read refused before it is sent, which leaves
-  // `doctor`'s gh version line unable to ask gh at all.
-  const send = recording(() => ({ status: 0, stdout: 'gh version 2.103.3 (2026-10-26)\n', stderr: '' }));
-
-  const said = await readRunner(['--version'], { send });
-
-  assert.deepEqual(send.sent, [['gh', '--version']]);
-  assert.equal(said.stdout, 'gh version 2.103.3 (2026-10-26)\n');
-});
-
 test('the read runner refuses a subcommand its read allowlist does not name, naming it, and sends nothing', async () => {
   // The defect this catches is a read runner that admits any `gh` subcommand it does not
   // recognise as `api`, which sends `gh issue close` and `gh project item-archive` as reads.
