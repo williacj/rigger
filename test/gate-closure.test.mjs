@@ -12,6 +12,7 @@ import { temporaryDirectory } from './temporary-directory.mjs';
 import { commitParents, repositoryAt, worktreeAt } from './git-repository.mjs';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { chmodSync } from 'node:fs';
 
 const ROOT = fileURLToPath(new URL('../', import.meta.url));
 function fixture(files) {
@@ -229,7 +230,7 @@ function assertPinReached(root, pin) {
     try { return gitIn(root, 'merge-base', pin, parent).trim() === pin; }
     catch { return false; }
   });
-  assert.ok(reached, `${pin} is no ancestor of the commit being made (parents: ${parents.join(', ')})`);
+  assert.ok(reached, `${pin} is no ancestor of the commit being made (parents: ${parents.join(', ')}). If an automatic merge was refused, finish the recorded merge with git commit.`);
 }
 
 // A squash-merged pull request's own head is still unreachable through the commit's parents
@@ -283,6 +284,7 @@ function assertPinOutcome(root, accepted) {
   else assert.throws(() => assertPinReached(root, pin), (error) => {
     assert.equal(error.code, 'ERR_ASSERTION');
     assert.ok(error.message.includes(pin), error.message);
+    assert.ok(error.message.includes('git commit'), error.message);
     return true;
   });
   assert.deepEqual(snapshot(), before, 'checking the pin must leave the repository unchanged');
@@ -413,6 +415,96 @@ test('M6: a resolved and staged conflicted merge reaches the incoming pin', () =
   assert.notEqual(gitIn(root, 'merge-base', pin, 'HEAD').trim(), pin);
   assert.equal(pinIn(root), pin);
   assertPinOutcome(root, true);
+});
+
+/** Run the exact shared assertion in a hook child, importing the fixture's git boundary. */
+function pinHooks(root, directory, pin) {
+  const script = join(directory, 'check-pin.mjs');
+  writeFileSync(script, `// ABOUTME: Runs the shared pin assertion from a fixture commit hook.
+import assert from 'node:assert/strict';
+import { gitIn, commitParents } from ${JSON.stringify(new URL('./git-repository.mjs', import.meta.url).href)};
+${assertPinReached.toString()}
+assertPinReached(process.cwd(), ${JSON.stringify(pin)});
+`);
+  const quoted = (value) => `'${value.replaceAll("'", "'\\''")}'`;
+  for (const name of ['pre-merge-commit', 'pre-commit']) {
+    const hook = join(directory, name);
+    writeFileSync(hook, `#!/bin/sh
+# ABOUTME: Checks the pin against the commit's recorded parents.
+exec ${quoted(process.execPath)} ${quoted(script)}
+`);
+    chmodSync(hook, 0o755);
+  }
+  gitIn(root, 'config', 'core.hooksPath', directory);
+}
+
+// Trusting GITHEAD_* would let the automatic hook pass before git records real merge parents.
+test('M7: an automatic linked-worktree merge is refused then git commit records both parents', () => {
+  const { directory, root, incoming, pin, head } = pinMergeFixture();
+  const linked = worktreeAt(root, join(directory, 'linked'), 'linked');
+  assert.notEqual(gitIn(linked, 'merge-base', pin, 'HEAD').trim(), pin);
+  pinHooks(linked, directory, pin);
+  assert.throws(() => gitIn(linked, 'merge', '--no-ff', incoming, '-m', 'merge pin'), (error) => {
+    assert.ok(error.message.includes(`${pin} is no ancestor`), error.message);
+    return true;
+  });
+  assert.equal(gitIn(linked, 'rev-parse', 'HEAD').trim(), head);
+  assert.deepEqual(mergeRecord(linked), [incoming]);
+  assert.equal(existsSync(recordPath(root, 'MERGE_HEAD')), false);
+  assert.equal(pinIn(linked), pin);
+  assert.equal(gitIn(linked, 'show', `:${WORKFLOW}`), workflowPin(pin));
+  assert.doesNotThrow(() => gitIn(linked, 'commit', '--no-edit'));
+  assert.equal(gitIn(linked, 'show', '-s', '--format=%P', 'HEAD').trim(), `${head} ${incoming}`);
+  assert.equal(existsSync(recordPath(linked, 'MERGE_HEAD')), false);
+  assert.equal(gitIn(linked, 'status', '--porcelain'), '');
+});
+
+/** An inherited merge-label hint survives into hooks; it must never contribute a parent. */
+function withGithead(commit, run) {
+  const key = `GITHEAD_${commit}`;
+  const before = process.env[key];
+  process.env[key] = 'incoming';
+  try { run(); }
+  finally {
+    if (before === undefined) delete process.env[key];
+    else process.env[key] = before;
+  }
+}
+
+// An inherited merge label cannot turn an ordinary commit into a merge of that branch.
+test('E1: an inherited GITHEAD hint cannot admit an ordinary commit', () => {
+  const { root, pin, incoming } = pinMergeFixture();
+  writeFileSync(join(root, WORKFLOW), workflowPin(pin));
+  gitIn(root, 'add', WORKFLOW);
+  assert.notEqual(gitIn(root, 'merge-base', pin, 'HEAD').trim(), pin);
+  assert.equal(gitIn(root, 'merge-base', pin, incoming).trim(), pin);
+  assert.equal(existsSync(recordPath(root, 'MERGE_HEAD')), false);
+  withGithead(incoming, () => assertPinOutcome(root, false));
+});
+
+// A squash inherits environment labels too, but its result has only HEAD as a parent.
+test('E2: an inherited GITHEAD hint cannot admit a squash', () => {
+  const { root, pin, incoming } = pinMergeFixture();
+  gitIn(root, 'merge', '--squash', incoming);
+  assert.equal(existsSync(recordPath(root, 'MERGE_HEAD')), false);
+  assert.notEqual(gitIn(root, 'merge-base', pin, 'HEAD').trim(), pin);
+  assert.equal(gitIn(root, 'merge-base', pin, incoming).trim(), pin);
+  assert.equal(pinIn(root), pin);
+  withGithead(incoming, () => assertPinOutcome(root, false));
+});
+
+// Even a real merge record does not qualify an unrelated inherited label as another parent.
+test('E3: an inherited GITHEAD hint cannot add a third parent to a recorded merge', () => {
+  const { root, fork, incoming } = pinMergeFixture();
+  gitIn(root, 'switch', '-qc', 'unreachable', fork);
+  const pin = commitFile(root, 'unreachable', 'unreachable\n');
+  gitIn(root, 'switch', '-q', 'main');
+  gitIn(root, 'merge', '--no-commit', '--no-ff', incoming);
+  assert.deepEqual(mergeRecord(root), [incoming]);
+  for (const parent of ['HEAD', incoming]) assert.notEqual(gitIn(root, 'merge-base', pin, parent).trim(), pin);
+  writeFileSync(join(root, WORKFLOW), workflowPin(pin));
+  gitIn(root, 'add', WORKFLOW);
+  withGithead(pin, () => assertPinOutcome(root, false));
 });
 
 // A staged squash has no merged parent even though its source branch reaches the pin.
