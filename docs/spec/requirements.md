@@ -651,12 +651,12 @@ Each row is one process that descended from a dispatch and left its process grou
 
 | What the reads showed | How Rigger ends the dispatch | Scope |
 |---|---|---|
-| a read showed it while its parent was in the dispatch's process group or descended from the dispatch | as `R-STATE-17` obliges | in: ended |
+| a read showed it while its parent was in the dispatch's process group or descended from the dispatch, whatever a later read showed or whether a later read failed | as `R-STATE-17` obliges | in: ended |
 | the same, and Rigger's next start confirms the process is still the one a read showed | Rigger's own exit runs past the fixed time of `R-STATE-28` | in: ended by Rigger's next start |
 | the same, Rigger recorded it, and Rigger's next start confirms the process is still the one recorded | Rigger is killed outright | in: ended by Rigger's next start, as `R-STATE-10` has it |
 | the same, and Rigger's next start cannot confirm the process at that pid is still the one recorded | Rigger is killed outright, or its own exit runs past the fixed time of `R-STATE-28` | out: the next start ends nothing at that pid, and records the process as not ended |
 | the same, and Rigger had not yet recorded it | Rigger is killed outright | out: no record of it survives |
-| a read failed while the dispatch ran, and no later read showed it | any | out: Rigger records the dispatch and why in its place, as `R-STATE-19` records a group it cannot read |
+| no read showed it while its parent was in the dispatch's process group or descended from the dispatch, and a read failed while the dispatch ran | any | out: Rigger records the dispatch and why in its place, as `R-STATE-19` records a group it cannot read |
 | no read showed it while its parent was in the dispatch's process group or descended from the dispatch, and no read failed | any | out: a known escape. An immediate double fork is the known case: a descendant starts a process that leaves the dispatch's process group, starts this one, and exits at once |
 | it started after the last read before Rigger ended the dispatch's process group | any | out: no read could show it |
 
