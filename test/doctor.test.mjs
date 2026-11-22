@@ -501,18 +501,50 @@ test("the gh version line comes once, after the Node line and before the gh sign
   }
 });
 
+/**
+ * The items of the unordered list under the README heading `Prerequisites`, each as one line of
+ * text, read as CommonMark reads them (https://spec.commonmark.org/0.31.2/, sections 4.2, 5.2 and
+ * 5.3). Line endings are LF, CRLF or CR. The heading is an ATX heading at any level, with up to
+ * three spaces before it and optional closing `#`s, and its section runs to the next heading of
+ * the same or a higher level. An item starts with `-`, `*` or `+`, up to three spaces in, and
+ * runs over its continuation lines to a blank line or the next item. Its whitespace is collapsed,
+ * so where a line is wrapped, how far it is indented and what trails it change nothing.
+ */
+function prerequisiteItems(text) {
+  const lines = text.replace(/\r\n?/g, '\n').split('\n');
+  const heading = (line) => line.match(/^ {0,3}(#{1,6})(?:[ \t]+(.*?))?(?:[ \t]+#+)?[ \t]*$/);
+  const start = lines.findIndex((line) => heading(line)?.[2]?.trim() === 'Prerequisites');
+  if (start === -1) return null;
+  const level = heading(lines[start])[1].length;
+  const items = [];
+  let open = false;
+  for (const line of lines.slice(start + 1)) {
+    const next = heading(line);
+    if (next && next[1].length <= level) break;
+    const marker = line.match(/^ {0,3}[-*+](?:[ \t]+|$)(.*)$/);
+    if (marker) {
+      items.push(marker[1]);
+      open = true;
+    } else if (line.trim() === '') {
+      open = false;
+    } else if (open) {
+      items[items.length - 1] += ` ${line}`;
+    }
+  }
+  return items.map((item) => item.replace(/\s+/g, ' ').trim());
+}
+
 test("the gh version README.md's Prerequisites states is the minimum the forge adapter exports", () => {
   // The README owns what a consumer is told to install, and the forge adapter owns what doctor
-  // compares against. The defect this catches is one moved without the other. Each item of the
-  // Prerequisites list is read as Markdown reads it, one logical item from its `- ` to the next,
-  // its continuation lines joined and its whitespace collapsed, so rewrapping it changes nothing.
-  const readme = readFileSync(join(root, 'README.md'), 'utf8');
-  const section = readme.split(/^## /m).find((part) => part.startsWith('Prerequisites\n'));
-  assert.ok(section, 'README.md has no Prerequisites section');
-  const items = section.split(/^- /m).slice(1).map((item) => item.split(/\n\s*\n/)[0].replace(/\s+/g, ' ').trim());
+  // compares against. The defect this catches is one moved without the other. The list is read
+  // as Markdown reads it (`prerequisiteItems`), so a change of layout that keeps its meaning,
+  // whether line endings, list marker, heading level, indentation, trailing space or wrapping,
+  // changes nothing here.
+  const items = prerequisiteItems(readFileSync(join(root, 'README.md'), 'utf8'));
+  assert.ok(items, 'README.md has no Prerequisites heading');
   const gh = items.filter((item) => item.includes('cli.github.com'));
-  assert.equal(gh.length, 1, section);
-  const stated = gh[0].match(/version (\d+\.\d+\.\d+) or later/);
+  assert.equal(gh.length, 1, `README.md's Prerequisites list names gh ${gh.length} times: ${JSON.stringify(items)}`);
+  const stated = gh[0].match(/\bversion (\d+\.\d+\.\d+) or later\b/);
   assert.ok(stated, `README.md's gh prerequisite states no version: ${gh[0]}`);
   assert.equal(stated[1], GH_MINIMUM);
 });
