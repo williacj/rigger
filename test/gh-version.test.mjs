@@ -118,9 +118,10 @@ test('the version read records one forge read call.end, ok, for the gh it starte
   const events = [];
   const emitter = { emit: (event, fields) => { events.push({ event, ...fields }); } };
 
-  const { result: read, started } = await withScriptedGh(t, printed('2.103.3'), () => readGhVersion({ emitter }));
+  // What the read parses from gh's answer is the test above's to prove, so only the start and the
+  // record are asserted here.
+  const { started } = await withScriptedGh(t, printed('2.103.3'), () => readGhVersion({ emitter }));
 
-  assert.equal(read.version, '2.103.3');
   assert.deepEqual(started, [['gh', '--version']]);
   const ends = events.filter(({ event }) => event === 'call.end').map(({ system, side, outcome }) => ({ system, side, outcome }));
   assert.deepEqual(ends, [{ system: 'forge', side: 'read', outcome: 'ok' }]);
