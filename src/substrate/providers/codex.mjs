@@ -11,6 +11,11 @@ import { startFailure } from '../process.mjs';
 import { gitEnvironment } from '../git-environment.mjs';
 import { runCommand } from '../process.mjs';
 
+// Measured from dispatch d-796876a3's stderr (#1433): max_chars=1048576.
+// Codex counts characters; Rigger counts UTF-8 bytes, conservatively for non-ASCII text.
+// provider-codex-live.test.mjs proves refusal above this limit only, never acceptance below it.
+export const promptLimit = 1048576;
+
 /*
  * Every flag and setting here is grounded in #473's report, `docs/spikes/what-headless-sessions-
  * load.md`, measured with codex-cli 0.159.2 and cited below by its run labels, in #519's report,
