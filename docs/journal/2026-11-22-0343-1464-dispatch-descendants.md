@@ -11,6 +11,7 @@ Spike #1430 measured today's kill route leaving fixture member M6 alive on macOS
 - **The owner's choice.** The owner chose polling once a second with identity by pid and start time, and named the immediate double fork as a known escape owned by the Temporal containment epic (M8-U98, [1293#7073483810](https://github.com/williacj/rigger/issues/1293#issuecomment-7073483810)).
 - **No Linux proof.** Linux stays unproved under `D13` (M8-U97).
 - **The reviewer's attack reshaped the table.** It made the cells exclusive by splitting what the reads showed from how Rigger ends the dispatch. It placed a descendant's read under `R-STATE-26`, gave a recorded descendant `R-STATE-11`'s confirmation guard, and added a cell for a failed read.
+- **Round 1 of the pull request.** The Codex reviewer's finding B1 ([1469#7074045385](https://github.com/williacj/rigger/issues/1469#issuecomment-7074045385)) showed the failed-read cell also excused a descendant a read had already shown, once its parent exited and a later read failed. The table now keeps such a descendant in scope whatever a later read showed or whether it failed. The failed-read cell covers only a descendant no read showed. #1466 and #1467 gained a row each for that history.
 - **The claim exception.** The row lands with no claiming test under M8-U99 ([1293#7073723186](https://github.com/williacj/rigger/issues/1293#issuecomment-7073723186)), as #1433's rows did under M8-U83. #1466 (M8-39) and #1467 (M8-42) claim it before M8 closes.
 
 ## What follows
