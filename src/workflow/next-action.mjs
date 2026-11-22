@@ -9,8 +9,9 @@ import { BRANCH_ELSEWHERE, BRANCH_REFUSED, FETCH_FAILED, LINE_DELETED, LINE_MOVE
 import { NOT_STARTED } from '../substrate/process.mjs';
 import { escalationDestination, escalationInstruction } from './escalation.mjs';
 import { acceptanceItems, checkAcceptanceForm } from './form-check.mjs';
-import { reviewAnswer } from './judges.mjs';
+import { reviewAnswer, settledJudge } from './judges.mjs';
 import { evidenceDigest } from './marker.mjs';
+import { preparedJudge } from './judges.mjs';
 
 /** Whether a card carries `label`, reading label names as GitHub does, whatever their letter case. */
 const carries = (card, label) => card.labels.some((held) => sameLabel(held, label));
@@ -95,12 +96,14 @@ const selecting = (card, kinds) =>
  * `makerAnswer` composes from `roles`, under `topic`, the rule naming the card's line of work, the
  * default rule where none is given.
  */
-export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTopic(), provisioning, outcomes = [], sink, attempt = 1, firstFailure, workspace, maker, forge, judged, directories, continuing } = {}) {
+export function nextAction(given, kinds, epicLabel, { roles, topic = worktreeTopic(), provisioning, outcomes = [], sink, attempt = 1, firstFailure, workspace, maker, forge, judged, directories, continuing, judgeSettled, judgeDispatch } = {}) {
+  if (judgeSettled !== undefined) return routed(settledJudge(given, judgeSettled, sink));
   // The facts L2's settle answered are of a card it moved to review.
   const card = forge === undefined ? given : { ...given, forge: { stage: 'review', ...forge } };
   if (carries(card, FIXED_LABELS.status)) return { action: 'ignore' };
   const escalation = escalationStatus(card);
   if (escalation !== undefined && !(card.forge?.merged?.length > 0)) return { action: 'ignore', ...escalation };
+  if (judgeDispatch !== undefined) return routed(preparedJudge(card, kinds, epicLabel, judgeDispatch, { roles, provisioning, sink }));
   const betweenAttempts = continuing === undefined && forge === undefined && maker === undefined
     && !(provisioning !== undefined && (attempt !== 1 || workspace !== undefined || outcomes.length > 0));
   /** Carries the ordinary answer through an eligible closed-card removal, preserving its origin. */

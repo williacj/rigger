@@ -260,12 +260,13 @@ async function claiming(verb, limit, opened, {
   // and why each judge it stopped naming was not dispatched, which L3 does not answer.
   const panels = new Map();
   /** L2's next action, recording refusals and judge wording while forwarding each attempt's outcomes. */
-  const decide = (card, outcomes, { attempt, firstFailure, workspace: unmade, maker, forge: settledFacts, judged, directories, continuing } = {}) => {
+  const decide = (card, outcomes, { attempt, firstFailure, workspace: unmade, maker, forge: settledFacts, judged, directories, continuing, judgeSettled, judgeDispatch } = {}) => {
     const next = nextAction(card, config.kinds, config.epicLabel, {
-      roles: config.roles, topic: worktreeTopic(config), provisioning: config.provisioning ?? {}, outcomes, sink, attempt, firstFailure, workspace: unmade, maker, forge: settledFacts, judged, directories, continuing,
+      roles: config.roles, topic: worktreeTopic(config), provisioning: config.provisioning ?? {}, outcomes, sink, attempt, firstFailure, workspace: unmade, maker, forge: settledFacts, judged, directories, continuing, judgeSettled, judgeDispatch,
     });
     if (next.action === 'refuse') refusals.push(next);
     if (next.action === 'judge') judging(card.number, next, judged ?? {}, directories ?? {});
+    if (next.action === 'escalate' && judgeDispatch !== undefined) panels.get(card.number).withheld.set(judgeDispatch.judge.role, `was not dispatched: ${next.reason}`);
     return next;
   };
   /**
@@ -291,7 +292,7 @@ async function claiming(verb, limit, opened, {
       panel.withheld.set(role, `was not dispatched, because ${which} could not be made: ${outcome.reason?.message}`);
     }
   };
-  const facts = (cards) => factsCall({ config, reads: cards.length === 1 ? cardReads(cards[0].number) : reads, decide })(cards);
+  const facts = (cards, options) => factsCall({ config, reads: cards.length === 1 ? cardReads(cards[0].number) : reads, decide })(cards, options);
   const state = join(named, STATE);
   const kill = () => killRecordedGroups({ directory: state, sink, host, readTimeout });
   // L3's read of the event record, handed down as the sink is: its events in order, none where no
@@ -340,7 +341,7 @@ async function claiming(verb, limit, opened, {
     const carried = judges.map(({ role, outcome, failure }) => {
       if (outcome !== undefined) {
         const { said: what, passed } = judgeOutcome(outcome, panel.named.get(role)?.timeout);
-        return { text: line(role, what), passed };
+        return { text: line(role, `${what}${failure === undefined ? '' : `; ${failure.message}`}`), passed: passed && failure === undefined };
       }
       if (failure !== undefined) return { text: `rigger ${verb}: ${failure.message}`, passed: false };
       return { text: line(role, panel.withheld.get(role)), passed: false };

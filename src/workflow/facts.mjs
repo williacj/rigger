@@ -71,7 +71,12 @@ export function factsCall({ config, reads, decide }) {
   const { columns } = config.board;
   const topic = worktreeTopic(config);
   const stages = new Map(['ready', 'coding', 'review', 'owner'].map((stage) => [columns[stage], stage]));
-  return async (cards) => {
+  return async (cards, { judge } = {}) => {
+    // A dispatched judge is settled against its original pull, whatever the board now holds.
+    if (judge !== undefined) {
+      const [comments] = await Promise.allSettled([reads.readComments(judge.facts.pull)]);
+      return comments;
+    }
     const offered = cards.filter((card) => stages.has(card.column));
     const lines = new Map(offered.map((card) => [card.number, topicFor(topic, card.number)]));
     const branches = offered.length === 0 ? {} : await forCards([...lines.keys()], () => reads.readBranches([...lines.values()]));
