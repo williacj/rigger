@@ -56,10 +56,11 @@ const ROWS = [
 ];
 
 test('the gh version line reaches the minimum exactly where the version gh reports does, compared by number and never as text', async () => {
-  // The defects this catches: the version compared as text, which puts 2.103.3 below 2.97.0 and
-  // 2.9.0 above it (V7, V9); a pre-release or a development build read as a release (V4, V11);
-  // the first line read from standard error, where an update notice can sit (V12); and a
-  // comparison against any minimum but the one the forge adapter exports.
+  // This test owns how gh's answer is parsed and compared. The defects it catches: the version
+  // compared as text, which puts 2.103.3 below 2.97.0 (V9); a pre-release or a development
+  // build read as a release (V4, V11); the first line read from standard error, where an update
+  // notice can sit (V12); the minimum itself refused (V5); and a comparison against any minimum
+  // but the one the forge adapter exports.
   assert.equal(GH_MINIMUM, '2.97.0', 'the card states the minimum as 2.97.0');
   for (const [row, answer, verdict] of ROWS) {
     const send = answering(answer);
@@ -109,10 +110,10 @@ async function withScriptedGh(t, stdout, use) {
 }
 
 test('the version read records one forge read call.end, ok, for the gh it started through L0', async (t) => {
-  // The defect this catches is the version read made without its record: the read runner's spawn
-  // is where a forge call's call.end is chosen and recorded (`ARCHITECTURE.md`, "L0's call
-  // events"), and a read that dropped it, or recorded it on another side or outcome, would leave
-  // the event stream without the call `doctor` made. The read runs as `doctor` runs it, with no
+  // This test owns what the version read records. The read runner's spawn is where a forge
+  // call's call.end is chosen and recorded (`ARCHITECTURE.md`, "L0's call events"); the defects
+  // this catches are that record dropped, or carried on another side or with another outcome,
+  // leaving the event stream without the call `doctor` made as it was made. The read runs as `doctor` runs it, with no
   // stand-in for the runner's spawn; L0's host is what is scripted.
   const events = [];
   const emitter = { emit: (event, fields) => { events.push({ event, ...fields }); } };

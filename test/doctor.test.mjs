@@ -24,7 +24,7 @@ import { stubCodex } from './stub-claude.mjs';
 import { ADAPTERS } from '../src/substrate/providers/adapters.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { readRunner } from '../src/substrate/forge/runners.mjs';
-import { ghVersion } from '../src/cli/doctor.mjs';
+import { ghVersion, versionLine } from '../src/cli/doctor.mjs';
 import { GH_MINIMUM } from '../src/substrate/forge/read.mjs';
 import { repositoryReads } from '../src/substrate/forge/read.mjs';
 import { seedRepository } from './fake-gh.mjs';
@@ -436,39 +436,45 @@ test('an authority this host cannot run at all is reported as unasked, never as 
 /** What gh prints for the release `version`, in the shape `RECORDED.ghVersion` was measured in. */
 const ghPrinting = (version) => ({ status: 0, stdout: `gh version ${version} (2026-10-26)\nhttps://github.com/cli/cli/releases/tag/v${version}\n`, stderr: '' });
 
-test("the gh version line's detail names what #1448's version boundary asks of each answer, on one line, and is not ok wherever no release was compared", async () => {
-  // Each row of #1448's "The version boundary" table, with the text its "Its detail names" column
-  // gives, written out by hand from the card. The defects this catches: a line a consumer cannot
-  // act on, which names neither the version gh reported nor the minimum it fell short of; a gh
-  // that could not be run, failed, or hung, reported as a pass; and a detail that carries gh's
-  // second line, or a line break of gh's own, into a report that is one line per check.
+/** A version read as `readGhVersion` hands one on (its documented plain data), for gh's `first` line. */
+const readOf = (first, version, fields = {}) => ({ status: 0, timedOut: false, timeout: 60_000, line: first, version, ...fields });
+
+test("the gh version line's detail names what #1448's version boundary asks of each read, on one line, and a gh not run, failed or hung is not ok", async () => {
+  // Each row of #1448's "The version boundary" table, as the read the forge adapter hands doctor,
+  // with the text its "Its detail names" column gives, written out by hand from the card. This
+  // test owns how doctor renders a read: the defects it catches are a detail that names neither
+  // the version gh reported nor the minimum it fell short of, a gh that could not be run, failed
+  // or hung reported as a pass (V1 to V3), and a detail that carries a line separator of gh's own
+  // first line (CR, U+2028, U+2029) unescaped into a report that is one line per check. How gh's
+  // answer is parsed and compared is `test/gh-version.test.mjs`'s to prove, so the reads below
+  // are given already parsed and the verdicts of V4 to V12 are left to that test.
   const unstarted = await notStarted();
   const rows = [
-    ['V1', () => Promise.reject(unstarted), null, ['could not be run']],
-    ['V2', () => ({ status: 1, stdout: '', stderr: 'unknown flag\n' }), null, ['exited 1']],
-    ['V3', () => ({ status: null, timedOut: true, timeout: 60_000, stdout: '', stderr: '' }), null, ['60000 ms']],
-    ['V4', () => ({ status: 0, stdout: 'gh version DEV\n', stderr: '' }), null, ['gh version DEV']],
-    ['V4', () => ({ status: 0, stdout: '', stderr: '' }), null, ['``']],
-    ['V4', () => ({ status: 0, stdout: 'To get started with GitHub CLI, please run:  gh auth login\n', stderr: '' }), null, ['To get started with GitHub CLI, please run:  gh auth login']],
+    ['V1', await ghVersion({ ask: () => Promise.reject(unstarted) }), null, ['could not be run']],
+    ['V2', versionLine(readOf('', null, { status: 1 })), null, ['exited 1']],
+    ['V3', versionLine(readOf('', null, { status: null, timedOut: true })), null, ['60000 ms']],
+    ['V4', versionLine(readOf('gh version DEV', null)), undefined, ['gh version DEV']],
+    ['V4', versionLine(readOf('', null)), undefined, ['``']],
+    ['V4', versionLine(readOf('To get started with GitHub CLI, please run:  gh auth login', null)), undefined, ['To get started with GitHub CLI, please run:  gh auth login']],
     // A first line carrying a separator other than LF, which the read keeps inside the line.
-    ['V4', () => ({ status: 0, stdout: 'gh version DEV\rextra detail\n', stderr: '' }), null, ['gh version DEV']],
-    ['V4', () => ({ status: 0, stdout: 'gh version DEV\u2028extra detail\n', stderr: '' }), null, ['gh version DEV']],
-    ['V4', () => ({ status: 0, stdout: 'gh version DEV\u2029extra detail\n', stderr: '' }), null, ['gh version DEV']],
-    ['V5', () => ghPrinting('2.97.0'), true, ['2.97.0']],
-    ['V6', () => ghPrinting('2.96.0'), false, ['2.96.0', '2.97.0']],
-    ['V6', () => ghPrinting('2.96.9'), false, ['2.96.9', '2.97.0']],
-    ['V7', () => ghPrinting('2.9.0'), false, ['2.9.0', '2.97.0']],
-    ['V7', () => ghPrinting('1.99.0'), false, ['1.99.0', '2.97.0']],
-    ['V8', () => ghPrinting('2.97.1'), true, ['2.97.1']],
-    ['V9', () => ghPrinting('2.103.3'), true, ['2.103.3']],
-    ['V10', () => ghPrinting('3.0.0'), true, ['3.0.0']],
-    ['V11', () => ({ status: 0, stdout: 'gh version 2.97.0-rc.1\n', stderr: '' }), null, ['gh version 2.97.0-rc.1']],
-    ['V11', () => ({ status: 0, stdout: 'gh version 2.98.0-rc.1\n', stderr: '' }), null, ['gh version 2.98.0-rc.1']],
-    ['V12', () => ({ ...ghPrinting('2.97.1'), stderr: '\nA new release of gh is available: 2.97.1 → 2.103.3\n' }), true, ['2.97.1']],
+    ['V4', versionLine(readOf('gh version DEV\rextra detail', null)), undefined, ['gh version DEV']],
+    ['V4', versionLine(readOf('gh version DEV\u2028extra detail', null)), undefined, ['gh version DEV']],
+    ['V4', versionLine(readOf('gh version DEV\u2029extra detail', null)), undefined, ['gh version DEV']],
+    ['V5', versionLine(readOf('gh version 2.97.0 (2026-10-26)', '2.97.0')), undefined, ['2.97.0']],
+    ['V6', versionLine(readOf('gh version 2.96.0 (2026-10-26)', '2.96.0')), undefined, ['2.96.0', '2.97.0']],
+    ['V6', versionLine(readOf('gh version 2.96.9 (2026-10-26)', '2.96.9')), undefined, ['2.96.9', '2.97.0']],
+    ['V7', versionLine(readOf('gh version 2.9.0 (2026-10-26)', '2.9.0')), undefined, ['2.9.0', '2.97.0']],
+    ['V7', versionLine(readOf('gh version 1.99.0 (2026-10-26)', '1.99.0')), undefined, ['1.99.0', '2.97.0']],
+    ['V8', versionLine(readOf('gh version 2.97.1 (2026-10-26)', '2.97.1')), undefined, ['2.97.1']],
+    ['V9', versionLine(readOf('gh version 2.103.3 (2026-10-26)', '2.103.3')), undefined, ['2.103.3']],
+    ['V10', versionLine(readOf('gh version 3.0.0 (2026-10-26)', '3.0.0')), undefined, ['3.0.0']],
+    ['V11', versionLine(readOf('gh version 2.97.0-rc.1', null)), undefined, ['gh version 2.97.0-rc.1']],
+    ['V11', versionLine(readOf('gh version 2.98.0-rc.1', null)), undefined, ['gh version 2.98.0-rc.1']],
+    ['V12', versionLine(readOf('gh version 2.97.1 (2026-10-26)', '2.97.1')), undefined, ['2.97.1']],
   ];
-  for (const [row, ask, verdict, named] of rows) {
-    const line = await ghVersion({ ask });
-    assert.equal(line.ok, verdict, `${row}: ${line.detail}`);
+  for (const [row, line, verdict, named] of rows) {
+    assert.equal(line.name, 'gh version', row);
+    if (verdict !== undefined) assert.equal(line.ok, verdict, `${row}: ${line.detail}`);
     for (const text of named) assert.ok(line.detail.includes(text), `${row}: the detail does not name ${text}: ${line.detail}`);
     assert.doesNotMatch(line.detail, /[\r\n\u2028\u2029]/, `${row}: ${line.detail}`);
   }

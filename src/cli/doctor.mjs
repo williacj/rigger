@@ -292,22 +292,29 @@ export async function ghAuth({ ask, emitter } = {}) {
 
 /**
  * Whether the installed gh is a release at or above the minimum Rigger requires, which is the
- * forge adapter's reading of `gh --version` compared here with that minimum, number by number.
+ * forge adapter's reading of `gh --version` reported by `versionLine`.
  *
  * The read goes through the forge adapter's read runner, as `ghAuth`'s does, with `emitter` for
- * L0's kills, and `ask` stands in for the runner's spawn in tests. A gh that could not be run,
- * that exited non-zero, that ran past its timeout, or whose first line names no release is
- * reported as unasked: no comparison was made. Every detail is one line.
+ * L0's kills, and `ask` stands in for the runner's spawn in tests.
  */
 export async function ghVersion({ ask, emitter } = {}) {
-  const line = (ok, detail) => ({ name: 'gh version', ok, detail });
-  let read;
   try {
-    read = await readGhVersion({ send: ask, emitter });
+    return versionLine(await readGhVersion({ send: ask, emitter }));
   } catch (failure) {
     if (failure.code !== NOT_STARTED) throw failure;
-    return line(null, `\`gh --version\` could not be run here: ${oneLine(failure.message)}`);
+    return versionLine({ unstarted: oneLine(failure.message) });
   }
+}
+
+/**
+ * The `gh version` line for a version read, `readGhVersion`'s plain data or `{ unstarted }` naming
+ * why gh could not be run, its version compared with the minimum number by number. A gh that
+ * could not be run, exited non-zero, ran past its timeout, or named no release is reported as
+ * unasked: no comparison was made. Every detail is one line.
+ */
+export function versionLine(read) {
+  const line = (ok, detail) => ({ name: 'gh version', ok, detail });
+  if (read.unstarted !== undefined) return line(null, `\`gh --version\` could not be run here: ${read.unstarted}`);
   if (read.timedOut) return line(null, `\`gh --version\` ran past its timeout of ${read.timeout} ms, and L0 ended it`);
   if (read.status !== 0) return line(null, `\`gh --version\` exited ${read.status}, so no version was read`);
   if (read.version === null) return line(null, `\`gh --version\` began \`${printable(read.line)}\`, which names no release as \`gh version <major>.<minor>.<patch>\`; Rigger requires gh ${GH_MINIMUM} or later`);
