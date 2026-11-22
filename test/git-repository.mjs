@@ -2,6 +2,8 @@
 // that names the environment every child runs under, a repository built at a root, and a clone.
 
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -201,3 +203,18 @@ export function previousCheckout(repository, branch) {
 
 /** Raw fixture worktree porcelain, with native NUL separators only when requested. */
 export const worktreeList = (repository, nul = false) => gitIn(repository, 'worktree', 'list', '--porcelain', ...(nul ? ['-z'] : []));
+
+/**
+ * Parents of the commit being made: HEAD, and every commit of a real merge in progress.
+ * Git resolves MERGE_HEAD per worktree; cherry-pick, rebase and squash records add no parent.
+ */
+export function commitParents(root) {
+  const path = resolve(root, gitIn(root, 'rev-parse', '--git-path', 'MERGE_HEAD').trim());
+  let merged;
+  try { merged = readFileSync(path, 'utf8').trim().split('\n'); }
+  catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    merged = [];
+  }
+  return ['HEAD', ...merged];
+}
