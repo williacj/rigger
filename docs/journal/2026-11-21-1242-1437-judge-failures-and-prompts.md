@@ -120,3 +120,22 @@ publishes the role commit through HEAD and asserts both files at the remote HEAD
 CLI runs. The selected C1/C2/C4/C5/C7/C8 run then measured tests=7, pass=7, fail=0, exit 0,
 load 3.61 to 3.93. The fixture ripple search found its callers only in once.test.mjs.
 No production source, acceptance, original-main test line or grant scope changed.
+
+The evidence closeout reran the gated live Codex refusal test on the final code tree,
+35cdbde5eba473edf2b4c1226336a0fbe0b3d13d, on 2026-11-22T00:16:27.068Z. The installed
+CLI reported codex-cli 0.166.0. With TMPDIR=/Users/cjwilliams/GitHub/rigger-worktrees/codex-1437-tmp,
+the command was RIGGER_LIVE_CODEX=1 npm run test:host -- --test-name-pattern '^1437:'
+test/provider-codex-live.test.mjs. Its test-runner exit was 0: tests=1, pass=1, fail=0,
+cancelled=0, skipped=0. The actual adapter invocation supplied 1048577 ASCII bytes; Codex
+exited 1, timedOut=false, with input_too_large=true. Start and end one-minute load were
+22.97; the guard counted 493 user processes before launch. The authentication file remained
+a symbolic link; no credential value was printed.
+
+The full unfiltered output is retained as
+/Users/cjwilliams/Library/Logs/rigger/1437-evidence/1437-live-journal-head.log and was reopened
+after fixture teardown. This final commit updates only this journal; source and test bytes
+remain those of the measured code tree. Historical failed-run command, UTC launch, base ref
+and exit provenance were recovered into 1437-failed-run-ledger.json in the same retention
+root. Uncommitted historical runs are identified as working trees based on af343e12 at their
+launch times; no exact tree hash was captured for them. The PR maps each acceptance item to
+a dated verification run and preserves failed-attempt excerpts separately.
