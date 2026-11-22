@@ -438,10 +438,12 @@ test("the forge adapter's version read is the release on real gh's own first lin
 // Host reason: wiring; doctor's version check must reach a gh found on the path through the read runner's real L0 spawn, which a scripted host cannot show.
 // Rigger decision: test/gh-version.test.mjs — the version read records one forge read call.end, ok, for the gh it started through L0.
 test('the gh version check reaches gh only through the forge read runner, which records the read as a forge call', async () => {
-  // The defect this catches is a version check that spawns gh by a route of its own, around the
-  // read runner's allowlist. Only the forge adapter's runner records a forge `call.end` on its
-  // side (`ARCHITECTURE.md`, "L0's call events"), so a gh reached any other way leaves none,
-  // whatever the report says. The gh asked is a stand-in first on the path the spawn searches.
+  // This test owns the wiring: the defect it catches is a version check that reaches gh by a
+  // route of its own, around the read runner's allowlist, while still reaching the gh on the path
+  // and reporting a line. Only the forge adapter's runner records a forge `call.end`
+  // (`ARCHITECTURE.md`, "L0's call events"), so a gh reached any other way leaves none. Which side
+  // and outcome that record carries is `test/gh-version.test.mjs`'s to prove, and the verdict is
+  // that file's too, so neither is asserted here. The gh asked is a stand-in first on the path.
   // `gh --version` as gh 2.103.3 answered it on macOS on 2026-11-21 (#1448, "Measured").
   const gh = stubGh({ status: 0, stdout: 'gh version 2.103.3 (2026-10-26)\nhttps://github.com/cli/cli/releases/tag/v2.103.3\n', stderr: '' });
   const events = [];
@@ -454,10 +456,9 @@ test('the gh version check reaches gh only through the forge read runner, which 
   } finally {
     process.env.PATH = held;
   }
-  assert.equal(line.ok, true, line.detail);
+  assert.equal(line.name, 'gh version', line.detail);
   assert.deepEqual(gh.calls(), ['--version']);
-  const calls = events.filter(({ event }) => event === 'call.end').map(({ system, side, outcome }) => ({ system, side, outcome }));
-  assert.deepEqual(calls, [{ system: 'forge', side: 'read', outcome: 'ok' }]);
+  assert.equal(events.filter(({ event, system }) => event === 'call.end' && system === 'forge').length, 1, JSON.stringify(events));
 });
 
 test('the read runner admits a `gh api <path>` form only where gh itself sends it as a GET with no body', async (t) => {
