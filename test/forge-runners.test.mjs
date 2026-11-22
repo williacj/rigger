@@ -435,8 +435,8 @@ test("the forge adapter's version read is the release on real gh's own first lin
   }
 });
 
-// Host reason: wiring; doctor's version check must reach a gh on the path through the read runner's spawn under L0, which only a real spawn records.
-// Rigger decision: none; this observes which spawn carries the check's call, a route no decision of Rigger's selects.
+// Host reason: wiring; doctor's version check must reach a gh found on the path through the read runner's real L0 spawn, which a scripted host cannot show.
+// Rigger decision: test/gh-version.test.mjs — the version read records one forge read call.end, ok, for the gh it started through L0.
 test('the gh version check reaches gh only through the forge read runner, which records the read as a forge call', async () => {
   // The defect this catches is a version check that spawns gh by a route of its own, around the
   // read runner's allowlist. Only the forge adapter's runner records a forge `call.end` on its

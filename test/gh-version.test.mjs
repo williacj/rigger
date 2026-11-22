@@ -4,8 +4,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+
 import { ghVersion } from '../src/cli/doctor.mjs';
-import { GH_MINIMUM } from '../src/substrate/forge/read.mjs';
+import { GH_MINIMUM, readGhVersion } from '../src/substrate/forge/read.mjs';
+import { realHost } from '../src/substrate/host.mjs';
+import { manualClock } from './clock-report-world.mjs';
 
 /**
  * A stand-in for the read runner's spawn, answering `answer` and recording what it was sent.
@@ -63,4 +68,55 @@ test('the gh version line reaches the minimum exactly where the version gh repor
     assert.equal(line.ok, verdict, `${row}: ${line.detail}`);
     assert.deepEqual(send.sent, [['gh', '--version']], row);
   }
+});
+
+/**
+ * Runs `use` while L0's real host starts a scripted `gh` answering `stdout` and exiting 0, whose
+ * group is gone once it exits, and puts the host back after. The child follows Node's documented
+ * `ChildProcess` events and streams (`EventEmitter`, `PassThrough`), as `test/process-host.test.mjs`
+ * scripts one; the clock is a manual one, so no timer runs and no process starts.
+ */
+async function withScriptedGh(stdout, use) {
+  const started = [];
+  const held = Object.fromEntries(['spawn', 'signal', 'clock'].map((name) => [name, Object.getOwnPropertyDescriptor(realHost, name)]));
+  Object.defineProperty(realHost, 'clock', { value: { ...manualClock(), pause: async () => {} }, configurable: true, enumerable: true, writable: true });
+  Object.defineProperty(realHost, 'signal', { value: () => { throw Object.assign(new Error('scripted absence'), { code: 'ESRCH' }); }, configurable: true, enumerable: true, writable: true });
+  Object.defineProperty(realHost, 'spawn', {
+    configurable: true,
+    enumerable: true,
+    get: () => (command, args) => {
+      started.push([command, ...args]);
+      const child = new EventEmitter();
+      Object.assign(child, { pid: 999999999, exitCode: null, signalCode: null, stdout: new PassThrough(), stderr: new PassThrough() });
+      queueMicrotask(() => {
+        child.exitCode = 0;
+        child.emit('exit', 0, null);
+        child.stdout.end(stdout);
+        child.stderr.end();
+      });
+      return child;
+    },
+  });
+  try {
+    return { result: await use(), started };
+  } finally {
+    for (const [name, descriptor] of Object.entries(held)) Object.defineProperty(realHost, name, descriptor);
+  }
+}
+
+test('the version read records one forge read call.end, ok, for the gh it started through L0', async () => {
+  // The defect this catches is the version read made without its record: the read runner's spawn
+  // is where a forge call's call.end is chosen and recorded (`ARCHITECTURE.md`, "L0's call
+  // events"), and a read that dropped it, or recorded it on another side or outcome, would leave
+  // the event stream without the call `doctor` made. The read runs as `doctor` runs it, with no
+  // stand-in for the runner's spawn; L0's host is what is scripted.
+  const events = [];
+  const emitter = { emit: (event, fields) => { events.push({ event, ...fields }); } };
+
+  const { result: read, started } = await withScriptedGh(printed('2.103.3'), () => readGhVersion({ emitter }));
+
+  assert.equal(read.version, '2.103.3');
+  assert.deepEqual(started, [['gh', '--version']]);
+  const ends = events.filter(({ event }) => event === 'call.end').map(({ system, side, outcome }) => ({ system, side, outcome }));
+  assert.deepEqual(ends, [{ system: 'forge', side: 'read', outcome: 'ok' }]);
 });
