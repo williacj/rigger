@@ -74,12 +74,16 @@ test('the gh version line reaches the minimum exactly where the version gh repor
  * Runs `use` while L0's real host starts a scripted `gh` answering `stdout` and exiting 0, whose
  * group is gone once it exits, and puts the host back after. The child follows Node's documented
  * `ChildProcess` events and streams (`EventEmitter`, `PassThrough`), as `test/process-host.test.mjs`
- * scripts one; the clock is a manual one, so no timer runs and no process starts.
+ * scripts one. One manual clock is L0's host clock and `performance.now`, which the forge runner
+ * times its call by, mocked through `t` as `test/kept-output.test.mjs` does, so no timer runs, no
+ * real clock is read, and no process starts.
  */
-async function withScriptedGh(stdout, use) {
+async function withScriptedGh(t, stdout, use) {
   const started = [];
+  const clock = manualClock();
+  t.mock.method(performance, 'now', clock.now);
   const held = Object.fromEntries(['spawn', 'signal', 'clock'].map((name) => [name, Object.getOwnPropertyDescriptor(realHost, name)]));
-  Object.defineProperty(realHost, 'clock', { value: { ...manualClock(), pause: async () => {} }, configurable: true, enumerable: true, writable: true });
+  Object.defineProperty(realHost, 'clock', { value: { ...clock, pause: async () => {} }, configurable: true, enumerable: true, writable: true });
   Object.defineProperty(realHost, 'signal', { value: () => { throw Object.assign(new Error('scripted absence'), { code: 'ESRCH' }); }, configurable: true, enumerable: true, writable: true });
   Object.defineProperty(realHost, 'spawn', {
     configurable: true,
@@ -104,7 +108,7 @@ async function withScriptedGh(stdout, use) {
   }
 }
 
-test('the version read records one forge read call.end, ok, for the gh it started through L0', async () => {
+test('the version read records one forge read call.end, ok, for the gh it started through L0', async (t) => {
   // The defect this catches is the version read made without its record: the read runner's spawn
   // is where a forge call's call.end is chosen and recorded (`ARCHITECTURE.md`, "L0's call
   // events"), and a read that dropped it, or recorded it on another side or outcome, would leave
@@ -113,7 +117,7 @@ test('the version read records one forge read call.end, ok, for the gh it starte
   const events = [];
   const emitter = { emit: (event, fields) => { events.push({ event, ...fields }); } };
 
-  const { result: read, started } = await withScriptedGh(printed('2.103.3'), () => readGhVersion({ emitter }));
+  const { result: read, started } = await withScriptedGh(t, printed('2.103.3'), () => readGhVersion({ emitter }));
 
   assert.equal(read.version, '2.103.3');
   assert.deepEqual(started, [['gh', '--version']]);
