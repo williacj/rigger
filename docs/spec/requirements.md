@@ -634,6 +634,7 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | R-STATE-9 | — Rigger itself exits, unless it is killed outright: ended by a signal that no process can catch or that Rigger cannot safely handle, by an abort, or by a fatal runtime error. | the engine | the test suite | |
 | R-STATE-19 | Where Rigger cannot end a process `R-STATE-17` or `R-STATE-10` obliges it to end, it records the process by name and command line as not ended, and waits on it no further. That holds only where Rigger may not signal the process, or where the process outlives Rigger's kill for a bound Rigger sets. Except as `R-STATE-26` allows, where Rigger cannot read which processes a group or a dispatch's directory held, it records that group or directory in their place, and waits on it no further. | the engine | the test suite | |
 | R-STATE-28 | Where Rigger's own exit runs past a fixed time, it ends each remaining group without searching that group's directories, keeps that group's record, and its next start ends what remains in them. | the engine | the test suite | |
+| R-STATE-29 | A process's parent is the process that started it. A process descends from a dispatch while its parent is in the process group Rigger created for that dispatch, or descends from that dispatch. Once it has descended, it stays the dispatch's after its parent exits, whatever process group or working directory it moves to. Whenever `R-STATE-17`, `R-STATE-28` or `R-STATE-10` obliges Rigger to end a dispatch's processes, Rigger also ends every process descended from that dispatch, except as `### R-STATE-29 — A dispatch's descendants` allows. `R-STATE-12`, `R-STATE-13` and `R-STATE-19` apply to such a process as to one `R-STATE-17` obliges Rigger to end. For `R-STATE-26`, a read that showed it is a read of its dispatch's process group. | the engine | the test suite | |
 | R-STATE-10 | If Rigger is itself killed outright, its next start ends what remains of each dispatch whose process group it recorded, except as `R-STATE-11` and `R-STATE-19` allow. | the engine | the test suite | |
 | R-STATE-11 | A start that cannot read its record of process groups ends nothing, starts no work, and names the record. A start that cannot tell whether a recorded group is still the one Rigger recorded ends nothing in it, starts no work, and names the group. A later start ends such a group only once it confirms the group is still Rigger's. | the engine | the test suite | |
 | R-STATE-12 | Except as `R-STATE-26` allows, Rigger records every process it had to end by force. Where it cannot read which processes a group held, it records the group it ended in their place. | the engine | the event record, by the kill events it holds | |
@@ -643,6 +644,21 @@ Claude Code's configuration home is `~/.claude` unless the consumer moves it. Ea
 | R-STATE-15 | A command that returns on its own gives its result's exit code, and no process that outlives it changes that code. | the engine | the test suite | |
 | R-STATE-16 | A command that Rigger ended at its time has a result that never reads as success, whatever it exited with. The same holds for a command whose ending Rigger saw was by a signal. | the engine | the test suite | |
 | R-STATE-18 | Rigger leaves no process stopped that it stopped, whether or not the process is still in a process group Rigger created. This holds unless Rigger is killed outright, as `R-STATE-9` defines it. | the engine | the test suite | |
+
+### R-STATE-29 — A dispatch's descendants
+
+Each row is one process that descended from a dispatch and left its process group. A read is one read of the process table that Rigger takes while the dispatch's command runs, or as it ends the dispatch.
+
+| What the reads showed | How Rigger ends the dispatch | Scope |
+|---|---|---|
+| a read showed it while its parent was in the dispatch's process group or descended from the dispatch | as `R-STATE-17` obliges | in: ended |
+| the same, and Rigger's next start confirms the process is still the one a read showed | Rigger's own exit runs past the fixed time of `R-STATE-28` | in: ended by Rigger's next start |
+| the same, Rigger recorded it, and Rigger's next start confirms the process is still the one recorded | Rigger is killed outright | in: ended by Rigger's next start, as `R-STATE-10` has it |
+| the same, and Rigger's next start cannot confirm the process at that pid is still the one recorded | Rigger is killed outright, or its own exit runs past the fixed time of `R-STATE-28` | out: the next start ends nothing at that pid, and records the process as not ended |
+| the same, and Rigger had not yet recorded it | Rigger is killed outright | out: no record of it survives |
+| a read failed while the dispatch ran, and no later read showed it | any | out: Rigger records the dispatch and why in its place, as `R-STATE-19` records a group it cannot read |
+| no read showed it while its parent was in the dispatch's process group or descended from the dispatch, and no read failed | any | out: a known escape. An immediate double fork is the known case: a descendant starts a process that leaves the dispatch's process group, starts this one, and exits at once |
+| it started after the last read before Rigger ended the dispatch's process group | any | out: no read could show it |
 
 ## R-FAIL — infrastructure failure
 
