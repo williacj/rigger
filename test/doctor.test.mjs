@@ -503,11 +503,14 @@ test("the gh version line comes once, after the Node line and before the gh sign
 
 test("the gh version README.md's Prerequisites states is the minimum the forge adapter exports", () => {
   // The README owns what a consumer is told to install, and the forge adapter owns what doctor
-  // compares against. The defect this catches is one moved without the other.
+  // compares against. The defect this catches is one moved without the other. Each item of the
+  // Prerequisites list is read as Markdown reads it, one logical item from its `- ` to the next,
+  // its continuation lines joined and its whitespace collapsed, so rewrapping it changes nothing.
   const readme = readFileSync(join(root, 'README.md'), 'utf8');
   const section = readme.split(/^## /m).find((part) => part.startsWith('Prerequisites\n'));
   assert.ok(section, 'README.md has no Prerequisites section');
-  const gh = section.split('\n').filter((line) => line.includes('cli.github.com'));
+  const items = section.split(/^- /m).slice(1).map((item) => item.split(/\n\s*\n/)[0].replace(/\s+/g, ' ').trim());
+  const gh = items.filter((item) => item.includes('cli.github.com'));
   assert.equal(gh.length, 1, section);
   const stated = gh[0].match(/version (\d+\.\d+\.\d+) or later/);
   assert.ok(stated, `README.md's gh prerequisite states no version: ${gh[0]}`);
