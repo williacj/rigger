@@ -58,3 +58,7 @@ The reviewer found that the two top-level tests for PATH membership and for no o
 The architect found that the exact-names test required the list to hold a name beyond PATH and HOME, which the card does not pin: `['PATH', 'HOME']` failed its premise. The test now checks three literal callers (PATH alone; PATH and HOME; all five permitted names), each beside an outside name. Its premise holds for any list holding PATH and some other permitted name. Because every permitted name is held by some caller, a dropped one is still caught.
 
 The architect also found that the PR body quoted the spawn probe's stdout. Item 23 allows host output only as names, counts and exit status, so the probe is now described by the names it checked and its exit status alone.
+
+## Round 6: a list of PATH alone
+
+The architect found that the exact-names test still required a second list member: with `['PATH']`, no caller can hold a listed name and also lack another, so the premise failed before any record was read. The card permits that list. The premise is now asserted only when the list holds a name besides PATH. The three callers are unchanged, so every permitted name is held by some caller, and a record that drops a held name is still killed. Receipts at the head: `['PATH']` and `['PATH', 'HOME']` survive; the drop-HOME record and M1 to M4 are killed.
