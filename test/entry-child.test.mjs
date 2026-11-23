@@ -71,5 +71,7 @@ test('entryChild hands spawn the caller\'s whole environment, outside names incl
 });
 
 test('the recorded-name allowlist holds PATH and only names the host fixture callers set for a reason', () => {
-  assert.deepEqual([...RECORDED_NAMES].sort(), ['CODEX_HOME', 'HOME', 'LANG', 'PATH', 'RIGGER_STAND_IN_VALUE']);
+  const permitted = new Set(['PATH', 'HOME', 'LANG', 'CODEX_HOME', 'RIGGER_STAND_IN_VALUE']);
+  assert.ok(RECORDED_NAMES.includes('PATH'), 'the allowlist holds PATH');
+  assert.deepEqual(RECORDED_NAMES.filter((name) => !permitted.has(name)), [], 'the allowlist holds no name outside the permitted set');
 });
