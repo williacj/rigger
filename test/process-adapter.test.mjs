@@ -291,6 +291,42 @@ test('T8: a tracked pid reused before its stopped identity check is resumed with
   await world.running;
   assert.deepEqual(world.signals.filter(({ target }) => target === world.escaped).map(({ name }) => name), ['SIGSTOP', 'SIGCONT']);
   assert.equal(world.events.some(({ pid }) => pid === world.escaped), false, 'the reused pid was recorded as killed');
+
+  for (const read of ['periodic', 'final', 'reparented']) {
+    for (const reused of [false, true]) {
+      await t.test(`${read} read; ${reused ? 'reused' : 'unchanged'} tracked parent`, async (t) => {
+        const world = await trackedDispatch(t);
+        const original = { ...world.table.get(world.escaped) };
+        const retained = world.escaped + 100;
+        const newcomer = world.escaped + 1000;
+        world.table.set(retained, { ...original, pid: retained, parent: world.escaped, group: retained, cmd: 'original descendant' });
+        await world.clock.advance(1000);
+        await turn(t);
+        if (read === 'reparented') {
+          world.table.get(world.escaped).parent = 1;
+          await world.clock.advance(2000);
+          await turn(t);
+        }
+        world.table.set(world.escaped, { ...world.table.get(world.escaped),
+          started: reused ? 'Thu Oct 29 12:00:01 2026' : original.started });
+        world.table.set(newcomer, { ...original, pid: newcomer, parent: world.escaped, group: newcomer,
+          started: 'Thu Oct 29 12:00:02 2026', cmd: 'later child' });
+        if (read !== 'final') {
+          await world.clock.advance(world.clock.now() + 1000);
+          await turn(t);
+        }
+        world.finish();
+        await world.running;
+        assert.deepEqual(world.events.filter(({ pid }) => pid === retained).map(({ event }) => event), ['survivor.killed'], 'the original descendant lost its attribution');
+        if (reused) {
+          assert.deepEqual(world.signals.filter(({ target }) => target === newcomer), [], 'the child of a reused unrelated parent was signalled as a dispatch descendant');
+          assert.deepEqual(world.events.filter(({ pid }) => pid === newcomer), [], 'the unrelated child was recorded');
+        } else {
+          assert.deepEqual(world.events.filter(({ pid }) => pid === newcomer).map(({ event }) => event), ['survivor.killed'], 'the unchanged parent did not attribute its child');
+        }
+      });
+    }
+  }
 });
 
 test('T9: a tracked process refusing signals and one outliving the kill are recorded as unended', { timeout: 10_000 }, async (t) => {

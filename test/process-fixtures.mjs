@@ -774,11 +774,9 @@ export async function descendantsReady(t, directory) {
  * follow the same documented requests as budgetWorld. ChildProcess uses EventEmitter and
  * PassThrough, as test/process-host.test.mjs does. No expected decision supplies an answer.
  */
-export function trackerWorld(clock) {
-  const group = 900_000_010;
+export function trackerWorld(clock, group = 900_000_010, table = new Map()) {
   const escaped = group + 10;
   const started = 'Thu Oct 29 12:00:00 2026';
-  const table = new Map();
   const add = (pid, parent, pgid = group) => table.set(pid, { pid, parent, group: pgid, started, state: 'S', name: 'controlled', cmd: `controlled ${pid}` });
   add(group, 1);
   add(group + 1, group);

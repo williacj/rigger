@@ -11,6 +11,9 @@ import { killRecordedGroups } from '../src/execution/run.mjs';
 import { atExit } from '../src/substrate/process.mjs';
 import { BUDGET, budgetWorld, groupOf } from './exit-budget-world.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
+import { dispatch } from '../src/execution/run.mjs';
+import { trackerWorld, turn } from './process-fixtures.mjs';
+import { manualClock } from './clock-report-world.mjs';
 
 /**
  * L0's exit cleanup, taken off the `exit` event L0 installs it on (`ARCHITECTURE.md`, "Failure
@@ -130,4 +133,65 @@ test('T15: after the care bound passes both directories share one sweep of the l
   const two = await cleanedUp(t, { groups: [plan] });
   const one = await cleanedUp(t, { groups: [{ ...plan, noScratch: true }] });
   assertSweepTogether(two, one);
+});
+
+// Native T1–T6 keep the OS proof; these table answers isolate the decisions they exercise.
+test('dispatch descendant decisions preserve identities, endings, isolation and the known escape', async (t) => {
+  for (const ending of ['return', 'timeout', 'reparented', 'exit', 'isolation', 'known escape']) {
+    await t.test(ending, async (t) => {
+      const clock = manualClock(0);
+      const world = trackerWorld(clock);
+      const sibling = world.escaped + 1;
+      world.table.set(sibling, { ...world.table.get(world.escaped), pid: sibling, group: sibling });
+      const peer = ending === 'isolation' ? trackerWorld(clock, world.group + 100, world.table) : undefined;
+      let starts = 0;
+      const host = { ...world.host,
+        spawn: () => (++starts === 1 ? world : peer).host.spawn(),
+        signal: (target, name) => (target === -peer?.group ? peer : world).host.signal(target, name),
+      };
+      const sink = heldSink();
+      const state = temporaryDirectory('rigger-tracker-decisions-', { context: t });
+      const start = (id) => dispatch({ id, card: 1466, directory: state, sink,
+        command: '/controlled/command', args: [], cwd: '/', env: {}, timeout: 3000, host, clock: clock.now });
+      const running = start('decision');
+      let other;
+      t.after(async () => { world.finish(); peer?.finish(); await Promise.all([running, other]); });
+      await turn(t);
+      if (ending === 'isolation') { other = start('peer'); await turn(t); }
+      if (ending === 'reparented') {
+        world.table.get(world.escaped).parent = 1;
+        await clock.advance(1000);
+        await turn(t);
+      }
+      const unseen = world.escaped + 1000;
+      if (ending === 'known escape') {
+        world.table.set(unseen, { ...world.table.get(world.escaped), pid: unseen, parent: 1, group: unseen });
+      }
+      if (ending === 'timeout') await clock.advance(3000);
+      else if (ending === 'exit') exitCleanup();
+      else world.finish();
+      await running;
+      for (const pid of [world.escaped, sibling]) {
+        assert.equal(world.table.get(pid).state, 'Z', 'a dispatch descendant outlived its ending');
+        assert.deepEqual(sink.events.filter((event) => event.pid === pid).map(({ layer, dispatch, card, event, name, cmd }) => ({ layer, dispatch, card, event, name, cmd })), [
+          { layer: 'L0', dispatch: 'decision', card: 1466, event: 'survivor.killed', name: 'controlled', cmd: `controlled ${world.escaped}` },
+        ], 'each descendant needs exactly one named kill under its dispatch and card');
+      }
+      if (ending === 'timeout') {
+        for (const row of world.table.values()) if (row.group === world.group) assert.equal(row.state, 'Z', 'a group member outlived the timeout');
+      }
+      if (peer) {
+        assert.equal(world.table.get(peer.escaped).state, 'S', 'the running peer descendant was stopped or ended');
+        assert.deepEqual(sink.events.filter(({ pid }) => pid === peer.escaped), []);
+        peer.finish();
+        await other;
+      }
+      if (ending === 'known escape') {
+        assert.equal(world.table.get(unseen).state, 'S', 'the unattributed orphan was stopped or ended');
+        assert.deepEqual(world.signals.filter(({ target }) => target === unseen), []);
+        assert.deepEqual(sink.events.filter(({ pid }) => pid === unseen), []);
+      }
+      await turn(t);
+    });
+  }
 });

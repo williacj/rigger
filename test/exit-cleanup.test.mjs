@@ -32,6 +32,8 @@ import { descendantCommand, descendantsReady, holding, processState } from './pr
 // suite: nothing waits on it once the caller has ended.
 const ENDS_WITHIN = { timeout: 30_000 };
 
+// Host reason: OS behaviour; caller SIGTERM must invoke containment and end a real escaped session.
+// Ordinary decision counterpart: test/exit-budget.test.mjs :: dispatch descendant decisions preserve identities, endings, isolation and the known escape
 // proves R-STATE-29
 test('T4: SIGTERM of a dispatch caller ends and records M6 outside its group and directory', ENDS_WITHIN, async (t) => {
   const directory = holding(t);
