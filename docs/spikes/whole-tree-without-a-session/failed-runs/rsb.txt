@@ -1,0 +1,440 @@
+ABOUTME: Card #1459 failed run rsb: its transcript entry, copied whole from transcript.txt beside this directory.
+Names masked under the owner's ruling (1459#7090274068). The original is kept off-repo; its sha256 is withheld for privacy (1459#7104456293).
+### step rsb  2026-11-22T04:22:08.668Z -> 2026-11-22T04:23:13.276Z  host=wsl-root-via-finnpc  orch pid 31521 (ppid 48053), child pid 31619, exit 0
+$ ["ssh","finnpc","wsl.exe","-u","root","-e","bash","-s","fx1459rsb","rs","n2"]
+stdin: case-rsb.sh (sha256 [sha256 withheld]):
+<<<
+# ABOUTME: Card #1459 helpers inlined at the top of every root script sent to WSL: UTC timestamps, the process record (pid,
+# starttime, boot id), login-state reads, and a scan that records only the spike's own processes.
+export TZ=UTC LC_ALL=C
+TU=rigger-spike
+D=/home/$TU/1459-spike-engineer
+RECF=$D/record.txt
+NODE=$D/node-v24.19.0-linux-x64/bin/node
+BOOT=$(</proc/sys/kernel/random/boot_id)
+while read -r k v; do [[ $k == btime ]] && BT=$v; done < /proc/stat
+now(){ local t=$EPOCHREALTIME; printf '%(%Y-%m-%dT%H:%M:%S)T.%sZ' "${t%.*}" "${t#*.}"; }
+say(){ echo "$(now) $*"; }
+declare -A SEEN
+# cmdl <pid>: the process's argv joined by spaces, cut to 80 characters, in REPLY (bash builtins only).
+cmdl(){ local -a a; { mapfile -d '' -t a < /proc/$1/cmdline; } 2>/dev/null; REPLY="${a[*]}"; REPLY=${REPLY:0:80}; }
+# st <pid>: sets STF to the fields of /proc/<pid>/stat after the command name (STF[1] ppid, STF[19] starttime). Fails if gone.
+st(){ local raw; { raw=$(</proc/$1/stat); } 2>/dev/null || return 1; STF=(${raw##*) }); }
+# rp <label> <pid>: record one process by pid and starttime (field 22 of /proc/<pid>/stat, clock ticks since the VM's boot).
+rp(){
+  st "$2" || { say "REC-MISS label=$1 pid=$2 (gone before it could be read)"; return 0; }
+  local s=${STF[19]} key="$2:${STF[19]}"; [[ -n ${SEEN[$key]} ]] && return 0; SEEN[$key]=1
+  local cs=$(( BT*100 + s )) line
+  printf -v line 'REC host=wsl boot=%s pid=%s starttime=%s created=%(%Y-%m-%dT%H:%M:%S)T.%02dZ recorded=%s label=%s' "$BOOT" "$2" "$s" "$((cs/100))" "$((cs%100))" "$(now)" "$1"
+  echo "$line"; [[ -d $D ]] && echo "$line" >> "$RECF"
+}
+# mine <pid>: true if the process is the spike's own: a descendant of this script, owned by the user under test, in an fx1459
+# unit or the user under test's slice, or in root's user slice and started no earlier than 3 s before this script.
+mine(){
+  local p=$1 cg u; { cg=$(</proc/$p/cgroup); } 2>/dev/null || return 1
+  case $cg in *fx1459*|*user-$TUID.slice*) return 0;; esac
+  u=$(stat -c %u /proc/$p 2>/dev/null); [[ -n $TUID && $u == "$TUID" ]] && return 0
+  if [[ $cg == *user-0.slice* ]]; then st $p && (( STF[19] >= MYST - 300 )) && return 0; fi
+  local q=$p n=0; while (( q > 1 && n < 64 )); do [[ $q == "$$" ]] && return 0; st $q || return 1; q=${STF[1]}; ((n++)); done
+  return 1
+}
+# recnew <label>: record every live process of the spike's own (see mine) not yet recorded.
+recnew(){ local p; for p in /proc/[0-9]*; do p=${p#/proc/}; [[ $p == "$BASHPID" ]] && continue; mine $p && { cmdl $p; rp "$1:$REPLY" "$p"; }; done; }
+# recboot <label>: when this connection started the distro, record every process of that start except [name withheld]'s (uid 1000) and
+# sshd's per-connection processes, which belong to [name withheld]'s own sessions and user manager and are not the spike's.
+recboot(){ local p u; for p in /proc/[0-9]*; do p=${p#/proc/}; [[ $p == "$BASHPID" ]] && continue; u=$(stat -c %u /proc/$p 2>/dev/null) || continue; [[ $u == 1000 ]] && continue; cmdl $p; [[ $REPLY == [name withheld]* ]] && continue; rp "$1:$REPLY" "$p"; done; }
+# start_record: record this script and its /init parents; and, if the distro's pid 1 started less than 10 s before this
+# script, every process of that distro start (recboot); then the spike's own processes.
+start_record(){
+  st $$; MYST=${STF[19]}; st 1; P1ST=${STF[19]}; TUID=$(id -u $TU 2>/dev/null)
+  say "script pid $$ ppid $PPID starttime $MYST; distro pid 1 starttime $P1ST; boot_id $BOOT btime $BT; user under test $TU uid ${TUID:-none}"
+  rp "script:$TAG" $$; rp "init-parent" $PPID; st $PPID; rp "init-grandparent" "${STF[1]}"
+  if (( MYST - P1ST < 1000 )); then say "this connection started the distro (pid 1 started $((MYST - P1ST)) ticks before this script): recording that start, except [name withheld]'s processes"; recboot "boot"; fi
+  recnew "start"
+}
+# winrec <label>: record, through interop, this connection's Windows process chain and any WSL VM process started since it began.
+winrec(){ say "winrec $1"; /mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -NonInteractive -EncodedCommand "$(sed "s/__TAG__/$TAG/;s/__LABEL__/$1/" $D/winrec.ps1 | iconv -t UTF-16LE | base64 -w0)" 2>/dev/null | tr -d '\r' | grep -v -e '^#< CLIXML' -e '^<Objs' | tee -a "$RECF"; }
+login_state(){
+  say "LOGIN STATE ($1)"; echo '$ loginctl list-sessions --no-pager'; loginctl list-sessions --no-pager
+  echo "\$ loginctl show-user $TU --no-pager -p State -p Sessions -p Linger -p Service"; loginctl show-user $TU --no-pager -p State -p Sessions -p Linger -p Service 2>&1
+  echo "\$ systemctl is-active user@$TUID.service"; systemctl is-active user@$TUID.service
+}
+wsl_alive(){ st 1; say "WSL instance ($1): boot_id $(</proc/sys/kernel/random/boot_id); distro pid 1 starttime ${STF[19]}; uptime $(cut -d' ' -f1 /proc/uptime) s"; }
+# tu_sessions: ids of the user under test's sessions other than its user manager's own (class manager).
+tu_sessions(){ loginctl list-sessions --no-legend --no-pager | awk -v u=$TU '$3==u && $6!="manager" {print $1}'; }
+# ---- case driver body. Arguments: <tag> <route r0|rl|rs> <cases...>. Runs each case for the user under test, as root only to
+# set up or revert the route and to observe; every supervisor and fresh writer runs as the user under test.
+main(){
+TAG=$1; ROUTE=$2; shift 2; CASES="$*"
+start_record; winrec start; wsl_alive start
+UNITF=/etc/systemd/system/fx1459-rs@.service
+asuser(){ setpriv --reuid=$TUID --regid=$TUID --init-groups env -i HOME=/home/$TU USER=$TU LOGNAME=$TU PATH=/usr/bin:/bin XDG_RUNTIME_DIR=/run/user/$TUID "$@"; }
+revert(){
+  case $ROUTE in
+    rl) say '$ loginctl disable-linger rigger-spike'; loginctl disable-linger $TU; echo "exit $?"; ls -la /var/lib/systemd/linger;;
+    rs) say "revert RS"; systemctl stop 'fx1459-rs@*.service' 2>&1; systemctl reset-failed 'fx1459-rs@*.service' 2>&1; rm -v $UNITF; systemctl daemon-reload; echo '$ systemctl cat fx1459-rs@x.service'; systemctl cat fx1459-rs@x.service 2>&1; ls -la $UNITF 2>&1;;
+  esac
+}
+say "=== ROUTE $ROUTE setup"
+login_state "route $ROUTE, before setup"
+case $ROUTE in
+  r0) echo "R0: the user as created, linger unset"; ls -la /var/lib/systemd/linger;;
+  rl) trap revert EXIT; say '$ loginctl enable-linger rigger-spike'; loginctl enable-linger $TU; echo "exit $?"; ls -la /var/lib/systemd/linger
+      for i in $(seq 1 50); do [[ $(systemctl is-active user@$TUID.service) == active ]] && break; sleep 0.2; done; say "user@$TUID: $(systemctl is-active user@$TUID.service)"; recnew "rl-setup";;
+  rs) trap revert EXIT; say "install $UNITF"
+      cat > $UNITF <<UNIT
+# ABOUTME: Card #1459 route RS: a system unit that runs the supervisor as the unprivileged user under test with a delegated cgroup.
+[Unit]
+Description=fx1459 RS supervisor %i
+[Service]
+Type=simple
+User=$TU
+Group=$TU
+Delegate=yes
+KillMode=process
+WorkingDirectory=$D
+ExecStart=$NODE $D/supervisor.cjs %i rs-%i
+StandardOutput=append:$D/runs/rs-%i/sup.log
+StandardError=append:$D/runs/rs-%i/sup.log
+UNIT
+      cat $UNITF; systemctl daemon-reload; echo "daemon-reload exit $?";;
+esac
+waitlog(){ local f=$1 pat=$2 n=$3; for ((i=0;i<n*10;i++)); do grep -qE "$pat" $f 2>/dev/null && return 0; sleep 0.1; done; return 1; }
+alive_rec(){ st $1 && [[ ${STF[19]} == "$2" && ${STF[0]} != Z ]]; }
+supinfo(){ local l; l=$(grep -m1 '^REC .*label=supervisor:' $R/sup.log); SUP=$(sed -E 's/.* pid=([0-9]+) .*/\1/' <<<"$l"); SUPST=$(sed -E 's/.* starttime=([0-9]+) .*/\1/' <<<"$l"); TREE=$(grep -m1 ' TREE ' $R/sup.log | awk '{print $3}'); }
+listing(){ asuser $NODE $D/list.cjs $RUN "driver: $1" 2>&1; }
+end_survivors(){
+  local who pid start
+  while read -r _ who pid start _; do [[ $who == *from-root* ]] && continue; if alive_rec $pid $start; then kill -9 $pid && say "cleanup: ended recorded $who pid $pid (starttime $start)"; fi; done < <(grep '^MEMBER' $R/members.txt 2>/dev/null)
+  [[ -n $SUP ]] && alive_rec $SUP $SUPST && kill -9 $SUP && say "cleanup: ended recorded supervisor $SUP"
+}
+run_case(){
+  local c=$1 mode=$1; RUN=$ROUTE-$c; R=$D/runs/$RUN; SUP=; SUPST=; TREE=; H=
+  mkdir -p $R; chown $TU:$TU $R
+  say "=== CASE $c under $ROUTE (run $RUN)"; wsl_alive "case $RUN start"
+  if [[ $c == n2 ]]; then
+    say "N2: open a $TU login session through WSL interop: wsl.exe -u $TU -e sleep 8"
+    /mnt/c/Windows/System32/wsl.exe -u $TU -e sleep 8 & H=$!; rp "interop wsl.exe shim, $RUN login" $H
+    for i in $(seq 1 50); do [[ -n $(tu_sessions) ]] && break; sleep 0.2; done; recnew "$RUN-login"
+    login_state "$RUN: session open, before supervisor start"
+  else
+    login_state "$RUN: during the run, before supervisor start"
+    if [[ -n $(tu_sessions) ]]; then say "ABORT $RUN: $TU has a login session open"; return; fi
+  fi
+  if [[ $ROUTE == r0 && $c != n2 ]]; then mode=obtain; fi
+  say "start supervisor (mode $mode)"
+  case $ROUTE in
+    r0) if [[ $c == n2 ]]; then
+          echo "\$ asuser systemd-run --user --unit=fx1459-$RUN -p Delegate=yes -p KillMode=process -p StandardOutput=append:$R/sup.log -p StandardError=append:$R/sup.log --working-directory=$D $NODE $D/supervisor.cjs $mode $RUN"
+          asuser systemd-run --user --unit=fx1459-$RUN -p Delegate=yes -p KillMode=process -p StandardOutput=append:$R/sup.log -p StandardError=append:$R/sup.log --working-directory=$D $NODE $D/supervisor.cjs $mode $RUN 2>&1; echo "exit $?"
+        else
+          echo "\$ asuser $NODE $D/supervisor.cjs obtain $RUN > $R/sup.log 2>&1   (started directly as $TU with no session: R0 changes nothing)"
+          asuser $NODE $D/supervisor.cjs obtain $RUN > $R/sup.log 2>&1; echo "exit $?"
+          echo '$ asuser systemd-run --user --unit=fx1459-'$RUN'-unit -p Delegate=yes --working-directory='$D' '$NODE' '$D'/supervisor.cjs obtain '$RUN; asuser systemd-run --user --unit=fx1459-$RUN-unit -p Delegate=yes --working-directory=$D $NODE $D/supervisor.cjs obtain $RUN 2>&1; echo "exit $?"
+        fi;;
+    rl) echo "\$ asuser systemd-run --user --unit=fx1459-$RUN -p Delegate=yes -p KillMode=process -p StandardOutput=append:$R/sup.log -p StandardError=append:$R/sup.log --working-directory=$D $NODE $D/supervisor.cjs $mode $RUN"
+        asuser systemd-run --user --unit=fx1459-$RUN -p Delegate=yes -p KillMode=process -p StandardOutput=append:$R/sup.log -p StandardError=append:$R/sup.log --working-directory=$D $NODE $D/supervisor.cjs $mode $RUN 2>&1; echo "exit $?";;
+    rs) echo "\$ systemctl start fx1459-rs@$c.service"; systemctl start fx1459-rs@$c.service; echo "exit $?";;
+  esac
+  waitlog $R/sup.log 'READY|RESULT' 30; recnew "$RUN-supervisor"
+  say "supervisor log so far:"; cat $R/sup.log; supinfo
+  if grep -q 'RESULT' $R/sup.log; then say "RESULT for $RUN: $(grep RESULT $R/sup.log)"; recnew "$RUN-end"; return; fi
+  [[ -z $SUP ]] && { say "no supervisor record; abandoning $RUN"; end_survivors; return; }
+  say "supervisor pid $SUP starttime $SUPST tree $TREE"
+  case $c in
+    n1) login_state "$RUN: tree running, before the cgroup.kill write"
+        touch $R/go; say "trigger written"; waitlog $R/sup.log 'DONE' 40; say "supervisor log:"; sed -n '/trigger seen/,$p' $R/sup.log
+        listing "after DONE, at least 12 s after the write";;
+    n3) login_state "$RUN: tree running, before the kill"
+        listing "before kill -9 of the supervisor"
+        if alive_rec $SUP $SUPST; then say "\$ kill -9 $SUP"; kill -9 $SUP; say "kill -9 sent to recorded supervisor $SUP"; fi
+        sleep 12; listing "12 s after kill -9 of the supervisor, before the fresh write"
+        login_state "$RUN: supervisor killed, before the fresh write"
+        echo "\$ asuser $NODE $D/writer.cjs $RUN $TREE"; asuser $NODE $D/writer.cjs $RUN $TREE 2>&1
+        sleep 12; listing "12 s after the fresh write";;
+    n2) say "supervisor started under the open session; now close every session of $TU"
+        wait $H; say "interop login command exited ($?); sessions of $TU: $(tu_sessions | tr '\n' ' ')"
+        sleep 2; for s in $(tu_sessions); do say "\$ loginctl terminate-session $s   (its leader is the spike's own login, recorded above)"; loginctl terminate-session $s; echo "exit $?"; done
+        for i in $(seq 1 50); do [[ -z $(tu_sessions) ]] && break; sleep 0.2; done
+        CLOSED=$(now); say "every session of $TU closed at $CLOSED (tu_sessions empty: $([[ -z $(tu_sessions) ]] && echo yes || echo no))"
+        for i in $(seq 1 30); do sleep 1; a=$(asuser $NODE $D/list.cjs $RUN watch | sed -n 's/.*alive=\([0-9]*\).*/\1/p'); echo "$(now) t+${i}s after close: members alive=$a supervisor $(alive_rec $SUP $SUPST && echo alive || echo gone) user@$TUID $(systemctl is-active user@$TUID.service)"; done
+        login_state "$RUN: 30 s after every session closed, before the cgroup.kill write"
+        listing "30 s after every session closed, before the cgroup.kill write"
+        if alive_rec $SUP $SUPST; then touch $R/go; say "trigger written"; waitlog $R/sup.log 'DONE' 40; say "supervisor log:"; sed -n '/trigger seen/,$p' $R/sup.log
+        else say "supervisor $SUP is gone; supervisor log:"; cat $R/sup.log
+          if [[ -d $TREE ]]; then echo "\$ asuser $NODE $D/writer.cjs $RUN $TREE"; asuser $NODE $D/writer.cjs $RUN $TREE 2>&1; else say "tree cgroup $TREE does not exist: \$ ls -ld $TREE"; ls -ld $TREE 2>&1; fi
+          sleep 12; fi
+        listing "at least 12 s after the ending"
+        echo "\$ journalctl --no-pager -o short-iso-precise --since @${CASEST} _SYSTEMD_UNIT=systemd-logind.service + UNIT=user@$TUID.service + _SYSTEMD_UNIT=user@$TUID.service"
+        journalctl --no-pager -o short-iso-precise --since @${CASEST} _SYSTEMD_UNIT=systemd-logind.service + UNIT=user@$TUID.service + _SYSTEMD_UNIT=user@$TUID.service 2>&1 | tail -60;;
+  esac
+  recnew "$RUN-end"
+  end_survivors
+  [[ $ROUTE == rs ]] && { systemctl stop fx1459-rs@$c.service 2>/dev/null; systemctl reset-failed fx1459-rs@$c.service 2>/dev/null; }
+  [[ $ROUTE != rs ]] && systemctl is-active user@$TUID.service >/dev/null && asuser systemctl --user reset-failed fx1459-$RUN.service 2>/dev/null
+  sleep 1; listing "after cleanup"; wsl_alive "case $RUN end"
+}
+for c in $CASES; do CASEST=${EPOCHREALTIME%.*}; run_case $c; done
+recnew "end"; login_state "route $ROUTE, end"; winrec end; wsl_alive end; say "driver done"
+}
+# main is read in full before it runs, and runs with stdin from /dev/null, so no command it starts can read the rest of this script.
+main "$@" < /dev/null
+>>>
+--- output ---
+2026-11-22T04:22:08.025136Z script pid 4130 ppid 4129 starttime 13026; distro pid 1 starttime 64; boot_id 3c4522f0-1741-42f8-9d01-88ef813a8399 btime 1795321197; user under test rigger-spike uid 1001
+REC host=wsl boot=3c4522f0-1741-42f8-9d01-88ef813a8399 pid=4130 starttime=13026 created=2026-11-22T04:22:07.26Z recorded=2026-11-22T04:22:08.025606Z label=script:fx1459rsb
+REC host=wsl boot=3c4522f0-1741-42f8-9d01-88ef813a8399 pid=4129 starttime=13026 created=2026-11-22T04:22:07.26Z recorded=2026-11-22T04:22:08.026072Z label=init-parent
+REC host=wsl boot=3c4522f0-1741-42f8-9d01-88ef813a8399 pid=4128 starttime=13024 created=2026-11-22T04:22:07.24Z recorded=2026-11-22T04:22:08.026577Z label=init-grandparent
+2026-11-22T04:22:08.101539Z winrec start
+REC host=windows pid=36952 ppid=4156 created=2026-11-22T04:22:07.710Z recorded=2026-11-22T04:22:08.443Z label=start:sshd.exe:"C:\WINDOWS\System32\OpenSSH\sshd.exe" -R
+REC host=windows pid=2436 ppid=36952 created=2026-11-22T04:22:07.911Z recorded=2026-11-22T04:22:08.443Z label=start:sshd.exe:"C:\WINDOWS\System32\OpenSSH\sshd.exe" -z
+REC host=windows pid=27552 ppid=2436 created=2026-11-22T04:22:07.953Z recorded=2026-11-22T04:22:08.443Z label=start:cmd.exe:"c:\windows\system32\cmd.exe" /c "wsl.exe -u root -e bash -s fx1459rsb rs n2"
+REC host=windows pid=31296 ppid=27552 created=2026-11-22T04:22:07.958Z recorded=2026-11-22T04:22:08.443Z label=start:conhost.exe:\??\C:\WINDOWS\system32\conhost.exe 0x4
+REC host=windows pid=6576 ppid=27552 created=2026-11-22T04:22:07.974Z recorded=2026-11-22T04:22:08.443Z label=start:wsl.exe:wsl.exe -u root -e bash -s fx1459rsb rs n2
+REC host=windows pid=36904 ppid=6576 created=2026-11-22T04:22:07.980Z recorded=2026-11-22T04:22:08.443Z label=start:wsl.exe:wsl.exe -u root -e bash -s fx1459rsb rs n2
+REC host=windows pid=38264 ppid=36904 created=2026-11-22T04:22:08.018Z recorded=2026-11-22T04:22:08.443Z label=start:wslhost.exe: --[name withheld] [id withheld] --[name withheld] [id withheld]
+REC host=windows pid=27012 ppid=38264 created=2026-11-22T04:22:08.027Z recorded=2026-11-22T04:22:08.443Z label=start:conhost.exe:\??\C:\WINDOWS\system32\conhost.exe 0x4
+REC host=windows pid=2140 ppid=36904 created=2026-11-22T04:22:08.112Z recorded=2026-11-22T04:22:08.443Z label=start:powershell.exe:powershell.exe -NoProfile -NonInteractive -EncodedCommand [name withheld]
+REC host=windows pid=8040 ppid=2140 created=2026-11-22T04:22:08.114Z recorded=2026-11-22T04:22:08.443Z label=start:conhost.exe:\??\C:\WINDOWS\system32\conhost.exe 0x4
+2026-11-22T04:22:08.581081Z WSL instance (start): boot_id 3c4522f0-1741-42f8-9d01-88ef813a8399; distro pid 1 starttime 64; uptime 130.83 s
+2026-11-22T04:22:08.581454Z === ROUTE rs setup
+2026-11-22T04:22:08.581771Z LOGIN STATE (route rs, before setup)
+$ loginctl list-sessions --no-pager
+SESSION  UID USER SEAT LEADER CLASS [name withheld] IDLE SINCE
+     c1 1000 [name withheld] -    336    manager       -     no   -
+     c2    0 root -    414    user-early    pts/1 no   -
+     c3    0 root -    456    manager-early -     no   -
+     c6 1000 [name withheld] -    2137   user          -     no   -
+
+4 sessions listed.
+$ loginctl show-user rigger-spike --no-pager -p State -p Sessions -p Linger -p Service
+Service=user@1001.service
+State=closing
+Sessions=
+Linger=no
+$ systemctl is-active user@1001.service
+inactive
+2026-11-22T04:22:08.602871Z install /etc/systemd/system/fx1459-rs@.service
+# ABOUTME: Card #1459 route RS: a system unit that runs the supervisor as the unprivileged user under test with a delegated cgroup.
+[Unit]
+Description=fx1459 RS supervisor %i
+[Service]
+Type=simple
+User=rigger-spike
+Group=rigger-spike
+Delegate=yes
+KillMode=process
+WorkingDirectory=/home/rigger-spike/1459-spike-engineer
+ExecStart=/home/rigger-spike/1459-spike-engineer/node-v24.19.0-linux-x64/bin/node /home/rigger-spike/1459-spike-engineer/supervisor.cjs %i rs-%i
+StandardOutput=append:/home/rigger-spike/1459-spike-engineer/runs/rs-%i/sup.log
+StandardError=append:/home/rigger-spike/1459-spike-engineer/runs/rs-%i/sup.log
+daemon-reload exit 0
+2026-11-22T04:22:08.774700Z === CASE n2 under rs (run rs-n2)
+2026-11-22T04:22:08.776676Z WSL instance (case rs-n2 start): boot_id 3c4522f0-1741-42f8-9d01-88ef813a8399; distro pid 1 starttime 64; uptime 131.02 s
+2026-11-22T04:22:08.777063Z N2: open a rigger-spike login session through WSL interop: wsl.exe -u rigger-spike -e sleep 8
+REC host=wsl boot=3c4522f0-1741-42f8-9d01-88ef813a8399 pid=4292 starttime=13102 created=2026-11-22T04:22:08.02Z recorded=2026-11-22T04:22:08.777680Z label=interop [name withheld]
+2026-11-22T04:22:19.315978Z LOGIN STATE (rs-n2: session open, before supervisor start)
+$ loginctl list-sessions --no-pager
+SESSION  UID USER SEAT LEADER CLASS [name withheld] IDLE SINCE
+     c1 1000 [name withheld] -    336    manager       -     no   -
+     c2    0 root -    414    user-early    pts/1 no   -
+     c3    0 root -    456    manager-early -     no   -
+     c6 1000 [name withheld] -    2137   user          -     no   -
+
+4 sessions listed.
+$ loginctl show-user rigger-spike --no-pager -p State -p Sessions -p Linger -p Service
+Failed to get user: User ID 1001 is not logged in or lingering
+$ systemctl is-active user@1001.service
+inactive
+2026-11-22T04:22:19.323287Z start supervisor (mode n2)
+$ systemctl start fx1459-rs@n2.service
+exit 0
+REC host=wsl boot=3c4522f0-1741-42f8-9d01-88ef813a8399 pid=4596 starttime=14159 created=2026-11-22T04:22:18.59Z recorded=2026-11-22T04:22:22.548967Z label=rs-n2-supervisor:/home/rigger-spike/1459-spike-engineer/node-v24.19.0-linux-x64/bin/node /home/[name withheld]
+REC host=wsl boot=3c4522f0-1741-42f8-9d01-88ef813a8399 pid=4610 starttime=14169 created=2026-11-22T04:22:18.69Z recorded=2026-11-22T04:22:22.549518Z label=rs-n2-supervisor:bash /home/rigger-spike/1459-spike-engineer/fixture.sh rs-n2
+REC host=wsl boot=3c4522f0-1741-42f8-9d01-88ef813a8399 pid=4612 starttime=14171 created=2026-11-22T04:22:18.71Z recorded=2026-11-22T04:22:22.550004Z label=rs-n2-supervisor:fx-rs-n2-M1 300
+REC host=wsl boot=3c4522f0-1741-42f8-9d01-88ef813a8399 pid=4613 starttime=14171 created=2026-11-22T04:22:18.71Z recorded=2026-11-22T04:22:22.550467Z label=rs-n2-supervisor:fx-rs-n2-M3 300
+REC host=wsl boot=3c4522f0-1741-42f8-9d01-88ef813a8399 pid=4615 starttime=14171 created=2026-11-22T04:22:18.71Z recorded=2026-11-22T04:22:22.550929Z label=rs-n2-supervisor:fx-rs-n2-M5 300
+REC host=wsl boot=3c4522f0-1741-42f8-9d01-88ef813a8399 pid=4616 starttime=14171 created=2026-11-22T04:22:18.71Z recorded=2026-11-22T04:22:22.551377Z label=rs-n2-supervisor:fx-rs-n2-M2 300
+REC host=wsl boot=3c4522f0-1741-42f8-9d01-88ef813a8399 pid=4617 starttime=14171 created=2026-11-22T04:22:18.71Z recorded=2026-11-22T04:22:22.551825Z label=rs-n2-supervisor:fx-rs-n2-M6 300
+REC host=wsl boot=3c4522f0-1741-42f8-9d01-88ef813a8399 pid=4618 starttime=14171 created=2026-11-22T04:22:18.71Z recorded=2026-11-22T04:22:22.552262Z label=rs-n2-supervisor:fx-rs-n2-M4 300
+2026-11-22T04:22:22.559375Z supervisor log so far:
+REC host=wsl boot=3c4522f0-1741-42f8-9d01-88ef813a8399 pid=4596 starttime=14159 recorded=2026-11-22T04:22:19.423Z label=supervisor:rs-n2
+2026-11-22T04:22:19.428Z supervisor pid 4596 ppid 1 mode n2 run rs-n2 node v24.19.0
+2026-11-22T04:22:19.431Z $ id   (pid 4605, exited 0 before returning)
+uid=1001(rigger-spike) gid=1001(rigger-spike) groups=1001(rigger-spike)
+2026-11-22T04:22:19.431Z $ cat /proc/self/cgroup
+0::/system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service
+2026-11-22T04:22:19.437Z $ ls -ld /sys/fs/cgroup/system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service   (pid 4606, exited 0 before returning)
+drwxr-xr-x+ 2 rigger-spike rigger-spike 0 Nov 21 22:22 /sys/fs/cgroup/system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service
+2026-11-22T04:22:19.439Z $ ls -l /sys/fs/cgroup/system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/cgroup.kill /sys/fs/cgroup/system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/cgroup.procs /sys/fs/cgroup/system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/cgroup.subtree_control   (pid 4607, exited 0 before returning)
+--w------- 1 root         root         0 Nov 21 22:22 /sys/fs/cgroup/system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/cgroup.kill
+-rw-r--r-- 1 rigger-spike rigger-spike 0 Nov 21 22:22 /sys/fs/cgroup/system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/cgroup.procs
+-rw-r--r-- 1 rigger-spike rigger-spike 0 Nov 21 22:22 /sys/fs/cgroup/system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/cgroup.subtree_control
+2026-11-22T04:22:19.439Z access(W_OK) on own cgroup.kill: EACCES
+2026-11-22T04:22:19.440Z mkdir /sys/fs/cgroup/system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree : ok
+2026-11-22T04:22:19.441Z $ ls -ld /sys/fs/cgroup/system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree   (pid 4608, exited 0 before returning)
+drwxr-xr-x 2 rigger-spike rigger-spike 0 Nov 21 22:22 /sys/fs/cgroup/system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree
+2026-11-22T04:22:19.443Z $ ls -l /sys/fs/cgroup/system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree/cgroup.kill /sys/fs/cgroup/system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree/cgroup.procs   (pid 4609, exited 0 before returning)
+--w------- 1 rigger-spike rigger-spike 0 Nov 21 22:22 /sys/fs/cgroup/system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree/cgroup.kill
+-rw-r--r-- 1 rigger-spike rigger-spike 0 Nov 21 22:22 /sys/fs/cgroup/system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree/cgroup.procs
+2026-11-22T04:22:19.443Z access(W_OK) on tree/cgroup.kill: allowed
+2026-11-22T04:22:19.443Z TREE /sys/fs/cgroup/system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree
+REC host=wsl boot=3c4522f0-1741-42f8-9d01-88ef813a8399 pid=4610 starttime=14169 recorded=2026-11-22T04:22:19.445Z label=fixture-root:rs-n2
+2026-11-22T04:22:19.465Z moved fixture root 4610 into /sys/fs/cgroup/system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree
+2026-11-22T04:22:22.469Z BEFORE (+3 s after start)
+listing run=rs-n2 (supervisor, +3 s after start) at 2026-11-22T04:22:22.470Z by pid 4596 uid 1001
+WHO        PID     START     ALIVE STATE PPID    PGID    SID     CWD | CGROUP | ARGS
+root       4610    14169     yes   S     4596    4610    4610    /home/rigger-spike/1459-spike-engineer/runs/rs-n2/d | /system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree | bash /home/rigger-spike/1459-spike-engineer/fixture.sh rs-n2
+M3         4613    14171     yes   S     4610    4613    4613    /home/rigger-spike/1459-spike-engineer/runs/rs-n2/d | /system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree | fx-rs-n2-M3 300
+M1         4612    14171     yes   S     4610    4610    4610    /home/rigger-spike/1459-spike-engineer/runs/rs-n2/d | /system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree | fx-rs-n2-M1 300
+M2         4616    14171     yes   S     4612    4610    4610    /home/rigger-spike/1459-spike-engineer/runs/rs-n2/d | /system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree | fx-rs-n2-M2 300
+M6         4617    14171     yes   S     4610    4617    4617    / | /system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree | fx-rs-n2-M6 300
+M4-parent  4614    14171     NO    -     (no such pid)
+M5         4615    14171     yes   S     4610    4610    4610    /home/rigger-spike/1459-spike-engineer/runs/rs-n2/d | /system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree | fx-rs-n2-M5 300
+M4         4618    14171     yes   S     1       4610    4610    /home/rigger-spike/1459-spike-engineer/runs/rs-n2/d | /system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree | fx-rs-n2-M4 300
+members recorded=7 alive=7 (root and M1-M6; M4-parent exits at once by design) unrecorded-naming-run=0
+2026-11-22T04:22:22.474Z tree cgroup.procs: 4610 4612 4613 4615 4616 4617 4618
+2026-11-22T04:22:22.474Z READY
+2026-11-22T04:22:22.566787Z supervisor pid 4596 starttime 14159 tree /sys/fs/cgroup/system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree
+2026-11-22T04:22:22.567124Z supervisor started under the open session; now close every session of rigger-spike
+2026-11-22T04:22:22.570009Z interop login command exited (0); sessions of rigger-spike: 
+2026-11-22T04:22:24.589807Z every session of rigger-spike closed at 2026-11-22T04:22:24.587079Z (tu_sessions empty: yes)
+2026-11-22T04:22:25.622210Z t+1s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:26.657259Z t+2s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:27.694125Z t+3s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:28.721570Z t+4s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:29.750564Z t+5s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:30.787064Z t+6s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:31.820558Z t+7s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:32.852456Z t+8s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:33.882058Z t+9s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:34.914512Z t+10s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:35.942427Z t+11s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:36.977385Z t+12s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:38.005606Z t+13s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:39.040338Z t+14s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:40.074586Z t+15s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:41.112719Z t+16s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:42.148564Z t+17s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:43.183894Z t+18s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:44.220470Z t+19s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:45.255708Z t+20s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:46.280107Z t+21s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:47.309502Z t+22s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:48.346094Z t+23s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:49.381378Z t+24s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:50.417640Z t+25s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:51.463282Z t+26s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:52.498216Z t+27s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:53.531119Z t+28s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:54.565993Z t+29s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:55.602048Z t+30s after close: members alive=7 supervisor alive user@1001 inactive
+2026-11-22T04:22:55.607076Z LOGIN STATE (rs-n2: 30 s after every session closed, before the cgroup.kill write)
+$ loginctl list-sessions --no-pager
+SESSION  UID USER SEAT LEADER CLASS [name withheld] IDLE SINCE
+     c1 1000 [name withheld] -    336    manager       -     no   -
+     c2    0 root -    414    user-early    pts/1 no   -
+     c3    0 root -    456    manager-early -     no   -
+     c6 1000 [name withheld] -    2137   user          -     no   -
+
+4 sessions listed.
+$ loginctl show-user rigger-spike --no-pager -p State -p Sessions -p Linger -p Service
+Failed to get user: User ID 1001 is not logged in or lingering
+$ systemctl is-active user@1001.service
+inactive
+listing run=rs-n2 (driver: 30 s after every session closed, before the cgroup.kill write) at 2026-11-22T04:22:55.627Z by pid 5228 uid 1001
+WHO        PID     START     ALIVE STATE PPID    PGID    SID     CWD | CGROUP | ARGS
+root       4610    14169     yes   S     4596    4610    4610    /home/rigger-spike/1459-spike-engineer/runs/rs-n2/d | /system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree | bash /home/rigger-spike/1459-spike-engineer/fixture.sh rs-n2
+M3         4613    14171     yes   S     4610    4613    4613    /home/rigger-spike/1459-spike-engineer/runs/rs-n2/d | /system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree | fx-rs-n2-M3 300
+M1         4612    14171     yes   S     4610    4610    4610    /home/rigger-spike/1459-spike-engineer/runs/rs-n2/d | /system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree | fx-rs-n2-M1 300
+M2         4616    14171     yes   S     4612    4610    4610    /home/rigger-spike/1459-spike-engineer/runs/rs-n2/d | /system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree | fx-rs-n2-M2 300
+M6         4617    14171     yes   S     4610    4617    4617    / | /system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree | fx-rs-n2-M6 300
+M4-parent  4614    14171     NO    -     (no such pid)
+M5         4615    14171     yes   S     4610    4610    4610    /home/rigger-spike/1459-spike-engineer/runs/rs-n2/d | /system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree | fx-rs-n2-M5 300
+M4         4618    14171     yes   S     1       4610    4610    /home/rigger-spike/1459-spike-engineer/runs/rs-n2/d | /system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree | fx-rs-n2-M4 300
+members recorded=7 alive=7 (root and M1-M6; M4-parent exits at once by design) unrecorded-naming-run=0
+2026-11-22T04:22:55.633936Z trigger written
+2026-11-22T04:23:07.788452Z supervisor log:
+2026-11-22T04:22:55.728Z trigger seen
+listing run=rs-n2 (supervisor, immediately before the cgroup.kill write) at 2026-11-22T04:22:55.728Z by pid 4596 uid 1001
+WHO        PID     START     ALIVE STATE PPID    PGID    SID     CWD | CGROUP | ARGS
+root       4610    14169     yes   S     4596    4610    4610    /home/rigger-spike/1459-spike-engineer/runs/rs-n2/d | /system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree | bash /home/rigger-spike/1459-spike-engineer/fixture.sh rs-n2
+M3         4613    14171     yes   S     4610    4613    4613    /home/rigger-spike/1459-spike-engineer/runs/rs-n2/d | /system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree | fx-rs-n2-M3 300
+M1         4612    14171     yes   S     4610    4610    4610    /home/rigger-spike/1459-spike-engineer/runs/rs-n2/d | /system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree | fx-rs-n2-M1 300
+M2         4616    14171     yes   S     4612    4610    4610    /home/rigger-spike/1459-spike-engineer/runs/rs-n2/d | /system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree | fx-rs-n2-M2 300
+M6         4617    14171     yes   S     4610    4617    4617    / | /system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree | fx-rs-n2-M6 300
+M4-parent  4614    14171     NO    -     (no such pid)
+M5         4615    14171     yes   S     4610    4610    4610    /home/rigger-spike/1459-spike-engineer/runs/rs-n2/d | /system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree | fx-rs-n2-M5 300
+M4         4618    14171     yes   S     1       4610    4610    /home/rigger-spike/1459-spike-engineer/runs/rs-n2/d | /system.slice/system-fx1459\x2drs.slice/fx1459-rs@n2.service/tree | fx-rs-n2-M4 300
+members recorded=7 alive=7 (root and M1-M6; M4-parent exits at once by design) unrecorded-naming-run=0
+2026-11-22T04:22:55.734Z cgroup.kill write started 2026-11-22T04:22:55.732Z ; cgroup.events read "populated 0" 1.720 ms after the write
+2026-11-22T04:22:55.734Z AFTER WRITE: sleeping 12 s
+listing run=rs-n2 (supervisor, +12 s after the write) at 2026-11-22T04:23:07.747Z by pid 4596 uid 1001
+WHO        PID     START     ALIVE STATE PPID    PGID    SID     CWD | CGROUP | ARGS
+root       4610    14169     NO    -     (no such pid)
+M3         4613    14171     NO    -     (no such pid)
+M1         4612    14171     NO    -     (no such pid)
+M2         4616    14171     NO    -     (no such pid)
+M6         4617    14171     NO    -     (no such pid)
+M4-parent  4614    14171     NO    -     (no such pid)
+M5         4615    14171     NO    -     (no such pid)
+M4         4618    14171     NO    -     (no such pid)
+members recorded=7 alive=0 (root and M1-M6; M4-parent exits at once by design) unrecorded-naming-run=0
+2026-11-22T04:23:07.750Z DONE
+listing run=rs-n2 (driver: at least 12 s after the ending) at 2026-11-22T04:23:08.043Z by pid 5466 uid 1001
+WHO        PID     START     ALIVE STATE PPID    PGID    SID     CWD | CGROUP | ARGS
+root       4610    14169     NO    -     (no such pid)
+M3         4613    14171     NO    -     (no such pid)
+M1         4612    14171     NO    -     (no such pid)
+M2         4616    14171     NO    -     (no such pid)
+M6         4617    14171     NO    -     (no such pid)
+M4-parent  4614    14171     NO    -     (no such pid)
+M5         4615    14171     NO    -     (no such pid)
+M4         4618    14171     NO    -     (no such pid)
+members recorded=7 alive=0 (root and M1-M6; M4-parent exits at once by design) unrecorded-naming-run=0
+$ journalctl --no-pager -o short-iso-precise --since @1795321328 _SYSTEMD_UNIT=systemd-logind.service + UNIT=user@1001.service + _SYSTEMD_UNIT=user@1001.service
+-- No entries --
+listing run=rs-n2 (driver: after cleanup) at 2026-11-22T04:23:11.570Z by pid 5553 uid 1001
+WHO        PID     START     ALIVE STATE PPID    PGID    SID     CWD | CGROUP | ARGS
+root       4610    14169     NO    -     (no such pid)
+M3         4613    14171     NO    -     (no such pid)
+M1         4612    14171     NO    -     (no such pid)
+M2         4616    14171     NO    -     (no such pid)
+M6         4617    14171     NO    -     (no such pid)
+M4-parent  4614    14171     NO    -     (no such pid)
+M5         4615    14171     NO    -     (no such pid)
+M4         4618    14171     NO    -     (no such pid)
+members recorded=7 alive=0 (root and M1-M6; M4-parent exits at once by design) unrecorded-naming-run=0
+2026-11-22T04:23:11.576184Z WSL instance (case rs-n2 end): boot_id 3c4522f0-1741-42f8-9d01-88ef813a8399; distro pid 1 starttime 64; uptime 193.82 s
+2026-11-22T04:23:11.639284Z LOGIN STATE (route rs, end)
+$ loginctl list-sessions --no-pager
+SESSION  UID USER SEAT LEADER CLASS [name withheld] IDLE SINCE
+     c1 1000 [name withheld] -    336    manager       -     no   -
+     c2    0 root -    414    user-early    pts/1 no   -
+     c3    0 root -    456    manager-early -     no   -
+     c6 1000 [name withheld] -    2137   user          -     no   -
+
+4 sessions listed.
+$ loginctl show-user rigger-spike --no-pager -p State -p Sessions -p Linger -p Service
+Failed to get user: User ID 1001 is not logged in or lingering
+$ systemctl is-active user@1001.service
+inactive
+2026-11-22T04:23:11.646955Z winrec end
+REC host=windows pid=36952 ppid=4156 created=2026-11-22T04:22:07.710Z recorded=2026-11-22T04:23:11.997Z label=end:sshd.exe:"C:\WINDOWS\System32\OpenSSH\sshd.exe" -R
+REC host=windows pid=2436 ppid=36952 created=2026-11-22T04:22:07.911Z recorded=2026-11-22T04:23:11.997Z label=end:sshd.exe:"C:\WINDOWS\System32\OpenSSH\sshd.exe" -z
+REC host=windows pid=27552 ppid=2436 created=2026-11-22T04:22:07.953Z recorded=2026-11-22T04:23:11.997Z label=end:cmd.exe:"c:\windows\system32\cmd.exe" /c "wsl.exe -u root -e bash -s fx1459rsb rs n2"
+REC host=windows pid=31296 ppid=27552 created=2026-11-22T04:22:07.958Z recorded=2026-11-22T04:23:11.997Z label=end:conhost.exe:\??\C:\WINDOWS\system32\conhost.exe 0x4
+REC host=windows pid=6576 ppid=27552 created=2026-11-22T04:22:07.974Z recorded=2026-11-22T04:23:11.997Z label=end:wsl.exe:wsl.exe -u root -e bash -s fx1459rsb rs n2
+REC host=windows pid=36904 ppid=6576 created=2026-11-22T04:22:07.980Z recorded=2026-11-22T04:23:11.997Z label=end:wsl.exe:wsl.exe -u root -e bash -s fx1459rsb rs n2
+REC host=windows pid=38264 ppid=36904 created=2026-11-22T04:22:08.018Z recorded=2026-11-22T04:23:11.997Z label=end:wslhost.exe: --[name withheld] [id withheld] --[name withheld] [id withheld]
+REC host=windows pid=27012 ppid=38264 created=2026-11-22T04:22:08.027Z recorded=2026-11-22T04:23:11.997Z label=end:conhost.exe:\??\C:\WINDOWS\system32\conhost.exe 0x4
+REC host=windows pid=18944 ppid=36904 created=2026-11-22T04:23:11.665Z recorded=2026-11-22T04:23:11.997Z label=end:powershell.exe:powershell.exe -NoProfile -NonInteractive -EncodedCommand [name withheld]
+REC host=windows pid=7928 ppid=18944 created=2026-11-22T04:23:11.668Z recorded=2026-11-22T04:23:11.997Z label=end:conhost.exe:\??\C:\WINDOWS\system32\conhost.exe 0x4
+2026-11-22T04:23:12.115968Z WSL instance (end): boot_id 3c4522f0-1741-42f8-9d01-88ef813a8399; distro pid 1 starttime 64; uptime 194.36 s
+2026-11-22T04:23:12.116355Z driver done
+2026-11-22T04:23:12.116783Z revert RS
+removed '/etc/systemd/system/fx1459-rs@.service'
+$ systemctl cat fx1459-rs@x.service
+No files found for fx1459-rs@x.service.
+ls: cannot access '/etc/systemd/system/fx1459-rs@.service': No such file or directory
+
