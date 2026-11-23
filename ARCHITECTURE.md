@@ -1090,7 +1090,9 @@ cannot record runs no command. Each entry names:
 - the dispatch's tracked processes, each by pid and start time;
 - `unended`, each process of the dispatch L0 could not end, where it has any;
 - `unread`, each group, directory or dispatch L0 recorded in place of processes it could not read,
-  where it has any.
+  where it has any;
+- `settled`, where the dispatch's containment settled whole, so a later start owes the entry
+  nothing but its signs.
 
 L1 keeps what each role dispatch's agent CLI wrote to its standard output and standard error, byte for byte, under `<state directory>/output/<dispatch id>/` (`R-RECORD-19`). L3 invokes it once L1's dispatch settles, for a maker, a judge or an escalation's role, and never for a step. L5's push reads only its stream, so the kept output never leaves the machine.
 
@@ -1852,13 +1854,15 @@ stops on its own record's signs alone.
 - a record L1 cannot read: never. L1 neither rewrites nor removes it, and the owner repairs or
   removes it, as under `R-STATE-11`.
 
-An entry goes only once it holds neither `unended` nor `unread`. Nothing else removes a sign's
+An entry goes only once its containment settled whole and it holds neither `unended` nor
+`unread`. Nothing else removes a sign's
 record. The dispatch's settle, its group becoming empty, Rigger's own exit and a kill or record
 event the sink refused are no such condition.
 
 A sign's record survives Rigger's own exit, past exit cleanup's budget included. At that exit, L1
 writes each process a failed write left out into its dispatch's entry under `unended`, unless L0
-has shown it gone. A write that fails then leaves the record's temporary file, which the next start
+has shown it gone. Past the budget, that entry stays unmarked, so the next start still owes it its
+whole cleanup. A write that fails then leaves the record's temporary file, which the next start
 reads. Exit cleanup also writes the sign to standard error, as it writes a kill it could not
 record. Where that write leaves no temporary file either, no record of the sign survives. This
 structure carries that residual: the next start has nothing to read the failure from, as after a
@@ -1914,20 +1918,23 @@ previous run (`R-STATE-35`). The reap runs in this order:
    (`R-STATE-11`, `R-STATE-33`).
 2. L1 adds each group, directory and process the temporary file names, and the record does not, to
    the entries it acts on. No step removes the temporary file but step 6's write.
-3. For an entry holding no sign, L0 acts as above: it kills the confirmed group, ends the tracked
-   processes and sweeps the directories.
-4. For an entry holding a sign, L0 acts on its signs alone. It tries again to end each process
-   under `unended` that it confirms, by pid and start time, is still the one recorded.
+3. For each entry not marked `settled`, L0 acts as above, whether or not it holds a sign: it kills
+   the confirmed group, ends the tracked processes and sweeps the directories.
+4. For each entry, L0 tries again to end each process under `unended` that it confirms, by pid and
+   start time, is still the one recorded. For an entry marked `settled`, that and step 5 are all
+   the start owes it.
 5. For each group, directory or dispatch under `unread` that is still the one recorded, L0 reads it.
    It ends each process the read shows alive there.
 6. L1 writes the record. It keeps each sign whose condition under `R-STATE-31`, `R-STATE-32` or
-   `R-STATE-34` does not yet hold, and each sign the reap left. That write's rename replaces the
-   temporary file.
+   `R-STATE-34` does not yet hold, and each sign the reap left. It marks `settled` each entry kept
+   for its signs whose step 3 settled whole. That write's rename replaces the temporary file.
 7. Where a sign still stands, the start starts no work. L3 records `sign.stopped`, and the verb
    names each sign and exits non-zero.
 
-An entry holding a sign is one whose dispatch's containment settled, so its group and its
-directories were already acted on. A start that finds a temporary file naming a process the record
+L1 marks an entry `settled` only once its dispatch's containment settled whole: its tracked set
+ended, its group killed and its directories swept, at the dispatch's ending or at a start's step 3.
+An entry kept past exit cleanup's budget, or left by a kill outright, is not marked. So a sign never
+stands in for cleanup an entry still owes (`R-STATE-28`; "Supervising `run`"). A start that finds a temporary file naming a process the record
 does not therefore starts no work until that process is shown gone. A reap whose write in step 6
 fails stops the start, as a kill that fails does.
 
@@ -1935,8 +1942,9 @@ fails stops the start, as a kill that fails does.
 (`R-STATE-38`). It shows one gone only by a read of the whole process table that succeeds, and
 lists no process at its pid that is still the one recorded, by its start time. A process the read
 lists as exited and not yet reaped by its parent is gone. A read that fails or times out shows
-nothing, and so does a signal's answer. Where no start time was recorded, or the read gives none,
-L0 cannot tell, and the sign stands.
+nothing, and so does a signal's answer. A read that lists no process at the pid shows it gone,
+whether or not a start time was recorded. Where the read lists a live process at the pid, and no
+start time was recorded or the read gives none, L0 cannot tell, and the sign stands.
 
 **What would reverse each choice:**
 
@@ -1945,7 +1953,7 @@ L0 cannot tell, and the sign stands.
   would need a second file written before the record.
 - **L3 keeping the outcome from L2:** a requirement that a card's work go on in the same run after
   a sign, which would have L2 answer the refusal.
-- **An entry with a sign reaped for its signs alone:** a process found working in a settled
+- **An entry marked `settled` reaped for its signs alone:** a process found working in a settled
   dispatch's directory at a later start that no sign named.
 
 ## Telemetry
