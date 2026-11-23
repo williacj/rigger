@@ -361,7 +361,8 @@ test('given a sink that refuses every append, and a stand-in for the agent CLI t
   assert.match(ran.err, /survivor\.killed/, said);
   assert.ok(ran.err.includes(`/usr/bin/tail -f ${directory}/hold`), said);
   // `gh auth status` is the one call doctor makes before the probe.
-  assert.deepEqual(fake.sent(), [['auth', 'status']], said);
+  // `gh --version` comes before it (#1448).
+  assert.deepEqual(fake.sent(), [['--version'], ['auth', 'status']], said);
 });
 
 /** A `claude` stand-in in `directory` that never answers, as `gitHanging` never does, writing its pid to `claude.pid`, and `warmed` as it is. */
@@ -420,5 +421,5 @@ test('given a sink that refuses every append, and a gh stand-in that leaves a ch
   assert.ok(ran.err.includes(`/usr/bin/tail -f ${directory}/hold`), said);
   assert.doesNotMatch(ran.out + ran.err, /checks passed/, said);
   const sent = fake.sent();
-  assert.deepEqual(sent.map((args) => args[0]), ['auth', 'api'], said);
+  assert.deepEqual(sent.map((args) => args[0]), ['--version', 'auth', 'api'], said);
 });

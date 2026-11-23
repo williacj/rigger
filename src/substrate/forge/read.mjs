@@ -572,6 +572,42 @@ const TIMELINE_SELECTION = Object.values(TIMELINE_ENTRIES).map(({ type, kind, la
  * is given what it reads, and what a failure says it was reading. A read that fails rejects
  * naming what it read and why, and never answers none in its place.
  */
+/**
+ * The oldest gh release Rigger runs with, as `<major>.<minor>.<patch>`: `readDiff` sends
+ * `--allow-escape-sequences`, which gh accepts only from this release (the owner's ruling M8-U91
+ * on #1293). `README.md`'s "Prerequisites" states it, and `doctor` compares the version read
+ * below with it.
+ */
+export const GH_MINIMUM = '2.97.0';
+
+/** The first line `gh --version` prints for a release: its numbers, then a space or nothing. */
+const GH_RELEASE = /^gh version (\d+\.\d+\.\d+)(?: |$)/;
+
+/**
+ * What `gh --version` answered, read through the read runner and sent as `via` says: gh's exit
+ * `status`, whether the timeout ended it and that `timeout`, the first `line` of its standard
+ * output, and the `version` that line names as `<major>.<minor>.<patch>`, or null where it names
+ * none. A gh L0 could not start rejects as the runner rejects.
+ *
+ * gh owns which release it is (`D16` rule 1). Measured with gh 2.103.3 on macOS on 2026-11-21, it
+ * exits 0 and prints `gh version 2.103.3 (2026-10-26)` and then the release's URL. Where this
+ * reading can differ from gh's own answer (`D16` rule 3):
+ * - a pre-release such as `gh version 2.97.0-rc.1` names a release gh has not shipped, and is read
+ *   as naming none, whichever release it precedes;
+ * - a build gh does not number, which prints `gh version DEV`, is read as naming none;
+ * - only standard output's first line is read, so an update notice gh prints on standard error
+ *   is never taken for the version, and a gh that moved its version off that line would read as
+ *   naming none rather than as some other number;
+ * - the numbers are read as written, so a number with a leading zero is the number it spells.
+ * `test/forge-runners.test.mjs` asks the host's gh each run, and holds this read to its first line.
+ */
+export async function readGhVersion(via = {}) {
+  const said = await readRunner(['--version'], via);
+  const line = (said.stdout ?? '').split('\n')[0].replace(/\r$/, '');
+  const version = said.status === 0 && !said.timedOut ? (line.match(GH_RELEASE)?.[1] ?? null) : null;
+  return { status: said.status, timedOut: Boolean(said.timedOut), timeout: said.timeout, line, version };
+}
+
 const REPOSITORY_READS = {
   /**
    * The pull requests whose head is `branch` in the repository, as `{ open, merged, closed }`, each a list
