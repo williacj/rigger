@@ -179,31 +179,47 @@ const calls = new Map();
 const trackers = new WeakMap();
 const active = (host) => [...calls.values()].filter((call) => call.host === host && call.tracking);
 function trackerOf(host) {
-  if (!trackers.has(host)) trackers.set(host, {});
+  if (!trackers.has(host)) trackers.set(host, { queue: [] });
   return trackers.get(host);
 }
 
 /** All reads serve running dispatches; a final read queues without moving periodic service. */
 function scan(host, dispatches) {
   const tracker = trackerOf(host);
-  tracker.pending = (tracker.pending ?? Promise.resolve()).then(() => {
-    if (dispatches === undefined) tracker.began = host.clock.now();
-    const serving = [...new Set([...(dispatches ?? []), ...active(host)])];
-    return reading(tracking(serving), host.ps, serving[0]?.readTimeout ?? READ_TIMEOUT, undefined, serving[0]?.trace, host);
+  return new Promise((resolve) => {
+    tracker.queue.push({ dispatches, resolve });
+    serviceTracker(host);
   });
-  return tracker.pending;
 }
 
-/** The next read begins a period after the last began, or immediately if that read outlasted it. */
-function armTracker(host) {
+/**
+ * One owner advances the tracker: at most one read is in flight and one timer pending.
+ * Only a settling read arms the next period, with the last periodic start's remaining time
+ * (zero when overdue). Queued first/final reads run before arming. A final read never moves
+ * that start or cancels a peer's timer. Every answer serves its starting recipients and all
+ * dispatches tracking at settlement, including admissions during the read.
+ */
+function serviceTracker(host) {
   const tracker = trackerOf(host);
-  if (tracker.timer !== undefined || active(host).length === 0) return;
-  tracker.timer = host.clock.schedule(Object.assign(async () => {
-    tracker.timer = undefined;
-    await scan(host);
-    armTracker(host);
-  }, { tracker: true }), Math.max(0, 1000 - (host.clock.now() - tracker.began)));
-  tracker.timer?.unref?.();
+  if (tracker.reading) return;
+  const request = tracker.queue.shift();
+  if (request !== undefined) {
+    tracker.reading = true;
+    Promise.resolve().then(async () => {
+      if (request.dispatches === undefined) tracker.began = host.clock.now();
+      const serving = [...new Set([...(request.dispatches ?? []), ...active(host)])];
+      await reading(tracking(serving, host), host.ps, serving[0]?.readTimeout ?? READ_TIMEOUT, undefined, serving[0]?.trace, host);
+      tracker.reading = false;
+      request.resolve();
+      serviceTracker(host);
+    });
+  } else if (tracker.timer === undefined && active(host).length > 0) {
+    tracker.timer = host.clock.schedule(Object.assign(() => {
+      tracker.timer = undefined;
+      return scan(host);
+    }, { tracker: true }), Math.max(0, 1000 - (host.clock.now() - tracker.began)));
+    tracker.timer?.unref?.();
+  }
 }
 
 /** Stops this dispatch's periodic service, preserving the cadence of any other dispatch. */
@@ -217,15 +233,16 @@ function stopTracking(call) {
 }
 
 /** One whole-table observation closes each dispatch's descendant set, retaining its first identity. */
-function* tracking(dispatches) {
+function* tracking(dispatches, host) {
   if (dispatches.length === 0) return;
+  const recipients = () => [...new Set([...dispatches, ...(host === undefined ? [] : active(host))])];
   try {
     const table = [...rowsOf(yield ['-A', '-o', 'pid=,ppid=,pgid=,lstart='])].map(([pid, row]) => {
       const fields = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(row);
       if (!fields) throw new Error(`the tracker cannot read process ${pid}: ${row}`);
       return { pid, parent: Number(fields[1]), group: Number(fields[2]), started: secondsOf(fields[3]) };
     });
-    for (const call of dispatches) {
+    for (const call of recipients()) {
       const parents = new Set(table.filter(({ group }) => group === call.child.pid).map(({ pid }) => pid));
       for (const pid of call.tracked.keys()) parents.add(pid);
       let grew;
@@ -240,7 +257,7 @@ function* tracking(dispatches) {
       } while (grew);
     }
   } catch (error) {
-    for (const call of dispatches) call.trackerUnread = error.message;
+    for (const call of recipients()) call.trackerUnread = error.message;
   }
 }
 
@@ -1953,7 +1970,7 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
   }
   if (track) {
     call.tracking = true;
-    if (active(host).length === 1) scan(host).then(() => armTracker(host));
+    if (active(host).length === 1) scan(host);
   }
   const { events } = call;
   const exited = once(child, 'exit');
