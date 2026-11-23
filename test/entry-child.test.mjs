@@ -52,8 +52,15 @@ const PERMITTED = new Set(['PATH', 'HOME', 'LANG', 'CODEX_HOME', 'RIGGER_STAND_I
 /** The start record parsed from its JSON, which the "Line" test checks is all that follows the prefix. */
 const parsed = (text) => JSON.parse(text.slice(PREFIX.length));
 
-/** The names `RECORDED_NAMES` holds, read by index as an array is, whatever its iterator does. */
-const recordedNames = () => Array.prototype.slice.call(RECORDED_NAMES);
+/**
+ * The names `RECORDED_NAMES` holds, read by index into a plain array: no iterator or species of
+ * its own decides what is read, and no value it constructs is compared.
+ */
+function recordedNames() {
+  const names = [];
+  for (let at = 0; at < RECORDED_NAMES.length; at++) names.push(RECORDED_NAMES[at]);
+  return names;
+}
 
 test('the start diagnostic is the entry-child-start prefix followed by a single-line JSON object', async () => {
   const { text } = await recordedStart({ PATH: '/fixture/bin' });
@@ -95,7 +102,7 @@ test('the start record\'s pid is the PID the spawn reported', async () => {
 
 test('each recorded environment name maps to the value the caller passed for it', async () => {
   const caller = { PATH: '/fixture/bin', HOME: '/fixture/home', LANG: 'C.fixture', CODEX_HOME: '/fixture/codex', RIGGER_STAND_IN_VALUE: 'stand-in-fixture' };
-  assert.deepEqual(recordedNames().filter((name) => !Object.hasOwn(caller, name)), [], 'premise: the caller holds every recorded name');
+  for (const name of recordedNames()) assert.ok(Object.hasOwn(caller, name), `premise: the caller holds the recorded name ${name}`);
   const { environment } = parsed((await recordedStart(caller)).text);
   assert.ok(environment !== null && typeof environment === 'object' && !Array.isArray(environment), 'environment is a JSON object');
   for (const [name, value] of Object.entries(environment)) assert.equal(value, caller[name], `${name} is recorded with the caller's value`);
@@ -123,7 +130,7 @@ test('entryChild hands spawn the caller\'s whole environment, outside names incl
 
 test('RECORDED_NAMES is an exported array of strings', () => {
   assert.ok(Array.isArray(RECORDED_NAMES), 'RECORDED_NAMES is an array');
-  assert.deepEqual(recordedNames().filter((name) => typeof name !== 'string'), [], 'every element is a string');
+  for (const name of recordedNames()) assert.equal(typeof name, 'string', 'every element is a string');
 });
 
 test('RECORDED_NAMES holds PATH', () => {
