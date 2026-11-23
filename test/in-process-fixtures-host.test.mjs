@@ -20,6 +20,7 @@ import { admissionOf, closerText, seed } from './admission-world.mjs';
 import { temporaryDirectory } from './temporary-directory.mjs';
 import { setTimeout as observed } from 'node:timers/promises';
 import { alive, until } from './process-fixtures.mjs';
+import { entryChild } from './entry-child.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 
 // Host reason: wiring.
@@ -184,34 +185,6 @@ function installedPackage(t) {
   }
 }
 
-/** A real recorded child used by the five entry witnesses, with finite explicitly ended input. */
-async function entryChild(t, command, argv, cwd, environment, input = '') {
-  const child = spawn(command, argv, { cwd, env: environment, stdio: ['pipe', 'pipe', 'pipe'] });
-  const started = { pid: child.pid ?? null, command, argv, cwd, environment };
-  t.diagnostic(`entry-child-start ${JSON.stringify(started)}`);
-  let stdout = '';
-  let stderr = '';
-  let failure;
-  let inputFailure;
-  child.stdout.setEncoding('utf8');
-  child.stderr.setEncoding('utf8');
-  child.stdout.on('data', (chunk) => { stdout += chunk; });
-  child.stderr.on('data', (chunk) => { stderr += chunk; });
-  child.once('error', (error) => { failure = error; });
-  child.stdin.once('error', (error) => { inputFailure = error; });
-  const closed = new Promise((resolve) => child.once('close', (code, signal) => resolve({ code, signal })));
-  child.stdin.end(input);
-  const ended = await closed;
-  const completed = { pid: child.pid ?? null, ...ended, stdinFinished: child.stdin.writableFinished, stdout, stderr };
-  t.diagnostic(`entry-child-end ${JSON.stringify(completed)}`);
-  assert.ifError(failure);
-  assert.ifError(inputFailure);
-  assert.ok(Number.isSafeInteger(started.pid) && started.pid > 0, 'the witness recorded its actual child PID at start');
-  assert.equal(completed.pid, started.pid);
-  assert.equal(completed.signal, null);
-  assert.equal(completed.stdinFinished, true);
-  return completed;
-}
 
 /** A distinct consumer whose only gh is the executable fake under a path holding node and git. */
 function installedPlanWorld(t, board) {
