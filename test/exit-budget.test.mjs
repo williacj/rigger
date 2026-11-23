@@ -122,3 +122,12 @@ test('a group killed bare keeps its entry and its survivors, and the next start 
   assert.deepEqual(ran.world.report().left, []);
   assert.deepEqual(readGroups(ran.state), []);
 });
+
+// A second directory must not buy another read deadline after the careful budget is spent.
+test('T15: after the care bound passes both directories share one sweep of the loop', async (t) => {
+  const { assertSweepTogether } = await import('./exit-budget-world.mjs');
+  const plan = { label: 1, speed: 500, survivors: true, tracked: true, outlives: ['member', 'survivors', 'tracked'] };
+  const two = await cleanedUp(t, { groups: [plan] });
+  const one = await cleanedUp(t, { groups: [{ ...plan, noScratch: true }] });
+  assertSweepTogether(two, one);
+});

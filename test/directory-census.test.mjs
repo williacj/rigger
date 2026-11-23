@@ -19,6 +19,8 @@ import { heldOutput } from './process-fixtures.mjs';
 import { shellQuote } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { listingOf } from './listing-stand-in.mjs';
+import { descendantCommand, descendantsReady } from './process-fixtures.mjs';
+import { manualClock } from './clock-report-world.mjs';
 
 // A bound on the test alone, so that a dispatch which never settles fails here rather than
 // holding the suite: nothing waits on it when the dispatch settles.
@@ -60,6 +62,142 @@ test('given a dispatch whose command starts a process that leaves its group, wor
 
   assert.equal(result.exit, 0);
   assert.equal(alive(Number(read(directory, 'left.pid'))), false, 'the process working under the dispatch\'s directory is alive');
+});
+
+// proves R-STATE-29
+test('T1: a returning dispatch ends and records M3 and M6 while their in-group parent is alive', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const settled = dispatchIn(directory, { id: 'd-descendants', card: 1466, command: descendantCommand(directory) });
+  const pids = await descendantsReady(t, directory);
+  assertUntouched(pids.M1, 'M1 before the command returns');
+  writeFileSync(join(directory, 'release'), '');
+
+  const result = await settled;
+
+  assert.equal(result.exit, 0);
+  for (const member of ['M3', 'M6']) {
+    assert.ok(!alive(pids[member]) || processState(pids[member]).startsWith('Z'), `${member} outlived its dispatch`);
+    const events = readEvents(stateOf(directory)).filter(({ pid }) => pid === pids[member]);
+    assert.deepEqual(events.map(({ event, dispatch, card, name, cmd }) => ({ event, dispatch, card, name, cmd })), [
+      { event: 'survivor.killed', dispatch: 'd-descendants', card: 1466, name: 'tail', cmd: `/usr/bin/tail -f ${directory}/hold` },
+    ], `${member} has no one named kill under its dispatch`);
+  }
+});
+
+// proves R-STATE-29
+test('T2: a timed-out dispatch ends M1 through M6, including both new sessions', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const settled = dispatchIn(directory, { id: 'd-timeout-descendants', card: 1466, command: descendantCommand(directory), timeout: 3000 });
+  const pids = await descendantsReady(t, directory);
+  const result = await settled;
+  assert.equal(result.timedOut, true);
+  for (const [name, pid] of Object.entries(pids)) assert.ok(!alive(pid) || processState(pid).startsWith('Z'), `${name} outlived the timeout`);
+  for (const name of ['M3', 'M6']) assert.equal(readEvents(stateOf(directory)).filter((event) => event.event === 'survivor.killed' && event.pid === pids[name]).length, 1, `${name} was not recorded`);
+});
+
+// proves R-STATE-29
+test('T3: the real one-second tracker retains and ends M6x after its parent exits', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const observations = [];
+  const host = { ...realHost, execFile(tool, args, options, done) {
+    return realHost.execFile(tool, args, options, (error, stdout, stderr) => {
+      if (args.includes('-A')) observations.push(stdout);
+      done(error, stdout, stderr);
+    });
+  } };
+  let ended = false;
+  const settled = dispatchIn(directory, { id: 'd-reparented', card: 1466, command: descendantCommand(directory), host }).finally(() => { ended = true; });
+  const pids = await descendantsReady(t, directory);
+  const m6x = pids.M6;
+  const group = Number(read(directory, 'command.pid'));
+  const attributed = () => observations.some((table) => {
+    const rows = table.trim().split('\n').map((line) => line.trim().split(/\s+/).slice(0, 3).map(Number));
+    return rows.some(([pid, parent]) => pid === m6x && parent === pids.M1)
+      && rows.some(([pid, , pgid]) => pid === pids.M1 && pgid === group);
+  });
+  await until(() => attributed() || ended, t);
+  assert.ok(attributed(), 'the dispatch ended before any real tracker read showed M6x with its parent in the group');
+  assertUntouched(pids.M1, 'M6x parent after a real tracker observation');
+  writeFileSync(join(directory, 'parent-exit'), '');
+  await until(() => spawnSync('/bin/ps', ['-p', String(m6x), '-o', 'ppid='], { encoding: 'utf8' }).stdout.trim() === '1', t);
+  writeFileSync(join(directory, 'release'), '');
+  await settled;
+  assert.ok(!alive(m6x) || processState(m6x).startsWith('Z'), 'M6x outlived its dispatch after reparenting to pid 1');
+  assert.deepEqual(readEvents(stateOf(directory)).filter(({ pid }) => pid === m6x).map(({ event, dispatch, card, name, cmd }) => ({ event, dispatch, card, name, cmd })), [
+    { event: 'survivor.killed', dispatch: 'd-reparented', card: 1466, name: 'tail', cmd: `/usr/bin/tail -f ${directory}/hold` },
+  ]);
+});
+
+// proves R-STATE-29
+test('T5: ending one dispatch ends its M6 and leaves the concurrent dispatch M6 running', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const worlds = ['one', 'two'].map((id) => {
+    const workspace = join(directory, id);
+    mkdirSync(workspace);
+    writeFileSync(join(workspace, 'hold'), '');
+    return { workspace, settled: dispatchIn(workspace, { id, card: 1466, command: descendantCommand(workspace) }) };
+  });
+  const [first, second] = await Promise.all(worlds.map(({ workspace }) => descendantsReady(t, workspace)));
+  writeFileSync(join(worlds[0].workspace, 'release'), '');
+  await worlds[0].settled;
+  assert.ok(!alive(first.M6) || processState(first.M6).startsWith('Z'), 'the returning dispatch left M6 alive');
+  assertUntouched(second.M6, 'the other dispatch M6');
+  writeFileSync(join(worlds[1].workspace, 'release'), '');
+  await worlds[1].settled;
+});
+
+// proves R-STATE-29
+test('T6: the immediate double fork no read attributes to the dispatch is the known escape', SETTLES_WITHIN, async (t) => {
+  const directory = holding(t);
+  const observations = [];
+  // Hold the periodic clock between the first and final real reads, establishing the out-row premise.
+  const clock = manualClock(0);
+  const host = { ...realHost, clock: { ...clock, pause: async () => {} }, execFile(tool, args, options, done) {
+    return realHost.execFile(tool, args, options, (error, stdout, stderr) => {
+      if (args.includes('-A')) observations.push(stdout);
+      done(error, stdout, stderr);
+    });
+  } };
+  const fork = [
+    'use POSIX (); my $h = $ARGV[0]; exit if fork; POSIX::setsid() >= 0 or die;',
+    'sub mark { my ($name) = @_; open(my $f, ">", "$h/$name.tmp") or die; print $f $$; close $f; rename "$h/$name.tmp", "$h/$name.pid" or die; }',
+    'mark("middle"); exit if fork; chdir "/" or die;',
+    'open STDOUT, ">", "/dev/null" or die; open STDERR, ">", "/dev/null" or die;',
+    'mark("D2"); exec "/usr/bin/tail", "-f", "$h/hold" or die;',
+  ].join(' ');
+  const command = fixture(directory, 'command', [
+    'echo $$ > "$here/command.pid"',
+    'while [ ! -f "$here/fork" ]; do :; done',
+    `/usr/bin/perl -e ${shellQuote(fork)} "$here"`,
+    'while [ ! -f "$here/release" ]; do :; done',
+    'exit 0',
+  ].join('\n'));
+  const settled = dispatchIn(directory, { id: 'd-known-escape', card: 1466, command, host });
+  await until(() => observations.length === 1, t);
+  writeFileSync(join(directory, 'fork'), '');
+  await until(() => existsSync(join(directory, 'D2.pid')), t);
+  const escaped = Number(read(directory, 'D2.pid'));
+  t.after(() => { if (alive(escaped)) process.kill(escaped, 'SIGKILL'); });
+  await until(() => spawnSync('/bin/ps', ['-p', String(escaped), '-o', 'ppid=,ucomm='], { encoding: 'utf8' }).stdout.trim() === '1 tail', t);
+  writeFileSync(join(directory, 'release'), '');
+  await settled;
+  const middle = Number(read(directory, 'middle.pid'));
+  assertUntouched(escaped, 'D2, the known escape of R-STATE-29');
+  const tracked = new Set();
+  for (const printed of observations) {
+    const rows = printed.trim().split('\n').map((line) => line.trim().split(/\s+/).slice(0, 3).map(Number));
+    const group = Number(read(directory, 'command.pid'));
+    const parents = new Set([...tracked, ...rows.filter(([, , pgid]) => pgid === group).map(([pid]) => pid)]);
+    let grew;
+    do {
+      grew = false;
+      for (const [pid, parent, pgid] of rows) {
+        if (!parents.has(parent)) continue;
+        assert.ok(pid !== middle && pid !== escaped, `a read showed ${pid} with its parent ${parent} in the group or tracked; the known-escape premise is false`);
+        if (pgid !== group && !parents.has(pid)) { tracked.add(pid); parents.add(pid); grew = true; }
+      }
+    } while (grew);
+  }
 });
 
 // proves R-STATE-17, R-STATE-12
@@ -282,8 +420,10 @@ test('given a census tool that lists every process as another user\'s, the censu
   const directory = holding(t);
   // `lsof` itself, asked as the census asks it, with every user id it prints made root's.
   const lsof = fixture(directory, 'lsof', `: > "$here/lsof-asked"\n${shellQuote(LSOF)} "$@" | /usr/bin/sed 's/^u[0-9]*$/u0/'`);
+  const left = await tailIn(t, directory, join(directory, 'sub'));
+  writeFileSync(join(directory, 'left.pid'), String(left));
 
-  await dispatchIn(directory, { id: 'd-census', card: 1412, command: leavingInSub(directory), host: { ...realHost, lsof } });
+  await dispatchIn(directory, { id: 'd-census', card: 1412, command: '/usr/bin/true', host: { ...realHost, lsof } });
 
   assert.ok(existsSync(join(directory, 'lsof-asked')), 'the census never asked the stand-in, so the test proves nothing');
   assertUntouched(Number(read(directory, 'left.pid')), 'the process listed as another user\'s');
@@ -408,10 +548,16 @@ async function assertSuccessorEnded(directory, state, killed) {
   assert.deepEqual(readEvents(state).filter((event) => event.pid === q).map(({ event, name }) => ({ event, name })), [{ event: killed, name: 'tail' }]);
 }
 
+/** G7: P starts outside the dispatch's tree, so only the directory sweep may reach it. */
+function hoppingOutside(directory, body) {
+  spawnSync('/bin/sh', [fixture(directory, 'hop', `${hopping}\nexit 0`)], { stdio: 'ignore' });
+  return fixture(directory, 'command', body);
+}
+
 // proves R-STATE-17, R-STATE-7
 test('given a dispatch exiting 0 whose process outside its group, once the census has listed it, forks a successor in the dispatch\'s directory and exits before the census stops it, the successor is not alive when the dispatch settles, and its kill is recorded', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
-  const command = fixture(directory, 'command', `${hopping}\nexit 0`);
+  const command = hoppingOutside(directory, 'exit 0');
 
   await dispatchIn(directory, { id: 'd-census', card: 1412, command, host: { ...realHost, lsof: listingOnce(directory) } });
 
@@ -421,7 +567,7 @@ test('given a dispatch exiting 0 whose process outside its group, once the censu
 // proves R-STATE-17, R-STATE-8
 test('given a dispatch outliving its timeout whose process outside its group, once the census has listed it, forks a successor in the dispatch\'s directory and exits before the census stops it, the successor is not alive when the dispatch settles, and its kill is recorded', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
-  const command = fixture(directory, 'command', `${hopping}\n: > "$here/ready"\nexec /usr/bin/tail -f "$here/hold"`);
+  const command = hoppingOutside(directory, ': > "$here/ready"\nexec /usr/bin/tail -f "$here/hold"');
 
   const result = await dispatchIn(directory, { id: 'd-census', card: 1412, command, host: { ...realHost, lsof: listingOnce(directory) }, timeout: 3_000 });
 
@@ -433,7 +579,7 @@ test('given a dispatch outliving its timeout whose process outside its group, on
 // proves R-STATE-17, R-STATE-9
 test('given a dispatch whose process outside its group, once the exit cleanup\'s census has listed it, forks a successor in the dispatch\'s directory and exits before the census stops it, the successor is not alive after the caller receives SIGTERM, and its kill is recorded', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
-  const command = fixture(directory, 'command', `${hopping}\n: > "$here/ready"\nexec /usr/bin/tail -f "$here/hold"`);
+  const command = hoppingOutside(directory, ': > "$here/ready"\nexec /usr/bin/tail -f "$here/hold"');
 
   const { signal, said } = await terminated(t, directory, command, listingOnce(directory));
 
@@ -616,10 +762,11 @@ const SCRATCH_CALLER = [
 ].join('\n');
 
 // proves R-STATE-17, R-STATE-9
-test('given a dispatch running with a process that left its group, working in the dispatch\'s scratch directory, when the calling process receives SIGTERM, that process is not alive afterwards, and its kill is recorded', SETTLES_WITHIN, async (t) => {
+test('given a dispatch running with a process started outside the dispatch\'s tree, working in the dispatch\'s scratch directory, when the calling process receives SIGTERM, that process is not alive afterwards, and its kill is recorded', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   for (const each of ['work', 'scratch']) mkdirSync(join(directory, each));
-  const command = fixture(directory, 'command', [leaveWorking('scratch/sub', 'left'), ': > "$here/ready"', 'while :; do :; done'].join('\n'));
+  const left = await tailIn(t, directory, join(directory, 'scratch', 'sub'));
+  const command = fixture(directory, 'command', [': > "$here/ready"', 'while :; do :; done'].join('\n'));
   writeFileSync(join(directory, 'caller.mjs'), SCRATCH_CALLER);
   const caller = spawn(process.execPath, [join(directory, 'caller.mjs'), directory, command], { stdio: ['ignore', 'ignore', 'pipe'] });
   t.after(() => caller.kill('SIGKILL'));
@@ -633,7 +780,6 @@ test('given a dispatch running with a process that left its group, working in th
   const [, signal] = await exited;
 
   assert.equal(signal, 'SIGTERM', said);
-  const left = Number(read(directory, 'left.pid'));
   assert.equal(await gone(left), true, 'the process working in the scratch directory is alive');
   const kills = readEvents(stateOf(directory)).filter((event) => event.event === 'survivor.killed' && event.pid === left);
   assert.deepEqual(kills.map(({ dispatch: id, card, directory: swept }) => ({ id, card, swept })), [{ id: 'd-term', card: 7, swept: join(directory, 'scratch') }], said);
