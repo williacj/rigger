@@ -45,7 +45,8 @@
     "docs/spikes/npm-pack-output-investigation.md": "strict",
     "docs/guide.md": "strict",
     "docs/reference.md": "strict",
-    "docs/spikes/review-workspace-custody.md": "strict"
+    "docs/spikes/review-workspace-custody.md": "strict",
+    "docs/spikes/non-elevated-job-object.md": "strict"
   },
   "exempt": {
     "paths": {}
