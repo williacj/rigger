@@ -70,6 +70,7 @@ test('T1: a returning dispatch ends and records M3 and M6 while their in-group p
   const settled = dispatchIn(directory, { id: 'd-descendants', card: 1466, command: descendantCommand(directory) });
   const pids = await descendantsReady(t, directory);
   assertUntouched(pids.M1, 'M1 before the command returns');
+  assert.ok(!processState(pids.M1).startsWith('Z'), 'M1 ended before the command returns');
   writeFileSync(join(directory, 'release'), '');
 
   const result = await settled;
@@ -118,6 +119,7 @@ test('T3: the real one-second tracker retains and ends M6x after its parent exit
   await until(() => attributed() || ended, t);
   assert.ok(attributed(), 'the dispatch ended before any real tracker read showed M6x with its parent in the group');
   assertUntouched(pids.M1, 'M6x parent after a real tracker observation');
+  assert.ok(!processState(pids.M1).startsWith('Z'), 'M6x parent ended before its release');
   writeFileSync(join(directory, 'parent-exit'), '');
   await until(() => spawnSync('/bin/ps', ['-p', String(m6x), '-o', 'ppid='], { encoding: 'utf8' }).stdout.trim() === '1', t);
   writeFileSync(join(directory, 'release'), '');
@@ -142,6 +144,7 @@ test('T5: ending one dispatch ends its M6 and leaves the concurrent dispatch M6 
   await worlds[0].settled;
   assert.ok(!alive(first.M6) || processState(first.M6).startsWith('Z'), 'the returning dispatch left M6 alive');
   assertUntouched(second.M6, 'the other dispatch M6');
+  assert.ok(!processState(second.M6).startsWith('Z'), 'the other dispatch M6 was ended');
   writeFileSync(join(worlds[1].workspace, 'release'), '');
   await worlds[1].settled;
 });
@@ -183,6 +186,7 @@ test('T6: the immediate double fork no read attributes to the dispatch is the kn
   await settled;
   const middle = Number(read(directory, 'middle.pid'));
   assertUntouched(escaped, 'D2, the known escape of R-STATE-29');
+  assert.ok(!processState(escaped).startsWith('Z'), 'D2, the known escape, was ended');
   const tracked = new Set();
   for (const printed of observations) {
     const rows = printed.trim().split('\n').map((line) => line.trim().split(/\s+/).slice(0, 3).map(Number));
