@@ -20,3 +20,11 @@ The allowlist is `PATH`, `HOME`, `LANG`, `CODEX_HOME` and `RIGGER_STAND_IN_VALUE
 ## Round 1: the allowlist test pinned its representation
 
 The reviewer's B1 on #1477 found that the allowlist test deep-equalled the sorted array. A duplicate `PATH`, which leaves the `.includes` filter and every record unchanged, turned it red: an implementation test, `tdd` class 1. The test now asserts only what the card asks, that `PATH` is a member and that no name lies outside the permitted set. Receipts at `6c60aa27`: the duplicate-`PATH` mutation survives (5/5 pass), and appending `UNRELATED` is still killed by the allowlist test's outside-the-set assertion. Dropping `PATH` is killed by the PATH-value test and the membership assertion, and the whole-environment record is still killed by the outside-name test.
+
+## Round 2: the same class, fixed at the invariant
+
+Round 2's B1 found that the round-1 fix still compared an intermediate array's prototype, so an array subclass holding the same five names failed. The lesson is that the test should observe the allowlist only through what its consumer depends on, its elements. `.includes('PATH')` checks membership, and enumerating the elements checks that each is permitted; nothing compares a constructed value. Rejecting *any* outside name needs enumeration, since membership alone cannot be asked of an unbounded set of names.
+
+The sweep of the other four tests found two more instances, each shown red at `851b02fb` by a receipt: the PATH test read `record.environment.PATH`, pinning the field name, and the spawn test deep-compared the env object, pinning its prototype. The PATH test now finds PATH with its value anywhere in the parsed record. The spawn test compares the env's own entries.
+
+Receipts at `efa16e99`: duplicate PATH, subclass, reordered, frozen, duplicate-and-reordered, a null-prototype spawn env and a renamed record key all survive. An added forbidden name, a dropped PATH, the whole environment, an outside value under another key, a filtered spawn env and a dropped `cwd` are each killed by the test meant for them.
