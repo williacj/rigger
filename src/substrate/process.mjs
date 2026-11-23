@@ -199,7 +199,8 @@ function scan(host, dispatches) {
  * Only a settling read arms the next period, with the last periodic start's remaining time
  * (zero when overdue). Queued first/final reads run before arming. A final read never moves
  * that start or cancels a peer's timer. Every answer serves its starting recipients and all
- * dispatches tracking at settlement, including admissions during the read.
+ * dispatches whose final read has not settled, including those admitted and ended during
+ * this read. Stopping periodic service does not revoke an answer owed before the final read.
  */
 function serviceTracker(host) {
   const tracker = trackerOf(host);
@@ -237,7 +238,7 @@ function stopTracking(call) {
 /** One whole-table observation closes each dispatch's descendant set, retaining its first identity. */
 function* tracking(dispatches, host) {
   if (dispatches.length === 0) return;
-  const recipients = () => [...new Set([...dispatches, ...(host === undefined ? [] : active(host))])];
+  const recipients = () => [...new Set([...dispatches, ...(host === undefined ? [] : [...calls.values()].filter((call) => call.host === host && call.tracked !== undefined && !call.trackerEnded))])];
   try {
     const table = [...rowsOf(yield ['-A', '-o', 'pid=,ppid=,pgid=,lstart='])].map(([pid, row]) => {
       const fields = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(row);
@@ -1787,6 +1788,7 @@ async function descendants(call) {
   if (call.tracked === undefined) return [];
   stopTracking(call);
   await scan(call.host, [call]);
+  call.trackerEnded = true;
   return [...(await swept(undefined, call, 'survivor.killed', call.tracked)),
     ...(call.trackerUnread === undefined ? [] : [['descendants.unread', { group: call.child.pid, census: call.trackerUnread }]])];
 }
@@ -1795,7 +1797,8 @@ async function descendants(call) {
 function descendantsNow(call) {
   if (call.tracked === undefined) return [];
   const began = call.host.clock.now();
-  readingNow(tracking([call, ...active(call.host)]), call.ps, call.readTimeout, began + call.readTimeout, call.host.clock.now, call.host.spawnSync);
+  readingNow(tracking([call], call.host), call.ps, call.readTimeout, began + call.readTimeout, call.host.clock.now, call.host.spawnSync);
+  call.trackerEnded = true;
   return [...sweptNow(undefined, call, 'survivor.killed', call.tracked, began),
     ...(call.trackerUnread === undefined ? [] : [['descendants.unread', { group: call.child.pid, census: call.trackerUnread }]])];
 }
