@@ -46,7 +46,8 @@
     "docs/guide.md": "strict",
     "docs/reference.md": "strict",
     "docs/spikes/review-workspace-custody.md": "strict",
-    "docs/spikes/job-reach-after-supervisor-death.md": "strict"
+    "docs/spikes/job-reach-after-supervisor-death.md": "strict",
+    "docs/spikes/whole-tree-without-a-session.md": "strict"
   },
   "exempt": {
     "paths": {}
