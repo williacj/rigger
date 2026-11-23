@@ -12,5 +12,7 @@ The allowlist is `PATH`, `HOME`, `LANG`, `CODEX_HOME` and `RIGGER_STAND_IN_VALUE
 ## Verification
 
 - Before the move, a stand-in spawn showed the start record carrying a name outside the allowlist and its value; the outside-the-allowlist test was red on that, and green once the record passed through the allowlist.
-- Mutation, by `npm run mutation:receipt` at the committed head: restoring the start record to the whole environment turns the outside-the-allowlist test red on its name assertion, with the other four tests passing. The receipt is quoted in the pull request.
+- Mutation, by `npm run mutation:receipt` at `e518300e`: restoring the start record to the whole environment (anchor found once) turns the outside-the-allowlist test red on its name assertion, with the other four tests passing, and the restored file passes all five. The receipt is quoted in the pull request.
+- The deterministic spawn census in `test/git-environment.test.mjs` caught a first draft that called the injected spawn under another name; the parameter is now named `spawn`, so the census sees the call and that it hands an environment.
+- In the host run's own log, all 214 `entry-child-start` records carry only `PATH`, `LANG`, `HOME`, `RIGGER_STAND_IN_VALUE` and `CODEX_HOME` (counted by name; no value read out).
 - `npm run test:host -- test/in-process-fixtures-host.test.mjs` exits 0 and reports 22 tests, the 22 top-level `test(` registrations the file held at `3e325ab8`. Only names, counts and exit status from that run are quoted anywhere.
