@@ -776,7 +776,7 @@ const SCRATCH_CALLER = [
 ].join('\n');
 
 // proves R-STATE-17, R-STATE-9
-test('given a dispatch running with a process started outside the dispatch\'s tree, working in the dispatch\'s scratch directory, when the calling process receives SIGTERM, that process is not alive afterwards, and its kill is recorded', SETTLES_WITHIN, async (t) => {
+test('given a dispatch running with a process that left its group, working in the dispatch\'s scratch directory, when the calling process receives SIGTERM, that process is not alive afterwards, and its kill is recorded', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
   for (const each of ['work', 'scratch']) mkdirSync(join(directory, each));
   const left = await tailIn(t, directory, join(directory, 'scratch', 'sub'));
