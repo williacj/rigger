@@ -1863,10 +1863,9 @@ A sign's record survives Rigger's own exit, past exit cleanup's budget included.
 writes each process a failed write left out into its dispatch's entry under `unended`, unless L0
 has shown it gone. Past the budget, that entry stays unmarked, so the next start still owes it its
 whole cleanup. A write that fails then leaves the record's temporary file, which the next start
-reads. Exit cleanup also writes the sign to standard error, as it writes a kill it could not
-record. Where that write leaves no temporary file either, no record of the sign survives. This
-structure carries that residual: the next start has nothing to read the failure from, as after a
-write that failed outright and a kill outright.
+reads. Exit cleanup also writes the sign to standard error, as `R-STATE-37` names it. Where that
+write leaves no temporary file either, no record of the sign survives. That case is out of scope,
+as `### R-STATE-30 — Signs Rigger stops on` puts it (M8-U110 on #1293).
 
 **The one point that refuses a dispatch.** Every dispatch passes L1's `dispatch`, in
 `src/execution/run.mjs`, before its command starts, whatever its role or card. There L1 reads the

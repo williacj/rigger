@@ -19,7 +19,7 @@
 
 ## The residual
 
-A write that leaves out a process, then an exit cleanup whose write also fails with no temporary file left, leaves the next start nothing to read. That is the reason the rows give for a failed write followed by a kill outright. The pull request asks the owner whether it stands.
+Suppose a write leaves out a process, and exit cleanup's write then fails too with no temporary file left. The next start has nothing to read. The owner ruled this case a stated residual in M8-U110, and #1478 adds its out-of-scope row to `### R-STATE-30 — Signs Rigger stops on`. "When a sign's record goes" refers to that row. Exit cleanup names the sign on standard error, as `R-STATE-37` names it.
 
 ## Round 1's findings
 
@@ -28,4 +28,4 @@ The reviewer's round-1 verdict on #1484 found four defects:
 - **F2.** The reap acted on an entry's signs alone whenever it held one. An entry kept past exit cleanup's budget can hold a sign and still owe its whole cleanup. The entry now carries `settled`, which L1 writes only once the dispatch's containment settled whole. The reap acts on its signs alone only where `settled` is marked.
 - **F3.** "Showing a process gone" kept a sign when no start time was recorded, even where no process stood at the pid. A read that lists no process at the pid now shows it gone, whatever was recorded.
 - **F4 and the evidence.** The ordering item is checked at the merge base after #1483 merges. The pull request keeps the full `npm test` output at the head.
-- **F1.** A normal exit whose writes all fail leaves the next start nothing to read. No structure can keep a sign through a file system that refuses every write. The rows do not put this case out, so it is escalated on #1481 as `ambiguous`, with a recommended row for the owner.
+- **F1.** A normal exit whose writes all fail leaves the next start nothing to read. No structure can keep a sign through a file system that refuses every write. The rows do not put this case out, so it was escalated on #1481 as `ambiguous`. The owner ruled it a stated residual (M8-U110).
