@@ -41,7 +41,7 @@ The renewed fault search enumerated every tracker scheduling and observation
 path, including synchronous exit reads. Consumer inventories cover suite lists,
 network pins, fake-gh, in-process fixtures and the generated matrix. No required
 change outside Lands in was found. G2 retargets the network sites and parser pin;
-existing site reasons are preserved from the merge base. T11 changes only lines
+existing site reasons and program declarations are preserved from the merge base. T11 changes only lines
 this card added, so no additional existing-line grant is needed. No requirement
 declaration changes and no matrix regeneration is needed.
 
@@ -50,3 +50,11 @@ containment verifier, fresh-clone deterministic verification and CI evidence are
 recorded in PR 1475. Acceptance revision K7 f5f416c9b828 remains the bar. Item 27
 stays pending the owner's ci:full sequence. Local host proof is macOS only;
 Linux remains unproved under D13. The maker changes no label and does not merge.
+
+The grant audit also restored existing program declarations that the earlier
+inventory generator had replaced with a blanket local-reader list. G2 permits
+retargeting text, mentions and coordinates and adding /bin/ps; it does not permit
+replacing the other declared programs. The original declarations now remain
+intact, including configured role CLIs. This changes inventory metadata only.
+The complete network and exit-budget files verify the correction in
+1466-r3-grants-green.log before the final metadata commit.
