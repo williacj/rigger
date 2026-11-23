@@ -16,3 +16,7 @@ The allowlist is `PATH`, `HOME`, `LANG`, `CODEX_HOME` and `RIGGER_STAND_IN_VALUE
 - The deterministic spawn census in `test/git-environment.test.mjs` caught a first draft that called the injected spawn under another name; the parameter is now named `spawn`, so the census sees the call and that it hands an environment.
 - In the host run's own log, all 214 `entry-child-start` records carry only `PATH`, `LANG`, `HOME`, `RIGGER_STAND_IN_VALUE` and `CODEX_HOME` (counted by name; no value read out).
 - `npm run test:host -- test/in-process-fixtures-host.test.mjs` exits 0 and reports 22 tests, the 22 top-level `test(` registrations the file held at `3e325ab8`. Only names, counts and exit status from that run are quoted anywhere.
+
+## Round 1: the allowlist test pinned its representation
+
+The reviewer's B1 on #1477 found that the allowlist test deep-equalled the sorted array. A duplicate `PATH`, which leaves the `.includes` filter and every record unchanged, turned it red: an implementation test, `tdd` class 1. The test now asserts only what the card asks, that `PATH` is a member and that no name lies outside the permitted set. Receipts at `6c60aa27`: the duplicate-`PATH` mutation survives (5/5 pass), and appending `UNRELATED` is still killed by the allowlist test's outside-the-set assertion. Dropping `PATH` is killed by the PATH-value test and the membership assertion, and the whole-environment record is still killed by the outside-name test.
