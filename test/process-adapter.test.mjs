@@ -22,31 +22,136 @@ import { manualClock } from './clock-report-world.mjs';
 const processTraces = new Map();
 
 test('T11: the tracker reads every injected second and serializes a read that outlasts the period', { timeout: 10_000 }, async (t) => {
-  const clock = manualClock(0);
-  const world = trackerWorld(clock);
-  let release;
-  const running = runCommand({ command: '/controlled/command', args: [], cwd: '/', env: {}, timeout: 60_000, track: true, host: world.host, emitter: world.emitter });
-  t.after(async () => { world.inject(() => undefined); release?.(); world.finish(); await running; });
-  const observed = () => world.reads.filter(({ args }) => args.includes('-A'));
-  await turn(t);
-  assert.equal(observed().length, 1, 'the first dispatch had no immediate tracker read');
-  await clock.advance(999);
-  await turn(t);
-  assert.equal(observed().length, 1, 'the tracker read before its period');
-  world.inject((_tool, args) => args.includes('-A') ? { hold: (done) => { release = done; }, stdout: '' } : undefined);
-  const advancing = clock.advance(1000);
-  await turn(t);
-  assert.equal(observed().length, 2);
-  await clock.advance(2500);
-  await turn(t);
-  assert.equal(observed().length, 2, 'a tracker read overlapped the slow read');
-  world.inject(() => undefined);
-  release();
-  await advancing;
-  await turn(t);
-  await clock.advance(2500);
-  await turn(t);
-  assert.deepEqual(observed().map(({ at }) => at), [0, 1000, 2500], 'the overdue read did not start once the slow read settled');
+  await t.test('a slow periodic read defers the next until it settles', async (t) => {
+    const clock = manualClock(0);
+    const world = trackerWorld(clock);
+    let release;
+    const running = runCommand({ command: '/controlled/command', args: [], cwd: '/', env: {}, timeout: 60_000, track: true, host: world.host, emitter: world.emitter });
+    t.after(async () => { world.inject(() => undefined); release?.(); world.finish(); await running; });
+    const observed = () => world.reads.filter(({ args }) => args.includes('-A'));
+    await turn(t);
+    assert.equal(observed().length, 1, 'the first dispatch had no immediate tracker read');
+    await clock.advance(999);
+    await turn(t);
+    assert.equal(observed().length, 1, 'the tracker read before its period');
+    world.inject((_tool, args) => args.includes('-A') ? { hold: (done) => { release = done; }, stdout: '' } : undefined);
+    const advancing = clock.advance(1000);
+    await turn(t);
+    assert.equal(observed().length, 2);
+    await clock.advance(2500);
+    await turn(t);
+    assert.equal(observed().length, 2, 'a tracker read overlapped the slow read');
+    world.inject(() => undefined);
+    release();
+    await advancing;
+    await turn(t);
+    await clock.advance(2500);
+    await turn(t);
+    assert.deepEqual(observed().map(({ at }) => at), [0, 1000, 2500], 'the overdue read did not start once the slow read settled');
+    world.finish();
+    await running;
+  });
+  // B's ending must neither move A's periodic read nor hide an observation from A.
+  for (const ending of [500, 1000, 1500, 'exit', 'slow']) await t.test(({ exit: 'exit final reads serve dispatches not yet reached', slow: 'a slow final read delays periodic service without duplicating it' })[ending] ?? `B ends at ${ending} ms`, async (t) => {
+    const { EventEmitter } = await import('node:events');
+    const { PassThrough } = await import('node:stream');
+    const clock = manualClock(0);
+    const world = trackerWorld(clock);
+    const finalOnly = world.table.get(world.escaped);
+    world.table.delete(world.escaped);
+    const secondGroup = world.group + 100;
+    const second = Object.assign(new EventEmitter(), { pid: secondGroup, exitCode: null, signalCode: null, stdout: new PassThrough(), stderr: new PassThrough() });
+    let spawned = false;
+    const host = { ...world.host, spawn: () => {
+      if (spawned) return second;
+      spawned = true;
+      return world.host.spawn();
+    } };
+    const finishSecond = () => {
+      if (second.exitCode !== null) return;
+      world.table.delete(secondGroup);
+      second.exitCode = 0;
+      second.emit('exit', 0, null);
+      second.stdout.end();
+      second.stderr.end();
+    };
+    const options = { command: '/controlled/command', args: [], cwd: '/', env: {}, timeout: 60_000, track: true, host, emitter: world.emitter };
+    const firstRunning = runCommand(options);
+    let secondRunning;
+    let releaseFinal;
+    t.after(async () => { world.inject(() => undefined); releaseFinal?.(); finishSecond(); world.finish(); await Promise.all([firstRunning, secondRunning]); });
+    await turn(t);
+    world.table.set(secondGroup, { ...finalOnly, pid: secondGroup, parent: 1, group: secondGroup });
+    secondRunning = runCommand(options);
+    await turn(t);
+    if (ending >= 1000) { await clock.advance(1000); await turn(t); }
+    await clock.advance(typeof ending === 'string' ? 500 : ending);
+    // This parent exits before the next periodic read: only B's final read sees its child.
+    const finalParent = world.group + 2;
+    world.table.set(finalParent, { ...finalOnly, pid: finalParent, parent: world.group, group: world.group });
+    finalOnly.parent = ending === 'exit' ? secondGroup : finalParent;
+    world.table.set(world.escaped, finalOnly);
+    if (ending === 'exit') {
+      // A's final read alone sees B's descendant before A's group cleanup reparents it.
+      world.inject((_tool, args) => {
+        if (args.includes('-g') && Number(args[args.indexOf('-g') + 1]) === world.group) finalOnly.parent = 1;
+        return undefined;
+      });
+      const cleanup = process.listeners('exit').find(({ name }) => name === 'cleanup');
+      assert.equal(typeof cleanup, 'function');
+      cleanup();
+      finishSecond();
+      world.finish();
+      await Promise.all([firstRunning, secondRunning]);
+      assert.ok(world.signals.some(({ target, name }) => target === world.escaped && name === 'SIGKILL'), "A's exit read did not retain B's descendant");
+      assert.deepEqual(world.events.filter(({ pid }) => pid === world.escaped).map(({ event }) => event), ['survivor.killed']);
+      return;
+    }
+    if (ending === 'slow') {
+      world.inject((_tool, args) => args.includes('-A') ? { hold: (done) => { releaseFinal = done; }, stdout: '' } : undefined);
+      finishSecond();
+      await turn(t);
+      const advancing = clock.advance(1000);
+      await turn(t);
+      assert.deepEqual(world.reads.filter(({ args }) => args.includes('-A')).map(({ at }) => at), [0, 500], 'a periodic read overlapped the final read');
+      await clock.advance(1500);
+      world.inject(() => undefined);
+      releaseFinal();
+      await advancing;
+      await secondRunning;
+      await turn(t);
+      await clock.advance(1500);
+      await turn(t);
+      assert.deepEqual(world.reads.filter(({ args }) => args.includes('-A')).map(({ at }) => at), [0, 500, 1500], 'the final read armed an extra periodic read');
+      return;
+    }
+    finishSecond();
+    await secondRunning;
+    const nextPeriod = ending < 1000 ? 1000 : 2000;
+    await clock.advance((ending + nextPeriod) / 2);
+    finalOnly.parent = 1;
+    world.table.delete(finalParent);
+    // This child appears after the final read. Its parent exits between the due read
+    // and the postponed read that a reset cadence would incorrectly schedule.
+    const periodicPid = world.escaped + 1;
+    const periodicOnly = { ...finalOnly, pid: periodicPid, parent: world.group + 1, group: periodicPid };
+    world.table.set(periodicPid, periodicOnly);
+    await clock.advance(nextPeriod);
+    await turn(t);
+    const periodicReads = world.reads.filter(({ args, at }) => args.includes('-A') && at === nextPeriod);
+    await clock.advance(nextPeriod + 250);
+    periodicOnly.parent = 1;
+    world.table.delete(world.group + 1);
+    await clock.advance(nextPeriod + 500);
+    await turn(t);
+    world.finish();
+    await firstRunning;
+    assert.equal(periodicReads.length, 1, "B postponed A's periodic read");
+    for (const pid of [world.escaped, periodicPid]) {
+      assert.ok(world.signals.some(({ target, name }) => target === pid && name === 'SIGKILL'), `A lost descendant ${pid} across B's ending`);
+      assert.deepEqual(world.events.filter((event) => event.pid === pid).map(({ event }) => event), ['survivor.killed']);
+    }
+  });
 });
 
 /** A running controlled dispatch with a first observation before the test changes the host. */
