@@ -1,0 +1,4 @@
+ABOUTME: Card #1460 laptop process record: the launching shell of the commit that holds this report, recorded at its start.
+{"host":"laptop","pid":52394,"created":"Sun Nov 22 20:57:12 2026","recordedAt":"2026-11-23T02:57:12Z","role":"commit launcher, then suite-slot.sh by exec"}
+{"host":"laptop","pid":98479,"created":"Mon Nov 23 10:23:19 2026","recordedAt":"2026-11-23T16:23:20Z","role":"commit launcher, then suite-slot.sh by exec"}
+{"host":"laptop","pid":63540,"created":"Mon Nov 23 14:49:05 2026","recordedAt":"2026-11-23T20:49:06Z","role":"commit launcher, then suite-slot.sh by exec"}
