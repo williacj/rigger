@@ -769,7 +769,20 @@ asset is one per-user LaunchAgent template under `templates/launchd/`, and `D28`
 - **`ExitTimeOut`.** The template sets it explicitly, and never leaves it at launchd's default,
   which is 5 s on the owner's host (Q-d2), and `launchctl print` reports at most 60 s on macOS 27.2. One dispatch's cleanup, with one read that never
   answers, took about 5.5 s as a test's measured duration (Q-e2).
-- **The bound.** Exit cleanup has one fixed budget, whatever `concurrency` or a panel's size. L0 cleans up groups with their census and sweep for `EXIT_CARE_BOUND`. After it, L0 kills each remaining group without a census and records the kill of the group. L1 keeps that group's entry, so that the next start sweeps its directories. L1 still records each dispatch's end, and L0 still ends the sink. The function in `src/config/` answers `EXIT_BOUND`, which L0's process adapter exports: `EXIT_CARE_BOUND` and the longest one dispatch's careful cleanup can take. A judgment. launchd's cap is 60 s on macOS 27.2, so the bound stays below it. Exit cleanup makes no push, so the bound holds no network call ("Pushing the stream").
+- **The bound.** Exit cleanup has one fixed budget, whatever `concurrency` or a panel's size. L0 cleans up groups with their tracked sets, census and sweep for `EXIT_CARE_BOUND`, and ending a dispatch's tracked set counts against it. After it, L0 kills each remaining group without a census and records the kill of the group. L1 keeps that group's entry with its tracked set, so that the next start ends its tracked processes and sweeps its directories. L1 still records each dispatch's end, and L0 still ends the sink. The function in `src/config/` answers `EXIT_BOUND`, which L0's process adapter exports: `EXIT_CARE_BOUND` and the longest one dispatch's careful cleanup can take. A judgment. launchd's cap is 60 s on macOS 27.2, so the bound stays below it. Exit cleanup makes no push, so the bound holds no network call ("Pushing the stream").
+
+  The one dispatch is the one in progress when `EXIT_CARE_BOUND` passes. At exit, L0 sweeps that dispatch's directories in one pass of the sweep's loop. Its cleanup can spend these read deadlines, one `READ_TIMEOUT` each, in the order "Failure model" gives:
+
+  1. the tracker's final read, with the stop, the start-time confirmation and the kill of each tracked process;
+  2. the reads after that kill;
+  3. the group's census;
+  4. the group's reads before its kill;
+  5. the spare those reads are given;
+  6. the group's confirmation after its kill;
+  7. the sweep of its directories, through its kill;
+  8. the reads after that kill.
+
+  `EXIT_BOUND` less `EXIT_CARE_BOUND` is eight `READ_TIMEOUT`s at the values L0's process adapter exports, so the deadlines sum to it exactly.
 - **What L0 answers, and what `doctor` compares.** `doctor` reads a loaded job through a new L0
   module, `src/substrate/launchd.mjs`, which spawns only through the process adapter. It answers
   only the loaded job's fields, because L0 knows neither `concurrency` nor a kind. `doctor`
@@ -1070,10 +1083,11 @@ cannot record runs no command. Each entry names:
 - the dispatch's card, where it has one.
 - the dispatch's directory, where it has one, and what L0 needs to tell that directory from a
   later one at the same path.
+- the dispatch's tracked processes, each by pid and start time.
 
 L1 keeps what each role dispatch's agent CLI wrote to its standard output and standard error, byte for byte, under `<state directory>/output/<dispatch id>/` (`R-RECORD-19`). L3 invokes it once L1's dispatch settles, for a maker, a judge or an escalation's role, and never for a step. L5's push reads only its stream, so the kept output never leaves the machine.
 
-L1 removes an entry once its group is empty, and on Rigger's own exit. Past exit cleanup's budget, it keeps each remaining group's entry, so that the next start sweeps that group's directories. On start, L3 has L1 kill
+L1 removes an entry once its group is empty, and on Rigger's own exit. Past exit cleanup's budget, it keeps each remaining group's entry, so that the next start ends that group's tracked processes and sweeps its directories. On start, L3 has L1 kill
 every group it recorded, before L3 records or reads anything. L0 kills a recorded group only once it
 has confirmed that the group is the one recorded. A start that cannot confirm a recorded group kills
 nothing in it, keeps its entry, and stops, as an unrecorded kill does. Every kill of a dispatch's
@@ -1095,7 +1109,7 @@ where it sent the card to a role. The facts also include the judge failures the 
 
 `.rigger/` holds four things and no others:
 
-- the process groups L1 must read back to kill, each with its dispatch and card;
+- the process groups L1 must read back to kill, each with its dispatch, card and tracked processes;
 - whether admission is open and why it closed;
 - L5's event stream;
 - under `.rigger/output/<dispatch id>/`, what each role dispatch's agent CLI wrote to its standard output and standard error (`R-RECORD-19`).
@@ -1607,8 +1621,9 @@ remote-tracking ref, and records each retry. This is not L3's repo lane, which o
 agent's own git commands in its workspace are outside the queue.
 
 A process still in the command's group when the direct child exits is terminated by L0, and recorded
-by name and command line where a read before the kill found it; it never changes the exit code. A
-process that leaves its group is outside this containment. L0 never stops a process group to contain
+by name and command line where a read before the kill found it; it never changes the exit code. For
+a command that is not a dispatch, a process that leaves its group is outside this containment. For a
+dispatch, L0's tracker below ends such a process. L0 never stops a process group to contain
 it. It reads which processes the group holds, kills the group whole, then kills and reads it again until no member is left alive, with three exceptions:
 
 - Where it cannot read the table, it sends the kill on every look until a bound passes, then records the kill of the group and why, and settles without knowing the group is empty.
@@ -1643,7 +1658,71 @@ work in one of them, it records that directory and why in their place, and waits
 L1 hands L0 each of them and records it in the dispatch's entry. A later start does the same for
 each only where the directory at its path is still the one recorded. Where it is not, or L0 cannot
 tell, the start sweeps nothing there and records why. Past exit cleanup's budget, L0 leaves this sweep to the next start ("Supervising `run`"). A command that is not a dispatch has no such
-directory, and its group remains its whole containment.
+directory and no tracked set, and its group remains its whole containment.
+
+L0's process adapter also tracks each dispatch's descendants, as `R-STATE-29` requires. It tracks
+them from the step that creates the dispatch's group until the dispatch's containment settles. It
+tracks none for a command that is not a dispatch. The tracker works by reads of the whole process
+table:
+
+- **The period.** L0 reads the whole table once a period, and one read serves every dispatch then
+  running. The period is 1 s (M8-U98). A judgment, whose premise is the architect's measurement on
+  #1293: 20 whole-table reads on macOS 27.2.1, over 726 processes, took a median 16.2 ms and at
+  most 18.1 ms.
+- **What would reverse the period.** A measured read taking a tenth of the period or more on a
+  supported host would lengthen it. A recorded escape that a read within a shorter period would
+  have shown would shorten it.
+- **The first read.** The first read serving a dispatch begins within one period after the step
+  that creates its group. Where L0 is tracking no other dispatch then, it reads at once.
+- **No overlap.** L0 gives up each read at `READ_TIMEOUT`. A read that outlasts the period does
+  not overlap the next: the next read begins only once it has settled.
+- **A failed read.** A read that fails, times out or cannot be parsed leaves every tracked set
+  unchanged. A process already tracked so stays tracked and is ended with its dispatch. The failed
+  read fails no dispatch.
+
+A dispatch's tracked set is each process outside the dispatch's group whose parent is in the group
+or is tracked. L0 closes the set within one read, so a chain of descendants that one read shows is
+tracked whole. L0 takes each process's start time from the read that adds it. The set only grows
+while the dispatch runs.
+
+L0 identifies a tracked process by its pid and start time. Before ending a tracked process, L0
+stops it and reads its start time again while it is stopped. Where that start time no longer
+matches, L0 resumes the process and drops it from the set, because its pid now names another
+process.
+
+L0 holds each tracked set in memory while its dispatch runs. L0 hands L1 each process it adds, and
+L1 rewrites the dispatch's entry to name it. Where a rewrite fails, the process stays tracked in
+L0's memory, so Rigger's own exit still ends it. L1 reads an entry with no tracked-set field as an
+empty set. L1 refuses a record whose tracked process has no start time, or a pid that is not an
+integer greater than 1, as a record it cannot read (`R-STATE-11`).
+
+At a dispatch's ending, whichever ending it is, L0 contains it in this order:
+
+1. L0 takes a final read of the whole table, the last read that adds to the dispatch's set.
+2. L0 ends the tracked set through the directory sweep's loop. The loop confirms each process by
+   its start time in place of the directory listing.
+3. L0 kills the group, as above.
+4. L0 sweeps the dispatch's directories, as above.
+
+L0 records each tracked process it ends under the dispatch and its card, as it records a survivor.
+It names each by the name and command line a read of that pid gives. Where a tracked process is one
+L0 may not signal, or outlives the kill for the longer bound above, L0 records it as not ended
+(`R-STATE-19`). At the ending of a dispatch during which a tracker read failed, L0 records the
+dispatch and why. At an ending or a later start, a tracked process no read lists is already
+ended, and L0 records nothing for it.
+
+Past exit cleanup's budget, L0 kills the group bare, and L1 keeps the entry with its tracked set
+for the next start ("Supervising `run`"). A later start ends each recorded tracked process whose
+identity L0 confirms, whether or not L0 confirms the recorded group. It confirms by the stop and
+start-time read above. Where a recorded tracked pid's start time no longer matches, or L0 cannot
+read it, the start leaves that process alive and records it as not ended.
+
+The tracker misses three kinds of descendant, which `R-STATE-29`'s table puts out of scope:
+
+- a process no read showed while its parent was in the dispatch's group or tracked, an immediate
+  double fork's grandchild among them;
+- a process that started after the last read before L0 ended the dispatch's group;
+- a process a dead engine never recorded.
 
 A judge's directory holds two worktrees, each at a detached commit. `main` holds the main line as
 the forge held it when L1 made the directory, and the judge's agent CLI runs there. `head` holds
