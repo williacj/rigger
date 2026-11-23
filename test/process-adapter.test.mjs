@@ -16,8 +16,142 @@ import { realHost } from '../src/substrate/host.mjs';
 import { OUTLIVED, TAIL, alive, bytes, fixture, holding, leave, outliving, read, ready, running, scratch, shellQuote, startOf, warmed } from './process-fixtures.mjs';
 import { SETTLES_WITHIN as BOUNDS } from './settles-within.mjs';
 import { sightingPs } from './census-sightings.mjs';
+import { trackerWorld, turn } from './process-fixtures.mjs';
+import { manualClock } from './clock-report-world.mjs';
 
 const processTraces = new Map();
+
+test('T11: the tracker reads every injected second and serializes a read that outlasts the period', { timeout: 10_000 }, async (t) => {
+  const clock = manualClock(0);
+  const world = trackerWorld(clock);
+  let release;
+  const running = runCommand({ command: '/controlled/command', args: [], cwd: '/', env: {}, timeout: 60_000, track: true, host: world.host, emitter: world.emitter });
+  t.after(async () => { world.inject(() => undefined); release?.(); world.finish(); await running; });
+  const observed = () => world.reads.filter(({ args }) => args.includes('-A'));
+  await turn(t);
+  assert.equal(observed().length, 1, 'the first dispatch had no immediate tracker read');
+  await clock.advance(999);
+  await turn(t);
+  assert.equal(observed().length, 1, 'the tracker read before its period');
+  world.inject((_tool, args) => args.includes('-A') ? { hold: (done) => { release = done; }, stdout: '' } : undefined);
+  const advancing = clock.advance(1000);
+  await turn(t);
+  assert.equal(observed().length, 2);
+  await clock.advance(2500);
+  await turn(t);
+  assert.equal(observed().length, 2, 'a tracker read overlapped the slow read');
+  world.inject(() => undefined);
+  release();
+  await advancing;
+  await turn(t);
+  await clock.advance(2500);
+  await turn(t);
+  assert.deepEqual(observed().map(({ at }) => at), [0, 1000, 2500], 'the overdue read did not start once the slow read settled');
+});
+
+/** A running controlled dispatch with a first observation before the test changes the host. */
+async function trackedDispatch(t) {
+  const clock = manualClock(0);
+  const world = trackerWorld(clock);
+  const running = runCommand({ command: '/controlled/command', args: [], cwd: '/', env: {}, timeout: 60_000, track: true, host: world.host, emitter: world.emitter });
+  t.after(async () => { world.inject(() => undefined); world.finish(); await running; });
+  await turn(t);
+  return { ...world, clock, running };
+}
+
+test('T8: a tracked pid reused before its stopped identity check is resumed without a kill record', { timeout: 10_000 }, async (t) => {
+  const world = await trackedDispatch(t);
+  world.inject((_tool, args) => {
+    const row = world.table.get(world.escaped);
+    if (args.at(-1) === 'pid=,stat=' && row.state === 'T') row.started = 'Thu Oct 29 12:00:01 2026';
+    return undefined;
+  });
+  world.finish();
+  await world.running;
+  assert.deepEqual(world.signals.filter(({ target }) => target === world.escaped).map(({ name }) => name), ['SIGSTOP', 'SIGCONT']);
+  assert.equal(world.events.some(({ pid }) => pid === world.escaped), false, 'the reused pid was recorded as killed');
+});
+
+test('T9: a tracked process refusing signals and one outliving the kill are recorded as unended', { timeout: 10_000 }, async (t) => {
+  for (const property of ['refuses', 'outlives']) {
+    const world = await trackedDispatch(t);
+    world.table.get(world.escaped)[property] = true;
+    world.finish();
+    await world.running;
+    assert.deepEqual(world.events.filter(({ pid }) => pid === world.escaped).map(({ event }) => event), ['survivor.unended'], property);
+  }
+});
+
+test('T10: failed, timed-out and malformed tracker reads preserve the set and report why without failing the dispatch', { timeout: 10_000 }, async (t) => {
+  for (const fault of [
+    { error: Object.assign(new Error('tracker refused'), { code: 2 }), stdout: '', stderr: 'tracker refused' },
+    { error: Object.assign(new Error('tracker timed out'), { code: 'ETIMEDOUT' }), stdout: '' },
+    { stdout: 'not a process row\n' },
+  ]) {
+    const world = await trackedDispatch(t);
+    world.table.get(world.escaped).parent = 1;
+    world.inject((_tool, args) => args.includes('-A') ? fault : undefined);
+    await world.clock.advance(1000);
+    await turn(t);
+    world.finish();
+    const result = await world.running;
+    assert.equal(result.exit, 0, 'the tracker failure failed the dispatch');
+    assert.deepEqual(world.events.filter(({ pid }) => pid === world.escaped).map(({ event }) => event), ['survivor.killed'], 'the failed read lost a tracked process');
+    const unread = world.events.filter(({ event }) => event === 'descendants.unread');
+    assert.equal(unread.length, 1);
+    assert.equal(unread[0].group, world.group);
+    assert.match(unread[0].census, /tracker refused|tracker timed out|cannot read/);
+  }
+});
+
+test('T10b: later periodic failures retain the reparented identity for the answering final read', { timeout: 10_000 }, async (t) => {
+  const world = await trackedDispatch(t);
+  world.table.get(world.escaped).parent = 1;
+  world.inject((_tool, args) => args.includes('-A') ? { error: new Error('periodic failed'), stdout: '' } : undefined);
+  await world.clock.advance(1000);
+  await turn(t);
+  world.inject(() => undefined);
+  world.finish();
+  await world.running;
+  assert.ok(world.signals.some(({ target, name }) => target === world.escaped && name === 'SIGKILL'), 'the retained M6x was not killed');
+  assert.deepEqual(world.events.filter(({ pid }) => pid === world.escaped).map(({ event }) => event), ['survivor.killed']);
+});
+
+test('T12: the tracker reads nothing while no dispatch is running', { timeout: 10_000 }, async (t) => {
+  const world = await trackedDispatch(t);
+  world.finish();
+  await world.running;
+  const before = world.reads.length;
+  await world.clock.advance(world.clock.now() + 10_000);
+  await turn(t);
+  assert.equal(world.reads.length, before, 'an idle tracker read the table');
+});
+
+test('T13: a descendant first shown by the final read is killed before the group', { timeout: 10_000 }, async (t) => {
+  const clock = manualClock(0);
+  const world = trackerWorld(clock);
+  const row = world.table.get(world.escaped);
+  world.table.delete(world.escaped);
+  const running = runCommand({ command: '/controlled/command', args: [], cwd: '/', env: {}, timeout: 60_000, track: true, host: world.host, emitter: world.emitter });
+  t.after(async () => { world.finish(); await running; });
+  await turn(t);
+  assert.equal(world.reads.filter(({ args }) => args.includes('-A')).length, 1);
+  world.table.set(world.escaped, row);
+  world.finish();
+  await running;
+  const kills = world.signals.filter(({ name }) => name === 'SIGKILL').map(({ target }) => target);
+  assert.ok(kills.indexOf(world.escaped) >= 0, 'the final-read descendant was not killed');
+  assert.ok(kills.indexOf(world.escaped) < kills.indexOf(-world.group), 'the group was killed before its descendant');
+});
+
+test('T14: a tracked process absent at the ending gets no signal and no survivor event', { timeout: 10_000 }, async (t) => {
+  const world = await trackedDispatch(t);
+  world.table.delete(world.escaped);
+  world.finish();
+  await world.running;
+  assert.equal(world.signals.some(({ target }) => target === world.escaped), false);
+  assert.equal(world.events.some(({ pid }) => pid === world.escaped), false);
+});
 
 // A bound on the test alone, so that a call which never settles fails here rather than holding
 // the suite: nothing waits on it when the call settles.

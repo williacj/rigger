@@ -114,9 +114,9 @@ export const EXIT_CARE_BOUND = 15_000;
 /**
  * The longest the exit cleanup's reads can hold the process's ending: `EXIT_CARE_BOUND`, and 40 s
  * for the one dispatch that can be in progress when it passes. A reading of the deadlines, which
- * `test/exit-cleanup.test.mjs` bounds with a host that answers each read at its last moment: 5 s for
- * `containNow`'s census, 5 and 5 spare before its kill, 5 for its confirmation, and 5 and 5 for each
- * of `sweptNow`'s two directories. It bounds reads alone: a hung sink write, or a process stuck in
+ * `test/exit-cleanup.test.mjs` bounds with a host that answers each read at its last moment: 5 s each for
+ * the tracker and its post-kill reads, 5 for `containNow`'s census, 5 and 5 spare before its
+ * kill, 5 for its confirmation, and 5 and 5 for the shared sweep of both directories. It bounds reads alone: a hung sink write, or a process stuck in
  * the kernel, is outside it. It stays below the 60 s launchd allows on macOS 27.2
  * (`ARCHITECTURE.md`, "Supervising `run`"). L0 answers it here, since these deadlines are L0's, and
  * `launchdExitTimeout` hands it on.
@@ -174,6 +174,84 @@ export const LEFT_OUT = {
  * made and not yet recorded, and whether the call has emptied the group.
  */
 const calls = new Map();
+
+/** Hosts have separate clocks; each host serializes whole-table reads for all its dispatches. */
+const trackers = new WeakMap();
+const active = (host) => [...calls.values()].filter((call) => call.host === host && call.tracking);
+function trackerOf(host) {
+  if (!trackers.has(host)) trackers.set(host, {});
+  return trackers.get(host);
+}
+
+/** A final read queues behind a periodic read rather than overlapping it. */
+function scan(host, dispatches) {
+  const tracker = trackerOf(host);
+  tracker.pending = (tracker.pending ?? Promise.resolve()).then(() => {
+    tracker.began = host.clock.now();
+    const serving = dispatches ?? active(host);
+    return reading(tracking(serving), host.ps, serving[0]?.readTimeout ?? READ_TIMEOUT, undefined, serving[0]?.trace, host);
+  });
+  return tracker.pending;
+}
+
+/** The next read begins a period after the last began, or immediately if that read outlasted it. */
+function armTracker(host) {
+  const tracker = trackerOf(host);
+  if (tracker.timer !== undefined || active(host).length === 0) return;
+  tracker.timer = host.clock.schedule(Object.assign(async () => {
+    tracker.timer = undefined;
+    await scan(host);
+    armTracker(host);
+  }, { tracker: true }), Math.max(0, 1000 - (host.clock.now() - tracker.began)));
+  tracker.timer?.unref?.();
+}
+
+/** Stops periodic service for this dispatch before its final read. */
+function stopTracking(call) {
+  call.tracking = false;
+  const tracker = trackerOf(call.host);
+  if (tracker.timer !== undefined) call.host.clock.cancel(tracker.timer);
+  tracker.timer = undefined;
+}
+
+/** One whole-table observation closes each dispatch's descendant set, retaining its first identity. */
+function* tracking(dispatches) {
+  if (dispatches.length === 0) return;
+  try {
+    const table = [...rowsOf(yield ['-A', '-o', 'pid=,ppid=,pgid=,lstart='])].map(([pid, row]) => {
+      const fields = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(row);
+      if (!fields) throw new Error(`the tracker cannot read process ${pid}: ${row}`);
+      return { pid, parent: Number(fields[1]), group: Number(fields[2]), started: secondsOf(fields[3]) };
+    });
+    for (const call of dispatches) {
+      const parents = new Set(table.filter(({ group }) => group === call.child.pid).map(({ pid }) => pid));
+      for (const pid of call.tracked.keys()) parents.add(pid);
+      let grew;
+      do {
+        grew = false;
+        for (const member of table) {
+          if (parents.has(member.pid) || !parents.has(member.parent)) continue;
+          parents.add(member.pid);
+          call.tracked.set(member.pid, member.started);
+          grew = true;
+        }
+      } while (grew);
+    }
+  } catch (error) {
+    for (const call of dispatches) call.trackerUnread = error.message;
+  }
+}
+
+/** Selects recorded identities by pid, and confirms them again while the sweep holds them stopped. */
+function* trackedIn(tracked, pids = [...tracked.keys()]) {
+  if (pids.length === 0) return [];
+  const rows = rowsOf(yield ['-p', pids.join(','), '-o', 'pid=,lstart=']);
+  return [...rows].filter(([pid, start]) => {
+    if (secondsOf(start) === tracked.get(pid)) return true;
+    tracked.delete(pid);
+    return false;
+  }).map(([pid]) => pid);
+}
 
 /** Every read of the process table a census has in flight, so the exit cleanup can end it. */
 const reads = new Map();
@@ -282,6 +360,7 @@ function cleanup() {
   let began;
   for (const [group, call] of calls) {
     calls.delete(group);
+    if (call.tracked !== undefined) stopTracking(call);
     attempt(() => {
       const now = call.host.clock.now();
       began ??= now;
@@ -1558,7 +1637,7 @@ function* reaped(pids, kill, bound, observed = new Map(), now = realHost.clock.n
  * stopped in the directory. A process the call's had stopped and not yet listed again, which can
  * only be a pid handed on to a process outside it between a list and the stop, stays stopped.
  */
-function* sweeping(directory, lsof, kill, observeAfterKill = false, host = realHost) {
+function* sweeping(directory, lsof, kill, observeAfterKill = false, host = realHost, tracked) {
   const kills = [];
   const observed = new Map();
   // Stopped and not yet listed again; and listed again, stopped, and not yet killed.
@@ -1567,10 +1646,13 @@ function* sweeping(directory, lsof, kill, observeAfterKill = false, host = realH
   // Sent the kill, and listed again only while it is still ending, or where it outlives the kill,
   // which `settled` waits on: it is not stopped or killed again.
   const killed = new Set();
+  const locations = new Map();
   // When it first sent a process the kill.
   let killedAt;
   const list = function* (pids) {
-    return workingIn(yield { tool: lsof, args: listing(pids, host) }, directory, host);
+    if (tracked !== undefined) return yield* trackedIn(tracked, pids);
+    const printed = yield { tool: lsof, args: listing(pids, host) };
+    return (Array.isArray(directory) ? directory : [directory]).flatMap((place) => workingIn(printed, place, host).map((pid) => { locations.set(pid, place); return pid; }));
   };
   const resume = (pids) => {
     for (const pid of pids) {
@@ -1594,7 +1676,7 @@ function* sweeping(directory, lsof, kill, observeAfterKill = false, host = realH
         if (stop === 'EPERM') forbidden.add(pid);
       }
       const pids = [...held, ...ours];
-      if (pids.length === 0 && found.every((pid) => forbidden.has(pid) || killed.has(pid))) return { kills, refused: [...forbidden], killedAt, observed };
+      if (pids.length === 0 && found.every((pid) => forbidden.has(pid) || killed.has(pid))) return { kills, refused: [...forbidden], killedAt, observed, locations };
       if (pids.length === 0) continue;
       const before = rowsOf(yield ['-p', pids.join(','), '-o', 'pid=,stat=']);
       for (const pid of ours) if (!before.get(pid)?.startsWith('T')) ours.delete(pid);
@@ -1629,7 +1711,7 @@ function* sweeping(directory, lsof, kill, observeAfterKill = false, host = realH
   } catch (error) {
     const unnamed = [...ours].filter((pid) => sent(pid, 'SIGKILL', kill));
     if (unnamed.length > 0) killedAt ??= host.clock.now();
-    return { kills, unread: error.message, unnamed, killedAt, observed };
+    return { kills, unread: error.message, unnamed, killedAt, observed, locations };
   } finally {
     resume([...held]);
   }
@@ -1642,10 +1724,10 @@ function* sweeping(directory, lsof, kill, observeAfterKill = false, host = realH
  * be read, a `directory.unread` event naming the directory and why, and each process it then
  * killed unnamed. Of a directory `illegible` refuses, that event says why, and nothing is killed.
  */
-async function swept(directory, { ps, lsof, readTimeout, kill = SIGNAL, host = realHost }, killed) {
-  const why = illegible(directory);
+async function swept(directory, { ps, lsof, readTimeout, kill = SIGNAL, host = realHost }, killed, tracked) {
+  const why = tracked === undefined ? illegible(directory) : undefined;
   if (why !== undefined) return sweptEvents(directory, { kills: [], unread: why, unnamed: [], unended: [] }, killed);
-  const found = await reading(sweeping(directory, lsof, kill, false, host), ps, readTimeout, undefined, undefined, host);
+  const found = await reading(sweeping(directory, lsof, kill, false, host, tracked), ps, readTimeout, undefined, undefined, host);
   return sweptEvents(directory, await reading(settled(found, kill, KILL_BOUND, host.clock.now), ps, readTimeout, host.clock.now() + KILL_BOUND + readTimeout, undefined, host), killed);
 }
 
@@ -1657,12 +1739,11 @@ async function swept(directory, { ps, lsof, readTimeout, kill = SIGNAL, host = r
  * the kill left, and a process the kill does not end is read alive after it rather than recorded as
  * one the table could not be read for. Where it killed nothing, it waits within the first bound.
  */
-function sweptNow(directory, { ps, lsof, readTimeout, kill = SIGNAL, host = realHost }, killed) {
-  const why = illegible(directory);
+function sweptNow(directory, { ps, lsof, readTimeout, kill = SIGNAL, host = realHost }, killed, tracked, began = host.clock.now()) {
+  const why = tracked === undefined && !Array.isArray(directory) ? illegible(directory) : undefined;
   if (why !== undefined) return sweptEvents(directory, { kills: [], unread: why, unnamed: [], unended: [] }, killed);
-  const began = host.clock.now();
   const answered = !unanswered.has(ps);
-  const found = readingNow(sweeping(directory, lsof, kill, true, host), ps, readTimeout, began + readTimeout, host.clock.now, host.spawnSync);
+  const found = readingNow(sweeping(directory, lsof, kill, true, host, tracked), ps, readTimeout, began + readTimeout, host.clock.now, host.spawnSync);
   // A read of `ps` this census gave up on at its own bound, before its kill, is made again in the
   // wait on what it killed, which has a bound of its own; a table that does not answer that either
   // is given up on again.
@@ -1671,14 +1752,33 @@ function sweptNow(directory, { ps, lsof, readTimeout, kill = SIGNAL, host = real
 }
 
 /** The events `swept` hands back, from what `sweeping` found in `directory`: each process it could not end among them, as such. */
-const sweptEvents = (directory, { kills, unread, unnamed, unended }, killed) => [
-  ...kills.map((kill) => [killed, { ...kill, directory }]),
-  ...(unread === undefined ? [] : [['directory.unread', { directory, census: unread, ...(unnamed.length > 0 ? { killed: unnamed } : {}) }]]),
-  ...unended.map((each) => [killed.replace(/\.killed$/, '.unended'), { ...each, directory }]),
+const sweptEvents = (directory, { kills, unread, unnamed, unended, locations }, killed) => [
+  ...kills.map((kill) => [killed, { ...kill, directory: Array.isArray(directory) ? locations.get(kill.pid) : directory }]),
+  ...(unread === undefined ? [] : (Array.isArray(directory) ? directory : [directory]).map((place) => ['directory.unread', { directory: place, census: unread, ...(unnamed.length > 0 ? { killed: unnamed } : {}) }])),
+  ...unended.map((each) => [killed.replace(/\.killed$/, '.unended'), { ...each, directory: Array.isArray(directory) ? locations.get(each.pid) : directory }]),
 ];
 
 /** The directories `call` sweeps: the dispatch's directory and its scratch directory, each where it holds one. */
 const sweptBy = (call) => [call.directory, call.scratch].filter((directory) => directory !== undefined);
+
+/** The final whole-table read and the tracked set's sweep precede the group's kill. */
+async function descendants(call) {
+  if (call.tracked === undefined) return [];
+  stopTracking(call);
+  await scan(call.host, [call]);
+  armTracker(call.host);
+  return [...(await swept(undefined, call, 'survivor.killed', call.tracked)),
+    ...(call.trackerUnread === undefined ? [] : [['descendants.unread', { group: call.child.pid, census: call.trackerUnread }]])];
+}
+
+/** Exit's final table read and tracked-set kill share one deadline, followed by the post-kill wait. */
+function descendantsNow(call) {
+  if (call.tracked === undefined) return [];
+  const began = call.host.clock.now();
+  readingNow(tracking([call]), call.ps, call.readTimeout, began + call.readTimeout, call.host.clock.now, call.host.spawnSync);
+  return [...sweptNow(undefined, call, 'survivor.killed', call.tracked, began),
+    ...(call.trackerUnread === undefined ? [] : [['descendants.unread', { group: call.child.pid, census: call.trackerUnread }]])];
+}
 
 /**
  * The `L0` events for the census of each directory `call` sweeps, once its group is empty, each
@@ -1695,8 +1795,17 @@ async function censused(call) {
  * kills are recorded after the group's.
  */
 function endedNow(group, call) {
+  const tracked = descendantsNow(call);
   const look = containNow(group, call);
-  for (const directory of sweptBy(call)) look.kills = [...look.kills, ...sweptNow(directory, call, 'survivor.killed')];
+  look.kills.unshift(...tracked);
+  // One selector covers both directories under one pair of read deadlines at exit.
+  const directories = sweptBy(call).filter((directory) => {
+    const why = illegible(directory);
+    if (why === undefined) return true;
+    look.kills.push(['directory.unread', { directory, census: why }]);
+    return false;
+  });
+  if (directories.length > 0) look.kills.push(...sweptNow(directories, call, 'survivor.killed'));
   return look;
 }
 
@@ -1780,7 +1889,7 @@ function refused(unrecorded, result, ending = '') {
  * nothing for a call its caller has finished. A process kept running past its ending still has the
  * call settle, on the command's result.
  */
-export async function runCommand({ command, args, cwd, env, input, timeout, emitter, onGroup, onExit, directory, scratch, host = realHost, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND, trace }) {
+export async function runCommand({ command, args, cwd, env, input, timeout, emitter, onGroup, onExit, directory, scratch, track = false, host = realHost, readTimeout = READ_TIMEOUT, outputBound = OUTPUT_BOUND, trace }) {
   requireClock(host.clock);
   const { ps, lsof, signal: kill } = host;
   // The caller opens the emitter, so an `L0` event carries the card L0 never knows. There is no
@@ -1817,6 +1926,7 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
   }
   const output = Promise.all([drained(child.stdout), drained(child.stderr)]);
   const call = { emitter, host, ps, lsof, readTimeout, kill, onExit, trace, directory: real, scratch: scratchReal, child, events: [], contained: false };
+  if (track) call.tracked = new Map();
   calls.set(child.pid, call);
   // A call the exit cleanup took is one it has ended and recorded, so the call records nothing
   // more of it.
@@ -1831,7 +1941,7 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
     // A group the caller could not take runs no further: it is ended, and recorded, as a
     // survivor would be, before the caller hears why.
     // Nothing reads the output of a command that runs no further, so its pipes are let go.
-    const kills = [...(await contain(child.pid, call, 'survivor.killed')), ...(await censused(call))];
+    const kills = [...(await descendants(call)), ...(await contain(child.pid, call, 'survivor.killed')), ...(await censused(call))];
     call.contained = true;
     const unrecorded = record(emitter, taken() ? [] : kills);
     release();
@@ -1840,12 +1950,16 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
     if (unrecorded.length > 0) throw Object.assign(refused(unrecorded), { cause: refusal });
     throw refusal;
   }
+  if (track) {
+    call.tracking = true;
+    if (active(host).length === 1) scan(host).then(() => armTracker(host));
+  }
   const { events } = call;
   const exited = once(child, 'exit');
   const expired = await outlasts(exited, timeout, host);
   // The kills at the timeout wait among the call's unrecorded kills, so an exit meanwhile records
   // them.
-  if (expired) events.push(...(await contain(child.pid, call, 'timeout.killed')));
+  if (expired) events.push(...(await descendants(call)), ...(await contain(child.pid, call, 'timeout.killed')));
   const [code, signal] = await exited;
   // The timeout ended the command only where the kill did. One that exited on its own between the
   // timer and the kill ended itself, with its own exit code.
@@ -1854,6 +1968,7 @@ export async function runCommand({ command, args, cwd, env, input, timeout, emit
   // process that containment killed, or could not end, outlived the command.
   if (!timedOut) for (const ending of events) ending[0] = ending[0].replace(/^timeout\./, 'survivor.');
   const exit = signal === null ? code : signalled(signal);
+  if (!expired) events.push(...(await descendants(call)));
   events.push(...(await contain(child.pid, call, 'survivor.killed')));
   events.push(...(await censused(call)));
   call.contained = true;
