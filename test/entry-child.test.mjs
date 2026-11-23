@@ -39,43 +39,97 @@ async function recordedStart(environment) {
   const spawned = standInSpawn();
   await entryChild({ diagnostic: (message) => diagnostics.push(message) },
     '/fixture/bin/tool', ['plan', '--flag'], '/fixture/consumer', environment, '', spawned.start);
-  const starts = diagnostics.filter((message) => message.startsWith('entry-child-start '));
+  // Matched without the trailing space, so a misspelt prefix fails the "Line" test's own assertion.
+  const starts = diagnostics.filter((message) => message.startsWith('entry-child-start'));
   assert.equal(starts.length, 1, 'entryChild emits exactly one start diagnostic');
   return { text: starts[0], calls: spawned.calls };
 }
 
-/** Whether any object in a parsed record holds `name` with `value`, wherever the record nests it. */
-const holds = (node, name, value) => node !== null && typeof node === 'object'
-  && (node[name] === value || Object.values(node).some((child) => holds(child, name, value)));
+const PREFIX = 'entry-child-start ';
+const OUTSIDE = { RIGGER_ENTRY_OUTSIDE: 'outside-value-5d1c' };
+const PERMITTED = new Set(['PATH', 'HOME', 'LANG', 'CODEX_HOME', 'RIGGER_STAND_IN_VALUE']);
+
+/** The start record parsed from its JSON, which the "Line" test checks is all that follows the prefix. */
+const parsed = (text) => JSON.parse(text.slice(PREFIX.length));
+
+/** The names `RECORDED_NAMES` holds, read by index as an array is, whatever its iterator does. */
+const recordedNames = () => Array.prototype.slice.call(RECORDED_NAMES);
+
+test('the start diagnostic is the entry-child-start prefix followed by a single-line JSON object', async () => {
+  const { text } = await recordedStart({ PATH: '/fixture/bin' });
+  assert.ok(text.startsWith(PREFIX), 'the diagnostic carries the prefix with its one trailing space');
+  const rest = text.slice(PREFIX.length);
+  assert.equal(/[\r\n]/.test(rest), false, 'the JSON after the prefix is on one line');
+  const record = JSON.parse(rest);
+  assert.ok(record !== null && typeof record === 'object' && !Array.isArray(record), 'what follows the prefix is a JSON object');
+});
+
+test('the start record\'s top-level keys are exactly pid, command, argv, cwd and environment', async () => {
+  const { text } = await recordedStart({ PATH: '/fixture/bin' });
+  assert.deepEqual(Object.keys(parsed(text)).sort(), ['argv', 'command', 'cwd', 'environment', 'pid']);
+});
+
+test('the start record\'s environment.PATH is the value the caller passed', async () => {
+  const { text } = await recordedStart({ PATH: '/fixture/gh-dir:/fixture/installed', ...OUTSIDE });
+  assert.equal(parsed(text).environment.PATH, '/fixture/gh-dir:/fixture/installed');
+});
 
 test('the entry-child start record omits an environment name outside the allowlist and its value', async () => {
-  const { text } = await recordedStart({ PATH: '/fixture/bin:/fixture/tools', RIGGER_ENTRY_OUTSIDE: 'outside-value-5d1c' });
+  const { text } = await recordedStart({ PATH: '/fixture/bin:/fixture/tools', ...OUTSIDE });
   assert.equal(text.includes('RIGGER_ENTRY_OUTSIDE'), false, `the outside name reached the start record: ${text}`);
   assert.equal(text.includes('outside-value-5d1c'), false, `the outside value reached the start record: ${text}`);
 });
 
-test('the entry-child start record keeps PATH with the value the caller passed', async () => {
-  const { text } = await recordedStart({ PATH: '/fixture/gh-dir:/fixture/installed', RIGGER_ENTRY_OUTSIDE: 'outside-value-5d1c' });
-  const record = JSON.parse(text.slice('entry-child-start '.length));
-  assert.ok(holds(record, 'PATH', '/fixture/gh-dir:/fixture/installed'), `the start record lost PATH or its value: ${text}`);
+test('the start record\'s command, argv and cwd are what the caller passed', async () => {
+  const { text } = await recordedStart({ PATH: '/fixture/bin' });
+  const record = parsed(text);
+  assert.equal(record.command, '/fixture/bin/tool');
+  assert.deepEqual(record.argv, ['plan', '--flag']);
+  assert.equal(record.cwd, '/fixture/consumer');
 });
 
-test('the entry-child start record still names the child pid, command, argv and cwd', async () => {
+test('the start record\'s pid is the PID the spawn reported', async () => {
   const { text } = await recordedStart({ PATH: '/fixture/bin' });
-  const record = JSON.parse(text.slice('entry-child-start '.length));
-  assert.deepEqual({ pid: record.pid, command: record.command, argv: record.argv, cwd: record.cwd },
-    { pid: 4242, command: '/fixture/bin/tool', argv: ['plan', '--flag'], cwd: '/fixture/consumer' });
+  assert.equal(parsed(text).pid, 4242);
+});
+
+test('each recorded environment name maps to the value the caller passed for it', async () => {
+  const caller = { PATH: '/fixture/bin', HOME: '/fixture/home', LANG: 'C.fixture', CODEX_HOME: '/fixture/codex', RIGGER_STAND_IN_VALUE: 'stand-in-fixture' };
+  assert.deepEqual(recordedNames().filter((name) => !Object.hasOwn(caller, name)), [], 'premise: the caller holds every recorded name');
+  const { environment } = parsed((await recordedStart(caller)).text);
+  assert.ok(environment !== null && typeof environment === 'object' && !Array.isArray(environment), 'environment is a JSON object');
+  for (const [name, value] of Object.entries(environment)) assert.equal(value, caller[name], `${name} is recorded with the caller's value`);
+});
+
+test('the recorded environment\'s names are exactly the recorded names the caller held', async () => {
+  const caller = { PATH: '/fixture/bin', HOME: '/fixture/home', ...OUTSIDE };
+  const held = Object.keys(caller).filter((name) => RECORDED_NAMES.includes(name)).sort();
+  assert.ok(Object.keys(caller).some((name) => !RECORDED_NAMES.includes(name)), 'premise: the caller holds a name outside the list');
+  assert.ok(held.length > 0, 'premise: the caller holds a name inside the list');
+  assert.ok(recordedNames().some((name) => !Object.hasOwn(caller, name)), 'premise: the caller lacks a name inside the list');
+  const { environment } = parsed((await recordedStart(caller)).text);
+  assert.ok(environment !== null && typeof environment === 'object' && !Array.isArray(environment), 'environment is a JSON object');
+  assert.deepEqual(Object.keys(environment).sort(), held);
 });
 
 test('entryChild hands spawn the caller\'s whole environment, outside names included', async () => {
-  const environment = { PATH: '/fixture/bin', HOME: '/fixture/home', RIGGER_ENTRY_OUTSIDE: 'outside-value-5d1c' };
-  const { calls } = await recordedStart(environment);
+  const { calls } = await recordedStart({ PATH: '/fixture/bin', HOME: '/fixture/home', ...OUTSIDE });
   assert.equal(calls.length, 1, 'entryChild starts exactly one child');
-  assert.deepEqual({ ...calls[0].options.env }, { PATH: '/fixture/bin', HOME: '/fixture/home', RIGGER_ENTRY_OUTSIDE: 'outside-value-5d1c' });
+  // Node delivers every key a for...in over `env` yields, inherited ones included; that set is the contract.
+  const delivered = {};
+  for (const name in calls[0].options.env) delivered[name] = calls[0].options.env[name];
+  assert.deepEqual(delivered, { PATH: '/fixture/bin', HOME: '/fixture/home', RIGGER_ENTRY_OUTSIDE: 'outside-value-5d1c' });
 });
 
-test('the recorded-name allowlist holds PATH and only names the host fixture callers set for a reason', () => {
-  const permitted = new Set(['PATH', 'HOME', 'LANG', 'CODEX_HOME', 'RIGGER_STAND_IN_VALUE']);
-  assert.ok(RECORDED_NAMES.includes('PATH'), 'the allowlist holds PATH');
-  for (const name of RECORDED_NAMES) assert.ok(permitted.has(name), `the allowlist holds ${name}, outside the permitted set`);
+test('RECORDED_NAMES is an exported array of strings', () => {
+  assert.ok(Array.isArray(RECORDED_NAMES), 'RECORDED_NAMES is an array');
+  assert.deepEqual(recordedNames().filter((name) => typeof name !== 'string'), [], 'every element is a string');
+});
+
+test('RECORDED_NAMES holds PATH', () => {
+  assert.ok(RECORDED_NAMES.includes('PATH'));
+});
+
+test('RECORDED_NAMES holds no name outside PATH, HOME, LANG, CODEX_HOME and RIGGER_STAND_IN_VALUE', () => {
+  for (const name of recordedNames()) assert.ok(PERMITTED.has(name), `RECORDED_NAMES holds ${name}, outside the permitted set`);
 });
