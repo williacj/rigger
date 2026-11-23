@@ -17,7 +17,7 @@ import { temporaryDirectory } from './temporary-directory.mjs';
 import { onPath } from './on-path.mjs';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { realHost } from '../src/substrate/host.mjs';
+import { createRequire } from 'node:module';
 
 /** Observe the raw synchronous command result before a fixture caller interprets it. */
 const spawnSync = (...input) => {
@@ -775,6 +775,8 @@ export async function descendantsReady(t, directory) {
  * PassThrough, as test/process-host.test.mjs does. No expected decision supplies an answer.
  */
 export function trackerWorld(clock, group = 900_000_010, table = new Map()) {
+  // Standalone copies used by the warm runner do not carry the production host.
+  const { realHost } = createRequire(import.meta.url)('../src/substrate/host.mjs');
   const escaped = group + 10;
   const started = 'Thu Oct 29 12:00:00 2026';
   const add = (pid, parent, pgid = group) => table.set(pid, { pid, parent, group: pgid, started, state: 'S', name: 'controlled', cmd: `controlled ${pid}` });
