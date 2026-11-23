@@ -1,0 +1,3 @@
+ABOUTME: Card #1458, run n2: rec-cj.jsonl as written on finnpc by the launcher (as cj); every line after this one is that file byte for byte (sha256 5854f1f1a1fe72bf7e79a860b5514d48370576d4a88102f367a363b40968ee54).
+{"host":"finnpc","pid":7688,"created":"2026-11-22T03:03:46.2406681Z","createdFt":"134397902262406681","how":"self","what":"launcher","recorded":"2026-11-22T03:03:46.274Z","by":7688}
+{"host":"finnpc","pid":17944,"created":"2026-11-22T03:03:46.2878673Z","createdFt":"134397902262878673","how":"CreateProcessWithLogonW","what":"\"C:\\Program Files\\nodejs\\node.exe\" \"C:\\Users\\cj\\1458-spike-engineer\\supervisor.cjs\" e1 n2 \"C:\\Users\\cj\\1458-spike-engineer\\runs\\n2\"","recorded":"2026-11-22T03:03:46.288Z","by":7688}

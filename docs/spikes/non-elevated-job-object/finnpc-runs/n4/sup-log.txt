@@ -1,0 +1,38 @@
+ABOUTME: Card #1458, run n4: sup.log as written on finnpc by the supervisor (as fx1458), its log; every line after the MASKED EDIT line is that file, byte for byte apart from one masked SID; the file itself is identified by its digest (sha256 ec9a41c3b1ccbc70a1e0332fa5875658821a1de0fb05d656c0bb9a5a3194f220).
+[MASKED EDIT: one account's SID is replaced by "[SID withheld]", under the owner's ruling 1458#7090273806. The committed file before the masking had sha256 8a6a018545f6bdc84fa1a4dbd63d9c466f0c71cf570577fb47ef134ea1f1b12f.]
+2026-11-22T03:05:25.705Z supervisor pid 7356 ppid 18024 mode e1 run n4 session 0 created 2026-11-22T03:05:25.6637473Z
+2026-11-22T03:05:25.707Z versions: node v24.19.0 x64 | os.release() 10.0.26300 | koffi 3.3.8 (C:\Users\cj\1458-spike-engineer\node_modules\koffi\package.json) | @koromix/koffi-win32-x64 3.3.8 (C:\Users\cj\1458-spike-engineer\node_modules\@koromix\koffi-win32-x64\package.json) | koffi.version 3.3.8
+2026-11-22T03:05:25.707Z own token (OpenProcessToken(GetCurrentProcess()) + GetTokenInformation): user FINN-PC10\fx1458 ([SID withheld]) | TokenIntegrityLevel Mandatory Label\Medium Mandatory Level (S-1-16-8192, RID 0x2000) | TokenElevationType 1 (TokenElevationTypeDefault) | TokenIsElevated=0
+2026-11-22T03:05:25.708Z IsProcessInJob(GetCurrentProcess(), NULL) before creating a job: returned 1, Result=TRUE (already in a job)
+2026-11-22T03:05:25.708Z CreateJobObjectW(NULL, NULL): returned a handle (non-NULL), GetLastError=0
+2026-11-22T03:05:25.708Z SetInformationJobObject(job, JobObjectExtendedLimitInformation, KILL_ON_JOB_CLOSE): returned 1, GetLastError=0
+2026-11-22T03:05:25.708Z job limits read back (QueryInformationJobObject(JobObjectExtendedLimitInformation)): LimitFlags=0x2000 KILL_ON_JOB_CLOSE=set
+2026-11-22T03:05:25.711Z fixture root pid 32832: AssignProcessToJobObject(job, root): returned 1, GetLastError=0
+2026-11-22T03:05:30.832Z job process id list (JobObjectBasicProcessIdList): [5780,36636,38604,13452,37188,32832,14124,38476] accounting: {"total":9,"active":8,"terminated":0}
+2026-11-22T03:05:30.849Z BEFORE ENDING, with membership
+listing run=n4 before ending at 2026-11-22T03:05:30.849Z on Windows by pid 7356 (Toolhelp snapshot + PEB command line and CurrentDirectory + GetProcessTimes + IsProcessInJob)
+PID     PPID    CREATED (UTC, GetProcessTimes)    IN_SPIKE_JOB IN_ANY_JOB CWD | ROLE
+32832   7356    2026-11-22T03:05:25.7109749Z      yes          yes        C:\Users\cj\1458-spike-engineer\runs\n4\d\ | root
+14124   32832   2026-11-22T03:05:25.7451597Z      yes          yes        C:\Users\cj\1458-spike-engineer\runs\n4\d\ | M1
+36636   32832   2026-11-22T03:05:25.7470854Z      yes          yes        C:\Users\cj\1458-spike-engineer\runs\n4\d\ | M3
+13452   32832   2026-11-22T03:05:25.7508473Z      yes          yes        C:\ | M6
+37188   29140   2026-11-22T03:05:25.7640886Z      yes          yes        C:\Users\CJ\1458-spike-engineer\runs\n4\d\ | M4
+38476   14124   2026-11-22T03:05:25.7884011Z      yes          yes        C:\Users\cj\1458-spike-engineer\runs\n4\d\ | M2
+count=6
+2026-11-22T03:05:30.864Z IMMEDIATELY BEFORE ENDING
+listing run=n4 immediately before TerminateJobObject at 2026-11-22T03:05:30.864Z on Windows by pid 7356 (Toolhelp snapshot + PEB command line and CurrentDirectory + GetProcessTimes + IsProcessInJob)
+PID     PPID    CREATED (UTC, GetProcessTimes)    IN_SPIKE_JOB IN_ANY_JOB CWD | ROLE
+32832   7356    2026-11-22T03:05:25.7109749Z      yes          yes        C:\Users\cj\1458-spike-engineer\runs\n4\d\ | root
+14124   32832   2026-11-22T03:05:25.7451597Z      yes          yes        C:\Users\cj\1458-spike-engineer\runs\n4\d\ | M1
+36636   32832   2026-11-22T03:05:25.7470854Z      yes          yes        C:\Users\cj\1458-spike-engineer\runs\n4\d\ | M3
+13452   32832   2026-11-22T03:05:25.7508473Z      yes          yes        C:\ | M6
+37188   29140   2026-11-22T03:05:25.7640886Z      yes          yes        C:\Users\CJ\1458-spike-engineer\runs\n4\d\ | M4
+38476   14124   2026-11-22T03:05:25.7884011Z      yes          yes        C:\Users\cj\1458-spike-engineer\runs\n4\d\ | M2
+count=6
+2026-11-22T03:05:30.865Z TerminateJobObject(job, 1): returned 1, GetLastError=5
+2026-11-22T03:05:30.866Z job ActiveProcesses reached 0 0.458 ms after the TerminateJobObject call (hrtime, busy poll)
+2026-11-22T03:05:42.887Z AFTER ENDING (+12 s)
+listing run=n4 12 s after TerminateJobObject at 2026-11-22T03:05:42.887Z on Windows by pid 7356 (Toolhelp snapshot + PEB command line and CurrentDirectory + GetProcessTimes + IsProcessInJob)
+PID     PPID    CREATED (UTC, GetProcessTimes)    IN_SPIKE_JOB IN_ANY_JOB CWD | ROLE
+count=0
+2026-11-22T03:05:42.888Z job accounting: {"total":9,"active":0,"terminated":0}
