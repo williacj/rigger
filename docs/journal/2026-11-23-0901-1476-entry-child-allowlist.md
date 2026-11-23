@@ -50,3 +50,11 @@ Receipts at `7be1ce89`:
 - **Still killed:** the whole-environment record, a dropped PATH, a forbidden name, and an outside value under another key.
 
 Card #1476 allows one journal file, so this round is a section here, not a new entry.
+
+## Round 5: one redundancy and one constraint beyond the contract
+
+The reviewer found that the two top-level tests for PATH membership and for no outside name were redundant: a dropped PATH already fails the PATH-value test, and a forbidden name already fails the all-names test's premise. Their assertions now sit in the array-of-strings test, so each remaining test has a defect of its own.
+
+The architect found that the exact-names test required the list to hold a name beyond PATH and HOME, which the card does not pin: `['PATH', 'HOME']` failed its premise. The test now checks three literal callers (PATH alone; PATH and HOME; all five permitted names), each beside an outside name. Its premise holds for any list holding PATH and some other permitted name. Because every permitted name is held by some caller, a dropped one is still caught.
+
+The architect also found that the PR body quoted the spawn probe's stdout. Item 23 allows host output only as names, counts and exit status, so the probe is now described by the names it checked and its exit status alone.
