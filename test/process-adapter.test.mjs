@@ -289,8 +289,6 @@ test('T8: a tracked pid reused before its stopped identity check is resumed with
   });
   world.finish();
   await world.running;
-  assert.deepEqual(world.signals.filter(({ target }) => target === world.escaped).map(({ name }) => name), ['SIGSTOP', 'SIGCONT']);
-  assert.equal(world.events.some(({ pid }) => pid === world.escaped), false, 'the reused pid was recorded as killed');
 
   for (const read of ['periodic', 'final', 'reparented']) {
     for (const reused of [false, true]) {
@@ -327,6 +325,9 @@ test('T8: a tracked pid reused before its stopped identity check is resumed with
       });
     }
   }
+  assert.deepEqual(world.signals.filter(({ target }) => target === world.escaped).map(({ name }) => name), ['SIGSTOP', 'SIGCONT']);
+  assert.equal(world.events.some(({ pid }) => pid === world.escaped), false, 'the reused pid was recorded as killed');
+
 });
 
 test('T9: a tracked process refusing signals and one outliving the kill are recorded as unended', { timeout: 10_000 }, async (t) => {
