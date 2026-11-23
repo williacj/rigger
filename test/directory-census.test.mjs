@@ -64,6 +64,8 @@ test('given a dispatch whose command starts a process that leaves its group, wor
   assert.equal(alive(Number(read(directory, 'left.pid'))), false, 'the process working under the dispatch\'s directory is alive');
 });
 
+// Host reason: OS behaviour; real session descendants outside the group and workspace must be ended and recorded.
+// Ordinary decision counterpart: test/exit-budget.test.mjs :: dispatch descendant decisions preserve identities, endings, isolation and the known escape
 // proves R-STATE-29
 test('T1: a returning dispatch ends and records M3 and M6 while their in-group parent is alive', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
@@ -85,6 +87,8 @@ test('T1: a returning dispatch ends and records M3 and M6 while their in-group p
   }
 });
 
+// Host reason: OS behaviour; timeout signals must end real group members and escaped sessions.
+// Ordinary decision counterpart: test/exit-budget.test.mjs :: dispatch descendant decisions preserve identities, endings, isolation and the known escape
 // proves R-STATE-29
 test('T2: a timed-out dispatch ends M1 through M6, including both new sessions', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
@@ -96,6 +100,8 @@ test('T2: a timed-out dispatch ends M1 through M6, including both new sessions',
   for (const name of ['M3', 'M6']) assert.equal(readEvents(stateOf(directory)).filter((event) => event.event === 'survivor.killed' && event.pid === pids[name]).length, 1, `${name} was not recorded`);
 });
 
+// Host reason: OS behaviour; a real periodic ps answer must retain ancestry across reparenting to pid 1.
+// Ordinary decision counterpart: test/exit-budget.test.mjs :: dispatch descendant decisions preserve identities, endings, isolation and the known escape
 // proves R-STATE-29
 test('T3: the real one-second tracker retains and ends M6x after its parent exits', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
@@ -130,6 +136,8 @@ test('T3: the real one-second tracker retains and ends M6x after its parent exit
   ]);
 });
 
+// Host reason: OS behaviour; ending one real dispatch must leave its concurrent peer alive and unstopped.
+// Ordinary decision counterpart: test/exit-budget.test.mjs :: dispatch descendant decisions preserve identities, endings, isolation and the known escape
 // proves R-STATE-29
 test('T5: ending one dispatch ends its M6 and leaves the concurrent dispatch M6 running', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);
@@ -149,6 +157,8 @@ test('T5: ending one dispatch ends its M6 and leaves the concurrent dispatch M6 
   await worlds[1].settled;
 });
 
+// Host reason: OS behaviour; an immediate double fork reparented before observation remains a live known escape.
+// Ordinary decision counterpart: test/exit-budget.test.mjs :: dispatch descendant decisions preserve identities, endings, isolation and the known escape
 // proves R-STATE-29
 test('T6: the immediate double fork no read attributes to the dispatch is the known escape', SETTLES_WITHIN, async (t) => {
   const directory = holding(t);

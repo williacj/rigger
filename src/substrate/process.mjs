@@ -246,12 +246,15 @@ function* tracking(dispatches, host) {
       return { pid, parent: Number(fields[1]), group: Number(fields[2]), started: secondsOf(fields[3]) };
     });
     for (const call of recipients()) {
-      const parents = new Set(table.filter(({ group }) => group === call.child.pid).map(({ pid }) => pid));
-      for (const pid of call.tracked.keys()) parents.add(pid);
+      // A retained pid establishes ancestry only while this read shows its original identity.
+      // Its replacement cannot add children or overwrite that identity; earlier descendants stay.
+      const matching = table.filter(({ pid, started }) => !call.tracked.has(pid) || call.tracked.get(pid) === started);
+      const parents = new Set(matching.filter(({ group }) => group === call.child.pid).map(({ pid }) => pid));
+      for (const { pid } of matching) if (call.tracked.has(pid)) parents.add(pid);
       let grew;
       do {
         grew = false;
-        for (const member of table) {
+        for (const member of matching) {
           if (parents.has(member.pid) || !parents.has(member.parent)) continue;
           parents.add(member.pid);
           call.tracked.set(member.pid, member.started);
