@@ -694,6 +694,7 @@ Each row is one thing Rigger knows of an earlier dispatch's process, or of its r
 | at a start, a write of the record that did not complete, where Rigger can read what that write would have named | in: a sign, until each process it named and the record does not is shown gone |
 | at a start, a write of the record that did not complete, where Rigger cannot read what that write would have named | in: a record Rigger cannot read |
 | a write of the record that failed outright, after which Rigger was killed outright | out: the next start has nothing to read the failure from |
+| a write that left the record without a process the write would have named, where each later write of it failed, no unfinished write remained at Rigger's own exit, and Rigger had not shown the process gone by then | out: the next start has nothing to read the failure from. Rigger names the sign on standard error at that exit, as `R-STATE-37` names it |
 | a process Rigger saw and had not yet recorded when it was killed outright, as `### R-STATE-29 — A dispatch's descendants` has it | out: no record of it survives |
 | a dispatch's start in the event record with no end, whose process group Rigger was killed outright before recording | out: the start event names no group and no directory identity, so no read could show the sign gone |
 | a process no read showed, where no read failed; an immediate double fork's grandchild is the known case | out: a known escape, which `### R-STATE-29 — A dispatch's descendants` names |
